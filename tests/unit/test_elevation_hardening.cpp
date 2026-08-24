@@ -18,8 +18,59 @@
 #include <QJsonObject>
 #include <QtTest/QtTest>
 
+#include <algorithm>
+#include <iterator>
 #include <set>
 #include <string>
+
+namespace {
+
+// The exact justification each Elevated/Mixed feature shows the user when it asks for
+// administrator rights. Kept at file scope so the test body stays short.
+struct ExpectedReason {
+    sak::FeatureId id;
+    std::string_view reason;
+};
+
+constexpr ExpectedReason kExpectedElevationReasons[] = {
+    {sak::FeatureId::BackupBitlockerKeys, "BitLocker WMI namespace requires administrator access"},
+    {sak::FeatureId::VerifySystemFiles, "SFC and DISM write to protected system directories"},
+    {sak::FeatureId::CheckDiskErrors, "Disk checking requires filesystem-level access"},
+    {sak::FeatureId::ResetNetworkStack, "netsh reset commands require administrator privileges"},
+    {sak::FeatureId::FlashUsbDrive, "Raw disk I/O requires administrator privileges"},
+    {sak::FeatureId::UupIsoConversion, "DISM AppX provisioning requires administrator privileges"},
+    {sak::FeatureId::PartitionInventory,
+     "Some storage inventory fields require administrator access"},
+    {sak::FeatureId::PartitionMutate,
+     "Changing partition tables and volumes requires administrator privileges"},
+    {sak::FeatureId::PartitionCloneImage, "Raw disk read/write requires administrator privileges"},
+    {sak::FeatureId::PartitionBootRepair,
+     "BCD, EFI, and WinRE repair requires administrator privileges"},
+    {sak::FeatureId::PartitionSsdOptimize, "Volume optimization requires administrator privileges"},
+    {sak::FeatureId::PartitionSecureWipe,
+     "Disk and volume wipe operations require administrator privileges"},
+    {sak::FeatureId::BackupCrossUser,
+     "SE_BACKUP_NAME privilege required for cross-user file access"},
+    {sak::FeatureId::RestoreWithAcls, "SE_RESTORE_NAME and SE_TAKE_OWNERSHIP_NAME required"},
+    {sak::FeatureId::ChocolateyInstall,
+     "Package installation modifies system directories and registry"},
+    {sak::FeatureId::ChocolateyUninstall,
+     "Package removal modifies system directories and registry"},
+    {sak::FeatureId::AdvancedUninstall,
+     "System application removal requires administrator privileges"},
+    {sak::FeatureId::FirewallAuditModify,
+     "Modifying firewall rules requires administrator privileges"},
+    {sak::FeatureId::DnsCacheFlush, "ipconfig /flushdns requires administrator privileges"},
+    {sak::FeatureId::ModifyAdapterConfig,
+     "Changing IP/DNS settings requires administrator privileges"},
+    {sak::FeatureId::CpuThermalData, "root/WMI thermal namespace requires administrator access"},
+    {sak::FeatureId::PermissionStripInherit,
+     "System files may require elevation; user files do not"},
+    {sak::FeatureId::PermissionTakeOwnership, "SE_TAKE_OWNERSHIP_NAME privilege required"},
+    {sak::FeatureId::PermissionSetAcl, "System files may require elevation; user files do not"},
+};
+
+}  // namespace
 
 class TestElevationHardening : public QObject {
     Q_OBJECT
@@ -397,16 +448,28 @@ void TestElevationHardening::tier3_mixedFeaturesNeedElevation() {
 // ============================================================================
 
 void TestElevationHardening::featureTable_allElevatedHaveNonEmptyReasons() {
+    // !empty() let a truncated reason -- or one copy-pasted onto the WRONG feature -- reach the
+    // UAC prompt unnoticed. These strings are what justifies elevation to the user, so pin each
+    // one to its feature, and pin the count so a newly elevated feature must declare a reason
+    // here rather than inheriting a neighbour's.
+    int elevated_count = 0;
     for (const auto& entry : sak::kFeatureElevationTable) {
-        if (entry.tier == sak::ElevationTier::Elevated || entry.tier == sak::ElevationTier::Mixed) {
-            QVERIFY2(!entry.reason.empty(),
-                     qPrintable(QString("Feature '%1' is %2 but has empty reason")
-                                    .arg(QString::fromUtf8(entry.name.data(),
-                                                           static_cast<int>(entry.name.size())))
-                                    .arg(entry.tier == sak::ElevationTier::Elevated ? "Elevated"
-                                                                                    : "Mixed")));
+        if (entry.tier != sak::ElevationTier::Elevated && entry.tier != sak::ElevationTier::Mixed) {
+            continue;
         }
+        ++elevated_count;
+        const auto expected = std::ranges::find_if(kExpectedElevationReasons,
+                                                   [&entry](const ExpectedReason& candidate) {
+                                                       return candidate.id == entry.id;
+                                                   });
+        QVERIFY2(expected != std::end(kExpectedElevationReasons),
+                 qPrintable(
+                     QString::fromUtf8(entry.name.data(), static_cast<int>(entry.name.size()))));
+        QCOMPARE(QString::fromUtf8(entry.reason.data(), static_cast<int>(entry.reason.size())),
+                 QString::fromUtf8(expected->reason.data(),
+                                   static_cast<int>(expected->reason.size())));
     }
+    QCOMPARE(elevated_count, static_cast<int>(std::size(kExpectedElevationReasons)));
 }
 
 void TestElevationHardening::featureTable_noStandardFeatureHasReason() {
@@ -488,6 +551,9 @@ void TestElevationHardening::dispatcher_multipleRegistrationsAllAllowed() {
         QVERIFY2(dispatcher.isAllowed(id),
                  qPrintable(QString("Task '%1' should be allowed").arg(id)));
     }
+    // The allowlist is EXACTLY these five: the loop proves none is missing, the count proves
+    // no sixth task was registered alongside them.
+    QCOMPARE(dispatcher.handlerCount(), 5);
     QVERIFY(!dispatcher.isAllowed("NotRegistered"));
 }
 
@@ -541,8 +607,12 @@ void TestElevationHardening::errorCodes_taskNotAllowedExists() {
 
 void TestElevationHardening::ipc_cancelRequestRoundTrip() {
     QByteArray frame = sak::buildCancelRequest("TestTask");
-    QVERIFY(!frame.isEmpty());
-    QVERIFY(frame.size() >= sak::kPipeHeaderSize);
+    // A 5-byte header plus the compact JSON {"task":"TestTask"} (19 bytes); the header's
+    // declared length must agree with what was actually appended.
+    QCOMPARE(frame.size(), sak::kPipeHeaderSize + 19);
+    const auto decoded = sak::ElevatedPipeServer::decodeFrameHeader(frame.constData());
+    QCOMPARE(decoded.payload_len, 19u);
+    QCOMPARE(decoded.type, sak::PipeMessageType::CancelRequest);
 
     auto type =
         static_cast<sak::PipeMessageType>(static_cast<uint8_t>(frame.at(sak::kPipeHeaderSize - 1)));
@@ -551,7 +621,9 @@ void TestElevationHardening::ipc_cancelRequestRoundTrip() {
     QByteArray payload_bytes = frame.mid(sak::kPipeHeaderSize);
     QJsonDocument doc = QJsonDocument::fromJson(payload_bytes);
     QVERIFY(doc.isObject());
-    QCOMPARE(doc.object()["task"].toString(), QString("TestTask"));
+    // The message carries the task name and NOTHING else.
+    const QJsonObject expected{{QStringLiteral("task"), QStringLiteral("TestTask")}};
+    QCOMPARE(doc.object(), expected);
 }
 
 void TestElevationHardening::ipc_taskRequestPreservesPayload() {
@@ -560,17 +632,20 @@ void TestElevationHardening::ipc_taskRequestPreservesPayload() {
     payload["recursive"] = true;
 
     QByteArray frame = sak::buildTaskRequest("TakeOwnership", payload);
-    QVERIFY(!frame.isEmpty());
+    const auto decoded = sak::ElevatedPipeServer::decodeFrameHeader(frame.constData());
+    QCOMPARE(decoded.type, sak::PipeMessageType::TaskRequest);
+    QCOMPARE(static_cast<int>(decoded.payload_len), frame.size() - sak::kPipeHeaderSize);
 
     QByteArray payload_bytes = frame.mid(sak::kPipeHeaderSize);
     QJsonDocument doc = QJsonDocument::fromJson(payload_bytes);
     QVERIFY(doc.isObject());
 
-    QJsonObject parsed = doc.object();
-    QCOMPARE(parsed["task"].toString(), QString("TakeOwnership"));
-    QCOMPARE(parsed["payload"].toObject()["path"].toString(),
-             QString("C:\\Windows\\System32\\test.dll"));
-    QCOMPARE(parsed["payload"].toObject()["recursive"].toBool(), true);
+    // The request is exactly {task, payload} with the payload forwarded verbatim -- pin the
+    // whole object so an added field, or a payload key silently dropped, cannot pass.
+    QJsonObject expected;
+    expected[QStringLiteral("task")] = QStringLiteral("TakeOwnership");
+    expected[QStringLiteral("payload")] = payload;
+    QCOMPARE(doc.object(), expected);
 }
 
 // ============================================================================

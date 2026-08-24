@@ -425,9 +425,9 @@ void OpenAIResponsesClientTests::parseResponseObject_incompleteStatusReportsErro
 
     QString error;
     const auto result = sak::ai::OpenAIResponsesClient::parseResponseObject(json, &error);
-    QVERIFY(!error.isEmpty());
-    QVERIFY(error.contains(QStringLiteral("incomplete")));
-    QVERIFY(error.contains(QStringLiteral("max_output_tokens")));
+    // The exact message names the incomplete REASON the API reported; two contains() could not
+    // tell it from a different incomplete reason (or a differently-worded failure).
+    QCOMPARE(error, QStringLiteral("OpenAI response is incomplete: max_output_tokens"));
     // Fail closed: an incomplete response must surface no usable assistant output that
     // a caller could mistake for a complete answer. output_text is empty for ANY implementation
     // here (the sole output item is a function_call, never routed to output_text), so the
@@ -450,8 +450,7 @@ void OpenAIResponsesClientTests::parseResponseObject_failedStatusReportsError() 
 
     QString error;
     const auto result = sak::ai::OpenAIResponsesClient::parseResponseObject(json, &error);
-    QVERIFY(!error.isEmpty());
-    QVERIFY(error.contains(QStringLiteral("failed")));
+    QCOMPARE(error, QStringLiteral("OpenAI response failed"));
     QVERIFY(result.output_text.isEmpty());
 }
 
@@ -463,7 +462,8 @@ void OpenAIResponsesClientTests::parseInputTokenCountObject_rejectsOutOfRange() 
     const qint64 tokens = sak::ai::OpenAIResponsesClient::parseInputTokenCountObject(json, &error);
 
     QCOMPARE(tokens, qint64{-1});
-    QVERIFY(!error.isEmpty());
+    // The reason is the range rejection specifically, not a parse or missing-field error.
+    QCOMPARE(error, QStringLiteral("OpenAI input token count was out of range"));
 }
 
 void OpenAIResponsesClientTests::parseResponseObject_extractsUrlCitations() {
@@ -499,6 +499,8 @@ void OpenAIResponsesClientTests::parseResponseObject_extractsUrlCitations() {
     QString error;
     const auto result = sak::ai::OpenAIResponsesClient::parseResponseObject(json, &error);
     QVERIFY(error.isEmpty());
+    // The citation offsets index into output_text, so pin the text they annotate too.
+    QCOMPARE(result.output_text, QStringLiteral("Per Microsoft, run sfc /scannow."));
     QCOMPARE(result.citations.size(), 1);
     QCOMPARE(result.citations[0].url, QStringLiteral("https://learn.microsoft.com/sfc"));
     QCOMPARE(result.citations[0].title, QStringLiteral("SFC documentation"));
@@ -517,8 +519,8 @@ void OpenAIResponsesClientTests::parseResponseObject_apiError_reportsMessage() {
     QString error;
     const auto result = sak::ai::OpenAIResponsesClient::parseResponseObject(json, &error);
     QVERIFY(result.output_text.isEmpty());
-    QVERIFY(error.contains(QStringLiteral("Bad key")));
-    QVERIFY(error.contains(QStringLiteral("invalid_request_error")));
+    // Both API fields are rendered into one message in a fixed "type: message" shape.
+    QCOMPARE(error, QStringLiteral("invalid_request_error: Bad key"));
 }
 
 void OpenAIResponsesClientTests::parseInputTokenCountObject_extractsExactCount() {
@@ -547,9 +549,8 @@ void OpenAIResponsesClientTests::parseModelsList_extractsIds() {
     QString error;
     const auto models = sak::ai::OpenAIResponsesClient::parseModelsList(json, &error);
     QVERIFY(error.isEmpty());
-    QCOMPARE(models.size(), 2);
-    QVERIFY(models.contains(QStringLiteral("gpt-5.4-mini")));
-    QVERIFY(models.contains(QStringLiteral("gpt-5.5")));
+    // The list is returned in API order; pin it whole rather than by size + membership.
+    QCOMPARE(models, QStringList({QStringLiteral("gpt-5.4-mini"), QStringLiteral("gpt-5.5")}));
 }
 
 void OpenAIResponsesClientTests::redactSecrets_redactsOpenAiAndBearerTokens() {
@@ -564,11 +565,13 @@ void OpenAIResponsesClientTests::redactSecrets_redactsOpenAiAndBearerTokens() {
         QStringLiteral("key=%1 ctx %2 bearer Bearer %3")
             .arg(openai_redaction_sample, context7_redaction_sample, bearer_redaction_sample);
     const QString redacted = sak::ai::CredentialStore::redactSecrets(input);
-    QVERIFY(!redacted.contains(openai_redaction_sample));
-    QVERIFY(!redacted.contains(context7_redaction_sample));
-    QVERIFY(!redacted.contains(bearer_redaction_sample));
-    QVERIFY(redacted.contains(QStringLiteral("[redacted]")));
-    QVERIFY(redacted.contains(QStringLiteral("[redacted-context7-key]")));
+    // Pin the WHOLE redacted string. Absence checks alone are satisfied by a redactor that
+    // over-redacts (dropping surrounding text, or the key prefix an operator needs to identify
+    // WHICH credential leaked) as readily as by the correct one -- and the OpenAI rule keeps a
+    // "sk-..." hint on purpose.
+    QCOMPARE(redacted,
+             QStringLiteral("key=sk-...[redacted] ctx [redacted-context7-key] "
+                            "bearer Bearer [redacted]"));
 }
 
 void OpenAIResponsesClientTests::redactSecrets_redactsGitHubAndCloudTokens() {
@@ -583,11 +586,10 @@ void OpenAIResponsesClientTests::redactSecrets_redactsGitHubAndCloudTokens() {
         QStringLiteral("token %1 and %2 google %3")
             .arg(github_redaction_sample, aws_redaction_sample, google_redaction_sample);
     const QString redacted = sak::ai::CredentialStore::redactSecrets(input);
-    QVERIFY(redacted.contains(QStringLiteral("[redacted-github-token]")));
-    QVERIFY(redacted.contains(QStringLiteral("[redacted-aws-key]")));
-    QVERIFY(redacted.contains(QStringLiteral("[redacted-google-key]")));
-    QVERIFY(!redacted.contains(github_redaction_sample));
-    QVERIFY(!redacted.contains(aws_redaction_sample));
+    // Each token type keeps its OWN marker, in place, with the surrounding text intact.
+    QCOMPARE(redacted,
+             QStringLiteral("token [redacted-github-token] and [redacted-aws-key] "
+                            "google [redacted-google-key]"));
 }
 
 void OpenAIResponsesClientTests::redactSecrets_redactsAssignmentStyleSecrets() {
@@ -601,11 +603,11 @@ void OpenAIResponsesClientTests::redactSecrets_redactsAssignmentStyleSecrets() {
                                    api_key_redaction_sample,
                                    token_redaction_sample);
     const QString redacted = sak::ai::CredentialStore::redactSecrets(input);
-    QVERIFY(!redacted.contains(password_redaction_sample));
-    QVERIFY(!redacted.contains(secret_redaction_sample));
-    QVERIFY(!redacted.contains(api_key_redaction_sample));
-    QVERIFY(!redacted.contains(token_redaction_sample));
-    QVERIFY(redacted.contains(QStringLiteral("[redacted]")));
+    // The assignment KEY survives so the log still says what was redacted; note the quoted
+    // "password: \"...\"" form normalizes to password=[redacted].
+    QCOMPARE(redacted,
+             QStringLiteral("password=[redacted] password=[redacted] api_key=[redacted] "
+                            "token=[redacted]"));
 }
 
 void OpenAIResponsesClientTests::buildPayload_chatModeOmitsLocalTools() {
@@ -619,8 +621,10 @@ void OpenAIResponsesClientTests::buildPayload_chatModeOmitsLocalTools() {
     const QJsonArray tools = root.value(QStringLiteral("tools")).toArray();
 
     QCOMPARE(tools.size(), 1);
-    QCOMPARE(tools.first().toObject().value(QStringLiteral("type")).toString(),
-             QStringLiteral("web_search_preview"));
+    // The whole tool object: a web-search entry that also carried extra configuration would
+    // pass a type-only check.
+    QCOMPARE(tools.first().toObject(),
+             QJsonObject({{QStringLiteral("type"), QStringLiteral("web_search_preview")}}));
     QVERIFY(!hasFunctionTool(tools, QStringLiteral("run_powershell")));
     QVERIFY(!hasFunctionTool(tools, QStringLiteral("run_cmd")));
     QVERIFY(!hasFunctionTool(tools, QStringLiteral("run_process")));
@@ -660,9 +664,20 @@ void OpenAIResponsesClientTests::buildPayload_assistedOrUnattendedAdvertisesLoca
                                       .toObject()
                                       .value(QStringLiteral("enum"))
                                       .toArray();
-    QVERIFY(operations.contains(QStringLiteral("docs_query")));
-    QVERIFY(operations.contains(QStringLiteral("win32_mcp_call")));
-    QVERIFY(operations.contains(QStringLiteral("app_run_action")));
+    // The enum is the CLOSED set of gateway operations the model may request, so pin it whole:
+    // three membership checks cannot see an operation that was added (widening what the model
+    // can invoke) or one that silently disappeared.
+    QCOMPARE(operations,
+             QJsonArray({QStringLiteral("providers"),
+                         QStringLiteral("provider_status"),
+                         QStringLiteral("docs_query"),
+                         QStringLiteral("win32_mcp_call"),
+                         QStringLiteral("app_manifest"),
+                         QStringLiteral("app_capabilities"),
+                         QStringLiteral("app_run_action_plan"),
+                         QStringLiteral("app_run_action")}));
+    // Nine presence checks above prove no tool is MISSING; the count proves none was ADDED.
+    QCOMPARE(tools.size(), 14);
     QCOMPARE(root.value(QStringLiteral("parallel_tool_calls")).toBool(true), false);
 }
 
@@ -699,8 +714,12 @@ void OpenAIResponsesClientTests::buildPayload_omitsTruncationAndPromptCacheKeyWh
 
     const QJsonObject root = payloadObject(request);
 
-    QVERIFY(!root.contains(QStringLiteral("truncation")));
-    QVERIFY(!root.contains(QStringLiteral("prompt_cache_key")));
+    // Pin the exact key set: two absence checks cannot notice a THIRD optional field leaking
+    // into the payload when the caller left it unset.
+    QCOMPARE(root.keys(),
+             QStringList({QStringLiteral("input"),
+                          QStringLiteral("instructions"),
+                          QStringLiteral("model")}));
 }
 
 void OpenAIResponsesClientTests::buildPayload_functionToolsUseStrictSchemas() {
@@ -756,7 +775,10 @@ void OpenAIResponsesClientTests::buildPayload_providerGatewayArgumentsAreStrictS
                                       .toObject();
 
     QCOMPARE(arguments.value(QStringLiteral("type")).toString(), QStringLiteral("string"));
-    QVERIFY(!arguments.contains(QStringLiteral("additionalProperties")));
+    // The schema node carries exactly a description and a type -- pinning the key set catches
+    // any other stray keyword, not just additionalProperties.
+    QCOMPARE(arguments.keys(),
+             QStringList({QStringLiteral("description"), QStringLiteral("type")}));
 }
 
 void OpenAIResponsesClientTests::buildPayload_packageToolWarnsAgainstScanInstalls() {
@@ -770,9 +792,20 @@ void OpenAIResponsesClientTests::buildPayload_packageToolWarnsAgainstScanInstall
                                                    QStringLiteral("sak_package_manager"));
     const QString description = package.value(QStringLiteral("description")).toString();
 
-    QVERIFY(description.contains(QStringLiteral("Do not use install/upgrade/uninstall")));
-    QVERIFY(description.contains(QStringLiteral("scan/action")));
-    QVERIFY(description.contains(QStringLiteral("sak_provider_gateway")));
+    // The description IS the instruction the model follows, so pin it verbatim: three
+    // substring checks would still pass if the surrounding guidance were reworded into
+    // something that no longer steers the model away from install-as-scan.
+    QCOMPARE(description,
+             QStringLiteral("Use S.A.K. Utility's built-in bundled Chocolatey package "
+                            "manager. Use this before web search, raw choco/winget "
+                            "commands, or vendor downloads for app search, install, "
+                            "uninstall, upgrade, installed-version checks, and "
+                            "outdated-package checks. Do not use install/upgrade/"
+                            "uninstall as a substitute for running an installed app's "
+                            "scan/action. For scan requests, first check installed "
+                            "status and app capabilities through sak_provider_gateway; "
+                            "only install when the user explicitly asks to install, "
+                            "repair-install, or upgrade software."));
 }
 
 void OpenAIResponsesClientTests::realModelSmokeTest_optIn() {
