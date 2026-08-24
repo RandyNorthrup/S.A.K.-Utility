@@ -145,6 +145,22 @@ void FileScannerTests::scanAndCollect_returnsAllFiles() {
     auto result = scanner.scanAndCollect(m_rootPath, opts);
     QVERIFY(result.has_value());
     QCOMPARE(result.value().size(), std::size_t{6});
+    // Identity, not just arity: the six collected paths are the six fixture FILES, each exactly
+    // once, at its real location in the tree. A size-only check stayed green if the collector
+    // pushed the containing directory (or the same entry twice) for every emission.
+    QStringList collected;
+    for (const auto& collected_path : result.value()) {
+        collected << QString::fromStdString(
+            collected_path.lexically_relative(m_rootPath).generic_string());
+    }
+    collected.sort();
+    QCOMPARE(collected,
+             (QStringList{QStringLiteral("dir_a/data.json"),
+                          QStringLiteral("dir_a/readme.md"),
+                          QStringLiteral("dir_b/image.png"),
+                          QStringLiteral("dir_b/nested/deep.log"),
+                          QStringLiteral("file1.txt"),
+                          QStringLiteral("file2.cpp")}));
 }
 
 void FileScannerTests::scanAndCollect_respectsFilters() {
@@ -193,6 +209,13 @@ void FileScannerTests::excludeDir_skipsDirectory() {
     QVERIFY(result.has_value());
     // Without dir_b: file1.txt, file2.cpp, dir_a/data.json, dir_a/readme.md = 4
     QCOMPARE(result.value().files_found, std::size_t{4});
+    // The name is excluded by TWO independent guards -- emission (shouldProcessEntry) and descent
+    // (canDescendInto). files_found only proves the descent guard: with the emission guard deleted
+    // dir_b is still not walked, so the count stays 4 while dir_b is wrongly REPORTED as a found
+    // directory and passed to the callback. Exactly one entry (dir_b itself) is filtered out.
+    QCOMPARE(result.value().skipped_by_filter, std::size_t{1});
+    // Bytes follow the same exclusion: 5 + 13 + 13 + 7, with dir_b's 109 bytes absent.
+    QCOMPARE(result.value().total_size, std::uintmax_t{38});
 }
 
 void FileScannerTests::fileSizeFilter_minMax() {
@@ -205,6 +228,11 @@ void FileScannerTests::fileSizeFilter_minMax() {
     QVERIFY(result.has_value());
     // Files 10-50 bytes: file2.cpp(13), dir_a/data.json(13); 5/7/9 below min, 100 above max.
     QCOMPARE(result.value().files_found, std::size_t{2});
+    // total_size is the sum over the files that PASSED the filter, not the tree total: 13 + 13.
+    // A scan that accumulated bytes before the size filter reports 147 and kept files_found == 2.
+    QCOMPARE(result.value().total_size, std::uintmax_t{26});
+    // The four rejected files are seen-and-rejected, not never-enumerated.
+    QCOMPARE(result.value().skipped_by_filter, std::size_t{4});
 }
 
 void FileScannerTests::maxDepth_limitsRecursion() {
@@ -216,6 +244,13 @@ void FileScannerTests::maxDepth_limitsRecursion() {
     QVERIFY(result.has_value());
     // Only root-level files: file1.txt, file2.cpp = 2
     QCOMPARE(result.value().files_found, std::size_t{2});
+    // The depth test gates BOTH emission (shouldProcessEntry) and descent (canDescendInto).
+    // Exactly the four depth-1 entries (data.json, readme.md, image.png, nested) are enumerated
+    // and rejected; a walk that kept descending and leaned on the emission filter alone also
+    // reaches dir_b/nested and records 5.
+    QCOMPARE(result.value().skipped_by_filter, std::size_t{4});
+    // Bytes come only from the two emitted root files: 5 + 13.
+    QCOMPARE(result.value().total_size, std::uintmax_t{18});
 }
 
 void FileScannerTests::typeFilter_filesOnly() {
@@ -235,11 +270,21 @@ void FileScannerTests::typeFilter_dirsOnly() {
     sak::file_scanner scanner;
     sak::scan_options opts;
     opts.type_filter = sak::file_type_filter::directories_only;
+    // scan_emptyDirectory() adds "empty_dir" to the shared root, so exclude it here to keep the
+    // catalog independent of test-function execution order (5 in-class vs 4 standalone today).
+    opts.exclude_dirs = {"empty_dir"};
 
     auto result = scanner.scan(m_rootPath, opts);
     QVERIFY(result.has_value());
     QCOMPARE(result.value().files_found, std::size_t{0});
-    QVERIFY(result.value().directories_found >= std::size_t{3});
+    // Exact catalog: dir_a, dir_b, dir_c and the nested dir_b/nested.
+    QCOMPARE(result.value().directories_found, std::size_t{4});
+    // The six regular files plus the excluded empty_dir are enumerated and REJECTED, so they must
+    // be counted as filtered rather than silently unvisited.
+    QCOMPARE(result.value().skipped_by_filter, std::size_t{7});
+    // Bytes are accumulated only for emitted files (updateFileStats), so a directories_only scan
+    // reports zero; an accumulation moved ahead of the filter would report the tree's 147.
+    QCOMPARE(result.value().total_size, std::uintmax_t{0});
 }
 
 // ============================================================================
@@ -252,10 +297,19 @@ void FileScannerTests::cancellation_stopsScan() {
 
     sak::file_scanner scanner;
     sak::scan_options opts;
+    int entriesSeen = 0;
+    opts.callback = [&entriesSeen](const std::filesystem::path&, bool) -> bool {
+        ++entriesSeen;
+        return true;
+    };
 
     auto result = scanner.scan(m_rootPath, opts, stopSource.get_token());
     QVERIFY(!result.has_value());
     QCOMPARE(result.error(), sak::error_code::operation_cancelled);
+    // An already-requested stop must abort BEFORE the first directory is enumerated. scan() also
+    // checks the token AFTER the walk, so deleting the pre-enumeration and per-entry checks still
+    // yields operation_cancelled: the error code alone never proved the scan stopped early.
+    QCOMPARE(entriesSeen, 0);
 }
 
 // ============================================================================
@@ -281,6 +335,17 @@ void FileScannerTests::findFiles_byPattern() {
     QVERIFY(result.has_value());
     // Recursive find now reaches dir_a/data.json.
     QCOMPARE(result.value().size(), std::size_t{1});
+    // WHICH file: the one match is the nested data.json, returned as a full path under the root.
+    QCOMPARE(QString::fromStdString(
+                 result.value().front().lexically_relative(m_rootPath).generic_string()),
+             QStringLiteral("dir_a/data.json"));
+
+    // Other arm of the same entry point: an EMPTY pattern list must fail closed with
+    // invalid_argument. Left unchecked it would leave include_patterns empty, which the scan
+    // reads as "no filter" and answers a filtered query with every file in the tree.
+    auto no_patterns = sak::file_scanner::findFiles(m_rootPath, {}, true);
+    QVERIFY(!no_patterns.has_value());
+    QCOMPARE(no_patterns.error(), sak::error_code::invalid_argument);
 }
 
 // ============================================================================
@@ -301,6 +366,10 @@ void FileScannerTests::callback_falseStopsScan() {
     // into operation_cancelled and stops; the root holds >= 3 emittable entries, so exactly 3
     // callbacks fire. <= 3 also passed if the false-return were ignored; == 3 pins the abort.
     QCOMPARE(filesProcessed, 3);
+    // The abort must also be REPORTED. A scanner that stopped the walk but handed back a
+    // successful -- silently truncated -- statistics block also leaves filesProcessed at 3.
+    QVERIFY(!result.has_value());
+    QCOMPARE(result.error(), sak::error_code::operation_cancelled);
 }
 
 // ============================================================================
@@ -309,10 +378,19 @@ void FileScannerTests::callback_falseStopsScan() {
 
 void FileScannerTests::progress_callbackInvoked() {
     int progressCalls = 0;
+    std::uintmax_t lastBytes = 0;
     sak::file_scanner scanner;
     sak::scan_options opts;
-    opts.progress_callback = [&progressCalls](std::size_t, std::uintmax_t) {
+    opts.progress_callback = [&progressCalls, &lastBytes](std::size_t files, std::uintmax_t bytes) {
         ++progressCalls;
+        // Both arguments are CUMULATIVE running totals, so the file count advances by exactly one
+        // per call and the byte total strictly grows (every fixture file is non-empty). Both
+        // parameters were unnamed, so only the ARITY of the invocation was ever checked: a
+        // callback invoked with (0, 0), with a per-file size instead of the running total, or
+        // with the two counters swapped stayed green.
+        QCOMPARE(files, static_cast<std::size_t>(progressCalls));
+        QVERIFY(bytes > lastBytes);
+        lastBytes = bytes;
     };
 
     auto result = scanner.scan(m_rootPath, opts);
@@ -350,6 +428,9 @@ void FileScannerTests::symlink_notFollowedWhenDisabled() {
     auto result = scanner.scan(root, opts);
     QVERIFY(result.has_value());
     QCOMPARE(result.value().files_found, std::size_t{1});
+    // The loop symlink is still EMITTED as a directory (is_directory() resolves it); only the
+    // DESCENT is refused, so payload + loop = 2.
+    QCOMPARE(result.value().directories_found, std::size_t{2});
 
     // follow_symlinks=true must still terminate (cycle guard) rather than hang.
     sak::file_scanner following_scanner;
@@ -360,6 +441,13 @@ void FileScannerTests::symlink_notFollowedWhenDisabled() {
     // The cycle guard refuses to re-descend the loop symlink (canonical(root) already visited),
     // so p.txt is counted exactly once -- a terminate-but-double-count bug would fail this.
     QCOMPARE(followed.value().files_found, std::size_t{1});
+    // WHICH arm refused matters: the silent cycle guard, or the fail-closed canonical() failure
+    // that counts an error. Both stop the descent, so files_found cannot separate them.
+    QCOMPARE(followed.value().errors_encountered, std::size_t{0});
+    QVERIFY(followed.value().is_complete());
+    // With the root seeding deleted the walk descends the loop once and re-emits payload+loop
+    // (4 dirs) while p.txt is still counted exactly once -- invisible to files_found alone.
+    QCOMPARE(followed.value().directories_found, std::size_t{2});
 }
 
 void FileScannerTests::junction_notFollowedByDefault() {
@@ -401,6 +489,14 @@ void FileScannerTests::junction_notFollowedByDefault() {
     auto result = scanner.scan(root, opts);
     QVERIFY(result.has_value());
     QCOMPARE(result.value().files_found, std::size_t{1});
+    // The junction is refused at the DESCENT gate only: it is still enumerated and emitted as a
+    // directory (directory_entry::is_directory() resolves the reparse point), so payload + jloop
+    // = 2. skip_symlinks (default off) is the separate option that drops such entries entirely,
+    // and a regression that turned it on -- or one that counted the refusal as an error -- keeps
+    // files_found at 1.
+    QCOMPARE(result.value().directories_found, std::size_t{2});
+    QCOMPARE(result.value().errors_encountered, std::size_t{0});
+    QVERIFY(result.value().is_complete());
 #else
     QSKIP("Junctions are a Windows-only concept");
 #endif

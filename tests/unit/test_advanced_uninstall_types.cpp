@@ -368,6 +368,11 @@ void AdvancedUninstallTypesTests::provenanceKey_stableAcrossFormatting() {
     // Filesystem: separator/case/trailing-dot differences resolve to the same key.
     QCOMPARE(sak::leftoverProvenanceKey(makeItem(T::File, "C:\\Program Files\\Acme\\a.dll")),
              sak::leftoverProvenanceKey(makeItem(T::File, "c:/program files/acme/a.dll")));
+    // The trailing-dot/space half of the claim above was never exercised: Win32 discards a
+    // trailing '.' or ' ' from EVERY path component, so these name the same object. Interior
+    // components are used so QString::trimmed() cannot be what does the work.
+    QCOMPARE(sak::leftoverProvenanceKey(makeItem(T::File, "C:\\Program Files \\Acme.\\a.dll")),
+             sak::leftoverProvenanceKey(makeItem(T::File, "c:/program files/acme/a.dll")));
     // Registry key: hive case + repeated/trailing separators canonicalize.
     QCOMPARE(sak::leftoverProvenanceKey(makeItem(T::RegistryKey, "HKLM\\SOFTWARE\\Acme")),
              sak::leftoverProvenanceKey(makeItem(T::RegistryKey, "hklm\\software\\\\acme\\")));
@@ -387,6 +392,12 @@ void AdvancedUninstallTypesTests::provenanceKey_distinctForDifferentItems() {
     // Different value names under one key are distinct.
     QVERIFY(sak::leftoverProvenanceKey(makeItem(T::RegistryValue, "HKCU\\Software\\Acme", "Run")) !=
             sak::leftoverProvenanceKey(makeItem(T::RegistryValue, "HKCU\\Software\\Acme", "Load")));
+    // SEPARATOR INJECTION: a registry path and a value name may both legally contain '|', the
+    // character that joins the composite key's fields. Unescaped, (path="...\\Acme|B", value="C")
+    // and (path="...\\Acme", value="B|C") collapse to the SAME key, so a scan proof for one value
+    // would authorize deleting a different value under that key.
+    QVERIFY(sak::leftoverProvenanceKey(makeItem(T::RegistryValue, "HKCU\\Software\\Acme|B", "C")) !=
+            sak::leftoverProvenanceKey(makeItem(T::RegistryValue, "HKCU\\Software\\Acme", "B|C")));
     // Different filesystem paths are distinct.
     QVERIFY(sak::leftoverProvenanceKey(makeItem(T::File, "C:\\Acme\\a.dll")) !=
             sak::leftoverProvenanceKey(makeItem(T::File, "C:\\Acme\\b.dll")));
@@ -400,8 +411,37 @@ void AdvancedUninstallTypesTests::provenanceKey_distinctForDifferentItems() {
     // recursion escalation), nor RegistryKey vs ShellExtension at the same key.
     QVERIFY(sak::leftoverProvenanceKey(makeItem(T::File, "C:\\Acme\\data")) !=
             sak::leftoverProvenanceKey(makeItem(T::Folder, "C:\\Acme\\data")));
+    // StartupEntry is a TWO-ARM key (file-backed shortcut vs registry Run value) and NEITHER arm
+    // was reached: a file-backed startup proof must not authorize a plain-file delete at the same
+    // path, a registry-backed one must not authorize deleting that Run VALUE directly, and the two
+    // arms must not collide with each other.
+    QVERIFY(sak::leftoverProvenanceKey(makeItem(T::StartupEntry, "C:\\Acme\\run.lnk")) !=
+            sak::leftoverProvenanceKey(makeItem(T::File, "C:\\Acme\\run.lnk")));
+    QVERIFY(sak::leftoverProvenanceKey(
+                makeItem(T::StartupEntry, "HKCU\\Software\\Acme\\Run", "Acme")) !=
+            sak::leftoverProvenanceKey(
+                makeItem(T::RegistryValue, "HKCU\\Software\\Acme\\Run", "Acme")));
+    QVERIFY(sak::leftoverProvenanceKey(makeItem(T::StartupEntry, "C:\\Acme\\run.lnk")) !=
+            sak::leftoverProvenanceKey(makeItem(T::StartupEntry, "C:\\Acme\\run.lnk", "Acme")));
     QVERIFY(sak::leftoverProvenanceKey(makeItem(T::RegistryKey, "HKCR\\CLSID\\{x}")) !=
             sak::leftoverProvenanceKey(makeItem(T::ShellExtension, "HKCR\\CLSID\\{x}")));
+    // FIREWALL QUALIFIERS: direction/profile/program are captured at scan time and folded into the
+    // identity so a proof for one rule cannot authorize deleting a DIFFERENT rule that merely
+    // shares the display name (cleanup turns them into the netsh dir=/profile=/program= narrowing).
+    // Only `path` ever reached the key here, leaving all three qualifier fields silent.
+    sak::LeftoverItem fwIn = makeItem(T::FirewallRule, "Acme Updater");
+    fwIn.firewallDirection = "in";
+    fwIn.firewallProfile = "Private";
+    fwIn.firewallProgram = "C:\\Program Files\\Acme\\upd.exe";
+    sak::LeftoverItem fwOtherDir = fwIn;
+    fwOtherDir.firewallDirection = "out";
+    sak::LeftoverItem fwOtherProfile = fwIn;
+    fwOtherProfile.firewallProfile = "Public";
+    sak::LeftoverItem fwOtherProgram = fwIn;
+    fwOtherProgram.firewallProgram = "C:\\Program Files\\Acme\\other.exe";
+    QVERIFY(sak::leftoverProvenanceKey(fwIn) != sak::leftoverProvenanceKey(fwOtherDir));
+    QVERIFY(sak::leftoverProvenanceKey(fwIn) != sak::leftoverProvenanceKey(fwOtherProfile));
+    QVERIFY(sak::leftoverProvenanceKey(fwIn) != sak::leftoverProvenanceKey(fwOtherProgram));
 }
 
 void AdvancedUninstallTypesTests::provenanceStore_recordsAndMatches() {
@@ -448,6 +488,20 @@ void AdvancedUninstallTypesTests::provenanceStore_bindsRealObjectIdentity() {
 
     // Unchanged object: the scan proof still holds (a reformatted path also matches).
     QVERIFY(store.contains(makeItem(T::File, filePath)));
+    // Pin the fingerprint's FIELD SET, not merely "it changed": size ALONE satisfies the swap
+    // check below (23 bytes -> 46 bytes), so a size-only fingerprint stays green while the
+    // creation/last-write components -- the only ones that catch a SAME-SIZE delete-and-recreate
+    // -- go unproven. Recomputed from QFileInfo directly, not from the function under test.
+    const QFileInfo probe(filePath);
+    const QString expectedFingerprint = QStringLiteral("sz:%1|bt:%2|mt:%3")
+                                            .arg(probe.size())
+                                            .arg(probe.birthTime().toMSecsSinceEpoch())
+                                            .arg(probe.lastModified().toMSecsSinceEpoch());
+    QCOMPARE(sak::fsIdentityFingerprint(makeItem(T::File, filePath)), expectedFingerprint);
+    // Both arms of the file-backed guard: a file-backed startup entry fingerprints the real
+    // object, a registry-backed one (value name present) carries none however the path text reads.
+    QCOMPARE(sak::fsIdentityFingerprint(makeItem(T::StartupEntry, filePath)), expectedFingerprint);
+    QVERIFY(sak::fsIdentityFingerprint(makeItem(T::StartupEntry, filePath, "Acme")).isEmpty());
     QVERIFY(store.contains(makeItem(T::File, QDir::fromNativeSeparators(filePath).toUpper())));
 
     // Swap the object at the SAME path for different content: the on-disk identity fingerprint

@@ -86,14 +86,31 @@ void TestLeftoverCleanupGuard::registryKeyRefusesOsCriticalSubtree() {
     QCOMPARE(registryKeyDeletionRefusal(
                  QStringLiteral("HKLM\\SYSTEM\\CurrentControlSet\\Services\\RpcSs")),
              QStringLiteral("refusing to delete a protected system registry subtree (system)"));
-    QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKLM\\SAM\\SAM"))));
-    QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKLM\\SECURITY"))));
-    QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKLM\\BCD00000000\\Objects"))));
-    QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKLM\\HARDWARE\\DESCRIPTION"))));
-    // Case- and separator-insensitive.
-    QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("hklm\\system\\foo\\"))));
-    QVERIFY(blocked(registryKeyDeletionRefusal(
-        QStringLiteral("HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows Defender"))));
+    // Pin WHICH denylist entry fired: an entry narrowed to the tested key itself (e.g.
+    // "hardware\\description" instead of "hardware") keeps a bare blocked() green while
+    // HKLM\\HARDWARE\\DEVICEMAP silently becomes deletable.
+    QCOMPARE(registryKeyDeletionRefusal(QStringLiteral("HKLM\\SAM\\SAM")),
+             QStringLiteral("refusing to delete a protected system registry subtree (sam)"));
+    QCOMPARE(registryKeyDeletionRefusal(QStringLiteral("HKLM\\SECURITY")),
+             QStringLiteral("refusing to delete a protected system registry subtree (security)"));
+    QCOMPARE(registryKeyDeletionRefusal(QStringLiteral("HKLM\\BCD00000000\\Objects")),
+             QStringLiteral(
+                 "refusing to delete a protected system registry subtree (bcd00000000)"));
+    QCOMPARE(registryKeyDeletionRefusal(QStringLiteral("HKLM\\HARDWARE\\DESCRIPTION")),
+             QStringLiteral("refusing to delete a protected system registry subtree (hardware)"));
+    // Case- and separator-insensitive: this is the file's ONLY lower-case hive spelling, so a
+    // case-SENSITIVE hive match would fall through to the "must start with HKLM\\" refusal --
+    // still non-empty, so a bare blocked() cannot tell the two apart.
+    QCOMPARE(registryKeyDeletionRefusal(QStringLiteral("hklm\\system\\foo\\")),
+             QStringLiteral("refusing to delete a protected system registry subtree (system)"));
+    QCOMPARE(registryKeyDeletionRefusal(
+                 QStringLiteral("HKLM\\SOFTWARE\\Policies\\Microsoft\\Windows Defender")),
+             QStringLiteral(
+                 "refusing to delete a protected system registry subtree (software\\policies)"));
+    // The whole Policies tree (group policy), not merely the Defender leaf under it.
+    QCOMPARE(registryKeyDeletionRefusal(QStringLiteral("HKLM\\SOFTWARE\\Policies")),
+             QStringLiteral(
+                 "refusing to delete a protected system registry subtree (software\\policies)"));
 }
 
 void TestLeftoverCleanupGuard::registryKeyRefusesSharedRootExact() {
@@ -103,7 +120,15 @@ void TestLeftoverCleanupGuard::registryKeyRefusesSharedRootExact() {
         QStringLiteral("HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion"))));
     QVERIFY(blocked(registryKeyDeletionRefusal(
         QStringLiteral("HKLM\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run"))));
-    QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKCR\\CLSID"))));
+    QCOMPARE(
+        registryKeyDeletionRefusal(QStringLiteral("HKCR\\CLSID")),
+        QStringLiteral(
+            "refusing to delete a shared registry root key; delete a specific subkey instead"));
+    // ...and blocked ONLY as the exact root: an app's own COM registration under it is the
+    // commonest leftover of all and must stay cleanable. Promoting "clsid" to the PREFIX table
+    // keeps the pin above green while silently refusing every per-app GUID.
+    QVERIFY(!blocked(registryKeyDeletionRefusal(
+        QStringLiteral("HKCR\\CLSID\\{12345678-1234-1234-1234-1234567890ab}"))));
     QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKLM\\SOFTWARE\\Classes"))));
 }
 
@@ -146,14 +171,27 @@ void TestLeftoverCleanupGuard::registryKeyRefusesBrickCriticalDescendants() {
         blocked(registryKeyDeletionRefusal(QStringLiteral("HKCR\\exefile\\shell\\open\\command"))));
     QVERIFY(blocked(registryKeyDeletionRefusal(
         QStringLiteral("HKLM\\SOFTWARE\\Classes\\exefile\\shell\\open\\command"))));
-    QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral("HKCR\\lnkfile\\shell\\open"))));
+    QCOMPARE(registryKeyDeletionRefusal(QStringLiteral("HKCR\\lnkfile\\shell\\open")),
+             QStringLiteral(
+                 "refusing to delete a protected system registry subtree (lnkfile\\shell)"));
+    // Scoped to the shell-verb tree: widening that entry to "lnkfile" keeps the pin above green
+    // while every app-added .lnk context-menu handler becomes un-cleanable.
+    QVERIFY(!blocked(registryKeyDeletionRefusal(
+        QStringLiteral("HKCR\\lnkfile\\shellex\\ContextMenuHandlers\\Acme"))));
     QCOMPARE(
         registryKeyDeletionRefusal(QStringLiteral(
             "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\ProfileList\\S-1-5-21-1-2-3")),
         QStringLiteral("refusing to delete a protected system registry subtree "
                        "(software\\microsoft\\windows nt\\currentversion\\profilelist)"));
-    QVERIFY(blocked(registryKeyDeletionRefusal(QStringLiteral(
-        "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SvcHost\\netsvcs"))));
+    QCOMPARE(registryKeyDeletionRefusal(QStringLiteral(
+                 "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\SvcHost\\netsvcs")),
+             QStringLiteral("refusing to delete a protected system registry subtree "
+                            "(software\\microsoft\\windows nt\\currentversion\\svchost)"));
+    // The entry is the svchost subtree, NOT its parent: truncating it to
+    // ...\\Windows NT\\CurrentVersion keeps the pin above green while refusing every ordinary app
+    // key under Windows NT\\CurrentVersion.
+    QVERIFY(!blocked(registryKeyDeletionRefusal(QStringLiteral(
+        "HKLM\\SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\AppCompatFlags\\Layers"))));
     // File-extension class registrations: the exact key unregisters the whole association.
     QCOMPARE(
         registryKeyDeletionRefusal(QStringLiteral("HKCR\\.exe")),
@@ -244,8 +282,16 @@ void TestLeftoverCleanupGuard::scheduledTaskRefusesMicrosoftTree() {
     QCOMPARE(scheduledTaskDeletionRefusal(
                  QStringLiteral("\\Microsoft\\Windows\\Defrag\\ScheduledDefrag")),
              QStringLiteral("refusing to delete a Windows/Microsoft scheduled task"));
-    QVERIFY(blocked(scheduledTaskDeletionRefusal(
-        QStringLiteral("Microsoft\\Windows\\UpdateOrchestrator\\Reboot"))));  // no leading slash
+    QCOMPARE(scheduledTaskDeletionRefusal(  // no leading slash
+                 QStringLiteral("Microsoft\\Windows\\UpdateOrchestrator\\Reboot")),
+             QStringLiteral("refusing to delete a Windows/Microsoft scheduled task"));
+    // schtasks resolves all three spellings to the SAME task, so neither the '/' -> '\\'
+    // normalization nor the LOOPING leading-separator strip may be dropped: without them these
+    // two are permitted while every assertion above stays green.
+    QCOMPARE(scheduledTaskDeletionRefusal(QStringLiteral("/Microsoft/Windows/Defrag")),
+             QStringLiteral("refusing to delete a Windows/Microsoft scheduled task"));
+    QCOMPARE(scheduledTaskDeletionRefusal(QStringLiteral("\\\\Microsoft\\Windows\\Defrag")),
+             QStringLiteral("refusing to delete a Windows/Microsoft scheduled task"));
     QCOMPARE(scheduledTaskDeletionRefusal(QString()), QStringLiteral("empty scheduled-task name"));
     QCOMPARE(scheduledTaskDeletionRefusal(QStringLiteral("\\")),
              QStringLiteral("refusing to delete the scheduled-task root"));  // root
@@ -298,6 +344,13 @@ void TestLeftoverCleanupGuard::fileRefusesTrailingDotSpaceEvasion() {
     // must be refused despite the literal trailing character.
     QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\Windows."))));
     QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\Windows "))));
+    // A trailing space at the END of the string is removed by trimmed() before the guard runs, so
+    // the line above proves nothing about the per-component space strip. The real evasion puts the
+    // space on an INTERIOR component of a path that does not exist (nothing to canonicalize).
+    QCOMPARE(
+        filePathDeletionRefusal(QStringLiteral("C:\\Users\\Username\\AppData \\Local")),
+        QStringLiteral(
+            "refusing a shared system/user root directory; delete a specific subfolder instead"));
     QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\Program Files."))));
     QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\Windows.\\System32"))));
 }
@@ -333,7 +386,13 @@ void TestLeftoverCleanupGuard::fileRefusesUserShellFolderRoots() {
                              "OneDrive"}) {
         const QString path =
             QStringLiteral("C:\\Users\\Username\\%1").arg(QString::fromLatin1(leaf));
-        QVERIFY2(blocked(filePathDeletionRefusal(path)), qPrintable(path));
+        // Pin the REASON: a leaf promoted out of the exact shared-root regex into the
+        // boot/critical-SUBTREE regex keeps a bare blocked() green while silently refusing every
+        // app subfolder under that shell folder.
+        QVERIFY2(filePathDeletionRefusal(path) ==
+                     QStringLiteral("refusing a shared system/user root directory; delete a "
+                                    "specific subfolder instead"),
+                 qPrintable(path));
     }
     QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\Users\\Public\\Documents"))));
     QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\Users\\Public\\Pictures"))));
@@ -346,7 +405,12 @@ void TestLeftoverCleanupGuard::fileRefusesBootAndCriticalTree() {
              QStringLiteral("refusing a boot/system-critical path"));
     QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\Boot"))));
     QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\Boot\\BCD"))));
-    QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\Recovery"))));
+    QCOMPARE(filePathDeletionRefusal(QStringLiteral("C:\\Recovery")),
+             QStringLiteral("refusing a boot/system-critical path"));
+    // Subtree, not just the exact root -- WinRE lives under it. Demoting "recovery" to the exact
+    // shared-root table keeps the pin above green while C:\\Recovery\\WindowsRE turns deletable.
+    QCOMPARE(filePathDeletionRefusal(QStringLiteral("C:\\Recovery\\WindowsRE\\Winre.wim")),
+             QStringLiteral("refusing a boot/system-critical path"));
     QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("D:\\EFI\\Microsoft\\Boot"))));
     QVERIFY(blocked(filePathDeletionRefusal(QStringLiteral("C:\\$Recycle.Bin\\S-1-5-21"))));
     QVERIFY(blocked(
@@ -393,6 +457,15 @@ void TestLeftoverCleanupGuard::handleRedirectRefusesSwapAndProtected() {
     QVERIFY(blocked(
         cleanupHandleRedirectRefusal(QStringLiteral("C:\\Program Files\\AcmeCorp\\cache\\data.bin"),
                                      QStringLiteral("C:\\Windows\\System32\\data.bin"))));
+    // The line above is satisfied by the redirect-MISMATCH arm too, so it cannot prove the
+    // protected screen ran at all. Pin the composed reason on a boot-critical target (the Windows
+    // tree wording varies with %SystemRoot%; this one does not).
+    QCOMPARE(
+        cleanupHandleRedirectRefusal(QStringLiteral("C:\\Program Files\\AcmeCorp\\cache\\data.bin"),
+                                     QStringLiteral("C:\\Boot\\BCD")),
+        QStringLiteral(
+            "delete target resolved to a protected location (refusing a boot/system-critical "
+            "path)"));
     // Ancestor junction redirects to a DIFFERENT but benign location the human never confirmed:
     // still refused (the real target must equal the validated target).
     QCOMPARE(cleanupHandleRedirectRefusal(

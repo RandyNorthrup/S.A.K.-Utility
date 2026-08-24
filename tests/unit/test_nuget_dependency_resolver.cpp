@@ -127,6 +127,23 @@ void TestNuGetDependencyResolver::resolvesDiamondOnce() {
 
     QCOMPARE(resolved.size(), 4);
     QCOMPARE(countOf(resolved, "d"), 1);
+    // resolved() is contracted as "root first, then in discovery order", and the work
+    // queue is FIFO breadth-first -- pin the ORDERED catalog, not just membership.
+    QStringList ordered_ids;
+    for (const ResolvedPackage& p : resolved) {
+        ordered_ids.append(p.package_id);
+    }
+    QCOMPARE(
+        ordered_ids,
+        QStringList(
+            {QStringLiteral("a"), QStringLiteral("b"), QStringLiteral("c"), QStringLiteral("d")}));
+    // Each node's REAL graph level (d is reached via b, so depth 2). depth is the
+    // budget a later reselection re-enqueues its replacement dependencies with, so a
+    // flattened depth silently defeats the depth cap for a corrected subtree.
+    QCOMPARE(resolved.at(0).depth, 0);
+    QCOMPARE(resolved.at(1).depth, 1);
+    QCOMPARE(resolved.at(2).depth, 1);
+    QCOMPARE(resolved.at(3).depth, 2);
     QVERIFY(r.errors().isEmpty());
 }
 
@@ -140,6 +157,10 @@ void TestNuGetDependencyResolver::handlesCycleWithoutLooping() {
     r.start(QStringLiteral("a"), QString());
     const auto resolved = drive(r, feed);
 
+    // The test is NAMED for termination and never asserted it: drive() has its own iteration
+    // guard, so a resolver that looped forever would be cut off by the harness and still produce
+    // this result set. isComplete() proves the resolver terminated on its own.
+    QVERIFY(r.isComplete());
     QCOMPARE(resolved.size(), 2);
     QCOMPARE(countOf(resolved, "a"), 1);
     QCOMPARE(countOf(resolved, "b"), 1);
@@ -348,6 +369,33 @@ void TestNuGetDependencyResolver::lateConstraintReselectsResolvableDiamond() {
     QCOMPARE(versionOf(resolved, "d"), QStringLiteral("1.0.0"));  // re-selected down
     QCOMPARE(countOf(resolved, "d"), 1);
     QVERIFY(r.errors().isEmpty());  // resolvable -> corrected, not an error
+
+    // The SUPERSEDED version's own edges must be withdrawn, not left as stale state.
+    // Here d@2.0.0 -- the pick later corrected down to 1.0.0 -- is the ONLY package
+    // that ever demanded z, so on reselection z must be dropped from the pending
+    // queue and must never enter the closure.
+    Feed feed2;
+    feed2["a"] = {fv("1.0.0", {dep("b"), dep("d")})};  // b first -> e's edge lands late
+    feed2["d"] = {fv("1.0.0"), fv("2.0.0", {dep("z")})};
+    feed2["b"] = {fv("1.0.0", {dep("e")})};
+    feed2["e"] = {fv("1.0.0", {dep("d", "[1.0.0]")})};
+    feed2["z"] = {fv("1.0.0")};  // resolvable if (wrongly) still demanded
+
+    NuGetDependencyResolver r2;
+    r2.start(QStringLiteral("a"), QString());
+    const auto resolved2 = drive(r2, feed2);
+
+    QCOMPARE(versionOf(resolved2, "d"), QStringLiteral("1.0.0"));
+    QVERIFY(versionOf(resolved2, "z").isEmpty());  // demanded ONLY by the dropped d@2.0.0
+    QStringList ids2;
+    for (const ResolvedPackage& p : resolved2) {
+        ids2.append(p.package_id);
+    }
+    QCOMPARE(
+        ids2,
+        QStringList(
+            {QStringLiteral("a"), QStringLiteral("b"), QStringLiteral("d"), QStringLiteral("e")}));
+    QVERIFY(r2.errors().isEmpty());
 }
 
 void TestNuGetDependencyResolver::feedResponseForWrongIdIsIgnored() {
@@ -456,6 +504,22 @@ void TestNuGetDependencyResolver::prereleaseExcludedForPlainRange() {
     const auto resolved = drive(r, feed);
 
     QCOMPARE(versionOf(resolved, "a"), QStringLiteral("1.9.0"));
+    QCOMPARE(resolved.size(), 1);
+    QVERIFY(r.errors().isEmpty());
+
+    // The OPT-IN arm of the same guard: when a relevant range's bound is ITSELF a
+    // prerelease, prerelease candidates ARE eligible, so the higher 2.0.0-beta wins
+    // over the stable 1.9.0 that also satisfies the range.
+    Feed pre_feed;
+    pre_feed["r"] = {fv("1.0.0", {dep("a", "[1.0.0-beta,)")})};
+    pre_feed["a"] = {fv("1.9.0"), fv("2.0.0-beta")};
+
+    NuGetDependencyResolver r2;
+    r2.start(QStringLiteral("r"), QString());
+    const auto pre_resolved = drive(r2, pre_feed);
+
+    QCOMPARE(versionOf(pre_resolved, "a"), QStringLiteral("2.0.0-beta"));
+    QVERIFY(r2.errors().isEmpty());
 }
 
 void TestNuGetDependencyResolver::duplicateRootDifferentVersionWarns() {
@@ -476,6 +540,10 @@ void TestNuGetDependencyResolver::duplicateRootDifferentVersionWarns() {
     QCOMPARE(r.errors().first(),
              QStringLiteral("Package a requested at multiple versions; keeping the first and "
                             "ignoring the additional pin 2.0.0"));
+    // The SUPPRESSION arm: re-stating a pin that is ALREADY an active constraint is
+    // not a conflict and must add no second warning.
+    r.addRoot(QStringLiteral("a"), QStringLiteral("1.0.0"));
+    QCOMPARE(r.errors().size(), 1);
 }
 
 QTEST_APPLESS_MAIN(TestNuGetDependencyResolver)

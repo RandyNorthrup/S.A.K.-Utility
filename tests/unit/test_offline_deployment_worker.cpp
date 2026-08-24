@@ -112,12 +112,12 @@ void TestOfflineDeploymentWorker::sanitizeManifestFilename_rejectsPathsAndTraver
     // Empty and pure-traversal names are refused outright.
     QVERIFY(OfflineDeploymentWorker::sanitizeManifestFilename(QString()).isEmpty());
     QVERIFY(OfflineDeploymentWorker::sanitizeManifestFilename(QStringLiteral("..")).isEmpty());
-    // A directory-bearing name is reduced to a basename or refused -- either way
-    // the result never carries a separator that could escape the source dir.
+    // A directory-bearing name is reduced to EXACTLY its basename. "Confined OR refused, either
+    // way" cannot tell the two apart, and verifyBundledPackage branches on which one happened
+    // (empty -> name refusal; non-empty -> looked up inside source_dir).
     const QString r =
         OfflineDeploymentWorker::sanitizeManifestFilename(QStringLiteral("../../etc/evil.nupkg"));
-    QVERIFY(!r.contains(QLatin1Char('/')));
-    QVERIFY(!r.contains(QLatin1Char('\\')));
+    QCOMPARE(r, QStringLiteral("evil.nupkg"));
 }
 
 void TestOfflineDeploymentWorker::verifyBundledPackage_acceptsMatchingChecksumAndSize() {
@@ -142,6 +142,15 @@ void TestOfflineDeploymentWorker::verifyBundledPackage_acceptsMatchingChecksumAn
     QString err;
     QVERIFY2(OfflineDeploymentWorker::verifyBundledPackage(entry, dir.path(), err),
              qPrintable(err));
+
+    // The manifest digest is compared CASE-INSENSITIVELY: an uppercase-hex checksum (as
+    // several hashing tools emit, and as a hand-authored manifest.json may carry) must
+    // still verify. Only the lowercase arm was exercised.
+    DeploymentManifestEntry upper = entry;
+    upper.checksum = entry.checksum.toUpper();
+    QString err_upper;
+    QVERIFY2(OfflineDeploymentWorker::verifyBundledPackage(upper, dir.path(), err_upper),
+             qPrintable(err_upper));
 
     // Fail closed: a Bundle entry MUST carry both a size AND a checksum. An entry
     // missing either can no longer be verified and is rejected before install.
@@ -175,30 +184,43 @@ void TestOfflineDeploymentWorker::verifyBundledPackage_rejectsMismatchMissingAnd
     entry.checksum = QString(64, QLatin1Char('a'));
     QString err;
     QVERIFY(!OfflineDeploymentWorker::verifyBundledPackage(entry, dir.path(), err));
-    QVERIFY(!err.isEmpty());
+    // Pin the REASON, not merely that some refusal happened: five other guards in this
+    // function also produce a non-empty message, so !isEmpty() cannot tell a tampered
+    // package from a missing/unnamed one -- which is the line a technician acts on.
+    QCOMPARE(err, QStringLiteral("Checksum mismatch for pkg.1.0.nupkg"));
 
-    // Wrong size -> reject even before hashing.
+    // Wrong size -> reject even before hashing. The checksum must stay POPULATED or the entry is
+    // turned away by the lacks-size/checksum guard and the size comparison never runs; the pinned
+    // message proves which of the six guards actually fired.
     DeploymentManifestEntry bad_size = entry;
-    bad_size.checksum.clear();
     bad_size.size_bytes = body.size() + 1;
     QString err2;
     QVERIFY(!OfflineDeploymentWorker::verifyBundledPackage(bad_size, dir.path(), err2));
+    QCOMPARE(err2, QStringLiteral("Size mismatch for pkg.1.0.nupkg (10 vs manifest 11)"));
 
-    // Missing file -> reject.
+    // Missing file -> reject. Size and checksum stay declared so the entry reaches the file-open
+    // guard instead of being refused earlier as unverifiable.
     DeploymentManifestEntry missing = entry;
     missing.nupkg_filename = QStringLiteral("nope.nupkg");
-    missing.checksum.clear();
-    missing.size_bytes = 0;
     QString err3;
     QVERIFY(!OfflineDeploymentWorker::verifyBundledPackage(missing, dir.path(), err3));
+    QCOMPARE(err3, QStringLiteral("Bundled package missing: nope.nupkg"));
 
-    // Traversal filename -> refused as invalid name.
+    // Traversal filename: it is CONFINED to a bare basename and looked up INSIDE source_dir. The
+    // reported name proves that confinement -- a false return alone does not, and "refused as an
+    // invalid name" is not what actually happens here.
     DeploymentManifestEntry bad_name = entry;
     bad_name.nupkg_filename = QStringLiteral("../evil.nupkg");
-    bad_name.checksum.clear();
-    bad_name.size_bytes = 0;
     QString err4;
     QVERIFY(!OfflineDeploymentWorker::verifyBundledPackage(bad_name, dir.path(), err4));
+    QCOMPARE(err4, QStringLiteral("Bundled package missing: evil.nupkg"));
+
+    // A name that sanitizes to NOTHING is the case the filename guard itself refuses.
+    DeploymentManifestEntry no_name = entry;
+    no_name.nupkg_filename = QStringLiteral("..");
+    QString err5;
+    QVERIFY(!OfflineDeploymentWorker::verifyBundledPackage(no_name, dir.path(), err5));
+    QCOMPARE(err5, QStringLiteral("Manifest entry has no valid package filename"));
 }
 
 void TestOfflineDeploymentWorker::installDispositionFor_skipsNotPackedOnlyUnderAirGap() {
@@ -313,6 +335,14 @@ void TestOfflineDeploymentWorker::isSafeInstallToken_rejectsOptionLikeAndBlankTo
     QVERIFY(!OfflineDeploymentWorker::isSafeInstallToken(QStringLiteral("-x")));
     QVERIFY(!OfflineDeploymentWorker::isSafeInstallToken(QStringLiteral("a b")));
     QVERIFY(!OfflineDeploymentWorker::isSafeInstallToken(QStringLiteral("a\tb")));
+    // A C0 control that is NOT whitespace exercises the control-char arm on its own: tab,
+    // space, CR and LF all satisfy isSpace() too, so they leave that arm dead. NUL and the
+    // other non-whitespace controls are what the header contract promises to refuse before
+    // a manifest token becomes a choco argv element.
+    QVERIFY(!OfflineDeploymentWorker::isSafeInstallToken(
+        QStringLiteral("a") + QChar(static_cast<char16_t>(0x01)) + QStringLiteral("b")));
+    QVERIFY(!OfflineDeploymentWorker::isSafeInstallToken(
+        QStringLiteral("git.install") + QChar(QChar::Null) + QStringLiteral("--force")));
 }
 
 void TestOfflineDeploymentWorker::topologicalInstallOrder_installsDepsBeforeDependents() {
@@ -379,6 +409,12 @@ void TestOfflineDeploymentWorker::topologicalInstallOrder_reportsCyclicMembers()
     const auto ordered =
         OfflineDeploymentWorker::topologicalInstallOrder({mk("x", {"y"}), mk("y", {"x"})}, &cyclic);
     QCOMPARE(ordered.size(), 2);
+    // Nothing dropped AND nothing duplicated: both members survive, in manifest order.
+    QCOMPARE(ordered[0].package_id, QStringLiteral("x"));
+    QCOMPARE(ordered[1].package_id, QStringLiteral("y"));
+    // The report names the CYCLIC PACKAGES in manifest order; membership alone cannot
+    // tell that from a report that echoed each package's dependency id instead.
+    QCOMPARE(cyclic, QStringList({QStringLiteral("x"), QStringLiteral("y")}));
     QCOMPARE(cyclic.size(), 2);
     QVERIFY(cyclic.contains(QStringLiteral("x")));
     QVERIFY(cyclic.contains(QStringLiteral("y")));
@@ -394,6 +430,14 @@ void TestOfflineDeploymentWorker::unmetClosureDependencies_flagsMissingIntraClos
 
     // A complete closure: every declared dependency is present in the job set.
     QVERIFY(OfflineDeploymentWorker::unmetClosureDependencies({job("a", {"b"}), job("b", {})})
+                .isEmpty());
+
+    // NuGet ids are case-insensitive and the feed returns whatever case the publisher
+    // registered, so a dependency whose case differs from the job supplying it is NOT
+    // missing. Both foldings are pinned: the dep side (first) and the job-id side (second).
+    QVERIFY(OfflineDeploymentWorker::unmetClosureDependencies({job("a", {"B"}), job("b", {})})
+                .isEmpty());
+    QVERIFY(OfflineDeploymentWorker::unmetClosureDependencies({job("a", {"b"}), job("B", {})})
                 .isEmpty());
 
     // The excluded Chocolatey framework is never counted as missing.

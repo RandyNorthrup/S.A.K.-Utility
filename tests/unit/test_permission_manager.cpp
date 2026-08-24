@@ -115,6 +115,13 @@ void PermissionManagerTests::getSecurityDescriptorSddl_nonExistentFile() {
     sak::PermissionManager mgr;
     QString sddl = mgr.getSecurityDescriptorSddl(m_tempDir.filePath("nonexistent.txt"));
     QVERIFY(sddl.isEmpty());
+    // Empty comes back from three different arms (the embedded-NUL refusal, a GetNamedSecurityInfoW
+    // failure, a conversion failure), and m_lastError is never cleared on entry -- so an arm that
+    // returns empty WITHOUT recording an error leaves a stale message from an unrelated earlier
+    // call. Pin WHICH arm fired: the parent directory exists, so the Win32 error is
+    // ERROR_FILE_NOT_FOUND (2), measured identically for the forward-slash form
+    // QTemporaryDir::filePath() produces and for the backslash form.
+    QCOMPARE(mgr.getLastError(), QStringLiteral("Failed to get security descriptor: 2"));
 }
 
 // ============================================================================
@@ -142,15 +149,33 @@ void PermissionManagerTests::stripPermissions_doesNotProduceNullDacl() {
     file.write("x");
     file.close();
 
+    // Seed a PROTECTED, explicit DACL first so the two negative assertions below are not trivially
+    // true. A freshly created temp file ALREADY reads back as "O:...G:...D:AI(A;ID;...)...":
+    // neither "NO_ACCESS_CONTROL" nor "D:P" is present BEFORE stripPermissions runs at all, so
+    // both negatives held on the pre-state and proved nothing about the strip. Measured: dropping
+    // the UNPROTECTED bit from the strip's SECURITY_INFORMATION left the fresh file's SDDL
+    // byte-identical and the old assertions green, while on a protected file it leaves an EMPTY
+    // PROTECTED DACL that locks everyone out.
+    const QString ownerSid = mgr.getOwner(f);
+    QVERIFY(!ownerSid.isEmpty());
+    QVERIFY2(mgr.setSecurityDescriptorSddl(f, QStringLiteral("D:P(A;;FA;;;%1)").arg(ownerSid)),
+             qPrintable(mgr.getLastError()));
+    const QString seeded = mgr.getSecurityDescriptorSddl(f);
+    QVERIFY2(seeded.contains(QStringLiteral("D:P")), qPrintable(seeded));
+
     QVERIFY2(mgr.stripPermissions(f), qPrintable(mgr.getLastError()));
     const QString sddl = mgr.getSecurityDescriptorSddl(f);
     QVERIFY(!sddl.isEmpty());
     // A NULL DACL serializes as "NO_ACCESS_CONTROL"; it must be absent.
     QVERIFY2(!sddl.contains("NO_ACCESS_CONTROL"),
              qPrintable(QStringLiteral("strip produced a null DACL: %1").arg(sddl)));
-    // Inheritance must be re-enabled (unprotected), i.e. not a protected "D:P".
+    // Inheritance must be re-enabled (unprotected), i.e. not a protected "D:P" -- and because the
+    // seed installed exactly that, this now proves the strip CLEARED protection rather than
+    // restating a property the fixture already had.
     QVERIFY2(!sddl.contains(QStringLiteral("D:P")),
              qPrintable(QStringLiteral("strip left a protected DACL: %1").arg(sddl)));
+    // ...and that it actually rewrote the DACL rather than leaving the seeded one in place.
+    QVERIFY2(sddl != seeded, qPrintable(sddl));
 #else
     QVERIFY(true);
 #endif
@@ -173,11 +198,28 @@ void PermissionManagerTests::setStandardUser_keepsSystemAndAdmins() {
     QVERIFY2(mgr.setStandardUserPermissions(f, ownerSid), qPrintable(mgr.getLastError()));
     const QString sddl = mgr.getSecurityDescriptorSddl(f);
     QVERIFY(!sddl.isEmpty());
-    // SYSTEM -> "SY", local Administrators -> "BA" in SDDL.
+    // SYSTEM -> "SY", local Administrators -> "BA" in SDDL. NOTE: a freshly created temp file
+    // already inherits ACEs for SY and BA, so these two alone are satisfied by the pre-state.
     QVERIFY2(sddl.contains(QStringLiteral(";SY)")),
              qPrintable(QStringLiteral("SYSTEM missing from ACL: %1").arg(sddl)));
     QVERIFY2(sddl.contains(QStringLiteral(";BA)")),
              qPrintable(QStringLiteral("Administrators missing from ACL: %1").arg(sddl)));
+    // buildStandardUserDacl grants EXACTLY three trustees (kAclTrusteeCount) and the DACL is
+    // applied PROTECTED, so the result is three ACEs and no inherited ones. Pinning only the two
+    // well-known siblings left the DESTINATION USER unasserted (a 3-entry table that names
+    // Administrators twice still passes), and accepted an UNPROTECTED apply that keeps every one of
+    // the parent's inherited ACEs alongside them.
+    QCOMPARE(sddl.count(QLatin1Char('(')), qsizetype(3));
+    QVERIFY2(sddl.contains(QStringLiteral("D:P")),
+             qPrintable(QStringLiteral("standard-user DACL is not protected: %1").arg(sddl)));
+    // The destination-user ACE. Its trustee is this file's own owner SID, so the writer renders it
+    // exactly as the descriptor's O: field -- taking the expected text from there is alias-proof (a
+    // well-known SID prints as a two-letter alias in BOTH places).
+    QVERIFY2(sddl.startsWith(QLatin1String("O:")), qPrintable(sddl));
+    const qsizetype groupPos = sddl.indexOf(QLatin1String("G:"));
+    QVERIFY2(groupPos > 2, qPrintable(sddl));
+    QVERIFY2(sddl.contains(QStringLiteral(";%1)").arg(sddl.mid(2, groupPos - 2))),
+             qPrintable(QStringLiteral("destination user missing from ACL: %1").arg(sddl)));
 #else
     QVERIFY(true);
 #endif
@@ -228,6 +270,13 @@ void PermissionManagerTests::stripPermissions_refusesReparsePoint() {
 
     const auto result = mgr.tryStripPermissions(link);
     QVERIFY2(!result.has_value(), "strip must refuse a reparse point, not follow it");
+    QCOMPARE(result.error(), sak::error_code::permission_update_failed);
+    // Pin the kReparseRefused text exactly, the way the ancestor-junction test below does. A
+    // case-insensitive contains("reparse") also accepts a by-NAME pre-check bolted on ahead of the
+    // no-follow open (e.g. "Refused: reparse point detected"), which is precisely the TOCTOU-open
+    // shape the handle-based guard exists to replace.
+    QCOMPARE(mgr.getLastError(),
+             QStringLiteral("Refused: target is a reparse point (junction/symlink)"));
     QVERIFY2(mgr.getLastError().contains("reparse", Qt::CaseInsensitive),
              qPrintable(mgr.getLastError()));
 #else
@@ -378,13 +427,25 @@ void PermissionManagerTests::setSddl_refusesPresentNullDacl() {
     const QString f = makeOwnedSddlFile(m_tempDir, QStringLiteral("sddl_nulldacl.txt"));
 
     QVERIFY(!mgr.setSecurityDescriptorSddl(f, QStringLiteral("D:NO_ACCESS_CONTROL")));
-    QVERIFY2(mgr.getLastError().contains(QStringLiteral("neither an owner nor a valid DACL")),
-             qPrintable(mgr.getLastError()));
+    QCOMPARE(mgr.getLastError(),
+             QStringLiteral("SDDL specifies neither an owner nor a valid DACL"));
+
+    const QString ownerSid = mgr.getOwner(f);
+    QVERIFY(!ownerSid.isEmpty());
+
+    // Guard isolation. applyParsedSecurityDescriptor returns ERROR_INVALID_SECURITY_DESCR -- this
+    // same message -- from five places, one of which is "the descriptor specified nothing at all"
+    // (si == 0). A bare "D:NO_ACCESS_CONTROL" hits that arm too, so an implementation that merely
+    // IGNORED the present-but-NULL DACL instead of refusing it stayed green. Carrying a valid OWNER
+    // alongside the NULL DACL makes si != 0, leaving collectParsedDacl's present-NULL-DACL
+    // rejection as the only branch that can produce this refusal.
+    const QString ownerNullDacl = QStringLiteral("O:%1D:NO_ACCESS_CONTROL").arg(ownerSid);
+    QVERIFY(!mgr.setSecurityDescriptorSddl(f, ownerNullDacl));
+    QCOMPARE(mgr.getLastError(),
+             QStringLiteral("SDDL specifies neither an owner nor a valid DACL"));
 
     // Non-vacuity: a well-formed DACL granting the current owner full access IS accepted, so the
     // rejection is specific to the NULL DACL, not a blanket refusal of every SDDL.
-    const QString ownerSid = mgr.getOwner(f);
-    QVERIFY(!ownerSid.isEmpty());
     QVERIFY2(mgr.setSecurityDescriptorSddl(f, QStringLiteral("D:(A;;FA;;;%1)").arg(ownerSid)),
              qPrintable(mgr.getLastError()));
 #else
@@ -404,8 +465,17 @@ void PermissionManagerTests::setSddl_refusesSacl() {
 
     // A low-integrity mandatory-label SACL alongside a valid DACL.
     const QString withSacl = QStringLiteral("D:(A;;FA;;;%1)S:(ML;;NW;;;LW)").arg(ownerSid);
+    // The SACL check runs BEFORE applyParsedSecurityDescriptor touches the file, so the refusal
+    // must also be FAIL-CLOSED: the DACL carried alongside the SACL must not have been applied.
+    // "returns false with a message mentioning SACL" alone also accepts an implementation that
+    // applies owner/group/DACL first and only then notices the SACL.
+    const QString before = mgr.getSecurityDescriptorSddl(f);
+    QVERIFY(!before.isEmpty());
     QVERIFY(!mgr.setSecurityDescriptorSddl(f, withSacl));
-    QVERIFY2(mgr.getLastError().contains(QStringLiteral("SACL")), qPrintable(mgr.getLastError()));
+    QCOMPARE(mgr.getLastError(),
+             QStringLiteral(
+                 "Refused: SDDL carries a SACL (audit/integrity label), which is not applied"));
+    QCOMPARE(mgr.getSecurityDescriptorSddl(f), before);
 
     // Non-vacuity: the SAME descriptor WITHOUT the S: field applies, so the refusal is the SACL,
     // not the DACL alongside it.

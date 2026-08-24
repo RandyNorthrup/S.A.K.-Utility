@@ -5024,6 +5024,50 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 SECOND-pass sweep b83 (gated 249/249): 48 weak assertions pinned across six
+    more already-swept files (leftover_cleanup_guard 11, file_scanner 11, offline_deployment_worker
+    10, permission_manager 6, nuget_dependency_resolver 5, advanced_uninstall_types 5).
+    TWO WINDOWS ACL TESTS PROVED NOTHING, both measured live rather than argued.
+    (1) stripPermissions_doesNotProduceNullDacl asserted !contains("NO_ACCESS_CONTROL") and
+    !contains("D:P") on a FRESH temp file -- whose SDDL contains NEITHER before stripPermissions
+    runs at all, so both negatives held on the pre-state. Measured: dropping
+    UNPROTECTED_DACL_SECURITY_INFORMATION from the strip's SECURITY_INFORMATION left the fresh
+    file's SDDL byte-identical and the test green; against a PROTECTED seed the same mutant leaves
+    an EMPTY PROTECTED DACL that locks everyone out (the measurement's own cleanup then failed
+    with access-denied). The test now seeds "D:P(A;;FA;;;<owner>)" first, so the negatives prove
+    the strip CLEARED protection instead of restating the fixture.
+    (2) setStandardUser_keepsSystemAndAdmins asserted only that ";SY)" and ";BA)" appear -- and a
+    freshly created temp file ALREADY inherits ACEs for both, so those two were pre-satisfied as
+    well. Two uncaught mutants: dropping the DESTINATION USER from the three-trustee table (the
+    user the call was made FOR gets no access) and flipping PROTECTED to UNPROTECTED (all eight
+    inherited ACEs survive alongside, so the "standard user" ACL restricts nothing). Now pinned to
+    exactly three ACEs, a protected DACL, and the destination-user ACE read back from the
+    descriptor's own O: field so the check is SID-alias-proof.
+    leftover_cleanup_guard is the multi-guard refuser at scale: this file screens the destructive
+    clean_leftovers path, and most cases asserted only blocked() -- non-empty -- across a denylist
+    whose entries produce DIFFERENT reasons. Each is now pinned to its reason, plus the negative
+    arm that proves scope: HKCR\CLSID is refused as an exact root while a per-app GUID under it
+    stays cleanable (promoting "clsid" to the prefix table would silently refuse every COM
+    registration), the lnkfile entry covers the shell-verb tree only, the svchost entry is the
+    subtree and not its Windows NT\CurrentVersion parent, and C:\Recovery is a SUBTREE so
+    WindowsRE stays protected. The scheduled-task normalization now covers all three spellings
+    schtasks resolves to the same task ("/Microsoft/...", "\\\\Microsoft\\...").
+    offline_deployment_worker: verifyBundledPackage has SIX refusal paths reported through one
+    bool, and the fixtures CLEARED checksum/size before each case, so every one of them was
+    actually refused by the lacks-size/checksum guard and the guard each case is NAMED for never
+    ran. All four now keep the entry verifiable and pin the exact message -- which also documents
+    that a traversal filename is CONFINED to its basename and looked up inside source_dir
+    ("Bundled package missing: evil.nupkg"), not "refused as an invalid name" as the old comment
+    claimed. A name sanitizing to nothing is the case that actually hits the filename guard.
+    file_scanner: the progress callback took both parameters UNNAMED, so only the arity of the
+    invocation was checked -- a callback fed (0, 0), a per-file size instead of the running total,
+    or the two counters swapped all passed. Both are cumulative now.
+    HONESTY NOTE: the two symlink-cycle assertions added to symlink_notFollowedWhenDisabled did
+    NOT execute here -- that slot QSKIPs on this host ("Platform cannot create directory symlinks
+    without privilege"). They were verified by reading production instead: scan() seeds
+    canonical(root) into m_visited_dirs before the walk (file_scanner.cpp:51-53), so the loop
+    symlink is refused by the cycle guard at :384 WITHOUT incrementing errors_encountered (:381 is
+    the separate canonical-failure arm), and both cases emit payload + loop = 2 directories.
   - PROGRESS 2026-08-24 SECOND-pass sweep b82 (gated 249/249): 36 weak assertions pinned across six
     more already-swept files (user_profile_types 11, ai_conversation_store 10, mbox_writer 8,
     restore_point_manager 3, thermal_monitor 2, flash_worker 2). Two of these files were seeded by
