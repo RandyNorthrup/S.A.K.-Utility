@@ -166,6 +166,14 @@ $manifestedFilePaths = New-Object "System.Collections.Generic.HashSet[string]" -
     [StringComparer]::OrdinalIgnoreCase
 )
 $tools = @($manifest.tools)
+# Fail CLOSED on an empty tools array. A manifest declaring zero tools alongside an emptied
+# bundle directory is internally CONSISTENT -- the per-tool loop runs zero times and the
+# unmanifested-file sweep finds nothing -- so the gate would print "passed: 0 tool(s)" at the
+# exact moment the bundled filesystem tools silently vanished from the release. The manifest's
+# purpose is to prove the bundle matches the code, and an empty bundle cannot satisfy that.
+Assert-Condition -Condition ($tools.Count -gt 0) `
+    -Message ("Filesystem tool manifest declares ZERO tools. A manifest with no tools is a " +
+        "missing bundle, not a valid configuration.")
 foreach ($tool in $tools) {
     Assert-StringField -Object $tool -Field "id" -ToolId "<unknown>"
     $toolId = [string]$tool.id

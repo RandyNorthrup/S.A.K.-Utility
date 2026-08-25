@@ -10,7 +10,14 @@
 
 param(
     [switch]$Check,
-    [string[]]$Files
+    [string[]]$Files,
+    # Fail closed when the resolved file list is EMPTY. Pre-commit hands this script the staged
+    # files, so an empty list there legitimately means "nothing C++ was staged" and exiting 0 is
+    # correct. A whole-tree caller (CI) is the opposite case: an empty list means the file
+    # discovery broke, and reporting a green gate that formatted nothing is exactly the
+    # false-green this repo has been burned by twice (the cppcheck -Files comma-join, and this
+    # script invoked with no arguments at all). CI passes -RequireFiles so that cannot happen.
+    [switch]$RequireFiles
 )
 
 $ErrorActionPreference = "Stop"
@@ -60,6 +67,11 @@ foreach ($file in $Files) {
 }
 
 if ($cppFiles.Count -eq 0) {
+    if ($RequireFiles) {
+        Write-Error ("No C++ files resolved, but -RequireFiles was specified. A whole-tree run " +
+                     "that finds nothing is a BROKEN gate, not a passing one.")
+        exit 1
+    }
     Write-Host "No C++ files to format."
     exit 0
 }
@@ -72,14 +84,28 @@ if (-not (Test-Path -LiteralPath $clangFormatConfig -PathType Leaf)) {
 }
 
 $clangFormat = Find-ClangFormat
-if ($Check) {
-    & $clangFormat -style=file -fallback-style=none --dry-run -Werror -- $cppFiles
-} else {
-    & $clangFormat -style=file -fallback-style=none -i -- $cppFiles
+
+# Batch the file list. A whole-tree run passes ~900 paths, which overruns the Windows
+# command-line limit and fails with "The filename or extension is too long" -- a failure that
+# looks nothing like a formatting violation and would have to be diagnosed from scratch on a CI
+# runner. Batching keeps every invocation well inside the limit, and the worst exit code across
+# the batches is what the gate reports, so a violation in ANY batch still fails the run.
+$batchSize = 100
+$worstExit = 0
+for ($offset = 0; $offset -lt $cppFiles.Count; $offset += $batchSize) {
+    $batch = $cppFiles[$offset..([Math]::Min($offset + $batchSize - 1, $cppFiles.Count - 1))]
+    if ($Check) {
+        & $clangFormat -style=file -fallback-style=none --dry-run -Werror -- $batch
+    } else {
+        & $clangFormat -style=file -fallback-style=none -i -- $batch
+    }
+    if ($LASTEXITCODE -ne 0) {
+        $worstExit = $LASTEXITCODE
+    }
 }
 
-if ($LASTEXITCODE -ne 0) {
-    exit $LASTEXITCODE
+if ($worstExit -ne 0) {
+    exit $worstExit
 }
 
-Write-Host "clang-format passed."
+Write-Host "clang-format passed ($($cppFiles.Count) file(s))."

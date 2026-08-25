@@ -34,11 +34,20 @@ function Convert-ToRepoPath([string]$Path) {
 
 Push-Location $repo
 try {
-    $files = Get-ChildItem -Path "src", "include" -Recurse -File -Include *.cpp, *.h |
+    $files = @(Get-ChildItem -Path "src", "include" -Recurse -File -Include *.cpp, *.h |
         Where-Object {
             $repoPath = Convert-ToRepoPath $_.FullName
             $allowedFiles -notcontains $repoPath
-        }
+        })
+
+    # Fail CLOSED on an empty discovery. src/ and include/ always hold hundreds of sources, so
+    # zero files means the walk broke (wrong working directory, a renamed tree, a bad -Include),
+    # and printing "check passed" for a scan that examined nothing is a false green.
+    if ($files.Count -eq 0) {
+        Write-Error ("No src/include sources found to scan. A style gate that examines zero " +
+                     "files is BROKEN, not passing.")
+        exit 1
+    }
 
     # The property:value patterns require a real, semicolon-terminated CSS declaration
     # (`prop: value;` with no intervening quote or brace) rather than a bare `prop:`.
@@ -74,7 +83,11 @@ try {
 
     foreach ($file in $files) {
         $repoPath = Convert-ToRepoPath $file.FullName
-        $lines = Get-Content -LiteralPath $file.FullName
+        # @(...) is load-bearing: Get-Content returns a SCALAR string for a single-line file,
+        # and indexing a string yields CHARACTERS -- so the loop below would scan that file one
+        # character at a time and see a violation on no line but the first. Forcing an array
+        # makes a one-line file exactly one iteration.
+        $lines = @(Get-Content -LiteralPath $file.FullName)
         $inRawLiteral = $false
         $rawLiteralStart = 0
         for ($i = 0; $i -lt $lines.Count; ++$i) {

@@ -7092,6 +7092,63 @@ gate teaches people to disable both.
       suppression
 - [~] R5-G21-2 Every gate runs in BOTH pre-commit and CI. CI currently has no clang-tidy,
   - IN PROGRESS (2026-08-17 audit): CI (build-release.yml) DOES run cppcheck (whole-tree), clang-tidy-naming, blocking-patterns, accessibility, ascii-only, all partition-manager matrix/claim gates, build-system-lint, error-message-uniqueness, doc-accuracy, third-party-licenses, qrc, secret-scan, a record-gate-tool-versions preflight, plus build+ctest (Release AND Debug/ASan). GAP -- gates that are PRE-COMMIT-ONLY and thus bypassable by a direct push: clang-format, lizard (C++ complexity), the four GUI gates (style-tokens / magic-numbers / stylesheet-literals / magic-numbers), logged-message-boxes, powershell-syntax, mutation-catalog-integrity, partition-fs-tool-manifest. Wiring these into CI is config-only, but green-VERIFYING them on a clean runner shares the paid-CI block in R5-G21-7 (owner cost decision), so it is its own batch: each will be proven clean whole-tree locally first, then added to the workflow, rather than shipping a possibly-red CI step here.
+  - THAT BATCH IS NOW DONE 2026-08-25 (the enumerated gap is closed; the item stays [~] only for
+    the clean-runner proof, which is R5-G21-7's paid-CI block and NOT local work). The gap was
+    TEN gates, not the nine this entry originally enumerated -- scripts/check_magic_numbers.py
+    was pre-commit-only too and was missed by the 2026-08-17 audit (found by the Codex review of
+    this very change). Each was first run WHOLE-TREE locally and proven clean, then added to
+    build-release.yml as four steps: clang-format (902 first-party sources), lizard (C++ plus the
+    browser JavaScript against its shrink-only baseline: 18 known, none new, none worse), a
+    combined GUI/PowerShell step (style-tokens, gui-magic-numbers, stylesheet-literals,
+    logged-message-boxes, powershell-syntax, partition-fs-tool-manifest, magic-numbers), and
+    mutation-catalog integrity (25 catalogs, ratchet holds).
+    A CODEX REVIEW OF THE WIRING FOUND FOUR MORE FAIL-OPENS, all verified against the tree
+    before fixing and all PROVEN by running the pre-fix script against the failing input:
+     * scripts/run_lizard.py certified a scan of NOTHING. lizard exits 0 when its paths are
+       missing or hold nothing it recognises, so a run launched from the wrong working directory
+       printed "PASSED -- all functions within limits." and exited 0. PROVEN: the HEAD version,
+       run against a tree with an empty src/, prints exactly that. The wrapper already failed
+       closed on the OPPOSITE case (non-zero exit with no parseable warning); this was the
+       untested direction. Now asserts the run will analyze at least one file, with the
+       explicit-files path deliberately exempt (pre-commit legitimately passes a commit with no
+       files of that language).
+     * scripts/check_gui_stylesheet_literals.ps1 had the same empty-discovery hole -- PROVEN:
+       the HEAD version prints "Style-literal check passed." against an empty tree -- and a
+       second, subtler one: `Get-Content` returns a SCALAR for a single-line file, and indexing
+       a string yields CHARACTERS, so such a file was scanned one character at a time and no
+       line past the first was ever examined. Both fixed (@() around the discovery and the read).
+     * scripts/check_partition_filesystem_tool_manifest.ps1 accepted a manifest declaring ZERO
+       tools. That state is internally consistent -- the per-tool loop runs zero times and the
+       unmanifested-file sweep finds nothing -- so the gate printed "passed: 0 tool(s)" at the
+       exact moment the bundled filesystem tools vanished from the release. Now fails closed;
+       drilled by emptying the real manifest (gate fails) and restoring it (gate passes).
+     * The CI clang-format file list used an ANCHORED '^(third_party|...)/' exclusion while the
+       pre-commit hook's is UNANCHORED, so CI silently pulled src/third_party/qrcodegen into
+       scope -- a divergence that would red CI on a vendored file nobody may reformat. Aligned;
+       the whole-tree count drops 904 -> 902.
+    TWO REAL DEFECTS FOUND WHILE DOING IT, both of the fail-open/false-green class this campaign
+    exists to kill:
+     * run_clang_format.ps1 with NO file arguments exits 0 printing "No C++ files to format."
+       That is CORRECT for pre-commit, whose contract is to check the STAGED files, but wiring
+       that bare invocation into CI would have produced a permanently GREEN formatting gate that
+       formatted nothing -- the same shape as the run_cppcheck.ps1 -Files comma-join that
+       reported "No C++ files to check." and exited 0 (FINDING N7/N8). Fixed by adding an opt-in
+       -RequireFiles switch that turns an EMPTY resolved list into a failure, used by the CI step
+       and by nothing else, so the pre-commit path is byte-for-byte unchanged. Fire-drilled all
+       three paths: empty + -RequireFiles -> exit 1; empty without it -> exit 0; single file -> 0.
+     * The same script could not run whole-tree at all: 904 paths overrun the Windows
+       command-line limit and clang-format.exe fails with "The filename or extension is too
+       long" -- a failure that looks nothing like a formatting violation and would have had to be
+       diagnosed from scratch on a runner. Fixed by batching at 100 files per invocation, taking
+       the WORST exit code across batches so a violation in any batch still fails the gate.
+    A THIRD, in my own verification harness rather than the repo: the first pass of this audit
+    reported partition-fs-tool-manifest GREEN when the script name was wrong and did not exist.
+    `& missing.ps1` raised a non-terminating error but left $LASTEXITCODE holding the PREVIOUS
+    command's 0, so the loop read a stale success. The real name is
+    check_partition_filesystem_tool_manifest.ps1. Re-verified under $ErrorActionPreference='Stop'
+    (what GitHub's pwsh shell sets) with the correct name: passes, 5 tools. Recorded because it
+    is the identical lesson as the gates themselves -- an exit code you did not actually observe
+    for the command you think you ran is not a result.
       no cppcheck, no dead-code and no sanitizer job
 - [x] R5-G21-3 Every gate set to its strictest defensible setting, with any relaxation
   - DONE 2026-08-17: audited every gate's relaxations for an IN-CONFIG written justification.

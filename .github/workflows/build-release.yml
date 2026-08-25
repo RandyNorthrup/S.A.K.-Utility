@@ -381,6 +381,53 @@ jobs:
         & scripts/check_error_message_uniqueness.ps1
         & scripts/check_doc_accuracy.ps1
 
+    # R5-G21-2: the gates below were PRE-COMMIT-ONLY, and therefore bypassable by a direct push
+    # or a --no-verify commit. Each was proven clean whole-tree locally before being wired here.
+    #
+    # clang-format is passed an EXPLICIT whole-tree file list and -RequireFiles. Both matter:
+    # with no arguments the script legitimately exits 0 with "No C++ files to format" (its
+    # pre-commit contract is to check the STAGED files), so a bare invocation here would be a
+    # green gate that checked nothing -- the same false-green shape as a cppcheck -Files list
+    # that resolves to zero paths. -RequireFiles turns an empty resolved list into a failure.
+    - name: Formatting (clang-format, whole first-party tree)
+      shell: pwsh
+      run: |
+        # The exclusion is UNANCHORED, matching the pre-commit hook's own `exclude:` pattern.
+        # An anchored '^(third_party|...)/' silently pulled src/third_party/qrcodegen into the
+        # CI scan while pre-commit skipped it -- a scope divergence that would red CI on a
+        # vendored file nobody is allowed to reformat.
+        $files = git ls-files '*.cpp' '*.h' '*.hpp' '*.cxx' '*.cc' '*.hxx' |
+          Where-Object { $_ -notmatch '(third_party|3rdparty|external|_archived)/' }
+        Write-Host "clang-format over $($files.Count) first-party sources"
+        & scripts/run_clang_format.ps1 -Check -RequireFiles -Files $files
+
+    # Complexity (CCN <= 10, PARAM <= 5, length <= 70) over C++ AND the browser JavaScript,
+    # whose violations are held by the shrink-only baseline ratchet in the script itself.
+    - name: Complexity (lizard, C++ and JavaScript)
+      shell: pwsh
+      run: |
+        python scripts/run_lizard.py
+
+    - name: GUI and PowerShell gates
+      shell: pwsh
+      run: |
+        & scripts/check_gui_style_tokens.ps1
+        & scripts/check_gui_magic_numbers.ps1
+        & scripts/check_gui_stylesheet_literals.ps1
+        & scripts/check_logged_message_boxes.ps1
+        & scripts/check_powershell_syntax.ps1
+        & scripts/check_partition_filesystem_tool_manifest.ps1
+        python scripts/check_magic_numbers.py
+
+    # The mutation-catalog ratchet: every find-string must still occur EXACTLY once in the
+    # current source (a refactor that moves the mutated text turns the mutation into a silent
+    # no-op that "passes" while testing nothing), the manifest and the on-disk catalog set must
+    # agree, and no interrupted mutation run may have left broken production source behind.
+    - name: Mutation-catalog integrity
+      shell: pwsh
+      run: |
+        python scripts/run_all_mutation_catalogs.py --validate
+
     # G7-2: cppcheck runs in pre-commit on CHANGED files only; run it whole-tree in CI
     # so a defect in an unchanged file (or a bypassed local hook) is still caught.
     - name: Static analysis (cppcheck, whole first-party tree)

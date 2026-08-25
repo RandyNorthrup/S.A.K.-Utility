@@ -115,8 +115,43 @@ def build_command(files: list[str], language: str, default_dirs: list[str]) -> l
     return command
 
 
+def assert_scan_is_not_empty(files: list[str], language: str, default_dirs: list[str],
+                             extensions: set[str]) -> None:
+    """Abort unless this run will actually analyze at least one file.
+
+    lizard exits 0 when the paths it is given are missing or hold nothing it recognises, so a
+    whole-tree run launched from the wrong working directory -- or against a renamed tree --
+    produces no warnings, no non-zero exit, and a confident "PASSED -- all functions within
+    limits." That is a gate certifying a scan it never performed. The explicit-files case is
+    NOT checked here: pre-commit legitimately passes a commit with no files of this language,
+    and main() already returns 0 for that."""
+    if files:
+        return
+    found = 0
+    for directory in default_dirs:
+        root = PROJECT_ROOT / directory
+        if not root.is_dir():
+            raise SystemExit(
+                f"ABORT: lizard ({language}) default scan directory {directory!r} does not "
+                f"exist under {PROJECT_ROOT}; refusing to certify a scan of nothing.")
+        for path in root.rglob("*"):
+            if path.is_file() and path.suffix.lower() in extensions:
+                found += 1
+                if found:
+                    break
+        if found:
+            break
+    if found == 0:
+        raise SystemExit(
+            f"ABORT: lizard ({language}) found no source files under {default_dirs}; a scan "
+            "that analyzes zero files is BROKEN, not passing.")
+
+
 def run_lizard(files: list[str], language: str, default_dirs: list[str]) -> list[str]:
     """Run lizard and return the lines that are hard violations."""
+    extensions = JS_EXTENSIONS if language == "javascript" else {
+        ".cpp", ".h", ".hpp", ".cxx", ".cc", ".hxx"}
+    assert_scan_is_not_empty(files, language, default_dirs, extensions)
     command = build_command(files, language, default_dirs)
     try:
         result = subprocess.run(
