@@ -44,8 +44,16 @@ namespace sak::mbox {
     QString current_value;
 
     auto flushHeader = [&]() {
-        if (!current_name.isEmpty()) {
-            headers.insert(current_name.toLower().trimmed(), current_value.trimmed());
+        // Normalize BEFORE the guard, not after. Guarding on the raw name let a name that is
+        // non-empty but consists only of whitespace through, and it was then inserted under a key
+        // that trimmed to empty -- breaking the output contract above ("an empty name is never
+        // emitted") for any caller iterating the map, which then sees a header it cannot key on.
+        // Such a name is reachable: the continuation check below treats only ' ' and '\t' as an
+        // indent, while QString::trimmed() also strips \v, \f and \r, so a line like "\v: x" is
+        // parsed as a new header whose name survives the raw guard and vanishes at insert.
+        const QString key = current_name.toLower().trimmed();
+        if (!key.isEmpty()) {
+            headers.insert(key, current_value.trimmed());
         }
         current_name.clear();
         current_value.clear();

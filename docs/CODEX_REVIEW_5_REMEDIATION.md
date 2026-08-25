@@ -5024,6 +5024,85 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-25 SECOND-pass sweep b101 (gated 249/249): 41 weak assertions pinned across six
+    more already-swept files (organizer_worker 8, ai_tool_turn 8, elevation_tier 7,
+    ai_cancellation_token 7, native_messaging 6, fuzz_mbox_headers 5), and ONE REAL PRODUCTION
+    DEFECT FOUND AND FIXED. Zero candidates were rejected by the adversarial pass.
+    THE DEFECT: parseRfc5322Headers emitted a header under an EMPTY key, breaking the output
+    contract stated in its own header ("an empty name is never emitted"). flushHeader guarded on
+    the RAW name and applied .toLower().trimmed() only at insert, so a name that is non-empty but
+    consists ONLY of whitespace passed the guard and vanished at insertion. It is reachable
+    because the continuation check treats only ' ' and '\t' as an indent while QString::trimmed()
+    also strips \v, \f and \r: the line "\v: x" is parsed as a new header, its name survives the
+    guard, and the map comes back as {"": "x"} -- a header a caller iterating the map cannot key
+    on. Verified BEFORE touching production (assertion written, watched fail, then fixed and
+    watched pass); the fix normalizes before the guard rather than after.
+    Worth recording WHY the existing fuzz did not catch it: the harness's invariant is correct and
+    explicitly checks for an empty name, but 2000 deterministic mutants from the fixed seed never
+    produced a whitespace-only name, so the invariant's empty-name arm was never reached at its
+    boundary. A correct invariant over a corpus that cannot reach it is not coverage.
+    Other fuzz-harness holes closed in the same file: headerInvariant walks the emitted map, so an
+    EMPTY map runs its loop body zero times and returns a PASS -- the slot degraded to a no-op the
+    moment the parser emitted nothing, with every input scored green and nothing asserting that
+    any input produced a header at all (class W again, third batch running). The corpus itself was
+    unpinned, though two of its seeds are the only things reaching the colon guards. The value is
+    trimmed TWICE (extraction and insert) and no fixture had trailing whitespace followed by a
+    fold, so either trim was deletable -- and the repo's own mutation catalog declares that mutant
+    "equivalent", which is FALSE and masked by the corpus: whitespace held past extraction is
+    carried into the join where the outer trim cannot reach it, so a folding Content-Type gains
+    interior whitespace a downstream charset/boundary split would mis-tokenise. The header/body
+    boundary is likewise decided twice (the pre-cut and the CR strip), and every fixture put the
+    blank line exactly at the pre-cut, so the CR strip was deletable -- the input that separates
+    them is a message whose header section is EMPTY, where a broken chop parses the BODY as
+    headers, the header-injection shape for the caller's Content-Type lookups.
+    native_messaging: a pid pinned by "> 0" though the test runs IN the process whose pid it is
+    (satisfied by a hardcoded 1, a thread id, or a counter); the protocol number compared against
+    the very constant that produced it, while TWO other independent hardcoded copies must agree
+    with it and nothing pinned the literal; the echoed id read through .toInt(), which collapses a
+    STRING id to 0 -- and the browser extension correlates on ids it sends as strings, so
+    integer-only coverage was the wrong shape entirely; the id-echo guard's false arm never
+    reached, so a reply could fabricate an id the caller never sent; and the type dispatch proved
+    only by "launch_missiles", which no loosening of the compare would accept.
+    ai_tool_turn: the snapshot round trip asserted only scalars and never what the turn CARRIES --
+    if arguments_json stopped being written, the decoder accepts an undefined value, coerces it to
+    empty, and validateCall explicitly allows empty arguments, so a resumed turn would dispatch
+    run_powershell with NO arguments and every assertion stayed green. The run-id binding that
+    stops a pending turn resuming into the WRONG run was never exercised, because every restore()
+    omitted expected_run_id. Both non-destructive contracts -- begin() and restore() must not wipe
+    an in-flight turn, a documented past data-loss bug -- were unobservable because every fixture
+    called them on a FRESH turn. Two of validateSnapshotOutputsMatchCalls' three fail-closed arms
+    were unreached, and the arguments guard's second arm (valid JSON that is not an object) would
+    have dispatched with EMPTY arguments instead of failing closed.
+    ai_cancellation_token: childCount() filters EXPIRED children, and every token in the file is
+    held alive for the whole test, so the filter was never observed -- the raw vector size passes
+    equally, and it grows without bound. The "copies the parent's cancel stamp verbatim" claim was
+    unfalsifiable at millisecond resolution with both stamps taken microseconds apart; backdating
+    forces the two candidate sources apart. And the generated-child-id arm -- the only one in the
+    repository exercising createChild()'s fallback -- was pinned by its constant PREFIX only,
+    leaving the counter, whose entire purpose is trace-id uniqueness, unasserted.
+    elevation_tier: the header states "the table is sorted by FeatureId for binary-search lookup"
+    and nothing checked it -- a std::set is order-blind, so the loop proved only distinctness. The
+    invariant holds today and is enforced now, which matters because the header actively invites
+    the std::lower_bound rewrite that would make an unenforced ordering a silent correctness hole.
+    The unknown-id refusal was probed only at 9999, far PAST the last row, so a neighbour-matching
+    lookup still returned nullptr for it; interior gaps are pinned now, and featureNeedsElevation's
+    default is FAIL-OPEN, making exact matching the only thing between an unrecognised id and a
+    wrong answer. Display names were guarded by "not empty" across 46 rows, with no exact name
+    pinned anywhere -- so a row keeping its NEIGHBOUR's name, the likeliest copy-paste edit, was
+    invisible. Mixed rows were exempted from BOTH reason loops even though a Mixed feature raises
+    the UAC prompt and so needs its justification string.
+    organizer_worker: every fixture organized into EMPTY category folders, so the execute-time
+    existence re-check -- what stops a plain rename from silently REPLACING a user's file -- and
+    the whole of handleCollision() were unobserved, and the shipped collision_strategy default was
+    pinned only to "one of three accepted names". planTruncated()'s TRUE arm is asserted nowhere
+    in the repository, though it is what makes previewOrganize report an honest lower bound rather
+    than a false exact count; its cap is a three-arm condition whose first arm is the only thing
+    keeping an APPLY uncapped. The cancellation test never STARTED the worker, so none of the three
+    checkStop sites was reached and nothing observed whether a cancelled organize stops before
+    relocating bytes. Every fixture file was claimed by a category, making files-SCANNED and
+    operations-PLANNED the same number everywhere; an unclaimed file now forces them apart and
+    reaches the `!category.isEmpty()` guard, without which planMove builds a destination that
+    collapses onto the SOURCE and the collision path renames the user's own file in place.
   - PROGRESS 2026-08-24 SECOND-pass sweep b100 (gated 249/249): 45 weak assertions pinned across six
     more already-swept files (program_enumerator 10, worker_base 8, ai_subagent_tool_executor 8,
     ai_lease_manager 8, diagnostic_controller 7, fuzz_install_script 4). One candidate was

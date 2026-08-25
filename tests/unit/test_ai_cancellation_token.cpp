@@ -9,6 +9,31 @@
 
 #include <atomic>
 
+namespace {
+
+/// A generated child id is "<parent>_child_<n>", with n read under the same mutex that appends,
+/// so it is deterministic and unique. @p previous_ordinal is updated in place: the ordinals a
+/// single worker observes must strictly INCREASE, since the children vector only ever grows.
+/// Gaps are expected -- other workers interleave -- but going backwards or repeating is not.
+bool generatedChildIdIsWellFormed(const sak::ai::CancellationToken& child,
+                                  qsizetype& previous_ordinal) {
+    static const QString kPrefix = QStringLiteral("stress_child_");
+    const QJsonObject child_json = child.toJson();
+    const QString child_id = child_json.value(QStringLiteral("id")).toString();
+    if (!child_json.value(QStringLiteral("valid")).toBool() || !child_id.startsWith(kPrefix)) {
+        return false;
+    }
+    bool ordinal_ok = false;
+    const qsizetype ordinal = child_id.mid(kPrefix.size()).toLongLong(&ordinal_ok);
+    if (!ordinal_ok || ordinal <= previous_ordinal) {
+        return false;
+    }
+    previous_ordinal = ordinal;
+    return true;
+}
+
+}  // namespace
+
 class AiCancellationTokenTests : public QObject {
     Q_OBJECT
 
@@ -74,6 +99,18 @@ void AiCancellationTokenTests::childCancelDoesNotCancelParentOrSibling() {
     QVERIFY(phase_b.cancelledAtUtc().isNull());
     // The sibling must still be REGISTERED on the root, so a later root cancel reaches it...
     QCOMPARE(root.childCount(), 2);
+    // ... and childCount() is not a plain size(): it counts only children whose weak_ptr has NOT
+    // expired. Every token in this file is held alive in a local for the whole test, so that
+    // filter was never observed by any assertion in the repo -- both exact counts were equally
+    // satisfied by returning the raw vector size, which grows without bound because the children
+    // vector is append-only. This is the difference between "how many children are still
+    // running" and "how many were ever created".
+    {
+        auto scoped = root.createChild(QStringLiteral("scoped"));
+        QCOMPARE(scoped.id(), QStringLiteral("scoped"));
+        QCOMPARE(root.childCount(), 3);
+    }
+    QVERIFY2(root.childCount() == 2, "a destroyed child must stop being counted");
     root.cancel(QStringLiteral("root_cancelled"));
     QVERIFY(phase_b.isCancellationRequested());
     QCOMPARE(phase_b.cancelReason(), QStringLiteral("root_cancelled"));
@@ -89,11 +126,29 @@ void AiCancellationTokenTests::childCreatedAfterCancelStartsCancelled() {
 
     QVERIFY(late_child.isCancellationRequested());
     QCOMPARE(late_child.id(), QStringLiteral("late_child"));
-    // createChild() copies the parent's cancel stamp verbatim onto a child born cancelled.
+    // createChild() copies the parent's cancel stamp VERBATIM onto a child born cancelled. The
+    // equality below is the whole claim, and QDateTime compares at millisecond resolution -- so
+    // with the parent cancelled microseconds earlier in the same test, a child that stamped a
+    // FRESH "now" instead of copying would compare equal anyway. Backdating the parent's stamp
+    // forces the two candidate sources apart: a copied stamp is old, a fresh one is not.
     QVERIFY(late_child.cancelledAtUtc().isValid());
     QCOMPARE(late_child.cancelledAtUtc(), root.cancelledAtUtc());
     QCOMPARE(late_child.cancelReason(), QStringLiteral("timeout"));
     QCOMPARE(root.childCount(), 1);
+
+    auto aged = sak::ai::CancellationToken::createRoot(QStringLiteral("run_3b"));
+    aged.cancel(QStringLiteral("timeout"));
+    const QDateTime aged_stamp = aged.cancelledAtUtc();
+    QVERIFY(aged_stamp.isValid());
+    // A second of separation is far beyond QDateTime's millisecond resolution, so a fresh stamp
+    // cannot masquerade as the copied one.
+    QTest::qWait(1100);
+    auto aged_child = aged.createChild(QStringLiteral("aged_child"));
+    QVERIFY(aged_child.isCancellationRequested());
+    QCOMPARE(aged_child.cancelledAtUtc(), aged_stamp);
+    QVERIFY2(aged_child.cancelledAtUtc().msecsTo(QDateTime::currentDateTimeUtc()) >= 1000,
+             "the child stamped a fresh 'now' instead of copying the parent's cancel instant");
+    QCOMPARE(aged_child.cancelReason(), QStringLiteral("timeout"));
 }
 
 void AiCancellationTokenTests::concurrentCancelAndChildCreationIsConsistent() {
@@ -108,13 +163,21 @@ void AiCancellationTokenTests::concurrentCancelAndChildCreationIsConsistent() {
         for (int worker = 0; worker < 8; ++worker) {
             workers.append(QtConcurrent::run([root, &cancelled_flag]() {
                 bool consistent = true;
+                // This loop is the ONLY place in the repository that exercises createChild()'s
+                // generated-id arm -- every other call site, in tests and in src/, passes an
+                // explicit id. The generated form is "<parent>_child_<n>" where n is
+                // children.size() + 1 read under the same mutex that appends, so the ordinal is
+                // deterministic and unique; startsWith() constrained only the constant prefix,
+                // leaving the entire counter half -- the uniqueness of trace ids, which is the
+                // reason the counter exists -- unasserted. The ordinals a single worker observes
+                // must strictly INCREASE: the children vector only grows, and size() is read
+                // under the append lock. Gaps are expected (other workers interleave); going
+                // backwards or repeating is not.
+                qsizetype previous_ordinal = 0;
                 for (int i = 0; i < 200; ++i) {
                     auto child = root.createChild(QString());
                     (void)root.isCancellationRequested();
-                    const QJsonObject child_json = child.toJson();
-                    const QString child_id = child_json.value(QStringLiteral("id")).toString();
-                    if (!child_json.value(QStringLiteral("valid")).toBool() ||
-                        !child_id.startsWith(QStringLiteral("stress_child_"))) {
+                    if (!generatedChildIdIsWellFormed(child, previous_ordinal)) {
                         consistent = false;
                     }
                     // Once cancellation is globally visible, a fresh child must be cancelled.
