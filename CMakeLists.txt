@@ -185,6 +185,65 @@ option(ENABLE_ASAN "Enable Address Sanitizer (Debug builds)" ON)
 option(ENABLE_UBSAN "Enable Undefined Behavior Sanitizer (Clang/GCC Debug)" ON)
 option(ENABLE_TSAN "Enable Thread Sanitizer (mutually exclusive with ASan)" OFF)
 
+# ============================================================================
+# BRANCH COVERAGE (R5-G14-16b)
+# ============================================================================
+# OpenCppCoverage (scripts/run_coverage.ps1) measures LINE coverage only, which
+# cannot see an untaken arm that shares a line with a taken one. That blind spot
+# is not theoretical: include/sak/mbox_transfer_decoder.h measures 100% LINE
+# covered while four of its branches were never executed by the suite -- the
+# bare-LF soft break, the hex pair's short-circuited second conjunct, and a
+# whitespace arm of the base64 unwrap. Each was a real hole, found by hand.
+#
+# Source-based instrumentation reports those directly. It needs clang-cl (MSVC
+# has no equivalent), so this is opt-in and OFF by default; configure a separate
+# build tree with -T ClangCL -DENABLE_COVERAGE=ON and drive it with
+# scripts/run_branch_coverage.ps1.
+option(ENABLE_COVERAGE "Enable source-based branch coverage (clang-cl only)" OFF)
+
+set(SAK_COVERAGE_STATE "OFF")
+if(ENABLE_COVERAGE)
+    if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        # Silently building uninstrumented binaries would produce an empty report
+        # that reads as "no uncovered branches" -- the worst possible failure for
+        # a coverage gate. Refuse instead.
+        message(FATAL_ERROR
+            "ENABLE_COVERAGE=ON requires clang-cl: MSVC emits no source-based coverage "
+            "mapping, so the build would produce uninstrumented binaries and an empty "
+            "report that reads as full coverage. Configure the coverage tree with "
+            "-T ClangCL, or leave ENABLE_COVERAGE=OFF.")
+    endif()
+    add_compile_options(-fprofile-instr-generate -fcoverage-mapping)
+    add_link_options(-fprofile-instr-generate)
+    # The warning set below is tuned for MSVC and carries /WX. clang-cl accepts the flags but
+    # warns that a few are unused (/MP, /Zc:preprocessor, /external:anglebrackets), and /WX then
+    # turns those notes into hard errors before a single file compiles. Silence ONLY that
+    # diagnostic, and only in this opt-in tree: every real warning stays an error.
+    add_compile_options(-Wno-unused-command-line-argument)
+    # clang has warnings MSVC does not, and /WX makes each one fatal. These are toolchain
+    # differences rather than defects, and this tree exists to MEASURE the suite, not to re-lint
+    # it under a second compiler: a coverage run that cannot build reports nothing at all.
+    #   * missing-designated-field-initializers: a C++20 designated initializer that omits a
+    #     field, which is value-initialized by the standard (e.g. the root-folder record in
+    #     partition_hfs_internal.h omitting .data_fork).
+    # Everything else stays an error, so this does not turn the coverage build into a warning-free
+    # fiction. Linting is the MSVC build's job and is unaffected.
+    add_compile_options(-Wno-missing-designated-field-initializers)
+    #   * missing-field-initializers / unused-variable / unused-function / unused-parameter /
+    #     unused-lambda-capture / trigraphs: clang diagnoses these where MSVC does not. They are
+    #     style differences between two compilers, not defects in code that MSVC builds warning
+    #     free under /W4 /WX every commit.
+    add_compile_options(
+        -Wno-missing-field-initializers
+        -Wno-unused-variable
+        -Wno-unused-function
+        -Wno-unused-parameter
+        -Wno-unused-lambda-capture
+        -Wno-trigraphs)
+    set(SAK_COVERAGE_STATE "ENABLED (source-based, all configurations)")
+    message(STATUS "Branch coverage:    ${SAK_COVERAGE_STATE}")
+endif()
+
 # Effective state, reported in the configuration summary below. The option
 # values are requests; these say what the build will actually instrument.
 set(SAK_ASAN_STATE "OFF")

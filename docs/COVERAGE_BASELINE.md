@@ -138,11 +138,81 @@ these lines are out of the testable-headless universe on purpose, not skipped.
 - clipboard interop (`network_diagnostic_panel.cpp`, `partition_manager_panel.cpp`, `advanced_uninstall_panel.cpp`, `ai_transcript_view.cpp` **clipboard()->setText**) -- real cross-app OS clipboard/CF_UNICODETEXT delivery. Cert: manual.
 - `src/gui/detachable_log_window.cpp` **moveEvent snap (frameGeometry)**, `src/gui/info_button.cpp` **availableGeometry clamp**, `src/gui/file_explorer_status_center_widget.cpp` **devicePixelRatioF HiDPI branch** -- depend on a real WM frame / real monitor bounds / DPR != 1. Cert: manual.
 
+## Branch coverage (R5-G14-16b) -- DONE 2026-08-25
+
+Branch coverage is now measurable: `scripts/run_branch_coverage.ps1` over a clang-cl tree
+configured with `-DENABLE_COVERAGE=ON` (the CMake option refuses to configure under MSVC
+rather than emit uninstrumented binaries whose empty report would read as full coverage).
+
+WHY IT WAS NEEDED, measured rather than argued. A line is "covered" the moment any part of
+it executes, so an untaken arm sharing a line with a taken one is invisible.
+`include/sak/mbox_transfer_decoder.h` sits at 100.0% in the per-file table above. Measured
+with branch coverage against the pre-b99 test corpus it was **87.50%, four branches never
+taken**:
+
+| branch | source |
+|--------|--------|
+| `hex1 == '\n'`  | the bare-LF soft break every Unix mailer writes |
+| `hex2 == '\n'`  | the CRLF arm of the soft-break ternary |
+| `ok_second`     | short-circuited away by every malformed-hex fixture |
+| whitespace arm  | the base64 unwrap every wrapped MIME body takes |
+
+All four were real holes, found by hand in sweep b99 and pinned there; the same file now
+reports 32/32 branches. Line coverage read 100% throughout.
+
+### First whole-suite measurement (2026-08-25, at commit 58fcb1a2)
+
+Scope: **228 of the 246 built test executables**. Eighteen do not compile under clang-cl and
+are listed below -- they fail on conformance differences MSVC permits (a default member
+initializer used inside its own enclosing class, protected-member access, a using-declaration
+naming its own class), NOT on anything wrong with the tests. Excluded targets:
+
+    test_active_connections_monitor    test_migration_report
+    test_ai_app_action_planner         test_msg_writer
+    test_ai_assistant_panel_tool_dispatch  test_network_diagnostic_controller
+    test_ai_command_tool_planner       test_package_matcher
+    test_app_installation_worker       test_pst_splitter
+    test_browser_bridge_pipe           test_pst_writer
+    test_browser_bridge_relay          test_quick_action
+    test_dbx_writer                    test_user_data_manager
+    test_imap_uploader                 test_win32_mcp_server
+
+Raw result: **19,788 branches never taken in one direction**, across 272 files. That raw
+number is NOT a work list, and quoting it as one would misrepresent it: it counts every
+region the exclusion inventory below already documents as unreachable from a unit test. The
+five largest contributors are all in those categories --
+
+| file | missed | exclusion |
+|------|--------|-----------|
+| include/sak/partition_hfs_internal.h | 3339 | #2 foreign-FS writes, macOS-kernel certified |
+| src/core/partition_apfs_writer.cpp | 1662 | #2 same |
+| src/gui/partition_manager_panel.cpp | 1258 | #6 GUI |
+| src/gui/file_management_explorer_panel.cpp | 1143 | #6 GUI |
+| src/gui/wifi_manager_panel.cpp | 245 | #6 GUI |
+
+Subtracting the GUI and foreign-filesystem-writer trees leaves **10,964 actionable missed
+branches**, written to `build-cov/coverage/ACTIONABLE.txt` by the script. Those are branches
+in code the suite does drive, and they are the same class the G18-4 weak-assertion sweep has
+been finding by inspection -- a guard whose refusal arm no fixture reaches, because every
+fixture supplies the benign shape the guard exists to reject. Sample, from a file sweep b97
+had already been through:
+
+    uup_iso_builder.cpp:67  never TRUE  if (unit == QLatin1String("KiB"))
+    uup_iso_builder.cpp:70  never TRUE  if (unit == QLatin1String("GiB"))
+    uup_iso_builder.cpp:81  never TRUE  info.exists() && (info.isSymLink() || info.isJunction())
+    uup_iso_builder.cpp:88  never TRUE  !value.contains('\n') && !value.contains('\r')
+
+The junction arm is the same shape that turned up a real subtree-escape defect in G10-9.
+
+Caveats that bound the number honestly: coverage over a SUBSET of tests overstates misses,
+because a test binary statically links code it never drives (the same distortion noted for
+the per-subsystem table above) -- so the eighteen excluded targets inflate the count for the
+PST/MSG/DBX writer and user-data files in particular. llvm-cov also reported 1259 functions
+with mismatched data across the merged profile, whose counts are correspondingly unreliable.
+
 ## Not yet done (tracked, not claimed)
 
-Branch coverage (R5-G14-16b) is not reported here: OpenCppCoverage measures LINE coverage
-only, so branch enforcement needs an additional instrumentation lift (clang-cl + llvm-cov,
-both installed in the local LLVM 22.1.1). The measured line baseline above is over the
+The measured line baseline above is over the
 CURATED CORE SET, not the full suite; raising specific reachable numbers is tracked as its
 own increments (e.g. R5-G14-5 adds page-trailer-valid PST store seeds so pst_parser.cpp
 executes its deep BTree/LTP layers). The dispositions of R5-G14-16a (enforce 100% line) and

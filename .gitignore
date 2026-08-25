@@ -529,6 +529,11 @@ build-qt610/
 # actually analyzes (one entry per translation unit instead of one per target).
 build-tidy/
 build-tidy-fp/
+# clang-cl tree for source-based BRANCH coverage (R5-G14-16b). OpenCppCoverage
+# measures line coverage only, so an untaken arm that shares a line with a taken
+# one is invisible to it; MSVC emits no coverage mapping, so measuring branches
+# needs a parallel clang-cl tree. Built and driven by scripts/run_branch_coverage.ps1.
+build-cov/
 
 # Local-only Claude Code workspace tooling (personal skills, hardcoded paths)
 .claude/
