@@ -5024,6 +5024,86 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 SECOND-pass sweep b98 (gated 249/249): 31 weak assertions pinned across six
+    more already-swept files (backup_bitlocker_keys_action 8, screenshot_settings_action 8,
+    fuzz_decompressor 7, fuzz_command_classifier 3, all_actions_metadata 3, action_factory 2).
+    Three further candidates were REJECTED by the adversarial pass.
+    A FUZZ HARNESS THAT SCORED ACCEPT AND REJECT IDENTICALLY, PROVED BY MUTATION.
+    test_fuzz_decompressor's runOneDecoder declared BOTH a null factory result and a refused open()
+    to be "correct outcomes" for every input, and every invariant it checked fired only on an
+    overrun or a resumed failure -- so a clean end of stream was honoured at any total, and nothing
+    ever asserted that a stream which MUST be rejected actually was. Neither refusal can
+    legitimately happen there (detectByExtension matches the staged NAME, never the bytes, and
+    open() is a QFile open plus a data-independent library init), so the whole fuzz could become a
+    silent no-op. Mutating read()'s terminal -1 to a 0 (streaming_decompressor.cpp:97-100) was run
+    against the suite: the fuzz slot itself STILL PASSED over all 2007 inputs, and only the new
+    deterministic control caught it. A second mutation, returning 0 from the bomb-cap guard, was
+    caught by the new clean-EOF-above-cap invariant AND the control -- the old ceiling check could
+    not see it, because the cap is exactly 16 read buffers so the crossing read lands the total at
+    17 * 65536 = 1114112, precisely the ceiling, and that compare is `>`. The file now also
+    measures the expansion through an INDEPENDENT byte count rather than decompressedBytesProduced()
+    alone, which is the guard's own input; probes stickiness more than once; pins the positive
+    control (a valid gzip decodes to its exact plaintext); and checks the corpus itself, since
+    gzipCompress() returns an empty QByteArray on any zlib failure and nothing verified it -- had
+    it started failing, all three gzip seeds would have become empty buffers with every assertion
+    still green, taking the bomb path with them (setMaxDecompressedBytes has no caller in src/ at
+    all, so that seed is the only thing exercising exceededMaxOutput() in the repository).
+    FIVE CATASTROPHIC-COMMAND REGEX ARMS THAT NO TEST IN THE TREE REACHED. Mapping all 20
+    alternatives of kCatastrophic (ai_tool_policy.cpp:773) against every fixture in tests/ left
+    clear-volume, reset-physicaldisk, initialize-disk, `remove-item ... hk(lm|cu|cr|u):` and
+    `(rd|rmdir) /s` + Windows-path unclaimed -- each deletable with the whole suite green, dropping
+    a disk- or registry-destroying command out of the human-confirmation gate. The last two are
+    COMPOUND arms (keyword plus lookaheads), so neither the arm nor any individual lookahead was
+    constrained. Seeds added for all five; deleting the clear-volume arm now fails at seed 14
+    (verified). The benign corpus gained the near miss that matters: nothing in the repository
+    paired a format-PREFIXED token with a FOLLOWING drive letter, so the keyword half of
+    `\bformat\b\s+(?:/\S+\s+)*[a-z]:` was only ever exercised where the drive letter could not
+    reach it -- widening it to `\bformat\S*` (the obvious way to "also catch format.com") left
+    every existing fixture green while ordinary display pipelines started demanding confirmation.
+    Verified by mutation.
+    THE SHIPPED FUZZ BUDGET, FLEET-WIDE. Both fuzz files asserted `iterations > 0` and then
+    compared iterations_run against corpus.size() + iterationsFromEnv() -- both sides from the same
+    call, so if the clamp ever answered 0 the mutation loop would run zero times, iterations_run
+    would equal the seed count, and the equation would still hold. Eighteen fuzz suites call
+    iterationsFromEnv() and not one compared against kDefaultIterations, so a collapsed default
+    would have reduced the entire fuzz fleet to a smoke test with nothing red anywhere. Both files
+    now pin the literal 2000 when no SAK_FUZZ_ITERS override is in play.
+    backup_bitlocker_keys_action: parseKeyProtectorResponse's bare-OBJECT arm was never fed, yet
+    that is the ORDINARY production shape -- ConvertTo-Json emits an object rather than a
+    one-element array whenever a volume has exactly one protector (the TPM-only case), so deleting
+    it would parse a real single-protector volume as EMPTY and back up no key at all. Also: the
+    per-ELEMENT non-object guard was unreachable because every fixture array held only objects;
+    device_id and volume_label were mapped but asserted nowhere in the repository though both print
+    in the recovery document; EncryptionPct 0 and LockStatus 1 were never supplied, so `enc_pct >=
+    0` agreed with `> 0` on every input seen and "Locked" was never rendered; volume_size_bytes was
+    pinned only at 1024, where the double and int accessors are indistinguishable, defeating the
+    whole point of the toDouble() read; the drive-letter validator was probed only by values
+    carrying a second letter, a backslash or a quote, so near misses (notably "C::", which the
+    file's own comment names as the guarded-against filter, plus "C:$(whoami)") now pin the
+    anchored shape; both enum tables are pinned in full rather than by one sampled code each; and
+    the "no recovery password" fixtures were default-constructed NULL QStrings while production
+    holds an empty-but-NON-NULL one from JSON "", so nothing decided whether the helpers test
+    isEmpty() or isNull() -- switching them would count a USB-only volume as having a recovery
+    password.
+    screenshot_settings_action: every header counter had two candidate sources and the fixture made
+    each pair agree (screenshots_taken == captured_pages.size(), failed_attempts ==
+    failed_pages.size()), so the whole-report compare could not tell which member the builder read;
+    all values are now distinct. generateReport's monitor_count had the same shape (1 == 1 == 1).
+    The ", report not written" suffix -- the only sentence telling a technician the evidence file is
+    missing -- was reachable by exactly one block that never asserted result.message. The
+    zero-capture branch's own log tail was read by nothing in the repository. duration_ms was never
+    read by any assertion, and with start_time set to "now" even a correct value was ~0 ms, so the
+    fixture now backdates it. The Timestamp row was proved by a bare prefix; its format is the
+    contract, since the builder ignores the passed timestamp and stamps the wall clock.
+    all_actions_metadata / action_factory: cancel()'s guard is a two-state whitelist whose FALSE arm
+    was proved with only Idle and Success -- Ready (where every scan ends, and exactly where a
+    technician sits deciding whether to cancel) and Failed went untested, leaving the guard
+    rewritable as a blacklist over the two probed states; all five non-in-flight states are now
+    covered, each also requiring NO statusChanged emission. The Scanning arm got the spy the Running
+    arm already had. testAllCategoriesValid's disjunction listed all four enumerators, so every
+    in-range value satisfied it; the per-action routing is pinned now. The category census is exact
+    (1/3/1/2) rather than `n > 0`, and the catalog is pinned as a NAME SET because findByName() is
+    blind to an EXTRA entry -- an eighth action could have shipped with nothing asserted about it.
   - PROGRESS 2026-08-24 SECOND-pass sweep b97 (gated 249/249): 37 weak assertions pinned across six
     more already-swept files (ai_skill_store 9, connectivity_tester 7, email_types 7,
     uup_iso_builder 6, image_flasher_panel 3, win32_mcp_key_chord 3). Two further candidates were

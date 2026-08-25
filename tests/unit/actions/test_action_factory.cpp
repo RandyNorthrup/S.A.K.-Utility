@@ -142,15 +142,32 @@ void TestActionFactory::testAllDescriptionsNonEmpty() {
 }
 
 void TestActionFactory::testAllCategoriesValid() {
-    for (const auto& action : m_actions) {
-        const auto cat = action->category();
-        QVERIFY2(cat == QuickAction::ActionCategory::SystemOptimization ||
-                     cat == QuickAction::ActionCategory::Maintenance ||
-                     cat == QuickAction::ActionCategory::Troubleshooting ||
-                     cat == QuickAction::ActionCategory::EmergencyRecovery,
-                 qPrintable(QStringLiteral("Action '%1' has unknown category %2")
-                                .arg(action->name())
-                                .arg(static_cast<int>(cat))));
+    // The old disjunction listed ALL FOUR enumerators of QuickAction::ActionCategory
+    // (quick_action.h:37-42), so every in-range value satisfied it -- it could only ever catch an
+    // out-of-range static_cast, which no action performs. Pin the ROUTING instead, in
+    // initTestCase() construction order, the same convention testRequiresAdminIsBool uses.
+    // category() is the single source both for the AI app-action descriptor's category string
+    // (app_action_bridge.cpp:196) and for the panel's getActionsByCategory() grouping
+    // (quick_action_controller.cpp:256), so a mis-route files a destructive recovery action under
+    // routine maintenance in every surface that lists it.
+    struct Expected {
+        QString name;
+        QuickAction::ActionCategory category;
+    };
+    const std::vector<Expected> expected = {
+        {QStringLiteral("BitLocker Key Backup"), QuickAction::ActionCategory::EmergencyRecovery},
+        {QStringLiteral("Check Disk Errors"), QuickAction::ActionCategory::Maintenance},
+        {QStringLiteral("Generate System Report"), QuickAction::ActionCategory::Troubleshooting},
+        {QStringLiteral("Optimize Power Settings"),
+         QuickAction::ActionCategory::SystemOptimization},
+        {QStringLiteral("Reset Network Settings"), QuickAction::ActionCategory::Maintenance},
+        {QStringLiteral("Screenshot Settings"), QuickAction::ActionCategory::EmergencyRecovery},
+        {QStringLiteral("Verify System Files"), QuickAction::ActionCategory::Maintenance},
+    };
+    QCOMPARE(m_actions.size(), expected.size());
+    for (size_t i = 0; i < m_actions.size(); ++i) {
+        QCOMPARE(m_actions[i]->name(), expected[i].name);
+        QCOMPARE(m_actions[i]->category(), expected[i].category);
     }
 }
 
@@ -201,12 +218,22 @@ void TestActionFactory::testAllCategoriesPopulated() {
         QuickAction::ActionCategory::EmergencyRecovery,
     };
 
+    // The shipped distribution is deterministic and knowable, so pin the census rather than a
+    // floor. `n > 0` only rejects a category emptied ENTIRELY, so an action drifting into an
+    // already-populated bucket stayed invisible -- and the trailing total could not fail either:
+    // countByCategory() sums over all four enumerators while testAllCategoriesValid has already
+    // accepted every value as in-range, so it merely re-derives the fixture size from the fixture.
+    const std::vector<int> expected_counts = {1, 3, 1, 2};
+    QCOMPARE(categories.size(), expected_counts.size());
+
     int categorized_total = 0;
-    for (const auto cat : categories) {
-        const int n = countByCategory(cat);
-        QVERIFY2(n > 0,
-                 qPrintable(
-                     QStringLiteral("Category %1 has zero actions").arg(static_cast<int>(cat))));
+    for (size_t i = 0; i < categories.size(); ++i) {
+        const int n = countByCategory(categories[i]);
+        QVERIFY2(n == expected_counts[i],
+                 qPrintable(QStringLiteral("Category %1 holds %2 actions, expected %3")
+                                .arg(static_cast<int>(categories[i]))
+                                .arg(n)
+                                .arg(expected_counts[i])));
         categorized_total += n;
     }
 

@@ -12,9 +12,28 @@
 
 #include <QMap>
 #include <QSignalSpy>
+#include <QStringList>
 #include <QTest>
 
+#include <array>
+
 using namespace sak;
+
+namespace {
+
+// The shipped catalog size, mirroring the registration list at app_action_service.cpp:26-32.
+constexpr int kExpectedActionCount = 7;
+
+// Every ActionStatus that is NOT in-flight. QuickAction::cancel() guards on a whitelist of
+// exactly two states (quick_action.cpp:43-45), so these five are its entire false arm.
+constexpr std::array<QuickAction::ActionStatus, 5> kNotInFlightStatuses{
+    QuickAction::ActionStatus::Idle,
+    QuickAction::ActionStatus::Ready,
+    QuickAction::ActionStatus::Success,
+    QuickAction::ActionStatus::Failed,
+    QuickAction::ActionStatus::Cancelled};
+
+}  // namespace
 
 /**
  * @brief Per-action metadata and behavior validation.
@@ -59,6 +78,9 @@ private:
                       QuickAction::ActionCategory expectedCat,
                       bool expectedAdmin);
 
+    static void verifyCancelLeavesStatusAlone(QuickAction* action,
+                                              QuickAction::ActionStatus resting);
+
     std::vector<std::unique_ptr<QuickAction>> createAllActions() const;
 };
 
@@ -77,7 +99,49 @@ std::vector<std::unique_ptr<QuickAction>> TestAllActionsMetadata::createAllActio
 
 void TestAllActionsMetadata::initTestCase() {
     m_actions = createAllActions();
-    QVERIFY(!m_actions.empty());
+    // The exact catalog, not a floor. Every per-action slot below reaches its subject through
+    // findByName(), which fails loudly when an entry goes MISSING but is completely blind to an
+    // EXTRA one -- so !empty() left this file's own docblock claim ("every action returns the
+    // exact expected name, category, and admin flag") true only of the seven names spelled out
+    // below, while an eighth action could ship with nothing asserted about its name,
+    // description, category or elevation flag. Pinning the NAME SET closes both directions.
+    QCOMPARE(static_cast<int>(m_actions.size()), kExpectedActionCount);
+    QStringList names;
+    names.reserve(static_cast<qsizetype>(m_actions.size()));
+    for (const auto& action : m_actions) {
+        names << action->name();
+    }
+    names.sort();
+    QStringList expected{QStringLiteral("BitLocker Key Backup"),
+                         QStringLiteral("Check Disk Errors"),
+                         QStringLiteral("Generate System Report"),
+                         QStringLiteral("Optimize Power Settings"),
+                         QStringLiteral("Reset Network Settings"),
+                         QStringLiteral("Screenshot Settings"),
+                         QStringLiteral("Verify System Files")};
+    expected.sort();
+    QCOMPARE(names, expected);
+}
+
+// cancel() must leave a NON-in-flight action exactly as it found it -- status untouched and,
+// because setStatus() is never reached, no statusChanged emission at all.
+void TestAllActionsMetadata::verifyCancelLeavesStatusAlone(QuickAction* action,
+                                                           QuickAction::ActionStatus resting) {
+    action->clearCancellation();
+    action->updateStatus(resting);
+    QSignalSpy status_spy(action, &QuickAction::statusChanged);
+    QVERIFY(status_spy.isValid());
+
+    action->cancel();
+
+    QVERIFY2(action->status() == resting,
+             qPrintable(QStringLiteral("cancel() moved '%1' off the non-in-flight status %2")
+                            .arg(action->name())
+                            .arg(static_cast<int>(resting))));
+    QVERIFY2(status_spy.count() == 0,
+             qPrintable(QStringLiteral("cancel() emitted statusChanged for '%1' resting at %2")
+                            .arg(action->name())
+                            .arg(static_cast<int>(resting))));
 }
 
 QuickAction* TestAllActionsMetadata::findByName(const QString& name) const {
@@ -225,12 +289,23 @@ void TestAllActionsMetadata::testStatusAfterCancel() {
         QVERIFY2(action->status() == QuickAction::ActionStatus::Idle,
                  qPrintable("cancel() from Idle changed status of '" + action->name() + "'"));
 
-        // Scanning IS in-flight: cancel() must transition to Cancelled.
+        // Scanning IS in-flight: cancel() must transition to Cancelled AND announce it. The
+        // status read alone is the wrong observable: statusChanged is emitted from exactly one
+        // place (quick_action.cpp:26, inside setStatus) and is the only channel by which any
+        // observer learns of the transition -- the controller hooks it at
+        // quick_action_controller.cpp:209 and nothing polls status() -- so the Scanning path
+        // could reach the right status by a route that notifies nobody, exactly as the Running
+        // arm below already guards against.
         action->clearCancellation();
         action->updateStatus(QuickAction::ActionStatus::Scanning);
+        QSignalSpy scanning_spy(action.get(), &QuickAction::statusChanged);
+        QVERIFY(scanning_spy.isValid());
         action->cancel();
         QVERIFY2(action->status() == QuickAction::ActionStatus::Cancelled,
                  qPrintable("cancel() during Scanning left '" + action->name() + "' un-cancelled"));
+        QCOMPARE(scanning_spy.count(), 1);
+        QCOMPARE(scanning_spy.at(0).at(0).value<QuickAction::ActionStatus>(),
+                 QuickAction::ActionStatus::Cancelled);
 
         // Running IS in-flight: cancel() must transition to Cancelled AND emit statusChanged --
         // that signal is what releases the panel's Cancel button.
@@ -243,11 +318,16 @@ void TestAllActionsMetadata::testStatusAfterCancel() {
         QCOMPARE(status_spy.at(0).at(0).value<QuickAction::ActionStatus>(),
                  QuickAction::ActionStatus::Cancelled);
 
-        // A terminal status is NOT in-flight: cancel() must leave it alone.
-        action->clearCancellation();
-        action->updateStatus(QuickAction::ActionStatus::Success);
-        action->cancel();
-        QCOMPARE(action->status(), QuickAction::ActionStatus::Success);
+        // The FALSE arm, exhaustively. quick_action.cpp:43 is a WHITELIST of two states, and
+        // proving its false side with only Idle and Success left the guard rewritable as a
+        // blacklist over those two -- while the states production actually parks in went
+        // untested. Ready is where every scan ends (check_disk_errors_action.cpp:89 and its
+        // six siblings) and is precisely where a technician sits reading the scan estimate,
+        // the single most likely moment for a Cancel click; Failed is where every bad run
+        // ends. Cancelled covers a second cancel arriving after the first.
+        for (const QuickAction::ActionStatus resting : kNotInFlightStatuses) {
+            verifyCancelLeavesStatusAlone(action.get(), resting);
+        }
     }
 }
 

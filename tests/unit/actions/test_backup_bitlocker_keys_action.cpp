@@ -37,6 +37,9 @@ private Q_SLOTS:
     // scalar) must fail closed, not silently drop a protector.
     void parseKeyProtectorResponse_rejectsMalformedElements();
     void parseDetectedVolumes_signalsParseState();
+    // The sentinel-vs-index-0 boundaries, a real-sized volume, and the per-ELEMENT
+    // non-object guard that every all-objects fixture leaves unreached.
+    void parseDetectedVolumes_pinsBoundariesAndPerElementGuard();
     // WaveD-04: drive letters are validated before entering the PowerShell filter
     // / key filename, so a malformed value cannot inject or escape the directory.
     void buildKeyProtectorScript_rejectsInvalidDriveLetters();
@@ -198,6 +201,19 @@ void BackupBitlockerKeysActionTests::parseKeyProtectorResponse_rejectsMalformedE
     QVERIFY2(parse_ok, "control: a lone well-formed protector must parse");
     QCOMPARE(result.size(), 1);
 
+    // A BARE OBJECT -- and this is the ORDINARY production shape, not an edge case. Every payload
+    // this file feeds the parser is either an array or a non-array scalar, yet ConvertTo-Json
+    // emits a bare object rather than a one-element array whenever a volume has exactly ONE key
+    // protector, which is the common case for a TPM-only or single-recovery-password volume. So
+    // the object arm is the path most real machines take and it was entirely unobserved: delete
+    // it and a single-protector volume parses as EMPTY, silently backing up no key at all.
+    parse_ok = false;
+    result = action.parseKeyProtectorResponse(kValidFirst, parse_ok);
+    QVERIFY2(parse_ok, "a bare protector OBJECT is the single-protector production shape");
+    QCOMPARE(result.size(), 1);
+    QCOMPARE(result[0].protector_id, QStringLiteral("{guid-1}"));
+    QCOMPARE(result[0].recovery_password, QStringLiteral("111111-222222-333333"));
+
     // The guard rejects the WHOLE response, it does not return what it has so far: a malformed
     // entry AFTER a valid one must discard the partially-parsed list, so no half-read protector
     // set can escape alongside parse_ok == false. Every element the existing cases reject is in
@@ -246,7 +262,9 @@ void BackupBitlockerKeysActionTests::parseDetectedVolumes_signalsParseState() {
     // that arm must yield one record per element, fully mapped.
     parse_ok = false;
     const QVector<BackupBitlockerKeysAction::VolumeInfo> many = action.parseDetectedVolumes(
-        QStringLiteral("[{\"DriveLetter\":\"C:\",\"ProtectionStatus\":1,\"LockStatus\":0,"
+        QStringLiteral("[{\"DriveLetter\":\"C:\","
+                       "\"DeviceID\":\"Volume{11111111-2222-3333-4444-555555555555}\","
+                       "\"VolumeLabel\":\"OS-Disk\",\"ProtectionStatus\":1,\"LockStatus\":0,"
                        "\"EncryptionPct\":100,\"EncryptionMethod\":7,\"VolumeType\":0,"
                        "\"SizeBytes\":1024},{\"DriveLetter\":\"D:\",\"ProtectionStatus\":0}]"),
         parse_ok);
@@ -259,8 +277,69 @@ void BackupBitlockerKeysActionTests::parseDetectedVolumes_signalsParseState() {
     QCOMPARE(many[0].encryption_method, QStringLiteral("XTS-AES-256"));
     QCOMPARE(many[0].volume_type, QStringLiteral("Operating System"));
     QCOMPARE(many[0].volume_size_bytes, Q_INT64_C(1024));
+    // Two of VolumeInfo's nine mapped fields were asserted NOWHERE in the repository, though both
+    // reach the technician: device_id prints as "Device ID:" in the recovery document and as
+    // "device_id" in bitlocker_keys.json, and volume_label appears in the volume header, the scan
+    // summary and every per-volume key file. They are how a technician matches a recovery key to
+    // a physical disk, so a dropped or cross-wired assignment is a real recovery failure.
+    QCOMPARE(many[0].device_id, QStringLiteral("Volume{11111111-2222-3333-4444-555555555555}"));
+    QCOMPARE(many[0].volume_label, QStringLiteral("OS-Disk"));
     QCOMPARE(many[1].drive_letter, QStringLiteral("D:"));
     QCOMPARE(many[1].protection_status, QStringLiteral("Off"));
+    // Control: element 1 supplies neither key, so both stay empty -- proving the values above came
+    // from element 0's OWN keys rather than a constant or a carry-over between records.
+    QVERIFY2(many[1].device_id.isEmpty(), qPrintable(many[1].device_id));
+    QVERIFY2(many[1].volume_label.isEmpty(), qPrintable(many[1].volume_label));
+}
+
+void BackupBitlockerKeysActionTests::parseDetectedVolumes_pinsBoundariesAndPerElementGuard() {
+    BackupBitlockerKeysAction action(QStringLiteral("C:/temp/does-not-matter"));
+
+    // Both sentinel-vs-index-0 boundaries, fed from the OTHER side. The slot above states the
+    // contract as "omitted fields must reach the -1 sentinels ... never index 0", but only the
+    // ABSENT direction was ever supplied: EncryptionPct was never 0, so `enc_pct >= 0` agreed
+    // with `> 0` on every input it saw, and LockStatus was never 1, so kLockStatusLabels[1]
+    // ("Locked") was never rendered by any test. A volume genuinely reporting 0% converted and
+    // LOCKED must say so -- "N/A"/"Unknown" mean "we could not read this field", which is a very
+    // different thing to tell someone holding a recovery key.
+    bool parse_ok = false;
+    const QVector<BackupBitlockerKeysAction::VolumeInfo> zero_locked = action.parseDetectedVolumes(
+        QStringLiteral("{\"DriveLetter\":\"E:\",\"EncryptionPct\":0,\"LockStatus\":1}"), parse_ok);
+    QVERIFY2(parse_ok, "a well-formed object is a parse success");
+    QCOMPARE(zero_locked.size(), 1);
+    QCOMPARE(zero_locked[0].encryption_percentage, QStringLiteral("0%"));
+    QCOMPARE(zero_locked[0].lock_status, QStringLiteral("Locked"));
+
+    // A REAL volume size. 1024 was the only size the suite ever asserted, and it fits in an int --
+    // at that value the double and int accessors are indistinguishable, so the very reason the
+    // production read is `static_cast<qint64>(obj["SizeBytes"].toDouble())` went untested. A real
+    // BitLocker volume is hundreds of gigabytes: 500107862016 is past INT_MAX, so an int accessor
+    // truncates it and the recovery document reports a fraction of the disk.
+    parse_ok = false;
+    const QVector<BackupBitlockerKeysAction::VolumeInfo> large = action.parseDetectedVolumes(
+        QStringLiteral("{\"DriveLetter\":\"F:\",\"SizeBytes\":500107862016}"), parse_ok);
+    QVERIFY2(parse_ok, "a well-formed object is a parse success");
+    QCOMPARE(large.size(), 1);
+    QCOMPARE(large[0].volume_size_bytes, Q_INT64_C(500'107'862'016));
+
+    // The per-ELEMENT non-object guard, which every all-objects fixture leaves unreached.
+    // parseDetectedVolumes fails closed through three independent arms -- the JSON parse error,
+    // the whole-document shape guard, and this one -- and only the first two were exercised. The
+    // production comment says this arm is meant to behave "exactly like parseKeyProtectorResponse",
+    // an equivalence nothing tested.
+    parse_ok = true;
+    QVERIFY(action.parseDetectedVolumes(QStringLiteral("[123]"), parse_ok).isEmpty());
+    QVERIFY2(!parse_ok, "a non-object array element must fail closed");
+
+    // ... and in TRAILING position, where "rejected" and "never accumulated anything" are
+    // distinguishable: the whole response is discarded, not returned half-read. Same shape the
+    // sibling parser already pins.
+    parse_ok = true;
+    const QVector<BackupBitlockerKeysAction::VolumeInfo> partial =
+        action.parseDetectedVolumes(QStringLiteral("[{\"DriveLetter\":\"C:\"}, 123]"), parse_ok);
+    QVERIFY2(!parse_ok, "a trailing non-object element must fail closed");
+    QVERIFY2(partial.isEmpty(),
+             "a failed parse must discard already-accumulated volumes, not return them");
 }
 
 void BackupBitlockerKeysActionTests::buildKeyProtectorScript_rejectsInvalidDriveLetters() {
@@ -277,12 +356,41 @@ void BackupBitlockerKeysActionTests::buildKeyProtectorScript_rejectsInvalidDrive
     QVERIFY2(bare_form.contains(QStringLiteral(R"(-Filter "DriveLetter='D'")")),
              qPrintable(bare_form));
 
+    // A lowercase letter is accepted too: the validator is [A-Za-z], and PowerShell drive letters
+    // arrive in either case, so pinning only uppercase would let the class narrow to [A-Z] and
+    // fail-closed every lowercase volume.
+    const QString lower_form = action.buildKeyProtectorScript(QStringLiteral("e"));
+    QVERIFY2(lower_form.contains(QStringLiteral(R"(-Filter "DriveLetter='e'")")),
+             qPrintable(lower_form));
+
     // Anything else yields an empty script (fail closed): empty, injection
     // attempts, and path-escape sequences must all be refused.
     QVERIFY(action.buildKeyProtectorScript(QString()).isEmpty());
     QVERIFY(action.buildKeyProtectorScript(QStringLiteral("C:' ; Remove-Item C:\\ #")).isEmpty());
     QVERIFY(action.buildKeyProtectorScript(QStringLiteral("C:\\..\\..\\evil")).isEmpty());
     QVERIFY(action.buildKeyProtectorScript(QStringLiteral("CC")).isEmpty());
+
+    // NEAR MISSES of the accepted forms. Every rejection above is disqualified by something
+    // coarse -- a second letter, a backslash, or a quote plus spaces -- so none of them constrains
+    // the validator's SHAPE (`^[A-Za-z]:?$`, anchored at both ends, with at most one colon).
+    // Notably the comment above names DriveLetter='C::' as the malformed filter being guarded
+    // against, and then nothing ever fed "C::". The value is interpolated into a DOUBLE-quoted
+    // PowerShell argument, where $( ) still expands, so a quote-only blacklist is not equivalent
+    // to the regex -- which is exactly what these pin.
+    const QStringList near_misses{
+        QStringLiteral("C::"),          // the doubled colon the comment above names
+        QStringLiteral("C:\\"),         // a trailing separator
+        QStringLiteral(" C:"),          // unanchored at the front
+        QStringLiteral("C: "),          // unanchored at the end
+        QStringLiteral("C:$(whoami)"),  // subexpression: expands inside a double-quoted argument
+        QStringLiteral("C:`n"),         // an escape sequence, no quote involved
+        QStringLiteral(":"),            // a colon with no letter
+        QStringLiteral("1:"),           // a digit, not [A-Za-z]
+        QStringLiteral("C:\nD:"),       // a newline-separated second value
+    };
+    for (const QString& candidate : near_misses) {
+        QVERIFY2(action.buildKeyProtectorScript(candidate).isEmpty(), qPrintable(candidate));
+    }
 }
 
 // ============================================================================
@@ -380,6 +488,29 @@ void BackupBitlockerKeysActionTests::recoveryPasswordHelpers_countAndDetect() {
     protectors << rec2 << tpm2;
     QCOMPARE(Action::countRecoveryPasswords(protectors), 2);
     QVERIFY(Action::volumeHasRecoveryPassword(protectors));
+
+    // The "no recovery password" fixtures above are DEFAULT-CONSTRUCTED, i.e. null, QStrings --
+    // but what production actually holds comes from obj["RecoveryPassword"].toString() applied to
+    // "RecoveryPassword":"", which is empty YET NON-NULL. Both helpers test isEmpty(), and no
+    // fixture anywhere made isEmpty() and isNull() disagree, so nothing in the suite decided which
+    // predicate they use: switch either to !isNull() and every assertion above stays green while a
+    // USB-only volume is counted as HAVING a recovery password -- passing the key gate and writing
+    // a key file with nothing in it. Parse the value the way production does rather than
+    // hand-building it, so the fixture cannot drift from the real shape.
+    BackupBitlockerKeysAction parser(QStringLiteral("C:/temp/does-not-matter"));
+    bool parse_ok = false;
+    const QVector<KeyProtectorInfo> from_wmi = parser.parseKeyProtectorResponse(
+        QStringLiteral("[{\"ProtectorID\":\"{guid-2}\",\"ProtectorType\":2,"
+                       "\"RecoveryPassword\":\"\",\"KeyFileName\":\"0A1B2C3D-EXT.BEK\"}]"),
+        parse_ok);
+    QVERIFY(parse_ok);
+    QCOMPARE(from_wmi.size(), 1);
+    QVERIFY2(from_wmi[0].recovery_password.isEmpty(), "control: the External Key record has none");
+    QVERIFY2(!from_wmi[0].recovery_password.isNull(),
+             "control: a JSON \"\" must arrive EMPTY BUT NON-NULL, or this fixture cannot tell "
+             "isEmpty() from isNull() any better than the hand-built ones above");
+    QCOMPARE(Action::countRecoveryPasswords(from_wmi), 0);
+    QVERIFY(!Action::volumeHasRecoveryPassword(from_wmi));
 }
 
 // ============================================================================
@@ -387,9 +518,47 @@ void BackupBitlockerKeysActionTests::recoveryPasswordHelpers_countAndDetect() {
 // ============================================================================
 
 void BackupBitlockerKeysActionTests::formatters_mapKnownCodes() {
-    QCOMPARE(Action::formatProtectorType(3),
-             QStringLiteral("Numerical Password (Recovery Password)"));
-    QCOMPARE(Action::formatEncryptionMethod(7), QStringLiteral("XTS-AES-256"));
+    // Both tables in FULL. kProtectorTypes holds 11 entries and kEncryptionMethods 8, and the
+    // suite pinned two protector codes and one encryption code between them. lookupCodeDescription
+    // matches on the explicit m_code field, so a whole-table shift would have been caught -- but a
+    // SINGLE mislabelled entry away from the sampled codes was invisible, and every one of these
+    // strings is printed verbatim to the technician as "Type:" and "Encryption Method:" in the
+    // document used to recover an encrypted disk. formatVolumeType below was already pinned
+    // exhaustively, so the file disagreed with itself about how much of a table to prove.
+    const QVector<QPair<int, QString>> protector_types{
+        {0, QStringLiteral("Unknown or Other")},
+        {1, QStringLiteral("TPM")},
+        {2, QStringLiteral("External Key (USB)")},
+        {3, QStringLiteral("Numerical Password (Recovery Password)")},
+        {4, QStringLiteral("TPM + PIN")},
+        {5, QStringLiteral("TPM + Startup Key")},
+        {6, QStringLiteral("TPM + PIN + Startup Key")},
+        {7, QStringLiteral("Public Key (Certificate)")},
+        {8, QStringLiteral("Passphrase")},
+        {9, QStringLiteral("TPM + Certificate")},
+        {10, QStringLiteral("Clear Key (Unprotected)")},
+    };
+    for (const auto& [code, description] : protector_types) {
+        QCOMPARE(Action::formatProtectorType(code), description);
+    }
+
+    const QVector<QPair<int, QString>> encryption_methods{
+        {0, QStringLiteral("None")},
+        {1, QStringLiteral("AES-128 with Diffuser")},
+        {2, QStringLiteral("AES-256 with Diffuser")},
+        {3, QStringLiteral("AES-128")},
+        {4, QStringLiteral("AES-256")},
+        {5, QStringLiteral("Hardware Encryption")},
+        {6, QStringLiteral("XTS-AES-128")},
+        {7, QStringLiteral("XTS-AES-256")},
+    };
+    for (const auto& [code, description] : encryption_methods) {
+        QCOMPARE(Action::formatEncryptionMethod(code), description);
+    }
+    // One past each table's last mapped code, so the tables cannot silently GROW an entry either.
+    QCOMPARE(Action::formatProtectorType(11), QStringLiteral("Unknown (11)"));
+    QCOMPARE(Action::formatEncryptionMethod(8), QStringLiteral("Unknown (8)"));
+
     QCOMPARE(Action::formatVolumeType(0), QStringLiteral("Operating System"));
     QCOMPARE(Action::formatVolumeType(1), QStringLiteral("Fixed Data"));
     QCOMPARE(Action::formatVolumeType(2), QStringLiteral("Removable Data"));

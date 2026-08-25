@@ -103,6 +103,9 @@ void appendExeSuffix(QString& command, sak::fuzz::Prng& prng) {
 constexpr uint32_t kObfuscationOperatorCount = 4;
 constexpr uint32_t kMaxObfuscationsPerMutant = 5;
 
+// The shipped fuzz budget (tests/fuzz/fuzz_harness.h kDefaultIterations), as a literal.
+constexpr int kShippedFuzzIterations = 2000;
+
 void applyOneObfuscation(QString& command, sak::fuzz::Prng& prng) {
     switch (prng.below(kObfuscationOperatorCount)) {
     case 0:
@@ -152,6 +155,24 @@ std::vector<QString> catastrophicSeeds() {
         QStringLiteral("set-executionpolicy unrestricted"),
         QStringLiteral("mkfs ext4 /dev/sdb"),
         QStringLiteral("dd if=/dev/zero of=/dev/sdb"),
+        // The five alternatives of kCatastrophic that NOTHING in tests/ reached. Mapping every
+        // alternative of the 20-way alternation (ai_tool_policy.cpp:773) against every fixture in
+        // the repository leaves these unclaimed: this file's seeds cover format+drive, diskpart,
+        // clear-disk, remove-partition, bcdedit, vssadmin/wbadmin delete, cipher /w,
+        // set-executionpolicy, mkfs and dd, and test_ai_tool_policy.cpp adds format-volume,
+        // wevtutil cl, reg delete hk and the remove-item -Recurse Windows-path arm. Each of the
+        // five below could be deleted from the alternation with the entire suite still green,
+        // dropping a disk- or registry-destroying command straight out of the human-confirmation
+        // gate.
+        QStringLiteral("clear-volume -driveletter d"),
+        QStringLiteral("reset-physicaldisk -friendlyname disk1"),
+        QStringLiteral("initialize-disk -number 1"),
+        // The two COMPOUND arms are worse than the rest: each is a keyword plus one or two
+        // lookaheads, so without a fixture neither the arm nor any individual lookahead is
+        // constrained. The registry hive and the Windows path are what make these catastrophic
+        // rather than ordinary deletions, so both are spelled out.
+        QStringLiteral("remove-item hklm:\\software\\vendor -recurse"),
+        QStringLiteral("rd /s c:\\windows\\system32"),
     };
 }
 
@@ -164,6 +185,15 @@ std::vector<QString> benignSeeds() {
         QStringLiteral("systeminfo"),
         QStringLiteral("tasklist"),
         QStringLiteral("format-list"),  // a PowerShell display cmdlet, not disk format
+        // The near miss that matters. "format-list" alone stops exactly where the disk-format arm
+        // gets interesting -- it has no following token, so the only thing it proves is that a '-'
+        // blocks the `\s+`. Nothing in the repository pairs a format-PREFIXED token with a
+        // following drive letter, so the keyword half of `\bformat\b\s+(?:/\S+\s+)*[a-z]:` is only
+        // ever exercised where the drive letter cannot reach it: widen the keyword to
+        // `\bformat\S*` -- the obvious way to "also catch format.com" without trusting the suffix
+        // normalizer -- and every existing fixture stays green while ordinary display pipelines
+        // start demanding human confirmation.
+        QStringLiteral("format-list c:"),
     };
 }
 
@@ -213,6 +243,16 @@ void assertProperty(const PropertyOutcome& outcome, int seed_count) {
     // 12-command smoke test.
     const int iterations = sak::fuzz::iterationsFromEnv();
     QVERIFY(iterations > 0);
+    if (!qEnvironmentVariableIsSet("SAK_FUZZ_ITERS")) {
+        // `> 0` is the weakest possible reading of that clamp -- ANY positive default satisfies
+        // it, and the QCOMPARE below re-reads the same function for both sides of its equation,
+        // so it moves with the value too. Pin the shipped default to a LITERAL. Eighteen fuzz
+        // suites in tests/unit call iterationsFromEnv() and not one compares against
+        // kDefaultIterations, so a default that silently collapsed would take the entire fuzz
+        // fleet down to a smoke test with nothing red anywhere -- and this file, the only one
+        // that even mentions the clamp, would not notice.
+        QCOMPARE(iterations, kShippedFuzzIterations);
+    }
     // runProperty increments checks_run once per seed plus once per mutant, so the exact count
     // is knowable; a > 0 floor is satisfied by the seed pass alone. Same convention as the
     // sibling fuzz suites.

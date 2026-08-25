@@ -12,6 +12,7 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
+#include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QtTest/QtTest>
@@ -31,15 +32,34 @@ class ScreenshotSettingsActionTests : public QObject {
 private Q_SLOTS:
     void reportPathLine_onlyAdvertisesWrittenReport();
     void buildScreenshotReportText_containsPagesAndSections();
+    void buildScreenshotReportText_omitsFailedSectionOnCleanRun();
     void generateReport_writesAndDetectsFailure();
     // WaveD-09: success requires a full capture AND a written report; a partial
     // capture or an unwritten report must fail closed, not report success.
     void buildExecutionResult_succeedsOnFullCaptureAndWrittenReport();
     void buildExecutionResult_failsClosedOnPartialOrUnwrittenReport();
+    void buildExecutionResult_failsClosedOnUnwrittenReport();
     void buildExecutionResult_failsClosedOnZeroCapture();
     void captureWindowToPng_failsClosedWithoutScreen();
     void captureWindowToPng_failsClosedWhenMarshalledFromWorkerThread();
+
+private:
+    // The 3-page context both fail-closed slots drive, parameterised only by the one field that
+    // distinguishes them. A member, not a file-scope helper: CaptureContext is private to the
+    // action and reachable only through this class's friendship.
+    static CaptureContext contextWith(bool report_written);
 };
+
+ScreenshotSettingsAction::CaptureContext ScreenshotSettingsActionTests::contextWith(
+    bool report_written) {
+    CaptureContext ctx;
+    ctx.total_pages = 3;
+    ctx.monitor_count = 1;
+    ctx.timestamp = QStringLiteral("ts");
+    ctx.start_time = QDateTime::currentDateTime();
+    ctx.report_written = report_written;
+    return ctx;
+}
 
 void ScreenshotSettingsActionTests::reportPathLine_onlyAdvertisesWrittenReport() {
     QCOMPARE(Action::reportPathLine(true, QStringLiteral("C:/reports/r.txt")),
@@ -51,14 +71,23 @@ void ScreenshotSettingsActionTests::reportPathLine_onlyAdvertisesWrittenReport()
 }
 
 void ScreenshotSettingsActionTests::buildScreenshotReportText_containsPagesAndSections() {
+    // Every header counter has TWO candidate sources, and the old fixture made each pair agree:
+    // screenshots_taken == captured_pages.size() and failed_attempts == failed_pages.size(), so
+    // the whole-report QCOMPARE below could not tell which member the builder actually read and
+    // the inline claims ("captured + failed, not captured alone", "captured_pages.size()",
+    // "failed_attempts") were unverifiable. Every value here is deliberately DISTINCT -- monitors
+    // 7, captured 2, failed_pages 1, screenshots_taken 5, failed_attempts 4 -- so each counter
+    // can only be produced by its own source, and screenshots_taken (which the builder must
+    // ignore entirely) matches nothing on the page.
     CaptureResult capture;
-    capture.captured_pages << QStringLiteral("Display_Settings");
+    capture.captured_pages << QStringLiteral("Display_Settings")
+                           << QStringLiteral("Sound_Settings");
     capture.failed_pages << QStringLiteral("WiFi_Settings");
-    capture.screenshots_taken = 1;
-    capture.failed_attempts = 1;
+    capture.screenshots_taken = 5;
+    capture.failed_attempts = 4;
 
     const QString text = Action::buildScreenshotReportText(
-        2, capture, QStringLiteral("C:/out"), QStringLiteral("20260731_010203"));
+        7, capture, QStringLiteral("C:/out"), QStringLiteral("20260731_010203"));
 
     // The builder is pure and deterministic apart from the Timestamp line, so pin the whole
     // report shape: every header counter, WHICH marker each page gets ([x] captured vs [ ]
@@ -77,14 +106,15 @@ void ScreenshotSettingsActionTests::buildScreenshotReportText_containsPagesAndSe
         QStringLiteral("| WINDOWS SETTINGS SCREENSHOT REPORT |"),
         bar,
         lines.value(3),  // Timestamp: wall clock, the only non-deterministic line
-        QStringLiteral("| Monitors Detected: 2 |"),
-        QStringLiteral("| Total Pages: 2 |"),  // captured + failed, not captured alone
-        QStringLiteral("| Successful: 1 |"),   // captured_pages.size()
-        QStringLiteral("| Failed: 1 |"),       // failed_attempts
+        QStringLiteral("| Monitors Detected: 7 |"),
+        QStringLiteral("| Total Pages: 3 |"),  // captured + failed, not captured alone
+        QStringLiteral("| Successful: 2 |"),   // captured_pages.size(), NOT screenshots_taken (5)
+        QStringLiteral("| Failed: 4 |"),       // failed_attempts, NOT failed_pages.size() (1)
         bar,
         QStringLiteral("| CAPTURED PAGES |"),
         bar,
         QStringLiteral("| [x] Display_Settings |"),  // captured page -> [x], never [ ]
+        QStringLiteral("| [x] Sound_Settings |"),
         bar,
         QStringLiteral("| FAILED PAGES |"),
         bar,
@@ -96,9 +126,17 @@ void ScreenshotSettingsActionTests::buildScreenshotReportText_containsPagesAndSe
     };
     QCOMPARE(lines, expected);
 
-    // The one line left free above is still constrained to be the timestamp.
-    QVERIFY(lines.value(3).startsWith(QStringLiteral("| Timestamp: ")));
+    // The one line left free above is deliberately its own oracle in `expected`, so the QCOMPARE
+    // asserts nothing whatever about it -- which left a bare prefix check as the row's ONLY
+    // constraint, saying nothing about the stamp's format, its presence, or the closing bar. This
+    // row is the sole record of WHEN the evidence was taken (the builder ignores the passed
+    // timestamp -- Q_UNUSED -- and stamps the wall clock instead), so the format IS the contract.
+    const QRegularExpression timestamp_row(
+        QStringLiteral(R"(^\| Timestamp: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \|$)"));
+    QVERIFY2(timestamp_row.match(lines.value(3)).hasMatch(), qPrintable(lines.value(3)));
+}
 
+void ScreenshotSettingsActionTests::buildScreenshotReportText_omitsFailedSectionOnCleanRun() {
     // The FAILED PAGES section is guarded: a capture with no failures must NOT print a failure
     // banner. A report that says "FAILED PAGES" on a perfect run is a false alarm to the
     // customer.
@@ -125,8 +163,14 @@ void ScreenshotSettingsActionTests::generateReport_writesAndDetectsFailure() {
     capture.captured_pages << QStringLiteral("Display_Settings");
     capture.screenshots_taken = 1;
 
-    // Real directory -> report is written and committed.
-    QVERIFY(action.generateReport(dir.path(), QStringLiteral("ts1"), 1, capture));
+    // Real directory -> report is written and committed. The monitor count is deliberately NOT 1:
+    // generateReport forwards its own monitor_count argument into the builder, and that argument
+    // is the only wiring this test can observe for the "Monitors Detected:" row -- but with
+    // monitor_count == screenshots_taken == captured_pages.size() == 1, every candidate source
+    // produced the identical byte and the line-for-line compare below could not tell which one it
+    // actually passed.
+    const int kMonitorCount = 4;
+    QVERIFY(action.generateReport(dir.path(), QStringLiteral("ts1"), kMonitorCount, capture));
     // The committed file must BE the report for THIS capture, not merely a name on disk:
     // compare it line-for-line against the pure builder, skipping only the wall-clock
     // "Timestamp:" line.
@@ -136,7 +180,7 @@ void ScreenshotSettingsActionTests::generateReport_writesAndDetectsFailure() {
     written.close();
     const QStringList file_lines = report_text.split(QLatin1Char('\n'));
     const QStringList built_lines =
-        Action::buildScreenshotReportText(1, capture, dir.path(), QStringLiteral("ts1"))
+        Action::buildScreenshotReportText(kMonitorCount, capture, dir.path(), QStringLiteral("ts1"))
             .split(QLatin1Char('\n'));
     QCOMPARE(file_lines.size(), built_lines.size());
     for (int i = 0; i < built_lines.size(); ++i) {
@@ -161,7 +205,12 @@ void ScreenshotSettingsActionTests::buildExecutionResult_succeedsOnFullCaptureAn
     ctx.total_pages = 3;
     ctx.monitor_count = 1;
     ctx.timestamp = QStringLiteral("ts");
-    ctx.start_time = QDateTime::currentDateTime();
+    // Deliberately NOT "now": duration_ms is measured from start_time, and with start_time set to
+    // the current instant even a correct measurement is ~0 ms, so no assertion could tell a real
+    // elapsed time from a hard-coded zero. Backdating it by a known amount makes the measurement
+    // observable.
+    const qint64 kInjectedElapsedMs = 1500;
+    ctx.start_time = QDateTime::currentDateTime().addMSecs(-kInjectedElapsedMs);
     ctx.report_written = true;
 
     ScreenshotSettingsAction action(dir.path());
@@ -174,6 +223,13 @@ void ScreenshotSettingsActionTests::buildExecutionResult_succeedsOnFullCaptureAn
     // The technician-visible siblings: where the screenshots went and how many.
     QCOMPARE(result.output_path, out.absolutePath());
     QCOMPARE(result.files_processed, static_cast<qint64>(3));
+    // The third sibling, previously read by no assertion in the repository. It is persisted to
+    // the saved result JSON and rendered in the assistant transcript, where a non-positive value
+    // renders as nothing at all -- so a duration that silently became 0 would simply vanish from
+    // the report rather than look wrong.
+    QVERIFY2(result.duration_ms >= kInjectedElapsedMs,
+             qPrintable(QStringLiteral("duration_ms %1 did not measure from start_time")
+                            .arg(result.duration_ms)));
     QCOMPARE(result.message, QStringLiteral("Captured 3/3 settings pages (1 monitors detected)"));
     // The structured log the caller parses, REPORT_PATH line included.
     QCOMPARE(result.log,
@@ -192,16 +248,6 @@ void ScreenshotSettingsActionTests::buildExecutionResult_failsClosedOnPartialOrU
     QVERIFY(dir.isValid());
     const QDir out(dir.path());
 
-    auto contextWith = [&](bool report_written) {
-        CaptureContext ctx;
-        ctx.total_pages = 3;
-        ctx.monitor_count = 1;
-        ctx.timestamp = QStringLiteral("ts");
-        ctx.start_time = QDateTime::currentDateTime();
-        ctx.report_written = report_written;
-        return ctx;
-    };
-
     // Some pages failed, even though the report was written -> fail closed.
     {
         ScreenshotSettingsAction action(dir.path());
@@ -212,17 +258,38 @@ void ScreenshotSettingsActionTests::buildExecutionResult_failsClosedOnPartialOrU
         action.buildExecutionResult(cap, out, contextWith(true));
         const auto& partial = action.lastExecutionResult();
         QVERIFY2(!partial.success, "a partial capture must not be a success");
-        // 2 of 3 pages captured: the structured log must carry the REAL counters and the
-        // real 2*100/3 = 66% rate, not a flat 100% that hides the failed page.
-        QVERIFY2(partial.log.contains(QStringLiteral("SUCCESSFUL_CAPTURES:2\n"
-                                                     "FAILED_CAPTURES:1\n"
-                                                     "TOTAL_PAGES:3\n"
-                                                     "SUCCESS_RATE:66%\n")),
-                 qPrintable(partial.log));
+        // A failure still has to say where the screenshots that DID land went, and how many.
+        // These two were asserted only on the success path, yet production assigns them before
+        // the branch -- and only that placement is what makes them survive a failure.
+        QCOMPARE(partial.output_path, out.absolutePath());
+        QCOMPARE(partial.files_processed, static_cast<qint64>(2));
+        // 2 of 3 pages captured: the structured log must carry the REAL counters and the real
+        // 2*100/3 = 66% rate, not a flat 100% that hides the failed page. Pinned WHOLE rather
+        // than by a contains() of four lines: the log is deterministic, and this is the only
+        // fixture in the file that is both a FAILING run and has report_written == true, so it
+        // is the only place that can prove a written report is still advertised when the run
+        // failed. A contains() left the MONITORS_DETECTED line, the entire REPORT_PATH line and
+        // the trailing "Saved to:" tail unpinned, so the positive direction of that guard was
+        // proved only on the full-success path.
+        QCOMPARE(partial.log,
+                 QStringLiteral("MONITORS_DETECTED:1\n"
+                                "SUCCESSFUL_CAPTURES:2\n"
+                                "FAILED_CAPTURES:1\n"
+                                "TOTAL_PAGES:3\n"
+                                "SUCCESS_RATE:66%\n"
+                                "REPORT_PATH:") +
+                     out.filePath(QStringLiteral("Screenshot_Report_ts.txt")) +
+                     QStringLiteral("\n\nSaved to: ") + out.absolutePath());
         // The report WAS written here, so the ", report not written" suffix must be absent.
         QCOMPARE(partial.message, QStringLiteral("Incomplete: captured 2/3 pages, 1 failed"));
         QVERIFY2(!action.lastExecutionResult().success, "a partial capture must not be a success");
     }
+}
+
+void ScreenshotSettingsActionTests::buildExecutionResult_failsClosedOnUnwrittenReport() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QDir out(dir.path());
 
     // Every page captured but the report could not be written -> fail closed.
     {
@@ -233,6 +300,14 @@ void ScreenshotSettingsActionTests::buildExecutionResult_failsClosedOnPartialOrU
         action.buildExecutionResult(cap, out, contextWith(false));
         QVERIFY2(!action.lastExecutionResult().success,
                  "an unwritten report must not be a success");
+        // This block is the ONLY case in the repository that reaches the ", report not written"
+        // suffix, and it never touched result.message -- the block above pins the message with
+        // report_written == true, i.e. only the EMPTY arm of that ternary. So the single
+        // technician-visible sentence saying the evidence file is missing was unproven: drop the
+        // suffix and every page still reports as merely "incomplete", with the log's
+        // REPORT_WRITE_FAILED line the only surviving hint that nothing was saved.
+        QCOMPARE(action.lastExecutionResult().message,
+                 QStringLiteral("Incomplete: captured 3/3 pages, 0 failed, report not written"));
         // "Not a success" says nothing about what the log ADVERTISES. An unwritten report must
         // not hand the caller a REPORT_PATH for a file that does not exist, and must surface the
         // write failure instead.
@@ -266,6 +341,19 @@ void ScreenshotSettingsActionTests::buildExecutionResult_failsClosedOnZeroCaptur
     const auto& zero = action.lastExecutionResult();
     QVERIFY2(!zero.success, "a zero-capture run must not be a success");
     QCOMPARE(zero.message, QStringLiteral("Failed to capture any screenshots"));
+    // The zero-capture branch assembles its OWN log tail, and nothing in the repository read it.
+    // That branch is exactly the one whose structured log a technician has to parse to find out
+    // why nothing was captured -- the monitor count, the counters, and whether a report file
+    // exists -- and it is the only branch carrying the remediation line.
+    QCOMPARE(zero.log,
+             QStringLiteral("MONITORS_DETECTED:1\n"
+                            "SUCCESSFUL_CAPTURES:0\n"
+                            "FAILED_CAPTURES:0\n"
+                            "TOTAL_PAGES:3\n"
+                            "SUCCESS_RATE:0%\n"
+                            "REPORT_PATH:") +
+                 out.filePath(QStringLiteral("Screenshot_Report_ts.txt")) +
+                 QStringLiteral("\n\nCheck display permissions and Settings app availability"));
 }
 
 void ScreenshotSettingsActionTests::captureWindowToPng_failsClosedWithoutScreen() {
