@@ -58,6 +58,14 @@ void Win32McpInputPlanTests::absCoordHonorsNegativeOrigin() {
     const ScreenBox left{-100, 0, 101, 1};
     QCOMPARE(toAbsCoord(-100, 0, left).nx, 0L);
     QCOMPARE(toAbsCoord(0, 0, left).nx, 65'535L);
+
+    // Transposed case: a secondary monitor ABOVE the primary, and NOT square. Every other fixture
+    // in this file whose .ny is read sits at y == 0 and is square, so the y arm's origin term and
+    // its (h - 1) divisor would otherwise be unpinned -- a y arm that dropped `- screen.y`, or that
+    // copy-pasted `screen.w - 1` as its divisor, passes every other assertion here.
+    const ScreenBox above{0, -100, 1, 101};
+    QCOMPARE(toAbsCoord(0, -100, above).ny, 0L);    // topmost pixel; without `- screen.y`: -65535
+    QCOMPARE(toAbsCoord(0, 0, above).ny, 65'535L);  // bottom pixel; with a (w - 1) divisor: 6553500
 }
 
 void Win32McpInputPlanTests::absCoordDegenerateScreenDoesNotDivideByZero() {
@@ -83,6 +91,12 @@ void Win32McpInputPlanTests::pointInVirtualScreenBounds() {
     QVERIFY(!pointInVirtualScreen(-1, 10, s));                        // left of origin
     QVERIFY(!pointInVirtualScreen(10, 10, ScreenBox{0, 0, 0, 100}));  // no width -> nothing inside
     QVERIFY(pointInVirtualScreen(-50, -50, ScreenBox{-100, -100, 100, 100}));  // negative origin
+    QVERIFY(!pointInVirtualScreen(
+        10, -1, s));  // above the top edge -- the ONLY arm no other row refuses through
+    QVERIFY(!pointInVirtualScreen(
+        -50, -101, ScreenBox{-100, -100, 100, 100}));  // top edge follows a negative origin
+    QVERIFY(!pointInVirtualScreen(
+        10, 10, ScreenBox{0, 0, 100, 0}));  // no height -> nothing inside (twin of the width row)
 }
 
 void Win32McpInputPlanTests::buttonFlagsMapAndDefault() {
@@ -127,6 +141,23 @@ void Win32McpInputPlanTests::buttonFlagsTrimAndReject() {
     QVERIFY(!mouseButtonFlags(QStringLiteral("scroll"), down, up));  // unknown -> refuse
     QCOMPARE(down, 0xDEADul);
     QCOMPARE(up, 0xBEEFul);
+
+    // "scroll" shares no prefix with any accepted name, so refusing it cannot tell the exact
+    // `==` at win32_mcp_input_plan.cpp:49,54,59 from a startsWith/contains/endsWith match. A name
+    // that EXTENDS an accepted one must refuse too, or "leftclick" fires a real left button.
+    down = 0xDEADul;
+    up = 0xBEEFul;
+    QVERIFY(!mouseButtonFlags(
+        QStringLiteral("leftclick"), down, up));  // prefix of "left" is not "left"
+    QCOMPARE(down, 0xDEADul);
+    QCOMPARE(up, 0xBEEFul);
+    QVERIFY(!mouseButtonFlags(
+        QStringLiteral("double right"), down, up));  // inner/trailing match refused
+    QCOMPARE(down, 0xDEADul);
+    QCOMPARE(up, 0xBEEFul);
+    QVERIFY(!mouseButtonFlags(QStringLiteral("middle click"), down, up));
+    QCOMPARE(down, 0xDEADul);
+    QCOMPARE(up, 0xBEEFul);
 }
 
 void Win32McpInputPlanTests::typePlanAsciiAndNewline() {
@@ -167,6 +198,24 @@ void Win32McpInputPlanTests::typePlanCollapsesCrlf() {
                                  KeyStroke{.code = enter, .is_vk = true, .key_up = true},
                                  KeyStroke{.code = b_unit, .is_vk = false, .key_up = false},
                                  KeyStroke{.code = b_unit, .is_vk = false, .key_up = true}}));
+
+    // Every row above decides the CR by the FIRST arm of the CRLF lookahead alone
+    // (win32_mcp_input_plan.cpp:76): "\r" ends the string so `i + 1 < count` is already false, and
+    // both "\r\n" rows put a real LF next so the second arm is true whenever the first is. Present
+    // a CR that is IN RANGE but NOT followed by LF -- the only input the second arm exists to let
+    // through. Classic-Mac text pasted by a caller must keep its line break.
+    QCOMPARE(planTypeText(QStringLiteral("\ra")),
+             (QVector<KeyStroke>{KeyStroke{.code = enter, .is_vk = true, .key_up = false},
+                                 KeyStroke{.code = enter, .is_vk = true, .key_up = true},
+                                 KeyStroke{.code = a_unit, .is_vk = false, .key_up = false},
+                                 KeyStroke{.code = a_unit, .is_vk = false, .key_up = true}}));
+    // Two CRs in a row: only the SECOND one belongs to the CRLF, so this is TWO line breaks. A
+    // lookahead that drops any non-final CR would collapse them into one.
+    QCOMPARE(planTypeText(QStringLiteral("\r\r\n")),
+             (QVector<KeyStroke>{KeyStroke{.code = enter, .is_vk = true, .key_up = false},
+                                 KeyStroke{.code = enter, .is_vk = true, .key_up = true},
+                                 KeyStroke{.code = enter, .is_vk = true, .key_up = false},
+                                 KeyStroke{.code = enter, .is_vk = true, .key_up = true}}));
 }
 
 void Win32McpInputPlanTests::typePlanEmitsSurrogatesForAstralChar() {

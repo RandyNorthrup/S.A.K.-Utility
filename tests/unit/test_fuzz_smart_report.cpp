@@ -66,6 +66,68 @@ ReportSignature signatureOf(const sak::SmartReport& r) {
     return sig;
 }
 
+// Guidance must agree with the verdict it explains: the NVMe recommendation ladder walks the
+// SAME thresholds as the NVMe health assessment, so the two may not drift apart.
+// A self-reported FAILED drive is always Critical -- and the report has to SAY so. The enum
+// alone cannot see the FAILED guidance being dropped.
+QString smartFailedDriveRule(const sak::SmartReport& report) {
+    // The hardest rule, restated independently: a self-reported FAILED drive is always Critical --
+    // AND the report has to say so. The enum alone cannot see the FAILED guidance being dropped:
+    // without the prepend at smart_disk_analyzer.cpp:609 the warning list is empty, so
+    // generateRecommendations() falls through to the clean-drive branch at :628 and hands a drive
+    // reporting imminent failure "Drive health is good -- no action required" while the verdict
+    // stays Critical and the recommendation list stays non-empty.
+    if (report.smart_status == QLatin1String("FAILED")) {
+        if (report.overall_health != sak::SmartHealthStatus::Critical) {
+            return QStringLiteral("smart_status FAILED but overall_health is not Critical");
+        }
+        if (!report.recommendations.contains(
+                QStringLiteral("CRITICAL: Drive is reporting imminent failure -- back up all data "
+                               "immediately and replace drive"))) {
+            return QStringLiteral(
+                "smart_status FAILED but the imminent-failure recommendation is missing");
+        }
+        if (!report.warnings.contains(QStringLiteral("SMART overall health assessment: FAILED"))) {
+            return QStringLiteral("smart_status FAILED but the FAILED health warning is missing");
+        }
+        if (report.recommendations.contains(
+                QStringLiteral("Drive health is good -- no action required"))) {
+            return QStringLiteral(
+                "smart_status FAILED but the report advises that drive health is good");
+        }
+    }
+    return {};
+}
+
+QString smartGuidanceConsistency(const sak::SmartReport& report) {
+    // Guidance must agree with the verdict it explains. generateNvmeRecommendations() walks the
+    // SAME wear ladder as assessNvmeHealth() (smart_disk_analyzer.cpp:553/:558 vs :504/:510), so
+    // the two may not drift apart: critical-wear advice may only ride a Critical report, and the
+    // near-future wear advice may never ride a report assessed Healthy. An NVMe log always
+    // satisfies reportHasAssessableData(), so neither branch can be reached with Unknown.
+    if (report.recommendations.contains(
+            QStringLiteral("CRITICAL: Plan drive replacement -- SSD endurance nearly exhausted")) &&
+        report.overall_health != sak::SmartHealthStatus::Critical) {
+        return QStringLiteral("critical NVMe wear advice on a report not assessed Critical");
+    }
+    if (report.recommendations.contains(
+            QStringLiteral("Consider planning drive replacement in the near future")) &&
+        report.overall_health == sak::SmartHealthStatus::Healthy) {
+        return QStringLiteral("NVMe wear advice on a report assessed Healthy");
+    }
+
+    // The Unknown path always says plainly that health is unknown -- non-emptiness alone would
+    // still pass if that sentence were dropped while a temperature/age advisory kept the list
+    // populated (smart_disk_analyzer.cpp:619-624).
+    if (report.overall_health == sak::SmartHealthStatus::Unknown &&
+        !report.recommendations.contains(QStringLiteral(
+            "SMART data was unavailable or unreadable -- verify the drive connection and "
+            "re-run with administrator privileges"))) {
+        return QStringLiteral("Unknown health without the could-not-determine guidance");
+    }
+    return {};
+}
+
 QString smartReportInvariant(const QByteArray& input) {
     sak::SmartDiskAnalyzer analyzer;
     const sak::SmartReport report = analyzer.parseAndAssessForTesting(input, 0);
@@ -87,16 +149,18 @@ QString smartReportInvariant(const QByteArray& input) {
                                "(fail-open)");
     }
 
-    // The hardest rule, restated independently: a self-reported FAILED drive is always Critical.
-    if (report.smart_status == QLatin1String("FAILED") &&
-        report.overall_health != sak::SmartHealthStatus::Critical) {
-        return QStringLiteral("smart_status FAILED but overall_health is not Critical");
+    if (const QString detail = smartFailedDriveRule(report); !detail.isEmpty()) {
+        return detail;
     }
 
     // The pipeline always emits guidance -- a parsed report is never left with no recommendation.
     if (report.recommendations.isEmpty()) {
         return QStringLiteral("assessed report carries no recommendation");
     }
+    if (const QString detail = smartGuidanceConsistency(report); !detail.isEmpty()) {
+        return detail;
+    }
+
     return {};
 }
 
@@ -185,6 +249,82 @@ private Q_SLOTS:
         const sak::SmartReport failed = analyzer.parseAndAssessForTesting(
             QByteArrayLiteral("{\"smart_status\":{\"passed\":false}}"), 0);
         QCOMPARE(failed.overall_health, sak::SmartHealthStatus::Critical);
+    }
+
+    void dataLessPayloadsStayUnknown() {
+        sak::SmartDiskAnalyzer analyzer;
+        // Identity fields are NOT assessable signal. A smartctl reply that names the drive but
+        // carries no smart_status, no attribute table and no NVMe log means the drive told us
+        // nothing about its health, so it must stay Unknown -- never a clean bill of health.
+        // This is the anchor the fuzz corpus entry {"model_name":"only identity"} exists for:
+        // the oracle at line 83 calls the same predicate assessHealth() decides Unknown with
+        // (smart_disk_analyzer.cpp:464), so WIDENING that signal set moves both sides of the
+        // equivalence together and stays silent. Pinned here, a widened set goes red.
+        const sak::SmartReport identity_only = analyzer.parseAndAssessForTesting(
+            QByteArrayLiteral("{\"model_name\":\"only identity\"}"), 0);
+        QCOMPARE(identity_only.model, QStringLiteral("only identity"));
+        QVERIFY(!sak::SmartDiskAnalyzer::reportHasAssessableData(identity_only));
+        QCOMPARE(identity_only.overall_health, sak::SmartHealthStatus::Unknown);
+        // ...and the guidance never reads as a clean bill over a drive we never actually read.
+        for (const QString& rec : identity_only.recommendations) {
+            QVERIFY2(!rec.contains(QStringLiteral("health is good"), Qt::CaseInsensitive),
+                     "an identity-only SMART payload must not be reported as healthy");
+        }
+    }
+
+    void degenerateSignalRecordsStayUnknown() {
+        sak::SmartDiskAnalyzer analyzer;
+        // Phantom/degenerate ATA entries are dropped, not counted as signal. `table:[null,{}]`
+        // parses to two id-0 attributes; without the id-0 skip (smart_disk_analyzer.cpp:357)
+        // they would be appended, satisfy reportHasAssessableData(), and let this data-less
+        // payload read Healthy with the "health is good" note.
+        const sak::SmartReport phantom_attrs = analyzer.parseAndAssessForTesting(
+            QByteArrayLiteral("{\"ata_smart_attributes\":{\"table\":[null,{}]}}"), 0);
+        QVERIFY(phantom_attrs.attributes.isEmpty());
+        QVERIFY(!sak::SmartDiskAnalyzer::reportHasAssessableData(phantom_attrs));
+        QCOMPARE(phantom_attrs.overall_health, sak::SmartHealthStatus::Unknown);
+        QVERIFY(!phantom_attrs.recommendations.contains(
+            QStringLiteral("Drive health is good -- no action required")));
+
+        // A null/empty NVMe log builds no health record. Without the empty-log guard
+        // (smart_disk_analyzer.cpp:402) an all-zero NvmeHealthInfo would be synthesized
+        // (available_spare 0 < threshold 0 is false, media_errors 0, wear 0) and read Healthy.
+        const sak::SmartReport null_nvme = analyzer.parseAndAssessForTesting(
+            QByteArrayLiteral("{\"nvme_smart_health_information_log\":null}"), 0);
+        QVERIFY(!null_nvme.nvme_health.has_value());
+        QVERIFY(!sak::SmartDiskAnalyzer::reportHasAssessableData(null_nvme));
+        QCOMPARE(null_nvme.overall_health, sak::SmartHealthStatus::Unknown);
+        QVERIFY(!null_nvme.recommendations.contains(
+            QStringLiteral("Drive health is good -- no action required")));
+
+        // Critical has a second SATA producer that no test in the tree reaches: the per-attribute
+        // `failing` flag (smart_disk_analyzer.cpp:476), raised when a normalized value falls to or
+        // below the drive's own threshold (:374). Raw 0 keeps the per-id ladder at Healthy and the
+        // status is PASSED, so ONLY the failing-flag promotion can produce Critical here --
+        // deleting that arm turns this Healthy. (Asserting health only: such a drive currently ALSO
+        // collects "Drive health is good", because the flag arm appends no warning. That fail-open
+        // is a separate defect; pinning it here would fail against the tree as it stands.)
+        const sak::SmartReport prefail = analyzer.parseAndAssessForTesting(
+            QByteArrayLiteral(
+                "{\"device\":{\"type\":\"sat\"},\"smart_status\":{\"passed\":true},"
+                "\"ata_smart_attributes\":{\"table\":[{\"id\":5,"
+                "\"name\":\"Reallocated_Sector_Ct\",\"value\":8,\"worst\":8,\"thresh\":10,"
+                "\"raw\":{\"value\":0}}]}}"),
+            0);
+        QCOMPARE(prefail.overall_health, sak::SmartHealthStatus::Critical);
+
+        // The other half of that gate: thresh 0 means the vendor declared NO threshold, so a
+        // normalized value of 0 must not be read as at-or-below it. Without the `threshold > 0`
+        // conjunct at smart_disk_analyzer.cpp:374 this document reads 0 <= 0 as failing and comes
+        // back Critical.
+        const sak::SmartReport no_threshold = analyzer.parseAndAssessForTesting(
+            QByteArrayLiteral(
+                "{\"device\":{\"type\":\"sat\"},\"smart_status\":{\"passed\":true},"
+                "\"ata_smart_attributes\":{\"table\":[{\"id\":199,"
+                "\"name\":\"UDMA_CRC_Error_Count\",\"value\":0,\"worst\":0,\"thresh\":0,"
+                "\"raw\":{\"value\":0}}]}}"),
+            0);
+        QCOMPARE(no_threshold.overall_health, sak::SmartHealthStatus::Healthy);
     }
 };
 

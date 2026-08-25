@@ -5024,6 +5024,47 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 SECOND-pass sweep b96 (gated 249/249): 33 weak assertions pinned across six
+    more already-swept files (ai_win32_gui_runner 10, advanced_search_types 7, fuzz_smart_report 5,
+    win32_mcp_input_plan 4, ai_mcp_http_client 3+1, fuzz_hfs_reader 3). Two further candidates were
+    REJECTED by the adversarial pass.
+    A RECIPE COULD OPT OUT OF THE HIGH-RISK GATE BY MARKING THE STEP OPTIONAL -- untested either
+    way. executeWin32GuiSteps refuses a high-risk tool unconditionally, and only the ORDINARY
+    step-failure path honours `optional`; nothing proved the two do not interact. Recipes are
+    model-authored, so optional:true on a high-risk step is exactly the shape the gate exists for.
+    The same file's disallowed-tool and plan-failure paths both key their fatality on a NON-EMPTY
+    short_error, so an executor that flags the condition WITHOUT filling in a reason would have
+    been recorded ok:true and let the recipe report success; both fallback reasons are pinned now.
+    A VACUOUS TRAIT CHECK THE BINARY CANNOT DISPROVE: advanced_search_types asserted
+    is_copy_constructible_v at RUNTIME for four types whose copy-constructibility is already
+    gated by static_asserts in the header -- the binary only links because they held, so the
+    QVERIFYs can never observe false. They pin ASSIGNABILITY now, which nothing gates and which
+    AdvancedSearchController::setPreferences relies on (`m_preferences = prefs;`); adding a const
+    or reference member to any of those structs silently deletes operator= and flips them.
+    fuzz_smart_report: the harness's central equivalence compared assessHealth's verdict against
+    reportHasAssessableData -- the SAME predicate the production code decides Unknown with -- so
+    WIDENING the signal set moved both sides together and stayed silent. The identity-only,
+    phantom-attribute (`table:[null,{}]`) and null-NVMe-log payloads are pinned by name now, each
+    required to stay Unknown and to carry no clean bill of health. Also pinned: the per-attribute
+    `failing` flag as a second, independent producer of Critical that no test in the tree reached.
+    NOTED, NOT PINNED (a real fail-open, deliberately left visible): a drive promoted to Critical
+    solely by that failing flag ALSO collects "Drive health is good -- no action required",
+    because the flag arm appends no warning and generateRecommendations then falls through to the
+    clean-drive branch. Pinning it would fail against the tree as it stands, so it is recorded
+    here as a production defect rather than silently asserted away.
+    ai_mcp_http_client: isJsonRpcResponse is a three-arm predicate and every rejection fixture
+    missed ALL THREE at once, so no arm was isolated -- and the `error` half of its disjunction
+    was unpinned in BOTH directions, meaning a legitimate server-side JSON-RPC error could be
+    refused as "not a JSON-RPC response" and never reach explainJsonRpcError. The endpoint
+    validator's accept side is now proved with ZERO sockets: every control sends an oversize
+    argument tree, so a call that clears validation stops deterministically at the request-body
+    cap that sits between validation and any HTTP I/O.
+    fuzz_hfs_reader: the read invariant checked only a ceiling (<= cap), which stays green for a
+    reader that silently TRUNCATES every hostile fork to the cap; the exact listed size is pinned
+    now, plus a deterministic clamp-vs-refuse case on the clean fixture. And a bounded listing is
+    required to be an HONEST one -- re-listing at a cap of 1 must carry the exact truncation
+    warning, since !warnings.isEmpty() would pass vacuously on a fixture that already warns about
+    journal replay.
   - FINDING N8 2026-08-24 (GATE INTEGRITY, pre-existing, NOT introduced by b95): the exhaustive
     cppcheck hook silently analyzes NOTHING on any translation unit that reaches a
     Q_DECLARE_METATYPE. cppcheck reports it as `unknownMacro`, which is a CRITICAL error that

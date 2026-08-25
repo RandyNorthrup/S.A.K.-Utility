@@ -106,6 +106,21 @@ QString checkEntry(const QString& path, const sak::PartitionHfsFileEntry& entry)
             .arg(file.data.size())
             .arg(kFileReadCap);
     }
+    // The reader never clamps: an over-cap fork is refused outright
+    // (partition_hfs_internal.h:9126) and an ok read returns EXACTLY the fork's logical size
+    // (readForkBytes loops to remaining==0 and readAt fails on a short read, :10444/:10464),
+    // which the listing already reported as entry.size_bytes (:11851, :12032; a hard-link alias
+    // is enriched from the same inode the read resolves, :12048 vs :9099). The ceiling alone
+    // would stay green for a reader that silently truncated every hostile fork to the cap.
+    // A listed size of 0 is exempt: a decmpfs record carries data_size 0 and returns
+    // decompressed bytes (:8849).
+    if (file.ok && entry.size_bytes != 0 &&
+        static_cast<uint64_t>(file.data.size()) != entry.size_bytes) {
+        return QStringLiteral("readFile(%1) returned %2 bytes, not the listed size %3")
+            .arg(entry.path)
+            .arg(file.data.size())
+            .arg(entry.size_bytes);
+    }
     return {};
 }
 
@@ -123,6 +138,38 @@ QString hfsReaderInvariant(const QByteArray& input, const QDir& dir) {
     }
     if (!root.ok) {
         return {};
+    }
+
+    // A bounded listing must also be an HONEST one: childRecords scans one past the cap
+    // (partition_hfs_internal.h:11876) so an over-full directory is trimmed AND warned about
+    // (:11908-11912) instead of being reported as a complete listing. checkListing only proves
+    // the listing is not LARGER than the cap, which the trim guarantees unconditionally, and at
+    // kListEntryCap=256 the cap path is never entered. Re-list the same directory at a cap of 1
+    // whenever the full listing held more than one entry: the cap-1 scan visits a strict prefix
+    // of the records/nodes the cap-256 scan already accepted, so it can never raise a new blocker
+    // and can only fail where the full listing already failed (which returned above).
+    // Match the EXACT truncation string -- warnings are already non-empty on the accept-path
+    // fixture (load() appends a journal-replay warning, cf. test_partition_manager_core.cpp:3501),
+    // so a mere !warnings.isEmpty() check would pass vacuously.
+    if (root.entries.size() > 1) {
+        const auto capped =
+            sak::PartitionHfsFileSystemReader::listDirectoryFromImage(path, QString(), 1);
+        if (!capped.ok) {
+            return QStringLiteral("cap-1 listing failed where the cap-%1 listing succeeded: %2")
+                .arg(kListEntryCap)
+                .arg(capped.blockers.join(QStringLiteral("; ")));
+        }
+        if (capped.entries.size() != 1) {
+            return QStringLiteral("cap-1 listing returned %1 entries, expected exactly 1")
+                .arg(capped.entries.size());
+        }
+        if (!capped.warnings.contains(
+                QStringLiteral("HFS+ directory listing truncated at the entry cap; some entries "
+                               "were not listed"))) {
+            return QStringLiteral(
+                "cap-1 listing dropped entries but reported no truncation warning (a silently "
+                "truncated listing masquerading as complete)");
+        }
     }
     for (const auto& entry : root.entries) {
         if (const QString detail = checkEntry(path, entry); !detail.isEmpty()) {
@@ -187,14 +234,33 @@ private Q_SLOTS:
         // wrong size -- pin the whole listing.
         QCOMPARE(root.entries.size(), static_cast<qsizetype>(2));
         QCOMPARE(root.entries[0].name, QStringLiteral("Docs"));
+        QCOMPARE(root.entries[0].path, QStringLiteral("/Docs"));
+        QCOMPARE(root.entries[0].type, QStringLiteral("Directory"));
         QVERIFY(root.entries[0].directory);
         QVERIFY(!root.entries[0].regular_file);
         QCOMPARE(root.entries[0].catalog_id, static_cast<uint32_t>(16));
         QCOMPARE(root.entries[1].name, QStringLiteral("hello.txt"));
+        QCOMPARE(root.entries[1].path, QStringLiteral("/hello.txt"));
+        QCOMPARE(root.entries[1].type, QStringLiteral("File"));
         QVERIFY(root.entries[1].regular_file);
         QVERIFY(!root.entries[1].directory);
         QCOMPARE(root.entries[1].catalog_id, static_cast<uint32_t>(17));
         QCOMPARE(root.entries[1].size_bytes, static_cast<uint64_t>(15));
+
+        // Clamp-vs-refuse, pinned on the clean fixture: a cap at or above the file yields EXACTLY
+        // the fork bytes, and a cap below it is REFUSED with a reason and no data -- a reader that
+        // served a truncated prefix would satisfy the fuzz harness's "<= cap" ceiling forever.
+        const QString hello_path = root.entries[1].path;
+        const auto whole =
+            sak::PartitionHfsFileSystemReader::readFileFromImage(path, hello_path, kFileReadCap);
+        QVERIFY2(whole.ok, qPrintable(whole.blockers.join(QStringLiteral("; "))));
+        QCOMPARE(whole.data, QByteArrayLiteral("hello from hfs\n"));
+        QCOMPARE(static_cast<uint64_t>(whole.data.size()), root.entries[1].size_bytes);
+        const auto capped = sak::PartitionHfsFileSystemReader::readFileFromImage(
+            path, hello_path, static_cast<uint64_t>(4));
+        QVERIFY(!capped.ok);
+        QVERIFY(capped.data.isEmpty());
+        QVERIFY(capped.blockers.join(QStringLiteral(" ")).contains(QStringLiteral("read cap")));
     }
 };
 
