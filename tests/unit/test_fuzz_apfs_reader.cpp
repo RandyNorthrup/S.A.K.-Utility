@@ -201,6 +201,28 @@ private Q_SLOTS:
             QByteArray(kHeaderWindowBytes, '\xFF'),
             QByteArray(4096, '\0') + baseWindow.mid(4096),  // nx_superblock block zeroed
         };
+        // The three hand-built heads above are fixed inputs, so their refusal is knowable and is
+        // pinned BY NAME here rather than left to the generic fail-closed invariant. Each one
+        // destroys the nx_superblock magic at block 0, and the reader must refuse for THAT reason:
+        // if the magic gate (partition_apfs_file_system_reader.cpp:609-612) is deleted, every seed
+        // is still refused -- but by validateBlockGeometry downstream (:648-656) -- so the fuzz
+        // stays green while the reader no longer confirms it is looking at an APFS container
+        // before trusting the block-size and block-count fields it reads out of that block.
+        for (int i = 1; i < static_cast<int>(corpus.size()); ++i) {
+            const QByteArray& corruptHead = corpus[static_cast<size_t>(i)];
+            QVERIFY(overlayHeadWindow(workPath, baseWindow, corruptHead));
+            const auto refused = sak::PartitionApfsFileSystemReader::listDirectoryFromImage(
+                workPath, QStringLiteral("/"), kListEntryCap);
+            QVERIFY2(!refused.ok,
+                     qPrintable(QStringLiteral("corrupt seed %1 was accepted").arg(i)));
+            QVERIFY2(refused.entries.isEmpty(),
+                     qPrintable(QStringLiteral("corrupt seed %1 returned entries").arg(i)));
+            // The exact list, not contains(): a joined-substring probe would also accept the
+            // downstream geometry rejection standing in for the missing magic check.
+            QCOMPARE(refused.blockers,
+                     QStringList({QStringLiteral("APFS container superblock was not found")}));
+        }
+
         const sak::fuzz::Target target = [&workPath, &baseWindow](const QByteArray& input) {
             return apfsReaderInvariant(input, workPath, baseWindow);
         };
@@ -233,9 +255,27 @@ private Q_SLOTS:
         // listing. A membership-only contains() would still pass on a duplicate root.txt or an
         // inflated listing -- the count-inflation corruption this accept-path lock-in guards.
         QCOMPARE(root.entries.size(), 1);
-        QCOMPARE(root.entries.first().name, QStringLiteral("root.txt"));
-        QVERIFY(root.entries.first().regular_file);
-        QCOMPARE(root.entries.first().size_bytes, static_cast<uint64_t>(7));
+        const auto& rootEntry = root.entries.first();
+        QCOMPARE(rootEntry.name, QStringLiteral("root.txt"));
+        QCOMPARE(rootEntry.path, QStringLiteral("/root.txt"));
+        QVERIFY(rootEntry.regular_file);
+        QVERIFY(!rootEntry.directory);
+        QVERIFY(!rootEntry.symlink);
+        QCOMPARE(rootEntry.type, QStringLiteral("File"));
+        QCOMPARE(rootEntry.size_bytes, static_cast<uint64_t>(7));
+
+        // size_bytes above is inode METADATA -- it is not proof the read path returns the file's
+        // bytes. Pin the content: the writer stores root.txt in a block-aligned 4096-byte extent
+        // while the inode dstream size is 7, so the read clamp to the logical size is the only
+        // thing trimming the read back. Without it the reader hands back the whole block -- 4089
+        // bytes of trailing container content -- which the fuzz harness's `> kFileReadCap` check
+        // cannot see, because the cap (4096) IS the block size.
+        const auto file = sak::PartitionApfsFileSystemReader::readFileFromImage(workPath,
+                                                                                rootEntry.path,
+                                                                                kFileReadCap);
+        QVERIFY2(file.ok, qPrintable(file.blockers.join(QStringLiteral("; "))));
+        QVERIFY(!file.truncated);
+        QCOMPARE(file.data, QByteArrayLiteral("root me"));
     }
 };
 

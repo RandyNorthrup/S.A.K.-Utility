@@ -10,6 +10,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QTemporaryDir>
 #include <QTest>
 #include <QTimeZone>
@@ -43,6 +44,9 @@ private Q_SLOTS:
         auto result = writer.writeMessage(item, no_attachments, QString());
         QVERIFY(result.has_value());
 
+        // prefix_with_date=false + preserve_folders=false => exact deterministic destination
+        QCOMPARE(result.value(), temp_dir.path() + QStringLiteral("/PDF Test.pdf"));
+
         QFile file(result.value());
         QVERIFY(file.exists());
         QVERIFY(file.size() > 0);
@@ -51,6 +55,15 @@ private Q_SLOTS:
         QVERIFY(file.open(QIODevice::ReadOnly));
         QByteArray header = file.read(5);
         QCOMPARE(header, QByteArrayLiteral("%PDF-"));  // full 5-byte magic, not just "%PDF"
+
+        sak::PstItemDetail empty_body = item;
+        empty_body.body_plain.clear();
+        const auto empty_result = writer.writeMessage(empty_body, no_attachments, QString());
+        QVERIFY(empty_result.has_value());
+        QFile empty_file(empty_result.value());
+        QVERIFY(empty_file.exists());
+        QVERIFY2(file.size() > empty_file.size(),
+                 "plain-text body never reached the rendered page");
     }
 
     // ====================================================================
@@ -77,6 +90,17 @@ private Q_SLOTS:
         QFile file(result.value());
         QVERIFY(file.exists());
         QVERIFY(file.size() > 0);
+
+        sak::PstItemDetail bodyless = item;
+        bodyless.body_html.clear();
+        QTemporaryDir bodyless_dir;
+        QVERIFY(bodyless_dir.isValid());
+        sak::PdfEmailWriter bodyless_writer(bodyless_dir.path(), false, false);
+        const auto bodyless_result =
+            bodyless_writer.writeMessage(bodyless, no_attachments, QString());
+        QVERIFY(bodyless_result.has_value());
+        QVERIFY2(file.size() > QFileInfo(bodyless_result.value()).size(),
+                 "HTML body did not reach the rendered page");
     }
 
     // ====================================================================
@@ -102,6 +126,10 @@ private Q_SLOTS:
 
         QString expected = temp_dir.path() + "/Archive/2025";
         QVERIFY(QDir(expected).exists());
+        // The message must be written INTO the preserved subfolder -- a created-then-ignored
+        // directory (return m_output_dir instead of *target_dir) would still satisfy exists().
+        QCOMPARE(result.value(), expected + QStringLiteral("/Subfolder PDF.pdf"));
+        QVERIFY(QFile::exists(result.value()));
     }
 
     // ====================================================================
@@ -146,6 +174,23 @@ private Q_SLOTS:
         item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
 
         QVector<QPair<QString, QByteArray>> no_attachments;
+
+        auto result = writer.writeMessage(item, no_attachments, QString());
+        QVERIFY(result.has_value());
+        // The counter is the EXACT size of the file just committed (pdf_email_writer.cpp:267),
+        // not a proxy such as the HTML length and not merely "nonzero".
+        QCOMPARE(writer.totalBytesWritten(), QFileInfo(result.value()).size());
+
+        // The counter ACCUMULATES across messages, so a second write must SUM rather than
+        // replace. A single message cannot tell "+=" from "="; email_export_worker reads this
+        // value as a per-item delta (email_export_worker.cpp:968/983).
+        item.subject = QStringLiteral("Size Two");
+        item.body_plain = QStringLiteral("A different and noticeably longer second body.");
+        auto second = writer.writeMessage(item, no_attachments, QString());
+        QVERIFY(second.has_value());
+        QVERIFY(second.value() != result.value());
+        QCOMPARE(writer.totalBytesWritten(),
+                 QFileInfo(result.value()).size() + QFileInfo(second.value()).size());
         std::ignore = writer.writeMessage(item, no_attachments, QString());
         QVERIFY(writer.totalBytesWritten() > 0);
     }
@@ -170,6 +215,13 @@ private Q_SLOTS:
         QVERIFY(r1.has_value());
         QVERIFY(r2.has_value());
         QVERIFY(r3.has_value());
+        // Exact collision-resolution scheme: "X_1" is taken by the first message, so the
+        // second "X" keeps the free name "X.pdf" and the third must skip the occupied
+        // "X_1.pdf" and land on "X_2.pdf". Distinctness alone would also accept a resolver
+        // that suffixes every file.
+        QCOMPARE(QFileInfo(r1.value()).fileName(), QStringLiteral("X_1.pdf"));
+        QCOMPARE(QFileInfo(r2.value()).fileName(), QStringLiteral("X.pdf"));
+        QCOMPARE(QFileInfo(r3.value()).fileName(), QStringLiteral("X_2.pdf"));
         // Three DISTINCT files, all present at once (no clobber).
         QVERIFY(r1.value() != r2.value());
         QVERIFY(r2.value() != r3.value());
@@ -243,11 +295,18 @@ private Q_SLOTS:
         QVERIFY(bytes.contains("%%EOF"));
     }
 
-    // A subfolder path escaping the output directory must be refused.
+    // A subfolder path escaping the output directory must be refused -- and refused
+    // BEFORE any directory is created. The export root is nested one level inside the
+    // QTemporaryDir so "../escape" resolves to a path we own and that is auto-cleaned.
     void rejectsSubfolderTraversal() {
         QTemporaryDir temp_dir;
         QVERIFY(temp_dir.isValid());
-        sak::PdfEmailWriter writer(temp_dir.path(), false, true);
+        const QString root = temp_dir.filePath(QStringLiteral("root"));
+        QVERIFY(QDir().mkpath(root));
+        const QString escape_dir = temp_dir.filePath(QStringLiteral("escape"));
+        QVERIFY(!QDir(escape_dir).exists());  // precondition: nothing there yet
+
+        sak::PdfEmailWriter writer(root, false, true);
 
         sak::PstItemDetail item;
         item.subject = QStringLiteral("x");
@@ -258,6 +317,11 @@ private Q_SLOTS:
         auto result = writer.writeMessage(item, {}, QStringLiteral("../escape"));
         QVERIFY(!result.has_value());
         QCOMPARE(result.error(), sak::error_code::path_traversal_attempt);
+        // The lexical guard runs inside composeTargetDir(), before resolveTargetDirectory()
+        // reaches mkpath(). Moving it after mkpath would still return this error code, so
+        // the refusal is only proved by observing that nothing was created outside the root.
+        QVERIFY(!QDir(escape_dir).exists());
+        QVERIFY(QDir(root).entryList(QDir::AllEntries | QDir::NoDotAndDotDot).isEmpty());
     }
 };
 

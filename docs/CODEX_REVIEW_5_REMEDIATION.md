@@ -5024,6 +5024,50 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 SECOND-pass sweep b94 (gated 249/249): 42 weak assertions pinned across six
+    more already-swept files (firewall_rule_auditor 16, ai_workflow_store 11, pdf_email_writer 7,
+    dns_diagnostic_tool 5, fuzz_apfs_reader 3). Eight further candidates were REJECTED by the
+    adversarial pass -- including ALL FOUR proposed for fuzz_uup_manifest_guard, which is the
+    first file this campaign has confirmed clean rather than merely thin.
+    TWO MORE STATIC UPCASTS POSING AS ASSERTIONS: `dynamic_cast<QObject*>(&auditor) != nullptr`
+    appeared twice in firewall_rule_auditor (construction and cancel). Both classes publicly
+    derive from QObject, so that is a compile-time truth of every implementation. What was
+    actually unpinned is that the explicit ctor FORWARDS its parent to QObject -- the parent edge
+    is the only owner a heap-allocating caller gets -- and that cancel() does not WEDGE the
+    auditor: cancel only raises the cooperative flag, and if a later operation fails to clear it
+    the COM enumeration breaks out early and the emit gate suppresses rulesEnumerated permanently.
+    A DIFFERENTIAL THAT A DISCARDED BODY SURVIVES: pdf_email_writer's plain-text and HTML tests
+    asserted exists() + size() > 0, but the From/Date/Subject header table alone renders a valid
+    ~15 KB (plain) / ~4 KB (HTML) PDF -- so a writer that silently discarded EVERY body passed
+    both. Each now renders the identical message with the body cleared and requires the
+    body-bearing PDF to be strictly larger. The collision resolver was checked only for
+    distinctness, which a resolver that suffixes every file also satisfies; the exact scheme
+    ("X_1" taken -> the second "X" keeps "X.pdf" and the third lands on "X_2.pdf") is pinned now.
+    And the traversal refusal was proved only by the returned error code, which cannot distinguish
+    "refused before touching disk" from "created the escaping directory and THEN returned the
+    error" -- ordering is the entire point of a fail-closed guard, so the test now observes that
+    nothing was created outside the export root.
+    firewall_rule_auditor: rulesConflict is a conjunction over direction, action, enabled,
+    profiles, protocol, local ports, remote ports, service and application path -- and the fixture
+    left most of those EQUAL, so each arm could be deleted with the suite green. Every arm now
+    gets a disjoint pair of its own, plus the conservative directions that must never HIDE a
+    conflict (profiles == 0 means the mask was not read; Protocol::Other vs Other cannot be proven
+    distinct). The port helpers were probed only in the interior of a range and below the token
+    cap; the inclusive endpoints, the ports just outside them, and both sides of the 256-token
+    fail-safe are pinned -- noting the two helpers fail safe in OPPOSITE directions (portsOverlap
+    toward "overlap", localPortsCoverPort toward "covered").
+    ai_workflow_store: `category` was asserted NOWHERE in the repo, yet it is the workflow-tree
+    group label and part of the catalog line the model is shown -- isValid() and promptSummary()
+    never look at it, so a mis-keyed assignment was invisible. always_run was equally unpinned in
+    the parser: it is the flag the orchestrator uses to RE-EXECUTE an unrun phase after a cancel
+    or abort, so a defaults-true parser would replay destructive phases. rejectInvalidWorkflow
+    removed ONE field and matched a substring; all six required-field guards are now proved alone,
+    by exact message and exact error count.
+    dns_diagnostic_tool: the cache-parse fixture's single nameless row ALSO had null Data, so the
+    name.isEmpty() arm never decided anything and the empty-address arm was never reached -- each
+    skip arm now gets a row only it can reject. answersEquivalent was compared as a set, so a
+    resolver that flattened a CNAME chain into a repeated A record compared equivalent to the
+    single-record answer.
   - PROGRESS 2026-08-24 FIRST-pass sweep b93 (gated 249/249): 30 weak assertions pinned across the
     LAST four never-swept files plus two more (wifi_setup_script 11, reset_network 6,
     check_disk_errors 5, fuzz_ai_response 4, generate_system_report 2, optimize_power_settings 2).

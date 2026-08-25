@@ -53,6 +53,15 @@ void TestDnsDiagnosticTool::construction_default() {
     DnsDiagnosticTool tool;
     QVERIFY(tool.parent() == nullptr);
     QVERIFY(!std::is_copy_constructible_v<DnsDiagnosticTool>);
+
+    // The declared ctor takes an owner (dns_diagnostic_tool.h:28) and must forward it to QObject
+    // so the tool is destroyed with its owner. A default-constructed tool cannot see the argument
+    // at all, so construct WITH a parent and pin both the link and the ownership registration.
+    // `owner` is declared first so `owned` is destroyed (and de-registered) before it.
+    QObject owner;
+    DnsDiagnosticTool owned(&owner);
+    QCOMPARE(owned.parent(), &owner);
+    QVERIFY(owner.children().contains(&owned));
 }
 
 void TestDnsDiagnosticTool::construction_nonCopyable() {
@@ -148,6 +157,15 @@ void TestDnsDiagnosticTool::isSupportedRecordType_acceptsKnownRejectsUnknown() {
     QVERIFY(!DnsDiagnosticTool::isSupportedRecordType(QStringLiteral("AA")));
     QVERIFY(!DnsDiagnosticTool::isSupportedRecordType(QStringLiteral("XYZ")));
     QVERIFY(!DnsDiagnosticTool::isSupportedRecordType(QString()));
+    // The acceptance guard is the ONLY normalization boundary: mapRecordType
+    // (dns_diagnostic_tool.cpp:130) upper-cases and nothing else, then falls through to
+    // DNS_TYPE_A (:136). Anything this guard normalizes away that the mapper does not
+    // clears the gate at :294 and silently issues an A query labelled with the caller's
+    // raw string -- the R5-P10-31 coercion bug. Pin case folding as the only normalization.
+    QVERIFY(!DnsDiagnosticTool::isSupportedRecordType(QStringLiteral(" MX ")));
+    QVERIFY(!DnsDiagnosticTool::isSupportedRecordType(QStringLiteral("MX ")));
+    QVERIFY(!DnsDiagnosticTool::isSupportedRecordType(QStringLiteral(" A")));
+    QVERIFY(!DnsDiagnosticTool::isSupportedRecordType(QStringLiteral("\tPTR\n")));
 }
 
 void TestDnsDiagnosticTool::isNumericIpv4_acceptsValidRejectsNonNumeric() {
@@ -171,6 +189,32 @@ void TestDnsDiagnosticTool::answersEquivalent_orderInsensitive() {
     QVERIFY(DnsDiagnosticTool::answersEquivalent(a, reordered));  // round-robin still agrees
     QVERIFY(!DnsDiagnosticTool::answersEquivalent(a, different));
     QVERIFY(!DnsDiagnosticTool::answersEquivalent(a, shorter));
+    // Multiset, not set: a hijacking/misconfigured resolver that flattens a CNAME chain into a
+    // repeated A record must NOT compare equivalent to the single-record answer, and two same-size
+    // answers with the same members but different duplicate counts must disagree. A de-duplicating
+    // QSet compare collapses both cases (the size guard alone only catches the first).
+    const QVector<QString> duplicated = {QStringLiteral("1.1.1.1"), QStringLiteral("1.1.1.1")};
+    QVERIFY(!DnsDiagnosticTool::answersEquivalent(duplicated, shorter));
+    const QVector<QString> twoOnes = {QStringLiteral("1.1.1.1"),
+                                      QStringLiteral("1.1.1.1"),
+                                      QStringLiteral("2.2.2.2")};
+    const QVector<QString> twoTwos = {QStringLiteral("1.1.1.1"),
+                                      QStringLiteral("2.2.2.2"),
+                                      QStringLiteral("2.2.2.2")};
+    QVERIFY(!DnsDiagnosticTool::answersEquivalent(twoOnes, twoTwos));
+    // ...while a duplicate-carrying answer still agrees with its own round-robin reordering.
+    const QVector<QString> twoOnesReordered = {QStringLiteral("2.2.2.2"),
+                                               QStringLiteral("1.1.1.1"),
+                                               QStringLiteral("1.1.1.1")};
+    QVERIFY(DnsDiagnosticTool::answersEquivalent(twoOnes, twoOnesReordered));
+    // Two resolvers that both legitimately return an EMPTY answer set agree; the first success
+    // sets the baseline even when empty (dns_diagnostic_tool.cpp:352-357) and every later success
+    // is compared against it, so a fail-closed empty check here would fabricate a disagreement.
+    const QVector<QString> empty;
+    QVERIFY(DnsDiagnosticTool::answersEquivalent(empty, empty));
+    // An empty answer set is still NOT equivalent to a populated one (size guard, both directions).
+    QVERIFY(!DnsDiagnosticTool::answersEquivalent(empty, a));
+    QVERIFY(!DnsDiagnosticTool::answersEquivalent(a, empty));
 }
 
 // ===================================================================
@@ -199,14 +243,22 @@ void TestDnsDiagnosticTool::parseDnsCache_singleBareObject() {
 
 void TestDnsDiagnosticTool::parseDnsCache_skipsNullDataAndEmptyName() {
     // A real Get-DnsClientCache dump mixes resolved records with negative-cache / pending entries
-    // that carry a null Data or an empty Name; only the resolved (name, address) pair is useful.
+    // that carry a null Data, an empty Data, or an empty Name; only the resolved (name, address)
+    // pair is useful. Each skip arm gets a row that ONLY it can reject, so no guard is masked by
+    // a sibling (the old fixture's single nameless row also had null Data, so the name.isEmpty()
+    // arm never decided anything and the empty-address arm was never reached at all):
+    //   row 2 -- empty Name WITH a real address -> only name.isEmpty() can drop it
+    //   row 3 -- named record with empty-string Data -> only address.isEmpty() can drop it
+    //   row 4 -- named record with null Data -> only !data.isString() can drop it
     const QString json = QStringLiteral(R"([{"Name":"good.example","Data":"1.1.1.1"},)"
-                                        R"({"Name":"","Data":null},)"
-                                        R"({"Name":"pending.example","Data":null}])");
+                                        R"({"Name":"","Data":"2.2.2.2"},)"
+                                        R"({"Name":"blank.example","Data":""},)"
+                                        R"({"Name":"pending.example","Data":null},)"
+                                        R"({"Name":"","Data":null}])");
     const auto entries = DnsDiagnosticTool::parseDnsClientCacheJson(json);
-    QCOMPARE(entries.size(), qsizetype(1));
-    QCOMPARE(entries.at(0).first, QStringLiteral("good.example"));
-    QCOMPARE(entries.at(0).second, QStringLiteral("1.1.1.1"));
+    const QVector<QPair<QString, QString>> expected = {
+        {QStringLiteral("good.example"), QStringLiteral("1.1.1.1")}};
+    QCOMPARE(entries, expected);
 }
 
 void TestDnsDiagnosticTool::parseDnsCache_emptyInputIsEmptyCache() {
