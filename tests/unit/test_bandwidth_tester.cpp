@@ -23,7 +23,7 @@ private Q_SLOTS:
     void serverNotRunning_initially();
     void cancel_doesNotCrash();
     void stopServer_withoutStart();
-    void isIperf3Available_returnsBool();
+    void isIperf3Available_matchesBundledToolOnDisk();
     void bandwidthTestResult_defaults();
 
     // -- composeFirewallRuleName (per-instance uniqueness, B9-16) --
@@ -35,6 +35,7 @@ private Q_SLOTS:
     void parseIperf_rejectsGarbage();
     void parseIperf_rejectsJsonWithoutEndSummary();
     void parseIperf_acceptsValidTcpResult();
+    void parseIperf_acceptsUdpResultFromEndSum();
 
     // -- composeNetshPath (absolute netsh, fail closed on empty root) --
     void netshPath_absoluteUnderSystemRoot();
@@ -103,11 +104,38 @@ void TestBandwidthTester::stopServer_withoutStart() {
     QVERIFY(!tester.isServerRunning());
 }
 
-void TestBandwidthTester::isIperf3Available_returnsBool() {
+void TestBandwidthTester::isIperf3Available_matchesBundledToolOnDisk() {
+    // isIperf3Available() is not an "either": it is exactly "did findIperf3Path resolve one
+    // of its three fixed candidates under applicationDirPath". Recompute that answer here,
+    // independently of the function under test, instead of discarding it via Q_UNUSED.
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QString bundled = appDir + QStringLiteral("/tools/iperf3/iperf3.exe");
+    const QStringList candidates = {
+        bundled,
+        appDir + QStringLiteral("/../tools/iperf3/iperf3.exe"),
+        appDir + QStringLiteral("/iperf3.exe"),
+    };
+    bool anyCandidateOnDisk = false;
+    for (const QString& candidate : candidates) {
+        if (QFileInfo::exists(candidate)) {
+            anyCandidateOnDisk = true;
+            break;
+        }
+    }
+
     BandwidthTester tester;
-    const bool available = tester.isIperf3Available();
-    Q_UNUSED(available);
-    // Verify it returns without crashing; result depends on tools/ dir
+    QCOMPARE(tester.isIperf3Available(), anyCandidateOnDisk);
+
+    // The Release test binary is emitted into the app output dir (tests/CMakeLists.txt:22,
+    // :6646), where the sak_utility POST_BUILD tools-bundle copy (CMakeLists.txt:1460-1468)
+    // deploys tools/iperf3/iperf3.exe. Whenever that bundle is on disk the answer must be a
+    // definite yes: dropping that candidate from findIperf3Path would make startIperfServer
+    // (bandwidth_tester.cpp:273) and runIperfTest (:429) report "iPerf3 not found" for a
+    // perfectly deployed tool. Scoped to the file's presence so the check is inert, never
+    // wrong, in a layout that has no deployed bundle.
+    if (QFileInfo::exists(bundled)) {
+        QVERIFY2(tester.isIperf3Available(), qPrintable(bundled));
+    }
     QVERIFY(!tester.isServerRunning());
 }
 
@@ -124,6 +152,22 @@ void TestBandwidthTester::bandwidthTestResult_defaults() {
     QCOMPARE(result.durationSec, 0);
     QCOMPARE(result.parallelStreams, 0);
     QVERIFY(!result.reverseMode);
+    // tcpWindowSize has NO writer anywhere in the codebase -- parseIperfJson
+    // (bandwidth_tester.cpp:518) default-constructs its result and never assigns it
+    // (the ":528 Parse TCP window size" comment is stale), so the header's = 0.0 is
+    // the field's only value and it rides the SUCCESS path to the panel via :484/:492.
+    QCOMPARE(result.tcpWindowSize, 0.0);
+
+    // A failed run must not render as data: runIperfTest sets timestamp ONLY on the
+    // success path (bandwidth_tester.cpp:490), so the default must stay null or every
+    // testComplete({}) failure exit (:431/:437/:451/:456/:463/:471/:481) would carry a
+    // fresh, real-looking time.
+    QVERIFY(!result.timestamp.isValid());
+
+    // Pin the emission form used by those failure exits, not just default-init:
+    // testComplete({}) value-initializes, and that zero/null result IS the contract.
+    QCOMPARE(BandwidthTestResult{}.tcpWindowSize, 0.0);
+    QVERIFY(!BandwidthTestResult{}.timestamp.isValid());
 }
 
 // ===================================================================
@@ -135,6 +179,16 @@ void TestBandwidthTester::firewallRuleName_containsPortAndToken() {
     QCOMPARE(name, QStringLiteral("SAK_Utility_iPerf3_5201_abc123"));
     // Same inputs -> stable name (so create and remove match).
     QCOMPARE(name, BandwidthTester::composeFirewallRuleName(5201, QStringLiteral("abc123")));
+
+    // The CALLER-supplied port must reach the name -- not netdiag::kDefaultIperfPort.
+    // startIperfServer() feeds the same port to this name and to netsh "localport="
+    // (bandwidth_tester.cpp:291-292, :700), so a name pinned only at the default value
+    // cannot tell a real port-routed name from a hardcoded default (B9-16 cross-deletion).
+    QCOMPARE(BandwidthTester::composeFirewallRuleName(5202, QStringLiteral("abc123")),
+             QStringLiteral("SAK_Utility_iPerf3_5202_abc123"));
+    // Distinct ports (same token) must yield distinct rule names.
+    QVERIFY(BandwidthTester::composeFirewallRuleName(5202, QStringLiteral("abc123")) !=
+            BandwidthTester::composeFirewallRuleName(5201, QStringLiteral("abc123")));
 }
 
 void TestBandwidthTester::firewallRuleName_uniquePerToken() {
@@ -180,6 +234,29 @@ void TestBandwidthTester::parseIperf_acceptsValidTcpResult() {
     QCOMPARE(r->downloadMbps, 90.0);  // 90 Mbit/s
     QCOMPARE(r->retransmissions, 2.0);
 }
+void TestBandwidthTester::parseIperf_acceptsUdpResultFromEndSum() {
+    // A UDP run (`iperf3 -u -J`) carries throughput ONLY in end.sum -- it has no
+    // sum_sent/sum_received. Two things must hold or B9-18 is violated for UDP:
+    //   (a) the third arm of the hasThroughput gate (bandwidth_tester.cpp:513) must
+    //       ACCEPT this shape, else a successful UDP test is reported as
+    //       "iPerf3 completed but returned unparseable output" (bandwidth_tester.cpp:479);
+    //   (b) the UDP field block (bandwidth_tester.cpp:549-558) must fill
+    //       upload/download/jitter/loss, else the run reads as a bogus all-zero
+    //       "success" because lines 524-526 find no sum_sent/sum_received.
+    const QByteArray json = QByteArrayLiteral(
+        "{\"end\":{\"sum\":{\"bits_per_second\":50000000,\"jitter_ms\":1.5,"
+        "\"lost_percent\":2.5}}}");
+    const auto r = BandwidthTester::parseIperfJson(json);
+    QVERIFY(r.has_value());
+    // UDP throughput is symmetric: the single end.sum figure feeds both directions.
+    QCOMPARE(r->uploadMbps, 50.0);    // 50 Mbit/s
+    QCOMPARE(r->downloadMbps, 50.0);  // 50 Mbit/s
+    QCOMPARE(r->jitterMs, 1.5);
+    QCOMPARE(r->packetLossPercent, 2.5);
+    // No TCP retransmit counter exists on a UDP run.
+    QCOMPARE(r->retransmissions, 0.0);
+}
+
 
 // ===================================================================
 // composeNetshPath -- absolute path only, fail closed on empty root

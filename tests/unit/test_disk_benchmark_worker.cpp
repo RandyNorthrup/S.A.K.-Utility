@@ -41,6 +41,11 @@ private Q_SLOTS:
     // Codex-3 disk:214-228: an absurdly large test-file size must fail closed before
     // total_bytes = size_mb * 1 MiB can wrap size_t.
     void execute_oversizedTestFile_failsClosed();
+    void execute_sizeJustBelowMinimum_failsClosed();
+    void execute_zeroSequentialPasses_failsClosed();
+    void execute_sequentialPassesAboveMax_failsClosed();
+    void execute_zeroRandomDuration_failsClosed();
+    void execute_outOfRangeQueueDepth_failsClosed();
     // Codex-2 diagnostic_types:254: configured block sizes are wired into the
     // I/O sizing via effectiveBlockBytes -- validate/align, fail closed.
     void effectiveBlockBytes_failsClosedOnNonpositive();
@@ -52,8 +57,21 @@ private Q_SLOTS:
 
 void TestDiskBenchmarkWorker::construction_default() {
     DiskBenchmarkWorker worker;
+    // Default-constructed: the default argument is nullptr, so this documents the
+    // default rather than testing forwarding (see the parented case below).
     QVERIFY(worker.parent() == nullptr);
     QVERIFY(!worker.isRunning());
+
+    // DiagnosticController owns its worker via `std::make_unique<DiskBenchmarkWorker>(this)`
+    // (diagnostic_controller.cpp:68), so the ctor MUST forward its parent through
+    // WorkerBase -> QThread(parent) (disk_benchmark_worker.cpp:316, worker_base.cpp:17).
+    // Dropping the argument would leave every production worker outside its owner's
+    // object tree -- no destruction-time ownership, no Qt thread-affinity binding.
+    // `owner` is declared first so the child unparents itself at scope exit.
+    QObject owner;
+    DiskBenchmarkWorker parented(&owner);
+    QCOMPARE(parented.parent(), &owner);
+    QVERIFY(owner.children().contains(&parented));
 }
 
 void TestDiskBenchmarkWorker::construction_isWorkerBase() {
@@ -98,10 +116,28 @@ void TestDiskBenchmarkWorker::config_fieldAssignment() {
 void TestDiskBenchmarkWorker::result_initialDefaults() {
     DiskBenchmarkWorker worker;
     const auto& result = worker.result();
+    // m_result has no brace-init (disk_benchmark_worker.h:233) and the ctor does not
+    // touch it (disk_benchmark_worker.cpp:316), so every zero below comes solely from the
+    // NSDMIs at diagnostic_types.h:263-295. Pin ALL of the numeric defaults, not a subset:
+    // rand_4k_qd32_*_iops are 60% of calculateScore (disk_benchmark_worker.cpp:1161-1164),
+    // and drive_capacity_bytes is left untouched when bytesTotal() <= 0 (:469-472), so on
+    // an early-return run (:326/:334/:340, all before the :345 reset) a lost default is
+    // handed to the UI as a real capacity.
+    QCOMPARE(result.drive_capacity_bytes, static_cast<uint64_t>(0));
     QCOMPARE(result.seq_read_mbps, 0.0);
     QCOMPARE(result.seq_write_mbps, 0.0);
     QCOMPARE(result.rand_4k_read_mbps, 0.0);
     QCOMPARE(result.rand_4k_write_mbps, 0.0);
+    QCOMPARE(result.rand_4k_read_iops, 0.0);
+    QCOMPARE(result.rand_4k_write_iops, 0.0);
+    QCOMPARE(result.rand_4k_qd32_read_mbps, 0.0);
+    QCOMPARE(result.rand_4k_qd32_write_mbps, 0.0);
+    QCOMPARE(result.rand_4k_qd32_read_iops, 0.0);
+    QCOMPARE(result.rand_4k_qd32_write_iops, 0.0);
+    QCOMPARE(result.avg_read_latency_us, 0.0);
+    QCOMPARE(result.avg_write_latency_us, 0.0);
+    QCOMPARE(result.p99_read_latency_us, 0.0);
+    QCOMPARE(result.p99_write_latency_us, 0.0);
 }
 
 void TestDiskBenchmarkWorker::result_scores_initiallyZero() {
@@ -174,6 +210,122 @@ void TestDiskBenchmarkWorker::execute_oversizedTestFile_failsClosed() {
     QVERIFY(!result.has_value());
     QCOMPARE(static_cast<int>(result.error()), static_cast<int>(sak::error_code::invalid_argument));
 }
+// disk_benchmark_worker.cpp:411 is a BOUND (`< kMinTestFileSizeMb`, 16 at :71), not a
+// zero-check: 15 MB is refused too. Narrowed to `== 0` it would admit the 1..15 MB files
+// the comment at :67-71 says leave too few random-block slots.
+void TestDiskBenchmarkWorker::execute_sizeJustBelowMinimum_failsClosed() {
+    DiskExecProbe worker;
+    DiskBenchmarkConfig config;
+    config.drive_path = QStringLiteral("C:\\");
+    config.test_file_size_mb = 15;  // kMinTestFileSizeMb (16) - 1
+    // Valid but cheap, so a regressed guard fails here instead of benchmarking the disk.
+    config.sequential_passes = 1;
+    config.random_duration_sec = 1;
+    worker.setConfig(config);
+
+    const auto result = worker.runExecute();
+    QVERIFY(!result.has_value());
+    QCOMPARE(static_cast<int>(result.error()), static_cast<int>(sak::error_code::invalid_argument));
+}
+
+// disk_benchmark_worker.cpp:423, low half. 0 passes makes the measurement loops at :713
+// and :789 no-ops, leaving best_mbps at its 0.0 init and reporting a 0 MB/s benchmark as
+// SUCCESS -- the fail-open the comment at :76-77 says this guard exists to stop.
+void TestDiskBenchmarkWorker::execute_zeroSequentialPasses_failsClosed() {
+    DiskExecProbe worker;
+    DiskBenchmarkConfig config;
+    config.drive_path = QStringLiteral("C:\\");
+    config.test_file_size_mb = 16;  // kMinTestFileSizeMb: accepted, and cheap
+    config.sequential_passes = 0;
+    config.random_duration_sec = 1;
+    worker.setConfig(config);
+
+    const auto result = worker.runExecute();
+    QVERIFY(!result.has_value());
+    QCOMPARE(static_cast<int>(result.error()), static_cast<int>(sak::error_code::invalid_argument));
+}
+
+// disk_benchmark_worker.cpp:423, high half (kMaxSequentialPasses == 1000 at :78).
+void TestDiskBenchmarkWorker::execute_sequentialPassesAboveMax_failsClosed() {
+    DiskExecProbe worker;
+    DiskBenchmarkConfig config;
+    config.drive_path = QStringLiteral("C:\\");
+    config.test_file_size_mb = 16;
+    config.sequential_passes = 1001;  // kMaxSequentialPasses (1000) + 1
+    config.random_duration_sec = 1;
+    worker.setConfig(config);
+
+    const auto result = worker.runExecute();
+    QVERIFY(!result.has_value());
+    QCOMPARE(static_cast<int>(result.error()), static_cast<int>(sak::error_code::invalid_argument));
+}
+
+// disk_benchmark_worker.cpp:429: a 0-second random duration measures nothing and still
+// reports a figure (kMaxRandomDurationSec == 3600 at :79 caps the * 1000 overflow).
+void TestDiskBenchmarkWorker::execute_zeroRandomDuration_failsClosed() {
+    DiskExecProbe worker;
+    DiskBenchmarkConfig config;
+    config.drive_path = QStringLiteral("C:\\");
+    config.test_file_size_mb = 16;
+    config.sequential_passes = 1;
+    config.random_duration_sec = 0;
+    worker.setConfig(config);
+
+    const auto result = worker.runExecute();
+    QVERIFY(!result.has_value());
+    QCOMPARE(static_cast<int>(result.error()), static_cast<int>(sak::error_code::invalid_argument));
+}
+
+// disk:444-458: queue_depth_low/high are caller-supplied (setConfig copies the config
+// verbatim), not invariants. runRandom4KRead/Write size an aligned buffer as
+// block_bytes * queue_depth (disk_benchmark_worker.cpp:878, :1093) and loop queue_depth
+// times (:994), so a depth of 0 would issue zero ops per iteration and still report IOPS,
+// and an unbounded depth is an unbounded allocation; the Q_ASSERT_X backstop at :867 is
+// compiled out in Release. execute() must therefore reject the depth up front.
+// Size/passes/duration are all in range here, so invalid_argument can ONLY come from
+// validateQueueDepths: if that guard were dropped, execute() would fall through to
+// validateDriveAndSpace and report invalid_path for this non-existent volume. The bogus
+// volume path also guarantees no benchmark file is ever created, on either path.
+void TestDiskBenchmarkWorker::execute_outOfRangeQueueDepth_failsClosed() {
+    const QString kUnusableVolume =
+        QStringLiteral("\\\\?\\Volume{ffffffff-ffff-ffff-ffff-ffffffffffff}\\");
+
+    // Zero depth: buffer of 0 bytes and a loop that measures nothing.
+    {
+        DiskExecProbe worker;
+        DiskBenchmarkConfig config;
+        config.drive_path = kUnusableVolume;
+        config.test_file_size_mb = 64;  // inside [16, 1024*1024]
+        config.queue_depth_low = 0;
+        worker.setConfig(config);
+
+        const auto result = worker.runExecute();
+        QVERIFY(!result.has_value());
+        QCOMPARE(static_cast<int>(result.error()),
+                 static_cast<int>(sak::error_code::invalid_argument));
+        // execute() records the target drive (disk_benchmark_worker.cpp:346) only after
+        // validation passes, so an empty drive_path proves it stopped at the guard and
+        // never entered a benchmark phase.
+        QVERIFY(worker.result().drive_path.isEmpty());
+    }
+
+    // Above kMaxQueueDepth (1024): an unbounded depth is an unbounded allocation.
+    {
+        DiskExecProbe worker;
+        DiskBenchmarkConfig config;
+        config.drive_path = kUnusableVolume;
+        config.test_file_size_mb = 64;
+        config.queue_depth_high = 1025;
+        worker.setConfig(config);
+
+        const auto result = worker.runExecute();
+        QVERIFY(!result.has_value());
+        QCOMPARE(static_cast<int>(result.error()),
+                 static_cast<int>(sak::error_code::invalid_argument));
+        QVERIFY(worker.result().drive_path.isEmpty());
+    }
+}
+
 
 // A nonpositive configured block size is invalid: effectiveBlockBytes must
 // return 0 (fail closed) so execute() aborts rather than running a benchmark
@@ -191,6 +343,14 @@ void TestDiskBenchmarkWorker::effectiveBlockBytes_rejectsOutOfRange() {
     // Above max and below min both fail closed (previously clamped to a bound).
     QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(4096, 4, 64), static_cast<size_t>(0));
     QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(1, 4, 64), static_cast<size_t>(0));
+    // The bounds are EXACT, not fuzzy: the first value past each bound is rejected.
+    // The sector round-up (:609-612) happens after the range check and must never
+    // widen it, so 65 KiB is not "close enough" to the 64 KiB max to be admitted.
+    QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(65, 4, 64), static_cast<size_t>(0));
+    QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(3, 4, 64), static_cast<size_t>(0));
+    // Inverted bounds (min > max) and a nonpositive min fail closed, never clamp-UB.
+    QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(8, 64, 4), static_cast<size_t>(0));
+    QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(8, 0, 64), static_cast<size_t>(0));
     // Inverted bounds (min > max) and a nonpositive min fail closed, never clamp-UB.
     QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(8, 64, 4), static_cast<size_t>(0));
     QCOMPARE(DiskBenchmarkWorker::effectiveBlockBytes(8, 0, 64), static_cast<size_t>(0));

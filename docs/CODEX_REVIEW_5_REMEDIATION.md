@@ -5024,6 +5024,58 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - FINDING N8 2026-08-24 (GATE INTEGRITY, pre-existing, NOT introduced by b95): the exhaustive
+    cppcheck hook silently analyzes NOTHING on any translation unit that reaches a
+    Q_DECLARE_METATYPE. cppcheck reports it as `unknownMacro`, which is a CRITICAL error that
+    abandons the whole TU -- "Active checkers: 4/186" -- while the hook still prints "PASSED:
+    cppcheck analysis clean" and exits 0. This is the SAME defect class as N7 with a different
+    macro: N7's fix (spelling Q_SLOTS) does not help here, because the macro sits in a production
+    header the test includes, not in the test. Measured on tests/unit/test_bandwidth_tester.cpp,
+    which reaches include/sak/network_diagnostic_types.h:511: 4/186 at HEAD, and 174/186 with
+    `-DQ_DECLARE_METATYPE(x)=` added to the hook's define list, with zero findings on that file.
+    Confirmed pre-existing by running the same command against the HEAD copy (also 4/186). OPEN:
+    the one-line hook fix is verified, but the blast radius (how many TUs across tests/ and src/
+    are currently unanalyzed, and what the newly-enabled checkers report) is NOT yet measured, so
+    it gets its own gated commit rather than riding on a test-assertion batch.
+  - PROGRESS 2026-08-24 SECOND-pass sweep b95 (gated 249/249): 32 weak assertions pinned across six
+    more already-swept files (ethernet_config_manager 7, bandwidth_tester 6, flash_coordinator 5,
+    disk_benchmark_worker 5, image_source 5, fuzz_mcp_framing 4). Three further candidates were
+    REJECTED by the adversarial pass.
+    A RAW-DISK GUARD WITH ZERO TEST REFERENCES ANYWHERE. validateTargets refuses duplicate flash
+    targets with TWO independent guards: string equality, and physical-disk IDENTITY. The fixture
+    passed the same literal twice, so only the first ever fired -- and a repo-wide grep for
+    firstDuplicatePhysicalDrive found it referenced ONLY in the header and its own definition,
+    never in tests. "\\.\PhysicalDriveN" and "\\?\PhysicalDriveN" are different strings naming ONE
+    disk, so deleting the identity guard admits them both and two raw writers interleave on the
+    same physical disk -- the exact corruption the test's own comment claims to cover. Pinned as a
+    WIRING test (through startFlash), because a seam-only test would stay green under a deleted
+    call site.
+    A REFUSAL THAT COULD HAVE WEDGED THE COORDINATOR: the empty-target guard deliberately runs
+    BEFORE beginFlashClaim() publishes Validating, and nothing on that early-return path releases
+    a claim. The test observed only the return value and the error text, which are identical
+    either way; reordering the guard after the claim would leave m_state Validating forever, so
+    every later startFlash is refused with "already in progress". state()/isFlashing() and a
+    second call are pinned now. Same shape in testCancelWhenIdle: an idle cancel must be a
+    COMPLETE no-op, and state() alone cannot tell that apart from a Cancelled broadcast to every
+    listener -- the panel drives its UI off exactly those signals, so an idle coordinator that
+    announced Cancelled would render a finished run with nothing behind it.
+    fuzz_mcp_framing: the harness asserted only `consumed > 0` on an accepted frame, but the exact
+    count is DERIVABLE from the input the harness already holds (4-byte prefix + the little-endian
+    body length). A header-only or off-by-one consume desyncs every caller that erases `consumed`
+    and re-parses, silently, on every mutated input. And parseJsonLine's accepted object is now
+    compared against the document re-parsed from the INPUT BYTES, so a version that MANUFACTURES
+    the "2.0" tag instead of refusing -- the fail-open normalization -- adds a key the input never
+    carried and trips on every mutant that reaches it.
+    bandwidth_tester: isIperf3Available's result was computed and then discarded via Q_UNUSED, so
+    the function was never actually asserted; it is recomputed independently from the three fixed
+    candidate paths now, and required to be a definite yes whenever the deployed bundle is on
+    disk. UDP runs carry throughput ONLY in end.sum and have no sum_sent/sum_received, so that
+    whole arm of the parser was unexercised -- a successful UDP test would have been reported as
+    unparseable output, or as a bogus all-zero success.
+    disk_benchmark_worker: the size guard is a BOUND (< 16 MB), not a zero-check, and only the
+    oversized side was tested; the queue-depth guards were not tested at all, though a depth of 0
+    issues zero ops per iteration while still reporting IOPS, and an unbounded depth is an
+    unbounded allocation whose Q_ASSERT_X backstop is compiled out in Release.
   - PROGRESS 2026-08-24 SECOND-pass sweep b94 (gated 249/249): 42 weak assertions pinned across six
     more already-swept files (firewall_rule_auditor 16, ai_workflow_store 11, pdf_email_writer 7,
     dns_diagnostic_tool 5, fuzz_apfs_reader 3). Eight further candidates were REJECTED by the

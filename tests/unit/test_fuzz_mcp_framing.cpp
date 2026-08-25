@@ -31,13 +31,19 @@
 #include "../fuzz/fuzz_harness.h"
 
 #include <QByteArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QString>
+#include <QtEndian>
 #include <QtTest/QtTest>
 
 #include <vector>
 
 namespace {
+
+// Width of the native-messaging length prefix; parseFrame consumes this plus the body
+// length it decodes out of those same bytes.
+constexpr int kFramePrefixBytes = 4;
 
 // Seed corpus for parseFrame: valid frames, a truncated frame, a zero-length prefix,
 // and an oversized length prefix -- the boundaries the length check guards.
@@ -75,8 +81,22 @@ QString nativeFrameInvariant(const QByteArray& input) {
             .arg(input.size());
     }
     using Status = sak::win32mcp::NativeFrame::Status;
-    if (frame.status == Status::Ok && frame.consumed <= 0) {
-        return QStringLiteral("parseFrame returned Ok but consumed no bytes");
+    if (frame.status == Status::Ok) {
+        // Ok proves the 4-byte prefix was present and drove the decode, so the exact consumed
+        // count is derivable from the input this harness already holds: prefix + the
+        // little-endian body length. Pinning the VALUE, not just "> 0", is what catches a
+        // header-only or off-by-one consume -- the desync every caller that erases `consumed`
+        // and re-parses would suffer, silently, on every one of these mutated inputs.
+        const auto declared = static_cast<qint64>(
+            qFromLittleEndian<quint32>(reinterpret_cast<const uchar*>(input.constData())));
+        const qint64 expected = kFramePrefixBytes + declared;
+        if (frame.consumed != expected) {
+            return QStringLiteral("parseFrame Ok consumed %1, expected %2 + %3 = %4")
+                .arg(frame.consumed)
+                .arg(kFramePrefixBytes)
+                .arg(declared)
+                .arg(expected);
+        }
     }
     if (frame.status == Status::NeedMore && frame.consumed != 0) {
         return QStringLiteral("parseFrame returned NeedMore but consumed %1 bytes")
@@ -102,6 +122,18 @@ QString jsonRpcInvariant(const QByteArray& input) {
     if (!parsed.isEmpty() &&
         parsed.value(QStringLiteral("jsonrpc")).toString() != QLatin1String("2.0")) {
         return QStringLiteral("parseJsonLine accepted a message without the 2.0 version tag");
+    }
+    if (!parsed.isEmpty()) {
+        // Expectation derived from the INPUT bytes, not from the object the parser handed back:
+        // parseJsonLine returns doc.object() intact, so an accepted message must be exactly the
+        // document that arrived on the wire. A version that MANUFACTURES the "2.0" tag instead
+        // of refusing -- the fail-open normalization -- adds a key the input never carried and
+        // trips here on every mutant that reaches it.
+        const QJsonObject source = QJsonDocument::fromJson(input.trimmed()).object();
+        if (parsed != source) {
+            return QStringLiteral(
+                "parseJsonLine returned an object the input bytes did not contain");
+        }
     }
     return {};
 }
@@ -140,6 +172,34 @@ class McpFramingFuzzTests : public QObject {
 
 private Q_SLOTS:
     void nativeMessagingFrameNeverMisframes() {
+        // The fuzz invariant is one-directional (it never asserts a specific status), so pin the
+        // deterministic seed table by name: each corpus entry's exact status and consumed count.
+        using Status = sak::win32mcp::NativeFrame::Status;
+        const std::vector<QByteArray> corpus = nativeFrameCorpus();
+        // Empty buffer: cannot even read the length prefix.
+        QCOMPARE(sak::win32mcp::parseFrame(corpus.at(0)).status, Status::NeedMore);
+        // Two well-formed frames decode and consume the whole buffer (non-vacuity: proves the
+        // table is not satisfiable by a decoder that rejects everything).
+        QCOMPARE(sak::win32mcp::parseFrame(corpus.at(1)).status, Status::Ok);
+        QCOMPARE(sak::win32mcp::parseFrame(corpus.at(1)).consumed,
+                 static_cast<int>(corpus.at(1).size()));
+        QCOMPARE(sak::win32mcp::parseFrame(corpus.at(2)).status, Status::Ok);
+        QCOMPARE(sak::win32mcp::parseFrame(corpus.at(2)).consumed,
+                 static_cast<int>(corpus.at(2).size()));
+        // Declared length 4, body absent: a SHORT READ, not a framing failure. This is the
+        // smallest in-range length, so it is the one the short-buffer guard's condition can be
+        // narrowed past (e.g. adding `&& length > kLengthPrefixBytes`) while every other test
+        // in the suite stays green -- the host would then kill the extension port on an
+        // ordinary partial read of a minimal `{}` message.
+        QCOMPARE(sak::win32mcp::parseFrame(corpus.at(3)).status, Status::NeedMore);
+        QCOMPARE(sak::win32mcp::parseFrame(corpus.at(3)).consumed, 0);
+        // Zero length, over-cap length, and a body that is not a JSON object are all
+        // unrecoverable framing errors, and none of them consumes bytes.
+        QCOMPARE(sak::win32mcp::parseFrame(corpus.at(4)).status, Status::Error);
+        QCOMPARE(sak::win32mcp::parseFrame(corpus.at(5)).status, Status::Error);
+        QCOMPARE(sak::win32mcp::parseFrame(corpus.at(6)).status, Status::Error);
+        QCOMPARE(sak::win32mcp::parseFrame(corpus.at(6)).consumed, 0);
+
         runFuzz("parseFrame", nativeFrameCorpus(), nativeFrameInvariant);
     }
 
@@ -190,6 +250,46 @@ private Q_SLOTS:
                  QJsonObject({{QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
                               {QStringLiteral("id"), 1},
                               {QStringLiteral("result"), QJsonObject{}}}));
+    }
+
+    // R5-G18-4: jsonRpcLineResultIsUnambiguous only proves SOME reason was set -- the corpus
+    // carries one seed per refusal branch (jsonRpcCorpus, lines 63-66) but the invariant cannot
+    // tell which branch fired. The ceiling branch is pinned byte-exact above; pin the other two
+    // the same way, because the reason is what callers surface (ai_mcp_stdio_client.cpp:244
+    // hands it straight to fail()).
+    void jsonRpcLineRefusalReasonNamesTheBranch() {
+        // Valid JSON, but an ARRAY: refused by the !doc.isObject() arm of the two-arm guard
+        // (ai_mcp_jsonrpc.h:91), which reports the PARSE reason. Dropping that arm is otherwise
+        // silent: QJsonDocument::object() on an array document yields {}, so the message would
+        // fall through to the version-tag guard and be refused with the WRONG reason while the
+        // fuzz invariant (empty object + non-empty error) still held. Qt rejects every other
+        // non-object top-level value as a parse error, so an array is the only input that
+        // reaches this arm.
+        QString array_error;
+        const QJsonObject array_parsed = sak::ai::mcp::parseJsonLine(QByteArray("[1,2,3]\n"),
+                                                                     &array_error);
+        QVERIFY(array_parsed.isEmpty());
+        QVERIFY2(array_error.startsWith(QStringLiteral("Invalid MCP stdio JSON response:")),
+                 array_error.toUtf8().constData());
+
+        // Raw garbage: same arm, reached through its parse-error half.
+        QString garbage_error;
+        const QJsonObject garbage_parsed =
+            sak::ai::mcp::parseJsonLine(QByteArray("not json at all\n"), &garbage_error);
+        QVERIFY(garbage_parsed.isEmpty());
+        QVERIFY2(garbage_error.startsWith(QStringLiteral("Invalid MCP stdio JSON response:")),
+                 garbage_error.toUtf8().constData());
+
+        // A syntactically valid object that omits the version tag: the THIRD branch. Byte-exact
+        // on this first-party string, so no other branch can masquerade as it.
+        QString version_error;
+        const QJsonObject version_parsed =
+            sak::ai::mcp::parseJsonLine(QByteArray("{\"id\":7,\"result\":{}}\n"), &version_error);
+        QVERIFY(version_parsed.isEmpty());
+        QCOMPARE(version_error,
+                 QStringLiteral("MCP message is missing the JSON-RPC 2.0 version tag"));
+        // The three reasons are pairwise distinct, which is what makes the branch identifiable.
+        QVERIFY(array_error != version_error);
     }
 };
 

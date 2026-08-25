@@ -43,6 +43,7 @@ private Q_SLOTS:
     void testStartFlashRejectsZeroLengthImage();
     void testStartFlashRejectsDuplicateTargets();
     void testFirstDuplicateTargetSeam();
+    void testStartFlashRejectsAliasedPhysicalDriveTargets();
     void testParsePhysicalDriveNumberSeam();
     void testCancelWhenIdle();
 
@@ -137,6 +138,18 @@ void TestFlashCoordinator::testStartableWorkerCountSeam() {
     QCOMPARE(FlashCoordinator::startableWorkerCount(1, 1, 2), 0);
     QCOMPARE(FlashCoordinator::startableWorkerCount(4, 1, 5), 3);
     QCOMPARE(FlashCoordinator::startableWorkerCount(4, 0, 0), 0);
+    // The rows above are the region where a naive local "free slots" formula agrees
+    // with the policy, so they cannot distinguish routing from re-deriving. These
+    // three sit on the policy's saturating edges (flasher_policy.h:70-78) and are the
+    // ones that actually prove the forwarder: a re-derivation gets every one wrong.
+    // A ceiling below 1 is raised to 1, never 0 -- 0 would leave the run unable to
+    // ever start a worker.
+    QCOMPARE(FlashCoordinator::startableWorkerCount(0, 0, 3), 1);
+    // Nothing queued starts nothing, and never a negative count.
+    QCOMPARE(FlashCoordinator::startableWorkerCount(4, 0, -1), 0);
+    // A negative running count is clamped to 0 rather than inflating the free slots
+    // past the ceiling.
+    QCOMPARE(FlashCoordinator::startableWorkerCount(2, -3, 5), 2);
 }
 
 // ============================================================================
@@ -162,6 +175,21 @@ void TestFlashCoordinator::testStartFlashEmptyDrives() {
     QVERIFY(!result);
     QCOMPARE(spy.count(), 1);
     QCOMPARE(spy.first().first().toString(), QStringLiteral("No target drives specified"));
+
+    // The empty-target refusal must happen BEFORE beginFlashClaim() publishes
+    // Validating (flash_coordinator.cpp:241-245 ordered ahead of :250-256), because
+    // nothing on this early-return path releases a claim. If the guard were reordered
+    // after the claim, m_state would stay Validating forever and isFlashing() would
+    // report busy, so every later startFlash would be refused with "A flash run is
+    // already in progress" -- invisible to the return value and the error text above.
+    QCOMPARE(m_coord->state(), sak::FlashState::Idle);
+    QVERIFY(!m_coord->isFlashing());
+
+    // ...and the coordinator is genuinely reusable: a second call reaches its OWN
+    // empty-list guard rather than being turned away by a stale re-entry claim.
+    QVERIFY(!m_coord->startFlash("C:/test.iso", QStringList{}));
+    QCOMPARE(spy.count(), 2);
+    QCOMPARE(spy.at(1).first().toString(), QStringLiteral("No target drives specified"));
 }
 
 // A 0-byte image must be refused BEFORE any drive work: it would write nothing yet
@@ -203,6 +231,45 @@ void TestFlashCoordinator::testStartFlashRejectsDuplicateTargets() {
              QStringLiteral("Duplicate target device: \\\\.\\PhysicalDrive99"));
     QCOMPARE(spy.at(1).first().toString(), QStringLiteral("Target validation failed"));
 }
+// String equality is NOT device identity: "\\.\PhysicalDriveN" and "\\?\PhysicalDriveN"
+// are different strings naming ONE disk, so they slip past the string-equality guard.
+// Pin the SECOND, independent guard (flash_coordinator.cpp:1260-1269) and its wiring --
+// without it these two targets are accepted and two raw writers interleave on one disk.
+void TestFlashCoordinator::testStartFlashRejectsAliasedPhysicalDriveTargets() {
+    // Pure seam: same disk number reached by two different path spellings.
+    QCOMPARE(FlashCoordinator::firstDuplicatePhysicalDrive(
+                 {QStringLiteral("\\\\.\\PhysicalDrive5"),
+                  QStringLiteral("\\\\?\\PhysicalDrive5")}),
+             QStringLiteral("\\\\?\\PhysicalDrive5"));
+    // Distinct disks -> no duplicate.
+    QVERIFY(FlashCoordinator::firstDuplicatePhysicalDrive(
+                {QStringLiteral("\\\\.\\PhysicalDrive5"), QStringLiteral("\\\\.\\PhysicalDrive6")})
+                .isEmpty());
+    // Unparseable identity is skipped, not folded together (validateSingleTarget refuses those).
+    QVERIFY(FlashCoordinator::firstDuplicatePhysicalDrive(
+                {QStringLiteral("\\\\.\\C:"), QStringLiteral("\\\\.\\D:")})
+                .isEmpty());
+
+    // Wiring: the guard must actually run inside validateTargets, ahead of per-target
+    // validation. A real (readable) image so validateImagePath passes.
+    QTemporaryFile img;
+    QVERIFY(img.open());
+    img.write("dummy image payload");
+    img.flush();
+
+    QSignalSpy spy(m_coord.get(), &FlashCoordinator::flashError);
+    const bool result = m_coord->startFlash(img.fileName(),
+                                            QStringList{QStringLiteral("\\\\.\\PhysicalDrive99"),
+                                                        QStringLiteral("\\\\?\\PhysicalDrive99")});
+
+    QVERIFY(!result);
+    QCOMPARE(spy.count(), 2);
+    QCOMPARE(spy.at(0).first().toString(),
+             QStringLiteral("Duplicate target device: \\\\?\\PhysicalDrive99 names a physical "
+                            "disk that is already in the target list"));
+    QCOMPARE(spy.at(1).first().toString(), QStringLiteral("Target validation failed"));
+}
+
 
 void TestFlashCoordinator::testFirstDuplicateTargetSeam() {
     // Distinct targets -> empty (no duplicate).
@@ -222,6 +289,28 @@ void TestFlashCoordinator::testFirstDuplicateTargetSeam() {
     QCOMPARE(FlashCoordinator::firstDuplicateTarget({QStringLiteral("\\\\.\\PhysicalDrive4"),
                                                      QStringLiteral("  \\\\.\\PHYSICALDRIVE4 ")}),
              QStringLiteral("  \\\\.\\PHYSICALDRIVE4 "));
+
+    // Non-adjacent duplicate: the seen-set spans the WHOLE prefix, not just the previous
+    // element. Ticking drive 5, drive 6, then drive 5 again is the shape the real selection
+    // path produces; an adjacent-pair scan would wave it through.
+    QCOMPARE(FlashCoordinator::firstDuplicateTarget({QStringLiteral("\\\\.\\PhysicalDrive5"),
+                                                     QStringLiteral("\\\\.\\PhysicalDrive6"),
+                                                     QStringLiteral("\\\\.\\PhysicalDrive5")}),
+             QStringLiteral("\\\\.\\PhysicalDrive5"));
+
+    // The normalized key is remembered ACROSS the gap too, and the value returned is the LATER
+    // occurrence verbatim (that string is what reaches the user-facing flashError), not the
+    // first one and not the normalized key.
+    QCOMPARE(FlashCoordinator::firstDuplicateTarget({QStringLiteral("\\\\.\\PhysicalDrive7"),
+                                                     QStringLiteral("\\\\.\\PhysicalDrive8"),
+                                                     QStringLiteral("  \\\\.\\PHYSICALDRIVE7 ")}),
+             QStringLiteral("  \\\\.\\PHYSICALDRIVE7 "));
+
+    // Three distinct targets stay accepted (the seen-set does not false-positive).
+    QVERIFY(FlashCoordinator::firstDuplicateTarget({QStringLiteral("\\\\.\\PhysicalDrive1"),
+                                                    QStringLiteral("\\\\.\\PhysicalDrive2"),
+                                                    QStringLiteral("\\\\.\\PhysicalDrive3")})
+                .isEmpty());
 }
 
 void TestFlashCoordinator::testParsePhysicalDriveNumberSeam() {
@@ -242,9 +331,29 @@ void TestFlashCoordinator::testParsePhysicalDriveNumberSeam() {
 }
 
 void TestFlashCoordinator::testCancelWhenIdle() {
-    // Cancel when not flashing should be safe
+    // Cancel with no run in flight must be a COMPLETE no-op, not merely state-neutral.
+    // The isFlashing() guard (src/core/flash_coordinator.cpp:622-624) returns BEFORE the
+    // locked state write (:646) AND before every announcement (stateChanged :660,
+    // emitTerminalOutcome/flashCompleted :662). state() alone only sees the write, so it
+    // cannot tell a no-op apart from a cancel broadcast to every listener. The Image
+    // Flasher panel drives its UI off exactly those signals (src/gui/image_flasher_panel.cpp
+    // :125 stateChanged, :133 flashCompleted), so an idle coordinator that announced
+    // Cancelled would render a finished run with nothing behind it. Pin the channels.
+    QSignalSpy stateSpy(m_coord.get(), &FlashCoordinator::stateChanged);
+    QSignalSpy completedSpy(m_coord.get(), &FlashCoordinator::flashCompleted);
+    QSignalSpy errorSpy(m_coord.get(), &FlashCoordinator::flashError);
+    QVERIFY(stateSpy.isValid());
+    QVERIFY(completedSpy.isValid());
+    QVERIFY(errorSpy.isValid());
+
     m_coord->cancel();
+
     QCOMPARE(m_coord->state(), sak::FlashState::Idle);
+    QVERIFY(!m_coord->isFlashing());
+    QCOMPARE(m_coord->progress().state, sak::FlashState::Idle);
+    QCOMPARE(stateSpy.count(), 0);
+    QCOMPARE(completedSpy.count(), 0);
+    QCOMPARE(errorSpy.count(), 0);
 }
 
 QTEST_MAIN(TestFlashCoordinator)

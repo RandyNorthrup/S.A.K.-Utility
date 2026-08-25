@@ -6,6 +6,7 @@
 
 #include "sak/image_source.h"
 
+#include <QFile>
 #include <QSignalSpy>
 #include <QTemporaryFile>
 #include <QtTest/QtTest>
@@ -44,6 +45,7 @@ private Q_SLOTS:
     // -- FileImageSource construction ------------------------------
     void fileSource_construction();
     void fileSource_openNonExistent();
+    void fileSource_readNullBuffer();
 };
 
 // ===================================================================
@@ -109,16 +111,34 @@ void TestImageSource::detectFormat_img() {
 void TestImageSource::detectFormat_gz() {
     const auto fmt = FileImageSource::detectFormat("archive.img.gz");
     QCOMPARE(fmt, ImageFormat::GZIP);
+    // A double-extension name is answered by EITHER table -- suffix()=="gz" matches the
+    // kFormats row and completeSuffix()=="img.gz" ends with ".gz" in kCompound -- so it
+    // pins neither. Only a BARE single-extension name can reach the kFormats row alone:
+    // completeSuffix() is then "gz", and "gz".endsWith(".gz") is false, so the compound
+    // table cannot cover for a deleted row.
+    QCOMPARE(FileImageSource::detectFormat("ubuntu.gz"), ImageFormat::GZIP);
 }
 
 void TestImageSource::detectFormat_bz2() {
     const auto fmt = FileImageSource::detectFormat("archive.img.bz2");
     QCOMPARE(fmt, ImageFormat::BZIP2);
+    // A compound name is classified by BOTH tables at once -- suffix()=="bz2" hits the kFormats
+    // row and completeSuffix()=="img.bz2" ends with ".bz2" -- so the line above cannot tell which
+    // table answered. A BARE name reaches only the kFormats row, because completeSuffix()=="bz2"
+    // does NOT end with ".bz2"; dropping that row would degrade a plain .bz2 image to Unknown,
+    // which the flasher refuses outright.
+    QCOMPARE(FileImageSource::detectFormat("ubuntu.bz2"), ImageFormat::BZIP2);
 }
 
 void TestImageSource::detectFormat_xz() {
     const auto fmt = FileImageSource::detectFormat("archive.img.xz");
     QCOMPARE(fmt, ImageFormat::XZ);
+    // "archive.img.xz" is answered by BOTH tables at once (suffix()=="xz" and
+    // completeSuffix()=="img.xz"), so it cannot tell the single-extension row apart from the
+    // compound one. A bare .xz -- the usual shape of a raw disk image off a distro mirror --
+    // has completeSuffix()=="xz", which does NOT end with ".xz", so only the kFormats row can
+    // classify it.
+    QCOMPARE(FileImageSource::detectFormat("ubuntu.xz"), ImageFormat::XZ);
 }
 
 void TestImageSource::detectFormat_unknown() {
@@ -229,11 +249,18 @@ void TestImageSource::fileSource_openNonExistent() {
     QVERIFY(!opened);
     QVERIFY(!source.isOpen());
     // A refusal that is only RETURNED is invisible to the flash coordinator, which listens on
-    // readError: exactly one report, carrying the documented prefix. The tail is the OS
-    // errorString (locale-dependent), so only the invariant prefix is pinned.
+    // readError. The prefix is a fixed literal, so the whole information content is the TAIL,
+    // which the coordinator forwards verbatim as the user-facing reason. Pin it without
+    // hard-coding a locale-dependent string: a QFile opened ReadOnly on the same path in this
+    // process reports the identical OS reason.
     QCOMPARE(errorSpy.count(), 1);
     const QString reported = errorSpy.at(0).at(0).toString();
-    QVERIFY2(reported.startsWith(QStringLiteral("Failed to open file: ")), qPrintable(reported));
+    QFile probe(QStringLiteral("C:\\definitely_does_not_exist_12345.iso"));
+    QVERIFY(!probe.open(QIODevice::ReadOnly));
+    QCOMPARE(reported, QStringLiteral("Failed to open file: ") + probe.errorString());
+    // The tail must be the OS reason, never an echo of the path the caller already supplied.
+    QVERIFY2(!reported.contains(QStringLiteral("definitely_does_not_exist_12345")),
+             qPrintable(reported));
     // The failed open must leave the source cleanly closed rather than half-initialised: a
     // second attempt re-tries and reports again instead of taking an "already open"
     // short-circuit and returning true.
@@ -241,6 +268,37 @@ void TestImageSource::fileSource_openNonExistent() {
     QCOMPARE(errorSpy.count(), 2);
     QVERIFY(!source.isOpen());
 }
+// read() is public on the ImageSource interface, so the buffer arrives from outside the class
+// and image_source.cpp:88-91 refuses a null one with the documented -1. The closed-source call
+// in fileSource_construction cannot prove that guard: a closed source answers -1 for the
+// !isOpen() reason (image_source.cpp:92-94) no matter what buffer it is handed. Pin the guard
+// where it is the ONLY thing that can produce -1 -- on a source with a live handle and real
+// bytes underneath, which is exactly the state flash_worker.cpp:787/1091/1129 read in.
+void TestImageSource::fileSource_readNullBuffer() {
+    QTemporaryFile image;
+    QVERIFY(image.open());
+    const QByteArray body("0123456789ABCDEF");
+    QCOMPARE(image.write(body), qint64(body.size()));
+    image.close();
+
+    FileImageSource source(image.fileName());
+    QVERIFY(source.open());
+    QVERIFY(source.isOpen());
+    // The handle really is live and readable: a valid buffer returns bytes here...
+    QByteArray sink(8, '\0');
+    QCOMPARE(source.read(sink.data(), sink.size()), qint64(8));
+    QCOMPARE(sink, body.left(8));
+    // ...so the -1 below is attributable ONLY to the null-buffer guard. Without it the pointer
+    // goes straight into QIODevice::read on an open device -- a memcpy into address 0.
+    QCOMPARE(source.read(nullptr, sink.size()), qint64(-1));
+    // The refusal is not destructive: the source stays open and the cursor never moved.
+    QVERIFY(source.isOpen());
+    QCOMPARE(source.position(), qint64(8));
+    QCOMPARE(source.read(sink.data(), sink.size()), qint64(8));
+    QCOMPARE(sink, body.mid(8, 8));
+    source.close();
+}
+
 
 QTEST_MAIN(TestImageSource)
 #include "test_image_source.moc"
