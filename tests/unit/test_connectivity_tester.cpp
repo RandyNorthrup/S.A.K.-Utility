@@ -26,8 +26,9 @@ private Q_SLOTS:
     void pingResult_defaults();
     void tracerouteHop_defaults();
     void mtrHopStats_defaults();
-    void cancel_doesNotCrash();
+    void cancel_stopsPingLoopEarly();
     void ping_localhost_completesSuccessfully();
+    void ping_clampsOutOfRangeCountBeforeLooping();
 
     // -- sanitizeConfig bounds (B9-17) -----------------------------
     void sanitizePing_clampsOutOfRange();
@@ -52,12 +53,30 @@ void TestConnectivityTester::construction_nonCopyable() {
 void TestConnectivityTester::pingConfig_defaults() {
     ConnectivityTester::PingConfig config;
     QVERIFY(config.target.isEmpty());
-    QCOMPARE(config.count, netdiag::kDefaultPingCount);
-    QCOMPARE(config.intervalMs, netdiag::kDefaultPingIntervalMs);
-    QCOMPARE(config.timeoutMs, netdiag::kDefaultPingTimeoutMs);
-    QCOMPARE(config.packetSizeBytes, netdiag::kDefaultPingPacketSize);
-    QCOMPARE(config.ttl, netdiag::kDefaultPingTtl);
+
+    // Pin the shipped VALUES, not each constant against itself: comparing
+    // config.count to netdiag::kDefaultPingCount merely restates the member
+    // initialiser (connectivity_tester.h:28-32), so both sides move together.
+    // traceroute/MTR pass kDefaultPingPacketSize to sendIcmpEcho unsanitized
+    // (connectivity_tester.cpp:507, :572), so the literal values matter.
+    QCOMPARE(config.count, 10);
+    QCOMPARE(config.intervalMs, 1000);
+    QCOMPARE(config.timeoutMs, 4000);
+    QCOMPARE(config.packetSizeBytes, 32);
+    QCOMPARE(config.ttl, 128);
     QVERIFY(config.resolveHostnames);
+
+    // Every default must survive sanitizeConfig untouched. A default that drifts
+    // outside its clamp (network_diagnostic_types.h:49-58) is silently rewritten
+    // on every call (connectivity_tester.cpp:430, :399-408), so the shipped
+    // default would not be the declared one -- e.g. ttl 0 ships as ttl 1 and each
+    // echo expires at the first hop.
+    const auto sanitized = ConnectivityTester::sanitizeConfig(config);
+    QCOMPARE(sanitized.count, config.count);
+    QCOMPARE(sanitized.intervalMs, config.intervalMs);
+    QCOMPARE(sanitized.timeoutMs, config.timeoutMs);
+    QCOMPARE(sanitized.packetSizeBytes, config.packetSizeBytes);
+    QCOMPARE(sanitized.ttl, config.ttl);
 }
 
 void TestConnectivityTester::pingConfig_fieldAssignment() {
@@ -97,10 +116,41 @@ void TestConnectivityTester::mtrConfig_defaults() {
     QCOMPARE(config.timeoutMs, netdiag::kDefaultTracerouteTimeout);
 }
 
-void TestConnectivityTester::cancel_doesNotCrash() {
+void TestConnectivityTester::cancel_stopsPingLoopEarly() {
     ConnectivityTester tester;
-    tester.cancel();
-    QVERIFY(dynamic_cast<QObject*>(&tester) != nullptr);
+    QSignalSpy complete_spy(&tester, &ConnectivityTester::pingComplete);
+
+    // pingReply is emitted from inside the ping loop on this same thread
+    // (connectivity_tester.cpp:459), so this slot runs synchronously and the
+    // cancel lands before the loop-top check at :445.
+    const QMetaObject::Connection cancelOnFirstReply = QObject::connect(
+        &tester, &ConnectivityTester::pingReply, &tester, [&tester](const PingReply&) {
+            tester.cancel();
+        });
+
+    ConnectivityTester::PingConfig config;
+    config.target = QStringLiteral("127.0.0.1");
+    config.count = 5;
+    config.intervalMs = netdiag::kMinIntervalMs;
+    config.timeoutMs = 2000;
+    config.resolveHostnames = false;
+
+    tester.ping(config);
+
+    // sent == attempts actually made (:469), so a working cancel() stops the run
+    // after the first reply instead of completing all five.
+    QCOMPARE(complete_spy.count(), 1);
+    const auto cancelled = complete_spy.takeFirst().at(0).value<PingResult>();
+    QCOMPARE(cancelled.sent, 1);
+
+    // ping() re-arms the flag at :429: the next run is not still cancelled.
+    QObject::disconnect(cancelOnFirstReply);
+    config.count = 3;
+    tester.ping(config);
+
+    QCOMPARE(complete_spy.count(), 1);
+    const auto rearmed = complete_spy.takeFirst().at(0).value<PingResult>();
+    QCOMPARE(rearmed.sent, 3);
 }
 
 void TestConnectivityTester::pingReply_defaults() {
@@ -170,9 +220,53 @@ void TestConnectivityTester::ping_localhost_completesSuccessfully() {
     QCOMPARE(complete_spy.count(), 1);
     const auto result = complete_spy.takeFirst().at(0).value<PingResult>();
     QCOMPARE(result.sent, 3);
+    QCOMPARE(static_cast<int>(result.replies.size()), 3);
+
+    // received is not a floor: it is exactly the number of replies flagged success, and every
+    // reply carries its 1-based sequence number (connectivity_tester.cpp:451, :453-458).
+    int successes = 0;
+    for (int i = 0; i < static_cast<int>(result.replies.size()); ++i) {
+        const PingReply& reply = result.replies.at(i);
+        QCOMPARE(reply.sequenceNumber, i + 1);
+        if (reply.success) {
+            ++successes;
+        }
+    }
+    QVERIFY(successes > 0);  // loopback must answer at least once
+    QCOMPARE(result.received, successes);
+
+    // Derived siblings the panel renders, computed in computePingStats
+    // (connectivity_tester.cpp:75-77).
+    QCOMPARE(result.lost, result.sent - successes);
+    QCOMPARE(result.lossPercent,
+             (static_cast<double>(result.sent - successes) / result.sent) * 100.0);
+
+    QCOMPARE(result.resolvedIP, QStringLiteral("127.0.0.1"));
     QVERIFY(result.received > 0);
     QCOMPARE(result.resolvedIP, QStringLiteral("127.0.0.1"));
 }
+void TestConnectivityTester::ping_clampsOutOfRangeCountBeforeLooping() {
+    ConnectivityTester tester;
+    QSignalSpy complete_spy(&tester, &ConnectivityTester::pingComplete);
+
+    ConnectivityTester::PingConfig config;
+    config.target = QStringLiteral("127.0.0.1");
+    config.count = 0;  // out of range: must clamp UP, not silently skip the loop
+    config.timeoutMs = 2000;
+    config.resolveHostnames = false;
+
+    tester.ping(config);
+
+    QCOMPARE(complete_spy.count(), 1);
+    const auto result = complete_spy.takeFirst().at(0).value<PingResult>();
+    QCOMPARE(result.resolvedIP, QStringLiteral("127.0.0.1"));
+    // Proves ping() actually runs its config through sanitizeConfig(): `sent` counts real
+    // attempts, so a clamped count yields kMinPingCount attempts, while an unsanitised
+    // count of 0 never enters the loop body and would leave sent == 0.
+    QCOMPARE(result.sent, netdiag::kMinPingCount);
+    QCOMPARE(result.replies.size(), static_cast<qsizetype>(netdiag::kMinPingCount));
+}
+
 
 // ===================================================================
 // sanitizeConfig -- clamp every numeric field to a safe range (B9-17)
@@ -200,6 +294,18 @@ void TestConnectivityTester::sanitizePing_clampsOutOfRange() {
     const auto sl = ConnectivityTester::sanitizeConfig(low);
     QCOMPARE(sl.count, netdiag::kMinPingCount);
     QCOMPARE(sl.ttl, netdiag::kMinTtl);
+
+    // Upper arms the "absurd" block above never reaches: intervalMs/timeoutMs are only
+    // ever driven negative there, so their kMax ceilings would otherwise go unproved --
+    // and packetSizeBytes is only ever driven high, leaving its floor unproved.
+    ConnectivityTester::PingConfig high;
+    high.intervalMs = 10'000'000;  // ~2.7h per gap at QThread::msleep (connectivity_tester.cpp:463)
+    high.timeoutMs = 10'000'000;   // DWORD handed to IcmpSendEcho (connectivity_tester.cpp:382)
+    high.packetSizeBytes = -1;     // negative -> the WORD cast would wrap to 65535
+    const auto sh = ConnectivityTester::sanitizeConfig(high);
+    QCOMPARE(sh.intervalMs, netdiag::kMaxIntervalMs);
+    QCOMPARE(sh.timeoutMs, netdiag::kMaxPingTimeoutMs);
+    QCOMPARE(sh.packetSizeBytes, netdiag::kMinPacketSizeBytes);
 }
 
 void TestConnectivityTester::sanitizePing_passesValidThrough() {
@@ -227,6 +333,12 @@ void TestConnectivityTester::sanitizeTraceroute_clampsOutOfRange() {
     QCOMPARE(s.maxHops, netdiag::kMaxHops);
     QCOMPARE(s.timeoutMs, netdiag::kMinPingTimeoutMs);
     QCOMPARE(s.probesPerHop, netdiag::kMaxProbesPerHop);
+    // Upper arm: an absurd timeout is multiplied by the hop sweep -- up to kMaxHops (255)
+    // hops x kMaxProbesPerHop (10) blocking IcmpSendEcho calls -- so it must cap at the max.
+    ConnectivityTester::TracerouteConfig hi;
+    hi.timeoutMs = 10'000'000;
+    const auto sh = ConnectivityTester::sanitizeConfig(hi);
+    QCOMPARE(sh.timeoutMs, netdiag::kMaxPingTimeoutMs);
 
     ConnectivityTester::TracerouteConfig low;
     low.maxHops = 0;
@@ -247,6 +359,18 @@ void TestConnectivityTester::sanitizeMtr_clampsOutOfRange() {
     QCOMPARE(s.intervalMs, netdiag::kMinIntervalMs);
     QCOMPARE(s.maxHops, netdiag::kMaxHops);
     QCOMPARE(s.timeoutMs, netdiag::kMaxPingTimeoutMs);
+
+    // Opposite arm of every clamp: the low end (and the interval's high end) must clamp too.
+    ConnectivityTester::MtrConfig low;
+    low.cycles = 0;              // zero/negative -> a run that never cycles
+    low.intervalMs = 5'000'000;  // absurd -> an ~83-minute msleep between cycles
+    low.maxHops = -5;            // negative -> QVector<MtrHopStats> of negative size
+    low.timeoutMs = -1;          // negative -> huge DWORD timeout cast
+    const auto sl = ConnectivityTester::sanitizeConfig(low);
+    QCOMPARE(sl.cycles, netdiag::kMinMtrCycles);
+    QCOMPARE(sl.intervalMs, netdiag::kMaxIntervalMs);
+    QCOMPARE(sl.maxHops, netdiag::kMinHops);
+    QCOMPARE(sl.timeoutMs, netdiag::kMinPingTimeoutMs);
 }
 
 QTEST_MAIN(TestConnectivityTester)

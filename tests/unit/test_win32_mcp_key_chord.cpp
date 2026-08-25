@@ -177,12 +177,59 @@ void Win32McpKeyChordTests::unknownMainKeyRefused() {
         const QString bare(1, punct);
         QVERIFY2(!parse(bare).ok, qPrintable(bare));
     }
+
+    // A near-miss of a catalog name must be refused as firmly as a nonsense word. "bogus" and
+    // "nonsense" are neither a prefix nor an extension of any catalog row, so on their own they
+    // leave a loosened compare -- matching abbreviations ("ente" -> enter) or extensions
+    // ("f13" -> f1) instead of the exact name -- completely green, and send_keys would inject a
+    // keystroke the caller never wrote.
+    static const char* const kNearMisses[] = {
+        "ente", "es", "de", "page", "backspac", "enterkey", "f13", "spaceb"};
+    for (const char* const near_miss : kNearMisses) {
+        const QString bare_near = QString::fromLatin1(near_miss);
+        QVERIFY2(!parse(bare_near).ok, near_miss);
+        const QString chord = QStringLiteral("Ctrl+") + bare_near;
+        QVERIFY2(!parse(chord).ok, qPrintable(chord));
+    }
 }
 
 void Win32McpKeyChordTests::unknownModifierRefused() {
     // SAFETY: an unknown modifier fails the whole chord rather than being ignored.
     QVERIFY(!parse(QStringLiteral("hyper+a")).ok);
     QVERIFY(!parse(QStringLiteral("ctrl+super+a")).ok);
+    // "hyper" and "super" share no prefix, suffix or substring with any alias, so they prove
+    // only that two arbitrary words miss. The modifier catalog has no self-shadowing pair
+    // (unlike f1/f10 in namedKeysMap), so nothing else in the suite distinguishes the exact
+    // '==' chain from a loosened compare. Near-miss tokens pin exactness in all three
+    // directions -- extension, truncation and substring -- because a modifier that silently
+    // resolves makes send_keys inject a REAL Ctrl/Alt/Win down (win32_mcp_input.cpp:411-412)
+    // instead of returning "Unrecognized key combination": "alternate+f4" would close the
+    // technician's window.
+    static const char* const kNearMiss[] = {
+        // extensions of an alias: killed by `low.startsWith(alias)`
+        "ctrlx",
+        "controls",
+        "alternate",
+        "shifty",
+        "windows",
+        "metal",
+        // truncations of an alias: killed by `QLatin1String(alias).startsWith(low)`
+        "ctr",
+        "contro",
+        "al",
+        "sh",
+        "wi",
+        "met",
+        // alias embedded with a prefix: killed by `low.contains(alias)` / `endsWith`
+        "xctrl",
+        "leftshift",
+        "rightalt",
+        "mymeta",
+    };
+    for (const char* const near_miss : kNearMiss) {
+        const QString chord = QString::fromLatin1(near_miss) + QStringLiteral("+a");
+        QVERIFY2(!parse(chord).ok, qPrintable(chord));
+    }
 }
 
 void Win32McpKeyChordTests::emptyOrSeparatorOnlyRefused() {
@@ -197,7 +244,29 @@ void Win32McpKeyChordTests::malformedSeparatorRefused() {
     QVERIFY(!parse(QStringLiteral("Ctrl++S")).ok);
     QVERIFY(!parse(QStringLiteral("+S")).ok);
     QVERIFY(!parse(QStringLiteral("Ctrl+")).ok);
-    QVERIFY(!parse(QStringLiteral("Ctrl+ +S")).ok);  // whitespace-only segment
+    QVERIFY(!parse(QStringLiteral("Ctrl+ +S")).ok);  // a segment with no non-space content
+
+    // Padding INTERIOR to the chord is handled only by the two per-segment trims
+    // (win32_mcp_key_chord.cpp:97 and :103): the send_keys consumer trims just the whole `keys`
+    // string (win32_mcp_input.cpp:401). Refusal assertions cannot see either trim -- "Ctrl+ +S"
+    // is rejected by the empty-segment guard AND, independently, by modifierVk("")==0 -- so pin
+    // acceptance, once for the modifier loop and once for the main key, or both trims delete free
+    // and send_keys("Ctrl + S") starts answering "Unrecognized key combination" with this green.
+    const Parsed padded_modifier = parse(QStringLiteral("Ctrl +S"));
+    QVERIFY(padded_modifier.ok);
+    QCOMPARE(padded_modifier.modifiers,
+             QVector<unsigned short>{static_cast<unsigned short>(VK_CONTROL)});
+    QCOMPARE(padded_modifier.main_key, static_cast<unsigned short>('S'));
+    const Parsed padded_main_key = parse(QStringLiteral("Ctrl+ S"));
+    QVERIFY(padded_main_key.ok);
+    QCOMPARE(padded_main_key.modifiers,
+             QVector<unsigned short>{static_cast<unsigned short>(VK_CONTROL)});
+    QCOMPARE(padded_main_key.main_key, static_cast<unsigned short>('S'));
+    // A padded named key on the bare (no-modifier) path exercises :103 with a multi-char name.
+    const Parsed padded_named = parse(QStringLiteral(" Enter "));
+    QVERIFY(padded_named.ok);
+    QVERIFY(padded_named.modifiers.isEmpty());
+    QCOMPARE(padded_named.main_key, static_cast<unsigned short>(VK_RETURN));
 }
 
 QTEST_GUILESS_MAIN(Win32McpKeyChordTests)

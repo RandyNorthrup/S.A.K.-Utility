@@ -69,6 +69,7 @@ private Q_SLOTS:
     void loadImageFileRefusesAMissingFile();
     void loadImageFileRefusesAnEmptyFile();
     void aRejectedImageLeavesFlashDisabled();
+    void loadImageFileRefusesAnUnknownFormatWhenDeclined();
 
 private:
     QPushButton* flashButton() const;
@@ -161,7 +162,13 @@ QString ImageFlasherPanelTests::writeImage(const QString& name, const QByteArray
 void ImageFlasherPanelTests::flashIsDisabledWithNothingSelected() {
     QPushButton* flash = flashButton();
     QVERIFY(flash);
-    QVERIFY(!flash->isEnabled());
+    QVERIFY2(!flash->isEnabled(), "nothing selected must leave Flash disabled");
+    // The one Step 1 fact only updateNavigationButtons establishes: the destructive button
+    // is not on the image-selection page at all (image_flasher_panel.cpp:1037). The button is
+    // constructed disabled (:285), so isEnabled() alone survives deleting the gate call at :229.
+    // isVisibleTo() reads the explicit hide flag without show()-ing the panel.
+    QVERIFY2(!flash->isVisibleTo(m_panel.get()),
+             "Flash must not be shown on the image-selection page");
 }
 
 // THE REGRESSION. The gate used to read the drive list alone, so this passed with
@@ -193,6 +200,24 @@ void ImageFlasherPanelTests::flashEnablesOnlyWithBothAnImageAndADrive() {
     // Image + drive is.
     selectOneDrive();
     QVERIFY(flash->isEnabled());
+
+    // The gate reads the SELECTION, not the presence of a row. Deselecting the only target
+    // must shut Flash again: nothing else in this file changes a selection twice, so gating on
+    // m_driveListWidget->count() -- the original defect -- or dropping the m_selectedDrives
+    // clear in onDriveSelectionChanged would leave a deselected drive a live write target.
+    QListWidget* list = driveList();
+    QVERIFY(list);
+    QCOMPARE(list->count(), 1);
+    list->item(0)->setSelected(false);
+    QVERIFY2(!flash->isEnabled(), "a deselected drive is not a target drive");
+
+    // Reachability is the other half of the same gate, and no assertion here ever looked at it:
+    // Flash is deliberately hidden on Step 1 and must actually appear on drive selection.
+    QVERIFY2(!flash->isVisibleTo(m_panel.get()), "Flash must not be offered on the image step");
+    list->item(0)->setSelected(true);
+    next->click();
+    QVERIFY2(flash->isVisibleTo(m_panel.get()), "Flash must be reachable on drive selection");
+    QVERIFY(flash->isEnabled());
 }
 
 // ============================================================================
@@ -210,8 +235,46 @@ void ImageFlasherPanelTests::loadImageFileRefusesAnEmptyPath() {
 }
 
 void ImageFlasherPanelTests::loadImageFileRefusesAMissingFile() {
-    armMessageBoxDismisser();
-    QVERIFY(!m_panel->loadImageFile(m_dir.filePath("does_not_exist.img")));
+    // loadImageFile is the drag-drop and command-line entry point, so "returned false" and
+    // "told the user why" are two different behaviours: a silent refusal is a drop that
+    // appears to do nothing. Capture the refusal the user actually sees.
+    QString seenText;
+    std::unique_ptr<QTimer> dismiss;
+    const auto armCapturingDismisser = [&seenText, &dismiss]() {
+        seenText.clear();
+        dismiss = std::make_unique<QTimer>();
+        dismiss->setInterval(kModalPollIntervalMs);
+        QTimer* poll = dismiss.get();
+        connect(poll, &QTimer::timeout, poll, [poll, &seenText]() {
+            if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                poll->stop();
+                seenText = box->text();
+                box->accept();
+            }
+        });
+        dismiss->start();
+    };
+
+    const QString missing = m_dir.filePath("does_not_exist.img");
+    armCapturingDismisser();
+    QVERIFY(!m_panel->loadImageFile(missing));
+    QVERIFY2(seenText.contains(QStringLiteral("Not a readable image file")),
+             "a missing path must be refused out loud, not silently");
+    QVERIFY2(seenText.contains(missing), "the refusal must name the path it refused");
+    QVERIFY(!flashButton()->isEnabled());
+    QPushButton* next = findNextButton(m_panel.get());
+    QVERIFY(next);
+    QVERIFY2(!next->isEnabled(), "a refused image must not open drive selection");
+
+    // The other arm of the same guard: a directory exists but is not a file. Its size is 0
+    // on Windows, so the empty-file guard would refuse it too -- with the wrong reason --
+    // which makes the message the only witness that the isFile() arm is still there.
+    QVERIFY(QDir(m_dir.path()).mkpath(QStringLiteral("a_directory.img")));
+    const QString directory = m_dir.filePath("a_directory.img");
+    armCapturingDismisser();
+    QVERIFY(!m_panel->loadImageFile(directory));
+    QVERIFY2(seenText.contains(QStringLiteral("Not a readable image file")),
+             "a directory must be refused as not-a-file, not as an empty file");
     QVERIFY(!flashButton()->isEnabled());
 }
 
@@ -239,6 +302,56 @@ void ImageFlasherPanelTests::aRejectedImageLeavesFlashDisabled() {
     QVERIFY(next);
     QVERIFY2(!next->isEnabled(), "a rejected image must not open drive selection");
 }
+
+// The fourth refusal guard, and the only one no test in this file reached. Every image the
+// fixture writes is a .img, which the extension table resolves to ImageFormat::IMG, so the
+// unknown-format confirmation at image_flasher_panel.cpp:1074-1083 was never executed: deleting
+// that block outright -- letting an unrecognised file become a raw-disk write source with no
+// prompt at all -- left all seven other tests green.
+//
+// The technician is asked here, and anything short of Yes refuses (fail closed). The No button is
+// clicked explicitly rather than closing the box with accept(): QMessageBox::done() maps a
+// programmatic result code back to a button in Qt 6.5+, so a bare accept() is not a dependable
+// way to express "declined".
+void ImageFlasherPanelTests::loadImageFileRefusesAnUnknownFormatWhenDeclined() {
+    // .bin is in neither the extension table nor the compound-suffix table, so detectFormat
+    // reports Unknown and the confirmation is reached. If .bin is ever added to that table this
+    // test fails loudly on the first assertion rather than silently passing.
+    const QString image = writeImage("mystery.bin", QByteArray(4096, '\x5A'));
+    QVERIFY(!image.isEmpty());
+
+    auto* decline = new QTimer(this);
+    decline->setInterval(kModalPollIntervalMs);
+    connect(decline, &QTimer::timeout, this, [decline]() {
+        auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+        if (box == nullptr) {
+            return;
+        }
+        QAbstractButton* no = box->button(QMessageBox::No);
+        if (no == nullptr) {
+            // Not the Unknown Format question; close it so the test cannot hang.
+            decline->stop();
+            decline->deleteLater();
+            box->reject();
+            return;
+        }
+        decline->stop();
+        decline->deleteLater();
+        no->click();
+    });
+    decline->start();
+
+    QVERIFY2(!m_panel->loadImageFile(image),
+             "an unrecognised image format must be refused unless the technician confirms");
+
+    selectOneDrive();
+    QVERIFY2(!flashButton()->isEnabled(),
+             "a declined unknown-format image is not a selected image");
+    QPushButton* next = findNextButton(m_panel.get());
+    QVERIFY(next);
+    QVERIFY2(!next->isEnabled(), "a declined unknown-format image must not open drive selection");
+}
+
 
 QTEST_MAIN(ImageFlasherPanelTests)
 #include "test_image_flasher_panel.moc"

@@ -5,6 +5,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -35,6 +36,7 @@ private Q_SLOTS:
     // -- Convert-then-replace (B10-21) -----------------------
     void replaceFinalIso_movesOverExisting();
     void replaceFinalIso_leavesNoBackupArtifact();
+    void replaceFinalIso_refusesNonRegularPathsAndLeavesPriorImage();
 
     // -- Metadata size accumulation (R3-14) ------------------
     void computeTotalDownloadBytes_sumsValidSizes();
@@ -66,7 +68,18 @@ void TestUupIsoBuilder::testNotRunningInitially() {
 
 void TestUupIsoBuilder::testCancelWhenIdle() {
     UupIsoBuilder builder;
+    QSignalSpy phaseSpy(&builder, &UupIsoBuilder::phaseChanged);
+    QVERIFY(phaseSpy.isValid());
+
     builder.cancel();
+
+    // cancel() on a never-started builder must stay SILENT. The Failed transition and
+    // its "Build cancelled by user" announcement live inside the phase fence at
+    // src/core/uup_iso_builder.cpp:284-287; phaseChanged is the only way the panel
+    // learns of a cancellation, and ~UupIsoBuilder() calls cancel() unconditionally
+    // (:180-182), so hoisting that emission out of the fence would make every
+    // destroyed-but-never-started builder announce a bogus cancellation.
+    QCOMPARE(phaseSpy.count(), 0);
     QCOMPARE(builder.currentPhase(), UupIsoBuilder::Phase::Idle);
 }
 
@@ -116,11 +129,34 @@ void TestUupIsoBuilder::missingFiles_absentOrTruncated_reported() {
     absent.fileName = "gone.esd";
     absent.size = 10;
 
-    const QStringList missing = UupIsoBuilder::missingFiles({present, truncated, absent},
-                                                            dir.path());
-    // missingFiles preserves input order, appending only absent/truncated entries; the exact
-    // ordered list subsumes the size, both members, and the ok.esd (present) exclusion.
-    QCOMPARE(missing, QStringList({"short.wim", "gone.esd"}));
+    // A DIRECTORY named like an expected file is not the payload. Declared size stays 0 so
+    // the `file.size > 0` size compare cannot mask the isFile() arm -- only isFile() can
+    // report this entry.
+    UupDumpApi::FileInfo folder;
+    folder.fileName = "folder.esd";
+    folder.size = 0;
+    QVERIFY(QDir(dir.path()).mkdir(folder.fileName));
+
+    // An OVER-LONG file is not the artifact aria2 was told to fetch: the size compare is
+    // EXACT, not a >= floor.
+    UupDumpApi::FileInfo overlong;
+    overlong.fileName = "long.wim";
+    overlong.size = 2;                        // declared 2 ...
+    writeFile(QDir(dir.path()).filePath(overlong.fileName),
+              QByteArrayLiteral("toolong"));  // ...actually 7
+
+    // An unnamed API entry cannot be checked at all, so it is reported, never skipped.
+    UupDumpApi::FileInfo unnamed;  // fileName deliberately left empty
+    unnamed.size = 7;
+
+    const QStringList missing = UupIsoBuilder::missingFiles(
+        {present, truncated, absent, folder, overlong, unnamed}, dir.path());
+    // missingFiles preserves input order and appends one entry per refusal arm it reaches:
+    // truncated (short), absent, non-regular-file, over-long (exact compare), unnamed.
+    // ok.esd (present, exact size) is the only entry excluded.
+    QCOMPARE(missing,
+             QStringList(
+                 {"short.wim", "gone.esd", "folder.esd", "long.wim", "<unnamed UUP file entry>"}));
 }
 
 // ============================================================================
@@ -153,13 +189,70 @@ void TestUupIsoBuilder::replaceFinalIso_leavesNoBackupArtifact() {
     const QString tempPath = QDir(dir.path()).filePath("win.iso.partial");
     writeFile(finalPath, QByteArrayLiteral("OLD-ISO"));
     writeFile(tempPath, QByteArrayLiteral("FRESH-ISO-BYTES"));
+    // Plant a stale backup from a crashed earlier run so the ".prev" name is REALLY in play:
+    // a successful swap must clear it (uup_iso_builder.cpp:1308 then :1316), which an
+    // implementation that never backs up at all would leave sitting on disk.
+    writeFile(finalPath + ".prev", QByteArrayLiteral("STALE-FROM-A-CRASHED-RUN"));
 
     QVERIFY(UupIsoBuilder::replaceFinalIso(tempPath, finalPath));
-    // The prior image is moved aside by rename during the swap, then dropped: no
-    // ".prev" backup artifact must survive a successful replacement.
     QVERIFY(!QFile::exists(finalPath + ".prev"));
     QVERIFY(!QFile::exists(tempPath));
+
+    // The rename-aside is what makes the swap survivable: if the prior image cannot be moved
+    // aside, the replacement must abort BEFORE the good ISO is touched. Occupying the ".prev"
+    // name with a directory makes that aside-rename fail (uup_iso_builder.cpp:1309-1311).
+    // A destructive remove-then-rename reports success here with the only good ISO destroyed.
+    const QString keepPath = QDir(dir.path()).filePath("keep.iso");
+    const QString freshPath = QDir(dir.path()).filePath("keep.iso.partial");
+    writeFile(keepPath, QByteArrayLiteral("OLD-ISO"));
+    writeFile(freshPath, QByteArrayLiteral("FRESH-ISO-BYTES"));
+    QVERIFY(QDir(dir.path()).mkdir("keep.iso.prev"));
+
+    QVERIFY(!UupIsoBuilder::replaceFinalIso(freshPath, keepPath));
+    QFile kept(keepPath);
+    QVERIFY(kept.open(QIODevice::ReadOnly));
+    QCOMPARE(kept.readAll(), QByteArrayLiteral("OLD-ISO"));  // prior good image untouched
+    kept.close();
+    QVERIFY(QFile::exists(freshPath));  // converted output still there to retry with
 }
+void TestUupIsoBuilder::replaceFinalIso_refusesNonRegularPathsAndLeavesPriorImage() {
+    // Only a real regular file may be promoted, and only a real regular file may be
+    // replaced (uup_iso_builder.cpp:1293-1301). A non-regular path at either end must be
+    // refused BEFORE any rename, so the prior good image survives untouched and no
+    // ".prev" backup artifact is left behind.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QDir root(dir.path());
+
+    // -- Guard 1: tempPath is a directory, not a regular file -------------------
+    const QString finalPath = root.filePath("win.iso");
+    const QString tempDirPath = root.filePath("win.iso.partial");
+    writeFile(finalPath, QByteArrayLiteral("OLD-ISO"));  // the prior good ISO
+    QVERIFY(QDir(dir.path()).mkdir("win.iso.partial"));
+
+    QVERIFY(!UupIsoBuilder::replaceFinalIso(tempDirPath, finalPath));
+    QVERIFY(QDir(tempDirPath).exists());           // the directory was not consumed
+    QVERIFY(!QFile::exists(finalPath + ".prev"));  // nothing was moved aside
+    QFile kept(finalPath);
+    QVERIFY(kept.open(QIODevice::ReadOnly));
+    QCOMPARE(kept.readAll(), QByteArrayLiteral("OLD-ISO"));  // prior image untouched
+    kept.close();
+
+    // -- Guard 2: finalPath exists but is a directory ---------------------------
+    const QString finalDirPath = root.filePath("out.iso");
+    const QString tempPath = root.filePath("out.iso.partial");
+    QVERIFY(QDir(dir.path()).mkdir("out.iso"));
+    writeFile(tempPath, QByteArrayLiteral("FRESH-ISO-BYTES"));
+
+    QVERIFY(!UupIsoBuilder::replaceFinalIso(tempPath, finalDirPath));
+    QVERIFY(QDir(finalDirPath).exists());             // still a directory, not overwritten
+    QVERIFY(!QFile::exists(finalDirPath + ".prev"));  // nothing was moved aside
+    QFile fresh(tempPath);
+    QVERIFY(fresh.open(QIODevice::ReadOnly));
+    QCOMPARE(fresh.readAll(), QByteArrayLiteral("FRESH-ISO-BYTES"));  // temp not consumed
+    fresh.close();
+}
+
 
 // ============================================================================
 // Metadata size accumulation (R3-14): reject negative and overflowing totals.
@@ -189,6 +282,25 @@ void TestUupIsoBuilder::computeTotalDownloadBytes_rejectsOverflow() {
     UupDumpApi::FileInfo b;
     b.size = 1;
     QVERIFY(!UupIsoBuilder::computeTotalDownloadBytes({a, b}).has_value());
+
+    // Accept side of the same boundary: a total landing EXACTLY on qint64 max is a legal
+    // sum, not an overflow, so `total > max - file.size` (uup_iso_builder.cpp:195) must stay
+    // strict. A `>=` there would abort the build with a bogus "negative or overflowing size
+    // total" (uup_iso_builder.cpp:243-248) instead of returning the sum.
+    UupDumpApi::FileInfo lone;
+    lone.size = std::numeric_limits<qint64>::max();
+    const auto atMaxAlone = UupIsoBuilder::computeTotalDownloadBytes({lone});  // zero running total
+    QVERIFY(atMaxAlone.has_value());
+    QCOMPARE(*atMaxAlone, std::numeric_limits<qint64>::max());
+
+    UupDumpApi::FileInfo justUnder;
+    justUnder.size = std::numeric_limits<qint64>::max() - 1;
+    UupDumpApi::FileInfo one;
+    one.size = 1;
+    const auto atMaxSummed =
+        UupIsoBuilder::computeTotalDownloadBytes({justUnder, one});  // non-zero running total
+    QVERIFY(atMaxSummed.has_value());
+    QCOMPARE(*atMaxSummed, std::numeric_limits<qint64>::max());
 }
 
 // ============================================================================
@@ -224,6 +336,31 @@ void TestUupIsoBuilder::hasIso9660Signature_rejectsNonIso() {
     const QString wrongPath = QDir(dir.path()).filePath("wrongsig.iso");
     writeFile(wrongPath, QByteArray(0x8006, 'X'));
     QVERIFY(!UupIsoBuilder::hasIso9660Signature(wrongPath));
+
+    // The identifier must sit at exactly 0x8001 -- an arbitrary payload that merely CONTAINS
+    // "CD001" elsewhere is not an ISO and must not be promoted by the gate at
+    // src/core/uup_iso_builder.cpp:1515.
+    const QString strayPath = QDir(dir.path()).filePath("straysig.iso");
+    QByteArray stray(0x8006, 'X');
+    stray[0x1000] = 'C';
+    stray[0x1001] = 'D';
+    stray[0x1002] = '0';
+    stray[0x1003] = '0';
+    stray[0x1004] = '1';
+    writeFile(strayPath, stray);
+    QVERIFY(!UupIsoBuilder::hasIso9660Signature(strayPath));
+
+    // One byte early (0x8000 is the volume-descriptor TYPE field, not the identifier):
+    // still not a PVD, so an off-by-one seek must not be accepted either.
+    const QString offByOnePath = QDir(dir.path()).filePath("offbyone.iso");
+    QByteArray early(0x8006, 'X');
+    early[0x8000] = 'C';
+    early[0x8001] = 'D';
+    early[0x8002] = '0';
+    early[0x8003] = '0';
+    early[0x8004] = '1';
+    writeFile(offByOnePath, early);
+    QVERIFY(!UupIsoBuilder::hasIso9660Signature(offByOnePath));
 
     // Missing file entirely.
     QVERIFY(!UupIsoBuilder::hasIso9660Signature(QDir(dir.path()).filePath("nope.iso")));

@@ -5024,6 +5024,45 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 SECOND-pass sweep b97 (gated 249/249): 37 weak assertions pinned across six
+    more already-swept files (ai_skill_store 9, connectivity_tester 7, email_types 7,
+    uup_iso_builder 6, image_flasher_panel 3, win32_mcp_key_chord 3). Two further candidates were
+    REJECTED by the adversarial pass.
+    EVERY FIXTURE IN A FILE AGREED WITH ITSELF, SO ONE FIELD WAS NEVER PROVED. Skill::fromMarkdown
+    seeds the id from the FILE STEM before parsing front-matter, and every single fixture in
+    test_ai_skill_store.cpp (and the one in test_ai_assistant_panel_tool_dispatch.cpp, and all
+    eight bundled resources) used a path whose stem equalled its declared id -- so
+    QCOMPARE(skill.id, ...) could not distinguish "front-matter id applied" from "stem fallback".
+    Deleting the front-matter id arm left the entire suite green, while renaming a skill file on
+    disk would silently re-key the skill and break both load-by-id and user-overrides-built-in.
+    The fixture now uses a stem that deliberately differs.
+    Related in the same file: the catalog view was checked for the ABSENCE of a "body" key, which
+    says nothing about a body smuggled under another name -- the exact key set is pinned now; and
+    the built-in/override order is pinned as an ordered id list, because skills() order IS the
+    order the system-prompt catalog is emitted in and the order its cap truncates from, so
+    "replaced in place" is a contract rather than a comment.
+    email_types: note_color is assigned NOWHERE in src/, so its default alone picks the swatch the
+    inspector renders, and importance 0 would make every exported message read "Low" -- both were
+    unpinned. The ExportFormat ordinals are pinned because a member inserted mid-list silently
+    renumbers every later one, and both consumers fail OPEN on a format they do not recognise
+    (`default: return false;` and an empty display name).
+    uup_iso_builder: missingFiles is a four-arm refuser that only two arms ever reached -- a
+    DIRECTORY named like an expected file, an OVER-LONG file (the size compare is exact, not a
+    floor) and an unnamed API entry are all reported now. replaceFinalIso gained the non-regular
+    path guards, proving the prior good ISO survives a refused promotion with no ".prev" artifact.
+    The ISO signature check now rejects a payload that merely CONTAINS "CD001" elsewhere and one
+    that has it one byte early, not just a wrong-bytes buffer.
+    connectivity_tester: pingConfig_defaults compared each member to the very constant that
+    initialises it -- both sides move together -- so the shipped values are literals now, and each
+    default is required to survive sanitizeConfig untouched (a default outside its own clamp is
+    silently rewritten on every call). cancel() was proved by a QObject upcast; it now proves the
+    ping loop stops early AND that the next run is not still cancelled. Every clamp had only one
+    arm exercised.
+    win32_mcp_key_chord: the catalog and modifier refusals were proved only by words sharing no
+    prefix, suffix or substring with any accepted name, so a loosened compare -- matching "ente"
+    to enter, or "f13" to f1 -- stayed green while send_keys injected a keystroke the caller never
+    wrote. Near-miss tokens now pin exactness in all three directions. And both per-segment trims
+    are pinned by their POSITIVE half, since the refusal cases survive deleting all three trims.
   - PROGRESS 2026-08-24 SECOND-pass sweep b96 (gated 249/249): 33 weak assertions pinned across six
     more already-swept files (ai_win32_gui_runner 10, advanced_search_types 7, fuzz_smart_report 5,
     win32_mcp_input_plan 4, ai_mcp_http_client 3+1, fuzz_hfs_reader 3). Two further candidates were
