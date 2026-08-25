@@ -425,7 +425,7 @@ struct ViewModeWidgets {
     QListView* columnsPreview;
 };
 
-void switchThroughViewModesAndVerifyVisibility(sak::FileExplorerPane* pane,
+void switchThroughViewModesAndVerifyVisibility(const sak::FileExplorerPane* pane,
                                                QToolButton* view,
                                                QAction* listAction,
                                                const ViewModeWidgets& widgets) {

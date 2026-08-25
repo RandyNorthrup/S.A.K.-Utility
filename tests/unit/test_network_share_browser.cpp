@@ -72,6 +72,9 @@ void TestNetworkShareBrowser::networkShareInfo_fieldAssignment() {
 
     QCOMPARE(info.hostName, QStringLiteral("SERVER01"));
     QCOMPARE(info.shareName, QStringLiteral("Share$"));
+    // uncPath was assigned and never read back (FINDING N8). It is the value every mount and
+    // browse actually connects to -- host and share alone do not prove the path was composed.
+    QCOMPARE(info.uncPath, QStringLiteral("\\\\SERVER01\\Share$"));
     QCOMPARE(info.type, NetworkShareInfo::ShareType::IPC);
     QVERIFY(info.canRead);
     QVERIFY(!info.canWrite);

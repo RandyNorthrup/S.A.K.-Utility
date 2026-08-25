@@ -371,6 +371,12 @@ void TestEmailSearchWorker::searchHitFields() {
     QCOMPARE(hit.item_node_id, static_cast<uint64_t>(42));
     QCOMPARE(hit.item_type, sak::EmailItemType::Email);
     QCOMPARE(hit.subject, QStringLiteral("Budget Report"));
+    // sender/date/context_snippet were assigned and never read back (FINDING N8). They are the
+    // three columns the search results list renders beside the subject, so a cross-wired
+    // assignment would show the wrong correspondent or the wrong excerpt for a real hit.
+    QCOMPARE(hit.sender, QStringLiteral("boss@example.com"));
+    QVERIFY(hit.date.isValid());
+    QCOMPARE(hit.context_snippet, QStringLiteral("...the budget for Q1..."));
     QCOMPARE(hit.match_field, QStringLiteral("body"));
     QCOMPARE(hit.folder_path, QStringLiteral("Inbox/Work"));
 }

@@ -365,7 +365,15 @@ void TestEmailProfileManager::profilePopulation() {
     pst_file.is_linked = true;
     profile.data_files.append(pst_file);
 
+    // Five profile fields were assigned and never read back (FINDING N8: cppcheck could not see
+    // this file at all until the gate was fixed). These are exactly what the migration UI shows
+    // the technician when picking a profile to move, and total_size_bytes is the transfer volume.
     QCOMPARE(profile.client_type, sak::EmailClientType::Outlook);
+    QCOMPARE(profile.client_name, QStringLiteral("Microsoft Outlook 2021"));
+    QCOMPARE(profile.client_version, QStringLiteral("16.0"));
+    QCOMPARE(profile.profile_name, QStringLiteral("Default"));
+    QCOMPARE(profile.profile_path, QStringLiteral("HKCU\\Software\\Microsoft\\Outlook"));
+    QCOMPARE(profile.total_size_bytes, static_cast<qint64>(1024 * 1024 * 500));
     QCOMPARE(profile.data_files.size(), 1);
     QVERIFY(profile.data_files[0].is_linked);
     QCOMPARE(profile.data_files[0].type, QStringLiteral("PST"));
@@ -379,6 +387,9 @@ void TestEmailProfileManager::dataFilePopulation() {
     file.is_linked = false;
 
     QCOMPARE(file.path, QStringLiteral("C:/mail.mbox"));
+    // `type` routes the reader that opens the file, so leaving it unread let a mis-assigned
+    // type through.
+    QCOMPARE(file.type, QStringLiteral("MBOX"));
     QCOMPARE(file.size_bytes, static_cast<qint64>(50 * 1024));
     QVERIFY(!file.is_linked);
 }

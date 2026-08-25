@@ -108,6 +108,13 @@ $CppcheckArgs += @(
     "-DQ_EMIT="
     "-DQ_ENUM(x)="
     "-DQTEST_SET_MAIN_SOURCE_PATH="
+    # Q_DECLARE_METATYPE is the SAME failure as the lower-case keywords below, reached through a
+    # different door: cppcheck reports it as `unknownMacro`, which it treats as a CRITICAL error
+    # and which abandons the WHOLE translation unit ("Active checkers: 4/186") while this script
+    # still prints "PASSED: cppcheck analysis clean" and exits 0. It sits in production headers
+    # (quick_action.h, email_types.h, network_diagnostic_types.h and eight more), so every test
+    # that includes one was unanalyzed: 65 of the 238 files under tests/unit, measured.
+    "-DQ_DECLARE_METATYPE(x)="
 )
 
 # The lower-case spellings (slots, signals, emit) are deliberately NOT defined here.

@@ -5037,6 +5037,34 @@ So the suite itself must be audited for tests that pass regardless of the code.
     the one-line hook fix is verified, but the blast radius (how many TUs across tests/ and src/
     are currently unanalyzed, and what the newly-enabled checkers report) is NOT yet measured, so
     it gets its own gated commit rather than riding on a test-assertion batch.
+    CLOSED 2026-08-24 (gated 249/249). Blast radius MEASURED, not estimated: 65 of the 238 files
+    under tests/unit were unanalyzed, via 11 production headers (quick_action.h, email_types.h,
+    network_diagnostic_types.h, diagnostic_controller.h, file_explorer_types.h,
+    advanced_uninstall_types.h, file_management_file_system.h, linux_iso_downloader.h,
+    offline_deployment_worker.h, uup_iso_builder.h, advanced_search_worker.h). Adding
+    -DQ_DECLARE_METATYPE(x)= restores them; the whole suite now reports 183/186 with ZERO
+    findings, verified per-file through the hook itself rather than trusting "PASSED".
+    THE BLINDNESS WAS CONCEALING THIS CAMPAIGN'S OWN QUARRY. Enabling analysis surfaced 21
+    findings, and 17 were `unreadVariable` -- a fixture assigning a struct field and never
+    reading it back, which IS the class-E weak assertion G18-4 exists to hunt. Every one was
+    COMPLETED as a pin rather than silenced (the b89 precedent): config.format in three
+    EmailExportConfig option blocks (the field that SELECTS the writer), export_path /
+    export_format / total_bytes in the export result, five EmailClientProfile fields the
+    migration UI shows the technician, EmailDataFile::type (which routes the reader that opens
+    the file), sender / date / context_snippet in a search hit (the three columns rendered beside
+    the subject), NetworkShareInfo::uncPath (what every mount actually connects to), and
+    FirewallRule::description / applicationPath -- the latter in a file b94 had ALREADY swept,
+    where applicationPath is the very selector findRulesByApplication filters on.
+    The remaining four: one constParameterPointer (a helper that only reads through its pane
+    pointer), three inconclusive functionConst on PST fixture builders that touch no member state
+    and are now static -- and making the first one static exposed three more siblings that had
+    been masked by calling it. One finding was a genuine FALSE POSITIVE and is suppressed inline
+    at the site with its reason: cppcheck reads the stopAndJoin() CALL inside
+    AdvancedSearchWorker's inline destructor as a duplicate member declaration, but that class
+    declares no such member.
+    TRANSFERABLE LESSON: a degraded static-analysis gate is not merely "not helping" -- it
+    actively conceals findings you are separately paying agents to hunt. Read the
+    "Active checkers: N/186" line per file; never trust "PASSED".
   - PROGRESS 2026-08-24 SECOND-pass sweep b95 (gated 249/249): 32 weak assertions pinned across six
     more already-swept files (ethernet_config_manager 7, bandwidth_tester 6, flash_coordinator 5,
     disk_benchmark_worker 5, image_source 5, fuzz_mcp_framing 4). Three further candidates were

@@ -225,6 +225,12 @@ void TestFirewallRuleAuditor::firewallRule_fieldAssignment() {
     rule.applicationPath = QStringLiteral("C:\\test.exe");
 
     QCOMPARE(rule.name, QStringLiteral("Test Rule"));
+    // description and applicationPath were assigned and never read back (FINDING N8 -- cppcheck
+    // could not see this file at all until the gate was fixed). applicationPath in particular is
+    // the selector findRulesByApplication filters on, so an unread field here left the
+    // assignment itself unproven.
+    QCOMPARE(rule.description, QStringLiteral("Unit test rule"));
+    QCOMPARE(rule.applicationPath, QStringLiteral("C:\\test.exe"));
     QVERIFY(rule.enabled);
     QCOMPARE(rule.direction, FirewallRule::Direction::Outbound);
     QCOMPARE(rule.action, FirewallRule::Action::Block);

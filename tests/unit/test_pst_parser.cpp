@@ -272,13 +272,15 @@ private Q_SLOTS:
 
 private:
     /// Build a minimal valid PST file header in a QByteArray
-    QByteArray buildMinimalPstHeader(bool unicode,
-                                     uint8_t encryption = 0x00,
-                                     uint16_t content_type = sak::email::kPstContentType,
-                                     uint16_t version_override = 0);
-    QByteArray buildStoreWithEmptyBTrees(uint16_t content_type, uint16_t version);
-    QByteArray buildCompressibleEncryptedRootPst();
-    QByteArray buildUnicode4kBlockStore(const QByteArray& block, uint16_t declared_uncompressed);
+    // static: it builds a header from its arguments alone and touches no member state.
+    static QByteArray buildMinimalPstHeader(bool unicode,
+                                            uint8_t encryption = 0x00,
+                                            uint16_t content_type = sak::email::kPstContentType,
+                                            uint16_t version_override = 0);
+    static QByteArray buildStoreWithEmptyBTrees(uint16_t content_type, uint16_t version);
+    static QByteArray buildCompressibleEncryptedRootPst();
+    static QByteArray buildUnicode4kBlockStore(const QByteArray& block,
+                                               uint16_t declared_uncompressed);
     QByteArray rootHeapZlibStream();
 };
 

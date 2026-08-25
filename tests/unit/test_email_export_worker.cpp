@@ -87,6 +87,10 @@ void TestEmailExportWorker::configCsvOptions() {
     config.csv_delimiter = QLatin1Char(';');
     config.csv_include_header = false;
 
+    // `format` is what selects the writer, so an option block that never reads it back cannot
+    // tell a CSV config from any other. cppcheck flagged all three of these as unreadVariable
+    // once the gate stopped being blind (FINDING N8).
+    QCOMPARE(config.format, sak::ExportFormat::CsvEmails);
     QCOMPARE(config.csv_columns.size(), 4);
     QCOMPARE(config.csv_delimiter, QLatin1Char(';'));
     QVERIFY(!config.csv_include_header);
@@ -101,6 +105,7 @@ void TestEmailExportWorker::configAttachmentOptions() {
 
     QVERIFY(!config.flatten_attachments);
     QCOMPARE(config.attachment_filter, QStringLiteral("*.pdf"));
+    QCOMPARE(config.format, sak::ExportFormat::Attachments);
     QVERIFY(!config.skip_inline_images);
 }
 
@@ -110,6 +115,7 @@ void TestEmailExportWorker::configEmlOptions() {
     config.eml_include_headers = false;
     config.prefix_with_date = false;
 
+    QCOMPARE(config.format, sak::ExportFormat::Eml);
     QVERIFY(!config.eml_include_headers);
     QVERIFY(!config.prefix_with_date);
 }
@@ -141,6 +147,12 @@ void TestEmailExportWorker::resultPopulation() {
     result.started = QDateTime::currentDateTime().addSecs(-60);
     result.finished = QDateTime::currentDateTime();
 
+    // The three fields below were assigned and never read back, so the round trip proved only
+    // the counters. export_path/export_format are what the completion report shows the operator,
+    // and total_bytes is the exported volume.
+    QCOMPARE(result.export_path, QStringLiteral("C:/output"));
+    QCOMPARE(result.export_format, QStringLiteral("EML"));
+    QCOMPARE(result.total_bytes, static_cast<qint64>(1024 * 1024));
     QCOMPARE(result.items_exported, 150);
     QCOMPARE(result.items_failed, 3);
     QCOMPARE(result.errors.size(), 1);
