@@ -5024,6 +5024,91 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 SECOND-pass sweep b99 (gated 249/249): 39 weak assertions pinned across six
+    more already-swept files (elevation_ux 8, ai_human_gate_store 8, fuzz_mbox_transfer_decoder 7,
+    fuzz_backup_codec 7, ai_run_state 5, file_explorer_archive_service 4). Zero candidates were
+    rejected by the adversarial pass -- the first batch in the campaign with a clean sweep, and the
+    verifier earned it: for the shield-icon pin it replicated the whole Win32 chain by P/Invoke on
+    this machine to confirm the real SIID_SHIELD small icon carries 160 of 256 pixels at alpha 255,
+    closing the one way that pin could have been wrong (a legacy icon whose colour DIB is
+    all-zero-alpha would have made an alpha-based helper RED against correct code).
+    A TRANSPARENT ICON PASSED EVERY ASSERTION. iconColorBitmapToImage() pre-fills its QImage with
+    Qt::transparent BEFORE the GetDIBits copy, precisely so a partial copy never leaks garbage --
+    which makes an all-zero image perfectly VALID: not null, non-null QPixmap, non-null QIcon,
+    positive width and height. Every assertion in all four shield tests was satisfied by an icon
+    with zero visible pixels, i.e. an invisible UAC cue on every elevated-action button. A
+    hasVisiblePixel() helper now pins real pixels (the sibling panel suite already had one).
+    Related in the same file: QIcon::cacheKey() returns 0 for a NULL icon, so the caching test
+    compared two FAILED extractions equal and passed with nothing extracted at all -- three of the
+    four shield tests degraded to no-ops on exactly the configuration where extraction is broken.
+    A FUZZ HARNESS THAT SCORED ACCEPT AND REJECT IDENTICALLY, TWICE MORE. b98 found the shape in
+    the decompressor; the finder class added for it fired immediately in both remaining fuzz
+    suites. fuzz_backup_codec's target returned "" (pass) whether readBackupFile ACCEPTED or
+    REFUSED, so four of its five corpus entries were deliberate garbage scored green no matter what
+    the decoder did with them, and the accept side -- where fail-open lives -- carried no assertion
+    at all. The accept path now requires the genuine 14080-byte payload byte for byte, the garbage
+    entries are required to be refused fail-closed by name (including a valid-magic/forged-body
+    entry that clears the first gate so the AEAD is what does the rejecting, and a tag-flipped
+    one), and the determinism re-decode no longer clears the destination first -- which is what
+    made publishRestored's "destination already exists" arm unreachable tree-wide.
+    Its classify invariant was VACUOUS in the strict sense: every return in backupContainerKind is
+    an enumerator literal and nothing read from the file is ever cast into the enum, so "the kind
+    is one of the three" can never be observed false. It now cross-checks against an INDEPENDENT
+    read of the same eight bytes, which matters concretely -- readBackupFile seeks past the magic
+    and the AEAD tag covers only the encryptor header plus ciphertext, so byte 7 of the magic sits
+    OUTSIDE the authenticated region and that exact compare is the only thing guarding it. Proved
+    by mutation: ignoring byte 7 is caught by the new near-miss probe (SAKBFC1X), while the fuzz
+    slot itself stayed green because the corpus is an ENCRYPTED container and its mutants rarely
+    form a plain-magic prefix -- the deterministic control is what caught it, exactly as in b98.
+    fuzz_mbox_transfer_decoder: the base64 line-unwrapping step was claimed by NOTHING, because
+    every accept-path input in the file is whitespace-free -- and it is the step that actually runs
+    in production, since every MIME base64 body is wrapped at 76 columns. The corpus's "wrapped"
+    seed only looked like coverage: it stays invalid base64 even after unwrapping, so it is refused
+    either way. Also: the quoted-printable contract was asserted in one direction only ("never
+    grows"), which an empty return satisfies everywhere -- the identity case (an input with no '='
+    at all) is pinned now and fires on a third of the mutants; the soft-break guard's bare-LF arm,
+    the spelling every Unix mailer writes, was reached by nothing; the hex arm's second conjunct
+    was short-circuited away by every malformed fixture having a bad FIRST digit; lower-case hex
+    was unpinned; the malformed-'=' pass-through the file's own header documents was asserted
+    nowhere; and the dispatch compare was probed only by "7bit", which no loosening would refuse.
+    THE SHIPPED FUZZ BUDGET: 2 more of the 16 remaining suites converted. Both files here used the
+    self-satisfying corpus.size() + iterationsFromEnv() form and now pin the literal 2000 plus an
+    exact seed count, guarded on SAK_FUZZ_ITERS so a nightly override stays green.
+    ai_human_gate_store: isKnownHumanGateStatus is a seven-arm alternation gating whether a record
+    may resolve a pending gate, and this file exercised two arms -- one of which ("completed") is
+    the single resolving status NO production caller ever writes. The five the shipped app depends
+    on (approved/rejected/cancelled/skipped/failed) were claimed by no fixture in the repository.
+    Worse, the test named latestPendingGateIgnoresResolvedGates could not reach its own claim: with
+    the log written [gate_1 waiting, gate_1 completed, gate_2 waiting], an implementation that
+    ignored the per-gate_id latest-state map entirely and returned the last record whose OWN status
+    is waiting answered gate_2 too, because gate_1's stale pending record sat BEFORE gate_2's and
+    was never reached. The records are reordered so that naive implementation now returns gate_1.
+    Added: two simultaneously-pending gates (the only arrangement in which the reverse scan's
+    DIRECTION is observable), two gates sharing ONE run_id (production's actual shape -- every
+    fixture paired the two identities 1:1, so nothing decided which keyed the map), the on-disk KEY
+    NAMES (every field assertion travelled the same toJson/fromJson pair, so a rename on both
+    halves was invisible), the caller-supplied-timestamp PRESERVE arm, near-miss forged statuses,
+    and the error out-param asserted empty after every successful load -- the panel treats any
+    non-empty error as fatal and returns WITHOUT restoring the pending gate.
+    file_explorer_archive_service: the entry-size guard is an EXACT compare but only the
+    UNDER-produce side was ever driven. Loosening it to `<` kept every assertion green, and the
+    OVER-produce side is the security-relevant one: extractZipEntry charges the bomb ceilings with
+    the DECLARED size, so an entry declaring a handful of bytes that actually inflates to something
+    enormous clears both ceilings and is written at its real length. Pinned with a deflated entry
+    whose central-directory size alone is patched, and mutation-proved. Also: the guard refusing an
+    archive written INSIDE a folder being compressed was reached by nothing in the repository (its
+    message string appears once, in the production source) -- deleting it lets the recursive walk
+    fold a partial copy of the zip into itself; and the result struct's output_path / entries /
+    warnings were never read on either path, though they become the model's success message.
+    ai_run_state: the counter clamps were an identity on every input the suite ever produced, and
+    the fail-closed arm that forces WaitingForHuman on a snapshot asserting a pending gate with an
+    identity-less payload -- the tamper case its nine-line comment exists for -- was entered by
+    nothing. Both are pinned now, with controls proving the forcing is the guard firing rather than
+    an unconditional rewrite. isTerminal() is required to agree with isTerminalRunStatus across all
+    EIGHT statuses (two points cannot establish agreement over an eight-value enum), the persisted
+    key names are pinned, and runStatusFromString gained near-miss tokens -- the cancelling vs
+    cancelled pair especially, where mis-resolving one for the other is the difference between
+    "still draining a live mutation" and "safe to accept new work", on an attacker-writable field.
   - PROGRESS 2026-08-24 SECOND-pass sweep b98 (gated 249/249): 31 weak assertions pinned across six
     more already-swept files (backup_bitlocker_keys_action 8, screenshot_settings_action 8,
     fuzz_decompressor 7, fuzz_command_classifier 3, all_actions_metadata 3, action_factory 2).

@@ -30,8 +30,51 @@ private Q_SLOTS:
     void compressThenExtract_roundTrips();
     void compressToZip_missingSourceFailsClosed();
     void compressToZip_countsDirectoriesTowardEntryCap();
+    void compressToZip_refusesAnArchiveInsideASourceFolder();
     void extractZip_refusesAnEntryWhoseDeclaredSizeIsALie();
+    void extractZip_refusesAnEntryThatOverProducesItsDeclaredSize();
 };
+
+void FileExplorerArchiveServiceTests::compressToZip_refusesAnArchiveInsideASourceFolder() {
+    // compressToZip refuses on four distinct conditions, and every refusal assertion in the tree
+    // landed on the SAME one (the NewOnly exclusive-create refusal, proved here and again in the
+    // panel suite). This guard -- which refuses an archive landing INSIDE a folder being
+    // compressed -- was reached by nothing: its message string appears exactly once in the whole
+    // repository, in the production source itself. Deleting it leaves every suite green while the
+    // recursive walk reaches the archive file mid-write and folds a partial copy of the zip back
+    // into itself: a self-referential, silently corrupt archive reported as a successful compress.
+    // The exclusive-create refusal cannot stand in for it, because the archive path does not exist
+    // yet when this case fires.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QDir root(dir.path());
+    QVERIFY(root.mkpath(QStringLiteral("bundle/sub")));
+    writeFile(root.filePath(QStringLiteral("bundle/a.txt")), QByteArrayLiteral("x"));
+    const QString folder = root.filePath(QStringLiteral("bundle"));
+
+    // Directly inside the source folder.
+    const QString inside = root.filePath(QStringLiteral("bundle/out.zip"));
+    const auto direct = FileExplorerArchiveService::compressToZip(inside, {folder});
+    QVERIFY2(!direct.ok, "an archive written inside a source folder must be refused");
+    QCOMPARE(direct.blockers.size(), 1);
+    QCOMPARE(direct.blockers.first(),
+             QStringLiteral("Refused to write the archive inside source folder %1.").arg(folder));
+    QVERIFY2(!QFile::exists(inside), "the refused archive must never be created");
+
+    // ... and nested deeper, which the startsWith arm of the same guard covers.
+    const QString nested = root.filePath(QStringLiteral("bundle/sub/out.zip"));
+    const auto deep = FileExplorerArchiveService::compressToZip(nested, {folder});
+    QVERIFY2(!deep.ok, "an archive nested deeper inside a source folder must be refused");
+    QCOMPARE(deep.blockers.size(), 1);
+    QVERIFY2(!QFile::exists(nested), "the refused archive must never be created");
+
+    // Control: a SIBLING path sharing the folder's name prefix is not inside it, and must still
+    // compress -- the guard appends '/' precisely so "bundle-2" is not read as "inside bundle".
+    const QString sibling = root.filePath(QStringLiteral("bundle-2.zip"));
+    const auto ok = FileExplorerArchiveService::compressToZip(sibling, {folder});
+    QVERIFY2(ok.ok, qPrintable(ok.blockers.join(QStringLiteral("; "))));
+    QVERIFY(QFile::exists(sibling));
+}
 
 void FileExplorerArchiveServiceTests::compressToZip_refusesExistingOutputWithoutClobber() {
     QTemporaryDir dir;
@@ -71,10 +114,31 @@ void FileExplorerArchiveServiceTests::compressThenExtract_roundTrips() {
     const auto compressed = FileExplorerArchiveService::compressToZip(zip, {src});
     QVERIFY2(compressed.ok, qPrintable(compressed.blockers.join(QStringLiteral("; "))));
     QVERIFY(QFile::exists(zip));
+    // The result STRUCT, not just ok plus the file existing. output_path is the path the terminal
+    // card and the model are told the archive landed at and is asserted nowhere in the
+    // repository; entries is never stated on its own for a single-file compress; and warnings is
+    // never required to be empty on a clean run, even though the compress path silently downgrades
+    // a symlink or a special entry to a warning -- so a mis-classified regular file would
+    // warn-and-skip while ok stayed true and the archive shipped without it.
+    QCOMPARE(compressed.output_path, zip);
+    QCOMPARE(compressed.entries, 1);
+    QVERIFY2(compressed.warnings.isEmpty(),
+             qPrintable(compressed.warnings.join(QStringLiteral("; "))));
 
     const QString outdir = dir.filePath(QStringLiteral("extracted"));
     const auto extracted = FileExplorerArchiveService::extractZip(zip, outdir);
     QVERIFY2(extracted.ok, qPrintable(extracted.blockers.join(QStringLiteral("; "))));
+    // Same on the extract side, where only ok and blockers were ever read by any test in the
+    // repository. Both fields are user-facing: they become the model's "Extract succeeded: N
+    // entr(y|ies)" message and its data["output_path"], so both could be dropped with the whole
+    // suite green and the model told an archive extracted 0 entries into "". The empty warnings
+    // list matters here too -- a corrupt central-directory record and a symlink entry are
+    // downgraded to warnings while ok stays true, and a clean single-file round trip is the right
+    // place to require that none fired.
+    QCOMPARE(extracted.output_path, outdir);
+    QCOMPARE(extracted.entries, 1);
+    QVERIFY2(extracted.warnings.isEmpty(),
+             qPrintable(extracted.warnings.join(QStringLiteral("; "))));
 
     QFile roundtripped(QDir(outdir).filePath(QStringLiteral("data.txt")));
     QVERIFY(roundtripped.open(QIODevice::ReadOnly));
@@ -167,6 +231,58 @@ void FileExplorerArchiveServiceTests::extractZip_refusesAnEntryWhoseDeclaredSize
     // The truncated payload must not be left on disk claiming to be the extracted file.
     QVERIFY2(!QFile::exists(QDir(outdir).filePath(QStringLiteral("data.txt"))),
              "the short entry must not be written");
+    // The refusal must not report entries it never validated: buildArchiveResult ships
+    // result.entries to the model as "Extract succeeded: N entr(y|ies)", so counting an entry
+    // before it is checked reports work that did not happen.
+    QCOMPARE(extracted.entries, 0);
+}
+
+void FileExplorerArchiveServiceTests::extractZip_refusesAnEntryThatOverProducesItsDeclaredSize() {
+    // The production guard is an EXACT compare, `data.size() != info.size`, but the only fixture
+    // in the tree drove it with 13 produced vs 4096 declared -- the UNDER-produce side. Loosening
+    // it to `data.size() < info.size` keeps every assertion in the sibling test green, and the
+    // OVER-produce side is the security-relevant one: extractZipEntry charges the running total
+    // and the per-file ceiling with the DECLARED size, so an entry that declares a handful of
+    // bytes and actually inflates to something enormous clears both bomb ceilings and is then
+    // written at its real length -- precisely the bypass those ceilings exist to stop.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = dir.filePath(QStringLiteral("data.txt"));
+    // Compressible and comfortably larger than the lie, so the entry is DEFLATED: a tiny stored
+    // entry would be truncated to its declared size by the reader, which is exactly why the
+    // existing 13-byte fixture cannot reach this direction.
+    const QByteArray payload = QByteArray(1100, 'z');
+    writeFile(src, payload);
+    const QString zip = dir.filePath(QStringLiteral("archive.zip"));
+    QVERIFY(FileExplorerArchiveService::compressToZip(zip, {src}).ok);
+
+    QFile archive(zip);
+    QVERIFY(archive.open(QIODevice::ReadOnly));
+    QByteArray bytes = archive.readAll();
+    archive.close();
+
+    // Patch ONLY the central directory's uncompressed size: that is where info.size comes from,
+    // and leaving the local header's true length in place keeps the entry decoding normally.
+    const qsizetype central = bytes.indexOf(QByteArrayLiteral("PK\x01\x02"));
+    QVERIFY2(central >= 0, "central directory record not found in the built archive");
+    const quint32 lie = 5;
+    for (int i = 0; i < 4; ++i) {
+        bytes[central + 24 + i] = static_cast<char>((lie >> (8 * i)) & 0xFF);
+    }
+    writeFile(zip, bytes);
+
+    const QString outdir = dir.filePath(QStringLiteral("extracted"));
+    const auto extracted = FileExplorerArchiveService::extractZip(zip, outdir);
+
+    QVERIFY2(!extracted.ok, "an entry that decodes to MORE bytes than it declares must fail");
+    QCOMPARE(extracted.blockers.size(), 1);
+    QCOMPARE(extracted.blockers.first(),
+             QStringLiteral("Extraction of entry data.txt produced %1 bytes, not the declared 5 "
+                            "(truncated or corrupt).")
+                 .arg(payload.size()));
+    QVERIFY2(!QFile::exists(QDir(outdir).filePath(QStringLiteral("data.txt"))),
+             "the over-producing entry must not be written");
+    QCOMPARE(extracted.entries, 0);
 }
 
 QTEST_GUILESS_MAIN(FileExplorerArchiveServiceTests)
