@@ -5024,6 +5024,60 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-25 mutation-harness hardening, closing the b101 catalog mislabel and the
+    FAIL-OPEN that hid it. b101 recorded that scripts/mutation_catalogs/mbox_header_parser.json
+    declared its value-extract-trim mutant "equivalent" and that the claim was FALSE. Corrected:
+    the entry is now value-extract-trim-at-extraction with expect=killed and a why naming the input
+    that separates the two trims (a value with TRAILING whitespace that is then FOLDED -- whatever
+    the extraction trim leaves is carried INTO the join, where the outer trim can no longer reach
+    it, so "Content-Type: text/plain;   " folded onto " charset=utf-8" yields four interior spaces
+    instead of one). EXECUTED, not asserted: the catalog now runs 9 mutants, 8 killed / 1
+    equivalent / 0 holes / 0 mislabelled, with the reclassified mutant KILLED by the
+    foldedContinuationJoinsWithSingleSpace fixture b101 added.
+    THE HARNESS WAS FAIL-OPEN ON EXACTLY THIS CLASS. run_mutation_test.py printed "(declared
+    equivalent but a test distinguishes it -- fine)" and exited 0. Declaring a mutant equivalent is
+    the claim that NO input distinguishes it, so a test that KILLS it is a proof the rationale is
+    false -- and the rationale is the only thing the ratchet accepts in place of the suite proving
+    anything. Both directions of the mislabel were therefore silent: it SURVIVED while the corpus
+    was too thin to reach it, and once b101 added the reaching fixture the harness said "fine".
+    A mislabelled verdict is now a hard failure (exit 1), fire-drilled against a scratch copy of the
+    catalog so the detector was watched to FIRE rather than assumed present.
+    NEW --audit-equivalents MODE (run_all_mutation_catalogs.py) builds and runs ONLY the mutants
+    declared equivalent, across every catalog. Equivalence claims are 6 of 268 mutants, so auditing
+    all of them costs a fraction of a full run, and they are the entries whose rationale rots
+    silently as a suite gains fixtures. Schema/uniqueness validation still covers EVERY entry in a
+    filtered run, so a rotted find-string in a skipped mutant is not traded away for the speed.
+    EXECUTED across the whole repository: 6/6 equivalence claims audited, all SURVIVED, 0
+    mislabelled (apfs_reader extent-bounds-off-by-one, linux_distro_catalog empty-or-comment-guard,
+    mbox_header_parser leading-colon-guard-ge, mbox_transfer_decoder qp-byte-assembly-or-to-plus,
+    nuget_version_range strip-leading-zeros-keep-one-digit, pst_block_decoder
+    4k-decompress-failure-isEmpty-masked). Every surviving rationale in the repo is now measured,
+    not merely written.
+    A SECOND, WORSE GAP FOUND WHILE FIXING THE FIRST. The harness edits tracked production sources
+    in place and restores them in a finally block -- which a HARD KILL skips. It happened twice
+    during this session's audit runs, leaving a deliberately broken production source sitting in
+    the working tree looking exactly like an ordinary edit, caught only because git status was run.
+    Fixed by making the run ARMED ON DISK: the pre-run bytes go to .mutation-snapshot/ and a
+    .mutation-in-progress.json sentinel names the catalog, the files at risk and the mutant
+    currently applied; a clean exit clears both. If they survive, the harness REFUSES to start (a
+    second run would snapshot the MUTATED bytes as the original and make the damage permanent),
+    --validate FAILS -- and --validate is the mutation-catalog-integrity pre-commit hook, so a
+    leftover mutation now BLOCKS THE COMMIT instead of riding along inside it -- and --recover
+    restores from the snapshot. Recovery uses the snapshot rather than telling the operator to run
+    git checkout, because checkout would also discard any uncommitted work those files held before
+    the run started.
+    PROVED BY KILLING A REAL RUN, not by reasoning: a drill starts the harness, waits for it to
+    arm, hard-kills it, and asserts all fifteen arms (sentinel and snapshot survive; a source is
+    genuinely left mutated; --validate exits 2 and says why; a second run refuses and names the
+    recovery command; --recover restores and clears; --validate passes again; --recover on a clean
+    tree is a no-op). THE FIRST DRILL FAILED AND FOUND A REAL BUG IN THE RECOVERY PATH: a hard kill
+    takes down the harness but NOT the cl.exe it spawned, and on Windows a compiler holding a
+    source open for read blocks the write, so --recover died with a bare PermissionError and left
+    the tree mutated. Reasoning would not have found it. Restores are now lock-tolerant, retrying
+    while the holder exits; if the retries are spent the harness fails CLOSED, leaving the sentinel
+    and snapshot in place so the commit stays blocked and the bytes to finish the job stay
+    available. The re-run drill passes all fifteen, and its log shows the retry path actually
+    FIRING ("locked by another process ... waiting") rather than merely being present.
   - PROGRESS 2026-08-25 SECOND-pass sweep b101 (gated 249/249): 41 weak assertions pinned across six
     more already-swept files (organizer_worker 8, ai_tool_turn 8, elevation_tier 7,
     ai_cancellation_token 7, native_messaging 6, fuzz_mbox_headers 5), and ONE REAL PRODUCTION

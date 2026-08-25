@@ -535,5 +535,13 @@ build-tidy-fp/
 # needs a parallel clang-cl tree. Built and driven by scripts/run_branch_coverage.ps1.
 build-cov/
 
+# Transient state of an in-flight mutation run (scripts/run_mutation_test.py): the
+# sentinel naming the mutant currently applied, and the pre-run bytes of every file
+# it touches. A finished run deletes both. Ignored so a survivor of a hard-killed run
+# can never be committed by accident -- the mutation-catalog-integrity pre-commit hook
+# reads them regardless of this file and BLOCKS the commit while they exist.
+.mutation-in-progress.json
+.mutation-snapshot/
+
 # Local-only Claude Code workspace tooling (personal skills, hardcoded paths)
 .claude/

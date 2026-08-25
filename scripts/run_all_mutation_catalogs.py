@@ -12,7 +12,20 @@ catalogs, in two modes:
                has silently ROTTED -- a source refactor that moves or renames the
                mutated text turns the mutation into a no-op that "passes" while
                testing nothing, and a deleted catalog silently drops coverage.
-               Both fail closed here.
+               Both fail closed here. It also refuses while a mutation run is
+               marked in flight, which is what stops a hard-killed run's broken
+               production source from being committed as if it were an edit.
+
+  --audit-equivalents
+               MIDDLE cost. Builds and runs only the mutants declared EQUIVALENT,
+               across every catalog. Declaring a mutant equivalent is the claim
+               that no input distinguishes it from the original, and it is the one
+               verdict the ratchet accepts WITHOUT the suite proving anything -- so
+               a rationale that was true when written (because the corpus could not
+               reach the mutated site) can quietly become false as the suite grows,
+               and nothing notices. Equivalence claims are a small minority of the
+               mutants, so auditing all of them costs a fraction of a full run and
+               is worth doing whenever a covered suite gains fixtures.
 
   (default)    FULL run. After the fast checks pass it invokes run_mutation_test
                on each catalog in turn and aggregates the verdicts. Rebuilding a
@@ -28,6 +41,7 @@ must equal the set in the manifest, exactly.
 Usage:
     python scripts/run_all_mutation_catalogs.py            # full run (slow)
     python scripts/run_all_mutation_catalogs.py --validate # fast integrity only
+    python scripts/run_all_mutation_catalogs.py --audit-equivalents
 
 Exit codes (match run_mutation_test.py): 0 = PASS, 1 = a surviving hole in a
 full run, 2 = a structural/integrity failure (ratchet, schema, stale find).
@@ -43,6 +57,9 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CATALOG_DIR = REPO_ROOT / "scripts" / "mutation_catalogs"
 MANIFEST_PATH = CATALOG_DIR / "MANIFEST.txt"
+# Written by run_mutation_test.py while the tree is mutated; kept in step with the
+# constant of the same name there.
+SENTINEL_PATH = REPO_ROOT / ".mutation-in-progress.json"
 
 
 def _read_source(path: Path) -> str:
@@ -61,6 +78,24 @@ def _manifest_entries() -> list[str]:
         if stripped and not stripped.startswith("#"):
             out.append(stripped)
     return out
+
+
+def _check_no_mutation_in_flight() -> list[str]:
+    """A mutation run that was hard-killed leaves a deliberately BROKEN production
+    source in the working tree, indistinguishable from an ordinary edit. Since
+    --validate is the pre-commit hook, checking the sentinel here is what stops that
+    edit from being committed -- the one moment where the damage would become
+    permanent. run_mutation_test.py clears the sentinel only after restoring."""
+    if not SENTINEL_PATH.is_file():
+        return []
+    try:
+        detail = SENTINEL_PATH.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        detail = f"(sentinel present but unreadable: {exc})"
+    return [f"a mutation run did not finish, so the working tree is presumed MUTATED "
+            f"-- do NOT commit. Restore it with 'python scripts/run_mutation_test.py "
+            f"--recover'. Sentinel {SENTINEL_PATH.name}:\n    "
+            + detail.replace("\n", "\n    ")]
 
 
 def _check_ratchet() -> list[str]:
@@ -128,7 +163,8 @@ def _validate_catalog(catalog_path: Path) -> list[str]:
 
 def _validate_all(catalogs: list[Path]) -> int:
     """Run the ratchet + per-catalog structural validation. Exit 0 or 2."""
-    problems = _check_ratchet()
+    problems = _check_no_mutation_in_flight()
+    problems.extend(_check_ratchet())
     for catalog_path in catalogs:
         catalog_problems = _validate_catalog(catalog_path)
         if catalog_problems:
@@ -144,28 +180,53 @@ def _validate_all(catalogs: list[Path]) -> int:
     return 0
 
 
-def _run_full(catalogs: list[Path]) -> int:
+def _declares_equivalent(catalog_path: Path) -> bool:
+    """True if this catalog declares at least one equivalent mutant. Parse failures
+    are reported as False here only because _validate_all has already run and would
+    have failed the whole pass on an unparseable catalog."""
+    try:
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return False
+    return any(m.get("expect") == "equivalent" for m in catalog.get("mutants") or [])
+
+
+def _run_full(catalogs: list[Path], equivalents_only: bool = False) -> int:
     """Fast checks, then invoke the harness on each catalog. Aggregate verdicts."""
     validate_rc = _validate_all(catalogs)
     if validate_rc != 0:
         print("\nStructural validation failed; not running the (slow) mutation pass.")
         return validate_rc
+    extra_args = ["--only-equivalents"] if equivalents_only else []
+    if equivalents_only:
+        selected = [c for c in catalogs if _declares_equivalent(c)]
+        skipped = len(catalogs) - len(selected)
+        print(f"\nAuditing equivalence claims in {len(selected)} of {len(catalogs)} "
+              f"catalogs ({skipped} declare none).")
+        if not selected:
+            # Not a pass by omission: say plainly that nothing was audited, so an empty
+            # run cannot be mistaken for a clean one.
+            print("No equivalence claims exist in any catalog; nothing to audit.")
+            return 0
+    else:
+        selected = catalogs
     worst = 0
     summary: list[tuple[str, int]] = []
-    for catalog_path in catalogs:
+    for catalog_path in selected:
         print(f"\n########## {catalog_path.name} ##########")
         rel = catalog_path.relative_to(REPO_ROOT).as_posix()
         rc = subprocess.run(
-            [sys.executable, "scripts/run_mutation_test.py", rel], cwd=REPO_ROOT
+            [sys.executable, "scripts/run_mutation_test.py", rel] + extra_args, cwd=REPO_ROOT
         ).returncode
         summary.append((catalog_path.name, rc))
         worst = max(worst, rc)
     print("\n=== aggregate summary ===")
     for name, rc in summary:
-        verdict = "PASS" if rc == 0 else ("HOLE" if rc == 1 else "ERROR")
+        verdict = "PASS" if rc == 0 else ("FAIL" if rc == 1 else "ERROR")
         print(f"  {verdict:<6} {name}")
+    scope = "equivalence claims" if equivalents_only else "catalogs"
     if worst == 0:
-        print(f"\nALL CATALOGS PASS ({len(catalogs)} catalogs)")
+        print(f"\nALL {scope.upper()} PASS ({len(selected)} catalogs)")
     else:
         print(f"\nMUTATION RATCHET FAIL (worst exit {worst})")
     return worst
@@ -174,8 +235,11 @@ def _run_full(catalogs: list[Path]) -> int:
 def main() -> int:
     args = sys.argv[1:]
     validate_only = False
+    equivalents_only = False
     if args == ["--validate"]:
         validate_only = True
+    elif args == ["--audit-equivalents"]:
+        equivalents_only = True
     elif args:
         print(__doc__)
         return 2
@@ -188,7 +252,7 @@ def main() -> int:
         return 2
     if validate_only:
         return _validate_all(catalogs)
-    return _run_full(catalogs)
+    return _run_full(catalogs, equivalents_only=equivalents_only)
 
 
 if __name__ == "__main__":
