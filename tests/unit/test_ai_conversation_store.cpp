@@ -39,6 +39,123 @@ private Q_SLOTS:
     void concurrentReadersAndWriterDoNotDeadlockOrCorrupt();
 };
 
+namespace {
+
+// The index is the PRIMARY source and the raw logs are only the FALLBACK, but the fixture
+// makes them produce byte-identical hits -- the index text and the raw scan build the same
+// string -- so no assertion in the caller can tell WHICH source answered, and either path
+// could be deleted with everything still green. Isolate them one at a time.
+void verifySearchAnswersFromIndexAndFromRawLogs(const sak::ai::ConversationStore& store,
+                                                QFile& index_file,
+                                                QString& error) {
+    // The index is the PRIMARY source and the raw logs are only the FALLBACK, but this fixture
+    // makes them produce byte-identical hits -- the index text and the raw scan build the same
+    // "%1 %2" string -- so no assertion above can tell WHICH source answered, and either path
+    // could be deleted with everything still green.
+    const auto snippetFor = [](const auto& hits, const QString& source) {
+        const auto it = std::find_if(hits.cbegin(), hits.cend(), [&source](const auto& hit) {
+            return hit.source == source;
+        });
+        return it == hits.cend() ? QString() : it->snippet;
+    };
+    const QString session_dir = store.currentSessionInfo().path;
+    const QString transcript_path = session_dir + QStringLiteral("/transcript.jsonl");
+    const QString commands_path = session_dir + QStringLiteral("/commands.jsonl");
+    const QString index_path = session_dir + QStringLiteral("/search_index.jsonl");
+    index_file.close();
+
+    // (a) With the raw logs moved aside, only a real index READ can still answer. An index read
+    // that bails out (missing, oversized, or open-failure) turns this into zero hits.
+    QVERIFY(QFile::rename(transcript_path, transcript_path + QStringLiteral(".off")));
+    QVERIFY(QFile::rename(commands_path, commands_path + QStringLiteral(".off")));
+    const auto index_only = store.searchSessions(QStringLiteral("SUPERAntiSpyware"), 10, &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(index_only.size(), 2);
+    QCOMPARE(snippetFor(index_only, QStringLiteral("transcript")),
+             QStringLiteral("You Run SUPERAntiSpyware scan"));
+    QCOMPARE(snippetFor(index_only, QStringLiteral("command")),
+             QStringLiteral("Get-Process SUPERAntiSpyware "
+                            "{\"error_message\":\"health_suppressed\",\"success\":false}"));
+
+    // (b) And the fallback must really work for a session with NO index -- a pre-index session,
+    // or one whose index grew past the size cap: restore the raw logs, drop the index, same two.
+    QVERIFY(QFile::rename(transcript_path + QStringLiteral(".off"), transcript_path));
+    QVERIFY(QFile::rename(commands_path + QStringLiteral(".off"), commands_path));
+    QVERIFY(QFile::remove(index_path));
+    const auto raw_only = store.searchSessions(QStringLiteral("SUPERAntiSpyware"), 10, &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(raw_only.size(), 2);
+    QCOMPARE(snippetFor(raw_only, QStringLiteral("transcript")),
+             QStringLiteral("You Run SUPERAntiSpyware scan"));
+    QCOMPARE(snippetFor(raw_only, QStringLiteral("command")),
+             QStringLiteral("Get-Process SUPERAntiSpyware "
+                            "{\"error_message\":\"health_suppressed\",\"success\":false}"));
+}
+
+// The writer half of the concurrency fixture discards all of its return values and nothing
+// downstream could see a failed append -- the test never reads the transcript back -- so if
+// every append had silently failed the readers would still find a consistent session and
+// every assertion would still pass, leaving that half a green no-op. The results are
+// deliberately not checked one-by-one: the searches run unlocked on the reader threads, so a
+// manifest commit can lose a race and return false even when the record was persisted. The
+// corpus it builds must still be real -- the transcript line is written before the manifest.
+void verifyWriterHalfBuiltARealCorpus(const sak::ai::ConversationStore& store,
+                                      const QString& session_id,
+                                      int iterations,
+                                      QString& error) {
+    // Pin the WRITER half of the fixture too. Its 300 return values are discarded and nothing
+    // downstream could see a failed append -- the test never reads the transcript back -- so if
+    // every append had silently failed the readers would still find a consistent session and
+    // every assertion here would still pass, leaving that half a green no-op. The results are
+    // deliberately not checked one-by-one: the searches run unlocked on the reader threads, so a
+    // manifest commit can lose a race and return false even when the record was persisted. The
+    // corpus it builds must still be real -- the transcript line is written before the manifest
+    // is reached.
+    const auto written = store.loadTranscriptLines(session_id, &error);
+    QCOMPARE(written.size(), iterations);
+    QVERIFY2(written.constLast().endsWith(QStringLiteral("disk check %1").arg(iterations - 1)),
+             qPrintable(written.constLast()));
+}
+
+// One reader thread's body. It checks not only that a snapshot is internally consistent but
+// that the artifact-path RESULTS stay correct: every refusal arm in that nested read chain
+// returns an empty string with an error set, so a store that refused EVERY concurrent
+// request would score exactly like a healthy one when the results are discarded.
+struct ContentionReaderContext {
+    sak::ai::ConversationStore& store;
+    const QString& session_id;
+    int iterations;
+    std::atomic<bool>& torn_read;
+    std::atomic<bool>& bad_artifact_read;
+    const QString& expected_root;
+    const QString& expected_artifact;
+};
+
+auto makeContentionReader(const ContentionReaderContext& ctx) {
+    return [&ctx]() {
+        for (int i = 0; i < ctx.iterations; ++i) {
+            const sak::ai::AiSessionInfo info = ctx.store.currentSessionInfo();
+            // The session is never cleared or renamed here, so a snapshot must be
+            // internally consistent: a torn read could pair a stale id with a fresh
+            // path, or an empty id with a non-empty path.
+            if (info.id != ctx.session_id || info.path.isEmpty()) {
+                ctx.torn_read = true;
+            }
+            QString err;
+            const QString root = ctx.store.artifactRootDirectory(&err);  // nested-read chain
+            const QString artifact =
+                ctx.store.artifactPath(QStringLiteral("downloads"), QStringLiteral("f.bin"), &err);
+            if (root != ctx.expected_root || artifact != ctx.expected_artifact || !err.isEmpty()) {
+                ctx.bad_artifact_read = true;
+            }
+            (void)ctx.store.currentSessionId();
+            (void)ctx.store.searchSessions(QStringLiteral("disk"), 10, &err);
+        }
+    };
+}
+
+}  // namespace
+
 void AiConversationStoreTests::startSession_writesManifestAndListsSession() {
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
@@ -108,9 +225,42 @@ void AiConversationStoreTests::latestAssistantResponseId_returnsLastAssistantMet
                                        {QStringLiteral("response_id"), QStringLiteral("resp_new")}},
                                    &error));
 
+    // Both loop guards must be PROVED, not merely present. As written the winning id was simply
+    // "the last line in the file", so neither the role filter nor the non-empty-id guard was
+    // load-bearing: the Tool Result line planted to prove the role filter sits BEFORE the final
+    // assistant line. A LATER Tool Result carrying an id proves the role filter, and a LATER
+    // assistant line whose id is whitespace-only proves the trim-and-non-empty guard -- a
+    // streamed turn not yet assigned an id must not blank the id the next API call chains on.
+    QVERIFY(
+        store.appendTranscript(QStringLiteral("Assistant"),
+                               QStringLiteral("streaming chunk with no id yet"),
+                               QJsonObject{{QStringLiteral("response_id"), QStringLiteral("   ")}},
+                               &error));
+    QVERIFY(store.appendTranscript(QStringLiteral("Tool Result"),
+                                   QStringLiteral("later tool result"),
+                                   QJsonObject{{QStringLiteral("response_id"),
+                                                QStringLiteral("resp_tool_last")}},
+                                   &error));
+
     QCOMPARE(store.latestAssistantResponseId(store.currentSessionId(), &error),
              QStringLiteral("resp_new"));
     QVERIFY(error.isEmpty());
+
+    // A successful lookup must CLEAR the caller's error slot, not merely leave it alone. `error`
+    // was only ever written on failure and every call above succeeded, so the assertion above
+    // would have passed BEFORE the call. Callers reuse one QString across store calls, so a
+    // stale message left in place is reported against the wrong operation.
+    error = QStringLiteral("stale failure from an earlier call");
+    QCOMPARE(store.latestAssistantResponseId(store.currentSessionId(), &error),
+             QStringLiteral("resp_new"));
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+
+    // A session with no transcript is "no response id", NOT a failure: the missing-file arm must
+    // clear the slot too, or the caller reports a phantom error for a lookup that succeeded.
+    error = QStringLiteral("stale failure from an earlier call");
+    QVERIFY(
+        store.latestAssistantResponseId(QStringLiteral("ai_no_such_session"), &error).isEmpty());
+    QVERIFY2(error.isEmpty(), qPrintable(error));
 }
 
 void AiConversationStoreTests::listPromptedSessions_filtersUnpromptedSessions() {
@@ -143,6 +293,25 @@ void AiConversationStoreTests::listPromptedSessions_filtersUnpromptedSessions() 
     QCOMPARE(sessions.first().title, QStringLiteral("Prompted"));
     QVERIFY(std::none_of(sessions.cbegin(), sessions.cend(), [&](const auto& session) {
         return session.id == empty_id || session.id == assistant_only_id || session.id == blank_id;
+    }));
+
+    // The filter accepts EITHER role spelling: the panel writes "You", while an API-side or
+    // imported transcript writes "user". Every session above uses "You", so the second
+    // alternative was dead weight that could be deleted silently -- and coverage measures it as
+    // never once true. Dropping it makes such a chat vanish from the session picker with no
+    // error at all: a silently unlistable chat.
+    QVERIFY(store.startSession(QStringLiteral("ApiRole"), &error));
+    const QString api_role_id = store.currentSessionId();
+    QVERIFY(!api_role_id.isEmpty());
+    QVERIFY(store.appendTranscript(QStringLiteral("user"), QStringLiteral("run scan"), {}, &error));
+
+    const auto with_api_role = store.listPromptedSessions();
+    QCOMPARE(with_api_role.size(), 2);
+    QVERIFY(std::any_of(with_api_role.cbegin(), with_api_role.cend(), [&](const auto& session) {
+        return session.id == api_role_id;
+    }));
+    QVERIFY(std::any_of(with_api_role.cbegin(), with_api_role.cend(), [&](const auto& session) {
+        return session.id == prompted_id;
     }));
 }
 
@@ -209,7 +378,15 @@ void AiConversationStoreTests::writeUsage_persistsUsageJson() {
     QCOMPARE(session_total.value(QStringLiteral("output_tokens")).toInt(), 55);
     QCOMPARE(session_total.value(QStringLiteral("reasoning_tokens")).toInt(), 22);
     QCOMPARE(session_total.value(QStringLiteral("total_tokens")).toInt(), 165);
-    QVERIFY(!usage_root.value(QStringLiteral("updated_at")).toString().isEmpty());
+    // Every other field here is pinned exactly; the timestamp alone was checked only for being
+    // non-empty, which any placeholder satisfies. Its instant is not knowable but its FORM is:
+    // the store writes Qt::ISODateWithMs, the same spec session dates are parsed back with.
+    const QString usage_stamp = usage_root.value(QStringLiteral("updated_at")).toString();
+    const QDateTime usage_written_at = QDateTime::fromString(usage_stamp, Qt::ISODateWithMs);
+    QVERIFY2(usage_written_at.isValid(), qPrintable(usage_stamp));
+    // ...and it is THIS write's stamp, not a frozen literal that merely parses.
+    QVERIFY2(qAbs(usage_written_at.msecsTo(QDateTime::currentDateTimeUtc())) < 60'000,
+             qPrintable(usage_stamp));
 }
 
 void AiConversationStoreTests::commandLogPath_createsLogsDirectoryAndReturnsPath() {
@@ -223,7 +400,11 @@ void AiConversationStoreTests::commandLogPath_createsLogsDirectoryAndReturnsPath
     const QString stdout_path =
         store.commandLogPath(QStringLiteral("cmd_001"), QStringLiteral("stdout"), &error);
     QVERIFY2(!stdout_path.isEmpty(), qPrintable(error));
-    QVERIFY(stdout_path.endsWith(QStringLiteral("/artifacts/Logs/logs/cmd_001_stdout.txt")));
+    // The whole path is knowable, and a tail match cannot see WHICH directory the artifacts tree
+    // hangs off -- which is exactly what confines one chat's logs to its own session folder.
+    QCOMPARE(stdout_path,
+             store.currentSessionInfo().path +
+                 QStringLiteral("/artifacts/Logs/logs/cmd_001_stdout.txt"));
 
     const QFileInfo info(stdout_path);
     QVERIFY(info.absoluteDir().exists());
@@ -251,6 +432,18 @@ void AiConversationStoreTests::commandLogPath_confinesTraversalTokens() {
     QCOMPARE(path,
              store.currentSessionInfo().path +
                  QStringLiteral("/artifacts/Logs/logs/____etc__.txt"));
+
+    // The sanitizer takes a per-call fallback -- "cmd" for the id, "output" for the suffix -- and
+    // no fixture ever sanitized a token down to nothing, so neither fallback was ever the source
+    // of the name and coverage measures both arms of that branch as unreached. A token that
+    // sanitizes away entirely must fall back to its OWN default, so an emptied id or suffix
+    // still names a distinct, non-degenerate file instead of every such command sharing one.
+    const QString fallback_path =
+        store.commandLogPath(QStringLiteral("."), QStringLiteral("  "), &error);
+    QVERIFY2(!fallback_path.isEmpty(), qPrintable(error));
+    QCOMPARE(fallback_path,
+             store.currentSessionInfo().path +
+                 QStringLiteral("/artifacts/Logs/logs/cmd_output.txt"));
 }
 
 void AiConversationStoreTests::safeArtifactDirectoryName_rejectsDotSegments() {
@@ -269,6 +462,19 @@ void AiConversationStoreTests::safeArtifactDirectoryName_rejectsDotSegments() {
     QCOMPARE(sak::ai::ConversationStore::safeArtifactDirectoryName(QStringLiteral("My Session"),
                                                                    QStringLiteral("ai_x")),
              QStringLiteral("My Session"));
+    // EVERY member of the reserved class is replaced, not just the path separators -- '/' was
+    // the only one probed anywhere in this file, and the preserved-title case contains none at
+    // all. A shrunken class leaves ':' / '?' / '*' in the directory name, mkpath then fails, and
+    // every artifact write for that chat turns into a fail-closed empty path.
+    QCOMPARE(sak::ai::ConversationStore::safeArtifactDirectoryName(
+                 QStringLiteral(R"(Report: <v2>?"x"|y*z\w/q)"), QStringLiteral("ai_x")),
+             QStringLiteral("Report_ _v2___x__y_z_w_q"));
+    // ...and the length cap actually truncates; it was probed nowhere. The bound lives in the
+    // .cpp's anonymous namespace, so pin its value here by literal.
+    constexpr qsizetype kExpectedMaxChars = 80;
+    QCOMPARE(sak::ai::ConversationStore::safeArtifactDirectoryName(
+                 QString(kExpectedMaxChars * 2, QLatin1Char('a')), QStringLiteral("ai_x")),
+             QString(kExpectedMaxChars, QLatin1Char('a')));
 }
 
 void AiConversationStoreTests::artifactPath_createsSubdirectoryAndReturnsPath() {
@@ -282,13 +488,32 @@ void AiConversationStoreTests::artifactPath_createsSubdirectoryAndReturnsPath() 
     const QString screenshot_path =
         store.artifactPath(QStringLiteral("screenshots"), QStringLiteral("shot_001.png"), &error);
     QVERIFY2(!screenshot_path.isEmpty(), qPrintable(error));
-    QVERIFY(
-        screenshot_path.endsWith(QStringLiteral("/artifacts/Artifacts/screenshots/shot_001.png")));
+    // The containment assertions further down are all RELATIVE to downloads_dir, so they move
+    // with a mis-rooted artifact tree; nothing here named the session directory the artifacts
+    // must live under. The whole path is knowable, so pin it.
+    QCOMPARE(screenshot_path,
+             store.currentSessionInfo().path +
+                 QStringLiteral("/artifacts/Artifacts/screenshots/shot_001.png"));
     QVERIFY(QFileInfo(screenshot_path).absoluteDir().exists());
 
     const QString downloads_dir = store.artifactSubdir(QStringLiteral("downloads"), &error);
     QVERIFY2(!downloads_dir.isEmpty(), qPrintable(error));
     QVERIFY(QDir(downloads_dir).exists());
+    // Pin WHICH directory came back, not merely that it is non-empty: it must be the managed
+    // subdirectory under THIS session's artifact root.
+    QCOMPARE(downloads_dir,
+             store.currentSessionInfo().path + QStringLiteral("/artifacts/Artifacts/downloads"));
+    // An empty or whitespace-only subdir must be REFUSED, an arm coverage measures as never
+    // taken. The guard is not decorative: QDir::filePath({}) returns the directory itself
+    // unchanged and mkpath on an existing directory succeeds, so without it artifactSubdir hands
+    // back the ARTIFACT ROOT and a model-chosen filename lands beside the managed subdirectories.
+    error.clear();
+    QVERIFY(store.artifactSubdir(QStringLiteral("   "), &error).isEmpty());
+    QCOMPARE(error, QStringLiteral("Artifact subdir is empty"));
+    error.clear();
+    QVERIFY(store.artifactSubdir(QString(), &error).isEmpty());
+    QCOMPARE(error, QStringLiteral("Artifact subdir is empty"));
+    error.clear();
 
     // P08-01: a filename that escapes the artifact subdir must be rejected -- and rejected BY THE
     // CONTAINMENT GUARD, not by one of artifactPath's other empty-with-error return paths.
@@ -326,6 +551,16 @@ void AiConversationStoreTests::renameSession_updatesTitleAndArtifactRoot() {
 
     QVERIFY(store.renameCurrentSession(QStringLiteral("Drive Check / SSD"), &error));
     QCOMPARE(store.currentSessionInfo().title, QStringLiteral("Drive Check / SSD"));
+    // currentSessionInfo() is the IN-MEMORY record, updated before anything is persisted, so
+    // the compare above cannot see the persistence half of the rename. The session picker
+    // rebuilds itself from the manifest, so a rename that never reaches disk shows the OLD title
+    // again after a restart. Both stamps are pinned as well: a rename is the only point where
+    // created_at and updated_at diverge, so a swapped write is invisible everywhere else.
+    const auto persisted = store.listSessions();
+    QCOMPARE(persisted.size(), 1);
+    QCOMPARE(persisted.first().title, QStringLiteral("Drive Check / SSD"));
+    QCOMPARE(persisted.first().created_at, store.currentSessionInfo().created_at);
+    QCOMPARE(persisted.first().updated_at, store.currentSessionInfo().updated_at);
 
     const QString root = store.artifactRootDirectory(&error);
     QVERIFY2(!root.isEmpty(), qPrintable(error));
@@ -384,6 +619,21 @@ void AiConversationStoreTests::memoryFile_appendsEntries() {
     const qsizetype second_at = memory.indexOf(QStringLiteral(" - Assistant - Finding\nSMART OK"));
     QVERIFY(first_at >= 0);
     QVERIFY(second_at > first_at);
+
+    // The cap is memoryText's whole contract for the prompt builder -- keep the NEWEST max_chars
+    // and announce the omission, so a memory file allowed to grow cannot flood the context
+    // window -- and no call anywhere in this file gets near it: every one passes 16'000 against
+    // a few hundred characters, which coverage confirms leaves that arm never taken. Deleting
+    // the cap outright stayed green.
+    const QString capped = store.memoryText(40, &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QVERIFY(capped.startsWith(QStringLiteral("[older working memory omitted]")));
+    QVERIFY(capped.size() < memory.size());
+    // The NEWEST entry survives and the OLDEST content is what gets dropped -- a left() instead
+    // of a right() would keep the marker but lose this and keep the file header.
+    QVERIFY(capped.contains(QStringLiteral("SMART OK")));
+    QVERIFY(!capped.contains(QStringLiteral("check my drive")));
+    QVERIFY(!capped.contains(QStringLiteral("# Session Working Memory")));
 }
 
 void AiConversationStoreTests::memoryFile_initializesStructuredSections() {
@@ -400,13 +650,22 @@ void AiConversationStoreTests::memoryFile_initializesStructuredSections() {
 
     const QString memory = store.memoryText(16'000, &error);
     QVERIFY2(error.isEmpty(), qPrintable(error));
-    QVERIFY(memory.contains(QStringLiteral("## Pinned Facts")));
-    QVERIFY(memory.contains(QStringLiteral("## Current Task")));
-    QVERIFY(memory.contains(QStringLiteral("## Decisions")));
-    QVERIFY(memory.contains(QStringLiteral("## Open Questions")));
-    QVERIFY(memory.contains(QStringLiteral("## Artifacts")));
-    QVERIFY(memory.contains(QStringLiteral("## Resolved History")));
-    QVERIFY(memory.contains(QStringLiteral("install firefox")));
+    // The header is a fixed literal and this file was just initialized from it, so the whole
+    // prefix is knowable byte-for-byte. Six contains() calls pinned neither the section ORDER
+    // nor the "- _none_" placeholders that tell the model a section is empty rather than
+    // missing -- reordering the literal, or dropping every placeholder body, stayed green.
+    const QString expected_header = QStringLiteral(
+        "# Session Working Memory\n\n"
+        "## Pinned Facts\n- _none_\n\n"
+        "## Current Task\n- _none_\n\n"
+        "## Decisions\n- _none_\n\n"
+        "## Open Questions\n- _none_\n\n"
+        "## Artifacts\n- _none_\n\n"
+        "## Resolved History\n\n");
+    QVERIFY2(memory.startsWith(expected_header), qPrintable(memory.left(400)));
+    // The appended entry lands under Resolved History, i.e. after the entire header.
+    const qsizetype entry_at = memory.indexOf(QStringLiteral(" - User - Request\ninstall firefox"));
+    QVERIFY(entry_at >= expected_header.size());
 }
 
 namespace {
@@ -551,6 +810,8 @@ void AiConversationStoreTests::searchSessions_findsTranscriptAndCommandIndex() {
         return hit.source == QStringLiteral("command") &&
                hit.snippet.contains(QStringLiteral("SUPERAntiSpyware"));
     }));
+
+    verifySearchAnswersFromIndexAndFromRawLogs(store, index_file, error);
 }
 
 void AiConversationStoreTests::appendCommand_redactsSecretsInPersistedRecord() {
@@ -610,23 +871,28 @@ void AiConversationStoreTests::concurrentReadersAndWriterDoNotDeadlockOrCorrupt(
 
     constexpr int kIterations = 300;
     std::atomic<bool> torn_read{false};
+    // (c) the reader RESULTS must stay CORRECT under contention, not merely not-crash. Every
+    // reader result used to be cast to void, and torn_read only fires on a wrong id or an empty
+    // path -- it cannot see artifactRootDirectory() or artifactPath() returning an empty string
+    // with an error set. Every refusal arm in that nested chain returns exactly that, so a store
+    // that refused EVERY concurrent artifact request scored identically to a healthy one. Both
+    // expected values (and their directories) are established before any thread starts, so the
+    // only thing a reader can observe is a contention-induced refusal.
+    std::atomic<bool> bad_artifact_read{false};
+    const QString expected_root = store.artifactRootDirectory(&error);
+    QVERIFY2(!expected_root.isEmpty(), qPrintable(error));
+    const QString expected_artifact =
+        store.artifactPath(QStringLiteral("downloads"), QStringLiteral("f.bin"), &error);
+    QCOMPARE(expected_artifact, expected_root + QStringLiteral("/downloads/f.bin"));
 
-    auto reader = [&store, &session_id, &torn_read]() {
-        for (int i = 0; i < kIterations; ++i) {
-            const sak::ai::AiSessionInfo info = store.currentSessionInfo();
-            // The session is never cleared or renamed here, so a snapshot must be
-            // internally consistent: a torn read could pair a stale id with a fresh
-            // path, or an empty id with a non-empty path.
-            if (info.id != session_id || info.path.isEmpty()) {
-                torn_read = true;
-            }
-            QString err;
-            (void)store.artifactRootDirectory(&err);  // nested-read chain
-            (void)store.artifactPath(QStringLiteral("downloads"), QStringLiteral("f.bin"), &err);
-            (void)store.currentSessionId();
-            (void)store.searchSessions(QStringLiteral("disk"), 10, &err);
-        }
-    };
+    const ContentionReaderContext reader_ctx{.store = store,
+                                             .session_id = session_id,
+                                             .iterations = kIterations,
+                                             .torn_read = torn_read,
+                                             .bad_artifact_read = bad_artifact_read,
+                                             .expected_root = expected_root,
+                                             .expected_artifact = expected_artifact};
+    auto reader = makeContentionReader(reader_ctx);
 
     std::vector<std::thread> readers;
     readers.reserve(4);
@@ -644,6 +910,11 @@ void AiConversationStoreTests::concurrentReadersAndWriterDoNotDeadlockOrCorrupt(
     }
 
     QVERIFY(!torn_read.load());
+    QVERIFY2(!bad_artifact_read.load(),
+             "a reader saw an empty or mismatched artifact path under contention");
+
+    verifyWriterHalfBuiltARealCorpus(store, session_id, kIterations, error);
+
     // The store is still consistent and usable after the hammering.
     QCOMPARE(store.currentSessionId(), session_id);
     const QString root = store.artifactRootDirectory(&error);

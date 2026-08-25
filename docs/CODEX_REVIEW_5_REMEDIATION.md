@@ -5024,6 +5024,46 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-25 COVERAGE-DIRECTED sweep b102 (gated 249/249): 70 weak assertions pinned
+    across six files, the largest batch of the campaign and the first whose targets were chosen by
+    MEASUREMENT rather than by inspection. Targets came from build-cov/coverage/ACTIONABLE.txt
+    (the 10,964 never-taken conditional arms the R5-G14-16b branch-coverage run enumerates) ranked
+    by missed-arm count, and each finder agent was handed its own production file's entries:
+    advanced_search_worker 12 (273 missed arms), vulnerability_scanner 15 (267), email_export_worker
+    6 (225), ai_conversation_store 15 (179), firewall_rule_auditor 9 (169), leftover_scanner 13
+    (155). Three of the six had never been swept by any prior G18-4 batch. Three candidates were
+    rejected by the adversarial pass.
+    THE METHOD CHANGE PAID. The new class AA -- an arm coverage PROVES is never taken -- is the
+    single largest class in the batch (10 direct plus 5 in combinations, 15 of 70), and it is a
+    class inspection had been finding only by accident. Concrete measured-dead arms now driven for
+    the first time: RegOpenKeyExW never once SUCCEEDED in any of the 246 test binaries (the whole
+    registry-classification path in leftover_scanner was unreachable, so its slot's loop body never
+    ran); the recursive folder-size walk's loop body was never entered (every folder fixture in the
+    file was an EMPTY directory, so every sizeBytes assertion pinned 0 -- exactly what a walk that
+    never accumulates returns); isPublisherDir never once returned true; the "program files"
+    operand of the risk chain was never evaluated because every fixture was rooted in a
+    QTemporaryDir, which on Windows lives under %LOCALAPPDATA%\Temp and short-circuits on
+    "appdata" first; the CSV no-comma arm; the KEV id-less-row reject; the OSV single-query shape;
+    the CVSS v4.0 metric tier; the token-match scoring tier; and installedVersionAffected's
+    absent-version guard. The complement held too, as b101 predicted: coverage is blind to
+    value-level weakness on fully covered lines, and the batch's other 55 pins came from
+    inspection -- floors, self-comparisons, swap-prone sibling fields, one-sided guards.
+    A REAL PRODUCTION-BEHAVIOUR SURPRISE, none: every exact value the agents predicted from reading
+    production held on first run (confidence scores 50/80/70/30, the 6-matches-across-4-file-kinds
+    count, byte offsets, metadata catalog positions 2 and 4, the 1023-byte recursive size, the
+    Risky/Safe registry classifications, and the conflict-completeness count recomputed against the
+    live host firewall). Two pins were STRENGTHENED past what the agent proposed, because the
+    proposed form was one-sided: the inline-attachment skip is now exported twice (skip on, skip
+    off) so the guard is proved REACHED rather than merely silent -- a parser that dropped the
+    inline part earlier would have satisfied the one-sided version identically -- and the
+    conflict-completeness pin carries an explicit note that it does NOT pin rulesConflict itself,
+    since both sides call it, only the pair scan around it.
+    LIZARD CAUGHT THE COST. The 70 pins pushed 16 test functions past the CCN<=10 / length<=70
+    limits, all 16 NEW (the same files measured clean at HEAD). Fixed by extracting named
+    intention-revealing helpers into each file's anonymous namespace -- the convention these files
+    already use -- not by loosening the gate or splitting slots arbitrarily; one 7-parameter helper
+    became a context struct. cppcheck then flagged three of the new helpers' parameters as
+    const-able, fixed rather than suppressed.
   - PROGRESS 2026-08-25 mutation-harness hardening, closing the b101 catalog mislabel and the
     FAIL-OPEN that hid it. b101 recorded that scripts/mutation_catalogs/mbox_header_parser.json
     declared its value-extract-trim mutant "equivalent" and that the claim was FALSE. Corrected:

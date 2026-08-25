@@ -32,6 +32,7 @@ private Q_SLOTS:
 
     // -- Cancel ----------------------------------------------------------
     void cancelBeforeExportDoesNotPoisonNextExport();
+    void cancelDuringMboxExportStampsPartialOutput();
 
     // -- Export With Null Parser -----------------------------------------
     void exportWithNullPstParserFailsClosed();
@@ -52,6 +53,188 @@ private Q_SLOTS:
     // -- B7: MBOX must reject non-per-message formats, not coerce to EML --
     void mboxRejectsNonMessageFormat();
 };
+
+namespace {
+
+// One MBOX message carrying a base64 attachment ("Hello Attach") in a multipart/mixed body,
+// plus an INLINE image part with a Content-ID -- the shape the skip_inline_images option
+// exists to filter (a signature logo or a tracking pixel), and which no fixture anywhere in
+// the suite produced before, leaving that filter measured-dead.
+QByteArray attachmentMboxFixture() {
+    QByteArray content;
+    content += "From sender@example.com Mon Jan  1 00:00:00 2024\r\n";
+    content += "From: A <a@example.com>\r\n";
+    content += "To: B <b@example.com>\r\n";
+    content += "Subject: Has Attachment\r\n";
+    content += "Date: Mon, 01 Jan 2024 00:00:00 +0000\r\n";
+    content += "MIME-Version: 1.0\r\n";
+    content += "Content-Type: multipart/mixed; boundary=\"BOUND\"\r\n";
+    content += "\r\n";
+    content += "--BOUND\r\n";
+    content += "Content-Type: text/plain; charset=UTF-8\r\n";
+    content += "\r\n";
+    content += "Body text.\r\n";
+    // image/* is non-text, so MboxParser routes this to appendAttachment despite the
+    // "inline" disposition, and records the Content-ID that marks it inline.
+    content += "--BOUND\r\n";
+    content += "Content-Type: image/png; name=\"logo.png\"\r\n";
+    content += "Content-Transfer-Encoding: base64\r\n";
+    content += "Content-Disposition: inline; filename=\"logo.png\"\r\n";
+    content += "Content-ID: <logo@example.com>\r\n";
+    content += "\r\n";
+    content += "SW5saW5lTG9nbw==\r\n";  // "InlineLogo"
+    content += "--BOUND\r\n";
+    content += "Content-Type: application/octet-stream; name=\"data.bin\"\r\n";
+    content += "Content-Transfer-Encoding: base64\r\n";
+    content += "Content-Disposition: attachment; filename=\"data.bin\"\r\n";
+    content += "\r\n";
+    content += "SGVsbG8gQXR0YWNo\r\n";  // "Hello Attach"
+    content += "--BOUND--\r\n";
+    return content;
+}
+
+// One plain-text MBOX message whose Subject is the value the include-headers switch must hide.
+// It carries Cc and Message-ID as well: clearEmlHeaderFields clears eight fields, but
+// EmlWriter::appendHeader returns early on an EMPTY value, so a field this fixture leaves
+// empty makes its clear() a provable no-op and the leak assertions below vacuous.
+QByteArray plainHeaderMboxFixture() {
+    QByteArray content;
+    content += "From sender@example.com Mon Jan  1 00:00:00 2024\r\n";
+    content += "From: A <a@example.com>\r\n";
+    content += "To: B <b@example.com>\r\n";
+    content += "Cc: C <c@example.com>\r\n";
+    content += "Subject: SecretSubjectLine\r\n";
+    content += "Date: Mon, 01 Jan 2024 00:00:00 +0000\r\n";
+    content += "Message-ID: <SecretMsgId42@example.com>\r\n";
+    content += "\r\n";
+    content += "Plain body content.\r\n";
+    return content;
+}
+
+// The inline-skip assertions in the caller are one-sided: dropping the inline part somewhere
+// EARLIER -- a parser that never records it, or a filter keyed on the wrong field --
+// satisfies them just as well as the skip does, and leaves the guard measured-dead exactly
+// as it was. Re-exporting with skip_inline_images=false must EMBED it, which is only
+// possible if the part reached the filter and the filter read the flag. The HTML re-export
+// then pins the SECOND row of the ordered format-name table, whose first row is all any
+// other assertion in this file has ever matched.
+void verifyInlineKeepArmAndHtmlFormatRow(MboxParser& parser) {
+    // The OTHER arm, and the reason the three assertions above are not vacuous. Dropping the
+    // inline part somewhere EARLIER -- a parser that never records it, or a filter keyed on
+    // the wrong field -- satisfies them just as well as the skip does, and leaves the guard
+    // measured-dead exactly as it was. Re-exporting with skip_inline_images=false must EMBED
+    // it, which is only possible if the part reached the filter and the filter read the flag.
+    QTemporaryDir keep_dir;
+    QVERIFY(keep_dir.isValid());
+    sak::EmailExportConfig keep_config;
+    keep_config.format = sak::ExportFormat::Eml;
+    keep_config.output_path = keep_dir.path();
+    keep_config.skip_inline_images = false;
+
+    EmailExportWorker keep_worker;
+    QSignalSpy keep_spy(&keep_worker, &EmailExportWorker::exportComplete);
+    keep_worker.exportMboxItems(&parser, keep_config);
+    QCOMPARE(keep_spy.count(), 1);
+    const auto keep_result = keep_spy.first().first().value<sak::EmailExportResult>();
+    QVERIFY(keep_result.errors.isEmpty());
+    QCOMPARE(keep_result.items_exported, 1);
+
+    const QStringList keep_eml =
+        QDir(keep_dir.path()).entryList({QStringLiteral("*.eml")}, QDir::Files);
+    QCOMPARE(keep_eml.size(), 1);
+    QFile keep_written(keep_dir.path() + QLatin1Char('/') + keep_eml.first());
+    QVERIFY(keep_written.open(QIODevice::ReadOnly));
+    const QByteArray keep_bytes = keep_written.readAll();
+    keep_written.close();
+    QVERIFY(keep_bytes.contains("logo.png"));
+    QVERIFY(keep_bytes.contains("SW5saW5lTG9nbw"));
+    QCOMPARE(keep_bytes.count("Content-Disposition: attachment;"), 2);
+
+    // The label comes from kExportFormatNames, an ORDERED table, and every assertion above
+    // matches its FIRST row -- coverage shows the row comparison never once returned false, so
+    // the loop has never advanced past Eml and the other eleven rows are unverified text.
+    // Re-exporting the SAME fixture as HTML pins the second row and drives the Html arms that
+    // the coverage run reports dead: isMessageFileFormat's Html clause, the HtmlEmailWriter
+    // construction in prepareMessageWriters, and exportOneMboxItem's Html case.
+    QTemporaryDir html_dir;
+    QVERIFY(html_dir.isValid());
+    sak::EmailExportConfig html_config;
+    html_config.format = sak::ExportFormat::Html;
+    html_config.output_path = html_dir.path();
+
+    EmailExportWorker html_worker;
+    QSignalSpy html_spy(&html_worker, &EmailExportWorker::exportComplete);
+    html_worker.exportMboxItems(&parser, html_config);
+    QCOMPARE(html_spy.count(), 1);
+    const auto html_result = html_spy.first().first().value<sak::EmailExportResult>();
+    // A renamed or deleted Html row reports "EML (from MBOX)" or " (from MBOX)" here, and
+    // dropping Html from isMessageFileFormat refuses the export outright.
+    QCOMPARE(html_result.export_format, QStringLiteral("HTML (from MBOX)"));
+    QVERIFY(html_result.errors.isEmpty());
+    QCOMPARE(html_result.items_exported, 1);
+    QCOMPARE(html_result.items_failed, 0);
+    QCOMPARE(QDir(html_dir.path()).entryList({QStringLiteral("*.html")}, QDir::Files).size(), 1);
+}
+
+// The headers-ON half: the recipient header must survive that path too, and the two fields
+// the leak checks depend on must really reach the writer -- appendHeader returns early on an
+// empty value, so an absent Cc or Message-ID cannot leak either way and would make those
+// checks vacuous again, which is the exact failure being fixed.
+template <typename ReadSingleEml>
+void verifyHeadersOnPathCarriesEveryHeader(MboxParser& parser,
+                                           const ReadSingleEml& read_single_eml) {
+    // Headers included (default).
+    QTemporaryDir on_dir;
+    QVERIFY(on_dir.isValid());
+    sak::EmailExportConfig on_config;
+    on_config.format = sak::ExportFormat::Eml;
+    on_config.output_path = on_dir.path();
+    on_config.eml_include_headers = true;
+    EmailExportWorker on_worker;
+    on_worker.exportMboxItems(&parser, on_config);
+    const QByteArray on_eml = read_single_eml(on_dir.path());
+    QVERIFY(!on_eml.isEmpty());
+    QVERIFY(on_eml.contains("Subject: SecretSubjectLine\r\n"));
+    // The recipient header must survive the include-headers path too: nothing else pins
+    // display_to, so losing the worker's msg.to -> display_to mapping is invisible today.
+    QVERIFY(on_eml.contains("To: B <b@example.com>\r\n"));
+    // And the two fields the leak checks above depend on really do reach the writer. Without
+    // this, a fixture typo would silently make those checks vacuous again -- appendHeader
+    // returns early on an empty value, so an absent Cc/Message-ID cannot leak either way.
+    QVERIFY(on_eml.contains("Cc: C <c@example.com>\r\n"));
+    QVERIFY(on_eml.contains("Message-ID: <SecretMsgId42@example.com>\r\n"));
+}
+
+// The attachment BYTES must actually reach the written file: with an empty attachment vector
+// EmlWriter takes the simple text/plain branch and every count assertion in the caller still
+// passes. The inline part (Content-ID set) must equally be EXCLUDED -- skip_inline_images
+// defaults true, and without that skip every signature logo and tracking pixel is re-embedded.
+void verifyEmbeddedAttachmentBytesAndInlineSkip(const QString& out_dir,
+                                                const QString& eml_name,
+                                                const sak::EmailExportResult& result) {
+    // ...and the attachment BYTES actually reached that file. With an empty attachment
+    // vector (the pre-B7 behaviour) EmlWriter takes the simple text/plain branch and
+    // every assertion above -- exported=1, failed=0, one .eml -- still passes.
+    QFile written(out_dir + QLatin1Char('/') + eml_name);
+    QVERIFY(written.open(QIODevice::ReadOnly));
+    const QByteArray eml_bytes = written.readAll();
+    written.close();
+    QVERIFY(eml_bytes.contains("Content-Type: multipart/mixed; boundary=\"----=_SAK_Part_"));
+    QVERIFY(eml_bytes.contains("Content-Type: application/octet-stream; name=\"data.bin\"\r\n"));
+    QVERIFY(eml_bytes.contains(
+        "Content-Disposition: attachment; filename=\"data.bin\"\r\n\r\nSGVsbG8gQXR0YWNo\r\n"));
+    // total_bytes is the writer's own byte counter; cross-check it against the file.
+    QCOMPARE(result.total_bytes, static_cast<qint64>(eml_bytes.size()));
+
+    // ...and the INLINE part (Content-ID set) was EXCLUDED. skip_inline_images defaults true,
+    // so collectMboxAttachmentData must drop it before EmlWriter ever sees it; without that
+    // skip, every signature logo and tracking pixel is re-embedded as a full attachment part.
+    QVERIFY(!eml_bytes.contains("logo.png"));
+    QVERIFY(!eml_bytes.contains("SW5saW5lTG9nbw"));
+    QCOMPARE(eml_bytes.count("Content-Disposition: attachment;"), 1);
+}
+
+}  // namespace
 
 // ============================================================================
 // Config Defaults
@@ -206,6 +389,57 @@ void TestEmailExportWorker::cancelBeforeExportDoesNotPoisonNextExport() {
     parser.close();
 }
 
+// The test above claims something about cancel(), but every assertion in it describes a
+// CLEAN export -- empty out the body of EmailExportWorker::cancel() and it still passes with
+// identical values, because the cancel it raises is REQUIRED to have no effect. Nothing else
+// in the suite covers for that: the coverage run reports both cancellation checks -- the MBOX
+// item loop's and noteIfCancelled's -- as never once taken. So a cancel raised WHILE an
+// export is running must be shown to stop the run AND mark the result partial: the loop
+// breaks before the only message is written, and noteIfCancelled stamps "output is partial"
+// so a caller can tell a cancelled export from a clean one.
+void TestEmailExportWorker::cancelDuringMboxExportStampsPartialOutput() {
+    QTemporaryFile mbox;
+    QVERIFY(mbox.open());
+    mbox.write(plainHeaderMboxFixture());
+    mbox.close();
+
+    MboxParser parser;
+    parser.open(mbox.fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+
+    QTemporaryDir out_dir;
+    QVERIFY(out_dir.isValid());
+    sak::EmailExportConfig config;
+    config.format = sak::ExportFormat::Eml;
+    config.output_path = out_dir.path();
+
+    EmailExportWorker worker;
+    QSignalSpy started_spy(&worker, &EmailExportWorker::exportStarted);
+    QSignalSpy complete_spy(&worker, &EmailExportWorker::exportComplete);
+
+    // exportStarted is emitted AFTER the entry reset of the cancelled flag and BEFORE the
+    // item loop, and the worker lives on this thread, so this handler runs synchronously and
+    // the cancel it raises is the one the loop sees. Raising it before the call instead would
+    // be erased by that entry reset -- which is exactly what the previous test pins.
+    QObject::connect(&worker, &EmailExportWorker::exportStarted, &worker, [&worker](int) {
+        worker.cancel();
+    });
+
+    worker.exportMboxItems(&parser, config);
+
+    QCOMPARE(started_spy.count(), 1);
+    QCOMPARE(complete_spy.count(), 1);
+    const auto result = complete_spy.first().first().value<sak::EmailExportResult>();
+    QCOMPARE(result.items_exported, 0);  // the loop broke before the one message
+    QCOMPARE(result.items_failed, 0);    // a cancel is not an item failure
+    QCOMPARE(result.errors.size(), 1);
+    QVERIFY2(result.errors.first().contains(QStringLiteral("output is partial")),
+             qPrintable(result.errors.join(QLatin1Char('|'))));
+    QVERIFY(QDir(out_dir.path()).entryList(QDir::Files).isEmpty());  // nothing written
+    parser.close();
+}
+
 // ============================================================================
 // Export With Null Parser
 // ============================================================================
@@ -308,48 +542,6 @@ void TestEmailExportWorker::allExportFormatValuesAreDistinct() {
 // whole mailbox must record no read-failure -- items_exported=1, items_failed=0.
 // Exercises the refactored collectMboxIndices / collectMboxAttachmentData /
 // exportOneMboxItem wiring (B7-25, B7-27).
-namespace {
-
-// One MBOX message carrying a base64 attachment ("Hello Attach") in a multipart/mixed body.
-QByteArray attachmentMboxFixture() {
-    QByteArray content;
-    content += "From sender@example.com Mon Jan  1 00:00:00 2024\r\n";
-    content += "From: A <a@example.com>\r\n";
-    content += "To: B <b@example.com>\r\n";
-    content += "Subject: Has Attachment\r\n";
-    content += "Date: Mon, 01 Jan 2024 00:00:00 +0000\r\n";
-    content += "MIME-Version: 1.0\r\n";
-    content += "Content-Type: multipart/mixed; boundary=\"BOUND\"\r\n";
-    content += "\r\n";
-    content += "--BOUND\r\n";
-    content += "Content-Type: text/plain; charset=UTF-8\r\n";
-    content += "\r\n";
-    content += "Body text.\r\n";
-    content += "--BOUND\r\n";
-    content += "Content-Type: application/octet-stream; name=\"data.bin\"\r\n";
-    content += "Content-Transfer-Encoding: base64\r\n";
-    content += "Content-Disposition: attachment; filename=\"data.bin\"\r\n";
-    content += "\r\n";
-    content += "SGVsbG8gQXR0YWNo\r\n";  // "Hello Attach"
-    content += "--BOUND--\r\n";
-    return content;
-}
-
-// One plain-text MBOX message whose Subject is the value the include-headers switch must hide.
-QByteArray plainHeaderMboxFixture() {
-    QByteArray content;
-    content += "From sender@example.com Mon Jan  1 00:00:00 2024\r\n";
-    content += "From: A <a@example.com>\r\n";
-    content += "To: B <b@example.com>\r\n";
-    content += "Subject: SecretSubjectLine\r\n";
-    content += "Date: Mon, 01 Jan 2024 00:00:00 +0000\r\n";
-    content += "\r\n";
-    content += "Plain body content.\r\n";
-    return content;
-}
-
-}  // namespace
-
 void TestEmailExportWorker::mboxExportWithAttachmentSucceeds() {
     QTemporaryFile mbox;
     QVERIFY(mbox.open());
@@ -392,20 +584,18 @@ void TestEmailExportWorker::mboxExportWithAttachmentSucceeds() {
     // One .eml file was written.
     const QStringList eml = QDir(out_dir.path()).entryList({QStringLiteral("*.eml")}, QDir::Files);
     QCOMPARE(eml.size(), 1);
+    // The date prefix is the ONLY place config.prefix_with_date (default true) is observable
+    // anywhere in this file -- it is set and read back as struct storage, never as behaviour.
+    // It is also the only check that the item's subject and its parsed Date reached the writer
+    // at all. Hard-coding EmlWriter's prefix argument to false, or losing the msg.date ->
+    // item.date mapping, drops the prefix silently while every other assertion here holds.
+    // The fixture Date carries +0000, so the printed wall clock is machine-independent.
+    QCOMPARE(eml.first(), QStringLiteral("2024-01-01_000000_Has Attachment.eml"));
 
-    // ...and the attachment BYTES actually reached that file. With an empty attachment
-    // vector (the pre-B7 behaviour) EmlWriter takes the simple text/plain branch and
-    // every assertion above -- exported=1, failed=0, one .eml -- still passes.
-    QFile written(out_dir.path() + QLatin1Char('/') + eml.first());
-    QVERIFY(written.open(QIODevice::ReadOnly));
-    const QByteArray eml_bytes = written.readAll();
-    written.close();
-    QVERIFY(eml_bytes.contains("Content-Type: multipart/mixed; boundary=\"----=_SAK_Part_"));
-    QVERIFY(eml_bytes.contains("Content-Type: application/octet-stream; name=\"data.bin\"\r\n"));
-    QVERIFY(eml_bytes.contains(
-        "Content-Disposition: attachment; filename=\"data.bin\"\r\n\r\nSGVsbG8gQXR0YWNo\r\n"));
-    // total_bytes is the writer's own byte counter; cross-check it against the file.
-    QCOMPARE(result.total_bytes, static_cast<qint64>(eml_bytes.size()));
+    verifyEmbeddedAttachmentBytesAndInlineSkip(out_dir.path(), eml.first(), result);
+
+    verifyInlineKeepArmAndHtmlFormatRow(parser);
+
     parser.close();
 }
 
@@ -449,30 +639,19 @@ void TestEmailExportWorker::emlExportRespectsIncludeHeaders() {
     QVERIFY(!off_eml.isEmpty());
     QVERIFY(!off_eml.contains("Subject: SecretSubjectLine"));
     QVERIFY(!off_eml.contains("From: "));
-    // From/Subject are 2 of the 8 fields clearEmlHeaderFields must clear, and
-    // appendStandardHeaders runs before the first MIME byte -- so a body-only .eml must
-    // begin AT the MIME block. Forgetting display_to (or date, or message_id) leaks a
-    // recipient/timestamp while both checks above stay green.
+    // From/To/Cc/Subject/Message-ID/Date are 6 of the 8 fields clearEmlHeaderFields must
+    // clear, and appendStandardHeaders runs before the first MIME byte -- so a body-only .eml
+    // must begin AT the MIME block. Forgetting any one of them leaks a recipient, a timestamp
+    // or a thread id while the coarser checks stay green. (in_reply_to is unreachable from
+    // here: MboxMessageDetail has no such field, so that clear needs a PST-path test.)
     QVERIFY(off_eml.startsWith("MIME-Version: 1.0\r\n"));
     QVERIFY(!off_eml.contains("b@example.com"));  // To: recipient must not leak
     QVERIFY(!off_eml.contains("a@example.com"));  // From: addr-spec must not leak
+    QVERIFY(!off_eml.contains("c@example.com"));  // Cc: recipient must not leak
+    QVERIFY(!off_eml.contains("SecretMsgId42"));  // originating Message-ID must not leak
     QVERIFY(off_eml.contains("Plain body content."));
 
-    // Headers included (default).
-    QTemporaryDir on_dir;
-    QVERIFY(on_dir.isValid());
-    sak::EmailExportConfig on_config;
-    on_config.format = sak::ExportFormat::Eml;
-    on_config.output_path = on_dir.path();
-    on_config.eml_include_headers = true;
-    EmailExportWorker on_worker;
-    on_worker.exportMboxItems(&parser, on_config);
-    const QByteArray on_eml = read_single_eml(on_dir.path());
-    QVERIFY(!on_eml.isEmpty());
-    QVERIFY(on_eml.contains("Subject: SecretSubjectLine\r\n"));
-    // The recipient header must survive the include-headers path too: nothing else pins
-    // display_to, so losing the worker's msg.to -> display_to mapping is invisible today.
-    QVERIFY(on_eml.contains("To: B <b@example.com>\r\n"));
+    verifyHeadersOnPathCarriesEveryHeader(parser, read_single_eml);
 
     parser.close();
 }
@@ -509,6 +688,44 @@ void TestEmailExportWorker::mboxRejectsNonMessageFormat() {
         QStringLiteral("MBOX export supports only per-message formats")));
     // No stray .eml was written from a coerced format.
     QVERIFY(QDir(out_dir.path()).entryList({QStringLiteral("*.eml")}, QDir::Files).isEmpty());
+
+    // The guard delegates the whole decision to isMessageFileFormat(), a four-arm alternation,
+    // and CsvEmails above is the ONLY value the entire suite has ever fed it -- the coverage
+    // run reports the Html/Text/Pdf clauses never once evaluated. One rejected value leaves
+    // the acceptance set free to widen: a mutation such as `return !isCsvFormat(format);`
+    // keeps the probe above green while letting Vcf / Ics / PlainTextNotes / Attachments past,
+    // where messageFormatOrEml() coerces them to EML and the export silently succeeds in the
+    // wrong format -- precisely the coercion this test is named for. Probe every one of them,
+    // and check the whole directory rather than *.eml alone, since a coerced Text format
+    // would write .txt and slip past a glob that only looks for .eml.
+    const QVector<sak::ExportFormat> refused_formats = {sak::ExportFormat::Vcf,
+                                                        sak::ExportFormat::Ics,
+                                                        sak::ExportFormat::CsvContacts,
+                                                        sak::ExportFormat::CsvCalendar,
+                                                        sak::ExportFormat::CsvTasks,
+                                                        sak::ExportFormat::PlainTextNotes,
+                                                        sak::ExportFormat::Attachments};
+    for (const auto refused : refused_formats) {
+        const QByteArray label = QByteArray::number(static_cast<int>(refused));
+        QTemporaryDir each_dir;
+        QVERIFY2(each_dir.isValid(), label.constData());
+        sak::EmailExportConfig each_config;
+        each_config.format = refused;
+        each_config.output_path = each_dir.path();
+
+        EmailExportWorker each_worker;
+        QSignalSpy each_spy(&each_worker, &EmailExportWorker::exportComplete);
+        each_worker.exportMboxItems(&parser, each_config);
+
+        QVERIFY2(each_spy.count() == 1, label.constData());
+        const auto each_result = each_spy.first().first().value<sak::EmailExportResult>();
+        QVERIFY2(each_result.items_exported == 0, label.constData());
+        QVERIFY2(each_result.errors.size() == 1, label.constData());
+        QVERIFY2(each_result.errors.first().contains(
+                     QStringLiteral("MBOX export supports only per-message formats")),
+                 qPrintable(each_result.errors.first()));
+        QVERIFY2(QDir(each_dir.path()).entryList(QDir::Files).isEmpty(), label.constData());
+    }
     parser.close();
 }
 

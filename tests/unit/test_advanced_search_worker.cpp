@@ -484,6 +484,24 @@ QVector<SearchMatch> AdvancedSearchWorkerTests::runWorker(const SearchConfig& co
                        __LINE__);
     }
 
+    // A run that FAILED emits no resultsReady at all, so allMatches comes back EMPTY -- and this
+    // helper is the shared harness for roughly twenty-five tests, several of whose only
+    // assertion is that the match count is zero. Those pass just as happily on a search that
+    // never ran, which makes this harness score accept and reject identically. Pin the terminal
+    // signal: exactly one finished(), never failed(). QTest::qVerify rather than QVERIFY for the
+    // same reason as the wait() check above -- the macro's early return is illegal here.
+    QTest::qVerify(failedSpy.isEmpty(),
+                   "failedSpy.isEmpty()",
+                   "AdvancedSearchWorker emitted failed() -- the search never ran, so an empty "
+                   "result list is not an authoritative 'no matches'",
+                   __FILE__,
+                   __LINE__);
+    QTest::qVerify(finishedSpy.count() == 1,
+                   "finishedSpy.count() == 1",
+                   "AdvancedSearchWorker did not emit finished() exactly once",
+                   __FILE__,
+                   __LINE__);
+
     for (int i = 0; i < resultsSpy.count(); ++i) {
         const auto matches = resultsSpy[i][0].value<QVector<SearchMatch>>();
         allMatches.append(matches);
@@ -786,7 +804,18 @@ void AdvancedSearchWorkerTests::extensionFilter_emptyMatchesAll() {
     for (const auto& m : matches) {
         extensions.insert(QFileInfo(m.file_path).suffix());
     }
-    QVERIFY(extensions.size() >= 2);  // At least .txt and .cpp
+    // The tree, the excludes and the suffixes are all knowable: "Hello" occurs six times across
+    // exactly four file kinds -- hello.txt (3), code.cpp (1), .git/config (1, a name with no dot
+    // at all) and the stored entry inside test.zip (1, byte-scanned as text because
+    // search_in_archives is off). A floor of two is met by ANY two of them, including the case
+    // where an allow-list silently drops the extension-less and archive hits -- which is exactly
+    // the "an empty filter means every file" claim this test exists to make.
+    QCOMPARE(matches.size(), 6);
+    QCOMPARE(extensions.size(), 4);
+    QVERIFY(extensions.contains(QStringLiteral("txt")));
+    QVERIFY(extensions.contains(QStringLiteral("cpp")));
+    QVERIFY(extensions.contains(QStringLiteral("zip")));
+    QVERIFY(extensions.contains(QString()));  // .git/config has no suffix at all
 }
 
 // ============================================================================
@@ -922,9 +951,26 @@ void AdvancedSearchWorkerTests::hexSearch_exclusiveMode() {
     // Should still find the pattern (binary mode reads as UTF-8) -- all three occurrences.
     QCOMPARE(matches.size(), 3);
 
-    // But the result format should be binary-style (line_number = byte offset)
-    // and context_before should contain hex data
+    // The binary-mode contract the comment above states, now actually asserted. It used to name
+    // the very thing that distinguishes binary mode from text mode -- line_number is a RAW BYTE
+    // OFFSET, line_content is the matched bytes, match_start is 0 -- and then check none of it,
+    // looking only for a "Hex:" prefix the production code attaches unconditionally. The offsets
+    // are read from the fixture's own bytes, so this holds under either line ending.
+    QFile helloFile(m_temp_dir.path() + "/hello.txt");
+    QVERIFY(helloFile.open(QIODevice::ReadOnly));
+    const QByteArray helloBytes = helloFile.readAll();
+    helloFile.close();
+
+    qsizetype expectedOffset = -1;
     for (const auto& m : matches) {
+        expectedOffset = helloBytes.indexOf("Hello", expectedOffset + 1);
+        QVERIFY(expectedOffset >= 0);
+        QCOMPARE(m.line_number, static_cast<int>(expectedOffset));
+        QCOMPARE(m.line_content, QStringLiteral("Hello"));
+        QCOMPARE(m.match_start, 0);
+        QCOMPARE(m.match_end, 5);
+
+        // ...and hex context is attached to every one of them.
         bool hasHex = false;
         for (const auto& ctx : m.context_before) {
             if (ctx.startsWith("Hex:")) {
@@ -934,6 +980,8 @@ void AdvancedSearchWorkerTests::hexSearch_exclusiveMode() {
         }
         QVERIFY2(hasHex, "Binary search should provide hex context");
     }
+    // Every occurrence was consumed: no fourth "Hello" was left unreported.
+    QCOMPARE(helloBytes.indexOf("Hello", expectedOffset + 1), qsizetype(-1));
 }
 
 // ============================================================================
@@ -1173,6 +1221,14 @@ void AdvancedSearchWorkerTests::fileMetadataSearch_findsFileInfo() {
     QCOMPARE(matches.size(), 2);
     QCOMPARE(matches[0].line_content, QStringLiteral("[Metadata] FileName: test_meta.json"));
     QCOMPARE(matches[1].line_content, QStringLiteral("[Metadata] FileType: JSON"));
+    // For a metadata hit, line_number is not a line at all: it is the 1-based position of the
+    // field within the QMap-ordered (alphabetical) catalog the worker synthesizes --
+    // Created(1), FileName(2), FileSize(3), FileType(4), LastModified(5). Pinning the position
+    // is what makes a silently dropped field visible: delete "Created" and it stops being
+    // searchable entirely -- a false negative for anyone searching a creation date -- while
+    // both line_content compares above keep passing.
+    QCOMPARE(matches[0].line_number, 2);
+    QCOMPARE(matches[1].line_number, 4);
 }
 
 void AdvancedSearchWorkerTests::fileMetadataSearch_hasMetadataFormat() {
@@ -1299,17 +1355,30 @@ void AdvancedSearchWorkerTests::cancellation_stopsEarly() {
 
     AdvancedSearchWorker worker(config);
     QSignalSpy cancelledSpy(&worker, &WorkerBase::cancelled);
+    QSignalSpy finishedSpy(&worker, qOverload<>(&WorkerBase::finished));
+    QSignalSpy resultsSpy(&worker, &AdvancedSearchWorker::resultsReady);
+    QSignalSpy progressSpy(&worker, &WorkerBase::progress);
 
-    worker.start();
-
-    // Wait briefly then cancel
-    QThread::msleep(10);
+    // This test used to assert NOTHING about cancellation -- a worker that ignored
+    // requestStop() entirely joined just the same, so it scored "honours the cooperative stop"
+    // identically to "ignores it". The mid-run stop it attempted was also a race: 100 tiny files
+    // finish well inside a 10 ms sleep. A stop requested BEFORE start() is deliberate and
+    // deterministic: run() does not clear the flag, so the first stop check at the top of the
+    // directory walk must abort before a single one of the 100 files is scanned.
     worker.requestStop();
+    worker.start();
 
     QVERIFY(worker.wait(5000));
 
-    // Worker should have handled the stop request
-    // (may or may not have found some results before stopping)
+    // The cooperative stop was HONOURED, not merely survived. cancelled() alone does not prove
+    // that -- run() emits it from the flag regardless of how much work execute() did -- so pin
+    // the silence too: aborting at the first check returns before any scan outcome is reported.
+    // Delete that poll and the walk runs all 100 files and reports "Search complete" via a
+    // final progress update, which is what turns the progress assertion below red.
+    QCOMPARE(cancelledSpy.count(), 1);
+    QCOMPARE(finishedSpy.count(), 0);
+    QCOMPARE(resultsSpy.count(), 0);
+    QCOMPARE(progressSpy.count(), 0);
 }
 
 // ============================================================================
@@ -1416,12 +1485,23 @@ void AdvancedSearchWorkerTests::malformedMedia_doesNotCrash() {
         config.search_file_metadata = !fx.image;
         config.exclude_patterns.clear();
 
-        // The assertion that matters is that the worker returns at all: a
-        // regression would crash the process or hang past the wait timeout.
+        // Returning is necessary but not sufficient, and it was the only thing asserted. Each
+        // fixture plants a length/offset field with the high bit set right next to a payload the
+        // pattern would match ("Comment\0value" in bad.png). A parser that TRUSTED that field
+        // would clamp it to the buffer, emit "[Metadata] Comment: value", and still return well
+        // inside the timeout -- so the refusal and the acceptance scored identically. png/jpg are
+        // excluded from text search, and no fixture's raw bytes or filesystem metadata fields
+        // contain "value", so ANY result here means a parser accepted the malformed field --
+        // exactly the out-of-bounds read the hardening removed.
         AdvancedSearchWorker worker(config);
+        QSignalSpy resultsSpy(&worker, &AdvancedSearchWorker::resultsReady);
         worker.start();
         QVERIFY2(worker.wait(10'000),
                  qPrintable(QStringLiteral("worker hung on malformed %1").arg(fx.name)));
+        QVERIFY2(resultsSpy.count() == 0,
+                 qPrintable(QStringLiteral("malformed %1: parser accepted the bogus "
+                                           "length/offset field and emitted a match")
+                                .arg(fx.name)));
     }
 }
 
@@ -1439,6 +1519,19 @@ void AdvancedSearchWorkerTests::firstInvalidExcludePattern_detectsBadRegex() {
         QStringList{QStringLiteral("valid"), QStringLiteral("[unterminated")});
     QVERIFY(bad.has_value());
     QCOMPARE(*bad, QStringLiteral("[unterminated"));
+    // The contract is FIRST, not any-or-last, and every fixture in this file puts exactly ONE
+    // invalid pattern in the list -- under which "first", "last" and "any" are indistinguishable.
+    // The returned string is what the caller logs and shows the operator as the pattern to fix.
+    // Each of these is independently invalid, so a scan-to-end implementation that kept the LAST
+    // match would report "(second".
+    QVERIFY(AdvancedSearchWorker::firstInvalidExcludePattern(QStringList{QStringLiteral("[first")})
+                .has_value());
+    QVERIFY(AdvancedSearchWorker::firstInvalidExcludePattern(QStringList{QStringLiteral("(second")})
+                .has_value());
+    const auto firstOfTwo = AdvancedSearchWorker::firstInvalidExcludePattern(
+        QStringList{QStringLiteral("[first"), QStringLiteral("(second")});
+    QVERIFY(firstOfTwo.has_value());
+    QCOMPARE(*firstOfTwo, QStringLiteral("[first"));
 }
 
 void AdvancedSearchWorkerTests::invalidExcludePattern_failsClosed() {
@@ -1490,6 +1583,7 @@ void AdvancedSearchWorkerTests::unreadableFile_isCounted() {
     config.pattern = QStringLiteral("Hello");
 
     AdvancedSearchWorker worker(config);
+    QSignalSpy resultsSpy(&worker, &AdvancedSearchWorker::resultsReady);
     worker.start();
     const bool finished = worker.wait(10'000);
     CloseHandle(handle);
@@ -1497,6 +1591,18 @@ void AdvancedSearchWorkerTests::unreadableFile_isCounted() {
 
     // The locked file could not be read -> counted, not a silent false negative.
     QCOMPARE(worker.filesUnreadable(), 1);
+
+    // ...and the walk CONTINUED past it. readable.txt is created as the searchable half and its
+    // result was never observed -- no spy existed -- so a worker that aborted the entire walk on
+    // the first read failure reported filesUnreadable() == 1 just the same while silently
+    // dropping every later match. That is the difference between a SURFACED omission and a
+    // total false negative. Two files is well under the batch size, so the run makes exactly one
+    // terminal flush and it must carry readable.txt's match.
+    QCOMPARE(resultsSpy.count(), 1);
+    const auto delivered = resultsSpy[0][0].value<QVector<SearchMatch>>();
+    QCOMPARE(delivered.size(), 1);
+    QCOMPARE(delivered[0].file_path, readable.fileName());
+    QCOMPARE(delivered[0].line_content, QStringLiteral("Hello there"));
 }
 
 // ============================================================================
@@ -1559,8 +1665,17 @@ void AdvancedSearchWorkerTests::binarySearch_byteExactOffsetsAndArbitraryBytes()
         config.exclude_patterns.clear();
 
         auto matches = runWorker(config);
-        QVERIFY(matches.size() >= 1);
+        // Exactly one, not "at least one": the fixture is seven bytes and \xff occurs once, so
+        // a floor cannot see a duplicated emission. Sub-case (a) above already pins its record;
+        // this one left the highlight SPAN -- the fields the UI draws with -- unpinned entirely.
+        QCOMPARE(matches.size(), 1);
         QCOMPARE(matches[0].line_number, 0);  // 0xFF is the first byte
+        // Byte-exact both ways: the captured text is the raw 0xFF byte and the span is ONE byte
+        // wide. A UTF-8 re-encode of U+00FF -- the old bug -- reports match_end == 2 and
+        // overruns the highlight.
+        QCOMPARE(matches[0].line_content, QString::fromLatin1(bytes.left(1)));
+        QCOMPARE(matches[0].match_start, 0);
+        QCOMPARE(matches[0].match_end, 1);
     }
 }
 
@@ -1770,6 +1885,26 @@ void AdvancedSearchWorkerTests::targetReadFailure_marksScanIncomplete() {
     QCOMPARE(final_message,
              QStringLiteral("Search INCOMPLETE: 0 matches in 0 files (1 scanned); some files could "
                             "not be searched, results may be missing matches"));
+
+    // The can_advanced_search assertion above describes the FIXTURE, before the worker runs: it
+    // would pass identically if execute() ignored the flag entirely. It is the only mention of
+    // the flag in this file, every fixture sets it true, and coverage measures the refuser it
+    // guards as never once taken. Drive it: a target reporting that it cannot support advanced
+    // search must abort the run with invalid_argument, not be walked through the bridge anyway
+    // and reported as a clean scan.
+    SearchConfig refused = config;
+    refused.file_system_target.can_advanced_search = false;
+
+    AdvancedSearchWorker refused_worker(refused);
+    QSignalSpy refusedFailed(&refused_worker, &WorkerBase::failed);
+    QSignalSpy refusedProgress(&refused_worker, &WorkerBase::progress);
+    refused_worker.start();
+    QVERIFY(refused_worker.wait(10'000));
+
+    QCOMPARE(refusedFailed.count(), 1);
+    QCOMPARE(refusedFailed[0][0].toInt(), static_cast<int>(sak::error_code::invalid_argument));
+    // Refused means NOT searched: the run reported no scan outcome at all.
+    QCOMPARE(refusedProgress.count(), 0);
 }
 
 void AdvancedSearchWorkerTests::dataDescriptorZip_reportedIncomplete() {
@@ -1882,7 +2017,13 @@ void AdvancedSearchWorkerTests::singleFileSearch_appliesSkipFilters() {
         worker.start();
         QVERIFY(worker.wait(10'000));
 
-        QVERIFY(resultsSpy.count() >= 1);
+        // Exactly one batch carrying all three "Hello" hits from the fixture. This sub-case is
+        // the CONTROL proving the single-file filtering did not break the ordinary path, and its
+        // siblings pin their counts exactly -- a floor here still passes if the filter let the
+        // file through but truncated the scan, or split or dropped a batch, which is precisely
+        // the regression the control exists to catch.
+        QCOMPARE(resultsSpy.count(), 1);
+        QCOMPARE(resultsSpy[0][0].value<QVector<SearchMatch>>().size(), 3);
         QVERIFY(!worker.scanIncomplete());
     }
 }
@@ -1903,6 +2044,16 @@ void AdvancedSearchWorkerTests::requiresNetworkProbe_detectsMappedNetworkDrive()
     QVERIFY(
         !AdvancedSearchWorker::requiresNetworkProbe(QStringLiteral("D:\\data"), DRIVE_REMOVABLE));
     QVERIFY(!AdvancedSearchWorker::requiresNetworkProbe(QStringLiteral("E:\\iso"), DRIVE_CDROM));
+    // GetDriveTypeW returns one of SEVEN values and three were unclaimed, so the rule was only
+    // pinned as "remote yes, three obviously-local ones no" -- an implementation reading it as
+    // "anything not obviously local" passed. It is a strict equality on DRIVE_REMOTE. Type 0
+    // matters most: the live classifier reports it for every path with no drive-letter root, and
+    // a probe that times out refuses the whole search.
+    QVERIFY(
+        !AdvancedSearchWorker::requiresNetworkProbe(QStringLiteral("C:\\local"), DRIVE_UNKNOWN));
+    QVERIFY(
+        !AdvancedSearchWorker::requiresNetworkProbe(QStringLiteral("Q:\\gone"), DRIVE_NO_ROOT_DIR));
+    QVERIFY(!AdvancedSearchWorker::requiresNetworkProbe(QStringLiteral("R:\\ram"), DRIVE_RAMDISK));
 
     // The live classifier agrees for the two ends it can decide without a mapping.
     QVERIFY(AdvancedSearchWorker::isNetworkPath(QStringLiteral("\\\\server\\share")));

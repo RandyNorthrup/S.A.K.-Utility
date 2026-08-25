@@ -53,6 +53,253 @@ FirewallRule conflictRule(FirewallRule::Action action) {
     return rule;
 }
 
+// findRulesByApplication is a case-insensitive SUBSTRING filter, not an exact or prefix match:
+// "which rules govern chrome.exe" must find the rule bound to its full path. Every other probe in
+// this file queries with a WHOLE path, under which contains(), startsWith() and an exact
+// compare() == 0 are indistinguishable, so the substring contract was unpinned. Derive a strict
+// INFIX of a real application path (first and last characters dropped) and flip its case: only a
+// case-insensitive contains() matches it.
+void verifyApplicationFilterIsCaseInsensitiveSubstring(const FirewallRuleAuditor& auditor,
+                                                       const QVector<FirewallRule>& all_rules) {
+    QString path_owner;
+    QString path_infix;
+    for (const auto& rule : all_rules) {
+        if (rule.applicationPath.size() < 4) {
+            continue;
+        }
+        const QString infix = rule.applicationPath.mid(1, rule.applicationPath.size() - 2);
+        const QString candidate = (infix == infix.toUpper()) ? infix.toLower() : infix.toUpper();
+        // Require a real case flip, an infix that still matches case-insensitively (guards
+        // against exotic case mappings), and an owner that does NOT start with it, so neither a
+        // case-sensitive contains(), a startsWith(), nor an exact compare() can match by accident.
+        if (candidate == infix || !rule.applicationPath.contains(candidate, Qt::CaseInsensitive) ||
+            rule.applicationPath.startsWith(candidate, Qt::CaseInsensitive)) {
+            continue;
+        }
+        path_owner = rule.applicationPath;
+        path_infix = candidate;
+        break;
+    }
+    QVERIFY2(!path_infix.isEmpty(),
+             "expected a firewall rule application path with a cased interior substring");
+
+    const auto infix_results = auditor.findRulesByApplication(path_infix);
+    // Narrowing the filter to an exact (or prefix) match empties this -- a fail-open
+    // "no rule governs this program".
+    QVERIFY2(!infix_results.isEmpty(), qPrintable(path_infix));
+    bool infix_owner_found = false;
+    for (const auto& rule : infix_results) {
+        QVERIFY2(rule.applicationPath.contains(path_infix, Qt::CaseInsensitive),
+                 qPrintable(rule.name + QStringLiteral(" -> ") + rule.applicationPath));
+        infix_owner_found = infix_owner_found || rule.applicationPath == path_owner;
+    }
+    QVERIFY2(infix_owner_found, qPrintable(path_owner));
+}
+
+// rule.name must come from the NAME getter, not from a sibling block in the same populate helper.
+// A mis-read (grouping or description into name) leaves name equal to that sibling field for
+// EVERY rule, which a per-rule non-empty check cannot see. Windows always ships a rule whose name
+// differs from all of them (e.g. "Core Networking - DNS (UDP-Out)" under "Core Networking").
+void verifyRuleNamesAreTheirOwnField(const QVector<FirewallRule>& rules) {
+    // The file's stated invariant is UNIVERSAL, so pin it per-rule: an OR-fold over hundreds of
+    // rules is satisfied by a single named one, which is exactly where a wrong-getter bug hides.
+    for (const auto& rule : rules) {
+        QVERIFY2(!rule.name.isEmpty(),
+                 qPrintable(QStringLiteral("unnamed rule (grouping=%1, app=%2, ports=%3)")
+                                .arg(rule.grouping, rule.applicationPath, rule.localPorts)));
+    }
+    bool name_is_its_own_field = false;
+    for (const auto& rule : rules) {
+        if (!rule.name.isEmpty() && rule.name != rule.grouping && rule.name != rule.description &&
+            rule.name != rule.applicationPath && rule.name != rule.serviceName &&
+            rule.name != rule.localPorts && rule.name != rule.remotePorts) {
+            name_is_its_own_field = true;
+            break;
+        }
+    }
+    QVERIFY2(name_is_its_own_field,
+             "rule.name aliased a sibling COM field on every rule (wrong getter in "
+             "populateRuleIdentity)");
+}
+
+// Membership alone ("everything reported really is a conflict") is VACUOUS when the vector is
+// empty, so that loop degrades to a no-op the moment findConflicts stops appending -- bound its
+// inner pair loop to nothing and the test still passes. Recompute the expected set: findConflicts
+// is the full i<j pair scan over the very rule set the signal carries, and reaching the emit at
+// all proves the cancel break never fired, so the counts must agree exactly. This pins
+// COMPLETENESS -- that no genuine conflict is DROPPED, the half a security audit lives on. It
+// deliberately does NOT pin rulesConflict itself: both sides call it, so a broken predicate moves
+// them together. What it catches is a truncated, mis-indexed or short-circuited pair scan, which
+// the predicate cannot mask.
+void verifyReportedConflictsAreCompleteAndReal(const QVector<FirewallRule>& rules,
+                                               const QVector<FirewallConflict>& conflicts) {
+    qsizetype expected_conflicts = 0;
+    for (qsizetype i = 0; i < rules.size(); ++i) {
+        for (qsizetype j = i + 1; j < rules.size(); ++j) {
+            if (FirewallRuleAuditor::rulesConflict(rules.at(i), rules.at(j))) {
+                ++expected_conflicts;
+            }
+        }
+    }
+    QCOMPARE(conflicts.size(), expected_conflicts);
+
+    for (const auto& conflict : conflicts) {
+        QVERIFY2(FirewallRuleAuditor::rulesConflict(conflict.ruleA, conflict.ruleB),
+                 qPrintable(conflict.conflictDescription));
+        QVERIFY(!conflict.conflictDescription.isEmpty());
+    }
+}
+
+// The gap loop was vacuous in the same way: gutting findGaps to `return {}` would silently
+// disable every gap check and still pass. Three of the five checks are threshold-free, so their
+// verdict is FULLY DETERMINED by the same rule set the signal carries -- derive each expected
+// answer here and pin it in BOTH directions, host-independently. Unlike the conflict count this
+// IS an independent oracle: the gap conditions are re-derived from the rule fields rather than by
+// calling the checks. The wildcard and disabled-block gaps are deliberately excluded: their
+// verdicts turn on private tuning thresholds this test must not mirror.
+struct DeterministicGapExpectations {
+    bool has_icmp_block = false;   // checkIcmpGap: gap UNLESS this holds
+    bool rdp_open_to_all = false;  // checkRdpGap:  gap IFF this holds
+    bool smb_on_public = false;    // checkSmbGap:  gap IFF this holds
+};
+
+bool isEnabledInboundAllow(const FirewallRule& rule) {
+    return rule.enabled && rule.action == FirewallRule::Action::Allow &&
+           rule.direction == FirewallRule::Direction::Inbound;
+}
+
+bool isOpenToEveryAddress(const FirewallRule& rule) {
+    return rule.remoteAddresses.isEmpty() || rule.remoteAddresses == QStringLiteral("*");
+}
+
+DeterministicGapExpectations deriveGapExpectations(const QVector<FirewallRule>& rules) {
+    DeterministicGapExpectations expected;
+    for (const auto& rule : rules) {
+        if (rule.enabled && rule.protocol == FirewallRule::Protocol::ICMPv4 &&
+            rule.action == FirewallRule::Action::Block) {
+            expected.has_icmp_block = true;
+        }
+        if (!isEnabledInboundAllow(rule)) {
+            continue;
+        }
+        if (FirewallRuleAuditor::localPortsCoverPort(rule.localPorts, 3389) &&
+            isOpenToEveryAddress(rule)) {
+            expected.rdp_open_to_all = true;
+        }
+        if (FirewallRuleAuditor::localPortsCoverPort(rule.localPorts, 445) &&
+            (rule.profiles & static_cast<int>(FirewallRule::Profile::Public)) != 0) {
+            expected.smb_on_public = true;
+        }
+    }
+    return expected;
+}
+
+void verifyDeterministicGapsMatchTheRuleSet(const QVector<FirewallRule>& rules,
+                                            const QVector<FirewallGap>& gaps) {
+    const auto gapReported = [&gaps](const QString& description) {
+        for (const auto& gap : gaps) {
+            if (gap.description == description) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    const DeterministicGapExpectations expected = deriveGapExpectations(rules);
+    const bool has_icmp_block = expected.has_icmp_block;
+    const bool rdp_open_to_all = expected.rdp_open_to_all;
+    const bool smb_on_public = expected.smb_on_public;
+
+    const QString kIcmpGap = QStringLiteral("No explicit ICMP block rules found");
+    const QString kRdpGap = QStringLiteral("RDP (port 3389) is open to all addresses");
+    const QString kSmbGap = QStringLiteral("SMB (port 445) is allowed on Public profile");
+    QCOMPARE(gapReported(kIcmpGap), !has_icmp_block);
+    QCOMPARE(gapReported(kRdpGap), rdp_open_to_all);
+    QCOMPARE(gapReported(kSmbGap), smb_on_public);
+
+    // Every reported gap carries the description + recommendation the UI renders, and the
+    // deterministic literals above must be the exact ones production emits.
+    for (const auto& gap : gaps) {
+        QVERIFY(!gap.description.isEmpty());
+        QVERIFY(!gap.recommendation.isEmpty());
+        if (gap.description == kIcmpGap) {
+            QCOMPARE(gap.recommendation,
+                     QStringLiteral(
+                         "Consider adding ICMP rate limiting on public-facing networks"));
+            QCOMPARE(gap.severity, FirewallGap::Severity::Info);
+        } else if (gap.description == kRdpGap) {
+            QCOMPARE(gap.recommendation,
+                     QStringLiteral("Restrict RDP access to specific IP ranges or use a VPN"));
+            QCOMPARE(gap.severity, FirewallGap::Severity::Warning);
+        } else if (gap.description == kSmbGap) {
+            QCOMPARE(gap.recommendation,
+                     QStringLiteral(
+                         "Disable SMB on Public networks to prevent lateral movement attacks"));
+            QCOMPARE(gap.severity, FirewallGap::Severity::Warning);
+        }
+    }
+}
+
+// tryParsePortRange refuses on FOUR independent conditions, and the two probes in the caller
+// both land on the SAME bounds guard -- the other two are unreached by any fixture in this
+// file, so either could be deleted and the malformed span would then parse as a REAL range
+// whose concrete port set looks provably disjoint, hiding a conflict.
+void verifyMalformedPortRangesAreRefusedWholesale() {
+    // Extra dashes are not a range: without the part-count guard "80-90-100" reads as 80-90.
+    QVERIFY(FirewallRuleAuditor::portsOverlap(QStringLiteral("80-90-100"), QStringLiteral("443")));
+    QVERIFY(!FirewallRuleAuditor::localPortsCoverPort(QStringLiteral("80-90-100"), 85));
+    // A MISSING start is not port 0: QString::toInt leaves 0 behind on failure, so without the
+    // parse-success arm "-80" would clear the bounds check as the range 0-80.
+    QVERIFY(FirewallRuleAuditor::portsOverlap(QStringLiteral("-80"), QStringLiteral("443")));
+    QVERIFY(!FirewallRuleAuditor::localPortsCoverPort(QStringLiteral("-80"), 0));
+}
+
+// The profile and protocol selector arms, each fed a DISJOINT pair so deleting either arm is
+// caught, plus the conservative directions that must never HIDE a real conflict.
+void verifyProfileAndProtocolOverlapArms(const FirewallRule& allow, const FirewallRule& block) {
+    // profiles: Domain(1) and Public(4) never apply to the same connection.
+    FirewallRule blockPublic = block;
+    blockPublic.profiles = static_cast<int>(FirewallRule::Profile::Public);
+    QVERIFY(!FirewallRuleAuditor::rulesConflict(allow, blockPublic));
+    // ...but any shared bit in the mask still conflicts (overlap is bitwise, not equality).
+    blockPublic.profiles = static_cast<int>(FirewallRule::Profile::Public) |
+                           static_cast<int>(FirewallRule::Profile::Domain);
+    QVERIFY(FirewallRuleAuditor::rulesConflict(allow, blockPublic));
+    // profiles == 0 means the mask was NOT read, so it must conservatively overlap
+    // everything rather than fail open and hide the conflict.
+    FirewallRule blockUnknownProfile = block;
+    blockUnknownProfile.profiles = 0;
+    QVERIFY(FirewallRuleAuditor::rulesConflict(allow, blockUnknownProfile));
+    // The OTHER arm of that zero guard. Every fixture here is built from conflictRule(), which
+    // always sets profiles = Domain, so the LEFT-hand mask is never 0 and its arm could be
+    // deleted unnoticed. An unread mask must overlap from EITHER side -- a rule whose
+    // get_Profiles failed leaves profiles at its 0 default and would otherwise vanish from the
+    // conflict scan whenever it happened to sort first.
+    QVERIFY(FirewallRuleAuditor::rulesConflict(blockUnknownProfile, allow));
+
+    // protocol: TCP vs UDP is disjoint traffic.
+    FirewallRule blockUdp = block;
+    blockUdp.protocol = FirewallRule::Protocol::UDP;
+    QVERIFY(!FirewallRuleAuditor::rulesConflict(allow, blockUdp));
+    // Protocol::Any matches every protocol (conservative, never hides a conflict).
+    blockUdp.protocol = FirewallRule::Protocol::Any;
+    QVERIFY(FirewallRuleAuditor::rulesConflict(allow, blockUdp));
+    // ...and the wildcard is SYMMETRIC. findConflicts pairs rules in raw enumeration order, so
+    // an "Any" rule is just as often the FIRST argument; pinning only the right-hand arm lets
+    // the left one be deleted in silence, dropping every Any-vs-TCP conflict where the Any rule
+    // happens to sort first. conflictRule() hard-codes TCP, so no other fixture reaches it.
+    FirewallRule allowAny = allow;
+    allowAny.protocol = FirewallRule::Protocol::Any;
+    QVERIFY(FirewallRuleAuditor::rulesConflict(allowAny, block));
+    // Two Other rules cannot be proven distinct, so they must still conflict
+    // (over-report is fail-safe; Other != Other would hide a real GRE-vs-GRE clash).
+    FirewallRule allowOther = allow;
+    allowOther.protocol = FirewallRule::Protocol::Other;
+    FirewallRule blockOther = block;
+    blockOther.protocol = FirewallRule::Protocol::Other;
+    QVERIFY(FirewallRuleAuditor::rulesConflict(allowOther, blockOther));
+}
+
 }  // namespace
 
 void TestFirewallRuleAuditor::construction_default() {
@@ -169,6 +416,8 @@ void TestFirewallRuleAuditor::findRulesByApplication_filtersOnApplicationPathNot
     }
     QVERIFY2(probe_returned, qPrintable(probe.applicationPath));
 
+    verifyApplicationFilterIsCaseInsensitiveSubstring(auditor, all_rules);
+
     // An application path no rule can carry returns nothing, proving the argument is applied at
     // all (a filter that ignored it would return the whole non-empty set).
     QVERIFY(auditor.findRulesByApplication(QStringLiteral("C:\\ZZZ_NoSuchApp_9999\\nope.exe"))
@@ -269,19 +518,17 @@ void TestFirewallRuleAuditor::enumerateRules_emitsSignal() {
     // would still hand us a large, plausible-looking vector. Existence claims only -- a live
     // Windows host always ships enabled rules, outbound rules, TCP/UDP rules, and every
     // Windows Firewall rule carries a Name -- so this cannot be host-fragile.
-    bool any_named = false;
     bool any_enabled = false;
     bool any_outbound = false;
     bool any_concrete_protocol = false;
     for (const auto& rule : rules) {
-        any_named = any_named || !rule.name.isEmpty();
         any_enabled = any_enabled || rule.enabled;
         any_outbound = any_outbound || (rule.direction == FirewallRule::Direction::Outbound);
         any_concrete_protocol = any_concrete_protocol ||
                                 (rule.protocol == FirewallRule::Protocol::TCP ||
                                  rule.protocol == FirewallRule::Protocol::UDP);
     }
-    QVERIFY2(any_named, "every enumerated rule had an empty name (identity never populated)");
+    verifyRuleNamesAreTheirOwnField(rules);
     QVERIFY2(any_enabled, "no enumerated rule was enabled (Enabled never populated)");
     QVERIFY2(any_outbound, "no enumerated rule was Outbound (Direction never populated)");
     QVERIFY2(any_concrete_protocol,
@@ -308,21 +555,8 @@ void TestFirewallRuleAuditor::fullAudit_emitsAuditComplete() {
     // set it reports must be the enumerated one, not an empty stand-in.
     QVERIFY2(!rules.isEmpty(), "fullAudit must report the enumerated rules, not an empty set");
 
-    // conflicts/gaps may legitimately be empty on a given host, so pin their
-    // CONTENT contract instead of a count: every reported conflict must really
-    // be a conflict under the pure seam (findConflicts appends only when
-    // rulesConflict() holds for the very pair it stores in ruleA/ruleB), and
-    // every reported gap must carry the description + recommendation the UI
-    // renders.
-    for (const auto& conflict : conflicts) {
-        QVERIFY2(FirewallRuleAuditor::rulesConflict(conflict.ruleA, conflict.ruleB),
-                 qPrintable(conflict.conflictDescription));
-        QVERIFY(!conflict.conflictDescription.isEmpty());
-    }
-    for (const auto& gap : gaps) {
-        QVERIFY(!gap.description.isEmpty());
-        QVERIFY(!gap.recommendation.isEmpty());
-    }
+    verifyReportedConflictsAreCompleteAndReal(rules, conflicts);
+    verifyDeterministicGapsMatchTheRuleSet(rules, gaps);
 }
 
 void TestFirewallRuleAuditor::findRules_afterEnumeration() {
@@ -414,6 +648,7 @@ void TestFirewallRuleAuditor::portsOverlap_unknownExpressionOverlapsConservative
     // otherwise "100-80,443" would parse to [443] and look provably disjoint from "80", hiding
     // a conflict.
     QVERIFY(FirewallRuleAuditor::portsOverlap(QStringLiteral("100-80,443"), QStringLiteral("80")));
+    verifyMalformedPortRangesAreRefusedWholesale();
 
     // The kMaxPortTokens (256) fail-safe (src/core/firewall_rule_auditor.cpp:388-390)
     // bounds the O(n^2) rule-pair scan: an expression with more comma-separated tokens
@@ -456,34 +691,7 @@ void TestFirewallRuleAuditor::rulesConflict_profileAndProtocolArms() {
     // DISJOINT pair so deleting either arm is caught, plus the conservative
     // directions that must never HIDE a real conflict.
 
-    // profiles: Domain(1) and Public(4) never apply to the same connection.
-    FirewallRule blockPublic = block;
-    blockPublic.profiles = static_cast<int>(FirewallRule::Profile::Public);
-    QVERIFY(!FirewallRuleAuditor::rulesConflict(allow, blockPublic));
-    // ...but any shared bit in the mask still conflicts (overlap is bitwise, not equality).
-    blockPublic.profiles = static_cast<int>(FirewallRule::Profile::Public) |
-                           static_cast<int>(FirewallRule::Profile::Domain);
-    QVERIFY(FirewallRuleAuditor::rulesConflict(allow, blockPublic));
-    // profiles == 0 means the mask was NOT read, so it must conservatively overlap
-    // everything rather than fail open and hide the conflict.
-    FirewallRule blockUnknownProfile = block;
-    blockUnknownProfile.profiles = 0;
-    QVERIFY(FirewallRuleAuditor::rulesConflict(allow, blockUnknownProfile));
-
-    // protocol: TCP vs UDP is disjoint traffic.
-    FirewallRule blockUdp = block;
-    blockUdp.protocol = FirewallRule::Protocol::UDP;
-    QVERIFY(!FirewallRuleAuditor::rulesConflict(allow, blockUdp));
-    // Protocol::Any matches every protocol (conservative, never hides a conflict).
-    blockUdp.protocol = FirewallRule::Protocol::Any;
-    QVERIFY(FirewallRuleAuditor::rulesConflict(allow, blockUdp));
-    // Two Other rules cannot be proven distinct, so they must still conflict
-    // (over-report is fail-safe; Other != Other would hide a real GRE-vs-GRE clash).
-    FirewallRule allowOther = allow;
-    allowOther.protocol = FirewallRule::Protocol::Other;
-    FirewallRule blockOther = block;
-    blockOther.protocol = FirewallRule::Protocol::Other;
-    QVERIFY(FirewallRuleAuditor::rulesConflict(allowOther, blockOther));
+    verifyProfileAndProtocolOverlapArms(allow, block);
 
     // Same action is not a conflict -- in BOTH halves, Allow/Allow and Block/Block.
     QVERIFY(!FirewallRuleAuditor::rulesConflict(allow, allow));
@@ -535,6 +743,14 @@ void TestFirewallRuleAuditor::rulesConflict_scopeSelectorsNarrowTheMatch() {
     blockSvc.serviceName = QStringLiteral("ServiceA");
     QVERIFY(FirewallRuleAuditor::rulesConflict(allowSvc, blockSvc));
 
+    // An EMPTY serviceName means "any service", so it must still conflict with a service-bound
+    // rule -- one assertion per arm of that guard. Every fixture in this file makes the two
+    // services either BOTH empty or BOTH set, so the arms are never separated and EITHER could
+    // be deleted with every assertion still green: a svchost-bound rule would then silently
+    // stop conflicting with an any-service rule.
+    QVERIFY(FirewallRuleAuditor::rulesConflict(allowSvc, block));  // right-hand service empty
+    QVERIFY(FirewallRuleAuditor::rulesConflict(allow, blockSvc));  // left-hand service empty
+
     // B9-11: rules bound to DIFFERENT programs scope to disjoint traffic -> not a
     // conflict; this pins the applicationPathsMatch arm of the final conjunction,
     // which every other fixture leaves empty (and so short-circuits true).
@@ -550,6 +766,12 @@ void TestFirewallRuleAuditor::rulesConflict_scopeSelectorsNarrowTheMatch() {
 
     // An empty applicationPath means "any program" and matches a bound one.
     QVERIFY(FirewallRuleAuditor::rulesConflict(allowApp, block));
+    // The MIRRORED arm: an EMPTY path on the LEFT must also match a bound one on the right.
+    // findConflicts pairs rules in enumeration order and most Windows rules carry no
+    // application path, so the unrestricted "any program" rule lands on the left half the time.
+    // Every other fixture here leaves BOTH paths empty, which keeps the second arm true on its
+    // own -- so without this the first arm can be deleted unnoticed.
+    QVERIFY(FirewallRuleAuditor::rulesConflict(allow, blockApp));
 }
 
 void TestFirewallRuleAuditor::localPortsCoverPort_emptyAndWildcardCoverAllPorts() {
