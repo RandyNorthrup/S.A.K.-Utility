@@ -5024,6 +5024,98 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-24 SECOND-pass sweep b100 (gated 249/249): 45 weak assertions pinned across six
+    more already-swept files (program_enumerator 10, worker_base 8, ai_subagent_tool_executor 8,
+    ai_lease_manager 8, diagnostic_controller 7, fuzz_install_script 4). One candidate was
+    REJECTED by the adversarial pass.
+    A TEST WHOSE OWN COMMENT WAS FACTUALLY WRONG, AND THE WRONGNESS WAS THE HOLE.
+    destructorStopsThread ended in QVERIFY(true), justified by a comment claiming that a lost
+    requestStop() would fall through to terminate() and then std::abort(), so reaching the next
+    line was the assertion. std::abort() is reached only if the POST-terminate join also fails, and
+    on Windows terminate() calls TerminateThread, which does kill a thread sitting in msleep(10) --
+    so the 5s re-join succeeds and stopAndJoin() returns normally. The mutation the comment named
+    as covered actually PASSED: it merely took the full 15s shutdown timeout and logged an error
+    nobody reads, and the test carries no ctest TIMEOUT property, so the extra 15s was invisible to
+    the gate. Verified by applying the mutation: the old test exits 0 in ~15.2s; the new one -- which
+    requires the worker's own cancelled() epilogue to have run AND the destructor to complete well
+    inside the terminate() fallback -- goes red, and the run again takes 15213ms against ~228ms on
+    the cooperative path. This was also the only test in the file reaching stopAndJoin()'s
+    cooperative arm at all; every other worker is stopped or joined explicitly first.
+    Related in the same file: reportProgress refuses on `total <= 0 || current < 0` and the only
+    progress worker fed (0..100, 100), so NEITHER arm was reached and the whole guard -- the only
+    thing stopping a division by zero or a negative percentage in every progress-bar consumer
+    downstream -- was deletable; progress() carries three args and only `current` was read, at two
+    indices; both catch blocks clear m_is_running BEFORE emitting, and that sticky store was
+    sampled by nothing (drop it and isExecuting() reports true forever after the thread has died);
+    requestStop() does two things and only the atomic was observable, with a repo-wide grep for
+    isInterruptionRequested returning zero hits; and FailWorker returned internal_error, the same
+    code both catch blocks hardcode, so the error branch could stop consulting result.error()
+    entirely with every fixture still reporting 902.
+    SECURITY-RELEVANT UNREACHED GUARDS IN program_enumerator. detectOrphaned refuses to touch the
+    filesystem for remote/device paths in TWO places -- the installLocation expression and the
+    uninstaller branch -- and neither was reachable, because every path in the file is a plain
+    drive-letter path. Those are the guards stopping an attacker-writable HKCU Uninstall value from
+    coercing SMB authentication and unbounded remote I/O as the elevated caller. Separately, the
+    quoted-uninstaller normalization -- the branch handling the overwhelmingly common registry form
+    "C:\...\unins000.exe" /SILENT -- was reached by no fixture, and with the quote strip gone every
+    quoted-uninstaller program on a real machine is reported orphaned and offered for forced
+    removal. The exe-existence arm was never once allowed to decide TRUE (the missing-install
+    test gets its true from the earlier arm, and every other fixture asserts the struct default),
+    the Provisioned half of the UWP skip was untested, markBloatware's packageFamilyName arm was
+    unreachable because no fixture set that field (several shipped patterns such as "king.com"
+    match ONLY a family name), the bloatware negatives shared nothing with any pattern so a
+    truncating compare would flag "Dropbox"/"Sandboxie"/"Windows Terminal" while staying green,
+    calculateDirSize's fixture was FLAT so recursion could not be distinguished from its absence,
+    and cancelAndReset asserted a cache that is empty before the call and stays empty regardless.
+    ai_subagent_tool_executor: the argument-object was never checked for reaching the dispatcher
+    (the operation field is read INSIDE the executor before the call, so it proves only the parse);
+    command_preview -- the string the policy layer classifies as read-only / catastrophic /
+    obfuscated -- was derived from a "query" key no fixture carried; the forwarded cancellation
+    token was dropped by the recorder's lambda entirely; the invalid-arguments refusal has two arms
+    and only the parse-error one was fed, so valid JSON that is not an object would dispatch with
+    EMPTY arguments instead of failing closed; the 1 MiB cap was never approached (largest fixture:
+    16 characters) so it was deletable or flippable to >= unnoticed; the allowlist gate reads the
+    NORMALIZED name while the dispatch and error echo the RAW one, and every fixture made them
+    identical; and call_id was asserted on the happy path only, though the runner turns a
+    mismatched id into a hard broken-execution.
+    ai_lease_manager: release() returns bool and every test in the tree DISCARDED it -- yet the
+    dispatcher's lease_reclaimed_midop breach detection, which stamps a mutation as failed because
+    its exclusivity was violated mid-flight, fires only when that answer is false. The steady-clock
+    reclaim arm (the backstop for a wall clock moved BACKWARD, which would otherwise wedge every
+    mutating action behind an abandoned lease until restart) was never the sole reason a lease was
+    reclaimed; monotonic_expiry_ms was read by no test although its own `> 0` gate turns an omitted
+    stamp into a fail-open; hasActiveExclusive() was only ever asked about a manager whose sole
+    lease was exclusive, so it could not distinguish "some lease is exclusive" from "some lease
+    exists"; the expiry boundary was probed an hour early and a second late, never at the instant;
+    the non-positive-TTL fallback was proved only through the accessor, never through a lease
+    actually minted from such a manager; and kDefaultLeaseTtlSeconds was constrained from one side
+    only, though it is equally the CAP on how long an abandoned lease wedges the app.
+    diagnostic_controller: the no-failure arm of statusWithStepFailures was probed only with
+    AllPassed -- the one input where "return current" and "return AllPassed" are identical -- while
+    that arm runs on every standalone scan and every clean suite run, exactly where the SMART and
+    stress aggregators have just written CriticalIssues. generateReport was called by NOTHING in
+    tests/, so all three of its precondition guards were unobserved, including the m_has_results
+    refusal whose fixture this file already builds and then asserts the dangerous shape of (a fresh
+    controller aggregating to AllPassed over nothing). requestedReportFormats was probed with "pdf",
+    which no loosening would accept, though the production comment names the exact prior defect a
+    substring matcher caused ("xhtml" -> html); the one-bad-token-voids-the-spec behaviour was
+    unclaimed; and the trim and de-dup arms of the accept path were unreached. suiteAdvanceAllowed's
+    equality was probed from one direction only, and cancelCurrentResetsState never left Idle.
+    THE SHIPPED FUZZ BUDGET: a fifth suite converted (fuzz_install_script), plus its corpus size
+    pinned. Its per-resource check was `line_number < 0`, a guard the harness can never reach --
+    lineNumberAt returns 0 or count + 1, both non-negative -- standing in for the two facts that
+    ARE knowable: the 1-based bounded range, and that every appended resource carries a URL. Its
+    determinism helper also compared 5 of 6 fields, silently omitting original_script, and because
+    it only ever compares a parse against another parse of the same bytes the omission was
+    self-concealing; the harness holds the one oracle the parser does not produce (the input) and
+    never used it.
+    PROCESS NOTE: one b100 VERIFIER applied a production mutation, rebuilt and ran the suite to
+    measure it. It restored the tree afterwards and its evidence was excellent (it is the source of
+    the 15217ms measurement above), but the READ-ONLY clause existed only on the FINDER prompt. A
+    mid-batch mutation left behind would be caught only by luck, and a concurrent build corrupts
+    the parent session's build directory. The clause is now on the verifier prompt too, directing
+    it to say so explicitly and give a reasoned verdict instead, so the parent session runs the
+    mutation under supervision.
   - PROGRESS 2026-08-24 SECOND-pass sweep b99 (gated 249/249): 39 weak assertions pinned across six
     more already-swept files (elevation_ux 8, ai_human_gate_store 8, fuzz_mbox_transfer_decoder 7,
     fuzz_backup_codec 7, ai_run_state 5, file_explorer_archive_service 4). Zero candidates were

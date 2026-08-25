@@ -35,6 +35,9 @@
 
 namespace {
 
+constexpr int kExpectedCorpusSeeds = 6;
+constexpr int kShippedFuzzIterations = 2000;  // tests/fuzz/fuzz_harness.h kDefaultIterations
+
 QByteArray installChocolateyPackageSeed() {
     return QByteArrayLiteral(
         "$ErrorActionPreference = 'Stop'\n"
@@ -103,9 +106,14 @@ bool sameResource(const sak::DownloadResource& a, const sak::DownloadResource& b
 }
 
 bool sameResult(const sak::ParsedInstallScript& a, const sak::ParsedInstallScript& b) {
+    // original_script is compared too. It was the one field of the six this helper omitted, and
+    // because the helper only ever compares a parse against ANOTHER PARSE of the same bytes, the
+    // omission was self-concealing: the field would agree even if the parser dropped it entirely.
+    // It is not decorative -- script_rewriter refuses outright when it is empty and seeds the
+    // rewritten script from it, so losing it fails every internalization rewrite.
     if (a.package_type != b.package_type || a.silent_args != b.silent_args ||
         a.uses_splatting != b.uses_splatting || a.warnings != b.warnings ||
-        a.resources.size() != b.resources.size()) {
+        a.original_script != b.original_script || a.resources.size() != b.resources.size()) {
         return false;
     }
     for (int i = 0; i < a.resources.size(); ++i) {
@@ -114,6 +122,28 @@ bool sameResult(const sak::ParsedInstallScript& a, const sak::ParsedInstallScrip
         }
     }
     return true;
+}
+
+// Every APPENDED resource must carry a real 1-based line inside the script, and a URL.
+QString checkResources(const sak::ParsedInstallScript& parsed, const QString& script) {
+    const int line_count = static_cast<int>(script.count(QLatin1Char('\n'))) + 1;
+    for (const auto& resource : parsed.resources) {
+        // `line_number < 0` is a guard this harness can NEVER reach: lineNumberAt has exactly two
+        // returns, 0 and count('\n') + 1, both non-negative by construction. The knowable contract
+        // is the range.
+        if (resource.line_number < 1 || resource.line_number > line_count) {
+            return QStringLiteral("resource line number %1 is outside the script's 1..%2 lines")
+                .arg(resource.line_number)
+                .arg(line_count);
+        }
+        // Every one of the parser's four append sites refuses a resource carrying neither url nor
+        // url_64bit -- a multi-guard refuser this harness proved nothing about. A URL-less
+        // resource flowing on to the internalization engine was invisible here.
+        if (resource.url.isEmpty() && resource.url_64bit.isEmpty()) {
+            return QStringLiteral("an appended resource carries neither url nor url_64bit");
+        }
+    }
+    return {};
 }
 
 // Parse @p input; return "" if every invariant held, else the violated one.
@@ -126,13 +156,29 @@ QString installScriptInvariant(const QByteArray& input) {
     if (!sameResult(first, second)) {
         return QStringLiteral("parse is non-deterministic on identical input");
     }
-    for (const auto& resource : first.resources) {
-        if (resource.line_number < 0) {
-            return QStringLiteral("resource reports a negative line number (%1)")
-                .arg(resource.line_number);
-        }
+    // The parser ECHOES its input back, so the harness holds an oracle the parser does not also
+    // produce: the input itself. Nothing used it.
+    if (first.original_script != script) {
+        return QStringLiteral("parse did not echo the script it was given");
     }
-    return {};
+
+    // The empty-content arm is the parser's first act and its fail-closed guard: it appends
+    // exactly one warning and skips all four matchers. The corpus's first seed is empty and the
+    // erase/truncate mutation operators drive inputs to blank constantly, so thousands of
+    // iterations pass through this arm -- and warnings was compared only between two parses of
+    // the SAME input, never against what the input deserves, so which arm answered was invisible.
+    // Pinned in BOTH directions: a blank script must take it, and a non-blank one must not.
+    const bool blank = script.trimmed().isEmpty();
+    const bool claims_empty = first.warnings.contains(QStringLiteral("Empty script content"));
+    if (blank != claims_empty) {
+        return blank ? QStringLiteral("a blank script did not report empty content")
+                     : QStringLiteral("a non-blank script was reported as empty content");
+    }
+    if (blank && !first.resources.isEmpty()) {
+        return QStringLiteral("a blank script produced resources");
+    }
+
+    return checkResources(first, script);
 }
 
 QByteArray failureBanner(const sak::fuzz::FuzzOutcome& outcome) {
@@ -154,17 +200,25 @@ private Q_SLOTS:
             return installScriptInvariant(input);
         };
         const std::vector<QByteArray> corpus = installScriptCorpus();
-        const sak::fuzz::FuzzOutcome outcome = sak::fuzz::run(
-            corpus, target, sak::fuzz::iterationsFromEnv(), sak::fuzz::seedFromEnv());
+        const int budget = sak::fuzz::iterationsFromEnv();
+        QVERIFY2(budget > 0, "the clamp must never hand run() a non-positive iteration budget");
+        if (!qEnvironmentVariableIsSet("SAK_FUZZ_ITERS")) {
+            QCOMPARE(budget, kShippedFuzzIterations);
+        }
+        const sak::fuzz::FuzzOutcome outcome =
+            sak::fuzz::run(corpus, target, budget, sak::fuzz::seedFromEnv());
         if (!outcome.ok) {
             const QByteArray banner = failureBanner(outcome);
             QVERIFY2(false, banner.constData());
         }
         // Exact count on the all-pass path (any failure QVERIFY2(false)-returns above): run()
-        // increments iterations_run once per seed plus once per mutation iteration. The old >=
-        // bound would still pass if the mutation loop ran ZERO iterations.
-        QCOMPARE(outcome.iterations_run,
-                 static_cast<int>(corpus.size()) + sak::fuzz::iterationsFromEnv());
+        // increments iterations_run once per seed plus once per mutation iteration. Both sides are
+        // LITERALS: drawing either from corpus.size() or a second iterationsFromEnv() call is
+        // self-satisfying, since if the clamp answered 0 the mutation loop would run zero times,
+        // iterations_run would equal the seed count, and seed_count + 0 would still match -- and a
+        // seed silently dropped from installScriptCorpus() shrinks the surface unnoticed.
+        QCOMPARE(static_cast<int>(corpus.size()), kExpectedCorpusSeeds);
+        QCOMPARE(outcome.iterations_run, kExpectedCorpusSeeds + budget);
     }
 };
 
