@@ -148,6 +148,23 @@ private:
 ///        resolved. On non-Windows returns @p relativeExe unchanged.
 [[nodiscard]] QString windowsDirPath(const QString& relativeExe);
 
+/// @brief Resolve a BARE executable name (no path separator) to an absolute path, fail-closed.
+///
+/// CreateProcess searches the CURRENT DIRECTORY ahead of PATH, so launching a bare name lets a
+/// binary planted in the working directory win. System32 wins first -- both by exact name and
+/// with the PATHEXT suffixes applied, because a model naturally writes "whoami" rather than
+/// "whoami.exe" and the exact check alone would fall through to PATH for every extensionless
+/// spelling. Only the ABSOLUTE entries of PATH are then searched; "." and relative entries are
+/// skipped because they resolve against the working directory. Returns an empty string when
+/// nothing resolves, and every caller MUST fail closed on that rather than launching the name.
+///
+/// THIS LIVES HERE BECAUSE IT HAD TWO HOMES. The AI command planner resolved the program at
+/// plan time so the approval preview names the binary that will run, and the execution broker
+/// resolved it again at launch time as a backstop -- byte-for-byte the same logic, in two files.
+/// Fixing the System32 suffix gap in one of them was what made the copies disagree, which is the
+/// whole argument for one home.
+[[nodiscard]] QString resolveBareExecutable(const QString& name);
+
 /// @brief Launch a Windows-shipped System32 tool DETACHED, naming it by its absolute path.
 ///
 /// A shell-open ("explorer.exe <uri>", "control.exe /name ...") is resolved through the

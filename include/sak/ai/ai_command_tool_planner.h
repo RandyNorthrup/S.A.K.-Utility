@@ -18,7 +18,15 @@ struct AiCommandToolPlan {
     AiToolCallRequest policy_request;
     AiToolPolicyDecision policy_decision;
     QString shell_label;
+    /// The command as the guard, the risk classifier and the persisted record see it: RAW, so
+    /// classification matches the text that will actually run. Never put this in front of a
+    /// human -- use @c display_preview.
     QString preview;
+    /// The same command rendered safe to DISPLAY: control characters, bidi overrides and
+    /// zero-width marks are made visible, so what the approver reads cannot differ from what
+    /// runs. Kept separate from @c preview because sanitising the classifier's input would
+    /// change which commands are judged risky.
+    QString display_preview;
     QString guard_block_error;
     QString guard_approval_reason;
     bool risky_change{false};

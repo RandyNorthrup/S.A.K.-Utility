@@ -8,7 +8,9 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QProcess>
+#include <QStandardPaths>
 
 #include <optional>
 #include <utility>
@@ -298,6 +300,42 @@ QString system32Path(const QString& relativeExe) {
 #else
     return relativeExe;
 #endif
+}
+
+QString resolveBareExecutable(const QString& name) {
+#ifdef Q_OS_WIN
+    const QString system32 = system32Path(name);
+    if (!system32.isEmpty() && QFileInfo(system32).isFile()) {
+        return system32;
+    }
+    // The exact-name check above is not enough: System32/whoami does not exist as a file, so an
+    // extensionless name fell through to the PATH search below -- which DOES apply PATHEXT and
+    // returns the first match in PATH ORDER, letting any earlier PATH directory beat System32.
+    // Search System32 with the same suffix rules before considering PATH at all.
+    if (!system32.isEmpty()) {
+        const QString system32_dir = QFileInfo(system32).absolutePath();
+        const QString suffixed = QStandardPaths::findExecutable(name, {system32_dir});
+        if (!suffixed.isEmpty()) {
+            return suffixed;
+        }
+    }
+#endif
+    QStringList search;
+    const QStringList entries = qEnvironmentVariable("PATH").split(QDir::listSeparator(),
+                                                                   Qt::SkipEmptyParts);
+    for (const QString& entry : entries) {
+        const QString trimmed = entry.trimmed();
+        // "." and any relative entry resolve against the working directory -- exactly the hijack
+        // this function exists to prevent -- so they are skipped rather than searched.
+        if (trimmed.isEmpty() || !QDir::isAbsolutePath(trimmed)) {
+            continue;
+        }
+        search.append(trimmed);
+    }
+    if (search.isEmpty()) {
+        return {};
+    }
+    return QStandardPaths::findExecutable(name, search);
 }
 
 QString windowsDirPath(const QString& relativeExe) {

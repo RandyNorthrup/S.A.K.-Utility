@@ -237,7 +237,7 @@ private:
     QWidget* createChatWorkspace();
     QWidget* createContextPane();
     QWidget* createConversationPane();
-    void createStatusStrip(QVBoxLayout* rootLayout);
+    void createStatusStrip(QVBoxLayout* root_layout);
     void configureExecutionBrokers();
     [[nodiscard]] bool initializeAccessibilityAuditUi();
     [[nodiscard]] bool loadWorkflowDefaults(QStringList* workflow_errors);
@@ -270,8 +270,8 @@ private:
     void setupComposerInput(QVBoxLayout* layout, QWidget* composer);
     void setupComposerContextList(QVBoxLayout* layout, QWidget* composer);
     void setupComposerActions(QVBoxLayout* layout, QWidget* composer);
-    void setupComposerContextActions(QHBoxLayout* actionRow, QWidget* composer);
-    void setupComposerSendActions(QHBoxLayout* actionRow, QWidget* composer);
+    void setupComposerContextActions(QHBoxLayout* action_row, QWidget* composer);
+    void setupComposerSendActions(QHBoxLayout* action_row, QWidget* composer);
     void connectAiClient();
     void connectOpenAiClientSignals();
     void connectExecutionBrokerSignals();
@@ -509,7 +509,7 @@ private:
                                                      const QString& url_string,
                                                      const QString& filename,
                                                      QString* error_message);
-    [[nodiscard]] QJsonObject runDownloadTool(const QString& url, const QString& filename);
+    [[nodiscard]] QJsonObject runDownloadTool(const QString& url_string, const QString& filename);
     [[nodiscard]] QJsonObject runWorkflowPowerShellTool(const QJsonObject& args,
                                                         const QString& command_preview);
     [[nodiscard]] ai::AiCommandResult executeWorkflowPowerShellRequest(

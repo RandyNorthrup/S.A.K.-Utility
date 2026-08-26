@@ -74,35 +74,6 @@ constexpr int kMaxArgumentCount = 256;
            QString::fromUtf8(bytes.right(tail_bytes));
 }
 
-/// @brief Resolve a bare program name (no path separator) to an absolute path.
-///
-/// CreateProcess searches the CURRENT DIRECTORY ahead of PATH, so a bare name lets a
-/// planted binary win -- the same hijack the System32-qualified shells above refuse.
-/// System32 wins first, then only the ABSOLUTE entries of PATH (never "." or a relative
-/// entry, which resolve against the working directory). Empty return -> caller fails closed.
-[[nodiscard]] QString resolveBareProgram(const QString& name) {
-#ifdef Q_OS_WIN
-    const QString system32 = sak::system32Path(name);
-    if (!system32.isEmpty() && QFileInfo(system32).isFile()) {
-        return system32;
-    }
-#endif
-    QStringList search;
-    const QStringList entries = qEnvironmentVariable("PATH").split(QDir::listSeparator(),
-                                                                   Qt::SkipEmptyParts);
-    for (const QString& entry : entries) {
-        const QString trimmed = entry.trimmed();
-        if (trimmed.isEmpty() || !QDir::isAbsolutePath(trimmed)) {
-            continue;
-        }
-        search.append(trimmed);
-    }
-    if (search.isEmpty()) {
-        return {};
-    }
-    return QStandardPaths::findExecutable(name, search);
-}
-
 /// @brief Read one optional numeric field, failing closed on a wrong type or a value
 /// outside the accepted domain instead of substituting a default.
 [[nodiscard]] bool parseOptionalTimeoutSeconds(const QJsonObject& args, int& out, QString& error) {
@@ -555,7 +526,10 @@ bool ExecutionBroker::startProcess(const AiCommandRequest& request, const QStrin
     // resolve it here (System32, then absolute PATH entries) or refuse the run.
     QString program = request.program.trimmed();
     if (!program.contains(QLatin1Char('/')) && !program.contains(QLatin1Char('\\'))) {
-        const QString resolved = resolveBareProgram(program);
+        // Shared with the plan-time resolver (sak::resolveBareExecutable) so the
+        // binary named in the approval preview and the binary launched here can
+        // never be decided by two drifting copies of the same rule.
+        const QString resolved = sak::resolveBareExecutable(program);
         if (resolved.isEmpty()) {
             AiCommandResult fail;
             fail.error_message = QStringLiteral(

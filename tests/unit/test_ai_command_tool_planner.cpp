@@ -20,6 +20,8 @@ private Q_SLOTS:
     void carriesPidMutationGuardBlock();
     void carriesChecksumBypassBlock();
     void rejectsNonCanonicalToolName();  // R5-G10-9
+    void shellPreviewIsSanitizedBeforeItIsShownToAHuman();
+    void validationFailureIsAlwaysRisky();
 };
 
 void AiCommandToolPlannerTests::buildsPowerShellPlanWithPolicy() {
@@ -136,8 +138,15 @@ void AiCommandToolPlannerTests::processPreviewQuotesAmbiguousArgs() {
     // embedded tab is escaped visibly (never emitted raw). Pin the exact rendered command -- the
     // security-relevant text the human approves -- which subsumes the per-token quoting, ordering,
     // and no-raw-tab checks in a single assertion.
+    //
+    // THE ESCAPE FORM CHANGED DELIBERATELY, from "\t" to "<TAB>". A backslash escape is ambiguous
+    // the moment a value contains the literal characters '\' and 't', and disambiguating it would
+    // mean doubling every backslash -- unreadable in a product whose commands are full of Windows
+    // paths, as the program path in this very fixture shows. The bracketed form cannot be produced
+    // by escaping, so the path below stays exactly as the operator would type it.
     QCOMPARE(plan.preview,
-             QStringLiteral("\"C:\\Program Files\\app.exe\" \"hello world\" plain \"tab\\there\""));
+             QStringLiteral(
+                 "\"C:\\Program Files\\app.exe\" \"hello world\" plain \"tab<TAB>here\""));
 }
 
 void AiCommandToolPlannerTests::marksRiskyCommandAndPolicyDenial() {
@@ -212,6 +221,90 @@ void AiCommandToolPlannerTests::rejectsNonCanonicalToolName() {
                                                              args,
                                                              sak::ai::AiToolPolicy::ReadOnlyPc);
     QVERIFY(ok.guard_block_error.isEmpty());
+}
+
+void AiCommandToolPlannerTests::shellPreviewIsSanitizedBeforeItIsShownToAHuman() {
+    // The approval dialog renders its text in a QPlainTextEdit with NoWrap and a COLLAPSED
+    // maximum height. A raw newline therefore does not merely look untidy -- it pushes whatever
+    // follows out of the visible box, so the operator approves the first line and the rest runs
+    // unseen. U+2028 does the same (QTextDocument treats it as a line separator), and a bidi
+    // override reverses the visual order of everything after it.
+    //
+    // The process branch was always safe because buildProcessPreview quotes each argument through
+    // the sanitiser. The two SHELL branches -- the ones a model actually uses -- passed the raw
+    // string straight to the dialog.
+    struct Case {
+        QString label;
+        QString injected;
+    };
+    const QList<Case> cases = {
+        {QStringLiteral("newline"), QStringLiteral("\n")},
+        {QStringLiteral("carriage return"), QStringLiteral("\r")},
+        {QStringLiteral("NEL"), QString(QChar(0x0085))},
+        {QStringLiteral("line separator"), QString(QChar(0x2028))},
+        {QStringLiteral("paragraph separator"), QString(QChar(0x2029))},
+        {QStringLiteral("RLO"), QString(QChar(0x202E))},
+        {QStringLiteral("LRI"), QString(QChar(0x2066))},
+        {QStringLiteral("zero width space"), QString(QChar(0x200B))},
+        {QStringLiteral("BOM"), QString(QChar(0xFEFF))},
+    };
+
+    for (const QString& tool : {QStringLiteral("run_powershell"), QStringLiteral("run_cmd")}) {
+        for (const Case& c : cases) {
+            QJsonObject args;
+            args[QStringLiteral("command")] = QStringLiteral("Get-Date") + c.injected +
+                                              QStringLiteral("Remove-Item -Recurse C:/");
+
+            const auto plan = sak::ai::AiCommandToolPlanner::buildPlan(
+                tool, args, sak::ai::AiToolPolicy::ExclusiveMutatingExecutor);
+
+            const QString context = tool + QStringLiteral(" / ") + c.label;
+            // The RAW preview keeps the character: the guard and the risk classifier must judge
+            // the text that will actually run, not a display rendering of it.
+            QVERIFY2(plan.preview.contains(c.injected), qPrintable(context));
+            // The DISPLAYED preview must not.
+            QVERIFY2(!plan.display_preview.contains(c.injected), qPrintable(context));
+            // And nothing is lost: the dangerous tail is still visible to the reader.
+            QVERIFY2(plan.display_preview.contains(QStringLiteral("Remove-Item")),
+                     qPrintable(context + QStringLiteral(" -> ") + plan.display_preview));
+        }
+    }
+
+    // Ordinary Windows commands must survive UNCHANGED. A sanitiser that doubled backslashes to
+    // disambiguate its own escapes would mangle every path in the product, which is why the
+    // escape form is bracketed instead.
+    QJsonObject plain;
+    plain[QStringLiteral("command")] =
+        QStringLiteral(R"(Copy-Item C:\Windows\System32\drivers\etc\hosts D:\backup)");
+    const auto plain_plan = sak::ai::AiCommandToolPlanner::buildPlan(
+        QStringLiteral("run_powershell"), plain, sak::ai::AiToolPolicy::ExclusiveMutatingExecutor);
+    QCOMPARE(plain_plan.display_preview, plain_plan.preview);
+}
+
+void AiCommandToolPlannerTests::validationFailureIsAlwaysRisky() {
+    // buildPlan's contract says any call whose arguments fail the broker's typed validation comes
+    // back with risky_change SET, and the unsupported-tool branch honours it. The shell branches
+    // did not: a malformed request whose text did not look destructive returned
+    // risky_change == false, so a caller following the documented contract would skip the
+    // risky-command presentation and the restore-point offer for a request nothing could parse.
+    QJsonObject args;
+    args[QStringLiteral("command")] = QStringLiteral("Get-Date");
+    // A wrong-typed field the broker rejects; the command text itself is entirely benign.
+    args[QStringLiteral("timeout_seconds")] = QStringLiteral("not-a-number");
+
+    const auto plan = sak::ai::AiCommandToolPlanner::buildPlan(
+        QStringLiteral("run_powershell"), args, sak::ai::AiToolPolicy::ExclusiveMutatingExecutor);
+
+    QVERIFY2(!plan.request.validation_error.isEmpty(),
+             "fixture must actually fail typed validation");
+    QVERIFY2(!plan.guard_block_error.isEmpty(), qPrintable(plan.guard_block_error));
+    QVERIFY2(plan.risky_change, "a call that failed validation must be marked risky");
+    QVERIFY(!plan.policy_decision.allowed);
+    // The unsupported-tool sibling has always done this; pin it too so the two paths cannot
+    // drift apart again.
+    const auto unsupported = sak::ai::AiCommandToolPlanner::buildPlan(
+        QStringLiteral("RUN_POWERSHELL"), args, sak::ai::AiToolPolicy::ExclusiveMutatingExecutor);
+    QVERIFY(unsupported.risky_change);
 }
 
 QTEST_GUILESS_MAIN(AiCommandToolPlannerTests)

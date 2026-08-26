@@ -14,6 +14,7 @@
 #include <QStringList>
 
 #include <algorithm>
+#include <array>
 
 namespace sak::ai {
 
@@ -25,30 +26,85 @@ constexpr int kToolNameErrorMaxChars = 64;
 // Code points below this are C0 control characters; 0x7f is the DEL control character.
 constexpr char16_t kFirstPrintableCodePoint = 0x20;
 constexpr char16_t kDeleteControlChar = 0x7f;
-// Render an escaped control byte as two hexadecimal digits (\xNN).
-constexpr int kControlEscapeHexWidth = 2;
+// C1 controls (0x80-0x9F) include NEL (0x85), which several renderers break lines on.
+constexpr char16_t kFirstC1Control = 0x80;
+constexpr char16_t kLastC1Control = 0x9f;
+// Render an escaped code point as four hexadecimal digits (<U+XXXX>).
+constexpr int kControlEscapeHexWidth = 4;
 constexpr int kHexadecimalBase = 16;
 
-bool isControlChar(QChar ch) {
-    return ch.unicode() < kFirstPrintableCodePoint || ch.unicode() == kDeleteControlChar;
+// Every code point that can change what the reader SEES without being visible itself. The old
+// set was only C0 plus DEL, which left the whole class of Unicode display attacks open against
+// the one string a human is asked to approve:
+//   U+0085 NEL, U+2028 LINE SEPARATOR, U+2029 PARAGRAPH SEPARATOR -- QTextDocument breaks lines
+//     on these, so a "single-line" command can push its dangerous tail out of a fixed-height,
+//     no-wrap preview box entirely.
+//   U+200E/U+200F and U+202A-U+202E and U+2066-U+2069 -- bidi marks, embeddings, overrides and
+//     isolates. RIGHT-TO-LEFT OVERRIDE reverses the VISUAL order of everything after it, which
+//     is the classic way to make a destructive command read as a harmless one.
+//   U+200B-U+200D, U+FEFF, U+00AD -- zero-width and soft-hyphen characters, invisible by
+//     definition, able to split a word the reader is scanning for ("rm" vs "r<ZWSP>m").
+// A table rather than a switch: eighteen equal alternatives are DATA, and written as control
+// flow they cost one cyclomatic branch each (CCN 23, over the gate's limit of 10) while telling
+// the reader nothing a list would not. Sorted so the lookup is a binary search.
+constexpr std::array<char16_t, 18> kNonC0DisplayHazards = {
+    0x00ad,  // SOFT HYPHEN
+    0x200b,  // ZERO WIDTH SPACE
+    0x200c,  // ZERO WIDTH NON-JOINER
+    0x200d,  // ZERO WIDTH JOINER
+    0x200e,  // LEFT-TO-RIGHT MARK
+    0x200f,  // RIGHT-TO-LEFT MARK
+    0x2028,  // LINE SEPARATOR
+    0x2029,  // PARAGRAPH SEPARATOR
+    0x202a,  // LEFT-TO-RIGHT EMBEDDING
+    0x202b,  // RIGHT-TO-LEFT EMBEDDING
+    0x202c,  // POP DIRECTIONAL FORMATTING
+    0x202d,  // LEFT-TO-RIGHT OVERRIDE
+    0x202e,  // RIGHT-TO-LEFT OVERRIDE
+    0x2066,  // LEFT-TO-RIGHT ISOLATE
+    0x2067,  // RIGHT-TO-LEFT ISOLATE
+    0x2068,  // FIRST STRONG ISOLATE
+    0x2069,  // POP DIRECTIONAL ISOLATE
+    0xfeff,  // ZERO WIDTH NO-BREAK SPACE / BOM
+};
+
+bool isDisplayHazardChar(QChar ch) {
+    const char16_t code = ch.unicode();
+    if (code < kFirstPrintableCodePoint || code == kDeleteControlChar) {
+        return true;
+    }
+    if (code >= kFirstC1Control && code <= kLastC1Control) {
+        return true;
+    }
+    return std::ranges::binary_search(kNonC0DisplayHazards, code);
 }
 
-// Renders a control character as a visible escape so a newline/tab embedded in an
-// argument cannot forge the displayed confirmation command.
-QString escapeControlChar(QChar ch) {
+// Renders a hazardous character visibly so it cannot forge the displayed confirmation command.
+//
+// THE FORM IS BRACKETED, NOT BACKSLASH-ESCAPED, and that is deliberate. A backslash escape
+// (\n, \x0a) is ambiguous the moment a value contains the LITERAL two characters '\' and 'n' --
+// the reader cannot tell a real newline from text that merely looks like one. Escaping the
+// backslash to disambiguate would be worse here than the disease: Windows commands are full of
+// paths, and doubling every separator ("C:\\Windows\\System32") makes the preview harder to read
+// in exactly the situation where careful reading matters. The bracketed form cannot be produced
+// by escaping, so no doubling is needed; a value containing the literal text "<LF>" merely makes
+// the reader suspect a newline that is not there, which errs toward caution rather than away.
+QString escapeDisplayHazardChar(QChar ch) {
     if (ch == QLatin1Char('\t')) {
-        return QStringLiteral("\\t");
+        return QStringLiteral("<TAB>");
     }
     if (ch == QLatin1Char('\n')) {
-        return QStringLiteral("\\n");
+        return QStringLiteral("<LF>");
     }
     if (ch == QLatin1Char('\r')) {
-        return QStringLiteral("\\r");
+        return QStringLiteral("<CR>");
     }
-    return QStringLiteral("\\x%1").arg(static_cast<uint>(ch.unicode()),
-                                       kControlEscapeHexWidth,
-                                       kHexadecimalBase,
-                                       QLatin1Char('0'));
+    return QStringLiteral("<U+%1>")
+        .arg(static_cast<uint>(ch.unicode()),
+             kControlEscapeHexWidth,
+             kHexadecimalBase,
+             QLatin1Char('0'))
+        .toUpper();
 }
 
 // Makes control chars visible and escapes embedded double quotes (the preview's
@@ -57,8 +113,8 @@ QString sanitizeForPreview(const QString& value) {
     QString out;
     out.reserve(value.size());
     for (const QChar ch : value) {
-        if (isControlChar(ch)) {
-            out += escapeControlChar(ch);
+        if (isDisplayHazardChar(ch)) {
+            out += escapeDisplayHazardChar(ch);
         } else if (ch == QLatin1Char('"')) {
             out += QStringLiteral("\\\"");
         } else {
@@ -73,7 +129,7 @@ bool previewNeedsQuoting(const QString& value) {
         return true;
     }
     return std::ranges::any_of(value, [](QChar ch) {
-        return ch.isSpace() || isControlChar(ch) || ch == QLatin1Char('"');
+        return ch.isSpace() || isDisplayHazardChar(ch) || ch == QLatin1Char('"');
     });
 }
 
@@ -86,35 +142,6 @@ QString quoteArgForPreview(const QString& value) {
         return QLatin1Char('"') + sanitized + QLatin1Char('"');
     }
     return sanitized;
-}
-
-// Resolve a bare program name (no path separator) to an absolute path. System32 wins first,
-// then only the ABSOLUTE entries of PATH (never "." or a relative entry, which resolve
-// against the working directory). Empty return -> caller fails closed. This mirrors the
-// execution broker's launch-time resolver so the plan-time preview names the SAME binary
-// the broker would run, closing the window where the approved name and the launched target
-// could differ.
-[[nodiscard]] QString resolveBareProgram(const QString& name) {
-#ifdef Q_OS_WIN
-    const QString system32 = sak::system32Path(name);
-    if (!system32.isEmpty() && QFileInfo(system32).isFile()) {
-        return system32;
-    }
-#endif
-    QStringList search;
-    const QStringList entries = qEnvironmentVariable("PATH").split(QDir::listSeparator(),
-                                                                   Qt::SkipEmptyParts);
-    for (const QString& entry : entries) {
-        const QString entry_trimmed = entry.trimmed();
-        if (entry_trimmed.isEmpty() || !QDir::isAbsolutePath(entry_trimmed)) {
-            continue;
-        }
-        search.append(entry_trimmed);
-    }
-    if (search.isEmpty()) {
-        return {};
-    }
-    return QStandardPaths::findExecutable(name, search);
 }
 
 // Rewrite an AI-supplied run_process program into an ABSOLUTE, verified path AT PLAN TIME so
@@ -142,7 +169,7 @@ QString quoteArgForPreview(const QString& value) {
                    "working-directory-relative path: %1")
             .arg(sanitizeForPreview(trimmed.left(kToolNameErrorMaxChars)));
     }
-    const QString resolved = resolveBareProgram(trimmed);
+    const QString resolved = sak::resolveBareExecutable(trimmed);
     if (resolved.isEmpty()) {
         return QStringLiteral(
                    "Cannot resolve program '%1' to an absolute path; refusing to launch a bare "
@@ -179,6 +206,49 @@ void resolveRequestProcessProgram(AiCommandRequest& request) {
     }
 }
 
+// Populate @p plan's request/label/preview from the tool name. Returns false when the name is
+// not one of the three canonical tools, having already filled in the refusal.
+//
+// The command tools are a CLOSED set of EXACT names. The router (and every policy helper)
+// matches tool names case- and whitespace-insensitively, so a variant such as "RUN_POWERSHELL"
+// is authorized as a shell tool; letting it fall through to the process branch would parse and
+// launch a model-supplied executable instead of the shell that was authorized. Anything that is
+// not one of the three canonical names is refused outright.
+bool populateRequestForTool(const QString& tool_name,
+                            const QJsonObject& args,
+                            AiCommandToolPlan& plan,
+                            bool& direct_process) {
+    if (tool_name == QLatin1String("run_powershell")) {
+        plan.request = ExecutionBroker::requestFromJson(args);
+        plan.shell_label = QStringLiteral("PowerShell");
+        plan.preview = plan.request.command;
+        return true;
+    }
+    if (tool_name == QLatin1String("run_cmd")) {
+        plan.request = ExecutionBroker::requestFromJson(args);
+        plan.shell_label = QStringLiteral("cmd.exe");
+        plan.preview = plan.request.command;
+        return true;
+    }
+    if (tool_name == QLatin1String("run_process")) {
+        direct_process = true;
+        plan.request = ExecutionBroker::processRequestFromJson(args);
+        plan.shell_label = QStringLiteral("Process");
+        resolveRequestProcessProgram(plan.request);
+        plan.preview = buildProcessPreview(plan.request.program, plan.request.arguments);
+        return true;
+    }
+    plan.shell_label = QStringLiteral("Process");
+    plan.risky_change = true;
+    plan.request.validation_error =
+        QStringLiteral("Unsupported command tool: %1")
+            .arg(sanitizeForPreview(tool_name.left(kToolNameErrorMaxChars)));
+    plan.guard_block_error = plan.request.validation_error;
+    plan.policy_request.tool_name = tool_name;
+    plan.display_preview = plan.preview;
+    return false;
+}
+
 }  // namespace
 
 AiCommandToolPlan AiCommandToolPlanner::buildPlan(const QString& tool_name,
@@ -186,37 +256,18 @@ AiCommandToolPlan AiCommandToolPlanner::buildPlan(const QString& tool_name,
                                                   AiToolPolicy policy,
                                                   Options options) {
     AiCommandToolPlan plan;
-    // The command tools are a CLOSED set of EXACT names. The router (and every policy
-    // helper) matches tool names case- and whitespace-insensitively, so a variant such as
-    // "RUN_POWERSHELL" is authorized as a shell tool; letting it fall through to the
-    // process branch here would parse and launch a model-supplied executable instead of
-    // the shell that was authorized. Anything that is not one of the three canonical
-    // names is refused outright.
     bool direct_process = false;
-    if (tool_name == QLatin1String("run_powershell")) {
-        plan.request = ExecutionBroker::requestFromJson(args);
-        plan.shell_label = QStringLiteral("PowerShell");
-        plan.preview = plan.request.command;
-    } else if (tool_name == QLatin1String("run_cmd")) {
-        plan.request = ExecutionBroker::requestFromJson(args);
-        plan.shell_label = QStringLiteral("cmd.exe");
-        plan.preview = plan.request.command;
-    } else if (tool_name == QLatin1String("run_process")) {
-        direct_process = true;
-        plan.request = ExecutionBroker::processRequestFromJson(args);
-        plan.shell_label = QStringLiteral("Process");
-        resolveRequestProcessProgram(plan.request);
-        plan.preview = buildProcessPreview(plan.request.program, plan.request.arguments);
-    } else {
-        plan.shell_label = QStringLiteral("Process");
-        plan.risky_change = true;
-        plan.request.validation_error =
-            QStringLiteral("Unsupported command tool: %1")
-                .arg(sanitizeForPreview(tool_name.left(kToolNameErrorMaxChars)));
-        plan.guard_block_error = plan.request.validation_error;
-        plan.policy_request.tool_name = tool_name;
+    if (!populateRequestForTool(tool_name, args, plan, direct_process)) {
         return plan;  // policy_decision stays default-denied.
     }
+    // THE HUMAN-FACING COPY, sanitised once, here, for EVERY branch. The two shell branches
+    // assign the model's command string straight through, and that string is what the approval
+    // dialog used to render: a raw newline (or U+2028, which QTextDocument also breaks on)
+    // pushes the dangerous tail out of a fixed-height no-wrap preview box, and a bidi override
+    // reverses the visual order of what is left. The process branch was already safe because
+    // buildProcessPreview quotes each argument through sanitizeForPreview -- the defence existed
+    // and simply was not applied to the branches a model actually uses.
+    plan.display_preview = sanitizeForPreview(plan.preview);
 
     plan.request.max_output_bytes = options.max_output_bytes;
     // A direct process launch is an arbitrary executable: its effect lives in the binary,
@@ -230,6 +281,14 @@ AiCommandToolPlan AiCommandToolPlanner::buildPlan(const QString& tool_name,
     // repaired into defaults and carried through the confirmation, lease, and launch path
     // only to be refused at the broker's entry point.
     if (!plan.request.validation_error.isEmpty()) {
+        // The header promises that ANY call failing the broker's typed validation comes back with
+        // risky_change SET, and the sibling unsupported-tool branch above does exactly that. This
+        // path did not: a shell command whose arguments were malformed but whose text did not
+        // look destructive returned risky_change == false, so a caller honouring the documented
+        // contract would skip the risky-command presentation and the restore-point offer for a
+        // request it could not even parse. Arguments that failed validation are arguments nothing
+        // understood -- fail closed.
+        plan.risky_change = true;
         plan.guard_block_error = plan.request.validation_error;
         plan.policy_request.tool_name = tool_name;
         plan.policy_request.command_preview = plan.preview;

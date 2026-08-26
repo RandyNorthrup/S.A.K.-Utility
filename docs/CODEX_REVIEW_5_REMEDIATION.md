@@ -2271,6 +2271,60 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
         REQUEST cancellation would silently have named the predicate instead. Renamed to
         cancel_check. Fixed on the spot rather than stepped over -- a finding is a finding whether
         or not this batch caused it.
+  - THE COMMAND-TOOL PLANNER, 2026-08-26. The approval dialog is the last thing between a
+    model-issued command and the machine, and three findings attacked it directly.
+      * THE SHELL PREVIEWS WERE RAW, a display-spoofing hole against the one string a human is
+        asked to approve. run_powershell and run_cmd assigned the model's command straight to
+        plan.preview, which the panel rendered; the run_process branch was already safe because
+        buildProcessPreview quotes every argument through sanitizeForPreview. The defence existed
+        and simply was not applied to the branches a model actually uses.
+        WHY IT MATTERS CONCRETELY: the dialog is a QPlainTextEdit with setPlainText, NoWrap and a
+        COLLAPSED maximum height. A raw newline is not cosmetic there -- it pushes everything
+        after it out of the visible box, so the operator reads and approves the first line while
+        the rest runs unseen. U+2028/U+2029/U+0085 do the same (QTextDocument breaks on them),
+        and a RIGHT-TO-LEFT OVERRIDE reverses the visual order of what remains.
+        Fixed with a separate AiCommandToolPlan::display_preview, sanitised once for every
+        branch, used at the four panel sites that RENDER (sensitive-package prompt, approval
+        dialog, restore-point dialog, chat transcript line). plan.preview stays RAW for the
+        guard, the risk classifier and the persisted record: sanitising the classifier's input
+        would change which commands are judged risky.
+        The hazard set was widened from "C0 plus DEL" to include C1, NEL, LS/PS, the bidi marks,
+        embeddings, overrides and isolates, and the zero-width and soft-hyphen characters.
+        THE ESCAPE FORM CHANGED from backslash to bracketed (<TAB>), deliberately, and one
+        existing test pinning the old rendering was corrected rather than the change reverted. A
+        backslash escape is ambiguous the moment a value contains the literal characters for it,
+        and the obvious disambiguation -- escaping the backslash itself -- would double every
+        separator in a product whose commands are full of Windows paths. That is a real
+        readability cost in exactly the dialog where careful reading is the point. The bracketed
+        form cannot be produced by escaping, and a value containing literal "<LF>" only makes the
+        reader suspect a newline that is not there, which errs toward caution.
+      * A VALIDATION FAILURE WAS NOT MARKED RISKY, contradicting the header's own contract while
+        the SIBLING unsupported-tool branch honoured it. A shell command whose arguments were
+        malformed but whose text did not look destructive returned risky_change == false, so a
+        caller following the documented contract would skip the risky-command presentation and
+        the restore-point offer for a request nothing could parse. Now fails closed.
+      * SYSTEM32-FIRST WAS DEFEATED FOR THE SPELLING A MODEL NATURALLY WRITES. The resolver
+        checked System32 for the EXACT name only; "whoami" is not a file there, so control fell
+        through to the PATH search, which DOES apply PATHEXT and returns the first match in PATH
+        ORDER. Any directory earlier in PATH than System32 therefore won for every extensionless
+        name -- precisely the guarantee the resolver exists to give. It now searches System32
+        with the same suffix rules before considering PATH.
+    AND A FINDING THE BRIEF RATED "LOW" THAT THIS BATCH MADE LIVE. The brief noted the planner's
+    executable resolution duplicated the broker's, "drift-prone". Fixing the System32 gap in the
+    planner is what turned that risk into actual drift: the broker held a byte-for-byte copy of
+    the old resolver, so the preview would have named the System32 binary while the launch picked
+    a PATH-planted one -- the two disagreeing BECAUSE OF THE FIX. Both now call one
+    sak::resolveBareExecutable, promoted into process_runner beside system32Path, the module that
+    already owns this knowledge.
+    TWO PRE-EXISTING cppcheck findings in ai_assistant_panel.cpp surfaced because the batch
+    touched that file: four header parameter names disagreeing with their definitions, and a
+    non-const reference binding. Both fixed. The two knownConditionTrueFalse hits on
+    resumeWorkflowInputGate/resumeApprovalGate are NOT defects and were not "fixed" into one:
+    both are deliberate fail-closed stubs -- a stale gate cannot be resumed, so they explain and
+    refuse -- and they now carry an inline suppression saying so, rather than a behaviour change
+    made to satisfy a checker.
+    MUTATION-PROVED: shipping the raw string as the display copy turns the suite RED, and
+    dropping the risky_change fail-close turns it RED. Build exit 0 confirmed separately.
     A MUTATION DRILL ON THE MIGRATION FOUND A REAL COVERAGE HOLE, which is the point of running
     one on a "behaviour-preserving" change. Breaking the shared helper turned three of the four
     migrated suites RED and left test_mbox_writer GREEN -- because MboxWriter::sanitizeFolderName

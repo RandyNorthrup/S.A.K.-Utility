@@ -836,7 +836,7 @@ void addApprovalButtons(QVBoxLayout* layout,
 }
 
 ApprovalPromptChoice showApprovalPrompt(const ApprovalPromptSpec& spec) {
-    if (auto& hook = aiApprovalPromptTestHook(); hook) {
+    if (const auto& hook = aiApprovalPromptTestHook(); hook) {
         return static_cast<ApprovalPromptChoice>(hook(spec.window_title, spec.command_text));
     }
     QDialog dialog(spec.parent);
@@ -6082,8 +6082,9 @@ bool AiAssistantPanel::authorizeCommandToolCall(const PendingToolCallContext& co
         return false;
     }
     if (!plan.guard_approval_reason.isEmpty()) {
+        // display_preview, never preview: this string is RENDERED to the approver.
         const QString approval_preview =
-            QStringLiteral("%1\n\n%2").arg(plan.guard_approval_reason, plan.preview);
+            QStringLiteral("%1\n\n%2").arg(plan.guard_approval_reason, plan.display_preview);
         if (!confirmCommandWithUser(tr("Sensitive Package Command"), approval_preview, true)) {
             output->output = QString::fromUtf8(
                 QJsonDocument(toolError(QStringLiteral("User declined sensitive package command")))
@@ -6114,8 +6115,10 @@ bool AiAssistantPanel::authorizeCommandForAccessMode(const PendingToolCallContex
     const bool catastrophic = plan.policy_decision.catastrophic_change;
     const AccessMode mode = currentAccessMode();
     if (catastrophic || mode == AccessMode::AssistedFullAccess) {
-        if (!confirmCommandWithUser(
-                plan.shell_label, plan.preview, plan.risky_change || catastrophic, catastrophic)) {
+        if (!confirmCommandWithUser(plan.shell_label,
+                                    plan.display_preview,
+                                    plan.risky_change || catastrophic,
+                                    catastrophic)) {
             return rejectCommandBeforeRun(context,
                                           output,
                                           QStringLiteral("{\"error\":\"User declined command\"}"),
@@ -6125,7 +6128,7 @@ bool AiAssistantPanel::authorizeCommandForAccessMode(const PendingToolCallContex
         return true;
     }
     if (mode == AccessMode::UnattendedFullAccess &&
-        !offerRestorePointIfNeeded(plan.preview, plan.risky_change, catastrophic)) {
+        !offerRestorePointIfNeeded(plan.display_preview, plan.risky_change, catastrophic)) {
         return rejectCommandBeforeRun(
             context,
             output,
@@ -6222,7 +6225,7 @@ void AiAssistantPanel::startCommandToolCall(const PendingToolCallContext& contex
         tr("Running %1%2 tool call %3").arg(plan.shell_label, admin_suffix, m_currentCommandId));
     Q_EMIT logOutput(ai::CredentialStore::redactSecrets(
         QStringLiteral("[%1 %2%3] $ %4")
-            .arg(m_currentCommandId, plan.shell_label, admin_suffix, plan.preview)));
+            .arg(m_currentCommandId, plan.shell_label, admin_suffix, plan.display_preview)));
 
     if (context.call->name == QLatin1String("run_powershell")) {
         (void)m_executionBroker->startPowerShell(plan.request, m_currentCommandId);
@@ -11419,8 +11422,13 @@ void AiAssistantPanel::onResumeGateClicked() {
     const ai::AiHumanGate gate = m_runState.pending_human_gate;
     bool resumed = false;
     if (gate.kind == QLatin1String("workflow_input")) {
+        // cppcheck-suppress knownConditionTrueFalse ; deliberate: a stale workflow-input gate
+        // cannot be resumed, so the handler always explains and refuses. The assignment keeps
+        // this branch the same shape as the resumable kinds below.
         resumed = resumeWorkflowInputGate(gate);
     } else if (gate.kind == QLatin1String("approval")) {
+        // cppcheck-suppress knownConditionTrueFalse ; deliberate, as above: a stale approval
+        // prompt must be re-issued against the CURRENT command, never silently reused.
         resumed = resumeApprovalGate(gate);
     } else if (gate.kind == QLatin1String("workflow_recovery")) {
         resumed = resumeWorkflowRecoveryGate(gate);
