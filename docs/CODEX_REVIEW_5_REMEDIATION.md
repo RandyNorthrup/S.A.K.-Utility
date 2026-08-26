@@ -2082,12 +2082,30 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
     earlier report. Recorded as hardening, not a live bug.
     FLAGGED, NOT ACTIONED (removals need owner authorization): queryPowerPlan and its pattern
     appear to be dead code.
-    NOT yet actioned from this batch, and deliberately not claimed as fixed: the
-    generate_system_report UTF-16-vs-UTF-8 size accounting, the optimize_power_settings
-    dead-helper finding (queryPowerPlan; a removal needs owner authorization), and the
-    ai_chat_title secret-pattern coverage (only sk-* keys are recognised) plus its
-    domain-substring matching. They are in the stored briefs under docs/review_briefs/ so they
-    can be picked up without re-running Codex.
+    NOT yet actioned from this batch, and deliberately not claimed as fixed -- the list is
+    maintained as items close, per the lesson immediately below. As of 2026-08-26 the whole of
+    it is:
+      - optimize_power_settings queryPowerPlan and its pattern appear to be DEAD CODE. Flagged,
+        not removed: a removal needs owner authorization, so this stays open by rule rather than
+        by oversight.
+      - ai_command_tool_planner, three findings still open. (a) The resolved program is not
+        pinned or revalidated between approval and launch, so the binary can change underneath
+        the "SAME binary" guarantee -- a real TOCTOU that needs handle pinning across the
+        planner/broker boundary, not a one-line fix. (b) An embedded NUL is displayed as an
+        escape but retained in program/arguments, which native argv cannot carry, so the preview
+        and the launch can disagree. (c) Broker preconditions (empty shell command, unsupported
+        elevated CMD/process launch, invalid output limits) are not checked at plan time, so
+        those plans are authorized and only then refused.
+      - ai_conversation_store partial-state ordering: a transcript/command record is persisted
+        BEFORE the manifest update, so a manifest failure returns false after the data is already
+        committed and a retry duplicates the record; failed session start and rename likewise
+        mutate active-session state before the manifest succeeds.
+    Everything else from these briefs is now closed and recorded above: generate_system_report's
+    size accounting, ai_chat_title's secret coverage AND its five remaining findings, the
+    conversation store's redaction/containment/memory/index defects, the lease manager, the MCP
+    session pool, and the command planner's preview-spoofing, risky_change and System32
+    findings. All stored briefs remain under docs/review_briefs/ so the open items above can be
+    picked up without re-running Codex.
     THIS LIST WAS ITSELF STALE, corrected 2026-08-26: it named the collector cancellation, the
     same-millisecond filename collision, the power-report formatting and the planner
     timeout-ceiling mismatch as un-actioned AFTER the bullets above had recorded fixing all four.
