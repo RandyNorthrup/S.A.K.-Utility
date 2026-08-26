@@ -92,6 +92,20 @@ public:
     /// folder.relative_path before it is joined onto the source profile and destination roots.
     [[nodiscard]] static bool isSafeRelativePath(const QString& rel);
 
+    /// @brief Convert an absolute native path to its "\\?\" extended-length form.
+    ///
+    /// A path longer than MAX_PATH (260) does not resolve through the plain Win32 API in this
+    /// process -- it carries no long-path manifest -- and a deep profile tree reaches that length
+    /// easily. Because the reparse-point probe that uses this FAILS CLOSED, an unresolvable query
+    /// reads as "this is a link" and would refuse to back up every such path, so the conversion is
+    /// what keeps long paths usable rather than a mere optimization.
+    ///
+    /// A UNC path takes the "\\?\UNC\" form (\\server\share -> \\?\UNC\server\share); a path that
+    /// is already extended-length is returned unchanged. Pure and side-effect free so the
+    /// >MAX_PATH and UNC hostile-environment dimensions are testable without a 260-character
+    /// directory tree or a live file server (R5-G23-4).
+    [[nodiscard]] static QString extendedLengthPath(const QString& absoluteNativePath);
+
 Q_SIGNALS:
     /**
      * @brief Overall backup progress

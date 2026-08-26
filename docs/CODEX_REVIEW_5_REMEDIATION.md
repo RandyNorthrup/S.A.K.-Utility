@@ -4401,6 +4401,28 @@ rather than as generic advice.
       it; it was noticed by using the application. Add startup and key-operation time
       budgets as CI assertions
 - [~] R5-G23-4 HOSTILE ENVIRONMENT MATRIX. The code assumes C: is the system drive,
+  - MATRIX TESTS 2026-08-25 (>MAX_PATH, UNC and LOCALE dimensions), via the EXTRACT-THE-DECISION
+    seam rather than the environment-injection harness this item had been waiting on:
+      * >MAX_PATH + UNC: the extended-length conversion inside user_profile_backup_worker's
+        isReparsePoint was a file-static expression with no way to reach it. Lifted to the pure
+        static UserProfileBackupWorker::extendedLengthPath, beside the existing
+        isSafePathSegment/isSafeRelativePath seams, and pinned by
+        extendedLengthPath_handlesLongAndUncPaths: a >260-character path (asserted past MAX_PATH
+        in the fixture itself), the \\server\share -> \\?\UNC\server\share form, an
+        ALREADY-extended path in both spellings returned unchanged, and C:/D:/Z: treated
+        identically (the non-C: dimension of the same matrix). This conversion is load-bearing,
+        not an optimization: the probe that consumes it FAILS CLOSED, so without it every
+        over-MAX_PATH profile path resolves as unreadable, reads as a reparse point, and is
+        dropped from the backup. Mutation-proved: keeping the two leading backslashes when
+        building the UNC form (a naive concatenation) turns the test RED, restoring relinks green.
+      * LOCALE: parseNetIpConfig_nonEnglishAdapterNameSurvives pins that a German and a Russian
+        adapter NAME survive the Get-NetIPConfiguration JSON decode byte-for-byte. The property
+        names this parser reads are language-neutral -- which is why it replaced the English netsh
+        scrape -- but the adapter name is not, and it is carried into the restore, so a mangled
+        one would target a different adapter or none. Written with \xNN escapes so the source
+        stays 7-bit ASCII for the repo gate.
+    Still [~]: no-network, missing-bundled-tools and UNC-only-cwd remain untested (they need real
+    injection seams), as do the two non-destructive UI residuals.
   - OPEN: no test exercises non-C: system drive, paths over 260 chars, UNC-only working dir, no-admin, no-network, non-English locale, or missing bundled tools; still to build. (The reliability-track siblings crash reporting/startup budget/config schema/doc-accuracy/build-lint/error-message uniqueness already landed separately.)
   - PROGRESS 2026-08-18 (non-C: system-drive dimension audited): the "assumes C: is the system drive"
     premise is largely FALSE in the code. The risky scan roots derive from the environment

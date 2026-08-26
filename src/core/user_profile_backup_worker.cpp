@@ -48,14 +48,8 @@ bool isReparsePoint(const QString& path) {
     // and -- under the fail-closed rule below -- would refuse every ordinary deep profile path;
     // \\?\ avoids that. It needs a fully-qualified backslash path, and a \\server\share UNC path
     // becomes \\?\UNC\server\share.
-    QString extended = QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath());
-    if (!extended.startsWith(QStringLiteral("\\\\?\\"))) {
-        if (extended.startsWith(QStringLiteral("\\\\"))) {
-            extended = QStringLiteral("\\\\?\\UNC\\") + extended.mid(kUncLeadingBackslashCount);
-        } else {
-            extended = QStringLiteral("\\\\?\\") + extended;
-        }
-    }
+    const QString extended = UserProfileBackupWorker::extendedLengthPath(
+        QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()));
     const DWORD attrs = GetFileAttributesW(extended.toStdWString().c_str());
     if (attrs == INVALID_FILE_ATTRIBUTES) {
         return true;  // fail closed: an unresolvable/denied query must not read as "not a link"
@@ -952,6 +946,20 @@ bool UserProfileBackupWorker::isSafeRelativePath(const QString& rel) {
         }
     }
     return true;
+}
+
+QString UserProfileBackupWorker::extendedLengthPath(const QString& absoluteNativePath) {
+    // Already extended-length (either "\\?\C:\..." or "\\?\UNC\server\..."): prefixing again
+    // would produce a path that resolves to nothing.
+    if (absoluteNativePath.startsWith(QStringLiteral("\\\\?\\"))) {
+        return absoluteNativePath;
+    }
+    // A UNC path keeps its server\share, but the two leading backslashes are replaced by the
+    // "\\?\UNC\" prefix rather than kept alongside it.
+    if (absoluteNativePath.startsWith(QStringLiteral("\\\\"))) {
+        return QStringLiteral("\\\\?\\UNC\\") + absoluteNativePath.mid(kUncLeadingBackslashCount);
+    }
+    return QStringLiteral("\\\\?\\") + absoluteNativePath;
 }
 
 bool UserProfileBackupWorker::validateSourcePaths() {

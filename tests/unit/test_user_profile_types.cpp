@@ -600,6 +600,44 @@ private Q_SLOTS:
         QCOMPARE(c.dns_secondary, QStringLiteral("8.8.8.8"));
     }
 
+    void parseNetIpConfig_nonEnglishAdapterNameSurvives() {
+        // R5-G23-4 hostile environment, LOCALE dimension. This parser exists BECAUSE the previous
+        // implementation scraped English netsh labels and so captured nothing on a non-English
+        // Windows -- silently losing every adapter from a profile backup that a restore then feeds
+        // from. Get-NetIPConfiguration's PROPERTY names are language-neutral, but the adapter NAME
+        // is not: on a German or Russian install it is whatever the OS calls the NIC, and it is
+        // carried through to the restore. Pin that a non-ASCII name survives byte-for-byte rather
+        // than being mangled or dropped by the JSON decode.
+        // The escape is split before "ber": \xBC would otherwise swallow the following hex
+        // digits ('b', 'e') and overflow the escape sequence.
+        const QString german = QString::fromUtf8(
+            "Ethernet-Verbindung \xC3\xBC"
+            "ber LAN");
+        const QString russian = QString::fromUtf8(
+            "\xD0\x9F\xD0\xBE\xD0\xB4\xD0\xBA\xD0\xBB"
+            "\xD1\x8E\xD1\x87\xD0\xB5\xD0\xBD\xD0\xB8\xD0\xB5");
+        const QString json =
+            QStringLiteral(R"([{"Name":"%1","Dhcp":"Enabled","IPv4":"10.0.0.5","Prefix":24,)"
+                           R"("Gateway":"10.0.0.1","Dns":["10.0.0.1"]},)"
+                           R"({"Name":"%2","Dhcp":"Disabled","IPv4":"192.168.1.7","Prefix":16,)"
+                           R"("Gateway":null,"Dns":[]}])")
+                .arg(german, russian);
+
+        const auto configs = EthernetConfigInfo::parseNetIpConfigJson(json);
+        QCOMPARE(configs.size(), qsizetype(2));
+        // Byte-for-byte: a name that came back transliterated or with replacement characters
+        // would target a DIFFERENT adapter (or none) when the restore runs netsh against it.
+        QCOMPARE(configs.at(0).adapter_name, german);
+        QCOMPARE(configs.at(1).adapter_name, russian);
+        // The rest of the mapping is unaffected by the non-ASCII name -- the language-neutral
+        // property names are still what the parser reads.
+        QVERIFY(configs.at(0).dhcp_enabled);
+        QCOMPARE(configs.at(0).ip_address, QStringLiteral("10.0.0.5"));
+        QCOMPARE(configs.at(0).subnet_mask, QStringLiteral("255.255.255.0"));
+        QVERIFY(!configs.at(1).dhcp_enabled);
+        QCOMPARE(configs.at(1).subnet_mask, QStringLiteral("255.255.0.0"));
+    }
+
     void parseNetIpConfig_staticAdapterNullGatewayEmptyDns() {
         // A statically-configured adapter with no gateway and no DNS: Dhcp Disabled, Gateway null,
         // Dns []. The null/empty fields must map to empty strings, not crash.

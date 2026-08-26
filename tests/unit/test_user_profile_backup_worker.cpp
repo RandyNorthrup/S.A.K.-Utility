@@ -38,6 +38,7 @@ private Q_SLOTS:
     // -- B7-08: username / relative-path traversal validation --
     void isSafePathSegment_acceptsNamesRejectsTraversal();
     void isSafeRelativePath_acceptsRelativeRejectsEscapes();
+    void extendedLengthPath_handlesLongAndUncPaths();
 
     // -- B7-20: incomplete backups must not report a clean success --
     void backupMissingSelectedFolderReportsFailure();
@@ -433,6 +434,58 @@ void TestUserProfileBackupWorker::isSafePathSegment_acceptsNamesRejectsTraversal
     QVERIFY(!UserProfileBackupWorker::isSafePathSegment(QStringLiteral("..\\..\\Windows")));
     QVERIFY(!UserProfileBackupWorker::isSafePathSegment(QStringLiteral("C:")));
     QVERIFY(!UserProfileBackupWorker::isSafePathSegment(QStringLiteral("a*b")));
+}
+
+void TestUserProfileBackupWorker::extendedLengthPath_handlesLongAndUncPaths() {
+    // R5-G23-4 hostile environment: the >MAX_PATH and UNC dimensions. This process carries no
+    // long-path manifest, so a path past 260 characters does not resolve through the plain Win32
+    // API -- and the reparse-point probe that consumes this FAILS CLOSED, reporting an
+    // unresolvable query AS a link. Without the extended-length form every deep profile path
+    // would therefore be refused as a reparse point and silently dropped from the backup. That
+    // makes this conversion load-bearing rather than an optimization, which is why it is pinned
+    // here instead of left to a 260-character directory tree nobody can create in a fixture.
+
+    // An ordinary drive path gains the prefix.
+    QCOMPARE(UserProfileBackupWorker::extendedLengthPath(QStringLiteral("C:\\Users\\Username")),
+             QStringLiteral("\\\\?\\C:\\Users\\Username"));
+
+    // A genuinely over-MAX_PATH path is converted the same way -- length is not a special case,
+    // which is the point: nothing in the conversion depends on being "long enough".
+    const QString deep = QStringLiteral("D:\\Users\\Username\\") +
+                         QStringLiteral("nested\\").repeated(60) + QStringLiteral("file.dat");
+    QVERIFY(deep.size() > 260);  // the fixture really is past MAX_PATH
+    const QString deepExtended = UserProfileBackupWorker::extendedLengthPath(deep);
+    QCOMPARE(deepExtended, QStringLiteral("\\\\?\\") + deep);
+    QVERIFY(deepExtended.startsWith(QStringLiteral("\\\\?\\D:\\Users\\Username\\nested\\")));
+
+    // A UNC path takes the UNC form: the two leading backslashes are REPLACED by the prefix, not
+    // kept alongside it. "\\\\?\\\\\\server\\share" (prefix plus the original slashes) resolves to
+    // nothing, so this is the case a naive concatenation gets wrong.
+    QCOMPARE(UserProfileBackupWorker::extendedLengthPath(
+                 QStringLiteral("\\\\server\\share\\Profiles\\Alice")),
+             QStringLiteral("\\\\?\\UNC\\server\\share\\Profiles\\Alice"));
+    // The server and share survive intact -- a conversion that dropped a component would point
+    // the probe at a different share.
+    QVERIFY(UserProfileBackupWorker::extendedLengthPath(QStringLiteral("\\\\srv\\s\\x"))
+                .endsWith(QStringLiteral("UNC\\srv\\s\\x")));
+
+    // An already-extended path is returned UNCHANGED, in both forms. Prefixing twice
+    // ("\\\\?\\\\\\?\\C:\\x") names nothing at all, so the probe would fail closed and refuse a
+    // path that was already correct.
+    QCOMPARE(UserProfileBackupWorker::extendedLengthPath(
+                 QStringLiteral("\\\\?\\C:\\Users\\Username")),
+             QStringLiteral("\\\\?\\C:\\Users\\Username"));
+    QCOMPARE(UserProfileBackupWorker::extendedLengthPath(
+                 QStringLiteral("\\\\?\\UNC\\server\\share\\x")),
+             QStringLiteral("\\\\?\\UNC\\server\\share\\x"));
+
+    // Non-C: system drives are not special-cased anywhere in the conversion (the non-C: dimension
+    // of the same matrix): every drive letter is prefixed identically.
+    for (const QChar drive : {QChar(u'C'), QChar(u'D'), QChar(u'Z')}) {
+        const QString path = QString(drive) + QStringLiteral(":\\Windows\\System32");
+        QCOMPARE(UserProfileBackupWorker::extendedLengthPath(path),
+                 QStringLiteral("\\\\?\\") + path);
+    }
 }
 
 void TestUserProfileBackupWorker::isSafeRelativePath_acceptsRelativeRejectsEscapes() {
