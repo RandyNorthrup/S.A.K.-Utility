@@ -41,6 +41,7 @@ private Q_SLOTS:
     void artifactPath_rejectsAFilenameThatNamesTheDirectory();
     void safeArtifactDirectoryName_rejectsReservedAndTrailingDotNames();
     void memoryFile_trimActuallyGetsUnderTheCapForNonAsciiMemory();
+    void searchFallsBackToRawLogsWhenTheIndexIsKnownIncomplete();
     void concurrentReadersAndWriterDoNotDeadlockOrCorrupt();
 };
 
@@ -1009,6 +1010,56 @@ void AiConversationStoreTests::memoryFile_trimActuallyGetsUnderTheCapForNonAscii
     // Truncation landed on a character boundary: a split UTF-8 sequence would decode to U+FFFD.
     QVERIFY2(!text.contains(QChar(0xFFFD)), "trim split a multi-byte character");
     QCOMPARE(text.toUtf8(), raw);
+}
+
+void AiConversationStoreTests::searchFallsBackToRawLogsWhenTheIndexIsKnownIncomplete() {
+    // Index appends are best-effort BY DESIGN -- losing one must never fail a transcript or
+    // command write that already succeeded. But searchIndexFile() returned true for any index it
+    // could merely OPEN, and that return is what makes the caller skip the raw-log scan. So a
+    // record whose index append had failed became permanently invisible to search, silently,
+    // while the transcript on disk held it the whole time.
+    //
+    // The writer now drops a marker when an append fails. While it exists the index is demoted
+    // from authoritative to advisory and the raw logs answer instead.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Index integrity"), &error));
+
+    QVERIFY(store.appendTranscript(QStringLiteral("assistant"),
+                                   QStringLiteral("SUPERAntiSpyware quick scan finished"),
+                                   QJsonObject{},
+                                   &error));
+
+    const QString session_dir = store.currentSessionInfo().path;
+    const QString index_path = session_dir + QStringLiteral("/search_index.jsonl");
+    const QString marker_path = session_dir + QStringLiteral("/search_index.incomplete");
+
+    // Baseline: the index answers, and it holds the record.
+    QVERIFY(QFileInfo::exists(index_path));
+    QVERIFY(!QFileInfo::exists(marker_path));
+    QCOMPARE(store.searchSessions(QStringLiteral("SUPERAntiSpyware"), 10, &error).size(), 1);
+
+    // Simulate the state a failed index append leaves behind: the raw transcript still has the
+    // record, the INDEX DOES NOT, and the marker says so. Without the marker this search would
+    // answer from the truncated index and report zero hits for a record that exists.
+    QFile index(index_path);
+    QVERIFY(index.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text));
+    index.close();
+    QCOMPARE(store.searchSessions(QStringLiteral("SUPERAntiSpyware"), 10, &error).size(), 0);
+
+    QFile marker(marker_path);
+    QVERIFY(marker.open(QIODevice::WriteOnly | QIODevice::Text));
+    marker.write("search index incomplete\n");
+    marker.close();
+
+    const auto hits = store.searchSessions(QStringLiteral("SUPERAntiSpyware"), 10, &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(hits.size(), 1);
+    QCOMPARE(hits.first().source, QStringLiteral("transcript"));
+    QVERIFY2(hits.first().snippet.contains(QStringLiteral("SUPERAntiSpyware")),
+             qPrintable(hits.first().snippet));
 }
 
 void AiConversationStoreTests::artifactSubdir_confinesSubdirToTheArtifactRoot() {

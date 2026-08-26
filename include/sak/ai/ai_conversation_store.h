@@ -114,6 +114,11 @@ private:
                                       QString* error_message = nullptr) const;
     [[nodiscard]] bool appendSearchIndexRecord(QJsonObject object,
                                                QString* error_message = nullptr) const;
+    /// Mark this session's search index as missing at least one record, so search stops treating
+    /// it as authoritative and falls back to scanning the raw logs (which still hold that record).
+    /// Index appends are best-effort -- losing one must never fail a transcript or command write
+    /// that already succeeded -- but that cannot mean the record silently stops existing.
+    void markSearchIndexIncomplete() const;
     [[nodiscard]] static AiSessionInfo readManifest(const QString& session_path);
     [[nodiscard]] static QJsonObject usageToJson(const TokenUsage& usage);
     [[nodiscard]] static QString safeArtifactDirectoryName(const QString& title,

@@ -2393,6 +2393,29 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
     not.
     MUTATION-PROVED: restoring the http(s)-only URL pattern turns the suite RED, and restoring
     bare-substring domain matching turns it RED. Build exit 0 confirmed separately for each.
+  - TWO MORE CONVERSATION-STORE FAIL-OPENS, 2026-08-26.
+      * A MEMORY APPEND COULD TRUNCATE AND STILL REPORT SUCCESS. appendMemoryEntry issued three
+        writes and a close and discarded EVERY return value, so a short write or a close-time
+        flush failure -- disk full, quota, a device pulled mid-write -- truncated the entry in
+        place while the function returned true. The caller then recorded "memory saved" for a
+        memory that was not saved. The record is now assembled as a SINGLE buffer (so a failure
+        cannot leave a heading with no body under it), written once, and the byte count, the
+        flush and QFileDevice::error() are all checked before success is reported.
+      * A FAILED SEARCH-INDEX APPEND MADE A RECORD PERMANENTLY UNSEARCHABLE, silently. Index
+        appends are best-effort BY DESIGN and must stay that way: losing one must never fail a
+        transcript or command write that already succeeded. But searchIndexFile() returned true
+        for any index it could merely OPEN, and that return is exactly what makes the caller skip
+        the raw-log scan -- so a truncated index answered authoritatively and the record, which
+        was sitting in the transcript the whole time, could never be found again.
+        The writer now drops a search_index.incomplete marker when an append fails. While it
+        exists the index is demoted from authoritative to advisory and the raw-log scan answers
+        instead. The marker write is itself best-effort, and the code says why: if it cannot be
+        created there is nothing more this layer can do, and failing the caller's transcript
+        write over it would trade a search gap for actual data loss.
+    MUTATION-PROVED: removing the marker check from searchIndexFile turns the suite RED. The test
+    is deliberately three-phase -- index answers, truncated index answers WRONG (zero hits for a
+    record that exists), marker present and the raw logs answer correctly -- so it pins the
+    demotion itself rather than just "search works".
     A MUTATION DRILL ON THE MIGRATION FOUND A REAL COVERAGE HOLE, which is the point of running
     one on a "behaviour-preserving" change. Breaking the shared helper turned three of the four
     migrated suites RED and left test_mbox_writer GREEN -- because MboxWriter::sanitizeFolderName

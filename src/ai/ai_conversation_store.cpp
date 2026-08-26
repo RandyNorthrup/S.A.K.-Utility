@@ -34,6 +34,10 @@ constexpr auto kTranscriptFile = "transcript.jsonl";
 constexpr auto kCommandsFile = "commands.jsonl";
 constexpr auto kContextFile = "context.jsonl";
 constexpr auto kSearchIndexFile = "search_index.jsonl";
+// Dropped beside the index when an append to it fails. While it exists the index is
+// known to be missing at least one record, so searchIndexFile() refuses to answer from
+// it and the raw-log scan -- which still holds that record -- runs instead.
+constexpr auto kSearchIndexStaleFile = "search_index.incomplete";
 constexpr auto kUsageFile = "usage.json";
 constexpr auto kMemoryFile = "memory.md";
 constexpr int kSessionArtifactSchemaVersion = 1;
@@ -179,6 +183,36 @@ QString boundedMemorySection(const QString& body, qint64 max_bytes) {
     }
     return QStringLiteral("[older section content compacted by SAK]\n\n%1")
         .arg(QString::fromUtf8(encoded.mid(cut)));
+}
+
+// Append one already-assembled memory record, VERIFYING that it actually reached the file.
+//
+// The three writes this replaces discarded every return value, and the close() alongside them, so
+// a short write or a close-time flush failure (disk full, quota, a device pulled mid-write)
+// truncated the entry in place while appendMemoryEntry still returned true -- the caller recorded
+// "memory saved" for a memory that was not. Writing the record as a SINGLE buffer also means a
+// failure cannot leave a half-written heading with no body under it.
+bool appendMemoryRecord(const QString& path, const QByteArray& record, QString* error_message) {
+    QFile file(path);
+    if (!file.open(QIODevice::Append | QIODevice::Text)) {
+        if (error_message != nullptr) {
+            *error_message = QStringLiteral("Could not append memory: %1").arg(file.errorString());
+        }
+        return false;
+    }
+    const qint64 written = file.write(record);
+    const bool flushed = file.flush();
+    file.close();
+    if (written == record.size() && flushed && file.error() == QFileDevice::NoError) {
+        return true;
+    }
+    if (error_message != nullptr) {
+        *error_message = QStringLiteral("Could not append memory: wrote %1 of %2 bytes (%3)")
+                             .arg(written)
+                             .arg(record.size())
+                             .arg(file.errorString());
+    }
+    return false;
 }
 
 QString compactedMemoryText(const QString& existing) {
@@ -596,6 +630,17 @@ bool searchIndexFile(const AiSessionInfo& session,
                      const QString& query,
                      QVector<AiSessionSearchResult>* results) {
     const QString path = QDir(session.path).filePath(QString::fromLatin1(kSearchIndexFile));
+    // AN INDEX KNOWN TO BE INCOMPLETE IS NOT AUTHORITATIVE. Returning true here is what makes the
+    // caller SKIP the raw-log scan, so an index that merely opens was treated as the whole truth.
+    // Index appends are best-effort by design -- a failed one must not lose a transcript or
+    // command record that was already persisted -- but the consequence was that the record became
+    // permanently invisible to search, silently. The writer now drops a marker when an append
+    // fails; while it exists, search falls back to scanning the raw logs, which DO contain the
+    // record.
+    if (QFileInfo::exists(
+            QDir(session.path).filePath(QString::fromLatin1(kSearchIndexStaleFile)))) {
+        return false;
+    }
     const QFileInfo info(path);
     if (!info.exists() || info.size() > kMaxSearchIndexBytes) {
         return false;
@@ -1175,20 +1220,15 @@ bool ConversationStore::appendMemoryEntry(const QString& kind,
     if (!ensureMemoryFileInitialized(memory_path, error_message)) {
         return false;
     }
-    QFile file(memory_path);
-    if (!file.open(QIODevice::Append | QIODevice::Text)) {
-        if (error_message != nullptr) {
-            *error_message = QStringLiteral("Could not append memory: %1").arg(file.errorString());
-        }
-        return false;
-    }
     const QString heading =
         QStringLiteral("## %1 - %2 - %3\n").arg(nowIso(), oneLine(kind), oneLine(title));
-    file.write(heading.toUtf8());
-    file.write(body.left(kMemoryAppendMaxChars).toUtf8());
-    file.write("\n\n");
-    file.close();
-    if (!trimMemoryFile(file.fileName(), error_message)) {
+    QByteArray record = heading.toUtf8();
+    record += body.left(kMemoryAppendMaxChars).toUtf8();
+    record += "\n\n";
+    if (!appendMemoryRecord(memory_path, record, error_message)) {
+        return false;
+    }
+    if (!trimMemoryFile(memory_path, error_message)) {
         return false;
     }
     m_current_session.updated_at = QDateTime::currentDateTimeUtc();
@@ -1324,7 +1364,30 @@ bool ConversationStore::appendSearchIndexRecord(QJsonObject object, QString* err
     }
     object[QStringLiteral("schema_version")] = kSessionArtifactSchemaVersion;
     object[QStringLiteral("indexed_at")] = nowIso();
-    return appendJsonLine(QString::fromLatin1(kSearchIndexFile), std::move(object), error_message);
+    if (!appendJsonLine(QString::fromLatin1(kSearchIndexFile), std::move(object), error_message)) {
+        markSearchIndexIncomplete();
+        return false;
+    }
+    return true;
+}
+
+// Record that the search index is missing at least one record. Callers treat an index append as
+// best-effort -- losing it must never fail a transcript or command write that already succeeded --
+// but "best effort" cannot mean the record silently stops existing for search. The marker demotes
+// the index from authoritative to advisory until the session is re-indexed, and searchIndexFile()
+// then answers from the raw logs, which still contain everything.
+//
+// The marker write is itself best-effort: if it cannot be created there is nothing further this
+// layer can do, and failing the caller's transcript write over it would trade a search gap for
+// actual data loss.
+void ConversationStore::markSearchIndexIncomplete() const {
+    const QString marker =
+        QDir(currentSessionPath()).filePath(QString::fromLatin1(kSearchIndexStaleFile));
+    QFile file(marker);
+    if (file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+        file.write(QStringLiteral("search index incomplete since %1\n").arg(nowIso()).toUtf8());
+        file.close();
+    }
 }
 
 AiSessionInfo ConversationStore::readManifest(const QString& session_path) {
