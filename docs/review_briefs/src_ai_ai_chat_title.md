@@ -1,0 +1,8 @@
+- **HIGH** -- Secret redaction recognizes only `sk-*` keys; passwords, JWTs, GitHub/AWS tokens, and labeled credentials can enter persisted chat titles. `src/ai/ai_chat_title.cpp:54`
+- **HIGH** -- Drive and UNC path redaction stops at whitespace, exposing tails of paths such as `C:\Users\Username Doe\secret.txt`. `src/ai/ai_chat_title.cpp:51`
+- **MEDIUM** -- URL redaction covers only HTTP(S) and `www`; valid schemes such as FTP expose hostnames, paths, and embedded credentials. `src/ai/ai_chat_title.cpp:48`
+- **MEDIUM** -- Domain rules use unrestricted substring matching; prompts containing words such as "antivirus" incorrectly become "Malware Cleanup." `src/ai/ai_chat_title.cpp:164` `src/ai/ai_chat_title.cpp:173`
+- **MEDIUM** -- Offline-installer titles retain only first non-skipped token, truncating multi-word products such as "Google Chrome" to "Google Offline Installer." `src/ai/ai_chat_title.cpp:146`
+- **MEDIUM** -- Punctuation-only tokens such as `---` and `++` qualify as meaningful words, bypassing workflow fallback and producing unusable titles. `src/ai/ai_chat_title.cpp:108` `src/ai/ai_chat_title.cpp:196`
+- **LOW** -- ASCII-only filtering discards all non-Latin words, reducing otherwise meaningful international prompts to `AI Chat`. `src/ai/ai_chat_title.cpp:108`
+- **LOW** -- Unclosed fenced or inline code is not removed, allowing code contents to dominate generated titles. `src/ai/ai_chat_title.cpp:46`

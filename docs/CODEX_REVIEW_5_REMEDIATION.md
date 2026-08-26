@@ -1967,6 +1967,56 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
         State gained a monotonic next_child_index. Test expiredChildrenArePrunedAndIdsStayUnique
         creates 50 transient children and then asserts two survivors still get distinct ids.
       * LOW: std::move used with no direct <utility> include. Added.
+  - BATCH OF 4 MORE UNITS, 2026-08-25 (scripts/run_review_units.ps1, the driver this item said
+    existed and did not). 20 findings; the tree was verified unchanged after each read-only run.
+    Verified by hand and FIXED:
+      * src/actions/generate_system_report_action.cpp -- MEMORY REPORTED 1024x TOO SMALL.
+        Get-ComputerInfo is not unit-uniform: CsTotalPhysicalMemory (Win32_ComputerSystem) is in
+        BYTES, while every Os* memory value (Win32_OperatingSystem) is in KILOBYTES. All four Os*
+        values were divided by 1MB and labelled MB. MEASURED LIVE on this 32 GB host: the report
+        printed "Free Physical Memory: 16.85 MB" when 17,249.87 MB was actually free -- a
+        technician reading that report sees a machine apparently out of RAM. Now / 1KB.
+      * Same file -- a blank line in every report: Get-ComputerInfo exposes NO "WindowsDirectory"
+        property (confirmed absent on a live host), so that line rendered with nothing after it,
+        while the next line labelled WindowsSystemRoot as "System Drive". WindowsSystemRoot IS the
+        Windows directory; the drive now comes from $env:SystemDrive.
+      * src/actions/optimize_power_settings_action.cpp -- THE FEATURE WAS DEAD ON NON-ENGLISH
+        WINDOWS. The plan parser required the literal English label "Power Scheme GUID:", so
+        powercfg /list matched nothing, the plan list came back empty, and the optimisation
+        refused (fail-closed, but dead). This is the THIRD instance of the localized-OS-text class
+        in this campaign, after the ipconfig /displaydns and netsh ethernet scrapes.
+        Fixed by anchoring on what does NOT localise -- the scheme GUID and the trailing '*'
+        active marker -- with the parenthesised name kept for display only, since every decision
+        (which plan is High Performance, which is active) is made on the GUID. Extracted as the
+        pure public OptimizePowerSettingsAction::parsePowerPlanList so the locale dimension is
+        testable without a non-English Windows; English, German and French fixtures pin it, plus
+        empty/header-only/truncated-GUID rejection and GUID case-normalisation.
+        MUTATION-PROVED: restoring the English-only pattern turns the suite RED.
+        NOTE ON WHAT WAS *NOT* DONE: Win32_PowerPlan (root\cimv2\power) would also be
+        language-neutral, but querying it needs elevation and this session could not, so its JSON
+        shape was never seen. Writing a parser against an unobserved shape is exactly what the
+        earlier Get-NetIPConfiguration fix avoided by recon'ing first, so the GUID-anchored fix --
+        which needs no new data source -- was taken instead.
+      * src/ai/ai_chat_title.cpp -- A FILENAME LEAK INTO PERSISTED TITLES. The drive-path
+        redactor used [^\s]+, which cannot cross a space, so "C:\Users\Username With Space\secret.txt"
+        redacted only up to that space and left the rest of the path, INCLUDING the filename, in
+        the generated title -- which
+        is saved with the conversation. Every existing fixture used a space-free path, which is
+        why the redaction test passed. Now a space is consumed only while the text still looks
+        like path interior (another separator follows before the next whitespace), so the leak is
+        closed AND "C:\temp and reinstall Chrome" still stops at the path instead of swallowing
+        the sentence. Both directions are pinned; mutation-proved.
+      * src/ai/ai_app_action_planner.cpp -- std::clamp is UNDEFINED when lo > hi, and the output
+        bounds were passed through unordered. NOT reachable from today's callers (both bounds are
+        internal defaults), so this is recorded as hardening rather than a live defect: the bounds
+        are now ordered before the clamp, which costs nothing and removes a UB hazard.
+    NOT yet actioned from this batch, and deliberately not claimed as fixed: the remaining
+    generate_system_report findings (cancellation not plumbed into the PowerShell collectors,
+    same-millisecond report filename collision, UTF-16-vs-UTF-8 size accounting), the
+    optimize_power_settings report-formatting and dead-helper findings, the ai_chat_title
+    secret-pattern coverage (only sk-* keys are recognised) and domain-substring matching, and
+    the ai_app_action_planner timeout-ceiling mismatch. They are in the stored briefs under
+    docs/review_briefs/ so they can be picked up without re-running Codex.
   - AUTHORIZED-IN-PROGRESS, BLOCKED-ON-USER (relabelled 2026-08-17 from a dishonest "RESOLVED [deferred-with-rationale]" -- the sweep is genuinely INCOMPLETE, not resolved): 764 of 1098 units run (69.6%); 334 remain (246 tests / 75 src / 9 include / 4 scripts). The August-11-2026 Codex account cap that blocked it HAS since reset, but RELAUNCH IS A MANUAL, BUDGET-HEAVY STEP on Randy's own Codex account (334 xhigh review units) -- nothing auto-resumes, and burning that much of his account budget is his call, so this waits on his explicit go. NOT verified-done (334 units genuinely unrun); NOT deferred (it is authorized and would resume the moment he says so). The 764 units already run DID produce the P1-P11 subsystem findings, all closed.
       BLOCKED: 764 of 1098 units complete (69.6%). The Codex account usage limit is
       exhausted and does not reset until August 11, 2026 11:10 AM, so the remaining 334

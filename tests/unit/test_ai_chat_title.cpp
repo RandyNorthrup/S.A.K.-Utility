@@ -40,6 +40,28 @@ void AiChatTitleTests::titleRedactsSecretsPathsAndUrls() {
     // Redaction is deterministic: the key/path/URL each map to a dropped token, leaving exactly
     // "Review Website". The exact pin subsumes the three negative-contains checks and the bound.
     QCOMPARE(title, QStringLiteral("Review Website"));
+
+    // A path with SPACES is the common Windows case and the one the fixture above cannot reach:
+    // every path here was space-free, so a redactor that stopped at the first whitespace looked
+    // correct. It was not -- a profile name containing a space was redacted only up to that
+    // space, leaving the rest of the path (including the FILENAME) in a title that is PERSISTED
+    // alongside the conversation.
+    const QString spaced_path = QStringLiteral("C:") +
+                                QStringLiteral("\\Users\\Username With Space\\secret.txt");
+    const QString spaced_title =
+        sak::ai::chatTitleFromFirstPrompt(QStringLiteral("Recover %1 now").arg(spaced_path));
+    QVERIFY2(!spaced_title.contains(QStringLiteral("With")), qPrintable(spaced_title));
+    QVERIFY2(!spaced_title.contains(QStringLiteral("secret")), qPrintable(spaced_title));
+    QVERIFY2(!spaced_title.contains(QStringLiteral("txt")), qPrintable(spaced_title));
+
+    // ...and the space-tolerance is BOUNDED, or the redactor would swallow the rest of the
+    // sentence and every title containing a path would collapse to one word. A space is only
+    // consumed while the text still looks like path interior (another separator follows), so
+    // ordinary prose after a path survives.
+    const QString bounded = sak::ai::chatTitleFromFirstPrompt(
+        QStringLiteral("Clean C:") + QStringLiteral("\\temp and reinstall Chrome"));
+    QVERIFY2(bounded.contains(QStringLiteral("Chrome")), qPrintable(bounded));
+    QVERIFY2(!bounded.contains(QStringLiteral("temp")), qPrintable(bounded));
 }
 
 void AiChatTitleTests::defaultTitleDetectionPreservesManualNames() {

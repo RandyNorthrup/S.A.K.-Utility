@@ -240,8 +240,14 @@ QString GenerateSystemReportAction::buildOsInfoScript() {
            "Write-Output \"OS Install Date: $($info.OsInstallDate)\"\n"
            "Write-Output \"OS Last Boot Time: $($info.OsLastBootUpTime)\"\n"
            "Write-Output \"OS Uptime: $($info.OsUptime)\"\n"
-           "Write-Output \"Windows Directory: $($info.WindowsDirectory)\"\n"
-           "Write-Output \"System Drive: $($info.WindowsSystemRoot)\"\n"
+           // Get-ComputerInfo exposes no "WindowsDirectory" property (verified on a live Windows
+           // 11 host: the property is absent, so this line rendered "Windows Directory:" with
+           // nothing after it). WindowsSystemRoot is the Windows directory -- it is NOT the
+           // system drive, which is what the next line used to call it. Both now say what they
+           // actually are, and the drive comes from the environment, which is where every other
+           // site in this codebase derives it from.
+           "Write-Output \"Windows Directory: $($info.WindowsSystemRoot)\"\n"
+           "Write-Output \"System Drive: $env:SystemDrive\"\n"
            "Write-Output \"\"\n"
            "\n"
            "Write-Output \"=== COMPUTER SYSTEM ===\"\n"
@@ -269,18 +275,24 @@ QString GenerateSystemReportAction::buildOsInfoScript() {
 }
 
 QString GenerateSystemReportAction::buildHardwareInfoScript() {
+    // UNITS ARE NOT UNIFORM ACROSS Get-ComputerInfo, and getting this wrong is silent:
+    //   CsTotalPhysicalMemory comes from Win32_ComputerSystem and is in BYTES  -> / 1GB.
+    //   Os* memory values come from Win32_OperatingSystem and are in KILOBYTES -> / 1KB for MB.
+    // Every Os* value here was divided by 1MB and labelled MB, so each was reported 1024x too
+    // small. Measured on a 32 GB machine: "Free Physical Memory: 16.85 MB" for 17,249 MB actually
+    // free. A technician reading that report would see a machine apparently out of RAM.
     return "\n"
            "Write-Output \"=== MEMORY ===\"\n"
            "Write-Output \"Total Physical Memory: "
            "$([math]::Round($info.CsTotalPhysicalMemory / 1GB, 2)) GB\"\n"
            "Write-Output \"Free Physical Memory: "
-           "$([math]::Round($info.OsFreePhysicalMemory / 1MB, 2)) MB\"\n"
+           "$([math]::Round($info.OsFreePhysicalMemory / 1KB, 2)) MB\"\n"
            "Write-Output \"Total Virtual Memory: "
-           "$([math]::Round($info.OsTotalVirtualMemorySize / 1MB, 2)) MB\"\n"
-           "Write-Output \"Free Virtual Memory: $([math]::Round($info.OsFreeVirtualMemory / 1MB, "
+           "$([math]::Round($info.OsTotalVirtualMemorySize / 1KB, 2)) MB\"\n"
+           "Write-Output \"Free Virtual Memory: $([math]::Round($info.OsFreeVirtualMemory / 1KB, "
            "2)) "
            "MB\"\n"
-           "Write-Output \"Page File Size: $([math]::Round($info.OsSizeStoredInPagingFiles / 1MB, "
+           "Write-Output \"Page File Size: $([math]::Round($info.OsSizeStoredInPagingFiles / 1KB, "
            "2)) "
            "MB\"\n"
            "Write-Output \"\"\n"

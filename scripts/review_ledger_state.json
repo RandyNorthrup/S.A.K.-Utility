@@ -2103,12 +2103,18 @@
       "status": "reviewed"
     },
     "src/actions/generate_system_report_action.cpp": {
+      "brief": "docs/review_briefs/src_actions_generate_system_report_action.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "1d961ed234f54c7564a5f916b7f3a59246c4bfe8",
+      "status": "reviewed"
     },
     "src/actions/optimize_power_settings_action.cpp": {
+      "brief": "docs/review_briefs/src_actions_optimize_power_settings_action.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "efd60c8f7f5d2705d7a1dec7dfb43d00e1cfdaf6",
+      "status": "reviewed"
     },
     "src/actions/reset_network_action.cpp": {
       "evidence": "cited",
@@ -2129,8 +2135,11 @@
       "status": "reviewed"
     },
     "src/ai/ai_app_action_planner.cpp": {
+      "brief": "docs/review_briefs/src_ai_ai_app_action_planner.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "c1e22ad7e07e417ffadb5bbae6d0571fbfbe7305",
+      "status": "reviewed"
     },
     "src/ai/ai_async_tool_runner.cpp": {
       "evidence": "cited",
@@ -2146,8 +2155,11 @@
       "status": "reviewed"
     },
     "src/ai/ai_chat_title.cpp": {
+      "brief": "docs/review_briefs/src_ai_ai_chat_title.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "7597187760ad5a4ef165c6c8dff5bb3301b8fd79",
+      "status": "reviewed"
     },
     "src/ai/ai_command_guard.cpp": {
       "group": "src",

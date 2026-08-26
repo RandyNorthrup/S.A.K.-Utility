@@ -48,7 +48,17 @@ QString redactedPromptText(QString text) {
     text.replace(QRegularExpression(QStringLiteral(R"(https?://\S+|www\.\S+)"),
                                     QRegularExpression::CaseInsensitiveOption),
                  QStringLiteral(" website "));
-    text.replace(QRegularExpression(QStringLiteral(R"(\b[A-Za-z]:[\\/][^\s]+)")),
+    // A drive-rooted path may contain SPACES ("C:\Users\Username With Space\secret.txt"). The old
+    // pattern stopped at the first whitespace, so it redacted only up to that space and left the
+    // rest of the path -- INCLUDING THE FILENAME -- in a title that is then PERSISTED: a leak in
+    // exactly the artifact that outlives the conversation.
+    //
+    // A space is consumed only when what follows still looks like path interior, i.e. a further
+    // separator appears before the next whitespace. So "C:\temp and then reboot" still stops at
+    // "C:\temp" rather than swallowing the sentence: over-redaction would cost title quality,
+    // under-redaction costs a leak, and this keeps both bounded.
+    text.replace(QRegularExpression(
+                     QStringLiteral(R"(\b[A-Za-z]:[\\/](?:[^\s]|\s(?=[^\s]*[\\/]))*)")),
                  QStringLiteral(" file "));
     text.replace(QRegularExpression(QStringLiteral(R"(\\\\[^\s]+)")), QStringLiteral(" file "));
     text.replace(QRegularExpression(QStringLiteral(R"(\bsk(?:-proj)?-[A-Za-z0-9_\-]{12,}\b)"),

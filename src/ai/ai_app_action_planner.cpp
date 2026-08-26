@@ -157,10 +157,16 @@ AiAppActionPlan AiAppActionPlanner::buildPlan(const QString& app_id,
                                   .toInt(kAppActionDefaultTimeoutSeconds)),
                    kAppActionMinTimeoutSeconds,
                    kAppActionMaxTimeoutSeconds);
+    // std::clamp is UNDEFINED BEHAVIOUR when lo > hi, so the bounds are ORDERED before use
+    // rather than trusted. No caller can invert them today (both are internal defaults), but a
+    // future misconfiguration would cost UB rather than a merely wrong number, and the ordering
+    // is free.
+    const int output_floor = std::min(options.min_output_bytes, options.max_output_bytes);
+    const int output_ceiling = std::max(options.min_output_bytes, options.max_output_bytes);
     plan.request.max_output_bytes = std::clamp(
         arguments.value(QStringLiteral("max_output_bytes")).toInt(options.default_output_bytes),
-        options.min_output_bytes,
-        options.max_output_bytes);
+        output_floor,
+        output_ceiling);
     plan.evidence = plan.action_profile.value(QStringLiteral("evidence")).toArray();
 
     if (plan.method == QLatin1String("win32_gui")) {

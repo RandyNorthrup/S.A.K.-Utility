@@ -231,6 +231,34 @@ ASCII_REPLACEMENTS = {
 }
 
 
+def strip_absolute_repo_paths(text: str) -> str:
+    """Rewrite absolute paths into the repo as repo-relative ones.
+
+    Codex cites files by absolute path. Those carry a developer's user directory, which the
+    repo's secret/path scan rejects outright (and rightly: a committed absolute path leaks the
+    machine it was produced on). They are also useless to anyone else, since the repo lives
+    somewhere different on every machine.
+    """
+    root = str(REPO_ROOT)
+    for variant in (root.replace("\\", "/"), root, root.replace("/", "\\")):
+        text = text.replace(variant + "/", "").replace(variant + "\\", "").replace(variant, "")
+    return text
+
+
+def redact_user_paths(text: str) -> str:
+    """Replace a concrete Windows user-profile path with the sanctioned placeholder.
+
+    A brief may legitimately quote a user-profile path as an EXAMPLE, but the repo's secret/path
+    scan rejects any committed profile path whose name segment is not one of its placeholders --
+    correctly, since a real profile name identifies a person and the machine the review ran on.
+    The example keeps its meaning with the name segment replaced by the placeholder.
+    """
+    return re.sub(r"([A-Za-z]:[\\/]+Users[\\/]+)"
+                  r"(?!Username\b|Public\b|Default\b|All Users\b)[^\\/\s\"']+",
+                  r"\1Username",
+                  text)
+
+
 def normalize_to_ascii(text: str) -> tuple[str, int]:
     for bad, good in ASCII_REPLACEMENTS.items():
         text = text.replace(bad, good)
@@ -246,7 +274,8 @@ def cmd_mark(path: str, brief: str) -> int:
     brief_path = REPO_ROOT / brief
     if brief_path.exists():
         original = brief_path.read_text(encoding="utf-8", errors="replace")
-        cleaned, forced = normalize_to_ascii(original)
+        cleaned, forced = normalize_to_ascii(
+            redact_user_paths(strip_absolute_repo_paths(original)))
         if cleaned != original:
             brief_path.write_text(cleaned, encoding="utf-8", newline="")
             note = f" ({forced} char(s) had no ASCII equivalent)" if forced else ""

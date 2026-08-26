@@ -42,7 +42,6 @@ public:
     ///        guessed GUID). Pure decision seam.
     static bool discoveryPermitsActivation(bool discovery_ok, int plans_found);
 
-private:
     /// @brief Represents a Windows power plan with its GUID and active state
     struct PowerPlan {
         QString guid;
@@ -50,6 +49,23 @@ private:
         bool isActive{false};
     };
 
+    /// @brief Parse `powercfg /list` output into plans. LOCALE-INDEPENDENT by construction.
+    ///
+    /// The previous parser required the literal English label "Power Scheme GUID:", so on a
+    /// non-English Windows it matched nothing, the plan list came back EMPTY, and the whole
+    /// optimisation refused (fail-closed, but the feature was simply dead). The parts of that
+    /// output that do NOT localise are the scheme GUID itself and the trailing '*' that marks the
+    /// active plan, so those are what this anchors on -- the same "route around the localized
+    /// text" rule already applied to the DNS cache and ethernet-config scrapes (R5-G23-4).
+    ///
+    /// The plan NAME is still read from the parenthesised text, which IS localised -- that is
+    /// correct: it is a display string, and every decision (which plan is High Performance,
+    /// which is active) is made on the GUID and the marker instead.
+    ///
+    /// Public and pure so the locale dimension is testable without a non-English Windows.
+    [[nodiscard]] static QVector<PowerPlan> parsePowerPlanList(const QString& output);
+
+private:
     struct OptimizationResultContext {
         QDateTime start_time;
         QString report;

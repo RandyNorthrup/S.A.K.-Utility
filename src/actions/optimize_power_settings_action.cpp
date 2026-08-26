@@ -19,8 +19,14 @@ namespace sak {
 
 namespace {
 
+// LOCALE-INDEPENDENT. The old pattern required the English label "Power Scheme GUID:", so on a
+// non-English Windows it matched nothing, the plan list came back EMPTY and the whole
+// optimisation refused -- fail-closed, but the feature was simply dead. A scheme GUID and the
+// trailing '*' active marker do not localise, so the match anchors on those; the parenthesised
+// NAME is captured for display only. Same rule as the DNS-cache and ethernet-config fixes.
 constexpr auto kPowerPlanListPattern =
-    "Power Scheme GUID:\\s*([0-9a-f\\-]+)\\s*\\(([^\\)]+)\\)(\\s*\\*)?";
+    "([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\s*"
+    "\\(([^\\)]+)\\)(\\s*\\*)?";
 constexpr auto kPowerPlanNamePattern = "Power Scheme GUID:\\s*[0-9a-f\\-]+\\s*\\(([^\\)]+)\\)";
 constexpr auto kActivePowerPlanPattern = "Power Scheme GUID:\\s*([0-9a-f\\-]+)\\s*\\(([^\\)]+)\\)";
 constexpr int kPowerPlanGuidCaptureGroup = 1;
@@ -45,8 +51,6 @@ bool OptimizePowerSettingsAction::isHighPerformanceGuid(const QString& guid) {
 // ENTERPRISE-GRADE: Enumerate all power plans using powercfg -LIST
 QVector<OptimizePowerSettingsAction::PowerPlan> OptimizePowerSettingsAction::enumeratePowerPlans(
     bool& discovery_ok) {
-    QVector<PowerPlan> plans;
-
     const ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("powercfg.exe")),
                                           QStringList() << "-LIST",
                                           sak::kTimeoutProcessShortMs);
@@ -56,9 +60,12 @@ QVector<OptimizePowerSettingsAction::PowerPlan> OptimizePowerSettingsAction::enu
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Power plan list warning: " + proc.std_err.trimmed());
     }
-    const QString output = proc.std_out;
+    return parsePowerPlanList(proc.std_out);
+}
 
-    // Parse output: "Power Scheme GUID: {guid} (Plan Name) *"
+QVector<OptimizePowerSettingsAction::PowerPlan> OptimizePowerSettingsAction::parsePowerPlanList(
+    const QString& output) {
+    QVector<PowerPlan> plans;
     const QRegularExpression plan_regex(QString::fromLatin1(kPowerPlanListPattern),
                                         QRegularExpression::CaseInsensitiveOption);
 
@@ -66,7 +73,9 @@ QVector<OptimizePowerSettingsAction::PowerPlan> OptimizePowerSettingsAction::enu
     while (it.hasNext()) {
         const QRegularExpressionMatch match = it.next();
         PowerPlan plan;
-        plan.guid = match.captured(kPowerPlanGuidCaptureGroup);
+        // Lower-cased so a GUID comparison never depends on how powercfg happened to print it;
+        // the built-in GUID constants in this file are canonical lower-case.
+        plan.guid = match.captured(kPowerPlanGuidCaptureGroup).toLower();
         plan.name = match.captured(kPowerPlanNameCaptureGroup).trimmed();
         plan.isActive = !match.captured(kPowerPlanActiveMarkerCaptureGroup).isEmpty();
         plans.append(plan);
