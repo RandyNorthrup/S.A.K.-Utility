@@ -3,6 +3,7 @@
 
 #include "sak/flash_coordinator.h"
 
+#include <QFile>
 #include <QSignalSpy>
 #include <QTemporaryFile>
 #include <QTest>
@@ -42,7 +43,9 @@ private Q_SLOTS:
     void testStartFlashEmptyDrives();
     void testStartFlashRejectsZeroLengthImage();
     void testStartFlashRejectsDuplicateTargets();
+    void testStartFlashRejectsTooManyTargets();
     void testFirstDuplicateTargetSeam();
+    void testFirstDuplicatePhysicalDriveSeam();
     void testStartFlashRejectsAliasedPhysicalDriveTargets();
     void testParsePhysicalDriveNumberSeam();
     void testCancelWhenIdle();
@@ -91,9 +94,31 @@ void TestFlashCoordinator::testSetVerification() {
 }
 
 void TestFlashCoordinator::testSetBufferSize() {
-    // Should not crash
     constexpr qint64 size128MB = 128LL * 1024 * 1024;
     m_coord->setBufferSize(size128MB);
+    QCOMPARE(m_coord->bufferSize(), size128MB);
+
+    // The ceiling is 1024 MB (flash_coordinator.cpp:34) and it is INCLUSIVE.
+    constexpr qint64 ceilingBytes = 1024LL * 1024 * 1024;
+    m_coord->setBufferSize(ceilingBytes);
+    QCOMPARE(m_coord->bufferSize(), ceilingBytes);
+
+    // Each running worker allocates one of these (flash_coordinator.cpp:508) and
+    // FlashWorker itself bounds only the low end (flash_worker.cpp:293-299), so this
+    // ceiling is the only thing between an attacker-writable config value and a
+    // multi-gigabyte allocation request. One byte over is refused and the last
+    // accepted size is KEPT -- never silently substituted.
+    m_coord->setBufferSize(ceilingBytes + 1);
+    QCOMPARE(m_coord->bufferSize(), ceilingBytes);
+    m_coord->setBufferSize(64LL * 1024 * 1024 * 1024);
+    QCOMPARE(m_coord->bufferSize(), ceilingBytes);
+
+    // Zero or negative starts no I/O at all. Refused the same way, and the worker
+    // must never be handed a negative size to fall back on its own default with.
+    m_coord->setBufferSize(0);
+    QCOMPARE(m_coord->bufferSize(), ceilingBytes);
+    m_coord->setBufferSize(-1);
+    QCOMPARE(m_coord->bufferSize(), ceilingBytes);
 }
 
 void TestFlashCoordinator::testDefaultConcurrencyAndEject() {
@@ -150,6 +175,14 @@ void TestFlashCoordinator::testStartableWorkerCountSeam() {
     // A negative running count is clamped to 0 rather than inflating the free slots
     // past the ceiling.
     QCOMPARE(FlashCoordinator::startableWorkerCount(2, -3, 5), 2);
+    // The clamp in the OTHER direction: more free slots than drives left in the queue.
+    // Every row above returns free_slots, so all of them survive a local "free slots"
+    // re-derivation intact; this is the row that actually separates routing from
+    // re-deriving. startPendingWorkers (flash_coordinator.cpp:571-576) indexes m_workers
+    // with this count and never bounds checks it, so returning free slots instead of the
+    // queue length is out-of-bounds UB.
+    QCOMPARE(FlashCoordinator::startableWorkerCount(4, 0, 2), 2);
+    QCOMPARE(FlashCoordinator::startableWorkerCount(16, 1, 1), 1);
 }
 
 // ============================================================================
@@ -210,6 +243,31 @@ void TestFlashCoordinator::testStartFlashRejectsZeroLengthImage() {
     QCOMPARE(spy.first().first().toString(),
              QStringLiteral("Image file is empty (0 bytes); nothing to flash"));
     QCOMPARE(m_coord->state(), sak::FlashState::Failed);
+
+    // validateImagePath has a SECOND, independent refusal arm ahead of the size gate:
+    // the input_validator path gate (flash_coordinator.cpp:385-393) enforcing
+    // must_exist + must_be_file + check_read_permission + the reparse/traversal rules.
+    // A missing file has QFileInfo::size() == 0, so with that gate deleted -- or with
+    // must_exist flipped to false at :378 -- a nonexistent image is STILL refused, just
+    // by the wrong guard and mislabelled "empty". Pin the gate by its OWN message so the
+    // two arms cannot stand in for each other. (Coverage: :387 is measured never-TRUE.)
+    QString missingImage;
+    {
+        QTemporaryFile probe;
+        QVERIFY(probe.open());
+        missingImage = probe.fileName();
+    }  // destructor removes the file
+    QVERIFY(!QFile::exists(missingImage));
+
+    QSignalSpy missingSpy(m_coord.get(), &FlashCoordinator::flashError);
+    QVERIFY(
+        !m_coord->startFlash(missingImage, QStringList{QStringLiteral("\\\\.\\PhysicalDrive99")}));
+    QCOMPARE(missingSpy.count(), 1);
+    // NOT "Image file is empty (0 bytes)": the validator must be the one that refuses,
+    // and it must say why (input_validator.cpp:287-289).
+    QCOMPARE(missingSpy.first().first().toString(),
+             QStringLiteral("Image path validation failed: Path must exist but does not"));
+    QCOMPARE(m_coord->state(), sak::FlashState::Failed);
 }
 
 void TestFlashCoordinator::testStartFlashRejectsDuplicateTargets() {
@@ -230,12 +288,55 @@ void TestFlashCoordinator::testStartFlashRejectsDuplicateTargets() {
     QCOMPARE(spy.at(0).first().toString(),
              QStringLiteral("Duplicate target device: \\\\.\\PhysicalDrive99"));
     QCOMPARE(spy.at(1).first().toString(), QStringLiteral("Target validation failed"));
+
+    // This refusal happens AFTER beginFlashClaim() published Validating, so handing the
+    // claim back is failRun()'s job (flash_coordinator.cpp:274-278 -> :358-359). The
+    // assertions above cannot see it: the return is false and both strings are emitted
+    // whatever m_state holds. A coordinator left in Validating reports isFlashing()==true
+    // forever, so every later run is refused as already in progress.
+    QCOMPARE(m_coord->state(), sak::FlashState::Failed);
+    QVERIFY(!m_coord->isFlashing());
+    QVERIFY(!m_coord->startFlash(img.fileName(), QStringList{drive, drive}));
+    QCOMPARE(spy.count(), 4);
+    QCOMPARE(spy.at(3).first().toString(), QStringLiteral("Target validation failed"));
+}
+
+// The 64-target ceiling (src/core/flash_coordinator.cpp:1235-1244) is the FIRST guard in
+// validateTargets and returns before any device is opened, so it is provable headlessly --
+// yet the coverage run measures it as never TRUE. Without it a caller passing hundreds of
+// targets reaches unmountVolumes, every disk is taken PERSISTENTLY offline, and a failed
+// allocation in buildWorkerQueue then leaves them offline with nothing writing to them.
+// Pin the exact refusal text: that kills deleting the guard AND moving kMaxTargetDrives
+// (:43) in either direction. The constant lives in an anonymous namespace, so the numbers
+// are spelled out here on purpose.
+void TestFlashCoordinator::testStartFlashRejectsTooManyTargets() {
+    QTemporaryFile img;
+    QVERIFY(img.open());
+    img.write("dummy image payload");
+    img.flush();
+
+    // 65 DISTINCT paths naming 65 DISTINCT disks, so neither duplicate guard (:1248,
+    // :1260) can fire and only the ceiling can produce this refusal. High indices (still
+    // under kMaxPhysicalDriveNumber) so a build with the ceiling removed falls through to
+    // validateSingleTarget without touching a real disk on the test machine.
+    QStringList targets;
+    for (int i = 0; i < 65; ++i) {
+        targets << QStringLiteral("\\\\.\\PhysicalDrive%1").arg(900 + i);
+    }
+
+    QSignalSpy spy(m_coord.get(), &FlashCoordinator::flashError);
+    QVERIFY(!m_coord->startFlash(img.fileName(), targets));
+    QCOMPARE(spy.count(), 2);
+    QCOMPARE(spy.at(0).first().toString(),
+             QStringLiteral("Refusing 65 target drives: at most 64 may be flashed in one run"));
+    QCOMPARE(spy.at(1).first().toString(), QStringLiteral("Target validation failed"));
+    QCOMPARE(m_coord->state(), sak::FlashState::Failed);
 }
 // String equality is NOT device identity: "\\.\PhysicalDriveN" and "\\?\PhysicalDriveN"
 // are different strings naming ONE disk, so they slip past the string-equality guard.
 // Pin the SECOND, independent guard (flash_coordinator.cpp:1260-1269) and its wiring --
 // without it these two targets are accepted and two raw writers interleave on one disk.
-void TestFlashCoordinator::testStartFlashRejectsAliasedPhysicalDriveTargets() {
+void TestFlashCoordinator::testFirstDuplicatePhysicalDriveSeam() {
     // Pure seam: same disk number reached by two different path spellings.
     QCOMPARE(FlashCoordinator::firstDuplicatePhysicalDrive(
                  {QStringLiteral("\\\\.\\PhysicalDrive5"),
@@ -245,11 +346,34 @@ void TestFlashCoordinator::testStartFlashRejectsAliasedPhysicalDriveTargets() {
     QVERIFY(FlashCoordinator::firstDuplicatePhysicalDrive(
                 {QStringLiteral("\\\\.\\PhysicalDrive5"), QStringLiteral("\\\\.\\PhysicalDrive6")})
                 .isEmpty());
+    // Non-adjacent alias: the seen-set spans the WHOLE prefix, not just the previous element.
+    // Ticking disk 5, disk 6, then disk 5 again under its \\?\ spelling is the shape the real
+    // selection path produces; an adjacent-pair scan would wave it through and put two raw
+    // writers on disk 5.
+    QCOMPARE(FlashCoordinator::firstDuplicatePhysicalDrive(
+                 {QStringLiteral("\\\\.\\PhysicalDrive5"),
+                  QStringLiteral("\\\\.\\PhysicalDrive6"),
+                  QStringLiteral("\\\\?\\PhysicalDrive5")}),
+             QStringLiteral("\\\\?\\PhysicalDrive5"));
+    // An unparseable path BETWEEN two aliases is skipped without discarding the identities
+    // already seen: the `continue` must not reset the set.
+    QCOMPARE(FlashCoordinator::firstDuplicatePhysicalDrive(
+                 {QStringLiteral("\\\\.\\PhysicalDrive5"),
+                  QStringLiteral("\\\\.\\C:"),
+                  QStringLiteral("\\\\?\\PhysicalDrive5")}),
+             QStringLiteral("\\\\?\\PhysicalDrive5"));
+    // Three distinct disks stay accepted (the seen-set does not false-positive).
+    QVERIFY(FlashCoordinator::firstDuplicatePhysicalDrive({QStringLiteral("\\\\.\\PhysicalDrive5"),
+                                                           QStringLiteral("\\\\.\\PhysicalDrive6"),
+                                                           QStringLiteral("\\\\.\\PhysicalDrive7")})
+                .isEmpty());
     // Unparseable identity is skipped, not folded together (validateSingleTarget refuses those).
     QVERIFY(FlashCoordinator::firstDuplicatePhysicalDrive(
                 {QStringLiteral("\\\\.\\C:"), QStringLiteral("\\\\.\\D:")})
                 .isEmpty());
+}
 
+void TestFlashCoordinator::testStartFlashRejectsAliasedPhysicalDriveTargets() {
     // Wiring: the guard must actually run inside validateTargets, ahead of per-target
     // validation. A real (readable) image so validateImagePath passes.
     QTemporaryFile img;
@@ -268,6 +392,24 @@ void TestFlashCoordinator::testStartFlashRejectsAliasedPhysicalDriveTargets() {
              QStringLiteral("Duplicate target device: \\\\?\\PhysicalDrive99 names a physical "
                             "disk that is already in the target list"));
     QCOMPARE(spy.at(1).first().toString(), QStringLiteral("Target validation failed"));
+
+    // This refusal happens AFTER beginFlashClaim() published Validating
+    // (flash_coordinator.cpp:250-256, reached at :274), so handing the claim back is
+    // failRun()'s job at :276 -> setState(Failed) (:358-359). The four assertions above
+    // cannot see it: the return is false and both strings are emitted by validateTargets
+    // (:1265-1267) and startFlash whatever m_state holds. A coordinator left in
+    // Validating reports isFlashing()==true forever (:685-690 via isActiveFlashState
+    // :71-75), so every later run is refused as already in progress.
+    QCOMPARE(m_coord->state(), sak::FlashState::Failed);
+    QVERIFY(!m_coord->isFlashing());
+
+    // ...and it is genuinely reusable: a second call reaches its OWN duplicate guard
+    // rather than being turned away by a stale re-entry claim.
+    QVERIFY(!m_coord->startFlash(img.fileName(),
+                                 QStringList{QStringLiteral("\\\\.\\PhysicalDrive99"),
+                                             QStringLiteral("\\\\?\\PhysicalDrive99")}));
+    QCOMPARE(spy.count(), 4);
+    QCOMPARE(spy.at(3).first().toString(), QStringLiteral("Target validation failed"));
 }
 
 

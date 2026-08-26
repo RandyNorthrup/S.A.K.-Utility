@@ -8,6 +8,7 @@
 
 #include "sak/apfs_compression.h"
 #include "sak/apfs_crypto.h"
+#include "sak/apfs_free_queue_guard.h"
 #include "sak/apfs_keybag.h"
 #include "sak/apfs_lzbitmap.h"
 #include "sak/apfs_resource_fork.h"
@@ -29,6 +30,7 @@
 #include <algorithm>
 #include <array>
 #include <functional>
+#include <limits>
 #include <optional>
 #include <utility>
 
@@ -6379,6 +6381,109 @@ bool publishCheckpoint(ApfsCheckpointAdvanceRequest& request,
     return true;
 }
 
+// F25: the reserved regions as they stand AFTER this commit publishes.
+//
+// TWO qualifiers carry this guard, and getting either wrong turns it into a false-close that
+// rejects a correct commit. Both were learned by writing the wrong version first.
+//
+// (1) POST-commit, not pre-commit. A free-queue record schedules ghost blocks for reuse, so a
+//     record covering live container metadata hands the allocator the checkpoint ring or the
+//     internal pool -- silent corruption on the next allocation. The FIRST implementation of
+//     F25 tested against the geometry as it stood BEFORE the commit and was reverted, because
+//     that is wrong in exactly the case that matters: a chunk-adding grow RE-HOMES the internal
+//     pool and then queues the pool's OLD location. Those blocks are reserved before the commit
+//     and free after it, so a pre-commit test rejects a legitimate relocation. Reading the new
+//     geometry from the request (0 meaning "unchanged", the convention every other resize field
+//     in ApfsCheckpointAdvanceRequest uses) puts the freed old pool OUTSIDE the region and the
+//     live new pool inside it. The descriptor and data rings never move, so live's copy is
+//     already post-commit.
+//
+// (2) PER-QUEUE scope. The internal-pool free queue's entire DOMAIN is the internal-pool
+//     subsystem: its records are ghost blocks inside the pool (the rotated cib-0 slot) and
+//     inside the pool's bitmap ring (the overflow tier's old boundary-chunk bitmap, which
+//     request.extraFreedIpBlocks exists to carry). Treating those two regions as reserved for
+//     the IP queue rejects every ordinary rotation commit -- which is precisely what a first
+//     attempt at this guard did, reproducing the original F25 over-reach from a new direction.
+//     So the pool and its bitmap ring are reserved against the MAIN queue only; the anchor and
+//     the checkpoint rings are reserved against both, because no queue may ever release those.
+QVector<sak::apfs::ReservedRegion> postCommitReservedRegions(
+    const ApfsCheckpointAdvanceRequest& request,
+    const ApfsLiveCheckpoint& live,
+    const QByteArray& liveSpaceman,
+    bool includeInternalPool) {
+    const auto orLive = [](uint64_t updated, uint64_t current) {
+        return updated != 0 ? updated : current;
+    };
+    const uint64_t liveIpBase =
+        liveSpaceman.isEmpty() ? 0 : le64(liveSpaceman, kApfsSpacemanIpBaseOffset);
+    const uint64_t liveIpBlocks =
+        liveSpaceman.isEmpty() ? 0 : le64(liveSpaceman, kApfsSpacemanIpBlockCountOffset);
+    const uint64_t liveIpBmBase =
+        liveSpaceman.isEmpty() ? 0 : le64(liveSpaceman, kApfsSpacemanIpBmBaseOffset);
+    // sm_ip_bm_block_count is a uint32 field sitting 4 bytes below sm_ip_bm_base, so it MUST be
+    // read with le32 -- the whole rest of this file does (advanceIpBitmapRing and its siblings).
+    // Reading it as 64 bits swallows the base field and yields a nonsense span, which is exactly
+    // what a first cut of this guard did: it reported the bitmap ring as [169,725849473209) and
+    // false-closed a legitimate main-device record two blocks past the pool.
+    const uint64_t liveIpBmBlocks =
+        liveSpaceman.isEmpty() ? 0 : le32(liveSpaceman, kApfsSpacemanIpBmBlockCountOffset);
+
+    QVector<sak::apfs::ReservedRegion> regions;
+    // Reserved against EVERY queue: the container superblock's fixed anchor and both rings.
+    regions.append({kApfsFormatNxsbBlock, 1, QStringLiteral("nx_superblock anchor")});
+    regions.append({live.descBase, live.descBlocks, QStringLiteral("checkpoint descriptor ring")});
+    regions.append({live.dataBase, live.dataBlocks, QStringLiteral("checkpoint data ring")});
+    if (includeInternalPool) {
+        // Main-device queue only -- see qualifier (2) above.
+        regions.append({orLive(request.newIpBase, liveIpBase),
+                        orLive(request.newIpBlockCount, liveIpBlocks),
+                        QStringLiteral("internal pool")});
+        regions.append({orLive(request.newIpBmBase, liveIpBmBase),
+                        orLive(request.ipBmBlocks, liveIpBmBlocks),
+                        QStringLiteral("internal-pool bitmap ring")});
+    }
+    regions.removeIf([](const sak::apfs::ReservedRegion& r) { return r.blocks == 0; });
+    return regions;
+}
+
+// F25: refuse to publish a checkpoint whose free queue would hand back live metadata. The
+// overlap arithmetic and the refusal live in the sak::apfs::freeQueueRunsAvoidReserved seam
+// (include/sak/apfs_free_queue_guard.h) so they can be exercised with hostile runs directly;
+// this wrapper only adapts the writer's own entry type.
+bool freeQueueEntriesAvoidReserved(const QVector<ApfsFreeQueueEntry>& entries,
+                                   const QString& which,
+                                   const QVector<sak::apfs::ReservedRegion>& reserved,
+                                   QStringList* blockers) {
+    QVector<sak::apfs::FreeQueueRun> runs;
+    runs.reserve(entries.size());
+    for (const ApfsFreeQueueEntry& entry : entries) {
+        runs.append({entry.paddr, entry.length});
+    }
+    return sak::apfs::freeQueueRunsAvoidReserved(runs, which, reserved, blockers);
+}
+
+// F25: neither queue may schedule live container metadata for reuse. Checked against
+// POST-commit geometry, and with the internal-pool subsystem reserved against the MAIN queue
+// only -- the IP queue's own records legitimately live inside it (the rotated cib-0 slot and
+// the overflow tier's old boundary-chunk bitmap). Both qualifiers are explained at
+// postCommitReservedRegions and in apfs_free_queue_guard.h.
+bool commitFreeQueuesAvoidLiveMetadata(const ApfsCheckpointAdvanceRequest& request,
+                                       const ApfsLiveCheckpoint& live,
+                                       const QByteArray& liveSpaceman,
+                                       const QVector<ApfsFreeQueueEntry>& ipFqEntries,
+                                       QStringList* blockers) {
+    return freeQueueEntriesAvoidReserved(
+               ipFqEntries,
+               QStringLiteral("internal-pool"),
+               postCommitReservedRegions(request, live, liveSpaceman, false),
+               blockers) &&
+           freeQueueEntriesAvoidReserved(
+               request.mainFqEntries,
+               QStringLiteral("main-device"),
+               postCommitReservedRegions(request, live, liveSpaceman, true),
+               blockers);
+}
+
 bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
                        ApfsInPlaceCheckpointResult* result,
                        QStringList* blockers) {
@@ -6427,6 +6532,10 @@ bool advanceCheckpoint(ApfsCheckpointAdvanceRequest request,
     const QVector<ApfsFreeQueueEntry> ipFqEntries = request.explicitIpFqEntries.isEmpty()
                                                         ? buildIpFreeQueueWindow(request, newXid)
                                                         : request.explicitIpFqEntries;
+    // F25: refuse a checkpoint whose free queues would release live container metadata.
+    if (!commitFreeQueuesAvoidLiveMetadata(request, live, liveSpaceman, ipFqEntries, blockers)) {
+        return false;
+    }
     ApfsCheckpointCommitContext ctx =
         makeCheckpointCommitContext(request, live, newXid, dataStart, ipFqEntries);
     ctx.spacemanEmitSpan = spacemanEmitSpan;

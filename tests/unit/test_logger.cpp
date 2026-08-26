@@ -40,6 +40,7 @@ private Q_SLOTS:
 
     // Log output
     void log_writesToFile();
+    void log_escapesControlBytesInMessage();
     void log_multipleMessages();
 
     // Console output toggle
@@ -171,6 +172,21 @@ void LoggerTests::initialize_reInitFails() {
     // Fail closed: a rejected initialize() must leave the sink where it was,
     // not repoint getLogFile() at a file it never opened.
     QVERIFY2(log.getLogFile() == originalFile, "a failed re-init must not repoint the log sink");
+
+    // Class (N): "the sink survived the refusal" has two independent sources --
+    // the reported path (m_log_file, what getLogFile() returns) and the stream
+    // that writes actually go to (m_file_stream). The check above only sees the
+    // first. Production itself documents the divergence (logger.cpp:116-121), and
+    // isInitialized() cannot see it either: the ensureLogDirectory early return
+    // (logger.cpp:105-107) never clears m_initialized. Observe the STREAM: a
+    // rejected initialize() that closed it would leave both checks above green
+    // while writeEntryToFile silently drops every later entry (logger.cpp:229-231).
+    log.log(sak::log_level::error, "REINIT_REFUSED_SINK_STILL_LIVE_4417");
+    log.flush();
+    std::ifstream survivor(originalFile);
+    const std::string survivorContent((std::istreambuf_iterator<char>(survivor)),
+                                      std::istreambuf_iterator<char>());
+    QCOMPARE(countOccurrences(survivorContent, "REINIT_REFUSED_SINK_STILL_LIVE_4417"), 1);
 }
 
 // ============================================================================
@@ -209,6 +225,18 @@ void LoggerTests::levelFiltering_belowMinNotWritten() {
     const std::string boundary = readLogContent();
     QVERIFY(boundary.find("FILTER_MARKER_SHOULD_NOT_APPEAR_WARNING") == std::string::npos);
     QCOMPARE(countOccurrences(boundary, "FILTER_CONTROL_ERROR_MUST_APPEAR_5512"), 1);
+
+    // A second, INDEPENDENT copy of this filter lives in the arg-formatted
+    // template overload (include/sak/logger.h:282); the calls above all bind the
+    // no-args overload (src/core/logger.cpp:411), so deleting the template's
+    // early exit leaks below-threshold formatted entries and stays green. A
+    // three-argument call binds the template, so drive that copy at the same
+    // boundary, with its own live-sink control.
+    log.log(sak::log_level::warning, "FILTER_MARKER_FMT_SHOULD_NOT_APPEAR_{}", 5513);
+    log.log(sak::log_level::error, "FILTER_CONTROL_FMT_MUST_APPEAR_{}", 5514);
+    const std::string formatted = readLogContent();
+    QVERIFY(formatted.find("FILTER_MARKER_FMT_SHOULD_NOT_APPEAR_5513") == std::string::npos);
+    QCOMPARE(countOccurrences(formatted, "FILTER_CONTROL_FMT_MUST_APPEAR_5514"), 1);
 
     // Restore level for subsequent tests
     log.setLevel(sak::log_level::debug);
@@ -254,6 +282,27 @@ void LoggerTests::log_writesToFile() {
         (infoNl == std::string::npos) ? std::string::size_type{0} : infoNl + 1;
     const std::string infoRecord = shaped.substr(infoBegin, infoAt - infoBegin);
     QVERIFY2(infoRecord.starts_with("["), "an entry must begin its own line");
+
+    // Class (F): the needle below deliberately begins at "] ", so the timestamp
+    // field is proved only to EXIST. getTimestamp()'s own catch arm returns the
+    // literal "TIMESTAMP_ERROR" (logger.cpp:336), and dropping the date from
+    // std::format("{:%Y-%m-%d %H:%M:%S}", now) (logger.cpp:332) satisfies every
+    // other assertion in this file. Pin the fixed leading 19 characters
+    // positionally -- the sub-second tail is platform width (MSVC system_clock
+    // ticks at 100ns, so 7 digits), but "YYYY-MM-DD HH:MM:SS" is not.
+    const auto infoStampEnd = infoRecord.find(']');
+    QVERIFY(infoStampEnd != std::string::npos);
+    const std::string infoStamp = infoRecord.substr(1, infoStampEnd - 1);
+    QVERIFY2(infoStamp.size() >= 19, "a record timestamp must carry a full date and time");
+    for (std::string::size_type i = 0; i < 19; ++i) {
+        const char c = infoStamp[i];
+        const bool stampShaped = (i == 4 || i == 7)     ? (c == '-')
+                                 : (i == 10)            ? (c == ' ')
+                                 : (i == 13 || i == 16) ? (c == ':')
+                                                        : (c >= '0' && c <= '9');
+        QVERIFY2(stampShaped, "a record timestamp must render as YYYY-MM-DD HH:MM:SS");
+    }
+
     QCOMPARE(countOccurrences(infoRecord, "] [INFO] [test_logger.cpp:"), 1);
 
     const auto critAt = shaped.find("WRITE_TEST_ENTRY_CRITICAL_98766");
@@ -263,6 +312,34 @@ void LoggerTests::log_writesToFile() {
         (critNl == std::string::npos) ? std::string::size_type{0} : critNl + 1;
     const std::string critRecord = shaped.substr(critBegin, critAt - critBegin);
     QCOMPARE(countOccurrences(critRecord, "] [CRITICAL] [test_logger.cpp:"), 1);
+}
+
+void LoggerTests::log_escapesControlBytesInMessage() {
+    auto& log = sak::logger::instance();
+
+    // The record shape pinned above is only enforceable because production escapes control
+    // bytes before formatting (sanitizeLogText, src/core/logger.cpp:54-66, called at :200 --
+    // CWE-117 log forging). No fixture in this file contains a byte below 0x20, so that call
+    // can be deleted and every assertion here still passes. Hand log() a message carrying a
+    // raw newline plus a well-formed forged header and require it to stay INSIDE one record.
+    log.log(sak::log_level::info,
+            "INJECT_TEST_ENTRY_98767\n[2000-01-01 00:00:00.000] [CRITICAL] [evil.cpp:1:forge] "
+            "FORGED_TEST_ENTRY_98768");
+    const std::string injected = readLogContent();
+
+    const auto injAt = injected.find("INJECT_TEST_ENTRY_98767");
+    QVERIFY(injAt != std::string::npos);
+    const auto injNl = injected.rfind('\n', injAt);
+    const std::string::size_type injBegin = (injNl == std::string::npos) ? std::string::size_type{0}
+                                                                         : injNl + 1;
+    const auto injEnd = injected.find('\n', injAt);
+    QVERIFY(injEnd != std::string::npos);
+    const std::string injRecord = injected.substr(injBegin, injEnd - injBegin);
+    QVERIFY2(injRecord.find("INJECT_TEST_ENTRY_98767\\n[2000-01-01") != std::string::npos,
+             "a raw newline must be escaped in place, not emitted as a record break");
+    QVERIFY2(injRecord.find("FORGED_TEST_ENTRY_98768") != std::string::npos,
+             "injected text must stay inside the single record it was logged in");
+    QCOMPARE(countOccurrences(injRecord, "] [INFO] [test_logger.cpp:"), 1);
 }
 
 void LoggerTests::log_multipleMessages() {
@@ -330,10 +407,28 @@ void LoggerTests::flush_writesData() {
 void LoggerTests::getLogFile_afterInit() {
     const auto& log = sak::logger::instance();
     auto logFile = log.getLogFile();
-    // Pin the deterministic name shape rather than a mere non-empty / substring check: the log file
-    // is "test_logger_<...>.log".
-    QVERIFY(logFile.filename().string().starts_with("test_logger_"));
+    // Pin the deterministic name shape rather than a mere non-empty / substring check.
+    // Prefix + extension alone leave the timestamp -- the only varying part, and the whole
+    // reason the name is unique -- unchecked, so truncating the stamp in logger.cpp:113
+    // would stay green. Production emits "<prefix>_YYYY-MM-DD_HH-MM-SS[.fraction].log"
+    // (logger.cpp:113-114; %S on system_clock carries a sub-second fraction here).
+    const std::string kPrefix = "test_logger_";
+    QVERIFY(logFile.filename().string().starts_with(kPrefix));
     QCOMPARE(logFile.extension().string(), std::string(".log"));
+
+    const std::string stamp = logFile.stem().string().substr(kPrefix.size());
+    const std::string shape = "DDDD-DD-DD_DD-DD-DD";  // D = decimal digit
+    QVERIFY2(stamp.size() >= shape.size(),
+             "log name must carry a full YYYY-MM-DD_HH-MM-SS stamp after the prefix");
+    for (std::string::size_type i = 0; i < shape.size(); ++i) {
+        const bool ok = (shape[i] == 'D') ? (stamp[i] >= '0' && stamp[i] <= '9')
+                                          : (stamp[i] == shape[i]);
+        QVERIFY2(ok, "log name timestamp must be YYYY-MM-DD_HH-MM-SS");
+    }
+    const std::string frac = stamp.substr(shape.size());
+    QVERIFY2(frac.empty() || (frac.size() > 1 && frac.front() == '.' &&
+                              frac.find_first_not_of("0123456789", 1) == std::string::npos),
+             "only a fractional-second field may follow the timestamp");
 }
 
 // ============================================================================

@@ -230,6 +230,10 @@ public:
      */
     void setBufferSize(qint64 sizeBytes);
 
+    /// @brief Current per-worker I/O buffer size in bytes. Every worker this
+    ///        coordinator starts is handed exactly this value.
+    [[nodiscard]] qint64 bufferSize() const;
+
     /**
      * @brief Set the post-write verification depth applied to every worker.
      * @param mode Full, Sample or Skip.

@@ -18,7 +18,8 @@ Full Release ctest must pass before every commit.
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-18: 640 [x] / 20 [~] / 1 [ ] (reconciled to the live marker counts) (G18-3 impl-detail-vs-contract audit COMPLETE -- whole tests/unit tree exhaustively swept, every nominee resolved; G18-1 mutation-testing COMPLETE and LEDGER-4
+as of 2026-08-25: 643 [x] / 19 [~] / 0 [ ] (reconciled to the live marker counts; F25, the
+last [ ], closed 2026-08-25) (G18-3 impl-detail-vs-contract audit COMPLETE -- whole tests/unit tree exhaustively swept, every nominee resolved; G18-1 mutation-testing COMPLETE and LEDGER-4
 committed-ledger done; a whole-doc un-defer + staleness sweep AND a [~] reclassification landed
 this window -- 41 owner-decision / tool-limit items were verified against the live config and
 settled to [x]; then the gate-audit batch closed R5-G21-1 (gate-pair contradiction), R5-G21-3
@@ -56,7 +57,8 @@ measurable) both flip to [x] design-decisions; and R5-G10-5 (zero unjustified in
 suppressions) flips [x] as the rollup of G5-1/G5-2, re-verified against the live tree with the
 one remaining implicit-reason site (a Qt test-driver macro) given an explicit justification.
 That leaves 21 [~] = ~6 blocked-on-user + ~15 locally
-actionable; the single [ ] open item is F25). UN-DEFER CAMPAIGN (2026-08-16, ongoing): the
+actionable; the single [ ] open item was F25, CLOSED 2026-08-25 -- there are now ZERO [ ] items
+left in this document). UN-DEFER CAMPAIGN (2026-08-16, ongoing): the
 "deferred-with-rationale" disposition was rejected by the owner -- each such label is being
 re-adjudicated against the LIVE tree/gate (never the doc's own claim) and resolved to either
 [x] fixed (real work done, e.g. P6-18 searchCancelled, G18-10 wait-misuse), [x] verified-done
@@ -2106,7 +2108,34 @@ F-numbers; the adjudication and per-finding evidence are archived in the campaig
       oid absent from the checkpoint map, a level>=2 root whose index children would be mis-read
       as leaves, and a block-0 / duplicate freed chain member all now fail closed or dedup so the
       queued free count matches the coalesced runs.
-- [ ] F25 (free-queue reserved-region exclusion) OPEN/INCOMPLETE: the first implementation was reverted because PRE-commit geometry false-closed legitimately-relocated pool/checkpoint blocks during grow/shrink; the correct guard (post-commit geometry, or read/adopt-path-only for a foreign queue with no relocation in flight) is not yet written.
+- [x] F25 (free-queue reserved-region exclusion) CLOSED 2026-08-25. A free-queue record schedules
+      ghost blocks for reuse, so a record covering live container metadata hands the allocator the
+      checkpoint ring, the internal pool or the pool's bitmap ring, and the next allocation
+      overwrites them. advanceCheckpoint now refuses such a checkpoint before the atomic publish
+      (commitFreeQueuesAvoidLiveMetadata -> freeQueueEntriesAvoidReserved), and the overlap
+      arithmetic is lifted into include/sak/apfs_free_queue_guard.h so it can be driven directly
+      with hostile runs (tests/unit/test_apfs_free_queue_guard.cpp, 7 slots, accept AND refuse).
+      Getting it right took THREE tries, and every wrong one was a FALSE-CLOSE that rejected a
+      LEGITIMATE commit -- each caught only by a full build plus the generated-container
+      round-trip tests, never by reasoning:
+      1. testing against PRE-commit geometry (the original revert): a chunk-adding grow re-homes
+         the whole internal pool and then queues the pool's OLD location, which is reserved before
+         the commit and free after it;
+      2. reserving the internal pool against the INTERNAL-POOL queue, whose records are by
+         definition ghost blocks inside that pool (the rotated cib-0 slot, and the overflow tier's
+         old boundary-chunk bitmap) -- this rejected every ordinary rotation commit, reported as
+         "run [185,187) overlaps the internal pool at [185,191)". Fixed by scoping the reserved
+         set PER QUEUE: the pool subsystem is reserved against the main-device queue only;
+      3. reading sm_ip_bm_block_count -- a uint32 field four bytes below sm_ip_bm_base -- with
+         le64 instead of le32, which swallowed the base and reported the bitmap ring as spanning
+         725,849,473,209 blocks, rejecting a legitimate main-device record two blocks past the
+         pool.
+      All three are recorded as explicit ACCEPT cases in the guard's unit test and in the header's
+      own contract comment, so a future re-tightening cannot silently reintroduce them. The guard
+      fails closed on an address-space-wrapping run or region rather than computing an end below
+      its own start (which would make every overlap test silently false -- a no-op guard for
+      exactly the most malformed input). Mutation-proved: flipping the strict `<` to `<=` in the
+      half-open overlap test turns the suite red (2 failures).
 - [x] Wave E1 / F3, F4, F6, F17, F42, F48, F50 COMMITTED 4e76c6c. The bitmap-builder
       memory-safety half was already in (an out-of-range bit index is skipped, no OOB write); this
       completes the fail-closed half so a genuinely out-of-range used-set / chunk-range index
@@ -2142,7 +2171,9 @@ F-numbers; the adjudication and per-finding evidence are archived in the campaig
 
 CAMPAIGN COMPLETE: of the 56 re-adjudicated findings, 18 were already fixed by prior campaign
 commits and 37 are fixed across waves A-G (3de3d61 / a44d82a / 73198b7 / a875d9b / 4e76c6c /
-7b9b74b / dc98991 / 49c092a), each gated at full Release ctest 225/225. F25 is the single still-open item: its first implementation was reverted for false-closing legitimate pool relocation, and the correct post-commit-geometry guard has not yet been written.
+7b9b74b / dc98991 / 49c092a), each gated at full Release ctest 225/225. F25 was the single
+still-open item and is now CLOSED (2026-08-25, see its entry above): post-commit geometry,
+per-queue reserved scoping, and the arithmetic lifted into a directly-testable seam.
 Zero false positives across all 56 -- consistent with the "Codex findings are accurate" rule.
 
 Three fail-closed OVER-REACHES were introduced and then caught by the generated-container
@@ -2151,7 +2182,8 @@ array, F51 surviving-pool-with-data): the recurring lesson that a verifier CONFI
 a real-code over-reach only a full build+ctest reveals.
 
 Open residuals, flagged and tracked, not silently dropped (recorded in the campaign scratchpad):
-1. F25 (free-queue reserved-region) -- OPEN: needs post-commit geometry or read/adopt-path-only application so it does not reject legitimately-relocated pool blocks.
+1. F25 (free-queue reserved-region) -- CLOSED 2026-08-25: post-commit geometry, with the internal
+   pool reserved against the MAIN queue only, so legitimately-relocated pool blocks are accepted.
 2. The IP-bitmap sink still materializes only block 0 of a multi-block ip_bm_size layout. Waves
    E1/E2 make that REFUSE (fail closed) rather than silently truncate, but a genuine multi-block
    distribution (a > ~512 TiB container with > 32768 packed cib/cab metadata slots) is the still-open
@@ -5024,6 +5056,46 @@ So the suite itself must be audited for tests that pass regardless of the code.
     preconditions pinned per branch AND widened from a "*.zip" glob to an entryList of the whole
     backup directory (the plaintext copy DIRECTORY those guards exist to prevent is invisible to a
     zip glob), and every round-trip pinned on CONTENT rather than existence.
+  - PROGRESS 2026-08-25 COVERAGE-DIRECTED sweep b103 (gated 250/250): 44 weak assertions pinned
+    across six never-before-swept files -- test_uup_iso_builder (3), test_logger (5),
+    test_flash_coordinator (6), test_offline_deployment_worker (9), test_ai_execution_broker (10),
+    test_package_internalization_engine (11). Targets again chosen by MEASUREMENT from
+    build-cov/coverage/ACTIONABLE.txt; one candidate was rejected by the adversarial pass. Class AA
+    (an arm coverage PROVES is never taken) led at 9, ahead of Z (5), S (4) and A (4).
+    THREE PINS REQUIRED NEW PRODUCTION OR NEW SLOTS rather than a stronger assertion on an existing
+    one, because there was no observable at all:
+      * FlashCoordinator had no bufferSize() accessor, so testSetBufferSize's entire oracle was
+        "should not crash" -- the 1024 MB per-worker ceiling (the only bound between an
+        attacker-writable config value and a multi-gigabyte allocation) could be deleted with zero
+        red. Added the accessor beside maxConcurrentWrites(), matching the class's own convention,
+        and pinned the ceiling as INCLUSIVE plus both refusal arms keeping the last accepted size.
+      * The 64-target ceiling in validateTargets is the FIRST guard, returns before any device is
+        opened, and was measured never-TRUE. New slot testStartFlashRejectsTooManyTargets pins its
+        exact text ("Refusing 65 target drives: at most 64 may be flashed in one run"), which kills
+        both deleting the guard and moving kMaxTargetDrives in either direction.
+      * ExecutionBroker's bare-name resolver (System32/PATH, so CreateProcess cannot prefer a
+        planted .\<name>) was unobservable from the accept side -- AiCommandResult carries no
+        program field and cmd.exe resolves either way. New slot
+        startProcess_refusesUnresolvableBareName drives the refusal, which is SYNCHRONOUS, unlike
+        the async "Process start error" an absolute bad path produces.
+    A PIN'S PREDICTION WAS WRONG AND THE RUN SAID SO. safeInstallerFilename("s:etup.exe") was
+    predicted to hit the Windows-hazard screen via the ADS colon; it actually returns "etup.exe",
+    because a colon in POSITION 1 is a drive prefix that QFileInfo::fileName strips before the
+    hazard check ever runs. That is still confinement -- a plain basename inside the output dir --
+    so the pin now records the REAL behaviour explicitly and a separate case ("setup:ads.exe")
+    drives the colon into the guard. Caught by running, not by reading.
+    Other notable pins: sanitizeLogText's CWE-117 escaping had never been driven by any fixture in
+    the suite (no test message anywhere contained a byte below 0x20, so the call could be deleted
+    outright) -- now a raw newline plus a well-formed forged header must stay INSIDE one record;
+    logger's arg-formatted template overload carries an INDEPENDENT second copy of the level
+    filter that every existing two-argument call bypassed; the topological installer had never seen
+    an out-of-payload dependency (the COMMON production shape, since the 'chocolatey' framework is
+    excluded from the closure) nor a package with TWO in-payload deps, so the in-degree counter's
+    reach-zero contract was untested; and parsePackageHashFromOData's prefixed-vs-plain OData
+    precedence had two sources for one value that every fixture made agree.
+    LIZARD AGAIN CAUGHT THE COST: 6 functions over the CCN<=10 / length<=70 limits, 4 of them test
+    slots and 2 in the F25 code landed in the same commit. Fixed by splitting into focused sibling
+    slots and named helpers, not by loosening the gate.
   - PROGRESS 2026-08-25 COVERAGE-DIRECTED sweep b102 (gated 249/249): 70 weak assertions pinned
     across six files, the largest batch of the campaign and the first whose targets were chosen by
     MEASUREMENT rather than by inspection. Targets came from build-cov/coverage/ACTIONABLE.txt

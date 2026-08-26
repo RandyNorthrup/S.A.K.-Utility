@@ -98,12 +98,51 @@ void TestOfflineDeploymentWorker::safeInstallerFilename_confinesTraversalNames()
     QCOMPARE(OfflineDeploymentWorker::safeInstallerFilename(QStringLiteral("."), fb), fb);
     QCOMPARE(OfflineDeploymentWorker::safeInstallerFilename(QStringLiteral(".."), fb), fb);
     QCOMPARE(OfflineDeploymentWorker::safeInstallerFilename(QStringLiteral("../../.."), fb), fb);
-    // Whatever the platform makes of a backslash, the result never carries a
-    // separator that could redirect the write outside the output dir.
-    const QString bs =
-        OfflineDeploymentWorker::safeInstallerFilename(QStringLiteral("bad\\path.exe"), fb);
-    QVERIFY(!bs.contains(QLatin1Char('/')));
-    QVERIFY(!bs.contains(QLatin1Char('\\')));
+    // A backslash name must land on a CONFINED basename, not merely on "something
+    // without a separator": the fallback satisfies !contains('/') && !contains('\\')
+    // just as well, and that is precisely the distinction the caller acts on.
+#ifdef Q_OS_WIN
+    // QFileInfo treats '\' as a separator here, so the name is split, not refused.
+    QCOMPARE(OfflineDeploymentWorker::safeInstallerFilename(QStringLiteral("bad\\path.exe"), fb),
+             QStringLiteral("path.exe"));
+#else
+    // Elsewhere '\' is an ordinary character, so the separator guard refuses it.
+    QCOMPARE(OfflineDeploymentWorker::safeInstallerFilename(QStringLiteral("bad\\path.exe"), fb),
+             fb);
+#endif
+
+    // The Windows-filename-hazard arm is a THIRD refusal, distinct from empty/traversal
+    // and from the separator guard: such a name carries no separator at all, so only an
+    // exact-fallback comparison can prove it fired. Each case drives one decision of
+    // hasWindowsFilenameHazard.
+    // Reserved DOS device name, bare and with an extension -- writing to these opens a
+    // device, never a file.
+    QCOMPARE(OfflineDeploymentWorker::safeInstallerFilename(QStringLiteral("CON"), fb), fb);
+    QCOMPARE(OfflineDeploymentWorker::safeInstallerFilename(QStringLiteral("aux.exe"), fb), fb);
+    QCOMPARE(OfflineDeploymentWorker::safeInstallerFilename(QStringLiteral("LPT1.msi"), fb), fb);
+    // Trailing dot / trailing space: Win32 silently strips both, so "setup.exe." would
+    // land ON setup.exe and collide with (or replace) a legitimately named installer.
+    QCOMPARE(OfflineDeploymentWorker::safeInstallerFilename(QStringLiteral("setup.exe."), fb), fb);
+    QCOMPARE(OfflineDeploymentWorker::safeInstallerFilename(QStringLiteral("setup.exe "), fb), fb);
+    // Reserved shell/NTFS metacharacters, including the ADS colon.
+    QCOMPARE(OfflineDeploymentWorker::safeInstallerFilename(QStringLiteral("se?tup.exe"), fb), fb);
+    QCOMPARE(OfflineDeploymentWorker::safeInstallerFilename(QStringLiteral("setup:ads.exe"), fb),
+             fb);
+    // A colon in POSITION 1 is a drive prefix, so QFileInfo strips it before the hazard
+    // screen ever runs. That is still confinement -- the result is a plain basename written
+    // inside the output dir, never a drive-relative path -- so pin the confined name rather
+    // than the fallback, and pin it here so the distinction stays deliberate.
+    QCOMPARE(OfflineDeploymentWorker::safeInstallerFilename(QStringLiteral("s:etup.exe"), fb),
+             QStringLiteral("etup.exe"));
+    // A C0 control character, which no legitimate URL basename carries.
+    QCOMPARE(OfflineDeploymentWorker::safeInstallerFilename(
+                 QStringLiteral("a") + QChar(static_cast<char16_t>(0x01)) + QStringLiteral("b.exe"),
+                 fb),
+             fb);
+    // Control: a name that merely CONTAINS a dot or a space, without a hazardous
+    // position, is still accepted -- the guard must not over-refuse.
+    QCOMPARE(OfflineDeploymentWorker::safeInstallerFilename(QStringLiteral("my setup.v1.exe"), fb),
+             QStringLiteral("my setup.v1.exe"));
 }
 
 void TestOfflineDeploymentWorker::sanitizeManifestFilename_rejectsPathsAndTraversal() {
@@ -112,6 +151,19 @@ void TestOfflineDeploymentWorker::sanitizeManifestFilename_rejectsPathsAndTraver
     // Empty and pure-traversal names are refused outright.
     QVERIFY(OfflineDeploymentWorker::sanitizeManifestFilename(QString()).isEmpty());
     QVERIFY(OfflineDeploymentWorker::sanitizeManifestFilename(QStringLiteral("..")).isEmpty());
+    // The Windows-hazard screen is a DISTINCT refusal arm from the empty/".." ones: a name
+    // that is a perfectly legal Qt basename can still be lethal on Win32, and whatever this
+    // returns non-empty is opened verbatim inside source_dir by verifyBundledPackage. One
+    // case per sub-check of hasWindowsFilenameHazard so a partial weakening is caught too.
+    QVERIFY(OfflineDeploymentWorker::sanitizeManifestFilename(QStringLiteral("NUL.nupkg"))
+                .isEmpty());  // reserved DOS device stem -- would open a DEVICE, not a file
+    QVERIFY(OfflineDeploymentWorker::sanitizeManifestFilename(QStringLiteral("pkg.nupkg."))
+                .isEmpty());  // Win32 strips the trailing dot -- resolves onto the real pkg.nupkg
+    QVERIFY(OfflineDeploymentWorker::sanitizeManifestFilename(QStringLiteral("pkg|x.nupkg"))
+                .isEmpty());  // reserved shell metacharacter
+    // (Deliberately NOT pinning "." here: hasWindowsFilenameHazard(".") already refuses it via
+    // the trailing-dot check, so the `base == "."` arm is a masked equivalent, and an
+    // assertion on "." would pass even with that arm deleted.)
     // A directory-bearing name is reduced to EXACTLY its basename. "Confined OR refused, either
     // way" cannot tell the two apart, and verifyBundledPackage branches on which one happened
     // (empty -> name refusal; non-empty -> looked up inside source_dir).
@@ -158,12 +210,38 @@ void TestOfflineDeploymentWorker::verifyBundledPackage_acceptsMatchingChecksumAn
     no_sum.checksum.clear();
     QString err2;
     QVERIFY(!OfflineDeploymentWorker::verifyBundledPackage(no_sum, dir.path(), err2));
+    // Pin the REASON: this message is handed verbatim to the operator by
+    // installBundlePackage (emitPackageOutcome(entry, false, verify_error)), and five other
+    // guards in verifyBundledPackage also return false -- a bare !verify cannot tell an
+    // unverifiable entry from a tampered or missing one, nor catch a silently empty reason.
+    QCOMPARE(err2, QStringLiteral("Bundle entry lacks a size/checksum to verify: pkg.1.0.nupkg"));
 
     DeploymentManifestEntry no_size = entry;
     no_size.size_bytes = 0;
     QString err3;
     QVERIFY(!OfflineDeploymentWorker::verifyBundledPackage(no_size, dir.path(), err3));
+    // A declared checksum with no size is refused by the SAME guard, so it reports the
+    // same reason -- the size arm of the disjunct, not a later size-comparison failure.
+    QCOMPARE(err3, QStringLiteral("Bundle entry lacks a size/checksum to verify: pkg.1.0.nupkg"));
 }
+
+namespace {
+
+// Split out of verifyBundledPackage_rejectsMismatchMissingAndBadName to keep that slot within
+// the length gate. @p entry names a file whose real on-disk content is @p body.
+void refuseOversizedBundledPackage(const QString& dir_path,
+                                   const QByteArray& body,
+                                   const DeploymentManifestEntry& entry) {
+    DeploymentManifestEntry padded = entry;
+    padded.size_bytes = body.size() - 1;
+    padded.checksum =
+        QString::fromLatin1(QCryptographicHash::hash(body, QCryptographicHash::Sha256).toHex());
+    QString err_padded;
+    QVERIFY(!OfflineDeploymentWorker::verifyBundledPackage(padded, dir_path, err_padded));
+    QCOMPARE(err_padded, QStringLiteral("Size mismatch for pkg.1.0.nupkg (10 vs manifest 9)"));
+}
+
+}  // namespace
 
 void TestOfflineDeploymentWorker::verifyBundledPackage_rejectsMismatchMissingAndBadName() {
     QTemporaryDir dir;
@@ -197,6 +275,14 @@ void TestOfflineDeploymentWorker::verifyBundledPackage_rejectsMismatchMissingAnd
     QString err2;
     QVERIFY(!OfflineDeploymentWorker::verifyBundledPackage(bad_size, dir.path(), err2));
     QCOMPARE(err2, QStringLiteral("Size mismatch for pkg.1.0.nupkg (10 vs manifest 11)"));
+
+    // Both sides of the EXACT size compare. An oversized/padded artifact -- the file
+    // carrying MORE bytes than the manifest declares -- must be turned away by the size
+    // gate itself, BEFORE the whole file is hashed. The checksum here is the TRUE digest
+    // of the on-disk bytes, so the size guard is the only thing that can refuse this
+    // entry: a `<`-only comparison would wave it through and, at best, report it as a
+    // checksum problem after paying for the full hash.
+    refuseOversizedBundledPackage(dir.path(), body, entry);
 
     // Missing file -> reject. Size and checksum stay declared so the entry reaches the file-open
     // guard instead of being refused earlier as unverifiable.
@@ -254,7 +340,8 @@ void TestOfflineDeploymentWorker::collectInstallerDownloads_collectsEveryResourc
     a.checksum_type = QStringLiteral("sha256");
     a.url_64bit = QStringLiteral("https://host/a64.exe");
     a.checksum_64bit = QStringLiteral("aa64");
-    a.checksum_type_64bit = QStringLiteral("sha256");
+    a.checksum_type_64bit = QStringLiteral("sha512");  // differs from the 32-bit type so a
+                                                       // 32/64 mis-pairing cannot hide
     DownloadResource b;
     b.url = QStringLiteral("https://host/b.msi");
     b.url_64bit = QStringLiteral("https://host/a64.exe");  // duplicate of a's 64-bit URL
@@ -272,10 +359,36 @@ void TestOfflineDeploymentWorker::collectInstallerDownloads_collectsEveryResourc
         }
         return QString(QStringLiteral("<absent>"));
     };
-    // Each installer carries the checksum its resource declared.
+    auto findType = [&](const QString& url) {
+        for (const auto& d : got) {
+            if (d.url == url) {
+                return d.checksum_type;
+            }
+        }
+        return QString(QStringLiteral("<absent>"));
+    };
+    // Each installer carries the checksum AND the algorithm its resource declared, correctly
+    // PAIRED per width. The pair is what downloadInstallersToDir hands downloadFileFromUrl
+    // (worker :1788); resolveChecksumAlgorithm only falls back to hex-LENGTH inference when the
+    // type is empty, and 32 hex chars infer MD5 -- so a dropped type silently downgrades
+    // authentication, and a 32/64 mis-pairing authenticates against the wrong digest. Neither
+    // shows up in the URL or checksum, which is all the rest of this test looks at.
     QCOMPARE(findSum(QStringLiteral("https://host/a32.exe")), QStringLiteral("aa32"));
+    QCOMPARE(findType(QStringLiteral("https://host/a32.exe")), QStringLiteral("sha256"));
     QCOMPARE(findSum(QStringLiteral("https://host/a64.exe")), QStringLiteral("aa64"));
+    QCOMPARE(findType(QStringLiteral("https://host/a64.exe")), QStringLiteral("sha512"));
+    // A resource that declared neither carries neither -- an empty type must NOT be
+    // back-filled with a guessed default.
     QCOMPARE(findSum(QStringLiteral("https://host/b.msi")), QString());
+    QCOMPARE(findType(QStringLiteral("https://host/b.msi")), QString());
+
+    // Emission order is resource-declaration order, 32-bit before 64-bit, with the duplicate
+    // 64-bit URL of b dropped in place rather than re-appended. Order is observable: it feeds
+    // the installer_%N fallback index and the uniqueFilename collision order at worker
+    // :1783-1785, so two installers that share a basename land on the wrong files if it flips.
+    QCOMPARE(got[0].url, QStringLiteral("https://host/a32.exe"));
+    QCOMPARE(got[1].url, QStringLiteral("https://host/a64.exe"));
+    QCOMPARE(got[2].url, QStringLiteral("https://host/b.msi"));
 
     // Empty parse -> nothing to download.
     QVERIFY(OfflineDeploymentWorker::collectInstallerDownloads(ParsedInstallScript{}).isEmpty());
@@ -322,6 +435,14 @@ void TestOfflineDeploymentWorker::isChocolateyFrameworkId_matchesOnlyTheFramewor
     QVERIFY(!OfflineDeploymentWorker::isChocolateyFrameworkId(
         QStringLiteral("chocolatey-core.extension")));
     QVERIFY(!OfflineDeploymentWorker::isChocolateyFrameworkId(QStringLiteral("git.install")));
+    // The refuser is a silent DROPPER (assembleClosureJobs :781 and :798 -- the latter the ONE
+    // exception to "NEVER drop an explicitly-requested package" -- plus unmetClosureDependencies
+    // :835 and installOneManifestEntry :1198), so an over-broad match deletes a legitimate
+    // package from the payload with no error. The prefix direction above is not enough: pin the
+    // SUFFIX, EMBEDDED and TRUNCATED directions so only an exact case-folded equality matches.
+    QVERIFY(!OfflineDeploymentWorker::isChocolateyFrameworkId(QStringLiteral("not-chocolatey")));
+    QVERIFY(!OfflineDeploymentWorker::isChocolateyFrameworkId(QStringLiteral("mychocolateypkg")));
+    QVERIFY(!OfflineDeploymentWorker::isChocolateyFrameworkId(QStringLiteral("chocolate")));
 }
 
 void TestOfflineDeploymentWorker::isSafeInstallToken_rejectsOptionLikeAndBlankTokens() {
@@ -367,6 +488,40 @@ void TestOfflineDeploymentWorker::topologicalInstallOrder_installsDepsBeforeDepe
     QCOMPARE(ordered.size(), 3);
     QVERIFY(indexOf(ordered, "c") < indexOf(ordered, "b"));
     QVERIFY(indexOf(ordered, "b") < indexOf(ordered, "a"));
+
+    // An out-of-payload dependency contributes NO edge. This is the COMMON production
+    // shape: manifest deps are copied verbatim from the feed while the 'chocolatey'
+    // framework is deliberately excluded from the closure, so a resolver that mapped a
+    // missing id to index 0 would forge an edge from an unrelated package. 'solo' has no
+    // in-payload dep, so it stays deps-free and is emitted with the other deps-free
+    // packages, never made to wait on 'app'.
+    const QVector<DeploymentManifestEntry> outside{mk("app", {"lib"}),
+                                                   mk("lib", {}),
+                                                   mk("solo", {"chocolatey"})};
+    QStringList outside_cyclic;
+    const auto out_ordered = OfflineDeploymentWorker::topologicalInstallOrder(outside,
+                                                                              &outside_cyclic);
+    QCOMPARE(out_ordered.size(), 3);
+    QVERIFY(outside_cyclic.isEmpty());
+    QVERIFY(indexOf(out_ordered, "lib") < indexOf(out_ordered, "app"));
+    QVERIFY(indexOf(out_ordered, "solo") < indexOf(out_ordered, "app"));
+
+    // A package with TWO in-payload dependencies is emitted only after BOTH, and EXACTLY
+    // ONCE: the in-degree counter must reach zero, not merely be decremented. A chain in
+    // which every package has one dependency cannot tell those apart -- a >=0 test would
+    // queue 'top' after its first dep and queue it a second time after the other,
+    // installing it twice.
+    const QVector<DeploymentManifestEntry> diamond{
+        mk("top", {"l", "r"}), mk("l", {"base"}), mk("r", {"base"}), mk("base", {})};
+    QStringList diamond_cyclic;
+    const auto d_ordered = OfflineDeploymentWorker::topologicalInstallOrder(diamond,
+                                                                            &diamond_cyclic);
+    QCOMPARE(d_ordered.size(), 4);  // nothing dropped AND nothing installed twice
+    QVERIFY(diamond_cyclic.isEmpty());
+    QVERIFY(indexOf(d_ordered, "base") < indexOf(d_ordered, "l"));
+    QVERIFY(indexOf(d_ordered, "base") < indexOf(d_ordered, "r"));
+    QVERIFY(indexOf(d_ordered, "l") < indexOf(d_ordered, "top"));
+    QVERIFY(indexOf(d_ordered, "r") < indexOf(d_ordered, "top"));
 
     // A dependency cycle must not drop packages: all are still returned.
     const QVector<DeploymentManifestEntry> cyclic{mk("x", {"y"}), mk("y", {"x"})};
@@ -450,6 +605,15 @@ void TestOfflineDeploymentWorker::unmetClosureDependencies_flagsMissingIntraClos
     QCOMPARE(missing.size(), 1);
     QCOMPARE(missing.first(), QStringLiteral("c"));
 
+    // Several closure members declaring the SAME absent prerequisite report it ONCE:
+    // the caller joins this list into one operator-facing warning
+    // (offline_deployment_worker.cpp:577-581), so a duplicated entry would both misword
+    // the warning ("c, c, c") and inflate the count of packages actually missing.
+    // Case-folded as well, and the FIRST spelling encountered is the one reported.
+    const QStringList shared = OfflineDeploymentWorker::unmetClosureDependencies(
+        {job("a", {"c"}), job("b", {"C"}), job("d", {"c"})});
+    QCOMPARE(shared, QStringList({QStringLiteral("c")}));
+
     // A requested package re-appended to be attempted directly carries no dep edges,
     // so its own (unknown) deps never falsely trip the check.
     QVERIFY(OfflineDeploymentWorker::unmetClosureDependencies({job("direct", {})}).isEmpty());
@@ -461,6 +625,17 @@ void TestOfflineDeploymentWorker::isSuccessInstallExitCode_acceptsZeroAndRebootC
     QVERIFY(OfflineDeploymentWorker::isSuccessInstallExitCode(3010));  // reboot required
     QVERIFY(!OfflineDeploymentWorker::isSuccessInstallExitCode(1));    // generic failure
     QVERIFY(!OfflineDeploymentWorker::isSuccessInstallExitCode(-1));
+
+    // The accepted set is EXACTLY {0, 1641, 3010}, so pin both reboot codes from BOTH
+    // sides. Without the upper neighbours a widened compare (>= 1641, or >= 3010) still
+    // passes every probe above while reporting a failed install as a success: 1642 is
+    // ERROR_PATCH_TARGET_NOT_FOUND and 1640 is ERROR_INSTALL_REMOTE_DISALLOWED -- real
+    // MSI failures whose only gate is this function (installBundlePackage feeds it
+    // straight into emitPackageOutcome and the completion tally).
+    QVERIFY(!OfflineDeploymentWorker::isSuccessInstallExitCode(1640));
+    QVERIFY(!OfflineDeploymentWorker::isSuccessInstallExitCode(1642));
+    QVERIFY(!OfflineDeploymentWorker::isSuccessInstallExitCode(3009));
+    QVERIFY(!OfflineDeploymentWorker::isSuccessInstallExitCode(3011));
 }
 
 // R5-P7-25: the direct-download harvester used to fetch the feed .nupkg through

@@ -145,15 +145,26 @@ void TestUupIsoBuilder::missingFiles_absentOrTruncated_reported() {
     writeFile(QDir(dir.path()).filePath(overlong.fileName),
               QByteArrayLiteral("toolong"));  // ...actually 7
 
+    // A REAL, COMPLETE file whose API metadata omitted a size (FileInfo::size defaults to 0,
+    // uup_dump_api.h:61) is NOT missing: the `file.size > 0` guard at uup_iso_builder.cpp:1282
+    // stops an UNDECLARED size being read as "expected exactly 0 bytes". Drop that guard and
+    // every size-less entry is reported, so onAria2Finished (:874-882) aborts a set that
+    // downloaded perfectly. Unlike folder.esd above, this one IS a regular file, so it reaches
+    // the size compare instead of short-circuiting at isFile().
+    UupDumpApi::FileInfo undeclaredSize;
+    undeclaredSize.fileName = "nosize.esd";      // size deliberately left at its 0 default
+    writeFile(QDir(dir.path()).filePath(undeclaredSize.fileName),
+              QByteArrayLiteral("real bytes"));  // 10 bytes on disk vs 0 declared
+
     // An unnamed API entry cannot be checked at all, so it is reported, never skipped.
     UupDumpApi::FileInfo unnamed;  // fileName deliberately left empty
     unnamed.size = 7;
 
     const QStringList missing = UupIsoBuilder::missingFiles(
-        {present, truncated, absent, folder, overlong, unnamed}, dir.path());
+        {present, truncated, absent, folder, overlong, undeclaredSize, unnamed}, dir.path());
     // missingFiles preserves input order and appends one entry per refusal arm it reaches:
     // truncated (short), absent, non-regular-file, over-long (exact compare), unnamed.
-    // ok.esd (present, exact size) is the only entry excluded.
+    // ok.esd (present, exact size) and nosize.esd (no size declared) are the entries excluded.
     QCOMPARE(missing,
              QStringList(
                  {"short.wim", "gone.esd", "folder.esd", "long.wim", "<unnamed UUP file entry>"}));
@@ -179,6 +190,28 @@ void TestUupIsoBuilder::replaceFinalIso_movesOverExisting() {
     QVERIFY(out.open(QIODevice::ReadOnly));
     QCOMPARE(out.readAll(), QByteArrayLiteral("FRESH-ISO-BYTES"));
     out.close();
+
+    // FIRST-EVER build: the destination does not exist yet. finalizeSuccessfulConversion
+    // (uup_iso_builder.cpp:1545) promotes "<final>.partial" onto a user-chosen path whose
+    // DIRECTORY is all that prepareConversion creates (:933); :939-942 deliberately leave
+    // the final file untouched, so the no-prior-image fast path (:1302-1304) is THE
+    // production path for a first build. Deleting it drops control into the aside-rename
+    // block, where QFile::rename(finalPath, backupPath) at :1309 fails because finalPath
+    // does not exist, and the build reports "could not be moved into place" (:1547-1550)
+    // with the ISO never published. Every other fixture here pre-creates finalPath, so
+    // nothing else in this file would catch that.
+    const QString firstBuildPath = QDir(dir.path()).filePath("first.iso");
+    const QString firstTempPath = QDir(dir.path()).filePath("first.iso.partial");
+    writeFile(firstTempPath, QByteArrayLiteral("FIRST-ISO-BYTES"));
+    QVERIFY(!QFile::exists(firstBuildPath));  // no prior image: the common production case
+
+    QVERIFY(UupIsoBuilder::replaceFinalIso(firstTempPath, firstBuildPath));
+    QVERIFY(!QFile::exists(firstTempPath));             // temp consumed by the rename
+    QVERIFY(!QFile::exists(firstBuildPath + ".prev"));  // no backup dance when nothing to back up
+    QFile firstOut(firstBuildPath);
+    QVERIFY(firstOut.open(QIODevice::ReadOnly));
+    QCOMPARE(firstOut.readAll(), QByteArrayLiteral("FIRST-ISO-BYTES"));
+    firstOut.close();
 }
 
 void TestUupIsoBuilder::replaceFinalIso_leavesNoBackupArtifact() {
@@ -274,6 +307,21 @@ void TestUupIsoBuilder::computeTotalDownloadBytes_rejectsNegativeSize() {
     UupDumpApi::FileInfo bad;
     bad.size = -1;
     QVERIFY(!UupIsoBuilder::computeTotalDownloadBytes({a, bad}).has_value());
+
+    // Accept side of the SAME sign boundary: 0 is FileInfo's default (uup_dump_api.h:61), it
+    // survives the API parser (uup_dump_api.cpp:610 rejects only `size < 0`), and the rest of
+    // the builder reads it as "no size declared" (the `size > 0` guards at
+    // uup_iso_builder.cpp:483 and :1282). So `file.size < 0` (uup_iso_builder.cpp:192) must stay
+    // strict: a `<= 0` there would refuse a legal metadata set with the bogus "negative or
+    // overflowing size total" error at uup_iso_builder.cpp:243-248.
+    UupDumpApi::FileInfo undeclared;  // size deliberately left at its 0 default
+    const auto withUndeclared = UupIsoBuilder::computeTotalDownloadBytes({a, undeclared});
+    QVERIFY(withUndeclared.has_value());
+    QCOMPARE(*withUndeclared, qint64{10});  // the 0 entry contributes nothing, it does not abort
+
+    const auto loneUndeclared = UupIsoBuilder::computeTotalDownloadBytes({undeclared});
+    QVERIFY(loneUndeclared.has_value());
+    QCOMPARE(*loneUndeclared, qint64{0});
 }
 
 void TestUupIsoBuilder::computeTotalDownloadBytes_rejectsOverflow() {

@@ -5786,6 +5786,30 @@ add_test(NAME test_rich_text_safety COMMAND test_rich_text_safety
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_rich_text_safety")
 
+# test_apfs_free_queue_guard --- F25: an APFS free-queue record schedules ghost blocks for reuse,
+# so a record covering live container metadata hands the allocator the checkpoint ring or the
+# internal pool and the next allocation destroys them. The guard is pure interval arithmetic, and
+# it was written WRONG three times -- each a false-close that rejected a legitimate commit, each
+# caught only by a full build plus the container round-trip tests. Pinned here from both sides so
+# the next attempt fails in seconds instead.
+add_executable(test_apfs_free_queue_guard
+    unit/test_apfs_free_queue_guard.cpp
+)
+set_target_properties(test_apfs_free_queue_guard PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_apfs_free_queue_guard PRIVATE
+    Qt6::Core Qt6::Test
+)
+target_include_directories(test_apfs_free_queue_guard PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_apfs_free_queue_guard COMMAND test_apfs_free_queue_guard
+         -o "${TEST_OUTPUT_DIR}/test_apfs_free_queue_guard.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_apfs_free_queue_guard")
+
 # test_backup_destination_guard --- fail-closed screen for the user-profile backup destination:
 # whitespace-only text, relative paths, and folders that overlap a selected source profile are
 # refused outright (header-only guard; pure string/path logic, no filesystem access). Windows-only

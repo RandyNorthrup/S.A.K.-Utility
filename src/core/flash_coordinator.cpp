@@ -746,6 +746,10 @@ void FlashCoordinator::setBufferSize(qint64 sizeBytes) {
     m_bufferSize = sizeBytes;
 }
 
+qint64 FlashCoordinator::bufferSize() const {
+    return m_bufferSize;
+}
+
 void FlashCoordinator::setValidationMode(sak::ValidationMode mode) {
     m_validationMode = mode;
 }
