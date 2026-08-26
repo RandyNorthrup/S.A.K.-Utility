@@ -2100,6 +2100,24 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
         BEFORE the manifest update, so a manifest failure returns false after the data is already
         committed and a retry duplicates the record; failed session start and rename likewise
         mutate active-session state before the manifest succeeds.
+        ATTEMPTED AND REVERTED 2026-08-26, recorded because the attempt was WORSE THAN THE BUG.
+        The obvious fix is to reorder: writeManifest is a full QSaveFile rewrite and therefore
+        idempotent, appendJsonLine is not, so do the idempotent step first and a retry after a
+        manifest failure is safe. That was implemented (a touchManifestBeforeAppend helper that
+        also rolled back the in-memory updated_at) and it made the suite RED at 248 of 300
+        records: concurrentReadersAndWriterDoNotDeadlockOrCorrupt pins that all 300 transcript
+        lines survive, and its own comment already explained why -- the searches run unlocked on
+        reader threads, so a manifest commit CAN lose a race and return false even when the
+        record was fine, and the record-before-manifest order is what kept the record. Putting
+        the manifest first turned every lost race into a DROPPED RECORD. Trading a
+        retry-duplication hazard for real data loss is not a fix, so it was reverted whole.
+        WHAT THE REAL FIX NEEDS: a contract change, not a reorder -- the caller must be able to
+        distinguish "nothing was written, safe to retry" from "record is durable, manifest is
+        stale, do NOT retry". That means touching every appendTranscript/appendCommand caller and
+        deciding what each does with the second case, which is its own reviewed batch rather than
+        something to slip into an unrelated one. The finding stays OPEN and honest.
+        The existing concurrency test earned its keep here: it caught a regression that reads as
+        an improvement in the diff.
     Everything else from these briefs is now closed and recorded above: generate_system_report's
     size accounting, ai_chat_title's secret coverage AND its five remaining findings, the
     conversation store's redaction/containment/memory/index defects, the lease manager, the MCP
