@@ -2176,6 +2176,78 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
     MUTATION-PROVED (the two that can be): restoring the live id in the denial reason turns the
     suite RED, and ORing the wall arm back into the reclaim decision turns it RED. Build exit 0
     confirmed separately for each drill, so the red is the test and not a stale binary.
+  - THE CONVERSATION STORE AND THE CHAT TITLE, 2026-08-26. Six findings, all verified against the
+    tree first. The theme is the one this campaign keeps returning to: a rule written down twice.
+      * A STRUCTURAL FIX FIRST. Redaction is pure text work but lived inside CredentialStore,
+        which does DPAPI and file I/O, so anything that merely wanted to scrub a string had to
+        link an encrypted credential store to reach it. The predictable result was a SECOND,
+        weaker catalogue written locally: ai_chat_title recognised only sk-* keys. The rules now
+        live in their own dependency-free TU (src/ai/ai_secret_redaction.cpp); CredentialStore
+        keeps its two methods as facades so no caller changes. Same seam pattern as the G10-9
+        gateway extraction -- remove the REASON to copy, not just the copy.
+      * THE TOOL RESULT WAS PERSISTED UNREDACTED. appendCommand cleaned the command string only,
+        under a comment claiming it is "the single point every command record and its search-index
+        entry pass through". `result` is the tool result -- the CAPTURED STDOUT/STDERR -- and it
+        went verbatim into BOTH commands.jsonl and the search index, which searchSessions hands
+        back to the model as a snippet. A token echoed by a command landed in exactly the files
+        that comment was about. Now routed through a new redactSecretsInJson.
+        WHY THAT IS A TREE WALK AND NOT A TEXT PASS, recorded because the obvious implementation
+        is wrong: redacting SERIALIZED json makes the assignment pattern rewrite `"token":"abc"`
+        to `token=[redacted]`, deleting the quotes and the colon, so the document no longer parses
+        and the record is lost. The walk redacts per VALUE and never touches structure; a value
+        whose KEY names a secret goes wholesale (a field called "password" holding "ab" is still a
+        password), while "token_count" and "secretary" are left alone.
+      * artifactSubdir DID NOT CONFINE ITS SUBDIR, and that is the ground another guard stands on.
+        QDir::filePath returns an absolute argument verbatim and does not resolve "..". Worse,
+        artifactPath anchors its OWN filename-containment check to the directory artifactSubdir
+        returns -- so an escaping subdir did not merely create a directory in the wrong place, it
+        silently DEFEATED the filename guard whose comment says "without this an artifact write
+        could overwrite an arbitrary file". Every present caller passes a literal, so this is
+        recorded as hardening rather than a live bug; it is still the foundation of a guard.
+      * artifactPath RETURNED A DIRECTORY AS A FILE. An empty or dot-only filename resolves to the
+        artifact directory itself, which the containment check ACCEPTS (resolved == base), so the
+        function reported success and handed back a directory. The caller opens it and the write
+        fails somewhere that can no longer explain why. Rejected now.
+      * THE MEMORY CAP WAS BYTES, THE BUDGET WAS SPENT IN CHARACTERS. trimMemory compares
+        QFileInfo::size() -- bytes on disk -- against 256 KiB, then trimmed to a QString LENGTH.
+        QString counts UTF-16 code units, so for non-ASCII memory the units disagree badly: the
+        drill measured a trim that "succeeded" and left 563,577 bytes against a 262,144 cap, and
+        because every later call trimmed to the same oversized result the cap NEVER CONVERGED.
+        The budget is bytes now, and truncation walks back to a character boundary so it cannot
+        split a multi-byte sequence into a U+FFFD. The pre-existing trim test is all-ASCII, where
+        one character is one byte and the bug is invisible -- the new test is deliberately CJK.
+      * TWO NAMING DEFECTS IN THE ARTIFACT DIRECTORY. memoryHasRequiredSections checked two of the
+        six names in memorySectionNames() as string literals, so a partially structured file was
+        judged complete and skipped normalization (and adding a section would not have been
+        reflected there at all) -- now derived from the list. And safeArtifactDirectoryName left
+        trailing dots and reserved DOS device names intact: Windows SILENTLY STRIPS a trailing dot
+        from a path component, so titles "Report." and "Report" ALIAS ONE DIRECTORY and two
+        sessions overwrite each other's artifacts, while a chat titled "CON" makes mkpath fail and
+        every artifact write in that session fails for a reason no message explains.
+        THE RESERVED-NAME CATALOGUE ALREADY EXISTED FIVE TIMES (file_management_file_system,
+        file_recovery_engine, input_validator, mbox_writer, offline_deployment_worker), each with
+        its own spelling. Rather than add a sixth, include/sak/windows_reserved_names.h is now the
+        canonical one. MIGRATING THE OTHER FIVE ONTO IT IS REAL OPEN WORK, INCOMPLETE, NOT
+        DEFERRED -- the conversation store uses the shared header today and the five private
+        copies still exist.
+    MUTATION-PROVED, four drills, each with build exit 0 confirmed separately: un-redacting the
+    command result turns the suite RED (the failure output shows the bearer token and the password
+    sitting in commands.jsonl); neutering the subdir containment turns it RED; dropping the shared
+    redactor from the chat title turns it RED; restoring the character-count memory budget turns
+    it RED at 563,577 bytes. A DRILL NOTE WORTH KEEPING: the first attempt at the containment
+    drill used `if (false)`, which orphans the `base` variable and fails warnings-as-errors -- the
+    build dies, the old binary runs, and the drill reads GREEN for the wrong reason. Neuter a
+    guard with a condition that still USES its operands.
+    A SECOND, SHARPER DRILL LESSON -- A TRAVERSAL DRILL ESCAPES THE SANDBOX FOR REAL. With the
+    containment guard neutered, the drill's own fixture did exactly what the finding says it
+    would: artifactSubdir("../../../../evil") CREATED a directory outside its QTemporaryDir, in
+    the system temp folder. The drill was reverted, but the directory stayed -- and the next full
+    gate failed in a completely unrelated suite, test_ai_assistant_panel_tool_dispatch, whose
+    restoreRecoverableNeutralizesTraversalExtension asserts that no "evil" directory sits beside
+    its own temp dir. The failure was real test pollution from the drill, not a regression in this
+    batch; the stray empty directory was removed and the suite passes. Two things follow: a
+    path-traversal drill must be cleaned up on DISK as well as in the source, and a gate failure
+    in a suite the batch never touched deserves this check before it is treated as a regression.
   - AUTHORIZED-IN-PROGRESS, BLOCKED-ON-USER (relabelled 2026-08-17 from a dishonest "RESOLVED [deferred-with-rationale]" -- the sweep is genuinely INCOMPLETE, not resolved): 764 of 1098 units run (69.6%); 334 remain (246 tests / 75 src / 9 include / 4 scripts). The August-11-2026 Codex account cap that blocked it HAS since reset, but RELAUNCH IS A MANUAL, BUDGET-HEAVY STEP on Randy's own Codex account (334 xhigh review units) -- nothing auto-resumes, and burning that much of his account budget is his call, so this waits on his explicit go. NOT verified-done (334 units genuinely unrun); NOT deferred (it is authorized and would resume the moment he says so). The 764 units already run DID produce the P1-P11 subsystem findings, all closed.
       BLOCKED: 764 of 1098 units complete (69.6%). The Codex account usage limit is
       exhausted and does not reset until August 11, 2026 11:10 AM, so the remaining 334

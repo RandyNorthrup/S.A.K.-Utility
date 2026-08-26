@@ -5,6 +5,8 @@
 
 #include "sak/ai/ai_credential_store.h"
 #include "sak/ai/ai_paths.h"
+#include "sak/ai/ai_secret_redaction.h"
+#include "sak/windows_reserved_names.h"
 
 #include <QDir>
 #include <QDirIterator>
@@ -147,27 +149,55 @@ QString memorySectionBody(const QString& text, const QString& section) {
     return body.isEmpty() ? QStringLiteral("- _none_") : body;
 }
 
-QString boundedMemorySection(const QString& body, qsizetype max_chars) {
-    if (body.size() <= max_chars) {
+// Keep the TAIL of a section within a budget expressed in UTF-8 BYTES.
+//
+// The budget has to be bytes because that is what it is checked against: trimMemory compares
+// QFileInfo::size() -- bytes on disk -- to kMaxMemoryBytes, then spends kTrimmedMemoryBytes here.
+// Spending it as a QString character count made the two units disagree: QString counts UTF-16
+// code units, so 192 KiB of non-ASCII characters can serialize to well over 500 KiB of UTF-8 and
+// land ABOVE the 256 KiB ceiling the trim exists to enforce. The trim then reported success while
+// the file stayed over the cap, and every later call trimmed it to the same oversized result --
+// a cap that never converges.
+//
+// Truncation walks back from the cut to a character boundary, so it can never split a surrogate
+// pair into a lone half (which encodes as U+FFFD and silently corrupts the tail).
+QString boundedMemorySection(const QString& body, qint64 max_bytes) {
+    // A UTF-8 continuation byte matches the bit pattern 10xxxxxx: mask off the low six payload
+    // bits and what remains is exactly the marker. Every byte of a multi-byte character except
+    // the first is one of these, so this is how a cut lands on a character boundary.
+    constexpr unsigned char kUtf8ContinuationMask = 0xC0;
+    constexpr unsigned char kUtf8ContinuationMarker = 0x80;
+    QByteArray encoded = body.toUtf8();
+    if (encoded.size() <= max_bytes) {
         return body;
     }
+    qsizetype cut = static_cast<qsizetype>(encoded.size() - max_bytes);
+    // Advance to the start of a UTF-8 sequence: continuation bytes are 10xxxxxx.
+    while (cut < encoded.size() && (static_cast<unsigned char>(encoded.at(cut)) &
+                                    kUtf8ContinuationMask) == kUtf8ContinuationMarker) {
+        ++cut;
+    }
     return QStringLiteral("[older section content compacted by SAK]\n\n%1")
-        .arg(body.right(max_chars));
+        .arg(QString::fromUtf8(encoded.mid(cut)));
 }
 
 QString compactedMemoryText(const QString& existing) {
-    constexpr qsizetype kPreservedSectionChars = 8 * 1024;
+    // BYTES, like every other budget here -- see boundedMemorySection. The five non-history
+    // sections take 8 KiB each and Resolved History takes kTrimmedMemoryBytes, so the compacted
+    // whole is bounded by 192 + 5*8 = 232 KiB plus headers, safely under the 256 KiB cap that
+    // trimMemory checks the file against.
+    constexpr qint64 kPreservedSectionBytes = 8 * 1024;
     QString out = QStringLiteral("# Session Working Memory\n\n");
     for (const auto& section : memorySectionNames()) {
         out += QStringLiteral("## %1\n").arg(section);
         QString body = memorySectionBody(existing, section);
         if (section == QLatin1String("Resolved History")) {
-            body = boundedMemorySection(body, static_cast<qsizetype>(kTrimmedMemoryBytes));
+            body = boundedMemorySection(body, kTrimmedMemoryBytes);
             if (!body.startsWith(QStringLiteral("[older section content compacted by SAK]"))) {
                 body.prepend(QStringLiteral("[older resolved history compacted by SAK]\n\n"));
             }
         } else {
-            body = boundedMemorySection(body, kPreservedSectionChars);
+            body = boundedMemorySection(body, kPreservedSectionBytes);
         }
         out += body.trimmed();
         out += QStringLiteral("\n\n");
@@ -312,8 +342,14 @@ std::optional<QString> readMemoryFile(const QString& path, QString* error_messag
 }
 
 bool memoryHasRequiredSections(const QString& existing) {
-    return existing.contains(QStringLiteral("## Pinned Facts")) &&
-           existing.contains(QStringLiteral("## Resolved History"));
+    // Derived from memorySectionNames(), never restated. This used to check two of the six names
+    // as string literals, so a memory file carrying only "Pinned Facts" and "Resolved History"
+    // was judged fully structured and skipped normalization -- and adding a section to
+    // memorySectionNames() would not have been reflected here at all. Same duplicated-knowledge
+    // shape as the other drift defects in this campaign: one fact, two copies, one updated.
+    return std::ranges::all_of(memorySectionNames(), [&existing](const QString& section) {
+        return existing.contains(QStringLiteral("## %1").arg(section));
+    });
 }
 
 QByteArray normalizedMemoryContent(const QString& header, const QString& existing) {
@@ -930,17 +966,26 @@ bool ConversationStore::appendCommand(const QString& command,
     // workflow PowerShell runner) pass the raw command/preview, which can contain
     // passwords or API keys. This is the single point every command record and its
     // search-index entry pass through.
-    const QString redacted_command = CredentialStore::redactSecrets(command);
+    //
+    // THE RESULT IS REDACTED TOO, and that is not belt-and-braces. Only the command string used
+    // to be cleaned, while `result` -- the tool result, i.e. the CAPTURED STDOUT/STDERR of the
+    // command (ai_tool_result_recorder passes request.result_json; the panel passes the workflow
+    // result) -- was written verbatim into both the command log and the search index. A token
+    // echoed by a command, or a config dump, landed unredacted in the very files this comment
+    // claimed everything passes through.
+    const QString redacted_command = redactSecrets(command);
+    const QJsonObject redacted_result = redactSecretsInJson(result);
     QJsonObject obj;
     obj[QStringLiteral("command")] = redacted_command;
-    obj[QStringLiteral("result")] = result;
+    obj[QStringLiteral("result")] = redacted_result;
     if (!appendJsonLine(QString::fromLatin1(kCommandsFile), obj, error_message)) {
         return false;
     }
     QJsonObject index;
     index[QStringLiteral("source")] = QStringLiteral("command");
     index[QStringLiteral("text")] = QStringLiteral("%1 %2").arg(
-        redacted_command, QString::fromUtf8(QJsonDocument(result).toJson(QJsonDocument::Compact)));
+        redacted_command,
+        QString::fromUtf8(QJsonDocument(redacted_result).toJson(QJsonDocument::Compact)));
     (void)appendSearchIndexRecord(index, nullptr);
     m_current_session.updated_at = QDateTime::currentDateTimeUtc();
     return writeManifest(error_message);
@@ -987,7 +1032,22 @@ QString ConversationStore::artifactSubdir(const QString& subdir, QString* error_
     if (artifact_root.isEmpty()) {
         return {};
     }
-    const QString path = QDir(artifact_root).filePath(trimmed_subdir);
+    // Confine the subdir to the artifact root, exactly as artifactPath() confines the filename.
+    // QDir::filePath returns an ABSOLUTE argument verbatim and does not resolve "..", so without
+    // this an "absolute" or traversing subdir creates a directory anywhere the process can write.
+    // It also silently DEFEATS artifactPath's filename guard, which anchors its containment check
+    // to the directory this function returns: once the base has escaped, a filename inside that
+    // escaped base passes the check. This is the foundation that guard stands on, so it fails
+    // closed here rather than trusting the caller.
+    const QString base = QDir::cleanPath(artifact_root);
+    const QString path = QDir::cleanPath(QDir(artifact_root).filePath(trimmed_subdir));
+    if (path != base && !path.startsWith(base + QLatin1Char('/'))) {
+        if (error_message != nullptr) {
+            *error_message = QStringLiteral("Artifact subdir escapes the artifact directory: %1")
+                                 .arg(trimmed_subdir);
+        }
+        return {};
+    }
     if (!QDir().mkpath(path)) {
         if (error_message != nullptr) {
             *error_message = QStringLiteral("Could not create artifact directory: %1").arg(path);
@@ -1030,7 +1090,18 @@ QString ConversationStore::artifactPath(const QString& subdir,
     // an artifact write could overwrite an arbitrary file.
     const QString base = QDir::cleanPath(dir);
     const QString resolved = QDir::cleanPath(QDir(dir).filePath(filename));
-    if (resolved != base && !resolved.startsWith(base + QLatin1Char('/'))) {
+    // An empty or dot-only filename resolves to the DIRECTORY itself, which the containment
+    // check below then accepts (resolved == base) and returns as a successful FILE path. The
+    // caller opens it, and a write to a directory fails at a point where the error no longer
+    // names the cause. Reject it here: this function promises a path to a file.
+    if (resolved == base) {
+        if (error_message != nullptr) {
+            *error_message =
+                QStringLiteral("Artifact filename does not name a file: '%1'").arg(filename);
+        }
+        return {};
+    }
+    if (!resolved.startsWith(base + QLatin1Char('/'))) {
         if (error_message != nullptr) {
             *error_message = QStringLiteral("Artifact filename escapes the artifact directory: %1")
                                  .arg(filename);
@@ -1298,12 +1369,25 @@ QString ConversationStore::safeArtifactDirectoryName(const QString& title,
                  QStringLiteral("_"));
     safe.replace(QRegularExpression(QStringLiteral(R"(\s+)")), QStringLiteral(" "));
     safe = safe.trimmed().left(kSafeFilenameMaxChars);
+    // Windows SILENTLY STRIPS trailing dots and spaces from a path component, so a title ending
+    // in '.' does not name the directory it appears to: "Report." and "Report" resolve to the
+    // SAME directory, and two sessions with those titles would share one artifact folder and
+    // overwrite each other's files. Strip them here so the name we compute is the name the
+    // filesystem uses.
+    while (!safe.isEmpty() &&
+           (safe.endsWith(QLatin1Char('.')) || safe.endsWith(QLatin1Char(' ')))) {
+        safe.chop(1);
+    }
     // A name that is only dots ("." / ".." / "...") would traverse or alias the parent
     // directory, so collapse it to the safe fallback rather than let it name the dir.
     const bool all_dots = !safe.isEmpty() && std::ranges::all_of(safe, [](QChar ch) {
         return ch == QLatin1Char('.');
     });
-    if (safe.isEmpty() || all_dots) {
+    // The DOS device names are reserved on Windows for every extension and in every case, so
+    // mkpath on one of them FAILS -- and artifactRootDirectory then returns empty, which makes
+    // every artifact write in that session fail for a reason no message would explain. A chat
+    // titled "CON" or "aux" is perfectly ordinary, so fall back rather than break the session.
+    if (safe.isEmpty() || all_dots || isWindowsReservedName(safe)) {
         safe = QStringLiteral("AI Session");
     }
     return safe;

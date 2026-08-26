@@ -1000,6 +1000,7 @@ if(SAK_ENABLE_AI_ASSISTANT)
     list(APPEND AI_SOURCES
         src/ai/ai_app_action_planner.cpp
         src/ai/ai_credential_store.cpp
+        src/ai/ai_secret_redaction.cpp
         src/ai/ai_cancellation_token.cpp
         src/ai/ai_command_guard.cpp
         src/ai/ai_command_tool_planner.cpp

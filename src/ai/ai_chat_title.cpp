@@ -3,6 +3,8 @@
 
 #include "sak/ai/ai_chat_title.h"
 
+#include "sak/ai/ai_secret_redaction.h"
+
 #include <QRegularExpression>
 #include <QSet>
 #include <QStringList>
@@ -61,9 +63,26 @@ QString redactedPromptText(QString text) {
                      QStringLiteral(R"(\b[A-Za-z]:[\\/](?:[^\s]|\s(?=[^\s]*[\\/]))*)")),
                  QStringLiteral(" file "));
     text.replace(QRegularExpression(QStringLiteral(R"(\\\\[^\s]+)")), QStringLiteral(" file "));
+    // Route the whole text through the ONE hardened redactor rather than keeping a second, weaker
+    // secret catalogue here. This file recognised only sk-* keys, so a bearer token, a JWT, a
+    // GitHub/AWS/Slack/Stripe key or a plain "password=..." went into the generated title -- and
+    // a title is PERSISTED with the conversation, so it outlives the transcript it came from.
+    // CredentialStore::redactSecrets covers all of those and is directly tested; a private copy
+    // of a secret catalogue is exactly the drift this campaign keeps finding.
+    //
+    // Its marker is mapped to this file's vocabulary BEFORE the punctuation strip below, which
+    // would otherwise remove the brackets and leave the bare word "redacted" in the title.
+    text = sak::ai::redactSecrets(text);
+    text.replace(QStringLiteral("[redacted]"), QStringLiteral(" secret "));
+    text.replace(QRegularExpression(QStringLiteral(R"(\[redacted-[a-z0-9-]+\])"),
+                                    QRegularExpression::CaseInsensitiveOption),
+                 QStringLiteral(" secret "));
     text.replace(QRegularExpression(QStringLiteral(R"(\bsk(?:-proj)?-[A-Za-z0-9_\-]{12,}\b)"),
                                     QRegularExpression::CaseInsensitiveOption),
                  QStringLiteral(" secret "));
+    // redactSecrets renders an OpenAI key as "sk-...[redacted]", whose "sk-..." prefix survives
+    // the mapping above; collapse that remnant so it does not read as a truncated key.
+    text.replace(QStringLiteral("sk-... secret "), QStringLiteral(" secret "));
     text.replace(QRegularExpression(
                      QStringLiteral(R"(\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b)")),
                  QStringLiteral(" account "));

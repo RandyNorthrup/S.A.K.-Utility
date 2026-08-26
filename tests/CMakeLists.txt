@@ -1620,6 +1620,7 @@ add_executable(test_openai_responses_client
     ../src/core/app_paths.cpp
     ../src/ai/ai_token_usage_tracker.cpp
     ../src/ai/ai_credential_store.cpp
+    ../src/ai/ai_secret_redaction.cpp
     ../src/ai/ai_paths.cpp
     ../src/core/secure_memory.cpp
     ../src/core/logger.cpp
@@ -2654,6 +2655,7 @@ add_executable(test_fuzz_ai_response
     ../src/core/app_paths.cpp
     ../src/ai/ai_token_usage_tracker.cpp
     ../src/ai/ai_credential_store.cpp
+    ../src/ai/ai_secret_redaction.cpp
     ../src/ai/ai_paths.cpp
     ../src/core/secure_memory.cpp
     ../src/core/logger.cpp
@@ -2746,6 +2748,7 @@ add_executable(test_ai_app_action_planner
     ${SAK_PROCESS_RUNNER_SOURCES}
     ../src/ai/ai_tool_policy.cpp
     ../src/ai/ai_credential_store.cpp
+    ../src/ai/ai_secret_redaction.cpp
     ../src/ai/ai_paths.cpp
     ../src/core/app_paths.cpp
     ../src/core/secure_memory.cpp
@@ -2989,6 +2992,7 @@ message(STATUS "Added unit test: test_win32_mcp_geometry")
 add_executable(test_ai_credential_store
     unit/test_ai_credential_store.cpp
     ../src/ai/ai_credential_store.cpp
+    ../src/ai/ai_secret_redaction.cpp
     ../src/ai/ai_paths.cpp
     ../src/core/app_paths.cpp
     ../src/core/secure_memory.cpp
@@ -3039,6 +3043,7 @@ add_executable(test_ai_command_tool_planner
     ${SAK_PROCESS_RUNNER_SOURCES}
     ../src/ai/ai_tool_policy.cpp
     ../src/ai/ai_credential_store.cpp
+    ../src/ai/ai_secret_redaction.cpp
     ../src/ai/ai_paths.cpp
     ../src/core/app_paths.cpp
     ../src/core/secure_memory.cpp
@@ -3227,6 +3232,7 @@ add_executable(test_ai_conversation_store
     ../src/core/app_paths.cpp
     ../src/ai/ai_conversation_store.cpp
     ../src/ai/ai_credential_store.cpp
+    ../src/ai/ai_secret_redaction.cpp
     ../src/ai/ai_paths.cpp
     ../src/ai/ai_token_usage_tracker.cpp
     ../include/sak/ai/ai_conversation_store.h
@@ -3252,6 +3258,7 @@ message(STATUS "Added unit test: test_ai_conversation_store")
 add_executable(test_ai_chat_title
     unit/test_ai_chat_title.cpp
     ../src/ai/ai_chat_title.cpp
+    ../src/ai/ai_secret_redaction.cpp
     ../include/sak/ai/ai_chat_title.h
 )
 set_target_properties(test_ai_chat_title PROPERTIES
@@ -3274,6 +3281,7 @@ add_executable(test_ai_execution_broker
     ../src/core/app_paths.cpp
     ../src/ai/ai_execution_broker.cpp
     ../src/ai/ai_credential_store.cpp
+    ../src/ai/ai_secret_redaction.cpp
     ../src/ai/ai_paths.cpp
     ../src/core/secure_memory.cpp
     ${SAK_PROCESS_RUNNER_SOURCES}
@@ -3427,6 +3435,7 @@ add_executable(test_ai_trace_store
     unit/test_ai_trace_store.cpp
     ../src/ai/ai_trace_store.cpp
     ../src/ai/ai_credential_store.cpp
+    ../src/ai/ai_secret_redaction.cpp
     ../src/ai/ai_paths.cpp
     ../src/ai/ai_token_usage_tracker.cpp
     ../src/core/app_paths.cpp
@@ -3612,6 +3621,7 @@ add_executable(test_ai_workflow_powershell_tool_runner
     # ai_execution_broker resolves interpreters through sak::systemPowerShellPath.
     ${SAK_PROCESS_RUNNER_SOURCES}
     ../src/ai/ai_credential_store.cpp
+    ../src/ai/ai_secret_redaction.cpp
     ../src/ai/ai_paths.cpp
     ../src/core/app_paths.cpp
     ../src/core/secure_memory.cpp
@@ -3694,6 +3704,7 @@ add_executable(test_ai_tool_result_recorder
     unit/test_ai_tool_result_recorder.cpp
     ../src/ai/ai_conversation_store.cpp
     ../src/ai/ai_credential_store.cpp
+    ../src/ai/ai_secret_redaction.cpp
     ../src/ai/ai_paths.cpp
     ../src/ai/ai_tool_result_recorder.cpp
     ../src/core/app_paths.cpp

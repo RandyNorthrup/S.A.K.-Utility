@@ -36,6 +36,11 @@ private Q_SLOTS:
     void memoryFile_trimPreservesStructuredSections();
     void searchSessions_findsTranscriptAndCommandIndex();
     void appendCommand_redactsSecretsInPersistedRecord();
+    void appendCommand_redactsSecretsInTheResultToo();
+    void artifactSubdir_confinesSubdirToTheArtifactRoot();
+    void artifactPath_rejectsAFilenameThatNamesTheDirectory();
+    void safeArtifactDirectoryName_rejectsReservedAndTrailingDotNames();
+    void memoryFile_trimActuallyGetsUnderTheCapForNonAsciiMemory();
     void concurrentReadersAndWriterDoNotDeadlockOrCorrupt();
 };
 
@@ -477,6 +482,44 @@ void AiConversationStoreTests::safeArtifactDirectoryName_rejectsDotSegments() {
              QString(kExpectedMaxChars, QLatin1Char('a')));
 }
 
+void AiConversationStoreTests::safeArtifactDirectoryName_rejectsReservedAndTrailingDotNames() {
+    const auto name = [](const QString& title) {
+        return sak::ai::ConversationStore::safeArtifactDirectoryName(title, QStringLiteral("ai_x"));
+    };
+
+    // WINDOWS SILENTLY STRIPS a trailing dot or space from a path component, so "Report." and
+    // "Report" are THE SAME DIRECTORY. Two sessions titled that way shared one artifact folder
+    // and overwrote each other's files. The computed name must be the name the filesystem uses.
+    QCOMPARE(name(QStringLiteral("Report.")), QStringLiteral("Report"));
+    QCOMPARE(name(QStringLiteral("Report...")), QStringLiteral("Report"));
+    QCOMPARE(name(QStringLiteral("Report")), QStringLiteral("Report"));
+    // An interior dot is ordinary and must survive -- this is not "strip all dots".
+    QCOMPARE(name(QStringLiteral("v1.2 notes")), QStringLiteral("v1.2 notes"));
+
+    // The DOS device names are reserved for every extension and in every case, so mkpath on one
+    // FAILS -- artifactRootDirectory then returns empty and every artifact write in that session
+    // fails for a reason no message explains. "CON" is a perfectly ordinary chat title.
+    for (const QString& reserved : {QStringLiteral("CON"),
+                                    QStringLiteral("con"),
+                                    QStringLiteral("Aux"),
+                                    QStringLiteral("NUL"),
+                                    QStringLiteral("COM1"),
+                                    QStringLiteral("lpt9"),
+                                    QStringLiteral("NUL.txt"),
+                                    QStringLiteral("CON.")}) {
+        QCOMPARE(name(reserved), QStringLiteral("AI Session"));
+    }
+    // Near-misses are NOT reserved and must keep their titles, or the guard is just deleting
+    // legitimate names.
+    for (const QString& ordinary : {QStringLiteral("CONSOLE"),
+                                    QStringLiteral("COM0"),
+                                    QStringLiteral("COM12"),
+                                    QStringLiteral("LPT"),
+                                    QStringLiteral("AUXILIARY")}) {
+        QCOMPARE(name(ordinary), ordinary);
+    }
+}
+
 void AiConversationStoreTests::artifactPath_createsSubdirectoryAndReturnsPath() {
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
@@ -850,6 +893,188 @@ void AiConversationStoreTests::appendCommand_redactsSecretsInPersistedRecord() {
     const QString index_text = QString::fromUtf8(index.readAll());
     QVERIFY(!index_text.contains(secret));
     QVERIFY(index_text.contains(QStringLiteral("[redacted-context7-key]")));
+}
+
+void AiConversationStoreTests::appendCommand_redactsSecretsInTheResultToo() {
+    // ONLY THE COMMAND USED TO BE REDACTED. `result` is the tool result -- the captured
+    // stdout/stderr of the command -- and it was written verbatim into both the command log and
+    // the search index, under a comment claiming this is "the single point every command record
+    // and its search-index entry pass through". A token echoed by a command landed unredacted in
+    // exactly the files that comment was about.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Result secrets"), &error));
+
+    const QString echoed_token = QStringLiteral("ab+cd/efGHIJ0123+/xyz==");
+    QJsonObject nested;
+    nested[QStringLiteral("stdout")] = QStringLiteral("Authorization: Bearer ") + echoed_token;
+    nested[QStringLiteral("exit_code")] = 0;
+    QJsonObject result;
+    result[QStringLiteral("success")] = true;
+    result[QStringLiteral("detail")] = nested;
+    result[QStringLiteral("password")] = QStringLiteral("hunter2value");
+
+    QVERIFY(store.appendCommand(QStringLiteral("run the thing"), result, &error));
+
+    const QString session_path = store.currentSessionInfo().path;
+    for (const QString& file : {session_path + QStringLiteral("/commands.jsonl"),
+                                session_path + QStringLiteral("/search_index.jsonl")}) {
+        QFile persisted(file);
+        QVERIFY2(persisted.open(QIODevice::ReadOnly | QIODevice::Text), qPrintable(file));
+        const QString text = QString::fromUtf8(persisted.readAll());
+        QVERIFY2(!text.contains(echoed_token), qPrintable(file + QStringLiteral(" -> ") + text));
+        QVERIFY2(!text.contains(QStringLiteral("hunter2value")),
+                 qPrintable(file + QStringLiteral(" -> ") + text));
+    }
+
+    // The record must remain a usable RECORD, not just a scrubbed one: the redaction is a tree
+    // walk precisely so the document still parses and its non-secret fields survive.
+    QFile commands(session_path + QStringLiteral("/commands.jsonl"));
+    QVERIFY(commands.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QJsonObject record = QJsonDocument::fromJson(commands.readAll().trimmed()).object();
+    const QJsonObject stored_result = record.value(QStringLiteral("result")).toObject();
+    QVERIFY(stored_result.value(QStringLiteral("success")).toBool());
+    QCOMPARE(stored_result.value(QStringLiteral("password")).toString(),
+             QStringLiteral("[redacted]"));
+    QCOMPARE(
+        stored_result.value(QStringLiteral("detail")).toObject().value(QStringLiteral("exit_code")),
+        QJsonValue(0));
+}
+
+void AiConversationStoreTests::memoryFile_trimActuallyGetsUnderTheCapForNonAsciiMemory() {
+    // THE CAP IS BYTES, THE BUDGET WAS SPENT IN CHARACTERS. trimMemory compares
+    // QFileInfo::size() -- bytes on disk -- against 256 KiB, then trimmed to a QString length
+    // budget, and QString counts UTF-16 code units. For non-ASCII memory the two units disagree
+    // badly: 192 Ki CHARACTERS of CJK is ~576 KiB of UTF-8, so the trim "succeeded" and left the
+    // file FAR ABOVE the cap it exists to enforce -- and every later call trimmed to the same
+    // oversized result, so it never converged.
+    //
+    // The existing trim test uses ASCII, where one character is one byte and the bug is
+    // invisible. This one is deliberately non-ASCII.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Memory Trim Wide"), &error));
+
+    // Three bytes per character in UTF-8, one QString character each.
+    const QString wide_line = QString(200, QChar(0x6F22));  // CJK ideograph
+    QStringList history;
+    history.reserve(3000);
+    for (int i = 0; i < 3000; ++i) {
+        history << QStringLiteral("## entry %1\n%2").arg(i).arg(wide_line);
+    }
+    const QString memory = QStringLiteral(
+                               "# Session Working Memory\n\n"
+                               "## Pinned Facts\n- keep this\n\n"
+                               "## Current Task\n- keep this too\n\n"
+                               "## Decisions\n- decided\n\n"
+                               "## Open Questions\n- asked\n\n"
+                               "## Artifacts\n- reports/session.md\n\n"
+                               "## Resolved History\n\n%1\n")
+                               .arg(history.join(QStringLiteral("\n\n")));
+
+    QFile file(store.currentSessionInfo().path + QStringLiteral("/memory.md"));
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Truncate));
+    file.write(memory.toUtf8());
+    file.close();
+
+    constexpr qint64 kMaxMemoryBytes = 256LL * 1024LL;
+    const qint64 before = QFileInfo(file.fileName()).size();
+    QVERIFY2(before > kMaxMemoryBytes, qPrintable(QString::number(before)));
+
+    QVERIFY(store.appendMemoryEntry(QStringLiteral("Assistant"),
+                                    QStringLiteral("Latest"),
+                                    QStringLiteral("Latest preserved finding"),
+                                    &error));
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+
+    // THE POINT: the file is actually under the cap afterwards, measured the same way the cap is.
+    const qint64 after = QFileInfo(file.fileName()).size();
+    QVERIFY2(after <= kMaxMemoryBytes,
+             qPrintable(
+                 QStringLiteral("trimmed to %1 bytes, cap is %2").arg(after).arg(kMaxMemoryBytes)));
+
+    QFile trimmed(file.fileName());
+    QVERIFY(trimmed.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QByteArray raw = trimmed.readAll();
+    const QString text = QString::fromUtf8(raw);
+    // Structure survives, and the newest entry is kept.
+    static_cast<void>(verifyMemorySectionsInOrder(text));
+    QVERIFY(text.contains(QStringLiteral("keep this")));
+    QVERIFY(text.contains(QStringLiteral("Latest preserved finding")));
+    // Truncation landed on a character boundary: a split UTF-8 sequence would decode to U+FFFD.
+    QVERIFY2(!text.contains(QChar(0xFFFD)), "trim split a multi-byte character");
+    QCOMPARE(text.toUtf8(), raw);
+}
+
+void AiConversationStoreTests::artifactSubdir_confinesSubdirToTheArtifactRoot() {
+    // artifactPath() confines the FILENAME, and anchors that check to the directory
+    // artifactSubdir() returns. So an escaping subdir does not merely create a directory in the
+    // wrong place -- it silently defeats the filename guard, because a filename inside an already
+    // escaped base passes containment. This is the ground that guard stands on.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Artifacts"), &error));
+
+    const QString escaping_relative = QStringLiteral("../../../../evil");
+    error.clear();
+    QVERIFY2(store.artifactSubdir(escaping_relative, &error).isEmpty(), qPrintable(error));
+    QCOMPARE(error,
+             QStringLiteral("Artifact subdir escapes the artifact directory: %1")
+                 .arg(escaping_relative));
+
+    // An ABSOLUTE subdir is the other half: QDir::filePath returns it verbatim, so without the
+    // guard it names a directory anywhere the process can write.
+    const QString absolute = QDir::toNativeSeparators(temp.path()) + QStringLiteral("/outside");
+    const QString absolute_forward = QDir::fromNativeSeparators(absolute);
+    error.clear();
+    QVERIFY2(store.artifactSubdir(absolute_forward, &error).isEmpty(), qPrintable(error));
+    QVERIFY2(error.startsWith(QStringLiteral("Artifact subdir escapes")), qPrintable(error));
+    QVERIFY2(!QDir(absolute_forward).exists(), "the escaping directory must never be created");
+
+    // And the escape cannot be laundered through artifactPath's filename guard either.
+    error.clear();
+    QVERIFY(store.artifactPath(escaping_relative, QStringLiteral("ok.txt"), &error).isEmpty());
+    QVERIFY2(!error.isEmpty(), "artifactPath must fail closed when its base escapes");
+
+    // The other arm: a legitimate nested subdir still works, so this is not "reject anything
+    // with a separator".
+    error.clear();
+    const QString nested = store.artifactSubdir(QStringLiteral("downloads/batch_01"), &error);
+    QVERIFY2(!nested.isEmpty(), qPrintable(error));
+    QVERIFY(nested.endsWith(QStringLiteral("/downloads/batch_01")));
+}
+
+void AiConversationStoreTests::artifactPath_rejectsAFilenameThatNamesTheDirectory() {
+    // An empty or dot-only filename resolves to the artifact directory itself, and the
+    // containment check ACCEPTS that (resolved == base) -- so the function returned a DIRECTORY
+    // as a successful file path. The caller then opens it and the write fails somewhere that can
+    // no longer explain why. This function promises a path to a file.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Artifacts"), &error));
+
+    for (const QString& filename : {QString(), QStringLiteral("."), QStringLiteral("nested/..")}) {
+        error.clear();
+        QVERIFY2(store.artifactPath(QStringLiteral("downloads"), filename, &error).isEmpty(),
+                 qPrintable(filename));
+        QCOMPARE(error,
+                 QStringLiteral("Artifact filename does not name a file: '%1'").arg(filename));
+    }
+
+    // Control: a real filename still resolves, so the guard is not rejecting everything.
+    error.clear();
+    QVERIFY(!store.artifactPath(QStringLiteral("downloads"), QStringLiteral("f.bin"), &error)
+                 .isEmpty());
+    QVERIFY2(error.isEmpty(), qPrintable(error));
 }
 
 void AiConversationStoreTests::concurrentReadersAndWriterDoNotDeadlockOrCorrupt() {

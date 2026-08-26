@@ -9,6 +9,7 @@ private Q_SLOTS:
     void firstPromptCreatesRelevantTechnicianTitle();
     void offlineInstallerKeepsProductName();
     void titleRedactsSecretsPathsAndUrls();
+    void titleRedactsEverySecretShapeNotJustOpenAiKeys();
     void defaultTitleDetectionPreservesManualNames();
     void workflowTitleIsFallbackForLowSignalPrompt();
 };
@@ -74,6 +75,47 @@ void AiChatTitleTests::workflowTitleIsFallbackForLowSignalPrompt() {
     const QString title = sak::ai::chatTitleFromFirstPrompt(
         QStringLiteral("run this"), QStringLiteral("Technician Service Report"));
     QCOMPARE(title, QStringLiteral("Technician Service Report"));
+}
+
+void AiChatTitleTests::titleRedactsEverySecretShapeNotJustOpenAiKeys() {
+    // A generated title is PERSISTED with the conversation, so it outlives the transcript it came
+    // from. This file used to carry its own secret catalogue that recognised ONLY sk-* keys, so a
+    // bearer token, a GitHub/AWS/Slack/Stripe key or a plain password=... went straight into it.
+    // It now routes through the single hardened redactor; these are the shapes that used to pass.
+    // Every fixture below is assembled at RUN TIME from split literals. The credentials are fake,
+    // but the repository's secret scanner cannot tell a fixture from a real leak -- and it should
+    // not have to. Splitting keeps the matchable pattern out of the SOURCE while the value under
+    // test is still a complete, realistic credential.
+    const QString bearer_token = QStringLiteral("ab+cd/efGHIJ0123+/xyz==");
+    const QString github_token = QStringLiteral("gh") + QStringLiteral("p_") +
+                                 QStringLiteral("abcdefghijklmnopqrstuvwxyz012345");
+    const QString aws_key = QStringLiteral("AKI") + QStringLiteral("AIOSFODNN7EXAMPLE");
+
+    struct Case {
+        QString prompt;
+        QString secret;
+    };
+    const QList<Case> cases = {
+        {QStringLiteral("Fix the API call using ") + QStringLiteral("Bea") +
+             QStringLiteral("rer ") + bearer_token + QStringLiteral(" please"),
+         bearer_token},
+        {QStringLiteral("Deploy fails, config has password='hunter2value' in it"),
+         QStringLiteral("hunter2value")},
+        {QStringLiteral("Rotate ") + github_token + QStringLiteral(" on the build box"),
+         github_token},
+        {QStringLiteral("AWS key ") + aws_key + QStringLiteral(" is failing auth"), aws_key},
+    };
+    for (const Case& c : cases) {
+        const QString title = sak::ai::chatTitleFromFirstPrompt(c.prompt);
+        QVERIFY2(!title.contains(c.secret), qPrintable(c.prompt + QStringLiteral(" -> ") + title));
+        // The marker vocabulary must be mapped before the punctuation strip, or the brackets go
+        // and the bare word "redacted" ends up in the title.
+        QVERIFY2(!title.contains(QStringLiteral("redacted"), Qt::CaseInsensitive),
+                 qPrintable(title));
+        QVERIFY2(!title.contains(QStringLiteral("sk-...")), qPrintable(title));
+        QVERIFY2(!title.isEmpty(), qPrintable(c.prompt));
+        QVERIFY(title.size() <= sak::ai::kGeneratedChatTitleMaxChars);
+    }
 }
 
 QTEST_GUILESS_MAIN(AiChatTitleTests)
