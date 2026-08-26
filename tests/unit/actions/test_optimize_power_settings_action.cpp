@@ -22,8 +22,48 @@ private Q_SLOTS:
     void discoveryPermitsActivation_failsClosedWithoutDiscovery();
     void parsePowerPlanList_isLocaleIndependent();
     void parsePowerPlanList_rejectsNonPlanText();
+    void parseActivePowerPlan_isLocaleIndependent();
 };
 
+
+void OptimizePowerSettingsActionTests::parseActivePowerPlan_isLocaleIndependent() {
+    // The list parser was de-localized first and THIS one was missed, which mattered more: the
+    // active plan is how "already using High Performance" is decided, so an English-only match
+    // meant that check could never succeed on a translated Windows and the action would
+    // re-activate the plan on every single run.
+    const auto english = OptimizePowerSettingsAction::parseActivePowerPlan(QStringLiteral(
+        "\r\nPower Scheme GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c  (High performance)\r\n"));
+    QCOMPARE(english.guid, QStringLiteral("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"));
+    QCOMPARE(english.name, QStringLiteral("High performance"));
+    QVERIFY(english.isActive);
+    // ...and it is recognised as the built-in High Performance scheme, which is the decision
+    // this parse actually feeds.
+    QVERIFY(OptimizePowerSettingsAction::isHighPerformanceGuid(english.guid));
+
+    // German: the label differs entirely, the GUID does not.
+    const auto german = OptimizePowerSettingsAction::parseActivePowerPlan(QStringLiteral(
+        "\r\nEnergieschema-GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c  (Hoechstleistung)\r\n"));
+    QCOMPARE(german.guid, QStringLiteral("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"));
+    QCOMPARE(german.name, QStringLiteral("Hoechstleistung"));
+    QVERIFY(german.isActive);
+    QVERIFY(OptimizePowerSettingsAction::isHighPerformanceGuid(german.guid));
+
+    // An uppercase GUID normalises, so the built-in comparison still holds.
+    const auto upper = OptimizePowerSettingsAction::parseActivePowerPlan(
+        QStringLiteral("GUID: 8C5E7FDA-E8BF-4A96-9A85-A6E23A8C635C  (High)\r\n"));
+    QVERIFY(OptimizePowerSettingsAction::isHighPerformanceGuid(upper.guid));
+
+    // No scheme line at all -> no active plan, and NOT a plan with an empty guid marked active:
+    // "active" with nothing identified would let the already-optimized check read a blank as a
+    // match.
+    for (const QString& empty : {QString(),
+                                 QStringLiteral("powercfg: unknown option\r\n"),
+                                 QStringLiteral("Power Scheme GUID: not-a-guid  (Broken)\r\n")}) {
+        const auto none = OptimizePowerSettingsAction::parseActivePowerPlan(empty);
+        QVERIFY2(none.guid.isEmpty(), qPrintable(empty));
+        QVERIFY2(!none.isActive, qPrintable(empty));
+    }
+}
 
 void OptimizePowerSettingsActionTests::parsePowerPlanList_isLocaleIndependent() {
     // R5-G23-4 (locale) via R5-LEDGER. The previous parser required the literal English label

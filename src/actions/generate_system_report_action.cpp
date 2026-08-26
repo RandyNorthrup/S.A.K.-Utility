@@ -31,9 +31,22 @@ constexpr int kPercentDisplayPrecision = 1;
 // Millisecond resolution (_zzz): two reports generated in the same second would
 // otherwise collide and the atomic save would truncate the earlier one.
 QString buildReportFilePath(const QDir& output_dir) {
-    const QString filename = QString("SystemReport_%1.txt")
-                                 .arg(QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss_zzz"));
-    return output_dir.filePath(filename);
+    const QString stamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss_zzz");
+    QString path = output_dir.filePath(QString("SystemReport_%1.txt").arg(stamp));
+    // Millisecond resolution makes a collision unlikely -- a report takes seconds to produce --
+    // but "unlikely" is not "cannot", and the save is an ATOMIC REPLACE: a collision silently
+    // destroys the earlier report rather than failing. Since the cost of being wrong is a lost
+    // artifact and the cost of the check is one stat, the name is made unique instead of assumed
+    // unique. Bounded so a pathological directory cannot spin here.
+    constexpr int kMaxReportNameAttempts = 100;
+    // The first duplicate is "_2", so the un-suffixed name reads as the first of the set.
+    constexpr int kFirstDuplicateSuffix = 2;
+    for (int attempt = kFirstDuplicateSuffix;
+         QFileInfo::exists(path) && attempt <= kMaxReportNameAttempts;
+         ++attempt) {
+        path = output_dir.filePath(QString("SystemReport_%1_%2.txt").arg(stamp).arg(attempt));
+    }
+    return path;
 }
 
 }  // namespace
@@ -332,7 +345,13 @@ QString GenerateSystemReportAction::buildHardwareInfoScript() {
 QString GenerateSystemReportAction::gatherOsAndHardwareInfo() {
     const QString ps_cmd_info = buildOsInfoScript() + buildHardwareInfoScript();
 
-    const ProcessResult proc_info = runPowerShell(ps_cmd_info, sak::kTimeoutChocoListMs);
+    // The cancel callback is what makes cancel() actually stop this collector. Without it
+    // the action only re-checked isCancelled() BETWEEN steps, so a cancel arriving while a
+    // collector was running left that PowerShell child running to its full timeout --
+    // cancellation that does not cancel. Matches runSFC / the DISM probes, which already
+    // pass this.
+    const ProcessResult proc_info = runPowerShell(
+        ps_cmd_info, sak::kTimeoutChocoListMs, true, true, [this]() { return isCancelled(); });
     if (!proc_info.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("System report OS warning: " + proc_info.std_err.trimmed());
     }
@@ -373,7 +392,10 @@ QString GenerateSystemReportAction::gatherStorageInfo() {
         "}\n"
         "Write-Output \"\"";
 
-    const ProcessResult proc_storage = runPowerShell(ps_cmd_storage, sak::kTimeoutProcessMediumMs);
+    const ProcessResult proc_storage =
+        runPowerShell(ps_cmd_storage, sak::kTimeoutProcessMediumMs, true, true, [this]() {
+            return isCancelled();
+        });
     if (!proc_storage.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("System report storage warning: " + proc_storage.std_err.trimmed());
     }
@@ -411,7 +433,10 @@ QString GenerateSystemReportAction::gatherNetworkInfo() {
         "}\n"
         "Write-Output \"\"";
 
-    const ProcessResult proc_network = runPowerShell(ps_cmd_network, sak::kTimeoutProcessMediumMs);
+    const ProcessResult proc_network =
+        runPowerShell(ps_cmd_network, sak::kTimeoutProcessMediumMs, true, true, [this]() {
+            return isCancelled();
+        });
     if (!proc_network.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("System report network warning: " + proc_network.std_err.trimmed());
     }

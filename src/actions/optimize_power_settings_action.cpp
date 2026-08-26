@@ -27,8 +27,15 @@ namespace {
 constexpr auto kPowerPlanListPattern =
     "([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\s*"
     "\\(([^\\)]+)\\)(\\s*\\*)?";
-constexpr auto kPowerPlanNamePattern = "Power Scheme GUID:\\s*[0-9a-f\\-]+\\s*\\(([^\\)]+)\\)";
-constexpr auto kActivePowerPlanPattern = "Power Scheme GUID:\\s*([0-9a-f\\-]+)\\s*\\(([^\\)]+)\\)";
+// These two were MISSED when the list pattern above was de-localized, and the omission mattered:
+// kActivePowerPlanPattern is how the CURRENTLY ACTIVE plan is identified, so on a non-English
+// Windows the "already using High Performance" check could never succeed and the action would
+// re-activate on every run. Anchored on the GUID for the same reason as the list pattern -- the
+// English label is the only part that translates.
+constexpr auto kPowerPlanNamePattern =
+    "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\\s*\\(([^\\)]+)\\)";
+constexpr auto kActivePowerPlanPattern =
+    "([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\\s*\\(([^\\)]+)\\)";
 constexpr int kPowerPlanGuidCaptureGroup = 1;
 constexpr int kPowerPlanNameCaptureGroup = 2;
 constexpr int kPowerPlanActiveMarkerCaptureGroup = 3;
@@ -132,14 +139,20 @@ OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::getActivePow
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Power plan active query warning: " + proc.std_err.trimmed());
     }
-    const QString output = proc.std_out;
+    return parseActivePowerPlan(proc.std_out);
+}
 
-    // Parse: "Power Scheme GUID: {guid} (Plan Name)"
-    const QRegularExpression regex(QString::fromLatin1(kActivePowerPlanPattern));
+OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::parseActivePowerPlan(
+    const QString& output) {
+    PowerPlan active_plan;
+    const QRegularExpression regex(QString::fromLatin1(kActivePowerPlanPattern),
+                                   QRegularExpression::CaseInsensitiveOption);
     const QRegularExpressionMatch match = regex.match(output);
 
     if (match.hasMatch()) {
-        active_plan.guid = match.captured(kPowerPlanGuidCaptureGroup);
+        // Lower-cased so a comparison against the canonical built-in GUIDs holds regardless of
+        // how powercfg happened to print it.
+        active_plan.guid = match.captured(kPowerPlanGuidCaptureGroup).toLower();
         active_plan.name = match.captured(kPowerPlanNameCaptureGroup).trimmed();
         active_plan.isActive = true;
     }
@@ -293,21 +306,33 @@ void OptimizePowerSettingsAction::finalizePowerOptimizationResult(
         result.message = "Already using High Performance power plan";
         result.log = context.report;
         result.log += QString("\nCompleted in %1 ms\n").arg(duration_ms);
+        // Stated as what the PLAN is, not as measured facts. These lines used to read
+        // "Processor performance boost enabled" and "Minimal power management restrictions" --
+        // assertions about the machine's effective settings that nothing here ever queried.
+        // Switching schemes can change sleep, display and processor settings, so a report that
+        // announces them without reading them is telling a technician something it does not know.
         result.log += "RECOMMENDATIONS:\n";
-        result.log += "* System already optimized for performance\n";
-        result.log += "* Processor performance boost enabled\n";
-        result.log += "* Minimal power management restrictions\n";
+        result.log += "* System is already on the High Performance plan\n";
+        result.log +=
+            "* That plan is Windows' least power-restricted scheme; individual "
+            "processor, sleep and display settings were NOT queried by this action\n";
     } else if (context.success) {
         result.success = true;
         result.message =
             QString("Switched to High Performance (was: %1)").arg(context.previous_plan_name);
         result.log = context.report;
         result.log += QString("\nCompleted in %1 ms\n").arg(duration_ms);
+        // "Sleep/hibernate settings unchanged" and "Display timeout settings unchanged" were not
+        // merely unverified, they were WRONG: every scheme carries its OWN sleep, hibernate and
+        // display timeouts, so activating a different plan changes those effective values. The
+        // report told a technician the opposite of what the action had just done.
         result.log += "RECOMMENDATIONS:\n";
-        result.log += "* Performance boost enabled\n";
-        result.log += "* Sleep/hibernate settings unchanged\n";
-        result.log += "* Display timeout settings unchanged\n";
-        result.log += "* Use powercfg -QUERY for detailed settings\n";
+        result.log +=
+            "* The active plan changed, so its sleep, hibernate and display timeouts "
+            "now apply INSTEAD of the previous plan's\n";
+        result.log +=
+            "* Run powercfg -QUERY to see the effective settings; this action does not "
+            "read them back\n";
     } else {
         result.success = false;
         result.message = "Failed to activate High Performance plan";

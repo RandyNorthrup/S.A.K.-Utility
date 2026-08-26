@@ -2169,16 +2169,25 @@
       "status": "reviewed"
     },
     "src/ai/ai_command_tool_planner.cpp": {
+      "brief": "docs/review_briefs/src_ai_ai_command_tool_planner.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "ea82ba7966ef6e1941b368d116f71d2fc664f7c5",
+      "status": "reviewed"
     },
     "src/ai/ai_conversation_store.cpp": {
+      "brief": "docs/review_briefs/src_ai_ai_conversation_store.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "7f287808d5bd17dd82338503fbb7d3636d89aa9e",
+      "status": "reviewed"
     },
     "src/ai/ai_credential_store.cpp": {
+      "brief": "docs/review_briefs/src_ai_ai_credential_store.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "131e9575145184a7c45118c4501ab682d10be696",
+      "status": "reviewed"
     },
     "src/ai/ai_execution_broker.cpp": {
       "evidence": "cited",
@@ -2187,8 +2196,11 @@
       "status": "reviewed"
     },
     "src/ai/ai_human_gate.cpp": {
+      "brief": "docs/review_briefs/src_ai_ai_human_gate.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "3e1170640f7a4e1381701d8aa3ee3fc295a7264c",
+      "status": "reviewed"
     },
     "src/ai/ai_human_gate_store.cpp": {
       "evidence": "cited",
@@ -2197,8 +2209,11 @@
       "status": "reviewed"
     },
     "src/ai/ai_lease_manager.cpp": {
+      "brief": "docs/review_briefs/src_ai_ai_lease_manager.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "b956f54d5cba2e909cc1c66589aae2535588565d",
+      "status": "reviewed"
     },
     "src/ai/ai_mcp_http_client.cpp": {
       "evidence": "cited",
@@ -2207,8 +2222,11 @@
       "status": "reviewed"
     },
     "src/ai/ai_mcp_session_pool.cpp": {
+      "brief": "docs/review_briefs/src_ai_ai_mcp_session_pool.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "281275ca5fe8157c596aae0e8ef92f2a0d1c359b",
+      "status": "reviewed"
     },
     "src/ai/ai_mcp_stdio_client.cpp": {
       "evidence": "cited",

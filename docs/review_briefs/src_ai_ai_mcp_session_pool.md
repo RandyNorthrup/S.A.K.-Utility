@@ -1,0 +1,6 @@
+- **HIGH** -- `src/ai/ai_mcp_session_pool.cpp:31`: Key omits `QProcessEnvironment::inheritsFromParent()`. Inherit-parent and explicit-empty environments serialize identically, allowing reuse across materially different launch environments.
+- **MEDIUM** -- `src/ai/ai_mcp_session_pool.cpp:154`: Returned object drops JSON-RPC `jsonrpc` and `id`; violates stated full-message/drop-in contract.
+- **LOW** -- `src/ai/ai_mcp_session_pool.cpp:121`: `callTool()` does not validate empty `tool_name` before pool lookup/session startup, causing wrong capacity errors or unnecessary process initialization.
+- **LOW** -- `src/ai/ai_mcp_session_pool.cpp:41`: Key uses raw sub-minimum timeout values although session normalizes them, creating redundant equivalent sessions and avoidable capacity exhaustion.
+- **LOW** -- `src/ai/ai_mcp_session_pool.cpp:113`, `src/ai/ai_mcp_session_pool.cpp:157`: `callTool()` and `listTools()` duplicate validation, acquisition, opening, reset, and error propagation logic.
+- **LOW** -- `src/ai/ai_mcp_session_pool.cpp:210`: `openSessionCount()` returns cached slot count, including failed/null sessions--not open session count.

@@ -107,6 +107,12 @@ Do NOT modify, create or delete any file; only read and report.
     if ($unexpected) {
         Write-Host "    WORKING TREE CHANGED during a read-only review. STOPPING."
         $unexpected | ForEach-Object { Write-Host "      $_" }
+        Write-Host "    Codex is instructed never to write, so this is either that instruction"
+        Write-Host "    failing -- which must be looked at -- or, far more likely, somebody"
+        Write-Host "    editing the repo while the batch ran. DO NOT EDIT DURING A BATCH: the"
+        Write-Host "    check cannot tell the two apart, and marking a unit reviewed while its"
+        Write-Host "    file is in flux is exactly the unverifiable bookkeeping this ledger"
+        Write-Host "    replaced. Nothing was marked; re-run when the tree is settled."
         break
     }
 

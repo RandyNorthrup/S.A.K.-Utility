@@ -1,0 +1,8 @@
+- **HIGH** -- Assignment redaction misses single-quoted and sub-four-character secrets, leaks suffixes of whitespace-containing quoted values, and corrupts quoted JSON syntax. `src/ai/ai_credential_store.cpp:407-420`
+- **HIGH** -- Bearer-token regex excludes valid `~`, `+`, and `/` characters, causing partial or absent secret redaction. `src/ai/ai_credential_store.cpp:374-376`
+- **MEDIUM** -- Existing `{}` credential file is treated as "not configured" without error, silently hiding corruption. `src/ai/ai_credential_store.cpp:65-69`, `src/ai/ai_credential_store.cpp:267-273`
+- **MEDIUM** -- Loaded plaintext bypasses save-side length and control-character validation; malformed DPAPI plaintext can return an invalid or header-unsafe key. `src/ai/ai_credential_store.cpp:279-289`, `src/ai/ai_credential_store.cpp:306-317`
+- **MEDIUM** -- Claimed owner-only hardening is not established on Windows by `QFile::setPermissions`; failed cleanup is also ignored, so an inadequately protected file may remain. `src/ai/ai_credential_store.cpp:234-241`
+- **LOW** -- Valid non-object JSON reports `invalid: no error occurred` because parse and root-type failures share the parser error string. `src/ai/ai_credential_store.cpp:91-97`
+- **LOW** -- Serialized `version` is never validated, making schema-version metadata dead and allowing unsupported versions with a recognized provider. `src/ai/ai_credential_store.cpp:104-121`, `src/ai/ai_credential_store.cpp:199-204`
+- **LOW** -- Assignment-redaction pass rebuilds and reassigns every nonempty string even when no assignment matched; its final condition is ineffective. `src/ai/ai_credential_store.cpp:412-425`

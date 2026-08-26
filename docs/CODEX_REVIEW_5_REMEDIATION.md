@@ -2051,6 +2051,37 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
         not the value -- it was having two copies. NOTE: two existing tests asserted the old
         ceiling (7200 passed through, 14'400 accepted); they were pinning the broken promise, so
         they are corrected rather than the fix reverted, with the reason recorded in place.
+  - THE LOCALE FIX ABOVE WAS HALF-DONE, corrected 2026-08-26. De-localizing
+    kPowerPlanListPattern was recorded as closing the gap. It did not:
+    kActivePowerPlanPattern and kPowerPlanNamePattern in the SAME FILE still required the English
+    "Power Scheme GUID:" label, and the active-plan one matters MORE than the list -- it is how
+    "already using High Performance" is decided, so on a translated Windows that check could never
+    succeed and the action would re-activate the plan on every run, reporting a change it did not
+    need to make. Both are now GUID-anchored; the parse is extracted as the public pure
+    OptimizePowerSettingsAction::parseActivePowerPlan and pinned with English, German and
+    uppercase-GUID fixtures plus three no-match cases -- including output with no scheme line,
+    which must yield an EMPTY guid that is NOT marked active, or the already-optimized check reads
+    a blank as a match.
+    THE LESSON: when a defect class is "a localized literal", fixing THE one that was reported is
+    not the same as fixing the file. Grep the whole file for siblings of the pattern before
+    claiming the item closed.
+  - THE POWER REPORT STATED TWO THINGS IT NEVER READ, and one of them was false. The success path
+    told the operator "Sleep/hibernate settings unchanged" and "Display timeout settings
+    unchanged" -- not merely unverified but WRONG, since every scheme carries its own sleep,
+    hibernate and display timeouts, so activating a different plan changes exactly those values.
+    The already-optimized path asserted "Processor performance boost enabled" and "Minimal power
+    management restrictions" without querying either. Both now report what the action knows and
+    name what it did not read (pointing at powercfg -QUERY). This is the campaign's own
+    assert-versus-measure thesis appearing in PRODUCT OUTPUT rather than in a test.
+  - generate_system_report_action: the three PowerShell collectors now receive the cancel callback
+    runPowerShell has always accepted and verify_system_files_action already passes. The action
+    only re-checked isCancelled() BETWEEN collectors, so a cancel arriving mid-collector left that
+    child running to its full timeout -- cancellation that did not cancel. Its report filename is
+    also made unique before writing rather than assumed unique: millisecond stamps make a
+    collision unlikely, but the save is an atomic REPLACE, so a collision silently destroys the
+    earlier report. Recorded as hardening, not a live bug.
+    FLAGGED, NOT ACTIONED (removals need owner authorization): queryPowerPlan and its pattern
+    appear to be dead code.
     NOT yet actioned from this batch, and deliberately not claimed as fixed: the remaining
     generate_system_report findings (cancellation not plumbed into the PowerShell collectors,
     same-millisecond report filename collision, UTF-16-vs-UTF-8 size accounting), the

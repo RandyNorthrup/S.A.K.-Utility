@@ -65,6 +65,14 @@ public:
     /// Public and pure so the locale dimension is testable without a non-English Windows.
     [[nodiscard]] static QVector<PowerPlan> parsePowerPlanList(const QString& output);
 
+    /// @brief Parse `powercfg -GETACTIVESCHEME` output into the active plan. Also
+    ///        locale-independent, and for a sharper reason than the list parser: this is how the
+    ///        "already using High Performance" check identifies the current plan, so an
+    ///        English-only match meant that check could never succeed on a translated Windows and
+    ///        the action would re-activate the plan on every single run. Returns a default-
+    ///        constructed plan (empty guid) when no scheme line is present.
+    [[nodiscard]] static PowerPlan parseActivePowerPlan(const QString& output);
+
 private:
     struct OptimizationResultContext {
         QDateTime start_time;
