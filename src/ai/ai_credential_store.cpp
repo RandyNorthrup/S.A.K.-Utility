@@ -12,13 +12,9 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
-#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
-#include <QRegularExpression>
-#include <QRegularExpressionMatch>
-#include <QRegularExpressionMatchIterator>
 #include <QSaveFile>
 
 #include <algorithm>

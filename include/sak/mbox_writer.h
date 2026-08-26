@@ -19,10 +19,20 @@
 #include <expected>
 #include <memory>
 
+class TestMboxWriter;
+
 namespace sak {
 
 /// @brief Writes Unix mbox files from PST item data
 class MboxWriter {
+    // Test seam, matching the convention used across this tree (DriveScannerTests,
+    // FileScannerTests, PackageMatcherTests, ...). sanitizeFolderName is a pure private static
+    // whose reserved-device-name arm was PROVEN UNTESTED by a mutation drill: breaking the shared
+    // sak::isWindowsReservedName turned every other migrated suite red and left this one green.
+    // Granting the test access is behaviour-preserving; widening the public API to reach it would
+    // not be.
+    friend class ::TestMboxWriter;
+
 public:
     /// @param combined_basename When not writing one-mbox-per-folder, names the single output file
     ///        (<combined_basename>.mbox) so distinct source files/jobs sharing one output directory

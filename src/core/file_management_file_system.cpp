@@ -13,6 +13,7 @@
 #include "sak/partition_ext_file_system_reader.h"
 #include "sak/partition_hfs_file_system_reader.h"
 #include "sak/partition_raw_device_io.h"
+#include "sak/windows_reserved_names.h"
 
 #include <QCryptographicHash>
 #include <QDir>
@@ -996,22 +997,11 @@ bool hasUnsafeHostNameChar(const QString& base) {
 
 // True when @p base resolves to a Windows reserved device name (CON, PRN, AUX,
 // NUL, COM1-9, LPT1-9) even with an extension -- "NUL.txt" still opens the device.
-// Matched case-insensitively on the stem before the first dot.
+// The catalogue is shared (sak/windows_reserved_names.h) rather than restated here: this was
+// one of five private copies of the same rule, which is how a fix to one could leave the
+// others wrong.
 bool isWindowsReservedDeviceName(const QString& base) {
-    const QString stem = base.section(QLatin1Char('.'), 0, 0).trimmed().toUpper();
-    static const QStringList kNames = {
-        QStringLiteral("CON"), QStringLiteral("PRN"), QStringLiteral("AUX"), QStringLiteral("NUL")};
-    if (kNames.contains(stem)) {
-        return true;
-    }
-    constexpr int kReservedDeviceStemLength = 4;  // "COM"/"LPT" prefix plus one digit
-    const QString prefix = stem.left(3);
-    if (stem.size() != kReservedDeviceStemLength ||
-        (prefix != QStringLiteral("COM") && prefix != QStringLiteral("LPT"))) {
-        return false;
-    }
-    const QChar last = stem.at(3);
-    return last >= QLatin1Char('1') && last <= QLatin1Char('9');
+    return sak::isWindowsReservedName(base);
 }
 
 }  // namespace

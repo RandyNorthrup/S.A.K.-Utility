@@ -9,6 +9,7 @@
 #include "sak/io_write_utils.h"
 #include "sak/logger.h"
 #include "sak/partition_export_containment.h"
+#include "sak/windows_reserved_names.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -208,22 +209,6 @@ QByteArray base64Wrapped(const QByteArray& data) {
 // collision checks and for "already truncated this run" -- must be case-folded.
 QString pathIdentity(const QString& path) {
     return path.toCaseFolded();
-}
-
-// DOS device names address a DEVICE, not a file, even with an extension: opening "NUL.mbox"
-// succeeds and every message written to it is silently discarded.
-bool isReservedDeviceName(const QString& name) {
-    static const QStringList kReserved = {
-        QStringLiteral("CON"),  QStringLiteral("PRN"),  QStringLiteral("AUX"),
-        QStringLiteral("NUL"),  QStringLiteral("COM1"), QStringLiteral("COM2"),
-        QStringLiteral("COM3"), QStringLiteral("COM4"), QStringLiteral("COM5"),
-        QStringLiteral("COM6"), QStringLiteral("COM7"), QStringLiteral("COM8"),
-        QStringLiteral("COM9"), QStringLiteral("LPT1"), QStringLiteral("LPT2"),
-        QStringLiteral("LPT3"), QStringLiteral("LPT4"), QStringLiteral("LPT5"),
-        QStringLiteral("LPT6"), QStringLiteral("LPT7"), QStringLiteral("LPT8"),
-        QStringLiteral("LPT9")};
-    const QString stem = name.section(QLatin1Char('.'), 0, 0).trimmed();
-    return kReserved.contains(stem, Qt::CaseInsensitive);
 }
 
 // Only a well-formed RFC 2045 type/subtype is carried through; anything else becomes the
@@ -856,7 +841,11 @@ QString MboxWriter::sanitizeFolderName(const QString& name) {
     // that two folders then truncate in turn; keep them distinct and creatable.
     static const QRegularExpression kTrailing(QStringLiteral("[ .]+$"));
     safe.replace(kTrailing, QStringLiteral("_"));
-    if (isReservedDeviceName(safe)) {
+    // DOS device names address a DEVICE, not a file, even with an extension: opening "NUL.mbox"
+    // succeeds and every message written to it is silently discarded. The catalogue is shared
+    // (sak/windows_reserved_names.h) rather than restated here -- it was one of five private
+    // copies of the same rule.
+    if (sak::isWindowsReservedName(safe)) {
         safe.append(QLatin1Char('_'));
     }
     return safe;

@@ -627,6 +627,58 @@ private:
         qint64 m_cap;
         qint64 m_written = 0;
     };
+
+private Q_SLOTS:
+
+    // ====================================================================
+    // Folder-name sanitisation
+    // ====================================================================
+
+    // FOUND BY A MUTATION DRILL, not by review. When the five private copies of the reserved
+    // device-name catalogue were migrated onto the shared sak::isWindowsReservedName, breaking
+    // that helper turned three of the four migrated suites RED -- and this one stayed GREEN,
+    // because sanitizeFolderName had NO test at all. Its reserved-name arm was therefore
+    // unproven: an "arm coverage proves never taken" hole.
+    //
+    // It matters here more than most places. A mail folder legitimately called "Con" or "Prn"
+    // is ordinary, and on Windows opening "NUL.mbox" SUCCEEDS while silently discarding every
+    // message written to it -- an export that reports success and produces nothing.
+    void testSanitizeFolderNameEscapesReservedDeviceNames() {
+        for (const QString& reserved : {QStringLiteral("CON"),
+                                        QStringLiteral("con"),
+                                        QStringLiteral("Aux"),
+                                        QStringLiteral("NUL"),
+                                        QStringLiteral("COM1"),
+                                        QStringLiteral("lpt9"),
+                                        QStringLiteral("NUL.mbox")}) {
+            const QString safe = sak::MboxWriter::sanitizeFolderName(reserved);
+            QVERIFY2(!safe.isEmpty(), qPrintable(reserved));
+            // The name must no longer BE the device: the guard appends a suffix, so the result
+            // differs from the input and is not itself reserved.
+            QVERIFY2(safe != reserved, qPrintable(reserved + QStringLiteral(" -> ") + safe));
+            QVERIFY2(safe.endsWith(QLatin1Char('_')),
+                     qPrintable(reserved + QStringLiteral(" -> ") + safe));
+        }
+
+        // Near-misses are ordinary folder names and must pass through unchanged, or the guard is
+        // just mangling legitimate mail folders.
+        for (const QString& ordinary : {QStringLiteral("Console"),
+                                        QStringLiteral("COM0"),
+                                        QStringLiteral("COM12"),
+                                        QStringLiteral("Inbox"),
+                                        QStringLiteral("Auxiliary")}) {
+            QCOMPARE(sak::MboxWriter::sanitizeFolderName(ordinary), ordinary);
+        }
+
+        // The trailing dot/space rule that sits immediately above the device guard: Windows
+        // strips these, so two distinct folders would otherwise resolve to one file.
+        QVERIFY(!sak::MboxWriter::sanitizeFolderName(QStringLiteral("Inbox "))
+                     .endsWith(QLatin1Char(' ')));
+        QVERIFY(!sak::MboxWriter::sanitizeFolderName(QStringLiteral("Inbox."))
+                     .endsWith(QLatin1Char('.')));
+        QVERIFY(sak::MboxWriter::sanitizeFolderName(QStringLiteral("Inbox ")) !=
+                sak::MboxWriter::sanitizeFolderName(QStringLiteral("Inbox")));
+    }
 };
 
 QTEST_MAIN(TestMboxWriter)

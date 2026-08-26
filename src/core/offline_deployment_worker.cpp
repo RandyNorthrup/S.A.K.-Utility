@@ -11,6 +11,7 @@
 #include "sak/network_transfer_runner.h"
 #include "sak/offline_deployment_constants.h"
 #include "sak/process_runner.h"
+#include "sak/windows_reserved_names.h"
 
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -170,17 +171,10 @@ bool hasWindowsFilenameHazard(const QString& base) {
         return true;
     }
     // Reserved DOS device names match on the stem (text before the first '.'),
-    // case-insensitively, with or without an extension.
-    static const QSet<QString> kReservedNames = {
-        QStringLiteral("CON"),  QStringLiteral("PRN"),  QStringLiteral("AUX"),
-        QStringLiteral("NUL"),  QStringLiteral("COM1"), QStringLiteral("COM2"),
-        QStringLiteral("COM3"), QStringLiteral("COM4"), QStringLiteral("COM5"),
-        QStringLiteral("COM6"), QStringLiteral("COM7"), QStringLiteral("COM8"),
-        QStringLiteral("COM9"), QStringLiteral("LPT1"), QStringLiteral("LPT2"),
-        QStringLiteral("LPT3"), QStringLiteral("LPT4"), QStringLiteral("LPT5"),
-        QStringLiteral("LPT6"), QStringLiteral("LPT7"), QStringLiteral("LPT8"),
-        QStringLiteral("LPT9")};
-    return kReservedNames.contains(base.section(QLatin1Char('.'), 0, 0).toUpper());
+    // case-insensitively, with or without an extension. The catalogue is shared
+    // (sak/windows_reserved_names.h) rather than restated here -- it was one of five private
+    // copies of the same rule, which is how a fix to one could leave the others wrong.
+    return sak::isWindowsReservedName(base);
 }
 
 // The OData FindPackagesById feed is paginated: a package with many versions is split
@@ -683,7 +677,11 @@ QVector<FeedPackageVersion> OfflineDeploymentWorker::fetchFeedVersions(const QSt
     query.addQueryItem(QStringLiteral("id"), QStringLiteral("'%1'").arg(package_id));
     url.setQuery(query);
     const QUrl origin = url;  // continuation links must not leave this origin
-    const NetworkCancelCheck cancel = [this]() {
+    // Named cancel_check, not cancel: the class already has a cancel() member, and a local of the
+    // same name shadows it -- so a later edit inside this function that meant to REQUEST
+    // cancellation would silently name the predicate instead. Pre-existing finding, surfaced when
+    // this file was touched.
+    const NetworkCancelCheck cancel_check = [this]() {
         return m_cancelled.load();
     };
 
@@ -692,7 +690,7 @@ QVector<FeedPackageVersion> OfflineDeploymentWorker::fetchFeedVersions(const QSt
     // (no-continuation) page is an authoritative answer.
     QVector<FeedPackageVersion> versions;
     for (int page = 0; page < kMaxFeedPages; ++page) {
-        const FeedPageOutcome outcome = fetchFeedPage(url, cancel, versions);
+        const FeedPageOutcome outcome = fetchFeedPage(url, cancel_check, versions);
         if (outcome.status == FeedPageStatus::Cancelled) {
             return {};  // ok stays false; a cancelled fetch is not a package-missing answer
         }

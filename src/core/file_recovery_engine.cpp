@@ -7,6 +7,7 @@
 #include "sak/file_recovery_engine.h"
 
 #include "sak/io_write_utils.h"
+#include "sak/windows_reserved_names.h"
 
 #include <QCryptographicHash>
 #include <QDir>
@@ -191,22 +192,6 @@ std::optional<CandidateMatch> matchAt(const QByteArray& data,
     return std::nullopt;
 }
 
-bool isReservedDeviceName(const QString& name) {
-    // Windows opens these as devices regardless of extension ("CON.txt" is the console,
-    // not a file). Match the stem -- the text before the first '.' -- case-folded.
-    static const QStringList kReservedDeviceNames = {
-        QStringLiteral("CON"),  QStringLiteral("PRN"),  QStringLiteral("AUX"),
-        QStringLiteral("NUL"),  QStringLiteral("COM1"), QStringLiteral("COM2"),
-        QStringLiteral("COM3"), QStringLiteral("COM4"), QStringLiteral("COM5"),
-        QStringLiteral("COM6"), QStringLiteral("COM7"), QStringLiteral("COM8"),
-        QStringLiteral("COM9"), QStringLiteral("LPT1"), QStringLiteral("LPT2"),
-        QStringLiteral("LPT3"), QStringLiteral("LPT4"), QStringLiteral("LPT5"),
-        QStringLiteral("LPT6"), QStringLiteral("LPT7"), QStringLiteral("LPT8"),
-        QStringLiteral("LPT9")};
-    const QString stem = name.section(QLatin1Char('.'), 0, 0).trimmed();
-    return kReservedDeviceNames.contains(stem, Qt::CaseInsensitive);
-}
-
 bool isUnsafeRestoreName(const QString& name) {
     // Defense in depth atop the bare-filename confinement (B8-15): reject an alternate-
     // data-stream colon, a trailing dot or space (Windows silently strips these, so
@@ -218,7 +203,10 @@ bool isUnsafeRestoreName(const QString& name) {
     if (name.endsWith(QLatin1Char('.')) || name.endsWith(QLatin1Char(' '))) {
         return true;
     }
-    return isReservedDeviceName(name);
+    // The reserved-name catalogue is shared (sak/windows_reserved_names.h), not restated here:
+    // it used to be one of five private copies of the same rule, which is how a fix to one could
+    // leave the others wrong.
+    return sak::isWindowsReservedName(name);
 }
 
 QString restoredFilePath(const QString& destinationDirectory,

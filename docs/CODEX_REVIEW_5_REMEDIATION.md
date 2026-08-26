@@ -2248,6 +2248,50 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
     batch; the stray empty directory was removed and the suite passes. Two things follow: a
     path-traversal drill must be cleaned up on DISK as well as in the source, and a gate failure
     in a suite the batch never touched deserves this check before it is treated as a regression.
+  - THE MIGRATION THE PREVIOUS BATCH OWED, 2026-08-26. Closing out what was recorded as
+    INCOMPLETE rather than leaving it to rot:
+      * FOUR of the five private reserved-device-name catalogues now call the shared
+        sak::isWindowsReservedName: file_management_file_system, file_recovery_engine,
+        mbox_writer and offline_deployment_worker. Each had written out CON/PRN/AUX/NUL/COM1-9/
+        LPT1-9 in its own spelling; all four were verified behaviourally equivalent to the shared
+        helper before the swap (each reduced to the stem before the first dot, trimmed, compared
+        case-insensitively -- the shared one additionally strips trailing dots/spaces, which
+        section() had already made unreachable).
+      * input_validator KEEPS its regex, and that is a DESIGN DECISION, not an un-migrated copy.
+        Its pattern answers a different question -- "does any COMPONENT of this path name a
+        device" -- over std::string_view rather than QString, so folding it into a name-level
+        QString helper would change what it checks. Recorded in the file itself, with the standing
+        obligation that if the device list ever changes BOTH must move.
+      * The four includes the redaction split left dead in ai_credential_store.cpp
+        (QJsonArray, QRegularExpression, QRegularExpressionMatch, QRegularExpressionMatchIterator)
+        are removed.
+      * A PRE-EXISTING cppcheck shadowFunction in offline_deployment_worker.cpp, surfaced only
+        because touching the file made the hook scan it: a local NetworkCancelCheck named `cancel`
+        shadowed the class's own cancel() member, so a later edit inside that function meaning to
+        REQUEST cancellation would silently have named the predicate instead. Renamed to
+        cancel_check. Fixed on the spot rather than stepped over -- a finding is a finding whether
+        or not this batch caused it.
+    A MUTATION DRILL ON THE MIGRATION FOUND A REAL COVERAGE HOLE, which is the point of running
+    one on a "behaviour-preserving" change. Breaking the shared helper turned three of the four
+    migrated suites RED and left test_mbox_writer GREEN -- because MboxWriter::sanitizeFolderName
+    had NO TEST AT ALL, so its reserved-name arm was pure class-AA "arm coverage proves never
+    taken". That arm matters more than most: a mail folder called "Con" or "Prn" is ordinary, and
+    on Windows opening "NUL.mbox" SUCCEEDS while silently discarding every message written to it
+    -- an export that reports success and produces nothing. The slot now pins the reserved names,
+    the near-misses that must pass through unchanged (Console, COM0, COM12, Auxiliary), and the
+    trailing dot/space rule beside it; reached through the tree's existing `friend class` test-seam
+    convention rather than by widening the public API. Re-running the drill now turns ALL FOUR
+    suites red.
+    ONE MORE FALSE-GREEN SIGHTING, the same trap as before and worth the repetition: the first
+    build of that new slot FAILED (sanitizeFolderName was private, C2248) and ctest in the same
+    invocation still reported "test_mbox_writer Passed" off the STALE binary. Only the separately
+    captured BUILD EXIT distinguished them.
+    WORKFLOW CORRECTION ADOPTED HERE: the full Release gate costs 12-15 minutes and the pre-commit
+    hooks cost seconds, yet three commits in this session passed 251/251 and were then REJECTED by
+    a cheap hook -- lizard (comments pushed redactSecrets past 70 lines), the secret scan
+    (realistic test fixtures), and the magic-number check (the 0xC0/0x80 UTF-8 masks) -- each
+    forcing a source edit and therefore another full gate. Run clang-format, lizard, scan_secrets
+    and the magic-number check on the changed files FIRST, then start the gate.
   - AUTHORIZED-IN-PROGRESS, BLOCKED-ON-USER (relabelled 2026-08-17 from a dishonest "RESOLVED [deferred-with-rationale]" -- the sweep is genuinely INCOMPLETE, not resolved): 764 of 1098 units run (69.6%); 334 remain (246 tests / 75 src / 9 include / 4 scripts). The August-11-2026 Codex account cap that blocked it HAS since reset, but RELAUNCH IS A MANUAL, BUDGET-HEAVY STEP on Randy's own Codex account (334 xhigh review units) -- nothing auto-resumes, and burning that much of his account budget is his call, so this waits on his explicit go. NOT verified-done (334 units genuinely unrun); NOT deferred (it is authorized and would resume the moment he says so). The 764 units already run DID produce the P1-P11 subsystem findings, all closed.
       BLOCKED: 764 of 1098 units complete (69.6%). The Codex account usage limit is
       exhausted and does not reset until August 11, 2026 11:10 AM, so the remaining 334

@@ -15,8 +15,12 @@
 /// Header-only and Qt-only-by-QString on purpose: it has no link-time dependency, so any target
 /// can include it without new wiring.
 ///
-/// MIGRATION STATUS -- INCOMPLETE, NOT DEFERRED: ai_conversation_store uses this. The five
-/// pre-existing private copies listed above still exist and are being migrated onto it.
+/// MIGRATION STATUS -- COMPLETE for the name-level copies. ai_conversation_store,
+/// file_management_file_system, file_recovery_engine, mbox_writer and offline_deployment_worker
+/// all call this. input_validator deliberately keeps its own regex: it answers the different
+/// question "does any COMPONENT of this path name a device", over std::string_view rather than
+/// QString. That is a design decision, not an un-migrated copy -- but if the device list below
+/// ever changes, input_validator's kWindowsDeviceNamePattern must change with it.
 
 #pragma once
 

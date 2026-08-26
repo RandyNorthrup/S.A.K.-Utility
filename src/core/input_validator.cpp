@@ -70,6 +70,12 @@ constexpr std::uintmax_t kFileDescriptorWarnDenominator = 5;
 constexpr std::size_t kUnknownHardwareThreadLimit = 64;
 constexpr unsigned int kThreadWarningMultiplier = 2;
 constexpr unsigned int kThreadRejectMultiplier = 4;
+// The reserved DOS device names, as a PATH-level pattern. This deliberately does NOT use the
+// shared sak::isWindowsReservedName (sak/windows_reserved_names.h), which the four other former
+// copies of this catalogue were migrated onto: that helper answers "is this NAME a device", while
+// this answers the different question "does any COMPONENT of this path name a device", and it
+// operates on std::string_view rather than QString. Keeping the pattern here is a deliberate
+// design decision, not an un-migrated copy -- but if the device list ever changes, BOTH must move.
 constexpr auto kWindowsDeviceNamePattern = "(^|[/\\\\])(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(\\.|$)";
 
 bool isContinuationByte(unsigned char byte) noexcept {
