@@ -47,6 +47,28 @@ void AiMcpSessionPoolTests::keyIsolatesCommandAndEnvironment() {
     QVERIFY(Pool::sessionKeyForTesting(read_only) != Pool::sessionKeyForTesting(full));
     // A different command -> different session.
     QVERIFY(Pool::sessionKeyForTesting(read_only) != Pool::sessionKeyForTesting(other_cmd));
+
+    // INHERIT-FROM-PARENT IS NOT THE SAME AS EMPTY, and the key could not tell them apart:
+    // QProcessEnvironment::toStringList() reports an EMPTY list for an inheriting environment,
+    // exactly like one that was deliberately emptied. One hands the server every variable this
+    // process holds -- including whatever secrets are in it -- and the other hands it none, so a
+    // session opened with the full user environment could have been reused for a call that asked
+    // for a bare one. Nothing constructs an inheriting environment today, which is why this never
+    // fired; the key is the isolation guarantee, so it must hold before something does.
+    auto inheriting = read_only;
+    inheriting.environment = QProcessEnvironment(QProcessEnvironment::InheritFromParent);
+    auto emptied = read_only;
+    emptied.environment = QProcessEnvironment();
+
+    QVERIFY(inheriting.environment.toStringList().isEmpty());
+    QVERIFY(emptied.environment.toStringList().isEmpty());
+    QVERIFY(inheriting.environment.inheritsFromParent());
+    QVERIFY(!emptied.environment.inheritsFromParent());
+    // Same command, same timeout, both env lists empty -- and still distinct keys.
+    QVERIFY(Pool::sessionKeyForTesting(inheriting) != Pool::sessionKeyForTesting(emptied));
+    // Each still keys stably to itself, so this is not just "always different".
+    QCOMPARE(Pool::sessionKeyForTesting(inheriting), Pool::sessionKeyForTesting(inheriting));
+    QCOMPARE(Pool::sessionKeyForTesting(emptied), Pool::sessionKeyForTesting(emptied));
 }
 
 void AiMcpSessionPoolTests::keyIsolatesTimeout() {
@@ -71,7 +93,7 @@ void AiMcpSessionPoolTests::emptyCommandRejected() {
     QVERIFY(pool.callTool(request, &error).isEmpty());
     // Fail closed with the exact empty-command message.
     QCOMPARE(error, QStringLiteral("MCP stdio command is empty"));
-    QCOMPARE(pool.openSessionCount(), 0);  // nothing was cached
+    QCOMPARE(pool.pooledSlotCount(), 0);  // nothing was cached
 }
 
 void AiMcpSessionPoolTests::missingCommandFailsCleanlyAndCloses() {
@@ -92,7 +114,7 @@ void AiMcpSessionPoolTests::missingCommandFailsCleanlyAndCloses() {
     QVERIFY(!error.isEmpty());
 
     pool.closeAll();
-    QCOMPARE(pool.openSessionCount(), 0);
+    QCOMPARE(pool.pooledSlotCount(), 0);
     pool.closeAll();  // idempotent
 }
 
@@ -125,7 +147,7 @@ void AiMcpSessionPoolTests::liveWin32McpReuseAndIsolation_optIn() {
         QVERIFY2(error.isEmpty(), qPrintable(error));
         QVERIFY(!message.value(QStringLiteral("result")).toObject().isEmpty());
     }
-    QCOMPARE(pool.openSessionCount(), 1);
+    QCOMPARE(pool.pooledSlotCount(), 1);
 
     // Discovery over the same pooled session must advertise the win32 catalog's own tools, not just
     // "some non-empty list" -- pin a known base tool.
@@ -135,7 +157,7 @@ void AiMcpSessionPoolTests::liveWin32McpReuseAndIsolation_optIn() {
             return t.name == QLatin1String("list_windows");
         });
     QVERIFY2(has_list_windows, qPrintable(error));
-    QCOMPARE(pool.openSessionCount(), 1);
+    QCOMPARE(pool.pooledSlotCount(), 1);
 
     // A different launch environment must NOT reuse the read-only process.
     QProcessEnvironment full = base;
@@ -143,10 +165,10 @@ void AiMcpSessionPoolTests::liveWin32McpReuseAndIsolation_optIn() {
     sak::ai::AiMcpStdioCallRequest full_request = request;
     full_request.environment = full;
     QVERIFY2(!pool.callTool(full_request, &error).isEmpty(), qPrintable(error));
-    QCOMPARE(pool.openSessionCount(), 2);
+    QCOMPARE(pool.pooledSlotCount(), 2);
 
     pool.closeAll();
-    QCOMPARE(pool.openSessionCount(), 0);
+    QCOMPARE(pool.pooledSlotCount(), 0);
 }
 
 QTEST_GUILESS_MAIN(AiMcpSessionPoolTests)

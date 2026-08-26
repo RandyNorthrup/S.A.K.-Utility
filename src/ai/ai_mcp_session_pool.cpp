@@ -31,6 +31,14 @@ QString sessionKey(const AiMcpStdioCallRequest& request) {
     QStringList entries = request.environment.toStringList();
     std::ranges::sort(entries);
     QCryptographicHash hash(QCryptographicHash::Sha256);
+    // INHERITANCE IS PART OF THE ENVIRONMENT, and toStringList() cannot express it: an
+    // inherit-from-parent environment reports an EMPTY list, exactly like one that was
+    // deliberately emptied. Those two are as different as launch environments get -- one hands
+    // the server every variable this process holds, the other hands it none -- yet they hashed
+    // identically, so a session opened with the full user environment could be reused for a call
+    // that asked for a bare one. That is the precise failure this key exists to prevent.
+    hash.addData(request.environment.inheritsFromParent() ? QByteArrayLiteral("inherit:1")
+                                                          : QByteArrayLiteral("inherit:0"));
     for (const QString& entry : entries) {
         const QByteArray bytes = entry.toUtf8();
         hash.addData(QByteArray::number(bytes.size()) + ':');
@@ -149,8 +157,11 @@ QJsonObject AiMcpSessionPool::callTool(const AiMcpStdioCallRequest& request,
     if (error_message != nullptr) {
         error_message->clear();
     }
-    // Re-wrap into the full JSON-RPC message shape the one-shot client returns, so
-    // this is a drop-in transport for callers that read message["result"].
+    // Wrap the tool result so callers that read message["result"] -- the shape the one-shot
+    // client returns -- work unchanged against this transport. This is NOT a complete JSON-RPC
+    // message: the "jsonrpc" and "id" members belong to the session's own request/response
+    // correlation and are consumed there, so re-synthesising them here would invent values
+    // rather than report them. The comment used to claim the full shape; it does not.
     return QJsonObject{{QStringLiteral("result"), result}};
 }
 
@@ -207,7 +218,7 @@ void AiMcpSessionPool::closeAll() {
     m_sessions.clear();
 }
 
-int AiMcpSessionPool::openSessionCount() const {
+int AiMcpSessionPool::pooledSlotCount() const {
     const QMutexLocker lock(&m_mutex);
     return static_cast<int>(m_sessions.size());
 }

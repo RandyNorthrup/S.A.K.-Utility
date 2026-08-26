@@ -2325,6 +2325,34 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
     made to satisfy a checker.
     MUTATION-PROVED: shipping the raw string as the display copy turns the suite RED, and
     dropping the risky_change fail-close turns it RED. Build exit 0 confirmed separately.
+  - THE MCP SESSION POOL, 2026-08-26. Three findings, one of them the pool's whole reason for
+    keying sessions the way it does.
+      * INHERIT-FROM-PARENT AND EXPLICITLY-EMPTY HASHED IDENTICALLY. The cache key exists so that
+        "a server started read-only must never be reused for a full-access call" -- its own
+        comment -- and it hashes the sorted environment to get there. But
+        QProcessEnvironment::toStringList() reports an EMPTY list for an INHERITING environment,
+        exactly as it does for one that was deliberately emptied, and inheritance is not
+        expressible in that list at all. Those two are as different as launch environments get:
+        one hands the server every variable this process holds, the other hands it none. A
+        session opened with the full user environment could therefore be reused for a call that
+        asked for a bare one. inheritsFromParent() is now part of the hash.
+        NOTHING CONSTRUCTS AN INHERITING ENVIRONMENT TODAY -- verified by grep across the tree --
+        so this is recorded as hardening rather than a live defect. It is still the isolation
+        guarantee, and it should hold before something starts relying on it, not after.
+      * openSessionCount() PROMISED SOMETHING ITS BODY NEVER COMPUTED. It returns
+        m_sessions.size(), the number of pooled SLOTS, including a slot whose session already
+        failed or was closed and is waiting to be reopened or reclaimed. The doc comment was
+        accurate; only the NAME lied. Renamed pooledSlotCount(). No production caller exists --
+        it is a test/diagnostic accessor -- so the rename is free, and honest naming is worth
+        more here than an unused alias.
+      * callTool's comment CLAIMED "the full JSON-RPC message shape" while returning only
+        {"result": ...}. The second half of the same sentence was already accurate ("a drop-in
+        transport for callers that read message[result]"). Corrected to say what it does and why
+        the missing members are missing: "jsonrpc" and "id" belong to the session's own
+        request/response correlation and are consumed there, so re-synthesising them at this
+        layer would INVENT values rather than report them.
+    MUTATION-PROVED: dropping the inheritance byte from the key turns the suite RED. Build exit 0
+    confirmed separately.
     A MUTATION DRILL ON THE MIGRATION FOUND A REAL COVERAGE HOLE, which is the point of running
     one on a "behaviour-preserving" change. Breaking the shared helper turned three of the four
     migrated suites RED and left test_mbox_writer GREEN -- because MboxWriter::sanitizeFolderName

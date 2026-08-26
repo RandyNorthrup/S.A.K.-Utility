@@ -48,9 +48,12 @@ public:
     /// run by the destructor.
     void closeAll();
 
-    /// Number of pooled session slots currently held (a slot with a live or a
-    /// last-failed session). For tests / diagnostics.
-    [[nodiscard]] int openSessionCount() const;
+    /// Number of pooled session SLOTS currently held -- including a slot whose session already
+    /// failed or was closed and is waiting to be reopened or reclaimed. This is deliberately NOT
+    /// a count of live sessions, and is named for what it returns: it was called
+    /// openSessionCount(), which promised something the body never computed. For tests and
+    /// diagnostics.
+    [[nodiscard]] int pooledSlotCount() const;
 
     /// The cache key derived for a request (command + a hash of its full launch
     /// environment). Exposed for tests.
