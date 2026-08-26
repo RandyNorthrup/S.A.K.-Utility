@@ -2416,6 +2416,25 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
     is deliberately three-phase -- index answers, truncated index answers WRONG (zero hits for a
     record that exists), marker present and the raw logs answer correctly -- so it pins the
     demotion itself rather than just "search works".
+  - THE SYSTEM REPORT TOLD THE TECHNICIAN THE WRONG FILE SIZE, 2026-08-26. The report is WRITTEN
+    as UTF-8 (report.toUtf8()) but its size was taken with QString::size(), which counts UTF-16
+    code units. Both the ExecutionResult's bytes_processed and the "Size: N KB" line shown after
+    a run therefore disagreed with the file on a localized Windows, where device names, user
+    names and service descriptions are not ASCII. Same unit-mismatch class as the memory cap
+    above, in a number a human is invited to check.
+    THE FIRST FIX WAS ALSO WRONG, AND THE TEST CAUGHT IT -- worth recording, because it was a
+    subtler instance of the very same mistake. Reporting data.size(), the ENCODED payload handed
+    to write(), still missed by one byte: the device is opened with QIODevice::Text, so on Windows
+    every '
+' is translated to "
+" on the way out and the file is larger than what was
+    written. saveReport now asks the FILESYSTEM for the committed file's size, which is the number
+    the technician can verify in Explorer, and the test pins all three relations: equal to the
+    file on disk, strictly greater than the UTF-16 unit count (so the fixture really does
+    distinguish the units rather than passing on ASCII where they coincide), and at least the
+    encoded payload.
+    Reached through this tree's `friend class` test-seam convention rather than by widening the
+    public API.
     A MUTATION DRILL ON THE MIGRATION FOUND A REAL COVERAGE HOLE, which is the point of running
     one on a "behaviour-preserving" change. Breaking the shared helper turned three of the four
     migrated suites RED and left test_mbox_writer GREEN -- because MboxWriter::sanitizeFolderName

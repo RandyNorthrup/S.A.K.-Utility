@@ -8,6 +8,8 @@
 #include <QString>
 #include <QStringList>
 
+class GenerateSystemReportActionTests;
+
 namespace sak {
 
 /**
@@ -16,6 +18,13 @@ namespace sak {
  * Generates comprehensive HTML system report using msinfo32 and PowerShell.
  */
 class GenerateSystemReportAction : public QuickAction {
+    // Test seam, matching this tree's convention (DriveScannerTests, FileScannerTests,
+    // PackageMatcherTests, TestMboxWriter, ...). saveReport writes the report as UTF-8 and now
+    // reports the BYTE count it wrote; that unit is the whole point of the fix, so it needs a
+    // test that can call it. Widening the public API to reach it would not be behaviour-
+    // preserving; a friend declaration is.
+    friend class ::GenerateSystemReportActionTests;
+
     Q_OBJECT
 
 public:
@@ -88,7 +97,10 @@ private:
 
     /// @brief Saves the assembled report to disk with timing footer.
     /// @return True on successful write.
-    bool saveReport(const QString& report, const QString& filepath);
+    /// Writes @p report to @p filepath as UTF-8. @p bytes_written receives the number of BYTES
+    /// actually written -- not QString::size(), which counts UTF-16 code units and disagrees with
+    /// the file on disk for any non-ASCII content.
+    bool saveReport(const QString& report, const QString& filepath, qint64* bytes_written);
 
     /// @brief Save the report file and emit the final ExecutionResult
     void saveReportAndFinish(const QString& report,

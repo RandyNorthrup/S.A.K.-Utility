@@ -177,7 +177,8 @@ void GenerateSystemReportAction::execute() {
 void GenerateSystemReportAction::saveReportAndFinish(const QString& report,
                                                      const QString& filepath,
                                                      const QDateTime& start_time) {
-    const bool save_success = saveReport(report, filepath);
+    qint64 report_bytes = 0;
+    const bool save_success = saveReport(report, filepath, &report_bytes);
     const bool all_collectors_ok = m_collector_errors.isEmpty();
     const bool overall_success = reportGenerationSucceeded(save_success, all_collectors_ok);
 
@@ -187,7 +188,7 @@ void GenerateSystemReportAction::saveReportAndFinish(const QString& report,
 
     ExecutionResult result;
     result.duration_ms = duration_ms;
-    result.bytes_processed = report.size();
+    result.bytes_processed = report_bytes;
     result.success = overall_success;
 
     if (overall_success) {
@@ -196,7 +197,7 @@ void GenerateSystemReportAction::saveReportAndFinish(const QString& report,
         result.output_path = filepath;
         result.log = QString("Report saved to: %1\nSize: %2 KB\nDuration: %3 seconds")
                          .arg(filepath)
-                         .arg(static_cast<double>(report.size()) / sak::kBytesPerKBf,
+                         .arg(static_cast<double>(report_bytes) / sak::kBytesPerKBf,
                               0,
                               'f',
                               kReportSizeDisplayPrecision)
@@ -499,7 +500,9 @@ QString GenerateSystemReportAction::gatherQtAndVolumeInfo() const {
     return section;
 }
 
-bool GenerateSystemReportAction::saveReport(const QString& report, const QString& filepath) {
+bool GenerateSystemReportAction::saveReport(const QString& report,
+                                            const QString& filepath,
+                                            qint64* bytes_written) {
     // QSaveFile: the report is written to a temp file and atomically renamed on
     // commit(), so a crash mid-write never leaves a truncated report in place,
     // and commit() surfaces a close/flush error instead of it being ignored.
@@ -512,7 +515,23 @@ bool GenerateSystemReportAction::saveReport(const QString& report, const QString
         file.cancelWriting();
         return false;
     }
-    return file.commit();
+    if (!file.commit()) {
+        return false;
+    }
+    // Report the SIZE OF THE FILE ON DISK, which is the number the technician can verify in
+    // Explorer. The caller used QString::size() for both the ExecutionResult's bytes_processed
+    // and the "Size: N KB" line, and that counts UTF-16 code units -- so on a localized Windows,
+    // where device names, user names and service descriptions are not ASCII, both numbers
+    // disagreed with the file.
+    //
+    // The encoded payload size is NOT the same thing either, and measuring it here would have
+    // been a subtler version of the same mistake: the device is opened with QIODevice::Text, so
+    // on Windows every '\n' is translated to "\r\n" on the way out and the file is larger than
+    // the bytes handed to write(). Ask the filesystem.
+    if (bytes_written != nullptr) {
+        *bytes_written = QFileInfo(filepath).size();
+    }
+    return true;
 }
 
 }  // namespace sak
