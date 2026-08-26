@@ -1395,17 +1395,9 @@ static qint64 calculateSourceSize(const QString& path, const std::atomic_bool* c
 // Name/Dhcp/IPv4/Prefix/Gateway/Dns fields, and the Enabled/Disabled DHCP enum are all
 // language-neutral. EthernetConfigInfo::parseNetIpConfigJson consumes the JSON (and converts the
 // CIDR Prefix to the dotted-quad subnet mask the restore path feeds to `netsh set address`).
-constexpr auto kEthernetConfigPowerShell =
-    "$ErrorActionPreference='Stop'; Get-NetIPConfiguration | ForEach-Object { "
-    "$a=$_.InterfaceAlias; "
-    "$d=(Get-NetIPInterface -InterfaceAlias $a -AddressFamily IPv4 "
-    "-ErrorAction SilentlyContinue).Dhcp; "
-    "[PSCustomObject]@{ Name=$a; Dhcp=\"$d\"; "
-    "IPv4=($_.IPv4Address.IPAddress | Select-Object -First 1); "
-    "Prefix=($_.IPv4Address.PrefixLength | Select-Object -First 1); "
-    "Gateway=($_.IPv4DefaultGateway.NextHop | Select-Object -First 1); "
-    "Dns=@($_.DNSServer | Where-Object {$_.AddressFamily -eq 2} | "
-    "ForEach-Object {$_.ServerAddresses}) } } | ConvertTo-Json -Depth 4";
+// The scan command now lives beside its parser in user_profile_types.h, because
+// EthernetConfigManager needs the identical command -- see kNetIpConfigPowerShell.
+constexpr auto kEthernetConfigPowerShell = sak::kNetIpConfigPowerShell;
 
 static const auto kCommonAppDataSources = std::to_array<AppDataSourceInfo>({
     // Browsers

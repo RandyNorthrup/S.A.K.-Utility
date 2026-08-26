@@ -50,12 +50,14 @@ if (-not $codexCmd) {
 $briefDir = Join-Path $RepoRoot "docs/review_briefs"
 New-Item -ItemType Directory -Force -Path $briefDir | Out-Null
 
-# The tree must be clean-ish going in, so "did Codex touch anything?" is answerable afterwards.
-$baseline = (git status --porcelain) -join "`n"
+# The "did Codex write?" check samples the tree immediately BEFORE and AFTER each unit, not once
+# for the whole run. A run-wide baseline also flags edits made by whoever is working in the repo
+# while the batch is in flight, which is a false alarm that stops the batch for no reason -- and a
+# per-call window is the tighter question anyway: did anything change DURING this review.
 
-$args = @("next", "--count", "$Count")
-if ($Group) { $args += @("--group", $Group) }
-$pending = (python scripts/review_ledger.py @args) |
+$ledgerArgs = @("next", "--count", "$Count")
+if ($Group) { $ledgerArgs += @("--group", $Group) }
+$pending = (python scripts/review_ledger.py @ledgerArgs) |
     Where-Object { $_ -match "^\s{2}\S" } | ForEach-Object { $_.Trim() }
 
 if (-not $pending) {
@@ -82,6 +84,9 @@ list with no reasoning. If there is nothing real to report, output exactly: NO F
 Do NOT modify, create or delete any file; only read and report.
 "@
 
+    # Sampled here, one line before the call, so a concurrent edit elsewhere in the repo
+    # cannot be mistaken for Codex having written something.
+    $before = (git status --porcelain) -join "`n"
     $log = Join-Path $env:TEMP "codex_unit_$safeName.log"
     $prompt | & $codexCmd.Source exec -m gpt-5.6-sol -c model_reasoning_effort=xhigh `
         --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check `
@@ -97,7 +102,7 @@ Do NOT modify, create or delete any file; only read and report.
     # is not the brief itself means the run cannot be trusted, so stop and let a human look.
     $now = (git status --porcelain) -join "`n"
     $unexpected = ($now -split "`n" | Where-Object {
-        $_ -and ($baseline -notmatch [regex]::Escape($_)) -and ($_ -notmatch "review_ledger_state|review_briefs")
+        $_ -and ($before -notmatch [regex]::Escape($_)) -and ($_ -notmatch "review_ledger_state|review_briefs")
     })
     if ($unexpected) {
         Write-Host "    WORKING TREE CHANGED during a read-only review. STOPPING."

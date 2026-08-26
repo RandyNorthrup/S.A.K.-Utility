@@ -25,8 +25,15 @@ namespace {
 // store corruption detected." verdict; "repairable" covers the corrupt verdict). The generic
 // "The operation completed successfully" is DELIBERATELY not accepted: DISM prints it for almost
 // any command, so treating it as a health verdict would let output that lacks the real corruption
-// line pass as healthy. On elevation refusal / error 740 / timeout / a localized verdict, stdout
-// carries none of these, so the probe is treated as "did not run" and verification fails closed.
+// line pass as healthy. On elevation refusal / error 740 / timeout, stdout carries none of these,
+// so the probe is treated as "did not run" and verification fails closed.
+//
+// A LOCALIZED verdict used to land in that same bucket. That was SAFE -- it degraded to "could
+// not assess" rather than a false clean -- but it also meant this check could never assess the
+// component store at all on a non-English Windows. Every DISM invocation here now passes
+// /English, which forces English output regardless of system language, so these phrases are what
+// DISM prints on any locale. The fail-closed behaviour is unchanged if the switch is ever
+// unavailable: the phrases simply do not match and the probe reports "did not run".
 bool dismProbeCompleted(const ProcessResult& proc) {
     return proc.std_out.contains("corruption", Qt::CaseInsensitive) ||
            proc.std_out.contains("repairable", Qt::CaseInsensitive);
@@ -114,7 +121,7 @@ void VerifySystemFilesAction::runSFC() {
 bool VerifySystemFilesAction::runDismCheckHealth() {
     const QString script =
         "& (Join-Path ([System.Environment]::GetFolderPath('System')) 'DISM.exe') "
-        "/Online /Cleanup-Image /CheckHealth; "
+        "/Online /Cleanup-Image /CheckHealth /English; "
         "$LASTEXITCODE";
 
     // Thread cancellation like runSFC/runDismRestoreHealth so cancel() force-terminates the
@@ -140,7 +147,7 @@ bool VerifySystemFilesAction::runDismScanHealth() {
     Q_EMIT executionProgress("DISM: Scanning component store...", progress::kStep50);
     const QString script =
         "& (Join-Path ([System.Environment]::GetFolderPath('System')) 'DISM.exe') "
-        "/Online /Cleanup-Image /ScanHealth";
+        "/Online /Cleanup-Image /ScanHealth /English";
 
     const ProcessResult proc = runPowerShell(script, sak::kTimeoutDismScanMs, true, true, [this]() {
         return isCancelled();
@@ -163,7 +170,7 @@ void VerifySystemFilesAction::runDismRestoreHealth() {
     Q_EMIT executionProgress("DISM: Repairing component store...", progress::kStep65);
     const QString script =
         "& (Join-Path ([System.Environment]::GetFolderPath('System')) 'DISM.exe') "
-        "/Online /Cleanup-Image /RestoreHealth /LimitAccess";
+        "/Online /Cleanup-Image /RestoreHealth /LimitAccess /English";
 
     Q_EMIT executionProgress("DISM restoring...", progress::kStep75);
     const ProcessResult proc = runPowerShell(

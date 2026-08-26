@@ -4540,6 +4540,41 @@ rather than as generic advice.
       it; it was noticed by using the application. Add startup and key-operation time
       budgets as CI assertions
 - [~] R5-G23-4 HOSTILE ENVIRONMENT MATRIX. The code assumes C: is the system drive,
+  - WHOLE-TREE LOCALE SWEEP 2026-08-26. The localized-OS-text class had now appeared THREE times
+    (ipconfig /displaydns, netsh ethernet config, powercfg /list), which is a pattern rather than
+    a coincidence, so every .cpp that runs an OS command AND matches English words in its output
+    was enumerated mechanically. 11 candidates; each read before judging. HONEST YIELD -- one real
+    defect, one improvement, and three that were ALREADY defended:
+      * REAL, FIXED: EthernetConfigManager::captureSettings still scraped `netsh interface ip show
+        config` for "DHCP enabled:", "IP Address:", "Subnet Prefix:", "Default Gateway:" and the
+        word "Yes". netsh translates every one, so on a non-English Windows each field came back
+        empty and the snapshot was blank -- and that snapshot is what a RESTORE replays onto the
+        adapter. The backup wizard's copy of this identical scrape was fixed earlier in this
+        campaign; THIS call site was missed entirely. Both now share one constant,
+        sak::kNetIpConfigPowerShell, declared beside its parser so they cannot drift apart again,
+        and the manager maps through the existing EthernetConfigInfo::parseNetIpConfigJson rather
+        than growing a second parser. New public seam
+        EthernetConfigManager::snapshotFromNetIpConfig is unit-tested with a German adapter name,
+        CIDR-to-dotted-quad conversion, case-insensitive adapter selection, an absent adapter
+        (which must borrow NO fields from a neighbour), and empty/malformed input.
+      * IMPROVEMENT, NOT A DEFECT: VerifySystemFilesAction's DISM parse. A localized verdict was
+        already handled -- dismProbeCompleted refuses to set m_dism_check_assessed unless an
+        authoritative phrase is present, so it degraded to "could not assess" rather than a false
+        clean. Safe, but it meant DISM verification could never assess anything outside English.
+        All three DISM invocations now pass /English, which forces English output regardless of
+        system language; the fail-closed path is unchanged if the switch is ever unavailable.
+      * ALREADY DEFENDED (no change): leftover_scanner's firewall dump has
+        firewallDumpHeaderMissing, written precisely to detect a localized dump whose separators
+        are present but whose "Rule Name:" headers are absent, and mark the phase UNRELIABLE
+        rather than report a deceptively empty rule list. windows_usb_creator_extract's
+        "Active : Yes" diskpart check documents "GPT/localized -> no match -> fails closed" and
+        does exactly that. chocolatey_manager parses choco's own output, which is English-only.
+        The remaining candidates (WMI property KEYS, PowerShell booleans, a GUI table column) are
+        not localized text at all.
+    The pattern to keep: a scrape of OS command output is a defect only when nothing downstream
+    notices the parse produced nothing. Where the code already fails closed on an unreadable
+    dump, the localized case is degraded-but-safe, and the fix is to make the tool speak a fixed
+    language (/English) rather than to re-write the parser.
   - MATRIX TESTS 2026-08-25 (>MAX_PATH, UNC and LOCALE dimensions), via the EXTRACT-THE-DECISION
     seam rather than the environment-injection harness this item had been waiting on:
       * >MAX_PATH + UNC: the extended-length conversion inside user_profile_backup_worker's

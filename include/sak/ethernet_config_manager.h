@@ -109,12 +109,18 @@ public:
     /// @brief List available Ethernet adapter names for backup
     [[nodiscard]] QStringList listEthernetAdapters();
 
+    /// @brief Select @p adapterName out of a Get-NetIPConfiguration JSON scan and map it into a
+    ///        snapshot. Language-neutral, unlike the netsh label scrape it replaced.
+    [[nodiscard]] static EthernetConfigSnapshot snapshotFromNetIpConfig(const QString& json,
+                                                                        const QString& adapterName);
+
 Q_SIGNALS:
     /// @brief Emitted with status messages during backup/restore
     void logOutput(const QString& message);
 
     /// @brief Emitted on errors
     void errorOccurred(const QString& error);
+
 
 private:
     /// @param dnsApplied Optional out: whether the DNS-to-automatic (source=dhcp)
@@ -134,6 +140,13 @@ private:
     [[nodiscard]] QString runNetsh(const QStringList& args, bool* ok = nullptr);
 
     /// @brief Parse the output of `netsh interface ip show config` for an adapter
+    /// @brief Run a PowerShell scan from System32, failing closed if it cannot be resolved.
+    [[nodiscard]] QString runPowerShellCapture(const QString& script);
+
+
+    /// @brief LEGACY English-only `netsh ... show config` parser. No longer on the capture path
+    ///        (see snapshotFromNetIpConfig); retained because saved snapshots and the restore
+    ///        tooling still reference the netsh text format.
     [[nodiscard]] static EthernetConfigSnapshot parseNetshConfig(const QString& output,
                                                                  const QString& adapterName);
 };

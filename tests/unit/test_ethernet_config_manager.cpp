@@ -25,6 +25,9 @@ private Q_SLOTS:
     void construction_default();
     void construction_nonCopyable();
 
+    // -- Locale-independent capture (R5-G23-4) ---------------------
+    void snapshotFromNetIpConfig_isLocaleIndependent();
+
     // -- EthernetConfigSnapshot ------------------------------------
     void snapshot_defaults();
     void snapshot_isValid_emptyInvalid();
@@ -49,6 +52,68 @@ private Q_SLOTS:
 // ===================================================================
 // Construction
 // ===================================================================
+
+void TestEthernetConfigManager::snapshotFromNetIpConfig_isLocaleIndependent() {
+    // R5-G23-4 (locale). captureSettings used to run `netsh interface ip show config` and match
+    // the English labels "DHCP enabled:", "IP Address:", "Subnet Prefix:", "Default Gateway:"
+    // and the word "Yes". netsh TRANSLATES every one of them, so on a non-English Windows each
+    // field came back empty and the snapshot was silently blank -- and that snapshot is what a
+    // RESTORE later replays onto the adapter.
+    //
+    // The backup wizard's copy of this same scrape was fixed earlier; THIS call site was missed,
+    // which is why both now share kNetIpConfigPowerShell. The scan's field names
+    // (Name/Dhcp/IPv4/Prefix/Gateway/Dns) and the Enabled/Disabled enum do not localise, so the
+    // fixture below is what the cmdlet emits on ANY locale -- only the adapter NAME differs, and
+    // a non-ASCII one is used here on purpose.
+    const QString json = QStringLiteral(
+        R"([{"Name":"Ethernet","Dhcp":"Disabled","IPv4":"192.168.1.50","Prefix":24,)"
+        R"("Gateway":"192.168.1.1","Dns":["1.1.1.1","8.8.8.8"]},)"
+        R"({"Name":"WLAN-Verbindung","Dhcp":"Enabled","IPv4":"10.0.0.9","Prefix":16,)"
+        R"("Gateway":null,"Dns":[]}])");
+
+    const auto wired = EthernetConfigManager::snapshotFromNetIpConfig(json,
+                                                                      QStringLiteral("Ethernet"));
+    QCOMPARE(wired.adapterName, QStringLiteral("Ethernet"));
+    QVERIFY(!wired.dhcpEnabled);  // "Disabled" is the enum, not a translated "No"
+    QCOMPARE(wired.ipv4Address, QStringLiteral("192.168.1.50"));
+    // The restore path feeds subnet_mask to `netsh set address`, which wants a dotted quad, so
+    // the CIDR prefix must arrive converted -- not as "24".
+    QCOMPARE(wired.ipv4SubnetMask, QStringLiteral("255.255.255.0"));
+    QCOMPARE(wired.ipv4Gateway, QStringLiteral("192.168.1.1"));
+    QCOMPARE(wired.ipv4DnsServers,
+             QStringList({QStringLiteral("1.1.1.1"), QStringLiteral("8.8.8.8")}));
+
+    // A German adapter name selects correctly, and a DHCP adapter with no gateway and no DNS
+    // yields empty fields rather than stale ones.
+    const auto wireless =
+        EthernetConfigManager::snapshotFromNetIpConfig(json, QStringLiteral("WLAN-Verbindung"));
+    QCOMPARE(wireless.adapterName, QStringLiteral("WLAN-Verbindung"));
+    QVERIFY(wireless.dhcpEnabled);
+    QCOMPARE(wireless.ipv4SubnetMask, QStringLiteral("255.255.0.0"));
+    QVERIFY(wireless.ipv4Gateway.isEmpty());
+    QVERIFY(wireless.ipv4DnsServers.isEmpty());
+
+    // Adapter selection is case-insensitive (Windows adapter names are).
+    QCOMPARE(EthernetConfigManager::snapshotFromNetIpConfig(json, QStringLiteral("ETHERNET"))
+                 .ipv4Address,
+             QStringLiteral("192.168.1.50"));
+
+    // An adapter that is not in the scan yields a snapshot with NO borrowed fields: reporting a
+    // neighbouring adapter's address here would restore the wrong settings onto it.
+    const auto missing =
+        EthernetConfigManager::snapshotFromNetIpConfig(json, QStringLiteral("NoSuchAdapter"));
+    QCOMPARE(missing.adapterName, QStringLiteral("NoSuchAdapter"));
+    QVERIFY(missing.ipv4Address.isEmpty());
+    QVERIFY(missing.ipv4Gateway.isEmpty());
+    QVERIFY(missing.ipv4DnsServers.isEmpty());
+
+    // Empty / malformed scan output is not a configuration.
+    QVERIFY(EthernetConfigManager::snapshotFromNetIpConfig(QString(), QStringLiteral("Ethernet"))
+                .ipv4Address.isEmpty());
+    QVERIFY(EthernetConfigManager::snapshotFromNetIpConfig(QStringLiteral("not json"),
+                                                           QStringLiteral("Ethernet"))
+                .ipv4Address.isEmpty());
+}
 
 void TestEthernetConfigManager::construction_default() {
     EthernetConfigManager mgr;

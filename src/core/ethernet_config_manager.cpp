@@ -8,6 +8,9 @@
 
 #include "sak/io_write_utils.h"
 #include "sak/process_runner.h"
+// EthernetConfigInfo::parseNetIpConfigJson + kNetIpConfigPowerShell: the language-neutral adapter
+// scan this manager shares with the backup wizard.
+#include "sak/user_profile_types.h"
 
 #include <QAbstractSocket>
 #include <QDateTime>
@@ -25,6 +28,10 @@
 namespace sak {
 
 namespace {
+// Get-NetIPConfiguration enumerates every adapter and queries each one's DHCP state, so it is
+// slower than the single netsh call it replaced. Bounded, not unbounded: a scan that never
+// returns must still fail the capture rather than hang the caller.
+constexpr int kAdapterScanTimeoutMs = 30'000;
 constexpr int kAdapterTypeCaptureGroup = 3;
 constexpr int kAdapterNameCaptureGroup = 4;
 
@@ -143,8 +150,13 @@ EthernetConfigSnapshot EthernetConfigManager::captureSettings(const QString& ada
     // below as a failed capture. No assert: see fromJson.
     Q_EMIT logOutput(QString("Capturing settings for adapter: %1").arg(adapterName));
 
-    const QString output =
-        runNetsh({"interface", "ip", "show", "config", QString("name=%1").arg(adapterName)});
+    // LANGUAGE-NEUTRAL capture. This used to run `netsh interface ip show config` and match the
+    // English labels "DHCP enabled:", "IP Address:", "Subnet Prefix:", "Default Gateway:" and the
+    // word "Yes". netsh TRANSLATES all of them, so on a non-English Windows every field came back
+    // empty and the snapshot was silently blank -- and this snapshot is what a RESTORE later
+    // replays onto the adapter. The backup wizard's copy of this same scrape was already fixed
+    // this way; this call site was missed, so both now share kNetIpConfigPowerShell.
+    const QString output = runPowerShellCapture(QString::fromLatin1(sak::kNetIpConfigPowerShell));
 
     if (output.isEmpty()) {
         Q_EMIT errorOccurred(
@@ -152,7 +164,7 @@ EthernetConfigSnapshot EthernetConfigManager::captureSettings(const QString& ada
         return {};
     }
 
-    auto snapshot = parseNetshConfig(output, adapterName);
+    auto snapshot = snapshotFromNetIpConfig(output, adapterName);
     snapshot.backupTimestamp = QDateTime::currentDateTime().toString(Qt::ISODate);
     snapshot.computerName = QSysInfo::machineHostName();
 
@@ -507,6 +519,60 @@ QString EthernetConfigManager::runNetsh(const QStringList& args, bool* ok) {
     }
 
     return result.std_out;
+}
+
+QString EthernetConfigManager::runPowerShellCapture(const QString& script) {
+    // Same System32-qualified, fail-closed launch rule as runNetsh: never whatever powershell
+    // PATH or the current directory happens to supply.
+    const QString ps_exe =
+        sak::system32Path(QStringLiteral("WindowsPowerShell\\v1.0\\powershell.exe"));
+    if (ps_exe.isEmpty()) {
+        Q_EMIT errorOccurred(QStringLiteral("Cannot resolve the System32 powershell.exe path"));
+        return {};
+    }
+    const auto result = sak::runProcess(ps_exe,
+                                        {QStringLiteral("-NoProfile"),
+                                         QStringLiteral("-NonInteractive"),
+                                         QStringLiteral("-ExecutionPolicy"),
+                                         QStringLiteral("Bypass"),
+                                         QStringLiteral("-Command"),
+                                         script},
+                                        kAdapterScanTimeoutMs);
+    if (result.timed_out || !result.succeeded()) {
+        Q_EMIT errorOccurred(QStringLiteral("Adapter configuration scan failed"));
+        return {};
+    }
+    return result.std_out;
+}
+
+EthernetConfigSnapshot EthernetConfigManager::snapshotFromNetIpConfig(const QString& json,
+                                                                      const QString& adapterName) {
+    // parseNetIpConfigJson already owns the language-neutral field mapping (including the CIDR
+    // prefix to dotted-quad mask conversion the restore path needs), so this only selects the
+    // requested adapter and maps into the snapshot type.
+    const QVector<EthernetConfigInfo> configs = EthernetConfigInfo::parseNetIpConfigJson(json);
+    EthernetConfigSnapshot snap;
+    snap.adapterName = adapterName;
+    for (const EthernetConfigInfo& cfg : configs) {
+        if (cfg.adapter_name.compare(adapterName, Qt::CaseInsensitive) != 0) {
+            continue;
+        }
+        snap.adapterName = cfg.adapter_name;
+        snap.description = cfg.description;
+        snap.dhcpEnabled = cfg.dhcp_enabled;
+        snap.ipv4Address = cfg.ip_address;
+        snap.ipv4SubnetMask = cfg.subnet_mask;
+        snap.ipv4Gateway = cfg.default_gateway;
+        snap.ipv4DnsServers.clear();
+        if (!cfg.dns_primary.isEmpty()) {
+            snap.ipv4DnsServers.append(cfg.dns_primary);
+        }
+        if (!cfg.dns_secondary.isEmpty()) {
+            snap.ipv4DnsServers.append(cfg.dns_secondary);
+        }
+        break;
+    }
+    return snap;
 }
 
 EthernetConfigSnapshot EthernetConfigManager::parseNetshConfig(const QString& output,

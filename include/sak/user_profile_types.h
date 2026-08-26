@@ -221,6 +221,28 @@ struct EthernetConfigInfo {
     [[nodiscard]] static QVector<EthernetConfigInfo> parseNetIpConfigJson(const QString& json);
 };
 
+/// @brief The language-neutral adapter scan that feeds parseNetIpConfigJson.
+///
+/// Declared here, beside its parser, because TWO call sites need it: the backup wizard's ethernet
+/// page and EthernetConfigManager::captureSettings. They were fixed at different times, and the
+/// second was still scraping localized `netsh interface ip show config` text long after the first
+/// stopped -- one shared constant is what stops that drifting apart again.
+///
+/// Every field read here (Name / Dhcp / IPv4 / Prefix / Gateway / Dns) and the Enabled/Disabled
+/// DHCP enum are language-neutral, unlike the "DHCP enabled: Yes" / "IP Address:" labels netsh
+/// prints, which are translated and so matched nothing outside English.
+constexpr auto kNetIpConfigPowerShell =
+    "$ErrorActionPreference='Stop'; Get-NetIPConfiguration | ForEach-Object { "
+    "$a=$_.InterfaceAlias; "
+    "$d=(Get-NetIPInterface -InterfaceAlias $a -AddressFamily IPv4 "
+    "-ErrorAction SilentlyContinue).Dhcp; "
+    "[PSCustomObject]@{ Name=$a; Dhcp=\"$d\"; "
+    "IPv4=($_.IPv4Address.IPAddress | Select-Object -First 1); "
+    "Prefix=($_.IPv4Address.PrefixLength | Select-Object -First 1); "
+    "Gateway=($_.IPv4DefaultGateway.NextHop | Select-Object -First 1); "
+    "Dns=@($_.DNSServer | Where-Object {$_.AddressFamily -eq 2} | "
+    "ForEach-Object {$_.ServerAddresses}) } } | ConvertTo-Json -Depth 4";
+
 /**
  * @brief Application data source for backup/restore
  */

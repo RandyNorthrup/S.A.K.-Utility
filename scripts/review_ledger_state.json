@@ -2162,8 +2162,11 @@
       "status": "reviewed"
     },
     "src/ai/ai_command_guard.cpp": {
+      "brief": "docs/review_briefs/src_ai_ai_command_guard.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "eb4ae7cb877e9961f2262e48a3f244028c8c133c",
+      "status": "reviewed"
     },
     "src/ai/ai_command_tool_planner.cpp": {
       "group": "src",

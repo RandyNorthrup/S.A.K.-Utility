@@ -1258,6 +1258,9 @@ add_executable(test_ethernet_config_manager
     ../src/core/ethernet_config_manager.cpp
     ../include/sak/ethernet_config_manager.h  # Q_OBJECT -> AUTOMOC
     ../src/core/process_runner.cpp
+    # EthernetConfigInfo::parseNetIpConfigJson -- the language-neutral adapter scan the manager
+    # now shares with the backup wizard instead of scraping localized netsh labels.
+    ../src/core/user_profile_types.cpp
 )
 set_target_properties(test_ethernet_config_manager PROPERTIES
     AUTOMOC ON
@@ -1812,6 +1815,10 @@ if(SAK_ENABLE_AI_ASSISTANT)
         # directly. The DHCP EXECUTION is not unit-tested (needs admin + would change the host's
         # network); the adapter exact-match guard + gating are.
         ${CMAKE_SOURCE_DIR}/src/core/ethernet_config_manager.cpp
+        # EthernetConfigManager now maps its capture through
+        # EthernetConfigInfo::parseNetIpConfigJson (language-neutral, replacing the
+        # localized netsh scrape), so its translation unit is required here too.
+        ${CMAKE_SOURCE_DIR}/src/core/user_profile_types.cpp
         # files.compress_zip / files.extract_zip: FileExplorerArchiveService (static, synchronous,
         # QZipReader/QZipWriter via Qt6::CorePrivate -- already linked). zip-slip/bomb hardening is
         # in the engine; the op-layer path guards + new/empty-dir + no-clobber are covered by tests.
@@ -6537,6 +6544,8 @@ add_executable(test_network_diagnostic_controller
     ../src/core/connectivity_tester.cpp
     ../src/core/dns_diagnostic_tool.cpp
     ../src/core/ethernet_config_manager.cpp
+    # EthernetConfigInfo::parseNetIpConfigJson -- see the ethernet manager's locale fix.
+    ../src/core/user_profile_types.cpp
     ../src/core/firewall_rule_auditor.cpp
     ../src/core/network_adapter_inspector.cpp
     ../src/core/network_diagnostic_report_generator.cpp
