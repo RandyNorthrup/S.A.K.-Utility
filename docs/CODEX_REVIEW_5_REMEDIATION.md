@@ -7374,7 +7374,7 @@ gate teaches people to disable both.
         1. DONE. scripts/run_lizard.py now runs JavaScript at the repo's own thresholds
            (CCN <= 10, PARAM <= 5, length <= 70) against browser/, and node is a REQUIRED
            entry in the toolchain preflight so the gate cannot silently stop running.
-        2. IN PROGRESS. 24 violations at the start, 18 now. dispatchCommand (41 CCN, the
+        2. IN PROGRESS. 24 violations at the start, 14 now. dispatchCommand (41 CCN, the
            worst), axNodeToCapture (33), selectCallArgs (13), printPageOptions (13),
            buildBoundsMap (13) and buildNodes (15) are closed. The rest are held by
            scripts/lizard_js_baseline.txt, which is a RATCHET rather than an exclusion: a
@@ -7408,7 +7408,39 @@ gate teaches people to disable both.
            DOM, not the worker). Closing those needs a heavier harness (CDP result stubs that
            return realistic payloads, or a jsdom-style DOM) before any refactor -- a distinct
            next investment, not a behaviour-blind swap.
-        3. DONE. tests/unit/test_browser_extension_pure.mjs, 24 tests, registered with ctest.
+           2026-08-25 (ext 0.3.18): 18 -> 14, via the DECISION-EXTRACTION pattern that answers
+           the "not pure" objection above without a heavier harness. A chrome-calling handler is
+           split into (a) a PURE function that decides -- validates, normalizes, or states the
+           refusal -- and (b) a thin shell that is a mechanical 1:1 apply of that decision, which
+           is the only part that speaks to chrome. The decisions are exactly where the refusals
+           live, so the untestable half shrinks to plumbing:
+             * onHostMessage (CCN 15, len 62) -> classifyHostFrame + classifyCommandFrame. This
+               is the bridge protocol's whole refusal set: an unannounced host must not get a
+               privileged command run on its say-so, a protocol skew has to STOP something to be
+               a check at all, a frame with no usable id is the one case that gets NO reply
+               (nothing to address it to), and everything else emits exactly one so the relay's
+               one-op pump stays in step.
+             * viewportState (15) -> viewportReading + positiveFinite. Every field scales or
+               offsets a coordinate the model measured off a screenshot, so an untrustworthy
+               self-report must produce ok:false rather than a plausible default; scroll offsets
+               are the deliberate exception (additive, so an unreadable one is the document
+               origin, not a reason to discard a good reading).
+             * handleStorage (25, the worst remaining) -> storageRequest + storageArgError +
+               storageOriginError. This tool reads and clears the storage sites keep session
+               tokens in; the origin guard is what stops it acting on whatever is in the active
+               tab instead of the site the caller named.
+             * handleWindow (23) -> windowRequest + newWindowRequest + suppliedWindowId +
+               createdWindowReply.
+           A REAL DEFECT, found by writing the test rather than by reading the code:
+           Number(null), Number(""), Number("   ") and Number([]) are ALL 0, so
+           `Number(args.window_id)` turned a focus/close carrying NO window_id into a request
+           addressing window 0. requireListedWindow refused it downstream (id 0 is not in any
+           listing), so nothing unsafe happened -- but the operator was told the window "was not
+           in the listing" when the truth was that the command named no window at all. Fixed
+           with suppliedWindowId, which accepts a number or a non-blank numeric string and
+           yields NaN otherwise; a genuinely-supplied 0 still passes through to the listing
+           check. The node suite grew 31 -> 57 tests.
+        3. DONE. tests/unit/test_browser_extension_pure.mjs, 57 tests, registered with ctest.
 
       The harness loads background.js AS SHIPPED under a stubbed chrome rather than splitting
       the pure functions into a separate module. Extracting them would have meant changing the

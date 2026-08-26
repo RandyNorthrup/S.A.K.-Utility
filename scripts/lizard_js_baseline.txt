@@ -26,11 +26,7 @@ handleGroupTabs@browser/extension/background.js      | 11 | 1 | 22
 handleHttpAuth@browser/extension/background.js       | 18 | 2 | 40
 handleNewTab@browser/extension/background.js         | 14 | 1 | 31
 handleSetValue@browser/extension/background.js       | 14 | 2 | 44
-handleStorage@browser/extension/background.js        | 25 | 2 | 37
 handleWaitFor@browser/extension/background.js        | 16 | 2 | 60
-handleWindow@browser/extension/background.js         | 23 | 1 | 44
 mediaFn@browser/extension/background.js              | 17 | 2 | 27
 occlusionAt@browser/extension/background.js          | 18 | 4 | 36
-onHostMessage@browser/extension/background.js        | 15 | 1 | 62
 selectOptionFn@browser/extension/background.js       | 26 | 5 | 56
-viewportState@browser/extension/background.js        | 15 | 1 | 21

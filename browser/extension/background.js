@@ -336,29 +336,52 @@ function send(reply) {
 
 // -- Frame dispatch ----------------------------------------------------------
 
-function onHostMessage(msg) {
+// Decide what a COMMAND frame means, without touching worker state or chrome. A command frame
+// has to be addressable and dispatchable before any of it runs: the id is what correlates the
+// single reply, the cmd is what selects the handler, and neither can be inferred from the rest
+// of the frame. A frame with no usable id cannot even be told so, hence "drop" -- the one case
+// where the one-reply-per-command rule cannot be honoured, because there is nothing to address.
+function classifyCommandFrame(msg, state) {
+  if (typeof msg.id !== "string" || msg.id.length === 0) {
+    return { action: "drop", reason: "no-id" };
+  }
+  if (typeof msg.cmd !== "string" || msg.cmd.length === 0) {
+    return { action: "error", id: msg.id, cmd: "",
+             error: "The command frame carries no command name." };
+  }
+  // The relay writes bridge_ready before it pumps a single command, so a command that
+  // arrives without one comes from a host that never handshook -- or from one whose
+  // protocol we already know we do not speak. Refuse it (still exactly one reply per
+  // command frame, so the relay's one-op pump stays in step).
+  if (!state.bridgeReady) {
+    return { action: "error", id: msg.id, cmd: msg.cmd,
+             error: state.lastError || "The bridge has not completed its readiness handshake." };
+  }
+  return { action: "dispatch", id: msg.id, cmd: msg.cmd };
+}
+
+// Decide what ANY host frame means. Pure: every refusal in the bridge protocol is decided here
+// from the frame plus the two pieces of worker state that matter (whether the handshake has
+// completed, and the last error to report with a refusal), so the refusals are unit-testable
+// without a port, a tab or a browser. onHostMessage below is a mechanical 1:1 apply of the
+// returned decision -- the only place the worker's state is mutated and chrome is spoken to.
+function classifyHostFrame(msg, state) {
   if (!msg || typeof msg !== "object") {
-    return;
+    return { action: "ignore" };
   }
   if (msg.type === "bridge_ready") {
-    health.connected = true;
-    health.bridge = "ready";
-    health.error = null;
-    bridgeReady = msg.protocol === BRIDGE_PROTOCOL;
-    if (!bridgeReady) {
-      health.error =
-        "Bridge protocol mismatch: host " + msg.protocol + ", extension " + BRIDGE_PROTOCOL;
-    }
-    console.info("[SAK] bridge ready, protocol", msg.protocol);
-    return;
+    const accepted = msg.protocol === BRIDGE_PROTOCOL;
+    return {
+      action: "bridge_ready",
+      accepted,
+      protocol: msg.protocol,
+      error: accepted
+        ? null
+        : "Bridge protocol mismatch: host " + msg.protocol + ", extension " + BRIDGE_PROTOCOL,
+    };
   }
   if (msg.type === "bridge_unavailable") {
-    health.connected = false;
-    health.bridge = "unavailable";
-    health.error = msg.error || "bridge unavailable";
-    bridgeReady = false;
-    console.warn("[SAK] bridge unavailable:", health.error);
-    return;
+    return { action: "bridge_unavailable", error: msg.error || "bridge unavailable" };
   }
   if (msg.type === "cancel") {
     // The host abandoning an exchange (its own I/O deadline elapsed) has no other way to stop a
@@ -367,36 +390,51 @@ function onHostMessage(msg) {
     // reset. Retiring the generation is the signal those loops watch; the command they belong to
     // then fails with its own error, so the one-reply-per-command rule still holds. A cancel is
     // not a command frame and is never replied to.
+    return { action: "cancel" };
+  }
+  if (msg.type === "command") {
+    return classifyCommandFrame(msg, state);
+  }
+  return { action: "unexpected", type: msg.type };
+}
+
+function onHostMessage(msg) {
+  const decision = classifyHostFrame(msg, { bridgeReady, lastError: health.error });
+  if (decision.action === "bridge_ready") {
+    health.connected = true;
+    health.bridge = "ready";
+    health.error = decision.error;
+    bridgeReady = decision.accepted;
+    console.info("[SAK] bridge ready, protocol", decision.protocol);
+    return;
+  }
+  if (decision.action === "bridge_unavailable") {
+    health.connected = false;
+    health.bridge = "unavailable";
+    health.error = decision.error;
+    bridgeReady = false;
+    console.warn("[SAK] bridge unavailable:", health.error);
+    return;
+  }
+  if (decision.action === "cancel") {
     commandGeneration++;
     return;
   }
-  if (msg.type === "command") {
-    // A command frame has to be addressable and dispatchable before any of it runs: the id is
-    // what correlates the single reply, the cmd is what selects the handler, and neither can be
-    // inferred from the rest of the frame. A frame with no usable id cannot even be told so.
-    if (typeof msg.id !== "string" || msg.id.length === 0) {
-      console.warn("[SAK] command frame with no usable id; dropping");
-      return;
-    }
-    if (typeof msg.cmd !== "string" || msg.cmd.length === 0) {
-      send({ type: "error", id: msg.id, cmd: "",
-             error: "The command frame carries no command name.", domEpoch });
-      return;
-    }
-    // The relay writes bridge_ready before it pumps a single command, so a command that
-    // arrives without one comes from a host that never handshook -- or from one whose
-    // protocol we already know we do not speak. Refuse it (still exactly one reply per
-    // command frame, so the relay's one-op pump stays in step).
-    if (!bridgeReady) {
-      send({ type: "error", id: msg.id, cmd: msg.cmd,
-             error: health.error || "The bridge has not completed its readiness handshake.",
-             domEpoch });
-      return;
-    }
+  if (decision.action === "drop") {
+    console.warn("[SAK] command frame with no usable id; dropping");
+    return;
+  }
+  if (decision.action === "error") {
+    send({ type: "error", id: decision.id, cmd: decision.cmd, error: decision.error, domEpoch });
+    return;
+  }
+  if (decision.action === "dispatch") {
     handleCommand(msg);
     return;
   }
-  console.warn("[SAK] unexpected frame type:", msg.type);
+  if (decision.action === "unexpected") {
+    console.warn("[SAK] unexpected frame type:", decision.type);
+  }
 }
 
 async function handleCommand(msg) {
@@ -1292,17 +1330,22 @@ async function handleRead(tabId, args) {
 // `ok` is false when the page could not be read: callers must fail closed on it rather than
 // trust the placeholder values, so that two failed reads (shot + click) can never compare
 // equal and wave a blind coordinate click through.
-async function viewportState(tabId) {
-  const res = await sendCdp(tabId, "Runtime.evaluate", {
-    expression:
-      "({dpr: window.devicePixelRatio, sx: window.scrollX, sy: window.scrollY, href: location.href," +
-      " iw: window.innerWidth, ih: window.innerHeight})",
-    returnByValue: true,
-  }).catch(() => null);
-  const v = res && res.result && res.result.value ? res.result.value : null;
-  if (!v || typeof v.href !== "string" || !Number.isFinite(v.dpr) || v.dpr <= 0 ||
-      !Number.isFinite(v.iw) || !Number.isFinite(v.ih) || v.iw <= 0 || v.ih <= 0) {
-    return { ok: false, dpr: 1, scrollX: 0, scrollY: 0, href: "", width: 0, height: 0 };
+// Pure: turn the page's self-report into a viewport reading, or refuse it. Every field here
+// scales or offsets a coordinate the model measured off a screenshot, so a value that cannot be
+// trusted must produce ok:false rather than a plausible-looking default -- a dpr of 0 or a
+// negative width would silently place a click somewhere other than where the model aimed.
+// Scroll offsets are the one exception: they are additive, so an unreadable one is 0 (the
+// document's own origin) rather than a reason to discard an otherwise-good reading.
+function positiveFinite(value) {
+  // NaN and +-Infinity both fail isFinite, so this is "a real, usable magnitude" in one place.
+  return Number.isFinite(value) && value > 0;
+}
+
+function viewportReading(v) {
+  const unusable = { ok: false, dpr: 1, scrollX: 0, scrollY: 0, href: "", width: 0, height: 0 };
+  if (!v || typeof v.href !== "string" || !positiveFinite(v.dpr) || !positiveFinite(v.iw) ||
+      !positiveFinite(v.ih)) {
+    return unusable;
   }
   return {
     ok: true,
@@ -1313,6 +1356,17 @@ async function viewportState(tabId) {
     width: Math.round(v.iw),
     height: Math.round(v.ih),
   };
+}
+
+async function viewportState(tabId) {
+  const res = await sendCdp(tabId, "Runtime.evaluate", {
+    expression:
+      "({dpr: window.devicePixelRatio, sx: window.scrollX, sy: window.scrollY, href: location.href," +
+      " iw: window.innerWidth, ih: window.innerHeight})",
+    returnByValue: true,
+  }).catch(() => null);
+  const v = res && res.result && res.result.value ? res.result.value : null;
+  return viewportReading(v);
 }
 
 // Does the live render still match the one a screenshot was taken against? Every field here
@@ -3077,35 +3131,82 @@ async function windowFacts(windowId) {
   return facts;
 }
 
-async function handleWindow(args) {
-  const action = String((args && args.action) || "").toLowerCase();
+// Pure: read a window id the caller actually SUPPLIED. Number() alone is not enough --
+// Number(null), Number(undefined via a missing field is NaN but) Number(""), Number("   ") and
+// Number([]) are all 0, a plausible-looking id nobody asked for. Before this guard existed a
+// focus/close with no window_id addressed window 0 and was refused downstream by
+// requireListedWindow, so the operator was told the window "was not in the listing" when the
+// truth was that the command carried no window at all. A numeric string stays usable.
+function suppliedWindowId(raw) {
+  if (typeof raw === "number") {
+    return raw;
+  }
+  if (typeof raw === "string" && raw.trim().length > 0) {
+    return Number(raw);
+  }
+  return NaN;
+}
+
+// Pure: the "new" arm. A standard browser window (Chrome's extension API does not reliably
+// honor a popup type for a navigated window, so we do not expose one). An optional URL opens it
+// there, and it goes through the same normalizeUrl every other navigation does: opening a new
+// window is still a navigation, so javascript:/file:/chrome:// are refused here too.
+function newWindowRequest(args) {
+  const url = args.url ? normalizeUrl(args.url) : null;
+  if (args.url && !url) {
+    return { error: "browser_window new url must be http(s)." };
+  }
+  return { action: "new", url };
+}
+
+// Pure: validate and normalize a browser_window request, or state why it is refused. A "new"
+// carries an optional already-normalized url; focus/close carry the integer window id, paired
+// with Number.isInteger so "3abc" is refused and a fractional or infinite id -- which addresses
+// no window at all -- cannot reach the API.
+function windowRequest(rawArgs) {
+  const args = rawArgs || {};
+  const action = String(args.action || "").toLowerCase();
   if (action !== "new" && action !== "focus" && action !== "close") {
-    throw new Error("browser_window action must be new, focus, or close.");
+    return { error: "browser_window action must be new, focus, or close." };
   }
   if (action === "new") {
-    // A standard browser window (Chrome's extension API does not reliably honor a popup type
-    // for a navigated window, so we do not expose one). An optional URL opens it there.
-    const url = args && args.url ? normalizeUrl(args.url) : null;
-    if (args && args.url && !url) {
-      throw new Error("browser_window new url must be http(s).");
-    }
-    const win = await chrome.windows.create(url ? { url } : {});
-    const firstTab = (win.tabs && win.tabs[0]) || null;
+    return newWindowRequest(args);
+  }
+  const windowId = suppliedWindowId(args.window_id);
+  if (!Number.isInteger(windowId)) {
+    return { error: "browser_window needs window_id for focus/close (see browser_windows)." };
+  }
+  return { action, windowId };
+}
+
+// Pure: the reply shape for a window this call just created. type is echoed only when the
+// browser actually reported one -- a fabricated "normal" would tell the model the window is a
+// kind it was never confirmed to be. A window that opened with no tab reports tab_index null
+// rather than 0, which would name a tab that does not exist.
+function createdWindowReply(win) {
+  const firstTab = (win.tabs && win.tabs[0]) || null;
+  const created = { ok: true, window_id: win.id, tab_index: firstTab ? firstTab.index : null };
+  if (typeof win.type === "string") { created.type = win.type; }
+  return created;
+}
+
+async function handleWindow(args) {
+  const req = windowRequest(args);
+  if (req.error) {
+    throw new Error(req.error);
+  }
+  if (req.action === "new") {
+    const win = await chrome.windows.create(req.url ? { url: req.url } : {});
     // A window this session just opened is one the caller has been told about, so it can be
     // named next without a re-listing.
     if (!lastWindowListing) { lastWindowListing = new Set(); }
     lastWindowListing.add(win.id);
-    const created = { ok: true, window_id: win.id, tab_index: firstTab ? firstTab.index : null };
-    if (typeof win.type === "string") { created.type = win.type; }  // never a fabricated "normal"
-    return created;
+    return createdWindowReply(win);
   }
-  const windowId = Number(args && args.window_id);
-  if (!Number.isInteger(windowId)) {
-    throw new Error("browser_window needs window_id for focus/close (see browser_windows).");
-  }
+  const windowId = req.windowId;
   requireListedWindow(windowId);
   const facts = await windowFacts(windowId);
-  if (action === "focus") {
+  if (req.action === "focus") {
     // Windows can refuse a foreground activation (the OS foreground lock), and the promise still
     // resolves. Every ambient-tab command in this file resolves its target through
     // lastFocusedWindow, so reporting a focus that did not happen silently points the rest of the
@@ -3489,41 +3590,76 @@ async function storageWrite(tabId, storageId, action, key, value) {
   return { ok: true, cleared: before.length };
 }
 
-async function handleStorage(tabId, args) {
-  await ensureAttached(tabId);
-  const action = String((args && args.action) || "").toLowerCase();
-  if (["get", "set", "remove", "clear", "keys"].indexOf(action) < 0) {
-    throw new Error("browser_storage action must be get, set, remove, clear, or keys.");
-  }
-  const area = String((args && args.area) || "local").toLowerCase();
-  if (area !== "local" && area !== "session") {
-    throw new Error("browser_storage area must be local or session.");
-  }
+const STORAGE_ACTIONS = ["get", "set", "remove", "clear", "keys"];
+
+// Pure: the per-action argument contract. A key or value that is absent (or is not a string)
+// must be REFUSED, never coerced: "undefined" is a perfectly valid storage key, so a coerced
+// one would read or overwrite a real entry under a name the caller never asked for.
+function storageArgError(action, args) {
   if ((action === "get" || action === "set" || action === "remove") &&
       (typeof args.key !== "string" || args.key.length === 0)) {
-    throw new Error("browser_storage " + action + " needs a key.");
+    return "browser_storage " + action + " needs a key.";
   }
   if (action === "set" && typeof args.value !== "string") {
-    throw new Error("browser_storage set needs a string value.");
+    return "browser_storage set needs a string value.";
+  }
+  return "";
+}
+
+// Pure: validate and normalize a browser_storage request, or state why it is refused. Returns
+// either { error } or the normalized { action, area, key, value } the CDP calls are driven with.
+function storageRequest(rawArgs) {
+  const args = rawArgs || {};
+  const action = String(args.action || "").toLowerCase();
+  if (STORAGE_ACTIONS.indexOf(action) < 0) {
+    return { error: "browser_storage action must be get, set, remove, clear, or keys." };
+  }
+  const area = String(args.area || "local").toLowerCase();
+  if (area !== "local" && area !== "session") {
+    return { error: "browser_storage area must be local or session." };
+  }
+  const argError = storageArgError(action, args);
+  if (argError) {
+    return { error: argError };
+  }
+  return { action, area, key: args.key || "", value: action === "set" ? args.value : "" };
+}
+
+// Pure: refuse a storage operation whose caller named a site other than the one it would touch.
+// An empty expectation is not a mismatch -- it is a caller that made no claim.
+function storageOriginError(url, expectOrigin) {
+  if (typeof expectOrigin !== "string" || expectOrigin.length === 0) {
+    return "";
+  }
+  if (originsMatch(url, expectOrigin)) {
+    return "";
+  }
+  return "The active tab is " + (url || "an unknown page") + ", not " + expectOrigin +
+    "; browser_storage will not touch another site's storage.";
+}
+
+async function handleStorage(tabId, args) {
+  await ensureAttached(tabId);
+  const req = storageRequest(args);
+  if (req.error) {
+    throw new Error(req.error);
   }
   // The command carries no site of its own: it acts on whichever tab is active when the frame
   // executes. Resolve that origin BEFORE touching anything, so a caller that states which site
   // it meant is refused on a mismatch rather than reading (or clearing) another site's tokens,
   // and so the reply names the origin the operation actually touched.
   const info = await tabInfo(tabId);
-  if (args && typeof args.expect_origin === "string" && args.expect_origin.length > 0 &&
-      !originsMatch(info.url, args.expect_origin)) {
-    throw new Error("The active tab is " + (info.url || "an unknown page") + ", not " +
-      args.expect_origin + "; browser_storage will not touch another site's storage.");
+  const originError = storageOriginError(info.url, args && args.expect_origin);
+  if (originError) {
+    throw new Error(originError);
   }
-  const storageId = storageIdFor(info.url, area);
+  const storageId = storageIdFor(info.url, req.area);
   await sendCdp(tabId, "DOMStorage.enable");
   // A DOMStorage failure (a blocked origin, a dead session) rejects with its own message, which
   // is the honest answer: there is no reading of it that makes a missed write a success.
-  const result = action === "get" || action === "keys"
-    ? await storageRead(tabId, storageId, action, args.key || "")
-    : await storageWrite(tabId, storageId, action, args.key || "",
-                         action === "set" ? args.value : "");
+  const result = req.action === "get" || req.action === "keys"
+    ? await storageRead(tabId, storageId, req.action, req.key)
+    : await storageWrite(tabId, storageId, req.action, req.key, req.value);
   return Object.assign({ url: info.url }, result);
 }
 

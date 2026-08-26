@@ -58,6 +58,9 @@ const EXPORTED = [
   "COMMAND_TABLE", "dispatchCommand", "axNodeToCapture", "indexProps",
   "AX_VALUE_MAX_CHARS", "printPageOptions", "buildBoundsMap",
   "buildNodes", "MAX_CAPTURE_NODES",
+  "classifyHostFrame", "classifyCommandFrame", "BRIDGE_PROTOCOL", "viewportReading",
+  "storageRequest", "storageArgError", "storageOriginError",
+  "windowRequest", "createdWindowReply", "suppliedWindowId",
 ];
 
 function loadWorker() {
@@ -562,4 +565,365 @@ test("buildNodes caps the emitted set at MAX_CAPTURE_NODES and reports truncatio
   const { nodes, truncated } = w.buildNodes({ nodes: nodesArr }, new Map());
   assert.equal(nodes.length, w.MAX_CAPTURE_NODES);
   assert.equal(truncated, true);
+});
+
+// --------------------------------------------------------------------------------------
+// Host-frame classification (R5-G21-9)
+//
+// Every refusal in the bridge protocol is decided by classifyHostFrame / classifyCommandFrame:
+// an unannounced host must not get a privileged command executed on its say-so, a protocol skew
+// has to STOP something to be a check at all, and the relay's one-op pump only stays in step if
+// exactly one reply leaves per command frame. onHostMessage is a mechanical 1:1 apply of these
+// decisions, so pinning them here is what makes those guards testable without a live port.
+// --------------------------------------------------------------------------------------
+
+const READY_STATE = { bridgeReady: true, lastError: null };
+
+test("classifyHostFrame ignores a frame that is not an object", () => {
+  for (const junk of [null, undefined, 0, "", "command", 42, true]) {
+    assert.equal(w.classifyHostFrame(junk, READY_STATE).action, "ignore");
+  }
+});
+
+test("classifyHostFrame accepts bridge_ready ONLY on an exact protocol match", () => {
+  const ok = w.classifyHostFrame({ type: "bridge_ready", protocol: w.BRIDGE_PROTOCOL },
+                                 { bridgeReady: false, lastError: null });
+  assert.equal(ok.action, "bridge_ready");
+  assert.equal(ok.accepted, true);
+  assert.equal(ok.error, null);
+
+  // A skew must be REPORTED, not tolerated: the frame shape is what every privileged command
+  // is parsed against. String "1" is deliberately included -- the compare is ===, so a host
+  // that sends the number as text does not get to speak a protocol it may not implement.
+  for (const skew of [0, 2, w.BRIDGE_PROTOCOL + 1, String(w.BRIDGE_PROTOCOL), null, undefined]) {
+    const bad = w.classifyHostFrame({ type: "bridge_ready", protocol: skew },
+                                    { bridgeReady: false, lastError: null });
+    assert.equal(bad.action, "bridge_ready");
+    assert.equal(bad.accepted, false, `protocol ${String(skew)} must not be accepted`);
+    assert.equal(bad.error,
+                 "Bridge protocol mismatch: host " + skew + ", extension " + w.BRIDGE_PROTOCOL);
+  }
+});
+
+test("classifyHostFrame reports bridge_unavailable with a reason, never an empty one", () => {
+  assert.deepEqual(
+    crossRealm(w.classifyHostFrame({ type: "bridge_unavailable", error: "pipe closed" },
+                                   READY_STATE)),
+    { action: "bridge_unavailable", error: "pipe closed" });
+  // A host that says nothing still produces a stated reason: health.error is what the operator
+  // and the refusal path below both read, and an empty one explains nothing.
+  for (const blank of [undefined, null, ""]) {
+    assert.equal(
+      w.classifyHostFrame({ type: "bridge_unavailable", error: blank }, READY_STATE).error,
+      "bridge unavailable");
+  }
+});
+
+test("classifyHostFrame treats cancel as a non-command frame that is never replied to", () => {
+  const d = w.classifyHostFrame({ type: "cancel", id: "c1", cmd: "browser_wait_for" },
+                                READY_STATE);
+  // Deliberately carries no id/cmd: a cancel retires the generation, and answering it would put
+  // a second reply into a relay that expects exactly one per COMMAND frame.
+  assert.deepEqual(crossRealm(d), { action: "cancel" });
+});
+
+test("classifyHostFrame refuses an unknown frame type instead of guessing", () => {
+  const d = w.classifyHostFrame({ type: "nonsense" }, READY_STATE);
+  assert.equal(d.action, "unexpected");
+  assert.equal(d.type, "nonsense");
+  // An object with no type at all is unexpected, NOT a command.
+  assert.equal(w.classifyHostFrame({}, READY_STATE).action, "unexpected");
+});
+
+test("a command frame with no usable id is DROPPED, not answered", () => {
+  // There is nothing to correlate a reply to, so this is the one frame that gets none.
+  for (const id of [undefined, null, "", 7, {}]) {
+    const d = w.classifyHostFrame({ type: "command", id, cmd: "browser_click" }, READY_STATE);
+    assert.equal(d.action, "drop", `id ${JSON.stringify(id)} must drop`);
+    assert.equal(d.reason, "no-id");
+  }
+});
+
+test("a command frame with no command name is refused BY NAME, addressed to its id", () => {
+  for (const cmd of [undefined, null, "", 7]) {
+    const d = w.classifyHostFrame({ type: "command", id: "c1", cmd }, READY_STATE);
+    assert.equal(d.action, "error");
+    assert.equal(d.id, "c1");
+    assert.equal(d.cmd, "");  // no cmd to echo: the reply must not invent one
+    assert.equal(d.error, "The command frame carries no command name.");
+  }
+});
+
+test("a command from an unannounced host is refused, and says why", () => {
+  // The privileged surface (input injection, cookies, web storage, permissions) runs only
+  // against a bridge that handshook. Refusing still emits exactly one reply, so the relay's
+  // one-op pump stays in step.
+  const d = w.classifyHostFrame({ type: "command", id: "c9", cmd: "browser_set_cookie" },
+                                { bridgeReady: false, lastError: null });
+  assert.equal(d.action, "error");
+  assert.equal(d.id, "c9");
+  assert.equal(d.cmd, "browser_set_cookie");  // the refused command IS echoed here
+  assert.equal(d.error, "The bridge has not completed its readiness handshake.");
+
+  // When a specific failure is already known (a protocol skew, a dead pipe), THAT is reported
+  // rather than the generic handshake line -- otherwise a skew is indistinguishable from a
+  // host that simply had not finished connecting.
+  const skewed = w.classifyHostFrame(
+    { type: "command", id: "c9", cmd: "browser_set_cookie" },
+    { bridgeReady: false, lastError: "Bridge protocol mismatch: host 2, extension 1" });
+  assert.equal(skewed.error, "Bridge protocol mismatch: host 2, extension 1");
+});
+
+test("a well-formed command from a ready bridge dispatches", () => {
+  const d = w.classifyHostFrame({ type: "command", id: "c2", cmd: "browser_navigate" },
+                                READY_STATE);
+  assert.deepEqual(crossRealm(d), { action: "dispatch", id: "c2", cmd: "browser_navigate" });
+});
+
+test("classifyCommandFrame orders its guards id, name, readiness", () => {
+  // Order is observable and load-bearing: a frame that is bad in two ways must be reported by
+  // the FIRST guard, because a reply addressed to a missing id cannot be delivered at all and
+  // a readiness refusal that echoed an absent cmd would put an invented name on the wire.
+  const noIdNoCmd = w.classifyCommandFrame({ id: "", cmd: "" },
+                                           { bridgeReady: false, lastError: "x" });
+  assert.equal(noIdNoCmd.action, "drop");
+  const noCmdNotReady = w.classifyCommandFrame({ id: "c3", cmd: "" },
+                                               { bridgeReady: false, lastError: "x" });
+  assert.equal(noCmdNotReady.error, "The command frame carries no command name.");
+});
+
+// --------------------------------------------------------------------------------------
+// Viewport reading (R5-G21-9)
+//
+// Every field scales or offsets a coordinate the model measured off a screenshot, so an
+// untrustworthy self-report has to produce ok:false rather than a plausible default: a dpr of 0
+// or a negative width would silently place a click somewhere other than where the model aimed.
+// --------------------------------------------------------------------------------------
+
+const UNUSABLE = { ok: false, dpr: 1, scrollX: 0, scrollY: 0, href: "", width: 0, height: 0 };
+
+test("viewportReading accepts a well-formed page self-report and rounds the pixel fields", () => {
+  assert.deepEqual(
+    crossRealm(w.viewportReading({ dpr: 1.5, sx: 10.4, sy: 20.6, href: "https://e/", iw: 800.7,
+                                   ih: 600.2 })),
+    { ok: true, dpr: 1.5, scrollX: 10, scrollY: 21, href: "https://e/", width: 801, height: 600 });
+  // dpr is NOT rounded: it is a scale factor, and 1.5 rounded to 2 mis-places every coordinate.
+  assert.equal(w.viewportReading({ dpr: 1.25, sx: 0, sy: 0, href: "x", iw: 10, ih: 10 }).dpr, 1.25);
+});
+
+test("viewportReading refuses a report it cannot trust, rather than defaulting", () => {
+  const base = { dpr: 1, sx: 0, sy: 0, href: "https://e/", iw: 800, ih: 600 };
+  for (const [label, bad] of [
+    ["null", null],
+    ["undefined", undefined],
+    ["no href", { ...base, href: undefined }],
+    ["non-string href", { ...base, href: 42 }],
+    ["zero dpr", { ...base, dpr: 0 }],
+    ["negative dpr", { ...base, dpr: -1 }],
+    ["NaN dpr", { ...base, dpr: NaN }],
+    ["Infinite dpr", { ...base, dpr: Infinity }],
+    ["zero width", { ...base, iw: 0 }],
+    ["zero height", { ...base, ih: 0 }],
+    ["negative width", { ...base, iw: -800 }],
+    ["negative height", { ...base, ih: -600 }],
+    ["NaN width", { ...base, iw: NaN }],
+    ["Infinite height", { ...base, ih: Infinity }],
+  ]) {
+    // The refusal shape is pinned in full: a caller that reads width/height without checking ok
+    // must get 0, never a stale or invented extent.
+    assert.deepEqual(crossRealm(w.viewportReading(bad)), UNUSABLE, `must refuse: ${label}`);
+  }
+});
+
+test("viewportReading treats an unreadable SCROLL offset as 0, not as a reason to refuse", () => {
+  // Scroll offsets are additive, so an absent one is the document's own origin. Discarding an
+  // otherwise-good reading over it would refuse every page that reports no scroll at all.
+  const r = w.viewportReading({ dpr: 2, sx: NaN, sy: undefined, href: "https://e/", iw: 400,
+                                ih: 300 });
+  assert.equal(r.ok, true);
+  assert.equal(r.scrollX, 0);
+  assert.equal(r.scrollY, 0);
+  // A NEGATIVE scroll (rubber-band overscroll on some platforms) is a real offset and is kept.
+  assert.equal(w.viewportReading({ dpr: 1, sx: -5.4, sy: 0, href: "x", iw: 1, ih: 1 }).scrollX, -5);
+});
+
+// --------------------------------------------------------------------------------------
+// browser_storage request contract (R5-G21-9)
+//
+// This tool reads and clears web storage, which is where sites keep session tokens. Its whole
+// refusal set lives in storageRequest / storageOriginError, and every one of those refusals is
+// the difference between acting on the site the caller named and acting on whatever happens to
+// be in the active tab.
+// --------------------------------------------------------------------------------------
+
+test("storageRequest refuses an unknown action instead of picking one", () => {
+  for (const action of [undefined, null, "", "delete", "getAll", "set ", 7, {}]) {
+    assert.equal(w.storageRequest({ action }).error,
+                 "browser_storage action must be get, set, remove, clear, or keys.",
+                 `must refuse action ${JSON.stringify(action)}`);
+  }
+  // A missing args object is refused the same way, not treated as a default action.
+  assert.ok(w.storageRequest(undefined).error);
+  assert.ok(w.storageRequest(null).error);
+});
+
+test("storageRequest accepts the five actions case-insensitively", () => {
+  for (const action of ["get", "GET", "Set", "remove", "CLEAR", "keys"]) {
+    const req = w.storageRequest({ action, key: "k", value: "v" });
+    assert.equal(req.error, undefined, `${action} must be accepted`);
+    assert.equal(req.action, action.toLowerCase());
+  }
+});
+
+test("storageRequest defaults the area to local but refuses an unknown one", () => {
+  assert.equal(w.storageRequest({ action: "clear" }).area, "local");
+  assert.equal(w.storageRequest({ action: "clear", area: "SESSION" }).area, "session");
+  // "sessionStorage", "cookie" and friends are NOT quietly mapped onto an area that exists.
+  for (const area of ["sessionStorage", "cookie", "sync", "x"]) {
+    assert.equal(w.storageRequest({ action: "clear", area }).error,
+                 "browser_storage area must be local or session.");
+  }
+});
+
+test("storageRequest requires a key for the keyed actions only", () => {
+  for (const action of ["get", "set", "remove"]) {
+    const args = action === "set" ? { action, value: "v" } : { action };
+    assert.equal(w.storageRequest(args).error, "browser_storage " + action + " needs a key.");
+    // An empty string is not a key, and a non-string is refused rather than coerced --
+    // "undefined" and "null" are perfectly valid storage keys, so a coerced one would read or
+    // overwrite a real entry under a name the caller never asked for.
+    assert.equal(w.storageRequest({ ...args, key: "" }).error,
+                 "browser_storage " + action + " needs a key.");
+    assert.equal(w.storageRequest({ ...args, key: 42 }).error,
+                 "browser_storage " + action + " needs a key.");
+    assert.equal(w.storageRequest({ ...args, key: null }).error,
+                 "browser_storage " + action + " needs a key.");
+  }
+  // clear and keys act on the whole area, so they need no key and must not demand one.
+  assert.equal(w.storageRequest({ action: "clear" }).error, undefined);
+  assert.equal(w.storageRequest({ action: "keys" }).error, undefined);
+});
+
+test("storageRequest requires a STRING value for set, and carries it only for set", () => {
+  assert.equal(w.storageRequest({ action: "set", key: "k" }).error,
+               "browser_storage set needs a string value.");
+  for (const value of [42, null, true, {}, undefined]) {
+    assert.equal(w.storageRequest({ action: "set", key: "k", value }).error,
+                 "browser_storage set needs a string value.",
+                 `must refuse value ${JSON.stringify(value)}`);
+  }
+  // An empty string IS a legal value: clearing an entry's contents is not the same as removing
+  // it, and refusing it would make that distinction unreachable.
+  assert.equal(w.storageRequest({ action: "set", key: "k", value: "" }).value, "");
+  // A value supplied to a non-set action is dropped, so it can never reach a write path.
+  assert.equal(w.storageRequest({ action: "remove", key: "k", value: "sneaky" }).value, "");
+  assert.equal(w.storageRequest({ action: "get", key: "k", value: "sneaky" }).value, "");
+});
+
+test("storageRequest normalizes the key for the keyless actions", () => {
+  // clear/keys are driven through the same CDP call shape, so the key must be a definite
+  // empty string rather than undefined leaking into the protocol frame.
+  assert.equal(w.storageRequest({ action: "clear" }).key, "");
+  assert.equal(w.storageRequest({ action: "keys" }).key, "");
+});
+
+test("storageArgError guards are ordered key-then-value", () => {
+  // A set with neither must report the KEY problem: the value check cannot be acted on until
+  // there is an entry to act on, and reporting the second problem first sends the caller to
+  // fix the wrong field.
+  assert.equal(w.storageArgError("set", {}), "browser_storage set needs a key.");
+});
+
+test("storageOriginError refuses a site the caller did not name, and only then", () => {
+  // No claim is not a mismatch.
+  assert.equal(w.storageOriginError("https://bank.example/x", undefined), "");
+  assert.equal(w.storageOriginError("https://bank.example/x", ""), "");
+  assert.equal(w.storageOriginError("https://bank.example/x", null), "");
+  assert.equal(w.storageOriginError("https://bank.example/x", 42), "");
+  // A matching claim passes.
+  assert.equal(w.storageOriginError("https://bank.example/x", "https://bank.example"), "");
+  // A mismatch is refused and NAMES both sides, so the operator can see which site was live.
+  assert.equal(
+    w.storageOriginError("https://evil.example/x", "https://bank.example"),
+    "The active tab is https://evil.example/x, not https://bank.example; " +
+    "browser_storage will not touch another site's storage.");
+  // An unreadable tab url is still a mismatch against a stated expectation -- it cannot be
+  // proven to be the named site, so it is refused rather than waved through.
+  assert.equal(
+    w.storageOriginError("", "https://bank.example"),
+    "The active tab is an unknown page, not https://bank.example; " +
+    "browser_storage will not touch another site's storage.");
+});
+
+// --------------------------------------------------------------------------------------
+// browser_window request contract (R5-G21-9)
+// --------------------------------------------------------------------------------------
+
+test("windowRequest refuses an unknown action", () => {
+  for (const action of [undefined, null, "", "open", "minimize", 7]) {
+    assert.equal(w.windowRequest({ action }).error,
+                 "browser_window action must be new, focus, or close.");
+  }
+  assert.ok(w.windowRequest(undefined).error);
+});
+
+test("windowRequest normalizes a new-window url and refuses a non-http(s) one", () => {
+  assert.deepEqual(crossRealm(w.windowRequest({ action: "new" })), { action: "new", url: null });
+  assert.equal(w.windowRequest({ action: "NEW", url: "example.com" }).url, "https://example.com");
+  // The same refusals normalizeUrl enforces everywhere else: a new window is still a navigation.
+  for (const hostile of ["javascript:alert(1)", "file:///C:/Windows", "chrome://settings",
+                         "data:text/html,x", "not a url"]) {
+    assert.equal(w.windowRequest({ action: "new", url: hostile }).error,
+                 "browser_window new url must be http(s).",
+                 `must refuse ${hostile}`);
+  }
+});
+
+test("windowRequest requires an INTEGER window id for focus and close", () => {
+  const msg = "browser_window needs window_id for focus/close (see browser_windows).";
+  for (const action of ["focus", "close"]) {
+    assert.equal(w.windowRequest({ action, window_id: 12 }).windowId, 12);
+    // Number("12") is 12, so a numeric string is a usable id and is accepted.
+    assert.equal(w.windowRequest({ action, window_id: "12" }).windowId, 12);
+    // Everything that Number() turns into a non-integer must be refused rather than addressed:
+    // "" becomes 0 (a real window id on some platforms), "3abc" becomes NaN, and a fractional
+    // or infinite id names no window at all.
+    for (const bad of [undefined, null, "", "  ", "3abc", 1.5, NaN, Infinity, {}, []]) {
+      assert.equal(w.windowRequest({ action, window_id: bad }).error, msg,
+                   `${action} must refuse window_id ${JSON.stringify(bad)}`);
+    }
+  }
+});
+
+test("createdWindowReply reports only what the browser actually said", () => {
+  assert.deepEqual(
+    crossRealm(w.createdWindowReply({ id: 7, type: "normal", tabs: [{ index: 0 }] })),
+    { ok: true, window_id: 7, tab_index: 0, type: "normal" });
+  // No type reported -> no type echoed, rather than a fabricated "normal".
+  assert.deepEqual(crossRealm(w.createdWindowReply({ id: 7, tabs: [{ index: 3 }] })),
+                   { ok: true, window_id: 7, tab_index: 3 });
+  assert.equal(w.createdWindowReply({ id: 7, type: 42, tabs: [{ index: 0 }] }).type, undefined);
+  // No tab -> tab_index null, never 0, which would name a tab that does not exist.
+  for (const tabs of [undefined, null, []]) {
+    assert.equal(w.createdWindowReply({ id: 7, tabs }).tab_index, null);
+  }
+});
+
+test("suppliedWindowId refuses a value the caller never supplied (a REAL find)", () => {
+  // Number(null), Number(""), Number("   ") and Number([]) are ALL 0, so before this guard a
+  // focus/close carrying no window_id addressed window 0 and was refused downstream by
+  // requireListedWindow -- telling the operator the window "was not in the listing" when the
+  // command in fact named no window at all. Found by writing this test, not by reading.
+  for (const absent of [undefined, null, "", "   ", [], {}, true, false]) {
+    assert.ok(Number.isNaN(w.suppliedWindowId(absent)),
+              `${JSON.stringify(absent)} must not become a window id`);
+  }
+  // A real id, including 0 when it is genuinely supplied as a number, still passes through.
+  assert.equal(w.suppliedWindowId(0), 0);
+  assert.equal(w.suppliedWindowId(12), 12);
+  assert.equal(w.suppliedWindowId("12"), 12);
+  assert.equal(w.suppliedWindowId(" 12 "), 12);
+  // Non-integers survive this step and are refused by the Number.isInteger check above it.
+  assert.equal(w.suppliedWindowId(1.5), 1.5);
+  assert.ok(Number.isNaN(w.suppliedWindowId("3abc")));
 });
