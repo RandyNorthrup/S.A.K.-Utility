@@ -4368,7 +4368,47 @@ the opposite: gaps identified by asking what a serious Windows desktop product n
 that is still absent here. Each one is justified against this project's own history
 rather than as generic advice.
 
-- [~] R5-G23-1 CONCURRENCY. BLOCKED (Windows platform limit): ThreadSanitizer is not available on any Windows toolchain -- MSVC has no TSan and clang-cl does not implement -fsanitize=thread on Windows -- so ENABLE_TSAN (CMakeLists.txt:186) fails closed and no CI job builds a TSan binary. A real TSan run would need a Linux clang build of the portable core; the deterministic-scheduler-seam alternative is local but a large harness.
+- [~] R5-G23-1 CONCURRENCY. TSAN NOW ACTUALLY RUNS, 2026-08-25.
+  A CORRECTION FIRST, because this entry was wrong for months and I made it worse before making
+  it better: earlier today I reclassified the TSan half as a DESIGN-DECISION -- "a Linux-clang
+  build of a portable core is a different product shape, not a task". The owner corrected that in
+  one line ("we have wsl tsan is available"), and he was right. The WSL archlinux this repo
+  ALREADY uses for apfsck has clang 22, cmake, ninja and qt6-base installed. The blocker was never
+  the platform; it was that nobody had tried. The lesson worth keeping: "no toolchain supports
+  this" was true only of the WINDOWS toolchain, and the item said so plainly -- the leap to "so it
+  cannot be done" was mine, and it was unexamined.
+    (a) LANDED: a real ThreadSanitizer run. tests/tsan/CMakeLists.txt builds the portable threaded
+        units with clang -fsanitize=thread against Qt6::Core/Test in WSL;
+        scripts/run_tsan_wsl.ps1 drives configure/build/run and fails closed. First unit is
+        sak::logger, whose existing concurrentWrites_noCorruption test spawns 4 threads x 25
+        messages -- an actual race exerciser rather than a single-threaded test that would prove
+        nothing. RESULT: no data race, no thread leak, no lock-order inversion in first-party
+        code. That is detection, not the manual audit that had been standing in for it.
+        SCOPE, stated so nobody over-reads it: only the units listed in that CMakeLists. Most
+        workers include <windows.h> and cannot be compiled there at all.
+        TWO DESIGN DECISIONS INSIDE THE HARNESS, both learned by being burned:
+          * A SUPPRESSIONS FILE WAS TRIED AND REJECTED. The uninstrumented distro Qt makes QtTest's
+            WatchDog thread emit 2-3 reports every run regardless of the code under test. But
+            `called_from_lib` matches the library that called into the interceptor, which for
+            these reports is libstdc++, not Qt -- so the entries silently matched NOTHING while
+            looking correct. The runner now judges positively instead: a report fails the run if
+            any frame names first-party source, and everything else is printed under a
+            third-party heading and counted, never hidden. A race of ours that merely passes
+            through Qt still names our file, so it still fails.
+          * llvm-symbolizer IS REQUIRED AND CHECKED FOR. Without it every frame is "??:?", Qt's
+            frames and ours become indistinguishable, and both suppression matching and
+            first-party detection fail OPEN while the run looks clean. The runner refuses to
+            start without it.
+        THE DETECTOR WAS WATCHED TO FIRE IN BOTH DIRECTIONS: a deliberate unsynchronized
+        `++counter` was planted in the test's own thread body; TSan reported it, the runner
+        attributed it to test_logger.cpp:451 and the named global, and FAILED -- while still
+        ignoring the 2 Qt reports in the same run. Drill reverted, clean run re-confirmed.
+    (b) STILL OPEN: more units under the harness (ai_cancellation_token, network_transfer_runner
+        and the rest of the 52 portable threaded files measured today), and deterministic
+        scheduler seams so a race reproduces on demand rather than one run in fifty.
+        R5-G18-8's flake-soak harness (scripts/run_flake_soak.py) is the order-dependence half of
+        that, landed the same day.
+  Original text, kept for the record: ThreadSanitizer is not available on any Windows toolchain -- MSVC has no TSan and clang-cl does not implement -fsanitize=thread on Windows -- so ENABLE_TSAN (CMakeLists.txt:186) fails closed and no CI job builds a TSan binary. A real TSan run would need a Linux clang build of the portable core; the deterministic-scheduler-seam alternative is local but a large harness.
   - OPEN: an ENABLE_TSAN CMake option exists (CMakeLists.txt:186) but builds only under clang-cl/GCC (MSVC fails closed); no clang-cl CI job makes TSan reachable and no deterministic scheduler seams exist, so nothing in CI detects a data race yet. (The items once bundled here have since landed separately: crash reporting G23-2, startup budget G23-3, config schema versioning G23-5, doc-accuracy G23-8, build-system lint G23-9, error-message uniqueness G23-12.)
   - AUDIT 2026-08-18 (read-only manual review, in lieu of the unavailable TSan): a 4-agent
     concurrency/lifecycle audit (worker dtor-join, QtConcurrent futures, cross-thread shared state,
@@ -7042,7 +7082,24 @@ So the suite itself must be audited for tests that pass regardless of the code.
     precondition instead of quietly asserting a state that no longer exists. (2) CTest runs
     each test as a whole binary (one add_test per executable, functions in declaration order),
     not per-function, so ordering-and-load-dependent behaviour is exercised the way it ships.
-    (3) RESIDUAL, open under the soak-test infra track (G23-10): a repeat-run flake soak that runs the whole suite N times and flags any function whose pass/fail depends on run order or load -- a dedicated harness, not yet built.
+    (3) RESIDUAL CLOSED 2026-08-25: scripts/run_flake_soak.py is that harness. Two modes, and
+    they look for different things. `soak --rounds N [--jobs 1,8]` re-runs the WHOLE ctest suite
+    and flags any test whose pass/fail is not identical across every round, which is the load and
+    inter-binary timing dimension; it reports consistently-failing tests SEPARATELY from flaky
+    ones, so a genuinely broken test is never filed as "flaky, look later". `isolation` runs every
+    QtTest function ALONE and diffs the result against its whole-binary run -- the pauseResumeToggles
+    shape exactly: a function that passes alone but whose binary fails (or that fails alone while
+    the binary passes, i.e. it needs a sibling's leftover state) is named. Both fail closed, and
+    both refuse to report an empty sweep as clean -- the same "a gate that scanned nothing is
+    broken, not passing" rule the clang-format and lizard gates already carry.
+    THE DETECTOR WAS WATCHED TO FIRE before being trusted: a deliberate order dependence was
+    planted in test_flash_types (one function setting a file-static, a later one asserting it),
+    which makes the BINARY pass while the second function fails alone. The harness reported
+    exactly that -- "binary PASSES but these fail ALONE: drillNeedsSiblingState" -- and the drill
+    was reverted. A clean run from an unproven detector is indistinguishable from a misconfigured
+    one, which is the whole reason this residual existed.
+    Deliberately NOT a pre-commit hook: a meaningful soak costs many minutes. It is run against
+    the suite periodically and after touching threading or shared state.
       pauseResumeToggles passed in isolation 40 times in a row and failed inside the
       full binary, because ordering and load changed the timing. Any flake hunt that
       only runs the single failing function will conclude, wrongly, that nothing is
