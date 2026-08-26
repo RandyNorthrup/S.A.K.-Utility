@@ -30,8 +30,11 @@ namespace sak::ai {
 namespace {
 
 constexpr int kTimeoutTickMs = 200;
-constexpr int kMinTimeoutSeconds = 5;
-constexpr int kMaxTimeoutSeconds = 3600;
+// The domain now lives in the header (kAiCommandMinTimeoutSeconds /
+// kAiCommandMaxTimeoutSeconds) so the planner cannot promise a timeout this clamp would
+// silently cut. Aliased here to keep the call sites below reading naturally.
+constexpr int kMinTimeoutSeconds = kAiCommandMinTimeoutSeconds;
+constexpr int kMaxTimeoutSeconds = kAiCommandMaxTimeoutSeconds;
 constexpr int kMinOutputCap = 1024;
 // Hard ceiling on what one run may make the broker retain per stream. Without it a caller
 // (or a tool argument that reached one) could ask for a multi-gigabyte buffer.

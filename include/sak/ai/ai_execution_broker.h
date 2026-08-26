@@ -23,6 +23,17 @@ class QProcess;
 namespace sak::ai {
 
 inline constexpr int kAiCommandDefaultTimeoutSeconds = 120;
+
+/// The command-timeout domain, declared HERE because the broker is what enforces it: launchProcess
+/// clamps every request to this range, silently.
+///
+/// It lives in the header because a second copy drifted. The app-action planner had its own
+/// ceiling of 14400 (four hours), so it produced -- and a user APPROVED -- plans promising a
+/// four-hour action that the broker then cut to one hour and reported as a timeout. The plan said
+/// one thing and execution did another. Anything that needs to bound a command's runtime must use
+/// these, not a private constant.
+inline constexpr int kAiCommandMinTimeoutSeconds = 5;
+inline constexpr int kAiCommandMaxTimeoutSeconds = 3600;
 inline constexpr int kAiCommandDefaultMaxOutputKilobytes = 256;
 inline constexpr int kAiCommandDefaultMaxOutputBytes = kAiCommandDefaultMaxOutputKilobytes *
                                                        static_cast<int>(sak::kBytesPerKB);

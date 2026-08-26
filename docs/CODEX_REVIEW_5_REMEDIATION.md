@@ -2010,6 +2010,47 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
         bounds were passed through unordered. NOT reachable from today's callers (both bounds are
         internal defaults), so this is recorded as hardening rather than a live defect: the bounds
         are now ordered before the clamp, which costs nothing and removes a UB hazard.
+  - TWO MORE FROM THE STORED BRIEFS, 2026-08-26. Both were verified against the tree before any
+    change, and both are cases where the CODE contradicted a promise the code itself made:
+      * src/ai/ai_command_guard.cpp -- TWO BYPASSES OF THE COMMAND GUARD, the thing standing
+        between a model-issued command and an unverified package install.
+        (a) The bypass list was fixed spellings, with a comment claiming "the singular spellings
+            also catch the plural switches". That only held for the UNHYPHENATED singular:
+            `--ignore-checksum` (hyphenated singular, which Chocolatey accepts) matched
+            "ignore-checksums"? no -- missing the s. "ignorechecksum"? no -- the hyphen. It passed
+            the guard unblocked. Same hole for --allow-empty-checksum and --skip-checksum.
+        (b) The refusal message has ALWAYS said "Do not pass --ignore-checksums, substitute
+            checksums, ..." while nothing in the code ever checked for substitution.
+            --checksum/--checksum64/--download-checksum/--download-checksum-x64 verify the
+            download against a value the CALLER chose, which defeats verification exactly as
+            thoroughly as skipping it.
+        Fixed with one switch-form regex in which the hyphen and the trailing 's' are both
+        optional, plus the substitution family; a switch prefix (- / -- / /) is REQUIRED so prose
+        mentioning "checksum" in a preview does not trip the guard and train the operator to click
+        through. 22 spellings pinned, plus four benign strings that must NOT block.
+        MUTATION-PROVED: removing the switch matching turns the suite RED.
+        A GATE LESSON FELL OUT OF THIS, worth its own note: adding those lines turned the lizard
+        C++ gate RED for a function that had not changed --
+        commandContainsBinaryContentRead reported as 85 lines when it is ten. A raw-string regex
+        inside a function BODY defeats lizard's tokenizer: it stops seeing where the function
+        ends and charges everything after it to that function, so any addition later in the file
+        eventually tips the mis-measure past the limit. Two wrong diagnoses were tried first (an
+        unbalanced paren inside a character class, then hex-escaping the literal ')' and backtick)
+        before the real cause was found. The fix is structural and improves the file anyway: the
+        patterns now live at namespace scope beside the word catalogues, and the gate passes.
+        Do not "fix" this class by trimming comments to fit -- that hides a parser artifact behind
+        a smaller function.
+      * The app-action planner PROMISED A TIMEOUT THE EXECUTOR NEVER HONOURED. The planner clamped
+        timeout_seconds to [5, 14400] while ExecutionBroker::launchProcess clamps every request to
+        [5, 3600] SILENTLY (ai_execution_broker.cpp:663), and app-action plans do run through that
+        broker (verified end to end: gateway callbacks.execute_powershell ->
+        executeWorkflowPowerShellRequest -> executeStandardWorkflowPowerShellRequest, which
+        constructs an ExecutionBroker). So a plan could be reviewed and APPROVED as a four-hour
+        action, then be killed at one hour and reported as a timeout.
+        The bounds now live once, in ai_execution_broker.h beside the default, because the bug was
+        not the value -- it was having two copies. NOTE: two existing tests asserted the old
+        ceiling (7200 passed through, 14'400 accepted); they were pinning the broken promise, so
+        they are corrected rather than the fix reverted, with the reason recorded in place.
     NOT yet actioned from this batch, and deliberately not claimed as fixed: the remaining
     generate_system_report findings (cancellation not plumbed into the PowerShell collectors,
     same-millisecond report filename collision, UTF-16-vs-UTF-8 size accounting), the

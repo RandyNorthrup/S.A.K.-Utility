@@ -15,8 +15,12 @@ namespace sak::ai {
 
 namespace {
 constexpr int kAppActionDefaultTimeoutSeconds = 1800;
-constexpr int kAppActionMinTimeoutSeconds = 5;
-constexpr int kAppActionMaxTimeoutSeconds = 14'400;
+// THE EXECUTOR'S bounds, not this planner's own. These were 5 and 14'400, while the broker
+// clamps every request to [5, 3600] -- so a plan could promise a four-hour action, be
+// reviewed and approved on that basis, and then be killed at one hour and reported as a
+// timeout. A plan must not describe an execution the executor will not perform.
+constexpr int kAppActionMinTimeoutSeconds = kAiCommandMinTimeoutSeconds;
+constexpr int kAppActionMaxTimeoutSeconds = kAiCommandMaxTimeoutSeconds;
 
 // Read a manifest safety flag fail closed. A present-but-mistyped value (e.g. the string
 // "true", or a number) must NOT silently downgrade to false and strip the risk/admin

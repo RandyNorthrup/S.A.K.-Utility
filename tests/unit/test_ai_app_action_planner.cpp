@@ -58,7 +58,14 @@ void AiAppActionPlannerTests::buildsSupportedPowerShellActionPlan() {
     QCOMPARE(plan.method, QStringLiteral("powershell"));
     QCOMPARE(plan.request.command, QStringLiteral("Start-MpScan -ScanType QuickScan"));
     QVERIFY(plan.request.requires_admin);
-    QCOMPARE(plan.request.timeout_seconds, 7200);
+    // 7200 is REDUCED to the executor's ceiling, not passed through. This assertion used to
+    // expect 7200 verbatim, which pinned a promise execution never kept: every app-action
+    // plan runs through ExecutionBroker::launchProcess, which clamps to
+    // kAiCommandMaxTimeoutSeconds (3600) SILENTLY -- so a plan reviewed and approved as a
+    // two-hour action was killed at one hour and reported as a timeout. The planner and the
+    // broker now share one constant, so a plan cannot describe an execution that will not
+    // happen.
+    QCOMPARE(plan.request.timeout_seconds, sak::ai::kAiCommandMaxTimeoutSeconds);
     // No max_output_bytes argument, so the default Options budget (256 KiB) survives the clamp.
     QCOMPARE(plan.request.max_output_bytes, 262'144);
     // The evidence array is copied verbatim from the manifest profile, so pin the whole ordered
@@ -115,7 +122,10 @@ void AiAppActionPlannerTests::clampsOutputAndTimeout() {
         sak::ai::AiAppActionPlanner::Options{2048, 1024, 4096});
 
     QVERIFY(plan.ok());
-    QCOMPARE(plan.request.timeout_seconds, 14'400);
+    // Same correction: the old ceiling of 14'400 was four times what the broker honours.
+    QCOMPARE(plan.request.timeout_seconds, sak::ai::kAiCommandMaxTimeoutSeconds);
+    // And the two bounds are the SAME constant, which is what stops them drifting again.
+    QVERIFY(sak::ai::kAiCommandMaxTimeoutSeconds == 3600);
     QCOMPARE(plan.request.max_output_bytes, 4096);
 }
 
