@@ -16,16 +16,8 @@
 # Thresholds are the repo's own, unchanged: CCN <= 10, PARAM <= 5, length <= 70.
 #
 # Format:  function@path | ccn | params | length
-String@browser/extension/background.js               | 15 | 1 | 26
-applyDeviceMetrics@browser/extension/background.js   | 14 | 3 | 24
 collectMediaNodes@browser/extension/background.js    | 18 | 2 | 35
 ensureAttached@browser/extension/background.js       | 11 | 1 | 32
-handleCookies@browser/extension/background.js        | 17 | 1 | 25
-handleDownload@browser/extension/background.js       | 18 | 1 | 33
-handleGroupTabs@browser/extension/background.js      | 11 | 1 | 22
-handleHttpAuth@browser/extension/background.js       | 18 | 2 | 40
-handleNewTab@browser/extension/background.js         | 14 | 1 | 31
-handleSetValue@browser/extension/background.js       | 14 | 2 | 44
 handleWaitFor@browser/extension/background.js        | 16 | 2 | 60
 mediaFn@browser/extension/background.js              | 17 | 2 | 27
 occlusionAt@browser/extension/background.js          | 18 | 4 | 36

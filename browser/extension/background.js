@@ -2082,47 +2082,65 @@ async function callOnNode(tabId, objectId, fn, args, awaitPromise) {
 // date/time/color/number inputs, checkboxes/radios, contenteditable, and hidden or custom
 // controls (no visible box needed -- it acts on the ref'd node via a CONSTANT function; the
 // value/checked come in as CDP argument values, never interpolated as code).
-async function handleSetValue(tabId, args) {
-  await ensureAttached(tabId);
-  requireSnapshotTab(tabId);
+// Pure: decide WHAT browser_set_value is being asked to set. Exactly one of value/checked is
+// required: with neither there is nothing to set, and preferring one over the other would
+// silently drop half of a contradictory request. The returned triple is what the injected
+// function is called with, so a refused request never reaches the page at all.
+function setValueMode(rawArgs) {
+  const args = rawArgs || {};
   const hasChecked = typeof args.checked === "boolean";
   const hasValue = typeof args.value === "string";
   if (!hasChecked && !hasValue) {
-    throw new Error("browser_set_value needs a value or checked.");
+    return { error: "browser_set_value needs a value or checked." };
   }
-  // Preferring one over the other would silently drop half of a contradictory request.
   if (hasChecked && hasValue) {
-    throw new Error("browser_set_value takes either value or checked, not both.");
+    return { error: "browser_set_value takes either value or checked, not both." };
+  }
+  return {
+    mode: hasChecked ? "checked" : "value",
+    value: hasValue ? args.value : "",
+    checked: hasChecked ? args.checked : false,
+  };
+}
+
+// Injected into the page and called with the element as `this` (see callOnNode). Not reachable
+// from the node harness -- it runs against a real DOM, not the worker.
+function setValueFn(mode, value, checked) {
+  var el = this;
+  if (!el) { return { ok: false, error: "no element" }; }
+  var type = (el.type || "").toLowerCase();
+  if (mode === "checked") {
+    // A checked request aimed at anything else is a mis-identified control (a text input, a
+    // <select>, a custom element with a value property). Falling through to the value branch
+    // would assign it the empty string this path carries -- wiping the control -- and report
+    // success for a checkbox action that never happened.
+    if (type !== "checkbox" && type !== "radio") {
+      return { ok: false, error: "checked only applies to a checkbox or radio" };
+    }
+    el.checked = checked;
+  } else if ("value" in el) {
+    el.value = value;
+  } else if (el.isContentEditable) {
+    el.textContent = value;
+  } else {
+    return { ok: false, error: "element has no settable value" };
+  }
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+  el.dispatchEvent(new Event("change", { bubbles: true }));
+  return { ok: true, value: "value" in el ? el.value : el.textContent || "", checked: !!el.checked };
+}
+
+async function handleSetValue(tabId, args) {
+  await ensureAttached(tabId);
+  requireSnapshotTab(tabId);
+  const req = setValueMode(args);
+  if (req.error) {
+    throw new Error(req.error);
   }
   const objectId = await resolveNodeObjectId(tabId, args.backendNodeId);
   const point = await resolveActionPoint(tabId, args.backendNodeId).catch(() => null);
   if (point) { await moveAgentCursor(tabId, point.x, point.y); }
-  const setFn = function (mode, value, checked) {
-    var el = this;
-    if (!el) { return { ok: false, error: "no element" }; }
-    var type = (el.type || "").toLowerCase();
-    if (mode === "checked") {
-      // A checked request aimed at anything else is a mis-identified control (a text input, a
-      // <select>, a custom element with a value property). Falling through to the value branch
-      // would assign it the empty string this path carries -- wiping the control -- and report
-      // success for a checkbox action that never happened.
-      if (type !== "checkbox" && type !== "radio") {
-        return { ok: false, error: "checked only applies to a checkbox or radio" };
-      }
-      el.checked = checked;
-    } else if ("value" in el) {
-      el.value = value;
-    } else if (el.isContentEditable) {
-      el.textContent = value;
-    } else {
-      return { ok: false, error: "element has no settable value" };
-    }
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-    el.dispatchEvent(new Event("change", { bubbles: true }));
-    return { ok: true, value: "value" in el ? el.value : el.textContent || "", checked: !!el.checked };
-  };
-  const mode = hasChecked ? "checked" : "value";
-  const r = await callOnNode(tabId, objectId, setFn, [mode, hasValue ? args.value : "", hasChecked ? args.checked : false]);
+  const r = await callOnNode(tabId, objectId, setValueFn, [req.mode, req.value, req.checked]);
   if (!r || !r.ok) { throw new Error((r && r.error) || "browser_set_value failed"); }
   return { ok: true, value: r.value, checked: r.checked };
 }
@@ -2994,21 +3012,37 @@ async function tabIdsFromIndices(spec) {
   return ids;
 }
 
-async function handleGroupTabs(args) {
-  const tabIds = await tabIdsFromIndices(args && args.tab_indices);
-  const groupId = await chrome.tabs.group({ tabIds });
-  lastTabListing = null;  // grouping moves tabs together: every index after this is unproven
+// Pure: build the tabGroups.update payload, or state why the request is refused. A color Chrome
+// does not know is not a color it silently keeps: ignoring it would leave the group whatever
+// shade Chrome picked while the caller believes it named one.
+function groupUpdateFrom(rawArgs) {
+  const args = rawArgs || {};
   const update = {};
-  if (args && typeof args.title === "string" && args.title.length > 0) { update.title = args.title; }
-  // A color Chrome does not know is not a color it silently keeps: ignoring it would leave the
-  // group whatever shade Chrome picked while the caller believes it named one.
-  if (args && typeof args.color === "string") {
+  if (typeof args.title === "string" && args.title.length > 0) {
+    update.title = args.title;
+  }
+  if (typeof args.color === "string") {
     if (!GROUP_COLORS.has(args.color)) {
-      throw new Error("browser_group_tabs color must be one of: " +
-        Array.from(GROUP_COLORS).join(", ") + ".");
+      return { error: "browser_group_tabs color must be one of: " +
+        Array.from(GROUP_COLORS).join(", ") + "." };
     }
     update.color = args.color;
   }
+  return { update };
+}
+
+async function handleGroupTabs(args) {
+  // Validated BEFORE anything is grouped. This check used to run after chrome.tabs.group() had
+  // already moved the tabs together, so an unknown color left the browser permanently regrouped
+  // while the call reported failure -- a half-applied action the caller was told did not happen.
+  const requested = groupUpdateFrom(args);
+  if (requested.error) {
+    throw new Error(requested.error);
+  }
+  const update = requested.update;
+  const tabIds = await tabIdsFromIndices(args && args.tab_indices);
+  const groupId = await chrome.tabs.group({ tabIds });
+  lastTabListing = null;  // grouping moves tabs together: every index after this is unproven
   if (Object.keys(update).length > 0) { await chrome.tabGroups.update(groupId, update); }
   // The group's title/color are reported as BROWSER state, so they have to come from the browser.
   // Falling back to the requested values on a failed read would echo the request back as if it
@@ -3045,22 +3079,44 @@ async function handleSelectTab(args) {
   return { ok: true, index, url: info.url, title: info.title };
 }
 
+// Pure: validate the optional url a new tab opens at. A SUPPLIED url must be usable -- letting a
+// blank one through opens a blank tab under the guise of having honored the request, which is
+// not the tab the caller asked for. No url at all is a different request (a blank new tab) and
+// is accepted.
+function newTabRequest(rawArgs) {
+  const args = rawArgs || {};
+  if (typeof args.url === "string" && args.url.trim().length === 0) {
+    return { error: "newTab url must be http(s)." };
+  }
+  const url = args.url ? normalizeUrl(args.url) : null;
+  if (args.url && !url) {
+    return { error: "newTab url must be http(s)." };
+  }
+  return { url };
+}
+
+// Pure: report what the tab ACTUALLY shows. chrome.tabs.create resolves the moment the tab
+// EXISTS -- the target is still in pendingUrl and url is empty -- so echoing the requested url
+// would state that the tab is at a page no load has been attempted for. pendingUrl is the
+// fallback only because a tab still navigating has nothing else to report.
+function tabStateReply(tab, loaded) {
+  return {
+    ok: true, index: tab.index,
+    url: tab.url || tab.pendingUrl || "", title: tab.title || "",
+    load_complete: loaded,
+  };
+}
+
 async function handleNewTab(args) {
-  // A supplied url must be usable. Letting a blank one through opens a blank tab under the guise
-  // of having honored the request, which is not the tab the caller asked for.
-  if (args && typeof args.url === "string" && args.url.trim().length === 0) {
-    throw new Error("newTab url must be http(s).");
+  const req = newTabRequest(args);
+  if (req.error) {
+    throw new Error(req.error);
   }
-  const url = args && args.url ? normalizeUrl(args.url) : null;
-  if (args && args.url && !url) {
-    throw new Error("newTab url must be http(s).");
-  }
+  const url = req.url;
   const tab = await chrome.tabs.create(url ? { url } : {});
   lastTabListing = null;  // a new tab shifts what an index names
-  // chrome.tabs.create resolves the moment the tab EXISTS -- the target is still in pendingUrl
-  // and url is empty. Reporting the requested url here would state that the tab is at a page no
-  // load has been attempted for, so wait for the load and report what the tab actually shows
-  // (a redirect, an interstitial, or a failed navigation all say so on their own).
+  // Wait for the load and report what the tab actually shows (a redirect, an interstitial, or a
+  // failed navigation all say so on their own) rather than the url that was requested.
   let loaded = true;
   if (url) {
     // null: a tab created for this navigation has no previous document, so any settled url is
@@ -3070,11 +3126,7 @@ async function handleNewTab(args) {
     loaded = await waitForComplete(tab.id, null);
   }
   const now = await chrome.tabs.get(tab.id);
-  return {
-    ok: true, index: now.index,
-    url: now.url || now.pendingUrl || "", title: now.title || "",
-    load_complete: loaded,
-  };
+  return tabStateReply(now, loaded);
 }
 
 async function handleCloseTab(args) {
@@ -3131,13 +3183,14 @@ async function windowFacts(windowId) {
   return facts;
 }
 
-// Pure: read a window id the caller actually SUPPLIED. Number() alone is not enough --
-// Number(null), Number(undefined via a missing field is NaN but) Number(""), Number("   ") and
-// Number([]) are all 0, a plausible-looking id nobody asked for. Before this guard existed a
-// focus/close with no window_id addressed window 0 and was refused downstream by
-// requireListedWindow, so the operator was told the window "was not in the listing" when the
-// truth was that the command carried no window at all. A numeric string stays usable.
-function suppliedWindowId(raw) {
+// Pure: read a number the caller actually SUPPLIED, or NaN. Number() alone is not enough --
+// Number(null), Number(""), Number("   ") and Number([]) are ALL 0, a plausible-looking value
+// nobody asked for. Two real defects came from that: a browser_window focus/close with no
+// window_id addressed window 0 (and was then refused downstream as "not in the listing", which
+// is not what went wrong), and a browser_download with timeout_ms:null took 0 -> clamped to a
+// ONE-SECOND budget instead of the 30s default, so any slower download reported that it could
+// not be tracked. A numeric string stays usable; everything else is "not supplied".
+function suppliedNumber(raw) {
   if (typeof raw === "number") {
     return raw;
   }
@@ -3172,7 +3225,7 @@ function windowRequest(rawArgs) {
   if (action === "new") {
     return newWindowRequest(args);
   }
-  const windowId = suppliedWindowId(args.window_id);
+  const windowId = suppliedNumber(args.window_id);
   if (!Number.isInteger(windowId)) {
     return { error: "browser_window needs window_id for focus/close (see browser_windows)." };
   }
@@ -3254,29 +3307,54 @@ async function resetEmulation(tabId) {
 // or non-positive leaves the tab laid out at a size nobody asked for, while the reply lists
 // whatever else did apply -- so a metrics request that cannot be honored is refused rather than
 // dropped, and a device_scale_factor is never quietly rewritten to 1.
-async function applyDeviceMetrics(tabId, args, applied) {
-  if (!argProvided(args.width) && !argProvided(args.height)
-      && !argProvided(args.device_scale_factor)) {
-    return;
-  }
-  const w = Number(args.width);
-  const h = Number(args.height);
-  const dsf = Number(args.device_scale_factor);
-  if (!(Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0)) {
-    throw new Error("browser_emulate needs both width and height as positive integers.");
+// Pure: width and height are required TOGETHER. Overriding one alone would give the page a
+// viewport nobody described, and every screenshot coordinate the model then measures is taken
+// against it.
+function deviceMetricsError(args, width, height, dsf) {
+  if (!(Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0)) {
+    return "browser_emulate needs both width and height as positive integers.";
   }
   if (argProvided(args.device_scale_factor) && !(Number.isFinite(dsf) && dsf > 0)) {
-    throw new Error("browser_emulate device_scale_factor must be a positive number.");
+    return "browser_emulate device_scale_factor must be a positive number.";
   }
-  await sendCdp(tabId, "Emulation.setDeviceMetricsOverride", {
-    width: Math.round(w), height: Math.round(h),
-    deviceScaleFactor: Number.isFinite(dsf) && dsf > 0 ? dsf : 1,
-    mobile: args.mobile === true,
-  });
-  applied.width = Math.round(w);
-  applied.height = Math.round(h);
-  applied.mobile = args.mobile === true;
+  return "";
+}
+
+// Pure: the Emulation.setDeviceMetricsOverride payload and what to report as applied; null when
+// no metric was requested at all (emulation is left alone), or { error } on a refusal. The
+// reported set is deliberately narrower than the sent one: device_scale_factor is reported only
+// when the caller asked for it, so a defaulted 1 is not echoed back as a choice they made.
+function deviceMetricsOverride(args) {
+  if (!argProvided(args.width) && !argProvided(args.height) &&
+      !argProvided(args.device_scale_factor)) {
+    return null;
+  }
+  const width = Number(args.width);
+  const height = Number(args.height);
+  const dsf = Number(args.device_scale_factor);
+  const error = deviceMetricsError(args, width, height, dsf);
+  if (error) {
+    return { error };
+  }
+  const applied = { width: Math.round(width), height: Math.round(height),
+                    mobile: args.mobile === true };
+  const override = { width: applied.width, height: applied.height,
+                     deviceScaleFactor: Number.isFinite(dsf) && dsf > 0 ? dsf : 1,
+                     mobile: applied.mobile };
   if (argProvided(args.device_scale_factor)) { applied.device_scale_factor = dsf; }
+  return { override, applied };
+}
+
+async function applyDeviceMetrics(tabId, args, applied) {
+  const metrics = deviceMetricsOverride(args);
+  if (!metrics) {
+    return;
+  }
+  if (metrics.error) {
+    throw new Error(metrics.error);
+  }
+  await sendCdp(tabId, "Emulation.setDeviceMetricsOverride", metrics.override);
+  Object.assign(applied, metrics.applied);
 }
 
 async function applyUserAgentOverride(tabId, args, applied) {
@@ -3672,6 +3750,7 @@ async function handleStorage(tabId, args) {
 // the API to that url's domain, so it cannot forge a cookie for an unrelated site. Values and
 // the returned list are capped so a large jar cannot flood the transport.
 const COOKIE_SAME_SITE = { no_restriction: "no_restriction", lax: "lax", strict: "strict" };
+const COOKIE_ACTIONS = ["get", "set", "remove"];
 
 function cookieView(c) {
   // A value long enough to be sliced is not the value the caller reads back. Chrome's own ~4096
@@ -3695,30 +3774,54 @@ function cookieView(c) {
 // A cookie attribute that cannot be honored is not an attribute that may be dropped: scope
 // (path), cross-site exposure (same_site), and lifetime (expires_days) are the whole point of
 // asking for them, and Chrome's default for each is a DIFFERENT cookie than the one requested.
-function cookieDetails(url, args) {
-  const details = { url, name: String(args.name), value: args.value };
+// Pure: SCOPE attributes (path, secure, httpOnly). Writes accepted ones onto @p details and
+// returns "" , or returns the refusal. An attribute that was not supplied is left off entirely
+// rather than defaulted -- chrome.cookies then applies the browser's own default, which is what
+// "unspecified" means, whereas writing a chosen-by-us value would be a cookie nobody asked for.
+function applyCookieScope(args, details) {
   if (args.path !== undefined && args.path !== null) {
     if (typeof args.path !== "string" || args.path.length === 0) {
-      throw new Error("browser_cookies path must be a non-empty string.");
+      return "browser_cookies path must be a non-empty string.";
     }
     details.path = args.path;
   }
   if (typeof args.secure === "boolean") { details.secure = args.secure; }
   if (typeof args.http_only === "boolean") { details.httpOnly = args.http_only; }
+  return "";
+}
+
+// Pure: CROSS-SITE EXPOSURE and LIFETIME (same_site, expires_days). @p nowSeconds is passed in
+// rather than read here so the expiry arithmetic is deterministic and testable.
+function applyCookieLifetime(args, details, nowSeconds) {
   if (args.same_site !== undefined && args.same_site !== null) {
-    const ss = typeof args.same_site === "string" ? COOKIE_SAME_SITE[args.same_site.toLowerCase()] : null;
+    const ss = typeof args.same_site === "string"
+      ? COOKIE_SAME_SITE[args.same_site.toLowerCase()]
+      : null;
     if (!ss) {
-      throw new Error("browser_cookies same_site must be one of: " +
-        Object.keys(COOKIE_SAME_SITE).join(", ") + ".");
+      return "browser_cookies same_site must be one of: " +
+        Object.keys(COOKIE_SAME_SITE).join(", ") + ".";
     }
     details.sameSite = ss;
   }
   if (args.expires_days !== undefined && args.expires_days !== null) {
     const days = Number(args.expires_days);
     if (!Number.isFinite(days) || days <= 0) {
-      throw new Error("browser_cookies expires_days must be a positive number.");
+      return "browser_cookies expires_days must be a positive number.";
     }
-    details.expirationDate = Math.floor(Date.now() / 1000) + Math.round(days * 86400);
+    details.expirationDate = nowSeconds + Math.round(days * 86400);
+  }
+  return "";
+}
+
+function cookieDetails(url, args) {
+  const details = { url, name: String(args.name), value: args.value };
+  const scopeError = applyCookieScope(args, details);
+  if (scopeError) {
+    throw new Error(scopeError);
+  }
+  const lifetimeError = applyCookieLifetime(args, details, Math.floor(Date.now() / 1000));
+  if (lifetimeError) {
+    throw new Error(lifetimeError);
   }
   return details;
 }
@@ -3742,19 +3845,43 @@ async function cookiesSet(url, args) {
   return Object.assign({ ok: true, url, set: true }, view);
 }
 
-async function handleCookies(args) {
-  const action = String((args && args.action) || "").toLowerCase();
-  if (["get", "set", "remove"].indexOf(action) < 0) {
-    throw new Error("browser_cookies action must be get, set, or remove.");
+// Pure: the browser_cookies argument contract, up to the point where an absent url has to be
+// resolved from the active tab. A url that was SUPPLIED must be usable -- letting an empty or
+// blank one fall through to the active tab answers a different question than the one that was
+// asked, and the answer is a site's cookies, which can be its session tokens.
+function cookiesRequest(rawArgs) {
+  const args = rawArgs || {};
+  const action = String(args.action || "").toLowerCase();
+  if (COOKIE_ACTIONS.indexOf(action) < 0) {
+    return { error: "browser_cookies action must be get, set, or remove." };
   }
-  // A url that was SUPPLIED must be usable. Letting an empty or blank one fall through to the
-  // active tab answers a different question than the one that was asked -- and the answer is a
-  // site's cookies, which can be its session tokens.
-  if (args && args.url !== undefined && args.url !== null &&
+  if (args.url !== undefined && args.url !== null &&
       (typeof args.url !== "string" || args.url.trim().length === 0)) {
-    throw new Error("browser_cookies url must be a non-empty http(s) url.");
+    return { error: "browser_cookies url must be a non-empty http(s) url." };
   }
-  let url = args && args.url ? String(args.url).trim() : null;
+  return { action, url: args.url ? String(args.url).trim() : null };
+}
+
+// Pure: get reads the whole jar for an origin, so it needs no name; set and remove address one
+// cookie and must be told which. A missing name must not become the empty-string cookie.
+function cookieNameError(action, rawArgs) {
+  const args = rawArgs || {};
+  if (action === "get") {
+    return "";
+  }
+  if (typeof args.name !== "string" || args.name.length === 0) {
+    return "browser_cookies " + action + " needs a name.";
+  }
+  return "";
+}
+
+async function handleCookies(args) {
+  const req = cookiesRequest(args);
+  if (req.error) {
+    throw new Error(req.error);
+  }
+  const action = req.action;
+  let url = req.url;
   if (!url) {
     const tab = await activeTab();
     url = tab && tab.url ? tab.url : null;
@@ -3767,8 +3894,9 @@ async function handleCookies(args) {
     return { ok: true, url, count: all.length, capped: all.length > 100,
              cookies: all.slice(0, 100).map(cookieView) };
   }
-  if (!args || typeof args.name !== "string" || args.name.length === 0) {
-    throw new Error("browser_cookies " + action + " needs a name.");
+  const nameError = cookieNameError(action, args);
+  if (nameError) {
+    throw new Error(nameError);
   }
   if (action === "remove") {
     const removed = await chrome.cookies.remove({ url, name: String(args.name) });
@@ -3804,38 +3932,66 @@ async function pollDownload(id, timeoutMs, gen) {
   return item;
 }
 
-async function handleDownload(args) {
-  // The generation this download wait belongs to, captured before anything can supersede it.
-  const gen = commandGeneration;
-  const url = args && args.url ? String(args.url) : "";
+const DOWNLOAD_TIMEOUT_DEFAULT_MS = 30000;
+const DOWNLOAD_TIMEOUT_MIN_MS = 1000;
+const DOWNLOAD_TIMEOUT_MAX_MS = 120000;
+
+// Pure: build the chrome.downloads payload and the wait budget, or state why the request is
+// refused. The filename guard is the load-bearing one: chrome.downloads rejects an absolute or
+// parent-relative path itself, but a page-supplied name that escaped the download tree would be
+// a write outside it, so it is refused HERE with a message that says which rule was broken.
+// An unusable timeout falls back to the default and is then clamped -- the clamp is not a
+// fallback for a bad value, it is the bound on how long a single command may hold the relay.
+function downloadOptions(rawArgs) {
+  const args = rawArgs || {};
+  const url = args.url ? String(args.url) : "";
   if (!/^https?:/i.test(url)) {
-    throw new Error("browser_download needs a valid http(s) url.");
+    return { error: "browser_download needs a valid http(s) url." };
   }
   const opts = { url, conflictAction: "uniquify", saveAs: false };
   if (typeof args.filename === "string" && args.filename.trim().length > 0) {
     const fn = args.filename.trim();
     if (/^([a-zA-Z]:|\\|\/)/.test(fn) || fn.indexOf("..") >= 0) {
-      throw new Error("browser_download filename must be a relative name without '..'.");
+      return { error: "browser_download filename must be a relative name without '..'." };
     }
     opts.filename = fn;
   }
-  let timeoutMs = Number(args && args.timeout_ms);
-  if (!Number.isFinite(timeoutMs)) { timeoutMs = 30000; }
-  timeoutMs = Math.min(120000, Math.max(1000, timeoutMs));
-  const id = await chrome.downloads.download(opts);
-  if (typeof id !== "number") {
-    throw new Error("browser_download failed to start.");
-  }
-  const item = await pollDownload(id, timeoutMs, gen);
-  if (!item) {
-    throw new Error("browser_download could not track the download.");
-  }
+  const supplied = suppliedNumber(args.timeout_ms);
+  const timeoutMs = Number.isFinite(supplied) ? supplied : DOWNLOAD_TIMEOUT_DEFAULT_MS;
+  return {
+    opts,
+    timeoutMs: Math.min(DOWNLOAD_TIMEOUT_MAX_MS, Math.max(DOWNLOAD_TIMEOUT_MIN_MS, timeoutMs)),
+  };
+}
+
+// Pure: report the download as the browser left it. A download that did not reach "complete" is
+// reported ok:false WITH its state and error rather than thrown, so the caller can tell an
+// interrupted transfer from a command that never ran.
+function downloadReply(id, item, url) {
   if (item.state !== "complete") {
     return { ok: false, id, state: item.state, error: item.error || null,
              path: item.filename || null };
   }
   return { ok: true, id, state: item.state, path: item.filename || null,
            bytes: item.fileSize || item.totalBytes || 0, url };
+}
+
+async function handleDownload(args) {
+  // The generation this download wait belongs to, captured before anything can supersede it.
+  const gen = commandGeneration;
+  const req = downloadOptions(args);
+  if (req.error) {
+    throw new Error(req.error);
+  }
+  const id = await chrome.downloads.download(req.opts);
+  if (typeof id !== "number") {
+    throw new Error("browser_download failed to start.");
+  }
+  const item = await pollDownload(id, req.timeoutMs, gen);
+  if (!item) {
+    throw new Error("browser_download could not track the download.");
+  }
+  return downloadReply(id, item, req.opts.url);
 }
 
 // -- HTTP auth (Fetch domain) ------------------------------------------------
@@ -3856,6 +4012,48 @@ function fetchStateReply(reply) {
   return reply;
 }
 
+// Pure: the credentials an arm carries, or the refusal. A PASSWORD may legally be empty (some
+// realms accept one), but a username may not: without one there is nothing to answer a challenge
+// with, and arming an empty pair would hand a blank credential to the next 401.
+function httpAuthCredentials(rawArgs) {
+  const args = rawArgs || {};
+  const username = typeof args.username === "string" ? args.username : "";
+  const password = typeof args.password === "string" ? args.password : "";
+  if (!username) {
+    return { error: "browser_http_auth needs a username (or clear:true to disarm)." };
+  }
+  return { username, password };
+}
+
+// Pure: refuse an arm whose caller named an origin other than the one the tab is actually on.
+// The origin comes from whichever tab is active when the frame executes, which need not be the
+// site the password was confirmed for -- so when the caller states which site it means, the arm
+// happens only if the tab is still that site. No claim is not a mismatch.
+function httpAuthOriginError(tabOrigin, expectOrigin) {
+  if (typeof expectOrigin !== "string" || expectOrigin.length === 0) {
+    return "";
+  }
+  if (originsMatch(expectOrigin, tabOrigin)) {
+    return "";
+  }
+  return "The active tab is " + tabOrigin + ", not " + expectOrigin +
+    "; browser_http_auth will not arm credentials for a different origin.";
+}
+
+// The tab's origin, or null when it has none this worker can resolve (an unreadable tab, a
+// non-URL page). Null is a refusal upstream, never a wildcard.
+async function resolveTabOrigin(tabId) {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab && tab.url) {
+      return new URL(tab.url).origin;
+    }
+  } catch (_e) {
+    return null;
+  }
+  return null;
+}
+
 async function handleHttpAuth(tabId, args) {
   await ensureAttached(tabId);
   if (args && args.clear === true) {
@@ -3863,35 +4061,23 @@ async function handleHttpAuth(tabId, args) {
     await sendCdp(tabId, "Fetch.disable").catch(() => {});
     return fetchStateReply({ ok: true, armed: false });
   }
-  const username = args && typeof args.username === "string" ? args.username : "";
-  const password = args && typeof args.password === "string" ? args.password : "";
-  if (!username) {
-    throw new Error("browser_http_auth needs a username (or clear:true to disarm).");
+  const creds = httpAuthCredentials(args);
+  if (creds.error) {
+    throw new Error(creds.error);
   }
   // Bind the credentials to the current tab's origin so the onEvent handler only ever hands
   // them to a same-origin challenge. Fail closed if the tab has no resolvable origin.
-  let origin = null;
-  try {
-    const tab = await chrome.tabs.get(tabId);
-    if (tab && tab.url) {
-      origin = new URL(tab.url).origin;
-    }
-  } catch (_e) {
-    origin = null;
-  }
+  const origin = await resolveTabOrigin(tabId);
   if (!origin || origin === "null") {
     throw new Error(
       "browser_http_auth could not resolve the tab's origin to bind the credentials to.");
   }
-  // The origin comes from whichever tab is active when the frame executes, which need not be the
-  // site the password was confirmed for. When the caller states the origin it means, the arm
-  // happens only if the tab is still that origin.
-  if (args && typeof args.origin === "string" && args.origin.length > 0 &&
-      !originsMatch(args.origin, origin)) {
-    throw new Error("The active tab is " + origin + ", not " + args.origin +
-      "; browser_http_auth will not arm credentials for a different origin.");
+  const originError = httpAuthOriginError(origin, args && args.origin);
+  if (originError) {
+    throw new Error(originError);
   }
-  httpAuthCreds = { username, password, origin };
+  const username = creds.username;
+  httpAuthCreds = { username, password: creds.password, origin };
   await sendCdp(tabId, "Fetch.enable",
     { handleAuthRequests: true, patterns: [{ urlPattern: "*" }] });
   return fetchStateReply({ ok: true, armed: true, username, origin });

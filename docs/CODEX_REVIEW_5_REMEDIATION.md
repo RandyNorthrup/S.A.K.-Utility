@@ -7374,7 +7374,7 @@ gate teaches people to disable both.
         1. DONE. scripts/run_lizard.py now runs JavaScript at the repo's own thresholds
            (CCN <= 10, PARAM <= 5, length <= 70) against browser/, and node is a REQUIRED
            entry in the toolchain preflight so the gate cannot silently stop running.
-        2. IN PROGRESS. 24 violations at the start, 14 now. dispatchCommand (41 CCN, the
+        2. IN PROGRESS. 24 violations at the start, 6 now. dispatchCommand (41 CCN, the
            worst), axNodeToCapture (33), selectCallArgs (13), printPageOptions (13),
            buildBoundsMap (13) and buildNodes (15) are closed. The rest are held by
            scripts/lizard_js_baseline.txt, which is a RATCHET rather than an exclusion: a
@@ -7440,7 +7440,32 @@ gate teaches people to disable both.
            with suppliedWindowId, which accepts a number or a non-blank numeric string and
            yields NaN otherwise; a genuinely-supplied 0 still passes through to the listing
            check. The node suite grew 31 -> 57 tests.
-        3. DONE. tests/unit/test_browser_extension_pure.mjs, 57 tests, registered with ctest.
+           2026-08-25, second pass (ext 0.3.19): 14 -> 6, same pattern, eight more functions:
+           handleNewTab (newTabRequest + tabStateReply), handleGroupTabs (groupUpdateFrom),
+           handleSetValue (setValueMode + the injected setValueFn hoisted to top level),
+           handleCookies (cookiesRequest + cookieNameError), cookieDetails (applyCookieScope +
+           applyCookieLifetime -- lizard reported this one as "String@" because its first line
+           is String(args.name), which is why it had never been recognised), handleDownload
+           (downloadOptions + downloadReply), handleHttpAuth (httpAuthCredentials +
+           httpAuthOriginError + resolveTabOrigin) and applyDeviceMetrics (deviceMetricsOverride
+           + deviceMetricsError). Node suite 57 -> 77.
+           TWO more real defects, both found by running the new tests, not by reading:
+             (a) THE SAME Number() TRAP AS window_id, in browser_download: timeout_ms:null (and
+                 "" / "   " / []) became 0 under a bare Number(), which then clamped to a
+                 ONE-SECOND wait budget instead of the 30s default -- so any download slower
+                 than a second reported "could not track the download". suppliedWindowId was
+                 generalized to suppliedNumber and now guards BOTH call sites. Three sightings
+                 of this trap in one session is the lesson: Number(x) on an optional field is
+                 never safe on its own.
+             (b) handleGroupTabs validated its color AFTER chrome.tabs.group() had already moved
+                 the tabs together, so an unknown color left the browser permanently regrouped
+                 while the call reported failure -- a half-applied action the caller was told
+                 did not happen. groupUpdateFrom now runs before anything is grouped.
+           The 6 that remain are the genuinely DOM/CDP-bound ones: selectOptionFn, mediaFn and
+           collectMediaNodes (page-injected, need a DOM), occlusionAt and ensureAttached (CDP
+           round-trips whose decisions ARE the round-trip), and handleWaitFor (a polling loop).
+           Those need the heavier harness described above, not another decision extraction.
+        3. DONE. tests/unit/test_browser_extension_pure.mjs, 77 tests, registered with ctest.
 
       The harness loads background.js AS SHIPPED under a stubbed chrome rather than splitting
       the pure functions into a separate module. Extracting them would have meant changing the

@@ -60,7 +60,12 @@ const EXPORTED = [
   "buildNodes", "MAX_CAPTURE_NODES",
   "classifyHostFrame", "classifyCommandFrame", "BRIDGE_PROTOCOL", "viewportReading",
   "storageRequest", "storageArgError", "storageOriginError",
-  "windowRequest", "createdWindowReply", "suppliedWindowId",
+  "windowRequest", "createdWindowReply", "suppliedNumber",
+  "newTabRequest", "tabStateReply", "groupUpdateFrom", "setValueMode",
+  "cookiesRequest", "cookieNameError", "GROUP_COLORS",
+  "applyCookieScope", "applyCookieLifetime", "COOKIE_SAME_SITE",
+  "downloadOptions", "downloadReply", "httpAuthCredentials", "httpAuthOriginError",
+  "deviceMetricsOverride", "deviceMetricsError",
 ];
 
 function loadWorker() {
@@ -909,21 +914,332 @@ test("createdWindowReply reports only what the browser actually said", () => {
   }
 });
 
-test("suppliedWindowId refuses a value the caller never supplied (a REAL find)", () => {
+test("suppliedNumber refuses a value the caller never supplied (TWO REAL finds)", () => {
   // Number(null), Number(""), Number("   ") and Number([]) are ALL 0, so before this guard a
   // focus/close carrying no window_id addressed window 0 and was refused downstream by
   // requireListedWindow -- telling the operator the window "was not in the listing" when the
   // command in fact named no window at all. Found by writing this test, not by reading.
   for (const absent of [undefined, null, "", "   ", [], {}, true, false]) {
-    assert.ok(Number.isNaN(w.suppliedWindowId(absent)),
+    assert.ok(Number.isNaN(w.suppliedNumber(absent)),
               `${JSON.stringify(absent)} must not become a window id`);
   }
   // A real id, including 0 when it is genuinely supplied as a number, still passes through.
-  assert.equal(w.suppliedWindowId(0), 0);
-  assert.equal(w.suppliedWindowId(12), 12);
-  assert.equal(w.suppliedWindowId("12"), 12);
-  assert.equal(w.suppliedWindowId(" 12 "), 12);
+  assert.equal(w.suppliedNumber(0), 0);
+  assert.equal(w.suppliedNumber(12), 12);
+  assert.equal(w.suppliedNumber("12"), 12);
+  assert.equal(w.suppliedNumber(" 12 "), 12);
   // Non-integers survive this step and are refused by the Number.isInteger check above it.
-  assert.equal(w.suppliedWindowId(1.5), 1.5);
-  assert.ok(Number.isNaN(w.suppliedWindowId("3abc")));
+  assert.equal(w.suppliedNumber(1.5), 1.5);
+  assert.ok(Number.isNaN(w.suppliedNumber("3abc")));
+});
+
+// --------------------------------------------------------------------------------------
+// Tab, group, set-value and cookie request contracts (R5-G21-9)
+// --------------------------------------------------------------------------------------
+
+test("newTabRequest refuses a SUPPLIED url that is unusable, but allows none at all", () => {
+  // No url is a different request -- a blank new tab -- and must still be honored.
+  assert.deepEqual(crossRealm(w.newTabRequest({})), { url: null });
+  assert.deepEqual(crossRealm(w.newTabRequest(undefined)), { url: null });
+  assert.equal(w.newTabRequest({ url: "example.com" }).url, "https://example.com");
+  // A blank string is a SUPPLIED url: opening a blank tab for it would report the request as
+  // honored while landing somewhere the caller never named.
+  for (const blank of ["", "   ", "\t"]) {
+    assert.equal(w.newTabRequest({ url: blank }).error, "newTab url must be http(s).");
+  }
+  for (const hostile of ["javascript:alert(1)", "file:///C:/Windows", "chrome://settings",
+                         "not a url"]) {
+    assert.equal(w.newTabRequest({ url: hostile }).error, "newTab url must be http(s).",
+                 `must refuse ${hostile}`);
+  }
+});
+
+test("tabStateReply reports what the tab shows, preferring url over pendingUrl", () => {
+  assert.deepEqual(
+    crossRealm(w.tabStateReply({ index: 2, url: "https://landed/", title: "T" }, true)),
+    { ok: true, index: 2, url: "https://landed/", title: "T", load_complete: true });
+  // Still navigating: pendingUrl is all there is, and it is reported as such.
+  assert.deepEqual(
+    crossRealm(w.tabStateReply({ index: 0, url: "", pendingUrl: "https://going/" }, false)),
+    { ok: true, index: 0, url: "https://going/", title: "", load_complete: false });
+  // Neither: an empty string, never undefined leaking into the reply frame.
+  assert.deepEqual(crossRealm(w.tabStateReply({ index: 1 }, true)),
+                   { ok: true, index: 1, url: "", title: "", load_complete: true });
+  // load_complete is carried through verbatim -- it is the caller's only signal that the page
+  // it is about to act on actually finished loading.
+  assert.equal(w.tabStateReply({ index: 0, url: "https://x/" }, false).load_complete, false);
+});
+
+test("groupUpdateFrom refuses a color Chrome does not know", () => {
+  // Ignoring an unknown color would leave the group whatever shade Chrome picked while the
+  // caller believes it named one.
+  const err = w.groupUpdateFrom({ color: "chartreuse" }).error;
+  assert.ok(err.startsWith("browser_group_tabs color must be one of: "));
+  for (const known of w.GROUP_COLORS) {
+    assert.equal(w.groupUpdateFrom({ color: known }).update.color, known);
+  }
+  // A non-string color is not a claim to a color at all, so it is simply not applied.
+  assert.deepEqual(crossRealm(w.groupUpdateFrom({ color: 7 }).update), {});
+});
+
+test("groupUpdateFrom applies a title only when one was actually given", () => {
+  assert.equal(w.groupUpdateFrom({ title: "Work" }).update.title, "Work");
+  // An empty title is not a title: sending it would blank a group name the caller never
+  // asked to clear.
+  assert.deepEqual(crossRealm(w.groupUpdateFrom({ title: "" }).update), {});
+  assert.deepEqual(crossRealm(w.groupUpdateFrom({ title: 42 }).update), {});
+  assert.deepEqual(crossRealm(w.groupUpdateFrom(undefined).update), {});
+  assert.deepEqual(crossRealm(w.groupUpdateFrom({ title: "W", color: "blue" }).update),
+                   { title: "W", color: "blue" });
+});
+
+test("setValueMode requires EXACTLY one of value/checked", () => {
+  assert.equal(w.setValueMode({}).error, "browser_set_value needs a value or checked.");
+  assert.equal(w.setValueMode(undefined).error, "browser_set_value needs a value or checked.");
+  assert.equal(w.setValueMode({ value: "x", checked: true }).error,
+               "browser_set_value takes either value or checked, not both.");
+  // Only the declared types count: a truthy non-boolean checked, or a numeric value, is not a
+  // request this can act on -- and must not be coerced into one.
+  assert.equal(w.setValueMode({ checked: "true" }).error,
+               "browser_set_value needs a value or checked.");
+  assert.equal(w.setValueMode({ value: 42 }).error, "browser_set_value needs a value or checked.");
+});
+
+test("setValueMode carries only the field that was set, with a definite other half", () => {
+  assert.deepEqual(crossRealm(w.setValueMode({ value: "hello" })),
+                   { mode: "value", value: "hello", checked: false });
+  // An empty string is a legal value: clearing a field is a real request.
+  assert.deepEqual(crossRealm(w.setValueMode({ value: "" })),
+                   { mode: "value", value: "", checked: false });
+  assert.deepEqual(crossRealm(w.setValueMode({ checked: true })),
+                   { mode: "checked", value: "", checked: true });
+  // checked:false is a request to UNCHECK, not an absent field.
+  assert.deepEqual(crossRealm(w.setValueMode({ checked: false })),
+                   { mode: "checked", value: "", checked: false });
+});
+
+test("cookiesRequest refuses an unknown action and a blank SUPPLIED url", () => {
+  for (const action of [undefined, null, "", "getAll", "delete", 7]) {
+    assert.equal(w.cookiesRequest({ action }).error,
+                 "browser_cookies action must be get, set, or remove.");
+  }
+  for (const blank of ["", "   ", 42, {}]) {
+    assert.equal(w.cookiesRequest({ action: "get", url: blank }).error,
+                 "browser_cookies url must be a non-empty http(s) url.",
+                 `must refuse url ${JSON.stringify(blank)}`);
+  }
+  // An ABSENT url is not a refusal: it means "the active tab", which the caller resolves.
+  assert.equal(w.cookiesRequest({ action: "get" }).url, null);
+  assert.equal(w.cookiesRequest({ action: "get", url: null }).url, null);
+  // A supplied url is trimmed but NOT scheme-checked here -- that guard runs after the active
+  // tab has been resolved, so both sources go through the same http(s) test.
+  assert.equal(w.cookiesRequest({ action: "GET", url: "  https://e/  " }).url, "https://e/");
+});
+
+test("cookieNameError demands a name for set/remove only", () => {
+  // get reads the whole jar for an origin, so it needs no name.
+  assert.equal(w.cookieNameError("get", {}), "");
+  for (const action of ["set", "remove"]) {
+    assert.equal(w.cookieNameError(action, { name: "sid" }), "");
+    // A missing name must not become the empty-string cookie, which is a real, addressable one.
+    for (const bad of [undefined, null, "", 42]) {
+      assert.equal(w.cookieNameError(action, { name: bad }),
+                   "browser_cookies " + action + " needs a name.");
+    }
+    assert.equal(w.cookieNameError(action, undefined),
+                 "browser_cookies " + action + " needs a name.");
+  }
+});
+
+test("applyCookieScope refuses a path that cannot be honored, and omits what was not asked", () => {
+  // An attribute nobody supplied is LEFT OFF, so chrome.cookies applies the browser default --
+  // writing a chosen-by-us value instead would install a cookie with a scope nobody requested.
+  const details = {};
+  assert.equal(w.applyCookieScope({}, details), "");
+  assert.deepEqual(crossRealm(details), {});
+
+  const full = {};
+  assert.equal(w.applyCookieScope({ path: "/app", secure: true, http_only: false }, full), "");
+  assert.deepEqual(crossRealm(full), { path: "/app", secure: true, httpOnly: false });
+
+  // A supplied-but-unusable path is refused: scope is the whole point of asking for it.
+  for (const bad of ["", 42, {}]) {
+    assert.equal(w.applyCookieScope({ path: bad }, {}),
+                 "browser_cookies path must be a non-empty string.",
+                 `must refuse path ${JSON.stringify(bad)}`);
+  }
+  // Non-boolean secure/http_only are not claims and are simply not applied.
+  const loose = {};
+  w.applyCookieScope({ secure: "yes", http_only: 1 }, loose);
+  assert.deepEqual(crossRealm(loose), {});
+});
+
+test("applyCookieLifetime refuses an unknown same_site rather than defaulting", () => {
+  // Chrome's default same_site is a DIFFERENT cookie (different cross-site exposure) than the
+  // one requested, so an unrecognized value must stop the write.
+  const err = w.applyCookieLifetime({ same_site: "sometimes" }, {}, 1000);
+  assert.ok(err.startsWith("browser_cookies same_site must be one of: "));
+  for (const known of Object.keys(w.COOKIE_SAME_SITE)) {
+    const d = {};
+    assert.equal(w.applyCookieLifetime({ same_site: known.toUpperCase() }, d, 1000), "");
+    assert.equal(d.sameSite, known);
+  }
+  // A non-string same_site is still a supplied attribute that cannot be honored -> refused,
+  // not silently skipped.
+  assert.ok(w.applyCookieLifetime({ same_site: 7 }, {}, 1000)
+             .startsWith("browser_cookies same_site must be one of: "));
+});
+
+test("applyCookieLifetime computes expiry from the clock it is GIVEN", () => {
+  const d = {};
+  assert.equal(w.applyCookieLifetime({ expires_days: 2 }, d, 1_000_000), "");
+  assert.equal(d.expirationDate, 1_000_000 + 2 * 86400);
+  // Fractional days are honored (rounded to the second), so a short-lived cookie is expressible.
+  const half = {};
+  w.applyCookieLifetime({ expires_days: 0.5 }, half, 0);
+  assert.equal(half.expirationDate, 43200);
+  // Zero or negative would be a cookie that expires in the past -- a DELETE dressed as a set.
+  for (const bad of [0, -1, NaN, Infinity, "soon", {}]) {
+    assert.equal(w.applyCookieLifetime({ expires_days: bad }, {}, 0),
+                 "browser_cookies expires_days must be a positive number.",
+                 `must refuse expires_days ${JSON.stringify(bad)}`);
+  }
+  // Absent -> session cookie: no expirationDate written at all.
+  const session = {};
+  assert.equal(w.applyCookieLifetime({}, session, 500), "");
+  assert.deepEqual(crossRealm(session), {});
+});
+
+// --------------------------------------------------------------------------------------
+// Download, HTTP-auth and device-metrics contracts (R5-G21-9)
+// --------------------------------------------------------------------------------------
+
+test("downloadOptions refuses a filename that could escape the download tree", () => {
+  // chrome.downloads rejects these itself, but the refusal here is what names the rule that
+  // was broken -- and a name that DID escape would be a write outside the browser's tree.
+  for (const hostile of ["C:\\evil.exe", "/etc/passwd", "\\\\server\\share\\x",
+                         "../../evil.exe", "sub/../../evil.exe", "a/../../b"]) {
+    assert.equal(w.downloadOptions({ url: "https://e/f", filename: hostile }).error,
+                 "browser_download filename must be a relative name without '..'.",
+                 `must refuse ${hostile}`);
+  }
+  // A relative name is kept, trimmed.
+  assert.equal(
+    w.downloadOptions({ url: "https://e/f", filename: "  sub/report.pdf " }).opts.filename,
+    "sub/report.pdf");
+  // A blank filename is not a filename: no override is sent and Chrome names the file.
+  assert.equal(w.downloadOptions({ url: "https://e/f", filename: "   " }).opts.filename,
+               undefined);
+});
+
+test("downloadOptions requires an http(s) url and always uniquifies", () => {
+  for (const bad of [undefined, "", "file:///C:/x", "javascript:alert(1)", "ftp://h/f",
+                     "chrome://settings"]) {
+    assert.equal(w.downloadOptions({ url: bad }).error,
+                 "browser_download needs a valid http(s) url.", `must refuse ${String(bad)}`);
+  }
+  const opts = w.downloadOptions({ url: "HTTPS://e/f" }).opts;
+  // saveAs:false keeps the op headless; uniquify means a repeat download never silently
+  // overwrites a file already on disk.
+  assert.deepEqual(crossRealm(opts),
+                   { url: "HTTPS://e/f", conflictAction: "uniquify", saveAs: false });
+});
+
+test("downloadOptions clamps the wait budget and defaults an unusable one", () => {
+  assert.equal(w.downloadOptions({ url: "https://e/f" }).timeoutMs, 30000);
+  // null/""/[] all become 0 under a bare Number(), which used to clamp to a ONE-SECOND budget
+  // instead of the default -- any slower download then reported that it could not be tracked.
+  for (const junk of ["soon", NaN, undefined, null, "", "   ", [], {}]) {
+    assert.equal(w.downloadOptions({ url: "https://e/f", timeout_ms: junk }).timeoutMs, 30000,
+                 `timeout_ms ${JSON.stringify(junk)} must fall back to the default`);
+  }
+  // The clamp bounds how long one command may hold the relay, in both directions.
+  assert.equal(w.downloadOptions({ url: "https://e/f", timeout_ms: 1 }).timeoutMs, 1000);
+  assert.equal(w.downloadOptions({ url: "https://e/f", timeout_ms: -5 }).timeoutMs, 1000);
+  assert.equal(w.downloadOptions({ url: "https://e/f", timeout_ms: 999999 }).timeoutMs, 120000);
+  assert.equal(w.downloadOptions({ url: "https://e/f", timeout_ms: 45000 }).timeoutMs, 45000);
+});
+
+test("downloadReply distinguishes an interrupted transfer from a completed one", () => {
+  assert.deepEqual(
+    crossRealm(w.downloadReply(3, { state: "complete", filename: "C:\\d\\a.pdf", fileSize: 12 },
+                               "https://e/f")),
+    { ok: true, id: 3, state: "complete", path: "C:\\d\\a.pdf", bytes: 12, url: "https://e/f" });
+  // Interrupted is reported, not thrown: the caller can tell a failed transfer from a command
+  // that never ran, and still learns where the partial file is.
+  assert.deepEqual(
+    crossRealm(w.downloadReply(4, { state: "interrupted", error: "NETWORK_FAILED",
+                                    filename: "C:\\d\\p.crdownload" }, "https://e/f")),
+    { ok: false, id: 4, state: "interrupted", error: "NETWORK_FAILED",
+      path: "C:\\d\\p.crdownload" });
+  // fileSize 0 falls back to totalBytes, and a size-less item reports 0 rather than undefined.
+  assert.equal(w.downloadReply(5, { state: "complete", totalBytes: 99 }, "u").bytes, 99);
+  assert.equal(w.downloadReply(5, { state: "complete" }, "u").bytes, 0);
+  assert.equal(w.downloadReply(5, { state: "complete" }, "u").path, null);
+});
+
+test("httpAuthCredentials requires a username but allows an empty password", () => {
+  assert.deepEqual(crossRealm(w.httpAuthCredentials({ username: "u", password: "p" })),
+                   { username: "u", password: "p" });
+  // Some realms accept an empty password; a blank USERNAME would arm a credential with nothing
+  // to answer a challenge with.
+  assert.deepEqual(crossRealm(w.httpAuthCredentials({ username: "u" })),
+                   { username: "u", password: "" });
+  for (const bad of [undefined, null, "", 42, {}]) {
+    assert.equal(w.httpAuthCredentials({ username: bad }).error,
+                 "browser_http_auth needs a username (or clear:true to disarm).");
+  }
+  assert.ok(w.httpAuthCredentials(undefined).error);
+  // A non-string password is not a password and must not be coerced into one.
+  assert.equal(w.httpAuthCredentials({ username: "u", password: 1234 }).password, "");
+});
+
+test("httpAuthOriginError will not arm credentials for a different origin", () => {
+  assert.equal(w.httpAuthOriginError("https://bank.example", "https://bank.example"), "");
+  // No claim is not a mismatch.
+  for (const none of [undefined, null, "", 42]) {
+    assert.equal(w.httpAuthOriginError("https://bank.example", none), "");
+  }
+  assert.equal(
+    w.httpAuthOriginError("https://evil.example", "https://bank.example"),
+    "The active tab is https://evil.example, not https://bank.example; " +
+    "browser_http_auth will not arm credentials for a different origin.");
+});
+
+test("deviceMetricsOverride leaves emulation alone when nothing was requested", () => {
+  assert.equal(w.deviceMetricsOverride({}), null);
+  assert.equal(w.deviceMetricsOverride({ mobile: true }), null);
+});
+
+test("deviceMetricsOverride requires width and height TOGETHER", () => {
+  const msg = "browser_emulate needs both width and height as positive integers.";
+  for (const partial of [{ width: 800 }, { height: 600 }, { width: 800, height: 0 },
+                         { width: -1, height: 600 }, { width: "wide", height: 600 },
+                         { device_scale_factor: 2 }]) {
+    assert.equal(w.deviceMetricsOverride(partial).error, msg,
+                 `must refuse ${JSON.stringify(partial)}`);
+  }
+});
+
+test("deviceMetricsOverride reports a scale factor only when one was asked for", () => {
+  const plain = w.deviceMetricsOverride({ width: 800.4, height: 600.6 });
+  // Rounded for the override, and mobile is a strict boolean check, not truthiness.
+  assert.deepEqual(crossRealm(plain.override),
+                   { width: 800, height: 601, deviceScaleFactor: 1, mobile: false });
+  // A defaulted 1 is NOT echoed back as a choice the caller made.
+  assert.deepEqual(crossRealm(plain.applied), { width: 800, height: 601, mobile: false });
+
+  const scaled = w.deviceMetricsOverride({ width: 400, height: 800, device_scale_factor: 3,
+                                           mobile: true });
+  assert.equal(scaled.override.deviceScaleFactor, 3);
+  assert.equal(scaled.applied.device_scale_factor, 3);
+  assert.equal(scaled.override.mobile, true);
+  assert.equal(w.deviceMetricsOverride({ width: 1, height: 1, mobile: "yes" }).override.mobile,
+               false);
+
+  // A supplied-but-unusable scale factor is refused rather than silently becoming 1.
+  for (const bad of [0, -2, "big", NaN]) {
+    assert.equal(w.deviceMetricsOverride({ width: 800, height: 600, device_scale_factor: bad })
+                  .error, "browser_emulate device_scale_factor must be a positive number.");
+  }
 });
