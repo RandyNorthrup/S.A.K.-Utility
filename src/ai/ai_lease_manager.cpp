@@ -18,9 +18,18 @@ constexpr int kLeaseIdWidth = 4;
 // Unguessable half of the lease id. The counter alone is predictable, so any code holding the
 // manager could release a lease it does not own by counting; a random token makes an id something
 // only its holder can present.
+//
+// Because the token is what AUTHORIZES a release, it is a bearer credential and must come from a
+// cryptographic source. QRandomGenerator::global() is a seeded PRNG, not a CSPRNG: an observer of
+// a handful of ids could recover its state and predict the rest, which is exactly the "guess
+// another agent's lease id" attack the token is here to stop. system() is the OS CSPRNG.
 constexpr int kLeaseTokenBase = 16;
 constexpr int kLeaseTokenWidth = 16;
 constexpr qint64 kLeaseMillisPerSecond = 1000;
+
+// A lease id is "lease_<counter>_<token>". Everything up to and including the counter is
+// non-secret and identifies the lease; the trailing token is the credential.
+constexpr int kLeaseIdLabelParts = 2;
 
 // TTL in milliseconds, saturated rather than overflowed: the ceiling is far beyond any real hold
 // and a wrapped deadline would read as "already expired" and reclaim a live lease immediately.
@@ -48,15 +57,19 @@ AiLeaseManager::AcquireResult AiLeaseManager::acquire(const QString& agent_id,
     if (!m_active.isEmpty()) {
         const auto existing = *m_active.constBegin();
         result.granted = false;
+        // The LABEL, never the live id. This reason is surfaced to the denied caller and, for a
+        // model-issued tool call, is written into the tool result and the persisted transcript.
+        // The id is a bearer credential: naming it here would hand the token that authorizes
+        // release() to the one caller we just refused, and leave it sitting in the transcript.
         result.reason = QStringLiteral("Active mutating lease '%1' held by '%2' blocks new lease")
-                            .arg(existing.lease_id, existing.agent_id);
+                            .arg(publicLabel(existing.lease_id), existing.agent_id);
         return result;
     }
     Lease lease;
     // Counter for readability in logs, random token so the id cannot be guessed or replayed.
     lease.lease_id = QStringLiteral("lease_%1_%2")
                          .arg(m_next_id++, kLeaseIdWidth, kDecimalBase, QLatin1Char('0'))
-                         .arg(QRandomGenerator::global()->generate64(),
+                         .arg(QRandomGenerator::system()->generate64(),
                               kLeaseTokenWidth,
                               kLeaseTokenBase,
                               QLatin1Char('0'));
@@ -90,19 +103,31 @@ QStringList AiLeaseManager::reclaimExpired(const QDateTime& now_utc) {
 
 QStringList AiLeaseManager::reclaimExpiredLocked(const QDateTime& now_utc) {
     QStringList reclaimed;
-    const qint64 elapsed_ms = m_clock.isValid() ? m_clock.elapsed() : 0;
+    const bool steady_available = m_clock.isValid();
+    const qint64 elapsed_ms = steady_available ? m_clock.elapsed() : 0;
     for (auto it = m_active.begin(); it != m_active.end();) {
         const Lease& lease = it.value();
-        // A null expiry (should not happen for leases minted here) is treated as
-        // non-expiring so we never reclaim a lease we cannot reason about.
-        const bool wall_expired = lease.expires_at_utc.isValid() && lease.expires_at_utc <= now_utc;
-        // Steady-clock backstop: a wall clock moved BACKWARD (NTP correction, a user changing the
-        // date) pushes expires_at_utc out of reach and would wedge every future mutating action
-        // behind an abandoned lease until the app restarts. This branch measures real elapsed
-        // time only, so it can never reclaim a lease before its TTL has genuinely passed.
-        const bool steady_expired = lease.monotonic_expiry_ms > 0 &&
-                                    elapsed_ms >= lease.monotonic_expiry_ms;
-        if (wall_expired || steady_expired) {
+        // THE STEADY CLOCK IS THE AUTHORITY, and it is consulted ALONE whenever it can answer.
+        // The previous form ORed the wall-clock arm in, which made the reclaim decision only as
+        // trustworthy as the LEAST trustworthy clock: reclaimExpired() is public and takes a
+        // caller-supplied now_utc, so a forward NTP correction, a user setting the date ahead, or
+        // a caller simply passing a future instant reclaimed a lease whose TTL had NOT elapsed --
+        // and a second mutating action then started beside the first, which is the concurrent
+        // mutation this class exists to prevent. This arm measures real elapsed time only, so it
+        // can never fire early, and it still closes the backward-jump wedge the wall arm cannot.
+        const bool steady_usable = steady_available && lease.monotonic_expiry_ms > 0;
+        bool expired = false;
+        if (steady_usable) {
+            expired = elapsed_ms >= lease.monotonic_expiry_ms;
+        } else {
+            // No monotonic deadline to consult (a lease not minted by this manager, or a steady
+            // clock that never started). Fall back to wall time, which is better than treating
+            // the lease as immortal -- a lost release would otherwise wedge mutations forever.
+            // A null expiry is treated as non-expiring: never reclaim what cannot be reasoned
+            // about.
+            expired = lease.expires_at_utc.isValid() && lease.expires_at_utc <= now_utc;
+        }
+        if (expired) {
             reclaimed.append(it.key());
             it = m_active.erase(it);
         } else {
@@ -110,6 +135,18 @@ QStringList AiLeaseManager::reclaimExpiredLocked(const QDateTime& now_utc) {
         }
     }
     return reclaimed;
+}
+
+QString AiLeaseManager::publicLabel(const QString& lease_id) {
+    // "lease_<counter>_<token>" -> "lease_<counter>". Split from the LEFT and keep the first two
+    // parts, so a token that itself contains an underscore cannot smuggle any of itself into the
+    // label. Anything that is not in that shape carries no token to protect and is returned whole
+    // -- returning a truncation of an unrecognised id would name no lease at all.
+    const QStringList parts = lease_id.split(QLatin1Char('_'));
+    if (parts.size() <= kLeaseIdLabelParts) {
+        return lease_id;
+    }
+    return parts.at(0) + QLatin1Char('_') + parts.at(1);
 }
 
 bool AiLeaseManager::hasActiveExclusive() const {
@@ -122,14 +159,17 @@ int AiLeaseManager::activeLeaseCount() const {
     return static_cast<int>(m_active.size());
 }
 
-QStringList AiLeaseManager::activeLeaseIds() const {
+QStringList AiLeaseManager::activeLeaseLabels() const {
     const QMutexLocker lock(&m_mutex);
-    QStringList ids;
-    ids.reserve(m_active.size());
+    QStringList labels;
+    labels.reserve(m_active.size());
     for (auto it = m_active.constBegin(); it != m_active.constEnd(); ++it) {
-        ids.append(it.key());
+        // Labels, not ids: this accessor answers "which leases are active", and the live id is
+        // the credential that authorizes releasing them. A caller that legitimately holds a lease
+        // already has its own id and does not need to read it back from here.
+        labels.append(publicLabel(it.key()));
     }
-    return ids;
+    return labels;
 }
 
 }  // namespace sak::ai

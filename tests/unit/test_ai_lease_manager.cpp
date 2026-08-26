@@ -42,11 +42,16 @@ private Q_SLOTS:
                                              QStringLiteral("system_change"),
                                              true);
         QVERIFY(!blocked.granted);
-        // Exactly one lease is active (first, agent "overseer"), so the blocked reason names it
-        // verbatim. Pin the wording, the blocking lease id, and the holder id.
+        // Exactly one lease is active (first, agent "overseer"), so the blocked reason names it.
+        // It names it by LABEL, not by the live id. This assertion used to pin the full id, which
+        // pinned a LEAK: the reason is handed to the refused caller and, for a model-issued tool
+        // call, written into the tool result and the persisted transcript -- so it was publishing
+        // the bearer token that authorizes releasing that very lease. The wording, the label and
+        // the holder are pinned; the token must be absent.
         QCOMPARE(blocked.reason,
                  QStringLiteral("Active mutating lease '%1' held by 'overseer' blocks new lease")
-                     .arg(first.lease.lease_id));
+                     .arg(AiLeaseManager::publicLabel(first.lease.lease_id)));
+        QVERIFY2(!blocked.reason.contains(first.lease.lease_id), qPrintable(blocked.reason));
 
         // release() returns bool, and that answer was DISCARDED here and in every other test in
         // the tree. It is not cosmetic: false means "no such lease was held", and the dispatcher's
@@ -125,48 +130,50 @@ private Q_SLOTS:
         QVERIFY(manager.hasActiveExclusive());
     }
 
-    // reclaimExpired() is a no-op before expiry and reclaims exactly the lease at
-    // or after its expiry instant.
+    // reclaimExpired() is a no-op before the TTL has elapsed and reclaims exactly the lease once
+    // it has.
+    //
+    // THIS TEST USED TO FAST-FORWARD WALL TIME to reach the boundary: it held a 3600s lease and
+    // swept with now_utc set to expires_at_utc, one millisecond either side of it. That worked
+    // only because the reclaim decision ORed a wall-clock arm in, which is precisely the defect
+    // fixed alongside this rewrite -- a caller-supplied future instant could reclaim a lease
+    // whose TTL had not elapsed and let a second mutating action start beside the first. The
+    // boundary is still pinned from both sides; it is now crossed by letting REAL time pass,
+    // which is the only thing that can legitimately expire a lease.
     void reclaimExpiredHonoursExpiryBoundary() {
-        AiLeaseManager manager(3600);
+        AiLeaseManager manager(1);
         const auto lease = manager.acquire(QStringLiteral("overseer"),
                                            {QStringLiteral("a")},
                                            QStringLiteral("system_change"),
                                            true);
         QVERIFY(lease.granted);
 
+        // BEFORE the TTL elapses, no sweep reclaims -- not one taken at the acquire instant, and
+        // not one taken from an hour in the future, because wall time is not what decides.
         QVERIFY(manager.reclaimExpired(lease.lease.acquired_at_utc).isEmpty());
+        QVERIFY2(manager.reclaimExpired(lease.lease.expires_at_utc.addSecs(3600)).isEmpty(),
+                 "wall time far past expiry must not reclaim a lease still inside its TTL");
         QCOMPARE(manager.activeLeaseCount(), 1);
-        // THE BOUNDARY ITSELF. The test's comment claims it reclaims "exactly the lease at or
-        // after its expiry instant", but the no-op sweep was taken an hour early and the
-        // reclaiming sweep a full second late, so the `expires_at_utc <= now_utc` compare was
-        // never touched from either side. One millisecond BEFORE must not reclaim...
-        QVERIFY2(manager.reclaimExpired(lease.lease.expires_at_utc.addMSecs(-1)).isEmpty(),
-                 "a sweep one millisecond before expiry must not reclaim");
-        QCOMPARE(manager.activeLeaseCount(), 1);
-        // ... and exactly AT the instant must, since the compare is inclusive.
-        const QStringList at_instant = manager.reclaimExpired(lease.lease.expires_at_utc);
-        QCOMPARE(at_instant.size(), 1);
-        QCOMPARE(at_instant.first(), lease.lease.lease_id);
-        QCOMPARE(manager.activeLeaseCount(), 0);
 
-        // Re-mint and confirm the late sweep still works, so the original claim is kept too.
-        const auto second = manager.acquire(QStringLiteral("overseer"),
-                                            {QStringLiteral("a")},
-                                            QStringLiteral("system_change"),
-                                            true);
-        QVERIFY(second.granted);
+        // AFTER the TTL genuinely elapses, the very same sweep reclaims exactly this lease --
+        // and it reclaims even when now_utc is in the PAST, proving the steady clock decided.
+        QTest::qWait(1100);
         const QStringList reclaimed =
-            manager.reclaimExpired(second.lease.expires_at_utc.addSecs(1));
+            manager.reclaimExpired(lease.lease.acquired_at_utc.addYears(-1));
         QCOMPARE(reclaimed.size(), 1);
-        QCOMPARE(reclaimed.first(), second.lease.lease_id);
+        QCOMPARE(reclaimed.first(), lease.lease.lease_id);
         QCOMPARE(manager.activeLeaseCount(), 0);
     }
 
-    // An abandoned lease (holder crashed without releasing) blocks new leases
-    // until its TTL elapses, after which the slot self-heals.
+    // An abandoned lease (holder crashed without releasing) blocks new leases until its TTL
+    // elapses, after which the slot self-heals.
+    //
+    // Like the boundary test above, this used to reach "after the TTL" by handing reclaimExpired()
+    // a wall instant one second past expires_at_utc on a 3600s lease -- i.e. by faking the passage
+    // of an hour. A lease is now expired only by real elapsed time, so the wait is real and the
+    // TTL is short.
     void abandonedLeaseNoLongerWedgesAfterExpiry() {
-        AiLeaseManager manager(3600);
+        AiLeaseManager manager(1);
         const auto held = manager.acquire(QStringLiteral("overseer"),
                                           {QStringLiteral("a")},
                                           QStringLiteral("system_change"),
@@ -180,7 +187,8 @@ private Q_SLOTS:
         QVERIFY(!blocked.granted);
         QVERIFY(blocked.reclaimed_expired.isEmpty());
 
-        manager.reclaimExpired(held.lease.expires_at_utc.addSecs(1));
+        QTest::qWait(1100);
+        manager.reclaimExpired(QDateTime::currentDateTimeUtc());
         QVERIFY(manager
                     .acquire(QStringLiteral("subagent"),
                              {QStringLiteral("b")},
@@ -199,13 +207,11 @@ private Q_SLOTS:
                                           true);
         QVERIFY(held.granted);
 
-        // A second manager, minted before the same wait, proves the STEADY-CLOCK arm at no extra
-        // cost. reclaimExpiredLocked reclaims on `wall_expired || steady_expired`, and every sweep
-        // in this file is driven by a now_utc at or past expires_at_utc -- so the wall arm alone
-        // always sufficed and the steady arm was never the sole reason a lease was reclaimed. Its
-        // documented purpose is the case no fixture created: a wall clock moved BACKWARD pushes
-        // expires_at_utc out of reach and would wedge every future mutating action behind an
-        // abandoned lease until the app restarts.
+        // A second manager, minted before the same wait, sweeps from a now_utc a YEAR IN THE PAST
+        // and must still reclaim -- the case a wall-clock decision could never handle. A wall
+        // clock moved BACKWARD (an NTP correction, a user changing the date) pushes expires_at_utc
+        // out of reach and would otherwise wedge every future mutating action behind an abandoned
+        // lease until the app restarts.
         AiLeaseManager steady_manager(1);
         const auto steady_held = steady_manager.acquire(QStringLiteral("overseer"),
                                                         {QStringLiteral("a")},
@@ -275,6 +281,98 @@ private Q_SLOTS:
         // every other comparison in the file measures leaseTtlSeconds() against the constant, so
         // both sides move together and pin nothing about its value. The shipped literal:
         QCOMPARE(AiLeaseManager::kDefaultLeaseTtlSeconds, static_cast<qint64>(16'200));
+    }
+
+    // A lease id is a BEARER CREDENTIAL -- whoever holds it can release() that lease. So the two
+    // places that hand lease information to someone who is not the holder must hand over the
+    // label and nothing more.
+    void publicLabelKeepsTheTokenOutOfEveryDisclosure() {
+        AiLeaseManager manager;
+        const auto held = manager.acquire(QStringLiteral("overseer"),
+                                          {QStringLiteral("run_powershell")},
+                                          QStringLiteral("system_change"),
+                                          true);
+        QVERIFY(held.granted);
+
+        // The label is a strict, non-empty PREFIX of the id: it still identifies the lease...
+        const QString label = AiLeaseManager::publicLabel(held.lease.lease_id);
+        QVERIFY(!label.isEmpty());
+        QVERIFY2(held.lease.lease_id.startsWith(label), qPrintable(label));
+        // ... and it is strictly SHORTER, i.e. the token really was dropped rather than the whole
+        // id being returned under a safer-sounding name.
+        QVERIFY2(label.size() < held.lease.lease_id.size(), qPrintable(label));
+        const QString token = held.lease.lease_id.mid(label.size() + 1);
+        QVERIFY2(!token.isEmpty(), qPrintable(held.lease.lease_id));
+        QVERIFY2(!label.contains(token), qPrintable(label));
+
+        // The diagnostic accessor reports labels, never live ids.
+        const QStringList labels = manager.activeLeaseLabels();
+        QCOMPARE(labels.size(), 1);
+        QCOMPARE(labels.first(), label);
+        QVERIFY2(!labels.first().contains(token), qPrintable(labels.first()));
+
+        // An id in an unexpected shape carries no token to strip, so it comes back whole: a
+        // truncation there would name no lease at all.
+        QCOMPARE(AiLeaseManager::publicLabel(QStringLiteral("odd")), QStringLiteral("odd"));
+        QCOMPARE(AiLeaseManager::publicLabel(QString()), QString());
+        // A token containing the separator must not smuggle any of itself into the label.
+        QCOMPARE(AiLeaseManager::publicLabel(QStringLiteral("lease_0007_ab_cd_ef")),
+                 QStringLiteral("lease_0007"));
+    }
+
+    // Two ids minted back to back must differ in the TOKEN, not merely in the counter -- if the
+    // token were constant (or trivially predictable) the counter alone would name every lease and
+    // the credential would be worthless.
+    void mintedTokensDifferBetweenLeases() {
+        AiLeaseManager manager;
+        const auto first = manager.acquire(QStringLiteral("a"),
+                                           {QStringLiteral("run_powershell")},
+                                           QStringLiteral("system_change"),
+                                           true);
+        QVERIFY(first.granted);
+        QVERIFY(manager.release(first.lease.lease_id));
+        const auto second = manager.acquire(QStringLiteral("b"),
+                                            {QStringLiteral("run_powershell")},
+                                            QStringLiteral("system_change"),
+                                            true);
+        QVERIFY(second.granted);
+
+        const QString first_token =
+            first.lease.lease_id.mid(AiLeaseManager::publicLabel(first.lease.lease_id).size() + 1);
+        const QString second_token = second.lease.lease_id.mid(
+            AiLeaseManager::publicLabel(second.lease.lease_id).size() + 1);
+        QVERIFY2(!first_token.isEmpty(), qPrintable(first.lease.lease_id));
+        QCOMPARE(first_token.size(), second_token.size());
+        QVERIFY2(first_token != second_token, qPrintable(first_token));
+    }
+
+    // THE RECLAIM DECISION BELONGS TO THE STEADY CLOCK ALONE. reclaimExpired() is public and
+    // takes caller-supplied wall time, so a forward clock jump -- an NTP correction, a user
+    // setting the date ahead, or a caller simply passing a future instant -- used to reclaim a
+    // lease whose TTL had NOT elapsed, letting a second mutating action start beside the first.
+    void aForwardClockJumpCannotReclaimALiveLease() {
+        AiLeaseManager manager(600);
+        const auto held = manager.acquire(QStringLiteral("overseer"),
+                                          {QStringLiteral("run_powershell")},
+                                          QStringLiteral("system_change"),
+                                          true);
+        QVERIFY(held.granted);
+
+        // A sweep from a year in the FUTURE. Real elapsed time is milliseconds, so the lease is
+        // still running and must survive.
+        const QStringList reclaimed =
+            manager.reclaimExpired(QDateTime::currentDateTimeUtc().addYears(1));
+        QVERIFY2(reclaimed.isEmpty(), qPrintable(reclaimed.join(QLatin1Char(','))));
+        QCOMPARE(manager.activeLeaseCount(), 1);
+
+        // And the slot is still genuinely held: a second acquire is still refused, which is the
+        // property an early reclaim would have destroyed.
+        const auto blocked = manager.acquire(QStringLiteral("subagent"),
+                                             {QStringLiteral("run_cmd")},
+                                             QStringLiteral("system_change"),
+                                             true);
+        QVERIFY(!blocked.granted);
+        QVERIFY(blocked.reclaimed_expired.isEmpty());
     }
 };
 

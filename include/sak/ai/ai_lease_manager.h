@@ -51,9 +51,15 @@ public:
     struct AcquireResult {
         bool granted{false};
         Lease lease;
+        // Why the lease was refused. Names the blocking lease by publicLabel(), never by its live
+        // id: this text reaches the refused caller and, for a model-issued tool call, the tool
+        // result and the persisted transcript.
         QString reason;
-        // Ids of stale leases auto-reclaimed while servicing this acquire, so the
-        // caller can audit that an abandoned lease was cleared.
+        // Ids of stale leases auto-reclaimed while servicing this acquire, so the caller can audit
+        // that an abandoned lease was cleared. These are full ids on purpose: a reclaimed lease is
+        // already gone from the table, so its id no longer authorizes anything (release() answers
+        // false for it), and the exact id is what makes the audit trail match the acquire that
+        // minted it.
         QStringList reclaimed_expired;
     };
 
@@ -69,15 +75,30 @@ public:
     // another agent's lease by counting.
     bool release(const QString& lease_id);
 
-    // Releases every lease whose expires_at_utc <= now_utc and returns the
-    // reclaimed ids. acquire() calls this first; a periodic sweeper may call it
-    // too so abandoned leases do not block new leases between acquires.
+    // Releases every lease whose TTL has genuinely elapsed and returns the reclaimed ids.
+    // acquire() calls this first; a periodic sweeper may call it too so abandoned leases do not
+    // block new leases between acquires.
+    //
+    // @p now_utc is only consulted for a lease that carries no monotonic deadline. The manager's
+    // OWN steady clock decides for every lease it minted, because now_utc is caller-supplied wall
+    // time: a forward NTP correction, a user setting the date ahead, or simply a caller passing a
+    // future instant would otherwise reclaim a lease that is still running and let a second
+    // mutating action start beside it -- the exact concurrency this class exists to prevent.
     QStringList reclaimExpired(const QDateTime& now_utc);
+
+    // The non-secret half of a lease id, safe to put in a message, a log line or a tool result.
+    // A lease id is a BEARER CREDENTIAL: whoever holds it can release() that lease. The counter
+    // prefix identifies which lease is meant without disclosing the token that authorizes it.
+    // Returns the whole string when it carries no token (nothing to protect).
+    [[nodiscard]] static QString publicLabel(const QString& lease_id);
 
     [[nodiscard]] qint64 leaseTtlSeconds() const { return m_ttl_seconds; }
     [[nodiscard]] bool hasActiveExclusive() const;
     [[nodiscard]] int activeLeaseCount() const;
-    [[nodiscard]] QStringList activeLeaseIds() const;
+    // Non-secret publicLabel() values for every active lease -- deliberately NOT the live ids.
+    // This is a diagnostic accessor, and handing a caller the bearer token of a lease it does not
+    // hold would let it release another agent's lease. A holder already has its own id.
+    [[nodiscard]] QStringList activeLeaseLabels() const;
 
 private:
     [[nodiscard]] QStringList reclaimExpiredLocked(const QDateTime& now_utc);

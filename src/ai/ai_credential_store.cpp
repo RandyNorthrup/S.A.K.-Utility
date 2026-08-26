@@ -360,9 +360,12 @@ bool CredentialStore::deleteApiKey(QString* error_message) const {
 #endif
 }
 
-QString CredentialStore::redactSecrets(const QString& text) {
-    QString result = text;
+namespace {
 
+// Vendor keys that announce themselves with a fixed prefix. Each is its own pattern rather than
+// one alternation so the replacement can NAME which vendor's credential was found -- a log
+// reader who sees [redacted-aws-key] knows which secret to rotate.
+void redactVendorPrefixedKeys(QString& result) {
     static const QRegularExpression kOpenAiKey(QStringLiteral(R"(\bsk-[A-Za-z0-9_\-]{12,}\b)"),
                                                QRegularExpression::UseUnicodePropertiesOption);
     result.replace(kOpenAiKey, QStringLiteral("sk-...[redacted]"));
@@ -370,10 +373,6 @@ QString CredentialStore::redactSecrets(const QString& text) {
     static const QRegularExpression kContext7Key(QStringLiteral(R"(\bctx7sk-[A-Za-z0-9\-]{12,}\b)"),
                                                  QRegularExpression::CaseInsensitiveOption);
     result.replace(kContext7Key, QStringLiteral("[redacted-context7-key]"));
-
-    static const QRegularExpression kBearer(QStringLiteral(R"((Bearer\s+)[A-Za-z0-9_\-\.]{12,})"),
-                                            QRegularExpression::CaseInsensitiveOption);
-    result.replace(kBearer, QStringLiteral("\\1[redacted]"));
 
     // GitHub personal/oauth/server/app/refresh tokens (ghp_, gho_, ghu_, ghs_, ghr_)
     static const QRegularExpression kGitHubToken(
@@ -403,12 +402,36 @@ QString CredentialStore::redactSecrets(const QString& text) {
     static const QRegularExpression kStripeKey(
         QStringLiteral(R"(\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{16,}\b)"));
     result.replace(kStripeKey, QStringLiteral("[redacted-stripe-key]"));
+}
 
-    // Generic "password=", "passwd=", "secret=", "token=", "api[_-]?key=" values, INCLUDING
-    // the quoted-JSON form "password":"..." -- the optional "? after the key name lets the
-    // closing quote of a JSON key sit between the name and the ':' separator.
-    static const QRegularExpression kAssignmentSecret(QStringLiteral(
-        R"RX((?i)\b(password|passwd|secret|token|api[_\-]?key)"?\s*[:=]\s*"?([^\s"';,]{4,})"?)RX"));
+// The token class must cover STANDARD base64 ('+', '/' and the '=' padding) and the '~' that
+// opaque provider tokens use, not just base64url. It did not, so a standard-base64 bearer token
+// matched only up to its first '+' or '/': the prefix was replaced and THE REST WAS PRINTED.
+// A partial redaction is worse than none -- it reads as though the secret was handled.
+// The scheme word is kept so the reader still sees that a bearer token was present.
+void redactBearerTokens(QString& result) {
+    static const QRegularExpression kBearer(QStringLiteral(
+                                                R"((Bearer\s+)[A-Za-z0-9_\-\.~+/=]{12,})"),
+                                            QRegularExpression::CaseInsensitiveOption);
+    result.replace(kBearer, QStringLiteral("\\1[redacted]"));
+}
+
+// Generic "password=", "passwd=", "secret=", "token=", "api[_-]?key=" values, INCLUDING the
+// quoted-JSON form "password":"..." -- the optional "? after the key name lets the closing quote
+// of a JSON key sit between the name and the ':' separator.
+// Three value forms, because the single-quoted one was missed entirely and the double-quoted one
+// broke on a space:
+//   "..."  any characters including spaces -- password="my secret" used to fail on the space and
+//          leak the whole assignment
+//   '...'  the value class excluded the quote itself, so password='mysecret' matched NOTHING and
+//          was printed verbatim
+//   bare   unquoted, still length-bounded so ordinary prose ("token: ok") is not swallowed
+// A quoted value is redacted at ANY length: quoting it is what makes the intent explicit, and a
+// four-character floor would leak a short password.
+void redactAssignmentSecrets(QString& result) {
+    static const QRegularExpression kAssignmentSecret(
+        QStringLiteral(R"RX((?i)\b(password|passwd|secret|token|api[_\-]?key)"?\s*[:=]\s*)RX"
+                       R"RX((?:"[^"]*"|'[^']*'|[^\s"';,]{4,})"?)RX"));
     QRegularExpressionMatchIterator it = kAssignmentSecret.globalMatch(result);
     QString rewritten;
     rewritten.reserve(result.size());
@@ -424,7 +447,15 @@ QString CredentialStore::redactSecrets(const QString& text) {
     if (!rewritten.isEmpty() || last_end > 0) {
         result = rewritten;
     }
+}
 
+}  // namespace
+
+QString CredentialStore::redactSecrets(const QString& text) {
+    QString result = text;
+    redactVendorPrefixedKeys(result);
+    redactBearerTokens(result);
+    redactAssignmentSecrets(result);
     return result;
 }
 

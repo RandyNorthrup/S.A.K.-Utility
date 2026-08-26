@@ -5,6 +5,7 @@
 #include "sak/ai/ai_tool_dispatcher.h"
 #include "sak/ai/ai_tool_policy.h"
 
+#include <QJsonDocument>
 #include <QtTest/QtTest>
 
 class AiToolDispatcherTests : public QObject {
@@ -211,10 +212,18 @@ void AiToolDispatcherTests::exclusiveLeaseBlocksConcurrentMutating() {
     QVERIFY(!outcome.result.value(QStringLiteral("success")).toBool(true));
     QCOMPARE(outcome.result.value(QStringLiteral("tool_name")).toString(),
              QStringLiteral("run_cmd"));
-    // The blocking holder is named verbatim in the error the caller sees.
+    // The blocking holder is named in the error the caller sees -- by LABEL, not by the live
+    // lease id. THIS ASSERTION PREVIOUSLY PINNED A LEAK, and pinned it at its worst point: this
+    // error_message is the tool result handed back to the MODEL and written into the persisted
+    // transcript, so asserting the full id here was asserting that the bearer token authorizing
+    // release() of that lease gets published to the agent we just refused. The label still names
+    // which lease is blocking; the token must not appear anywhere in the result.
     QCOMPARE(outcome.result.value(QStringLiteral("error_message")).toString(),
              QStringLiteral("Active mutating lease '%1' held by 'other_agent' blocks new lease")
-                 .arg(acquire.lease.lease_id));
+                 .arg(sak::ai::AiLeaseManager::publicLabel(acquire.lease.lease_id)));
+    const QString serialized_result =
+        QString::fromUtf8(QJsonDocument(outcome.result).toJson(QJsonDocument::Compact));
+    QVERIFY2(!serialized_result.contains(acquire.lease.lease_id), qPrintable(serialized_result));
 
     leases.release(acquire.lease.lease_id);
 }

@@ -2984,6 +2984,32 @@ add_test(NAME test_win32_mcp_geometry COMMAND test_win32_mcp_geometry
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_win32_mcp_geometry")
 
+# test_ai_credential_store - redactSecrets, the last line before a key reaches a log or a
+# transcript. It had no test of its own until R5-LEDGER found two leaks in it.
+add_executable(test_ai_credential_store
+    unit/test_ai_credential_store.cpp
+    ../src/ai/ai_credential_store.cpp
+    ../src/ai/ai_paths.cpp
+    ../src/core/app_paths.cpp
+    ../src/core/secure_memory.cpp
+    ../src/core/logger.cpp
+    ../include/sak/ai/ai_credential_store.h
+)
+set_target_properties(test_ai_credential_store PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_credential_store PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_ai_credential_store PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_credential_store COMMAND test_ai_credential_store
+         -o "${TEST_OUTPUT_DIR}/test_ai_credential_store.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_credential_store")
+
 add_executable(test_ai_command_guard
     unit/test_ai_command_guard.cpp
     ../src/ai/ai_command_guard.cpp

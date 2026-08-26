@@ -2082,13 +2082,100 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
     earlier report. Recorded as hardening, not a live bug.
     FLAGGED, NOT ACTIONED (removals need owner authorization): queryPowerPlan and its pattern
     appear to be dead code.
-    NOT yet actioned from this batch, and deliberately not claimed as fixed: the remaining
-    generate_system_report findings (cancellation not plumbed into the PowerShell collectors,
-    same-millisecond report filename collision, UTF-16-vs-UTF-8 size accounting), the
-    optimize_power_settings report-formatting and dead-helper findings, the ai_chat_title
-    secret-pattern coverage (only sk-* keys are recognised) and domain-substring matching, and
-    the ai_app_action_planner timeout-ceiling mismatch. They are in the stored briefs under
-    docs/review_briefs/ so they can be picked up without re-running Codex.
+    NOT yet actioned from this batch, and deliberately not claimed as fixed: the
+    generate_system_report UTF-16-vs-UTF-8 size accounting, the optimize_power_settings
+    dead-helper finding (queryPowerPlan; a removal needs owner authorization), and the
+    ai_chat_title secret-pattern coverage (only sk-* keys are recognised) plus its
+    domain-substring matching. They are in the stored briefs under docs/review_briefs/ so they
+    can be picked up without re-running Codex.
+    THIS LIST WAS ITSELF STALE, corrected 2026-08-26: it named the collector cancellation, the
+    same-millisecond filename collision, the power-report formatting and the planner
+    timeout-ceiling mismatch as un-actioned AFTER the bullets above had recorded fixing all four.
+    A tracking list that contradicts the paragraph three lines above it is the same defect class
+    this campaign keeps finding in the code -- two copies of one fact, only one of them updated.
+    When a batch entry moves an item to fixed, strike it from the batch's own leftover list in the
+    same edit.
+  - A REDACTOR THAT LEFT THE SECRET ON THE PAGE, 2026-08-26. src/ai/ai_credential_store.cpp,
+    CredentialStore::redactSecrets -- the function every AI transcript, log line and persisted
+    conversation passes through before it is written down. Two leaks, both verified against the
+    tree before any change:
+      * BEARER TOKENS LEAKED THEIR TAIL. The token class was [A-Za-z0-9_\-\.], which is base64URL.
+        A STANDARD base64 token contains '+', '/' and '=' padding, none of which were in the
+        class, so the match stopped at the first one: the prefix was replaced with [redacted] and
+        the REST OF THE SECRET was printed immediately after it. That is worse than no redaction,
+        because the line now reads as though the secret was handled. '~' (used by opaque
+        provider tokens) was missing too. The class now covers the whole alphabet.
+      * SINGLE-QUOTED AND SPACE-BEARING ASSIGNMENTS WERE NOT REDACTED AT ALL. The value class
+        [^\s"';,]{4,} excluded the single quote and whitespace, so password='mysecret' matched
+        nothing (the quote is the first character it cannot consume, leaving fewer than the
+        four-character minimum) and password="my secret" stopped at the space. Both now match as
+        quoted values, and a quoted value is redacted at ANY length -- the quoting is what makes
+        the intent explicit, and a four-character floor would have leaked a short password.
+    THE REASON BOTH SURVIVED: the credential store had NO TEST FILE. redactSecrets was exercised
+    only incidentally, through callers asserting on something else, which cannot catch a PARTIAL
+    redaction because the string did change. tests/unit/test_ai_credential_store.cpp now pins it
+    directly, and every case asserts the secret's TAIL is absent rather than that the output
+    differs -- plus a benign-prose slot, because a redactor that fires on ordinary text trains the
+    reader to ignore it. MUTATION-PROVED: restoring either original pattern turns the suite RED
+    (build exit 0 confirmed separately, so the red is the test and not a stale binary).
+    A GATE NOTE: the added comments pushed redactSecrets to 81 lines and lizard (length>70) went
+    RED at NLOC 52 / CCN 6 -- the CODE was never the problem. The fix is structural, not editorial:
+    the vendor-prefix catalogue, the bearer pattern and the assignment rewrite are now three
+    namespace-scope helpers and redactSecrets is four lines. Do NOT close this class by deleting
+    the comments that explain why each pattern is shaped the way it is.
+  - THE LEASE ID WAS A BEARER CREDENTIAL THE CODE HANDED OUT, 2026-08-26. src/ai/ai_lease_manager.
+    Three findings, all confirmed against the tree first; the first two are reachable.
+      * THE LIVE TOKEN WAS PUBLISHED TO THE CALLER IT REFUSED. A lease id is
+        "lease_<counter>_<random token>", and the file's own comment says the token exists so a
+        lease "cannot be aimed at another agent's" by counting -- i.e. holding the id is what
+        authorizes release(). acquire()'s denial reason interpolated the FULL live id of the
+        blocking lease, and that reason is returned to the denied caller: for a model-issued tool
+        call it goes through leaseDeniedResult into the tool result (ai_tool_dispatcher.cpp:311,
+        ai_assistant_panel.cpp:6197) and from there into the PERSISTED transcript. So the one
+        party just refused a lease was handed the credential for it, in writing, permanently.
+        activeLeaseIds() did the same wholesale, returning every live token to any caller.
+        Fixed with a static publicLabel() that keeps the counter half and drops the token; the
+        denial reason and the accessor (now activeLeaseLabels()) both use it. reclaimed_expired
+        deliberately KEEPS full ids: those leases are already out of the table, so the id
+        authorizes nothing and the exact value is what makes the audit match the acquire.
+        TWO EXISTING TESTS PINNED THE LEAK. test_ai_lease_manager asserted the denial reason
+        contained the full lease id. test_ai_tool_dispatcher pinned it AT ITS WORST POINT: it
+        asserted the full id in outcome.result["error_message"], which is the tool result handed
+        back to the model and written into the transcript -- so the suite was asserting that the
+        credential gets published to the agent just refused. Both corrected rather than reverted,
+        and both now also assert the token is ABSENT (the dispatcher one over the whole serialized
+        result, not just that one field).
+        HOW THE SECOND ONE SURFACED, worth its own note: the per-target run of
+        test_ai_lease_manager was green and the dispatcher failure appeared only in the FULL gate.
+        A fix that changes a message another subsystem asserts on is not proved by its own file's
+        suite; grep the tree for the string being changed, or expect the gate to find it.
+      * A FORWARD CLOCK JUMP RECLAIMED A LEASE THAT WAS STILL RUNNING. reclaimExpiredLocked
+        decided on `wall_expired || steady_expired`, which makes the decision only as trustworthy
+        as the LEAST trustworthy clock. reclaimExpired() is public and takes a caller-supplied
+        now_utc, so an NTP correction forward, a user setting the date ahead, or a caller simply
+        passing a future instant reclaimed a lease whose TTL had NOT elapsed -- and the next
+        acquire then granted a second mutating lease beside the first, which is the concurrent
+        mutation this class exists to prevent. The steady clock is now the sole authority whenever
+        it can answer; wall time is consulted only for a lease carrying no monotonic deadline
+        (never one this manager minted), so the backward-jump wedge the steady arm was added for
+        stays closed and the early reclaim is gone.
+        TWO MORE TESTS WERE PINNING THE DEFECT: both reached "after the TTL" by handing the sweep
+        a wall instant past expires_at_utc on a 3600s lease -- faking the passage of an hour, which
+        only worked because of the wall arm. Rewritten to short TTLs and a real wait, since real
+        elapsed time is the only thing that can legitimately expire a lease.
+      * THE UNGUESSABLE TOKEN CAME FROM A NON-CRYPTOGRAPHIC GENERATOR. QRandomGenerator::global()
+        is a seeded PRNG; an observer of a handful of ids can recover its state and predict the
+        rest, which is the guess-another-agent's-lease attack the token is there to stop. Now
+        QRandomGenerator::system(), the OS CSPRNG.
+        NOT MUTATION-PROVED, and deliberately not claimed to be: both generators yield tokens of
+        the same width that differ between leases, so every observable a unit test can reach is
+        identical. What changed is PREDICTABILITY, which no in-process assertion can see. The new
+        mintedTokensDifferBetweenLeases slot pins the properties that ARE observable (the token is
+        non-empty, fixed-width, and differs between two leases) and would catch a constant or
+        dropped token; it cannot and does not certify the source. Recorded as a contract fix.
+    MUTATION-PROVED (the two that can be): restoring the live id in the denial reason turns the
+    suite RED, and ORing the wall arm back into the reclaim decision turns it RED. Build exit 0
+    confirmed separately for each drill, so the red is the test and not a stale binary.
   - AUTHORIZED-IN-PROGRESS, BLOCKED-ON-USER (relabelled 2026-08-17 from a dishonest "RESOLVED [deferred-with-rationale]" -- the sweep is genuinely INCOMPLETE, not resolved): 764 of 1098 units run (69.6%); 334 remain (246 tests / 75 src / 9 include / 4 scripts). The August-11-2026 Codex account cap that blocked it HAS since reset, but RELAUNCH IS A MANUAL, BUDGET-HEAVY STEP on Randy's own Codex account (334 xhigh review units) -- nothing auto-resumes, and burning that much of his account budget is his call, so this waits on his explicit go. NOT verified-done (334 units genuinely unrun); NOT deferred (it is authorized and would resume the moment he says so). The 764 units already run DID produce the P1-P11 subsystem findings, all closed.
       BLOCKED: 764 of 1098 units complete (69.6%). The Codex account usage limit is
       exhausted and does not reset until August 11, 2026 11:10 AM, so the remaining 334
