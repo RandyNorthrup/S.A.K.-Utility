@@ -47,7 +47,18 @@ QString redactedPromptText(QString text) {
     }
     text.replace(QRegularExpression(QStringLiteral(R"(```[\s\S]*?```)")), QStringLiteral(" "));
     text.replace(QRegularExpression(QStringLiteral(R"(`[^`]*`)")), QStringLiteral(" "));
-    text.replace(QRegularExpression(QStringLiteral(R"(https?://\S+|www\.\S+)"),
+    // An UNCLOSED fence or backtick is not removed by the paired patterns above -- they need a
+    // closing delimiter -- so a prompt that opens a code block and never closes it (an
+    // interrupted paste, or the scan window truncating mid-block) had its whole code body feed
+    // the title. Drop from an unmatched opener to the end for both spellings.
+    text.replace(QRegularExpression(QStringLiteral(R"(```[\s\S]*$)")), QStringLiteral(" "));
+    text.replace(QRegularExpression(QStringLiteral(R"(`[^`]*$)")), QStringLiteral(" "));
+    // ANY scheme, not just http(s). The old pattern let ftp://user:pass@host/path through
+    // verbatim -- hostname, path and any embedded credentials -- into a title that is PERSISTED
+    // with the conversation. A scheme is a letter followed by letters/digits/+/-/. per RFC 3986;
+    // requiring the "://" keeps a drive letter ("C:/temp") out of this rule, which the path
+    // pattern below handles instead.
+    text.replace(QRegularExpression(QStringLiteral(R"([A-Za-z][A-Za-z0-9+.\-]*://\S+|www\.\S+)"),
                                     QRegularExpression::CaseInsensitiveOption),
                  QStringLiteral(" website "));
     // A drive-rooted path may contain SPACES ("C:\Users\Username With Space\secret.txt"). The old
@@ -109,9 +120,21 @@ QSet<QString> stopWords() {
     };
 }
 
+// True when @p lower_text contains one of @p terms AS A WHOLE WORD (or whole phrase).
+//
+// Plain substring matching mis-titled prompts, and did it in the direction that hurts: "virus"
+// is a substring of "ANTIVIRUS", so "my antivirus is blocking the printer" came back "Malware
+// Cleanup" -- the opposite of what the user said, and it never reached the printer rule because
+// the malware rule is earlier in the list. Same shape for "adware" inside longer words. The
+// boundary is asserted on both ends so multi-word terms ("blue screen", "ai panel") still match,
+// and a term ending in a non-word character would still anchor correctly.
 bool containsAnyTerm(const QString& lower_text, std::initializer_list<const char*> terms) {
     return std::ranges::any_of(terms, [&](const char* term) {
-        return lower_text.contains(QString::fromLatin1(term));
+        const QString pattern = QStringLiteral("(?<![\\p{L}\\p{N}])") +
+                                QRegularExpression::escape(QString::fromLatin1(term)) +
+                                QStringLiteral("(?![\\p{L}\\p{N}])");
+        const QRegularExpression rx(pattern, QRegularExpression::UseUnicodePropertiesOption);
+        return rx.match(lower_text).hasMatch();
     });
 }
 
@@ -134,9 +157,25 @@ QStringList meaningfulWords(const QString& text) {
     QStringList out;
     const QStringList raw = text.split(QLatin1Char(' '), Qt::SkipEmptyParts);
     for (QString word : raw) {
-        word.remove(QRegularExpression(QStringLiteral(R"([^A-Za-z0-9+\-.])")));
+        // Keep LETTERS AND DIGITS IN ANY SCRIPT, not just A-Za-z0-9. The ASCII-only class
+        // erased every character of a Cyrillic, Greek, Hebrew or CJK prompt, so an otherwise
+        // perfectly descriptive request produced no meaningful words at all and fell back to
+        // the generic "AI Chat" -- the title was worst exactly for the users least able to
+        // work around it.
+        word.remove(QRegularExpression(QStringLiteral(R"([^\p{L}\p{N}+\-.])"),
+                                       QRegularExpression::UseUnicodePropertiesOption));
         word = word.trimmed();
         if (word.size() < kMeaningfulWordMinChars) {
+            continue;
+        }
+        // A token must carry at least one letter or digit to be a WORD. The class above keeps
+        // '+', '-' and '.' because they belong inside real tokens (C++, wi-fi, 10.0.1), but on
+        // their own they spell nothing: "---" and "++" passed the length check and counted as
+        // meaningful, which is enough to defeat the low-signal fallback and produce a title made
+        // of punctuation.
+        static const QRegularExpression kHasAlnum(QStringLiteral(R"([\p{L}\p{N}])"),
+                                                  QRegularExpression::UseUnicodePropertiesOption);
+        if (!kHasAlnum.match(word).hasMatch()) {
             continue;
         }
         const QString lower = word.toLower();
@@ -147,6 +186,38 @@ QStringList meaningfulWords(const QString& text) {
         out.append(word);
     }
     return out;
+}
+
+// The product name at the head of an offline-installer request, title-cased, or empty when the
+// prompt names no product.
+//
+// KEEP THE WHOLE NAME, not just its first token. Taking the first non-skipped word turned
+// "download Google Chrome offline installer" into "Google Offline Installer", which names the
+// wrong product -- Google ships several installers and Chrome is the one that was asked for.
+//
+// A product's continuation tokens are capitalised in the prompt ("Google Chrome", "Adobe
+// Reader"), so continuation stops at the first lowercase word. That keeps "find an offline
+// installer for Firefox but do not install it" at "Firefox" rather than swallowing "but", and it
+// stops at a skip word regardless of case. THE LIMIT IS HONEST: an all-lowercase product name
+// ("vlc media player") still yields only its first token, because nothing in the text
+// distinguishes the rest of the name from ordinary prose without a product dictionary.
+QString productNameFromWords(const QStringList& words, const QSet<QString>& skip) {
+    constexpr qsizetype kMaxProductNameWords = 3;
+    for (qsizetype i = 0; i < words.size(); ++i) {
+        if (skip.contains(words.at(i).toLower())) {
+            continue;
+        }
+        QStringList product{titleCaseWord(words.at(i))};
+        for (qsizetype j = i + 1; j < words.size() && product.size() < kMaxProductNameWords; ++j) {
+            const QString& next = words.at(j);
+            if (skip.contains(next.toLower()) || next.isEmpty() || !next.at(0).isUpper()) {
+                break;
+            }
+            product << titleCaseWord(next);
+        }
+        return product.join(QLatin1Char(' '));
+    }
+    return {};
 }
 
 QString offlineInstallerTitle(const QString& text) {
@@ -172,11 +243,9 @@ QString offlineInstallerTitle(const QString& text) {
         QStringLiteral("bundle"),
         QStringLiteral("deployment"),
     };
-    for (const QString& word : words) {
-        const QString lower_word = word.toLower();
-        if (!skip.contains(lower_word)) {
-            return boundedTitle(QStringLiteral("%1 Offline Installer").arg(titleCaseWord(word)));
-        }
+    const QString product = productNameFromWords(words, skip);
+    if (!product.isEmpty()) {
+        return boundedTitle(QStringLiteral("%1 Offline Installer").arg(product));
     }
     return QStringLiteral("Offline Installer Download");
 }

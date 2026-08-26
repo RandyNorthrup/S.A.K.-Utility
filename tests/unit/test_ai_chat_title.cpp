@@ -10,6 +10,10 @@ private Q_SLOTS:
     void offlineInstallerKeepsProductName();
     void titleRedactsSecretsPathsAndUrls();
     void titleRedactsEverySecretShapeNotJustOpenAiKeys();
+    void titleRedactsAnySchemeAndUnclosedCode();
+    void domainRulesMatchWholeWordsOnly();
+    void offlineInstallerKeepsMultiWordProductName();
+    void punctuationAndNonLatinWordHandling();
     void defaultTitleDetectionPreservesManualNames();
     void workflowTitleIsFallbackForLowSignalPrompt();
 };
@@ -116,6 +120,128 @@ void AiChatTitleTests::titleRedactsEverySecretShapeNotJustOpenAiKeys() {
         QVERIFY2(!title.isEmpty(), qPrintable(c.prompt));
         QVERIFY(title.size() <= sak::ai::kGeneratedChatTitleMaxChars);
     }
+}
+
+void AiChatTitleTests::titleRedactsAnySchemeAndUnclosedCode() {
+    // URL redaction covered http(s) and www only, so any other scheme went into a PERSISTED
+    // title verbatim -- hostname, path, and for ftp:// the embedded credentials too.
+    //
+    // THE URL GOES FIRST IN EVERY PROMPT HERE, DELIBERATELY. The first version of this test put
+    // it mid-sentence and passed even with the fix reverted: the punctuation strip splits the URL
+    // into ordinary words, and the six-word title cap then dropped them for a reason that has
+    // nothing to do with redaction. The assertions were true by accident -- a vacuous test of
+    // exactly the kind this campaign exists to find. Leading the prompt with the URL puts its
+    // tokens inside the cap, so only real redaction can keep them out.
+    const QString ftp = QStringLiteral("ftp://") + QStringLiteral("user:pw@files.example.test") +
+                        QStringLiteral("/private/dump.sql");
+    const QString ftp_title =
+        sak::ai::chatTitleFromFirstPrompt(QStringLiteral("%1 keeps failing").arg(ftp));
+    QVERIFY2(ftp_title.contains(QStringLiteral("Website")), qPrintable(ftp_title));
+    for (const char* leaked : {"files", "example", "user", "dump", "private"}) {
+        QVERIFY2(!ftp_title.contains(QLatin1String(leaked), Qt::CaseInsensitive),
+                 qPrintable(ftp_title));
+    }
+
+    struct SchemeCase {
+        QString url;
+        QString leaked;
+    };
+    for (const SchemeCase& c :
+         {SchemeCase{QStringLiteral("smb://server/share/secretfile.txt"),
+                     QStringLiteral("secretfile")},
+          SchemeCase{QStringLiteral("ssh://buildbox.internal/repo"), QStringLiteral("buildbox")},
+          SchemeCase{QStringLiteral("ldap://directory.internal/ou=people"),
+                     QStringLiteral("directory")}}) {
+        const QString title =
+            sak::ai::chatTitleFromFirstPrompt(QStringLiteral("%1 is unreachable").arg(c.url));
+        QVERIFY2(title.contains(QStringLiteral("Website")), qPrintable(title));
+        QVERIFY2(!title.contains(c.leaked, Qt::CaseInsensitive),
+                 qPrintable(c.url + QStringLiteral(" -> ") + title));
+    }
+
+    // A drive letter is NOT a scheme -- "C:/temp" has one slash, not "://" -- so the path rule
+    // must still be the one that handles it, and the URL rule must not swallow the sentence.
+    const QString drive = sak::ai::chatTitleFromFirstPrompt(QStringLiteral("Clean C:") +
+                                                            QStringLiteral("/temp and fix Chrome"));
+    QVERIFY2(drive.contains(QStringLiteral("Chrome")), qPrintable(drive));
+
+    // An UNCLOSED fence is not removed by a paired pattern, so the code body used to drive the
+    // title. Both spellings now drop from the opener to the end.
+    const QString fence = sak::ai::chatTitleFromFirstPrompt(
+        QStringLiteral("Windows Update keeps failing ```powershell\nRemove-Item secretpath"));
+    QVERIFY2(!fence.contains(QStringLiteral("secretpath")), qPrintable(fence));
+    QVERIFY2(!fence.contains(QStringLiteral("powershell"), Qt::CaseInsensitive), qPrintable(fence));
+    const QString inline_tick =
+        sak::ai::chatTitleFromFirstPrompt(QStringLiteral("Printer is broken `Get-Secretthing"));
+    QVERIFY2(!inline_tick.contains(QStringLiteral("Secretthing")), qPrintable(inline_tick));
+}
+
+void AiChatTitleTests::domainRulesMatchWholeWordsOnly() {
+    // "virus" is a substring of "antivirus", so plain substring matching titled this prompt
+    // "Malware Cleanup" -- the OPPOSITE of what the user said. It never reached the printer rule
+    // either, because the malware rule sits earlier in the list.
+    QCOMPARE(sak::ai::chatTitleFromFirstPrompt(
+                 QStringLiteral("my antivirus is blocking the printer driver")),
+             QStringLiteral("Printer Troubleshooting"));
+
+    // The rules themselves must still fire on the real words, or this is just a way of breaking
+    // every title.
+    QCOMPARE(sak::ai::chatTitleFromFirstPrompt(QStringLiteral("remove this virus from the laptop")),
+             QStringLiteral("Malware Cleanup"));
+    QCOMPARE(sak::ai::chatTitleFromFirstPrompt(QStringLiteral("laptop has malware everywhere")),
+             QStringLiteral("Malware Cleanup"));
+    // A multi-word term still matches as a phrase.
+    QCOMPARE(sak::ai::chatTitleFromFirstPrompt(QStringLiteral("got a blue screen again today")),
+             QStringLiteral("BSOD Investigation"));
+    QCOMPARE(sak::ai::chatTitleFromFirstPrompt(QStringLiteral("windows update wont install")),
+             QStringLiteral("Windows Update Repair"));
+}
+
+void AiChatTitleTests::offlineInstallerKeepsMultiWordProductName() {
+    // Taking only the first non-skipped word named the WRONG product: Google ships several
+    // installers, and Chrome is the one that was asked for.
+    QCOMPARE(sak::ai::chatTitleFromFirstPrompt(
+                 QStringLiteral("download Google Chrome offline installer")),
+             QStringLiteral("Google Chrome Offline Installer"));
+
+    // Continuation stops at the first lowercase word, so ordinary prose after the product name
+    // is not absorbed into it.
+    QCOMPARE(sak::ai::chatTitleFromFirstPrompt(
+                 QStringLiteral("find an offline installer for Firefox but do not install it")),
+             QStringLiteral("Firefox Offline Installer"));
+    // ... and at a skip word regardless of case.
+    QCOMPARE(sak::ai::chatTitleFromFirstPrompt(
+                 QStringLiteral("download Firefox offline installer for my tech USB")),
+             QStringLiteral("Firefox Offline Installer"));
+    // No product named at all still falls back rather than inventing one.
+    QCOMPARE(sak::ai::chatTitleFromFirstPrompt(QStringLiteral("make an offline installer bundle")),
+             QStringLiteral("Offline Installer Download"));
+}
+
+void AiChatTitleTests::punctuationAndNonLatinWordHandling() {
+    // '+', '-' and '.' are kept because they belong inside real tokens, but a token made only of
+    // them spells nothing. "---" and "++" passed the length check and counted as meaningful,
+    // which was enough to defeat the low-signal workflow fallback.
+    QCOMPARE(sak::ai::chatTitleFromFirstPrompt(QStringLiteral("--- ++ ..."),
+                                               QStringLiteral("Technician Service Report")),
+             QStringLiteral("Technician Service Report"));
+    // A token that merely CONTAINS punctuation is still a word.
+    QVERIFY(
+        sak::ai::chatTitleFromFirstPrompt(QStringLiteral("upgrade wi-fi driver on the laptop"))
+            .contains(QStringLiteral("Wi-Fi"), Qt::CaseInsensitive) ||
+        sak::ai::chatTitleFromFirstPrompt(QStringLiteral("upgrade wi-fi driver on the laptop")) ==
+            QStringLiteral("Network Connectivity Repair"));
+
+    // ASCII-only filtering erased every character of a non-Latin prompt, so an otherwise
+    // descriptive request produced no meaningful words and fell back to the generic title. The
+    // title was worst for exactly the users least able to work around it.
+    const QString cyrillic =
+        sak::ai::chatTitleFromFirstPrompt(QString::fromUtf8("\xD0\xBF\xD1\x80\xD0\xB8\xD0\xBD"
+                                                            "\xD1\x82\xD0\xB5\xD1\x80 \xD1\x81"
+                                                            "\xD0\xBB\xD0\xBE\xD0\xBC\xD0\xB0"
+                                                            "\xD0\xBB\xD1\x81\xD1\x8F"));
+    QVERIFY2(cyrillic != QStringLiteral("AI Chat"), qPrintable(cyrillic));
+    QVERIFY(!cyrillic.isEmpty());
 }
 
 QTEST_GUILESS_MAIN(AiChatTitleTests)

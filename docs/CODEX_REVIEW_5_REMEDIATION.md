@@ -2353,6 +2353,46 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
         layer would INVENT values rather than report them.
     MUTATION-PROVED: dropping the inheritance byte from the key turns the suite RED. Build exit 0
     confirmed separately.
+  - THE CHAT-TITLE GENERATOR, remaining findings, 2026-08-26. A generated title is PERSISTED
+    with the conversation, so everything here outlives the transcript it came from.
+      * URL REDACTION COVERED http(s) AND www ONLY. Any other scheme went into the title
+        verbatim -- hostname, path, and for ftp://user:pass@host the embedded credentials too.
+        Now any RFC 3986 scheme (letter followed by letters/digits/+/-/.) before "://". Requiring
+        the double slash keeps a drive letter out of this rule; the path pattern still handles it.
+      * AN UNCLOSED FENCE OR BACKTICK WAS NOT REMOVED. The paired patterns need a closing
+        delimiter, so a prompt that opens a code block and never closes it -- an interrupted
+        paste, or the 4096-character scan window truncating mid-block -- had its whole code body
+        feed the title. Both spellings now drop from an unmatched opener to the end.
+      * DOMAIN RULES MATCHED BARE SUBSTRINGS, and mis-titled in the direction that hurts: "virus"
+        is inside "antivirus", so "my antivirus is blocking the printer" came back "Malware
+        Cleanup" -- the opposite of what the user said -- and never reached the printer rule,
+        because the malware rule sits earlier in the list. Now whole-word/whole-phrase anchored.
+      * THE OFFLINE-INSTALLER TITLE NAMED THE WRONG PRODUCT. Taking the first non-skipped word
+        turned "download Google Chrome offline installer" into "Google Offline Installer", and
+        Google ships several installers. Continuation now runs while the next word is capitalised
+        (product names are: "Google Chrome", "Adobe Reader") and stops at a lowercase word or a
+        skip word, which keeps "...for Firefox but do not install it" at "Firefox". THE LIMIT IS
+        STATED IN THE CODE: an all-lowercase product ("vlc media player") still yields one token,
+        because nothing in the text separates the rest of the name from prose without a
+        dictionary.
+      * PUNCTUATION-ONLY TOKENS COUNTED AS WORDS. '+', '-' and '.' are kept because they belong
+        inside real tokens (C++, wi-fi, 10.0.1), but "---" and "++" passed the length check and
+        registered as meaningful -- enough to defeat the low-signal workflow fallback and produce
+        a title made of punctuation. A token must now carry at least one letter or digit.
+      * ASCII-ONLY FILTERING ERASED NON-LATIN PROMPTS ENTIRELY. The character class was
+        [^A-Za-z0-9+\-.], so a Cyrillic, Greek, Hebrew or CJK request produced no meaningful
+        words at all and fell back to the generic "AI Chat" -- the title was worst for exactly
+        the users least able to work around it. Now Unicode letter/number properties.
+    A VACUOUS TEST OF MY OWN, CAUGHT BY DRILLING IT -- worth recording because it is the exact
+    weakness class this campaign hunts, produced while fixing that class. The first version of
+    the scheme test put the URL mid-sentence ("Fetch <url> for the customer") and PASSED WITH THE
+    FIX REVERTED: the punctuation strip splits a URL into ordinary words, and the six-word title
+    cap then dropped them for a reason unrelated to redaction, so every assertion was true by
+    accident. Leading the prompt with the URL puts its tokens inside the cap, and the drill then
+    turns the suite RED as it should. RUNNING the drill is what exposed it; reading the test did
+    not.
+    MUTATION-PROVED: restoring the http(s)-only URL pattern turns the suite RED, and restoring
+    bare-substring domain matching turns it RED. Build exit 0 confirmed separately for each.
     A MUTATION DRILL ON THE MIGRATION FOUND A REAL COVERAGE HOLE, which is the point of running
     one on a "behaviour-preserving" change. Breaking the shared helper turned three of the four
     migrated suites RED and left test_mbox_writer GREEN -- because MboxWriter::sanitizeFolderName
