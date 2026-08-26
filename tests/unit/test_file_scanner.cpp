@@ -111,8 +111,16 @@ void FileScannerTests::scan_normalDirectory() {
 }
 
 void FileScannerTests::scan_emptyDirectory() {
-    QDir(m_tempDir.path()).mkpath("empty_dir");
-    auto emptyPath = m_rootPath / "empty_dir";
+    // Its OWN directory, not a new subdirectory of the shared fixture root. Creating "empty_dir"
+    // under m_rootPath mutated the tree every other test in this class counts, so those tests
+    // passed only while they happened to run BEFORE this one: scan_normalDirectory's
+    // directories_found == 4 becomes 5 the moment this function has run, and typeFilter_dirsOnly
+    // was already carrying a partial workaround for exactly that. The flake-soak isolation sweep
+    // (scripts/run_flake_soak.py, R5-G18-8) caught the surviving half -- typeFilter_dirsOnly
+    // passed inside the binary and FAILED alone.
+    QTemporaryDir emptyDir;
+    QVERIFY(emptyDir.isValid());
+    const std::filesystem::path emptyPath = emptyDir.path().toStdWString();
 
     sak::file_scanner scanner;
     sak::scan_options opts;
@@ -270,18 +278,19 @@ void FileScannerTests::typeFilter_dirsOnly() {
     sak::file_scanner scanner;
     sak::scan_options opts;
     opts.type_filter = sak::file_type_filter::directories_only;
-    // scan_emptyDirectory() adds "empty_dir" to the shared root, so exclude it here to keep the
-    // catalog independent of test-function execution order (5 in-class vs 4 standalone today).
-    opts.exclude_dirs = {"empty_dir"};
-
+    // No exclude_dirs workaround any more: scan_emptyDirectory() no longer creates a directory in
+    // the shared root, so this catalog is the fixture's own tree whichever functions ran before.
+    // The previous version excluded "empty_dir" to stabilise directories_found but left
+    // skipped_by_filter asserting 7, which is only true when that sibling HAD run -- so this
+    // function passed in-binary and failed alone.
     auto result = scanner.scan(m_rootPath, opts);
     QVERIFY(result.has_value());
     QCOMPARE(result.value().files_found, std::size_t{0});
     // Exact catalog: dir_a, dir_b, dir_c and the nested dir_b/nested.
     QCOMPARE(result.value().directories_found, std::size_t{4});
-    // The six regular files plus the excluded empty_dir are enumerated and REJECTED, so they must
-    // be counted as filtered rather than silently unvisited.
-    QCOMPARE(result.value().skipped_by_filter, std::size_t{7});
+    // The six regular files are enumerated and REJECTED, so they must be counted as filtered
+    // rather than silently unvisited.
+    QCOMPARE(result.value().skipped_by_filter, std::size_t{6});
     // Bytes are accumulated only for emitted files (updateFileStats), so a directories_only scan
     // reports zero; an accumulation moved ahead of the filter would report the tree's 147.
     QCOMPARE(result.value().total_size, std::uintmax_t{0});

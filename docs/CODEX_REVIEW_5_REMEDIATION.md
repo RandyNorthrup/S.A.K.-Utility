@@ -1917,7 +1917,56 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
 
 ### Status (August 5, 2026)
 
-- [~] R5-LEDGER-1 Run all 1098 per-file review units to completion -- BLOCKED-ON-USER: 764 of 1098 units run (69.6%); the remaining 334 xhigh Codex review units need Randy to authorize and fund a relaunch on his own Codex account (nothing auto-resumes).
+- [~] R5-LEDGER-1 Run all per-file review units to completion.
+  - THE OLD NUMBERS WERE NOT REPRODUCIBLE, corrected 2026-08-25. This entry claimed "764 of 1098
+    units run (69.6%)" and, above, that "the drivers are idempotent and claim-based, so the run
+    resumes from exactly where it stopped". Checked against the live tree: there are NO driver
+    scripts and NO state file anywhere in the repository. Nothing recorded which units had been
+    reviewed, so 764/1098 could not be verified, resumed from, or audited -- it was an assertion,
+    which is precisely the failure this campaign keeps finding in tests and then repeating in its
+    own bookkeeping.
+    GROUNDED REPLACEMENT: scripts/review_ledger.py enumerates units from HEAD by an explicit,
+    reproducible rule and stores scripts/review_ledger_state.json. Measured at d4519cb0:
+      1029 units total (NOT 1098 -- the tree has gained and lost files since that count).
+      675 pending. 354 carry citation evidence (the remediation doc names the file, so the
+      earlier campaign demonstrably looked at it) -- recorded as evidence=cited.
+      0 units are SELF-VERIFYING: no brief survives in the tree for any unit.
+    Per group: include 285 pending / 63 cited; src 116 / 190; tests 193 / 60; scripts 81 / 40;
+    browser 0 / 1.
+    WHAT MAKES RESUMPTION REAL THIS TIME: every unit is keyed by path AND git blob SHA. A unit
+    counts as reviewed only while its blob is the one that was reviewed; edit the file and it
+    returns to pending automatically. That is the property the old claim asserted without
+    implementing. `evidence=cited` is deliberately distinguished from `evidence=driver` so that
+    inferring coverage from citations can never again be mistaken for having measured it.
+    STILL OPEN: 675 pending units to run (Codex authorized by the owner 2026-08-25), and the
+    354 cited units have no stored brief, so their findings cannot be re-audited without a re-run.
+  - DRIVER PROVEN END TO END on the first unit, 2026-08-25. src/ai/ai_cancellation_token.cpp was
+    reviewed read-only at xhigh; the brief is STORED (docs/review_briefs/ai_cancellation_token.md)
+    and the unit is marked with evidence=driver and its blob SHA -- the first self-verifying unit
+    in the ledger's history. Codex returned 3 findings; all 3 were verified against the tree by
+    hand before any change, and all 3 were REAL (consistent with the standing "Codex findings are
+    accurate, still verify" rule). All three are now FIXED with regression tests:
+      * HIGH, a genuine cancellation escape. Parent-to-child links are weak (so a finished child
+        does not pin memory) and child-to-parent was ALSO weak. An intermediate token therefore
+        held the only strong reference to its own state: root -> phase -> tool, with the worker
+        holding only `tool`, meant that when `phase` went out of scope its state died, the root's
+        weak link expired, and cancel() on the root walked past the expired entry and never
+        reached the LIVE grandchild. The user cancels, the sub-operation keeps running, nothing
+        reports it. FIX: child-to-parent is now a STRONG shared_ptr, so a descendant keeps its
+        ancestor chain alive; the links stay asymmetric (parent-to-child weak) so there is no
+        cycle and a state still dies once no descendant refers to it. `parent` was assigned but
+        never read, so nothing else was affected.
+        Every existing test in the file kept all three tokens alive in one scope -- the one shape
+        that cannot reach this bug. New test cancelReachesGrandchildAfterIntermediateTokenDropped
+        drops the intermediate in an inner scope. MUTATION-PROVED: reverting the member to
+        weak_ptr turns it RED (BUILD EXIT 0, test failed), restoring relinks green.
+      * MEDIUM, unbounded growth: expired children were never pruned, so a long-lived root that
+        creates a child per operation made every cancel(), childCount() and toJson() walk every
+        child it had ever had. FIX: prune expired entries on insert. That made the generated id
+        unsafe, because it was derived from children.size() and would repeat after a prune, so
+        State gained a monotonic next_child_index. Test expiredChildrenArePrunedAndIdsStayUnique
+        creates 50 transient children and then asserts two survivors still get distinct ids.
+      * LOW: std::move used with no direct <utility> include. Added.
   - AUTHORIZED-IN-PROGRESS, BLOCKED-ON-USER (relabelled 2026-08-17 from a dishonest "RESOLVED [deferred-with-rationale]" -- the sweep is genuinely INCOMPLETE, not resolved): 764 of 1098 units run (69.6%); 334 remain (246 tests / 75 src / 9 include / 4 scripts). The August-11-2026 Codex account cap that blocked it HAS since reset, but RELAUNCH IS A MANUAL, BUDGET-HEAVY STEP on Randy's own Codex account (334 xhigh review units) -- nothing auto-resumes, and burning that much of his account budget is his call, so this waits on his explicit go. NOT verified-done (334 units genuinely unrun); NOT deferred (it is authorized and would resume the moment he says so). The 764 units already run DID produce the P1-P11 subsystem findings, all closed.
       BLOCKED: 764 of 1098 units complete (69.6%). The Codex account usage limit is
       exhausted and does not reset until August 11, 2026 11:10 AM, so the remaining 334
@@ -7100,6 +7149,38 @@ So the suite itself must be audited for tests that pass regardless of the code.
     one, which is the whole reason this residual existed.
     Deliberately NOT a pre-commit hook: a meaningful soak costs many minutes. It is run against
     the suite periodically and after touching threading or shared state.
+    FIRST FULL SWEEP FOUND A REAL ONE, 2026-08-25. Across all 250 binaries (~3,700 single-function
+    runs) the isolation mode flagged exactly one: test_file_scanner::typeFilter_dirsOnly passed
+    inside its binary and FAILED alone. Root cause was a test mutating a SHARED fixture --
+    scan_emptyDirectory() did mkpath("empty_dir") under the class's m_rootPath, so every sibling
+    that counts entries in that root depended on whether it had run yet.
+    The previous author had already half-seen it: typeFilter_dirsOnly carried an
+    exclude_dirs={"empty_dir"} workaround with a comment about execution order, which stabilised
+    directories_found (4 either way) but left skipped_by_filter asserting 7 -- a number that is
+    only true once the sibling HAS run. That is why it needed the isolation sweep to surface: the
+    binary always ran the mutator first.
+    TWO MORE were fragile for the same reason and passing only by declaration order:
+    scan_normalDirectory asserts directories_found == 4 on the unfiltered root (5 once empty_dir
+    exists), and the exclude-dirs test's skipped_by_filter == 1. Neither was flagged, because both
+    pass alone AND in-binary today -- they were one reordering away from breaking.
+    FIXED AT THE ROOT rather than by patching counts: scan_emptyDirectory now uses its OWN
+    QTemporaryDir instead of adding a directory to the shared tree, so the fixture is whatever
+    initTestCase built for every function. typeFilter_dirsOnly's workaround is gone and its
+    skipped_by_filter is now 6 (the six regular files). Re-run: 21/21 functions agree alone and
+    in-binary.
+    THE LOAD DIMENSION THEN CAUGHT A SECOND ONE, unprompted: the very next full gate failed on
+    test_drive_scanner, a suite nothing in that commit had touched. All six of its failures were
+    the same shape -- QTestLib reporting "the requested timeout (5000 ms) was too short, 9300 ms
+    would have been sufficient this time". Real drive enumeration goes out to the OS (WMI /
+    SetupAPI / volume APIs) and measured 8000-10550 ms under a loaded full-suite run, against
+    QTest's 5000 ms QTRY default. The scanner was working correctly the whole time; the DEADLINE
+    was wrong, and a machine busy enough (here: a parallel WSL clang build) turns that into a red
+    gate. This is precisely the load-dependence the soak mode is aimed at, arriving on its own
+    before the soak was even run in anger.
+    FIXED by giving the ten hardware-bound QTRY sites a named kDriveEnumerationTimeoutMs =
+    30'000 rather than the implicit 5s default. Bounded generously, NOT removed: a scan that
+    never completes must still fail the test, so this is a longer deadline and not an unbounded
+    wait. The suite now takes ~115s and passes.
       pauseResumeToggles passed in isolation 40 times in a row and failed inside the
       full binary, because ordering and load changed the timing. Any flake hunt that
       only runs the single failing function will conclude, wrongly, that nothing is

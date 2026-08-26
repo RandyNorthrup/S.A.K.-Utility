@@ -15,6 +15,16 @@
 #include <cstring>
 #include <vector>
 
+// Real drive enumeration goes out to the OS (WMI / SetupAPI / volume APIs) and takes SECONDS.
+// Under a loaded full-suite run it measured 8000-10550 ms on this machine against QTest's 5000 ms
+// QTRY default, so the whole suite failed the gate while the scanner was working correctly --
+// QtTest's own message even reports how long would have sufficed. That is a LOAD-dependent test
+// failure, the exact class scripts/run_flake_soak.py exists to find (R5-G18-8).
+//
+// Bounded generously rather than removed: a scan that never completes must still fail, so this
+// is a longer deadline, not an unbounded wait.
+constexpr int kDriveEnumerationTimeoutMs = 30'000;
+
 class DriveScannerTests : public QObject {
     Q_OBJECT
 
@@ -163,7 +173,7 @@ void DriveScannerTests::getDrives_returnsNonEmpty() {
     scanner.refresh();
 
     // The scan runs on a worker thread; spin the event loop until it lands.
-    QTRY_VERIFY(!scanner.getDrives().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(!scanner.getDrives().isEmpty(), kDriveEnumerationTimeoutMs);
 
     const QList<sak::DriveInfo> drives = scanner.getDrives();
     QCOMPARE(updatedCount, 1);  // one scan, one publication -- not per-drive, not zero
@@ -195,13 +205,13 @@ void DriveScannerTests::getDrives_returnsNonEmpty() {
     scanner.refresh();
 
     // The scan runs on a worker thread; spin the event loop until it lands.
-    QTRY_VERIFY(!scanner.getDrives().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(!scanner.getDrives().isEmpty(), kDriveEnumerationTimeoutMs);
 }
 
 void DriveScannerTests::getRemovableDrives_subset() {
     DriveScanner scanner;
     scanner.refresh();
-    QTRY_VERIFY(!scanner.getDrives().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(!scanner.getDrives().isEmpty(), kDriveEnumerationTimeoutMs);
 
     auto all = scanner.getDrives();
     auto removable = scanner.getRemovableDrives();
@@ -226,7 +236,7 @@ void DriveScannerTests::getRemovableDrives_subset() {
 void DriveScannerTests::isSystemDrive_systemDriveDetected() {
     DriveScanner scanner;
     scanner.refresh();
-    QTRY_VERIFY(!scanner.getDrives().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(!scanner.getDrives().isEmpty(), kDriveEnumerationTimeoutMs);
 
     auto drives = scanner.getDrives();
     bool foundSystem = false;
@@ -259,7 +269,7 @@ void DriveScannerTests::refresh_doubleCallStillCompletes() {
     QVERIFY(scanner.m_isScanning.load());  // the first scan claimed the in-flight guard
     scanner.refresh();  // Lands while the first scan is still in flight -> swallowed at the CAS.
 
-    QTRY_VERIFY(!scanner.getDrives().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(!scanner.getDrives().isEmpty(), kDriveEnumerationTimeoutMs);
 
     // The guard is RELEASED again when the scan lands. onScanFinished() clears m_isScanning right
     // after applyDriveScan(), both on THIS thread, so it is already false the moment the cache
@@ -271,14 +281,14 @@ void DriveScannerTests::refresh_doubleCallStillCompletes() {
     // ...and a released guard really does admit the next scan.
     scanner.refresh();
     QVERIFY(scanner.m_isScanning.load());
-    QTRY_VERIFY(!scanner.m_isScanning.load());
+    QTRY_VERIFY_WITH_TIMEOUT(!scanner.m_isScanning.load(), kDriveEnumerationTimeoutMs);
     scanner.refresh();  // Lands while the first scan is still in flight.
 
     // The second call is swallowed by the m_isScanning in-flight guard. The point is that
     // the guard is RELEASED again when the scan lands: if it were left set (or the second
     // call replaced the running future), the cache would stay empty forever and the
     // scanner would be permanently wedged -- which a bare "did not crash" never noticed.
-    QTRY_VERIFY(!scanner.getDrives().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(!scanner.getDrives().isEmpty(), kDriveEnumerationTimeoutMs);
 }
 
 // ============================================================================
@@ -291,7 +301,7 @@ void DriveScannerTests::startStop_lifecycle() {
     scanner.start();
     // start() kicks an initial scan before arming the refresh timer, so monitoring really
     // is live once this lands.
-    QTRY_VERIFY(!scanner.getDrives().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(!scanner.getDrives().isEmpty(), kDriveEnumerationTimeoutMs);
     // The cache alone did not prove monitoring is LIVE: the fallback refresh timer must be armed,
     // otherwise start() is a one-shot scan and no drive ever hot-plugs in again.
     QVERIFY(scanner.m_refreshTimer->isActive());
@@ -305,7 +315,7 @@ void DriveScannerTests::startStop_lifecycle() {
     scanner.start();
     // start() kicks an initial scan before arming the refresh timer, so monitoring really
     // is live once this lands.
-    QTRY_VERIFY(!scanner.getDrives().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(!scanner.getDrives().isEmpty(), kDriveEnumerationTimeoutMs);
 
     scanner.stop();
     // stop() joins the in-flight worker scan and DROPS the cache: a stopped scanner must
@@ -323,7 +333,7 @@ void DriveScannerTests::getDriveInfo_nonExistentDrive() {
     // Wait for the scan to LAND. refresh() only kicks a worker future (drive_scanner.cpp:225);
     // without this the cache is still EMPTY when the lookup runs, so getDriveInfo() misses for
     // every path and the miss this test is named for is never reached.
-    QTRY_VERIFY(!scanner.getDrives().isEmpty());
+    QTRY_VERIFY_WITH_TIMEOUT(!scanner.getDrives().isEmpty(), kDriveEnumerationTimeoutMs);
 
     const auto info = scanner.getDriveInfo(QStringLiteral("\\\\.\\PhysicalDrive999"));
     QVERIFY(!info.isValid());

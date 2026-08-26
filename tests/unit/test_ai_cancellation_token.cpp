@@ -42,7 +42,61 @@ private Q_SLOTS:
     void childCancelDoesNotCancelParentOrSibling();
     void childCreatedAfterCancelStartsCancelled();
     void concurrentCancelAndChildCreationIsConsistent();
+    void cancelReachesGrandchildAfterIntermediateTokenDropped();
+    void expiredChildrenArePrunedAndIdsStayUnique();
 };
+
+void AiCancellationTokenTests::cancelReachesGrandchildAfterIntermediateTokenDropped() {
+    // R5-LEDGER: a real defect this suite could not see. The parent-to-child links are weak (so a
+    // finished child does not pin memory), and the child-to-parent link used to be weak too. That
+    // combination meant an intermediate token holding the only strong reference to its own state
+    // destroyed that state the moment it went out of scope: the root's weak link to it expired,
+    // cancel() walked past the expired entry, and a LIVE grandchild was never cancelled. The user
+    // pressed cancel, the sub-operation kept running, and nothing reported it.
+    //
+    // Every existing test in this file keeps all three tokens alive in one scope, which is
+    // exactly the shape that cannot reach the bug.
+    auto root = sak::ai::CancellationToken::createRoot(QStringLiteral("run_1"));
+    sak::ai::CancellationToken tool;
+    {
+        auto phase = root.createChild(QStringLiteral("phase_1"));
+        tool = phase.createChild(QStringLiteral("tool_1"));
+        // `phase` dies here. The worker still holds `tool` and is still polling it.
+    }
+    QVERIFY(tool.isValid());
+    QVERIFY(!tool.isCancellationRequested());
+
+    root.cancel(QStringLiteral("user_cancelled"));
+
+    // The grandchild MUST see the cancellation: it is the token the running work polls.
+    QVERIFY(tool.isCancellationRequested());
+    QCOMPARE(tool.cancelReason(), QStringLiteral("user_cancelled"));
+    // The intermediate is kept alive by its descendant, so the root still counts it -- proving
+    // the chain survived rather than the grandchild being reached some other way.
+    QCOMPARE(root.childCount(), 1);
+}
+
+void AiCancellationTokenTests::expiredChildrenArePrunedAndIdsStayUnique() {
+    // The children vector used to grow forever: a long-lived root that creates a child per
+    // operation made every cancel(), childCount() and toJson() walk every child it had ever had.
+    // Pruning is only safe if generated ids do NOT come from children.size(), which would hand
+    // two live children the same name once anything had been collected.
+    auto root = sak::ai::CancellationToken::createRoot(QStringLiteral("run"));
+    for (int i = 0; i < 50; ++i) {
+        auto transient = root.createChild(QString());  // dies immediately
+        QVERIFY(transient.isValid());
+    }
+    QCOMPARE(root.childCount(), 0);  // none of them are still alive
+
+    // Two survivors created after 50 collected children must still get DISTINCT generated ids.
+    auto first = root.createChild(QString());
+    auto second = root.createChild(QString());
+    QVERIFY(first.id() != second.id());
+    QCOMPARE(root.childCount(), 2);
+    // The generated names are index-based and monotonic, never reused after pruning.
+    QCOMPARE(first.id(), QStringLiteral("run_child_51"));
+    QCOMPARE(second.id(), QStringLiteral("run_child_52"));
+}
 
 void AiCancellationTokenTests::parentCancelCancelsChildren() {
     auto root = sak::ai::CancellationToken::createRoot(QStringLiteral("run_1"));

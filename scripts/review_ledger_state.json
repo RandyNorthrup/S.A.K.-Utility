@@ -1,0 +1,4833 @@
+{
+  "head_commit": "d4519cb006d0ca73809cebc9c4388f319c92c4f9",
+  "unit_rule": "include/**.h|.hpp, src/**.cpp|.h|.hpp, tests/**.cpp|.h|.mjs, scripts/**.py|.ps1|.sh, browser/**.js",
+  "units": {
+    "browser/extension/background.js": {
+      "evidence": "cited",
+      "group": "browser",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/action_constants.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/actions/backup_bitlocker_keys_action.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/actions/check_disk_errors_action.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/actions/generate_system_report_action.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/actions/optimize_power_settings_action.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/actions/reset_network_action.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/actions/screenshot_settings_action.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/actions/verify_system_files_action.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/active_connections_monitor.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/advanced_search_controller.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/advanced_search_panel.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/advanced_search_types.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/advanced_search_worker.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/advanced_uninstall_controller.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/advanced_uninstall_panel.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/advanced_uninstall_types.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/ai/ai_app_action_planner.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_async_tool_runner.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_cancellation_token.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_chat_title.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_command_guard.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_command_tool_planner.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_conversation_store.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_credential_store.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/ai/ai_execution_broker.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_human_gate.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_human_gate_store.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_lease_manager.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_mcp_http_client.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_mcp_jsonrpc.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/ai/ai_mcp_session_pool.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_mcp_stdio_client.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_mcp_stdio_session.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_model_catalog.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_offline_downloader_tool_runner.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_openai_model_client.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_orchestrator.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_package_selection.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_package_tool_planner.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_paths.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_prompt_assembler.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_provider_gateway.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_provider_gateway_authorization.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_provider_gateway_tool_runner.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_provider_registry.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_recovery_policy.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_run_state.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_run_state_store.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_skill.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_skill_store.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_subagent_runner.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_subagent_tool_executor.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_token_usage_tracker.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_tool_call_router.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_tool_dispatcher.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_tool_health_ledger.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_tool_loop_detector.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_tool_policy.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_tool_result_recorder.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_tool_turn.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_trace_store.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_win32_gui_runner.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_workflow_clarifier.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_workflow_placeholders.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_workflow_powershell_tool_runner.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_workflow_store.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_workflow_template.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/openai_response_types.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/openai_responses_client.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai_assistant_panel.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai_transcript_view.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/aligned_buffer.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/apfs_compression.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/apfs_crypto.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/apfs_free_queue_guard.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/apfs_keybag.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/apfs_lzbitmap.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/apfs_lzbitmap_codec.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/apfs_lzbitmap_encode.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/apfs_resource_fork.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/app_action_guards.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/app_action_registry.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/app_action_service.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/app_installation_busy.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/app_installation_panel.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/app_installation_worker.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/app_mutating_actions.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/app_organizer_helpers.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/app_partition_op_parse.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/app_paths.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/app_readonly_actions.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/app_scanner.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/backup_destination_guard.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/backup_file_codec.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/bandwidth_tester.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/bundled_tools_manager.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/bzip2_decompressor.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/chocolatey_manager.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/cleanup_worker.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/color_constants.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/config_manager.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/connectivity_tester.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/conversion_report_generator.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/cpu_benchmark_worker.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/crash_reporter.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/deadline_canceller.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/decompressor_factory.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/deleted_item_scanner.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/design_token_constants.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/detachable_log_window.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/diagnostic_benchmark_panel.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/diagnostic_controller.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/diagnostic_report_generator.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/diagnostic_types.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/disk_benchmark_worker.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/dns_diagnostic_tool.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/drive_scanner.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/drive_unmounter.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/duplicate_finder_worker.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/elevated_pipe_protocol.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/elevated_pipe_server.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/elevated_task_dispatcher.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/elevation_banner.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/elevation_broker.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/elevation_gate.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/elevation_manager.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/elevation_tier.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/email_attachment_saver.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/email_attachments_browser_dialog.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/email_calendar_dialog.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/email_constants.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/email_contacts_dialog.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/email_export_worker.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/email_file_scanner_dialog.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/email_folder_selection.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/email_html_sanitizer.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/email_inspector_controller.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/email_inspector_panel.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/email_profile_manager.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/email_report_generator.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/email_safe_text_browser.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/email_search_worker.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/email_types.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/email_view_ids.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/eml_writer.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/encryption.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/error_codes.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/ethernet_config_manager.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/file_explorer_archive_service.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/file_explorer_archive_worker.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/file_explorer_breadcrumb.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/file_explorer_command_bar.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/file_explorer_command_registry.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/file_explorer_details_pane.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/file_explorer_details_view.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/file_explorer_group_proxy_model.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/file_explorer_grouping.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/file_explorer_icon_registry.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/file_explorer_item_model.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/file_explorer_layout_metrics.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/file_explorer_name_delegate.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/file_explorer_omnibar.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/file_explorer_pane.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/file_explorer_properties_calc.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/file_explorer_properties_dialog.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/file_explorer_session_store.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/file_explorer_sidebar.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/file_explorer_sort_filter_model.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/file_explorer_status_center.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/file_explorer_status_center_widget.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/file_explorer_storage_history.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/file_explorer_style.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/file_explorer_style_constants.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/file_explorer_tag_store.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/file_explorer_transfer_worker.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/file_explorer_types.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/file_hash.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/file_management_explorer_panel.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/file_management_file_system.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/file_recovery_engine.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/file_scanner.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/firewall_rule_auditor.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/flash_coordinator.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/flash_worker.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/flasher_policy.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/follow_scroll_controller.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/format_utils.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/gzip_decompressor.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/hardware_inventory_scanner.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/html_email_writer.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/image_flasher_panel.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/image_flasher_settings_dialog.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/image_source.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/info_button.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/input_validator.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/install_script_parser.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/install_summary_dialog.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/io_write_utils.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/iso_analyzer.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/keep_awake.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/layout_constants.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/leftover_cleanup_guard.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/leftover_cleanup_item_guard.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/leftover_scan_provenance.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/leftover_scanner.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/linux_distro_catalog.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/linux_iso_download_dialog.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/linux_iso_downloader.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/log_viewer.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/logger.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/main_window.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/mbox_header_parser.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/mbox_parser.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/mbox_transfer_decoder.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/mbox_writer.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/memory_benchmark_worker.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/message_box_helpers.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/migration_report.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/network_adapter_inspector.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/network_constants.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/network_diagnostic_controller.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/network_diagnostic_panel.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/network_diagnostic_report_generator.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/network_diagnostic_types.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/network_probe_worker.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/network_share_browser.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/network_transfer_runner.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/nuget_dependency_resolver.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/nuget_version_range.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/offline_deployment_constants.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/offline_deployment_worker.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/organizer_panel.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/organizer_worker.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ost_conversion_worker.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ost_converter_constants.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ost_converter_controller.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ost_converter_types.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ost_converter_widget.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/package_internalization_engine.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/package_list_manager.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/package_matcher.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/partition_apfs_file_system_reader.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/partition_apfs_writer.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/partition_apply_worker.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/partition_executor.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/partition_export_containment.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/partition_ext_file_system_reader.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/partition_file_system_detector.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/partition_file_system_registry.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/partition_file_system_tool_manifest.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/partition_file_system_tool_runner.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/partition_hfs_case_folding.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/partition_hfs_core.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/partition_hfs_file_system_reader.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/partition_hfs_internal.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/partition_manager_controller.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/partition_manager_panel.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/partition_manager_types.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/partition_operation_planner.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/partition_operation_queue.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/partition_raw_device_io.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/partition_report_generator.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/partition_safety_validator.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/partition_script_builder.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/path_utils.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/pdf_email_writer.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/per_user_customization_dialog.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/permission_manager.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/port_scanner.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/process_runner.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/program_enumerator.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/pst_parser.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/quick_action.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/quick_action_controller.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/quick_action_result_io.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/recycle_bin.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/regex_pattern_library.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/registry_snapshot_engine.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/report_style_constants.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/restore_point_manager.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ribbon_tool_button.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/rich_text_constants.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/rich_text_safety.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/script_rewriter.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/secure_memory.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/settings_dialog.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/shield_icon.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/smart_disk_analyzer.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/smart_file_filter.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/splash_screen.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/storage_inventory_worker.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/streaming_decompressor.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/stress_test_worker.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/strong_index.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/style_constants.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/thermal_monitor.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/uninstall_worker.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/user_data_manager.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/user_migration_panel.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/user_profile_backup_wizard.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/user_profile_backup_worker.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/user_profile_restore_selection.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/user_profile_restore_wizard.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/user_profile_restore_worker.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/user_profile_types.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/uup_dump_api.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/uup_iso_builder.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/view_empty_state.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/vulnerability_panel.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/vulnerability_scanner.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/widget_helpers.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/wifi_analyzer.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/wifi_manager_panel.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/wifi_profile_scanner.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/wifi_setup_script.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/win32mcp/browser_bridge.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/win32mcp/browser_bridge_pipe.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/win32mcp/browser_bridge_relay.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/win32mcp/browser_bridge_security.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/win32mcp/browser_contract.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/win32mcp/browser_control.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/win32mcp/browser_extension_installer.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/win32mcp/native_messaging.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/win32mcp/win32_mcp_capture.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/win32mcp/win32_mcp_desktop.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/win32mcp/win32_mcp_dialog_choice.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/win32mcp/win32_mcp_dispatch.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/win32mcp/win32_mcp_entry.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/win32mcp/win32_mcp_fingerprint.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/win32mcp/win32_mcp_geometry.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/win32mcp/win32_mcp_input.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/win32mcp/win32_mcp_input_plan.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/win32mcp/win32_mcp_json_clamp.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/win32mcp/win32_mcp_key_chord.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/win32mcp/win32_mcp_native_host.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/win32mcp/win32_mcp_ocr.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/win32mcp/win32_mcp_text_match.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/win32mcp/win32_mcp_tools.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/win32mcp/win32_mcp_uia_ref.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/win32mcp/win32_mcp_watch.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/windows11_theme.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/windows_iso_download_dialog.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/windows_iso_downloader.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/windows_path_policy.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/windows_usb_creator.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/windows_user_scanner.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/worker_base.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/xz_decompressor.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "scripts/ai_smoke_checklist.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/bundle_chocolatey.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/bundle_iperf3.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/bundle_smartmontools.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/bundle_uup_tools.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/bundle_vcpkg_runtime.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/check_accessibility_patterns.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/check_ascii_only.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/check_blocking_patterns.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/check_build_system_lint.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/check_doc_accuracy.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/check_error_message_uniqueness.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/check_gui_magic_numbers.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/check_gui_style_tokens.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/check_gui_stylesheet_literals.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/check_logged_message_boxes.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/check_magic_numbers.py": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/check_partition_filesystem_tool_manifest.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/check_partition_manager_certification_bundle.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/check_partition_manager_certification_gap_report.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/check_partition_manager_certification_matrix_integrity.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/check_partition_manager_commercial_gate_matrix.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/check_partition_manager_external_checklist.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/check_partition_manager_external_lab_package.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/check_partition_manager_feature_matrix.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/check_partition_manager_release_claims.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/check_partition_manager_vhd_preflight_report.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/check_powershell_syntax.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/check_qrc_resources.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/check_release_readiness.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/check_startup_budget.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/check_test_registration.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/check_test_skips.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/check_third_party_licenses.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/check_tool_preflight.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/clang_tidy_naming_gate.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/create-release-tag.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/create_release_archive.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/create_signing_catalog.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/generate_compile_commands.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/get_partition_manager_certification_status.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/launch_ai_assistant_vm_smoke_local.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/launch_partition_manager_apfs_raw_format_validation_local.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/launch_partition_manager_bitlocker_mutation_external_gate_local.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/launch_partition_manager_ext_filesystem_vm_gate_local.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/launch_partition_manager_file_recovery_external_gate_local.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/launch_partition_manager_hdd_defrag_external_gate_local.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/launch_partition_manager_linux_swap_vm_gate_local.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/launch_partition_manager_offline_bios_bcd_break_local.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/launch_partition_manager_offline_bios_bcdboot_repair_local.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/launch_partition_manager_offline_bios_mbr_fixture_build_local.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/launch_partition_manager_offline_uefi_bcd_break_local.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/launch_partition_manager_offline_uefi_bcdboot_repair_local.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/launch_partition_manager_physical_cross_filesystem_destructive_validation_local.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/launch_partition_manager_physical_hfs_file_apply_validation_local.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/launch_partition_manager_physical_hfsprogs_validation_local.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/launch_partition_manager_system_mbr2gpt_external_gate_local.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/launch_partition_manager_vm_data_external_gates_local.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/launch_partition_manager_vm_gate_host.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/new_partition_manager_automation_vm.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/new_partition_manager_certification_bundle.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/new_partition_manager_certification_gap_report.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/new_partition_manager_external_evidence_manifest.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/rehearse_ci_locally.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/run_ai_assistant_vm_smoke.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_all_mutation_catalogs.py": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/run_branch_coverage.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_clang_format.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/run_clang_tidy.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/run_coverage.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/run_cppcheck.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/run_file_management_live_filesystem_certification.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_flake_soak.py": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/run_lizard.py": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/run_mutation_test.py": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/run_partition_manager_allocate_free_space_external_gate.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_partition_manager_apfs_raw_format_validation.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_partition_manager_bitlocker_mutation_external_gate.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_partition_manager_cluster_size_external_gate.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_partition_manager_destructive_certification.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_partition_manager_ext_filesystem_vm_gate.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_partition_manager_ext_linux_validation.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_partition_manager_file_recovery_external_gate.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_partition_manager_hardware_certification_strict.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_partition_manager_hdd_defrag_external_gate.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_partition_manager_hfsprogs_image_validation.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_partition_manager_linux_metadata_validation.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_partition_manager_linux_swap_format_validation.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_partition_manager_linux_swap_vm_gate.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_partition_manager_offline_bios_bcd_break.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_partition_manager_offline_bios_bcdboot_repair.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_partition_manager_offline_bios_mbr_fixture_build.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_partition_manager_offline_uefi_bcd_break.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_partition_manager_offline_uefi_bcdboot_repair.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_partition_manager_os_migration_external_gate.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_partition_manager_physical_apple_probe_validation.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_partition_manager_physical_cross_filesystem_destructive_validation.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_partition_manager_physical_hfs_file_apply_validation.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_partition_manager_physical_hfsprogs_validation.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_partition_manager_system_mbr2gpt_external_gate.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_partition_manager_vhd_certification_strict.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_partition_manager_vm_data_external_gates.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_portable_e2e_smoke.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/run_tsan_wsl.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/scan_secrets.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/sign-config.template.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/sign-exe.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/stage_portable_release.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/test-iso-downloader.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/test_file_management_live_certifier_gate.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/test_partition_filesystem_probe_certifier.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/test_partition_manager_certification_tools.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/test_partition_manager_vhd_preflight.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/test_sak_apfs_writer_cli.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/test_sak_hfs_writer_cli.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/update_partition_manager_external_manifest_from_reports.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/verify_authenticode_signatures.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/verify_build.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/verify_partition_manager_certification.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/verify_portable_release_smoke.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/verify_windows_runtime_dependencies.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "src/actions/backup_bitlocker_keys_action.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/actions/check_disk_errors_action.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/actions/generate_system_report_action.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/actions/optimize_power_settings_action.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/actions/reset_network_action.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/actions/screenshot_settings_action.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/actions/verify_system_files_action.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/ai/ai_app_action_planner.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/ai/ai_async_tool_runner.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/ai/ai_cancellation_token.cpp": {
+      "brief": "docs/review_briefs/ai_cancellation_token.md",
+      "evidence": "driver",
+      "group": "src",
+      "reviewed_blob": "81d098ac1e9ea5cf376a3cb6ce25357974f84916",
+      "status": "reviewed"
+    },
+    "src/ai/ai_chat_title.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/ai/ai_command_guard.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/ai/ai_command_tool_planner.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/ai/ai_conversation_store.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/ai/ai_credential_store.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/ai/ai_execution_broker.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/ai/ai_human_gate.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/ai/ai_human_gate_store.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/ai/ai_lease_manager.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/ai/ai_mcp_http_client.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/ai/ai_mcp_session_pool.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/ai/ai_mcp_stdio_client.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/ai/ai_mcp_stdio_session.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/ai/ai_offline_downloader_tool_runner.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/ai/ai_openai_model_client.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/ai/ai_orchestrator.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/ai/ai_package_selection.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/ai/ai_package_tool_planner.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/ai/ai_paths.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/ai/ai_prompt_assembler.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/ai/ai_provider_gateway.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/ai/ai_provider_gateway_authorization.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/ai/ai_provider_gateway_tool_runner.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/ai/ai_provider_registry.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/ai/ai_recovery_policy.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/ai/ai_run_state.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/ai/ai_run_state_store.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/ai/ai_skill.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/ai/ai_skill_store.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/ai/ai_subagent_runner.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/ai/ai_subagent_tool_executor.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/ai/ai_token_usage_tracker.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/ai/ai_tool_call_router.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/ai/ai_tool_dispatcher.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/ai/ai_tool_health_ledger.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/ai/ai_tool_loop_detector.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/ai/ai_tool_policy.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/ai/ai_tool_result_recorder.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/ai/ai_tool_turn.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/ai/ai_trace_store.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/ai/ai_win32_gui_runner.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/ai/ai_workflow_clarifier.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/ai/ai_workflow_placeholders.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/ai/ai_workflow_powershell_tool_runner.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/ai/ai_workflow_store.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/ai/ai_workflow_template.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/ai/openai_responses_client.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/active_connections_monitor.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/advanced_search_controller.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/advanced_search_worker.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/advanced_uninstall_controller.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/apfs_crypto.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/apfs_keybag.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/app_action_bridge.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/app_action_registry.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/app_action_service.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/app_installation_busy.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/app_installation_worker.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/app_mutating_actions.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/app_paths.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/app_readonly_actions.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/app_scanner.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/backup_file_codec.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/bandwidth_tester.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/bundled_tools_manager.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/bzip2_decompressor.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/chocolatey_manager.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/cleanup_worker.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/config_manager.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/connectivity_tester.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/conversion_report_generator.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/cpu_benchmark_worker.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/crash_reporter.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/decompressor_factory.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/deleted_item_scanner.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/diagnostic_controller.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/diagnostic_report_generator.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/disk_benchmark_worker.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/dns_diagnostic_tool.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/drive_scanner.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/drive_unmounter.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/elevated_pipe_server.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/elevated_task_dispatcher.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/elevation_broker.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/elevation_manager.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/email_attachment_saver.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/email_export_worker.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/email_folder_selection.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/email_inspector_controller.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/email_profile_manager.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/email_report_generator.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/email_search_worker.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/eml_writer.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/encryption.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/ethernet_config_manager.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/file_explorer_archive_service.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/file_explorer_archive_worker.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/file_explorer_command_registry.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/file_explorer_group_proxy_model.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/file_explorer_grouping.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/file_explorer_item_model.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/file_explorer_layout_metrics.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/file_explorer_properties_calc.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/file_explorer_session_store.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/file_explorer_sort_filter_model.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/file_explorer_status_center.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/file_explorer_storage_history.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/file_explorer_tag_store.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/file_explorer_transfer_worker.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/file_explorer_types.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/file_hash.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/file_management_file_system.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/file_recovery_engine.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/file_scanner.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/firewall_rule_auditor.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/flash_coordinator.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/gzip_decompressor.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/hardware_inventory_scanner.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/html_email_writer.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/image_source.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/input_validator.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/install_script_parser.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/iso_analyzer.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/keep_awake.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/leftover_scanner.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/linux_distro_catalog.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/linux_iso_downloader.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/logger.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/mbox_parser.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/mbox_writer.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/memory_benchmark_worker.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/migration_report.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/network_adapter_inspector.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/network_diagnostic_controller.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/network_diagnostic_report_generator.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/network_share_browser.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/network_transfer_runner.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/nuget_dependency_resolver.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/nuget_version_range.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/offline_deployment_worker.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/ost_conversion_worker.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/ost_converter_controller.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/package_internalization_engine.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/package_list_manager.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/package_matcher.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/partition_apfs_file_system_reader.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/partition_apfs_writer.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/partition_executor.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/partition_ext_file_system_reader.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/partition_file_system_detector.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/partition_file_system_registry.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/partition_file_system_tool_manifest.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/partition_file_system_tool_runner.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/partition_hfs_file_system_reader.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/partition_hfs_file_system_writer.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/partition_manager_controller.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/partition_manager_types.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/partition_operation_planner.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/partition_operation_queue.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/partition_raw_device_io.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/partition_report_generator.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/partition_safety_validator.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/partition_script_builder.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/path_utils.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/pdf_email_writer.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/permission_manager.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/port_scanner.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/process_runner.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/program_enumerator.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/pst_parser.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/quick_action.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/quick_action_controller.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/quick_action_result_io.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/recycle_bin.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/regex_pattern_library.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/registry_snapshot_engine.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/restore_point_manager.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/script_rewriter.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/secure_memory.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/smart_disk_analyzer.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/smart_file_filter.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/storage_inventory_worker.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/streaming_decompressor.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/stress_test_worker.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/thermal_monitor.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/uninstall_worker.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/user_data_manager.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/user_profile_backup_worker.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/user_profile_restore_selection.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/user_profile_restore_worker.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/user_profile_types.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/uup_dump_api.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/uup_iso_builder.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/vulnerability_scanner.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/core/wifi_analyzer.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/wifi_profile_scanner.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/wifi_setup_script.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/windows_iso_downloader.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/windows_usb_creator.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/windows_usb_creator_extract.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/windows_user_scanner.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/xz_decompressor.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/elevated/elevated_helper_main.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/gui/advanced_search_panel.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/advanced_uninstall_panel.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/advanced_uninstall_panel_dialogs.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/gui/ai_assistant_panel.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/gui/ai_transcript_view.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/gui/app_installation_panel.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/app_installation_panel_actions.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/gui/app_installation_panel_table.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/detachable_log_window.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/diagnostic_benchmark_panel.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/diagnostic_benchmark_panel_slots.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/email_attachments_browser_dialog.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/gui/email_calendar_dialog.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/email_contacts_dialog.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/email_file_scanner_dialog.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/email_inspector_panel.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/gui/file_explorer_breadcrumb.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/file_explorer_command_bar.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/file_explorer_details_pane.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/file_explorer_details_view.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/file_explorer_icon_registry.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/file_explorer_name_delegate.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/file_explorer_omnibar.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/file_explorer_pane.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/file_explorer_properties_dialog.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/gui/file_explorer_sidebar.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/file_explorer_status_center_widget.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/file_explorer_style.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/gui/file_management_explorer_panel.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/gui/follow_scroll_controller.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/image_flasher_panel.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/gui/image_flasher_settings_dialog.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/info_button.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/install_summary_dialog.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/linux_iso_download_dialog.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/log_viewer.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/main_window.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/gui/network_diagnostic_panel.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/organizer_panel.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/ost_converter_widget.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/gui/partition_manager_panel.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/gui/per_user_customization_dialog.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/gui/ribbon_tool_button.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/settings_dialog.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/gui/splash_screen.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/gui/user_migration_panel.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/user_profile_backup_wizard.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/user_profile_backup_wizard_execute.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/gui/user_profile_backup_wizard_pages.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/gui/user_profile_restore_wizard.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/gui/user_profile_restore_wizard_execute.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/gui/user_profile_restore_wizard_pages.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/gui/view_empty_state.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/gui/vulnerability_panel.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/wifi_manager_panel.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/windows11_theme.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/gui/windows_iso_download_dialog.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/main.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/third_party/qrcodegen/qrcodegen.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/third_party/qrcodegen/qrcodegen.hpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/threading/duplicate_finder_worker.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/threading/flash_worker.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/threading/network_probe_worker.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/threading/organizer_worker.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/threading/partition_apply_worker.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/threading/worker_base.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/tools/sak_apfs_writer_cli.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/tools/sak_hfs_writer_cli.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/win32mcp/browser_bridge.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/win32mcp/browser_bridge_pipe.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/win32mcp/browser_bridge_relay.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/win32mcp/browser_bridge_security.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/win32mcp/browser_contract.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/win32mcp/browser_control.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/win32mcp/browser_extension_installer.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/win32mcp/native_messaging.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/win32mcp/win32_mcp_capture.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/win32mcp/win32_mcp_desktop.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/win32mcp/win32_mcp_dialog_choice.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/win32mcp/win32_mcp_dispatch.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/win32mcp/win32_mcp_entry.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/win32mcp/win32_mcp_fingerprint.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/win32mcp/win32_mcp_geometry.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/win32mcp/win32_mcp_input.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/win32mcp/win32_mcp_input_plan.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/win32mcp/win32_mcp_json_clamp.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/win32mcp/win32_mcp_key_chord.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/win32mcp/win32_mcp_native_host.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/win32mcp/win32_mcp_ocr.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/win32mcp/win32_mcp_text_match.cpp": {
+      "group": "src",
+      "status": "pending"
+    },
+    "src/win32mcp/win32_mcp_tools.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/win32mcp/win32_mcp_uia_ref.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/win32mcp/win32_mcp_watch.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/certification/file_management_live_certifier.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/certification/flash_live_certifier.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/certification/partition_file_recovery_certifier.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/certification/partition_filesystem_probe_certifier.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/fuzz/fuzz_harness.h": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/integration/test_offline_package_builder.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/integration/test_ost_integration.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/integration/test_uup_conversion_pipeline.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/stubs/file_management_bridge_search_stub.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/support/byte_writer.h": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/support/ext_fixture.h": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/support/hfs_fixture.h": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/support/pst_fixture.h": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/actions/test_action_factory.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/actions/test_all_actions_metadata.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/actions/test_backup_bitlocker_keys_action.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/actions/test_check_disk_errors_action.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/actions/test_generate_system_report_action.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/actions/test_optimize_power_settings_action.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/actions/test_reset_network_action.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/actions/test_screenshot_settings_action.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/actions/test_verify_system_files_action.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_active_connections_monitor.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_advanced_search_controller.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_advanced_search_types.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_advanced_search_worker.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_advanced_uninstall_controller.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_advanced_uninstall_types.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_app_action_planner.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_assistant_panel_tool_dispatch.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_ai_async_tool_runner.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_cancellation_token.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_chat_title.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_command_guard.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_command_tool_planner.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_conversation_store.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_execution_broker.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_human_gate_store.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_lease_manager.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_mcp_http_client.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_mcp_session_pool.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_mcp_stdio_client.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_mcp_stdio_session.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_model_catalog.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_offline_downloader_tool_runner.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_orchestrator.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_package_selection.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_package_tool_planner.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_prompt_assembler.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_provider_gateway.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_ai_provider_registry.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_recovery_policy.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_run_state.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_run_state_store.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_skill_store.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_ai_subagent_runner.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_subagent_tool_executor.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_token_usage_tracker.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_tool_call_router.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_tool_dispatcher.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_ai_tool_health_ledger.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_tool_loop_detector.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_tool_policy.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_ai_tool_result_recorder.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_tool_turn.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_trace_store.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_transcript_view.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_ai_win32_gui_runner.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_workflow_clarifier.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_workflow_evals.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_workflow_powershell_tool_runner.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_ai_workflow_store.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_apfs_free_queue_guard.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_app_action_registry.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_app_action_service.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_app_installation_busy.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_app_installation_worker.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_app_scanner.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_backup_destination_guard.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_backup_file_codec.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_bandwidth_tester.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_browser_bridge.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_browser_bridge_pipe.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_browser_bridge_relay.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_browser_bridge_security.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_browser_contract.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_browser_extension_installer.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_browser_extension_pure.mjs": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_bundled_tools_manager.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_chocolatey_manager.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_cleanup_worker.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_config_manager.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_config_schema_versioning.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_connectivity_tester.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_conversion_report_generator.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_cpu_benchmark_worker.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_crash_reporter.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_deadline_canceller.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_decompressor_factory.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_diagnostic_controller.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_diagnostic_report_generator.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_diagnostic_types.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_disk_benchmark_worker.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_dns_diagnostic_tool.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_drive_scanner.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_drive_unmounter.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_duplicate_finder_worker.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_elevated_pipe_protocol.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_elevated_task_dispatcher.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_elevation_hardening.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_elevation_manager.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_elevation_tier.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_elevation_ux.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_email_attachment_saver.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_email_export_worker.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_email_folder_selection.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_email_html_sanitizer.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_email_profile_manager.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_email_report_generator.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_email_search_worker.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_email_types.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_email_view_ids.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_eml_writer.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_encryption.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_error_codes.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ethernet_config_manager.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_file_explorer_archive_service.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_file_explorer_breadcrumb.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_file_explorer_item_model.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_file_explorer_properties_calc.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_file_explorer_session_store.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_file_explorer_tag_store.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_file_explorer_types.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_file_hash.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_file_management_explorer_panel.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_file_management_file_system.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_file_scanner.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_firewall_rule_auditor.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_flash_coordinator.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_flash_types.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_flash_worker.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_flasher_policy.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_follow_scroll_controller.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_format_utils.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_fuzz_ai_response.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_fuzz_apfs_reader.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_fuzz_backup_codec.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_fuzz_command_classifier.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_fuzz_decompressor.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_fuzz_email_sanitizer.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_fuzz_ext_reader.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_fuzz_fs_detector.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_fuzz_hfs_reader.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_fuzz_install_script.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_fuzz_iso_analyzer.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_fuzz_mbox_container.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_fuzz_mbox_headers.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_fuzz_mbox_transfer_decoder.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_fuzz_mcp_framing.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_fuzz_nuget_version_range.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_fuzz_pst_parser.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_fuzz_pst_structure.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_fuzz_smart_report.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_fuzz_uup_manifest_guard.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_hardware_inventory_scanner.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_html_email_writer.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_image_flasher_panel.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_image_source.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_input_validator.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_install_script_parser.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_iso_analyzer.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_keep_awake.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_leftover_cleanup_guard.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_leftover_scanner.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_linux_distro_catalog.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_linux_iso_downloader.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_logger.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_mbox_parser.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_mbox_writer.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_memory_benchmark_worker.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_migration_report.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_mixed_tier_operations.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_native_messaging.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_network_adapter_inspector.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_network_diagnostic_controller.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_network_diagnostic_report.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_network_diagnostic_types.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_network_diagnostic_utils.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_network_share_browser.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_nuget_dependency_resolver.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_nuget_version_range.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_offline_deployment_worker.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_offline_package_search.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_openai_responses_client.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_organizer_worker.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ost_converter_controller.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ost_converter_types.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_package_internalization_engine.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_package_list_manager.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_package_matcher.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_partition_manager_core.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_partition_manager_panel.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_path_utils.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_pdf_email_writer.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_permission_manager.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_port_scanner.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_process_runner.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_program_enumerator.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_pst_parser.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_quick_action.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_quick_action_controller.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_quick_action_result_io.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_recycle_bin.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_regex_pattern_library.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_registry_snapshot_engine.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_resource_soak.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_restore_point_manager.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_rich_text_safety.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_script_rewriter.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_secure_memory.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_smart_disk_analyzer.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_smart_file_filter.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_splash_screen.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_streaming_decompressor.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_stress_test_worker.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_thermal_monitor.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_uninstall_worker.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_user_data_manager.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_user_profile_backup_worker.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_user_profile_restore_selection.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_user_profile_restore_worker.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_user_profile_types.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_uup_dump_api.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "tests/unit/test_uup_iso_builder.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_view_empty_state.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_vulnerability_scanner.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_wifi_analyzer.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_wifi_manager_panel.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_wifi_profile_scanner.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_wifi_setup_script.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_win32_mcp_dialog_choice.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_win32_mcp_fingerprint.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_win32_mcp_geometry.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_win32_mcp_input_plan.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_win32_mcp_json_clamp.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_win32_mcp_key_chord.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_win32_mcp_server.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_win32_mcp_text_match.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_win32_mcp_uia_ref.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_windows_iso_downloader.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_windows_usb_creator.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_windows_user_scanner.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_worker_base.cpp": {
+      "group": "tests",
+      "status": "pending"
+    }
+  }
+}

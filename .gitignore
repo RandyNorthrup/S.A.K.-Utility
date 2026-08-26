@@ -370,6 +370,11 @@ python_archive/**/*.egg-info/
 !package_mappings.json
 !compile_commands.json
 !resources/ai/workflows/*.json
+# The review ledger's state IS the record of which per-file review units have been run, and it
+# has to be COMMITTED to be worth anything (R5-LEDGER). The previous campaign's "764 of 1098
+# units run" was unverifiable precisely because no such file survived in the tree; letting the
+# blanket *.json rule swallow this one would reproduce that exact failure.
+!scripts/review_ledger_state.json
 !resources/ai/providers/*.json
 !resources/icons/files/manifest.json
 !resources/ai/app_manifests/*.json

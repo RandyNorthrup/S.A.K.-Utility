@@ -6,6 +6,7 @@
 #include <QJsonArray>
 
 #include <algorithm>
+#include <utility>  // std::move -- used directly below, so included directly
 
 namespace sak::ai {
 
@@ -33,10 +34,14 @@ CancellationToken CancellationToken::createChild(const QString& id) const {
     auto child = std::make_shared<State>();
     child->parent = m_state;
     const std::lock_guard<std::mutex> lock(m_state->mutex);
-    child->id =
-        id.trimmed().isEmpty()
-            ? QStringLiteral("%1_child_%2").arg(m_state->id).arg(m_state->children.size() + 1)
-            : id.trimmed();
+    // Drop children whose tokens are gone before appending. Without this a long-lived root that
+    // creates a child per operation grows its vector forever, and every cancel(), childCount()
+    // and toJson() walks every child it has ever had.
+    m_state->children.removeIf([](const auto& child_ref) { return child_ref.expired(); });
+    ++m_state->next_child_index;
+    child->id = id.trimmed().isEmpty()
+                    ? QStringLiteral("%1_child_%2").arg(m_state->id).arg(m_state->next_child_index)
+                    : id.trimmed();
     if (m_state->cancelled.load(std::memory_order_relaxed)) {
         // The child is not shared yet, so its fields need no synchronization here.
         child->cancelled.store(true, std::memory_order_relaxed);
