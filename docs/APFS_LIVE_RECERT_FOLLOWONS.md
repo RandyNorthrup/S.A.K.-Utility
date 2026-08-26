@@ -176,8 +176,10 @@ the rest is a debt-reduction + test-infra program (multi-session, much of it cos
 --------------------------------------------------------------------------------
 ## Cert rig quick reference (reuse)
 
-- macOS VM 10.10.11.102 (macOS 26.6, apfs_kext 2811.160.7), user randy / pass Calm4200*.
-  plink/pscp: `-hostkey SHA256:IWU3+XtT1JRceluCcuTa4pjmzKupjrkjLGyV3jYMG+E -pw Calm4200*`.
+- macOS VM 10.10.11.102 (macOS 26.6, apfs_kext 2811.160.7). Credentials (user, password and
+  the plink/pscp `-hostkey` fingerprint) live in the UNTRACKED temp/creds.md, never here: this
+  file is committed, so a password written into it is a password in the repository. The plink
+  and pscp invocations take `-hostkey <fingerprint> -pw <password>` from there.
 - Harvest a bare Apple container: `hdiutil create -size N -layout NONE -fs APFS x.dmg`
   (NXSB at block 0, no GPT; the .dmg extension is required). Attach, `diskutil
   enableOwnership` if testing owner, populate, detach, pscp to Windows.

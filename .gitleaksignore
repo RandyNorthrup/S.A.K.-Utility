@@ -4,3 +4,9 @@ ce15beae8d1180758e854c34bca02ecc59580cca:src/core/wifi_analyzer.cpp:generic-api-
 # builder (public documentation value, not a credential). The line now also
 # carries an inline gitleaks:allow for future commits.
 c4cdefc615b374bc7e8aa99186e826e5187380bb:scripts/new_partition_manager_automation_vm.ps1:generic-api-key:347
+
+# browser/extension/manifest.json "key" is the PUBLIC half of the extension signing key. It is
+# pinned in the manifest on purpose so an unpacked load derives the same extension id as the
+# signed CRX (ofodhfbipljnhenjjjpbdaglkjdphoec); the PRIVATE key lives outside the tree at
+# %LOCALAPPDATA%\SAK\keys\ and is never committed. Public key material, not a credential.
+c57db9b1cd69d1251b765a9418b8174838cfe03e:browser/extension/manifest.json:generic-api-key:5

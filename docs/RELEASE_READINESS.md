@@ -1,5 +1,25 @@
 # Release Readiness
 
+## PRE-PUSH BLOCKER: a live credential is in git history
+
+`main` has never been pushed (origin/main is ~1200 commits behind), so nothing is exposed today.
+It becomes exposed the moment the branch is pushed, because a push uploads history, not just the
+current tree.
+
+- WHAT: the macOS cert-rig VM password and its SSH hostkey fingerprint, committed in
+  `docs/APFS_LIVE_RECERT_FOLLOWONS.md` (introduced at commit 08035cf1, flagged by
+  `scripts/scan_secrets.ps1` on a full-history run as `generic-api-key`).
+- WORKING TREE: redacted 2026-08-25. The doc now points at the UNTRACKED `temp/creds.md`, so no
+  FUTURE commit carries the credential. The historical blob is untouched.
+- STILL OPEN, owner decision deferred to pre-push (2026-08-25): gitignoring the file or the whole
+  `docs/` tree does NOT help -- neither removes the blob from history. The options that actually
+  work are (1) ROTATE the VM password, which makes the string in history a dead credential and is
+  the low-cost fix; (2) rewrite history (owner rejected: "scrubbing the history sounds bad");
+  (3) never push.
+- The full-history secret scan is deliberately LEFT FAILING on this finding rather than added to
+  `.gitleaksignore`: an ignore entry would silence the one check standing between this credential
+  and GitHub. Do not silence it. Resolve it.
+
 ## Automated Gates
 
 Required before a release candidate is published:
