@@ -126,7 +126,14 @@ if ($gitleaks) {
 
 $trufflehog = Get-Command trufflehog -CommandType Application -ErrorAction SilentlyContinue
 if ($trufflehog) {
-    & $trufflehog.Source git "file://$ProjectRoot" --only-verified --fail --no-update
+    # "file://." and NOT "file://$ProjectRoot". trufflehog mangles a Windows ABSOLUTE path in
+    # every other form: backslashes get percent-encoded into an ssh:// URI with a bogus
+    # hostname, and forward slashes get the drive letter prepended a second time. Both fail to
+    # clone, so this arm of the gate could never run on this platform. It fails CLOSED --
+    # blocking the push rather than skipping the scan -- which is why nothing surfaced it until
+    # a push was first attempted. The script has already Set-Location'd to $ProjectRoot, so the
+    # relative form names the same repository.
+    & $trufflehog.Source git "file://." --only-verified --fail --no-update
     if ($LASTEXITCODE -ne 0) {
         exit $LASTEXITCODE
     }
