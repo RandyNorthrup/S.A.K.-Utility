@@ -160,6 +160,17 @@ public:
      */
     void setBufferSize(qint64 size_bytes);
 
+    /**
+     * @brief Current write-buffer size in bytes.
+     *
+     * Read-only accessor so the setter's effect is observable to a test, exactly as
+     * verificationEnabled() is above. Without it setBufferSize had no assertable outcome and
+     * its test was a bare QVERIFY(true) -- which would also have passed against an empty setter
+     * body, and against the loss of the non-positive-size guard (R5-G18-4). Touched only from
+     * the owning thread before the flash starts, so no synchronization is needed.
+     */
+    [[nodiscard]] qint64 bufferSize() const { return m_bufferSize; }
+
     /// @brief Zero-pad a buffer up to a whole multiple of the device sector size
     /// @param buffer Buffer to pad in place (grown to the padded size)
     /// @param bytes_read In/out valid byte count; set to the padded size on success

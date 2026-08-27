@@ -177,7 +177,10 @@ void PermissionManagerTests::stripPermissions_doesNotProduceNullDacl() {
     // ...and that it actually rewrote the DACL rather than leaving the seeded one in place.
     QVERIFY2(sddl != seeded, qPrintable(sddl));
 #else
-    QVERIFY(true);
+    // Windows-only: these exercise Win32 ACL APIs. QVERIFY(true) here reported a PASS on
+    // every other platform, so the suite counted ten tests as covering behaviour they had
+    // not executed a line of. A skip says what actually happened (R5-G18-4).
+    QSKIP("PermissionManager ACL behaviour is Windows-only");
 #endif
 }
 
@@ -221,7 +224,10 @@ void PermissionManagerTests::setStandardUser_keepsSystemAndAdmins() {
     QVERIFY2(sddl.contains(QStringLiteral(";%1)").arg(sddl.mid(2, groupPos - 2))),
              qPrintable(QStringLiteral("destination user missing from ACL: %1").arg(sddl)));
 #else
-    QVERIFY(true);
+    // Windows-only: these exercise Win32 ACL APIs. QVERIFY(true) here reported a PASS on
+    // every other platform, so the suite counted ten tests as covering behaviour they had
+    // not executed a line of. A skip says what actually happened (R5-G18-4).
+    QSKIP("PermissionManager ACL behaviour is Windows-only");
 #endif
 }
 
@@ -245,7 +251,10 @@ void PermissionManagerTests::setSddl_ownerlessDoesNotNullOwner() {
     const QString ownerAfter = mgr.getOwner(f);
     QCOMPARE(ownerAfter, ownerBefore);
 #else
-    QVERIFY(true);
+    // Windows-only: these exercise Win32 ACL APIs. QVERIFY(true) here reported a PASS on
+    // every other platform, so the suite counted ten tests as covering behaviour they had
+    // not executed a line of. A skip says what actually happened (R5-G18-4).
+    QSKIP("PermissionManager ACL behaviour is Windows-only");
 #endif
 }
 
@@ -280,7 +289,10 @@ void PermissionManagerTests::stripPermissions_refusesReparsePoint() {
     QVERIFY2(mgr.getLastError().contains("reparse", Qt::CaseInsensitive),
              qPrintable(mgr.getLastError()));
 #else
-    QVERIFY(true);
+    // Windows-only: these exercise Win32 ACL APIs. QVERIFY(true) here reported a PASS on
+    // every other platform, so the suite counted ten tests as covering behaviour they had
+    // not executed a line of. A skip says what actually happened (R5-G18-4).
+    QSKIP("PermissionManager ACL behaviour is Windows-only");
 #endif
 }
 
@@ -329,7 +341,10 @@ void PermissionManagerTests::stripPermissions_refusesHardLink() {
         QVERIFY(!mgr.getLastError().contains("hard link", Qt::CaseInsensitive));
     }
 #else
-    QVERIFY(true);
+    // Windows-only: these exercise Win32 ACL APIs. QVERIFY(true) here reported a PASS on
+    // every other platform, so the suite counted ten tests as covering behaviour they had
+    // not executed a line of. A skip says what actually happened (R5-G18-4).
+    QSKIP("PermissionManager ACL behaviour is Windows-only");
 #endif
 }
 
@@ -366,7 +381,10 @@ void PermissionManagerTests::stripPermissions_refusesAncestorJunction() {
              QStringLiteral(
                  "Refused: path resolves through a redirected junction/symlink ancestor"));
 #else
-    QVERIFY(true);
+    // Windows-only: these exercise Win32 ACL APIs. QVERIFY(true) here reported a PASS on
+    // every other platform, so the suite counted ten tests as covering behaviour they had
+    // not executed a line of. A skip says what actually happened (R5-G18-4).
+    QSKIP("PermissionManager ACL behaviour is Windows-only");
 #endif
 }
 
@@ -396,7 +414,10 @@ void PermissionManagerTests::setSddl_appliesGroup() {
     QVERIFY2(out.contains(QStringLiteral("G:%1").arg(ownerSid)),
              qPrintable(QStringLiteral("primary group was not applied on restore: %1").arg(out)));
 #else
-    QVERIFY(true);
+    // Windows-only: these exercise Win32 ACL APIs. QVERIFY(true) here reported a PASS on
+    // every other platform, so the suite counted ten tests as covering behaviour they had
+    // not executed a line of. A skip says what actually happened (R5-G18-4).
+    QSKIP("PermissionManager ACL behaviour is Windows-only");
 #endif
 }
 
@@ -449,7 +470,10 @@ void PermissionManagerTests::setSddl_refusesPresentNullDacl() {
     QVERIFY2(mgr.setSecurityDescriptorSddl(f, QStringLiteral("D:(A;;FA;;;%1)").arg(ownerSid)),
              qPrintable(mgr.getLastError()));
 #else
-    QVERIFY(true);
+    // Windows-only: these exercise Win32 ACL APIs. QVERIFY(true) here reported a PASS on
+    // every other platform, so the suite counted ten tests as covering behaviour they had
+    // not executed a line of. A skip says what actually happened (R5-G18-4).
+    QSKIP("PermissionManager ACL behaviour is Windows-only");
 #endif
 }
 
@@ -482,7 +506,10 @@ void PermissionManagerTests::setSddl_refusesSacl() {
     QVERIFY2(mgr.setSecurityDescriptorSddl(f, QStringLiteral("D:(A;;FA;;;%1)").arg(ownerSid)),
              qPrintable(mgr.getLastError()));
 #else
-    QVERIFY(true);
+    // Windows-only: these exercise Win32 ACL APIs. QVERIFY(true) here reported a PASS on
+    // every other platform, so the suite counted ten tests as covering behaviour they had
+    // not executed a line of. A skip says what actually happened (R5-G18-4).
+    QSKIP("PermissionManager ACL behaviour is Windows-only");
 #endif
 }
 
@@ -510,7 +537,10 @@ void PermissionManagerTests::setSddl_refusesEmbeddedNul() {
     // Non-vacuity: the clean path + clean SDDL applies.
     QVERIFY2(mgr.setSecurityDescriptorSddl(f, validSddl), qPrintable(mgr.getLastError()));
 #else
-    QVERIFY(true);
+    // Windows-only: these exercise Win32 ACL APIs. QVERIFY(true) here reported a PASS on
+    // every other platform, so the suite counted ten tests as covering behaviour they had
+    // not executed a line of. A skip says what actually happened (R5-G18-4).
+    QSKIP("PermissionManager ACL behaviour is Windows-only");
 #endif
 }
 

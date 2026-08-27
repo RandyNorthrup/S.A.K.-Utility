@@ -8335,6 +8335,44 @@ So the suite itself must be audited for tests that pass regardless of the code.
     after searching a 3-file tree can conclude the tree holds 2 files. Fix is a rename to
     files_with_matches (model-facing JSON key change, so it needs its own gated commit alongside the
     schema/description text); logged here rather than folded into a test-only sweep commit.
+  - PROGRESS 2026-08-27 (sweep batch 42): swept the whole tests/unit tree for the three
+    PROVABLY-vacuous shapes -- `QVERIFY(true)`, a self-compare `QCOMPARE(x, x)`, and a
+    `size() >= 0` that is true for every unsigned value. Self-compare and size>=0: ZERO
+    instances. `QVERIFY(true)`: twelve, all fixed.
+      * tests/unit/test_flash_worker.cpp setBufferSizeCustom was `setBufferSize(128 MiB);
+        QVERIFY(true);`. FlashWorker exposed no accessor, which is why it asserted nothing --
+        and the file's own comment said so and treated it as unfixable. It was fixable: the
+        sibling setter already has verificationEnabled(), added for exactly this reason, so
+        bufferSize() now exists on the same rationale. The test observes the default first (so
+        it cannot pass against a setter initialized to the same number), then pins the accepted
+        value, then pins the NON-POSITIVE GUARD -- setBufferSize ignores <= 0 and that guard had
+        no test at all, though a zero-byte buffer would make the flash read nothing. A smaller
+        positive size is still accepted, so the rule is "non-positive", not "never shrinks".
+        DRILLED twice, separately: removing the guard turns it red, and making the setter a
+        no-op turns it red. The old body survived both.
+      * tests/unit/test_permission_manager.cpp had TEN `#else QVERIFY(true) #endif` platform
+        stubs. These are Windows-only ACL tests, so on any other platform the suite counted ten
+        PASSES for behaviour it had not executed a line of. Now QSKIP, which reports what
+        actually happened. No effect on this machine (Windows-only build); the value is that a
+        non-Windows run stops reporting coverage it does not have.
+      * tests/unit/test_ai_assistant_panel_tool_dispatch.cpp
+        destroyingPanelWhileToolRunsDrainsCleanly ended in `panel.reset(); QVERIFY(true);` with
+        the reasoning that "the only failure mode is a CRASH or a HANG, so reaching this line is
+        the assertion". That is true of a crash and of a hang, but NOT of the failure mode
+        between them: a destructor that abandons the in-flight task instead of waiting returns
+        here perfectly happily, and only becomes a use-after-free later, elsewhere. The handler
+        now sets a flag as its LAST act and the test requires that flag after reset(), pinning
+        the wait itself.
+        DRILL, reported honestly because it did not go the expected way. Two REDUNDANT
+        enforcers hold this property -- AiAssistantPanel::drainAndStopAsyncTool pumps until the
+        runner stops, and ~AiAsyncToolRunner joins with waitForFinished() -- so defeating either
+        ALONE leaves the test green, and defeating the panel drain alone instead trips its own
+        qFatal (a fail-closed guard, not a silent abandon). Defeating BOTH produces the real
+        scenario, and then the assertion fires first: "'handler_returned.load()' returned FALSE",
+        followed by an access violation in QThread -- the exact use-after-free the guards exist
+        to prevent. So the assertion is non-vacuous and catches abandonment cleanly, but it is
+        backstopped by two independent mechanisms rather than one, which is why no single-guard
+        mutation reds it. Stated here rather than claimed as a clean single-guard drill.
       campaign, prove it by reverting the fix locally and observing the failure
 - [x] R5-G18-5 Ban environment-dependent assertions that can pass or fail by accident;
   - PROGRESS 2026-08-12: the three live-UUP-dump-API tests (testFetchBuilds / testGetFilesReturnsResults / testFileUrlsAreValid) that ran-or-skipped depending on live network reachability are now opt-in behind SAK_RUN_LIVE_UUP_TESTS (commit 3d9c88a), so the automated suite is network-deterministic and the skip baseline is stable. The skip-audit gate (G18-6) now enforces that no NEW environment-conditional skip can silently appear.

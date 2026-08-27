@@ -226,31 +226,46 @@ private Q_SLOTS:
     void destroyingPanelWhileToolRunsDrainsCleanly() {
         auto panel = std::make_unique<AiAssistantPanel>();
         std::atomic<bool> entered{false};
+        std::atomic<bool> handler_returned{false};
         std::atomic<Qt::HANDLE> handler_thread{QThread::currentThreadId()};
 
         // Handler ignores any gate and just sleeps briefly, so the worker is
         // genuinely in-flight when the panel is destroyed.
         panel->m_toolDispatcher->registerHandler(
             QStringLiteral("download_file"),
-            [&entered, &handler_thread](const QJsonObject&, const ai::AiToolPolicyDecision&) {
+            [&entered, &handler_returned, &handler_thread](const QJsonObject&,
+                                                           const ai::AiToolPolicyDecision&) {
                 handler_thread = QThread::currentThreadId();
                 entered = true;
                 QThread::msleep(200);
+                // Set LAST: this is what distinguishes "the destructor waited" from "the
+                // destructor returned and the task happened not to crash yet".
+                handler_returned = true;
                 return QJsonObject{{QStringLiteral("success"), true}};
             });
         allowLocalToolsAndValidRun(*panel);
         panel->beginToolTurn(downloadResponse());
         QTRY_VERIFY_WITH_TIMEOUT(entered.load(), 5000);
         QVERIFY(panel->m_asyncToolRunner->isRunning());
+        // The handler is mid-sleep, so the drain below has something real to wait for. Asserting
+        // this makes the post-reset check meaningful: without it, a handler that had already
+        // finished would satisfy the drain assertion for free.
+        QVERIFY(!handler_returned.load());
 
-        // Destroy mid-flight. The only failure mode here is a CRASH or a HANG, so there is
-        // nothing to compare: ~AiAssistantPanel must DRAIN the in-flight pool task (which
+        // Destroy mid-flight. ~AiAssistantPanel must DRAIN the in-flight pool task (which
         // captured `this`) before the members it touches are torn down. Without that drain,
         // reset() either blocks forever, or the task's completion dereferences a freed panel
         // (access violation / heap corruption), or Qt aborts with "QThread: Destroyed while
-        // thread is running". Reaching the line after reset() at all is the assertion.
+        // thread is running".
         panel.reset();
-        QVERIFY(true);
+
+        // This line used to be QVERIFY(true) -- "reaching it at all is the assertion". That is
+        // true of a crash or a hang, but it is NOT true of the failure mode in between: a
+        // destructor that abandons the task instead of waiting for it returns here perfectly
+        // happily, with the task still running behind it. Only then does it become a
+        // use-after-free, on a later run, on a different machine. Requiring the handler to have
+        // RETURNED before reset() completes pins the wait itself (R5-G18-4).
+        QVERIFY(handler_returned.load());
     }
 
     // Offline install_bundle with a wrong-typed 'packed_only' (a JSON number, which

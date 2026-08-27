@@ -276,8 +276,32 @@ void FlashWorkerTests::setVerificationEnabledToggle() {
 void FlashWorkerTests::setBufferSizeCustom() {
     auto src = std::make_unique<MockImageSource>(false);
     FlashWorker worker(std::move(src), QStringLiteral("X"));
-    worker.setBufferSize(128 * 1024 * 1024);  // 128 MiB
-    QVERIFY(true);
+
+    // The default must be observed FIRST. Pinning only the post-set value would pass against a
+    // setter that happened to be initialized to the same number, and the old body -- set, then
+    // QVERIFY(true) -- passed against an empty setter body entirely.
+    const qint64 default_size = worker.bufferSize();
+    QVERIFY(default_size > 0);
+
+    constexpr qint64 kCustomSize = 128 * 1024 * 1024;  // 128 MiB
+    QVERIFY(kCustomSize != default_size);              // otherwise the next line proves nothing
+    worker.setBufferSize(kCustomSize);
+    QCOMPARE(worker.bufferSize(), kCustomSize);
+
+    // setBufferSize IGNORES a non-positive size rather than accepting it. That guard had no test
+    // at all: a zero-byte buffer would make the flash read nothing, and a negative one is a
+    // nonsense allocation size. The previously accepted value must survive each rejection.
+    worker.setBufferSize(0);
+    QCOMPARE(worker.bufferSize(), kCustomSize);
+    worker.setBufferSize(-1);
+    QCOMPARE(worker.bufferSize(), kCustomSize);
+    worker.setBufferSize(std::numeric_limits<qint64>::min());
+    QCOMPARE(worker.bufferSize(), kCustomSize);
+
+    // A smaller-but-positive size is still accepted, so the guard rejects non-positive values
+    // specifically rather than "anything below the current size".
+    worker.setBufferSize(1);
+    QCOMPARE(worker.bufferSize(), qint64{1});
 }
 
 // ===========================================================================
