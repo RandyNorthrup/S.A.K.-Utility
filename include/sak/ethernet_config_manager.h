@@ -136,19 +136,12 @@ private:
                                          const QString& adapterName,
                                          bool* primaryApplied = nullptr);
 
-    /// @brief Run a netsh command and return stdout
+    /// @brief Run a netsh command and return stdout. Used only by the adapter ENUMERATION below;
+    ///        every netsh command that MUTATES an adapter lives in network_adapter_admin.h.
     [[nodiscard]] QString runNetsh(const QStringList& args, bool* ok = nullptr);
 
-    /// @brief Parse the output of `netsh interface ip show config` for an adapter
     /// @brief Run a PowerShell scan from System32, failing closed if it cannot be resolved.
     [[nodiscard]] QString runPowerShellCapture(const QString& script);
-
-
-    /// @brief LEGACY English-only `netsh ... show config` parser. No longer on the capture path
-    ///        (see snapshotFromNetIpConfig); retained because saved snapshots and the restore
-    ///        tooling still reference the netsh text format.
-    [[nodiscard]] static EthernetConfigSnapshot parseNetshConfig(const QString& output,
-                                                                 const QString& adapterName);
 };
 
 // -- Compile-Time Invariants -------------------------------------------------

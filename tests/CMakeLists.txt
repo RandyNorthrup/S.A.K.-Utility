@@ -1261,6 +1261,10 @@ add_executable(test_ethernet_config_manager
     unit/test_ethernet_config_manager.cpp
     ../src/core/ethernet_config_manager.cpp
     ../include/sak/ethernet_config_manager.h  # Q_OBJECT -> AUTOMOC
+    # The single owner of every netsh adapter command: the manager's restore legs are thin
+    # adapters over it rather than a second implementation (R5-IDX-19b).
+    ../src/core/network_adapter_admin.cpp
+    ../src/core/logger.cpp
     ../src/core/process_runner.cpp
     # EthernetConfigInfo::parseNetIpConfigJson -- the language-neutral adapter scan the manager
     # now shares with the backup wizard instead of scraping localized netsh labels.
@@ -6590,6 +6594,8 @@ add_executable(test_network_diagnostic_controller
     ../src/core/connectivity_tester.cpp
     ../src/core/dns_diagnostic_tool.cpp
     ../src/core/ethernet_config_manager.cpp
+    # The single owner of every netsh adapter command (R5-IDX-19b).
+    ../src/core/network_adapter_admin.cpp
     # EthernetConfigInfo::parseNetIpConfigJson -- see the ethernet manager's locale fix.
     ../src/core/user_profile_types.cpp
     ../src/core/firewall_rule_auditor.cpp

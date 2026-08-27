@@ -7,15 +7,15 @@
 #include "sak/ethernet_config_manager.h"
 
 #include "sak/io_write_utils.h"
+// The single owner of every netsh adapter command and of the dotted-IPv4 check.
+#include "sak/network_adapter_admin.h"
 #include "sak/process_runner.h"
 // EthernetConfigInfo::parseNetIpConfigJson + kNetIpConfigPowerShell: the language-neutral adapter
 // scan this manager shares with the backup wizard.
 #include "sak/user_profile_types.h"
 
-#include <QAbstractSocket>
 #include <QDateTime>
 #include <QFile>
-#include <QHostAddress>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -39,27 +39,22 @@ constexpr int kAdapterNameCaptureGroup = 4;
 // and must be rejected before it is read into memory (self-DoS guard).
 constexpr qint64 kMaxBackupFileBytes = 4LL * 1024 * 1024;
 
-// Accepts only a dotted-quad IPv4 literal. QHostAddress rejects hostnames and IPv6, so a malformed
-// captured field fails closed here before it can reach a live netsh apply.
-bool isIpv4Literal(const QString& value) {
-    QHostAddress addr;
-    return addr.setAddress(value) && addr.protocol() == QAbstractSocket::IPv4Protocol;
-}
-
 // Every captured IPv4 field that is PRESENT must be a well-formed dotted-quad; empty optional
 // fields (gateway, DNS, and the whole set on the DHCP path) are legitimate and are not rejected.
+// The dotted-quad test itself is sak::isDottedIpv4 -- this file used to carry its own copy, one of
+// four that existed across the tree for the same one-line check.
 bool ipv4FieldsWellFormed(const EthernetConfigSnapshot& snap) {
-    if (!snap.ipv4Address.isEmpty() && !isIpv4Literal(snap.ipv4Address)) {
+    if (!snap.ipv4Address.isEmpty() && !isDottedIpv4(snap.ipv4Address)) {
         return false;
     }
-    if (!snap.ipv4SubnetMask.isEmpty() && !isIpv4Literal(snap.ipv4SubnetMask)) {
+    if (!snap.ipv4SubnetMask.isEmpty() && !isDottedIpv4(snap.ipv4SubnetMask)) {
         return false;
     }
-    if (!snap.ipv4Gateway.isEmpty() && !isIpv4Literal(snap.ipv4Gateway)) {
+    if (!snap.ipv4Gateway.isEmpty() && !isDottedIpv4(snap.ipv4Gateway)) {
         return false;
     }
     for (const QString& dns : snap.ipv4DnsServers) {
-        if (!isIpv4Literal(dns)) {
+        if (!isDottedIpv4(dns)) {
             return false;
         }
     }
@@ -260,40 +255,23 @@ EthernetConfigSnapshot EthernetConfigManager::loadFromFile(const QString& filePa
     return snapshot;
 }
 
+// Each of the three restore legs below is a thin adapter over the ONE implementation in
+// network_adapter_admin: it decides what to attempt, hands the work to the shared executor, and
+// translates the outcome into this class's signals. No netsh argument vector is spelled out here.
+// Before R5-IDX-19b these legs and the diagnostic panel each built their own, and the two sets
+// had already drifted apart.
+
 bool EthernetConfigManager::restoreDhcpMode(const QString& adapterName, bool* dnsApplied) {
     Q_EMIT logOutput("Setting adapter to DHCP mode...");
-    bool ok = false;
-    const QString result = runNetsh(
-        {"interface", "ip", "set", "address", QString("name=%1").arg(adapterName), "source=dhcp"},
-        &ok);
-    if (!ok || result.contains("error", Qt::CaseInsensitive)) {
-        Q_EMIT errorOccurred(QString("Failed to set DHCP: %1").arg(result));
-        return false;
-    }
-
-    // Switch DNS to automatic too. netsh returns a NON-ZERO exit for the benign "DNS is already
-    // automatic" no-op and prints a message that never contains "error", so exit status alone
-    // would false-close a restore that already reached the DHCP-DNS target state. Treat the DNS
-    // switch as failed only on a genuine netsh error, or when the command could not run at all
-    // (empty output + non-success) -- both leave DNS pinned to the old static servers, so the
-    // restore is genuinely partial and must not be reported as a full success.
-    bool dnsCmdOk = false;
-    const QString dnsResult = runNetsh({"interface",
-                                        "ip",
-                                        "set",
-                                        "dnsservers",
-                                        QString("name=%1").arg(adapterName),
-                                        "source=dhcp"},
-                                       &dnsCmdOk);
-    const bool dnsFailed = dnsResult.contains("error", Qt::CaseInsensitive) ||
-                           (!dnsCmdOk && dnsResult.isEmpty());
+    const DhcpApplyOutcome outcome = setAdapterDhcpMode(adapterName);
     if (dnsApplied != nullptr) {
-        *dnsApplied = !dnsFailed;
+        *dnsApplied = outcome.dns_switched;
     }
-    if (dnsFailed) {
-        Q_EMIT errorOccurred(QString("Failed to set DNS to automatic (DHCP): %1").arg(dnsResult));
+    if (!outcome.succeeded) {
+        Q_EMIT errorOccurred(outcome.message);
         return false;
     }
+    Q_EMIT logOutput(outcome.message);
     return true;
 }
 
@@ -302,23 +280,13 @@ bool EthernetConfigManager::restoreStaticIp(const EthernetConfigSnapshot& snapsh
     Q_EMIT logOutput(QString("Setting static IP: %1 / %2 / %3")
                          .arg(snapshot.ipv4Address, snapshot.ipv4SubnetMask, snapshot.ipv4Gateway));
 
-    QStringList addressArgs = {"interface",
-                               "ip",
-                               "set",
-                               "address",
-                               QString("name=%1").arg(adapterName),
-                               "source=static",
-                               QString("addr=%1").arg(snapshot.ipv4Address),
-                               QString("mask=%1").arg(snapshot.ipv4SubnetMask)};
-
-    if (!snapshot.ipv4Gateway.isEmpty()) {
-        addressArgs << QString("gateway=%1").arg(snapshot.ipv4Gateway) << "gwmetric=0";
-    }
-
-    bool ok = false;
-    const QString result = runNetsh(addressArgs, &ok);
-    if (!ok || result.contains("error", Qt::CaseInsensitive)) {
-        Q_EMIT errorOccurred(QString("Failed to set IP address: %1").arg(result));
+    const AdapterAdminOutcome outcome = setAdapterStaticIpv4(adapterName,
+                                                             snapshot.ipv4Address,
+                                                             snapshot.ipv4SubnetMask,
+                                                             snapshot.ipv4Gateway,
+                                                             kRestoreIpv4Dialect);
+    if (!outcome.succeeded) {
+        Q_EMIT errorOccurred(QString("Failed to set IP address: %1").arg(outcome.message));
         return false;
     }
     return true;
@@ -333,44 +301,15 @@ bool EthernetConfigManager::restoreDnsServers(const EthernetConfigSnapshot& snap
 
     Q_EMIT logOutput(QString("Setting primary DNS: %1").arg(snapshot.ipv4DnsServers.first()));
 
-    bool ok = false;
-    QString result = runNetsh({"interface",
-                               "ip",
-                               "set",
-                               "dnsservers",
-                               QString("name=%1").arg(adapterName),
-                               "source=static",
-                               QString("addr=%1").arg(snapshot.ipv4DnsServers.first()),
-                               "register=primary"},
-                              &ok);
-    if (!ok || result.contains("error", Qt::CaseInsensitive)) {
-        Q_EMIT errorOccurred(QString("Failed to set primary DNS: %1").arg(result));
-        return false;
-    }
-
-    // Primary DNS is now LIVE: the `set dnsservers source=static` above replaced the adapter's
-    // entire DNS list. A caller must be told this even if a secondary `add` fails next.
+    const DnsApplyOutcome outcome = setAdapterStaticDns(adapterName,
+                                                        snapshot.ipv4DnsServers,
+                                                        kRestoreIpv4Dialect.dns_registration);
     if (primaryApplied != nullptr) {
-        *primaryApplied = true;
+        *primaryApplied = outcome.primary_applied;
     }
-
-    for (int idx = 1; idx < snapshot.ipv4DnsServers.size(); ++idx) {
-        Q_EMIT logOutput(QString("Adding DNS server: %1").arg(snapshot.ipv4DnsServers[idx]));
-
-        ok = false;
-        result = runNetsh({"interface",
-                           "ip",
-                           "add",
-                           "dnsservers",
-                           QString("name=%1").arg(adapterName),
-                           QString("addr=%1").arg(snapshot.ipv4DnsServers[idx]),
-                           QString("index=%1").arg(idx + 1)},
-                          &ok);
-        if (!ok || result.contains("error", Qt::CaseInsensitive)) {
-            Q_EMIT errorOccurred(QString("Failed to add DNS server %1: %2")
-                                     .arg(snapshot.ipv4DnsServers[idx], result));
-            return false;
-        }
+    if (!outcome.succeeded) {
+        Q_EMIT errorOccurred(outcome.message);
+        return false;
     }
     return true;
 }
@@ -572,82 +511,6 @@ EthernetConfigSnapshot EthernetConfigManager::snapshotFromNetIpConfig(const QStr
         }
         break;
     }
-    return snap;
-}
-
-namespace {
-
-/// Apply one "Label: value" line of `netsh interface ip show config` to @p snap.
-void applyNetshConfigLine(const QString& line, EthernetConfigSnapshot& snap) {
-    if (line.startsWith("DHCP enabled:", Qt::CaseInsensitive)) {
-        snap.dhcpEnabled = line.contains("Yes", Qt::CaseInsensitive);
-        return;
-    }
-    if (line.startsWith("IP Address:", Qt::CaseInsensitive)) {
-        snap.ipv4Address = line.mid(line.indexOf(':') + 1).trimmed();
-        return;
-    }
-    if (line.startsWith("Subnet Prefix:", Qt::CaseInsensitive)) {
-        // Format: "Subnet Prefix:  192.168.1.0/24 (mask 255.255.255.0)"
-        static const QRegularExpression kMaskRe(R"(\(mask\s+([\d.]+)\))");
-        const auto match = kMaskRe.match(line);
-        if (match.hasMatch()) {
-            snap.ipv4SubnetMask = match.captured(1);
-        }
-        return;
-    }
-    if (line.startsWith("Default Gateway:", Qt::CaseInsensitive)) {
-        snap.ipv4Gateway = line.mid(line.indexOf(':') + 1).trimmed();
-        return;
-    }
-    if (line.startsWith("Statically Configured DNS Servers:", Qt::CaseInsensitive) ||
-        line.startsWith("DNS Servers configured through DHCP:", Qt::CaseInsensitive)) {
-        const QString dns = line.mid(line.indexOf(':') + 1).trimmed();
-        if (!dns.isEmpty()) {
-            snap.ipv4DnsServers.append(dns);
-        }
-    }
-}
-
-/// Collect the continuation DNS entries: netsh prints additional servers as bare IP addresses
-/// on the lines FOLLOWING the "DNS Servers" label, with no label of their own.
-void appendContinuationDnsServers(const QStringList& lines, EthernetConfigSnapshot& snap) {
-    bool inDnsSection = false;
-    static const QRegularExpression kIpRe(R"(^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$)");
-
-    for (const auto& rawLine : lines) {
-        const QString line = rawLine.trimmed();
-
-        if (line.contains("DNS Servers", Qt::CaseInsensitive)) {
-            inDnsSection = true;
-            continue;
-        }
-        if (!inDnsSection) {
-            continue;
-        }
-        if (kIpRe.match(line).hasMatch()) {
-            if (!snap.ipv4DnsServers.contains(line)) {
-                snap.ipv4DnsServers.append(line);
-            }
-        } else if (!line.isEmpty()) {
-            inDnsSection = false;
-        }
-    }
-}
-
-}  // namespace
-
-EthernetConfigSnapshot EthernetConfigManager::parseNetshConfig(const QString& output,
-                                                               const QString& adapterName) {
-    EthernetConfigSnapshot snap;
-    snap.adapterName = adapterName;
-
-    const auto lines = output.split('\n');
-    for (const auto& rawLine : lines) {
-        applyNetshConfigLine(rawLine.trimmed(), snap);
-    }
-    appendContinuationDnsServers(lines, snap);
-
     return snap;
 }
 

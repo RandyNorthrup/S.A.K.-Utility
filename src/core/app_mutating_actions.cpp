@@ -48,11 +48,9 @@
 #include "sak/wifi_setup_script.h"
 #include "sak/worker_base.h"
 
-#include <QAbstractSocket>
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
-#include <QHostAddress>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QJsonValue>
@@ -2807,16 +2805,6 @@ AppActionResult setAdapterDhcp(const QJsonObject& args) {
 // list; a handful is plenty and bounds the number of netsh calls restoreDnsServers issues.
 constexpr int kMaxStaticDnsServers = 8;
 
-// True if @p value is a well-formed IPv4 address in exact dotted form. QHostAddress::setAddress
-// accepts ONLY a complete address (no CIDR suffix, no surrounding whitespace, no trailing junk), so
-// this refuses garbage up front (an honest error instead of an opaque netsh parse failure) and
-// guarantees the token shape that reaches netsh. runProcess is already shell-free (each value is a
-// single argv token, so there is no flag/shell injection); this is defense-in-depth on top of that.
-bool isValidIPv4(const QString& value) {
-    QHostAddress address;
-    return address.setAddress(value) && address.protocol() == QAbstractSocket::IPv4Protocol;
-}
-
 // Validate the required + optional address arguments (adapter/ip/mask/gateway). Returns an error
 // result to return verbatim, or nullopt when all are well-formed. Split out to keep the op within
 // the complexity/length budget. DNS entries are validated separately (they are a list).
@@ -2831,19 +2819,19 @@ std::optional<AppActionResult> validateStaticIpArgs(const QString& adapter,
                 "set_adapter_static_ip requires 'adapter_name', 'ip_address', and 'subnet_mask'"),
             {}};
     }
-    if (!isValidIPv4(ip)) {
+    if (!isDottedIpv4(ip)) {
         return AppActionResult{false,
                                QStringLiteral(
                                    "ip_address must be a valid IPv4 address (e.g. 192.168.1.50)"),
                                {}};
     }
-    if (!isValidIPv4(mask)) {
+    if (!isDottedIpv4(mask)) {
         return AppActionResult{false,
                                QStringLiteral(
                                    "subnet_mask must be a dotted IPv4 mask (e.g. 255.255.255.0)"),
                                {}};
     }
-    if (!gateway.isEmpty() && !isValidIPv4(gateway)) {
+    if (!gateway.isEmpty() && !isDottedIpv4(gateway)) {
         return AppActionResult{false,
                                QStringLiteral("gateway, if given, must be a valid IPv4 address"),
                                {}};
@@ -2872,12 +2860,15 @@ std::optional<QJsonArray> dnsServersArray(const QJsonObject& args,
 
 // Read + validate the optional dns_servers array. Each entry must be a string holding a valid IPv4
 // address; a wrong-typed array, a non-string entry, or an invalid address fails the whole op (via
-// @p error) rather than being silently dropped. Entries are de-duplicated and normalized to their
-// canonical dotted form, then capped at kMaxStaticDnsServers. De-duping matters: netsh's "add
-// dnsservers" fails ("The object already exists.", non-zero exit) if the same address is added
-// twice, which -- since the static IP is applied FIRST -- would otherwise turn a live, applied
-// address into a reported failure (see setAdapterStaticIp). Canonicalizing also feeds netsh the
-// exact dotted form even if a non-dotted numeric IPv4 spelling was supplied.
+// @p error) rather than being silently dropped. Entries are de-duplicated and capped at
+// kMaxStaticDnsServers. De-duping matters: netsh's "add dnsservers" fails ("The object already
+// exists.", non-zero exit) if the same address is added twice, which -- since the static IP is
+// applied FIRST -- would otherwise turn a live, applied address into a reported failure (see
+// setAdapterStaticIp). There is no canonicalization step: sak::isDottedIpv4 accepts exactly ONE
+// spelling per address (four plain-decimal octets, no leading zeros, no abbreviated inet_aton
+// form), so a validated entry is already canonical and two spellings of one address cannot both
+// get through. The QHostAddress round-trip that used to sit here existed only because the old
+// validator accepted the abbreviated forms.
 QStringList staticDnsFromArgs(const QJsonObject& args, std::optional<AppActionResult>& error) {
     QStringList dns;
     QSet<QString> seen;
@@ -2896,15 +2887,14 @@ QStringList staticDnsFromArgs(const QJsonObject& args, std::optional<AppActionRe
         if (entry.isEmpty()) {
             continue;
         }
-        QHostAddress address;
-        if (!address.setAddress(entry) || address.protocol() != QAbstractSocket::IPv4Protocol) {
+        if (!isDottedIpv4(entry)) {
             error = AppActionResult{
                 false,
                 QStringLiteral("dns_servers entry '%1' is not a valid IPv4 address").arg(entry),
                 {}};
             return {};
         }
-        const QString canonical = address.toString();
+        const QString& canonical = entry;
         if (seen.contains(canonical)) {
             continue;  // drop a duplicate so netsh's "add dnsservers" never fails on it
         }

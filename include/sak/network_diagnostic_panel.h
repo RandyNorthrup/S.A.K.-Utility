@@ -6,6 +6,8 @@
 
 #pragma once
 
+// sak::AdapterAdminOutcome -- the outcome type every adapter mutation this panel launches returns.
+#include "sak/network_adapter_admin.h"
 #include "sak/network_diagnostic_types.h"
 
 #include <QComboBox>
@@ -260,13 +262,13 @@ private:
     // -- Adapter context menu helpers --
     [[nodiscard]] const NetworkAdapterInfo* selectedAdapter() const;
     [[nodiscard]] QVector<const NetworkAdapterInfo*> selectedAdapters() const;
-    bool runNetshCommand(const QStringList& args, QString* output = nullptr);
-    void runCommandAsync(const QString& program,
-                         const QStringList& args,
-                         int timeout_ms,
-                         std::function<void(bool success, QString output)> callback);
-    void runNetshCommandAsync(const QStringList& args,
-                              std::function<void(bool success, QString output)> callback);
+    // Runs ONE adapter operation from sak/network_adapter_admin.h on a worker thread and reports
+    // its outcome back on the GUI thread. This panel supplies the thread, the confirmation dialogs
+    // and the reporting; it does not build or run the command. Per the owner's R5-IDX-19b ruling
+    // the GUI points at the headless seam rather than carrying a second implementation -- the two
+    // it used to carry had already drifted apart from the ones the assistant drives.
+    void launchAdapterWork(std::function<sak::AdapterAdminOutcome()> work,
+                           std::function<void(const sak::AdapterAdminOutcome&)> report);
     void addTypeSpecificMenuItems(QMenu& menu,
                                   const NetworkAdapterInfo& adapter,
                                   const QVector<const NetworkAdapterInfo*>& selected);
@@ -320,11 +322,11 @@ private:
     std::unique_ptr<NetworkDiagnosticController> m_controller;
     QuickActionController* m_qa_controller{nullptr};
 
-    // In-flight runCommandAsync() futures (netsh/ipconfig -- several are MUTATING adapter admin
-    // ops). Tracked so ~NetworkDiagnosticPanel can bounded-wait any still running instead of
-    // letting the mutation run detached past teardown; each carries its own process timeout so the
-    // wait is bounded. Finished futures are pruned on each new call so this never grows unbounded.
-    QList<QFuture<QPair<bool, QString>>> m_pending_command_futures;
+    // In-flight launchAdapterWork() futures (several are MUTATING adapter admin ops). Tracked so
+    // ~NetworkDiagnosticPanel can bounded-wait any still running instead of letting the mutation
+    // run detached past teardown; each carries its own process timeout so the wait is bounded.
+    // Finished futures are pruned on each new call so this never grows unbounded.
+    QList<QFuture<sak::AdapterAdminOutcome>> m_pending_command_futures;
 
     LogToggleSwitch* m_logToggle = nullptr;         ///< Owned by layout hierarchy
     LogToggleSwitch* m_adapterLogToggle = nullptr;  ///< Log toggle on adapter tab

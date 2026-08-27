@@ -254,10 +254,10 @@ NetworkDiagnosticPanel::NetworkDiagnosticPanel(QWidget* parent)
 }
 
 NetworkDiagnosticPanel::~NetworkDiagnosticPanel() {
-    // Bounded-join any in-flight runCommandAsync() ops (some MUTATE adapters via netsh) so the
+    // Bounded-join any in-flight launchAdapterWork() ops (some MUTATE adapters via netsh) so the
     // mutation does not run detached past teardown. Each op carries its own process timeout, so
     // this cannot hang teardown beyond a bounded few seconds even if several are in flight.
-    for (QFuture<QPair<bool, QString>>& future : m_pending_command_futures) {
+    for (QFuture<sak::AdapterAdminOutcome>& future : m_pending_command_futures) {
         if (future.isRunning()) {
             // SAK-ALLOW-BLOCKING: each op carries its own process timeout, so every future
             // completes on its own. Some of these MUTATE adapters via netsh; abandoning the
@@ -2429,72 +2429,28 @@ QVector<const NetworkAdapterInfo*> NetworkDiagnosticPanel::selectedAdapters() co
     return result;
 }
 
-bool NetworkDiagnosticPanel::runNetshCommand(const QStringList& args, QString* output) {
-    constexpr int kFinishTimeoutMs = 15'000;
-    // System32-qualified netsh, never the bare name: CreateProcess searches the current
-    // directory ahead of System32, and these adapter commands are privileged. Fail closed
-    // when the path cannot be resolved rather than run whatever PATH/CWD supplies.
-    const QString netsh_exe = sak::system32Path(QStringLiteral("netsh.exe"));
-    if (netsh_exe.isEmpty()) {
-        if (output != nullptr) {
-            *output = tr("Cannot resolve the System32 netsh.exe path");
-        }
-        return false;
-    }
-    const auto process = runProcess(netsh_exe, args, kFinishTimeoutMs);
+void NetworkDiagnosticPanel::launchAdapterWork(
+    std::function<sak::AdapterAdminOutcome()> work,
+    std::function<void(const sak::AdapterAdminOutcome&)> report) {
+    using TrackedFuture = QFuture<sak::AdapterAdminOutcome>;
 
-    if (process.timed_out) {
-        if (output != nullptr) {
-            *output = tr("netsh command timed out");
-        }
-        return false;
-    }
-
-    if (output != nullptr) {
-        *output = process.std_out.isEmpty() ? process.std_err : process.std_out;
-    }
-    return process.exit_code == 0;
-}
-
-void NetworkDiagnosticPanel::runCommandAsync(
-    const QString& program,
-    const QStringList& args,
-    int timeout_ms,
-    std::function<void(bool success, QString output)> callback) {
-    auto* watcher = new QFutureWatcher<QPair<bool, QString>>(this);
-    connect(watcher, &QFutureWatcher<QPair<bool, QString>>::finished, this, [watcher, callback]() {
-        const auto [success, output] = watcher->result();
-        watcher->deleteLater();
-        callback(success, output);
-    });
-    const QFuture<QPair<bool, QString>> future =
-        QtConcurrent::run([program, args, timeout_ms]() -> QPair<bool, QString> {
-            const auto process = runProcess(program, args, timeout_ms);
-            const QString output = process.std_out.isEmpty() ? process.std_err : process.std_out;
-            if (process.timed_out) {
-                return {false, QStringLiteral("%1 command timed out").arg(program)};
-            }
-            return {process.exit_code == 0, output};
-        });
+    // The watcher is parented to this panel, so the report slot never fires on a destroyed panel.
+    auto* watcher = new QFutureWatcher<sak::AdapterAdminOutcome>(this);
+    connect(watcher,
+            &QFutureWatcher<sak::AdapterAdminOutcome>::finished,
+            this,
+            [watcher, report = std::move(report)]() {
+                const sak::AdapterAdminOutcome outcome = watcher->result();
+                watcher->deleteLater();
+                report(outcome);
+            });
+    const TrackedFuture future = QtConcurrent::run(std::move(work));
     watcher->setFuture(future);
     // Track the future so the destructor can bounded-wait a still-running (possibly MUTATING) op
     // rather than let it run detached past teardown. Prune finished ones first so this stays
     // bounded.
-    m_pending_command_futures.removeIf(
-        [](const QFuture<QPair<bool, QString>>& f) { return f.isFinished(); });
+    m_pending_command_futures.removeIf([](const TrackedFuture& f) { return f.isFinished(); });
     m_pending_command_futures.append(future);
-}
-
-void NetworkDiagnosticPanel::runNetshCommandAsync(
-    const QStringList& args, std::function<void(bool success, QString output)> callback) {
-    // System32-qualified netsh only; an unresolvable path reports failure through the
-    // caller's own callback instead of launching a PATH/CWD-resolved binary.
-    const QString netsh_exe = sak::system32Path(QStringLiteral("netsh.exe"));
-    if (netsh_exe.isEmpty()) {
-        callback(false, tr("Cannot resolve the System32 netsh.exe path"));
-        return;
-    }
-    runCommandAsync(netsh_exe, args, sak::kTimeoutNetworkReadMs, std::move(callback));
 }
 
 namespace {
@@ -2811,32 +2767,28 @@ void NetworkDiagnosticPanel::onAdapterEnable() {
 
     Q_EMIT logOutput(tr("Enabling adapter '%1'...").arg(adapter->name));
 
-    // The SAME argument vector the headless network.enable_adapter action builds. The panel used
-    // to spell this out itself, so the two could drift on code that reconfigures adapters
-    // (R5-IDX-19b).
+    // The SAME code the headless network.enable_adapter action runs -- not a second copy of it.
     const QString adapter_name = adapter->name;
-    const QStringList args = sak::adapterAdminStateArgs(adapter_name, /*enabled=*/true);
-    runNetshCommandAsync(args, [this, adapter_name](bool success, const QString& output) {
-        if (success) {
-            Q_EMIT statusMessage(tr("Adapter '%1' enabled").arg(adapter_name),
-                                 sak::kTimerStatusMessageMs);
-            Q_EMIT logOutput(tr("Adapter '%1' enabled successfully").arg(adapter_name));
-            sak::logInfo("Enabled adapter: {}", adapter_name.toStdString());
-        } else {
-            sak::logError("Failed to enable adapter {}: {}",
-                          adapter_name.toStdString(),
-                          output.toStdString());
-            Q_EMIT logOutput(tr("[ERROR] Failed to enable '%1': %2").arg(adapter_name, output));
-            sak::showWarningLogged(this,
-                                   tr("Enable Failed"),
-                                   tr("Failed to enable adapter.\n\n"
-                                      "Administrator privileges may be required.\n\n%1")
-                                       .arg(output));
-        }
+    launchAdapterWork(
+        [adapter_name]() { return sak::setAdapterEnabled(adapter_name, /*enabled=*/true); },
+        [this, adapter_name](const sak::AdapterAdminOutcome& outcome) {
+            if (outcome.succeeded) {
+                Q_EMIT statusMessage(tr("Adapter '%1' enabled").arg(adapter_name),
+                                     sak::kTimerStatusMessageMs);
+                Q_EMIT logOutput(tr("Adapter '%1' enabled successfully").arg(adapter_name));
+                sak::logInfo("Enabled adapter: {}", adapter_name.toStdString());
+            } else {
+                sak::logError("Failed to enable adapter {}: {}",
+                              adapter_name.toStdString(),
+                              outcome.message.toStdString());
+                Q_EMIT logOutput(
+                    tr("[ERROR] Failed to enable '%1': %2").arg(adapter_name, outcome.message));
+                sak::showWarningLogged(this, tr("Enable Failed"), outcome.message);
+            }
 
-        constexpr int kRefreshDelayMs = 2000;
-        QTimer::singleShot(kRefreshDelayMs, this, &NetworkDiagnosticPanel::onRefreshAdapters);
-    });
+            constexpr int kRefreshDelayMs = 2000;
+            QTimer::singleShot(kRefreshDelayMs, this, &NetworkDiagnosticPanel::onRefreshAdapters);
+        });
 }
 
 void NetworkDiagnosticPanel::onAdapterDisable() {
@@ -2865,28 +2817,26 @@ void NetworkDiagnosticPanel::onAdapterDisable() {
 
     // Shared with the headless network.disable_adapter action -- see onAdapterEnable.
     const QString adapter_name = adapter->name;
-    const QStringList args = sak::adapterAdminStateArgs(adapter_name, /*enabled=*/false);
-    runNetshCommandAsync(args, [this, adapter_name](bool success, const QString& output) {
-        if (success) {
-            Q_EMIT statusMessage(tr("Adapter '%1' disabled").arg(adapter_name),
-                                 sak::kTimerStatusMessageMs);
-            Q_EMIT logOutput(tr("Adapter '%1' disabled successfully").arg(adapter_name));
-            sak::logInfo("Disabled adapter: {}", adapter_name.toStdString());
-        } else {
-            sak::logError("Failed to disable adapter {}: {}",
-                          adapter_name.toStdString(),
-                          output.toStdString());
-            Q_EMIT logOutput(tr("[ERROR] Failed to disable '%1': %2").arg(adapter_name, output));
-            sak::showWarningLogged(this,
-                                   tr("Disable Failed"),
-                                   tr("Failed to disable adapter.\n\n"
-                                      "Administrator privileges may be required.\n\n%1")
-                                       .arg(output));
-        }
+    launchAdapterWork(
+        [adapter_name]() { return sak::setAdapterEnabled(adapter_name, /*enabled=*/false); },
+        [this, adapter_name](const sak::AdapterAdminOutcome& outcome) {
+            if (outcome.succeeded) {
+                Q_EMIT statusMessage(tr("Adapter '%1' disabled").arg(adapter_name),
+                                     sak::kTimerStatusMessageMs);
+                Q_EMIT logOutput(tr("Adapter '%1' disabled successfully").arg(adapter_name));
+                sak::logInfo("Disabled adapter: {}", adapter_name.toStdString());
+            } else {
+                sak::logError("Failed to disable adapter {}: {}",
+                              adapter_name.toStdString(),
+                              outcome.message.toStdString());
+                Q_EMIT logOutput(
+                    tr("[ERROR] Failed to disable '%1': %2").arg(adapter_name, outcome.message));
+                sak::showWarningLogged(this, tr("Disable Failed"), outcome.message);
+            }
 
-        constexpr int kRefreshDelayMs = 2000;
-        QTimer::singleShot(kRefreshDelayMs, this, &NetworkDiagnosticPanel::onRefreshAdapters);
-    });
+            constexpr int kRefreshDelayMs = 2000;
+            QTimer::singleShot(kRefreshDelayMs, this, &NetworkDiagnosticPanel::onRefreshAdapters);
+        });
 }
 
 void NetworkDiagnosticPanel::onAdapterDiagnose() {
@@ -2992,26 +2942,23 @@ void NetworkDiagnosticPanel::onAdapterRename() {
     Q_EMIT logOutput(tr("Renaming adapter '%1' to '%2'...").arg(adapter->name, new_name));
 
     const QString old_name = adapter->name;
-    const QStringList args = sak::adapterRenameArgs(old_name, new_name);
-    runNetshCommandAsync(args, [this, old_name, new_name](bool success, const QString& output) {
-        if (success) {
-            Q_EMIT statusMessage(tr("Adapter renamed to '%1'").arg(new_name),
-                                 sak::kTimerStatusMessageMs);
-            Q_EMIT logOutput(tr("Adapter renamed to '%1'").arg(new_name));
-            sak::logInfo("Renamed adapter '{}' to '{}'",
-                         old_name.toStdString(),
-                         new_name.toStdString());
-            onRefreshAdapters();
-        } else {
-            sak::logError("Failed to rename adapter: {}", output.toStdString());
-            Q_EMIT logOutput(tr("[ERROR] Failed to rename: %1").arg(output));
-            sak::showWarningLogged(this,
-                                   tr("Rename Failed"),
-                                   tr("Failed to rename adapter.\n\n"
-                                      "Administrator privileges may be required.\n\n%1")
-                                       .arg(output));
-        }
-    });
+    launchAdapterWork(
+        [old_name, new_name]() { return sak::renameAdapter(old_name, new_name); },
+        [this, old_name, new_name](const sak::AdapterAdminOutcome& outcome) {
+            if (outcome.succeeded) {
+                Q_EMIT statusMessage(tr("Adapter renamed to '%1'").arg(new_name),
+                                     sak::kTimerStatusMessageMs);
+                Q_EMIT logOutput(tr("Adapter renamed to '%1'").arg(new_name));
+                sak::logInfo("Renamed adapter '{}' to '{}'",
+                             old_name.toStdString(),
+                             new_name.toStdString());
+                onRefreshAdapters();
+            } else {
+                sak::logError("Failed to rename adapter: {}", outcome.message.toStdString());
+                Q_EMIT logOutput(tr("[ERROR] Failed to rename: %1").arg(outcome.message));
+                sak::showWarningLogged(this, tr("Rename Failed"), outcome.message);
+            }
+        });
 }
 
 void NetworkDiagnosticPanel::onOpenAdapterSettings() {
@@ -3189,24 +3136,19 @@ void NetworkDiagnosticPanel::applyStaticIp(const QString& adapter_name,
                                            const QString& ip,
                                            const QString& mask,
                                            const QString& gateway) {
-    QStringList args = {QStringLiteral("interface"),
-                        QStringLiteral("ipv4"),
-                        QStringLiteral("set"),
-                        QStringLiteral("address"),
-                        adapter_name,
-                        QStringLiteral("static"),
-                        ip,
-                        mask};
-    if (!gateway.isEmpty()) {
-        args << gateway;
-    }
-
     Q_EMIT logOutput(
         tr("Setting static IP on '%1': %2 / %3 gw %4").arg(adapter_name, ip, mask, gateway));
 
-    runNetshCommandAsync(
-        args, [this, adapter_name, ip, mask, gateway](bool success, const QString& output) {
-            if (success) {
+    // kTechnicianIpv4Dialect is what this panel has always issued: no gwmetric, so Windows assigns
+    // the gateway metric. The restore/assistant path pins gwmetric=0 instead. Both now run the SAME
+    // code; the dialect is the one named difference between them (R5-IDX-19b).
+    launchAdapterWork(
+        [adapter_name, ip, mask, gateway]() {
+            return sak::setAdapterStaticIpv4(
+                adapter_name, ip, mask, gateway, sak::kTechnicianIpv4Dialect);
+        },
+        [this, adapter_name, ip, mask, gateway](const sak::AdapterAdminOutcome& outcome) {
+            if (outcome.succeeded) {
                 Q_EMIT statusMessage(tr("Static IP configured on '%1'").arg(adapter_name),
                                      sak::kTimerStatusMessageMs);
                 Q_EMIT logOutput(tr("Static IP configured on '%1'").arg(adapter_name));
@@ -3217,13 +3159,9 @@ void NetworkDiagnosticPanel::applyStaticIp(const QString& adapter_name,
                              gateway.toStdString());
                 onRefreshAdapters();
             } else {
-                sak::logError("Failed to set static IP: {}", output.toStdString());
-                Q_EMIT logOutput(tr("[ERROR] Failed to set static IP: %1").arg(output));
-                sak::showWarningLogged(this,
-                                       tr("Failed to Set IP"),
-                                       tr("Failed to configure static IP.\n\n"
-                                          "Administrator privileges may be required.\n\n%1")
-                                           .arg(output));
+                sak::logError("Failed to set static IP: {}", outcome.message.toStdString());
+                Q_EMIT logOutput(tr("[ERROR] Failed to set static IP: %1").arg(outcome.message));
+                sak::showWarningLogged(this, tr("Failed to Set IP"), outcome.message);
             }
         });
 }
@@ -3297,166 +3235,29 @@ void NetworkDiagnosticPanel::onSetDnsServers() {
     applyDnsServers(adapter->name, primary, secondary);
 }
 
-namespace {
-
-using TrackedFuture = QFuture<QPair<bool, QString>>;
-
-// Output text of a failed netsh step (timeout message or captured stderr/stdout).
-QString netshStepOutput(const ProcessResult& process) {
-    if (process.timed_out) {
-        return NetworkDiagnosticPanel::tr("netsh command timed out");
-    }
-    return process.std_out.isEmpty() ? process.std_err : process.std_out;
-}
-
-// Runs netsh steps in order on a worker thread, stopping at the first failure.
-// Returns {index of first failed step (or -1 if all succeeded), its output}.
-QPair<int, QString> runNetshStepsSequential(const QList<QStringList>& steps, int timeout_ms) {
-    // System32-qualified netsh only; unresolvable means step 0 failed (fail closed), never
-    // a PATH/CWD-resolved launch of a privileged DNS/adapter mutation.
-    const QString netsh_exe = sak::system32Path(QStringLiteral("netsh.exe"));
-    if (netsh_exe.isEmpty()) {
-        return {0, NetworkDiagnosticPanel::tr("Cannot resolve the System32 netsh.exe path")};
-    }
-    for (int i = 0; i < steps.size(); ++i) {
-        const auto process = runProcess(netsh_exe, steps.at(i), timeout_ms);
-        if (!process.succeeded()) {
-            return {i, netshStepOutput(process)};
-        }
-    }
-    return {-1, QString()};
-}
-
-// Maps a DNS-apply outcome to an honest {success, message}. A failed secondary
-// step is reported as a partial failure, never as success (fail closed).
-QPair<bool, QString> dnsApplyMessage(const QString& adapter,
-                                     const QString& primary,
-                                     const QString& secondary,
-                                     int failed_index,
-                                     const QString& output) {
-    if (failed_index < 0) {
-        return {true, NetworkDiagnosticPanel::tr("DNS servers configured on '%1'").arg(adapter)};
-    }
-    if (failed_index == 0) {
-        return {false,
-                NetworkDiagnosticPanel::tr("Failed to set primary DNS on '%1'. Administrator "
-                                           "privileges may be required.\n\n%2")
-                    .arg(adapter, output)};
-    }
-    return {false,
-            NetworkDiagnosticPanel::tr("Partially configured DNS on '%1': primary %2 was set, "
-                                       "but adding secondary %3 failed.\n\n%4")
-                .arg(adapter, primary, secondary, output)};
-}
-
-// Applies primary (and optional secondary) DNS as ONE joined worker unit so the
-// sequence cannot be truncated mid-way by panel teardown.
-QPair<bool, QString> runDnsApplySequence(const QString& adapter,
-                                         const QString& primary,
-                                         const QString& secondary,
-                                         int timeout_ms) {
-    QList<QStringList> steps;
-    steps.append({QStringLiteral("interface"),
-                  QStringLiteral("ipv4"),
-                  QStringLiteral("set"),
-                  QStringLiteral("dns"),
-                  adapter,
-                  QStringLiteral("static"),
-                  primary});
-    if (!secondary.isEmpty()) {
-        steps.append({QStringLiteral("interface"),
-                      QStringLiteral("ipv4"),
-                      QStringLiteral("add"),
-                      QStringLiteral("dns"),
-                      adapter,
-                      secondary,
-                      QStringLiteral("index=2")});
-    }
-    const auto [failed_index, output] = runNetshStepsSequential(steps, timeout_ms);
-    return dnsApplyMessage(adapter, primary, secondary, failed_index, output);
-}
-
-// Maps a DHCP-enable outcome to an honest {success, message}. A failed
-// DNS-to-DHCP step is reported as a partial failure, never as success.
-QPair<bool, QString> dhcpApplyMessage(const QString& adapter,
-                                      int failed_index,
-                                      const QString& output) {
-    if (failed_index < 0) {
-        return {true, NetworkDiagnosticPanel::tr("DHCP enabled on '%1'").arg(adapter)};
-    }
-    if (failed_index == 0) {
-        return {false,
-                NetworkDiagnosticPanel::tr("Failed to enable DHCP on '%1'. Administrator "
-                                           "privileges may be required.\n\n%2")
-                    .arg(adapter, output)};
-    }
-    return {false,
-            NetworkDiagnosticPanel::tr("Partially enabled DHCP on '%1': the IP address was "
-                                       "switched to DHCP, but resetting DNS to DHCP failed.\n\n%2")
-                .arg(adapter, output)};
-}
-
-// Switches the adapter's IP and DNS to DHCP as ONE joined worker unit.
-QPair<bool, QString> runDhcpEnableSequence(const QString& adapter, int timeout_ms) {
-    QList<QStringList> steps;
-    steps.append({QStringLiteral("interface"),
-                  QStringLiteral("ipv4"),
-                  QStringLiteral("set"),
-                  QStringLiteral("address"),
-                  adapter,
-                  QStringLiteral("dhcp")});
-    steps.append({QStringLiteral("interface"),
-                  QStringLiteral("ipv4"),
-                  QStringLiteral("set"),
-                  QStringLiteral("dns"),
-                  adapter,
-                  QStringLiteral("dhcp")});
-    const auto [failed_index, output] = runNetshStepsSequential(steps, timeout_ms);
-    return dhcpApplyMessage(adapter, failed_index, output);
-}
-
-// Launches a multi-step netsh mutation as a single joined worker unit and tracks
-// its future so panel teardown can bounded-wait the WHOLE sequence rather than
-// truncate it. The report callback is context-bound to `owner`, so no slot fires
-// on a destroyed panel.
-void launchTrackedNetshSequence(NetworkDiagnosticPanel* owner,
-                                QList<TrackedFuture>& tracked,
-                                std::function<QPair<bool, QString>()> work,
-                                std::function<void(bool, const QString&)> report) {
-    auto* watcher = new QFutureWatcher<QPair<bool, QString>>(owner);
-    QObject::connect(watcher,
-                     &QFutureWatcher<QPair<bool, QString>>::finished,
-                     owner,
-                     [watcher, report = std::move(report)]() {
-                         const auto [success, message] = watcher->result();
-                         watcher->deleteLater();
-                         report(success, message);
-                     });
-    const TrackedFuture future = QtConcurrent::run(std::move(work));
-    watcher->setFuture(future);
-    tracked.removeIf([](const TrackedFuture& f) { return f.isFinished(); });
-    tracked.append(future);
-}
-
-}  // namespace
-
 void NetworkDiagnosticPanel::applyDnsServers(const QString& adapter_name,
                                              const QString& primary,
                                              const QString& secondary) {
     Q_EMIT logOutput(
         tr("Setting DNS on '%1': primary=%2 secondary=%3").arg(adapter_name, primary, secondary));
 
-    const int timeout = sak::kTimeoutNetworkReadMs;
-    launchTrackedNetshSequence(
-        this,
-        m_pending_command_futures,
-        [adapter_name, primary, secondary]() {
-            return runDnsApplySequence(adapter_name, primary, secondary, timeout);
+    QStringList servers{primary};
+    if (!secondary.isEmpty()) {
+        servers << secondary;
+    }
+    // setAdapterStaticDns runs the primary and every secondary as ONE worker unit, so the sequence
+    // cannot be truncated mid-way by panel teardown, and it reports a failed secondary as a partial
+    // apply (the primary is already live) rather than as "nothing happened".
+    launchAdapterWork(
+        [adapter_name, servers]() {
+            const sak::DnsApplyOutcome outcome = sak::setAdapterStaticDns(
+                adapter_name, servers, sak::kTechnicianIpv4Dialect.dns_registration);
+            return sak::AdapterAdminOutcome{outcome.succeeded, outcome.message};
         },
-        [this, adapter_name, primary, secondary](bool success, const QString& message) {
-            if (success) {
-                Q_EMIT statusMessage(message, sak::kTimerStatusMessageMs);
-                Q_EMIT logOutput(message);
+        [this, adapter_name, primary, secondary](const sak::AdapterAdminOutcome& outcome) {
+            if (outcome.succeeded) {
+                Q_EMIT statusMessage(outcome.message, sak::kTimerStatusMessageMs);
+                Q_EMIT logOutput(outcome.message);
                 sak::logInfo("DNS set on {}: primary={} secondary={}",
                              adapter_name.toStdString(),
                              primary.toStdString(),
@@ -3464,9 +3265,9 @@ void NetworkDiagnosticPanel::applyDnsServers(const QString& adapter_name,
             } else {
                 sak::logError("DNS apply failed on {}: {}",
                               adapter_name.toStdString(),
-                              message.toStdString());
-                Q_EMIT logOutput(tr("[ERROR] %1").arg(message));
-                sak::showWarningLogged(this, tr("DNS Configuration Failed"), message);
+                              outcome.message.toStdString());
+                Q_EMIT logOutput(tr("[ERROR] %1").arg(outcome.message));
+                sak::showWarningLogged(this, tr("DNS Configuration Failed"), outcome.message);
             }
             onRefreshAdapters();
         });
@@ -3498,22 +3299,22 @@ void NetworkDiagnosticPanel::onEnableDhcp() {
     Q_EMIT logOutput(tr("Enabling DHCP on '%1'...").arg(adapter->name));
 
     const QString adapter_name = adapter->name;
-    const int timeout = sak::kTimeoutNetworkReadMs;
-    launchTrackedNetshSequence(
-        this,
-        m_pending_command_futures,
-        [adapter_name]() { return runDhcpEnableSequence(adapter_name, timeout); },
-        [this, adapter_name](bool success, const QString& message) {
-            if (success) {
-                Q_EMIT statusMessage(message, sak::kTimerStatusMessageMs);
-                Q_EMIT logOutput(message);
+    launchAdapterWork(
+        [adapter_name]() {
+            const sak::DhcpApplyOutcome outcome = sak::setAdapterDhcpMode(adapter_name);
+            return sak::AdapterAdminOutcome{outcome.succeeded, outcome.message};
+        },
+        [this, adapter_name](const sak::AdapterAdminOutcome& outcome) {
+            if (outcome.succeeded) {
+                Q_EMIT statusMessage(outcome.message, sak::kTimerStatusMessageMs);
+                Q_EMIT logOutput(outcome.message);
                 sak::logInfo("DHCP enabled on: {}", adapter_name.toStdString());
             } else {
                 sak::logError("DHCP enable failed on {}: {}",
                               adapter_name.toStdString(),
-                              message.toStdString());
-                Q_EMIT logOutput(tr("[ERROR] %1").arg(message));
-                sak::showWarningLogged(this, tr("DHCP Failed"), message);
+                              outcome.message.toStdString());
+                Q_EMIT logOutput(tr("[ERROR] %1").arg(outcome.message));
+                sak::showWarningLogged(this, tr("DHCP Failed"), outcome.message);
             }
             onRefreshAdapters();
         });
@@ -3527,26 +3328,19 @@ void NetworkDiagnosticPanel::onReleaseDhcpLease() {
 
     Q_EMIT logOutput(tr("Releasing DHCP lease on '%1'...").arg(adapter->name));
 
-    constexpr int kIpconfigTimeoutMs = 10'000;
     const QString adapter_name = adapter->name;
-    // System32-qualified ipconfig, never the bare name (same hijack surface as netsh).
-    const QString ipconfig_exe = sak::system32Path(QStringLiteral("ipconfig.exe"));
-    if (ipconfig_exe.isEmpty()) {
-        Q_EMIT logOutput(tr("[ERROR] Cannot resolve the System32 ipconfig.exe path"));
-        return;
-    }
-    runCommandAsync(
-        ipconfig_exe,
-        {QStringLiteral("/release"), adapter_name},
-        kIpconfigTimeoutMs,
-        [this, adapter_name](bool success, const QString& output) {
-            if (success) {
+    launchAdapterWork(
+        [adapter_name]() { return sak::releaseAdapterDhcpLease(adapter_name); },
+        [this, adapter_name](const sak::AdapterAdminOutcome& outcome) {
+            if (outcome.succeeded) {
                 Q_EMIT statusMessage(tr("DHCP lease released on '%1'").arg(adapter_name),
                                      sak::kTimerStatusMessageMs);
                 Q_EMIT logOutput(tr("DHCP lease released on '%1'").arg(adapter_name));
                 sak::logInfo("DHCP lease released: {}", adapter_name.toStdString());
             } else {
-                sak::logWarning("DHCP release may have failed: {}", output.toStdString());
+                // A release is reported as a WARNING, not an error: ipconfig also fails this way
+                // for an adapter that has no lease to give up, which is not a fault to raise.
+                sak::logWarning("DHCP release may have failed: {}", outcome.message.toStdString());
                 Q_EMIT logOutput(
                     tr("[WARN] DHCP release may have failed on '%1'").arg(adapter_name));
             }
@@ -3564,31 +3358,23 @@ void NetworkDiagnosticPanel::onRenewDhcpLease() {
     Q_EMIT statusMessage(tr("Renewing DHCP lease on '%1'...").arg(adapter->name), 0);
     Q_EMIT logOutput(tr("Renewing DHCP lease on '%1'...").arg(adapter->name));
 
-    constexpr int kIpconfigTimeoutMs = 30'000;
     const QString adapter_name = adapter->name;
-    // System32-qualified ipconfig, never the bare name (same hijack surface as netsh).
-    const QString ipconfig_exe = sak::system32Path(QStringLiteral("ipconfig.exe"));
-    if (ipconfig_exe.isEmpty()) {
-        Q_EMIT logOutput(tr("[ERROR] Cannot resolve the System32 ipconfig.exe path"));
-        return;
-    }
-    runCommandAsync(ipconfig_exe,
-                    {QStringLiteral("/renew"), adapter_name},
-                    kIpconfigTimeoutMs,
-                    [this, adapter_name](bool success, const QString& output) {
-                        if (success) {
-                            Q_EMIT statusMessage(tr("DHCP lease renewed on '%1'").arg(adapter_name),
-                                                 sak::kTimerStatusMessageMs);
-                            Q_EMIT logOutput(tr("DHCP lease renewed on '%1'").arg(adapter_name));
-                            sak::logInfo("DHCP lease renewed: {}", adapter_name.toStdString());
-                        } else {
-                            sak::logWarning("DHCP renew may have failed: {}", output.toStdString());
-                            Q_EMIT logOutput(
-                                tr("[WARN] DHCP renew may have failed on '%1'").arg(adapter_name));
-                        }
+    launchAdapterWork(
+        [adapter_name]() { return sak::renewAdapterDhcpLease(adapter_name); },
+        [this, adapter_name](const sak::AdapterAdminOutcome& outcome) {
+            if (outcome.succeeded) {
+                Q_EMIT statusMessage(tr("DHCP lease renewed on '%1'").arg(adapter_name),
+                                     sak::kTimerStatusMessageMs);
+                Q_EMIT logOutput(tr("DHCP lease renewed on '%1'").arg(adapter_name));
+                sak::logInfo("DHCP lease renewed: {}", adapter_name.toStdString());
+            } else {
+                // Warning, not error: a renew legitimately fails when no DHCP server answers.
+                sak::logWarning("DHCP renew may have failed: {}", outcome.message.toStdString());
+                Q_EMIT logOutput(tr("[WARN] DHCP renew may have failed on '%1'").arg(adapter_name));
+            }
 
-                        onRefreshAdapters();
-                    });
+            onRefreshAdapters();
+        });
 }
 
 // -- Ping --
