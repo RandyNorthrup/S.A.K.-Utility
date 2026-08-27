@@ -2,7 +2,7 @@
 
 - Generated UTC: 2026-06-02T05:27:33.7685145Z
 - Manifest: artifacts\partition-manager-certification\vm-lab\external-evidence.imported.json
-- Matrix: docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json
+- Matrix: certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json
 - Scope: external boot, removable media, SSD/NVMe, BitLocker, partition move/allocation/metadata conversion, and physical wipe gates.
 - Rule: use disposable VMs/media only. Do not run destructive steps on production disks.
 

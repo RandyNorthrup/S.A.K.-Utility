@@ -360,7 +360,7 @@ function New-ExternalReport {
         gate_name = "In-app BitLocker unlock/suspend/resume mutation proof"
         status = $Status
         manifest = "artifacts\partition-manager-certification\vm-lab\external-evidence.json"
-        certification_matrix = "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+        certification_matrix = "certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
         suggested_evidence_path = "artifacts/partition-manager-certification/vm-lab/external-evidence/external.bitlocker-mutation/report.json"
         safety_contract = @(
             "disposable_bitlocker_volume_only",

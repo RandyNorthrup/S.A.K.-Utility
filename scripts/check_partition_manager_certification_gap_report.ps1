@@ -154,7 +154,7 @@ function Test-RequiredEvidenceValuesMatch {
 
 Push-Location $ProjectRoot
 try {
-    $matrixPath = Join-Path $ProjectRoot "docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+    $matrixPath = Join-Path $ProjectRoot "certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
     $matrix = Get-Content -LiteralPath $matrixPath -Raw | ConvertFrom-Json
     Assert-Condition -Condition (Test-SchemaVersion -Value $matrix.schema_version) -Message "Unsupported Partition Manager certification matrix schema_version: $($matrix.schema_version)"
 

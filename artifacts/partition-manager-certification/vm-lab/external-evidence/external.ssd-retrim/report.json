@@ -5,7 +5,7 @@
     "gate_name":  "SSD/NVMe ReTrim and vendor purge warning proof",
     "status":  "Passed",
     "created_utc":  "2026-06-03T08:17:42.3139236Z",
-    "certification_matrix":  "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
+    "certification_matrix":  "certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
     "required_evidence_keys":  [
                                    "device_model",
                                    "media_type",

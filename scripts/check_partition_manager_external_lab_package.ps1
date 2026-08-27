@@ -164,8 +164,8 @@ function Get-DisplayPath {
 
 Push-Location $ProjectRoot
 try {
-    $matrixPath = Join-Path $ProjectRoot "docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
-    Assert-Condition -Condition (Test-Path -LiteralPath $matrixPath -PathType Leaf) -Message "Certification matrix missing: docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+    $matrixPath = Join-Path $ProjectRoot "certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+    Assert-Condition -Condition (Test-Path -LiteralPath $matrixPath -PathType Leaf) -Message "Certification matrix missing: certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
     $matrix = Get-Content -LiteralPath $matrixPath -Raw | ConvertFrom-Json
     Assert-Condition -Condition ($matrix.schema_version -eq 1) -Message "Unsupported Partition Manager certification matrix schema_version: $($matrix.schema_version)"
 
@@ -216,7 +216,7 @@ try {
 
         Assert-TextContains -Text $readme -Pattern "# $($gate.id) - $($gate.name)" -SourceName $sourceName
         Assert-TextContainsAny -Text $readme -Patterns $manifestPathOptions -SourceName $sourceName -Description "manifest path"
-        Assert-TextContains -Text $readme -Pattern "- Matrix: docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json" -SourceName $sourceName
+        Assert-TextContains -Text $readme -Pattern "- Matrix: certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json" -SourceName $sourceName
         Assert-TextContainsAny -Text $readme -Patterns @(
             "- Evidence directory: $displayRoot/$($gate.id)",
             "- Evidence directory: $displayResolvedRoot/$($gate.id)"
@@ -247,7 +247,7 @@ try {
         Assert-Condition -Condition ($reportTemplate.gate_name -eq $gate.name) -Message "Report template gate name mismatch for $($gate.id)"
         Assert-Condition -Condition ($reportTemplate.status -eq "Pending") -Message "Report template status mismatch for $($gate.id)"
         Assert-Condition -Condition ($reportTemplate.manifest -eq $ManifestPath) -Message "Report template manifest path mismatch for $($gate.id)"
-        Assert-Condition -Condition ($reportTemplate.certification_matrix -eq "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json") -Message "Report template matrix path mismatch for $($gate.id)"
+        Assert-Condition -Condition ($reportTemplate.certification_matrix -eq "certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json") -Message "Report template matrix path mismatch for $($gate.id)"
         Assert-Condition -Condition (Test-ArrayContainsAll -Actual @($reportTemplate.safety_contract) -Expected @($gate.safety_contract)) -Message "Report template safety contract mismatch for $($gate.id)"
         Assert-Condition -Condition (Test-ArrayContainsAll -Actual @($reportTemplate.required_evidence_keys) -Expected @($gate.required_evidence_keys)) -Message "Report template evidence keys mismatch for $($gate.id)"
         Assert-Condition -Condition (Test-RequiredEvidenceValuesMatch -Template $reportTemplate -Gate $gate) -Message "Report template required evidence values mismatch for $($gate.id)"

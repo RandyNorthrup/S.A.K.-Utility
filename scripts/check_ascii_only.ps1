@@ -118,12 +118,27 @@ foreach ($file in $Files) {
             $reportedOnThisLine = $false
             continue
         }
-        if ($byte -gt 0x7F -and -not $reportedOnThisLine) {
+        # A C0 control byte is worse than a high byte, because it stops the file being TEXT to
+        # the tools that read it. Once grep classifies a file as binary it prints
+        # "Binary file <path> matches" and SUPPRESSES the matching lines -- so a sweep still
+        # reports a hit while showing nothing usable, and a count returns that same line
+        # instead of a number. The file meanwhile reads normally in an editor. Not
+        # hypothetical: docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md carried eight NULs (a literal
+        # HFS+ private-directory name pasted in raw) and eleven open work items in it could
+        # not be listed by any grep-based sweep, while this gate passed the file every time
+        # because it checked only for bytes above 0x7F.
+        # Tab, LF and CR are the legitimate text controls.
+        $isControl = ($byte -lt 0x20 -and $byte -ne 0x09 -and $byte -ne 0x0D) -or $byte -eq 0x7F
+        if (($byte -gt 0x7F -or $isControl) -and -not $reportedOnThisLine) {
             $violations += [pscustomobject]@{
                 File   = $normalized
                 Line   = $line
                 Column = $column
-                Detail = ("byte 0x{0:X2}" -f $byte)
+                Detail = if ($isControl) {
+                    ("control byte 0x{0:X2} -- makes the file read as BINARY to grep" -f $byte)
+                } else {
+                    ("byte 0x{0:X2}" -f $byte)
+                }
             }
             $reportedOnThisLine = $true
         }

@@ -4,7 +4,7 @@
                       "artifacts/partition-manager-certification/vm-lab/external-evidence/external.file-level-data-recovery/restored/recovered_0000007d3000.pdf",
                       "artifacts/partition-manager-certification/vm-lab/file-recovery-stage-debug/run_partition_manager_file_recovery_external_gate.log"
                   ],
-    "certification_matrix":  "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
+    "certification_matrix":  "certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
     "created_utc":  "2026-06-03T01:00:46.544Z",
     "evidence":  {
                      "deleted_fixture_name":  "sak-deleted-recovery-fixture.pdf",

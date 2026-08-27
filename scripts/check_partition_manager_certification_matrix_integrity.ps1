@@ -160,8 +160,8 @@ function Assert-DynamicMatrixReader {
 
 Push-Location $ProjectRoot
 try {
-    $matrixPath = Join-Path $ProjectRoot "docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
-    Assert-Condition -Condition (Test-Path -LiteralPath $matrixPath -PathType Leaf) -Message "Certification matrix missing: docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+    $matrixPath = Join-Path $ProjectRoot "certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+    Assert-Condition -Condition (Test-Path -LiteralPath $matrixPath -PathType Leaf) -Message "Certification matrix missing: certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
     $matrix = Get-Content -LiteralPath $matrixPath -Raw | ConvertFrom-Json
     Assert-Condition -Condition ($matrix.schema_version -eq 1) -Message "Unsupported Partition Manager certification matrix schema_version: $($matrix.schema_version)"
 
@@ -178,7 +178,7 @@ try {
     }
 
     $allIds = @($vhdScenarios + $externalGates | ForEach-Object { $_.id })
-    Assert-UniqueStrings -Values $allIds -FieldName "certification scenario id" -Id "docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+    Assert-UniqueStrings -Values $allIds -FieldName "certification scenario id" -Id "certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
 
     $certificationDoc = Get-RepoText -RelativePath "docs\PARTITION_MANAGER_CERTIFICATION.md"
     foreach ($scenario in @($vhdScenarios + $externalGates)) {

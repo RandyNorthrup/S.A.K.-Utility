@@ -193,7 +193,7 @@ $features = @(
             },
             @{
                 kind = "certification matrix"
-                path = "docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+                path = "certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
                 patterns = @("vhd.image-clone", "vhd.image-restore", "target_overwritten", "vhd.partition-clone-region", "outside_marker_preserved")
             }
         )
@@ -283,7 +283,7 @@ $features = @(
             },
             @{
                 kind = "certification matrix"
-                path = "docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+                path = "certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
                 patterns = @("external.file-level-data-recovery", "deleted_fixture_name", "restore_to_separate_destination", "external.allocate-free-space", "external.ssd-retrim", "purge_warning_visible")
             }
         )
@@ -383,7 +383,7 @@ $features = @(
             },
             @{
                 kind = "certification matrix"
-                path = "docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+                path = "certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
                 patterns = @("required_evidence_keys", "safety_contract", "vhd.create-format-resize-delete", "external.file-level-data-recovery", "external.allocate-free-space", "external.partition-move", "external.cluster-size-change", "external.primary-logical-conversion", "external.volume-serial-number", "external.dynamic-to-basic", "external.hdd-defrag-execution", "external.ssd-secure-erase", "external.bitlocker-mutation", "external.hardware-wipe")
             }
         )

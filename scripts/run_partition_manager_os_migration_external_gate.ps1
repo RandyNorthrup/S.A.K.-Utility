@@ -239,7 +239,7 @@ $report = [ordered]@{
     status = if ($booted) { "Passed" } else { "Failed" }
     created_utc = (Get-Date).ToUniversalTime().ToString("o")
     manifest = "artifacts/partition-manager-certification/vm-lab/external-evidence.imported.json"
-    certification_matrix = "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+    certification_matrix = "certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
     required_evidence_keys = @(
         "source_disk_id",
         "target_disk_id",

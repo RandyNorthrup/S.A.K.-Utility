@@ -5,7 +5,7 @@
 .DESCRIPTION
     This static release gate prevents AOMEI/MiniTool-style destructive feature
     claims from drifting away from execution code, tests, documentation, and
-    docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json evidence IDs.
+    certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json evidence IDs.
 #>
 
 [CmdletBinding()]
@@ -55,7 +55,7 @@ function Assert-Contains {
     }
 }
 
-$matrixPath = Join-Path $ProjectRoot "docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+$matrixPath = Join-Path $ProjectRoot "certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
 $matrix = Get-Content -LiteralPath $matrixPath -Raw | ConvertFrom-Json
 if ($matrix.schema_version -ne 1) {
     throw "Unsupported Partition Manager certification matrix schema_version: $($matrix.schema_version)"

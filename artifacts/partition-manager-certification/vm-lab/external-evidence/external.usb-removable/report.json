@@ -5,7 +5,7 @@
     "gate_name":  "USB removable disk destructive operation proof",
     "status":  "Passed",
     "created_utc":  "2026-06-03T08:18:15.7354670Z",
-    "certification_matrix":  "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
+    "certification_matrix":  "certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
     "required_evidence_keys":  [
                                    "device_model",
                                    "serial_number",

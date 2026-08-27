@@ -3,7 +3,7 @@
     "schema_version":  1,
     "created_utc":  "2026-06-02T05:27:33.7685145Z",
     "project_root":  "C:\\Users\\Username\\Coding\\S.A.K.-Utility",
-    "certification_matrix":  "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
+    "certification_matrix":  "certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
     "results":  [
                     {
                         "id":  "external.system-mbr2gpt",

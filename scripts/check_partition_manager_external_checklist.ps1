@@ -86,8 +86,8 @@ function ConvertTo-RequirementText {
 
 Push-Location $ProjectRoot
 try {
-    $matrixPath = Join-Path $ProjectRoot "docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
-    Assert-Condition -Condition (Test-Path -LiteralPath $matrixPath -PathType Leaf) -Message "Certification matrix missing: docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+    $matrixPath = Join-Path $ProjectRoot "certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+    Assert-Condition -Condition (Test-Path -LiteralPath $matrixPath -PathType Leaf) -Message "Certification matrix missing: certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
     $matrix = Get-Content -LiteralPath $matrixPath -Raw | ConvertFrom-Json
     Assert-Condition -Condition ($matrix.schema_version -eq 1) -Message "Unsupported Partition Manager certification matrix schema_version: $($matrix.schema_version)"
 
@@ -98,7 +98,7 @@ try {
     $sourceName = $ChecklistPath
     Assert-TextContains -Text $checklist -Pattern "# Partition Manager External VM/Hardware Certification Checklist" -SourceName $sourceName
     Assert-TextContains -Text $checklist -Pattern "- Manifest: $ManifestPath" -SourceName $sourceName
-    Assert-TextContains -Text $checklist -Pattern "- Matrix: docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json" -SourceName $sourceName
+    Assert-TextContains -Text $checklist -Pattern "- Matrix: certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json" -SourceName $sourceName
     Assert-TextContains -Text $checklist -Pattern "- Rule: use disposable VMs/media only. Do not run destructive steps on production disks." -SourceName $sourceName
     Assert-TextContains -Text $checklist -Pattern "## Completion Rules" -SourceName $sourceName
     Assert-TextContains -Text $checklist -Pattern "Every required evidence key is filled in the JSON manifest with a non-empty value." -SourceName $sourceName

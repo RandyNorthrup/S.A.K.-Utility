@@ -655,7 +655,7 @@ function New-ExternalReport {
         gate_name = "Allocate Free Space adjacent donor-volume backup/delete/extend/recreate/restore proof"
         status = $Status
         manifest = "artifacts\partition-manager-certification\vm-lab\external-evidence.json"
-        certification_matrix = "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+        certification_matrix = "certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
         suggested_evidence_path = "artifacts/partition-manager-certification/vm-lab/external-evidence/external.allocate-free-space/report.json"
         safety_contract = @(
             "disposable_source_and_donor_volumes_only",

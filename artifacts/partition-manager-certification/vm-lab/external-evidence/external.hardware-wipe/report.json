@@ -5,7 +5,7 @@
     "gate_name":  "Non-system hardware wipe on disposable physical disk",
     "status":  "Passed",
     "created_utc":  "2026-06-03T08:03:10.0114731Z",
-    "certification_matrix":  "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
+    "certification_matrix":  "certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
     "required_evidence_keys":  [
                                    "device_model",
                                    "serial_number",

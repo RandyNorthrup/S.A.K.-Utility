@@ -288,7 +288,7 @@ function Write-GateReport {
         gate_name = $GateName
         status = $Status
         created_utc = (Get-Date).ToUniversalTime().ToString("o")
-        certification_matrix = "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+        certification_matrix = "certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
         required_evidence_keys = $RequiredEvidenceKeys
         safety_contract = $SafetyContract
         evidence = $Evidence

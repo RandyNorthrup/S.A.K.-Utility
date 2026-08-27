@@ -17,7 +17,7 @@ hardest generated-APFS geometry tier (containers above ~3 TiB, where the inline 
 no longer fits the spaceman block). The tier just below it (metadata-overflow) needed three dated
 cascade commits (`307df6d`, `27e8948`, ...) to pass `fsck_apfs`; CAB is comparable and modifies the
 same certified spaceman/IP allocator, so it must be implemented as a focused effort with per-step
-`fsck_apfs` verification on the cloud box (`docs/A2_CLOUD_CERT_PLAYBOOK.md`), not in one shot.
+`fsck_apfs` verification on the cloud box (`docs/archive/A2_CLOUD_CERT_PLAYBOOK.md`), not in one shot.
 
 ## What changes structurally
 

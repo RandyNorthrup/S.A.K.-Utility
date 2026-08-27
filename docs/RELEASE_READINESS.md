@@ -332,7 +332,7 @@ For the final strict hardware evidence handoff, run
 strict VHD certification root, external manifest, checklist, and evidence
 directory. It is non-mutating and requires `HardwareCertified` status before
 any release claim uses that wording.
-If `docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json` gains a VHD scenario,
+If `certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json` gains a VHD scenario,
 the matrix-integrity guard requires the harness and certification documentation
 to include the new scenario before readiness can pass. Rerun the elevated VHD
 matrix before using `-RequirePartitionVhdEvidence`.

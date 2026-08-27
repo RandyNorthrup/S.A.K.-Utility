@@ -211,7 +211,7 @@ function Write-GapMarkdown {
 
 Push-Location $ProjectRoot
 try {
-    $matrixPath = Join-Path $ProjectRoot "docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+    $matrixPath = Join-Path $ProjectRoot "certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
     $matrix = Get-Content -LiteralPath $matrixPath -Raw | ConvertFrom-Json
     if ($matrix.schema_version -ne 1) {
         throw "Unsupported Partition Manager certification matrix schema_version: $($matrix.schema_version)"
@@ -273,7 +273,7 @@ try {
         generated_utc = (Get-Date).ToUniversalTime().ToString("o")
         claim_level = $status.claim_level
         status_path = $resolvedStatusPath.Path
-        certification_matrix = "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+        certification_matrix = "certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
         source_report_path = $status.report.path
         external_manifest_path = $status.external_gates.manifest_path
         summary = [ordered]@{

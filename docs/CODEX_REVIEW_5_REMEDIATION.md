@@ -66,6 +66,58 @@ any gate, so nothing would have surfaced it.
   verifies `tests/README.md` against the real CTest registration and nothing else. Its header
   is honest about that; the gap is that 68 other tracked docs have no accuracy check of any
   kind, which is what let R5-IDX-7 rot inside files that a different gate does read.
+- [x] R5-IDX-17 NO PRODUCTION CODE POINTS INTO docs/ ANY MORE, per the owner 2026-08-26:
+  code and tests should stand on their own, and anything the code genuinely NEEDS should be
+  structured data, not prose. Seven comment citations in partition_apfs_writer.{h,cpp} named
+  design and ground-truth documents. Nothing READ them -- the tree compiles and the suite
+  passes with docs/ absent -- so they were provenance notes rather than a dependency, and an
+  earlier entry in this file that called them a dependency was wrong. The documents are
+  archived and the comments repointed. What remains cited from code is
+  docs/apfs-harvest/, two recipe files kept ACTIVE on purpose: they are procedures for
+  re-running a harvest against a real Mac, so they are working reference like the network
+  diagnostic plan, not a record of finished work.
+- [x] R5-IDX-18 WHICH CERTIFICATION RUN COUNTED AS AUTHORITATIVE DEPENDED ON FILE MTIME.
+  verify_partition_manager_certification.ps1 picked its report with
+  Sort-Object LastWriteTimeUtc, so the newest FILE won rather than the newest RUN. Any tool
+  that rewrites a stored report -- a path repoint, a reformat, even a fresh checkout --
+  silently changes which certification this gate verifies. Found by causing it: repointing the
+  matrix path inside the stored evidence moved selection onto a vhd-strict run from the
+  previous day whose scenario names predated a rename, and the gate failed on a name mismatch
+  that had nothing to do with the edit. This tool writes to raw disks, so verifying the wrong
+  run is not a cosmetic problem.
+  Selection now reads the timestamp the report RECORDS (completed_utc, falling back to
+  started_utc), which all 97 stored reports carry, and a report with neither is refused rather
+  than allowed to become the newest by default. DRILLED: stripping both timestamps from the
+  newest report turns the gate RED with "cannot be ordered", and restoring them returns it to
+  green naming the run it verified. Note that the first attempt at this fix read a
+  generated_utc field that these reports do not have -- it would have failed closed on every
+  report, which is the safe direction, but it was still the wrong field and the check against
+  all 97 files is what caught it.
+- [~] R5-IDX-14 docs/ASSISTANT_HEADLESS_DOMINION_PLAN.md -- 285 lines describing a headless
+  assistant capability with NO code in the tree: a whole-tree search for the plan's own
+  subject finds nothing under src/ or include/. It carries no checkbox markers at all, so it
+  reads as neither planned nor done. DECIDE: build it or drop it. It is the last plan in docs/
+  describing something unbuilt other than MACOS_BOOTABLE_USB_PLAN (R5-IDX-1), and the two
+  should be decided together since both are whole features rather than remaining work on a
+  shipped one.
+- [x] R5-IDX-15 THE ASCII GATE NOW REJECTS C0 CONTROL BYTES, closing R5-IDX-8. A control byte
+  is worse than a high byte: once grep classifies a file as binary it prints
+  "Binary file <path> matches" and SUPPRESSES the matching lines, so a sweep reports a hit
+  while showing nothing usable. Tab, LF and CR stay legal; NUL through 0x1F and DEL are
+  refused. DRILLED separately for 0x00 and 0x7F -- each turns the gate RED with
+  "control byte 0xNN" -- and the clean tree still passes at 1575 files checked. A survey of
+  every tracked file found control bytes in exactly three, all genuine binary assets
+  (icon.icns, icon.ico, sak_splash.png) that the gate already excludes by extension.
+- [x] R5-IDX-16 THE CERTIFICATION MATRIX IS NO LONGER FILED AS A DOCUMENT, closing R5-IDX-13
+  the other way round. On the owner's instruction it moved from docs/ to
+  certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json. It is schema-versioned machine
+  input, not prose, and 30 non-artifact consumers were repointed: 21 scripts, the two test
+  files, README, .gitignore and four docs. The matrix pointer inside the generated
+  certification artifacts was updated too, since a checklist naming a path that no longer
+  exists is a broken pointer rather than evidence of a run -- the measured results in those
+  reports were not touched. All ten partition certification gates re-run green afterwards,
+  including partition-external-checklist, which caught the stale pointer and was the reason
+  the artifact side got fixed rather than missed.
 - [x] R5-IDX-11 PROSE IS NO LONGER ADMISSIBLE AS FEATURE EVIDENCE, 2026-08-26.
   check_partition_manager_feature_matrix.ps1 proved each of its 12 features against a list of
   evidence entries, and `kind = "documentation"` was the MOST COMMON kind -- 12 entries, more
@@ -84,7 +136,7 @@ any gate, so nothing would have surfaced it.
   APFS_HFS_FULL_DRIVER_WRITE_PLAN (11), MACOS_BOOTABLE_USB_PLAN (40, unbuilt),
   FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN (7) and ASSISTANT_HEADLESS_DOMINION_PLAN (no code
   in the tree at all).
-- [~] R5-IDX-13 docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json IS DATA FILED AS A DOCUMENT.
+- [~] R5-IDX-13 certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json IS DATA FILED AS A DOCUMENT.
   It is schema-versioned machine input with required_evidence_keys per scenario, and 23
   scripts plus tests/certification read it. NOT MOVED, deliberately: the path is also recorded
   inside generated evidence report.json files, which are historical records that must not be
@@ -108,7 +160,7 @@ any gate, so nothing would have surfaced it.
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-26: 645 [x] / 30 [~] / 0 [ ] (reconciled to the live marker counts; F25, the
+as of 2026-08-26: 649 [x] / 31 [~] / 0 [ ] (reconciled to the live marker counts; F25, the
 last [ ], closed 2026-08-25; the R5-IDX items added 2026-08-26 index open work that was
 sitting in other documents where no gate could see it) (G18-3 impl-detail-vs-contract audit COMPLETE -- whole tests/unit tree exhaustively swept, every nominee resolved; G18-1 mutation-testing COMPLETE and LEDGER-4
 committed-ledger done; a whole-doc un-defer + staleness sweep AND a [~] reclassification landed
@@ -147,7 +199,7 @@ coverage: mirrors the G14-16a/b design-decisions, and G14-4 proved branch % is n
 measurable) both flip to [x] design-decisions; and R5-G10-5 (zero unjustified inline
 suppressions) flips [x] as the rollup of G5-1/G5-2, re-verified against the live tree with the
 one remaining implicit-reason site (a Qt test-driver macro) given an explicit justification.
-That leaves 30 [~] = ~6 blocked-on-user + ~13 locally
+That leaves 31 [~] = ~6 blocked-on-user + ~13 locally
 actionable + the R5-IDX items indexed at the top of this file; the single [ ] open item was F25, CLOSED 2026-08-25 -- there are now ZERO [ ] items
 left in this document). UN-DEFER CAMPAIGN (2026-08-16, ongoing): the
 "deferred-with-rationale" disposition was rejected by the owner -- each such label is being
@@ -876,7 +928,7 @@ in progress (started slice by slice); NOTHING is deferred.
   - RESOLVED 2026-08-11 [design-decision / known-limitation]: DESIGN_INTENT documented bcdboot/NTFS-ESP limitation (windows_usb_creator_extract.cpp:665-674 KNOWN LIMITATIONS comment). The run is already fail-closed on bcdboot's real exit (bcdbootReportsSuccess, :656/:691), so no fail-open. Universal UEFI boot would need a real Windows source or the ISO's BCD plus a FAT32 ESP / bundled UEFI:NTFS loader -- a media-format redesign that is a deliberate out-of-scope choice, not pending work.
   - Files: src/core/windows_usb_creator_extract.cpp:622
   - Boundary: app-own-certified-path (not-attacker-reachable)
-  - Evidence: Documented, accepted KNOWN LIMITATION: runBcdboot (622-666) has an explicit comment (625-634) citing Codex-review-3 findings 4/5 -- bcdboot source is the drive root (no /Windows tree) and the media is NTFS with no FAT32 ESP / UEFI:NTFS shim; these are design changes beyond this file and are NOT silently masked. DUP of docs/CODEX_REVIEW_3_REMEDIATION.md items 19 and 20 (MEDI/PART, wave C). The run is still gated fail-closed on bcdboot's real exit (bcdbootReportsSuccess 651-662), so no fail-open -- it just isn't universally firmware-bootable.
+  - Evidence: Documented, accepted KNOWN LIMITATION: runBcdboot (622-666) has an explicit comment (625-634) citing Codex-review-3 findings 4/5 -- bcdboot source is the drive root (no /Windows tree) and the media is NTFS with no FAT32 ESP / UEFI:NTFS shim; these are design changes beyond this file and are NOT silently masked. DUP of docs/archive/CODEX_REVIEW_3_REMEDIATION.md items 19 and 20 (MEDI/PART, wave C). The run is still gated fail-closed on bcdboot's real exit (bcdbootReportsSuccess 651-662), so no fail-open -- it just isn't universally firmware-bootable.
   - Fix: Supply a real Windows source dir or the ISO's own BCD to bcdboot, and add a FAT32 ESP / bundled UEFI:NTFS loader for universal UEFI boot.
 - [x] **R5-P5-15** [LOW] [PARTIAL] is_bootable set on El Torito boot-record presence; unreadable catalog defaults to Legacy BIOS
   - RESOLVED 2026-08-11 [fixed]: is_bootable set only after a boot catalog with a valid entry is confirmed; bootTypeFromFlags returns 'Unknown/Invalid' (not 'Legacy BIOS') when the catalog is zero/unreadable/malformed (read-only analyzer).

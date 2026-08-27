@@ -5392,7 +5392,7 @@ struct ApfsCheckpointCommitContext {
 };
 
 // Advance the sm_ip_bitmap ring in lockstep with the cib rotation (decoded from
-// the kernel-advanced harvest, docs/APFS_A2_CRASH_SAFETY_DESIGN.md): allocate the
+// the kernel-advanced harvest, docs/archive/APFS_A2_CRASH_SAFETY_DESIGN.md): allocate the
 // next free ring index for this checkpoint's IP-usage bitmap, mark it in-use,
 // release the index that ages out into the free-list, and advance the head/tail/
 // xid/seq. Writes the new live ip-bitmap block (the two active cib/bitmap slots).
@@ -6102,7 +6102,7 @@ struct ApfsCheckpointAdvanceRequest {
 // checkpoint-map + nx_superblock into the next descriptor-ring slot (optionally
 // re-pointing nx_omap_oid at a freshly COW'd container object map), and
 // re-anchor block 0. Mirrors the Apple apfs.kext commit decoded in
-// docs/APFS_A2_INPLACE_COMMIT_GROUND_TRUTH.md.
+// docs/archive/APFS_A2_INPLACE_COMMIT_GROUND_TRUTH.md.
 // The rolling two-deep IP free-queue window: the slot freed the previous commit (or
 // the genesis seed at the first commit) plus what this commit freed - the cib-0
 // rotation slot (ip_slot_stride ghost blocks) and, on the overflow tier, the
@@ -7702,7 +7702,7 @@ struct ApfsIpSlot {
 // A slot spans slot_stride = cib_count + 1 blocks (cib_count cibs then the
 // chunk-0 bitmap); the returned cib is the slot's first block and bitmap its
 // last. Foundation for the crash-safe IP-region rotation
-// (docs/APFS_A2_CRASH_SAFETY_DESIGN.md).
+// (docs/archive/APFS_A2_CRASH_SAFETY_DESIGN.md).
 [[nodiscard]] bool nextIpSlot(uint64_t liveCib,
                               const ApfsGeneratedLayout& layout,
                               ApfsIpSlot* out,
@@ -9556,7 +9556,7 @@ bool writeRotatedCab0(const ApfsCab0Rotation& rot, QStringList* blockers) {
 // chunk bitmap. (The sm_ip_bitmap ring is not advanced to match the cib rotation,
 // so a container left on a non-genesis cib slot draws one cosmetic fsck
 // "internal-pool overallocation" warning when the kernel continues it - see
-// docs/APFS_A2_CRASH_SAFETY_DESIGN.md; fsck self-answers no and passes.)
+// docs/archive/APFS_A2_CRASH_SAFETY_DESIGN.md; fsck self-answers no and passes.)
 // Overflow-tier allocation swap. Chunk 0 stays fully reserved: its bitmap rotates
 // into the new cib-0 slot with its content unchanged. This commit's frees and
 // allocations all land in the boundary chunk (metadataChunks - 1), whose bitmap is

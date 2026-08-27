@@ -7,7 +7,7 @@
     "host":  "MINI-DT",
     "project_root":  "C:\\Users\\Username\\Coding\\S.A.K.-Utility",
     "output_root":  "C:\\Users\\Username\\Coding\\S.A.K.-Utility\\artifacts\\partition-manager-certification\\vhd-strict\\run-20260602-194934",
-    "certification_matrix":  "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
+    "certification_matrix":  "certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
     "run_vhd_data_disk_matrix":  true,
     "elevated_relaunch_requested":  false,
     "require_vhd_data_disk_evidence":  true,

@@ -381,7 +381,7 @@ python_archive/**/*.egg-info/
 # Browser-control extension + native-host manifests are hand-written source.
 !browser/extension/*.json
 !browser/native-host/*.json
-!docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json
+!certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json
 # Mutation-test catalogs (R5-G18-1) are hand-written source, not report output.
 !scripts/mutation_catalogs/*.json
 # Error-message uniqueness gate baseline (committed allowlist of grandfathered duplicates).

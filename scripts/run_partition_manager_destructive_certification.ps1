@@ -56,7 +56,7 @@ function Resolve-ProjectPath {
 }
 
 function Read-CertificationMatrix {
-    $matrixPath = Join-Path (Resolve-ProjectRoot) "docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+    $matrixPath = Join-Path (Resolve-ProjectRoot) "certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
     $matrix = Get-Content -LiteralPath $matrixPath -Raw | ConvertFrom-Json
     if ($matrix.schema_version -ne 1) {
         throw "Unsupported Partition Manager certification matrix schema_version: $($matrix.schema_version)"
@@ -1226,7 +1226,7 @@ try {
         host = $env:COMPUTERNAME
         project_root = $projectRoot
         output_root = $Script:RunRoot
-        certification_matrix = "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+        certification_matrix = "certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
         run_vhd_data_disk_matrix = [bool]$RunVhdDataDiskMatrix
         elevated_relaunch_requested = [bool]$RelaunchElevated
         require_vhd_data_disk_evidence = [bool]$RequireVhdDataDiskEvidence

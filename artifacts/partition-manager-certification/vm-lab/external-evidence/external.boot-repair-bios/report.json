@@ -6,7 +6,7 @@
     "gate_name":  "BIOS/MBR boot repair with intentionally broken BCD",
     "status":  "Passed",
     "manifest":  "artifacts/partition-manager-certification/vm-lab/external-evidence.imported.json",
-    "certification_matrix":  "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
+    "certification_matrix":  "certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json",
     "suggested_evidence_path":  "artifacts/partition-manager-certification/vm-lab/external-evidence/external.boot-repair-bios/report.json",
     "safety_contract":  [
                             "disposable_bios_boot_vm_only",

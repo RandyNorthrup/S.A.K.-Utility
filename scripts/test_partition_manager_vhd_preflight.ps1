@@ -84,7 +84,7 @@ function Add-Warning {
 
 Push-Location $ProjectRoot
 try {
-    $matrixPath = Join-Path $ProjectRoot "docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+    $matrixPath = Join-Path $ProjectRoot "certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
     $matrix = Get-Content -LiteralPath $matrixPath -Raw | ConvertFrom-Json
     if ($matrix.schema_version -ne 1) {
         throw "Unsupported Partition Manager certification matrix schema_version: $($matrix.schema_version)"

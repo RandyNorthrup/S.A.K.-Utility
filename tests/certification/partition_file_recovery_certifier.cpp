@@ -204,7 +204,7 @@ QJsonObject reportBase(const ReportFields& fields) {
         {QStringLiteral("status"), fields.status},
         {QStringLiteral("manifest"), fields.manifestPath},
         {QStringLiteral("certification_matrix"),
-         QStringLiteral("docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json")},
+         QStringLiteral("certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json")},
         {QStringLiteral("suggested_evidence_path"), fields.suggestedEvidencePath},
         {QStringLiteral("safety_contract"),
          stringArray({QStringLiteral("disposable_recovery_volume"),

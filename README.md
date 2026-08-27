@@ -741,7 +741,7 @@ That harness uses disposable VHD media only and covers create/format/resize/dele
 FAT32-to-NTFS conversion, Quick Partition GPT equal/custom and MBR four-data-partition layouts, adjacent Extend Wizard growth,
 recovered-partition write-back, empty GPT/MBR conversion, clear-disk wipe, and
 offline VHD image clone, image restore overwrite, and partition-clone raw-region evidence. The shared certification matrix in
-`docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json` defines required evidence keys
+`certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json` defines required evidence keys
 and safety contracts; the matrix-integrity guard, external JSON scaffold,
 Markdown lab checklist verifier, external lab package verifier, per-gate
 `report.json` importer, read-only VHD preflight report, certification-gap report,

@@ -12,8 +12,8 @@ repeated:
 | Want | Look at |
 |---|---|
 | APFS on-disk offsets, with the reason each was chosen | the `kApfs*Offset` constant block atop `src/core/partition_apfs_writer.cpp` |
-| APFS in-place COW checkpoint design | `docs/APFS_A2_INPLACE_COMMIT_GROUND_TRUTH.md`, `docs/APFS_A2_CRASH_SAFETY_DESIGN.md`, `docs/APFS_A2_MULTI_LEAF_FSTREE_DESIGN.md`, `docs/APFS_A2_OVERFLOW_REPEATED_COMMIT_DESIGN.md` |
-| CAB spaceman tier (`cibs_per_cab`, cab addressing) | `docs/APFS_A2_CAB_TIER_DESIGN.md` |
+| APFS in-place COW checkpoint design | `docs/archive/APFS_A2_INPLACE_COMMIT_GROUND_TRUTH.md`, `docs/archive/APFS_A2_CRASH_SAFETY_DESIGN.md`, `docs/archive/APFS_A2_MULTI_LEAF_FSTREE_DESIGN.md`, `docs/archive/APFS_A2_OVERFLOW_REPEATED_COMMIT_DESIGN.md` |
+| CAB spaceman tier (`cibs_per_cab`, cab addressing) | `docs/archive/APFS_A2_CAB_TIER_DESIGN.md` |
 | Snapshot create/revert byte recipes harvested from macOS | `docs/apfs-harvest/snapshot-create-recipe.txt`, `snapshot-revert-recipe.txt` |
 | Cert rig invocations, credentials policy, foreign-volume workstreams | `docs/APFS_LIVE_RECERT_FOLLOWONS.md` |
 | Roadmap, acceptance definition, cross-cutting promotion rules | `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md` |

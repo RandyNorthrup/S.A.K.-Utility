@@ -352,7 +352,7 @@ function Assert-ExternalReport {
     Assert-Condition -Condition (Test-ScalarStringEquals -Actual $Report.gate_id -Expected ([string]$Spec.id)) -Message "External evidence report gate ID mismatch: expected $($Spec.id), got $($Report.gate_id)"
     Assert-Condition -Condition (Test-ScalarStringEquals -Actual $Report.gate_name -Expected ([string]$Spec.name)) -Message "External evidence report gate name mismatch for $($Spec.id)"
     Assert-Condition -Condition (Test-ScalarStringEquals -Actual $Report.status -Expected "Passed") -Message "External evidence report must be Passed before import: $($Spec.id)=$($Report.status)"
-    Assert-Condition -Condition (Test-ScalarStringEquals -Actual $Report.certification_matrix -Expected "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json") -Message "External evidence report matrix mismatch for $($Spec.id)"
+    Assert-Condition -Condition (Test-ScalarStringEquals -Actual $Report.certification_matrix -Expected "certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json") -Message "External evidence report matrix mismatch for $($Spec.id)"
     Assert-Condition -Condition (Test-ArrayContainsAll -Actual @($Report.required_evidence_keys) -Expected @($Spec.required_evidence_keys)) -Message "External evidence report keys mismatch for $($Spec.id)"
     Assert-Condition -Condition (Test-ArrayContainsAll -Actual @($Report.safety_contract) -Expected @($Spec.safety_contract)) -Message "External evidence report safety contract mismatch for $($Spec.id)"
     Assert-RequiredEvidenceValuesMatch -Report $Report -Spec $Spec
@@ -374,7 +374,7 @@ function Assert-ExternalReport {
 
 Push-Location $ProjectRoot
 try {
-    $matrixPath = Join-Path $ProjectRoot "docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+    $matrixPath = Join-Path $ProjectRoot "certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
     $matrix = Get-Content -LiteralPath $matrixPath -Raw | ConvertFrom-Json
     Assert-Condition -Condition ((-not ($matrix.schema_version -is [System.Array])) -and ($matrix.schema_version -eq 1)) -Message "Unsupported Partition Manager certification matrix schema_version: $($matrix.schema_version)"
     Assert-Condition -Condition (@($matrix.external_gates).Count -ge 1) -Message "Certification matrix defines no external gates; refusing to import (an empty gate set would produce a hollow zero-report certification)."

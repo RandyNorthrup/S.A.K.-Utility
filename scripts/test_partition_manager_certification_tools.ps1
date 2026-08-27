@@ -15,7 +15,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
-$CertificationMatrix = Get-Content -LiteralPath (Join-Path $ProjectRoot "docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json") -Raw | ConvertFrom-Json
+$CertificationMatrix = Get-Content -LiteralPath (Join-Path $ProjectRoot "certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json") -Raw | ConvertFrom-Json
 if ($CertificationMatrix.schema_version -ne 1) {
     throw "Unsupported Partition Manager certification matrix schema_version: $($CertificationMatrix.schema_version)"
 }
@@ -136,7 +136,7 @@ function Write-CertificationReport {
         host = $env:COMPUTERNAME
         project_root = $ProjectRoot
         output_root = Split-Path -Parent $Path
-        certification_matrix = "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+        certification_matrix = "certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
         run_vhd_data_disk_matrix = ($VhdStatuses.Values -contains "Passed")
         elevated_relaunch_requested = $false
         require_vhd_data_disk_evidence = $false
@@ -172,7 +172,7 @@ function Write-ExternalManifest {
         schema_version = 1
         created_utc = (Get-Date).ToUniversalTime().ToString("o")
         project_root = $ProjectRoot
-        certification_matrix = "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+        certification_matrix = "certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
         results = @($ExpectedExternalGateIds | ForEach-Object {
                 $spec = Get-ScenarioSpec -Id $_
                 [ordered]@{

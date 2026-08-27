@@ -25,7 +25,7 @@ function Resolve-ProjectRoot {
 }
 
 function Read-CertificationMatrix {
-    $matrixPath = Join-Path (Resolve-ProjectRoot) "docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+    $matrixPath = Join-Path (Resolve-ProjectRoot) "certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
     $matrix = Get-Content -LiteralPath $matrixPath -Raw | ConvertFrom-Json
     if ($matrix.schema_version -ne 1) {
         throw "Unsupported Partition Manager certification matrix schema_version: $($matrix.schema_version)"

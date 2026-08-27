@@ -726,7 +726,7 @@ function Get-MountValidation {
 }
 
 function Read-Matrix {
-    $matrixPath = Join-Path $ProjectRoot "docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+    $matrixPath = Join-Path $ProjectRoot "certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
     if (-not (Test-Path -LiteralPath $matrixPath -PathType Leaf)) {
         throw "Certification matrix not found: $matrixPath"
     }
@@ -816,7 +816,7 @@ function New-ExternalReport {
         gate_name = $spec.name
         status = $Status
         created_utc = (Get-Date).ToUniversalTime().ToString("o")
-        certification_matrix = "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+        certification_matrix = "certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
         required_evidence_keys = @($spec.required_evidence_keys)
         safety_contract = @($spec.safety_contract)
     }

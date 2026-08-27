@@ -25,7 +25,7 @@ $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 Push-Location $projectRoot
 try {
-    $matrixPath = Join-Path $projectRoot "docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+    $matrixPath = Join-Path $projectRoot "certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
     $matrix = Get-Content -LiteralPath $matrixPath -Raw | ConvertFrom-Json
     if ($matrix.schema_version -ne 1) {
         throw "Unsupported Partition Manager certification matrix schema_version: $($matrix.schema_version)"
@@ -218,7 +218,7 @@ try {
         $lines.Add("# $($Result.id) - $($Result.name)")
         $lines.Add("")
         $lines.Add("- Manifest: $ManifestPath")
-        $lines.Add("- Matrix: docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json")
+        $lines.Add("- Matrix: certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json")
         $lines.Add("- Evidence directory: $displayDirectory")
         $lines.Add("- Suggested evidence_path: $suggestedEvidencePath")
         $lines.Add("- Report template: $reportTemplatePath")
@@ -281,7 +281,7 @@ try {
             gate_name = $Result.name
             status = "Pending"
             manifest = $ManifestPath
-            certification_matrix = "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+            certification_matrix = "certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
             suggested_evidence_path = (Get-DisplayPath -Path "$EvidenceRootPath/$($Result.id)/report.json")
             safety_contract = @($Result.safety_contract)
             required_evidence_keys = @($Result.required_evidence_keys)
@@ -329,7 +329,7 @@ try {
         schema_version = 1
         created_utc = (Get-Date).ToUniversalTime().ToString("o")
         project_root = $projectRoot
-        certification_matrix = "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+        certification_matrix = "certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
         results = @($matrix.external_gates | ForEach-Object {
                 [ordered]@{
                     id = $_.id

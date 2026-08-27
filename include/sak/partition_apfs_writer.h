@@ -914,7 +914,7 @@ public:
     ///        a generated single-chunk container. Round-robins the three IP slots
     ///        (live 187 -> {189,190}; 189 -> {185,186}; 185 -> {187,188}) so the
     ///        previous checkpoint's cib/bitmap stay intact. Foundation for the
-    ///        crash-safe IP rotation (docs/APFS_A2_CRASH_SAFETY_DESIGN.md).
+    ///        crash-safe IP rotation (docs/archive/APFS_A2_CRASH_SAFETY_DESIGN.md).
     [[nodiscard]] static QPair<quint64, quint64> nextCrashSafeIpSlot(quint64 live_cib,
                                                                      quint64 block_count);
     /// \brief The live spaceman's first cib_addr in the generated container at

@@ -530,7 +530,7 @@ function New-ExternalReport {
         gate_name = "Existing-volume cluster-size change proof"
         status = $Status
         manifest = "artifacts\partition-manager-certification\vm-lab\external-evidence.json"
-        certification_matrix = "docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
+        certification_matrix = "certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
         suggested_evidence_path = "artifacts/partition-manager-certification/vm-lab/external-evidence/external.cluster-size-change/report.json"
         safety_contract = @(
             "disposable_volume_only",
