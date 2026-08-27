@@ -74,7 +74,7 @@ private:
 
     QVector<QString> m_drives;
 
-    // TigerStyle helpers for execute() decomposition
+    // execute() helpers -- split to stay under the 70-line function gate
     bool executeEnumerateVolumes(const QDateTime& start_time,
                                  QVector<QChar>& drives,
                                  QString& report);

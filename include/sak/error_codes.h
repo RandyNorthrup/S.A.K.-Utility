@@ -264,7 +264,7 @@ inline constexpr ErrorCodeMessage kErrorCodeMessages[] = {
     return "Undefined error";
 }
 
-// -- Compile-Time Invariants (TigerStyle) ------------------------------------
+// -- Compile-Time Invariants --------------------------------------------------
 
 inline constexpr int kFileSystemErrorRangeMax = 100;
 inline constexpr int kIoErrorRangeMax = 200;

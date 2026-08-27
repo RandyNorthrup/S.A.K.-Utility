@@ -87,7 +87,7 @@ private:
     QString m_storage_file;
 };
 
-// -- Compile-Time Invariants (TigerStyle) ------------------------------------
+// -- Compile-Time Invariants --------------------------------------------------
 
 /// RegexPatternLibrary must inherit QObject.
 static_assert(std::is_base_of_v<QObject, RegexPatternLibrary>,

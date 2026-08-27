@@ -198,7 +198,7 @@ private:
         bool permissions_set = false;
     };
 
-    // TigerStyle helpers for execute() decomposition
+    // execute() helpers -- split to stay under the 70-line function gate
     bool executeDiscoverVolumes(const QDateTime& start_time);
     bool executeExtractKeys(const QDateTime& start_time,
                             int& total_keys_found,

@@ -366,7 +366,7 @@ private:
     static constexpr int kBatchSize = 50;
 };
 
-// -- Compile-Time Invariants (TigerStyle) ------------------------------------
+// -- Compile-Time Invariants --------------------------------------------------
 
 /// AdvancedSearchWorker must inherit WorkerBase.
 static_assert(std::is_base_of_v<WorkerBase, AdvancedSearchWorker>,

@@ -1964,7 +1964,7 @@ inline QString passwordRevealButtonStyle() {
 inline const QString kFontWeightSemiboldStyle = fontWeightStyle(kFontWeightSemibold);
 inline const QString kFontWeightBoldStyle = fontWeightStyle(kFontWeightBold);
 
-// -- Compile-Time Invariants (TigerStyle) ------------------------------------
+// -- Compile-Time Invariants --------------------------------------------------
 
 // Margins must be monotonically increasing.
 static_assert(kMarginNone < kMarginTight, "Margins must be monotonically increasing.");

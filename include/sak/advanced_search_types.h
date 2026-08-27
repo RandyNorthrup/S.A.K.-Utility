@@ -172,7 +172,7 @@ inline const QSet<QString> kFileMetadataExtensions = {
 /// @brief Archive extensions that can be searched internally
 inline const QSet<QString> kArchiveExtensions = {"zip", "epub"};
 
-// -- Compile-Time Invariants (TigerStyle) ------------------------------------
+// -- Compile-Time Invariants --------------------------------------------------
 
 /// SearchMatch must be default-constructible for QVector usage.
 static_assert(std::is_default_constructible_v<SearchMatch>,

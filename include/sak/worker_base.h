@@ -142,7 +142,7 @@ private:
     std::atomic<bool> m_is_running{false};
 };
 
-// -- Compile-Time Invariants (TigerStyle) ------------------------------------
+// -- Compile-Time Invariants --------------------------------------------------
 
 /// WorkerBase must inherit QThread (which inherits QObject).
 static_assert(std::is_base_of_v<QThread, WorkerBase>, "WorkerBase must inherit QThread.");

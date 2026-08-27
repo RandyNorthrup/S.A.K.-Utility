@@ -1,4 +1,13 @@
-# S.A.K. Utility -- Copilot Instructions
+# S.A.K. Utility -- Coding Standards
+
+> **Read [AGENTS.md](../AGENTS.md) first.** This file covers HOW to write code here (naming, Qt
+> rules, error handling, testing, build). AGENTS.md covers how to WORK here: the non-negotiable
+> owner rulings, the gate that every code commit must pass, break-every-fix drill discipline, the
+> ways a green run has meant nothing, where authoritative status lives, and the pre-push secret
+> scan. Neither file restates the other.
+>
+> If `AGENTS.local.md` exists at the repo root, read that too -- it is gitignored and holds this
+> machine's certification rigs and the owner's working preferences.
 
 ## Project Identity
 
@@ -15,19 +24,13 @@ with the app, Qt runtime files, plugins, and bundled technician tools.
 
 ---
 
-## TigerStyle -- Best-Practice Philosophy
+## Code Quality Rules
 
-This project aspires to **TigerStyle**, a coding discipline from
-[TigerBeetle](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md)
-that prioritizes **safety -> performance -> developer experience**, in that order.
+Safety first, then performance, then developer experience.
 
-TigerStyle is a **guiding philosophy, not a blocker**. Strive to follow these
-guidelines, but never let them prevent code from shipping when the release
-hooks pass. The hard gates are: **zero build warnings, zero build errors,
-and all tests passing** (see *Build & CI Requirements* below).
-
-> "The design is not just what it looks like and feels like.
-> The design is how it works." -- Steve Jobs
+Some of what follows is enforced by a hook and some is not; each rule below says which.
+The hard gates are **zero build warnings, zero build errors, and all tests passing**
+(see *Build & CI Requirements* below).
 
 ### Core Tenets
 
@@ -49,36 +52,32 @@ and all tests passing** (see *Build & CI Requirements* below).
    swallow errors. Every user-visible error must also be logged via `sak::logError`
    or `sak::logWarning`.
 
-### TigerStyle Best-Practice Targets
+### Quality Rules and What Enforces Each
 
-These are goals to strive for. Violations are acceptable when pragmatically
-necessary -- they should be improved over time, not block a commit that passes
-the release hooks.
+BLOCKING rows are pre-commit hooks: the commit is rejected. Review rows are not checked by
+any tool, so they hold only if a human notices.
 
-| Guideline | Target | Notes |
+| Guideline | Target | Enforced by |
 |---|---|---|
-| Function body length | <=70 lines | Data-only initializers may exceed if splitting hurts readability |
-| Nesting depth | <=3 levels | Prefer early returns and helper extraction |
-| Line length | <=100 columns | Enforced by `.clang-format` |
-| Assertions | Meaningful preconditions/postconditions | Every assertion should catch a real bug |
-| `catch(...)` | Should have explanatory comment | Only in logger (exempt) |
-| Magic numbers | Prefer named `constexpr` constants | 0, 1, -1 are acceptable bare literals |
-| Single-letter variables | Avoid | Except tiny lambda predicates (`c` in `\[\](QChar c)`) |
-| `else` after `return` | Avoid | Prefer early-return guard clauses |
-| Nested ternary | Avoid | Prefer `if`/`else` or helper function |
-| TODO / FIXME / HACK in code | Avoid in committed code | Track in issue tracker instead |
-| Commented-out code | Avoid | Delete it; Git has the history |
+| Function body length | <=70 lines | `lizard-complexity` -- BLOCKING (`MAX_FUNC_LENGTH` in `scripts/run_lizard.py`) |
+| Cyclomatic complexity | CCN <=10 | `lizard-complexity` -- BLOCKING (`MAX_CCN`) |
+| Magic numbers | Named `constexpr` constants | `magic-numbers` -- BLOCKING (`scripts/check_magic_numbers.py`); `0`, `1`, `-1` stay bare |
+| Line length | <=100 columns | `clang-format` -- BLOCKING |
+| Single-letter variables | Avoid, except tiny lambda predicates | `readability-identifier-naming`, run in CI on every build |
+| Nesting depth | <=3 levels | Review -- lizard measures complexity, not nesting depth |
+| Assertions | Meaningful preconditions/postconditions | Review -- every assertion should catch a real bug |
+| `catch(...)` | Should have explanatory comment | Review -- only the logger is exempt |
+| `else` after `return` | Avoid | Review -- prefer early-return guard clauses |
+| Nested ternary | Avoid | Review -- prefer `if`/`else` or a helper |
+| TODO / FIXME / HACK in code | Avoid in committed code | Review -- no gate checks this |
+| Commented-out code | Delete it; Git has the history | Review |
 
-### TigerStyle Adaptations for C++/Qt
+When lizard rejects a function, fix it STRUCTURALLY by extracting a seam -- never by deleting
+the comments that explain why the code is shaped the way it is. A function over the length
+limit at CCN 2 is a comment-density signal, not a complexity problem.
 
-| TigerStyle (Zig) | S.A.K. (C++23/Qt6) |
-|---|---|
-| `std.debug.assert()` | `Q_ASSERT()` / `Q_ASSERT_X()` |
-| `comptime assert` | `static_assert()` |
-| `zig fmt` | `.clang-format` (100-col limit) |
-| `snake_case` everywhere | `snake_case` for vars/functions, `PascalCase` for types (Qt convention) |
-| No dynamic allocation | Not applicable -- Qt widgets require `new` with parent ownership |
-| No dependencies | Qt6 is the framework; vcpkg for utilities |
+Data-only initializers may exceed the length target where splitting hurts readability; they
+still have to pass the hook, so extract the data rather than arguing with it.
 
 ---
 
@@ -141,14 +140,13 @@ QString local_variable;              // Local variables are snake_case
 - Colors -> `style_constants.h` or `windows11_theme.cpp`
 - Acceptable bare literals: `0`, `1`, `-1`, `nullptr`, `true`, `false`
 
-### Code Shape (Best Practice)
+### Code Shape
 
-- **Aim for <=70 lines per function.** Data-only initializers (e.g., distro catalog
-  entries) may exceed if splitting harms readability. Slightly exceeding 70 lines
-  is acceptable -- refactor when practical, but don't let it block a commit.
-- **Aim for <=3 levels of nesting.** Use early returns (guard clauses) to flatten.
-- **<=100 characters per line.** Break long strings, connect calls, and signatures.
-- **One declaration per line.** No `int a, b, c;`.
+Function length, complexity and line length are in the quality table above, with the hook
+that enforces each. Lizard rejects at 71 lines; there is no "slightly over".
+
+- **<=3 levels of nesting.** Use early returns (guard clauses) to flatten. Review only.
+- **One declaration per line.** No `int a, b, c;`. Review only.
 
 ---
 
@@ -224,9 +222,9 @@ These are the **hard requirements**. Every PR must pass these gates:
 - [ ] **Pass all tests** (100% pass rate) -- non-negotiable
 - [ ] Include tests for new features
 
-TigerStyle guidelines (function length, nesting depth, naming, etc.) are
-best practices to strive for but do **not** block a PR that passes the
-release hooks above.
+Function length, complexity, magic numbers and line length are each enforced by a
+pre-commit hook that rejects the commit. The quality table near the top of this file
+says which rules block and which rely on review.
 
 ---
 
@@ -288,16 +286,9 @@ cmake/                -- CMake modules and build config
 - Do not silence errors or swallow exceptions.
 - Do not use `emit` -- use `Q_EMIT` (project uses `QT_NO_KEYWORDS`).
 
-### Best Practices (strive for, but not blockers)
+### Also expected, though nothing checks them
 
-- Avoid adding features without tests.
-- Avoid `catch(...)` without a justifying comment.
-- Avoid leaving `TODO`/`FIXME` in committed code -- file an issue instead.
-- Avoid committed commented-out code -- Git preserves history.
-- Avoid abbreviated or single-letter variable names.
-- Aim to keep functions under 70 lines.
-- Aim to keep nesting to <=3 levels.
-- Prefer named constants over magic numbers.
-- Prefer `static_cast`, `dynamic_cast` over C-style casts.
+- Do not add a feature without tests.
+- Prefer `static_cast` / `dynamic_cast` over C-style casts.
 
 ---

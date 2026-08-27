@@ -164,7 +164,7 @@ private:
     static constexpr int kMaxHistorySize = 50;
 };
 
-// -- Compile-Time Invariants (TigerStyle) ------------------------------------
+// -- Compile-Time Invariants --------------------------------------------------
 
 /// AdvancedSearchController must inherit QObject.
 static_assert(std::is_base_of_v<QObject, AdvancedSearchController>,

@@ -135,7 +135,7 @@ private:
     void showProgramProperties(const ProgramInfo& program);
     void showSettingsDialog();
 
-    // Dialog helper builders (split for TigerStyle function-length)
+    // Dialog helper builders -- split to stay under the 70-line function gate
     void populateBatchUninstallQueueList(const QVector<UninstallQueueItem>& queue,
                                          QListWidget* queueList,
                                          qint64* totalBytesOut) const;

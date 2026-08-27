@@ -1,13 +1,19 @@
 # Working on S.A.K. Utility as an agent
 
-Operating rules for any AI agent (Claude Code, Copilot, Codex, or a subagent) that changes this
+Operating rules for any AI agent (Claude Code, Codex, or a subagent) that changes this
 repository. This file is the agent-facing entry point.
 
 It deliberately does NOT restate coding standards. Those live in
-[.github/copilot-instructions.md](.github/copilot-instructions.md) (naming, Qt rules, error
+[docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md) (naming, Qt rules, error
 handling, magic numbers, test layout, build commands, architecture) and
-[CONTRIBUTING.md](CONTRIBUTING.md) (contributor process, C++ style, TigerStyle). Read those for
+[CONTRIBUTING.md](CONTRIBUTING.md) (contributor process, C++ style). Read those for
 HOW to write code here. This file is about how to WORK here.
+
+**If `AGENTS.local.md` exists at the repo root, read it too.** It is gitignored and holds
+machine-local facts -- this workstation's certification rigs and their addresses, and the owner's
+working preferences. It is deliberately not committed because it describes a developer's machine
+rather than the product, and it deliberately contains no credentials (those live in the untracked
+`temp/creds.md` and are read at use time). Its absence on another machine is normal.
 
 ---
 
@@ -16,11 +22,19 @@ HOW to write code here. This file is about how to WORK here.
 These are owner rulings. They override convenience, and they override an agent's own judgement
 about what is "obviously fine".
 
-**Implement, never drop.** Finish features; never delete one to make a problem go away. Every
-removal needs the owner's explicit authorization. Before calling anything dead, check the
-tracking doc and the callers -- an unused function is usually the unfinished half of planned
-work, not garbage. A `queryPowerPlan()` with no caller turned out to be the missing half of the
-feature its own report apologised for.
+**Make a proper decision about it.** Keep or remove is a real decision, and it has to be made on
+evidence rather than on whichever is easier at that moment. Deleting something to make a problem
+go away is one failure; carrying dead weight because a rule said "never delete" is the same
+failure pointing the other way. Before deciding, check the tracking doc and the callers, and work
+out what the thing was FOR.
+
+Both directions have bitten here. A `queryPowerPlan()` with no caller looked like dead code and
+was actually the missing half of the feature its own report apologised for -- deleting it would
+have destroyed real work. A style guide cited across 25 files went the other way: stale, so it was
+removed once that was established.
+
+A removal still needs the owner's authorization -- not because removal is wrong, but because
+which way that decision goes is his call, not an agent's.
 
 **Fail closed. No fallbacks.** A fallback disguises an error and ships the failure silently.
 No PATH fallback, no stale-cache fallback, no guessed default, no "log it and return success".

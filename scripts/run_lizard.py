@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Lizard complexity checker for S.A.K. Utility -- TigerStyle settings.
+"""Lizard complexity checker for S.A.K. Utility.
 
 Hard limits (block commit -- warnings are errors in this repo):
   - Cyclomatic complexity (CCN) <= 10
@@ -36,7 +36,7 @@ import sys
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# TigerStyle thresholds
+# Complexity thresholds -- hard gates, not preferences
 # ---------------------------------------------------------------------------
 MAX_CCN = 10            # Cyclomatic complexity (hard limit)
 MAX_PARAMS = 5          # Parameter count (hard limit)

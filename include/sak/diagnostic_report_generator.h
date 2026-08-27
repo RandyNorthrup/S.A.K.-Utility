@@ -110,7 +110,7 @@ private:
     /// @brief Format bytes as a human-readable string (e.g., "16.0 GB")
     [[nodiscard]] static QString formatBytes(uint64_t bytes);
 
-    // -- JSON section serializers (TigerStyle decomposition) --
+    // -- JSON section serializers (split to stay under the 70-line function gate) --
 
     /// @brief Serialize metadata section for JSON output
     [[nodiscard]] QJsonObject serializeMetadataSection() const;
@@ -133,7 +133,7 @@ private:
     /// @brief Serialize benchmark results for JSON output
     [[nodiscard]] QJsonObject serializeBenchmarkSection() const;
 
-    // -- CSV section writers (TigerStyle decomposition) --
+    // -- CSV section writers (split to stay under the 70-line function gate) --
 
     /// @brief Write hardware summary rows to CSV stream
     void writeCsvHardwareSummary(QTextStream& out) const;

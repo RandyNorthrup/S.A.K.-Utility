@@ -400,7 +400,7 @@ struct EmailClientProfile {
 };
 
 // ============================================================================
-// Compile-Time Invariants (TigerStyle)
+// Compile-Time Invariants
 // ============================================================================
 
 // All data types must be default-constructible for QVector usage.

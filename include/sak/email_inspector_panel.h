@@ -366,7 +366,7 @@ private:
     };
 };
 
-// -- Compile-Time Invariants (TigerStyle) ------------------------------------
+// -- Compile-Time Invariants --------------------------------------------------
 
 static_assert(std::is_base_of_v<QWidget, EmailInspectorPanel>,
               "EmailInspectorPanel must inherit QWidget.");

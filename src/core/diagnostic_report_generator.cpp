@@ -385,7 +385,7 @@ bool DiagnosticReportGenerator::generateCsv(const QString& output_path) {
 }
 
 // ============================================================================
-// CSV Section Writers (TigerStyle decomposition)
+// CSV Section Writers -- split to stay under the 70-line function gate
 // ============================================================================
 
 void DiagnosticReportGenerator::writeCsvHardwareSummary(QTextStream& out) const {

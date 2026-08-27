@@ -672,7 +672,7 @@ void WifiManagerPanel::onFindPrev() {
 }
 
 // -----------------------------------------------------------------------------
-// QR wizard helpers (TigerStyle decomposition of onGenerateQrClicked)
+// QR wizard helpers -- split out of onGenerateQrClicked for the 70-line function gate
 // -----------------------------------------------------------------------------
 
 QImage WifiManagerPanel::renderQrWithHeader(const QString& payload,

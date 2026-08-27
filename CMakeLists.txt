@@ -2043,7 +2043,7 @@ if(LIZARD_EXE)
         COMMAND ${LIZARD_EXE}
             -l cpp
             -C10            # CCN threshold (strict)
-            -L70            # Function length (TigerStyle)
+            -L70            # Function length (hard gate)
             -a5             # Parameter count (strict)
             -w              # Warnings-only output
             -i 0            # Zero tolerance

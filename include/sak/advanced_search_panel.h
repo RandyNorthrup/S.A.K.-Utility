@@ -212,7 +212,7 @@ private:
     static constexpr const char* kPlaceholderText = "Loading...";
 };
 
-// -- Compile-Time Invariants (TigerStyle) ------------------------------------
+// -- Compile-Time Invariants --------------------------------------------------
 
 /// AdvancedSearchPanel must inherit QWidget.
 static_assert(std::is_base_of_v<QWidget, AdvancedSearchPanel>,

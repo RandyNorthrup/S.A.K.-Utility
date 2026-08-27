@@ -226,19 +226,20 @@ QVector<int> values;
 auto* widget = new QWidget(this);  // 'this' manages lifetime
 ```
 
-### TigerStyle Best Practices
+### Code Quality Rules
 
-This project follows [TigerStyle](https://github.com/tigerbeetle/tigerbeetle/blob/main/docs/TIGER_STYLE.md) coding discipline as a guiding philosophy. These are best-practice targets to strive for - they do not block a PR that passes the release hooks (zero build warnings, zero build errors, all tests passing).
+The first four rows below are NOT aspirational: each is a pre-commit hook that rejects the commit. The full table, with the hook that enforces each rule, is in [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md).
 
 | Rule | Target | Enforced By |
 |---|---|---|
-| Function length | <=70 lines | Lizard, code review |
-| Nesting depth | <=3 levels | Lizard, code review |
-| Line length | <=100 columns | `.clang-format` |
+| Function length | <=70 lines | `lizard-complexity` hook -- BLOCKING |
+| Cyclomatic complexity | CCN <=10 | `lizard-complexity` hook -- BLOCKING |
+| Magic numbers | Named `constexpr` constants | `magic-numbers` hook -- BLOCKING |
+| Line length | <=100 columns | `.clang-format` hook -- BLOCKING |
+| Naming | No abbreviations, no single-letter vars | `readability-identifier-naming`, run in CI on every build |
+| Nesting depth | <=3 levels | Code review (Lizard measures complexity, not nesting depth) |
 | Assertions | Meaningful preconditions/postconditions | Code review |
 | `catch(...)` | Should have explanatory comment | Code review |
-| Magic numbers | Prefer named `constexpr` constants | Code review |
-| Naming | No abbreviations, no single-letter vars | Code review |
 
 **Pre-submit checklist**:
 ```powershell

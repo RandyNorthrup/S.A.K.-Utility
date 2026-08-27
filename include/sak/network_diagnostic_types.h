@@ -17,7 +17,7 @@
 namespace sak {
 
 // ===========================================================================
-// Named Constants (TigerStyle)
+// Named Constants
 // ===========================================================================
 
 namespace netdiag {
@@ -539,7 +539,7 @@ Q_DECLARE_METATYPE(QVector<sak::NetworkShareInfo>)
 Q_DECLARE_METATYPE(sak::LanTransferResult)
 
 // ===========================================================================
-// Compile-Time Invariants (TigerStyle)
+// Compile-Time Invariants
 // ===========================================================================
 
 static_assert(std::is_default_constructible_v<sak::NetworkAdapterInfo>,
