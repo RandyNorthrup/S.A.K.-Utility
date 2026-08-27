@@ -1150,7 +1150,7 @@ right the first time - no rework loops.
 | Guideline | Threshold | Notes |
 |-----------|-----------|-------|
 | Function length | <= 70 lines | Lizard prints warning, does NOT block |
-| Nesting depth | <= 3 levels | TigerStyle best practice |
+| Nesting depth | <= 3 levels | Review only -- no gate checks nesting |
 | Named constants | No magic numbers | 0, 1, -1 are acceptable bare literals |
 | Single-letter variables | Avoid | Except tiny lambda predicates |
 

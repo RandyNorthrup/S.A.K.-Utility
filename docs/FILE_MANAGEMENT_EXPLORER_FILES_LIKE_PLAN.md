@@ -1510,7 +1510,7 @@ Documentation checklist:
 - [x] Update README File Explorer section with only completed capabilities.
 - [x] Update CHANGELOG Unreleased with evidence paths.
 - [x] Update `THIRD_PARTY_LICENSES.md` with Files Community MIT attribution for any copied icon/source asset.
-- [x] Update `docs/PARTITION_MANAGER_CROSS_FILESYSTEM_PLAN.md` capability matrix. (the driver-capability matrix owner is `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md`; the foreign-APFS write reality is recorded there and in this plan's capability matrix + the certification doc)
+- [x] Update `docs/archive/PARTITION_MANAGER_CROSS_FILESYSTEM_PLAN.md` capability matrix. (the driver-capability matrix owner is `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md`; the foreign-APFS write reality is recorded there and in this plan's capability matrix + the certification doc)
 - [x] Update `docs/PARTITION_MANAGER_CERTIFICATION.md` live proof section. (2026-07-12 File Explorer command-route certification: foreign-APFS + apfsck, HFS+ + fsck_hfs, ext4/XFS/Btrfs)
 - [x] Update `docs/RELEASE_READINESS.md` release gate notes. (2026-07-12 command-route cert + 142/142 CTest)
 - [x] Update `tests/README.md` with new tests and live cert lanes. (bridge/panel/item-model rows + the command-route live-cert paragraph)
@@ -1617,7 +1617,7 @@ Do not call this Files-like complete until:
 
 - README File Explorer section: update only when phase exits pass.
 - CHANGELOG Unreleased: describe each completed phase and evidence paths.
-- `docs/PARTITION_MANAGER_CROSS_FILESYSTEM_PLAN.md`: keep raw FS capability matrix synced.
+- `docs/archive/PARTITION_MANAGER_CROSS_FILESYSTEM_PLAN.md`: keep raw FS capability matrix synced.
 - `docs/PARTITION_MANAGER_CERTIFICATION.md`: add live proof only after destructive certification.
 - `tests/README.md`: add unit/gui/live certification coverage.
 

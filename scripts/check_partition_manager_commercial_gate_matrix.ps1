@@ -82,7 +82,7 @@ function Assert-MatrixIds {
 
 $uiPath = "src\gui\partition_manager_panel.cpp"
 $scriptBuilderPath = "src\core\partition_script_builder.cpp"
-$planPath = "docs\PARTITION_MANAGER_PANEL_PLAN.md"
+$planPath = "docs\archive\PARTITION_MANAGER_PANEL_PLAN.md"
 $certificationPath = "docs\PARTITION_MANAGER_CERTIFICATION.md"
 $auditPath = "docs\PRODUCTION_GRADE_AUDIT.md"
 $readmePath = "README.md"

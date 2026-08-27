@@ -474,7 +474,28 @@ User action
 
 ### File Map
 
-Files implemented for this panel:
+This table is the plan's PROPOSED layout. The delivered code did not follow all of it: 25 of
+the paths below exist under no name. The features themselves shipped -- ReTrim, wipe and boot
+repair are built in `src/core/partition_script_builder.cpp`, clone/image run through
+`src/core/partition_operation_planner.cpp`, `src/core/partition_safety_validator.cpp` and the
+panel types, and the tests landed as `tests/unit/test_partition_manager_core.cpp` and
+`tests/unit/test_partition_manager_panel.cpp` rather than one file per component.
+
+Proposed but never created (decomposition only, not missing work):
+`include/sak/boot_repair_worker.h`, `src/core/boot_repair_worker.cpp`,
+`include/sak/disk_clone_worker.h`, `src/core/disk_clone_worker.cpp`,
+`include/sak/disk_image_worker.h`, `src/core/disk_image_worker.cpp`,
+`include/sak/secure_wipe_worker.h`, `src/core/secure_wipe_worker.cpp`,
+`include/sak/ssd_optimizer_worker.h`, `src/core/ssd_optimizer_worker.cpp`,
+`tests/unit/test_partition_operation_planner.cpp`,
+`tests/unit/test_partition_safety_validator.cpp`,
+`tests/unit/test_partition_script_builder.cpp`,
+`tests/unit/test_partition_operation_queue.cpp`,
+`tests/unit/test_storage_inventory_parser.cpp`,
+`tests/unit/test_partition_manager_accessibility.cpp`,
+and the nine `tests/fixtures/partition_inventory/` and `tests/fixtures/smart/` JSON fixtures.
+
+Proposed file map:
 
 | File | Purpose |
 | --- | --- |

@@ -6,7 +6,8 @@ Use this when starting hands-on testing of the AI Assistant panel.
 
 - App: `build\Release\sak_utility.exe`
 - Helper: `build\Release\sak_elevated_helper.exe`
-- Registered tests: 133 CTest tests after adding chat-title coverage.
+- Registered tests: see `tests/README.md`, which a pre-commit gate verifies against the real
+  CTest registration. A count copied to here has no gate to catch it going stale.
 - Latest targeted AI pass: `test_ai_chat_title`, `test_ai_prompt_assembler`,
   `test_ai_orchestrator`, `test_ai_workflow_evals`, and
   `test_openai_responses_client` passed on 2026-06-04 UTC.

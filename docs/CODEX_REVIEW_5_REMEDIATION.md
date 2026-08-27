@@ -10,16 +10,107 @@ after the August 5 reconciliation against HEAD). Phase 1 of R5 ran 11 subsystem 
 first-party code is reviewed under its own dedicated pass.
 
 STANDING RULES: no fallbacks, fail closed, surface the real error. Fix every issue found.
-Do the optionals. Nothing is DELETED to make a finding go away -- a half-built feature gets
-FINISHED, and any removal needs the user's explicit authorization. Plain 7-bit ASCII docs.
-Full Release ctest must pass before every commit.
+Do the optionals. Keep-or-remove is a real decision made on evidence, not a reflex in either
+direction: deleting something to make a finding go away and carrying dead weight because a
+rule forbade deleting are the same mistake. Any removal needs the owner's authorization,
+because which way that decision goes is his call. Plain 7-bit ASCII docs. Full Release ctest
+must pass before every commit.
+
+EVERY FINDING IN THE CURRENT TREE IS AN R5 ITEM, per the owner 2026-08-26, until the next
+Codex batches are run. Anything found in flight lands here rather than in a new document.
+
+## OPEN WORK HELD IN OTHER DOCS (index, 2026-08-26)
+
+Pointers only -- the detail stays in the file named, and nothing below is restated here.
+Each of these documents holds work that is genuinely unfinished, and none of them is read by
+any gate, so nothing would have surfaced it.
+
+- [~] R5-IDX-1 `docs/MACOS_BOOTABLE_USB_PLAN.md` -- 40 open items; the feature is NOT built
+  (no `macos_*` source under `src/`). Decide: build it or drop the plan. The README roadmap
+  entry for it is the only live promise of the feature.
+- [~] R5-IDX-2 `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md` -- 11 open items. These were
+  INVISIBLE to every grep-based scan until 2026-08-26: the file carried 8 raw NUL bytes, so
+  grep classified it as binary and silently skipped it. NULs are now escaped as text.
+- [~] R5-IDX-3 `docs/APFS_LIVE_RECERT_FOLLOWONS.md` -- 7 open items, including WS3c foreign
+  multi-chunk in-place COW (corruption-critical, deferred WITH a design), its WS3c-2 shrink
+  inverse, three gate scripts still carrying real debt, and a clang-tidy backlog of roughly
+  995 findings.
+- [~] R5-IDX-4 `docs/FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md` -- 7 open plus 6 partial.
+- [~] R5-IDX-5 `docs/CODEX_REVIEW_4_REMEDIATION.md` (6 partial) and
+  `docs/CODEX_REVIEW_REMEDIATION.md` (5 partial) -- earlier campaigns never driven to zero.
+- [~] R5-IDX-6 `docs/CODEX_FULL_SCAN_BACKLOG_2026-07-20.md` -- a 2294-line backlog that no
+  item in this document tracks.
+
+## FOUND IN FLIGHT 2026-08-26 (doc and gate audit)
+
+- [~] R5-IDX-7 THE HFS+/APFS "REMAINS BLOCKED" LIST IS STALE AND CONTRADICTS THE CODE.
+  Verified against the live tree: HFS+ B-tree split/rebalance IS implemented, with split and
+  merge hysteresis so create/delete churn does not thrash
+  (`include/sak/partition_hfs_internal.h:4431-4467`); APFS B-tree split is real
+  (`src/core/partition_apfs_writer.cpp:2771`); and the APFS writer CLI exposes resize,
+  snapshot create/delete/revert, clone, hardlink, move, rename, patch, compression
+  (lzfse/lzvn/zlib/lzbitmap) and encryption. What ACTUALLY remains blocked is narrower:
+  HFS+ operations needing extents-overflow records beyond the eight initial extent records
+  (`partition_hfs_internal.h:1432`, `:3629`, `partition_hfs_core.h:824`), and XFS/Btrfs
+  writes plus deep XFS/Btrfs tool checks (no writer under `src/`, no bundled tools).
+  The stale list is restated in `docs/PARTITION_MANAGER_CERTIFICATION.md` (twice),
+  `docs/RELEASE_READINESS.md` and `CHANGELOG.md`, and NO gate compares the copies. Fix is one
+  canonical list stated once, per-proof deltas re-verified against each `report.json`, and
+  the other files pointing at it. This tool writes to raw disks, so an operation reading as
+  approved when it is not is a data-destruction risk.
+- [~] R5-IDX-8 THE ASCII GATE DOES NOT REJECT CONTROL BYTES. `scripts/check_ascii_only.ps1`
+  checks for bytes above 0x7F and a BOM, so NUL and other C0 controls pass. That is how
+  R5-IDX-2's eight NULs survived in a tracked doc, and a NUL makes grep-based tools skip the
+  file ENTIRELY -- a scanner that reads nothing reports no findings.
+- [~] R5-IDX-9 THE DOC-ACCURACY GATE COVERS ONE FILE. `scripts/check_doc_accuracy.ps1`
+  verifies `tests/README.md` against the real CTest registration and nothing else. Its header
+  is honest about that; the gap is that 68 other tracked docs have no accuracy check of any
+  kind, which is what let R5-IDX-7 rot inside files that a different gate does read.
+- [x] R5-IDX-11 PROSE IS NO LONGER ADMISSIBLE AS FEATURE EVIDENCE, 2026-08-26.
+  check_partition_manager_feature_matrix.ps1 proved each of its 12 features against a list of
+  evidence entries, and `kind = "documentation"` was the MOST COMMON kind -- 12 entries, more
+  than `test` (9) or `UI action` (4). A feature counted as proved when a string appeared in a
+  markdown file, which is not proof of anything, and the file trusted for five of them was the
+  panel plan whose own file map named 25 sources that were never created. All 12 documentation
+  entries are removed; every feature keeps its code, UI, test and certification-matrix
+  evidence. DRILLED: renaming one test pattern to a nonexistent name turns the gate RED
+  ("missing test evidence"), and restoring it returns 12 feature groups verified -- so the
+  removal did not leave a feature passing on an empty evidence list.
+- [x] R5-IDX-12 REALIZED PLANS ARCHIVED, 2026-08-26. docs/archive/ now holds the six plans
+  whose features are in the tree (network diagnostic -- kept at the owner's request as working
+  reference, file explorer clone, AI assistant panel, AI multi-agent workflow, partition
+  cross-filesystem, partition manager panel). All gate and doc references were repointed and
+  the partition gates re-run green. Still ACTIVE in docs/ because they hold real open work:
+  APFS_HFS_FULL_DRIVER_WRITE_PLAN (11), MACOS_BOOTABLE_USB_PLAN (40, unbuilt),
+  FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN (7) and ASSISTANT_HEADLESS_DOMINION_PLAN (no code
+  in the tree at all).
+- [~] R5-IDX-13 docs/PARTITION_MANAGER_CERTIFICATION_MATRIX.json IS DATA FILED AS A DOCUMENT.
+  It is schema-versioned machine input with required_evidence_keys per scenario, and 23
+  scripts plus tests/certification read it. NOT MOVED, deliberately: the path is also recorded
+  inside generated evidence report.json files, which are historical records that must not be
+  rewritten, and most of the 23 consumers are VM/hardware certification scripts that cannot be
+  exercised on this machine to prove a path change did not break them. Moving it needs a
+  certification run, so it waits for one rather than being done blind.
+  The two docs/ subdirectories were checked at the same time and BOTH are justified:
+  docs/apfs-harvest/ holds byte sequences harvested from a real macOS that
+  src/core/partition_apfs_writer.cpp cites by path, and docs/review_briefs/ is the directory
+  scripts/run_review_units.ps1 writes into by design.
+- [~] R5-IDX-10 DOC VOLUME ITSELF OBSTRUCTS TRUTH (owner, 2026-08-26). 34997 lines of tracked
+  markdown after deleting the two dead converter plans, of which THIS file is 9016 (26%).
+  Almost nothing in `docs/` is depended on: `check_partition_manager_release_claims.ps1`
+  opens four of them as `$ClaimFiles`, but it POLICES them for over-claiming rather than
+  consuming them. The genuinely load-bearing markdown is outside `docs/` --
+  `resources/ai/skills/*.md` and `resources/ai/instructions/reporting_standard.md`, loaded at
+  runtime by `src/ai/ai_skill_store.cpp`, which are program data rather than documentation.
+  Two references cited as gate-enforced turned out to be comments naming the file, not reads.
 
 ## CAMPAIGN STATUS (live -- updated 2026-08-17)
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-25: 643 [x] / 19 [~] / 0 [ ] (reconciled to the live marker counts; F25, the
-last [ ], closed 2026-08-25) (G18-3 impl-detail-vs-contract audit COMPLETE -- whole tests/unit tree exhaustively swept, every nominee resolved; G18-1 mutation-testing COMPLETE and LEDGER-4
+as of 2026-08-26: 645 [x] / 30 [~] / 0 [ ] (reconciled to the live marker counts; F25, the
+last [ ], closed 2026-08-25; the R5-IDX items added 2026-08-26 index open work that was
+sitting in other documents where no gate could see it) (G18-3 impl-detail-vs-contract audit COMPLETE -- whole tests/unit tree exhaustively swept, every nominee resolved; G18-1 mutation-testing COMPLETE and LEDGER-4
 committed-ledger done; a whole-doc un-defer + staleness sweep AND a [~] reclassification landed
 this window -- 41 owner-decision / tool-limit items were verified against the live config and
 settled to [x]; then the gate-audit batch closed R5-G21-1 (gate-pair contradiction), R5-G21-3
@@ -56,8 +147,8 @@ coverage: mirrors the G14-16a/b design-decisions, and G14-4 proved branch % is n
 measurable) both flip to [x] design-decisions; and R5-G10-5 (zero unjustified inline
 suppressions) flips [x] as the rollup of G5-1/G5-2, re-verified against the live tree with the
 one remaining implicit-reason site (a Qt test-driver macro) given an explicit justification.
-That leaves 21 [~] = ~6 blocked-on-user + ~15 locally
-actionable; the single [ ] open item was F25, CLOSED 2026-08-25 -- there are now ZERO [ ] items
+That leaves 30 [~] = ~6 blocked-on-user + ~13 locally
+actionable + the R5-IDX items indexed at the top of this file; the single [ ] open item was F25, CLOSED 2026-08-25 -- there are now ZERO [ ] items
 left in this document). UN-DEFER CAMPAIGN (2026-08-16, ongoing): the
 "deferred-with-rationale" disposition was rejected by the owner -- each such label is being
 re-adjudicated against the LIVE tree/gate (never the doc's own claim) and resolved to either
