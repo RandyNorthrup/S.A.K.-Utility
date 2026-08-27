@@ -64,6 +64,15 @@ $ExcludedPrefixes = @(
 
 if (-not $Files -or $Files.Count -eq 0) {
     $Files = git ls-files
+    # A whole-tree run that enumerates NOTHING must not report zero violations. If git fails
+    # or returns an empty list, this gate would scan no bytes and print a clean pass -- the
+    # same false-green shape the sibling PowerShell-syntax gate already refuses. Fail closed.
+    if ($LASTEXITCODE -ne 0) {
+        throw "git ls-files failed (exit $LASTEXITCODE); cannot enumerate tracked files."
+    }
+    if (-not $Files -or @($Files).Count -eq 0) {
+        throw "git ls-files returned no tracked files; refusing to pass without scanning anything."
+    }
 }
 
 $violations = @()

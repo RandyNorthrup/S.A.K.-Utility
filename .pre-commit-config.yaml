@@ -107,6 +107,25 @@ repos:
         pass_filenames: false
 
       # -------------------------------------------------------------------
+      # 1a. Gitleaks over STAGED content, at commit time.
+      #     The hook above runs with -SkipExternalTools: regex and path rules
+      #     only, no gitleaks. Gitleaks itself ran solely at pre-push, and a
+      #     push scans HISTORY -- so by the time it fired, the secret was
+      #     already in a commit and could only be removed by rewriting every
+      #     commit after it. That is exactly how four findings reached this
+      #     repository's history. Scanning the staged diff catches a secret in
+      #     the one window where refusing it is still cheap: before it becomes
+      #     a commit. The pre-push full-history scan stays as the backstop.
+      # -------------------------------------------------------------------
+      - id: gitleaks-staged
+        name: "Gitleaks (staged changes)"
+        description: "Reject a COMMIT containing a secret, before it can enter history"
+        entry: gitleaks protect --staged --config .gitleaks.toml --redact --no-banner
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # -------------------------------------------------------------------
       # 2. Qt resource manifest check - every qrc file path must exist
       # -------------------------------------------------------------------
       - id: qrc-resource-check

@@ -1,12 +1,28 @@
-ce15beae8d1180758e854c34bca02ecc59580cca:src/core/wifi_analyzer.cpp:generic-api-key:130
-2f541318b8fe737aeff62c4ebfab027ded59ae9e:tests/unit/test_backup_activation_keys_action.cpp:generic-api-key:247
-# Microsoft's published generic Windows 11 Pro installation key in the VM lab
-# builder (public documentation value, not a credential). The line now also
-# carries an inline gitleaks:allow for future commits.
-c4cdefc615b374bc7e8aa99186e826e5187380bb:scripts/new_partition_manager_automation_vm.ps1:generic-api-key:347
-
-# browser/extension/manifest.json "key" is the PUBLIC half of the extension signing key. It is
-# pinned in the manifest on purpose so an unpacked load derives the same extension id as the
-# signed CRX (ofodhfbipljnhenjjjpbdaglkjdphoec); the PRIVATE key lives outside the tree at
-# %LOCALAPPDATA%\SAK\keys\ and is never committed. Public key material, not a credential.
-c57db9b1cd69d1251b765a9418b8174838cfe03e:browser/extension/manifest.json:generic-api-key:5
+# Gitleaks finding allowlist -- EXACT fingerprints only.
+#
+# A fingerprint is commit:file:rule:line, so each entry silences ONE finding in ONE
+# historical commit. Never add a path glob or a bare rule name here: that would disarm the
+# scanner for every future secret in that file, which is the one thing this gate exists to
+# prevent. If a new finding appears, resolve it -- do not extend this list to make a push go
+# through.
+#
+# Every entry needs the owner's explicit authorization and a reason, recorded below.
+# Authorized 2026-08-26.
+#
+# 1. A documentation placeholder, not a token. The line is a `curl -H "Authorization: Bearer
+#    <placeholder>"` usage example; the matched value is alphabetic with no key material.
+6f2a95a7dd869eecca34c83de963721673e62f4c:docs/CODEX_FULL_SCAN_BACKLOG_2026-07-20.md:curl-auth-header:818
+#
+# 2 and 3. Fabricated constants in the credential-store unit test. The test's whole purpose is
+#    to prove that a stored credential is encrypted at rest and redacted from output, so it
+#    MUST contain something key-shaped. These two never authenticated against anything.
+675e909be9c5b40e100188ea8d7afd6587ac42c3:tests/unit/test_ai_credential_store.cpp:generic-api-key:66
+675e909be9c5b40e100188ea8d7afd6587ac42c3:tests/unit/test_ai_credential_store.cpp:generic-api-key:67
+#
+# 4. A real credential, accepted as low risk by the owner: it is a plink `-pw` argument for the
+#    macOS certification VM, which is reachable only from inside his LAN. It is in history and
+#    cannot be removed without rewriting 1594 commits. Recorded honestly rather than described
+#    as a false positive -- it is not one. Rotating it costs nothing whenever convenient, and
+#    the pre-commit staged scan added alongside this file is what stops the next one reaching
+#    history at all. Credentials belong in the untracked temp/creds.md, read at use time.
+08035cf1b7a520aa235fa7d86c785dd6eb3a6a17:docs/APFS_LIVE_RECERT_FOLLOWONS.md:generic-api-key:109

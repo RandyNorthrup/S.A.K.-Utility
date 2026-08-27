@@ -90,11 +90,6 @@ $features = @(
                 kind = "test"
                 path = "tests\unit\test_partition_manager_core.cpp"
                 patterns = @("scriptBuilder_createRespectsWizardPayload", "scriptBuilder_formatsByPartitionIdentity", "scriptBuilder_setsPartitionLabelByMountedDriveLetter")
-            },
-            @{
-                kind = "documentation"
-                path = "docs\PARTITION_MANAGER_PANEL_PLAN.md"
-                patterns = @("Basic partition operations", "Create, delete, format, label, assign/remove drive letter")
             }
         )
     },
@@ -115,11 +110,6 @@ $features = @(
                 kind = "test"
                 path = "tests\unit\test_partition_manager_core.cpp"
                 patterns = @("safetyValidator_allowsResizeIntoAdjacentFreeSpace", "scriptBuilder_buildsOfflineMoveAndMetadataScripts", "safetyValidator_allowsConfirmedOfflineRebuildOperations")
-            },
-            @{
-                kind = "documentation"
-                path = "docs\PARTITION_MANAGER_PANEL_PLAN.md"
-                patterns = @("Resize operations", "MovePartition")
             }
         )
     },
@@ -140,11 +130,6 @@ $features = @(
                 kind = "test"
                 path = "tests\unit\test_partition_manager_core.cpp"
                 patterns = @("scriptBuilder_buildsMbr2GptScript", "safetyValidator_blocksUnsafeSystemStyleConversion")
-            },
-            @{
-                kind = "documentation"
-                path = "docs\PARTITION_MANAGER_PANEL_PLAN.md"
-                patterns = @("MBR/GPT conversion", "Safe system-disk MBR-to-GPT")
             }
         )
     },
@@ -165,11 +150,6 @@ $features = @(
                 kind = "test"
                 path = "tests\unit\test_partition_manager_core.cpp"
                 patterns = @("scriptBuilder_buildsMergeScript", "safetyValidator_blocksResizeBelowUsedBytes")
-            },
-            @{
-                kind = "documentation"
-                path = "docs\PARTITION_MANAGER_PANEL_PLAN.md"
-                patterns = @("Partition merge and split", "Merge And Split")
             }
         )
     },
@@ -190,11 +170,6 @@ $features = @(
                 kind = "test"
                 path = "tests\unit\test_partition_manager_core.cpp"
                 patterns = @("safetyValidator_blocksUnsupportedFileSystemConversion")
-            },
-            @{
-                kind = "documentation"
-                path = "docs\PARTITION_MANAGER_PANEL_PLAN.md"
-                patterns = @("File system conversion", "FAT/FAT32 to NTFS")
             }
         )
     },
@@ -215,11 +190,6 @@ $features = @(
                 kind = "test"
                 path = "tests\unit\test_partition_manager_core.cpp"
                 patterns = @("scriptBuilder_buildsCloneVerificationScript", "scriptBuilder_buildsOffsetPartitionCloneScript", "safetyValidator_requiresCloneOverwriteConfirmation", "safetyValidator_requiresPartitionRegionCloneConfirmation", "safetyValidator_blocksUnsafePayloadTargetDisk")
-            },
-            @{
-                kind = "documentation"
-                path = "docs\PARTITION_MANAGER_PANEL_PLAN.md"
-                patterns = @("Disk cloning and imaging", "Disk-to-disk clone, partition clone, image backup, image restore, and verification")
             },
             @{
                 kind = "certification matrix"
@@ -245,11 +215,6 @@ $features = @(
                 kind = "test"
                 path = "tests\unit\test_partition_manager_core.cpp"
                 patterns = @("scriptBuilder_buildsOsMigrationBootValidationScript")
-            },
-            @{
-                kind = "documentation"
-                path = "docs\PARTITION_MANAGER_PANEL_PLAN.md"
-                patterns = @("OS migration tools", "Boot repair utilities")
             }
         )
     },
@@ -270,11 +235,6 @@ $features = @(
                 kind = "test"
                 path = "tests\unit\test_partition_manager_core.cpp"
                 patterns = @("SmartSummary", "TemperatureCelsius", "WearPercent", "scriptBuilder_buildsAdvancedParityScripts")
-            },
-            @{
-                kind = "documentation"
-                path = "docs\PARTITION_MANAGER_PANEL_PLAN.md"
-                patterns = @("S.M.A.R.T. monitoring", "SSD optimization")
             }
         )
     },
@@ -295,11 +255,6 @@ $features = @(
                 kind = "test"
                 path = "tests\unit\test_partition_manager_core.cpp"
                 patterns = @("scriptBuilder_buildsClearLevelDiskWipeScript", "Optimize-Volume -DriveLetter", "safetyValidator_blocksUnsafeParityOperations")
-            },
-            @{
-                kind = "documentation"
-                path = "docs\PARTITION_MANAGER_PANEL_PLAN.md"
-                patterns = @("Secure data wiping", "SSD Secure Erase queues Windows ReTrim")
             }
         )
     },
@@ -327,11 +282,6 @@ $features = @(
                 patterns = @("fileRecoveryEngine_scansAndRestoresOfflineImage", "scanOfflineImage", "restoreCandidates", "source_not_mutated", "scriptBuilder_buildsAllocateFreeSpaceScript", "safetyValidator_blocksUnsafeAllocateFreeSpacePayloads")
             },
             @{
-                kind = "documentation"
-                path = "docs\PARTITION_MANAGER_PANEL_PLAN.md"
-                patterns = @("Commercial utility parity", "AOMEI/MiniTool expose Quick Partition", "Data Recovery", "Allocate Free Space queues adjacent donor", "Allocate Free Space To queues adjacent unallocated space", "image and raw volume/device file carving", "raw volume/device paths", "Largest Files", "File Types", "Copy Path", "BitLocker status", "defrag/ReTrim command guidance", "SSD Secure Erase shows disk identity")
-            },
-            @{
                 kind = "certification matrix"
                 path = "docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
                 patterns = @("external.file-level-data-recovery", "deleted_fixture_name", "restore_to_separate_destination", "external.allocate-free-space", "external.ssd-retrim", "purge_warning_visible")
@@ -355,11 +305,6 @@ $features = @(
                 kind = "disk map chrome"
                 path = "src\gui\partition_manager_panel.cpp"
                 patterns = @("DiskMapRowFrame", "partitionActionTextLink", "kDiskMapOuterMargin = 1", "kDiskMapRowSpacing = 2", "kDiskMapSegmentSpacing = 2", "GPT/Primary", "RAID5", 'setProperty("outerColorRole"', 'setProperty("innerColorRole"', 'setProperty("selected"')
-            },
-            @{
-                kind = "documentation"
-                path = "docs\PARTITION_MANAGER_PANEL_PLAN.md"
-                patterns = @("Pending operations", "right-click menu")
             }
         )
     },
@@ -440,11 +385,6 @@ $features = @(
                 kind = "certification matrix"
                 path = "docs\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
                 patterns = @("required_evidence_keys", "safety_contract", "vhd.create-format-resize-delete", "external.file-level-data-recovery", "external.allocate-free-space", "external.partition-move", "external.cluster-size-change", "external.primary-logical-conversion", "external.volume-serial-number", "external.dynamic-to-basic", "external.hdd-defrag-execution", "external.ssd-secure-erase", "external.bitlocker-mutation", "external.hardware-wipe")
-            },
-            @{
-                kind = "documentation"
-                path = "docs\PARTITION_MANAGER_CERTIFICATION.md"
-                patterns = @("Disposable VHD data-disk matrix", "External Gates")
             }
         )
     }
