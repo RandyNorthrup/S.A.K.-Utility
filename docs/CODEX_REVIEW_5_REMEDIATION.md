@@ -93,13 +93,30 @@ any gate, so nothing would have surfaced it.
   generated_utc field that these reports do not have -- it would have failed closed on every
   report, which is the safe direction, but it was still the wrong field and the check against
   all 97 files is what caught it.
-- [~] R5-IDX-14 docs/ASSISTANT_HEADLESS_DOMINION_PLAN.md -- 285 lines describing a headless
-  assistant capability with NO code in the tree: a whole-tree search for the plan's own
-  subject finds nothing under src/ or include/. It carries no checkbox markers at all, so it
-  reads as neither planned nor done. DECIDE: build it or drop it. It is the last plan in docs/
-  describing something unbuilt other than MACOS_BOOTABLE_USB_PLAN (R5-IDX-1), and the two
-  should be decided together since both are whole features rather than remaining work on a
-  shipped one.
+- [x] R5-IDX-14 THE HEADLESS DOMINION PLAN IS COMPLETE, and the entry that stood here saying
+  otherwise was wrong. It claimed "285 lines describing a feature with NO code in the tree",
+  produced by grepping for the word "headless" -- a word taken from the FILENAME, not from
+  anything the plan actually specifies. Zero hits was read as zero implementation.
+  What the plan names is AppActionRegistry, AppServiceHub and the sak_app_actions tool.
+  Grepping THOSE finds include/sak/app_action_registry.h, src/core/app_action_registry.cpp, a
+  registered unit test, plus app_action_bridge.cpp, app_action_service.cpp,
+  app_readonly_actions.cpp and app_mutating_actions.cpp. 62 action ids are registered across
+  12 domains (network 17, email 11, imaging 6, files 6, diagnostics 6, software 4, partition 3,
+  organizer 3, security 2, system, search, backup), wired through isKnownLocalTool,
+  kindForName and registerToolHandlers, invoked by the sak_app_action tool.
+  Wave 4, the one TRAPPED item, is done as well: the wifi builders are extracted to
+  src/core/wifi_setup_script.cpp (the panel keeps zero static builders and delegates to
+  sak::buildWifiSetupScriptWindows), and the actions are registered under the network. prefix
+  rather than wifi. -- network.generate_wifi_setup_script, network.connect_wifi,
+  network.wifi_scan, network.list_wifi_profiles, plus the adapter-admin operations the plan
+  listed as inline widget methods. A second bad grep, for "wifi.", is what hid that.
+  Track B landed too: 50 native win32mcp headers, no Python or Tesseract bundle tracked.
+  Two names in the plan do not exist as written -- AppServiceHub, and the split
+  sak_app_actions / sak_run_app_action pair, which became the single sak_app_action tool.
+  Renames during implementation, not gaps, given the actions enumerate and invoke.
+  THE LESSON IS THE ONE THIS CAMPAIGN KEEPS RELEARNING: a proxy for the thing is not the
+  thing. Verify a plan against the deliverables it NAMES, never against a keyword from its
+  title. The plan is archived as realized.
 - [x] R5-IDX-15 THE ASCII GATE NOW REJECTS C0 CONTROL BYTES, closing R5-IDX-8. A control byte
   is worse than a high byte: once grep classifies a file as binary it prints
   "Binary file <path> matches" and SUPPRESSES the matching lines, so a sweep reports a hit
@@ -160,7 +177,7 @@ any gate, so nothing would have surfaced it.
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-26: 649 [x] / 31 [~] / 0 [ ] (reconciled to the live marker counts; F25, the
+as of 2026-08-27: 650 [x] / 30 [~] / 0 [ ] (reconciled to the live marker counts; F25, the
 last [ ], closed 2026-08-25; the R5-IDX items added 2026-08-26 index open work that was
 sitting in other documents where no gate could see it) (G18-3 impl-detail-vs-contract audit COMPLETE -- whole tests/unit tree exhaustively swept, every nominee resolved; G18-1 mutation-testing COMPLETE and LEDGER-4
 committed-ledger done; a whole-doc un-defer + staleness sweep AND a [~] reclassification landed
