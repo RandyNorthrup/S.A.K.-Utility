@@ -151,9 +151,13 @@ QString quoteArgForPreview(const QString& value) {
 //
 // CreateProcess searches the CURRENT DIRECTORY ahead of PATH, so a bare name -- or any
 // relative path -- lets a binary planted in the working directory win. An absolute path is
-// kept as given (its existence is proven when the broker launches it, exactly as today); a
-// bare name is resolved via System32 then absolute PATH; a relative path with separators has
-// no defensible base directory and is refused rather than launched CWD-relative.
+// kept as given; a bare name is resolved via System32 then absolute PATH; a relative path with
+// separators has no defensible base directory and is refused rather than launched CWD-relative.
+//
+// This function decides the NAME only. Proving that the name refers to a real, examinable file
+// -- and recording WHICH file, so the launch can detect a swap -- is resolveRequestProcessProgram's
+// job immediately below. That split matters: the absolute branch here deliberately performs no
+// filesystem access, so its refusals stay purely textual and testable without a filesystem.
 [[nodiscard]] QString resolveProcessProgram(QString& program) {
     const QString trimmed = program.trimmed();
     if (trimmed.isEmpty()) {
@@ -203,6 +207,25 @@ void resolveRequestProcessProgram(AiCommandRequest& request) {
     const QString resolve_error = resolveProcessProgram(request.program);
     if (!resolve_error.isEmpty()) {
         request.validation_error = resolve_error;
+        return;
+    }
+    // BIND THE PLAN TO A FILE, not just to a path. resolveProcessProgram produces a name; the
+    // launch happens minutes later, on the far side of an approval dialog, a UAC prompt and
+    // restore-point creation. Recording which file that name meant NOW is what lets the broker
+    // prove at launch that nothing was swapped underneath the approval.
+    //
+    // This is also the first existence check the ABSOLUTE-path branch has ever had. It returned
+    // the caller's string untouched and left proof of existence to the broker, so a plan naming
+    // a file that was not there was still rendered, risk-classified and put in front of a human
+    // to approve -- an approval spent on something that could not run. An unreadable program is
+    // now refused at plan time.
+    request.program_identity = sak::executableIdentity(request.program);
+    if (!request.program_identity.valid) {
+        request.validation_error =
+            QStringLiteral(
+                "Cannot examine program '%1'; refusing to plan a launch of a file "
+                "that cannot be identified")
+                .arg(sanitizeForPreview(request.program.left(kToolNameErrorMaxChars)));
     }
 }
 

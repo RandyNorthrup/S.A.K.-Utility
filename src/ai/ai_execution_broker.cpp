@@ -179,9 +179,6 @@ constexpr int kMaxArgumentCount = 256;
         // The same truncation-at-launch mismatch parseRequiredString rejects above, and argv is
         // where it bites hardest: each element is passed to CreateProcessW inside a C string, so
         // the approver reads one argument and the process receives the shorter prefix of it.
-        // The same truncation-at-launch mismatch parseRequiredString rejects above, and argv is
-        // where it bites hardest: each element is passed to CreateProcessW inside a C string, so
-        // the approver reads one argument and the process receives the shorter prefix of it.
         if (argument.contains(QChar::Null)) {
             return QStringLiteral("an argument must not contain an embedded NUL character");
         }
@@ -461,6 +458,46 @@ namespace {
 
 }  // namespace
 
+namespace {
+
+/// @brief Resolve @p program in place to an absolute path, or return the refusal message.
+///
+/// THE RELATIVE-PATH ARM IS THE POINT. The old guard resolved only names with NO separator,
+/// so "sub/planted.exe" skipped resolution entirely and went to QProcess::start, which resolves
+/// it against the WORKING DIRECTORY -- precisely the hijack the resolution exists to prevent.
+/// The planner already refuses such a path (ai_command_tool_planner.cpp), so production never
+/// reached it; but startProcess is public API, nothing else enforced the rule, and a guard that
+/// depends on every caller having checked first is not a guard. The two layers now agree.
+[[nodiscard]] QString resolveLaunchProgram(QString& program) {
+    const bool has_separator = program.contains(QLatin1Char('/')) ||
+                               program.contains(QLatin1Char('\\'));
+    if (!has_separator) {
+        // A bare name is resolved by CreateProcess against the current directory before PATH,
+        // so resolve it here (System32, then absolute PATH entries) or refuse the run. Shared
+        // with the plan-time resolver (sak::resolveBareExecutable) so the binary named in the
+        // approval preview and the binary launched here can never be decided by two drifting
+        // copies of the same rule.
+        const QString resolved = sak::resolveBareExecutable(program);
+        if (resolved.isEmpty()) {
+            return QStringLiteral(
+                       "Cannot resolve program '%1' to an absolute path; refusing to launch a "
+                       "bare name")
+                .arg(program);
+        }
+        program = resolved;
+        return {};
+    }
+    if (!QDir::isAbsolutePath(program)) {
+        return QStringLiteral(
+                   "program must be an absolute path or a bare executable name, not a "
+                   "working-directory-relative path: %1")
+            .arg(program);
+    }
+    return {};
+}
+
+}  // namespace
+
 QString aiCommandPreconditionError(AiCommandTarget target, const AiCommandRequest& request) {
     const QString empty_error = emptyRequestError(target, request);
     if (!empty_error.isEmpty()) {
@@ -602,25 +639,39 @@ bool ExecutionBroker::startProcess(const AiCommandRequest& request, const QStrin
         emitDeferredFinish(std::move(fail));
         return false;
     }
-    // A bare name is resolved by CreateProcess against the current directory before PATH, so
-    // resolve it here (System32, then absolute PATH entries) or refuse the run.
     QString program = request.program.trimmed();
-    if (!program.contains(QLatin1Char('/')) && !program.contains(QLatin1Char('\\'))) {
-        // Shared with the plan-time resolver (sak::resolveBareExecutable) so the
-        // binary named in the approval preview and the binary launched here can
-        // never be decided by two drifting copies of the same rule.
-        const QString resolved = sak::resolveBareExecutable(program);
-        if (resolved.isEmpty()) {
+    const QString program_error = resolveLaunchProgram(program);
+    if (!program_error.isEmpty()) {
+        AiCommandResult fail;
+        fail.error_message = program_error;
+        emitDeferredFinish(std::move(fail));
+        return false;
+    }
+
+    // THE LAST POSSIBLE MOMENT TO CHECK. A plan carries the identity of the file its program
+    // named; re-taking it here and comparing proves the launch is about to run the binary the
+    // human approved rather than something that has since taken its name.
+    //
+    // THE RESIDUAL GAP IS STATED RATHER THAN HIDDEN: this closes the window from human scale
+    // (an approval dialog, a UAC prompt, restore-point creation -- minutes) to the microseconds
+    // between this comparison and CreateProcessW re-walking the path. That remainder cannot be
+    // removed here. Closing it needs a launch from the pinned handle itself, and QProcess::start
+    // accepts only a path -- there is no handle overload, and the Win32 route (an image section
+    // plus NtCreateUserProcess) would replace this broker's whole process lifecycle.
+    if (request.program_identity.valid) {
+        const sak::ExecutableIdentity now = sak::executableIdentity(program);
+        if (!sak::sameExecutable(request.program_identity, now)) {
             AiCommandResult fail;
-            fail.error_message = QStringLiteral(
-                                     "Cannot resolve program '%1' to an absolute path; refusing to "
-                                     "launch a bare name")
-                                     .arg(program);
+            fail.error_message =
+                QStringLiteral(
+                    "Program '%1' is not the file that was approved; it was replaced, "
+                    "moved, or became unreadable between approval and launch")
+                    .arg(program);
             emitDeferredFinish(std::move(fail));
             return false;
         }
-        program = resolved;
     }
+
     return launchProcess({.program = program,
                           .arguments = request.arguments,
                           .timeout_seconds = request.timeout_seconds,

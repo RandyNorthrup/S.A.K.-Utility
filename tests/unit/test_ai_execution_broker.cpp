@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/ai/ai_execution_broker.h"
+#include "sak/process_runner.h"
 
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -33,6 +35,8 @@ private Q_SLOTS:
     void startProcess_rejectsEmptyProgram();
     void processRequestFromJson_parsesArguments();
     void processRequestFromJson_refusesMalformedArguments();
+    void startProcess_refusesWorkingDirectoryRelativeProgram();
+    void startProcess_refusesAProgramThatIsNotTheApprovedFile();
     void refusesEmbeddedNulThatTheLaunchWouldTruncate();
     void embeddedNulSurvivesJsonTextSoTheGuardIsModelReachable();
     void toJson_redactsSecretsInStdoutAndStderr();
@@ -458,6 +462,88 @@ void AiExecutionBrokerTests::processRequestFromJson_parsesArguments() {
     wrong_type[QStringLiteral("timeout_seconds")] = QStringLiteral("30");
     const auto typed = sak::ai::ExecutionBroker::processRequestFromJson(wrong_type);
     QCOMPARE(typed.validation_error, QStringLiteral("timeout_seconds must be a number"));
+}
+
+void AiExecutionBrokerTests::startProcess_refusesWorkingDirectoryRelativeProgram() {
+    // THE BROKER USED TO BE THE FAIL-OPEN LAYER HERE. Its guard resolved only names with NO
+    // separator, so "sub/planted.exe" skipped resolution entirely and went to QProcess::start,
+    // which resolves a relative path against the WORKING DIRECTORY -- exactly the hijack the
+    // resolution exists to prevent. The planner already refused such a path, so production never
+    // reached it; but startProcess is public API and nothing here enforced the rule. A guard that
+    // holds only because every caller happened to check first is not a guard.
+    sak::ai::ExecutionBroker broker;
+    QSignalSpy finished_spy(&broker, &sak::ai::ExecutionBroker::finished);
+
+    sak::ai::AiCommandRequest request;
+    request.program = QStringLiteral("sub/planted.exe");
+    request.timeout_seconds = 10;
+
+    QVERIFY(!broker.startProcess(request, QStringLiteral("cmd_relative")));
+    QVERIFY(waitForFinish(finished_spy));
+    const auto result = resultFromSpy(finished_spy);
+    QVERIFY(!result.started);
+    QCOMPARE(result.error_message,
+             QStringLiteral("program must be an absolute path or a bare executable name, not a "
+                            "working-directory-relative path: sub/planted.exe"));
+
+    // Backslash form too -- the same string with the other separator must not slip through.
+    sak::ai::ExecutionBroker back_broker;
+    QSignalSpy back_spy(&back_broker, &sak::ai::ExecutionBroker::finished);
+    sak::ai::AiCommandRequest back_request;
+    back_request.program = QStringLiteral("sub\\planted.exe");
+    back_request.timeout_seconds = 10;
+    QVERIFY(!back_broker.startProcess(back_request, QStringLiteral("cmd_relative_back")));
+    QVERIFY(waitForFinish(back_spy));
+    QVERIFY(!resultFromSpy(back_spy).started);
+}
+
+void AiExecutionBrokerTests::startProcess_refusesAProgramThatIsNotTheApprovedFile() {
+#ifndef Q_OS_WIN
+    QSKIP("file-identity revalidation is exercised on Windows");
+#else
+    // The plan resolves the program to a path so the approval preview can name the binary that
+    // will run -- but a path is a NAME. The gap between naming it and running it spans an
+    // approval dialog, a UAC prompt and restore-point creation: minutes, during which the same
+    // string can come to mean a different file. The plan therefore carries the IDENTITY of the
+    // file it named, and the launch refuses if the file no longer matches.
+    const QString cmd = sak::system32Path(QStringLiteral("cmd.exe"));
+    QVERIFY2(!cmd.isEmpty() && QFileInfo(cmd).isFile(), qPrintable(cmd));
+
+    sak::ai::AiCommandRequest request;
+    request.program = cmd;
+    request.timeout_seconds = 10;
+    // A VALID identity belonging to a DIFFERENT real file: this is what a swap looks like from
+    // the launch site -- the path still resolves, the file is still readable, it is simply not
+    // the one that was approved.
+    const QString other = sak::system32Path(QStringLiteral("ping.exe"));
+    QVERIFY2(!other.isEmpty() && QFileInfo(other).isFile(), qPrintable(other));
+    request.program_identity = sak::executableIdentity(other);
+    QVERIFY(request.program_identity.valid);
+
+    sak::ai::ExecutionBroker broker;
+    QSignalSpy finished_spy(&broker, &sak::ai::ExecutionBroker::finished);
+    QVERIFY(!broker.startProcess(request, QStringLiteral("cmd_swapped")));
+    QVERIFY(waitForFinish(finished_spy));
+    const auto result = resultFromSpy(finished_spy);
+    QVERIFY2(!result.started, "a program that is not the approved file must never launch");
+    QVERIFY2(result.error_message.contains(QStringLiteral("not the file that was approved")),
+             qPrintable(result.error_message));
+
+    // NON-VACUITY: the SAME request with the CORRECT identity launches. Without this, a guard
+    // that refused every identity-carrying request would pass the assertions above.
+    sak::ai::AiCommandRequest ok_request = request;
+    ok_request.arguments = QStringList{QStringLiteral("/c"), QStringLiteral("echo identity-ok")};
+    ok_request.program_identity = sak::executableIdentity(cmd);
+    QVERIFY(ok_request.program_identity.valid);
+
+    sak::ai::ExecutionBroker ok_broker;
+    QSignalSpy ok_spy(&ok_broker, &sak::ai::ExecutionBroker::finished);
+    QVERIFY(ok_broker.startProcess(ok_request, QStringLiteral("cmd_identity_ok")));
+    QVERIFY(waitForFinish(ok_spy));
+    const auto ok_result = resultFromSpy(ok_spy);
+    QVERIFY2(ok_result.started, qPrintable(ok_result.error_message));
+    QCOMPARE(ok_result.stdout_text.trimmed(), QStringLiteral("identity-ok"));
+#endif
 }
 
 void AiExecutionBrokerTests::refusesEmbeddedNulThatTheLaunchWouldTruncate() {

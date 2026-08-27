@@ -5,6 +5,7 @@
 
 #include "sak/layout_constants.h"
 
+#include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
@@ -35,6 +36,10 @@ ProcessFaultInjector g_process_fault_injector;
 // well above the largest caller cap (~64 MiB) so it never clips legitimate
 // captured output, only pathological floods.
 constexpr qsizetype kMaxAccumulatedOutputChars = static_cast<qsizetype>(128) * 1024 * 1024;
+
+// Win32 splits file index, file size and FILETIME into a high and a low 32-bit half; this is
+// the shift that recombines them.
+constexpr int kFileIndexHighShift = 32;
 
 struct ProcessRunRequest {
     QString program;
@@ -336,6 +341,68 @@ QString resolveBareExecutable(const QString& name) {
         return {};
     }
     return QStandardPaths::findExecutable(name, search);
+}
+
+ExecutableIdentity executableIdentity(const QString& absolute_path) {
+    ExecutableIdentity identity;
+    if (absolute_path.isEmpty()) {
+        return identity;
+    }
+#ifdef Q_OS_WIN
+    const std::wstring wide = absolute_path.toStdWString();
+    // Metadata only, and share everything: this is a WITNESS, not a lock. FILE_FLAG_
+    // BACKUP_SEMANTICS is absent deliberately -- a directory is not a launch target, and
+    // refusing to open one here is a check the caller gets for free.
+    const HANDLE handle = ::CreateFileW(wide.c_str(),
+                                        FILE_READ_ATTRIBUTES,
+                                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                        nullptr,
+                                        OPEN_EXISTING,
+                                        FILE_ATTRIBUTE_NORMAL,
+                                        nullptr);
+    if (handle == INVALID_HANDLE_VALUE) {
+        return identity;  // unreadable -> stays invalid, and every caller fails closed on that
+    }
+    BY_HANDLE_FILE_INFORMATION info{};
+    const BOOL ok = ::GetFileInformationByHandle(handle, &info);
+    ::CloseHandle(handle);
+    if (ok == 0) {
+        return identity;
+    }
+    identity.volume_serial = info.dwVolumeSerialNumber;
+    identity.file_index = (static_cast<quint64>(info.nFileIndexHigh) << kFileIndexHighShift) |
+                          static_cast<quint64>(info.nFileIndexLow);
+    identity.size_bytes = (static_cast<qint64>(info.nFileSizeHigh) << kFileIndexHighShift) |
+                          static_cast<qint64>(info.nFileSizeLow);
+    identity.last_write_ms = (static_cast<qint64>(info.ftLastWriteTime.dwHighDateTime)
+                              << kFileIndexHighShift) |
+                             static_cast<qint64>(info.ftLastWriteTime.dwLowDateTime);
+    identity.valid = true;
+    return identity;
+#else
+    // Off Windows there is no volume-serial/file-index pair to read, so the identity is
+    // WEAKER by construction: size and modification time only. Stated rather than hidden --
+    // a replacement that preserves both would compare equal here and not on Windows.
+    const QFileInfo info(absolute_path);
+    if (!info.isFile()) {
+        return identity;
+    }
+    identity.size_bytes = info.size();
+    identity.last_write_ms = info.lastModified().toMSecsSinceEpoch();
+    identity.valid = true;
+    return identity;
+#endif
+}
+
+bool sameExecutable(const ExecutableIdentity& lhs, const ExecutableIdentity& rhs) {
+    // Two INVALID identities are not equal. Comparing "could not read" to "could not read" as a
+    // match is how a revalidation check turns into a rubber stamp on exactly the runs where the
+    // file became unreadable.
+    if (!lhs.valid || !rhs.valid) {
+        return false;
+    }
+    return lhs.volume_serial == rhs.volume_serial && lhs.file_index == rhs.file_index &&
+           lhs.size_bytes == rhs.size_bytes && lhs.last_write_ms == rhs.last_write_ms;
 }
 
 QString windowsDirPath(const QString& relativeExe) {

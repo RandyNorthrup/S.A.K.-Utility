@@ -165,6 +165,40 @@ private:
 /// whole argument for one home.
 [[nodiscard]] QString resolveBareExecutable(const QString& name);
 
+/// @brief Identity of an executable FILE, as opposed to the path that currently names it.
+///
+/// A resolved path is a name, and a name is not a binding. Between the moment a launch target
+/// is decided and the moment it launches, the same string can come to mean a different file:
+/// the file can be replaced in place, the directory renamed and another put in its place, or a
+/// junction/symlink on the path retargeted. Nothing about the string changes.
+///
+/// @c valid is false when the file could not be examined at all. It is NOT a synthesised
+/// "unknown but probably fine": every caller must fail closed on it, because an identity that
+/// could not be taken cannot later be compared.
+struct ExecutableIdentity {
+    /// Volume serial + file index is the Win32 identity of a file: it survives a rename and
+    /// differs for a replacement, which is exactly the discrimination a path cannot make.
+    quint32 volume_serial{0};
+    quint64 file_index{0};
+    qint64 size_bytes{-1};
+    qint64 last_write_ms{-1};
+    bool valid{false};
+};
+
+/// @brief Capture the identity of the file at @p absolute_path, or an invalid identity.
+///
+/// Opens the file for metadata only, sharing read/write/delete: this is a WITNESS, not a lock.
+/// Holding a deny-write handle across a human approval would block legitimate updates of a
+/// system binary for as long as a dialog sits open, and would still not survive process exit,
+/// so the design records what the file WAS and re-checks rather than trying to freeze it.
+[[nodiscard]] ExecutableIdentity executableIdentity(const QString& absolute_path);
+
+/// @brief True when both identities are valid AND name the same file with the same size and
+///        modification time. Two invalid identities are NOT equal -- absence of evidence must
+///        never compare equal to absence of evidence, or an unreadable file would validate
+///        against another unreadable file.
+[[nodiscard]] bool sameExecutable(const ExecutableIdentity& lhs, const ExecutableIdentity& rhs);
+
 /// @brief Launch a Windows-shipped System32 tool DETACHED, naming it by its absolute path.
 ///
 /// A shell-open ("explorer.exe <uri>", "control.exe /name ...") is resolved through the

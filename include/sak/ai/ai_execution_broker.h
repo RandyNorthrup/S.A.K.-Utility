@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/layout_constants.h"
+#include "sak/process_runner.h"
 
 #include <QElapsedTimer>
 #include <QJsonObject>
@@ -64,6 +65,19 @@ struct AiCommandRequest {
     /// malformed or out of domain; every entry point refuses it with this exact message
     /// instead of executing a request that was repaired with defaults.
     QString validation_error;
+    /// WHICH FILE `program` named when the plan was built, for the direct-process path.
+    ///
+    /// The planner resolves `program` to an absolute path so the approval preview can name the
+    /// binary that will run -- but a path is a NAME, and the gap between naming it and running
+    /// it is human-scale: it spans an approval dialog, a UAC prompt and restore-point creation,
+    /// i.e. minutes, not microseconds. Across that gap the same string can come to mean a
+    /// different file. Recording the identity here lets startProcess prove, immediately before
+    /// launch, that it is about to run the file that was approved and not merely something with
+    /// the approved name.
+    ///
+    /// Left invalid for the shell targets, which launch a System32 interpreter resolved at
+    /// launch time rather than an AI-chosen path, and so have no plan-time decision to bind to.
+    sak::ExecutableIdentity program_identity;
 };
 
 struct AiCommandResult {

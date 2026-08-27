@@ -413,3 +413,33 @@ repos:
           -File scripts/check_ascii_only.ps1
         language: system
         exclude: (tools/chocolatey|tools/uup|tools/iperf3|tools/smartmontools|artifacts)/
+
+      # -------------------------------------------------------------------
+      # 11. FULL-HISTORY secret scan, at PUSH time. This is the only gate that
+      #     runs at the moment a secret actually becomes exposed.
+      #
+      #     A push uploads HISTORY, not the working tree, so redacting a file
+      #     does nothing about the blob already in an earlier commit. The
+      #     commit-time scan above deliberately runs -SkipExternalTools (regex
+      #     only, current files only) so it stays fast -- which is exactly why
+      #     every commit in this repo has passed while a live credential sits
+      #     in history at 08035cf1. See the PRE-PUSH BLOCKER section at the top
+      #     of docs/RELEASE_READINESS.md.
+      #
+      #     Until this hook existed, NOTHING ran at push time and the blocker
+      #     was enforced only by a human remembering to read a document. It
+      #     fails closed: if gitleaks is missing, scan_secrets.ps1 errors rather
+      #     than reporting a pass it did not perform.
+      #
+      #     Install it (pre-commit install only wires pre-commit by default):
+      #         pre-commit install --hook-type pre-push
+      # -------------------------------------------------------------------
+      - id: full-history-secret-scan
+        name: "Full-history secret scan (pre-push)"
+        description: "Reject a push whose HISTORY contains a secret, not just its worktree"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/scan_secrets.ps1
+        language: system
+        stages: [pre-push]
+        pass_filenames: false
+        always_run: true

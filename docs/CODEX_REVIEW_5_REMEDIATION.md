@@ -2089,10 +2089,9 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
         "THE DEAD FUNCTION WAS THE UNFINISHED HALF" below. It was never dead code in the sense
         the flag implied; it was the missing half of the very feature the report apologised for,
         and it is now wired up.
-      - ai_command_tool_planner, ONE finding still open. (a) The resolved program is not
-        pinned or revalidated between approval and launch, so the binary can change underneath
-        the "SAME binary" guarantee -- a real TOCTOU that needs handle pinning across the
-        planner/broker boundary, not a one-line fix.
+      - ai_command_tool_planner: ALL THREE findings are now closed.
+        (a), the unpinned program across the approval gap, is CLOSED 2026-08-26 -- see "A PATH IS
+        A NAME, NOT A BINDING" below, which also closed a relative-path fail-open in the broker.
         (b), the embedded NUL retained in command/program/arguments, is CLOSED 2026-08-26 --
         see "THE COMMAND THE APPROVER READ WAS NOT THE COMMAND THAT WOULD RUN" below.
         (c), broker preconditions unchecked at plan time, is CLOSED 2026-08-26 -- see "A PLAN
@@ -2676,6 +2675,59 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
     ALSO FIXED IN PASSING: a duplicate kSecondsPerMinute. The compiler rejected it as ambiguous
     against sak::kSecondsPerMinute in layout_constants.h -- the same duplicated-knowledge class
     this whole batch is about, caught for free because the canonical one already existed.
+  - A PATH IS A NAME, NOT A BINDING, 2026-08-26. This closes leftover finding (a) on
+    ai_command_tool_planner, and the survey behind it found a second live fail-open plus a
+    defect I had shipped myself two commits earlier.
+      * THE RECORDED FINDING. The planner resolves run_process's program to an absolute path so
+        the approval preview can name the binary that will launch. But the plan carried a
+        QString and nothing else -- no handle, no file id, no size, no timestamp -- and the gap
+        between naming the file and running it is HUMAN scale: it spans the approval modal, a
+        UAC prompt and restore-point creation (an elevated Checkpoint-Computer), i.e. minutes.
+        Across that gap the same string can come to mean a different file: replaced in place,
+        the directory renamed and another put in its place, or a junction on the path retargeted.
+        Nothing about the string changes, so nothing noticed.
+        THE PLAN NOW CARRIES THE IDENTITY OF THE FILE, not just its name.
+        sak::executableIdentity() (beside resolveBareExecutable, which had the same two-homes
+        problem) records volume serial + file index + size + last-write via
+        GetFileInformationByHandle; startProcess re-takes it immediately before launch and
+        refuses on any mismatch. sameExecutable() treats two INVALID identities as NOT equal --
+        absence of evidence must never compare equal to absence of evidence, or an unreadable
+        file would validate against another unreadable file.
+        THE RESIDUAL GAP IS STATED, NOT HIDDEN: this shrinks the window from minutes to the
+        microseconds between the comparison and CreateProcessW re-walking the path. Closing it
+        entirely needs a launch from the pinned handle, and that is NOT POSSIBLE here --
+        QProcess::start takes only a path, there is no handle overload, there is no
+        CreateProcessW call anywhere in src/, and the Win32 route (an image section plus
+        NtCreateUserProcess) would replace the broker's entire process lifecycle (job assignment,
+        stdout/stderr drain, timeout, cancel). Recorded as a design limit, not a TODO.
+        A DELIBERATE SCOPE NOTE: elevated requests never reach this path at all --
+        elevationUnsupportedError refuses requires_admin for Process and Cmd, so run_process,
+        the only target carrying an AI-chosen absolute program, cannot take the elevated route.
+        The first draft of the survey listed that as a separate residual gap; the adversarial
+        verifier collapsed it, which is why it is written down here as closed rather than open.
+      * THE ABSOLUTE-PATH BRANCH HAD NEVER CHECKED ANYTHING. resolveProcessProgram returned an
+        absolute path untouched -- no stat, no open -- and its own comment conceded that
+        existence was "proven when the broker launches it". So a plan naming a file that was not
+        there was still rendered, risk-classified and PUT IN FRONT OF A HUMAN TO APPROVE, and
+        only then failed. Capturing the identity is also the existence proof, so that plan is
+        now refused before anyone is asked to approve it.
+      * A SECOND FAIL-OPEN, IN THE BROKER, FOUND BY THE SURVEY. startProcess resolved only names
+        with NO separator, so "sub/planted.exe" skipped resolution entirely and went to
+        QProcess::start, which resolves a relative path against the WORKING DIRECTORY -- exactly
+        the hijack the resolution exists to prevent. The planner already refused such a path, so
+        production never reached it, but startProcess is public API and no test covered it. A
+        guard that holds only because every caller happened to check first is not a guard. Both
+        layers now refuse it, and the broker's resolution moved into one resolveLaunchProgram()
+        so the bare-name and relative arms cannot drift apart again.
+      * A DEFECT OF MY OWN, shipped in the NUL commit two commits earlier and caught by this
+        survey: parseOptionalArguments carried the same three-line comment TWICE, verbatim. A
+        copy-paste, found only because an unrelated audit read the file closely.
+    MUTATION-PROVED, both new guards drilled separately: comparing the fresh identity against
+    ITSELF (never differs) turns test_ai_execution_broker RED, and neutering the relative-path
+    arm turns it RED. BUILD EXIT: 0 captured separately for each.
+    NON-VACUITY IS THE LOAD-BEARING HALF of the identity test: the same request with the CORRECT
+    identity must LAUNCH and produce its output, or a guard that refused every identity-carrying
+    request would pass the refusal assertions. Both halves are asserted.
   - AUTHORIZED-IN-PROGRESS, BLOCKED-ON-USER (relabelled 2026-08-17 from a dishonest "RESOLVED [deferred-with-rationale]" -- the sweep is genuinely INCOMPLETE, not resolved): 764 of 1098 units run (69.6%); 334 remain (246 tests / 75 src / 9 include / 4 scripts). The August-11-2026 Codex account cap that blocked it HAS since reset, but RELAUNCH IS A MANUAL, BUDGET-HEAVY STEP on Randy's own Codex account (334 xhigh review units) -- nothing auto-resumes, and burning that much of his account budget is his call, so this waits on his explicit go. NOT verified-done (334 units genuinely unrun); NOT deferred (it is authorized and would resume the moment he says so). The 764 units already run DID produce the P1-P11 subsystem findings, all closed.
       BLOCKED: 764 of 1098 units complete (69.6%). The Codex account usage limit is
       exhausted and does not reset until August 11, 2026 11:10 AM, so the remaining 334
