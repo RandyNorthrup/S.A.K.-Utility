@@ -550,3 +550,10 @@ build-cov/
 
 # Local-only Claude Code workspace tooling (personal skills, hardcoded paths)
 .claude/
+
+# Machine-local agent notes: this workstation's rigs, addresses and owner working
+# preferences. Kept in the repo directory so ANY agent working here can read it (agent
+# memories are per-tool and do not survive the machine), but never committed -- it
+# describes the developer's machine, not the product. Project conventions live in the
+# tracked AGENTS.md instead.
+AGENTS.local.md
