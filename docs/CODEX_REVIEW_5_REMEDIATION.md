@@ -170,6 +170,33 @@ a parked design, per the bucket convention. Open work is what remains after thos
   canonical list stated once, per-proof deltas re-verified against each `report.json`, and
   the other files pointing at it. This tool writes to raw disks, so an operation reading as
   approved when it is not is a data-destruction risk.
+  UPDATE 2026-08-27, and the finding turned on itself. Re-checking the tree found that THIS
+  ENTRY'S OWN "what actually remains blocked" list had rotted the same way the lists it
+  complains about did: it said HFS+ work needing extents-overflow records beyond the eight
+  initial extents remained blocked, but `rebalanceExtentsModel` exists at
+  partition_hfs_internal.h:6108 and is called at :6330, and the H1-H8 track records
+  extents-overflow B-trees of arbitrary depth and width with split plus underflow
+  merge/rebalance. A finding about stale capability claims going stale is not irony, it is the
+  mechanism: any capability list written in prose rots, including this one.
+  PARTIALLY FIXED. Two of the three restatements had ALREADY been annotated as superseded and
+  already name one owner: PARTITION_MANAGER_CERTIFICATION.md:589 and CHANGELOG.md:18 both say
+  their in-development "remains blocked" text was accurate when written and both name
+  `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md` as the single capability-matrix owner.
+  What was NOT annotated, and what this pass fixes, is `docs/PRODUCTION_GRADE_AUDIT.md`. Its
+  row 57 asserted that "B-tree split/rebalance ... compressed-file writes, and recursive
+  extents-overflow-file overflow remain blocked" -- flatly contradicting the H1-H8 record --
+  and its row 58 asserted APFS resize and non-generated writes were blocked, which predates
+  A1-A8. Both now say SUPERSEDED and point at the owner. Nothing here asserts a new
+  certification status: the rows were corrected by DELETING claims, not by adding any.
+  STILL OPEN, and it is the only durable fix: the single owner is still PROSE, so nothing
+  mechanically stops the next copy from drifting. The capability set belongs in machine-readable
+  data under `certification/` (where the destructive-operations matrix already lives) with the
+  docs citing it, per the owner's ruling that structured data does not belong in prose. That is
+  deliberately NOT done here: authoring a status-per-capability file means asserting, for about
+  thirty Apple-filesystem operations, which are certified -- and getting one wrong in the
+  permissive direction on a raw-disk writer is a data-destruction risk, not a documentation
+  bug. It needs the evidence read per capability against each report.json, not a doc-to-doc
+  transcription by an agent that cannot re-run the Apple certification.
 - [x] R5-IDX-8 THE ASCII GATE DOES NOT REJECT CONTROL BYTES -- CLOSED by R5-IDX-15. `scripts/check_ascii_only.ps1`
   checks for bytes above 0x7F and a BOM, so NUL and other C0 controls pass. That is how
   R5-IDX-2's eight NULs survived in a tracked doc, and a NUL makes grep-based tools skip the
