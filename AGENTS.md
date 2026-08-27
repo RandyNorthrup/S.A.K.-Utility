@@ -36,6 +36,28 @@ removed once that was established.
 A removal still needs the owner's authorization -- not because removal is wrong, but because
 which way that decision goes is his call, not an agent's.
 
+**Scan first. Always.** Before writing a file, class, function, gate, test or document, search
+for it. Not to be tidy -- to avoid building a second copy of something that already works,
+because a parallel implementation is worse than either version alone: two things now drift, and
+the one a caller reaches is decided by an include rather than by a decision.
+
+Search for the DELIVERABLE, not for a word that sounds like it:
+
+- The names the thing would actually have -- the class, the function, the tool id, the file.
+- What it DOES, in the vocabulary this tree already uses (`grep -rl` a behaviour, not a title).
+- Whether it exists under a different name, in a different layer, or unused.
+
+Two failures in this repo, in both directions. `wifi_profile_scanner` was written as a headless
+scanner and then sat UNUSED while the same logic lived on as static members of the wifi widget
+-- a parallel implementation shipped and drifted before anything reached it. And a plan was
+reported as having "no code in the tree" because a grep for a word from its FILENAME returned
+nothing, when the feature was fully built: 62 registered action ids, a registry, a bridge, a
+service and a unit test, all findable by grepping the names the plan itself specified. Acting
+on that would have meant rebuilding a finished subsystem.
+
+If a search turns up something close but not identical, that is a decision to make and state,
+not a reason to add another one quietly.
+
 **Fail closed. No fallbacks.** A fallback disguises an error and ships the failure silently.
 No PATH fallback, no stale-cache fallback, no guessed default, no "log it and return success".
 Surface the real error and refuse. This is the single most load-bearing rule in the codebase.
