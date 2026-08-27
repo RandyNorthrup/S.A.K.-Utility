@@ -26,3 +26,22 @@
 #    the pre-commit staged scan added alongside this file is what stops the next one reaching
 #    history at all. Credentials belong in the untracked temp/creds.md, read at use time.
 08035cf1b7a520aa235fa7d86c785dd6eb3a6a17:docs/APFS_LIVE_RECERT_FOLLOWONS.md:generic-api-key:109
+#
+# 5. The browser extension's manifest `key` field. This is the base64 PUBLIC key that pins the
+#    extension ID; Chrome requires it in the manifest and it is meant to be published. Nothing
+#    is authenticated by it.
+c57db9b1cd69d1251b765a9418b8174838cfe03e:browser/extension/manifest.json:generic-api-key:5
+#
+# 6. A generic Windows product key (the published KMS-client style value, confirmed by the
+#    owner), passed as `--key=` in a VirtualBox unattended-install argument list beside
+#    --locale, --country and --time-zone. It licenses nothing that is his.
+c4cdefc615b374bc7e8aa99186e826e5187380bb:scripts/new_partition_manager_automation_vm.ps1:generic-api-key:347
+#
+# 7. IEEE 802.11 AKM suite selector constants in a lookup table that maps each to a display
+#    name ("WPA2-Personal" and friends). Published protocol identifiers, not key material.
+ce15beae8d1180758e854c34bca02ecc59580cca:src/core/wifi_analyzer.cpp:generic-api-key:130
+#
+# 8. A fabricated product key in the activation-key test. The test asserts that a full key is
+#    MASKED before display, so the fixture has to look like a real key for the assertion to
+#    mean anything. Same class as entries 2 and 3.
+2f541318b8fe737aeff62c4ebfab027ded59ae9e:tests/unit/test_backup_activation_keys_action.cpp:generic-api-key:247
