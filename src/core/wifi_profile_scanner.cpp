@@ -52,44 +52,97 @@ QString friendlyWifiAuthName(const QString& token) {
     return token.trimmed();
 }
 
-}  // namespace
-
-QString wifiSecurityTypeFromProfileXml(const QString& xml) {
-    // The first (and only) <authentication> element lives under MSM/security/authEncryption. Match
-    // it case-insensitively across newlines; the value is a schema token, never localized text.
-    static const QRegularExpression re(
-        QStringLiteral("<authentication>\\s*([^<]+?)\\s*</authentication>"),
-        QRegularExpression::CaseInsensitiveOption | QRegularExpression::DotMatchesEverythingOption);
+/// Capture the trimmed text of the first @p element in @p xml, or empty when the element is
+/// absent, unterminated or blank. Shared by the three element readers below so they cannot drift
+/// apart on casing, newline handling or the closing-tag anchor.
+QString firstElementText(const QString& xml, const QString& element) {
+    // The closing tag is REQUIRED: a truncated WlanGetProfile buffer must fail closed rather than
+    // hand back whatever bytes followed the opening tag.
+    const QRegularExpression re(QStringLiteral("<%1>\\s*([^<]*?)\\s*</%1>").arg(element),
+                                QRegularExpression::CaseInsensitiveOption |
+                                    QRegularExpression::DotMatchesEverythingOption);
     const QRegularExpressionMatch match = re.match(xml);
     if (!match.hasMatch()) {
         return {};
     }
-    return friendlyWifiAuthName(match.captured(1));
+    return match.captured(1).trimmed();
+}
+
+}  // namespace
+
+bool wifiHiddenFromProfileXml(const QString& xml) {
+    // Only an explicit "true" hides the network. Absent, blank, "false" or anything unrecognized
+    // means broadcasting, which is both the schema default and the safe answer: mislabelling a
+    // visible network as hidden makes a re-deployed profile that never connects.
+    return firstElementText(xml, QStringLiteral("nonBroadcast"))
+               .compare(QStringLiteral("true"), Qt::CaseInsensitive) == 0;
+}
+
+QString wifiPlaintextKeyFromProfileXml(const QString& xml) {
+    // <protected> gates everything. Without WLAN_PROFILE_GET_PLAINTEXT_KEY, Windows still emits a
+    // <keyMaterial> element -- holding the DPAPI ciphertext, a long hex blob that looks enough
+    // like a key to be mistaken for one. Reading keyMaterial alone would therefore hand a
+    // technician an unusable string and let it be exported as a password.
+    if (firstElementText(xml, QStringLiteral("protected"))
+            .compare(QStringLiteral("false"), Qt::CaseInsensitive) != 0) {
+        return {};
+    }
+    return firstElementText(xml, QStringLiteral("keyMaterial"));
+}
+
+QString wifiSecurityTypeFromProfileXml(const QString& xml) {
+    // The first (and only) <authentication> element lives under MSM/security/authEncryption. The
+    // value is a schema token, never localized text. Read through the same element reader as
+    // nonBroadcast and keyMaterial so all three share one notion of "the element is present,
+    // closed, and non-blank".
+    return friendlyWifiAuthName(firstElementText(xml, QStringLiteral("authentication")));
 }
 
 #ifdef Q_OS_WIN
 
 namespace {
 
-/// Read one profile's XML, deriving its security type (and, when requested, its re-importable XML).
-/// WlanGetProfile is called WITHOUT WLAN_PROFILE_GET_PLAINTEXT_KEY, so the key stays
-/// DPAPI-protected and no plaintext PSK is ever produced. Sets @p detail_ok false on a read
-/// failure.
-WifiProfileInfo readOneProfile(
-    HANDLE handle, const GUID& guid, LPCWSTR profile_name, bool include_xml, bool& detail_ok) {
+/// What a caller asked this scan to produce. Kept as one value so the two functions that thread it
+/// down to WlanGetProfile carry a single decision rather than a pair of loose booleans that could
+/// be swapped at a call site.
+struct ProfileReadRequest {
+    bool include_xml{true};
+    WifiKeyMaterial key_material{WifiKeyMaterial::Protected};
+};
+
+/// Read one profile's XML, deriving its security type, hidden flag, and -- only under
+/// WifiKeyMaterial::Plaintext -- its cleartext PSK. Under WifiKeyMaterial::Protected the
+/// WLAN_PROFILE_GET_PLAINTEXT_KEY flag is not set, so the key stays DPAPI-protected and no
+/// plaintext PSK is ever produced. Sets @p detail_ok false on a read failure.
+WifiProfileInfo readOneProfile(HANDLE handle,
+                               const GUID& guid,
+                               LPCWSTR profile_name,
+                               const ProfileReadRequest& request,
+                               bool& detail_ok) {
     WifiProfileInfo info;
     info.profile_name = QString::fromWCharArray(profile_name);
     info.selected = true;
 
     LPWSTR xml = nullptr;
-    DWORD flags = 0;  // 0 -> keyMaterial remains DPAPI-protected (protected=true), never plaintext
+    // In: which key material to return. Out: what WlanGetProfile actually granted. Passing 0 keeps
+    // keyMaterial DPAPI-protected (protected=true); the plaintext flag asks Windows to decrypt it,
+    // which it does only for a caller holding sufficient privilege. Either way the XML's own
+    // <protected> element is what wifiPlaintextKeyFromProfileXml trusts, so a request that Windows
+    // silently declined yields no key rather than a hex blob posing as one.
+    DWORD flags = (request.key_material == WifiKeyMaterial::Plaintext)
+                      ? static_cast<DWORD>(WLAN_PROFILE_GET_PLAINTEXT_KEY)
+                      : 0u;
     DWORD granted_access = 0;
     const DWORD rc =
         WlanGetProfile(handle, &guid, profile_name, nullptr, &xml, &flags, &granted_access);
     if (rc == ERROR_SUCCESS && xml != nullptr) {
         const QString xml_str = QString::fromWCharArray(xml);
         info.security_type = wifiSecurityTypeFromProfileXml(xml_str);
-        if (include_xml) {
+        info.hidden = wifiHiddenFromProfileXml(xml_str);
+        if (request.key_material == WifiKeyMaterial::Plaintext) {
+            info.plaintext_key = wifiPlaintextKeyFromProfileXml(xml_str);
+        }
+        if (request.include_xml) {
             info.xml_data = xml_str;  // real re-importable WLANProfile XML (DPAPI-protected key)
         }
         detail_ok = true;
@@ -112,7 +165,7 @@ WifiProfileInfo readOneProfile(
 /// profile that fails its detail read increments @p detail_failures.
 bool appendInterfaceProfiles(HANDLE handle,
                              const GUID& guid,
-                             bool include_xml,
+                             const ProfileReadRequest& request,
                              QVector<WifiProfileInfo>& out,
                              int& detail_failures) {
     WLAN_PROFILE_INFO_LIST* profile_list = nullptr;
@@ -127,7 +180,7 @@ bool appendInterfaceProfiles(HANDLE handle,
     for (DWORD p = 0; p < profile_list->dwNumberOfItems; ++p) {
         bool detail_ok = false;
         const WifiProfileInfo info = readOneProfile(
-            handle, guid, profile_list->ProfileInfo[p].strProfileName, include_xml, detail_ok);
+            handle, guid, profile_list->ProfileInfo[p].strProfileName, request, detail_ok);
         if (detail_ok) {
             out.append(info);
         } else {
@@ -168,7 +221,8 @@ void reportScanOutcome(const WifiScanLogger& logger,
 
 QVector<WifiProfileInfo> scanAllWifiProfiles(const WifiScanLogger& logger,
                                              bool* scan_ok,
-                                             bool include_xml) {
+                                             bool include_xml,
+                                             WifiKeyMaterial key_material) {
     auto fail = [&](const char* why) -> QVector<WifiProfileInfo> {
         sak::logWarning("WLAN enumeration failed: {}", why);
         if (logger) {
@@ -179,6 +233,14 @@ QVector<WifiProfileInfo> scanAllWifiProfiles(const WifiScanLogger& logger,
         }
         return {};
     };
+
+    // Refuse the one combination that would leak: plaintext key material retained inside xml_data,
+    // which WifiProfileInfo::toJson DOES serialize, so a backup manifest built from this result
+    // would carry every PSK in the clear. Refusing beats honouring one request and dropping the
+    // other -- a caller that asked for both has a bug, and either silent choice hides it.
+    if (include_xml && key_material == WifiKeyMaterial::Plaintext) {
+        return fail("plaintext key material was requested together with XML retention");
+    }
 
     HANDLE handle = nullptr;
     DWORD negotiated_version = 0;
@@ -194,13 +256,14 @@ QVector<WifiProfileInfo> scanAllWifiProfiles(const WifiScanLogger& logger,
         return fail("WlanEnumInterfaces");
     }
 
+    const ProfileReadRequest request{include_xml, key_material};
     QVector<WifiProfileInfo> profiles;
     int detail_failures = 0;
     bool enumeration_complete = true;
     for (DWORD i = 0; i < interfaces->dwNumberOfItems; ++i) {
         if (!appendInterfaceProfiles(handle,
                                      interfaces->InterfaceInfo[i].InterfaceGuid,
-                                     include_xml,
+                                     request,
                                      profiles,
                                      detail_failures)) {
             enumeration_complete = false;
@@ -218,8 +281,10 @@ QVector<WifiProfileInfo> scanAllWifiProfiles(const WifiScanLogger& logger,
 
 QVector<WifiProfileInfo> scanAllWifiProfiles(const WifiScanLogger& logger,
                                              bool* scan_ok,
-                                             bool include_xml) {
+                                             bool include_xml,
+                                             WifiKeyMaterial key_material) {
     Q_UNUSED(include_xml);
+    Q_UNUSED(key_material);
     if (logger) {
         logger(QStringLiteral("WiFi scanning is Windows-only"));
     }

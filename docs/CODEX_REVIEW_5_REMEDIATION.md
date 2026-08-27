@@ -65,6 +65,51 @@ a parked design, per the bucket convention. Open work is what remains after thos
   changes live GUI behaviour on netsh operations, including the async/progress shape the
   widgets rely on, so it needs its own batch, its own drills and its own gate rather than being
   slipped into a verification.
+  WIFI HALF CLOSED 2026-08-27. wifi_manager_panel.cpp no longer runs netsh to READ profiles.
+  scanWindowsProfileNames() and parseWindowsWifiProfile() are deleted; the panel calls
+  scanAllWifiProfiles() -- the same WLAN-API scanner the backup wizard and the headless list op
+  use. Three things improved rather than merely consolidating:
+    * LOCALE. The deleted parse matched the English console strings "All User Profile",
+      "Authentication :", "Key Content :" and "Don't broadcast". netsh localizes all of them, so
+      on a non-English Windows the panel found NOTHING and said "No known WiFi profiles found".
+      The WLAN API returns schema tokens, which are identical on every UI language.
+    * PLAINTEXT KEYS ARE NOW AN EXPLICIT REQUEST. The deleted code passed `key=clear` on every
+      read. The scanner gained WifiKeyMaterial{Protected,Plaintext}; Protected is the default,
+      so a caller that never thinks about key material cannot produce one. The panel asks for
+      Plaintext because handing a technician the passphrase is its actual job.
+    * THE KEY CANNOT REACH A BACKUP FILE. wifiPlaintextKeyFromProfileXml returns <keyMaterial>
+      ONLY when <protected> is false -- without the flag Windows still emits that element,
+      holding DPAPI CIPHERTEXT that looks enough like a key to be handed over as one.
+      WifiProfileInfo::plaintext_key is runtime-only, omitted from toJson AND ignored by
+      fromJson, and scanAllWifiProfiles REFUSES include_xml together with Plaintext, because
+      xml_data IS serialized and would otherwise carry every PSK in the clear into a manifest.
+  Also fixed while there: the panel reported a FAILED scan as "No known WiFi profiles found",
+  discarding the scanner's scan_ok. Those two states call for opposite next actions, so the
+  panel now distinguishes them.
+  DRILLED, each guard separately, each with BUILD EXIT read on its own before the run:
+  defeating the <protected> gate turns key_refusedWhenProtectedIsTrue and
+  ...IsAbsent red; making the hidden check truthy instead of exact-"true" turns
+  hidden_explicitFalseAndAbsent and hidden_onlyExactTrueCounts red; inverting the
+  include_xml+Plaintext refusal turns scan_refusesPlaintextKeyTogetherWithXmlRetention red;
+  dropping the closing-tag anchor turns three parser tests red; adding plaintext_key to toJson
+  and, separately, to fromJson each turn
+  wifiProfile_plaintextKeyAndHiddenAreNeverSerialized red. Gate: 251/251.
+  STILL OPEN, and the network half is now known to be two problems rather than one:
+    * R5-IDX-19b DUPLICATE TRANSPORT. network_diagnostic_panel.cpp's applyStaticIp and
+      onSetDnsServers run netsh themselves through runNetshCommand/runNetshCommandAsync, while
+      EthernetConfigManager::restoreSettings and ::setDnsServers -- which the registered
+      network.set_adapter_static_ip / _dns / _dhcp actions delegate to -- already own exactly
+      that work, with adapter-name resolution against the system's own list, QHostAddress
+      validation, de-duplication and canonicalization the panel does not have.
+    * R5-IDX-19c THREE OPERATIONS THE ASSISTANT CANNOT DO AT ALL. onAdapterEnable,
+      onAdapterDisable and onAdapterRename have no headless counterpart: the registered network
+      ids are audit_firewall, connect_wifi, dns_query, flush_dns, generate_wifi_setup_script,
+      list_adapters, list_connections, list_shares, list_wifi_profiles, mtr, ping, port_scan,
+      set_adapter_dhcp, set_adapter_dns, set_adapter_static_ip, traceroute and wifi_scan --
+      there is no enable_adapter, disable_adapter or rename_adapter. This is not duplication;
+      it is a hole in the dominion claim itself, and it is the reason 19b and 19c belong in one
+      batch: once those three have a core seam, the panel's private netsh runners have no
+      remaining caller and can go.
 - [~] R5-IDX-2 `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md` -- 11 open items. These were
   INVISIBLE to every grep-based scan until 2026-08-26: the file carried 8 raw NUL bytes, so
   grep classified it as binary and silently skipped it. NULs are now escaped as text.
@@ -125,6 +170,38 @@ a parked design, per the bucket convention. Open work is what remains after thos
   that turns the published string into a dead credential, and it is the owner's to take; an
   agent must never apply a credential change against the live cert rig. Nothing in the build
   or the suite depends on it, so it blocks no other work here.
+- [~] R5-IDX-21 THE COMPLEXITY GATE SILENTLY SKIPS FUNCTIONS WHEN LIZARD'S PARSER DESYNCS.
+  Found 2026-08-27 while closing R5-IDX-19, and found the only way this class ever is: by
+  accident. Deleting two functions from src/gui/wifi_manager_panel.cpp made
+  `scripts/run_lizard.py` report a violation in a function nobody had touched --
+  onSelectionChanged, at CCN 11 against a limit of 10.
+  It was not a new violation. Running lizard against the file AS COMMITTED shows the parser
+  losing its place partway through: it closes parseWindowsWifiProfile 49 lines early, reports
+  no function at all between source lines 1692 and 1772 -- onSelectionChanged sits at 1712 and
+  is simply absent from the function list -- and every later function loses its `sak::`
+  namespace prefix, 31 of them, because the namespace stack had collapsed. 86 functions
+  reported where 87 exist. After the deletion the same file parses cleanly: 85 of 85, with the
+  only unqualified names being the five CheckHeaderView methods that genuinely sit outside the
+  namespace. So the gate had been reporting PASSED on a file containing an over-limit function,
+  and would have gone on doing so.
+  The trigger is somewhere inside the deleted parseWindowsWifiProfile. It is NOT any of the
+  obvious suspects -- a raw string literal, a raw string whose content ends in `))`, an
+  apostrophe inside a double-quoted string, and a parenthesis inside a plain string literal
+  were each probed in isolation against a deliberately CCN-12 canary and every one of them
+  parsed correctly. Bisecting by truncating the function is unsound (removing part of a block
+  changes the brace balance, which is the very thing being measured), so the exact token is
+  not yet pinned. That does not change the finding: the failure is REPRODUCIBLE from the
+  committed file, and the harm is proven.
+  WHY THIS MATTERS MORE THAN ONE CCN-11 FUNCTION: a linter that reports PASSED because it
+  stopped looking is the same false-green shape as R5-IDX-8's ASCII gate and the scan-nothing
+  hole in R5-G21-4. Every function after a desync point in any file is unmeasured, and nothing
+  says so. The count of functions that have been silently exempt across this tree is currently
+  unknown.
+  FIX (own batch, not slipped into R5-IDX-19): make run_lizard.py verify its own coverage.
+  Every out-of-line definition matching `Class::method(` at column 0 must appear in lizard's
+  reported function list; a definition present in the source and absent from the report is a
+  desync, and the gate must fail rather than pass. The namespace-prefix collapse is a second,
+  independent signal from the same event. Both need their own drill.
 - [x] R5-IDX-17 NO PRODUCTION CODE POINTS INTO docs/ ANY MORE, per the owner 2026-08-26:
   code and tests should stand on their own, and anything the code genuinely NEEDS should be
   structured data, not prose. Seven comment citations in partition_apfs_writer.{h,cpp} named
@@ -237,15 +314,18 @@ a parked design, per the bucket convention. Open work is what remains after thos
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-27: 653 [x] / 29 [~] / 0 [ ] MARKERS IN THIS FILE. That is not the same as the
+as of 2026-08-27: 653 [x] / 30 [~] / 0 [ ] MARKERS IN THIS FILE. That is not the same as the
 amount of open work, and the difference matters: 5 of those [~] are POINTERS at other
 documents (R5-IDX-2, -3, -4, -5, -6), and a pointer is one marker whether it stands for one
 item or forty. The other R5-IDX entries are native findings that merely share the prefix. Behind them sit 42 open or
 partial items counted in the files they name (APFS_HFS_FULL_DRIVER_WRITE_PLAN 11,
 APFS_LIVE_RECERT_FOLLOWONS 7, FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN 7 plus 6 partial,
 CODEX_REVIEW_4 6 partial, CODEX_REVIEW_REMEDIATION 5 partial), plus a 2294-line backlog that
-carries no checkbox markers at all. So the honest figure is 24 native [~] plus 42 referenced
-items = 66 open things, indexed by 29 markers. Indexing work into pointers made the marker
+carries no checkbox markers at all. So the honest figure is 25 native [~] plus 42 referenced
+items = 67 open things, indexed by 30 markers. One marker can also stand for more than one
+finding WITHOUT being a pointer: R5-IDX-19 now carries two distinct network defects (19b
+duplicate transport, 19c three operations with no headless counterpart at all), because they
+share a fix and splitting them would misrepresent that. Indexing work into pointers made the marker
 count go DOWN per unit of real work, which is precisely the kind of true-but-misleading number
 this campaign exists to remove. Recount both sides before quoting either (reconciled to the live marker counts; F25, the
 last [ ], closed 2026-08-25; the R5-IDX items added 2026-08-26 index open work that was

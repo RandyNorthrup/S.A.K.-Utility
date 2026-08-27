@@ -8,6 +8,7 @@
 
 #include <QDir>
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
@@ -366,6 +367,51 @@ private Q_SLOTS:
         BackupManifest m = sampleManifest();
         m.manifest_checksum.clear();
         QVERIFY(m.verifyManifestChecksum());  // nothing stored -> unverifiable, not a failure
+    }
+
+    void wifiProfile_plaintextKeyAndHiddenAreNeverSerialized() {
+        // WifiProfileInfo::plaintext_key is runtime-only BY DESIGN, and that is a security
+        // boundary rather than an omission. A WifiKeyMaterial::Plaintext scan fills it so the
+        // WiFi panel can hand a technician the passphrase; serializing it would write every PSK
+        // in the clear into a backup manifest, whose JSON is not encrypted. The `hidden` flag
+        // rides along on the same rule so the serialized shape stays exactly what it was.
+        WifiProfileInfo info;
+        info.profile_name = "HomeNet";
+        info.security_type = "WPA2-Personal";
+        info.xml_data = "<WLANProfile/>";
+        info.selected = false;
+        info.plaintext_key = "hunter2-correct-horse";
+        info.hidden = true;
+
+        const QJsonObject obj = info.toJson();
+        // Nothing in the emitted object may carry the key -- not under this name, and not under
+        // any other. Checking the serialized TEXT catches a future field that copies the value
+        // across under a different key, which a per-key assertion would sail straight past.
+        QVERIFY(!obj.contains("plaintext_key"));
+        QVERIFY(!obj.contains("hidden"));
+        const QString serialized = QString::fromUtf8(QJsonDocument(obj).toJson());
+        QVERIFY(!serialized.contains("hunter2-correct-horse"));
+
+        // The fields that ARE the persisted contract must still all be there: proving the key is
+        // absent is worthless if it was achieved by emitting nothing.
+        QCOMPARE(obj["profile_name"].toString(), QStringLiteral("HomeNet"));
+        QCOMPARE(obj["security_type"].toString(), QStringLiteral("WPA2-Personal"));
+        QCOMPARE(obj["xml_data"].toString(), QStringLiteral("<WLANProfile/>"));
+        QCOMPARE(obj["selected"].toBool(), false);
+
+        // Reading back yields a record with no key and no hidden flag, whatever a hand-edited or
+        // hostile document claims. A manifest that supplies "plaintext_key" must not be able to
+        // inject one into a live scan result.
+        QJsonObject hostile = obj;
+        hostile["plaintext_key"] = "injected-from-json";
+        hostile["hidden"] = true;
+        const WifiProfileInfo back = WifiProfileInfo::fromJson(hostile);
+        QVERIFY(back.plaintext_key.isEmpty());
+        QVERIFY(!back.hidden);
+        QCOMPARE(back.profile_name, QStringLiteral("HomeNet"));
+        QCOMPARE(back.security_type, QStringLiteral("WPA2-Personal"));
+        QCOMPARE(back.xml_data, QStringLiteral("<WLANProfile/>"));
+        QCOMPARE(back.selected, false);
     }
 
     void manifestChecksumCoversNetworkSelections() {

@@ -13,6 +13,7 @@
 #include "sak/process_runner.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
+#include "sak/wifi_profile_scanner.h"
 #include "sak/wifi_setup_script.h"
 
 #include "qrcodegen.hpp"
@@ -63,6 +64,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <utility>
 
 // -----------------------------------------------------------------------------
 // CheckHeaderView  --  column 0 renders a tri-state "select all" checkbox
@@ -1557,6 +1559,35 @@ void WifiManagerPanel::showMultiNetworkQrDialog(const QList<WifiConfig>& sources
 }
 
 
+std::pair<QList<WifiManagerPanel::WifiConfig>, bool> WifiManagerPanel::scanKnownWifiNetworks() {
+    // The shared headless scanner, not a second netsh implementation of the same thing. It reads
+    // the WLAN API directly, so the parse is against schema tokens rather than the English console
+    // text `netsh wlan show profile` emits -- the copy this replaced matched "All User Profile",
+    // "Authentication :" and "Don't broadcast", and found nothing at all on a non-English Windows.
+    //
+    // include_xml is FALSE and the key material is Plaintext: this panel hands the passphrase to a
+    // technician re-deploying the network, so it needs the key, and retaining the XML alongside it
+    // is refused by the scanner precisely because xml_data is serialized.
+    bool scan_ok = false;
+    const QVector<sak::WifiProfileInfo> profiles = sak::scanAllWifiProfiles(
+        nullptr, &scan_ok, /*include_xml=*/false, sak::WifiKeyMaterial::Plaintext);
+
+    QList<WifiConfig> configs;
+    configs.reserve(profiles.size());
+    for (const sak::WifiProfileInfo& profile : profiles) {
+        if (profile.profile_name.isEmpty()) {
+            continue;
+        }
+        WifiConfig cfg;
+        cfg.ssid = profile.profile_name;
+        cfg.password = profile.plaintext_key;
+        cfg.security = profile.security_type;
+        cfg.hidden = profile.hidden;
+        configs.append(cfg);
+    }
+    return {configs, scan_ok};
+}
+
 void WifiManagerPanel::onScanNetworksClicked() {
 #ifndef Q_OS_WIN
     Q_EMIT statusMessage("Scan Known Networks is only supported on Windows.",
@@ -1566,16 +1597,29 @@ void WifiManagerPanel::onScanNetworksClicked() {
     m_scan_networks_btn->setEnabled(false);
     Q_EMIT statusMessage("Scanning known Windows WiFi profiles...", 0);
 
-    auto* watcher = new QFutureWatcher<QList<WifiConfig>>(this);
+    // The bool is the scanner's scan_ok: a COMPLETE and authoritative enumeration. Without it an
+    // empty list is ambiguous, and this panel used to resolve that ambiguity the fail-OPEN way,
+    // telling the technician "No known WiFi profiles found" when the WLAN service was stopped or a
+    // profile read had been denied. "Your machine has no saved networks" and "I could not read
+    // them" call for opposite next actions.
+    using ScanResult = std::pair<QList<WifiConfig>, bool>;
+    auto* watcher = new QFutureWatcher<ScanResult>(this);
     const QPointer<WifiManagerPanel> panel(this);
-    connect(watcher, &QFutureWatcher<QList<WifiConfig>>::finished, this, [watcher, panel]() {
+    connect(watcher, &QFutureWatcher<ScanResult>::finished, this, [watcher, panel]() {
         watcher->deleteLater();
         if (!panel) {
             return;
         }
 
         panel->m_scan_networks_btn->setEnabled(true);
-        const QList<WifiConfig> configs = watcher->result();
+        const auto [configs, scan_ok] = watcher->result();
+        if (!scan_ok) {
+            Q_EMIT panel->statusMessage(
+                "Could not read the Windows WiFi profiles -- the scan was incomplete, so this is "
+                "not a report that none exist.",
+                sak::kTimerStatusWarnMs);
+            return;
+        }
         if (configs.isEmpty()) {
             Q_EMIT panel->statusMessage("No known WiFi profiles found.",
                                         sak::kTimerStatusMessageMs);
@@ -1595,118 +1639,39 @@ void WifiManagerPanel::onScanNetworksClicked() {
                                     sak::kTimerStatusDefaultMs);
     });
 
-    watcher->setFuture(QtConcurrent::run([]() {
-        QList<WifiConfig> configs;
-        const QStringList profile_names = scanWindowsProfileNames();
-        configs.reserve(profile_names.size());
-        for (const QString& name : profile_names) {
-            const WifiConfig cfg = parseWindowsWifiProfile(name);
-            if (!cfg.ssid.isEmpty()) {
-                configs.append(cfg);
-            }
-        }
-        return configs;
-    }));
+    watcher->setFuture(QtConcurrent::run(&WifiManagerPanel::scanKnownWifiNetworks));
 #endif
 }
 
-QStringList WifiManagerPanel::scanWindowsProfileNames() {
-    // System32-qualified netsh, never the bare name: CreateProcess searches the current
-    // directory ahead of System32, so a planted netsh could feed us fabricated profiles
-    // (or run with our token). Unresolvable -> FAILED scan, never a PATH-found binary.
-    const QString netsh_exe = sak::system32Path(QStringLiteral("netsh.exe"));
-    if (netsh_exe.isEmpty()) {
-        sak::logError("Cannot resolve the System32 netsh.exe path; WiFi profile scan aborted");
-        return {};
+
+void WifiManagerPanel::updateHeaderTriState(int total, int checked) {
+    auto* check_hdr = qobject_cast<CheckHeaderView*>(m_network_table->horizontalHeader());
+    if (check_hdr == nullptr) {
+        return;
     }
-    const auto result = sak::runProcess(
-        netsh_exe,
-        {QStringLiteral("wlan"), QStringLiteral("show"), QStringLiteral("profiles")},
-        sak::kTimerNetshWaitMs);
-    if (!result.succeeded()) {
-        return {};
+    if (total == 0 || checked == 0) {
+        check_hdr->setTriState(Qt::Unchecked);
+    } else if (checked == total) {
+        check_hdr->setTriState(Qt::Checked);
+    } else {
+        check_hdr->setTriState(Qt::PartiallyChecked);
     }
-    const QString output = result.std_out;
-    QStringList profile_names;
-    const QRegularExpression name_re(R"(:\s+(.+)$)");
-    for (const QString& line : output.split('\n')) {
-        const QString trimmed = line.trimmed();
-        if (!trimmed.contains("All User Profile", Qt::CaseInsensitive) &&
-            !trimmed.contains("Current User Profile", Qt::CaseInsensitive)) {
-            continue;
-        }
-        const auto match = name_re.match(trimmed);
-        if (!match.hasMatch()) {
-            continue;
-        }
-        const QString name = match.captured(1).trimmed();
-        if (!name.isEmpty()) {
-            profile_names.append(name);
-        }
-    }
-    return profile_names;
 }
 
-WifiManagerPanel::WifiConfig WifiManagerPanel::parseWindowsWifiProfile(
-    const QString& profile_name) {
-    Q_ASSERT(!profile_name.isEmpty());
-    const QString netsh_exe = sak::system32Path(QStringLiteral("netsh.exe"));
-    if (netsh_exe.isEmpty()) {
-        sak::logError("Cannot resolve the System32 netsh.exe path; WiFi profile read aborted");
-        return {};
+void WifiManagerPanel::updateSaveAndInstallButtons(int total, int checked) {
+    if (total == 0) {
+        m_save_table_btn->setEnabled(false);
+        m_save_table_btn->setText("Save\u2026");
+        m_add_to_windows_btn->setEnabled(false);
+    } else if (checked > 0) {
+        m_save_table_btn->setEnabled(true);
+        m_save_table_btn->setText(QString("Save Checked (%1)\u2026").arg(checked));
+        m_add_to_windows_btn->setEnabled(true);
+    } else {
+        m_save_table_btn->setEnabled(true);
+        m_save_table_btn->setText("Save\u2026");
+        m_add_to_windows_btn->setEnabled(false);
     }
-    const auto result = sak::runProcess(netsh_exe,
-                                        {QStringLiteral("wlan"),
-                                         QStringLiteral("show"),
-                                         QStringLiteral("profile"),
-                                         QStringLiteral("name=") + profile_name,
-                                         QStringLiteral("key=clear")},
-                                        sak::kTimeoutProcessShortMs);
-    if (!result.succeeded()) {
-        sak::logWarning("Timed out parsing WiFi profile: {}", profile_name.toStdString());
-        return {};
-    }
-    const QString detail = result.std_out;
-
-    QString password;
-    QString security = "WPA/WPA2/WPA3";
-    bool hidden = false;
-
-    const QRegularExpression key_re(R"(Key Content\s*:\s+(.+))",
-                                    QRegularExpression::CaseInsensitiveOption);
-    const auto key_match = key_re.match(detail);
-    if (key_match.hasMatch()) {
-        password = key_match.captured(1).trimmed();
-    }
-
-    const QRegularExpression auth_re(R"(Authentication\s*:\s+(.+))",
-                                     QRegularExpression::CaseInsensitiveOption);
-    const auto auth_match = auth_re.match(detail);
-    if (auth_match.hasMatch()) {
-        const QString auth = auth_match.captured(1).trimmed().toUpper();
-        if (auth.contains("WEP")) {
-            security = "WEP";
-        } else if (auth == "OPEN" || auth.contains("NONE")) {
-            security = "None (Open)";
-        }
-    }
-
-    const QRegularExpression non_bc_re(R"(Network broadcast\s*:\s+(.+))",
-                                       QRegularExpression::CaseInsensitiveOption);
-    const auto nb_match = non_bc_re.match(detail);
-    if (nb_match.hasMatch()) {
-        hidden =
-            nb_match.captured(1).trimmed().compare("Don't broadcast", Qt::CaseInsensitive) == 0 ||
-            nb_match.captured(1).trimmed().compare("Not broadcasting", Qt::CaseInsensitive) == 0;
-    }
-
-    WifiConfig cfg;
-    cfg.location = {};
-    cfg.ssid = profile_name;
-    cfg.password = password;
-    cfg.security = security;
-    cfg.hidden = hidden;
-    return cfg;
 }
 
 void WifiManagerPanel::onSelectionChanged() {
@@ -1721,31 +1686,8 @@ void WifiManagerPanel::onSelectionChanged() {
         }
     }
 
-    // Update header checkbox tri-state
-    auto* check_hdr = qobject_cast<CheckHeaderView*>(m_network_table->horizontalHeader());
-    if (check_hdr != nullptr) {
-        if (total == 0 || checked == 0) {
-            check_hdr->setTriState(Qt::Unchecked);
-        } else if (checked == total) {
-            check_hdr->setTriState(Qt::Checked);
-        } else {
-            check_hdr->setTriState(Qt::PartiallyChecked);
-        }
-    }
-
-    if (total == 0) {
-        m_save_table_btn->setEnabled(false);
-        m_save_table_btn->setText("Save\u2026");
-        m_add_to_windows_btn->setEnabled(false);
-    } else if (checked > 0) {
-        m_save_table_btn->setEnabled(true);
-        m_save_table_btn->setText(QString("Save Checked (%1)\u2026").arg(checked));
-        m_add_to_windows_btn->setEnabled(true);
-    } else {
-        m_save_table_btn->setEnabled(true);
-        m_save_table_btn->setText("Save\u2026");
-        m_add_to_windows_btn->setEnabled(false);
-    }
+    updateHeaderTriState(total, checked);
+    updateSaveAndInstallButtons(total, checked);
 
     // Update multi-modal button tooltips to indicate source
     if (checked > 0) {

@@ -182,8 +182,22 @@ struct BackupUserData {
 struct WifiProfileInfo {
     QString profile_name;   // SSID / profile name
     QString security_type;  // WPA2-Personal, Open, etc.
-    QString xml_data;       // Full XML profile data from netsh
+    QString xml_data;       // Re-importable WLANProfile XML, key still DPAPI-protected
     bool selected{true};
+
+    // -- Runtime-only fields. NEITHER is serialized, and that is a security boundary, not an
+    // -- oversight. toJson/fromJson deliberately omit both, so a plaintext PSK cannot reach a
+    // -- backup file, a manifest, or a log by way of a struct that happens to know it. Only the
+    // -- WifiKeyMaterial::Plaintext scan populates plaintext_key; every other caller leaves it
+    // -- empty. See wifi_profile_scanner.h. Pinned by test_user_profile_types
+    // -- wifiProfile_plaintextKeyAndHiddenAreNeverSerialized.
+
+    /// Cleartext pre-shared key. Empty unless the caller explicitly asked for
+    /// WifiKeyMaterial::Plaintext AND the profile's <sharedKey> reported protected=false.
+    QString plaintext_key;
+
+    /// True when the profile is a hidden network (<nonBroadcast>true</nonBroadcast>).
+    bool hidden{false};
 
     QJsonObject toJson() const;
     static WifiProfileInfo fromJson(const QJsonObject& json);

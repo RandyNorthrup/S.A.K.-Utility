@@ -650,6 +650,10 @@ add_executable(test_wifi_manager_panel
     ${SAK_PROCESS_RUNNER_SOURCES}
     ../src/core/logger.cpp
     ../src/core/wifi_setup_script.cpp
+    # The panel now scans through the shared headless scanner instead of its own netsh parse,
+    # so the target links the real thing rather than a second copy of the same logic.
+    ../src/core/wifi_profile_scanner.cpp
+    ../src/core/user_profile_types.cpp
     ../include/sak/wifi_manager_panel.h
     ../include/sak/detachable_log_window.h
 )

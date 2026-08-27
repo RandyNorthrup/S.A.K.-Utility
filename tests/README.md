@@ -191,7 +191,7 @@ cmake --build build --target run_integration_tests
 | test_smart_file_filter | `smart_file_filter` | Category-based filtering, exclusion patterns, size thresholds |
 | test_elevation_manager | `elevation_manager` | Admin privilege detection, UAC status |
 | test_user_data_manager | `user_data_manager` | User data discovery and categorization |
-| test_user_profile_types | `user_profile_types` | Profile data structures, serialization |
+| test_user_profile_types | `user_profile_types` | Profile data structures, serialization, and the fields deliberately kept OUT of it (a WiFi profile's plaintext key must never reach a manifest) |
 | test_user_profile_backup_worker | `user_profile_backup_worker` | Backup workflow, compression, encryption |
 | test_user_profile_restore_worker | `user_profile_restore_worker` | Restore workflow, permission handling, merge |
 | test_windows_user_scanner | `windows_user_scanner` | Windows user profile enumeration |
@@ -251,7 +251,7 @@ cmake --build build --target run_integration_tests
 | test_windows_usb_creator | `windows_usb_creator` | NTFS format, ISO extraction, boot sector |
 | test_streaming_decompressor | `streaming_decompressor` | Streaming gzip/bzip2/xz decompression, error handling |
 | test_decompressor_factory | `decompressor_factory` | Format detection, correct decompressor selection |
-| test_wifi_profile_scanner | `wifi_profile_scanner` | WiFi profile enumeration, export |
+| test_wifi_profile_scanner | `wifi_profile_scanner` | WLANProfile parsing (security type, hidden flag, plaintext key only when `protected` is false), and the refusal to retain XML alongside plaintext keys |
 
 ### Advanced Search
 | Test | Module Under Test | Coverage |

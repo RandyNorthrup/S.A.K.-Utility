@@ -271,17 +271,22 @@ private:
     QList<WifiConfig> allConfigs() const;
     /** Returns WifiConfig for every checked table row; empty list if none checked */
     QList<WifiConfig> checkedConfigs() const;
+    /** Set the header's tri-state box from the row totals (no rows / none / some / all checked) */
+    void updateHeaderTriState(int total, int checked);
+    /** Enable and label the Save and Add-to-Windows buttons from the row totals */
+    void updateSaveAndInstallButtons(int total, int checked);
+    /**
+     * Read the machine's known WiFi networks through the shared headless scanner.
+     * @return the configs, and whether the scan was COMPLETE -- an empty list with a false flag
+     *         means the profiles could not be read, which is not the same as having none.
+     */
+    static std::pair<QList<WifiConfig>, bool> scanKnownWifiNetworks();
     void updateSearchMatches(const QString& text);
     void highlightSearchMatches();
     /** Set all table row checkboxes to the given state */
     void setAllCheckStates(bool all_checked);
     /** Returns true if any visible column in the given row matches @p text */
     bool rowMatchesSearch(int row, const QString& text) const;
-    /** Scan Windows known WiFi profile names via netsh */
-    static QStringList scanWindowsProfileNames();
-    /** Parse a single Windows WiFi profile and return its config */
-    static WifiConfig parseWindowsWifiProfile(const QString& profile_name);
-
     // -------------------------------------------------------------------------
     // Windows WiFi profile helpers
     // -------------------------------------------------------------------------
