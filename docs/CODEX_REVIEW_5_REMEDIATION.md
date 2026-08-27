@@ -2101,6 +2101,12 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
         BEFORE the manifest update, so a manifest failure returns false after the data is already
         committed and a retry duplicates the record; failed session start and rename likewise
         mutate active-session state before the manifest succeeds.
+        THE SESSION-START AND RENAME HALVES ARE CLOSED 2026-08-26 -- see "A FAILED WRITE LEFT THE
+        STORE POINTING SOMEWHERE ELSE" below. They are separable from the append half because
+        neither has a durable record to protect: nothing has been written that a rollback could
+        lose, so the state can simply be put back.
+        THE APPEND HALF STAYS OPEN, and the paragraph below is why -- it is a contract change,
+        not a reorder.
         ATTEMPTED AND REVERTED 2026-08-26, recorded because the attempt was WORSE THAN THE BUG.
         The obvious fix is to reorder: writeManifest is a full QSaveFile rewrite and therefore
         idempotent, appendJsonLine is not, so do the idempotent step first and a retry after a
@@ -2728,6 +2734,43 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
     NON-VACUITY IS THE LOAD-BEARING HALF of the identity test: the same request with the CORRECT
     identity must LAUNCH and produce its output, or a guard that refused every identity-carrying
     request would pass the refusal assertions. Both halves are asserted.
+  - A FAILED WRITE LEFT THE STORE POINTING SOMEWHERE ELSE, 2026-08-26. This closes the session
+    start and rename halves of the ai_conversation_store partial-state ordering finding. The
+    append half is a different problem and stays open -- see the entry above for why reordering
+    it traded a duplicate for real data loss.
+      * A SESSION THAT FAILED TO PERSIST WAS STILL PRESENTED AS THE CURRENT ONE. startSession
+        assigned id, title, path and timestamps into m_current_session and only THEN wrote the
+        manifest. The manifest is what makes a session exist -- listSessions and openSession both
+        read it -- so on a write failure the caller was handed a currentSessionId() for a session
+        no reader can ever find. The live caller makes it concrete: the panel logs the failure and
+        returns WITHOUT clearing the store, so every later append targeted a directory that was
+        not a session. The previous record is now saved and restored on failure.
+      * A FAILED RENAME COULD ORPHAN EVERY ARTIFACT OF THE SESSION. renameCurrentSession moves the
+        artifact directory FIRST and then writes the manifest. Readers derive that directory from
+        the CURRENT title, so a manifest failure after the move left the manifest naming the old
+        title while the artifacts sat under the new one -- and none of them could be reached.
+      * THE ROLLBACK NEEDED TO KNOW WHAT IT WAS UNDOING, which is the part worth recording.
+        renameArtifactDirectory returned a bool covering two very different outcomes: a plain
+        directory rename, and a MERGE of entries into a directory that already existed. Renaming
+        back undoes the first; it does NOT separate a merge, and anything that tried would have to
+        delete artifacts to succeed. So the bool became ArtifactRenameOutcome {NoChange, Renamed,
+        Merged, Failed}: a Renamed move is rolled back, and a Merged one is reported in the error
+        with the exact residual state (which directory the artifacts are under, what the session
+        is still called) because only a human can reconcile it. A rollback that itself fails is
+        also appended to the error rather than swallowed.
+      * ONE TRANSCRIPT SITE OF TWELVE ATE ITS OWN ERROR, found while auditing the callers.
+        handleResponseToolCalls in ai_assistant_panel discarded the bool AND never read the out
+        error, so a failure to record the tool-loop cap -- the note that explains to the user why
+        the run stopped early -- vanished silently. Every sibling site surfaces it; this one now
+        does too.
+    MUTATION-PROVED, each guard drilled SEPARATELY with BUILD EXIT: 0 captured for each: removing
+    the m_current_session restore from startSession turns test_ai_conversation_store RED, and
+    removing the rename rollback turns it RED. The rename test asserts the artifact FILE is
+    readable back under the original name afterwards, not merely that the directory exists, so a
+    rollback that moved an empty directory would not pass it.
+    THE MERGED CASE IS NOT DRILLED AS A ROLLBACK, deliberately: there is nothing to undo, so the
+    test pins the ERROR TEXT instead -- that it names the merge, the destination and the unchanged
+    session title. Asserting a rollback there would have pinned behaviour the code must not have.
   - AUTHORIZED-IN-PROGRESS, BLOCKED-ON-USER (relabelled 2026-08-17 from a dishonest "RESOLVED [deferred-with-rationale]" -- the sweep is genuinely INCOMPLETE, not resolved): 764 of 1098 units run (69.6%); 334 remain (246 tests / 75 src / 9 include / 4 scripts). The August-11-2026 Codex account cap that blocked it HAS since reset, but RELAUNCH IS A MANUAL, BUDGET-HEAVY STEP on Randy's own Codex account (334 xhigh review units) -- nothing auto-resumes, and burning that much of his account budget is his call, so this waits on his explicit go. NOT verified-done (334 units genuinely unrun); NOT deferred (it is authorized and would resume the moment he says so). The 764 units already run DID produce the P1-P11 subsystem findings, all closed.
       BLOCKED: 764 of 1098 units complete (69.6%). The Codex account usage limit is
       exhausted and does not reset until August 11, 2026 11:10 AM, so the remaining 334
@@ -4080,16 +4123,28 @@ time by --config, not by CMAKE_BUILD_TYPE. /fsanitize=address has therefore neve
 applied to a single translation unit of this codebase. This is the SAME defect class as
 G12 (clang-tidy enabling zero checks) and G13 (cppcheck analyzing branches that never
 compile): a gate that reports healthy while analyzing nothing. Third occurrence.
+    CLOSED by R5-G14-1 (see below): the guard is now a generator expression, CI runs the
+    Debug+ASan suite, and check_build_system_lint.ps1 fails if the dead form reappears.
 
 MEASURED GAP 2 - no fuzzing of first-party parsers. The only fuzz directories in the
 tree belong to vendored e2fsprogs. Every one of these parsers consumes attacker-supplied
 bytes and none is fuzzed: PST/OST, MBOX, EML, APFS, HFS+, ext, ZIP and archive entries,
 IMAP server responses, and browser-extension JSON.
+    CLOSED -- first-party fuzz harnesses now exist under tests/ (tests/fuzz/fuzz_harness.h
+    plus the registered tests/unit/test_fuzz_*.cpp targets, which cover the APFS, HFS+, ext,
+    filesystem-detector, decompressor, email-sanitizer and AI-response parsers among others).
+    See tests/README.md for what is registered rather than a count repeated here.
 
 MEASURED GAP 3 - no coverage measurement of any kind. No OpenCppCoverage, gcov, or
 llvm-cov anywhere in the build or CI. '208 tests pass' therefore has an unknown
 denominator: there is no evidence about what fraction of the raw-filesystem engines,
 the elevation boundary, or the AI tool policy those tests actually execute.
+    CLOSED -- this paragraph is the ORIGINAL finding, kept verbatim as the record of what was
+    true when the review ran. It is no longer the state of the tree: the R5-G14-16a/b/c/d
+    coverage cluster closed it. OpenCppCoverage is wired (scripts/run_coverage.ps1,
+    scripts/run_branch_coverage.ps1, an opt-in CI job) and the measurement itself is in
+    docs/COVERAGE_BASELINE.md. The '208' above is likewise a historical figure; the live
+    registered count is in tests/README.md, which is gated.
 
 - [x] R5-G14-1 Fix the dead sanitizer guard: select on the multi-config generator
   - RESOLVED 2026-08-16 [DONE -- was mislabeled; the generic infra-boilerplate below did not match this item's actual subject]: the dead guard is fixed exactly as this item asks. CMakeLists.txt:221 applies ASan via a generator expression -- add_compile_options($<$<CONFIG:Debug>:/fsanitize=address>) -- NOT behind if(CMAKE_BUILD_TYPE STREQUAL Debug), which under the multi-config VS generator was always false at configure time and silently applied /fsanitize to zero translation units (the bug documented in the CMakeLists comment at lines 205-212). The clang-cl path mirrors it ($<$<CONFIG:Debug>:-fsanitize=address/undefined>). CI runs the Debug+ASan suite (debug-asan-suite, G15-2) and scripts/check_build_system_lint.ps1 (G23-9, wired pre-commit) fails if a real if(CMAKE_BUILD_TYPE STREQUAL) guard reappears. Verified against the live tree 2026-08-16.

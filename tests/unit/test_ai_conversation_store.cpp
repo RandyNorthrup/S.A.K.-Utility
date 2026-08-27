@@ -7,6 +7,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonDocument>
+#include <QProcess>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -30,6 +31,9 @@ private Q_SLOTS:
     void safeArtifactDirectoryName_rejectsDotSegments();
     void artifactPath_createsSubdirectoryAndReturnsPath();
     void renameSession_updatesTitleAndArtifactRoot();
+    void renameSession_rollsBackTheArtifactMoveWhenTheManifestFails();
+    void renameSession_reportsAMergeItCannotUndoWhenTheManifestFails();
+    void startSession_doesNotPresentASessionThatFailedToPersist();
     void caseOnlyRename_preservesArtifacts();
     void memoryFile_appendsEntries();
     void memoryFile_initializesStructuredSections();
@@ -611,6 +615,170 @@ void AiConversationStoreTests::renameSession_updatesTitleAndArtifactRoot() {
     QVERIFY(root.endsWith(QStringLiteral("/artifacts/Drive Check _ SSD")));
     QVERIFY(QDir(root).exists());
     QVERIFY(QFile::exists(QDir(root).filePath(QStringLiteral("logs/before.txt"))));
+}
+
+namespace {
+
+/// Make writeManifest fail for a session by putting a DIRECTORY where its manifest file goes.
+/// QSaveFile cannot create a file over a directory, and this needs no fault-injection seam in
+/// production code -- the filesystem does it.
+[[nodiscard]] bool blockManifestWrites(const QString& session_path) {
+    const QString manifest = QDir(session_path).filePath(QStringLiteral("manifest.json"));
+    QFile::remove(manifest);
+    return QDir().mkpath(manifest);
+}
+
+/// Read a file whole, returning an empty array if it cannot be opened. Used to assert that an
+/// artifact still holds its BYTES after a rollback, which QFile::exists alone cannot tell you.
+[[nodiscard]] QByteArray readFileContents(const QString& path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    return file.readAll();
+}
+
+}  // namespace
+
+void AiConversationStoreTests::renameSession_rollsBackTheArtifactMoveWhenTheManifestFails() {
+    // The artifact directory is MOVED BEFORE the manifest is written, and readers derive that
+    // directory from the CURRENT title. So a manifest write that fails after the move used to
+    // leave the manifest naming the old title while every artifact sat under the new one --
+    // reachable by nothing, with the rename reported as a plain failure.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Old"), &error));
+    const QString session_path = store.currentSessionInfo().path;
+
+    const QString log =
+        store.artifactPath(QStringLiteral("logs"), QStringLiteral("before.txt"), &error);
+    QVERIFY2(!log.isEmpty(), qPrintable(error));
+    QFile f(log);
+    QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
+    f.write("before");
+    f.close();
+
+    QVERIFY(blockManifestWrites(session_path));
+
+    error.clear();
+    QVERIFY2(!store.renameCurrentSession(QStringLiteral("New"), &error),
+             "a rename whose manifest cannot be written must fail");
+    QVERIFY(!error.isEmpty());
+
+    // THE IN-MEMORY RECORD IS RESTORED: the store must not claim a title it did not persist.
+    QCOMPARE(store.currentSessionInfo().title, QStringLiteral("Old"));
+
+    // AND THE DIRECTORY MOVE IS UNDONE, which is the half that loses data. Read the artifact back
+    // rather than only asking whether the path exists: a rollback that recreated an empty tree
+    // would satisfy an existence check while having lost the very bytes this guard protects.
+    const QString artifacts = QDir(session_path).filePath(QStringLiteral("artifacts"));
+    const QString restored = QDir(artifacts).filePath(QStringLiteral("Old/logs/before.txt"));
+    QVERIFY2(QFile::exists(restored),
+             qPrintable(QDir(artifacts).entryList(QDir::Dirs | QDir::NoDotAndDotDot).join(',')));
+    QCOMPARE(readFileContents(restored), QByteArrayLiteral("before"));
+    QVERIFY(!QDir(QDir(artifacts).filePath(QStringLiteral("New"))).exists());
+
+    // NON-VACUITY: with manifest writes working again the SAME rename succeeds and does move the
+    // directory, so the assertions above pin the rollback and not a rename that never happened.
+    QVERIFY(QDir(QDir(session_path).filePath(QStringLiteral("manifest.json"))).removeRecursively());
+    error.clear();
+    QVERIFY2(store.renameCurrentSession(QStringLiteral("New"), &error), qPrintable(error));
+    QCOMPARE(store.currentSessionInfo().title, QStringLiteral("New"));
+    QVERIFY(QFile::exists(QDir(artifacts).filePath(QStringLiteral("New/logs/before.txt"))));
+}
+
+void AiConversationStoreTests::renameSession_reportsAMergeItCannotUndoWhenTheManifestFails() {
+    // The other half of the rollback contract. When the destination directory ALREADY EXISTS the
+    // rename degrades to a merge, and a merge cannot be undone: renaming back would not separate
+    // the entries again, and nothing may delete artifacts to make the failure look clean. So this
+    // path must NOT roll back -- it must say exactly where the artifacts ended up and what the
+    // session is still called, because only a human can reconcile that.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Old"), &error));
+    const QString session_path = store.currentSessionInfo().path;
+
+    const QString log =
+        store.artifactPath(QStringLiteral("logs"), QStringLiteral("before.txt"), &error);
+    QVERIFY2(!log.isEmpty(), qPrintable(error));
+    QFile f(log);
+    QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Text));
+    f.write("before");
+    f.close();
+
+    // Pre-create the destination so the plain rename cannot be used and the merge arm is taken.
+    const QString artifacts = QDir(session_path).filePath(QStringLiteral("artifacts"));
+    QVERIFY(QDir().mkpath(QDir(artifacts).filePath(QStringLiteral("New/other"))));
+
+    QVERIFY(blockManifestWrites(session_path));
+
+    error.clear();
+    QVERIFY2(!store.renameCurrentSession(QStringLiteral("New"), &error),
+             "a rename whose manifest cannot be written must fail");
+
+    // THE ERROR NAMES THE RESIDUAL STATE: that a merge happened, where the artifacts now are, and
+    // the title the session still carries. A bare "rename failed" would send someone looking for
+    // the artifacts under a name that no longer holds them.
+    QVERIFY2(error.contains(QStringLiteral("merged")), qPrintable(error));
+    QVERIFY2(error.contains(QStringLiteral("New")), qPrintable(error));
+    QVERIFY2(error.contains(QStringLiteral("Old")), qPrintable(error));
+
+    // The in-memory title is still restored -- that half is not conditional on the outcome.
+    QCOMPARE(store.currentSessionInfo().title, QStringLiteral("Old"));
+
+    // AND NOTHING WAS DESTROYED TO TIDY UP: the merged bytes are under the new name, where the
+    // error says they are, and the pre-existing entry that forced the merge is untouched.
+    QCOMPARE(readFileContents(QDir(artifacts).filePath(QStringLiteral("New/logs/before.txt"))),
+             QByteArrayLiteral("before"));
+    QVERIFY(QDir(QDir(artifacts).filePath(QStringLiteral("New/other"))).exists());
+}
+
+void AiConversationStoreTests::startSession_doesNotPresentASessionThatFailedToPersist() {
+    // The manifest is what makes a session exist: listSessions and openSession both read it. So
+    // a startSession whose manifest write fails must not leave the new id as the current session
+    // -- the caller would hold a currentSessionId() no reader can find, and the panel's failure
+    // path returns WITHOUT clearing it, so every later append targets a non-session directory.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("First"), &error));
+    const QString first_id = store.currentSessionInfo().id;
+    QVERIFY(!first_id.isEmpty());
+
+    // Deny ADD_FILE on the root while leaving ADD_SUBDIRECTORY allowed, so the new session's
+    // mkpath still succeeds and only the manifest FILE write fails -- which is exactly the
+    // branch under test. (icacls (WD) is add-file; (AD) is add-subdirectory.)
+    const QString me = qEnvironmentVariable("USERNAME");
+    QVERIFY(!me.isEmpty());
+    QProcess deny;
+    deny.start(QStringLiteral("icacls"),
+               {QDir::toNativeSeparators(temp.path()),
+                QStringLiteral("/deny"),
+                me + QStringLiteral(":(OI)(CI)(WD)")});
+    QVERIFY(deny.waitForFinished(30'000));
+
+    error.clear();
+    const bool started = store.startSession(QStringLiteral("Second"), &error);
+
+    QProcess allow;  // restore before asserting, so a failed assertion cannot leave the dir locked
+    allow.start(QStringLiteral("icacls"),
+                {QDir::toNativeSeparators(temp.path()), QStringLiteral("/remove:d"), me});
+    QVERIFY(allow.waitForFinished(30'000));
+
+    if (started) {
+        QSKIP("the ACL did not block manifest creation on this filesystem; branch not exercised");
+    }
+    // The failed session is NOT presented: the previous session is still the current one.
+    QCOMPARE(store.currentSessionInfo().id, first_id);
+    QCOMPARE(store.currentSessionInfo().title, QStringLiteral("First"));
 }
 
 void AiConversationStoreTests::caseOnlyRename_preservesArtifacts() {

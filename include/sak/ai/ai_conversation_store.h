@@ -123,10 +123,22 @@ private:
     [[nodiscard]] static QJsonObject usageToJson(const TokenUsage& usage);
     [[nodiscard]] static QString safeArtifactDirectoryName(const QString& title,
                                                            const QString& fallback_id);
-    [[nodiscard]] static bool renameArtifactDirectory(const QString& old_name,
-                                                      const QString& new_name,
-                                                      const QString& artifacts_root,
-                                                      QString* error_message);
+    /// What renameArtifactDirectory actually did, so a caller can tell a REVERSIBLE move from an
+    /// irreversible one. A plain directory rename can be undone; a merge copied entries into an
+    /// existing directory and cannot be, so a caller that needs to roll back must know which
+    /// happened rather than blindly renaming back and silently destroying the merge.
+    enum class ArtifactRenameOutcome {
+        NoChange,
+        Renamed,
+        Merged,
+        Failed
+    };
+
+    [[nodiscard]] static ArtifactRenameOutcome renameArtifactDirectory(
+        const QString& old_name,
+        const QString& new_name,
+        const QString& artifacts_root,
+        QString* error_message);
 
     QString m_root_dir;
     AiSessionInfo m_current_session;

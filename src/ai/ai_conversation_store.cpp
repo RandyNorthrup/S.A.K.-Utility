@@ -896,12 +896,22 @@ bool ConversationStore::startSession(const QString& title, QString* error_messag
         return false;
     }
 
+    // The manifest is what makes a session EXIST on disk -- listSessions and openSession both
+    // read it. So the in-memory record is not allowed to outlive a failed manifest write: the
+    // caller would be handed a currentSessionId() for a session no reader can ever find, and
+    // (the live case) the panel logs the failure and returns WITHOUT clearing it, so every
+    // subsequent append targets a directory that is not a session.
+    const AiSessionInfo previous = m_current_session;
     m_current_session.id = id;
     m_current_session.title = fallbackTitle(title);
     m_current_session.path = path;
     m_current_session.created_at = QDateTime::currentDateTimeUtc();
     m_current_session.updated_at = m_current_session.created_at;
-    return writeManifest(error_message);
+    if (!writeManifest(error_message)) {
+        m_current_session = previous;  // never present a session that is not on disk
+        return false;
+    }
+    return true;
 }
 
 bool ConversationStore::openSession(const QString& session_id, QString* error_message) {
@@ -943,21 +953,57 @@ bool ConversationStore::renameCurrentSession(const QString& title, QString* erro
                                                                 m_current_session.id);
     const QString new_artifact_name = safeArtifactDirectoryName(trimmed, m_current_session.id);
     const QString artifacts_root = QDir(currentSessionPath()).filePath(QStringLiteral("artifacts"));
-    if (!renameArtifactDirectory(
-            old_artifact_name, new_artifact_name, artifacts_root, error_message)) {
+    const ArtifactRenameOutcome outcome = renameArtifactDirectory(
+        old_artifact_name, new_artifact_name, artifacts_root, error_message);
+    if (outcome == ArtifactRenameOutcome::Failed) {
         return false;
     }
+
+    // THE DIRECTORY HAS ALREADY MOVED AT THIS POINT. Readers derive the artifact directory from
+    // the CURRENT title, so if the manifest write now fails and nothing is undone, the manifest
+    // still names the old title while the artifacts sit under the new one -- and every artifact
+    // of that session becomes unreachable. Roll the move back when it was reversible.
+    const QString previous_title = m_current_session.title;
+    const QDateTime previous_updated = m_current_session.updated_at;
     m_current_session.title = trimmed;
     m_current_session.updated_at = QDateTime::currentDateTimeUtc();
-    return writeManifest(error_message);
+    if (writeManifest(error_message)) {
+        return true;
+    }
+
+    m_current_session.title = previous_title;
+    m_current_session.updated_at = previous_updated;
+    if (outcome == ArtifactRenameOutcome::Renamed) {
+        QString rollback_error;
+        if (renameArtifactDirectory(
+                new_artifact_name, old_artifact_name, artifacts_root, &rollback_error) ==
+                ArtifactRenameOutcome::Failed &&
+            error_message != nullptr) {
+            // Both the rename and its rollback failed. Say so: the artifacts are under the new
+            // name while the manifest names the old one, and only a human can reconcile that.
+            *error_message += QStringLiteral(
+                                  "; artifact directory could not be restored to '%1' "
+                                  "and now sits under '%2': %3")
+                                  .arg(old_artifact_name, new_artifact_name, rollback_error);
+        }
+    } else if (outcome == ArtifactRenameOutcome::Merged && error_message != nullptr) {
+        // A merge cannot be undone -- renaming back would not separate the entries again, and
+        // deleting anything here would destroy artifacts. Report the exact residual state.
+        *error_message += QStringLiteral(
+                              "; artifacts were merged into '%1' and cannot be "
+                              "un-merged, while the session is still named '%2'")
+                              .arg(new_artifact_name, previous_title);
+    }
+    return false;
 }
 
-bool ConversationStore::renameArtifactDirectory(const QString& old_name,
-                                                const QString& new_name,
-                                                const QString& artifacts_root,
-                                                QString* error_message) {
+ConversationStore::ArtifactRenameOutcome ConversationStore::renameArtifactDirectory(
+    const QString& old_name,
+    const QString& new_name,
+    const QString& artifacts_root,
+    QString* error_message) {
     if (old_name == new_name || !QDir(artifacts_root).exists()) {
-        return true;
+        return ArtifactRenameOutcome::NoChange;
     }
     QDir root_dir(artifacts_root);
     const QString old_path = root_dir.filePath(old_name);
@@ -974,12 +1020,16 @@ bool ConversationStore::renameArtifactDirectory(const QString& old_name,
         !old_canonical.isEmpty() &&
         QString::compare(old_canonical, new_canonical, Qt::CaseInsensitive) == 0;
     if (!QDir(old_path).exists() || same_physical_dir) {
-        return true;
+        return ArtifactRenameOutcome::NoChange;
     }
     if (!QDir(new_path).exists() && root_dir.rename(old_name, new_name)) {
-        return true;
+        return ArtifactRenameOutcome::Renamed;  // reversible: the caller can rename back
     }
-    return mergeDirectoryContents(old_path, new_path, error_message);
+    // A merge copies entries into a directory that already existed. It cannot be undone by
+    // renaming back, so it is reported distinctly rather than lumped in with the rename above.
+    return mergeDirectoryContents(old_path, new_path, error_message)
+               ? ArtifactRenameOutcome::Merged
+               : ArtifactRenameOutcome::Failed;
 }
 
 bool ConversationStore::appendTranscript(const QString& role,

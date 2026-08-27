@@ -12599,6 +12599,13 @@ void AiAssistantPanel::handleResponseToolCalls(const ai::OpenAIResponseResult& r
         if (m_conversationStore) {
             QString error;
             (void)m_conversationStore->appendTranscript(QStringLiteral("System"), warn, {}, &error);
+            if (!error.isEmpty()) {
+                // This was the ONE transcript site of twelve that discarded the bool AND never
+                // looked at `error`, so a failure to record the tool-loop cap -- the note that
+                // explains why the run stopped -- vanished silently. Every sibling site reports
+                // it; this one now does too.
+                appendLocalEvent(tr("Transcript log failed: %1").arg(error));
+            }
         }
         Q_EMIT statusMessage(warn, sak::kTimerStatusDefaultMs);
         QJsonObject metadata = response_metadata;
