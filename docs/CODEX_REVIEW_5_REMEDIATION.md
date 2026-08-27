@@ -227,7 +227,10 @@ a parked design, per the bucket convention. Open work is what remains after thos
   that turns the published string into a dead credential, and it is the owner's to take; an
   agent must never apply a credential change against the live cert rig. Nothing in the build
   or the suite depends on it, so it blocks no other work here.
-- [~] R5-IDX-21 THE COMPLEXITY GATE SILENTLY SKIPS FUNCTIONS WHEN LIZARD'S PARSER DESYNCS.
+- [x] R5-IDX-21 THE COMPLEXITY GATE SILENTLY SKIPPED FUNCTIONS WHEN LIZARD'S PARSER DESYNCED --
+  CLOSED 2026-08-27. Nothing is outstanding: the version is pinned, both surviving triggers are
+  rewritten, the desync guard is in the gate and drilled, and all seven C++ violations the fix
+  exposed are fixed structurally.
   Found 2026-08-27 while closing R5-IDX-19, and found the only way this class ever is: by
   accident. Deleting two functions from src/gui/wifi_manager_panel.cpp made
   `scripts/run_lizard.py` report a violation in a function nobody had touched --
@@ -416,15 +419,15 @@ a parked design, per the bucket convention. Open work is what remains after thos
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-27: 653 [x] / 31 [~] / 0 [ ] MARKERS IN THIS FILE. That is not the same as the
+as of 2026-08-27: 654 [x] / 30 [~] / 0 [ ] MARKERS IN THIS FILE. That is not the same as the
 amount of open work, and the difference matters: 5 of those [~] are POINTERS at other
 documents (R5-IDX-2, -3, -4, -5, -6), and a pointer is one marker whether it stands for one
 item or forty. The other R5-IDX entries are native findings that merely share the prefix. Behind them sit 42 open or
 partial items counted in the files they name (APFS_HFS_FULL_DRIVER_WRITE_PLAN 11,
 APFS_LIVE_RECERT_FOLLOWONS 7, FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN 7 plus 6 partial,
 CODEX_REVIEW_4 6 partial, CODEX_REVIEW_REMEDIATION 5 partial), plus a 2294-line backlog that
-carries no checkbox markers at all. So the honest figure is 26 native [~] plus 42 referenced
-items = 68 open things, indexed by 31 markers. One marker can also stand for more than one
+carries no checkbox markers at all. So the honest figure is 25 native [~] plus 42 referenced
+items = 67 open things, indexed by 30 markers. One marker can also stand for more than one
 finding WITHOUT being a pointer: R5-IDX-19 now carries two distinct network defects (19b
 duplicate transport, 19c three operations with no headless counterpart at all), because they
 share a fix and splitting them would misrepresent that. Indexing work into pointers made the marker
