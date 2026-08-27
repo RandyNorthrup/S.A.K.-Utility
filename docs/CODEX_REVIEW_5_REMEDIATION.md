@@ -65,7 +65,7 @@ any gate, so nothing would have surfaced it.
   canonical list stated once, per-proof deltas re-verified against each `report.json`, and
   the other files pointing at it. This tool writes to raw disks, so an operation reading as
   approved when it is not is a data-destruction risk.
-- [~] R5-IDX-8 THE ASCII GATE DOES NOT REJECT CONTROL BYTES. `scripts/check_ascii_only.ps1`
+- [x] R5-IDX-8 THE ASCII GATE DOES NOT REJECT CONTROL BYTES -- CLOSED by R5-IDX-15. `scripts/check_ascii_only.ps1`
   checks for bytes above 0x7F and a BOM, so NUL and other C0 controls pass. That is how
   R5-IDX-2's eight NULs survived in a tracked doc, and a NUL makes grep-based tools skip the
   file ENTIRELY -- a scanner that reads nothing reports no findings.
@@ -160,7 +160,7 @@ any gate, so nothing would have surfaced it.
   APFS_HFS_FULL_DRIVER_WRITE_PLAN (11), MACOS_BOOTABLE_USB_PLAN (40, unbuilt),
   FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN (7) and ASSISTANT_HEADLESS_DOMINION_PLAN (no code
   in the tree at all).
-- [~] R5-IDX-13 certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json IS DATA FILED AS A DOCUMENT.
+- [x] R5-IDX-13 THE CERTIFICATION MATRIX WAS DATA FILED AS A DOCUMENT -- CLOSED by R5-IDX-16.
   It is schema-versioned machine input with required_evidence_keys per scenario, and 23
   scripts plus tests/certification read it. NOT MOVED, deliberately: the path is also recorded
   inside generated evidence report.json files, which are historical records that must not be
@@ -171,8 +171,9 @@ any gate, so nothing would have surfaced it.
   docs/apfs-harvest/ holds byte sequences harvested from a real macOS that
   src/core/partition_apfs_writer.cpp cites by path, and docs/review_briefs/ is the directory
   scripts/run_review_units.ps1 writes into by design.
-- [~] R5-IDX-10 DOC VOLUME ITSELF OBSTRUCTS TRUTH (owner, 2026-08-26). 34997 lines of tracked
-  markdown after deleting the two dead converter plans, of which THIS file is 9016 (26%).
+- [~] R5-IDX-10 DOC VOLUME ITSELF OBSTRUCTS TRUTH (owner, 2026-08-26). No line count is quoted
+  here on purpose -- the one that used to be rotted within a day. Measure it when it matters
+  (`git ls-files '*.md' | xargs wc -l`); THIS file is the largest single contributor.
   Almost nothing in `docs/` is depended on: `check_partition_manager_release_claims.ps1`
   opens four of them as `$ClaimFiles`, but it POLICES them for over-claiming rather than
   consuming them. The genuinely load-bearing markdown is outside `docs/` --
@@ -184,7 +185,16 @@ any gate, so nothing would have surfaced it.
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-27: 651 [x] / 29 [~] / 0 [ ] (reconciled to the live marker counts; F25, the
+as of 2026-08-27: 653 [x] / 27 [~] / 0 [ ] MARKERS IN THIS FILE. That is not the same as the
+amount of open work, and the difference matters: 8 of those [~] are R5-IDX POINTERS, and a
+pointer is one marker whether it stands for one item or forty. Behind them sit 42 open or
+partial items counted in the files they name (APFS_HFS_FULL_DRIVER_WRITE_PLAN 11,
+APFS_LIVE_RECERT_FOLLOWONS 7, FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN 7 plus 6 partial,
+CODEX_REVIEW_4 6 partial, CODEX_REVIEW_REMEDIATION 5 partial), plus a 2294-line backlog that
+carries no checkbox markers at all. So the honest figure is 19 native [~] plus 42 referenced
+items = 61 open things, indexed by 27 markers. Indexing work into pointers made the marker
+count go DOWN per unit of real work, which is precisely the kind of true-but-misleading number
+this campaign exists to remove. Recount both sides before quoting either (reconciled to the live marker counts; F25, the
 last [ ], closed 2026-08-25; the R5-IDX items added 2026-08-26 index open work that was
 sitting in other documents where no gate could see it) (G18-3 impl-detail-vs-contract audit COMPLETE -- whole tests/unit tree exhaustively swept, every nominee resolved; G18-1 mutation-testing COMPLETE and LEDGER-4
 committed-ledger done; a whole-doc un-defer + staleness sweep AND a [~] reclassification landed
