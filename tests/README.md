@@ -2,13 +2,13 @@
 
 ## Overview
 
-Comprehensive test suite for SAK Utility using the **Qt Test** framework with **251 registered CTest tests** across **243 C++ test source files** plus script-backed helper tests. Tests cover AI assistant clients, chat-title generation, workflow orchestration, tool execution, cancellation, run state, trace storage, core utilities, security, elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX, hardening), diagnostics, partition management, ISO pipelines, deployment, email inspection, splash sizing, partition filesystem probe certification, and quick action validation.
+Comprehensive test suite for SAK Utility using the **Qt Test** framework with **252 registered CTest tests** across **244 C++ test source files** plus script-backed helper tests. Tests cover AI assistant clients, chat-title generation, workflow orchestration, tool execution, cancellation, run state, trace storage, core utilities, security, elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX, hardening), diagnostics, partition management, ISO pipelines, deployment, email inspection, splash sizing, partition filesystem probe certification, and quick action validation.
 
 ## Structure
 
 ```
 tests/
-+-- unit/                                  # Unit tests (240 C++ files, including actions/)
++-- unit/                                  # Unit tests (241 C++ files, including actions/)
 |   +-- actions/                           # Quick action validation tests
 |   |   +-- test_action_factory.cpp
 |   |   +-- test_all_actions_metadata.cpp
@@ -62,6 +62,7 @@ tests/
 |   +-- test_mbox_parser.cpp
 |   +-- test_memory_benchmark_worker.cpp
 |   +-- test_migration_report.cpp
+|   +-- test_network_adapter_admin.cpp
 |   +-- test_network_adapter_inspector.cpp
 |   +-- test_network_diagnostic_controller.cpp
 |   +-- test_network_diagnostic_report.cpp
@@ -225,6 +226,7 @@ cmake --build build --target run_integration_tests
 | test_network_diagnostic_controller | `network_diagnostic_controller` | Tool orchestration, result aggregation |
 | test_network_diagnostic_report | `network_diagnostic_report` | HTML/JSON report generation |
 | test_network_adapter_inspector | `network_adapter_inspector` | Adapter enumeration, config parsing |
+| test_network_adapter_admin | `network_adapter_admin` | New-name validation, exact-match resolution against the system's adapter list, and the netsh argument vectors for enable/disable/rename |
 | test_ethernet_config_manager | `ethernet_config_manager` | Ethernet backup/restore, JSON persistence |
 | test_dns_diagnostic_tool | `dns_diagnostic_tool` | DNS queries, record type parsing |
 | test_port_scanner | `port_scanner` | TCP port scanning, banner grabbing |
@@ -443,6 +445,6 @@ QCOMPARE(spy.count(), 1);
 ---
 
 **Test Framework:** Qt Test
-**Registered Tests:** 251 (CTest)
-**Test Files:** 243 C++ test source files plus script-backed helper tests
+**Registered Tests:** 252 (CTest)
+**Test Files:** 244 C++ test source files plus script-backed helper tests
 **Platform:** Windows 10/11

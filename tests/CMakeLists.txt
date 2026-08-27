@@ -1820,6 +1820,11 @@ if(SAK_ENABLE_AI_ASSISTANT)
         # directly. The DHCP EXECUTION is not unit-tested (needs admin + would change the host's
         # network); the adapter exact-match guard + gating are.
         ${CMAKE_SOURCE_DIR}/src/core/ethernet_config_manager.cpp
+        # network.enable_adapter / disable_adapter / rename_adapter: same shape -- the netsh
+        # EXECUTION needs admin and would change the host's network, so it is not unit-tested
+        # here, but the ops link against the pure seam (name validation, resolution, argument
+        # vectors) which test_network_adapter_admin covers directly.
+        ${CMAKE_SOURCE_DIR}/src/core/network_adapter_admin.cpp
         # EthernetConfigManager now maps its capture through
         # EthernetConfigInfo::parseNetIpConfigJson (language-neutral, replacing the
         # localized netsh scrape), so its translation unit is required here too.
@@ -6820,6 +6825,31 @@ add_test(NAME test_format_utils COMMAND test_format_utils
 message(STATUS "Added unit test: test_format_utils")
 
 # test_wifi_profile_scanner - WiFi profile name/security parsing
+# test_network_adapter_admin --- the pure half of enable/disable/rename (R5-IDX-19c):
+# new-name validation, resolution against the system's own adapter list, and the exact netsh
+# argument vectors. No adapter is touched, so this runs anywhere.
+add_executable(test_network_adapter_admin
+    unit/test_network_adapter_admin.cpp
+    ../src/core/network_adapter_admin.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+    ../include/sak/network_adapter_admin.h
+)
+set_target_properties(test_network_adapter_admin PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_network_adapter_admin PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_network_adapter_admin PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_network_adapter_admin COMMAND test_network_adapter_admin
+         -o "${TEST_OUTPUT_DIR}/test_network_adapter_admin.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_network_adapter_admin")
+
 add_executable(test_wifi_profile_scanner
     unit/test_wifi_profile_scanner.cpp
     ../src/core/wifi_profile_scanner.cpp

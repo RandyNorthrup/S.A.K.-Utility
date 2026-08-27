@@ -333,10 +333,12 @@ private Q_SLOTS:
 
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         QCOMPARE(result.value(QStringLiteral("operation")).toString(), QStringLiteral("list"));
-        // Exact catalog size: 7 QuickActions + 40 read-only + 21 mutating registrations. A
+        // Exact catalog size: 7 QuickActions + 40 read-only + 24 mutating registrations. A
         // floor would tolerate registrations silently failing (registerAction returns false
         // on a duplicate/empty id) and the assistant losing actions it can no longer reach.
-        QCOMPARE(result.value(QStringLiteral("action_count")).toInt(), 68);
+        // 21 -> 24 on 2026-08-27: network.enable_adapter / disable_adapter / rename_adapter
+        // (R5-IDX-19c). This assertion is what caught them being added, which is the point.
+        QCOMPARE(result.value(QStringLiteral("action_count")).toInt(), 71);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         bool found_verify = false;
@@ -394,8 +396,8 @@ private Q_SLOTS:
                         {QStringLiteral("action_id"), QString()},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
-        // 7 built-in QuickActions + 40 read-only + 21 mutating ops, pinned exactly.
-        QCOMPARE(result.value(QStringLiteral("action_count")).toInt(), 68);
+        // 7 built-in QuickActions + 40 read-only + 24 mutating ops, pinned exactly.
+        QCOMPARE(result.value(QStringLiteral("action_count")).toInt(), 71);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;

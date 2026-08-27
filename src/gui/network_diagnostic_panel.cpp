@@ -13,6 +13,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
+#include "sak/network_adapter_admin.h"
 #include "sak/network_constants.h"
 #include "sak/network_diagnostic_controller.h"
 #include "sak/port_scanner.h"
@@ -2810,12 +2811,11 @@ void NetworkDiagnosticPanel::onAdapterEnable() {
 
     Q_EMIT logOutput(tr("Enabling adapter '%1'...").arg(adapter->name));
 
-    const QStringList args = {QStringLiteral("interface"),
-                              QStringLiteral("set"),
-                              QStringLiteral("interface"),
-                              adapter->name,
-                              QStringLiteral("admin=ENABLED")};
+    // The SAME argument vector the headless network.enable_adapter action builds. The panel used
+    // to spell this out itself, so the two could drift on code that reconfigures adapters
+    // (R5-IDX-19b).
     const QString adapter_name = adapter->name;
+    const QStringList args = sak::adapterAdminStateArgs(adapter_name, /*enabled=*/true);
     runNetshCommandAsync(args, [this, adapter_name](bool success, const QString& output) {
         if (success) {
             Q_EMIT statusMessage(tr("Adapter '%1' enabled").arg(adapter_name),
@@ -2863,12 +2863,9 @@ void NetworkDiagnosticPanel::onAdapterDisable() {
 
     Q_EMIT logOutput(tr("Disabling adapter '%1'...").arg(adapter->name));
 
-    const QStringList args = {QStringLiteral("interface"),
-                              QStringLiteral("set"),
-                              QStringLiteral("interface"),
-                              adapter->name,
-                              QStringLiteral("admin=DISABLED")};
+    // Shared with the headless network.disable_adapter action -- see onAdapterEnable.
     const QString adapter_name = adapter->name;
+    const QStringList args = sak::adapterAdminStateArgs(adapter_name, /*enabled=*/false);
     runNetshCommandAsync(args, [this, adapter_name](bool success, const QString& output) {
         if (success) {
             Q_EMIT statusMessage(tr("Adapter '%1' disabled").arg(adapter_name),
@@ -2924,17 +2921,8 @@ void NetworkDiagnosticPanel::onAdapterDiagnose() {
                  adapter->name.toStdString());
 }
 
-void NetworkDiagnosticPanel::onAdapterRename() {
-    const NetworkAdapterInfo* selected = selectedAdapter();
-    if (selected == nullptr) {
-        return;
-    }
-    // Snapshot the adapter by value before the nested event loop below (dialog or message
-    // box): a queued adapter rescan delivered while it runs reassigns m_adapters and frees
-    // what selectedAdapter() returned, so a raw pointer would dangle (use-after-free).
-    const NetworkAdapterInfo adapter_snapshot = *selected;
-    const NetworkAdapterInfo* adapter = &adapter_snapshot;
-
+bool NetworkDiagnosticPanel::promptForNewAdapterName(const QString& current_name,
+                                                     QString& new_name) {
     constexpr int kRenameDialogWidth = 400;
 
     QDialog dialog(this);
@@ -2943,10 +2931,10 @@ void NetworkDiagnosticPanel::onAdapterRename() {
     auto* layout = new QVBoxLayout(&dialog);
 
     layout->addWidget(
-        new QLabel(tr("Current name: <b>%1</b>").arg(adapter->name.toHtmlEscaped()), &dialog));
+        new QLabel(tr("Current name: <b>%1</b>").arg(current_name.toHtmlEscaped()), &dialog));
 
     auto* name_edit = new QLineEdit(&dialog);
-    name_edit->setText(adapter->name);
+    name_edit->setText(current_name);
     name_edit->selectAll();
     name_edit->setPlaceholderText(tr("Enter new adapter name"));
     layout->addWidget(name_edit);
@@ -2958,22 +2946,53 @@ void NetworkDiagnosticPanel::onAdapterRename() {
     layout->addWidget(button_box);
 
     if (dialog.exec() != QDialog::Accepted) {
-        return;
+        return false;
     }
 
-    const QString new_name = name_edit->text().trimmed();
-    if (new_name.isEmpty() || new_name == adapter->name) {
+    const QString typed = name_edit->text().trimmed();
+    if (typed.isEmpty() || typed == current_name) {
+        return false;  // nothing to do, and not worth an error dialog
+    }
+    // Validated by the SAME rule the headless network.rename_adapter action applies, before any
+    // command is built. This panel previously passed whatever was typed straight into
+    // `newname=`, where a value containing '=' would have been re-split by netsh's own parser
+    // into something other than the operator intended (R5-IDX-19b).
+    if (!sak::isValidNewAdapterName(typed)) {
+        sak::showWarningLogged(
+            this,
+            tr("Invalid Adapter Name"),
+            tr("'%1' cannot be used as an adapter name.\n\n"
+               "It must be 1-%2 characters, must not contain '=', a double quote or a control "
+               "character, and must not begin with '-' or '/'.")
+                .arg(typed)
+                .arg(sak::kMaxAdapterNameLength));
+        return false;
+    }
+
+    new_name = typed;
+    return true;
+}
+
+void NetworkDiagnosticPanel::onAdapterRename() {
+    const NetworkAdapterInfo* selected = selectedAdapter();
+    if (selected == nullptr) {
+        return;
+    }
+    // Snapshot the adapter by value before the nested event loop below (dialog or message
+    // box): a queued adapter rescan delivered while it runs reassigns m_adapters and frees
+    // what selectedAdapter() returned, so a raw pointer would dangle (use-after-free).
+    const NetworkAdapterInfo adapter_snapshot = *selected;
+    const NetworkAdapterInfo* adapter = &adapter_snapshot;
+
+    QString new_name;
+    if (!promptForNewAdapterName(adapter->name, new_name)) {
         return;
     }
 
     Q_EMIT logOutput(tr("Renaming adapter '%1' to '%2'...").arg(adapter->name, new_name));
 
-    const QStringList args = {QStringLiteral("interface"),
-                              QStringLiteral("set"),
-                              QStringLiteral("interface"),
-                              adapter->name,
-                              QStringLiteral("newname=") + new_name};
     const QString old_name = adapter->name;
+    const QStringList args = sak::adapterRenameArgs(old_name, new_name);
     runNetshCommandAsync(args, [this, old_name, new_name](bool success, const QString& output) {
         if (success) {
             Q_EMIT statusMessage(tr("Adapter renamed to '%1'").arg(new_name),

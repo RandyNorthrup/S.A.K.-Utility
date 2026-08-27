@@ -94,22 +94,52 @@ a parked design, per the bucket convention. Open work is what remains after thos
   dropping the closing-tag anchor turns three parser tests red; adding plaintext_key to toJson
   and, separately, to fromJson each turn
   wifiProfile_plaintextKeyAndHiddenAreNeverSerialized red. Gate: 251/251.
-  STILL OPEN, and the network half is now known to be two problems rather than one:
-    * R5-IDX-19b DUPLICATE TRANSPORT. network_diagnostic_panel.cpp's applyStaticIp and
-      onSetDnsServers run netsh themselves through runNetshCommand/runNetshCommandAsync, while
-      EthernetConfigManager::restoreSettings and ::setDnsServers -- which the registered
-      network.set_adapter_static_ip / _dns / _dhcp actions delegate to -- already own exactly
-      that work, with adapter-name resolution against the system's own list, QHostAddress
-      validation, de-duplication and canonicalization the panel does not have.
-    * R5-IDX-19c THREE OPERATIONS THE ASSISTANT CANNOT DO AT ALL. onAdapterEnable,
-      onAdapterDisable and onAdapterRename have no headless counterpart: the registered network
-      ids are audit_firewall, connect_wifi, dns_query, flush_dns, generate_wifi_setup_script,
-      list_adapters, list_connections, list_shares, list_wifi_profiles, mtr, ping, port_scan,
-      set_adapter_dhcp, set_adapter_dns, set_adapter_static_ip, traceroute and wifi_scan --
-      there is no enable_adapter, disable_adapter or rename_adapter. This is not duplication;
-      it is a hole in the dominion claim itself, and it is the reason 19b and 19c belong in one
-      batch: once those three have a core seam, the panel's private netsh runners have no
-      remaining caller and can go.
+  R5-IDX-19c CLOSED 2026-08-27. onAdapterEnable, onAdapterDisable and onAdapterRename had no
+  headless counterpart at all -- the registered network ids covered DHCP, static IP and DNS but
+  nothing brought an adapter up or down or renamed one, so for those three the dominion claim
+  was false in the strongest possible way: there was no headless code to drive. New core seam
+  src/core/network_adapter_admin.cpp plus three registered actions, network.enable_adapter,
+  network.disable_adapter and network.rename_adapter. The registry catalog goes 68 -> 71
+  (7 QuickActions + 40 read-only + 24 mutating); test_ai_assistant_panel_tool_dispatch pins that
+  total EXACTLY rather than as a floor, and it is what caught the addition -- exactly the
+  behaviour it was written for, since a floor would also tolerate a registration silently
+  failing and the assistant quietly losing an action. Everything
+  decidable without touching the machine is a pure function -- new-name validation, exact-match
+  resolution against the system's own adapter list, and the netsh argument vectors -- so
+  test_network_adapter_admin covers them with no adapter present.
+  The panel now calls the SAME argument builders, so those three operations are one
+  implementation rather than two. Two defects were fixed on the way:
+    * The panel passed a typed name straight into `newname=`. A value containing '=' produces
+      `newname=a=b`, which netsh's own parser is free to split differently than intended. Both
+      paths now reject it, along with control bytes, a double quote, and a leading '-' or '/'
+      that netsh would read as an option. Nothing here is about shell quoting -- these arguments
+      never reach a shell.
+    * The actions resolve the caller's adapter name against the system's own list, exactly as
+      the DHCP and static-IP ops do, so a model-supplied or invented name is refused before any
+      command runs. Resolution is exact and case-insensitive with NO prefix or fuzzy matching:
+      "Ethernet" must never resolve to "Ethernet 2", because picking the closest adapter is how
+      the wrong NIC gets disabled.
+  DRILLED, each guard separately: dropping the '=' rule, the control-byte rule, the leading
+  '-'/'/' rule or the length cap each turns its own test red; making resolution a prefix match
+  turns resolve_refusesPartialMatch red; inverting the enable/disable token turns
+  stateArgs_enableAndDisableDifferOnlyInTheAdminToken red. Gate: full Release build exit 0,
+  ctest 252/252 (the new target brings the suite from 251 to 252).
+  R5-IDX-19b PARTIALLY CLOSED, and the rest is an OWNER DECISION rather than work.
+  Enable/disable/rename are unified as described above -- the two sides built byte-identical
+  netsh commands, so sharing them changed no behaviour at all.
+  Static IP and DNS are NOT unified, because the two sides do not issue the same command:
+    * EthernetConfigManager::restoreStaticIp issues
+      `interface ip set address name=<a> source=static addr=<ip> mask=<m> gateway=<g> gwmetric=0`
+    * the panel's applyStaticIp issues
+      `interface ipv4 set address <a> static <ip> <m> <g>`
+  Same intent, different form, and one real behavioural difference: the core pins the gateway
+  metric to 0 and the panel leaves Windows to choose it automatically from link speed. DNS
+  diverges the same way (restoreDnsServers versus the panel's runDnsApplySequence).
+  Unifying therefore changes live routing behaviour whichever direction it goes -- the panel
+  would start pinning metric 0, or the AI path would stop. On a multi-homed machine that decides
+  which interface wins. That is the owner's call, not something to slip into a refactor, so it
+  is stated here rather than done. Note this makes the drift risk WORSE than first recorded: the
+  two paths are not merely duplicated, they already disagree.
 - [~] R5-IDX-2 `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md` -- 11 open items. These were
   INVISIBLE to every grep-based scan until 2026-08-26: the file carried 8 raw NUL bytes, so
   grep classified it as binary and silently skipped it. NULs are now escaped as text.

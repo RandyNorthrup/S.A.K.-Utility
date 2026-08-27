@@ -285,6 +285,11 @@ private:
                              QString& ip,
                              QString& mask,
                              QString& gateway);
+    // Runs the modal rename dialog and VALIDATES the typed name with the same rule the headless
+    // network.rename_adapter action uses. Returns true, with @p new_name set, only for a name
+    // that is safe to hand to netsh; returns false on cancel, on an unchanged/empty name, and on
+    // a rejected name (having already told the user why).
+    bool promptForNewAdapterName(const QString& current_name, QString& new_name);
     void applyStaticIp(const QString& adapter_name,
                        const QString& ip,
                        const QString& mask,

@@ -30,6 +30,7 @@
 #include "sak/leftover_scan_provenance.h"
 #include "sak/logger.h"
 #include "sak/mbox_parser.h"
+#include "sak/network_adapter_admin.h"
 #include "sak/organizer_worker.h"
 #include "sak/ost_conversion_worker.h"
 #include "sak/ost_converter_types.h"
@@ -3192,6 +3193,141 @@ AppActionResult setAdapterDns(const QJsonObject& args) {
 }
 
 // ---------------------------------------------------------------------------
+// network.enable_adapter / disable_adapter / rename_adapter.
+//
+// R5-IDX-19c: the diagnostic panel could do all three and the assistant could do none of them,
+// because no headless code existed to drive. The pure parts (name validation, resolution, and
+// the exact netsh argument vector) live in network_adapter_admin so they are unit-testable with
+// no adapter present.
+// ---------------------------------------------------------------------------
+
+QJsonObject adapterNameOnlySchema(const QString& description) {
+    QJsonObject name_prop{{QStringLiteral("type"), QStringLiteral("string")},
+                          {QStringLiteral("description"), description}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"),
+                        QJsonObject{{QStringLiteral("adapter_name"), name_prop}}},
+                       {QStringLiteral("required"), QJsonArray{QStringLiteral("adapter_name")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
+QJsonObject enableAdapterParamsSchema() {
+    return adapterNameOnlySchema(
+        QStringLiteral("Exact name of the adapter to bring UP, as shown by "
+                       "network.list_adapters (e.g. \"Ethernet\" or \"Wi-Fi\")"));
+}
+
+QJsonObject disableAdapterParamsSchema() {
+    return adapterNameOnlySchema(
+        QStringLiteral("Exact name of the adapter to bring DOWN, as shown by "
+                       "network.list_adapters. Disabling the adapter carrying the current "
+                       "connection drops it until the adapter is enabled again."));
+}
+
+QJsonObject renameAdapterParamsSchema() {
+    QJsonObject name_prop{
+        {QStringLiteral("type"), QStringLiteral("string")},
+        {QStringLiteral("description"),
+         QStringLiteral("Exact CURRENT name of the adapter, as shown by network.list_adapters")}};
+    QJsonObject new_name_prop{
+        {QStringLiteral("type"), QStringLiteral("string")},
+        {QStringLiteral("description"),
+         QStringLiteral("The new adapter name. Must not contain '=', a double quote or a control "
+                        "character, and must not begin with '-' or '/'.")}};
+    return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
+                       {QStringLiteral("properties"),
+                        QJsonObject{{QStringLiteral("adapter_name"), name_prop},
+                                    {QStringLiteral("new_name"), new_name_prop}}},
+                       {QStringLiteral("required"),
+                        QJsonArray{QStringLiteral("adapter_name"), QStringLiteral("new_name")}},
+                       {QStringLiteral("additionalProperties"), false}};
+}
+
+// Resolve the model-supplied adapter name against the system's own list, exactly as the DHCP and
+// static-IP ops do. Returns the authoritative spelling, or a ready-made refusal naming what IS
+// available -- a bogus or invented name never reaches netsh.
+std::optional<AppActionResult> resolveAdapterOrRefuse(EthernetConfigManager& manager,
+                                                      const QString& requested,
+                                                      QString& resolved) {
+    resolved = resolveEthernetAdapter(manager, requested);
+    if (!resolved.isEmpty()) {
+        return std::nullopt;
+    }
+    const QStringList adapters = manager.listEthernetAdapters();
+    return AppActionResult{false,
+                           QStringLiteral("No network adapter named '%1' (available: %2)")
+                               .arg(requested,
+                                    adapters.isEmpty() ? QStringLiteral("none found")
+                                                       : adapters.join(", ")),
+                           {}};
+}
+
+// Bring an adapter up or down. SYNC + bounded (one netsh call with its own process timeout,
+// shell-free via runProcess -- no interpolation). Mutating + requires_admin; NOT destructive (no
+// data loss, and the inverse op restores it) and not catastrophic, so the panel gate fires at the
+// Assisted-confirm tier with the adapter name shown.
+AppActionResult setAdapterAdminState(const QJsonObject& args, bool enabled) {
+    const QString requested = args.value(QStringLiteral("adapter_name")).toString().trimmed();
+    if (requested.isEmpty()) {
+        return {false,
+                enabled ? QStringLiteral("enable_adapter requires an 'adapter_name' argument")
+                        : QStringLiteral("disable_adapter requires an 'adapter_name' argument"),
+                {}};
+    }
+
+    EthernetConfigManager manager;
+    QString resolved;
+    if (const auto refusal = resolveAdapterOrRefuse(manager, requested, resolved)) {
+        return *refusal;
+    }
+
+    const AdapterAdminOutcome outcome = setAdapterEnabled(resolved, enabled);
+    if (!outcome.succeeded) {
+        return {false, outcome.message, {}};
+    }
+    return {true,
+            outcome.message,
+            QJsonObject{{QStringLiteral("adapter_name"), resolved},
+                        {QStringLiteral("enabled"), enabled}}};
+}
+
+AppActionResult enableAdapter(const QJsonObject& args) {
+    return setAdapterAdminState(args, /*enabled=*/true);
+}
+
+AppActionResult disableAdapter(const QJsonObject& args) {
+    return setAdapterAdminState(args, /*enabled=*/false);
+}
+
+// Rename an adapter. Same shape as the state change; the NEW name is validated by
+// sak::renameAdapter before any command is built, so an unusable name is refused here rather
+// than handed to netsh to interpret.
+AppActionResult renameAdapterAction(const QJsonObject& args) {
+    const QString requested = args.value(QStringLiteral("adapter_name")).toString().trimmed();
+    const QString new_name = args.value(QStringLiteral("new_name")).toString();
+    if (requested.isEmpty() || new_name.trimmed().isEmpty()) {
+        return {false,
+                QStringLiteral("rename_adapter requires 'adapter_name' and 'new_name' arguments"),
+                {}};
+    }
+
+    EthernetConfigManager manager;
+    QString resolved;
+    if (const auto refusal = resolveAdapterOrRefuse(manager, requested, resolved)) {
+        return *refusal;
+    }
+
+    const AdapterAdminOutcome outcome = sak::renameAdapter(resolved, new_name);
+    if (!outcome.succeeded) {
+        return {false, outcome.message, {}};
+    }
+    return {true,
+            outcome.message,
+            QJsonObject{{QStringLiteral("adapter_name"), new_name.trimmed()},
+                        {QStringLiteral("previous_name"), resolved}}};
+}
+
+// ---------------------------------------------------------------------------
 // network.flush_dns: clear the local DNS resolver cache.
 // ---------------------------------------------------------------------------
 
@@ -3322,6 +3458,52 @@ QJsonObject connectWifiParamsSchema() {
                        {QStringLiteral("additionalProperties"), false}};
 }
 
+// Register the three adapter-administration ops (R5-IDX-19c). Kept in their own function so
+// registerNetworkMutatingOps stays within the length budget.
+void registerAdapterAdminOps(const AddMutatingActionFn& add) {
+    // Bringing an adapter UP restores connectivity rather than removing it, so it is the mildest
+    // of the three. Still requires_admin: netsh set interface needs elevation and a non-elevated
+    // run must fail honestly rather than report a change that did not happen.
+    AppActionDescriptor enable = mutatingDescriptor(
+        QStringLiteral("network.enable_adapter"),
+        QStringLiteral("Enable a network adapter"),
+        QStringLiteral("Bring a network adapter UP (netsh interface set interface admin=ENABLED). "
+                       "Reversible with disable_adapter; no data loss."),
+        QStringLiteral("network"));
+    enable.params_schema = enableAdapterParamsSchema();
+    enable.requires_admin = true;
+    add(enable, enableAdapter);
+
+    // Disabling is reversible and loses no data, so it is NOT destructive by this codebase's
+    // definition -- but it can drop the very connection the operator is working over, and it
+    // cannot be undone remotely once it does. The description says so plainly so the confirm
+    // prompt carries that warning rather than burying it.
+    AppActionDescriptor disable = mutatingDescriptor(
+        QStringLiteral("network.disable_adapter"),
+        QStringLiteral("Disable a network adapter"),
+        QStringLiteral("Bring a network adapter DOWN (netsh interface set interface "
+                       "admin=DISABLED). Reversible with enable_adapter, but disabling the "
+                       "adapter carrying the current connection drops it, and it cannot be "
+                       "re-enabled remotely afterwards."),
+        QStringLiteral("network"));
+    disable.params_schema = disableAdapterParamsSchema();
+    disable.requires_admin = true;
+    add(disable, disableAdapter);
+
+    // A rename changes a display name only; connectivity is untouched. It still needs elevation,
+    // and it is worth noting that scripts or saved profiles keyed on the OLD name stop matching.
+    AppActionDescriptor rename = mutatingDescriptor(
+        QStringLiteral("network.rename_adapter"),
+        QStringLiteral("Rename a network adapter"),
+        QStringLiteral("Change a network adapter's connection name (netsh interface set interface "
+                       "newname=). Connectivity is unaffected, but anything keyed on the old name "
+                       "will no longer match it."),
+        QStringLiteral("network"));
+    rename.params_schema = renameAdapterParamsSchema();
+    rename.requires_admin = true;
+    add(rename, renameAdapterAction);
+}
+
 // Register the network-mutating ops. Split out to keep registerMutatingAppActionsInto within the
 // length budget.
 void registerNetworkMutatingOps(const AddMutatingActionFn& add) {
@@ -3362,6 +3544,8 @@ void registerNetworkMutatingOps(const AddMutatingActionFn& add) {
     dns.params_schema = setAdapterDnsParamsSchema();
     dns.requires_admin = true;  // netsh set needs elevation; reversible so NOT destructive
     add(dns, setAdapterDns);
+
+    registerAdapterAdminOps(add);
 
     // network.flush_dns: clears the local DNS resolver cache -> mutating (a system-cache change)
     // but NOT requires_admin (ipconfig /flushdns needs no elevation) and NOT destructive (the cache
