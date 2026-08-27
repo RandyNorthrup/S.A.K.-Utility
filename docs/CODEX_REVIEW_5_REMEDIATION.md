@@ -2085,9 +2085,10 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
     NOT yet actioned from this batch, and deliberately not claimed as fixed -- the list is
     maintained as items close, per the lesson immediately below. As of 2026-08-26 the whole of
     it is:
-      - optimize_power_settings queryPowerPlan and its pattern appear to be DEAD CODE. Flagged,
-        not removed: a removal needs owner authorization, so this stays open by rule rather than
-        by oversight.
+      - optimize_power_settings queryPowerPlan: CLOSED 2026-08-26, and NOT by removing it -- see
+        "THE DEAD FUNCTION WAS THE UNFINISHED HALF" below. It was never dead code in the sense
+        the flag implied; it was the missing half of the very feature the report apologised for,
+        and it is now wired up.
       - ai_command_tool_planner, ONE finding still open. (a) The resolved program is not
         pinned or revalidated between approval and launch, so the binary can change underneath
         the "SAME binary" guarantee -- a real TOCTOU that needs handle pinning across the
@@ -2616,6 +2617,65 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
     named slot, which is a genuinely separate claim (is the guard reachable) from the slot around
     it (does the guard reject). The recurring lesson stands -- when lizard rejects a function at
     low CCN, the answer is a seam, never a shorter comment.
+  - THE DEAD FUNCTION WAS THE UNFINISHED HALF, 2026-08-26. This closes the
+    optimize_power_settings queryPowerPlan item, and it is the clearest vindication in this
+    campaign of the rule that a removal needs authorization and an investigation FIRST.
+    queryPowerPlan() had no caller, so it read as dead code and was flagged for removal. What it
+    actually did: run `powercfg -QUERY <guid>` -- the expensive call, and the ONLY one that
+    returns the settings tree at all -- and then keep nothing but the plan NAME, discarding
+    every value that made the query worth making. Three lines away, the success report told the
+    technician "Run powercfg -QUERY to see the effective settings; this action does not read
+    them back". The unused function was the missing half of the feature the report was
+    apologising for. Deleting it would have removed the evidence that the feature was half-built
+    and left the apology shipping forever.
+    IMPLEMENTED, NOT DROPPED. queryPowerPlan now returns PowerPlanDetails (the plan it names AND
+    the timeouts it lists), execute() calls it after activation, and the report states the
+    display / sleep / hibernate idle timeouts actually in force, on AC and on battery.
+    THE READ-BACK IS QUERIED AGAINST THE PLAN THAT IS ACTUALLY ACTIVE, not the plan activation
+    aimed at, so the figures describe the machine as the technician will find it; and it is
+    skipped entirely when activation FAILED, because the failure branch must not print settings
+    as though something had been applied.
+    LOCALE-INDEPENDENCE WAS THE WHOLE DESIGN PROBLEM, and this file had already shipped that bug
+    TWICE (the list parser and the active-plan parser both matched English labels and returned
+    nothing on a translated Windows). Every label in `powercfg -QUERY` output translates,
+    "Current AC Power Setting Index" included, so the parser anchors on two things that do not:
+    the well-known setting GUIDs, and INDENTATION. Within a setting block the two Current lines
+    sit at the SAME indent as the "Power Setting GUID" line that opens it, while the block's
+    Minimum/Maximum/increment attributes are indented deeper.
+    THE ANCHOR WAS VALIDATED AGAINST REAL OUTPUT BEFORE ANY C++ WAS WRITTEN, which is the part
+    worth repeating as method rather than as trivia. `powercfg -QUERY` is READ-ONLY, so running
+    it live costs nothing and guesses nothing: 278 lines, 27 setting blocks, 54 Current lines.
+    Checks run against that capture: (1) every Current line sits at indent 4 and no attribute
+    line does, zero violations; (2) an independent oracle that reads AC/DC straight off the
+    ENGLISH labels agrees with the indent rule on all 27 blocks, zero mismatches; (3) every
+    block carries exactly two readings; (4) the explicit-GUID query form -- the one
+    queryPowerPlan actually uses -- has identical shape to the bare form. The obvious
+    alternative rule, "the last two hex values in the block", was REJECTED by this exercise: it
+    happens to agree on all 27 blocks, but it would report a "Maximum Possible Setting:
+    0xffffffff" as a live setting in any block whose Current lines were absent, which is a
+    fail-OPEN in a report whose entire purpose is to stop asserting unmeasured values.
+    FAIL-CLOSED IS CARRIED BY A FLAG, NOT BY A VALUE. PowerTimeout::found is what says "read";
+    the seconds are NOT the signal, because 0 is a legitimate reading meaning "Never". A setting
+    the query did not return prints as "NOT READ (powercfg did not report this setting)" rather
+    than as a plausible default -- substituting one would have recreated the exact defect this
+    closes. Exactly two readings are required: one is half an answer with no defensible way to
+    say whether it was the AC or the DC value.
+    0 RENDERS AS "Never", because powercfg encodes "never time out" as 0 and a bare 0 in front
+    of a technician reads as an IMMEDIATE timeout -- the opposite of what it means.
+    MUTATION-PROVED, both structural anchors drilled separately: removing the indent filter turns
+    test_optimize_power_settings_action RED (BUILD EXIT: 0), and neutering the block terminator
+    turns it RED (BUILD EXIT: 0). The fixture is a verbatim excerpt of real output, kept
+    byte-for-byte because the indentation IS the thing under test, and it deliberately contains
+    both block shapes powercfg emits (a range setting with Minimum/Maximum attributes, and an
+    enumerated setting with none).
+    A FALSE-GREEN TRAP CAUGHT AGAIN, the same one already recorded twice: neutering the
+    terminator as `if (false && ...)` tripped C4127 under warnings-as-errors, so the BUILD died
+    and the drill would have run the STALE binary and read green. Captured BUILD EXIT separately
+    is what exposed it; the drill was rewritten as `indent < 0 && ...`, which is never true but
+    still uses both operands. WRITE MUTATIONS THAT STILL COMPILE.
+    ALSO FIXED IN PASSING: a duplicate kSecondsPerMinute. The compiler rejected it as ambiguous
+    against sak::kSecondsPerMinute in layout_constants.h -- the same duplicated-knowledge class
+    this whole batch is about, caught for free because the canonical one already existed.
   - AUTHORIZED-IN-PROGRESS, BLOCKED-ON-USER (relabelled 2026-08-17 from a dishonest "RESOLVED [deferred-with-rationale]" -- the sweep is genuinely INCOMPLETE, not resolved): 764 of 1098 units run (69.6%); 334 remain (246 tests / 75 src / 9 include / 4 scripts). The August-11-2026 Codex account cap that blocked it HAS since reset, but RELAUNCH IS A MANUAL, BUDGET-HEAVY STEP on Randy's own Codex account (334 xhigh review units) -- nothing auto-resumes, and burning that much of his account budget is his call, so this waits on his explicit go. NOT verified-done (334 units genuinely unrun); NOT deferred (it is authorized and would resume the moment he says so). The 764 units already run DID produce the P1-P11 subsystem findings, all closed.
       BLOCKED: 764 of 1098 units complete (69.6%). The Codex account usage limit is
       exhausted and does not reset until August 11, 2026 11:10 AM, so the remaining 334

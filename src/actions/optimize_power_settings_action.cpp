@@ -11,9 +11,11 @@
 #include "sak/process_runner.h"
 
 #include <QRegularExpression>
+#include <QStringList>
 #include <QTextStream>
 
 #include <algorithm>
+#include <limits>
 
 namespace sak {
 
@@ -44,6 +46,56 @@ constexpr int kReportInnerWidth = 67;
 // Built-in high-performance scheme GUIDs (lower-case, canonical).
 constexpr auto kHighPerformanceGuid = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";      // SCHEME_MIN
 constexpr auto kUltimatePerformanceGuid = "e9a42b02-d5df-448d-aa00-03f14749eb61";  // Ultimate
+
+// Well-known power SETTING GUIDs (not scheme GUIDs). Stable across Windows versions and
+// locales, which is exactly why the read-back keys on them instead of on the printed labels.
+constexpr auto kDisplayIdleSettingGuid = "3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e";    // VIDEOIDLE
+constexpr auto kSleepIdleSettingGuid = "29f6c1db-86da-48c5-9fdb-f2b67b1f44da";      // STANDBYIDLE
+constexpr auto kHibernateIdleSettingGuid = "9d7815a6-7ee4-497e-8888-515a05f02364";  // HIBERNATEIDLE
+
+// A setting block lists exactly two readings, "Current AC ..." then "Current DC ...", in that
+// order. Anything else means the block was not the shape this parser understands, and the
+// caller is told the value was not read rather than handed a guess.
+constexpr int kPowerReadingsPerSetting = 2;
+// sak::kSecondsPerMinute (layout_constants.h) is the canonical one; do not add a second copy.
+constexpr int kMinutesPerHour = 60;
+constexpr int kHexadecimalBase = 16;
+
+/// Count the leading spaces of @p line. Indentation is emitted by powercfg's own format
+/// strings and is not part of any translated text, which is what makes it a safe anchor.
+[[nodiscard]] int leadingSpaces(const QString& line) {
+    int count = 0;
+    while (count < line.size() && line.at(count) == QLatin1Char(' ')) {
+        ++count;
+    }
+    return count;
+}
+
+/// True when @p line carries a GUID, i.e. it OPENS a scheme/subgroup/setting block rather than
+/// reporting a value inside one. Used as the block terminator so a setting's readings are never
+/// read out of the following block.
+[[nodiscard]] bool lineOpensGuidBlock(const QString& line) {
+    static const QRegularExpression guid_re(
+        QStringLiteral("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"),
+        QRegularExpression::CaseInsensitiveOption);
+    return guid_re.match(line).hasMatch();
+}
+
+/// Extract a `0x...` reading from @p line, or -1 when it carries none.
+[[nodiscard]] qint64 hexReading(const QString& line) {
+    static const QRegularExpression hex_re(QStringLiteral("0x([0-9a-f]+)"),
+                                           QRegularExpression::CaseInsensitiveOption);
+    const QRegularExpressionMatch match = hex_re.match(line);
+    if (!match.hasMatch()) {
+        return -1;
+    }
+    bool ok = false;
+    const qulonglong value = match.captured(1).toULongLong(&ok, kHexadecimalBase);
+    if (!ok || value > static_cast<qulonglong>(std::numeric_limits<qint64>::max())) {
+        return -1;
+    }
+    return static_cast<qint64>(value);
+}
 
 }  // namespace
 
@@ -91,12 +143,117 @@ QVector<OptimizePowerSettingsAction::PowerPlan> OptimizePowerSettingsAction::par
     return plans;
 }
 
+namespace {
+
+/// Index of the line opening @p setting_guid's block, or -1 when this scheme does not list it.
+[[nodiscard]] int findSettingBlockLine(const QStringList& lines, const QString& setting_guid) {
+    for (int index = 0; index < lines.size(); ++index) {
+        if (lines.at(index).contains(setting_guid, Qt::CaseInsensitive)) {
+            return index;
+        }
+    }
+    return -1;
+}
+
+/// Collect the hex readings of the block opened at @p start_line.
+///
+/// The readings sit at the SAME indent as the line that opened the block, while the block's
+/// Minimum/Maximum/increment attributes are indented deeper -- so filtering on that indent is
+/// what keeps a "Maximum Possible Setting: 0xffffffff" from being reported as a live setting.
+/// The walk stops at the next line that both opens a GUID block and is no deeper, so one
+/// setting's readings can never be completed from the following setting's.
+[[nodiscard]] QVector<qint64> collectBlockReadings(const QStringList& lines, int start_line) {
+    const int block_indent = leadingSpaces(lines.at(start_line));
+    QVector<qint64> readings;
+    for (int index = start_line + 1; index < lines.size(); ++index) {
+        const QString& line = lines.at(index);
+        if (line.trimmed().isEmpty()) {
+            continue;
+        }
+        const int indent = leadingSpaces(line);
+        if (indent <= block_indent && lineOpensGuidBlock(line)) {
+            break;  // the next scheme/subgroup/setting block starts here
+        }
+        if (indent != block_indent) {
+            continue;  // a block attribute, not a reading
+        }
+        const qint64 reading = hexReading(line);
+        if (reading >= 0) {
+            readings.append(reading);
+        }
+    }
+    return readings;
+}
+
+}  // namespace
+
+OptimizePowerSettingsAction::PowerTimeout OptimizePowerSettingsAction::parsePowerTimeout(
+    const QString& query_output, const QString& setting_guid) {
+    PowerTimeout timeout;
+    const QStringList lines = query_output.split(QLatin1Char('\n'));
+    const int start_line = findSettingBlockLine(lines, setting_guid);
+    if (start_line < 0) {
+        return timeout;  // setting absent from this scheme -- NOT read, and said so
+    }
+
+    // EXACTLY two, in AC-then-DC order. Fewer means the block was not the shape this parser
+    // understands; more means it read something it should not have. Either way the honest
+    // answer is "not read", never a plausible-looking number.
+    const QVector<qint64> readings = collectBlockReadings(lines, start_line);
+    if (readings.size() != kPowerReadingsPerSetting) {
+        return timeout;
+    }
+    timeout.ac_seconds = readings.at(0);
+    timeout.dc_seconds = readings.at(1);
+    timeout.found = true;
+    return timeout;
+}
+
+OptimizePowerSettingsAction::PowerTimeouts OptimizePowerSettingsAction::parsePowerTimeouts(
+    const QString& query_output) {
+    PowerTimeouts timeouts;
+    timeouts.display = parsePowerTimeout(query_output,
+                                         QString::fromLatin1(kDisplayIdleSettingGuid));
+    timeouts.sleep = parsePowerTimeout(query_output, QString::fromLatin1(kSleepIdleSettingGuid));
+    timeouts.hibernate = parsePowerTimeout(query_output,
+                                           QString::fromLatin1(kHibernateIdleSettingGuid));
+    return timeouts;
+}
+
+QString OptimizePowerSettingsAction::formatPowerTimeout(qint64 seconds) {
+    // powercfg encodes "never time out" as 0. Printing a bare "0" would read as an immediate
+    // timeout -- the exact opposite of the setting's meaning -- to the technician this report
+    // exists for.
+    if (seconds <= 0) {
+        return QStringLiteral("Never");
+    }
+    if (seconds < kSecondsPerMinute) {
+        return QStringLiteral("%1 sec").arg(seconds);
+    }
+    const qint64 total_minutes = seconds / kSecondsPerMinute;
+    const qint64 trailing_seconds = seconds % kSecondsPerMinute;
+    QString rendered;
+    if (total_minutes >= kMinutesPerHour) {
+        rendered = QStringLiteral("%1 hr").arg(total_minutes / kMinutesPerHour);
+        const qint64 trailing_minutes = total_minutes % kMinutesPerHour;
+        if (trailing_minutes > 0) {
+            rendered += QStringLiteral(" %1 min").arg(trailing_minutes);
+        }
+    } else {
+        rendered = QStringLiteral("%1 min").arg(total_minutes);
+    }
+    if (trailing_seconds > 0) {
+        rendered += QStringLiteral(" %1 sec").arg(trailing_seconds);
+    }
+    return rendered;
+}
+
 // ENTERPRISE-GRADE: Get detailed power plan information using powercfg -QUERY
-OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::queryPowerPlan(
+OptimizePowerSettingsAction::PowerPlanDetails OptimizePowerSettingsAction::queryPowerPlan(
     const QString& guid) {
-    PowerPlan plan;
-    plan.guid = guid;
-    plan.isActive = false;
+    PowerPlanDetails details;
+    details.plan.guid = guid;
+    details.plan.isActive = false;
 
     const ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("powercfg.exe")),
                                           QStringList() << "-QUERY" << guid,
@@ -110,10 +267,13 @@ OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::queryPowerPl
     const QRegularExpression regex(QString::fromLatin1(kPowerPlanNamePattern));
     const QRegularExpressionMatch match = regex.match(output);
     if (match.hasMatch()) {
-        plan.name = match.captured(kPowerPlanGuidCaptureGroup);
+        details.plan.name = match.captured(kPowerPlanGuidCaptureGroup);
     }
 
-    return plan;
+    // The settings tree is the reason this query is run at all; reading only the name meant
+    // paying for the query and throwing away its answer.
+    details.timeouts = parsePowerTimeouts(output);
+    return details;
 }
 
 // ENTERPRISE-GRADE: Set power plan using powercfg -SETACTIVE
@@ -292,6 +452,62 @@ QString OptimizePowerSettingsAction::buildPowerPlanListReport(
     return report;
 }
 
+void OptimizePowerSettingsAction::appendTargetPlanHeader(const PowerPlan& target_plan,
+                                                         QString& report) {
+    report += QString("| Target Plan:  %1\n")
+                  .arg(target_plan.name)
+                  .leftJustified(kReportInnerWidth, ' ') +
+              "|\n";
+    report += QString("| Target GUID:  %1\n")
+                  .arg(target_plan.guid)
+                  .leftJustified(kReportInnerWidth, ' ') +
+              "|\n";
+    report += "+================================================================+\n";
+}
+
+OptimizePowerSettingsAction::PowerTimeouts OptimizePowerSettingsAction::readEffectiveTimeouts(
+    const QString& fallback_guid) {
+    // READ BACK WHAT IS NOW IN FORCE. Queried AFTER activation, and against the plan that is
+    // ACTUALLY active rather than the one this action aimed at, so the figures describe the
+    // machine as the technician will find it. If the active-scheme query cannot answer, the
+    // target GUID is the next best subject -- and any setting that then fails to parse is
+    // reported as unread rather than filled in.
+    Q_EMIT executionProgress("Reading effective power settings...", progress::kStep90);
+    const PowerPlan active_now = getActivePowerPlan();
+    const QString query_guid = active_now.guid.isEmpty() ? fallback_guid : active_now.guid;
+    return queryPowerPlan(query_guid).timeouts;
+}
+
+void OptimizePowerSettingsAction::appendEffectiveTimeouts(const PowerTimeouts& timeouts,
+                                                          QString& log) {
+    // Report what was MEASURED, and name what was not. The previous version of these lines told
+    // the technician to go and run powercfg -QUERY themselves -- while the action already had a
+    // queryPowerPlan() that ran exactly that command and discarded its answer.
+    struct Row {
+        const char* label;
+        const PowerTimeout* timeout;
+    };
+    const Row rows[] = {
+        {"Display off", &timeouts.display},
+        {"Sleep after", &timeouts.sleep},
+        {"Hibernate after", &timeouts.hibernate},
+    };
+    log += "EFFECTIVE IDLE TIMEOUTS (read back from powercfg):\n";
+    for (const Row& row : rows) {
+        if (!row.timeout->found) {
+            // Never a substituted default: a value this action could not read is reported as
+            // unread, which is the whole reason the read-back exists.
+            log += QString("*   %1: NOT READ (powercfg did not report this setting)\n")
+                       .arg(QString::fromLatin1(row.label));
+            continue;
+        }
+        log += QString("*   %1: %2 on AC, %3 on battery\n")
+                   .arg(QString::fromLatin1(row.label),
+                        formatPowerTimeout(row.timeout->ac_seconds),
+                        formatPowerTimeout(row.timeout->dc_seconds));
+    }
+}
+
 void OptimizePowerSettingsAction::finalizePowerOptimizationResult(
     const OptimizationResultContext& context) {
     Q_EMIT executionProgress("Power optimization complete", progress::kComplete);
@@ -313,9 +529,8 @@ void OptimizePowerSettingsAction::finalizePowerOptimizationResult(
         // announces them without reading them is telling a technician something it does not know.
         result.log += "RECOMMENDATIONS:\n";
         result.log += "* System is already on the High Performance plan\n";
-        result.log +=
-            "* That plan is Windows' least power-restricted scheme; individual "
-            "processor, sleep and display settings were NOT queried by this action\n";
+        result.log += "* That plan is Windows' least power-restricted scheme\n";
+        appendEffectiveTimeouts(context.effective_timeouts, result.log);
     } else if (context.success) {
         result.success = true;
         result.message =
@@ -330,9 +545,7 @@ void OptimizePowerSettingsAction::finalizePowerOptimizationResult(
         result.log +=
             "* The active plan changed, so its sleep, hibernate and display timeouts "
             "now apply INSTEAD of the previous plan's\n";
-        result.log +=
-            "* Run powercfg -QUERY to see the effective settings; this action does not "
-            "read them back\n";
+        appendEffectiveTimeouts(context.effective_timeouts, result.log);
     } else {
         result.success = false;
         result.message = "Failed to activate High Performance plan";
@@ -408,15 +621,7 @@ void OptimizePowerSettingsAction::execute() {
         return;
     }
 
-    report += QString("| Target Plan:  %1\n")
-                  .arg(high_perf_plan.name)
-                  .leftJustified(kReportInnerWidth, ' ') +
-              "|\n";
-    report += QString("| Target GUID:  %1\n")
-                  .arg(high_perf_plan.guid)
-                  .leftJustified(kReportInnerWidth, ' ') +
-              "|\n";
-    report += "+================================================================+\n";
+    appendTargetPlanHeader(high_perf_plan, report);
 
     // Match by GUID, not by name substring: a custom plan named e.g. "My High
     // Performance Rig" must NOT be treated as the built-in plan (which would skip
@@ -442,10 +647,17 @@ void OptimizePowerSettingsAction::execute() {
     }
 
     report += "+================================================================+\n";
+
+    // Skipped when activation failed: the report's failure branch must not print settings as
+    // though something had been applied.
+    const PowerTimeouts effective_timeouts = success ? readEffectiveTimeouts(high_perf_plan.guid)
+                                                     : PowerTimeouts{};
+
     finalizePowerOptimizationResult({.start_time = start_time,
                                      .report = report,
                                      .previous_plan_name = current_plan.name,
                                      .high_perf_guid = high_perf_plan.guid,
+                                     .effective_timeouts = effective_timeouts,
                                      .already_optimized = already_optimized,
                                      .success = success});
 }

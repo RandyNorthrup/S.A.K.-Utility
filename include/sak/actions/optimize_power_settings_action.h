@@ -73,18 +73,80 @@ public:
     ///        constructed plan (empty guid) when no scheme line is present.
     [[nodiscard]] static PowerPlan parseActivePowerPlan(const QString& output);
 
+    /// @brief One power setting's effective idle timeout, in seconds, for each power source.
+    ///
+    /// @c found false means the value was NOT READ. It is never a synthesised default, because
+    /// the entire point of reading these back is that the report stops asserting settings
+    /// nothing measured -- substituting a plausible zero here would recreate the defect.
+    struct PowerTimeout {
+        qint64 ac_seconds{0};
+        qint64 dc_seconds{0};
+        bool found{false};
+    };
+
+    /// @brief The three idle timeouts a technician asks about after a plan change.
+    struct PowerTimeouts {
+        PowerTimeout display;
+        PowerTimeout sleep;
+        PowerTimeout hibernate;
+    };
+
+    /// @brief What `powercfg -QUERY <guid>` reported: the plan it names and its timeouts.
+    struct PowerPlanDetails {
+        PowerPlan plan;
+        PowerTimeouts timeouts;
+    };
+
+    /// @brief Read one setting's AC/DC idle timeout out of `powercfg -QUERY` output.
+    ///
+    /// LOCALE-INDEPENDENT, by the same rule the parsers above follow, and it needs to be: every
+    /// label in this output translates ("Current AC Power Setting Index" included), so matching
+    /// on the English text would make the read-back silently return nothing on a translated
+    /// Windows -- the exact failure this file already suffered twice.
+    ///
+    /// What does NOT translate is the structure. Within a setting block, the two "Current ...
+    /// Index" lines sit at the SAME indent as the "Power Setting GUID" line that opens it, while
+    /// the block's Minimum/Maximum/increment attributes are indented deeper. Anchoring on that
+    /// indent -- rather than on "the last two hex values", which would happily report a
+    /// Maximum Possible Setting as a live reading if the Current lines were ever absent -- is
+    /// what makes a missing value fail closed instead of fabricating one.
+    ///
+    /// Verified against real `powercfg -QUERY` output before being written: all 54 Current lines
+    /// across 27 setting blocks sit at that indent, no attribute line does, and the rule agrees
+    /// with the English labels on every block. Requires EXACTLY two readings; anything else
+    /// returns found == false.
+    [[nodiscard]] static PowerTimeout parsePowerTimeout(const QString& query_output,
+                                                        const QString& setting_guid);
+
+    /// @brief Read the display, sleep and hibernate idle timeouts in one pass.
+    [[nodiscard]] static PowerTimeouts parsePowerTimeouts(const QString& query_output);
+
+    /// @brief Render one timeout for a technician. 0 seconds is powercfg's encoding of "Never",
+    ///        which as a bare "0" reads like an immediate timeout -- the opposite of what it means.
+    [[nodiscard]] static QString formatPowerTimeout(qint64 seconds);
+
 private:
     struct OptimizationResultContext {
         QDateTime start_time;
         QString report;
         QString previous_plan_name;
         QString high_perf_guid;
+        /// The timeouts actually in force once the action finished, read back from powercfg.
+        PowerTimeouts effective_timeouts;
         bool already_optimized{false};
         bool success{false};
     };
 
     QVector<PowerPlan> enumeratePowerPlans(bool& discovery_ok);
-    PowerPlan queryPowerPlan(const QString& guid);
+    /// @brief Run `powercfg -QUERY <guid>` and report BOTH the plan it names and the idle
+    ///        timeouts it lists.
+    ///
+    /// This used to run the query -- the expensive part, and the only call that returns the
+    /// settings tree at all -- and keep nothing but the plan NAME, discarding every value that
+    /// made the query worth making. It had no caller, while the success report told the
+    /// technician to go and run powercfg -QUERY themselves. The read-back is now wired up and
+    /// the report states what it measured.
+    PowerPlanDetails queryPowerPlan(const QString& guid);
     PowerPlan getActivePowerPlan();
     bool setPowerPlan(const QString& guid);
     /// @brief Exact (case-insensitive) name match within an ALREADY-enumerated plan list, so the
@@ -107,6 +169,15 @@ private:
                                      const QVector<PowerPlan>& all_plans) const;
     /// @brief Create and emit the final execution result with recommendations
     void finalizePowerOptimizationResult(const OptimizationResultContext& context);
+    /// @brief Append the "Target Plan / Target GUID" block that closes the report header.
+    static void appendTargetPlanHeader(const PowerPlan& target_plan, QString& report);
+    /// @brief Query the timeouts now in force, against the plan that is ACTUALLY active rather
+    ///        than the one activation aimed at, falling back to @p fallback_guid only when the
+    ///        active-scheme query cannot answer.
+    PowerTimeouts readEffectiveTimeouts(const QString& fallback_guid);
+    /// @brief Append the measured idle timeouts, naming any the query did not return rather
+    ///        than printing a default in their place.
+    static void appendEffectiveTimeouts(const PowerTimeouts& timeouts, QString& log);
     /// @brief Append the discovery-failure status to @p report and emit a fail-closed result
     ///        (no plan mutation). Extracted so execute() stays within the length cap.
     void finalizeDiscoveryFailure(const QDateTime& start_time,

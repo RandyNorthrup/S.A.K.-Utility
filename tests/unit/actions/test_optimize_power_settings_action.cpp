@@ -23,7 +23,195 @@ private Q_SLOTS:
     void parsePowerPlanList_isLocaleIndependent();
     void parsePowerPlanList_rejectsNonPlanText();
     void parseActivePowerPlan_isLocaleIndependent();
+    void parsePowerTimeout_readsRealQueryOutput();
+    void parsePowerTimeout_isLocaleIndependent();
+    void parsePowerTimeout_failsClosedRatherThanGuessing();
+    void formatPowerTimeout_rendersZeroAsNever();
 };
+
+namespace {
+
+/// A verbatim excerpt of real `powercfg -QUERY` output from a Windows 11 host, kept
+/// byte-for-byte (indentation included) because the INDENTATION is what the parser anchors on.
+/// Retyping this "tidily" would silently defeat the thing under test.
+///
+/// Two blocks, deliberately of the two different shapes powercfg emits: a range setting that
+/// carries Minimum/Maximum/increment attributes BEFORE its readings, and an enumerated setting
+/// that carries none. A parser that took "the last two hex values in the block" would pass the
+/// second and could report a Maximum Possible Setting as a live reading in the first.
+const char* const kRealQueryOutput =
+    "Power Scheme GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c  (High performance)\r\n"
+    "  GUID Alias: SCHEME_MIN\r\n"
+    "  Subgroup GUID: 7516b95f-f776-4464-8c53-06167f40cc99  (Display)\r\n"
+    "    GUID Alias: SUB_VIDEO\r\n"
+    "    Power Setting GUID: 3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e  (Turn off display after)\r\n"
+    "      GUID Alias: VIDEOIDLE\r\n"
+    "      Minimum Possible Setting: 0x00000000\r\n"
+    "      Maximum Possible Setting: 0xffffffff\r\n"
+    "      Possible Settings increment: 0x00000001\r\n"
+    "      Possible Settings units: Seconds\r\n"
+    "    Current AC Power Setting Index: 0x00000000\r\n"
+    "    Current DC Power Setting Index: 0x00000258\r\n"
+    "\r\n"
+    "  Subgroup GUID: 238c9fa8-0aad-41ed-83f4-97be242c8f20  (Sleep)\r\n"
+    "    Power Setting GUID: 29f6c1db-86da-48c5-9fdb-f2b67b1f44da  (Sleep after)\r\n"
+    "      GUID Alias: STANDBYIDLE\r\n"
+    "      Minimum Possible Setting: 0x00000000\r\n"
+    "      Maximum Possible Setting: 0xffffffff\r\n"
+    "      Possible Settings increment: 0x00000001\r\n"
+    "      Possible Settings units: Seconds\r\n"
+    "    Current AC Power Setting Index: 0x00000e10\r\n"
+    "    Current DC Power Setting Index: 0x00000708\r\n"
+    "\r\n"
+    "    Power Setting GUID: 9d7815a6-7ee4-497e-8888-515a05f02364  (Hibernate after)\r\n"
+    "      GUID Alias: HIBERNATEIDLE\r\n"
+    "      Minimum Possible Setting: 0x00000000\r\n"
+    "      Maximum Possible Setting: 0xffffffff\r\n"
+    "      Possible Settings increment: 0x00000001\r\n"
+    "      Possible Settings units: Seconds\r\n"
+    "    Current AC Power Setting Index: 0x00000000\r\n"
+    "    Current DC Power Setting Index: 0x00000d05\r\n"
+    "\r\n"
+    "  Subgroup GUID: 02f815b5-a5cf-4c84-bf20-649d1f75d3d8  (Internet Explorer)\r\n"
+    "    Power Setting GUID: 4c793e7d-a264-42e1-87d3-7a0d2f523ccd  (JavaScript Timer)\r\n"
+    "      Possible Setting Index: 000\r\n"
+    "      Possible Setting Friendly Name: Maximum Power Savings\r\n"
+    "      Possible Setting Index: 001\r\n"
+    "      Possible Setting Friendly Name: Maximum Performance\r\n"
+    "    Current AC Power Setting Index: 0x00000001\r\n"
+    "    Current DC Power Setting Index: 0x00000001\r\n";
+
+constexpr auto kDisplayGuid = "3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e";
+constexpr auto kSleepGuid = "29f6c1db-86da-48c5-9fdb-f2b67b1f44da";
+constexpr auto kHibernateGuid = "9d7815a6-7ee4-497e-8888-515a05f02364";
+
+}  // namespace
+
+void OptimizePowerSettingsActionTests::parsePowerTimeout_readsRealQueryOutput() {
+    // The action used to run powercfg -QUERY, keep only the plan NAME and throw the settings
+    // away, while its own success report told the technician to go and run the same command by
+    // hand. These are the values that report now states.
+    const QString output = QString::fromLatin1(kRealQueryOutput);
+    const auto timeouts = Action::parsePowerTimeouts(output);
+
+    QVERIFY(timeouts.display.found);
+    QCOMPARE(timeouts.display.ac_seconds, qint64(0));    // 0x00000000
+    QCOMPARE(timeouts.display.dc_seconds, qint64(600));  // 0x00000258
+    QVERIFY(timeouts.sleep.found);
+    QCOMPARE(timeouts.sleep.ac_seconds, qint64(3600));   // 0x00000e10
+    QCOMPARE(timeouts.sleep.dc_seconds, qint64(1800));   // 0x00000708
+    QVERIFY(timeouts.hibernate.found);
+    QCOMPARE(timeouts.hibernate.ac_seconds, qint64(0));
+    QCOMPARE(timeouts.hibernate.dc_seconds, qint64(3333));  // 0x00000d05
+
+    // THE ATTRIBUTE LINES MUST NOT BE READ AS READINGS. Each range block above carries
+    // 0xffffffff as its Maximum Possible Setting, which is both the largest value present and
+    // one of the last hex values before the readings -- so a parser that keyed on "the last two
+    // hex values" or "the biggest value" would surface it as a live setting. Asserting the exact
+    // numbers above already excludes it, and this states the intent explicitly.
+    QVERIFY(timeouts.display.ac_seconds != 0xff'ff'ff'ffLL);
+    QVERIFY(timeouts.display.dc_seconds != 0xff'ff'ff'ffLL);
+
+    // The enumerated block (no Minimum/Maximum attributes at all) parses by the same rule.
+    const auto enumerated =
+        Action::parsePowerTimeout(output, QStringLiteral("4c793e7d-a264-42e1-87d3-7a0d2f523ccd"));
+    QVERIFY(enumerated.found);
+    QCOMPARE(enumerated.ac_seconds, qint64(1));
+    QCOMPARE(enumerated.dc_seconds, qint64(1));
+}
+
+void OptimizePowerSettingsActionTests::parsePowerTimeout_isLocaleIndependent() {
+    // EVERY label in this output translates, "Current AC Power Setting Index" included. This
+    // file has already shipped that bug twice -- the list parser and the active-plan parser both
+    // matched English text and returned nothing on a translated Windows -- so the read-back
+    // anchors on the setting GUID and on indentation, neither of which localises.
+    //
+    // German labels, identical structure and identical GUIDs.
+    const QString german = QStringLiteral(
+        "Energieschema-GUID: 8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c  (Hoechstleistung)\r\n"
+        "  Untergruppen-GUID: 7516b95f-f776-4464-8c53-06167f40cc99  (Anzeige)\r\n"
+        "    Energieeinstellungs-GUID: 3c0bc021-c8a8-4e07-a973-6b14cbcb2b7e  (Anzeige aus)\r\n"
+        "      Moegliche Mindesteinstellung: 0x00000000\r\n"
+        "      Moegliche Hoechsteinstellung: 0xffffffff\r\n"
+        "    Aktueller Wechselstrom-Energieeinstellungsindex: 0x0000012c\r\n"
+        "    Aktueller Gleichstrom-Energieeinstellungsindex: 0x0000003c\r\n");
+
+    const auto de = Action::parsePowerTimeout(german, QString::fromLatin1(kDisplayGuid));
+    QVERIFY2(de.found, "a translated Windows must still yield the reading");
+    QCOMPARE(de.ac_seconds, qint64(300));  // 0x12c
+    QCOMPARE(de.dc_seconds, qint64(60));   // 0x3c
+
+    // An uppercase GUID in the output is matched too -- powercfg has printed both.
+    const auto upper = Action::parsePowerTimeout(german.toUpper().replace(QStringLiteral("0X"),
+                                                                          QStringLiteral("0x")),
+                                                 QString::fromLatin1(kDisplayGuid));
+    QVERIFY(upper.found);
+    QCOMPARE(upper.ac_seconds, qint64(300));
+}
+
+void OptimizePowerSettingsActionTests::parsePowerTimeout_failsClosedRatherThanGuessing() {
+    const QString output = QString::fromLatin1(kRealQueryOutput);
+
+    // A setting this scheme does not list is reported as NOT READ. This is the whole point of
+    // the read-back: the report it feeds previously asserted settings nothing had queried, so a
+    // substituted default here would recreate exactly the defect being fixed. Note that
+    // found == false is what carries that, NOT the zeroed seconds -- 0 is a legitimate value
+    // meaning "Never", which is why the flag exists at all.
+    const auto absent =
+        Action::parsePowerTimeout(output, QStringLiteral("00000000-1111-2222-3333-444444444444"));
+    QVERIFY(!absent.found);
+
+    // Empty output, and output with the GUID but no readings at all.
+    QVERIFY(!Action::parsePowerTimeout(QString(), QString::fromLatin1(kSleepGuid)).found);
+    const QString no_readings = QStringLiteral(
+        "    Power Setting GUID: 29f6c1db-86da-48c5-9fdb-f2b67b1f44da  (Sleep after)\r\n"
+        "      Minimum Possible Setting: 0x00000000\r\n"
+        "      Maximum Possible Setting: 0xffffffff\r\n"
+        "    Subgroup GUID: 238c9fa8-0aad-41ed-83f4-97be242c8f20  (Next)\r\n");
+    const auto none = Action::parsePowerTimeout(no_readings, QString::fromLatin1(kSleepGuid));
+    QVERIFY2(!none.found,
+             "min/max attributes must never be reported as the current AC/DC readings");
+
+    // Exactly ONE reading is also not a valid block: half an answer must not be presented as a
+    // whole one, and there is no defensible way to decide whether it was the AC or the DC value.
+    const QString one_reading = QStringLiteral(
+        "    Power Setting GUID: 29f6c1db-86da-48c5-9fdb-f2b67b1f44da  (Sleep after)\r\n"
+        "    Current AC Power Setting Index: 0x0000001e\r\n");
+    QVERIFY(!Action::parsePowerTimeout(one_reading, QString::fromLatin1(kSleepGuid)).found);
+
+    // A reading belonging to the NEXT setting must not be borrowed to complete this one: the
+    // hibernate block below is a separate setting, and the sleep block above it has only one
+    // reading of its own.
+    const QString bleeding = QStringLiteral(
+        "    Power Setting GUID: 29f6c1db-86da-48c5-9fdb-f2b67b1f44da  (Sleep after)\r\n"
+        "    Current AC Power Setting Index: 0x0000001e\r\n"
+        "    Power Setting GUID: 9d7815a6-7ee4-497e-8888-515a05f02364  (Hibernate after)\r\n"
+        "    Current AC Power Setting Index: 0x0000003c\r\n"
+        "    Current DC Power Setting Index: 0x0000003c\r\n");
+    QVERIFY2(!Action::parsePowerTimeout(bleeding, QString::fromLatin1(kSleepGuid)).found,
+             "a block must stop at the next GUID line, not run into the following setting");
+    // ...while the following setting itself still reads correctly, so the terminator is not
+    // simply swallowing everything.
+    const auto next = Action::parsePowerTimeout(bleeding, QString::fromLatin1(kHibernateGuid));
+    QVERIFY(next.found);
+    QCOMPARE(next.ac_seconds, qint64(60));
+}
+
+void OptimizePowerSettingsActionTests::formatPowerTimeout_rendersZeroAsNever() {
+    // powercfg encodes "never time out" as 0. Rendered as a bare "0" it reads as an IMMEDIATE
+    // timeout -- the opposite of the setting's meaning -- to the technician this report is for.
+    QCOMPARE(Action::formatPowerTimeout(0), QStringLiteral("Never"));
+    QCOMPARE(Action::formatPowerTimeout(30), QStringLiteral("30 sec"));
+    QCOMPARE(Action::formatPowerTimeout(60), QStringLiteral("1 min"));
+    QCOMPARE(Action::formatPowerTimeout(600), QStringLiteral("10 min"));
+    QCOMPARE(Action::formatPowerTimeout(90), QStringLiteral("1 min 30 sec"));
+    QCOMPARE(Action::formatPowerTimeout(3600), QStringLiteral("1 hr"));
+    QCOMPARE(Action::formatPowerTimeout(5400), QStringLiteral("1 hr 30 min"));
+    QCOMPARE(Action::formatPowerTimeout(3333), QStringLiteral("55 min 33 sec"));
+    // A negative value cannot come from a hex reading, but must not render as "-1 sec" if one
+    // ever reached here.
+    QCOMPARE(Action::formatPowerTimeout(-1), QStringLiteral("Never"));
+}
 
 
 void OptimizePowerSettingsActionTests::parseActivePowerPlan_isLocaleIndependent() {
