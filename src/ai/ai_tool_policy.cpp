@@ -339,9 +339,15 @@ bool commandUsesResolutionIndirection(const QString& preview) {
     //     out of harmless-looking fragments so 'format-volume' is never contiguous.
     // Any of these forfeits the read-only allowlist and is classified risky so a hidden
     // mutation cannot run without a lease/restore point (fail closed, no silent bypass).
+    // The double quote is written as the PCRE2 escape \x22 rather than as a literal `"`. That is
+    // not style: a literal quote inside a raw string desynchronizes lizard's C++ tokenizer, which
+    // then merged this function with the SEVENTEEN that follow it and measured none of them --
+    // in the file that decides whether a command is allowed to run (R5-IDX-21). \x22 is the same
+    // character to the regex engine and leaves no quote in the literal. A gate check now fails
+    // the build if this ever regresses, so the escape cannot be quietly undone.
     static const QRegularExpression kIndirection(
         QStringLiteral(
-            R"RX((\bget-command\b|\binvoke-command\b|\bstart-process\b|\bstart-job\b|\bnew-object\b|&\s*[('"$@{]|['"]\s*\+|\+\s*['"]))RX"),
+            R"RX((\bget-command\b|\binvoke-command\b|\bstart-process\b|\bstart-job\b|\bnew-object\b|&\s*[('\x22$@{]|['\x22]\s*\+|\+\s*['\x22]))RX"),
         QRegularExpression::CaseInsensitiveOption);
     return kIndirection.match(preview).hasMatch();
 }
@@ -801,10 +807,11 @@ bool commandLooksRiskyChange(const QString& preview) {
            commandLooksObfuscated(preview) || commandLooksCatastrophic(preview);
 }
 
-AiToolPolicyDecision evaluateToolPolicy(AiToolPolicy policy, const AiToolCallRequest& request) {
-    if (!isKnownLocalTool(request.tool_name)) {
-        return block(QStringLiteral("Unknown local tool"));
-    }
+// The tools whose mere invocation grants no capability, so they resolve the same way under
+// EVERY policy including read-only and no-local-execution. Returns nullopt when the request is
+// not one of them and the ordinary policy evaluation must run.
+std::optional<AiToolPolicyDecision> universallyAllowedToolDecision(
+    AiToolPolicy policy, const AiToolCallRequest& request) {
     // Reading bundled/user skill guidance is a pure text lookup with no PC, disk,
     // or network access, so it is allowed under every policy (including read-only
     // and no-local-execution) and never needs a lease or restore point.
@@ -831,6 +838,12 @@ AiToolPolicyDecision evaluateToolPolicy(AiToolPolicy policy, const AiToolCallReq
     if (isAppActionTool(request.tool_name)) {
         return evaluateAppActionPolicy(policy, request);
     }
+    return std::nullopt;
+}
+
+// Package mutation that the user's own message does not support. Both refusals carry the
+// mutating flags so a caller cannot treat the block as a harmless no-op.
+std::optional<AiToolPolicyDecision> refusedPackageMutation(const AiToolCallRequest& request) {
     if (packageMutationContradictsScanRequest(request)) {
         auto decision =
             block(QStringLiteral("Package install/upgrade/uninstall blocked because the user asked "
@@ -847,28 +860,46 @@ AiToolPolicyDecision evaluateToolPolicy(AiToolPolicy policy, const AiToolCallReq
         decision.requires_lease = true;
         return decision;
     }
+    return std::nullopt;
+}
+
+// Force the full mutating treatment on an allowed catastrophic op, regardless of which policy
+// allowed it, and machine-enforce its human gate.
+void escalateCatastrophicDecision(AiToolPolicyDecision& decision,
+                                  const AiToolCallRequest& request) {
+    decision.catastrophic_change = true;
+    decision.risky_change = true;
+    decision.requires_lease = true;
+    decision.restore_point_recommended = true;
+    // A catastrophic/irreversible op (disk format, partition wipe, boot-config edit,
+    // shadow-copy/backup delete, hive delete, recursive system-dir wipe) is NOT allowed to
+    // dispatch until an explicit human confirmation is recorded on the request. Callers detect
+    // catastrophic_change, obtain the confirmation, set request.human_confirmed, and
+    // re-dispatch. Leaving it to a caller convention meant any path that skipped the panel's
+    // confirm -- a direct dispatch, a future caller -- could run a wipe unattended (the gap this
+    // finding closes). catastrophic_change stays set so the gate still knows to prompt.
+    if (!request.human_confirmed) {
+        decision.allowed = false;
+        decision.reason = QStringLiteral(
+            "Catastrophic operation blocked: an explicit human confirmation is required");
+    }
+}
+
+AiToolPolicyDecision evaluateToolPolicy(AiToolPolicy policy, const AiToolCallRequest& request) {
+    if (!isKnownLocalTool(request.tool_name)) {
+        return block(QStringLiteral("Unknown local tool"));
+    }
+    if (const auto universal = universallyAllowedToolDecision(policy, request)) {
+        return *universal;
+    }
+    if (const auto refused = refusedPackageMutation(request)) {
+        return *refused;
+    }
 
     const ToolPolicyContext context = policyContext(request);
     AiToolPolicyDecision decision = evaluateKnownPolicy(policy, request, context);
     if (context.m_catastrophic && decision.allowed) {
-        // Force the full mutating treatment regardless of which policy allowed it.
-        decision.catastrophic_change = true;
-        decision.risky_change = true;
-        decision.requires_lease = true;
-        decision.restore_point_recommended = true;
-        // Machine-enforce the human gate: a catastrophic/irreversible op (disk format,
-        // partition wipe, boot-config edit, shadow-copy/backup delete, hive delete,
-        // recursive system-dir wipe) is NOT allowed to dispatch until an explicit human
-        // confirmation is recorded on the request. Callers detect catastrophic_change,
-        // obtain the confirmation, set request.human_confirmed, and re-dispatch. Leaving
-        // it to a caller convention meant any path that skipped the panel's confirm --
-        // a direct dispatch, a future caller -- could run a wipe unattended (the gap this
-        // finding closes). catastrophic_change stays set so the gate still knows to prompt.
-        if (!request.human_confirmed) {
-            decision.allowed = false;
-            decision.reason = QStringLiteral(
-                "Catastrophic operation blocked: an explicit human confirmation is required");
-        }
+        escalateCatastrophicDecision(decision, request);
     }
     return decision;
 }

@@ -151,7 +151,11 @@ void AdvancedSearchTypesTests::searchConfig_defaultExcludes() {
                           R"(\.bin$)"}));
 }
 
-void AdvancedSearchTypesTests::searchConfig_valueSemantics() {
+namespace {
+
+/// A SearchConfig with every field set to a NON-default value, so a copy that silently re-runs
+/// a default member initializer cannot pass by coincidence.
+sak::SearchConfig fullyPopulatedSearchConfig() {
     sak::SearchConfig config;
     config.root_path = "/search/root";
     config.pattern = "test_pattern";
@@ -177,8 +181,7 @@ void AdvancedSearchTypesTests::searchConfig_valueSemantics() {
     // BY VALUE (advanced_search_worker.h:42) -- so the copy must carry it. A copy that
     // drops it leaves use_file_system_target true with an empty target root_path, and the
     // :940 guard does not fire because can_advanced_search defaults true
-    // (file_management_file_system.h:75). FileManagementTarget has no operator==, so pin
-    // it field by field; kind is compared as int (no QTest::toString for the enum).
+    // (file_management_file_system.h:75).
     config.use_file_system_target = true;
     config.file_system_target.id = "target-id";
     config.file_system_target.label = "Raw image";
@@ -197,58 +200,78 @@ void AdvancedSearchTypesTests::searchConfig_valueSemantics() {
     config.file_system_target.can_duplicate_scan = false;
     config.file_system_target.can_advanced_search = false;
     config.file_system_target.blockers = QStringList{"blocked"};
+    return config;
+}
+
+/// FileManagementTarget has no operator==, so pin it field by field. `kind` is compared as int
+/// because QTest has no toString for the enum.
+void compareFileSystemTargets(const sak::FileManagementTarget& actual,
+                              const sak::FileManagementTarget& expected) {
+    QCOMPARE(actual.id, expected.id);
+    QCOMPARE(actual.label, expected.label);
+    QCOMPARE(actual.root_path, expected.root_path);
+    QCOMPARE(actual.file_system, expected.file_system);
+    QCOMPARE(actual.source, expected.source);
+    QCOMPARE(actual.details, expected.details);
+    QCOMPARE(actual.size_bytes, expected.size_bytes);
+    QCOMPARE(static_cast<int>(actual.kind), static_cast<int>(expected.kind));
+    QCOMPARE(actual.local_file_system, expected.local_file_system);
+    QCOMPARE(actual.read_only, expected.read_only);
+    QCOMPARE(actual.can_browse, expected.can_browse);
+    QCOMPARE(actual.can_read_files, expected.can_read_files);
+    QCOMPARE(actual.can_write_files, expected.can_write_files);
+    QCOMPARE(actual.can_organize, expected.can_organize);
+    QCOMPARE(actual.can_duplicate_scan, expected.can_duplicate_scan);
+    QCOMPARE(actual.can_advanced_search, expected.can_advanced_search);
+    QCOMPARE(actual.blockers, expected.blockers);
+}
+
+void compareSearchConfigOwnFields(const sak::SearchConfig& actual,
+                                  const sak::SearchConfig& expected) {
+    QCOMPARE(actual.root_path, expected.root_path);
+    QCOMPARE(actual.pattern, expected.pattern);
+    QCOMPARE(actual.case_sensitive, expected.case_sensitive);
+    QCOMPARE(actual.use_regex, expected.use_regex);
+    QCOMPARE(actual.whole_word, expected.whole_word);
+    QCOMPARE(actual.search_image_metadata, expected.search_image_metadata);
+    QCOMPARE(actual.search_file_metadata, expected.search_file_metadata);
+    QCOMPARE(actual.search_in_archives, expected.search_in_archives);
+    QCOMPARE(actual.hex_search, expected.hex_search);
+    QCOMPARE(actual.skip_symlinks, expected.skip_symlinks);
+    QCOMPARE(actual.file_extensions, expected.file_extensions);
+    QCOMPARE(actual.exclude_patterns, expected.exclude_patterns);
+    QCOMPARE(actual.context_lines, expected.context_lines);
+    QCOMPARE(actual.max_results, expected.max_results);
+    QCOMPARE(actual.max_file_size, expected.max_file_size);
+    QCOMPARE(actual.network_timeout_sec, expected.network_timeout_sec);
+    QCOMPARE(actual.use_file_system_target, expected.use_file_system_target);
+}
+
+}  // namespace
+
+void AdvancedSearchTypesTests::searchConfig_valueSemantics() {
+    const sak::SearchConfig config = fullyPopulatedSearchConfig();
 
     const sak::SearchConfig copy = config;
-
-    QCOMPARE(copy.root_path, config.root_path);
-    QCOMPARE(copy.pattern, config.pattern);
-    QCOMPARE(copy.case_sensitive, config.case_sensitive);
-    QCOMPARE(copy.use_regex, config.use_regex);
-    QCOMPARE(copy.whole_word, config.whole_word);
-    QCOMPARE(copy.search_image_metadata, config.search_image_metadata);
-    QCOMPARE(copy.search_file_metadata, config.search_file_metadata);
-    QCOMPARE(copy.search_in_archives, config.search_in_archives);
-    QCOMPARE(copy.hex_search, config.hex_search);
-    QCOMPARE(copy.skip_symlinks, config.skip_symlinks);
-    QCOMPARE(copy.file_extensions, config.file_extensions);
-    QCOMPARE(copy.exclude_patterns, config.exclude_patterns);
-    QCOMPARE(copy.context_lines, config.context_lines);
-    QCOMPARE(copy.max_results, config.max_results);
-    QCOMPARE(copy.max_file_size, config.max_file_size);
-    QCOMPARE(copy.network_timeout_sec, config.network_timeout_sec);
-
-    QCOMPARE(copy.use_file_system_target, config.use_file_system_target);
-    QCOMPARE(copy.file_system_target.id, config.file_system_target.id);
-    QCOMPARE(copy.file_system_target.label, config.file_system_target.label);
-    QCOMPARE(copy.file_system_target.root_path, config.file_system_target.root_path);
-    QCOMPARE(copy.file_system_target.file_system, config.file_system_target.file_system);
-    QCOMPARE(copy.file_system_target.source, config.file_system_target.source);
-    QCOMPARE(copy.file_system_target.details, config.file_system_target.details);
-    QCOMPARE(copy.file_system_target.size_bytes, config.file_system_target.size_bytes);
-    QCOMPARE(static_cast<int>(copy.file_system_target.kind),
-             static_cast<int>(config.file_system_target.kind));
-    QCOMPARE(copy.file_system_target.local_file_system,
-             config.file_system_target.local_file_system);
-    QCOMPARE(copy.file_system_target.read_only, config.file_system_target.read_only);
-    QCOMPARE(copy.file_system_target.can_browse, config.file_system_target.can_browse);
-    QCOMPARE(copy.file_system_target.can_read_files, config.file_system_target.can_read_files);
-    QCOMPARE(copy.file_system_target.can_write_files, config.file_system_target.can_write_files);
-    QCOMPARE(copy.file_system_target.can_organize, config.file_system_target.can_organize);
-    QCOMPARE(copy.file_system_target.can_duplicate_scan,
-             config.file_system_target.can_duplicate_scan);
-    QCOMPARE(copy.file_system_target.can_advanced_search,
-             config.file_system_target.can_advanced_search);
-    QCOMPARE(copy.file_system_target.blockers, config.file_system_target.blockers);
+    compareSearchConfigOwnFields(copy, config);
+    // A QCOMPARE failure inside a helper returns from the HELPER, not from this slot, so bail
+    // out explicitly rather than reporting cascading failures from an already-broken copy.
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+    compareFileSystemTargets(copy.file_system_target, config.file_system_target);
+    if (QTest::currentTestFailed()) {
+        return;
+    }
 
     // Copy ASSIGNMENT is a separate special member and crosses the same boundary.
     sak::SearchConfig assigned;
     assigned = config;
-    QCOMPARE(assigned.exclude_patterns, config.exclude_patterns);
-    QCOMPARE(assigned.file_extensions, config.file_extensions);
-    QCOMPARE(assigned.file_system_target.root_path, config.file_system_target.root_path);
-    QCOMPARE(assigned.file_system_target.can_advanced_search,
-             config.file_system_target.can_advanced_search);
-    QCOMPARE(assigned.use_file_system_target, config.use_file_system_target);
+    compareSearchConfigOwnFields(assigned, config);
+    if (QTest::currentTestFailed()) {
+        return;
+    }
+    compareFileSystemTargets(assigned.file_system_target, config.file_system_target);
 }
 
 // -- SearchPreferences -------------------------------------------------------

@@ -291,7 +291,13 @@ jobs:
       run: |
         choco install ripgrep -y --no-progress
         choco install cppcheck -y --no-progress
-        python -m pip install --disable-pip-version-check lizard==1.21.2
+        # Pinned to 1.24.0, not 1.21.2. The older parser desynchronized on certain string
+        # literals and simply STOPPED reporting functions for the rest of the file, so the
+        # complexity gate passed while measuring nothing after the trigger -- it was hiding a
+        # CCN-16 function in production code and eight more in the extension (R5-IDX-21).
+        # run_lizard.py additionally fails closed if any parse desync reappears, so a future
+        # downgrade cannot silently reinstate the blind spot.
+        python -m pip install --disable-pip-version-check lizard==1.24.0
 
     # G7-3: record every gate tool's version so a silently missing or wrong-version
     # tool is a hard failure, not a quietly-skipped check. Fail closed if any required

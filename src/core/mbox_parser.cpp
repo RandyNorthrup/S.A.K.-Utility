@@ -539,18 +539,23 @@ QVector<QByteArray> splitMimeParts(const QByteArray& body, const QByteArray& del
 
 /// Extract charset value from a Content-Type header
 QString extractCharset(const QString& content_type) {
-    static const QRegularExpression charset_regex(QStringLiteral(
-                                                      R"re(charset\s*=\s*"?([^"\;\s]+)"?)re"),
-                                                  QRegularExpression::CaseInsensitiveOption);
+    // \x22 is the PCRE2 escape for a double quote, used here instead of a literal `"`. A literal
+    // quote inside a raw string desynchronizes lizard's C++ tokenizer, which then merged this
+    // function with extractBoundary below and measured neither (R5-IDX-21). Same character to the
+    // regex engine; a gate check now fails the build if it regresses.
+    static const QRegularExpression charset_regex(
+        QStringLiteral(R"re(charset\s*=\s*\x22?([^\x22\;\s]+)\x22?)re"),
+        QRegularExpression::CaseInsensitiveOption);
     auto match = charset_regex.match(content_type);
     return match.hasMatch() ? match.captured(1) : QString();
 }
 
 /// Extract MIME boundary from a Content-Type header
 QString extractBoundary(const QString& content_type) {
-    static const QRegularExpression boundary_regex(QStringLiteral(
-                                                       R"re(boundary\s*=\s*"?([^"\;\s]+)"?)re"),
-                                                   QRegularExpression::CaseInsensitiveOption);
+    // \x22 rather than a literal quote, for the reason given on extractCharset above.
+    static const QRegularExpression boundary_regex(
+        QStringLiteral(R"re(boundary\s*=\s*\x22?([^\x22\;\s]+)\x22?)re"),
+        QRegularExpression::CaseInsensitiveOption);
     auto match = boundary_regex.match(content_type);
     return match.hasMatch() ? match.captured(1) : QString();
 }

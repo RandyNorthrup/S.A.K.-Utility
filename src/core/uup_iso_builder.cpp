@@ -95,6 +95,22 @@ static bool isSafeAria2Field(const QString& value) {
 // elevated workspace could redirect the delete out of it (e.g. into System32) -- this replaces
 // those calls. The callers already verify the ROOT is not a reparse point; this closes the
 // child/descendant gap. Returns false (fail closed) if any component could not be removed.
+static bool removeTreeRefusingReparse(const QString& dirPath);
+
+/// Remove one directory entry. A reparse point (symlink or junction) is UNLINKED, never
+/// followed: descending into one would delete whatever it happens to point at, which for a
+/// junction planted under a work directory is an arbitrary location on the machine.
+static bool removeOneEntryRefusingReparse(const QFileInfo& entry) {
+    const QString childPath = entry.absoluteFilePath();
+    if (entry.isSymLink() || entry.isJunction()) {
+        return QDir().rmdir(childPath) || QFile::remove(childPath);
+    }
+    if (entry.isDir()) {
+        return removeTreeRefusingReparse(childPath);
+    }
+    return QFile::remove(childPath);
+}
+
 static bool removeTreeRefusingReparse(const QString& dirPath) {
     const QFileInfo rootInfo(dirPath);
     if (rootInfo.isSymLink() || rootInfo.isJunction()) {
@@ -108,16 +124,9 @@ static bool removeTreeRefusingReparse(const QString& dirPath) {
     const QFileInfoList entries =
         dir.entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System);
     for (const QFileInfo& entry : entries) {
-        const QString childPath = entry.absoluteFilePath();
-        if (entry.isSymLink() || entry.isJunction()) {
-            if (!QDir().rmdir(childPath) && !QFile::remove(childPath)) {
-                ok = false;
-            }
-        } else if (entry.isDir()) {
-            if (!removeTreeRefusingReparse(childPath)) {
-                ok = false;
-            }
-        } else if (!QFile::remove(childPath)) {
+        // Keep going after a failure rather than returning early: a partially-removed work
+        // directory should be as empty as it can be, and the caller still learns it failed.
+        if (!removeOneEntryRefusingReparse(entry)) {
             ok = false;
         }
     }
@@ -1286,17 +1295,21 @@ QStringList UupIsoBuilder::missingFiles(const QList<UupDumpApi::FileInfo>& expec
     return missing;
 }
 
-bool UupIsoBuilder::replaceFinalIso(const QString& tempPath, const QString& finalPath) {
-    // Only a real regular file may be promoted, and only a real regular file may be
-    // replaced: a link/junction at either end would rename the redirection instead of the
-    // image (and would publish an attacker-chosen target as the finished ISO).
+/// Whether the two ends of the promotion are both real regular files. A link or junction at
+/// either end would rename the REDIRECTION instead of the image, publishing an attacker-chosen
+/// target as the finished ISO. An absent destination is fine; anything else present is not.
+static bool isoPromotionEndsAreRegularFiles(const QString& tempPath, const QString& finalPath) {
     const QFileInfo tempInfo(tempPath);
     if (!tempInfo.isFile() || tempInfo.isSymLink() || tempInfo.isJunction()) {
         return false;
     }
     const QFileInfo finalInfo(finalPath);
-    if (finalInfo.exists() &&
-        (!finalInfo.isFile() || finalInfo.isSymLink() || finalInfo.isJunction())) {
+    return !finalInfo.exists() ||
+           (finalInfo.isFile() && !finalInfo.isSymLink() && !finalInfo.isJunction());
+}
+
+bool UupIsoBuilder::replaceFinalIso(const QString& tempPath, const QString& finalPath) {
+    if (!isoPromotionEndsAreRegularFiles(tempPath, finalPath)) {
         return false;
     }
     if (!QFile::exists(finalPath)) {
@@ -1596,59 +1609,79 @@ void UupIsoBuilder::cleanupWorkDir() {
     m_workDir.clear();
 }
 
+namespace {
+
+/// One converter-failure classification: if any keyword appears in the lowercased error text,
+/// the operator gets this guidance. Kept as data rather than an if-chain so a new failure mode
+/// is one row, and so the ORDER in which modes are tried is visible in one place -- it matters,
+/// because an AppX failure also mentions DISM and must be reported as the AppX case.
+struct ConverterFailureRule {
+    QStringList keywords;
+    QString guidance;  // %1 receives the raw (not lowercased) converter errors
+};
+
+const QVector<ConverterFailureRule>& converterFailureRules() {
+    static const QVector<ConverterFailureRule> kRules = {
+        {{QStringLiteral("appx"),
+          QStringLiteral("msixbundle"),
+          QStringLiteral("appx installation")},
+         QStringLiteral("The converter failed during AppX provisioning (Microsoft Store "
+                        "components). This is a known issue with some Windows builds.\n\n"
+                        "Possible fixes:\n"
+                        "  1. Re-run the build -- transient DISM errors sometimes resolve "
+                        "on retry.\n"
+                        "  2. Select a different Windows edition (e.g., Professional N or "
+                        "Enterprise) which skips Store app bundling.\n"
+                        "  3. Run S.A.K. Utility as Administrator on a clean Windows "
+                        "installation (not an insider/preview OS).\n"
+                        "  4. Ensure no antivirus is blocking DISM or the converter.\n\n"
+                        "Detected errors:\n%1")},
+        {{QStringLiteral("edition plan"), QStringLiteral("edition")},
+         QStringLiteral("The converter could not process the selected Windows edition. "
+                        "The downloaded UUP files may not contain the edition you chose, "
+                        "or the edition name was not recognized by the converter.\n\n"
+                        "Try selecting a different edition, or leave the edition field "
+                        "blank to let the converter auto-detect available editions.\n\n"
+                        "Detected errors:\n%1")},
+        {{QStringLiteral("dism"), QStringLiteral("deployment image")},
+         QStringLiteral("The converter encountered a DISM (Deployment Image Servicing) "
+                        "error. This typically requires Administrator privileges and a "
+                        "clean host environment.\n\n"
+                        "Make sure S.A.K. Utility is running as Administrator and that "
+                        "no other DISM operations are in progress.\n\n"
+                        "Detected errors:\n%1")},
+        {{QStringLiteral("disk space"),
+          QStringLiteral("not enough"),
+          QStringLiteral("insufficient")},
+         QStringLiteral("The converter ran out of disk space. UUP-to-ISO conversion "
+                        "requires significant temporary space (typically 10-20 GB).\n\n"
+                        "Free disk space on the system drive and the output drive, then "
+                        "retry.\n\n"
+                        "Detected errors:\n%1")},
+    };
+    return kRules;
+}
+
+bool ruleMatches(const ConverterFailureRule& rule, const QString& lowercased_errors) {
+    for (const QString& keyword : rule.keywords) {
+        if (lowercased_errors.contains(keyword)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
 QString UupIsoBuilder::classifyConverterFailure() const {
     // The only caller sets m_phase = Phase::Failed on the line before this call.
     Q_ASSERT(m_phase == Phase::Failed);
     const QString joined = m_converterErrors.join('\n').toLower();
 
-    if (joined.contains("appx") || joined.contains("msixbundle") ||
-        joined.contains("appx installation")) {
-        return QString(
-                   "The converter failed during AppX provisioning (Microsoft Store "
-                   "components). This is a known issue with some Windows builds.\n\n"
-                   "Possible fixes:\n"
-                   "  1. Re-run the build -- transient DISM errors sometimes resolve "
-                   "on retry.\n"
-                   "  2. Select a different Windows edition (e.g., Professional N or "
-                   "Enterprise) which skips Store app bundling.\n"
-                   "  3. Run S.A.K. Utility as Administrator on a clean Windows "
-                   "installation (not an insider/preview OS).\n"
-                   "  4. Ensure no antivirus is blocking DISM or the converter.\n\n"
-                   "Detected errors:\n%1")
-            .arg(m_converterErrors.join('\n'));
-    }
-
-    if (joined.contains("edition plan") || joined.contains("edition")) {
-        return QString(
-                   "The converter could not process the selected Windows edition. "
-                   "The downloaded UUP files may not contain the edition you chose, "
-                   "or the edition name was not recognized by the converter.\n\n"
-                   "Try selecting a different edition, or leave the edition field "
-                   "blank to let the converter auto-detect available editions.\n\n"
-                   "Detected errors:\n%1")
-            .arg(m_converterErrors.join('\n'));
-    }
-
-    if (joined.contains("dism") || joined.contains("deployment image")) {
-        return QString(
-                   "The converter encountered a DISM (Deployment Image Servicing) "
-                   "error. This typically requires Administrator privileges and a "
-                   "clean host environment.\n\n"
-                   "Make sure S.A.K. Utility is running as Administrator and that "
-                   "no other DISM operations are in progress.\n\n"
-                   "Detected errors:\n%1")
-            .arg(m_converterErrors.join('\n'));
-    }
-
-    if (joined.contains("disk space") || joined.contains("not enough") ||
-        joined.contains("insufficient")) {
-        return QString(
-                   "The converter ran out of disk space. UUP-to-ISO conversion "
-                   "requires significant temporary space (typically 10-20 GB).\n\n"
-                   "Free disk space on the system drive and the output drive, then "
-                   "retry.\n\n"
-                   "Detected errors:\n%1")
-            .arg(m_converterErrors.join('\n'));
+    for (const ConverterFailureRule& rule : converterFailureRules()) {
+        if (ruleMatches(rule, joined)) {
+            return rule.guidance.arg(m_converterErrors.join('\n'));
+        }
     }
 
     if (!m_converterErrors.isEmpty()) {

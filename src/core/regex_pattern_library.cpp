@@ -18,6 +18,7 @@
 #include <QSaveFile>
 
 #include <algorithm>
+#include <optional>
 
 namespace sak {
 
@@ -338,22 +339,22 @@ void RegexPatternLibrary::clearAll() {
 
 // -- Persistence -------------------------------------------------------------
 
-void RegexPatternLibrary::loadCustomPatterns() {
-    // No precondition on m_custom_patterns: this function is the populator, and a
-    // fresh profile legitimately has zero saved custom patterns. (A prior inverted
-    // Q_ASSERT(!empty) here aborted every debug-build construction of the library.)
-    if (m_storage_file.isEmpty()) {
-        return;  // persistence disabled (no usable config dir) -- fail closed
-    }
-    QFile file(m_storage_file);
-    if (!file.exists()) {
-        return;
-    }
+namespace {
 
+/// Read the persisted custom-pattern array, or nullopt when there is nothing trustworthy to
+/// read. Every rejection path is deliberate and logged: absent file, unopenable file,
+/// out-of-bounds size, unparseable JSON, and a root that is not an array. A wrong root type in
+/// particular is NOT an empty library -- reporting it as zero patterns would hide a corrupt or
+/// tampered file behind a plausible-looking result.
+std::optional<QJsonArray> readPersistedCustomPatterns(const QString& storage_file) {
+    QFile file(storage_file);
+    if (!file.exists()) {
+        return std::nullopt;
+    }
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         logWarning("RegexPatternLibrary: failed to open '{}' for reading",
-                   m_storage_file.toStdString());
-        return;
+                   storage_file.toStdString());
+        return std::nullopt;
     }
 
     // Bound the read: a custom-patterns file is small, so an implausibly large (or
@@ -362,9 +363,9 @@ void RegexPatternLibrary::loadCustomPatterns() {
     const qint64 file_size = file.size();
     if (file_size < 0 || file_size > kMaxCustomPatternsBytes) {
         logWarning("RegexPatternLibrary: '{}' size {} is out of bounds; not loaded",
-                   m_storage_file.toStdString(),
+                   storage_file.toStdString(),
                    static_cast<long long>(file_size));
-        return;
+        return std::nullopt;
     }
 
     const QByteArray data = file.readAll();
@@ -372,32 +373,30 @@ void RegexPatternLibrary::loadCustomPatterns() {
 
     QJsonParseError parseError;
     const QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
-
     if (parseError.error != QJsonParseError::NoError) {
         logWarning("RegexPatternLibrary: JSON parse error: {}",
                    parseError.errorString().toStdString());
-        return;
+        return std::nullopt;
     }
-
-    // The file must be a JSON array of pattern objects. A wrong root type is not an
-    // empty library -- surface it rather than silently treating it as zero patterns.
     if (!doc.isArray()) {
         logWarning("RegexPatternLibrary: '{}' is not a JSON array; not loaded",
-                   m_storage_file.toStdString());
-        return;
+                   storage_file.toStdString());
+        return std::nullopt;
     }
+    return doc.array();
+}
 
-    const QJsonArray arr = doc.array();
-    m_custom_patterns.clear();
+}  // namespace
 
-    for (const auto& val : arr) {
+void RegexPatternLibrary::appendAcceptedCustomPatterns(const QJsonArray& entries) {
+    for (const auto& val : entries) {
         // Bound the number of entries taken from a persisted (possibly tampered) file, even
         // one that stayed under the byte cap; stop scanning -- do not silently keep going --
         // once the count cap is reached.
         if (m_custom_patterns.size() >= kMaxCustomPatternCount) {
             logWarning("RegexPatternLibrary: custom pattern count cap {} reached; ignoring rest",
                        kMaxCustomPatternCount);
-            break;
+            return;
         }
         if (!val.isObject()) {
             logWarning("RegexPatternLibrary: skipping non-object custom-pattern entry");
@@ -417,6 +416,22 @@ void RegexPatternLibrary::loadCustomPatterns() {
             m_custom_patterns.append(info);
         }
     }
+}
+
+void RegexPatternLibrary::loadCustomPatterns() {
+    // No precondition on m_custom_patterns: this function is the populator, and a
+    // fresh profile legitimately has zero saved custom patterns. (A prior inverted
+    // Q_ASSERT(!empty) here aborted every debug-build construction of the library.)
+    if (m_storage_file.isEmpty()) {
+        return;  // persistence disabled (no usable config dir) -- fail closed
+    }
+    const std::optional<QJsonArray> entries = readPersistedCustomPatterns(m_storage_file);
+    if (!entries) {
+        return;
+    }
+
+    m_custom_patterns.clear();
+    appendAcceptedCustomPatterns(*entries);
 
     logInfo("RegexPatternLibrary: loaded {} custom patterns", m_custom_patterns.size());
 }

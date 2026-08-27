@@ -15,10 +15,26 @@
 #
 # Thresholds are the repo's own, unchanged: CCN <= 10, PARAM <= 5, length <= 70.
 #
+# RE-BASELINED 2026-08-27 when lizard moved 1.21.2 -> 1.24.0 (R5-IDX-21). Not one line of
+# background.js changed. The old parser desynchronized on certain string literals and stopped
+# reporting functions, so EIGHT of the rows below were never measured by any gate -- they are
+# pre-existing debt that has just become visible, not new debt. Several already-listed rows also
+# moved because the corrected parse measures them accurately: collectMediaNodes 18 -> 15 CCN,
+# handleWaitFor 16 -> 12 CCN and 60 -> 38 length, mediaFn 17 -> 15 CCN and 27 -> 23 length. Every
+# number here was re-measured under 1.24.0; none was raised to accommodate a change.
+#
 # Format:  function@path | ccn | params | length
-collectMediaNodes@browser/extension/background.js    | 18 | 2 | 35
+(anonymous)@browser/extension/background.js          | 37 | 0 | 106
+collectMediaNodes@browser/extension/background.js    | 15 | 2 | 35
+downloadOptions@browser/extension/background.js      |  9 | 1 | 159
 ensureAttached@browser/extension/background.js       | 11 | 1 | 32
-handleWaitFor@browser/extension/background.js        | 16 | 2 | 60
-mediaFn@browser/extension/background.js              | 17 | 2 | 27
+getFn@browser/extension/background.js                | 11 | 0 | 27
+handleBox@browser/extension/background.js            | 15 | 2 | 38
+handleDrag@browser/extension/background.js           | 11 | 2 | 46
+handleMedia@browser/extension/background.js          | 17 | 2 | 45
+handlePermission@browser/extension/background.js     | 22 | 1 | 47
+handleScreenshot@browser/extension/background.js     | 14 | 2 | 78
+handleWaitFor@browser/extension/background.js        | 12 | 2 | 38
+mediaFn@browser/extension/background.js              | 15 | 2 | 23
 occlusionAt@browser/extension/background.js          | 18 | 4 | 36
 selectOptionFn@browser/extension/background.js       | 26 | 5 | 56

@@ -197,11 +197,56 @@ a parked design, per the bucket convention. Open work is what remains after thos
   hole in R5-G21-4. Every function after a desync point in any file is unmeasured, and nothing
   says so. The count of functions that have been silently exempt across this tree is currently
   unknown.
-  FIX (own batch, not slipped into R5-IDX-19): make run_lizard.py verify its own coverage.
-  Every out-of-line definition matching `Class::method(` at column 0 must appear in lizard's
-  reported function list; a definition present in the source and absent from the report is a
-  desync, and the gate must fail rather than pass. The namespace-prefix collapse is a second,
-  independent signal from the same event. Both need their own drill.
+  ROOT CAUSE FOUND, and it was not what the first guesses assumed. It is an upstream lizard bug
+  plus one trigger that survives the fix:
+    * lizard was pinned at 1.21.2. Under 1.24.0 the plain `R"(...)"` desync disappears:
+      regex_pattern_library.cpp goes from 2 reported functions to 14 (the file is 468 lines),
+      ethernet_config_manager.cpp from 19 to 20.
+    * A LITERAL DOUBLE QUOTE INSIDE A RAW STRING still desyncs 1.24.0. Verified by isolating
+      each candidate against a deliberately CCN-12 canary: a raw string, a raw string whose
+      content ends in `))`, an apostrophe in a normal string and a parenthesis in a normal
+      string all parse correctly; a quote inside the raw string is what breaks it.
+  FIXED 2026-08-27, three things:
+    1. lizard pinned to 1.24.0 in .venv and in the CI workflow.
+    2. The two remaining triggers rewritten to use the PCRE2 escape \x22 instead of a literal
+       quote -- identical to the regex engine, no quote left in the literal. They are
+       ai_tool_policy.cpp (which was merging SEVENTEEN functions, in the file that decides
+       whether a command may run) and mbox_parser.cpp (merging extractBoundary).
+    3. run_lizard.py now FAILS on any parse desync, so this cannot silently return. The check
+       needs no knowledge of the trigger: C++ has no column-0 nested definitions, so a
+       definition starting inside another function's reported span means the parser merged
+       them. Measured over 902 files: 2 true positives, 0 false positives. It shells out to the
+       SAME lizard executable the threshold check uses -- importing the module instead would
+       let the two disagree on version and certify a parse the gate never ran.
+       DRILLED: restoring one literal quote in mbox_parser turns the gate red naming
+       extractBoundary and the 10 functions it swallowed.
+  WHAT WAS HIDING, now visible and all fixed: 7 C++ violations (evaluateToolPolicy CCN 11,
+  parseNetshConfig CCN 16, loadCustomPatterns CCN 12 len 82, removeTreeRefusingReparse CCN 14,
+  replaceFinalIso CCN 11, classifyConverterFailure CCN 13, and a 99-line test), each fixed by
+  extracting a seam rather than by deleting the comments that explain the code. Plus 8
+  JavaScript functions in browser/extension/background.js that no gate had ever measured; the
+  ratchet baseline is re-measured under 1.24.0 and annotated, since not one line of that file
+  changed.
+  A TEST THAT LOOKED LIKE COVERAGE AND WAS NOT: the first attempt to pin the \x22 rewrite added
+  double-quoted rows to test_ai_tool_policy. Drilling it -- deleting the double-quote branch
+  outright -- left the file GREEN, because those commands were already caught by `get-command`
+  and by the `&` call operator. The rows are now `Get-Content ("app"+".log")` with a
+  single-quoted control, so quote-concat is the only thing that can classify them; the same
+  drill is red on the double-quoted row alone.
+- [~] R5-IDX-22 A DEAD PARSER IS STILL COMPILED, AND ITS STATED REASON DOES NOT HOLD.
+  `EthernetConfigManager::parseNetshConfig` has ZERO callers -- the only two hits tree-wide are
+  its own declaration and definition. Its comment says it is "retained because saved snapshots
+  and the restore tooling still reference the netsh text format", but nothing in the tree parses
+  that text format any more: the capture path moved to snapshotFromNetIpConfig (JSON, and
+  language-neutral, unlike this one) and restore issues netsh COMMANDS rather than reading
+  `show config` output.
+  NOT DELETED, deliberately. Removal is the owner's call, and this is exactly the shape the
+  queryPowerPlan() incident warns about: a function with no caller that turned out to be the
+  missing half of a feature. It is now within the complexity limits either way, so it blocks
+  nothing. What it needs is a keep-or-remove decision on the evidence above.
+  Note also that it is private and untested, so the CCN-16 -> compliant refactor it just
+  received is unverified by anything but review. That is acceptable only because it is dead; if
+  the decision is KEEP, it needs tests and its access widened to allow them.
 - [x] R5-IDX-17 NO PRODUCTION CODE POINTS INTO docs/ ANY MORE, per the owner 2026-08-26:
   code and tests should stand on their own, and anything the code genuinely NEEDS should be
   structured data, not prose. Seven comment citations in partition_apfs_writer.{h,cpp} named
@@ -314,15 +359,15 @@ a parked design, per the bucket convention. Open work is what remains after thos
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-27: 653 [x] / 30 [~] / 0 [ ] MARKERS IN THIS FILE. That is not the same as the
+as of 2026-08-27: 653 [x] / 31 [~] / 0 [ ] MARKERS IN THIS FILE. That is not the same as the
 amount of open work, and the difference matters: 5 of those [~] are POINTERS at other
 documents (R5-IDX-2, -3, -4, -5, -6), and a pointer is one marker whether it stands for one
 item or forty. The other R5-IDX entries are native findings that merely share the prefix. Behind them sit 42 open or
 partial items counted in the files they name (APFS_HFS_FULL_DRIVER_WRITE_PLAN 11,
 APFS_LIVE_RECERT_FOLLOWONS 7, FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN 7 plus 6 partial,
 CODEX_REVIEW_4 6 partial, CODEX_REVIEW_REMEDIATION 5 partial), plus a 2294-line backlog that
-carries no checkbox markers at all. So the honest figure is 25 native [~] plus 42 referenced
-items = 67 open things, indexed by 30 markers. One marker can also stand for more than one
+carries no checkbox markers at all. So the honest figure is 26 native [~] plus 42 referenced
+items = 68 open things, indexed by 31 markers. One marker can also stand for more than one
 finding WITHOUT being a pointer: R5-IDX-19 now carries two distinct network defects (19b
 duplicate transport, 19c three operations with no headless counterpart at all), because they
 share a fix and splitting them would misrepresent that. Indexing work into pointers made the marker

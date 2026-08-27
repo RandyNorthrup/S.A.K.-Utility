@@ -143,6 +143,39 @@ void AiToolPolicyTests::readOnlyPolicyBlocksNativeMutators() {
     }
 }
 
+namespace {
+
+/// Command-name indirection and string obfuscation rows for the read-only allowlist table.
+/// @param risky_reason the block reason every row here is expected to produce.
+void addIndirectionAllowlistRows(const QString& risky_reason) {
+    // Call-operator + Get-Command indirection with string-concatenation obfuscation:
+    // 'For'+'mat-Volume' assembles a catastrophic verb the substring regexes never see, and
+    // the leading "&" call operator resolves+invokes it. The allowlist must refuse it.
+    QTest::newRow("call-op-getcommand-concat")
+        << QStringLiteral("& (Get-Command ('For'+'mat-Volume')) -DriveLetter X -Force") << false
+        << risky_reason;
+    QTest::newRow("start-process-concat")
+        << QStringLiteral("Start-Process ('form'+'at.com') D:") << false << risky_reason;
+
+    // Quote-concatenation ALONE, with no other indirection marker to hide behind. The two rows
+    // above are also caught by "get-command" and by the "&" call operator, so neither of them
+    // actually exercises the regex's quote-concat alternative -- a drill proved that: deleting
+    // the double-quote branch outright left this whole file green.
+    //
+    // These two use Get-Content, which is not in the indirection list, and no "&", so the ONLY
+    // thing that can classify them is `['\x22]\s*\+`. The double-quote branch is spelled \x22
+    // rather than as a literal quote because a literal quote inside the raw string
+    // desynchronizes lizard's parser and silently dropped this file from the complexity gate
+    // (R5-IDX-21). If \x22 ever stopped meaning `"` to the regex engine, PowerShell's own
+    // preferred quoting style would splice a command name past the read-only allowlist.
+    QTest::newRow("concat-only-single-quoted")
+        << QStringLiteral("Get-Content ('app'+'.log')") << false << risky_reason;
+    QTest::newRow("concat-only-double-quoted")
+        << QStringLiteral(R"(Get-Content ("app"+".log"))") << false << risky_reason;
+}
+
+}  // namespace
+
 void AiToolPolicyTests::readOnlyShellRequiresDiagnosticAllowlist_data() {
     QTest::addColumn<QString>("command");
     QTest::addColumn<bool>("allowed");
@@ -188,14 +221,7 @@ void AiToolPolicyTests::readOnlyShellRequiresDiagnosticAllowlist_data() {
     QTest::newRow("method-invocation")
         << QStringLiteral("(Get-WmiObject Win32_Service -Filter \"name='w'\").Delete()") << false
         << kRisky;
-    // Call-operator + Get-Command indirection with string-concatenation obfuscation:
-    // 'For'+'mat-Volume' assembles a catastrophic verb the substring regexes never see, and
-    // the leading "&" call operator resolves+invokes it. The allowlist must refuse it.
-    QTest::newRow("call-op-getcommand-concat")
-        << QStringLiteral("& (Get-Command ('For'+'mat-Volume')) -DriveLetter X -Force") << false
-        << kRisky;
-    QTest::newRow("start-process-concat")
-        << QStringLiteral("Start-Process ('form'+'at.com') D:") << false << kRisky;
+    addIndirectionAllowlistRows(kRisky);
     QTest::newRow("whoami") << QStringLiteral("whoami /all") << true << kAllowed;
     QTest::newRow("netstat") << QStringLiteral("netstat -ano") << true << kAllowed;
 
@@ -677,6 +703,11 @@ void AiToolPolicyTests::obfuscatedCommandsCountAsRisky_data() {
     QTest::newRow("call-op-getcommand-concat")
         << QStringLiteral("& (Get-Command ('For'+'mat-Volume')) -DriveLetter X -Force");
     QTest::newRow("start-process-concat") << QStringLiteral("Start-Process ('form'+'at.com')");
+    // Quote-concat with nothing else to hide behind, so the risky classification can only come
+    // from the regex's `['\x22]\s*\+` branch -- see the fuller note in the allowlist data
+    // function above.
+    QTest::newRow("concat-only-single-quoted") << QStringLiteral("Get-Content ('app'+'.log')");
+    QTest::newRow("concat-only-double-quoted") << QStringLiteral(R"(Get-Content ("app"+".log"))");
 }
 
 void AiToolPolicyTests::obfuscatedCommandsCountAsRisky() {

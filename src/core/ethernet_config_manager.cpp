@@ -575,40 +575,43 @@ EthernetConfigSnapshot EthernetConfigManager::snapshotFromNetIpConfig(const QStr
     return snap;
 }
 
-EthernetConfigSnapshot EthernetConfigManager::parseNetshConfig(const QString& output,
-                                                               const QString& adapterName) {
-    EthernetConfigSnapshot snap;
-    snap.adapterName = adapterName;
+namespace {
 
-    const auto lines = output.split('\n');
-
-    for (const auto& rawLine : lines) {
-        const QString line = rawLine.trimmed();
-
-        if (line.startsWith("DHCP enabled:", Qt::CaseInsensitive)) {
-            snap.dhcpEnabled = line.contains("Yes", Qt::CaseInsensitive);
-        } else if (line.startsWith("IP Address:", Qt::CaseInsensitive)) {
-            snap.ipv4Address = line.mid(line.indexOf(':') + 1).trimmed();
-        } else if (line.startsWith("Subnet Prefix:", Qt::CaseInsensitive)) {
-            // Format: "Subnet Prefix:  192.168.1.0/24 (mask 255.255.255.0)"
-            static const QRegularExpression kMaskRe(R"(\(mask\s+([\d.]+)\))");
-            auto match = kMaskRe.match(line);
-            if (match.hasMatch()) {
-                snap.ipv4SubnetMask = match.captured(1);
-            }
-        } else if (line.startsWith("Default Gateway:", Qt::CaseInsensitive)) {
-            snap.ipv4Gateway = line.mid(line.indexOf(':') + 1).trimmed();
-        } else if (line.startsWith("Statically Configured DNS Servers:", Qt::CaseInsensitive) ||
-                   line.startsWith("DNS Servers configured through DHCP:", Qt::CaseInsensitive)) {
-            const QString dns = line.mid(line.indexOf(':') + 1).trimmed();
-            if (!dns.isEmpty()) {
-                snap.ipv4DnsServers.append(dns);
-            }
+/// Apply one "Label: value" line of `netsh interface ip show config` to @p snap.
+void applyNetshConfigLine(const QString& line, EthernetConfigSnapshot& snap) {
+    if (line.startsWith("DHCP enabled:", Qt::CaseInsensitive)) {
+        snap.dhcpEnabled = line.contains("Yes", Qt::CaseInsensitive);
+        return;
+    }
+    if (line.startsWith("IP Address:", Qt::CaseInsensitive)) {
+        snap.ipv4Address = line.mid(line.indexOf(':') + 1).trimmed();
+        return;
+    }
+    if (line.startsWith("Subnet Prefix:", Qt::CaseInsensitive)) {
+        // Format: "Subnet Prefix:  192.168.1.0/24 (mask 255.255.255.0)"
+        static const QRegularExpression kMaskRe(R"(\(mask\s+([\d.]+)\))");
+        const auto match = kMaskRe.match(line);
+        if (match.hasMatch()) {
+            snap.ipv4SubnetMask = match.captured(1);
+        }
+        return;
+    }
+    if (line.startsWith("Default Gateway:", Qt::CaseInsensitive)) {
+        snap.ipv4Gateway = line.mid(line.indexOf(':') + 1).trimmed();
+        return;
+    }
+    if (line.startsWith("Statically Configured DNS Servers:", Qt::CaseInsensitive) ||
+        line.startsWith("DNS Servers configured through DHCP:", Qt::CaseInsensitive)) {
+        const QString dns = line.mid(line.indexOf(':') + 1).trimmed();
+        if (!dns.isEmpty()) {
+            snap.ipv4DnsServers.append(dns);
         }
     }
+}
 
-    // Subsequent lines after "DNS Servers" may contain additional DNS entries
-    // (they appear as bare IP addresses on following lines)
+/// Collect the continuation DNS entries: netsh prints additional servers as bare IP addresses
+/// on the lines FOLLOWING the "DNS Servers" label, with no label of their own.
+void appendContinuationDnsServers(const QStringList& lines, EthernetConfigSnapshot& snap) {
     bool inDnsSection = false;
     static const QRegularExpression kIpRe(R"(^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$)");
 
@@ -619,17 +622,31 @@ EthernetConfigSnapshot EthernetConfigManager::parseNetshConfig(const QString& ou
             inDnsSection = true;
             continue;
         }
-
-        if (inDnsSection) {
-            if (kIpRe.match(line).hasMatch()) {
-                if (!snap.ipv4DnsServers.contains(line)) {
-                    snap.ipv4DnsServers.append(line);
-                }
-            } else if (!line.isEmpty()) {
-                inDnsSection = false;
+        if (!inDnsSection) {
+            continue;
+        }
+        if (kIpRe.match(line).hasMatch()) {
+            if (!snap.ipv4DnsServers.contains(line)) {
+                snap.ipv4DnsServers.append(line);
             }
+        } else if (!line.isEmpty()) {
+            inDnsSection = false;
         }
     }
+}
+
+}  // namespace
+
+EthernetConfigSnapshot EthernetConfigManager::parseNetshConfig(const QString& output,
+                                                               const QString& adapterName) {
+    EthernetConfigSnapshot snap;
+    snap.adapterName = adapterName;
+
+    const auto lines = output.split('\n');
+    for (const auto& rawLine : lines) {
+        applyNetshConfigLine(rawLine.trimmed(), snap);
+    }
+    appendContinuationDnsServers(lines, snap);
 
     return snap;
 }

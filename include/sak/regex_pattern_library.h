@@ -12,6 +12,7 @@
 
 #include "sak/advanced_search_types.h"
 
+#include <QJsonArray>
 #include <QObject>
 #include <QString>
 #include <QVector>
@@ -67,6 +68,11 @@ public:
 
     /// @brief Load custom patterns from persistent storage
     void loadCustomPatterns();
+
+    /// @brief Append the entries of a persisted pattern array that pass the same invariants
+    ///        addCustomPattern() enforces, stopping at the count cap. Public only because
+    ///        loadCustomPatterns() is; it appends to the existing list rather than replacing it.
+    void appendAcceptedCustomPatterns(const QJsonArray& entries);
 
     /// @brief Save custom patterns to persistent storage. Returns true only when the
     ///        list was durably committed; false on any I/O failure or when persistence

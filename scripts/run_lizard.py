@@ -30,6 +30,8 @@ Usage:
 Called by pre-commit hooks and CI. Exit code 0 = clean, 1 = violations found.
 """
 
+import csv
+import io
 import re
 import subprocess
 import sys
@@ -173,6 +175,150 @@ def run_lizard(files: list[str], language: str, default_dirs: list[str]) -> list
     return hard
 
 
+# ---------------------------------------------------------------------------
+# Parse-desync detection (R5-IDX-21)
+# ---------------------------------------------------------------------------
+# lizard's C++ tokenizer can lose its place -- a literal double quote inside a raw string
+# literal has done it -- and when it does it does not warn: it silently merges the remaining
+# functions into whichever one it was inside and reports nothing for the rest of the file.
+# Every function it swallows is then unmeasured, and the gate prints "PASSED".
+#
+# That is not hypothetical. Under lizard 1.21.2 this gate was passing a file whose
+# EthernetConfigManager::parseNetshConfig sits at CCN 16, a WifiManagerPanel::onSelectionChanged
+# at CCN 11, twelve functions in regex_pattern_library.cpp, seventeen in ai_tool_policy.cpp --
+# the file that decides whether a command is allowed to run -- and eight in the browser
+# extension. Upgrading to 1.24.0 fixed most of it; a literal quote inside a raw string still
+# triggers it, so detection, not a version bump, is what keeps this closed.
+#
+# The detector needs no knowledge of the bug's cause. C++ has no column-0 nested function
+# definitions, so if lizard reports a function spanning lines A..B and a line strictly inside
+# that range starts a definition at column 0, lizard merged two or more functions. Verified
+# across 902 files: 2 true positives, 0 false positives.
+
+# A definition at column 0: no leading whitespace, an identifier head, a parameter list, and no
+# terminating ';' (which would make it a declaration).
+DEFINITION_RE = re.compile(
+    r"^(?:[A-Za-z_][\w:<>,&*~\[\]\s]*?\s[\*&]?\s*)?([A-Za-z_~][\w:~]*)\s*\("
+)
+
+# Column-0 constructs that are not function definitions and must not be mistaken for one.
+NOT_A_DEFINITION_RE = re.compile(
+    r"^(?:"
+    r"#|//|/\*|\*|"                       # preprocessor and comments
+    r"\}|\)|"                             # continuation of a previous construct
+    r"(?:return|if|for|while|switch|else|do|case|catch)\b|"
+    r"Q_[A-Z_]+\s*\(|"                    # Qt macros (Q_DECLARE_METATYPE, Q_GLOBAL_STATIC, ...)
+    r"QTEST_|TEST\s*\(|TEST_F\s*\(|"      # test-framework entry-point macros
+    r"[A-Z][A-Z0-9_]*\s*\("               # SHOUTY_MACRO(...) at column 0
+    r")"
+)
+
+CPP_EXTENSIONS = {".cpp", ".h", ".hpp", ".cxx", ".cc", ".hxx"}
+
+
+def definition_line_numbers(path: Path) -> set[int]:
+    """1-based line numbers that begin a function definition at column 0."""
+    numbers: set[int] = set()
+    text = path.read_text(encoding="utf-8", errors="replace")
+    for number, raw in enumerate(text.splitlines(), start=1):
+        if not raw or raw[0].isspace():
+            continue
+        if NOT_A_DEFINITION_RE.match(raw):
+            continue
+        if raw.rstrip().endswith(";"):
+            continue
+        if DEFINITION_RE.match(raw):
+            numbers.add(number)
+    return numbers
+
+
+def cpp_files_to_check(files: list[str]) -> list[Path]:
+    """The C++ files this run covers, as paths that exist."""
+    if files:
+        return [Path(f) for f in files
+                if Path(f).suffix.lower() in CPP_EXTENSIONS and Path(f).is_file()]
+    found: list[Path] = []
+    for directory in DEFAULT_DIRS:
+        root = PROJECT_ROOT / directory
+        if not root.is_dir():
+            continue
+        found.extend(p for p in root.rglob("*")
+                     if p.suffix.lower() in CPP_EXTENSIONS
+                     and not any(part in ("third_party", "3rdparty", "external", "build",
+                                          ".venv")
+                                 for part in p.parts))
+    return found
+
+
+def reported_spans(paths: list[Path]) -> dict[str, list[tuple[str, int, int]]]:
+    """Ask lizard for EVERY function it found: {file -> [(name, start_line, end_line)]}.
+
+    Deliberately shells out to the same executable find_lizard() gives the threshold check,
+    rather than importing the lizard module. If the two disagreed on version, this check would
+    be certifying a parse that the gate never actually used.
+    """
+    spans: dict[str, list[tuple[str, int, int]]] = {}
+    lizard_exe = find_lizard()
+    # Windows caps a command line near 32k, and a whole-tree run is ~900 paths. Chunk it.
+    for start in range(0, len(paths), 40):
+        chunk = [str(p) for p in paths[start:start + 40]]
+        command = [lizard_exe, "--csv", "-l", "cpp", "--", *chunk]
+        try:
+            result = subprocess.run(
+                command, capture_output=True, text=True, cwd=str(PROJECT_ROOT))
+        except FileNotFoundError as exc:
+            raise SystemExit(
+                f"ABORT: lizard executable not found ({lizard_exe!r}); the parse-desync check "
+                "cannot run, so this gate cannot certify that every function was measured."
+            ) from exc
+        for row in csv.reader(io.StringIO(result.stdout)):
+            # NLOC,CCN,token,PARAM,length,location,file,function,args,start_line,end_line
+            if len(row) < 11:
+                continue
+            try:
+                key = str(Path(row[6]).resolve()).lower()
+                spans.setdefault(key, []).append((row[7], int(row[9]), int(row[10])))
+            except ValueError:
+                continue  # the header row, or a line that is not a record
+    return spans
+
+
+def check_for_parse_desync(files: list[str]) -> int:
+    """Fail when lizard merged functions, because everything it merged went unmeasured."""
+    paths = cpp_files_to_check(files)
+    if not paths:
+        return 0
+    spans = reported_spans(paths)
+
+    problems: list[str] = []
+    for path in paths:
+        definitions = definition_line_numbers(path)
+        if not definitions:
+            continue
+        for name, start_line, end_line in spans.get(str(path.resolve()).lower(), []):
+            swallowed = sorted(n for n in definitions if start_line < n <= end_line)
+            if swallowed:
+                shown = ", ".join(str(n) for n in swallowed[:5])
+                more = "" if len(swallowed) <= 5 else f" (+{len(swallowed) - 5} more)"
+                problems.append(
+                    f"{path}: lizard reports '{name}' as lines {start_line}-{end_line}, but "
+                    f"{len(swallowed)} function definition(s) START inside it, at line(s) "
+                    f"{shown}{more}. The parser lost its place and merged them, so none of "
+                    f"those functions was measured against the thresholds.")
+
+    if problems:
+        print(f"=== {len(problems)} lizard parse desync(s) -- functions went UNMEASURED ===")
+        for problem in problems:
+            print(f"  {problem}")
+        print()
+        print("This is not a complexity failure; it is the gate failing to see the code at all.")
+        print("A literal double quote inside a raw string literal is the known trigger. Write it")
+        print("as the regex escape \\x22 instead -- identical to the regex engine, and it leaves")
+        print("no quote in the literal for the tokenizer to trip over.")
+        return 1
+    return 0
+
+
 def parse_violation(line: str) -> tuple[str, int, int, int] | None:
     """Return (key, ccn, params, length) for a warning line, or None.
 
@@ -273,6 +419,11 @@ def classify_warning(line: str) -> str | None:
 
 def check_cpp(files: list[str]) -> int:
     """C++ is held at zero violations. Returns an exit code."""
+    # Run the desync check FIRST and independently of the threshold result. A merged function
+    # can easily be under every limit while the functions it swallowed are not, so "no
+    # violations reported" is meaningless until the parse itself is known to be sound.
+    status = check_for_parse_desync(files)
+
     hard_errors = run_lizard(files, "cpp", DEFAULT_DIRS)
     if hard_errors:
         print(f"=== {len(hard_errors)} C++ violation(s) "
@@ -281,7 +432,7 @@ def check_cpp(files: list[str]) -> int:
             print(line)
         print(f"\nFAILED: {len(hard_errors)} violation(s) must be fixed.")
         return 1
-    return 0
+    return status
 
 
 def main() -> int:
