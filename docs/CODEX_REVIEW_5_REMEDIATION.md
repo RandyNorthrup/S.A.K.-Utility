@@ -25,9 +25,16 @@ Pointers only -- the detail stays in the file named, and nothing below is restat
 Each of these documents holds work that is genuinely unfinished, and none of them is read by
 any gate, so nothing would have surfaced it.
 
-- [~] R5-IDX-1 `docs/MACOS_BOOTABLE_USB_PLAN.md` -- 40 open items; the feature is NOT built
-  (no `macos_*` source under `src/`). Decide: build it or drop the plan. The README roadmap
-  entry for it is the only live promise of the feature.
+- [x] R5-IDX-1 `docs/future/MACOS_BOOTABLE_USB_PLAN.md` -- SETTLED by the owner 2026-08-27: it stays
+  as a "might implement in the future" plan and now lives in `docs/future/`, the bucket for
+  parked designs, so its 40 unchecked items are a parked design,
+  NOT open remediation work, and nothing here should chase them. It keeps its place in the
+  README roadmap for the same reason.
+  The feature is genuinely unbuilt, verified against the deliverables the plan NAMES rather
+  than a keyword: MacOSCatalogParser, MacOSDownloader, MacOSFlashWorker, MacOSInstallerDialog
+  and MacOSToolValidator all resolve to zero files. FlashWorker and LinuxISODownloadDialog do
+  exist, because they are the Linux/Windows infrastructure this plan would build ON, and
+  mistaking those for progress is exactly the error this check was designed to avoid.
 - [~] R5-IDX-2 `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md` -- 11 open items. These were
   INVISIBLE to every grep-based scan until 2026-08-26: the file carried 8 raw NUL bytes, so
   grep classified it as binary and silently skipped it. NULs are now escaped as text.
@@ -177,7 +184,7 @@ any gate, so nothing would have surfaced it.
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-27: 650 [x] / 30 [~] / 0 [ ] (reconciled to the live marker counts; F25, the
+as of 2026-08-27: 651 [x] / 29 [~] / 0 [ ] (reconciled to the live marker counts; F25, the
 last [ ], closed 2026-08-25; the R5-IDX items added 2026-08-26 index open work that was
 sitting in other documents where no gate could see it) (G18-3 impl-detail-vs-contract audit COMPLETE -- whole tests/unit tree exhaustively swept, every nominee resolved; G18-1 mutation-testing COMPLETE and LEDGER-4
 committed-ledger done; a whole-doc un-defer + staleness sweep AND a [~] reclassification landed

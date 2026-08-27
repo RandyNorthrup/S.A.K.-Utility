@@ -842,7 +842,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for coding standards, commit conventions,
 
 ### Planned Features (detailed plans in `docs/`)
 
-- **macOS Bootable USB** - Create macOS bootable USB drives from macOS installer images. See [MACOS_BOOTABLE_USB_PLAN.md](docs/MACOS_BOOTABLE_USB_PLAN.md).
+- **macOS Bootable USB** - Create macOS bootable USB drives from macOS installer images. See [MACOS_BOOTABLE_USB_PLAN.md](docs/future/MACOS_BOOTABLE_USB_PLAN.md).
 
 ---
 

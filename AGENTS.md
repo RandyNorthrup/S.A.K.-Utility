@@ -121,10 +121,31 @@ Status belongs in exactly one place, and that place is versioned.
 - Registered test count and coverage claims: `tests/README.md` (a pre-commit gate verifies it
   against the real CTest registration -- a README once hid nine dead test files by asserting
   coverage that did not exist).
-- Certification claims for the partition tools: the matrices under `docs/`, also gated. This
-  tool writes to raw disks; an uncertified operation appearing as certified is a
-  data-destruction risk, not a documentation problem.
+- Certification claims for the partition tools: the matrix under `certification/`, which is
+  machine-readable data rather than prose, plus the gated docs that cite it. This tool writes
+  to raw disks; an uncertified operation appearing as certified is a data-destruction risk,
+  not a documentation problem.
 - Any version number: the file that owns it (e.g. `browser/extension/manifest.json`).
+
+**`docs/` has three buckets, and which one a file sits in IS its status.** A plan in the wrong
+bucket is a false claim, because the location is what a reader trusts before reading a word.
+
+- `docs/` itself -- work with real open items that someone is expected to finish.
+- `docs/archive/` -- realized or closed. The feature shipped, or the campaign hit zero. Kept
+  for the reasoning, not as a to-do list.
+- `docs/future/` -- "might implement one day". Unchecked boxes here are a parked design, NOT
+  open work, and nothing should chase them.
+
+**Production code must not depend on anything under `docs/`.** Code and tests stand on their
+own; if the code genuinely needs data, that data is a JSON somewhere sensible, not prose. A
+comment may CITE a document for provenance -- that is a reference, not a dependency, and the
+distinction is worth keeping straight: an earlier version of this file called seven such
+comments a dependency and used it to justify leaving files where they were.
+
+**Check a plan against the deliverables it NAMES, never against a keyword from its title.**
+A plan called ASSISTANT_HEADLESS_DOMINION was reported as having "no code in the tree" because
+a grep for "headless" returned nothing. It was fully built: the plan names AppActionRegistry
+and the sak_app_actions tool, and 62 registered action ids were sitting right there.
 
 **Never keep a second copy of a status in an agent's private notes.** Counts, tallies,
 percentages and COMPLETE labels rot on the next commit, and nothing updates the copy. An audit of
