@@ -37,8 +37,11 @@ constexpr int kMinTimeoutSeconds = kAiCommandMinTimeoutSeconds;
 constexpr int kMaxTimeoutSeconds = kAiCommandMaxTimeoutSeconds;
 constexpr int kMinOutputCap = 1024;
 // Hard ceiling on what one run may make the broker retain per stream. Without it a caller
-// (or a tool argument that reached one) could ask for a multi-gigabyte buffer.
-constexpr int kMaxOutputCap = 16 * 1024 * 1024;
+// (or a tool argument that reached one) could ask for a multi-gigabyte buffer. The value now
+// lives in the header (kAiCommandOutputBytesCeiling) so a caller's own output budget cannot
+// drift above the limit this file refuses at; aliased here to keep the call sites reading
+// naturally, exactly as the timeout domain above is.
+constexpr int kMaxOutputCap = kAiCommandOutputBytesCeiling;
 // The Windows command line tops out at 32767 characters, so anything beyond this could
 // only fail deep inside CreateProcess with an opaque error.
 constexpr int kMaxCommandChars = 30'000;
@@ -393,6 +396,66 @@ bool ExecutionBroker::runElevatedRequest(const AiCommandRequest& request) {
     return true;
 }
 
+namespace {
+
+/// @brief "Is there anything to run at all" -- the per-target emptiness rule.
+///
+/// Split from the target-specific messages so each entry point's refusal text stays exactly
+/// what it always was: a shared check that homogenised the wording would make a PowerShell
+/// refusal indistinguishable from a cmd one in a log.
+[[nodiscard]] QString emptyRequestError(AiCommandTarget target, const AiCommandRequest& request) {
+    if (target == AiCommandTarget::Process) {
+        return request.program.trimmed().isEmpty() ? QStringLiteral("Program path is empty")
+                                                   : QString{};
+    }
+    if (!request.command.trimmed().isEmpty()) {
+        return {};
+    }
+    return target == AiCommandTarget::PowerShell ? QStringLiteral("PowerShell command is empty")
+                                                 : QStringLiteral("CMD command is empty");
+}
+
+/// @brief Elevation support is per-target: only the PowerShell entry point routes through the
+/// injected elevated runner, so an admin request on the other two is refused outright.
+[[nodiscard]] QString elevationUnsupportedError(AiCommandTarget target,
+                                                const AiCommandRequest& request) {
+    if (!request.requires_admin) {
+        return {};
+    }
+    if (target == AiCommandTarget::Cmd) {
+        return QStringLiteral(
+            "Elevated cmd.exe launch is not supported; use run_powershell for admin tasks.");
+    }
+    if (target == AiCommandTarget::Process) {
+        return QStringLiteral(
+            "Elevated direct-process launch is not supported; use run_powershell for admin tasks.");
+    }
+    return {};  // PowerShell elevates through the injected runner rather than being refused.
+}
+
+}  // namespace
+
+QString aiCommandPreconditionError(AiCommandTarget target, const AiCommandRequest& request) {
+    const QString empty_error = emptyRequestError(target, request);
+    if (!empty_error.isEmpty()) {
+        return empty_error;
+    }
+    const QString elevation_error = elevationUnsupportedError(target, request);
+    if (!elevation_error.isEmpty()) {
+        return elevation_error;
+    }
+    // The SAME domain launchLimitsError enforces at the launch point, phrased identically on
+    // purpose: a refusal raised at plan time and the one raised at the door must be the same
+    // sentence, or a reader comparing a plan against a log has to work out whether two
+    // differently-worded messages describe one rule or two.
+    if (request.max_output_bytes <= 0 || request.max_output_bytes > kMaxOutputCap) {
+        return QStringLiteral("max_output_bytes %1 is outside the range 1-%2")
+            .arg(request.max_output_bytes)
+            .arg(kMaxOutputCap);
+    }
+    return {};
+}
+
 bool ExecutionBroker::startPowerShell(const AiCommandRequest& request, const QString& command_id) {
     if (m_running) {
         AiCommandResult fail;
@@ -410,9 +473,11 @@ bool ExecutionBroker::startPowerShell(const AiCommandRequest& request, const QSt
         emitDeferredFinish(std::move(fail));
         return false;
     }
-    if (request.command.trimmed().isEmpty()) {
+    const QString precondition_error = aiCommandPreconditionError(AiCommandTarget::PowerShell,
+                                                                  request);
+    if (!precondition_error.isEmpty()) {
         AiCommandResult fail;
-        fail.error_message = QStringLiteral("PowerShell command is empty");
+        fail.error_message = precondition_error;
         emitDeferredFinish(std::move(fail));
         return false;
     }
@@ -459,16 +524,10 @@ bool ExecutionBroker::startCmd(const AiCommandRequest& request, const QString& c
         emitDeferredFinish(std::move(fail));
         return false;
     }
-    if (request.command.trimmed().isEmpty()) {
+    const QString precondition_error = aiCommandPreconditionError(AiCommandTarget::Cmd, request);
+    if (!precondition_error.isEmpty()) {
         AiCommandResult fail;
-        fail.error_message = QStringLiteral("CMD command is empty");
-        emitDeferredFinish(std::move(fail));
-        return false;
-    }
-    if (request.requires_admin) {
-        AiCommandResult fail;
-        fail.error_message = QStringLiteral(
-            "Elevated cmd.exe launch is not supported; use run_powershell for admin tasks.");
+        fail.error_message = precondition_error;
         emitDeferredFinish(std::move(fail));
         return false;
     }
@@ -509,16 +568,11 @@ bool ExecutionBroker::startProcess(const AiCommandRequest& request, const QStrin
         emitDeferredFinish(std::move(fail));
         return false;
     }
-    if (request.program.trimmed().isEmpty()) {
+    const QString precondition_error = aiCommandPreconditionError(AiCommandTarget::Process,
+                                                                  request);
+    if (!precondition_error.isEmpty()) {
         AiCommandResult fail;
-        fail.error_message = QStringLiteral("Program path is empty");
-        emitDeferredFinish(std::move(fail));
-        return false;
-    }
-    if (request.requires_admin) {
-        AiCommandResult fail;
-        fail.error_message = QStringLiteral(
-            "Elevated direct-process launch is not supported; use run_powershell for admin tasks.");
+        fail.error_message = precondition_error;
         emitDeferredFinish(std::move(fail));
         return false;
     }

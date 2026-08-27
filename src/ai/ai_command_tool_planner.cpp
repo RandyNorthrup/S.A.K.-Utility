@@ -217,21 +217,23 @@ void resolveRequestProcessProgram(AiCommandRequest& request) {
 bool populateRequestForTool(const QString& tool_name,
                             const QJsonObject& args,
                             AiCommandToolPlan& plan,
-                            bool& direct_process) {
+                            AiCommandTarget& target) {
     if (tool_name == QLatin1String("run_powershell")) {
+        target = AiCommandTarget::PowerShell;
         plan.request = ExecutionBroker::requestFromJson(args);
         plan.shell_label = QStringLiteral("PowerShell");
         plan.preview = plan.request.command;
         return true;
     }
     if (tool_name == QLatin1String("run_cmd")) {
+        target = AiCommandTarget::Cmd;
         plan.request = ExecutionBroker::requestFromJson(args);
         plan.shell_label = QStringLiteral("cmd.exe");
         plan.preview = plan.request.command;
         return true;
     }
     if (tool_name == QLatin1String("run_process")) {
-        direct_process = true;
+        target = AiCommandTarget::Process;
         plan.request = ExecutionBroker::processRequestFromJson(args);
         plan.shell_label = QStringLiteral("Process");
         resolveRequestProcessProgram(plan.request);
@@ -249,6 +251,26 @@ bool populateRequestForTool(const QString& tool_name,
     return false;
 }
 
+// Record the BROKER'S OWN PRE-LAUNCH RULES against the plan, while it is still cheap to refuse.
+//
+// An empty shell command, an elevated cmd.exe or direct-process launch, and an out-of-domain
+// output budget are all refused at the broker's door -- but only AFTER the plan has been
+// rendered into a preview, risk-classified, put in front of a human for approval, and granted
+// an execution lease. Every one of those steps was spent on a command that could never run,
+// and an approval dialog whose answer changes nothing is how an operator learns to click
+// through it.
+//
+// Sharing the broker's function rather than restating its rules here is the point: a second
+// copy would be free to drift, which is exactly how the output ceiling this checks came to be
+// wrong in the first place (see kAiCommandOutputBytesCeiling). Recorded through the existing
+// validation_error channel so buildPlan keeps ONE fail-closed refusal path rather than two.
+void applyBrokerPreconditions(AiCommandTarget target, AiCommandRequest& request) {
+    if (!request.validation_error.isEmpty()) {
+        return;  // A parse failure is already recorded; do not overwrite the specific message.
+    }
+    request.validation_error = aiCommandPreconditionError(target, request);
+}
+
 }  // namespace
 
 AiCommandToolPlan AiCommandToolPlanner::buildPlan(const QString& tool_name,
@@ -256,10 +278,14 @@ AiCommandToolPlan AiCommandToolPlanner::buildPlan(const QString& tool_name,
                                                   AiToolPolicy policy,
                                                   Options options) {
     AiCommandToolPlan plan;
-    bool direct_process = false;
-    if (!populateRequestForTool(tool_name, args, plan, direct_process)) {
+    // Defaults to the strictest target so a refusal path that never reaches the dispatch below
+    // cannot leave an uninitialised one behind; it matches the "Process" shell_label the
+    // unsupported-tool branch already records.
+    AiCommandTarget target = AiCommandTarget::Process;
+    if (!populateRequestForTool(tool_name, args, plan, target)) {
         return plan;  // policy_decision stays default-denied.
     }
+    const bool direct_process = target == AiCommandTarget::Process;
     // THE HUMAN-FACING COPY, sanitised once, here, for EVERY branch. The two shell branches
     // assign the model's command string straight through, and that string is what the approval
     // dialog used to render: a raw newline (or U+2028, which QTextDocument also breaks on)
@@ -276,6 +302,8 @@ AiCommandToolPlan AiCommandToolPlanner::buildPlan(const QString& tool_name,
     // shell branches keep their text classification.
     plan.risky_change = direct_process ||
                         isPotentiallyDestructiveCommand(plan.request, plan.preview);
+
+    applyBrokerPreconditions(target, plan.request);
 
     // Malformed / wrong-typed / out-of-domain arguments are rejected HERE rather than
     // repaired into defaults and carried through the confirmation, lease, and launch path

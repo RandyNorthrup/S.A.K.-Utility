@@ -37,6 +37,8 @@ public:
     struct Options {
         int max_output_bytes{kDefaultCommandToolMaxOutputBytes};
     };
+    static_assert(kDefaultCommandToolMaxOutputBytes <= kAiCommandOutputBytesCeiling,
+                  "command-tool output budget must not exceed what ExecutionBroker accepts");
 
     /// @brief Plan one command tool call from AI-supplied arguments.
     ///
@@ -47,6 +49,12 @@ public:
     /// non-empty @c guard_block_error, a @c request.validation_error carrying the same
     /// message, @c risky_change set, and a default-denied @c policy_decision, so a
     /// caller that only checks the block error still fails closed.
+    ///
+    /// The same refusal covers a request that PARSES but that the broker would decline at
+    /// launch -- an empty shell command, an elevated cmd.exe or direct-process launch, an
+    /// out-of-domain output budget. Those are decided here, through the broker's own
+    /// @c aiCommandPreconditionError, so a plan that cannot run is never previewed,
+    /// risk-classified, approved by a human and leased before anything notices.
     [[nodiscard]] static AiCommandToolPlan buildPlan(const QString& tool_name,
                                                      const QJsonObject& args,
                                                      AiToolPolicy policy,

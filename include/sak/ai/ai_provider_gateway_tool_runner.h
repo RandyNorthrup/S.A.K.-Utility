@@ -26,8 +26,21 @@ struct AiProviderGatewayToolOptions {
 
     int default_output_bytes = kDefaultOutputKilobytes * static_cast<int>(sak::kBytesPerKB);
     int min_output_bytes = static_cast<int>(sak::kBytesPerKB);
+    /// Deliberately STRICTER than kAiCommandOutputBytesCeiling: a stricter local budget is a
+    /// policy choice and works, because run() clamps to it and the broker accepts the result.
+    /// Wider would not be a choice at all -- the broker REFUSES rather than clamps above its
+    /// own ceiling, so a wider budget here would only decide which commands die at the door.
     int max_output_bytes = kMaximumOutputMegabytes * static_cast<int>(sak::kBytesPerMB);
 };
+
+static_assert(AiProviderGatewayToolOptions{}.max_output_bytes <= kAiCommandOutputBytesCeiling,
+              "gateway tool output ceiling must not exceed what ExecutionBroker accepts");
+static_assert(AiProviderGatewayToolOptions{}.min_output_bytes <=
+                  AiProviderGatewayToolOptions{}.default_output_bytes,
+              "gateway tool output floor must not exceed its default");
+static_assert(AiProviderGatewayToolOptions{}.default_output_bytes <=
+                  AiProviderGatewayToolOptions{}.max_output_bytes,
+              "gateway tool output default must not exceed its ceiling");
 
 struct AiProviderGatewayToolCallbacks {
     std::function<bool(const QString& title, const QString& preview, bool risky)> confirm;

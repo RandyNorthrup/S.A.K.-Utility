@@ -38,6 +38,21 @@ inline constexpr int kAiCommandDefaultMaxOutputKilobytes = 256;
 inline constexpr int kAiCommandDefaultMaxOutputBytes = kAiCommandDefaultMaxOutputKilobytes *
                                                        static_cast<int>(sak::kBytesPerKB);
 
+/// The hard ceiling on max_output_bytes, declared HERE for exactly the reason the timeout
+/// domain above is: the broker is what ENFORCES it, refusing outright any request that exceeds
+/// it, so anything that budgets a command's output must be bounded by this rather than by a
+/// private ceiling of its own.
+///
+/// A private copy had already drifted PAST the enforcer, and the failure mode is the same one
+/// the timeout comment describes: AiWorkflowPowerShellToolOptions carried its own 64 MiB "hard
+/// ceiling", four times what the broker accepts, so a workflow phase asking for more than
+/// 16 MiB was clamped DOWN to a value the broker then REFUSED ("max_output_bytes 67108864 is
+/// outside the range 1-16777216") and the command never ran at all. A ceiling that is not the
+/// enforcer's ceiling bounds nothing; it only decides which requests die at the door.
+///
+/// A local budget may be STRICTER than this (several deliberately are); it may never be wider.
+inline constexpr int kAiCommandOutputBytesCeiling = 16 * static_cast<int>(sak::kBytesPerMB);
+
 struct AiCommandRequest {
     QString command;
     QString program;
@@ -69,6 +84,33 @@ struct AiCommandResult {
     [[nodiscard]] QJsonObject toJson() const;
     [[nodiscard]] QString toJsonString() const;
 };
+
+/// Which ExecutionBroker entry point a request is bound for. The pre-launch rules are NOT
+/// uniform across the three -- only the PowerShell entry point can elevate -- so a shared
+/// check has to be told which one it is deciding for.
+enum class AiCommandTarget {
+    PowerShell,
+    Cmd,
+    Process
+};
+
+/// @brief The broker's pre-launch preconditions, decided from the request ALONE.
+///
+/// Returns the exact refusal message ExecutionBroker would produce, or an empty string when
+/// the request would be accepted. Split out of the start* entry points so a PLANNER can apply
+/// the identical rule BEFORE a human is asked to approve: an empty shell command, an elevated
+/// cmd.exe or direct-process launch, and an out-of-domain output budget were each previewed,
+/// risk-classified, confirmed and leased, and only then refused at the broker's door.
+/// Authorising a command that cannot run is worse than refusing it early -- it spends the
+/// approver's attention on a decision that had no effect, and teaches them that the
+/// confirmation dialog does not mean what it says.
+///
+/// Deliberately PURE and request-only. The broker's other pre-launch failures -- another
+/// command already running, no elevated runner wired, an unresolvable System32 interpreter --
+/// turn on broker or machine state that a plan cannot honestly predict, so they stay at the
+/// launch point instead of being guessed at plan time.
+[[nodiscard]] QString aiCommandPreconditionError(AiCommandTarget target,
+                                                 const AiCommandRequest& request);
 
 struct ProcessLaunchRequest {
     QString program;

@@ -22,6 +22,8 @@ private Q_SLOTS:
     void rejectsNonCanonicalToolName();  // R5-G10-9
     void shellPreviewIsSanitizedBeforeItIsShownToAHuman();
     void validationFailureIsAlwaysRisky();
+    void brokerPreconditionsAreRefusedAtPlanTime();
+    void planTimePreconditionsDoNotRefuseLegalPlans();
 };
 
 void AiCommandToolPlannerTests::buildsPowerShellPlanWithPolicy() {
@@ -305,6 +307,126 @@ void AiCommandToolPlannerTests::validationFailureIsAlwaysRisky() {
     const auto unsupported = sak::ai::AiCommandToolPlanner::buildPlan(
         QStringLiteral("RUN_POWERSHELL"), args, sak::ai::AiToolPolicy::ExclusiveMutatingExecutor);
     QVERIFY(unsupported.risky_change);
+}
+
+namespace {
+
+// A request that PARSES cleanly -- typed validation has nothing to say about it -- and that the
+// broker nonetheless refuses at launch.
+struct PreconditionCase {
+    QString label;
+    QString tool;
+    QJsonObject args;
+    int max_output_bytes;
+    QString expected;
+};
+
+// A budget well inside the broker's domain, so a case that is not ABOUT the budget cannot be
+// refused for one.
+constexpr int kOkOutputBudget = 4096;
+
+// The expected strings are the BROKER's own refusal text, character for character (two of them
+// are independently pinned in test_ai_execution_broker against a real broker). A plan-time
+// refusal that reworded the launch-time one would leave a reader comparing a plan against a log
+// unable to tell whether they were looking at one rule or two.
+QList<PreconditionCase> preconditionCases() {
+    const QString ceiling = QString::number(sak::ai::kAiCommandOutputBytesCeiling);
+    return {
+        // Whitespace-only is not "a command with odd spacing": the broker trims before testing,
+        // so this arrives at the door as nothing at all.
+        {QStringLiteral("blank powershell"),
+         QStringLiteral("run_powershell"),
+         QJsonObject{{QStringLiteral("command"), QStringLiteral("   \t  ")}},
+         kOkOutputBudget,
+         QStringLiteral("PowerShell command is empty")},
+        {QStringLiteral("blank cmd"),
+         QStringLiteral("run_cmd"),
+         QJsonObject{{QStringLiteral("command"), QString{}}},
+         kOkOutputBudget,
+         QStringLiteral("CMD command is empty")},
+        // Elevation is supported ONLY on the PowerShell entry point. The other two are refused
+        // outright, and a plan that exists only to be refused is exactly what a human should
+        // never be asked to approve.
+        {QStringLiteral("elevated cmd"),
+         QStringLiteral("run_cmd"),
+         QJsonObject{{QStringLiteral("command"), QStringLiteral("dir")},
+                     {QStringLiteral("requires_admin"), true}},
+         kOkOutputBudget,
+         QStringLiteral(
+             "Elevated cmd.exe launch is not supported; use run_powershell for admin tasks.")},
+        {QStringLiteral("elevated process"),
+         QStringLiteral("run_process"),
+         QJsonObject{{QStringLiteral("program"), QStringLiteral("cmd.exe")},
+                     {QStringLiteral("requires_admin"), true}},
+         kOkOutputBudget,
+         QStringLiteral("Elevated direct-process launch is not supported; use run_powershell for "
+                        "admin tasks.")},
+        // An output budget outside the broker's domain, supplied by the CALLER through Options
+        // rather than by the model, so no amount of argument validation reaches it.
+        {QStringLiteral("zero output budget"),
+         QStringLiteral("run_powershell"),
+         QJsonObject{{QStringLiteral("command"), QStringLiteral("Get-Date")}},
+         0,
+         QStringLiteral("max_output_bytes 0 is outside the range 1-") + ceiling},
+        {QStringLiteral("over-ceiling output budget"),
+         QStringLiteral("run_powershell"),
+         QJsonObject{{QStringLiteral("command"), QStringLiteral("Get-Date")}},
+         sak::ai::kAiCommandOutputBytesCeiling + 1,
+         QStringLiteral("max_output_bytes %1 is outside the range 1-%2")
+             .arg(sak::ai::kAiCommandOutputBytesCeiling + 1)
+             .arg(ceiling)},
+    };
+}
+
+}  // namespace
+
+void AiCommandToolPlannerTests::brokerPreconditionsAreRefusedAtPlanTime() {
+    // Before this, each of these was rendered into a preview, risk-classified, put in front of a
+    // human for approval and granted an execution lease, and only then declined at the broker's
+    // door. The approval was spent on a decision that had no effect, which is how an operator
+    // learns to click through the dialog.
+    for (const PreconditionCase& c : preconditionCases()) {
+        const auto plan = sak::ai::AiCommandToolPlanner::buildPlan(
+            c.tool,
+            c.args,
+            sak::ai::AiToolPolicy::ExclusiveMutatingExecutor,
+            sak::ai::AiCommandToolPlanner::Options{c.max_output_bytes});
+
+        const QString context = c.label + QStringLiteral(" -> ") + plan.guard_block_error;
+        QCOMPARE(plan.request.validation_error, c.expected);
+        // The refusal must also reach a caller that reads only guard_block_error, and the
+        // documented contract requires risky_change SET and a default-denied policy here.
+        QCOMPARE(plan.guard_block_error, c.expected);
+        QVERIFY2(plan.risky_change, qPrintable(context));
+        QVERIFY2(!plan.policy_decision.allowed, qPrintable(context));
+    }
+}
+
+void AiCommandToolPlannerTests::planTimePreconditionsDoNotRefuseLegalPlans() {
+    // THE OTHER HALF OF THE BRACKET around brokerPreconditionsAreRefusedAtPlanTime, and
+    // load-bearing rather than ceremonial. Every fixture in that slot differs from a working
+    // plan by exactly ONE field, so dropping the precondition check entirely turns it red while
+    // this one stays green; making the check too broad -- refusing elevation on all three
+    // targets, or rejecting a budget that is legal -- turns THIS one red while that one stays
+    // green. Neither mistake can pass both.
+    const auto elevated_powershell = sak::ai::AiCommandToolPlanner::buildPlan(
+        QStringLiteral("run_powershell"),
+        QJsonObject{{QStringLiteral("command"), QStringLiteral("Get-Date")},
+                    {QStringLiteral("requires_admin"), true}},
+        sak::ai::AiToolPolicy::ExclusiveMutatingExecutor,
+        sak::ai::AiCommandToolPlanner::Options{kOkOutputBudget});
+    QVERIFY2(elevated_powershell.request.validation_error.isEmpty(),
+             qPrintable(elevated_powershell.request.validation_error));
+
+    // The ceiling itself is a legal budget -- the domain is inclusive, so an off-by-one in the
+    // comparison turns this red.
+    const auto at_ceiling = sak::ai::AiCommandToolPlanner::buildPlan(
+        QStringLiteral("run_powershell"),
+        QJsonObject{{QStringLiteral("command"), QStringLiteral("Get-Date")}},
+        sak::ai::AiToolPolicy::ExclusiveMutatingExecutor,
+        sak::ai::AiCommandToolPlanner::Options{sak::ai::kAiCommandOutputBytesCeiling});
+    QVERIFY2(at_ceiling.request.validation_error.isEmpty(),
+             qPrintable(at_ceiling.request.validation_error));
 }
 
 QTEST_GUILESS_MAIN(AiCommandToolPlannerTests)

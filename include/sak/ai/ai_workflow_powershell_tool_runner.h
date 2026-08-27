@@ -15,12 +15,28 @@ namespace sak::ai {
 
 struct AiWorkflowPowerShellToolOptions {
     static constexpr int kDefaultOutputKilobytes = 512;
-    static constexpr int kMaxOutputKilobytes = 64 * 1024;  // 64 MiB hard ceiling
 
     int default_output_bytes = kDefaultOutputKilobytes * static_cast<int>(sak::kBytesPerKB);
     int min_output_bytes = static_cast<int>(sak::kBytesPerKB);
-    int max_output_bytes = kMaxOutputKilobytes * static_cast<int>(sak::kBytesPerKB);
+    /// THE BROKER'S CEILING, not a private one. This carried its own "64 MiB hard ceiling",
+    /// four times what ExecutionBroker accepts, and run() CLAMPS to it -- so a workflow phase
+    /// asking for more than 16 MiB was quietly reduced to a value the broker then refused
+    /// outright ("max_output_bytes 67108864 is outside the range 1-16777216") and the command
+    /// never ran. The clamp read as a safety measure while being the thing that broke the run.
+    int max_output_bytes = kAiCommandOutputBytesCeiling;
 };
+
+// A local output budget may be STRICTER than the broker's; it may never be wider, because the
+// broker refuses -- rather than clamps -- anything above its ceiling. Asserted so the next
+// widening of this ceiling fails to compile instead of shipping commands that cannot launch.
+static_assert(AiWorkflowPowerShellToolOptions{}.max_output_bytes <= kAiCommandOutputBytesCeiling,
+              "workflow PowerShell output ceiling must not exceed what ExecutionBroker accepts");
+static_assert(AiWorkflowPowerShellToolOptions{}.min_output_bytes <=
+                  AiWorkflowPowerShellToolOptions{}.default_output_bytes,
+              "workflow PowerShell output floor must not exceed its default");
+static_assert(AiWorkflowPowerShellToolOptions{}.default_output_bytes <=
+                  AiWorkflowPowerShellToolOptions{}.max_output_bytes,
+              "workflow PowerShell output default must not exceed its ceiling");
 
 struct AiWorkflowPowerShellToolCallbacks {
     std::function<bool(const QString& title, const QString& preview, bool risky)> confirm;

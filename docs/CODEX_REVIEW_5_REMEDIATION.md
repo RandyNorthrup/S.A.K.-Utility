@@ -2088,14 +2088,15 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
       - optimize_power_settings queryPowerPlan and its pattern appear to be DEAD CODE. Flagged,
         not removed: a removal needs owner authorization, so this stays open by rule rather than
         by oversight.
-      - ai_command_tool_planner, three findings still open. (a) The resolved program is not
+      - ai_command_tool_planner, two findings still open. (a) The resolved program is not
         pinned or revalidated between approval and launch, so the binary can change underneath
         the "SAME binary" guarantee -- a real TOCTOU that needs handle pinning across the
         planner/broker boundary, not a one-line fix. (b) An embedded NUL is displayed as an
         escape but retained in program/arguments, which native argv cannot carry, so the preview
-        and the launch can disagree. (c) Broker preconditions (empty shell command, unsupported
-        elevated CMD/process launch, invalid output limits) are not checked at plan time, so
-        those plans are authorized and only then refused.
+        and the launch can disagree.
+        (c), broker preconditions unchecked at plan time, is CLOSED 2026-08-26 -- see "A PLAN
+        THE BROKER WAS ALWAYS GOING TO REFUSE" below, which also found a live output-ceiling
+        drift while closing it.
       - ai_conversation_store partial-state ordering: a transcript/command record is persisted
         BEFORE the manifest update, so a manifest failure returns false after the data is already
         committed and a retry duplicates the record; failed session start and rename likewise
@@ -2492,6 +2493,83 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
     (realistic test fixtures), and the magic-number check (the 0xC0/0x80 UTF-8 masks) -- each
     forcing a source edit and therefore another full gate. Run clang-format, lizard, scan_secrets
     and the magic-number check on the changed files FIRST, then start the gate.
+  - A PLAN THE BROKER WAS ALWAYS GOING TO REFUSE, 2026-08-26. This closes leftover finding (c)
+    on ai_command_tool_planner, and the reading turned up a LIVE defect of the same class that
+    the finding had not named.
+      * THE RECORDED FINDING. An empty shell command, an elevated cmd.exe or direct-process
+        launch, and an out-of-domain output budget are each refused by ExecutionBroker at the
+        door -- but nothing checked them at PLAN time. So such a request was parsed, rendered
+        into a preview, risk-classified, put in front of a human for approval, granted an
+        execution lease, and only then declined. Every one of those steps was spent on a command
+        that could never run. The cost is not the wasted work, it is the approval: a
+        confirmation dialog whose answer changes nothing is exactly how an operator learns to
+        click through the ones that do.
+        The rules are now a single pure function, aiCommandPreconditionError(target, request),
+        which the broker's three start* entry points and the planner BOTH call. Sharing it
+        rather than restating it in the planner is the whole point -- see the live defect below
+        for what a second copy does. The refusal is recorded through the existing
+        validation_error channel so buildPlan keeps ONE fail-closed refusal path rather than
+        two, and the plan-time message is the broker's own text character for character (two of
+        those strings were already pinned against a real broker in test_ai_execution_broker):
+        a plan-time refusal that reworded the launch-time one would leave anyone comparing a
+        plan against a log unable to tell one rule from two.
+        Deliberately PURE and request-only. The broker's other pre-launch failures -- another
+        command already running, no elevated runner wired, an unresolvable System32 interpreter
+        -- turn on broker or machine state a plan cannot honestly predict, so they stay at the
+        launch point instead of being guessed at plan time. That is a scope decision, not an
+        oversight: guessing them would produce a plan-time refusal that a retry one second later
+        contradicts.
+      * THE LIVE DEFECT THE FINDING DID NOT NAME, found by reading what "invalid output limits"
+        actually meant. The max_output_bytes domain existed in SIX independent copies, and one
+        had drifted PAST the enforcer. ExecutionBroker refuses -- rather than clamps -- anything
+        above 16 MiB, while AiWorkflowPowerShellToolOptions carried its own "64 MiB hard
+        ceiling". run() CLAMPS to that ceiling, so a workflow phase asking for more than 16 MiB
+        was quietly reduced to a value the broker then refused outright ("max_output_bytes
+        67108864 is outside the range 1-16777216") and THE COMMAND NEVER RAN. The clamp read as
+        a safety measure while being the thing that broke the run. Model-reachable: the phase
+        arguments carry max_output_bytes, and the shipped eval corpus only stays clear of it
+        because test_ai_workflow_evals separately asserts its phases request <= 1 MiB, which is
+        a property of that corpus and not a guard on the runtime path.
+        This is the SAME defect the header comment above kAiCommandMaxTimeoutSeconds already
+        describes on the timeout axis ("the app-action planner had its own ceiling of 14400 ...
+        the plan said one thing and execution did another"). The lesson had been written down
+        and applied to one constant in the struct while the one beside it kept its private copy.
+        Fixed the way the timeout was: the ceiling moves to the header as
+        kAiCommandOutputBytesCeiling, the broker aliases it, and the drifted runner now names it
+        instead of a literal. The other three budgets (app-action 4 MiB, provider-gateway 4 MiB,
+        command-tool 256 KiB default) are deliberately STRICTER and stay as they are -- stricter
+        is a policy choice that works, because those clamp and the broker accepts the result;
+        wider is not a choice at all, because the broker refuses. Each now carries a
+        static_assert against the shared ceiling, so the compiler enumerates the next violation
+        rather than a user discovering it as a command that will not start.
+      * A TEST WAS ASSERTING THE DRIFT. clampsCallerControlledOutputCap pinned the ceiling as
+        the literal 64 * 1024 * 1024 with a comment explaining that pinning the literal stops
+        the cap being "widened to the ~2GB it exists to prevent" -- correct reasoning about the
+        wrong number, and it made the broken value load-bearing. Rewritten to assert what the
+        clamp is FOR: the clamped request is handed to the broker's own precondition function
+        and must be accepted. A future widening past the enforcer now turns it red, whereas any
+        assertion written as a literal would simply have been updated to match.
+    MUTATION-PROVED, three drills, each with BUILD EXIT captured separately from the ctest run:
+    (1) deleting the planner's precondition call turns test_ai_command_tool_planner RED
+    (BUILD EXIT: 0); (2) restoring the 64 MiB ceiling with the static_assert disabled turns
+    test_ai_workflow_powershell_tool_runner RED (BUILD EXIT: 0); (3) restoring the 64 MiB
+    ceiling WITH the static_assert fails the build with C2338 naming the exact constraint. The
+    third drill is why both layers exist: the compile-time ratchet is the one that prevents the
+    defect, the runtime test is what proves the ratchet is wired to the real enforcer.
+    THE NON-VACUITY BRACKET IS DELIBERATE AND SPLIT ACROSS TWO SLOTS. Every refusal fixture
+    differs from a working plan by exactly ONE field, so dropping the precondition check turns
+    the refusal slot red while the legal-plan slot stays green, and making the check too broad
+    (refusing elevation on all three targets, or rejecting a legal budget) does the reverse.
+    Neither mistake can pass both. The at-ceiling case is included because the domain is
+    inclusive: an off-by-one in the comparison is otherwise invisible.
+    A GATE NOTE, the same class as the redactSecrets one recorded above and worth the
+    repetition: the added comments pushed buildPlan to 71 lines and the new test slot to 82,
+    both over lizard's limit of 70, at CCN 5 and CCN 2 -- the CODE was never the problem. Fixed
+    structurally, never editorially: the precondition step became applyBrokerPreconditions() and
+    carries the rationale, and the test's case table moved to a file-scope builder while the
+    non-vacuity arms became their own named slot. Deleting the comments that explain WHY each
+    rule is shaped the way it is would have closed the gate and thrown away the reason this
+    defect class keeps recurring.
   - AUTHORIZED-IN-PROGRESS, BLOCKED-ON-USER (relabelled 2026-08-17 from a dishonest "RESOLVED [deferred-with-rationale]" -- the sweep is genuinely INCOMPLETE, not resolved): 764 of 1098 units run (69.6%); 334 remain (246 tests / 75 src / 9 include / 4 scripts). The August-11-2026 Codex account cap that blocked it HAS since reset, but RELAUNCH IS A MANUAL, BUDGET-HEAVY STEP on Randy's own Codex account (334 xhigh review units) -- nothing auto-resumes, and burning that much of his account budget is his call, so this waits on his explicit go. NOT verified-done (334 units genuinely unrun); NOT deferred (it is authorized and would resume the moment he says so). The 764 units already run DID produce the P1-P11 subsystem findings, all closed.
       BLOCKED: 764 of 1098 units complete (69.6%). The Codex account usage limit is
       exhausted and does not reset until August 11, 2026 11:10 AM, so the remaining 334

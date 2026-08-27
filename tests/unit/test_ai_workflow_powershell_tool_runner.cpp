@@ -212,15 +212,17 @@ void AiWorkflowPowerShellToolRunnerTests::successfulRunRecordsRedactedCommand() 
 
 void AiWorkflowPowerShellToolRunnerTests::clampsCallerControlledOutputCap() {
     int seen_cap = -1;
+    sak::ai::AiCommandRequest seen_request;
     sak::ai::AiWorkflowPowerShellToolCallbacks callbacks;
     callbacks.allocate_command_id = [] {
         return QStringLiteral("cmd_cap");
     };
-    callbacks.execute_powershell = [&seen_cap](const sak::ai::AiCommandRequest& request,
-                                               const QString&) {
-        seen_cap = request.max_output_bytes;
-        return sak::ai::AiCommandResult{.started = true, .exit_code = 0};
-    };
+    callbacks.execute_powershell =
+        [&seen_cap, &seen_request](const sak::ai::AiCommandRequest& request, const QString&) {
+            seen_cap = request.max_output_bytes;
+            seen_request = request;
+            return sak::ai::AiCommandResult{.started = true, .exit_code = 0};
+        };
 
     const sak::ai::AiWorkflowPowerShellToolOptions options;
 
@@ -232,9 +234,21 @@ void AiWorkflowPowerShellToolRunnerTests::clampsCallerControlledOutputCap() {
         callbacks);
     QVERIFY(high.value(QStringLiteral("success")).toBool(false));
     QCOMPARE(seen_cap, options.max_output_bytes);
-    // Pin the ceiling itself: comparing only against the struct member lets the hard cap be
-    // shrunk, or widened to the ~2GB it exists to prevent, with no failure.
-    QCOMPARE(options.max_output_bytes, 64 * 1024 * 1024);
+    // THE CLAMPED VALUE MUST BE ONE THE BROKER ACCEPTS, which is the whole point of clamping
+    // and is what this assertion used to miss. It pinned the literal 64 * 1024 * 1024 instead,
+    // and that literal was FOUR TIMES what ExecutionBroker accepts: the runner reduced a large
+    // request to 64 MiB, the broker refused it outright ("max_output_bytes 67108864 is outside
+    // the range 1-16777216"), and the command never ran. The test asserted the drift.
+    //
+    // Asking the broker's own precondition function -- rather than naming a number here --
+    // means a future widening of the runner's ceiling past the enforcer's turns this red,
+    // whereas any assertion written as a literal would simply be updated to match.
+    QVERIFY2(sak::ai::aiCommandPreconditionError(sak::ai::AiCommandTarget::PowerShell, seen_request)
+                 .isEmpty(),
+             qPrintable(sak::ai::aiCommandPreconditionError(sak::ai::AiCommandTarget::PowerShell,
+                                                            seen_request)));
+    // And pin the ceiling to the shared constant, so shrinking it silently still fails.
+    QCOMPARE(options.max_output_bytes, sak::ai::kAiCommandOutputBytesCeiling);
 
     // A tiny request must be raised to the floor.
     const QJsonObject low = sak::ai::AiWorkflowPowerShellToolRunner::run(
