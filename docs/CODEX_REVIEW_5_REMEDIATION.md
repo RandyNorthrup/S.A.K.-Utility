@@ -35,6 +35,29 @@ any gate, so nothing would have surfaced it.
   and MacOSToolValidator all resolve to zero files. FlashWorker and LinuxISODownloadDialog do
   exist, because they are the Linux/Windows infrastructure this plan would build ON, and
   mistaking those for progress is exactly the error this check was designed to avoid.
+- [~] R5-IDX-19 THE GUI NEVER MOVED ONTO THE HEADLESS PATH IT NOW HAS. Verified 2026-08-27 at
+  the owner's request. The headless half of the dominion plan is real and complete: zero
+  QWidget/QDialog/QMessageBox across all 162 files in src/core and src/actions, and 62 action
+  ids the assistant can enumerate and invoke with no widget in the loop. What is NOT true is
+  the plan's actual goal -- "the assistant drives the SAME code the technician's buttons
+  drive". Two panels kept a private second implementation and never switched:
+    * src/gui/wifi_manager_panel.cpp runs its own netsh scan and parse in
+      scanWindowsProfileNames() and parseWindowsWifiProfile(), and does NOT reference
+      scanAllWifiProfiles() or wifiSecurityTypeFromProfileXml() anywhere -- the headless
+      scanner that src/core/app_readonly_actions.cpp and the backup wizard both use.
+    * src/gui/network_diagnostic_panel.cpp runs adapter administration through its own
+      runNetshCommand()/runNetshCommandAsync() and has ZERO references to the registered
+      network.set_adapter_static_ip / _dns / _dhcp actions in app_mutating_actions.cpp.
+  So adapter admin and wifi profile scanning each exist TWICE, executing netsh independently,
+  with nothing holding them in agreement. This is the same shape as the defect the plan set out
+  to fix (wifi_profile_scanner written headless and then left unused): the extraction landed,
+  the REUSE did not. Both copies work today and the assistant's path is the tested one, so the
+  live risk is drift -- a fix applied to one and not the other, on code that reconfigures
+  network adapters.
+  NOT FIXED IN THE SAME PASS THAT FOUND IT: repointing two panels onto the headless path
+  changes live GUI behaviour on netsh operations, including the async/progress shape the
+  widgets rely on, so it needs its own batch, its own drills and its own gate rather than being
+  slipped into a verification.
 - [~] R5-IDX-2 `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md` -- 11 open items. These were
   INVISIBLE to every grep-based scan until 2026-08-26: the file carried 8 raw NUL bytes, so
   grep classified it as binary and silently skipped it. NULs are now escaped as text.
@@ -185,14 +208,15 @@ any gate, so nothing would have surfaced it.
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-27: 653 [x] / 27 [~] / 0 [ ] MARKERS IN THIS FILE. That is not the same as the
-amount of open work, and the difference matters: 8 of those [~] are R5-IDX POINTERS, and a
-pointer is one marker whether it stands for one item or forty. Behind them sit 42 open or
+as of 2026-08-27: 653 [x] / 28 [~] / 0 [ ] MARKERS IN THIS FILE. That is not the same as the
+amount of open work, and the difference matters: 5 of those [~] are POINTERS at other
+documents (R5-IDX-2, -3, -4, -5, -6), and a pointer is one marker whether it stands for one
+item or forty. The other R5-IDX entries are native findings that merely share the prefix. Behind them sit 42 open or
 partial items counted in the files they name (APFS_HFS_FULL_DRIVER_WRITE_PLAN 11,
 APFS_LIVE_RECERT_FOLLOWONS 7, FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN 7 plus 6 partial,
 CODEX_REVIEW_4 6 partial, CODEX_REVIEW_REMEDIATION 5 partial), plus a 2294-line backlog that
-carries no checkbox markers at all. So the honest figure is 19 native [~] plus 42 referenced
-items = 61 open things, indexed by 27 markers. Indexing work into pointers made the marker
+carries no checkbox markers at all. So the honest figure is 23 native [~] plus 42 referenced
+items = 65 open things, indexed by 28 markers. Indexing work into pointers made the marker
 count go DOWN per unit of real work, which is precisely the kind of true-but-misleading number
 this campaign exists to remove. Recount both sides before quoting either (reconciled to the live marker counts; F25, the
 last [ ], closed 2026-08-25; the R5-IDX items added 2026-08-26 index open work that was
