@@ -1,0 +1,137 @@
+# Working on S.A.K. Utility as an agent
+
+Operating rules for any AI agent (Claude Code, Copilot, Codex, or a subagent) that changes this
+repository. This file is the agent-facing entry point.
+
+It deliberately does NOT restate coding standards. Those live in
+[.github/copilot-instructions.md](.github/copilot-instructions.md) (naming, Qt rules, error
+handling, magic numbers, test layout, build commands, architecture) and
+[CONTRIBUTING.md](CONTRIBUTING.md) (contributor process, C++ style, TigerStyle). Read those for
+HOW to write code here. This file is about how to WORK here.
+
+---
+
+## Non-negotiables
+
+These are owner rulings. They override convenience, and they override an agent's own judgement
+about what is "obviously fine".
+
+**Implement, never drop.** Finish features; never delete one to make a problem go away. Every
+removal needs the owner's explicit authorization. Before calling anything dead, check the
+tracking doc and the callers -- an unused function is usually the unfinished half of planned
+work, not garbage. A `queryPowerPlan()` with no caller turned out to be the missing half of the
+feature its own report apologised for.
+
+**Fail closed. No fallbacks.** A fallback disguises an error and ships the failure silently.
+No PATH fallback, no stale-cache fallback, no guessed default, no "log it and return success".
+Surface the real error and refuse. This is the single most load-bearing rule in the codebase.
+
+**No deferrals.** Nothing is "deferred". An item is either INCOMPLETE (real open work) or a
+DESIGN DECISION (a deliberate scope or tool limit, with the reason). Ground every status claim
+in a real commit or file:line against the LIVE tree, not against what you remember.
+
+**Fix every issue found.** Any defect noticed while doing something else -- preexisting or not --
+gets fixed on the spot if it is quick, or logged to the tracking doc if it is not. Never step
+over one.
+
+**Do the optionals.** Anything an agent flags as "optional" or "nice to have" is required.
+
+**Docs are 7-bit ASCII.** No em dash, en dash, arrows, checkmarks or smart quotes in tracked
+text. Use `--` for a dash. Verify zero bytes above 0x7F before committing; a pre-commit hook
+enforces it.
+
+**Never `--no-verify`.** If a hook fails, fix the cause. A hook bypassed once becomes a hook
+nobody trusts.
+
+---
+
+## The gate
+
+Every commit that touches code must pass the full Release gate first: a complete build AND the
+complete CTest suite, with **zero** failures. Not the affected target -- the whole suite. A fix
+that changes a message another subsystem asserts on is not proved by its own file's tests.
+
+Capture the build exit code in its own statement and read it before believing any test result:
+
+```powershell
+cmake --build build --config Release; "BUILD EXIT: $LASTEXITCODE"
+ctest --test-dir build -C Release; "CTEST EXIT: $LASTEXITCODE"
+```
+
+Run the cheap hooks BEFORE the gate, not after -- clang-format, lizard, the magic-number check
+and the secret scan take seconds, and each has rejected a commit that had already spent 15
+minutes passing the full suite.
+
+When lizard rejects a function, fix it STRUCTURALLY -- extract a seam. Never by deleting the
+comments that explain why the code is shaped the way it is. A function over the length limit at
+CCN 2 is a comment-density signal, not a complexity problem.
+
+---
+
+## Prove the test fails without the fix
+
+A regression test that has never been RUN against the broken code is not evidence. For every
+fix: break the production code on purpose, confirm the test goes RED, restore it. Assertions
+that look strong pass for unrelated reasons more often than anyone expects.
+
+Real examples from this repo: a URL-redaction test passed with the fix reverted because an
+unrelated six-word title cap dropped the tokens anyway; two tests asserted that a leaked
+credential appeared in output, so the suite was pinning the bug; a clamp test pinned a hard-coded
+ceiling that was four times what the enforcer accepted.
+
+Drill each guard SEPARATELY. A combined drill cannot tell you which guard the red belongs to.
+
+---
+
+## Ways a green run means nothing
+
+Every one of these has happened here.
+
+| Trap | What you see | Defence |
+|---|---|---|
+| Stale binary | Build FAILED, ctest runs the previous .exe and prints "Passed" | Capture and read BUILD EXIT separately |
+| Wrong exit code | `ctest ... \| Select-String` leaves `$LASTEXITCODE` from the cmdlet, printing 0 for a failed run | Capture the code straight after the native command |
+| Mutation that will not compile | `if (false && ...)` trips C4127 under warnings-as-errors; the build dies and the old binary runs green | Write mutations that still compile and still use their operands (`if (indent < 0 && ...)`, or compare a value with itself) |
+| PowerShell `-File` array binding | `powershell -File x.ps1 -Files $arr` passes only the FIRST element; a scan "PASSED" having read 1 of 11 files | Call it in-process: `& ./x.ps1 -Files $files` |
+| Persistent working directory | A stale `cd build` from an earlier tool call runs the wrong binary | `Set-Location` explicitly each call; prefer absolute paths |
+| .NET ignores the shell cwd | `[System.IO.File]::ReadAllBytes("docs/x.md")` resolves against the PROCESS cwd and can throw while a relative `Get-Content` succeeds -- a null result then reads as "0 problems found" | Absolute paths with .NET APIs, and assert the byte count actually read |
+
+---
+
+## Where truth lives
+
+Status belongs in exactly one place, and that place is versioned.
+
+- Item status and remediation history: the tracking doc under `docs/`.
+- What landed: `git log`.
+- Registered test count and coverage claims: `tests/README.md` (a pre-commit gate verifies it
+  against the real CTest registration -- a README once hid nine dead test files by asserting
+  coverage that did not exist).
+- Certification claims for the partition tools: the matrices under `docs/`, also gated. This
+  tool writes to raw disks; an uncertified operation appearing as certified is a
+  data-destruction risk, not a documentation problem.
+- Any version number: the file that owns it (e.g. `browser/extension/manifest.json`).
+
+**Never keep a second copy of a status in an agent's private notes.** Counts, tallies,
+percentages and COMPLETE labels rot on the next commit, and nothing updates the copy. An audit of
+one assistant's notes against this tree found the large majority of its factual claims stale or
+false -- every one of them a number that had been true when written. Cite the source and read it.
+
+---
+
+## Secrets
+
+A push uploads HISTORY, not the working tree, so redacting a file does not unpublish what an
+earlier commit already contains. The commit-time scan is regex-only over current files by
+design; the FULL-HISTORY scan runs at push time.
+
+Install it -- `pre-commit install` alone does not:
+
+```bash
+pre-commit install --hook-type pre-push
+```
+
+If it fails, resolve the finding. Do not add it to `.gitleaksignore`: that entry would be the
+only thing between a live credential and the remote. Note also that the scanner's `--redact`
+masks the matched token but still prints the surrounding line, so scan OUTPUT is itself
+sensitive and must not be pasted into logs or CI artifacts.
