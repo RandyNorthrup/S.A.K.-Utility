@@ -128,6 +128,23 @@ constexpr int kMaxArgumentCount = 256;
         out.clear();
         return false;
     }
+    // AN EMBEDDED NUL IS NOT A CHARACTER THE LAUNCH CAN CARRY, so a request containing one is
+    // refused rather than passed along. QProcess hands the program path and the assembled
+    // command line to CreateProcessW as C strings, which END AT THE FIRST NUL -- the launch is
+    // silently TRUNCATED there, while the approval preview is built from the whole QString and
+    // renders the NUL as a visible escape with the remainder after it.
+    //
+    // The disagreement runs in the dangerous direction. "Remove-Item C:/temp<NUL> -WhatIf" is
+    // read and approved as a dry run and executes as a real delete: the reviewer's eye is drawn
+    // to the trailing flag, and the trailing flag is exactly the part that never reaches the
+    // process. Escaping it for DISPLAY is not a fix -- it makes the preview honest about a
+    // character whose presence still changes what runs. No legitimate command line, program
+    // path or argument contains a NUL, so the request itself fails closed.
+    if (out.contains(QChar::Null)) {
+        error = QStringLiteral("%1 must not contain an embedded NUL character").arg(key);
+        out.clear();
+        return false;
+    }
     return true;
 }
 
@@ -158,6 +175,15 @@ constexpr int kMaxArgumentCount = 256;
         if (argument.size() > kMaxArgumentChars) {
             return QStringLiteral("an argument exceeds the %1 character limit")
                 .arg(kMaxArgumentChars);
+        }
+        // The same truncation-at-launch mismatch parseRequiredString rejects above, and argv is
+        // where it bites hardest: each element is passed to CreateProcessW inside a C string, so
+        // the approver reads one argument and the process receives the shorter prefix of it.
+        // The same truncation-at-launch mismatch parseRequiredString rejects above, and argv is
+        // where it bites hardest: each element is passed to CreateProcessW inside a C string, so
+        // the approver reads one argument and the process receives the shorter prefix of it.
+        if (argument.contains(QChar::Null)) {
+            return QStringLiteral("an argument must not contain an embedded NUL character");
         }
         out.append(argument);
     }

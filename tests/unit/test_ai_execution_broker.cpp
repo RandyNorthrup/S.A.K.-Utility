@@ -4,7 +4,9 @@
 #include "sak/ai/ai_execution_broker.h"
 
 #include <QJsonArray>
+#include <QJsonDocument>
 #include <QJsonObject>
+#include <QJsonParseError>
 #include <QSignalSpy>
 #include <QStringList>
 #include <QtTest/QtTest>
@@ -31,6 +33,8 @@ private Q_SLOTS:
     void startProcess_rejectsEmptyProgram();
     void processRequestFromJson_parsesArguments();
     void processRequestFromJson_refusesMalformedArguments();
+    void refusesEmbeddedNulThatTheLaunchWouldTruncate();
+    void embeddedNulSurvivesJsonTextSoTheGuardIsModelReachable();
     void toJson_redactsSecretsInStdoutAndStderr();
     void runPowerShell_truncationKeepsTerminalError();
 };
@@ -454,6 +458,83 @@ void AiExecutionBrokerTests::processRequestFromJson_parsesArguments() {
     wrong_type[QStringLiteral("timeout_seconds")] = QStringLiteral("30");
     const auto typed = sak::ai::ExecutionBroker::processRequestFromJson(wrong_type);
     QCOMPARE(typed.validation_error, QStringLiteral("timeout_seconds must be a number"));
+}
+
+void AiExecutionBrokerTests::refusesEmbeddedNulThatTheLaunchWouldTruncate() {
+    // QProcess hands the program path and the assembled command line to CreateProcessW as C
+    // strings, which end at the first NUL. A value carrying one is therefore TRUNCATED at
+    // launch, while the approval preview -- built from the whole QString -- renders the NUL as
+    // a visible escape and shows the reader everything after it.
+    //
+    // The mismatch runs in the dangerous direction, which is why this is refused rather than
+    // merely escaped for display: the fixture below reads as a dry run and would delete for
+    // real, because the trailing flag the reviewer's eye lands on is exactly the part that
+    // never reaches the process.
+    const QString nul = QString(QChar(QChar::Null));
+    const QString deceptive = QStringLiteral("Remove-Item C:/temp -Recurse") + nul +
+                              QStringLiteral(" -WhatIf");
+
+    // NON-VACUITY, and it is the assertion this whole slot rests on: if the fixture did not
+    // actually carry a NUL, every rejection below would be testing nothing. QString is
+    // length-counted, so it holds one -- but assert it rather than assume it.
+    QCOMPARE(deceptive.size(), 29 + 1 + 7);
+    QVERIFY(deceptive.contains(QChar::Null));
+
+    const auto shell = sak::ai::ExecutionBroker::requestFromJson(
+        QJsonObject{{QStringLiteral("command"), deceptive}});
+    QCOMPARE(shell.validation_error,
+             QStringLiteral("command must not contain an embedded NUL character"));
+    // The value is CLEARED as well as rejected, matching the length-limit arm beside it: a
+    // caller that ignored validation_error must not find a usable truncated command waiting.
+    QVERIFY(shell.command.isEmpty());
+
+    const auto program = sak::ai::ExecutionBroker::processRequestFromJson(QJsonObject{
+        {QStringLiteral("program"),
+         QStringLiteral("C:/Windows/System32/cmd.exe") + nul + QStringLiteral("evil.exe")}});
+    QCOMPARE(program.validation_error,
+             QStringLiteral("program must not contain an embedded NUL character"));
+    QVERIFY(program.program.isEmpty());
+
+    // argv is where the truncation bites hardest: the approver reads one argument and the
+    // process receives a shorter prefix of it.
+    const auto argument = sak::ai::ExecutionBroker::processRequestFromJson(QJsonObject{
+        {QStringLiteral("program"), QStringLiteral("C:/Windows/System32/cmd.exe")},
+        {QStringLiteral("arguments"),
+         QJsonArray{QStringLiteral("/c"), QStringLiteral("dir") + nul + QStringLiteral(" /s")}}});
+    QCOMPARE(argument.validation_error,
+             QStringLiteral("an argument must not contain an embedded NUL character"));
+
+    // THE OTHER HALF OF THE BRACKET: the same fixtures WITHOUT the NUL are accepted, so a
+    // guard that refused every command, or one that keyed on "Remove-Item" or on length,
+    // turns this red while the rejections above stay green.
+    const auto clean_shell = sak::ai::ExecutionBroker::requestFromJson(
+        QJsonObject{{QStringLiteral("command"),
+                     QStringLiteral("Remove-Item C:/temp -Recurse") + QStringLiteral(" -WhatIf")}});
+    QVERIFY2(clean_shell.validation_error.isEmpty(), qPrintable(clean_shell.validation_error));
+    const auto clean_process = sak::ai::ExecutionBroker::processRequestFromJson(QJsonObject{
+        {QStringLiteral("program"), QStringLiteral("C:/Windows/System32/cmd.exe")},
+        {QStringLiteral("arguments"),
+         QJsonArray{QStringLiteral("/c"), QStringLiteral("dir") + QStringLiteral(" /s")}}});
+    QVERIFY2(clean_process.validation_error.isEmpty(), qPrintable(clean_process.validation_error));
+}
+
+void AiExecutionBrokerTests::embeddedNulSurvivesJsonTextSoTheGuardIsModelReachable() {
+    // THE REAL DELIVERY PATH, pinned rather than assumed. A model's tool call arrives as JSON
+    // TEXT, so whether a \u0000 escape survives QJsonDocument parsing is what decides whether a
+    // model can reach the guard at all -- i.e. whether the sibling slot above defends a live
+    // path or a merely theoretical one. Recording the answer in a test rather than in someone's
+    // memory means a future Qt that changes it says so out loud instead of quietly turning that
+    // slot into a test of an unreachable branch.
+    QJsonParseError parse_error{};
+    const QJsonDocument doc = QJsonDocument::fromJson(
+        QByteArray(R"({"command":"Remove-Item C:/temp -Recurse\u0000 -WhatIf"})"), &parse_error);
+    QCOMPARE(parse_error.error, QJsonParseError::NoError);
+    const QString from_json = doc.object().value(QStringLiteral("command")).toString();
+    QVERIFY2(from_json.contains(QChar::Null),
+             "JSON text parsing must preserve \\u0000 for the NUL guard to be model-reachable");
+    const auto via_json = sak::ai::ExecutionBroker::requestFromJson(doc.object());
+    QCOMPARE(via_json.validation_error,
+             QStringLiteral("command must not contain an embedded NUL character"));
 }
 
 void AiExecutionBrokerTests::processRequestFromJson_refusesMalformedArguments() {

@@ -2088,12 +2088,12 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
       - optimize_power_settings queryPowerPlan and its pattern appear to be DEAD CODE. Flagged,
         not removed: a removal needs owner authorization, so this stays open by rule rather than
         by oversight.
-      - ai_command_tool_planner, two findings still open. (a) The resolved program is not
+      - ai_command_tool_planner, ONE finding still open. (a) The resolved program is not
         pinned or revalidated between approval and launch, so the binary can change underneath
         the "SAME binary" guarantee -- a real TOCTOU that needs handle pinning across the
-        planner/broker boundary, not a one-line fix. (b) An embedded NUL is displayed as an
-        escape but retained in program/arguments, which native argv cannot carry, so the preview
-        and the launch can disagree.
+        planner/broker boundary, not a one-line fix.
+        (b), the embedded NUL retained in command/program/arguments, is CLOSED 2026-08-26 --
+        see "THE COMMAND THE APPROVER READ WAS NOT THE COMMAND THAT WOULD RUN" below.
         (c), broker preconditions unchecked at plan time, is CLOSED 2026-08-26 -- see "A PLAN
         THE BROKER WAS ALWAYS GOING TO REFUSE" below, which also found a live output-ceiling
         drift while closing it.
@@ -2570,6 +2570,52 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
     non-vacuity arms became their own named slot. Deleting the comments that explain WHY each
     rule is shaped the way it is would have closed the gate and thrown away the reason this
     defect class keeps recurring.
+  - THE COMMAND THE APPROVER READ WAS NOT THE COMMAND THAT WOULD RUN, 2026-08-26. This closes
+    leftover finding (b) on ai_command_tool_planner.
+    An embedded NUL was rendered as a visible escape in the approval preview and RETAINED in
+    command/program/arguments. QProcess hands the program path and the assembled command line to
+    CreateProcessW as C strings, which END AT THE FIRST NUL, so the launch is silently truncated
+    there while the preview -- built from the whole QString, which is length-counted and holds
+    the NUL happily -- renders the escape and shows the reader everything after it.
+    THE MISMATCH RUNS IN THE DANGEROUS DIRECTION, which is the reason display-escaping was not
+    a fix. "Remove-Item C:/temp -Recurse<NUL> -WhatIf" is read and approved as a dry run and
+    executes as a real recursive delete: the reviewer's eye lands on the trailing flag, and the
+    trailing flag is exactly the part that never reaches the process. Making the preview honest
+    about the character does not change what runs; only refusing the request does.
+    Fixed in the BROKER'S TYPED PARSERS rather than in the planner, so both the plan-time path
+    and any direct broker caller refuse identically and no second copy can drift:
+    parseRequiredString (covers command and program) and parseOptionalArguments (covers each
+    argv element) now reject a value containing QChar::Null and CLEAR it, matching the
+    length-limit arm beside them so a caller that ignored validation_error cannot find a usable
+    truncated value waiting. No legitimate command line, program path or argument contains a
+    NUL, so this fails closed with nothing legitimate lost.
+    THE CODEBASE ALREADY HAD THE IDIOM -- app_mutating_actions, recycle_bin,
+    partition_ext_file_system_reader, partition_file_system_tool_runner and permission_manager
+    all reject an embedded NUL on their own path. The AI command parsers were the outlier, which
+    is the same shape as every other finding in this batch: the rule existed and was not applied
+    everywhere it had to be.
+    MODEL-REACHABILITY IS PINNED, NOT ASSUMED. A tool call arrives as JSON TEXT, so whether a
+    \u0000 escape survives QJsonDocument parsing is what decides whether the guard defends a
+    live path or a theoretical one. It does survive, and a dedicated slot asserts it -- so a
+    future Qt that changed the behaviour would say so out loud instead of quietly turning the
+    rejection slot into a test of an unreachable branch. That assertion was written BEFORE the
+    answer was known, and it was the reason to check rather than assume.
+    MUTATION-PROVED, the two guards drilled SEPARATELY rather than together, because a single
+    combined drill cannot tell which guard the red belongs to: removing only the
+    parseRequiredString check turns test_ai_execution_broker RED (BUILD EXIT: 0), and removing
+    only the parseOptionalArguments check turns it RED again (BUILD EXIT: 0).
+    NON-VACUITY, and this slot rests on it: the fixture's NUL is asserted present (both by exact
+    length and by contains) before anything is checked, because a fixture that quietly lost its
+    NUL would make every rejection below pass while testing nothing. The other half of the
+    bracket runs the SAME fixtures with the NUL removed and requires them accepted, so a guard
+    that refused every command, or one keyed on "Remove-Item" or on length, turns the bracket red
+    from the opposite side.
+    A GATE NOTE, third time in two sessions and now clearly a pattern worth naming: the new slot
+    came in at 72 lines against lizard's limit of 70, at CCN 1 -- comments again, never code.
+    Split structurally, and the split improved the tests: the JSON-delivery check became its own
+    named slot, which is a genuinely separate claim (is the guard reachable) from the slot around
+    it (does the guard reject). The recurring lesson stands -- when lizard rejects a function at
+    low CCN, the answer is a seam, never a shorter comment.
   - AUTHORIZED-IN-PROGRESS, BLOCKED-ON-USER (relabelled 2026-08-17 from a dishonest "RESOLVED [deferred-with-rationale]" -- the sweep is genuinely INCOMPLETE, not resolved): 764 of 1098 units run (69.6%); 334 remain (246 tests / 75 src / 9 include / 4 scripts). The August-11-2026 Codex account cap that blocked it HAS since reset, but RELAUNCH IS A MANUAL, BUDGET-HEAVY STEP on Randy's own Codex account (334 xhigh review units) -- nothing auto-resumes, and burning that much of his account budget is his call, so this waits on his explicit go. NOT verified-done (334 units genuinely unrun); NOT deferred (it is authorized and would resume the moment he says so). The 764 units already run DID produce the P1-P11 subsystem findings, all closed.
       BLOCKED: 764 of 1098 units complete (69.6%). The Codex account usage limit is
       exhausted and does not reset until August 11, 2026 11:10 AM, so the remaining 334
