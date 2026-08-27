@@ -1,24 +1,36 @@
 # Release Readiness
 
-## PRE-PUSH BLOCKER: a live credential is in git history
+## PUBLISHED CREDENTIAL: rotate the macOS cert-rig VM password
 
-`main` has never been pushed (origin/main is ~1200 commits behind), so nothing is exposed today.
-It becomes exposed the moment the branch is pushed, because a push uploads history, not just the
-current tree.
+The section that stood here described this as a PRE-PUSH blocker and stated that the finding was
+being left failing rather than allowlisted. Both statements stopped being true on 2026-08-26 and
+nothing updated them, which is exactly the staleness R5-IDX-7 tracks -- and worse here, because a
+reader checking the project's security posture would have been told a control was armed that had
+been deliberately, and correctly, stood down. Recorded as R5-IDX-20.
 
 - WHAT: the macOS cert-rig VM password and its SSH hostkey fingerprint, committed in
   `docs/APFS_LIVE_RECERT_FOLLOWONS.md` (introduced at commit 08035cf1, flagged by
   `scripts/scan_secrets.ps1` on a full-history run as `generic-api-key`).
-- WORKING TREE: redacted 2026-08-25. The doc now points at the UNTRACKED `temp/creds.md`, so no
-  FUTURE commit carries the credential. The historical blob is untouched.
-- STILL OPEN, owner decision deferred to pre-push (2026-08-25): gitignoring the file or the whole
-  `docs/` tree does NOT help -- neither removes the blob from history. The options that actually
-  work are (1) ROTATE the VM password, which makes the string in history a dead credential and is
-  the low-cost fix; (2) rewrite history (owner rejected: "scrubbing the history sounds bad");
-  (3) never push.
-- The full-history secret scan is deliberately LEFT FAILING on this finding rather than added to
-  `.gitleaksignore`: an ignore entry would silence the one check standing between this credential
-  and GitHub. Do not silence it. Resolve it.
+- WORKING TREE: redacted 2026-08-25. The doc points at the UNTRACKED `temp/creds.md`, so no
+  FUTURE commit carries the credential. The historical blob is untouched and always will be.
+- PUBLISHED. The branch was pushed to `origin/dev` on 2026-08-27 and commit 08035cf1 is an
+  ancestor of it, so the credential is on GitHub now. This was an owner decision, not an
+  accident: the VM is reachable only from inside his LAN, so he accepted the exposure as low
+  risk rather than rewrite 1594 commits ("scrubbing the history sounds bad"). Options (2)
+  rewrite history and (3) never push are therefore both spent.
+- ALLOWLISTED, with authorization. The fingerprint
+  `08035cf1...:docs/APFS_LIVE_RECERT_FOLLOWONS.md:generic-api-key:109` is entry 4 in
+  `.gitleaksignore`, recorded there as a REAL credential accepted as low risk rather than
+  dressed up as a false positive. It is one exact `commit:file:rule:line` fingerprint, so it
+  silences that one historical finding and nothing else; a path glob or a bare rule name there
+  would disarm the scanner for every future secret in the file, and that is still forbidden.
+- WHAT NOW STOPS THE NEXT ONE: the `gitleaks-staged` pre-commit hook, added alongside the
+  allowlist entry, scans the staged diff before a commit exists. The full-history scan could
+  only ever report a credential that had already been committed; this one refuses it at the
+  point it would enter history.
+- STILL OPEN: rotate the VM password. It costs nothing and it is the only remaining action that
+  turns the published string into a dead credential. Owner action -- an agent must never cert
+  netsh or VM changes against the live rig. Tracked as R5-IDX-20.
 
 ## Automated Gates
 

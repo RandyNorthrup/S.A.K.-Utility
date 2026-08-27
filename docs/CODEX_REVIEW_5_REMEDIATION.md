@@ -25,6 +25,13 @@ Pointers only -- the detail stays in the file named, and nothing below is restat
 Each of these documents holds work that is genuinely unfinished, and none of them is read by
 any gate, so nothing would have surfaced it.
 
+A sweep for `[ ]` across the tree hits three things that are NOT work, and re-deciding that
+every time costs a cycle. `docs/CODING_STANDARDS.md` and `CONTRIBUTING.md` carry per-PR
+checklist TEMPLATES -- boxes a contributor ticks on their own change, permanently unticked in
+the tree by design. `artifacts/.../external-evidence.imported.checklist.md` is captured
+evidence of a live run and must not be edited at all. Unchecked boxes under `docs/future/` are
+a parked design, per the bucket convention. Open work is what remains after those four.
+
 - [x] R5-IDX-1 `docs/future/MACOS_BOOTABLE_USB_PLAN.md` -- SETTLED by the owner 2026-08-27: it stays
   as a "might implement in the future" plan and now lives in `docs/future/`, the bucket for
   parked designs, so its 40 unchecked items are a parked design,
@@ -96,6 +103,28 @@ any gate, so nothing would have surfaced it.
   verifies `tests/README.md` against the real CTest registration and nothing else. Its header
   is honest about that; the gap is that 68 other tracked docs have no accuracy check of any
   kind, which is what let R5-IDX-7 rot inside files that a different gate does read.
+- [~] R5-IDX-20 THE RELEASE-READINESS SECURITY SECTION DESCRIBED A CONTROL THAT WAS NO LONGER
+  ARMED. Found 2026-08-27 by sweeping active docs for open work that nothing in this file
+  pointed at. `docs/RELEASE_READINESS.md` opened with a PRE-PUSH BLOCKER section asserting two
+  things: that the branch had never been pushed so the cert-rig VM credential in commit
+  08035cf1 was not exposed, and that the full-history scan was "deliberately LEFT FAILING on
+  this finding rather than added to `.gitleaksignore` ... Do not silence it." Neither survived
+  the following day. The owner authorized the allowlist entry on 2026-08-26 (b0355ef9, the VM
+  being LAN-only), and `dev` was pushed on 2026-08-27 with 08035cf1 as an ancestor. The doc was
+  written at fbebc6cd and never revisited.
+  This is the same failure class as R5-IDX-7 -- prose asserting a state the config contradicts
+  -- but it is worse than a stale capability list, because the false direction is toward
+  SAFETY: a reader auditing the project would have been told a check was standing between a
+  credential and GitHub when that check had been stood down on purpose, and would have had no
+  reason to look at `.gitleaksignore`. A wrong "we are protected" is the one kind of stale doc
+  that stops someone from acting.
+  The section is rewritten to state what is actually true: published, allowlisted by one exact
+  commit:file:rule:line fingerprint, with the new `gitleaks-staged` pre-commit hook now
+  catching the next one before it can enter history at all.
+  WHAT REMAINS OPEN -- BLOCKED-ON-USER: rotate the VM password. That is the only action left
+  that turns the published string into a dead credential, and it is the owner's to take; an
+  agent must never apply a credential change against the live cert rig. Nothing in the build
+  or the suite depends on it, so it blocks no other work here.
 - [x] R5-IDX-17 NO PRODUCTION CODE POINTS INTO docs/ ANY MORE, per the owner 2026-08-26:
   code and tests should stand on their own, and anything the code genuinely NEEDS should be
   structured data, not prose. Seven comment citations in partition_apfs_writer.{h,cpp} named
@@ -208,15 +237,15 @@ any gate, so nothing would have surfaced it.
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-27: 653 [x] / 28 [~] / 0 [ ] MARKERS IN THIS FILE. That is not the same as the
+as of 2026-08-27: 653 [x] / 29 [~] / 0 [ ] MARKERS IN THIS FILE. That is not the same as the
 amount of open work, and the difference matters: 5 of those [~] are POINTERS at other
 documents (R5-IDX-2, -3, -4, -5, -6), and a pointer is one marker whether it stands for one
 item or forty. The other R5-IDX entries are native findings that merely share the prefix. Behind them sit 42 open or
 partial items counted in the files they name (APFS_HFS_FULL_DRIVER_WRITE_PLAN 11,
 APFS_LIVE_RECERT_FOLLOWONS 7, FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN 7 plus 6 partial,
 CODEX_REVIEW_4 6 partial, CODEX_REVIEW_REMEDIATION 5 partial), plus a 2294-line backlog that
-carries no checkbox markers at all. So the honest figure is 23 native [~] plus 42 referenced
-items = 65 open things, indexed by 28 markers. Indexing work into pointers made the marker
+carries no checkbox markers at all. So the honest figure is 24 native [~] plus 42 referenced
+items = 66 open things, indexed by 29 markers. Indexing work into pointers made the marker
 count go DOWN per unit of real work, which is precisely the kind of true-but-misleading number
 this campaign exists to remove. Recount both sides before quoting either (reconciled to the live marker counts; F25, the
 last [ ], closed 2026-08-25; the R5-IDX items added 2026-08-26 index open work that was
