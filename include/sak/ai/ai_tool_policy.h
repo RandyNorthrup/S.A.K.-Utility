@@ -21,7 +21,22 @@ struct AiToolCallRequest {
     QString operation;
     QString command_preview;
     QString user_message;
+    /// The MODEL'S CLAIM about whether this call needs administrator rights. It is an input
+    /// from an untrusted source, not a fact about what will happen -- see @ref host_elevated.
     bool requires_admin{false};
+    /// True when THIS process is already running elevated.
+    ///
+    /// requires_admin alone is not the elevation of the launch. A call with
+    /// requires_admin=false skips the gated elevated runner and launches a plain QProcess,
+    /// which inherits S.A.K.'s own token -- so inside an elevated S.A.K. that "non-admin"
+    /// command runs with administrator rights while the policy, reading only the model's
+    /// claim, classified it as non-risky and took NO lease and NO restore point (B1-3 / H6).
+    ///
+    /// Injected rather than read here, so the policy stays a pure, testable rule: the caller
+    /// supplies ElevationManager::isElevated() and the policy decides. Defaults false, which
+    /// is the value a caller that forgets to set it gets -- deliberately the same as today's
+    /// behaviour, since the guard's job is to ADD risk, never to remove any.
+    bool host_elevated{false};
     // Set ONLY after a human has explicitly confirmed this specific catastrophic/
     // irreversible operation. evaluateToolPolicy refuses to allow a catastrophic change
     // while this is false, so the mandatory confirmation is machine-enforced by the policy

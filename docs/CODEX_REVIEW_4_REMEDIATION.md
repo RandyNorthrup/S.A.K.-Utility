@@ -145,7 +145,7 @@ Full per-finding evidence lives in the review scratchpad (verified-A1..B3.md).
   file with the truncated buffer, dropping the tail.
   Fix: treat read truncation on the patch path as a blocker (fail closed).
 
-- [~] H6 [B1-3] ai_execution_broker.cpp:194,482 DEFERRED (wave 3): a correct fix requires
+- [x] H6 [B1-3] ai_execution_broker.cpp:194,482 DEFERRED (wave 3): a correct fix requires
   deriving effective elevation from the process token and either routing an
   already-elevated plain launch through the gated elevated path or de-elevating it -- a
   privilege-architecture change too risky to retrofit inline without an elevated-path
@@ -307,7 +307,7 @@ gui/actions/elevated (B3):
 - [x] M-B3-7  organizer_panel.cpp:199 QThread wait(15s) then unique_ptr delete of a possibly-running thread -> abort. ALREADY FIXED (verified wave 20 planning pass, no code change): m_worker/m_dedup_worker are std::unique_ptr whose worker destructors call stopAndJoin (WorkerBase::~WorkerBase / DuplicateFinderWorker::~DuplicateFinderWorker): requestStop -> wait(15s) -> terminate() -> wait(5s) -> std::abort ONLY if the thread survives terminate for 5s (deliberate last-resort fail-closed to avoid use-after-free). The unique_ptr delete therefore never runs a raw ~QThread on a live thread, so the "wait then delete -> abort" the finding describes cannot occur. The "potential resource leak" log text is cosmetically misleading (the thread is joined/terminated, not leaked) but not load-bearing.
 - [x] M-B3-8  user_profile_backup/restore_wizard_execute.cpp no page dtor joins the QThread-subclass worker -> closing wizard mid-op aborts. ALREADY FIXED (verified wave 20 planning pass, no code change): both wizard workers are QThread subclasses created PARENTED to their page (new UserProfileRestoreWorker(this) / new UserProfileBackupWorker(this)), and each worker's OWN destructor joins the thread (if(isRunning()){cancel(); if(!wait(timeout)) wait();} -- bounded then UNBOUNDED wait, never destroying a running QThread). When the QWizard is destroyed it deletes its pages; each page's ~QObject disconnects receiver connections (late worker signals become no-ops) then deletes children, invoking the worker dtor's join. Closing the wizard mid-op blocks-and-joins rather than aborting. A separate page dtor is unnecessary.
 - [x] M-B3-9  screenshot_settings_action.cpp:44 grabWindow/QPixmap on a worker thread (GUI-thread affinity). FIXED (wave 31): execute() runs on the quick-action worker thread, so captureSettingsWindow's QScreen::grabWindow (GUI-thread-affine) touched the GUI off-thread. Added grabAndSaveOnGui(WId, filepath) (GUI-thread-only grab+save) and captureWindowToPng(WId, filepath), which marshals it onto the GUI thread via BlockingQueuedConnection and fails closed (returns false, no file) when there is no QCoreApplication or the invocation cannot be marshalled; captureSettingsWindow now calls captureWindowToPng. Also DELETED the dead openSettingsAndCapture + captureScreen(QString) cluster (unreferenced; a second off-thread grabWindow) and the unimplemented openSettings()/captureScreen() decls. Regression test captureWindowToPng_failsClosedWithoutScreen.
-- [~] M-B3-1  partition_script_builder.cpp:2297 Restore Image approval pins only size not content; same-size swap accepted; UNC bypasses same-disk check. PARTS B+C FIXED (wave 33); PART A (content pin) DEFERRED. Parts B/C (the security gaps): a new restoreImageSourceGuardScript -- symmetric to createImageDestinationGuardScript -- is emitted for every RestoreImage: it (C) rejects a UNC/network source (StartsWith '\\\\' but not '\\\\.\\'/'\\\\?\\', which a \\localhost\\C$ or \\127.0.0.1\\C$ alias could use to name the target and bypass the same-disk check), and (B) resolves the source image file's real volume identity via Get-SakVolumeGuid (follows reparse points) and throws if it maps onto the TARGET disk being restored (source would be overwritten mid-restore). Regression test scriptBuilder_restoreImageGuardsUncAndOnTargetDiskSource. Part A (size-only content pin -- a same-size content swap between queue and copy is still accepted at line 2296) is DEFERRED: closing it needs a content fingerprint (SHA-256, or an offset-sampled fingerprint for multi-GB images) captured at approval/queue time into the payload and re-verified in the emitted script before the copy, plus a FileShare::Read source handle -- a larger design change to the certified raw-disk restore path best done deliberately, not as a rushed addition. The queue guard's existing size check remains, so a same-size swap is the only residual (a source that changed size is still caught).
+- [x] M-B3-1  partition_script_builder.cpp:2297 Restore Image approval pins only size not content; same-size swap accepted; UNC bypasses same-disk check. PARTS B+C FIXED (wave 33); PART A (content pin) DEFERRED. Parts B/C (the security gaps): a new restoreImageSourceGuardScript -- symmetric to createImageDestinationGuardScript -- is emitted for every RestoreImage: it (C) rejects a UNC/network source (StartsWith '\\\\' but not '\\\\.\\'/'\\\\?\\', which a \\localhost\\C$ or \\127.0.0.1\\C$ alias could use to name the target and bypass the same-disk check), and (B) resolves the source image file's real volume identity via Get-SakVolumeGuid (follows reparse points) and throws if it maps onto the TARGET disk being restored (source would be overwritten mid-restore). Regression test scriptBuilder_restoreImageGuardsUncAndOnTargetDiskSource. Part A (size-only content pin -- a same-size content swap between queue and copy is still accepted at line 2296) is DEFERRED: closing it needs a content fingerprint (SHA-256, or an offset-sampled fingerprint for multi-GB images) captured at approval/queue time into the payload and re-verified in the emitted script before the copy, plus a FileShare::Read source handle -- a larger design change to the certified raw-disk restore path best done deliberately, not as a rushed addition. The queue guard's existing size check remains, so a same-size swap is the only residual (a source that changed size is still caught).
 
 pst/email (A1):
 - [x] M-A1-26 user_data_manager.cpp:965 atomicReplaceFile deletes target then renames; rename failure destroys the original. FIXED (wave 26): atomicReplaceFile now moves the existing target ASIDE (rename to <target>.sak_old) before renaming the staged replacement into place, and on a swap failure rolls the original back -- the original is never destroyed while the swap is incomplete (no data-loss window). Made a public static seam; regression test atomicReplaceFileSwapsWithoutDataLossWindow (existing-target replace + not-yet-existing-target move).
@@ -401,3 +401,51 @@ it, so the reader can tell the difference between "hard" and "waiting on a machi
            real reason this is open -- not the size of the change.
 
 This campaign is NOT at zero and stays in docs/ until it is.
+
+--------------------------------------------------------------------------------
+## H6 AND M-B3-1 PART A CLOSED 2026-08-27
+
+H6 -- the entry's own difficulty estimate was the thing blocking it. It called the fix "a
+privilege-architecture change too risky to retrofit inline"; the actual defect was that
+requires_admin is the MODEL'S CLAIM and was being read as the FACT. ElevationManager::
+isElevated() already existed and was used in five places.
+  - AiToolCallRequest gains host_elevated, INJECTED rather than read inside the policy, so
+    ai_tool_policy stays a pure testable rule. policyContext now computes
+    effective_admin = requires_admin || host_elevated.
+  - The planner and the subagent executor supply it from ElevationManager::isElevated().
+  - AiCommandResult::elevated now records what actually happened on the PLAIN path too: it
+    reported false unconditionally, while QProcess inherits this process's token, so inside
+    an elevated S.A.K. the command ran with administrator rights and the trace said it did
+    not.
+  Regression test elevatedHostMakesANonAdminCallRisky, deliberately driven with a BENIGN
+  non-shell command so effective elevation is the only thing that can make it risky.
+  DRILLED: collapsing effective_admin back to requires_admin turns it RED.
+  Linkage note: the AI test targets did not link ElevationManager, and it logs, so the two
+  travel together as SAK_ELEVATION_SOURCES rather than as two lines per target -- a new
+  target cannot then pick up half the dependency.
+
+M-B3-1 PART A -- the digest choice was the open question, and it is now made: a FULL SHA-256,
+not an offset-sampled fingerprint. This gates a raw whole-disk overwrite, and a sampled
+digest is only probabilistic against an attacker who chooses the content and can read the
+sampling offsets out of the emitted script. The program already pins bundled filesystem-tool
+binaries with a full SHA-256 (Invoke-SakFilesystemTool), so this is the established shape.
+  - onRestoreImage hashes the approved image through sak::file_hasher behind a cancellable
+    progress dialog (a multi-GB image takes real time and a frozen window reads as a hang)
+    and stores source_sha256 in the payload. Fail closed: no digest, nothing queued.
+  - The emitted script re-hashes immediately before the copy and throws on mismatch, and
+    throws outright when the payload carries NO fingerprint -- a restore that silently drops
+    its content check is the defect itself.
+  The progress dialog is INDETERMINATE, not a percentage, and the blocking-pattern gate is
+  what forced that. The first version pumped QCoreApplication::processEvents inside the hash
+  callback, which the gate refuses: it re-enters the GUI loop from inside a running operation.
+  Showing a real percentage means marshalling progress back into a dialog that dies the moment
+  the user cancels -- the detached task touching freed state shape fixed twice elsewhere in
+  this same sweep. The hash now runs on a worker capturing only COPIES (path + stop token),
+  the dialog's own modal loop runs meanwhile, and there is no processEvents, no hand-rolled
+  QEventLoop and no blocking wait. A busy indicator with a working Cancel, chosen over a
+  percentage bought with a lifetime hazard.
+
+  Regression test scriptBuilder_restoreImagePinsSourceContent. DRILLED 3/3 RED.
+  The first version of that test was WEAK and the drill caught it: it asserted the message
+  text ("content changed") which survives a mutation to `if ($false)`. It now pins the
+  emitted CONDITIONS.

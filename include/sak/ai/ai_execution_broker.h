@@ -84,6 +84,10 @@ struct AiCommandResult {
     bool started{false};
     bool cancelled{false};
     bool timed_out{false};
+    /// Whether the command actually RAN with administrator rights -- a fact, not the
+    /// model's requires_admin claim. True on the gated elevated-runner path, and also on
+    /// the plain path whenever this process is itself elevated, because a plain QProcess
+    /// inherits this process's token (B1-3 / H6).
     bool elevated{false};
     int exit_code{-1};
     int exit_status{0};

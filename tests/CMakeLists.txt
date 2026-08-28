@@ -29,6 +29,15 @@ set(SAK_PROCESS_RUNNER_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/process_runner.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/process_runner.h"
 )
+set(SAK_ELEVATION_SOURCES
+    # The AI command path asks ElevationManager whether THIS process is already elevated, so a
+    # "non-admin" launch that inherits an elevated token is still policed (B1-3 / H6). It logs,
+    # so the logger rides along -- kept as one group rather than two lines per target, so a new
+    # target cannot pick up half of the dependency.
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/elevation_manager.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/elevation_manager.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/logger.cpp"
+)
 set(SAK_NETWORK_TRANSFER_RUNNER_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/network_transfer_runner.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/network_transfer_runner.h"
@@ -569,6 +578,9 @@ endif()
 # test_partition_manager_panel - GUI chrome guard for AOMEI-style layout
 add_executable(test_partition_manager_panel
     unit/test_partition_manager_panel.cpp
+    # Restore Image fingerprints the approved image with sak::file_hasher before it queues,
+    # so the panel now pulls the hasher in (M-B3-1 part A).
+    ../src/core/file_hash.cpp
     ../src/gui/partition_manager_panel.cpp
     ../src/gui/view_empty_state.cpp
     ../include/sak/view_empty_state.h
@@ -2755,6 +2767,7 @@ add_test(NAME test_ai_provider_gateway COMMAND test_ai_provider_gateway
 message(STATUS "Added unit test: test_ai_provider_gateway")
 
 add_executable(test_ai_app_action_planner
+    ${SAK_ELEVATION_SOURCES}
     unit/test_ai_app_action_planner.cpp
     ../src/ai/ai_app_action_planner.cpp
     ../src/ai/ai_command_guard.cpp
@@ -3051,6 +3064,7 @@ add_test(NAME test_ai_command_guard COMMAND test_ai_command_guard
 message(STATUS "Added unit test: test_ai_command_guard")
 
 add_executable(test_ai_command_tool_planner
+    ${SAK_ELEVATION_SOURCES}
     unit/test_ai_command_tool_planner.cpp
     ../src/ai/ai_command_tool_planner.cpp
     ../src/ai/ai_command_guard.cpp
@@ -3293,6 +3307,7 @@ add_test(NAME test_ai_chat_title COMMAND test_ai_chat_title
 message(STATUS "Added unit test: test_ai_chat_title")
 
 add_executable(test_ai_execution_broker
+    ${SAK_ELEVATION_SOURCES}
     unit/test_ai_execution_broker.cpp
     ../src/core/app_paths.cpp
     ../src/ai/ai_execution_broker.cpp
@@ -3546,6 +3561,7 @@ add_test(NAME test_ai_lease_manager COMMAND test_ai_lease_manager
 message(STATUS "Added unit test: test_ai_lease_manager")
 
 add_executable(test_ai_subagent_tool_executor
+    ${SAK_ELEVATION_SOURCES}
     unit/test_ai_subagent_tool_executor.cpp
     ../src/ai/ai_subagent_tool_executor.cpp
     ../src/ai/ai_cancellation_token.cpp
@@ -3629,6 +3645,7 @@ add_test(NAME test_ai_offline_downloader_tool_runner
 message(STATUS "Added unit test: test_ai_offline_downloader_tool_runner")
 
 add_executable(test_ai_workflow_powershell_tool_runner
+    ${SAK_ELEVATION_SOURCES}
     unit/test_ai_workflow_powershell_tool_runner.cpp
     ../src/ai/ai_workflow_powershell_tool_runner.cpp
     ../src/ai/ai_workflow_placeholders.cpp

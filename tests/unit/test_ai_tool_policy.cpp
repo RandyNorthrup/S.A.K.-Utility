@@ -37,6 +37,7 @@ private Q_SLOTS:
     void ordinaryCommandsAreNotCatastrophic();
     void obfuscatedShellCommandsForceCatastrophic_data();
     void obfuscatedShellCommandsForceCatastrophic();
+    void elevatedHostMakesANonAdminCallRisky();  // B1-3 / H6
 };
 
 void AiToolPolicyTests::readOnlyPolicyBlocksRiskyCommands() {
@@ -886,6 +887,49 @@ void AiToolPolicyTests::obfuscatedShellCommandsForceCatastrophic() {
     QVERIFY2(decision.catastrophic_change, qPrintable(command));
     QVERIFY2(decision.risky_change, qPrintable(command));
     QVERIFY2(decision.requires_lease, qPrintable(command));
+}
+
+// B1-3 / H6. requires_admin is the MODEL'S CLAIM, and requires_admin=false does not mean the
+// command runs unelevated -- it means the call skips the gated elevated runner and launches a
+// plain QProcess, which inherits this process's token. Inside an elevated S.A.K. that command
+// therefore has administrator rights, while the policy, reading only the claim, classified it
+// as non-risky: no lease, no exclusive lease, no restore point.
+//
+// The command text here is deliberately BENIGN and non-shell (a provider-gateway read), so it
+// trips none of the other risk sources -- commandLooksRiskyChange, the shell-unproven rule,
+// mutating-package, mutating-provider. Effective elevation is then the ONLY thing that can
+// make it risky, so this cannot pass for an unrelated reason.
+void AiToolPolicyTests::elevatedHostMakesANonAdminCallRisky() {
+    sak::ai::AiToolCallRequest request;
+    request.tool_name = QStringLiteral("run_powershell");
+    request.command_preview = QStringLiteral("Get-Date");
+    request.requires_admin = false;
+
+    // Baseline: unelevated host, model says non-admin -> a lease is still required because a
+    // shell command is not PROVEN read-only, but the call is not classified admin-risky.
+    request.host_elevated = false;
+    const auto unelevated =
+        sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::MutatingRequiresLease, request);
+
+    // Same call, elevated host: it must be treated as risky and take the lease.
+    request.host_elevated = true;
+    const auto elevated = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::MutatingRequiresLease,
+                                                      request);
+    QVERIFY(elevated.risky_change);
+    QVERIFY(elevated.requires_lease);
+
+    // Non-vacuity: the elevated verdict must differ from the unelevated one on SOMETHING, or
+    // this test would pass against a policy that ignores host_elevated entirely and simply
+    // marks every shell call risky.
+    QVERIFY(!unelevated.risky_change);
+
+    // And the claim still works on its own: an unelevated host with requires_admin=true is
+    // risky too, so risky_change is not merely echoing host_elevated.
+    request.host_elevated = false;
+    request.requires_admin = true;
+    const auto claimed_admin =
+        sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::MutatingRequiresLease, request);
+    QVERIFY(claimed_admin.risky_change);
 }
 
 QTEST_GUILESS_MAIN(AiToolPolicyTests)

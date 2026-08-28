@@ -1608,6 +1608,7 @@ private Q_SLOTS:
     void safetyValidator_blocksOsDiskDataPartitionMutation();
     void scriptBuilder_createImageRefusesExistingWithoutOverwrite();
     void scriptBuilder_restoreImageGuardsUncAndOnTargetDiskSource();
+    void scriptBuilder_restoreImagePinsSourceContent();  // M-B3-1 part A
     void apfsWriter_freeQueueRunInBoundsRejectsOutOfRange();
     void apfsWriter_freeQueueExpansionBudgetFailsClosed();
     void apfsWriter_formatBlockWriteNeverEscapesValidatedTarget();
@@ -18038,6 +18039,58 @@ void PartitionManagerCoreTests::scriptBuilder_restoreImageGuardsUncAndOnTargetDi
     QVERIFY(script.script.contains(QStringLiteral("UNC/network sources are not supported")));
     QVERIFY(script.script.contains(QStringLiteral("resides on the target disk")));
     QVERIFY(script.script.contains(QStringLiteral("$tgtDiskNumber = 2")));
+}
+
+void PartitionManagerCoreTests::scriptBuilder_restoreImagePinsSourceContent() {
+    // CODEX_REVIEW_4 M-B3-1 part A: the approval pinned the source SIZE only, so a same-size
+    // CONTENT swap between queue time and the copy was accepted -- across a window that spans
+    // an approval dialog, an Apply, a UAC prompt and restore-point creation. The emitted script
+    // must re-hash the image and refuse a mismatch.
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Disk;
+    target.disk_number = DiskNumber{2};
+    target.size_bytes = 107'374'182'400ULL;
+    QJsonObject payload;
+    payload[QStringLiteral("source_path")] = QStringLiteral("D:\\images\\disk.img");
+    payload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\PhysicalDrive2");
+    payload[QStringLiteral("source_size_bytes")] = QStringLiteral("1048576");
+    payload[QStringLiteral("target_size_bytes")] = QStringLiteral("2097152");
+    payload[QStringLiteral("target_wipe_confirmed")] = true;
+    payload[QStringLiteral("overwrite_confirmed")] = true;
+    payload[QStringLiteral("source_sha256")] =
+        QStringLiteral("A3F1B2C4D5E6079889AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00");
+
+    const auto pinned =
+        PartitionScriptBuilder().buildScript(PartitionOperationPlanner::makeOperation(
+            PartitionOperationType::RestoreImage, target, payload));
+    // The digest is emitted LOWER-CASED, matching the .ToLowerInvariant() the script compares
+    // against; an upper-case pin would never match and would fail every legitimate restore.
+    QVERIFY(pinned.script.contains(
+        QStringLiteral("a3f1b2c4d5e6079889aabbccddeeff00112233445566778899aabbccddeeff00")));
+    QVERIFY(pinned.script.contains(QStringLiteral("Get-FileHash")));
+    // Pin the emitted CONDITIONS, not just the message text. Asserting only that the words
+    // "content changed" appear passes against a script whose test can never fire -- the drill
+    // proved it: mutating the guard to `if ($false)` left every message in place and the test
+    // stayed green. The comparison itself is what has to be present.
+    QVERIFY(pinned.script.contains(QStringLiteral("if ($actualImgHash -ne $expectedImgHash)")));
+    QVERIFY(pinned.script.contains(QStringLiteral("if (-not $expectedImgHash)")));
+    QVERIFY(pinned.script.contains(QStringLiteral("content changed")));
+
+    // And an operation queued WITHOUT a fingerprint must fail closed rather than skip the
+    // check: a restore that silently drops its content pin is the defect itself.
+    payload.remove(QStringLiteral("source_sha256"));
+    const auto unpinned =
+        PartitionScriptBuilder().buildScript(PartitionOperationPlanner::makeOperation(
+            PartitionOperationType::RestoreImage, target, payload));
+    QVERIFY(unpinned.script.contains(QStringLiteral("without a content fingerprint")));
+    QVERIFY(unpinned.script.contains(QStringLiteral("if (-not $expectedImgHash)")));
+    // The unpinned script must compare against an EMPTY expected value, so the refusal above
+    // is reached rather than a comparison that could accidentally match something.
+    QVERIFY(unpinned.script.contains(QStringLiteral("$expectedImgHash = ''")));
+    // Non-vacuity: the unpinned script must NOT carry a comparison that can pass. The refusal
+    // is the only outcome, so the pinned digest text is absent.
+    QVERIFY(!unpinned.script.contains(
+        QStringLiteral("a3f1b2c4d5e6079889aabbccddeeff00112233445566778899aabbccddeeff00")));
 }
 
 void PartitionManagerCoreTests::apfsWriter_freeQueueRunInBoundsRejectsOutOfRange() {

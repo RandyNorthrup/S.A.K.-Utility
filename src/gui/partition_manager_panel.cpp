@@ -8,6 +8,7 @@
 
 #include "sak/config_manager.h"
 #include "sak/detachable_log_window.h"
+#include "sak/file_hash.h"
 #include "sak/file_recovery_engine.h"
 #include "sak/layout_constants.h"
 #include "sak/message_box_helpers.h"
@@ -18,6 +19,11 @@
 #include "sak/partition_file_system_tool_manifest.h"
 #include "sak/partition_file_system_tool_runner.h"
 #include "sak/partition_hfs_file_system_reader.h"
+
+#include <QProgressDialog>
+
+#include <filesystem>
+#include <stop_token>
 // sak::diskLooksSsd / diskLooksHdd -- the same judgement the validator blocks an SSD defrag on.
 #include "sak/partition_safety_validator.h"
 #include "sak/process_runner.h"
@@ -11429,6 +11435,46 @@ namespace {
 
 }  // namespace
 
+// Every reason a chosen image cannot be restored onto the chosen disk, each reported with the
+// specific reason rather than one generic refusal. Split out of onRestoreImage so that adding
+// the content-fingerprint step did not push it past the function-length gate.
+bool PartitionManagerPanel::restoreImageSelectionIsUsable(const QFileInfo& image_info,
+                                                          const PartitionTarget& target) {
+    if (!restoreImageFileIsUsable(image_info)) {
+        showWarningLogged(this,
+                          tr("Restore Image"),
+                          tr("Select a readable, non-empty disk image file."));
+        return false;
+    }
+    if (imageResidesOnDisk(
+            m_controller->inventory(), image_info.filePath(), target.disk_number.value())) {
+        showWarningLogged(
+            this,
+            tr("Restore Image"),
+            tr("The image file resides on target Disk %1. Restoring would offline the disk "
+               "that holds the image and fail. Choose an image stored on a different disk.")
+                .arg(target.disk_number.value()));
+        return false;
+    }
+    if (target.size_bytes == 0) {
+        showWarningLogged(this,
+                          tr("Restore Image"),
+                          tr("Target disk size is unknown. Refresh inventory before restoring."));
+        return false;
+    }
+    const auto image_size = static_cast<uint64_t>(image_info.size());
+    if (image_size > target.size_bytes) {
+        showWarningLogged(this,
+                          tr("Restore Image"),
+                          tr("Image size (%1) is larger than target Disk %2 (%3).")
+                              .arg(formatPartitionBytes(image_size))
+                              .arg(target.disk_number.value())
+                              .arg(formatPartitionBytes(target.size_bytes)));
+        return false;
+    }
+    return true;
+}
+
 void PartitionManagerPanel::onRestoreImage() {
     const auto selected = selectedTarget();
     if (!selected || selected->kind != PartitionTargetKind::Disk) {
@@ -11442,37 +11488,10 @@ void PartitionManagerPanel::onRestoreImage() {
     }
 
     const QFileInfo image_info(path);
-    if (!restoreImageFileIsUsable(image_info)) {
-        showWarningLogged(this,
-                          tr("Restore Image"),
-                          tr("Select a readable, non-empty disk image file."));
-        return;
-    }
-    if (imageResidesOnDisk(m_controller->inventory(), path, selected->disk_number.value())) {
-        showWarningLogged(
-            this,
-            tr("Restore Image"),
-            tr("The image file resides on target Disk %1. Restoring would offline the disk "
-               "that holds the image and fail. Choose an image stored on a different disk.")
-                .arg(selected->disk_number.value()));
+    if (!restoreImageSelectionIsUsable(image_info, *selected)) {
         return;
     }
     const auto image_size = static_cast<uint64_t>(image_info.size());
-    if (selected->size_bytes == 0) {
-        showWarningLogged(this,
-                          tr("Restore Image"),
-                          tr("Target disk size is unknown. Refresh inventory before restoring."));
-        return;
-    }
-    if (image_size > selected->size_bytes) {
-        showWarningLogged(this,
-                          tr("Restore Image"),
-                          tr("Image size (%1) is larger than target Disk %2 (%3).")
-                              .arg(formatPartitionBytes(image_size))
-                              .arg(selected->disk_number.value())
-                              .arg(formatPartitionBytes(selected->size_bytes)));
-        return;
-    }
 
     const auto result = showQuestionLogged(
         this,
@@ -11489,14 +11508,79 @@ void PartitionManagerPanel::onRestoreImage() {
         return;
     }
 
+    // Pin the image's CONTENT, not just its size. The size pin already catches a source that
+    // changed length, but a same-size content swap between this approval and the copy was
+    // accepted -- and that window spans an approval, an Apply, a UAC prompt and restore-point
+    // creation, i.e. minutes. The emitted script re-hashes and refuses on mismatch.
+    // Fail closed: if the digest cannot be computed, the operation is not queued at all,
+    // because a RestoreImage without a fingerprint is refused at execution by design.
+    const QString source_sha256 = pinRestoreImageDigest(path);
+    if (source_sha256.isEmpty()) {
+        return;
+    }
+
     QJsonObject payload;
     payload[QStringLiteral("source_path")] = path;
     payload[QStringLiteral("target_path")] =
         QStringLiteral("\\\\.\\PhysicalDrive%1").arg(selected->disk_number.value());
     payload[QStringLiteral("source_size_bytes")] = QString::number(image_size);
     payload[QStringLiteral("target_size_bytes")] = QString::number(selected->size_bytes);
+    payload[QStringLiteral("source_sha256")] = source_sha256;
     payload[QStringLiteral("target_wipe_confirmed")] = true;
     queueOperation(PartitionOperationType::RestoreImage, payload);
+}
+
+// SHA-256 the approved image, with a cancellable progress dialog because a multi-GB image
+// takes real time and a frozen window reads as a hang. Returns empty on failure or cancel,
+// and the caller then queues NOTHING -- an unpinned RestoreImage is refused by the emitted
+// script, so queueing one would only defer the refusal to the destructive step.
+QString PartitionManagerPanel::pinRestoreImageDigest(const QString& path) {
+    // INDETERMINATE, not a percentage, and that is deliberate. Showing a percentage means
+    // marshalling progress from the hashing thread back into this dialog, and the dialog dies
+    // the moment the user cancels -- which is exactly the detached task touching freed state
+    // shape that has bitten this codebase before. The worker below therefore captures only
+    // COPIES (the path and a stop token) and touches nothing that can outlive it.
+    QProgressDialog progress(
+        tr("Fingerprinting image so the restore can prove it is the file you approved..."),
+        tr("Cancel"),
+        0,
+        0,
+        this);
+    progress.setWindowTitle(tr("Restore Image"));
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+
+    std::stop_source stopper;
+    QFutureWatcher<QString> watcher;
+    // The dialog's OWN modal loop runs while the hash proceeds -- no processEvents, no
+    // hand-rolled QEventLoop, and no blocking wait. exec() returns either because the hash
+    // finished (accept) or because the user cancelled.
+    connect(&watcher, &QFutureWatcher<QString>::finished, &progress, &QProgressDialog::accept);
+    connect(&progress, &QProgressDialog::canceled, this, [&stopper]() { stopper.request_stop(); });
+
+    watcher.setFuture(QtConcurrent::run([path, token = stopper.get_token()]() -> QString {
+        const sak::file_hasher hasher;
+        const auto digest =
+            hasher.calculateHash(std::filesystem::path(path.toStdWString()), nullptr, token);
+        return digest ? QString::fromStdString(*digest).toLower() : QString();
+    }));
+
+    const bool completed = progress.exec() == QDialog::Accepted;
+    if (!completed) {
+        // Cancelled: the stop token unwinds the hash on its own thread, and the future holds
+        // no reference to anything on this stack, so leaving it to finish is safe.
+        showWarningLogged(this,
+                          tr("Restore Image"),
+                          tr("Fingerprinting was cancelled; nothing was queued."));
+        return {};
+    }
+    const QString digest = watcher.result();
+    if (digest.isEmpty()) {
+        showWarningLogged(this,
+                          tr("Restore Image"),
+                          tr("Could not read the image to fingerprint it; nothing was queued."));
+    }
+    return digest;
 }
 
 void PartitionManagerPanel::onDataRecovery() {

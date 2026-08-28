@@ -311,7 +311,14 @@ ToolPolicyContext policyContext(const AiToolCallRequest& request) {
     context.m_catastrophic = context.m_shell &&
                              (commandLooksCatastrophic(request.command_preview) ||
                               commandLooksObfuscated(request.command_preview));
-    context.m_risky = request.requires_admin ||
+    // EFFECTIVE elevation, not the model's claim. requires_admin=false only means the call
+    // skips the gated elevated runner -- it does not mean the command runs unelevated. That
+    // path launches a plain QProcess which inherits this process's token, so inside an
+    // elevated S.A.K. the command has administrator rights either way. Reading the claim
+    // alone classified such a call as non-risky: no lease, no exclusive lease, no restore
+    // point, for a command that could do anything an administrator can (B1-3 / H6).
+    const bool effective_admin = request.requires_admin || request.host_elevated;
+    context.m_risky = effective_admin ||
                       (context.m_shell && commandLooksRiskyChange(request.command_preview)) ||
                       context.m_mutating_package || isMutatingProviderOperation(request);
     return context;

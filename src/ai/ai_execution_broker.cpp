@@ -4,6 +4,7 @@
 #include "sak/ai/ai_execution_broker.h"
 
 #include "sak/ai/ai_credential_store.h"
+#include "sak/elevation_manager.h"
 #include "sak/process_runner.h"
 
 #include <QDir>
@@ -845,6 +846,12 @@ void ExecutionBroker::onProcessFinished(int exit_code, int exit_status) {
     AiCommandResult result;
     result.started = true;
     result.cancelled = m_cancel_requested;
+    // This is the PLAIN launch path, and it reported elevated=false unconditionally. That is
+    // the model's claim, not what happened: QProcess inherits this process's token, so inside
+    // an elevated S.A.K. the command ran WITH administrator rights and the record said it did
+    // not. Report the fact, so the transcript, the trace and anything auditing them agree with
+    // the privilege the command actually had (B1-3 / H6).
+    result.elevated = ElevationManager::isElevated();
     result.exit_code = exit_code;
     result.exit_status = exit_status;
     result.duration_ms = m_timer.elapsed();

@@ -29,6 +29,8 @@ class QTextEdit;
 class QWidget;
 class QPoint;
 
+class QFileInfo;
+
 namespace sak {
 
 namespace ui {
@@ -112,6 +114,14 @@ private Q_SLOTS:
     void onCopyPartitionWizard();
     void onCreateImage();
     void onRestoreImage();
+    /// SHA-256 the image the operator just approved, with a cancellable progress dialog.
+    /// Empty means failed or cancelled, and the caller must then queue NOTHING: the emitted
+    /// restore script refuses an operation that carries no content fingerprint (M-B3-1 A).
+    [[nodiscard]] QString pinRestoreImageDigest(const QString& path);
+    /// Every reason the chosen image cannot be restored onto @p target, each reported with
+    /// its own specific message. False means a refusal was already shown to the user.
+    [[nodiscard]] bool restoreImageSelectionIsUsable(const QFileInfo& image_info,
+                                                     const PartitionTarget& target);
     void onDataRecovery();
     void onPartitionRecoveryWizard();
     void onMigrateOs();

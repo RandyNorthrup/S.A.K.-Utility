@@ -4,6 +4,7 @@
 #include "sak/ai/ai_command_tool_planner.h"
 
 #include "sak/ai/ai_command_guard.h"
+#include "sak/elevation_manager.h"
 #include "sak/process_runner.h"
 
 #include <QDir>
@@ -344,6 +345,7 @@ AiCommandToolPlan AiCommandToolPlanner::buildPlan(const QString& tool_name,
         plan.policy_request.tool_name = tool_name;
         plan.policy_request.command_preview = plan.preview;
         plan.policy_request.requires_admin = plan.request.requires_admin;
+        plan.policy_request.host_elevated = ElevationManager::isElevated();
         return plan;  // policy_decision stays default-denied.
     }
 
@@ -354,6 +356,7 @@ AiCommandToolPlan AiCommandToolPlanner::buildPlan(const QString& tool_name,
     plan.policy_request.tool_name = tool_name;
     plan.policy_request.command_preview = plan.preview;
     plan.policy_request.requires_admin = plan.request.requires_admin;
+    plan.policy_request.host_elevated = ElevationManager::isElevated();
     plan.policy_decision = evaluateToolPolicy(policy, plan.policy_request);
     return plan;
 }

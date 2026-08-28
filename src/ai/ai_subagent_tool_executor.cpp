@@ -3,6 +3,8 @@
 
 #include "sak/ai/ai_subagent_tool_executor.h"
 
+#include "sak/elevation_manager.h"
+
 #include <QJsonDocument>
 #include <QJsonParseError>
 
@@ -91,6 +93,10 @@ AiSubagentToolOutput AiSubagentToolExecutor::executeToolCall(const AiSubagentTas
     request.tool_name = call.name;
     request.operation = arguments.value(QStringLiteral("operation")).toString();
     request.command_preview = arguments.value(QStringLiteral("query")).toString();
+    // A subagent's tool call runs in THIS process, so it inherits this process's elevation.
+    // Without this the policy reads only the model's requires_admin claim and takes no lease
+    // and no restore point for a command that has administrator rights (B1-3 / H6).
+    request.host_elevated = ElevationManager::isElevated();
 
     const QJsonObject result =
         m_dispatch(task.tool_policy, request, arguments, task.agent_id, token);

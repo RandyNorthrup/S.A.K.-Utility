@@ -2485,6 +2485,35 @@ QString createImageDestinationGuardScript(const QString& target,
 // \\127.0.0.1\C$ alias could name the target volume), and resolve the source image file's real
 // volume identity (Get-SakVolumeGuid follows reparse points) and throw if it maps onto the TARGET
 // disk being restored, since restoring would overwrite the source mid-copy.
+// Re-verify the approved image's CONTENT immediately before the copy. The queue guard pins the
+// source SIZE, so a source that changed size is already caught -- but a same-size content swap
+// between approval and execution was accepted, and that window is human-scale: it spans an
+// approval dialog, an Apply, a UAC prompt and restore-point creation, i.e. minutes.
+//
+// A FULL SHA-256, deliberately, not an offset-sampled fingerprint. This gates a raw whole-disk
+// overwrite, and a sampled digest is only probabilistic against an attacker who chooses the
+// content and can read the sampling offsets out of this very script. The cost is a second read
+// of the image at execution time; the program already pins bundled filesystem-tool binaries the
+// same way (Invoke-SakFilesystemTool), so this is the established shape rather than a new one.
+//
+// Empty expected_sha256 means the queue did not pin a digest, which must FAIL rather than skip:
+// a restore that silently drops its content check is exactly the gap being closed (M-B3-1 A).
+QString restoreImageContentPinScript(const QString& source, const QString& expected_sha256) {
+    return QStringLiteral(
+               "$imgPin = %1\n"
+               "$expectedImgHash = %2\n"
+               "if (-not $expectedImgHash) { throw 'Restore Image was queued without a content "
+               "fingerprint; refusing to restore without verifying the approved image' }\n"
+               "$actualImgHash = (Get-FileHash -LiteralPath $imgPin -Algorithm SHA256).Hash."
+               "ToLowerInvariant()\n"
+               "if ($actualImgHash -ne $expectedImgHash) { throw ('Restore Image content changed "
+               "since it was approved (expected {0}, found {1}); refusing to write an image the "
+               "operator did not approve' -f $expectedImgHash, $actualImgHash) }\n"
+               "Write-Output 'Restore Image content fingerprint verified'\n")
+        .arg(PartitionScriptBuilder::quotePowerShell(QDir::toNativeSeparators(source)),
+             PartitionScriptBuilder::quotePowerShell(expected_sha256.toLower()));
+}
+
 QString restoreImageSourceGuardScript(const QString& source, uint32_t targetDiskNumber) {
     return sakVolumeGuidFunctionScript() +
            QStringLiteral(
@@ -4930,6 +4959,8 @@ PartitionScript PartitionScriptBuilder::buildCloneOrImageScript(
     if (operation.type == PartitionOperationType::RestoreImage) {
         out.script += restoreImageSourceGuardScript(spec.source,
                                                     operation.target.disk_number.value());
+        out.script += restoreImageContentPinScript(
+            spec.source, payloadString(operation, QStringLiteral("source_sha256")));
     }
     out.script += cloneTransferScript(spec);
     if (operation.type == PartitionOperationType::MigrateOs) {
