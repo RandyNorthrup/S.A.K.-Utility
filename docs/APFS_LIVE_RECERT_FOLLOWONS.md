@@ -160,13 +160,22 @@ the rest is a debt-reduction + test-infra program (multi-session, much of it cos
 - [x] GUI style-token gate wired (commit 2bee958). Its one residual was a QColor::rgba()
       method call folded into a pixmap cache key, not a raw color literal; the matcher now
       excludes a `.`/`::`-prefixed call, debt is zero, hook wired.
-- [ ] Three gate scripts still carry real debt (wired the moment each reaches zero, per the
-      note in .pre-commit-config.yaml). MEASURED 2026-08-10:
-        check_gui_magic_numbers.ps1        18  (raw layout ints in setContentsMargins/
-                                                setSpacing/setFixedHeight -> named ui:: consts;
-                                                bounded, low-value cosmetic)
-        check_gui_stylesheet_literals.ps1  74  (inline stylesheet literals -> style constants)
-        check_magic_numbers.py            452  (whole-tree magic numbers -> named constants)
+- [x] Three gate scripts carried real debt -- ALL THREE REACHED ZERO AND ARE WIRED as blocking
+      pre-commit hooks (sections 6d/6e/6f of .pre-commit-config.yaml, each carrying a comment
+      recording how its debt was cleared). Re-run 2026-08-27: all three exit 0.
+        check_gui_magic_numbers.ps1        18 -> 0  (folded into sak::ui margin/spacing tokens
+                                                     and per-file Files-xaml metric constants)
+        check_gui_stylesheet_literals.ps1  74 -> 0  (QSS moved into
+                                                     file_explorer_style_constants.h and
+                                                     rich_text_constants.h)
+        check_magic_numbers.py            452 -> 0  (named across the tree; the on-disk-format
+                                                     and crypto modules stay exempt in the
+                                                     script, where hand-naming byte offsets is
+                                                     high-risk churn against certified output)
+      This item stayed marked open for seventeen days after the work landed. Recorded because
+      it is the mirror of R5-IDX-6: there, unwritten dispositions made finished work look open
+      and invited a re-triage; here, a stale line made a wired blocking gate look unwired. Both
+      cost the same thing -- the next reader cannot trust the status without redoing the check.
 - [ ] clang-tidy backlog (~995 findings) -- a full clang-tidy pass + fix program.
 - [ ] cppcheck-suppression audit -- review every inline suppression is still justified.
 - [ ] Test-infra program (each a dedicated effort): G14 coverage ledger, G18 mutation

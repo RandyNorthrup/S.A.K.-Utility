@@ -21,6 +21,7 @@
 #include "sak/file_explorer_style_constants.h"
 #include "sak/file_explorer_tag_store.h"
 #include "sak/layout_constants.h"
+#include "sak/logger.h"
 #include "sak/message_box_helpers.h"
 #include "sak/process_runner.h"
 #include "sak/recycle_bin.h"
@@ -339,15 +340,39 @@ private:
         }
         QList<QUrl> urls;
         for (const FileManagementEntry& item : m_items) {
-            const QString staged = QDir(m_staging.path()).filePath(item.name);
-            const bool ok = item.directory ? FileManagementFileSystemBridge::exportDirectoryToHost(
-                                                 m_target, item.path, staged, kExplorerHashMaxBytes)
-                                                 .ok
-                                           : FileManagementFileSystemBridge::copyFileToHost(
-                                                 m_target, item.path, staged, kExplorerHashMaxBytes)
-                                                 .ok;
-            if (ok) {
+            // item.name comes verbatim from a parsed foreign image. exportDirectoryToHost
+            // confines the names it walks INTO, but the top-level name is built here, so
+            // without this the drag-out is the one export path that never applies the rule:
+            // QDir::filePath does not collapse "..", so a raw entry named "../evil" resolves
+            // outside the staging directory and QSaveFile writes there.
+            const QString staged_name = FileManagementFileSystemBridge::confinedHostName(item.name);
+            if (staged_name.isEmpty()) {
+                sak::logWarning("Raw drag-out skipped entry with unsafe name: {}",
+                                item.path.toStdString());
+                continue;
+            }
+            const QString staged = QDir(m_staging.path()).filePath(staged_name);
+            // Publish only a WHOLE export. A raw file past the read cap comes back ok with
+            // capped=true, and a directory walk reports complete=false when anything was
+            // truncated or skipped -- handing either to an external drop target would deliver
+            // a silently short file as if it were the real one.
+            bool whole = false;
+            if (item.directory) {
+                const FileManagementDirectoryExportResult exported =
+                    FileManagementFileSystemBridge::exportDirectoryToHost(
+                        m_target, item.path, staged, kExplorerHashMaxBytes);
+                whole = rawDirectoryExportIsWhole(exported);
+            } else {
+                const FileManagementExportResult exported =
+                    FileManagementFileSystemBridge::copyFileToHost(
+                        m_target, item.path, staged, kExplorerHashMaxBytes);
+                whole = rawFileExportIsWhole(exported);
+            }
+            if (whole) {
                 urls.append(QUrl::fromLocalFile(staged));
+            } else {
+                sak::logWarning("Raw drag-out skipped incomplete export of {}",
+                                item.path.toStdString());
             }
         }
         if (!urls.isEmpty()) {

@@ -426,7 +426,7 @@ bool FileExplorerTransferEngine::transferRawDirectoryToLocal(
         m_source_target, item.source_path, destination, m_raw_read_cap, observer);
     m_warnings.append(result.warnings);
     m_blockers.append(result.blockers);
-    if (!result.complete) {
+    if (!rawDirectoryExportIsWhole(result)) {
         // The only shortfall a caller can sanction up front is a capped read (Copy
         // Out asks for one and the copy is marked capped); dropped symlinks and
         // depth/entry-cap overflow are losses nobody asked for.
@@ -471,7 +471,7 @@ bool FileExplorerTransferEngine::transferRawToLocal(
     // A capped single-file read means the copy is truncated; a move must not
     // then delete the whole source. Copy Out asked for the cap and marks it, so
     // only a cap outside those semantics counts as unrequested loss.
-    if (result.capped) {
+    if (!rawFileExportIsWhole(result)) {
         noteIncompleteTransfer(m_allow_capped_raw_reads);
         if (!m_allow_capped_raw_reads) {
             // Fail the item outright on an UNREQUESTED cap so no caller -- including

@@ -183,6 +183,25 @@ struct FileManagementDirectoryExportResult {
     QStringList warnings;
 };
 
+/// True when a single-file export landed WHOLE: it succeeded and the source was not
+/// truncated at the raw read window. Stated here, once, because "ok" alone does not
+/// mean whole -- a capped read returns ok with only a prefix on disk, and a caller
+/// that hands that on (a drag-out URL, a move that then deletes the source) delivers
+/// a short file as if it were the real one.
+/// A caller that DELIBERATELY asked for a capped read (Copy Out) sanctions the cap
+/// itself and does not consult this.
+[[nodiscard]] inline bool rawFileExportIsWhole(const FileManagementExportResult& result) {
+    return result.ok && !result.capped;
+}
+
+/// True when a directory export landed WHOLE. @ref FileManagementDirectoryExportResult::complete
+/// already folds in ok plus "nothing skipped or truncated"; this names the question so
+/// both raw-export callers ask it the same way.
+[[nodiscard]] inline bool rawDirectoryExportIsWhole(
+    const FileManagementDirectoryExportResult& result) {
+    return result.complete;
+}
+
 /// Result of recursively importing a local host directory tree into a target.
 struct FileManagementDirectoryImportResult {
     bool ok{false};              ///< True when the walk finished without a hard blocker.

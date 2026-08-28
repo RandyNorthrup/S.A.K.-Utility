@@ -1520,6 +1520,57 @@ private Q_SLOTS:
         QCOMPARE(B::rawReplaceCaseAction(QStringLiteral("apfs"), 1),
                  A::RefuseAmbiguous);      // case-sensitivity unknown -> refuse, no data loss
     }
+
+    // P11-08: "ok" does NOT mean "whole". A raw read stopped at the read window comes
+    // back ok with only a prefix on disk, so any caller that hands the result on -- a
+    // drag-out URL published to an external drop target, a move that then deletes the
+    // source -- must ask this question instead of ok. Pinned as a shared rule because
+    // the export path and the transfer path both ask it and disagreed before.
+    void rawExportWholenessSeparatesOkFromComplete() {
+        sak::FileManagementExportResult file;
+
+        // The whole point: succeeded, but truncated at the cap -> NOT whole.
+        file.ok = true;
+        file.capped = true;
+        QVERIFY(!sak::rawFileExportIsWhole(file));
+
+        // Succeeded and untruncated -> whole.
+        file.capped = false;
+        QVERIFY(sak::rawFileExportIsWhole(file));
+
+        // A failed export is never whole, capped or not.
+        file.ok = false;
+        QVERIFY(!sak::rawFileExportIsWhole(file));
+        file.capped = true;
+        QVERIFY(!sak::rawFileExportIsWhole(file));
+
+        sak::FileManagementDirectoryExportResult dir;
+
+        // complete already folds in ok plus "nothing skipped or truncated", so a walk
+        // that succeeded while dropping a symlink or truncating a file is NOT whole.
+        dir.ok = true;
+        dir.complete = false;
+        dir.capped_files = 1;
+        QVERIFY(!sak::rawDirectoryExportIsWhole(dir));
+
+        dir.capped_files = 0;
+        dir.symlinks_skipped = 1;
+        QVERIFY(!sak::rawDirectoryExportIsWhole(dir));
+
+        dir.symlinks_skipped = 0;
+        dir.entries_skipped = 1;
+        QVERIFY(!sak::rawDirectoryExportIsWhole(dir));
+
+        // Only a complete walk is whole.
+        dir.entries_skipped = 0;
+        dir.complete = true;
+        QVERIFY(sak::rawDirectoryExportIsWhole(dir));
+
+        // ok without complete stays refused: that pairing is exactly the capped/skipped
+        // case above, and treating ok as sufficient is the defect this pins.
+        dir.complete = false;
+        QVERIFY(!sak::rawDirectoryExportIsWhole(dir));
+    }
 };
 
 QTEST_MAIN(FileManagementFileSystemTests)

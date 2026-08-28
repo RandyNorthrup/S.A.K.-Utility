@@ -59,8 +59,9 @@ private Q_SLOTS:
     // -- Export/import safety (P06-37/38/39/40) --------------
     void testHtmlEscapesMarkup();
     void testCsvNeutralizesFormula();
+    void testCsvNeutralizesFormulaBehindLeadingWhitespace();  // P06-39
     void testImportRejectsInvalidPreservesEntries();
-    void testImportRejectPreservesMetadata();  // B7-34
+    void testImportRejectPreservesMetadata();                 // B7-34
     void testExportSuccessReportsTrue();
 
 private:
@@ -383,7 +384,12 @@ void TestMigrationReport::testCsvNeutralizesFormula() {
     // neutralized just those two stayed green. Drive one field per remaining trigger.
     e.app_version = QStringLiteral("+1+1");
     e.app_publisher = QStringLiteral("-2-2");
-    e.notes = QStringLiteral("\tTAB");
+    // Tab-then-trigger, NOT a bare tab. This field used to be "\tTAB", which the report's
+    // private escape neutralized because it tested the raw first character and '\t' is in
+    // the trigger set. That was over-eager rather than protective: "TAB" is not a formula,
+    // so nothing needed neutralizing. The real tab risk is a tab HIDING a trigger, which is
+    // what an importer that strips leading whitespace would expose -- so drive that instead.
+    e.notes = QStringLiteral("\t=1+1");
     m_report.addEntry(e);
 
     QTemporaryDir dir;
@@ -394,13 +400,57 @@ void TestMigrationReport::testCsvNeutralizesFormula() {
     QFile f(path);
     QVERIFY(f.open(QIODevice::ReadOnly));
     const QString csv = QString::fromUtf8(f.readAll());
-    QVERIFY(csv.contains("\"'=HYPERLINK(\"\"http://x\"\",\"\"y\"\")\""));
-    QVERIFY(csv.contains("\"'@cmd\""));
+
+    // The guard is the LEADING APOSTROPHE; the quoting around it is a separate, RFC-4180
+    // question. These used to be asserted together as `"'@cmd"` because the report's own
+    // private escape quoted any value it had modified. sak::csvEscape quotes only when the
+    // cell actually contains a delimiter, a quote, CR or LF -- so `'@cmd` is now emitted
+    // unquoted, which is still valid CSV and still inert in a spreadsheet. Asserting the
+    // apostrophe against the cell boundary pins the security property itself and no longer
+    // pins one implementation's incidental quoting.
+    QVERIFY(csv.contains("\"'=HYPERLINK(\"\"http://x\"\",\"\"y\"\")\""));  // quoted: has , and "
+    QVERIFY(csv.contains(",'@cmd"));
     QVERIFY(!csv.contains(",=HYPERLINK"));
-    // The remaining triggers: '+', '-' and a leading TAB must be neutralized the same way.
-    QVERIFY(csv.contains("\"'+1+1\""));
-    QVERIFY(csv.contains("\"'-2-2\""));
-    QVERIFY(csv.contains("\"'\tTAB\""));
+    // The remaining triggers: '+', '-', and a trigger hidden behind a leading tab.
+    QVERIFY(csv.contains(",'+1+1"));
+    QVERIFY(csv.contains(",'-2-2"));
+    QVERIFY(csv.contains(",'\t=1+1"));
+    // And the UNGUARDED forms must be absent -- otherwise "contains the apostrophe version"
+    // could pass while some other cell still carried the live one.
+    QVERIFY(!csv.contains(",@cmd"));
+    QVERIFY(!csv.contains(",+1+1"));
+    QVERIFY(!csv.contains(",-2-2"));
+    QVERIFY(!csv.contains(",\t=1+1"));
+}
+
+// P06-39: the trigger character must be found through LEADING WHITESPACE. This report used to
+// carry its own escape whose guard read field.at(0) on the untrimmed value, so a single leading
+// space did not match it. Whether a given spreadsheet then evaluates the cell depends on the
+// importer -- LibreOffice Calc offers a trim-spaces option, Excel treats a leading space as
+// text -- which is exactly why the guard must not depend on which program opens the file.
+// app_name and app_publisher are read from the registry, so a program that installs itself under
+// a crafted display name chooses this text.
+void TestMigrationReport::testCsvNeutralizesFormulaBehindLeadingWhitespace() {
+    auto e = makeEntry(QStringLiteral("  =HYPERLINK(\"http://x\",\"y\")"), "", 0.5, "exact");
+    e.app_publisher = QStringLiteral(" @cmd");
+    m_report.addEntry(e);
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = QDir(dir.path()).filePath("ws.csv");
+    QVERIFY(m_report.exportToCsv(path));
+
+    QFile f(path);
+    QVERIFY(f.open(QIODevice::ReadOnly));
+    const QString csv = QString::fromUtf8(f.readAll());
+
+    // Neutralized: the apostrophe goes in FRONT of the whitespace, inside the quotes, so the
+    // cell is text. The untrimmed guard emitted these cells with no apostrophe at all.
+    QVERIFY(csv.contains("\"'  =HYPERLINK(\"\"http://x\"\",\"\"y\"\")\""));
+    QVERIFY(csv.contains("' @cmd"));
+    // And specifically NOT the unguarded forms, which is what the old copy produced.
+    QVERIFY(!csv.contains("\"  =HYPERLINK"));
+    QVERIFY(!csv.contains(", @cmd"));
 }
 
 // P06-37: a malformed import must be rejected without wiping the current report.

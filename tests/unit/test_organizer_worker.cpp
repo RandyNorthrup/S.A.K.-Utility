@@ -38,6 +38,89 @@ private:
     }
 
 private Q_SLOTS:
+    // A category is user-editable text that becomes a directory name under the target, and
+    // std::filesystem's operator/ confines nothing: ".." walks out of the target and an
+    // ABSOLUTE category ("C:/Windows/System32") replaces the target path outright. The
+    // worker refuses the WHOLE RUN up front (validateOrganizerConfig -> isSafeCategoryName)
+    // rather than skipping the offending file, which is the stronger choice: a mapping that
+    // contains a traversing category is one nobody should be running at all.
+    //
+    // Written because that rule had NO test anywhere in the suite -- it gates a recursive
+    // file-move and nothing pinned it. Run in preview mode so a regression that lets an
+    // unsafe category through cannot move real files while proving it.
+    void unsafeCategoryNameRefusesTheWholeRun() {
+        const QStringList unsafe_names{QStringLiteral(".."),
+                                       QStringLiteral("."),
+                                       QStringLiteral("C:/Windows/System32"),
+                                       QStringLiteral("sub/nested"),
+                                       QStringLiteral("back\\slash"),
+                                       QStringLiteral("trailing."),
+                                       QStringLiteral(" leading-space"),
+                                       QStringLiteral("CON")};
+        for (const QString& unsafe : unsafe_names) {
+            QTemporaryDir tmpDir;
+            QVERIFY(tmpDir.isValid());
+            createDummyFile(tmpDir.path(), "photo.jpg");
+            createDummyFile(tmpDir.path(), "notes.txt");
+
+            OrganizerWorker::Config config;
+            config.target_directory = tmpDir.path();
+            config.preview_mode = true;
+            config.create_subdirectories = true;
+            // One unsafe key alongside a perfectly good one, so a guard that only checked
+            // the FIRST key it saw cannot pass this.
+            config.category_mapping = {{QStringLiteral("Documents"), {QStringLiteral("txt")}},
+                                       {unsafe, {QStringLiteral("jpg")}}};
+            OrganizerWorker worker(config);
+
+            QSignalSpy failed_spy(&worker, &OrganizerWorker::failed);
+            QSignalSpy finished_spy(&worker, &OrganizerWorker::finished);
+            worker.start();
+            QTRY_COMPARE_WITH_TIMEOUT(failed_spy.count(), 1, 5000);
+
+            // Refused with the CONFIGURATION error, not some incidental failure.
+            QCOMPARE(failed_spy.at(0).at(0).toInt(),
+                     static_cast<int>(sak::error_code::invalid_configuration));
+            // finished() must NOT also fire: a run cannot be both refused and completed, and
+            // a caller watching only finished() would otherwise read this as a clean run.
+            QCOMPARE(finished_spy.count(), 0);
+
+            // Nothing planned, nothing moved, files untouched. movedCount == 0 is true of
+            // preview mode regardless, so the empty plan is asserted too.
+            QVERIFY(worker.plannedOperations().empty());
+            QCOMPARE(worker.movedCount(), 0);
+            const QDir root(tmpDir.path());
+            QVERIFY(QFile::exists(root.filePath(QStringLiteral("photo.jpg"))));
+            QVERIFY(QFile::exists(root.filePath(QStringLiteral("notes.txt"))));
+        }
+    }
+
+    // Non-vacuity control for the test above: the SAME shape of run with every category name
+    // safe is NOT refused -- it completes and plans both files. Without this, a
+    // validateOrganizerConfig that rejected EVERY mapping would satisfy the refusal test.
+    void safeCategoryNamesAreNotRefused() {
+        QTemporaryDir tmpDir;
+        QVERIFY(tmpDir.isValid());
+        createDummyFile(tmpDir.path(), "photo.jpg");
+        createDummyFile(tmpDir.path(), "notes.txt");
+
+        OrganizerWorker::Config config;
+        config.target_directory = tmpDir.path();
+        config.preview_mode = true;
+        config.create_subdirectories = true;
+        config.category_mapping = {{QStringLiteral("Documents"), {QStringLiteral("txt")}},
+                                   {QStringLiteral("Images"), {QStringLiteral("jpg")}}};
+        OrganizerWorker worker(config);
+
+        QSignalSpy failed_spy(&worker, &OrganizerWorker::failed);
+        QSignalSpy finished_spy(&worker, &OrganizerWorker::finished);
+        worker.start();
+        QTRY_COMPARE_WITH_TIMEOUT(finished_spy.count(), 1, 5000);
+
+        QCOMPARE(failed_spy.count(), 0);
+        QCOMPARE(static_cast<int>(worker.plannedOperations().size()), 2);
+    }
+
     void previewModeDoesNotMoveFiles() {
         QTemporaryDir tmpDir;
         QVERIFY(tmpDir.isValid());

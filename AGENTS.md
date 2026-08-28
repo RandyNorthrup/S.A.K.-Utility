@@ -190,6 +190,13 @@ bucket is a false claim, because the location is what a reader trusts before rea
 - `docs/future/` -- "might implement one day". Unchecked boxes here are a parked design, NOT
   open work, and nothing should chase them.
 
+**Moving the file is part of finishing the work, not tidying to do later** (owner, 2026-08-27).
+The moment a document is fully realized AND its work is certified -- gate green, not merely
+"all boxes ticked" -- move it to `docs/archive/` in the SAME commit that closes it. A finished
+campaign left sitting in `docs/` is a false claim of open work, and it is the expensive
+direction of the error: the next agent re-reads it, re-triages items that are already done,
+and reports them as findings. Do not wait for a separate cleanup pass; there is never one.
+
 **Production code must not depend on anything under `docs/`.** Code and tests stand on their
 own; if the code genuinely needs data, that data is a JSON somewhere sensible, not prose. A
 comment may CITE a document for provenance -- that is a reference, not a dependency, and the

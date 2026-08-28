@@ -25,9 +25,18 @@ namespace sak {
 
 /// @brief True when a value leads with a character a spreadsheet treats as the start of a
 ///        formula (CWE-1236, "Improper Neutralization of Formula Elements in a CSV File").
-/// @note Checked on the TRIMMED value: leading whitespace does not stop the evaluation, so it
-///       must not be allowed to hide the character that triggers it. Tab and CR are included
-///       because they are stripped by some importers before the first real character is read.
+/// @note Checked on the TRIMMED value, so leading whitespace cannot HIDE the character that
+///       triggers evaluation from this guard: whether a given importer strips that whitespace
+///       before parsing varies (LibreOffice Calc's CSV import has a trim option; Excel treats
+///       a leading space as text), and a guard must not depend on which one opens the file.
+///       "\t=1+1" is therefore neutralized, on the strength of the '=' behind the tab.
+/// @note '\t' and '\r' are in the list below but are UNREACHABLE while the check is on the
+///       trimmed value, because trimming removes exactly those characters -- a trimmed string
+///       can never start with one. They are kept deliberately: they are the correct set if
+///       this ever tests an untrimmed value, and removing them would quietly make that future
+///       change wrong. Nothing is lost by their being dead, because a bare leading tab in
+///       front of ORDINARY text ("\tTAB") is not a formula and needs no neutralizing -- an
+///       earlier private copy of this rule prefixed it anyway, which was over-eager, not safer.
 [[nodiscard]] inline bool startsWithFormulaChar(const QString& value) {
     const QString trimmed = value.trimmed();
     if (trimmed.isEmpty()) {

@@ -17,6 +17,7 @@ private Q_SLOTS:
     void getVolumesOnDrive_invalidDrive();
     void getVolumesOnDrive_negativeDriveFailsClosed();  // R5-G10-9
     void ejectDrive_rejectsNegativeDriveNumber();
+    void lockVolume_failedLockRegistersNothing();       // P11-18 sibling: P11-13
 };
 
 void TestDriveUnmounter::construction_default() {
@@ -69,6 +70,28 @@ void TestDriveUnmounter::ejectDrive_rejectsNegativeDriveNumber() {
     DriveUnmounter unmounter;
     QVERIFY(!unmounter.ejectDrive(-1));
     QCOMPARE(unmounter.lastError(), QStringLiteral("Refusing to eject invalid drive number -1"));
+}
+
+// P11-13. lockVolume hands back an EXCLUSIVELY locked volume handle. It now registers
+// that handle so ~DriveUnmounter closes it, because the caller borrowing it had no way to
+// release it: the lock survived the operation for the life of the process, and Windows
+// could not remount the drive the user had just been told was ejected.
+//
+// COVERAGE LIMIT, stated rather than papered over: the success path cannot be unit-tested
+// here. Proving the handle is registered requires actually taking an exclusive lock on a
+// real volume, and the only volumes present on a test machine are ones in use -- locking
+// one is exactly the destructive act this guard exists to avoid. What IS provable without
+// touching a volume is the other half of the contract: a lock that FAILS must register
+// nothing (a registered INVALID_HANDLE_VALUE would be closed at destruction) and must say
+// why. The success path is held by the ownership contract documented on the declaration.
+void TestDriveUnmounter::lockVolume_failedLockRegistersNothing() {
+    DriveUnmounter unmounter;
+    // A volume path that cannot resolve: CreateFileW fails, so no handle exists to track.
+    const HANDLE handle = unmounter.lockVolume(QStringLiteral("\\\\.\\NoSuchVolume999:"));
+    QCOMPARE(handle, INVALID_HANDLE_VALUE);
+    // And it reports the real reason -- an empty lastError would surface to the user as an
+    // unexplained failure, and would also pass a bare "returned invalid handle" assertion.
+    QVERIFY(unmounter.lastError().startsWith(QStringLiteral("CreateFile failed: error ")));
 }
 
 QTEST_MAIN(TestDriveUnmounter)

@@ -42,6 +42,7 @@
 #include <QMessageBox>
 #include <QProcess>
 #include <QRegularExpressionValidator>
+#include <QSaveFile>
 #include <QScrollArea>
 #include <QShortcut>
 #include <QtConcurrent>
@@ -4816,7 +4817,10 @@ void NetworkDiagnosticPanel::exportTableToCsv(QTableWidget* table, const QString
         return;
     }
 
-    QFile file(path);
+    // QSaveFile stages to a temporary and only replaces the target on commit(). A plain QFile
+    // with Truncate destroyed any existing export on open, and nothing here checked the stream
+    // afterwards -- so a disk-full or I/O failure still reported "Exported N rows".
+    QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         Q_EMIT statusMessage(
             tr("Could not open '%1' for CSV export: %2").arg(path, file.errorString()),
@@ -4844,6 +4848,16 @@ void NetworkDiagnosticPanel::exportTableToCsv(QTableWidget* table, const QString
             cells << sak::csvEscape((item != nullptr) ? item->text() : QString());
         }
         out << cells.join(QLatin1Char(',')) << "\n";
+    }
+
+    out.flush();
+    if (out.status() != QTextStream::Ok || !file.commit()) {
+        file.cancelWriting();
+        Q_EMIT statusMessage(
+            tr("CSV export to '%1' failed; the existing file was left unchanged.").arg(path),
+            sak::kTimerStatusMessageMs);
+        Q_EMIT logOutput(QStringLiteral("CSV export failed: %1").arg(path));
+        return;
     }
 
     Q_EMIT statusMessage(tr("Exported %1 rows to %2").arg(table->rowCount()).arg(path),

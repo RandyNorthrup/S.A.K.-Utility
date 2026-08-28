@@ -69,6 +69,11 @@ public:
      * @brief Lock a volume for exclusive access
      * @param volumePath Volume path (e.g., "\\.\C:")
      * @return Volume handle, or INVALID_HANDLE_VALUE on failure
+     *
+     * OWNERSHIP: this object keeps the handle and closes it in its destructor. The
+     * caller borrows it and must NOT close it. Do not let the returned handle outlive
+     * this DriveUnmounter -- an exclusive volume lock that survives the operation keeps
+     * Windows from remounting the drive.
      */
     HANDLE lockVolume(const QString& volumePath);
 

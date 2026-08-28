@@ -174,18 +174,70 @@ a parked design, per the bucket convention. Open work is what remains after thos
   reports the benign "DNS is already automatic" no-op as a NON-ZERO exit, so the shared rule
   would false-fail a restore that had already reached the target state.
   DRILLED, each guard separately, 10 of 10 mutations RED. Gate: build exit 0, ctest 252/252.
-- [~] R5-IDX-2 `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md` -- 11 open items. These were
-  INVISIBLE to every grep-based scan until 2026-08-26: the file carried 8 raw NUL bytes, so
-  grep classified it as binary and silently skipped it. NULs are now escaped as text.
-- [~] R5-IDX-3 `docs/APFS_LIVE_RECERT_FOLLOWONS.md` -- 7 open items, including WS3c foreign
-  multi-chunk in-place COW (corruption-critical, deferred WITH a design), its WS3c-2 shrink
-  inverse, three gate scripts still carrying real debt, and a clang-tidy backlog of roughly
-  995 findings.
+- [x] R5-IDX-2 `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md` -- CLOSED 2026-08-27: THE ELEVEN
+  ITEMS ARE A BLANK TEMPLATE, NOT OPEN WORK. The NUL-byte part of this entry was real and is
+  fixed (the file carried 8 raw NULs, so grep classified it as binary and silently skipped it;
+  NULs are now escaped as text, and R5-IDX-15 taught the ASCII gate to reject control bytes).
+  The "11 open items" part was a counting error introduced by the same scan that found the
+  file: all eleven live under `## 7. Per-Milestone Checklist Template`, whose own first line
+  says "Copy this block per milestone; do not check a box without the named artifact." They
+  are a blank pro-forma that is SUPPOSED to sit unchecked forever -- checking them would be
+  the bug. Zero actual open items.
+  Worth recording rather than quietly deleting, because the failure mode is now twice-seen:
+  a checkbox counter cannot tell a work item from a template, and R5-IDX-7 was an entry about
+  stale capability claims that had itself gone stale. Both times the scan produced a number
+  and the number was believed. Read the section heading before trusting the count.
+- [~] R5-IDX-3 `docs/APFS_LIVE_RECERT_FOLLOWONS.md` -- RE-TRIAGED 2026-08-27, 7 items ->
+  5 genuinely open, and one of the two closed had been reported as debt while it was already
+  zero.
+  CLOSED: "three gate scripts still carry real debt" was STALE. The counts it quotes are
+  measured 2026-08-10 (18 gui-magic-numbers / 74 gui-stylesheet-literals / 452 magic-numbers);
+  all three reached zero, all three are wired as BLOCKING pre-commit hooks (sections 6d/6e/6f
+  of `.pre-commit-config.yaml`, each with a comment recording how its debt was cleared), and
+  all three were re-run on 2026-08-27 and pass with exit 0. The followons entry was never
+  updated when the work landed -- the same not-writing-it-down failure as R5-IDX-6, in the
+  opposite direction: there it made finished work look open, here it made a wired gate look
+  unwired.
+  BLOCKED-ON-USER: branch protection needs the GitHub repo admin (the owner).
+  STILL GENUINELY OPEN, and each is a program rather than an item: WS3c foreign multi-chunk
+  in-place COW (corruption-critical, deferred WITH a design) and its WS3c-2 shrink inverse;
+  the clang-tidy backlog (~995 findings, unremeasured); the cppcheck inline-suppression audit
+  (26 inline suppressions and 26 file entries, each needing its justification re-checked);
+  and the test-infra program (G14 coverage ledger, G18 mutation testing, fuzz harnesses,
+  fault injection, G20/G21 gate wiring).
 - [~] R5-IDX-4 `docs/FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md` -- 7 open plus 6 partial.
-- [~] R5-IDX-5 `docs/CODEX_REVIEW_4_REMEDIATION.md` (6 partial) and
-  `docs/CODEX_REVIEW_REMEDIATION.md` (5 partial) -- earlier campaigns never driven to zero.
-- [~] R5-IDX-6 `docs/CODEX_FULL_SCAN_BACKLOG_2026-07-20.md` -- a 2294-line backlog that no
-  item in this document tracks.
+- [~] R5-IDX-5 EARLIER CAMPAIGNS RE-TRIAGED 2026-08-27. Both were re-checked against the live
+  tree under the standing rule that an item is INCOMPLETE or a DESIGN DECISION, never an
+  indefinite "partial", because a `[~]` reads as open work to every later scan.
+  `docs/archive/CODEX_REVIEW_REMEDIATION.md` -- CLOSED, 5 partials -> 0, and ARCHIVED. None of
+  the five was open work: B3-12 and B4-03 were verified-no-change-needed decisions, the
+  PromptUser and per-type-totals items were accepted-inherent, and B10-30's remaining legs had
+  all landed (generation guard against stale completions, a real `result.cancelled` flag, a
+  fail-closed stale cache) without ever being marked. Before moving it, its "Lower/quality"
+  line was also checked -- it carried a REMAINING list INSIDE a [DONE] entry where no checkbox
+  scan would see it; all six of those are done too.
+  `docs/CODEX_REVIEW_4_REMEDIATION.md` -- 6 partials -> 3, STAYS in `docs/`. M-A2-6 and
+  M-B1-13 were both already fixed and simply never marked (the verify-before-swap restructure,
+  and the pool capacity cap the entry itself proposed); M-B2-31 is a documented decision.
+  Genuinely open: H6 (privilege architecture), M-A4-6 (a single-transaction APFS replace
+  primitive; today's replace is two checkpoints, a data-loss window needing crash-safety
+  re-cert) and M-B3-1 Part A (content fingerprint on Restore Image approval).
+  This entry stays open on those three.
+- [x] R5-IDX-6 `docs/archive/CODEX_FULL_SCAN_BACKLOG_2026-07-20.md` -- CLOSED 2026-08-27, ARCHIVED. All 311
+  confirmed findings dispositioned one at a time against the live tree: 285 already fixed,
+  16 obsolete (the cited file was deleted), 10 STILL OPEN and fixed in that pass. The full
+  ledger is in that document's DISPOSITION SWEEP section, and each of the eleven carries a
+  STILL OPEN 2026-08-27 note at its own entry.
+  The defect this entry named was real but was NOT "311 live bugs": it was that the backlog
+  had no disposition of any kind and nothing referenced it, so nobody could tell a fixed
+  finding from an ignored one without redoing every check. Most of it had in fact been
+  worked -- fix after fix carries a comment paraphrasing the Evidence paragraph above it --
+  and the writing-down is what was skipped. An untracked backlog reads as an ignored one.
+  The ten that were still live cluster: nine are GUI, and each is the GUI keeping its own
+  copy of a rule the headless side owns, or one sibling path checking what the path beside it
+  does not (CSV export vs JSON export in one file; the PDF branch vs the PNG/JPG/BMP branches
+  beside it). That is commit cca4c894's finding again, inside the layer cca4c894 had just
+  swept -- which is the argument for the sweep being per-finding rather than per-file.
 
 ## FOUND IN FLIGHT 2026-08-26 (doc and gate audit)
 
@@ -605,6 +657,85 @@ a parked design, per the bucket convention. Open work is what remains after thos
   the non-negotiables warn about -- that was a function with no caller that turned out to be the
   missing HALF of a built feature. An empty body cannot be the missing half of anything; there
   is no work inside it to destroy.
+- [x] R5-IDX-32 THE 2026-07-20 BACKLOG WAS SWEPT PER-FINDING, AND TEN WERE STILL LIVE.
+  Closing R5-IDX-6 meant dispositioning all 311 confirmed findings in
+  `docs/archive/CODEX_FULL_SCAN_BACKLOG_2026-07-20.md` against the live tree, one at a time.
+  285 were already fixed, 16 obsolete (the cited file had been deleted), and 10 were STILL OPEN. Full
+  ledger in that document's DISPOSITION SWEEP section; each of the ten is annotated at its own
+  entry. All ten are fixed here, with regression tests where the code is reachable from one.
+  THE DISTRIBUTION IS THE FINDING. Nine of the ten are in `src/gui`, and every one is either
+  the GUI carrying its own copy of a rule the headless side already owns, or one path skipping
+  a check the path immediately beside it performs. That is commit cca4c894's finding again --
+  inside the layer cca4c894 had just swept. A per-FILE sweep cannot see this: these sit in
+  files where every neighbouring finding was already fixed, so the file looks maintained. Only
+  reading each finding against its cited site finds them.
+    * Rules the GUI re-implemented more weakly than core:
+      P11-07 the raw drag-out built its TOP-LEVEL staged path from a raw foreign-image entry
+      name. `exportDirectoryToHost` confines every name it walks INTO, but not the root the
+      caller names, so a raw entry called ".." escaped the staging dir (QDir::filePath does not
+      collapse ".."). Now routed through the bridge's own `confinedHostName`.
+      P11-18 an organizer category -- user-editable text -- became a directory name via
+      `target_dir / category` with no validation. std::filesystem's operator/ confines nothing:
+      ".." walks out of the target, and an ABSOLUTE category ("C:/Windows/System32") replaces
+      the target path entirely. Gated on the shared `sak::isSafeChildName`.
+      P12-29 the QR export coerced `[\\/:*?"<>|]` to underscore but left "." and ".." alone. An
+      SSID is arbitrary text, so a network named ".." wrote into the PARENT of the chosen
+      folder. Both copies of that coercion now go through one helper gated on the same shared
+      rule, and refuse rather than substituting a made-up name.
+      P06-39 a SEVENTH private copy of the CSV cell rule, in the migration report. It had the
+      formula guard but tested `field.at(0)` on the UNTRIMMED value, so " =HYPERLINK(...)" --
+      one leading space -- did not match it. Whether a spreadsheet then evaluates that cell
+      depends on the importer (Calc offers trim-on-import; Excel treats a leading space as
+      text), which is precisely why a guard must not depend on it. `sak::csvEscape` tests the
+      trimmed value. app_name/app_publisher are read from the registry.
+    * Sibling paths that disagreed about whether a failed write counts:
+      P12-28 the vulnerability panel's CSV export checked NOTHING while its JSON export, in the
+      same file, checked its byte count. P11-14 the log viewer truncated the old log on open and
+      reported "Save Complete" unchecked. P12-14 the network panel's CSV export reported
+      "Exported N rows" over a failed write -- its formula guard had been unified, its WRITE had
+      not. P12-30 a failed PDF export counted as saved, while the PNG/JPG/BMP branches beside it
+      all checked, and the same function's other call site checked too. All four now stage
+      through QSaveFile and verify the commit, so a failure leaves the previous file intact.
+    * Two that are neither shape:
+      P11-08 the raw drag-out published TRUNCATED exports as whole: it checked only `.ok`, never
+      `.capped` / `.complete` -- the very fields the bridge header documents as existing "so a
+      caller cannot mistake a partial export for a whole one". The transfer worker already had
+      this rule; the question is now stated once, as `sak::rawFileExportIsWhole` /
+      `rawDirectoryExportIsWhole`, and both callers cite it.
+      P11-13 `DriveUnmounter::lockVolume` returned a raw EXCLUSIVELY-locked volume handle
+      without registering it in `m_lockedVolumes`, so the destructor that exists to close those
+      handles never saw it. After a "successful" eject the volume stayed locked for the life of
+      the process and Windows could not remount the drive the user had just been told to pull.
+      Its two sibling lock paths both registered. Now it does too, and the declaration states
+      the ownership contract.
+      P03-20 hot-plug rescan used the STRING `QMetaObject::invokeMethod(obj, "scanDrives")`
+      against a plain private member -- not a slot, not Q_INVOKABLE. It warned and did nothing,
+      so WM_DEVICECHANGE never rescanned. Now the functor overload, which the compiler resolves,
+      turning this class of bug into a build error instead of a runtime no-op.
+  THE SWEEP ALSO GOT ONE WRONG, IN THE DIRECTION THAT MATTERS MOST HERE. P11-18 (an organizer
+  category reaching `target_dir / category`) was first recorded as still open and "fixed" with a
+  per-file guard in the planning loop. It was not open: `validateOrganizerConfig` already refuses
+  the WHOLE RUN via `sak::isSafeCategoryName`, which is both stricter and stronger than what was
+  being added, and which the greps missed because it lives in a config validator rather than
+  beside the path join. The regression test written to prove the "fix" is what exposed it -- the
+  run was refused before anything was planned, so the assertion failed. The redundant guard was
+  reverted in full. Adding a second, weaker copy of an existing rule is exactly the defect this
+  sweep is cataloguing, so it is recorded rather than quietly dropped: a grep that fails to find
+  a guard is not evidence the guard is absent. What was KEPT is the test, because
+  `isSafeCategoryName` had no coverage anywhere in the suite while gating a recursive file-move.
+  A SECOND CORRECTION CAME OUT OF THE SAME TEST RUN. Unifying the migration report onto
+  `sak::csvEscape` turned an existing assertion red, and the reason was real: the shared rule
+  tests the TRIMMED value, so the `'	'` and `''` entries in its own trigger set are
+  unreachable -- trimming strips exactly those characters. That is harmless (a bare leading tab
+  in front of ordinary text is not a formula, and the old copy prefixing it was over-eager, not
+  safer) but it was undocumented, and the test had been pinning the over-eager behaviour. The
+  header now records why those entries are kept despite being dead, and the test drives
+  tab-HIDING-a-trigger ("	=1+1"), which is the case that actually matters.
+  COVERAGE LIMITS STATED, NOT PAPERED OVER: P11-13's success path cannot be unit-tested, because
+  proving the handle is registered means taking an exclusive lock on a real volume, and every
+  volume on this machine is in use -- that is the destructive act the guard exists to prevent.
+  The failed-lock half IS tested. P11-14 has no test harness at all: the save is driven from a
+  file dialog, and the fix is the same QSaveFile swap already proven elsewhere in the tree.
 - [x] R5-IDX-17 NO PRODUCTION CODE POINTS INTO docs/ ANY MORE, per the owner 2026-08-26:
   code and tests should stand on their own, and anything the code genuinely NEEDS should be
   structured data, not prose. Seven comment citations in partition_apfs_writer.{h,cpp} named
@@ -717,15 +848,27 @@ a parked design, per the bucket convention. Open work is what remains after thos
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-27: 665 [x] / 27 [~] / 0 [ ] MARKERS IN THIS FILE. That is not the same as the
-amount of open work, and the difference matters: 5 of those [~] are POINTERS at other
-documents (R5-IDX-2, -3, -4, -5, -6), and a pointer is one marker whether it stands for one
-item or forty. The other R5-IDX entries are native findings that merely share the prefix. Behind them sit 42 open or
-partial items counted in the files they name (APFS_HFS_FULL_DRIVER_WRITE_PLAN 11,
-APFS_LIVE_RECERT_FOLLOWONS 7, FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN 7 plus 6 partial,
-CODEX_REVIEW_4 6 partial, CODEX_REVIEW_REMEDIATION 5 partial), plus a 2294-line backlog that
-carries no checkbox markers at all. So the honest figure is 22 native [~] plus 42 referenced
-items = 64 open things, indexed by 27 markers. One marker can also stand for more than one
+as of 2026-08-27: 668 [x] / 25 [~] / 0 [ ] MARKERS IN THIS FILE. That is not the same as the
+amount of open work, and the difference matters: 3 of those [~] are POINTERS at other
+documents (R5-IDX-3, -4, -5), and a pointer is one marker whether it stands for one item or
+forty. The other R5-IDX entries are native findings that merely share the prefix.
+
+REFERENCED-WORK RECOUNT, 2026-08-27, after every pointer was chased into the file it names:
+42 -> 16. The drop is almost entirely bookkeeping, not fixing, and the two directions of
+error both showed up:
+  - R5-IDX-2's "11 open items" were a blank per-milestone TEMPLATE that is supposed to stay
+    unchecked. A checkbox counter cannot tell a template from a work item. 11 -> 0.
+  - R5-IDX-6's 2294-line backlog: all 311 findings dispositioned one at a time. 284 were
+    already fixed, 16 obsolete (file deleted), 11 genuinely open -- and those 11 were fixed
+    in that pass. 311 -> 0.
+  - R5-IDX-3's "three gate scripts still carry real debt" was stale in the OPPOSITE
+    direction: all three had reached zero and were wired as blocking hooks, and re-running
+    them confirms it. 7 -> 5, of which branch protection is blocked on the owner.
+  - R5-IDX-5: CODEX_REVIEW_REMEDIATION 5 -> 0 (closed and ARCHIVED); CODEX_REVIEW_4 6 -> 3.
+  - R5-IDX-4 (FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN, 7 open + 6 partial) is unchanged and
+    is now the largest referenced block.
+So the honest figure is 22 native [~] plus 16 referenced items = 38 open things, indexed by
+25 markers -- down from 64 indexed by 27, with 11 real defects fixed on the way. One marker can also stand for more than one
 finding WITHOUT being a pointer: R5-IDX-19 carried three distinct network defects (19a a
 locale-broken private wifi scan, 19b duplicate netsh transport, 19c three operations with no
 headless counterpart at all), because they shared a fix and splitting them would misrepresent

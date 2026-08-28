@@ -245,7 +245,7 @@ Full per-finding evidence lives in the review scratchpad (verified-A1..B3.md).
 ===============================================================================
 
 profile-restore / network (A2):
-- [~] M-A2-6  worker.cpp:552 DEFERRED: the pre-existing original (.sakold.tmp) is removed on a successful swap, so a later verify/perms failure cannot auto-restore it. The failure IS surfaced fail-closed (m_filesErrored++, restore reports failure); auto-rollback needs a verify-before-swap restructure (defer removing .sakold.tmp until verify passes). Tracked.
+- [x] M-A2-6  worker.cpp:552 DEFERRED: the pre-existing original (.sakold.tmp) is removed on a successful swap, so a later verify/perms failure cannot auto-restore it. The failure IS surfaced fail-closed (m_filesErrored++, restore reports failure); auto-rollback needs a verify-before-swap restructure (defer removing .sakold.tmp until verify passes). Tracked.
 - [x] M-A2-4  worker.cpp:756,860 payload verify TOCTOU + compares dest vs re-read source, not manifest digest. FIXED (wave 22): verifyFile still compares dest vs source per-file, but restoreUser now runs a POST-restore re-hash of the source tree against the sealed manifest digest (verifyUserPayloadChecksum, gated on m_verify), so a source swapped between pre-restore validation and the copy is caught -- source==manifest at T0 AND T2 plus dest==source per-file => dest==sealed transitively. Folder loop extracted to restoreUserFolders to keep restoreUser under the length cap. (The manifest records only per-user tree digests, no per-file digests, so a full per-file bind would need a manifest schema change -- noted.)
 - [x] M-A2-13 worker.cpp:694 FIXED (wave 8): assignOwnershipToUser fails closed on SID-resolve/takeOwnership failure instead of silently stripping + reporting success.
 - [x] M-A2-14 worker.cpp:470 FIXED (wave 8): copyDirectory fails closed on an unreadable source dir; QDir::System added so system entries aren't silently skipped.
@@ -275,7 +275,7 @@ apfs/partition (A4):
 ai (B1):
 - [x] M-B1-5  ai_app_action_planner.cpp:116 provider-gateway app_run_action has no catastrophic path. FIXED (wave 24): AiAppActionPlan gained a `catastrophic` flag set from commandLooksCatastrophic || commandLooksObfuscated; authorizeAppAction now runs authorizeCatastrophicAppAction FIRST and in every access mode (mandatory callbacks.confirm), so a format/wipe/obfuscated manifest command can no longer be satisfied by only the Unattended restore-point offer. Regression test flagsCatastrophicManifestCommand.
 - [x] M-B1-6  ai_provider_gateway_tool_runner.cpp:397 recipe input-tier steps run without the per-call hard confirm. FIXED (wave 24): the recipe-step gate changed from isWin32InputTool (which includes browser/clipboard/extension input tools that the direct path hard-confirms in every mode) to a new positive allowlist isWin32DesktopInputTool ({click_text, uia_click_control, dismiss_dialog, mouse_click, type_text, send_keys, focus_window}). Browser/clipboard/extension input tools inside a win32_gui recipe are now rejected (require a per-call confirm); a newly added input tool defaults to rejected until whitelisted. Regression assertions in classifiesWin32McpToolRisk.
-- [~] M-B1-13 ai_mcp_session_pool.cpp:33 DEFERRED: timeout_ms in the key is DELIBERATE (a pooled session bakes its timeout at open(); dropping it reintroduces stale-timeout inheritance). The real fix is LRU eviction / a capacity cap on m_sessions (close+evict oldest), which needs a careful pool refactor + safe session close. Tracked.
+- [x] M-B1-13 ai_mcp_session_pool.cpp:33 DEFERRED: timeout_ms in the key is DELIBERATE (a pooled session bakes its timeout at open(); dropping it reintroduces stale-timeout inheritance). The real fix is LRU eviction / a capacity cap on m_sessions (close+evict oldest), which needs a careful pool refactor + safe session close. Tracked.
 - [x] M-B1-14 ai_mcp_stdio_client.cpp:165 reads a full line before the byte cap. FIXED (wave 20): handleReadyRead now enforces the byte cap BEFORE reading any line, so a single oversized newline-terminated line is refused up front (fail closed) instead of being allocated whole; the post-loop newline-free guard stays.
 - [x] M-B1-15 ai_mcp_stdio_client.cpp:128 server-exit uses terminate() not tree-kill. FIXED (wave 29): on server-exit the finished-lambda calls fail(...,force_kill=false) and stopProcess early-returned on NotRunning, so neither terminate() nor the parent-PID snapshot walk (which finds nothing once the parent exited and children reparented) reaped descendants. StdioToolCallWorker now places the live server in a KILL_ON_JOB_CLOSE Windows Job Object in onStarted() (assignProcessToJob), and stopProcess closes the job first (closeJob) -- reaping the WHOLE tree including a server that exited on its own -- returning before the per-process fallback. If the job cannot be created/assigned it falls back to the existing terminateProcessTree()+kill so cleanup is never weaker than before; a destructor closes the job as a safety net. (Mirrors the ExecutionBroker job pattern; no unit seam -- needs a live process.)
 - [x] M-B1-16 ai_execution_broker.cpp:90 job-create/assign failure -> kill primary only, descendants survive. FIXED (wave 24): terminateProcessTree now falls back to a recursive Toolhelp32 snapshot kill (killProcessTreeSnapshot) when the Job Object could not be established, run while the primary is still alive so descendants are reaped rather than orphaned. When the KILL_ON_JOB_CLOSE job IS present it still governs; the fallback only makes cleanup never weaker than the direct primary kill.
@@ -292,7 +292,7 @@ core-util (B2):
 - [x] M-B2-15 offline_deployment_worker.cpp:1580 empty declared checksum passes unverified; downloaded>0 ships partial. FIXED (wave 20): the direct-download integrity gate switched from the permissive binaryChecksumMatches (empty->true) to the fail-closed installerVerified (empty declared checksum -> reject), so an unauthenticated direct download is never written or counted.
 - [x] M-B2-16 vulnerability_scanner.cpp:1525 enumerateInstalledProgramsFast no incomplete flag -> denied hive = "complete" inventory. FIXED (wave 28): scanFastRegistryHive now returns a completeness bool (via fastHiveOpenIsComplete -- success or ERROR_FILE_NOT_FOUND = complete/empty, ACCESS_DENIED/other = incomplete; per-index enum/open failures also mark incomplete); enumerateInstalledProgramsFast(bool* out_complete=nullptr) ANDs the three hives. Callers surface it: listInstalledPrograms + scanVulnerabilities add an inventory_complete field (scanVulnerabilities also appends a source_error), vulnerability_panel emits an "inventory incomplete -- run elevated" progress line. Regression test fastHiveOpenIsComplete_treatsAbsentKeyAsCompleteDeniedAsIncomplete.
 - [x] M-B2-35 package_internalization_engine.cpp:371 FIXED (wave 11): isSafePackageComponent now rejects Win32-illegal chars (< > " | ? *), trailing dot/space, and reserved device names (CON/PRN/AUX/NUL/COM1-9/LPT1-9). Regression rows added.
-- [~] M-B2-31 windows_usb_creator_extract.cpp:618 bcdboot given drive root not a Windows dir (tracked in-code). NO CODE CHANGE (verified wave 20 planning pass): already both (a) documented in-code (lines 625-634 KNOWN LIMITATIONS) and (b) fail-closed -- runBcdboot gates certification on bcdboot's real exit via bcdbootReportsSuccess, so a root-source failure returns false and surfaces the error rather than falsely certifying bootable media. The residual is a FUNCTIONAL-correctness design change beyond this file (Windows install media has no top-level \\Windows tree; it lives inside sources\\install.wim), requiring either a valid Windows source dir for bcdboot or dropping bcdboot for install media in favor of the ISO's own extracted BCD store. Deliberately NOT adding a naive "<drive>\\Windows must exist" gate -- that would falsely fail-closed on legitimate install media. Tracking comment kept.
+- [x] M-B2-31 windows_usb_creator_extract.cpp:618 bcdboot given drive root not a Windows dir (tracked in-code). NO CODE CHANGE (verified wave 20 planning pass): already both (a) documented in-code (lines 625-634 KNOWN LIMITATIONS) and (b) fail-closed -- runBcdboot gates certification on bcdboot's real exit via bcdbootReportsSuccess, so a root-source failure returns false and surfaces the error rather than falsely certifying bootable media. The residual is a FUNCTIONAL-correctness design change beyond this file (Windows install media has no top-level \\Windows tree; it lives inside sources\\install.wim), requiring either a valid Windows source dir for bcdboot or dropping bcdboot for install media in favor of the ISO's own extracted BCD store. Deliberately NOT adding a naive "<drive>\\Windows must exist" gate -- that would falsely fail-closed on legitimate install media. Tracking comment kept.
 - [x] M-B2-28 disk_benchmark_worker.cpp:600,765 FIXED (wave 10): validateTestFileSize now rejects sequential_passes<=0/>1000 (loop-skip 0 MB/s success) and random_duration_sec<=0/>3600 (bounds the *1000 int overflow).
 - [x] M-B2-29 disk_benchmark_worker.cpp:183 FIXED (wave 10): randomIoResultUsable requires total_failures < total_ops (was <=), so a 50%-failure run is not scored as usable.
 
@@ -339,3 +339,39 @@ Recorded so they are not re-flagged:
 - B1: #7 (operation always set), #9,#10 (fails closed in effect), #19 (batch validated before active), #26 (skip = tool unoffered).
 - B2: #4 (UAF guarded), #9 (.NET repack terminating), #41 (severity labeled not understated); many design-intent surfaced-partial incl. #17/#18 (app_readonly 676/707 provenance is a shrink-only whitelist -- a timed-out scan cannot authorize deleting un-scanned items).
 - B3: #16 (single serial task) false-pos; #6 (AI UAF -- token + m_shuttingDown + QPointer, prior fix), #18 (File Explorer detach -- deliberate prior fix), #15 (trusted pipe), #21 (report success gated on collectors+save), #3 (mostly mitigated).
+
+--------------------------------------------------------------------------------
+## RE-TRIAGE 2026-08-27 (R5-IDX-5) -- 6 partials -> 3 closed, 3 genuinely open
+
+Under the standing rule that an item is INCOMPLETE or a DESIGN DECISION, never an indefinite
+"partial". Two of the three closures were work that had LANDED and was never marked, which is
+the same not-writing-it-down failure as R5-IDX-6.
+
+  M-A2-6   DONE (was marked deferred). The verify-before-swap restructure the entry asked for
+           is in the tree: copyFileReplacingExisting moves the displaced original aside and
+           RETURNS it rather than deleting it, and the caller finalizes it only after
+           applyPermissions + verifyFile pass -- restoring it if either fails. The staging
+           path also gained a 64-bit random token, because a fixed suffix let a local attacker
+           pre-plant a dangling symlink at a guessable path.
+  M-B1-13  DONE (was marked deferred). The entry's own proposed fix was "LRU eviction / a
+           capacity cap on m_sessions"; a kMaxPooledSessions cap is in place and the pool
+           refuses at capacity with an explicit message. Keeping timeout_ms in the key stays
+           deliberate, as the entry said.
+  M-B2-31  DECISION. bcdboot's drive-root source is a documented KNOWN LIMITATION in-code,
+           and the run is gated on bcdboot's real exit (bcdbootReportsSuccess), so nothing is
+           falsely certified as bootable. The residual is a functional design change beyond
+           this file; a naive "<drive>\Windows must exist" gate is deliberately NOT added
+           because it would fail-closed on legitimate install media.
+
+STILL OPEN, each a deliberate design deferral with its reason recorded at the entry:
+  H6       privilege architecture -- deriving effective elevation from the process token.
+  M-A4-6   a single-transaction commitInPlaceFileReplace primitive for APFS (today's replace
+           is two checkpoints: a crash between them loses the file. A data-loss WINDOW, not
+           corruption -- either state is internally consistent -- but it needs crash-safety
+           re-certification, so it is not a refactor to rush).
+  M-B3-1   Part A only: the Restore Image approval pins size, not content, so a same-size
+           content swap between queue and copy is accepted. Parts B and C (UNC source,
+           source-on-target-disk) are fixed. Closing A needs a content fingerprint captured
+           at approval time and re-verified in the emitted script.
+
+This campaign is NOT at zero and stays in docs/ until it is.

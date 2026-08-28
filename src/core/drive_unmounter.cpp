@@ -332,6 +332,18 @@ HANDLE DriveUnmounter::lockVolume(const QString& volumePath) {
         return INVALID_HANDLE_VALUE;
     }
 
+    // Register the handle so ~DriveUnmounter closes it, exactly as lockAndDismountVolume
+    // and the eject path already do. Handing a caller a raw EXCLUSIVELY-LOCKED handle that
+    // this object never tracks meant the lock outlived the operation for the life of the
+    // process: the volume stayed locked after a "successful" eject, so Windows could not
+    // remount the drive the user was just told they could remove.
+    // A second lock of the same volume replaces the entry, so close the previous handle
+    // rather than dropping it out of the map unclosed.
+    const auto existing = m_lockedVolumes.constFind(volumePath);
+    if (existing != m_lockedVolumes.constEnd() && existing.value() != INVALID_HANDLE_VALUE) {
+        CloseHandle(existing.value());
+    }
+    m_lockedVolumes.insert(volumePath, hVolume);
     return hVolume;
 }
 

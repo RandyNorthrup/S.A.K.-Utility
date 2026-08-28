@@ -15,6 +15,7 @@
 #include "sak/widget_helpers.h"
 #include "sak/wifi_profile_scanner.h"
 #include "sak/wifi_setup_script.h"
+#include "sak/windows_path_policy.h"
 
 #include "qrcodegen.hpp"
 
@@ -174,6 +175,18 @@ private:
 namespace sak {
 
 namespace {
+
+// A QR export writes into <chosen directory>/<sub_name>. The character class coerces the
+// separators Windows rejects, but it does NOT stop "." or ".." -- and an SSID is arbitrary
+// text this program did not author, so ".." is a legal network name that resolves to the
+// PARENT of the directory the user picked. Gate the coerced name on sak::isSafeChildName,
+// the shared single-child rule, and return empty so the caller refuses rather than writing
+// somewhere the user did not choose. There were two copies of the coercion and neither
+// checked the result.
+QString qrSubdirName(const QString& raw_name) {
+    const QString coerced = QString(raw_name).replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
+    return sak::isSafeChildName(coerced) ? coerced : QString();
+}
 
 constexpr int kWifiPasswordIconSize = ui::kUiIconSmall;
 constexpr int kWifiSelectColumnWidth = kSelectColumnW;
@@ -940,7 +953,13 @@ void WifiManagerPanel::showSingleQrWizard(const WifiConfig& cfg) {
     stack->addWidget(buildQrOutputPage(ctl));
 
     const QString raw_name = location.isEmpty() ? ssid : location + "_" + ssid;
-    const QString sub_name = QString(raw_name).replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
+    const QString sub_name = qrSubdirName(raw_name);
+    if (sub_name.isEmpty()) {
+        Q_EMIT statusMessage(
+            QString("Network name \"%1\" cannot be used as a folder name.").arg(raw_name),
+            sak::kTimerStatusMessageMs);
+        return;
+    }
 
     connectSingleQrWizard(
         &dlg,
@@ -956,24 +975,39 @@ bool WifiManagerPanel::executeSingleQrNetwork(const WifiConfig& cfg,
                                               const QrExportFormats& formats) {
     const QString cfg_payload = buildWifiPayloadFromConfig(cfg);
     const QString raw_name = cfg.location.isEmpty() ? cfg.ssid : cfg.location + "_" + cfg.ssid;
-    const QString sub_name = QString(raw_name).replace(QRegularExpression("[\\\\/:*?\"<>|]"), "_");
+    const QString sub_name = qrSubdirName(raw_name);
+    if (sub_name.isEmpty()) {
+        sak::logWarning("QR export refused: network name is not a usable folder name: {}",
+                        raw_name.toStdString());
+        return false;
+    }
     const QString out_dir = base_dir + "/" + sub_name;
     if (!QDir().mkpath(out_dir)) {
         return false;
     }
     const QImage img = renderQrWithHeader(cfg_payload, cfg.location, show_header);
+    return saveQrFormats(img, out_dir + "/" + sub_name, cfg.ssid, formats);
+}
+
+// Write the checked formats under @p path_stem (no extension) and report whether ANY of them
+// actually landed. Every branch checks its own write: exportQrToPdf's result used to be
+// discarded with any_saved set unconditionally, so a PDF-only export that failed still counted
+// as saved, unlike the image branches beside it.
+bool WifiManagerPanel::saveQrFormats(const QImage& img,
+                                     const QString& path_stem,
+                                     const QString& ssid,
+                                     const QrExportFormats& formats) {
     bool any_saved = false;
-    if (formats.png && img.save(out_dir + "/" + sub_name + ".png", "PNG")) {
+    if (formats.png && img.save(path_stem + ".png", "PNG")) {
         any_saved = true;
     }
-    if (formats.jpg && img.save(out_dir + "/" + sub_name + ".jpg", "JPEG")) {
+    if (formats.jpg && img.save(path_stem + ".jpg", "JPEG")) {
         any_saved = true;
     }
-    if (formats.bmp && img.save(out_dir + "/" + sub_name + ".bmp", "BMP")) {
+    if (formats.bmp && img.save(path_stem + ".bmp", "BMP")) {
         any_saved = true;
     }
-    if (formats.pdf) {
-        exportQrToPdf(img, out_dir + "/" + sub_name + ".pdf", cfg.ssid + " WiFi QR Code");
+    if (formats.pdf && exportQrToPdf(img, path_stem + ".pdf", ssid + " WiFi QR Code")) {
         any_saved = true;
     }
     return any_saved;

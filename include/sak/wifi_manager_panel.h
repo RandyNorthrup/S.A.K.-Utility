@@ -205,6 +205,12 @@ private:
 
     /** Write a QR image as a full-page A4 PDF; returns true on success */
     static bool exportQrToPdf(const QImage& image, const QString& path, const QString& title);
+    /// Write the checked formats under @p path_stem (no extension); true if ANY landed.
+    /// Each branch checks its own write, so a format that failed never counts as saved.
+    static bool saveQrFormats(const QImage& img,
+                              const QString& path_stem,
+                              const QString& ssid,
+                              const QrExportFormats& formats);
 
     /** Show a QR dialog for a single WiFi network */
     void showSingleNetworkQrDialog(const WifiConfig& cfg);

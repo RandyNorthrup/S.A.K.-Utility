@@ -3,6 +3,9 @@
 
 #include "sak/migration_report.h"
 
+// sak::csvEscape -- the one CSV cell writer. This file carried a private copy whose formula
+// guard tested the untrimmed value, so leading whitespace hid the trigger character.
+#include "sak/csv_escape.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/report_style_constants.h"
@@ -504,20 +507,15 @@ QString MigrationReport::getCurrentUser() const {
 }
 
 QString MigrationReport::escapeCsvField(const QString& field) {
-    // Neutralize spreadsheet formula injection: a field whose first character is
-    // a formula trigger is evaluated by Excel/Calc, so prefix a single quote to
-    // force it to be treated as literal text.
-    QString value = field;
-    if (!value.isEmpty() && QString("=+-@\t\r").contains(value.at(0))) {
-        value.prepend('\'');
-    }
-    if (value.contains(',') || value.contains('"') || value.contains('\n') ||
-        value.contains('\r') || value != field) {
-        QString escaped = value;
-        escaped.replace("\"", "\"\"");
-        return "\"" + escaped + "\"";
-    }
-    return value;
+    // Delegates to sak::csvEscape, the one CSV cell writer. This was a seventh private copy
+    // of that rule and it disagreed on the case that matters: it tested field.at(0) on the
+    // UNTRIMMED value, so " =HYPERLINK(...)" -- one leading space -- did not match its guard.
+    // Whether a spreadsheet then evaluates that cell depends on the importer (Calc offers a
+    // trim-spaces option on CSV import; Excel treats a leading space as text), which is
+    // precisely why the guard must not depend on it. The shared rule tests the trimmed value.
+    // This report exports app names and publishers read from the registry, so a program that
+    // installs itself under a crafted display name chooses that text -- it is not ours to trust.
+    return sak::csvEscape(field);
 }
 
 QString MigrationReport::formatHtmlReport() const {

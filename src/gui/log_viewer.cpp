@@ -11,6 +11,7 @@
 #include <QFileDialog>
 #include <QHBoxLayout>
 #include <QMessageBox>
+#include <QSaveFile>
 #include <QScrollBar>
 #include <QTextDocument>
 #include <QTextStream>
@@ -223,7 +224,12 @@ void LogViewer::onSaveClicked() {
         return;
     }
 
-    QFile file(file_path);
+    // QSaveFile stages to a temporary and only replaces the target on commit(). A plain
+    // QFile with Truncate destroyed an existing log the moment it opened, and close()
+    // without checking the stream flush reported "Save Complete" over a disk-full or I/O
+    // failure -- so the user was told their log was saved while the old one was already
+    // gone and the new one was short or empty.
+    QSaveFile file(file_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         sak::logError("Failed to save log file: {}", file_path.toStdString());
         sak::showWarningLogged(this,
@@ -234,7 +240,17 @@ void LogViewer::onSaveClicked() {
 
     QTextStream out(&file);
     out << m_text_browser->toPlainText();
-    file.close();
+    out.flush();
+    if (out.status() != QTextStream::Ok || !file.commit()) {
+        file.cancelWriting();
+        sak::logError("Failed to write log file: {}", file_path.toStdString());
+        sak::showWarningLogged(
+            this,
+            "Save Error",
+            QString("Failed to write log file: %1 (the existing file was left unchanged)")
+                .arg(file_path));
+        return;
+    }
 
     sak::logInfo("Saved log file: {}", file_path.toStdString());
     sak::showInformationLogged(this, "Save Complete", QString("Log saved to: %1").arg(file_path));

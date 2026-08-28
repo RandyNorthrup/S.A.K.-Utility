@@ -946,7 +946,14 @@ LRESULT CALLBACK DriveScanner::deviceChangeWndProc(HWND hwnd,
     const auto* pHdr = reinterpret_cast<const DEV_BROADCAST_HDR*>(lParam);
     if ((pHdr != nullptr) && pHdr->dbch_devicetype == DBT_DEVTYP_VOLUME &&
         (DriveScanner::s_instance != nullptr)) {
-        QMetaObject::invokeMethod(DriveScanner::s_instance, "scanDrives", Qt::QueuedConnection);
+        // Functor overload, NOT the string one. scanDrives() is a plain private member -- not a
+        // slot and not Q_INVOKABLE -- so invokeMethod("scanDrives") found no such method: it
+        // logged a warning and did nothing, and hot-plug arrival/removal never rescanned. The
+        // functor form is resolved by the compiler, so a method that is not invokable is a build
+        // error here rather than a silent no-op at runtime.
+        auto* const scanner = DriveScanner::s_instance;
+        QMetaObject::invokeMethod(
+            scanner, [scanner]() { scanner->scanDrives(); }, Qt::QueuedConnection);
     }
     return TRUE;
 }
