@@ -363,15 +363,41 @@ the same not-writing-it-down failure as R5-IDX-6.
            this file; a naive "<drive>\Windows must exist" gate is deliberately NOT added
            because it would fail-closed on legitimate install media.
 
-STILL OPEN, each a deliberate design deferral with its reason recorded at the entry:
-  H6       privilege architecture -- deriving effective elevation from the process token.
-  M-A4-6   a single-transaction commitInPlaceFileReplace primitive for APFS (today's replace
-           is two checkpoints: a crash between them loses the file. A data-loss WINDOW, not
-           corruption -- either state is internally consistent -- but it needs crash-safety
-           re-certification, so it is not a refactor to rush).
-  M-B3-1   Part A only: the Restore Image approval pins size, not content, so a same-size
-           content swap between queue and copy is accepted. Parts B and C (UNC source,
-           source-on-target-disk) are fixed. Closing A needs a content fingerprint captured
-           at approval time and re-verified in the emitted script.
+STILL OPEN. All three are INCOMPLETE -- none is a design decision, and none should be
+called a "deferral". That word is the middle category the non-negotiables forbid precisely
+because it lets an item sit forever without anyone deciding anything: an item is INCOMPLETE
+(someone is expected to finish it) or a DESIGN DECISION (nobody is, and the reason is
+recorded). Re-classified 2026-08-27 with what each actually needs and what actually blocks
+it, so the reader can tell the difference between "hard" and "waiting on a machine":
+
+  H6       INCOMPLETE, and TRACTABLE NOW -- the entry over-states its own difficulty. It
+           calls the fix "a privilege-architecture change", but ElevationManager::isElevated()
+           already exists and is used in five places. The defect is narrower than the entry
+           says: AiCommandResult::elevated records the model's CLAIM (requires_admin) rather
+           than the FACT. On the non-admin path the broker launches a plain QProcess that
+           inherits S.A.K.'s token, so when S.A.K. is itself elevated the child runs elevated
+           while `elevated` stays false and the policy takes no lease and no restore point.
+           Neither ai_execution_broker.cpp nor ai_tool_policy.cpp references ElevationManager
+           at all. The fix is to feed effective elevation
+           (requires_admin || ElevationManager::isElevated()) into the policy context and the
+           result. Bounded by the C2/C3/C4 content classifier today -- a destructive command
+           is gated on content regardless of requires_admin -- which is why this is not
+           urgent, not why it is hard.
+
+  M-A4-6   INCOMPLETE, BLOCKED ON THE CERT RIG. The work itself is well specified in this
+           entry (one commitInPlaceFileReplace modelled on commitInPlaceFilePatch). What
+           blocks it is not design: changing the certified in-place COW commit path requires
+           a crash-safety round-trip re-certification on the macOS VM rig, which is owner
+           capacity, not agent work. A crash between the two checkpoints loses the file --
+           a data-loss WINDOW, not corruption, and recoverable from backup.
+
+  M-B3-1   INCOMPLETE, WITH ONE OWNER DECISION INSIDE IT. Part A only: the Restore Image
+           approval pins size, not content, so a same-size content swap between queue and
+           copy is accepted (Parts B and C -- UNC source, source-on-target-disk -- are fixed).
+           Emitting a digest check in the generated script is small. The decision is WHICH
+           digest: a full SHA-256 of a multi-GB image costs minutes at approval time, and an
+           offset-sampled fingerprint is fast but only probabilistic against an attacker who
+           knows the sampling offsets. That trade-off is the owner's to make, and it is the
+           real reason this is open -- not the size of the change.
 
 This campaign is NOT at zero and stays in docs/ until it is.

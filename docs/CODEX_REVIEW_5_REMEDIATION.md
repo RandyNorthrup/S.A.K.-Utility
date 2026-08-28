@@ -219,10 +219,18 @@ a parked design, per the bucket convention. Open work is what remains after thos
   `docs/CODEX_REVIEW_4_REMEDIATION.md` -- 6 partials -> 3, STAYS in `docs/`. M-A2-6 and
   M-B1-13 were both already fixed and simply never marked (the verify-before-swap restructure,
   and the pool capacity cap the entry itself proposed); M-B2-31 is a documented decision.
-  Genuinely open: H6 (privilege architecture), M-A4-6 (a single-transaction APFS replace
-  primitive; today's replace is two checkpoints, a data-loss window needing crash-safety
-  re-cert) and M-B3-1 Part A (content fingerprint on Restore Image approval).
-  This entry stays open on those three.
+  Genuinely open: three, and all three are INCOMPLETE -- none is a design decision. They had
+  been carried as "deferred", which is the middle category the non-negotiables forbid because
+  it lets an item sit without anyone deciding anything. Re-classified with what actually
+  blocks each: H6 is TRACTABLE NOW and its entry over-stated its own difficulty (it calls the
+  fix a "privilege-architecture change", but ElevationManager::isElevated() already exists --
+  the real defect is that AiCommandResult::elevated records the model's CLAIM rather than the
+  fact, so a plain QProcess inheriting an elevated S.A.K. token runs elevated with no lease
+  and no restore point); M-A4-6 is blocked on macOS cert-rig capacity for a crash-safety
+  round trip, not on design; M-B3-1 Part A is small to emit but contains one genuine OWNER
+  decision -- full SHA-256 of a multi-GB image costs minutes at approval time, an
+  offset-sampled fingerprint is fast but only probabilistic against an attacker who knows the
+  offsets. This entry stays open on those three.
 - [x] R5-IDX-6 `docs/archive/CODEX_FULL_SCAN_BACKLOG_2026-07-20.md` -- CLOSED 2026-08-27, ARCHIVED. All 311
   confirmed findings dispositioned one at a time against the live tree: 285 already fixed,
   16 obsolete (the cited file was deleted), 10 STILL OPEN and fixed in that pass. The full
