@@ -1560,6 +1560,7 @@ private Q_SLOTS:
     void apfsWriter_crashSafeIpSlotRoundRobinsThreeSlots();
     void apfsWriter_readsGeneratedLiveCibAddr();
     void apfsWriter_crashBeforeCheckpointDurableRollsBack();
+    void apfsWriter_crashDuringReplaceKeepsTheOldFile();  // M-A4-6
     void fileSystemRegistry_reportsNativeAndNonNativeCapability();
     void fileSystemToolManifest_validatesPinnedTool();
     void fileSystemToolManifest_blocksMissingMetadataHashMismatchAndPathTraversal();
@@ -9528,21 +9529,29 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileWriteCreatesThenReplaces()
                                                        .options = options});
     QVERIFY2(create.ok, qPrintable(create.blockers.join(QStringLiteral("; "))));
     QCOMPARE(create.new_xid, 3ULL);
-    {
+    // Exactly one doc.txt holding exactly these bytes -- asserted after the create and again
+    // after the replace, so the replace is compared against a known-good starting state.
+    const auto verifyOnly = [](const QString& img, const QByteArray& want) {
         const auto listing =
-            PartitionApfsFileSystemReader::listDirectoryFromImage(created, QStringLiteral("/"), 20);
+            PartitionApfsFileSystemReader::listDirectoryFromImage(img, QStringLiteral("/"), 20);
         QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
         QCOMPARE(listing.entries.size(), 1);
         QCOMPARE(listing.entries.first().name, QStringLiteral("doc.txt"));
-        QCOMPARE(listing.entries.first().size_bytes, static_cast<uint64_t>(v1.size()));
-        const auto read = PartitionApfsFileSystemReader::readFileFromImage(
-            created, QStringLiteral("/doc.txt"), 4096);
+        QCOMPARE(listing.entries.first().size_bytes, static_cast<uint64_t>(want.size()));
+        const auto read =
+            PartitionApfsFileSystemReader::readFileFromImage(img, QStringLiteral("/doc.txt"), 4096);
         QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
-        QCOMPARE(read.data, v1);
-    }
+        QCOMPARE(read.data, want);
+    };
+    verifyOnly(created, v1);
 
-    // Replace: writing the same name overwrites it (delete xid 3 -> 4, then insert
-    // xid 4 -> 5). Still one entry, the new (longer) content, the new size.
+    // Replace: writing the same name overwrites it in ONE checkpoint (xid 3 -> 4).
+    //
+    // This used to be two commits -- a delete (3 -> 4) then an insert (4 -> 5) -- and a crash
+    // in the window between them left the file deleted with the replacement absent. M-A4-6
+    // fuses them, so the ONLY states an interruption can leave are the old file and the new
+    // one. The xid advancing by exactly ONE is what proves the fusion: two checkpoints would
+    // land on 5, which is what this assertion used to require.
     const QByteArray v2 = QByteArrayLiteral("second, longer version of the same file's content");
     const QString replaced = dir.filePath(QStringLiteral("a2fw-replaced.apfs"));
     const auto replace =
@@ -9552,18 +9561,11 @@ void PartitionManagerCoreTests::apfsWriter_inPlaceFileWriteCreatesThenReplaces()
                                                        .file_data = v2,
                                                        .options = options});
     QVERIFY2(replace.ok, qPrintable(replace.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(replace.new_xid, 5ULL);
-    const auto listing =
-        PartitionApfsFileSystemReader::listDirectoryFromImage(replaced, QStringLiteral("/"), 20);
-    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(listing.entries.size(), 1);
-    QCOMPARE(listing.entries.first().name, QStringLiteral("doc.txt"));
-    QCOMPARE(listing.entries.first().size_bytes, static_cast<uint64_t>(v2.size()));
-    const auto read = PartitionApfsFileSystemReader::readFileFromImage(replaced,
-                                                                       QStringLiteral("/doc.txt"),
-                                                                       4096);
-    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
-    QCOMPARE(read.data, v2);
+    // Exactly one checkpoint for the whole replace. Asserted against the CREATE's xid rather
+    // than a bare literal, so the property (a replace costs one checkpoint) is what is pinned.
+    QCOMPARE(replace.new_xid, create.new_xid + 1);
+    QCOMPARE(replace.previous_xid, create.new_xid);
+    verifyOnly(replaced, v2);
 }
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceDirectoryCreatePreservesTree() {
@@ -16320,6 +16322,69 @@ void PartitionManagerCoreTests::apfsWriter_crashBeforeCheckpointDurableRollsBack
     // Rolled back: the interrupted commit's charlie.txt is gone, the previous
     // checkpoint's two files survive intact.
     QCOMPARE(names, (QStringList{QStringLiteral("alpha.txt"), QStringLiteral("bravo.txt")}));
+}
+
+// M-A4-6. THE POINT of fusing the replace into one checkpoint: an interrupted replace must
+// leave the OLD FILE, never nothing at all.
+//
+// The replace used to be a delete commit followed by an insert commit. A crash in the window
+// between them left the file deleted and the replacement absent -- a data-loss window, since
+// both states are internally consistent but one of them has lost the user's file. Fused, the
+// only states an interruption can leave are "old file" and "new file".
+//
+// This drives the same crash-rollback harness the insert path uses: build the replace, then
+// roll the container back to the previous checkpoint as an interruption would. Under the old
+// two-commit path the rollback could land between the legs and the assertion below -- that
+// doc.txt still exists WITH ITS ORIGINAL CONTENT -- is exactly what would fail.
+void PartitionManagerCoreTests::apfsWriter_crashDuringReplaceKeepsTheOldFile() {
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString fmt = dir.filePath(QStringLiteral("cr0.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = fmt,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("REPLACECRASH"),
+                 .options = options})
+                .ok);
+
+    const QByteArray v1 = QByteArrayLiteral("the ORIGINAL content that must survive a crash");
+    const QByteArray v2 = QByteArrayLiteral("a replacement that is longer than the original one");
+    const QString created = dir.filePath(QStringLiteral("cr1.apfs"));
+    const QString replaced = dir.filePath(QStringLiteral("cr2.apfs"));
+    const auto write = [&](const QString& src, const QString& dst, const QByteArray& data) {
+        return PartitionApfsWriter::commitImageOnlyFileWrite(
+            {.source_image_path = src,
+             .written_image_path = dst,
+             .file_name = QStringLiteral("doc.txt"),
+             .file_data = data,
+             .options = options});
+    };
+    const auto create = write(fmt, created, v1);
+    QVERIFY2(create.ok, qPrintable(create.blockers.join(QStringLiteral("; "))));
+    const auto replace = write(created, replaced, v2);
+    QVERIFY2(replace.ok, qPrintable(replace.blockers.join(QStringLiteral("; "))));
+    // One checkpoint for the whole replace -- the property this test depends on.
+    QCOMPARE(replace.new_xid, create.new_xid + 1);
+
+    QString crashed;
+    writeApfsCrashRollbackImage(dir, created, replaced, &crashed);
+
+    const auto listing =
+        PartitionApfsFileSystemReader::listDirectoryFromImage(crashed, QStringLiteral("/"), 64);
+    QVERIFY2(listing.ok, qPrintable(listing.blockers.join(QStringLiteral("; "))));
+    // The file still EXISTS. Under a torn two-commit replace this is where it would be gone.
+    QCOMPARE(listing.entries.size(), 1);
+    QCOMPARE(listing.entries.first().name, QStringLiteral("doc.txt"));
+    QCOMPARE(listing.entries.first().size_bytes, static_cast<uint64_t>(v1.size()));
+
+    // And it is the OLD file, byte for byte -- not a truncated or half-written replacement.
+    const auto read =
+        PartitionApfsFileSystemReader::readFileFromImage(crashed, QStringLiteral("/doc.txt"), 4096);
+    QVERIFY2(read.ok, qPrintable(read.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(read.data, v1);
 }
 
 void PartitionManagerCoreTests::fileSystemRegistry_reportsNativeAndNonNativeCapability() {

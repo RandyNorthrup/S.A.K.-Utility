@@ -19183,6 +19183,177 @@ bool preflightReplacedStreamSource(const ApfsRootFileWriteRequest& request, QStr
     return true;
 }
 
+// M-A4-6: replace one existing file in a SINGLE checkpoint.
+//
+// The replace used to be two commits -- a delete followed by an insert -- each individually
+// crash-safe, but with a window between them in which the file is deleted and the replacement
+// is not yet there. A crash in that window loses the file. Not corruption (both states are
+// internally consistent) but a data-loss window nobody asked for.
+//
+// This is the two commits FUSED, not a change of semantics: the end state is identical to
+// running them in sequence. The new file still takes a fresh object id and the old file's
+// records and data still go away; the only difference is that both happen at one xid, so the
+// only states an interruption can leave are "the old file" and "the new file".
+//
+// The delicate part, and the reason this was not a mechanical refactor: on a snapshotted
+// volume the two legs pull the live extent-ref delta in opposite directions. The delete leg
+// REMOVES the replaced file's live-exclusive records (and merely decrements the refcount where
+// a clone made after the snapshot still points at those blocks -- freeing them there would
+// corrupt the clone). The insert leg then sizes the new fs-tree from that record set and
+// EXTENDS it with the freshly allocated data. Order matters: the removal must happen before
+// sizing, or the tree is reserved against a record count that no longer matches what is
+// written and the COW chain is sliced wrong.
+// The delete half of a fused replace: recover the replaced file from the LIVE TREE and work out
+// which of its blocks this commit frees. Split from commitInPlaceFileReplace to keep each within
+// the complexity budget.
+//
+// Recovering rather than trusting the caller's payload is the whole point. The caller's
+// ApfsRootFilePayload carries the file's name and id but not necessarily its data extents, and
+// the extents are what has to be freed. Taking the caller's copy silently freed NOTHING: the
+// content still round-tripped, so every unit test passed, and the host apfsck gate is what
+// caught it -- "Volume superblock: bad block count. ALLOC stored=7 computed=6", one block
+// allocated with nothing referencing it.
+//
+// The diverge branch must run BEFORE the insert leg sizes its fs-tree, because it changes the
+// live extent-ref record set that the sizing is computed from.
+struct ApfsReplaceDeletePlan {
+    ApfsRootFilePayload replaced;
+    QVector<uint64_t> freedDataBlocks;
+    bool nameDelete{false};
+};
+
+bool planReplaceDeleteHalf(const ApfsFsCommitContext& ctx,
+                           const ApfsDeleteRequest& replacedRequest,
+                           ApfsDivergeState* diverge,
+                           ApfsReplaceDeletePlan* out,
+                           QStringList* blockers) {
+    QVector<ApfsRootFilePayload> remaining;
+    if (!buildDeleteFileList({ctx.image,
+                              ctx.geometry,
+                              ctx.chain,
+                              replacedRequest.allFiles,
+                              replacedRequest.targetName,
+                              replacedRequest.targetParentId},
+                             &remaining,
+                             &out->replaced,
+                             &out->nameDelete,
+                             blockers)) {
+        return false;
+    }
+    // A hard-link NAME delete keeps the inode, so it frees no data at all.
+    out->freedDataBlocks = out->nameDelete
+                               ? QVector<uint64_t>{}
+                               : fileFreedDataBlocks(out->replaced, ctx.geometry.blockSize);
+    if (diverge->active && !out->nameDelete) {
+        const ApfsDivergeDeleteExtentPlan plan = planDivergeDeleteExtents(
+            diverge->liveExtentRefRecords, fileDataExtents(out->replaced, ctx.geometry.blockSize));
+        diverge->liveExtentRefRecords = plan.liveRecords;
+        out->freedDataBlocks = plan.freedBlocks;
+    }
+    return true;
+}
+
+// The insert half of a fused replace: size the new fs-tree against the extent-ref record set
+// the delete half has already reduced, reserve the layout, build the nodes, and extend the
+// diverge records with the freshly allocated data. Split from commitInPlaceFileReplace to keep
+// each within the complexity budget; identical in shape to the insert and patch paths.
+struct ApfsReplaceInsertInputs {
+    const ApfsFsCommitContext& ctx;
+    const ApfsFileInsertRequest& request;
+    uint64_t dataBlocks{0};
+};
+
+bool buildReplaceInsertHalf(const ApfsReplaceInsertInputs& in,
+                            ApfsDivergeState* diverge,
+                            ApfsInsertLayout* layout,
+                            ApfsInsertFsNodes* built,
+                            QStringList* blockers) {
+    const ApfsFsCommitContext& ctx = in.ctx;
+    const ApfsFileInsertRequest& request = in.request;
+    const uint64_t dataBlocks = in.dataBlocks;
+    ApfsInsertSizing sizing;
+    if (!applyDivergeCloneDelta(ctx, request, diverge, blockers) ||
+        !sizeInsertFsTree(ctx, request, *diverge, &sizing, blockers)) {
+        return false;
+    }
+    if (!reserveInsertLayout(ctx,
+                             {.nodeCount = sizing.nodeCount,
+                              .volMappingCount = sizing.nodeCount +
+                                                 diverge->retainedMappings.size(),
+                              .extentRefRecords = sizing.extentRefRecords,
+                              .dataBlocks = dataBlocks,
+                              .cowExtentRef = dataBlocks > 0 || diverge->active ||
+                                              request.cloneSourcePrivateId != 0},
+                             layout,
+                             blockers)) {
+        return false;
+    }
+    if (!buildInsertFsNodes(ctx, request, layout->dataBlockList, built, blockers)) {
+        return false;
+    }
+    // Same fail-closed check the insert and patch paths make: a fragmented data allocation can
+    // grow the fs-tree past the reserved node count, and the chain slicing indexes newBlocks by
+    // the ACTUAL count, so a divergence writes the container-omap header over the
+    // extent-ref/data blocks. Refuse rather than publish a mis-sliced COW chain.
+    if (built->nodes.size() != static_cast<qsizetype>(sizing.nodeCount)) {
+        blockers->append(QStringLiteral(
+            "APFS in-place replace: fs-tree grew past the reserved node count after allocation"));
+        return false;
+    }
+    extendDivergeExtentRecords(ctx, built->files, layout->dataBlockList, diverge);
+    return true;
+}
+
+bool commitInPlaceFileReplace(QIODevice* image,
+                              const ApfsFileInsertRequest& request,
+                              const ApfsDeleteRequest& replacedRequest,
+                              ApfsInPlaceCheckpointResult* result,
+                              QStringList* blockers) {
+    ApfsFsCommitContext ctx;
+    if (!loadFsCommitContext(image, &ctx, blockers)) {
+        return false;
+    }
+    ApfsDivergeState diverge;
+    if (!computeDivergeState(ctx, &diverge, blockers)) {
+        return false;
+    }
+    ApfsReplaceDeletePlan del;
+    if (!planReplaceDeleteHalf(ctx, replacedRequest, &diverge, &del, blockers)) {
+        return false;
+    }
+    const QVector<uint64_t>& freedDataBlocks = del.freedDataBlocks;
+
+    ApfsInsertLayout layout;
+    ApfsInsertFsNodes built;
+    const uint64_t dataBlocks = roundedBlockCount(request.payloadSize(), ctx.geometry.blockSize);
+    if (!buildReplaceInsertHalf({ctx, request, dataBlocks}, &diverge, &layout, &built, blockers)) {
+        return false;
+    }
+
+    // The fused count deltas are exactly the sum of the two commits they replace: the delete's
+    // deltas for the file going away (which may be a symlink or another object kind, not
+    // necessarily a regular file) plus the insert's +1 for the file arriving.
+    const ApfsDeleteCountDeltas removed = deleteCountDeltas(del.replaced, del.nameDelete);
+    const int64_t inserted = request.hardlinkTargetId != 0 ? 0 : 1;
+    return finalizeFsCommit({.ctx = ctx,
+                             .newXid = ctx.live.xid + 1,
+                             .fsNodes = built.nodes,
+                             .newBlocks = layout.newBlocks,
+                             .files = built.files,
+                             .extentRefNew = layout.extentRefBlocks.value(0),
+                             .extentRefBlocks = layout.extentRefBlocks,
+                             .freedDataBlocks = freedDataBlocks,
+                             .dataBlocksNew = static_cast<int64_t>(dataBlocks),
+                             .fileCountDelta = inserted + removed.files,
+                             .symlinkCountDelta = removed.symlinks,
+                             .otherObjectCountDelta = removed.others,
+                             .nextObjIdDelta = insertNextObjIdDelta(request),
+                             .chunk1BitmapBlock = layout.chunk1BitmapBlock,
+                             .diverge = diverge},
+                            result,
+                            blockers);
+}
+
 bool commitInPlaceRootFileWrite(QIODevice* image,
                                 const ApfsRootFileWriteRequest& request,
                                 ApfsInPlaceCheckpointResult* result,
@@ -19206,21 +19377,23 @@ bool commitInPlaceRootFileWrite(QIODevice* image,
     if (!buildRootWriteInsertRequest(request, existing, &insert, blockers)) {
         return false;
     }
-    if (exists) {
-        // Fail closed on an unusable stream BEFORE the delete leg publishes, so a replace never
-        // deletes the existing file and then fails to land the replacement (F55/F56).
-        if (!preflightReplacedStreamSource(request, blockers)) {
-            return false;
-        }
-        ApfsInPlaceCheckpointResult deleteResult;
-        if (!commitInPlaceFileDelete(image,
-                                     {request.allFiles, request.directories, fileName, parentId},
-                                     &deleteResult,
-                                     blockers)) {
-            return false;
-        }
+    if (!exists) {
+        return commitInPlaceFileInsert(image, insert, result, blockers);
     }
-    return commitInPlaceFileInsert(image, insert, result, blockers);
+    // Fail closed on an unusable stream BEFORE anything publishes, so a replace never destroys
+    // the existing file and then fails to land the replacement (F55/F56). Still checked even
+    // though the commit is now atomic: a preflight failure should refuse the operation outright
+    // rather than spend a checkpoint discovering the payload is unreadable.
+    if (!preflightReplacedStreamSource(request, blockers)) {
+        return false;
+    }
+    // ONE checkpoint (M-A4-6). This was a delete commit followed by an insert commit; a crash
+    // between them left the file deleted and the replacement absent.
+    return commitInPlaceFileReplace(image,
+                                    insert,
+                                    {request.allFiles, request.directories, fileName, parentId},
+                                    result,
+                                    blockers);
 }
 
 

@@ -264,7 +264,7 @@ win32mcp (A3):
 
 apfs/partition (A4):
 - [x] M-A4-4  partition_apfs_writer.cpp:8852 unvalidated free-queue {paddr,length} -> OOM / wrap. FIXED (wave 20): freeQueueRunInBounds() pure guard (paddr<blockCount, length<=blockCount-paddr, overflow-safe) at the parse chokepoint appends a blocker + returns {} on an out-of-range run, before expandFreeQueueEntries can allocate. Testing seam freeQueueRunInBoundsForTesting + unit test.
-- [~] M-A4-6  partition_apfs_writer.cpp:17198 non-atomic APFS replace (delete then insert as two checkpoints). DEFERRED (data-loss WINDOW, not corruption; needs a design-level single-transaction primitive): commitInPlaceRootFileWrite replaces an existing file as two independent checkpoints (commitInPlaceFileDelete then commitInPlaceFileInsert); an interruption between them leaves the file deleted with the new payload absent (the in-code comment already concedes "the replace is two checkpoints"). The correct fix is a new commitInPlaceFileReplace primitive modeled on the existing single-checkpoint commitInPlaceFilePatch (build one fs-tree dropping the old records + adding the new payload, freeing old data via freedDataBlocks in ONE finalizeFsCommit) so only the pre- or fully-replaced state is ever visible. Deferred rather than risk a partial refactor of the certified in-place COW commit path; requires crash-safety round-trip cert. NOT a fail-open security defect (either state is internally consistent; only a crash mid-replace loses the file, recoverable from backup).
+- [x] M-A4-6  partition_apfs_writer.cpp:17198 non-atomic APFS replace (delete then insert as two checkpoints). DEFERRED (data-loss WINDOW, not corruption; needs a design-level single-transaction primitive): commitInPlaceRootFileWrite replaces an existing file as two independent checkpoints (commitInPlaceFileDelete then commitInPlaceFileInsert); an interruption between them leaves the file deleted with the new payload absent (the in-code comment already concedes "the replace is two checkpoints"). The correct fix is a new commitInPlaceFileReplace primitive modeled on the existing single-checkpoint commitInPlaceFilePatch (build one fs-tree dropping the old records + adding the new payload, freeing old data via freedDataBlocks in ONE finalizeFsCommit) so only the pre- or fully-replaced state is ever visible. Deferred rather than risk a partial refactor of the certified in-place COW commit path; requires crash-safety round-trip cert. NOT a fail-open security defect (either state is internally consistent; only a crash mid-replace loses the file, recoverable from backup).
 - [x] M-A4-8  partition_safety_validator.cpp:1390 OS-disk data partitions lack the disk-level backstop. FIXED (wave 20): blocksCurrentOsDiskPartitionMutation() (partition-scoped mirror of blocksCurrentOsDiskMutation) blocks any destructive partition op on a system/boot disk, excluding read-only ClonePartition. Regression test safetyValidator_blocksOsDiskDataPartitionMutation.
 - [x] M-A4-11 partition_script_builder.cpp:2074 CreateImage overwrites an existing file without confirm. FIXED (wave 20): the CreateImage guard script now stats the destination and throws when it already exists unless overwrite_confirmed (a genuine payload bool) was passed; no silent FileMode::Create truncation. Regression test scriptBuilder_createImageRefusesExistingWithoutOverwrite. (Was previously listed as deferred; done.)
 - [x] M-A4-14 partition_script_builder.cpp:4563 FIXED (wave 14): buildMergeScript rejects a target_folder containing a path separator, ':', or '..'. Test scriptBuilder_mergeRejectsTraversalTargetFolder.
@@ -449,3 +449,66 @@ binaries with a full SHA-256 (Invoke-SakFilesystemTool), so this is the establis
   The first version of that test was WEAK and the drill caught it: it asserted the message
   text ("content changed") which survives a mutation to `if ($false)`. It now pins the
   emitted CONDITIONS.
+
+--------------------------------------------------------------------------------
+## M-A4-6 CLOSED 2026-08-28 -- the replace is ONE checkpoint, certified on the rig
+
+commitInPlaceRootFileWrite replaced an existing file as a delete commit followed by an insert
+commit. Each was individually crash-safe, but a crash in the window between them left the file
+deleted and the replacement absent. Not corruption -- both states are internally consistent --
+but one of them has lost the user's file.
+
+commitInPlaceFileReplace fuses the two into a single checkpoint. This is NOT a change of
+semantics: the end state is identical to running the two commits in sequence (the new file
+still takes a fresh object id, the old file's records and data still go away). The only
+difference is that both happen at one xid, so the only states an interruption can leave are
+"the old file" and "the new file". The fused count deltas are literally the sum of the two
+commits they replace, including the symlink/other-object deltas for a replaced object that is
+not a regular file.
+
+WHAT MADE IT DELICATE, AND WHAT CAUGHT THE BUG
+
+On a snapshotted volume the two legs pull the live extent-ref delta in OPPOSITE directions:
+the delete leg removes the replaced file's live-exclusive records (merely decrementing the
+refcount where a clone made after the snapshot still points at those blocks -- freeing them
+there would corrupt the clone), while the insert leg sizes the new fs-tree from that record
+set and then extends it with the freshly allocated data. The removal has to happen BEFORE
+sizing, or the tree is reserved against a record count that does not match what is written and
+the COW chain is sliced wrong.
+
+The first version had a different bug, and it is the reason this needed the rig rather than
+review: it took the replaced file's payload from the CALLER instead of recovering it from the
+live tree the way the delete leg does. That payload carries the name and id but not the data
+extents, so NOTHING was freed. Every unit test still passed -- the content round-trips
+perfectly -- and the host apfsck gate caught it immediately:
+  Volume superblock: bad block count. ALLOC stored=7 computed=6
+One block allocated with nothing referencing it. The fix is to recover the target through
+buildDeleteFileList, exactly as the delete leg does.
+
+CERTIFICATION
+
+Host apfsck (apfsprogs, -cw) clean on every shape:
+  create; replace GROW 1 -> 64 blocks; GROW 64 -> 1024 blocks; SHRINK 1024 -> 1 block;
+  zlib-compressed replace; plain-over-compressed; lzbitmap resource-fork replace;
+  and a replace on a SNAPSHOTTED volume (the diverge path).
+
+Apple fsck_apfs on the macOS VM (10.10.11.102, macOS 26.6), attached -nomount so no kernel
+mount advanced the checkpoint first -- clean on the basic replace, the shrink, the
+resource-fork compressed replace, and the snapshotted replace. "Verifying allocated space"
+passes, which is the check that would have caught the leak above.
+
+macOS kernel RW-mount, content verified byte-for-byte: the basic replace reads back the NEW
+47-byte content; the shrink reads back 100 bytes; the 4 MiB lzbitmap file is decompressed by
+the kernel to its full size. On the snapshotted image the live file is the replacement
+(262144 bytes) AND snapshot snapA (XID 4) survives intact.
+
+Crash-interruption proof: apfsWriter_crashDuringReplaceKeepsTheOldFile drives the same
+crash-rollback harness the insert path uses -- roll the container back to the previous
+checkpoint as an interruption would -- and asserts doc.txt still exists WITH ITS ORIGINAL
+CONTENT. Plus apfsWriter_inPlaceFileWriteCreatesThenReplaces now pins the property rather than
+a literal: the replace advances the xid by exactly ONE (it required 5, i.e. two checkpoints,
+before).
+
+DRILLED 2/2 RED: restoring the two-commit delete+insert turns both tests red -- the crash test
+because the rolled-back container has NO file, and the xid test because the replace costs two
+checkpoints again.

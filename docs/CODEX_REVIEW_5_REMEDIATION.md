@@ -206,39 +206,36 @@ a parked design, per the bucket convention. Open work is what remains after thos
   and the test-infra program (G14 coverage ledger, G18 mutation testing, fuzz harnesses,
   fault injection, G20/G21 gate wiring).
 - [~] R5-IDX-4 `docs/FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md` -- 7 open plus 6 partial.
-- [~] R5-IDX-5 EARLIER CAMPAIGNS RE-TRIAGED 2026-08-27. Both were re-checked against the live
-  tree under the standing rule that an item is INCOMPLETE or a DESIGN DECISION, never an
-  indefinite "partial", because a `[~]` reads as open work to every later scan.
-  `docs/archive/CODEX_REVIEW_REMEDIATION.md` -- CLOSED, 5 partials -> 0, and ARCHIVED. None of
-  the five was open work: B3-12 and B4-03 were verified-no-change-needed decisions, the
-  PromptUser and per-type-totals items were accepted-inherent, and B10-30's remaining legs had
-  all landed (generation guard against stale completions, a real `result.cancelled` flag, a
-  fail-closed stale cache) without ever being marked. Before moving it, its "Lower/quality"
-  line was also checked -- it carried a REMAINING list INSIDE a [DONE] entry where no checkbox
+- [x] R5-IDX-5 EARLIER CAMPAIGNS DRIVEN TO ZERO AND ARCHIVED. CLOSED 2026-08-28.
+  Both were re-checked against the live tree under the standing rule that an item is INCOMPLETE
+  or a DESIGN DECISION -- never an indefinite "partial", which is the middle category that lets
+  an item sit while looking like a considered position.
+  `docs/archive/CODEX_REVIEW_REMEDIATION.md` -- 5 partials -> 0, ARCHIVED 2026-08-27. None was
+  open work: B3-12 and B4-03 were verified-no-change-needed decisions, PromptUser and
+  per-type-totals were accepted-inherent, and B10-30's remaining legs had all landed unmarked.
+  Its "Lower/quality" line also hid a REMAINING list INSIDE a [DONE] entry where no checkbox
   scan would see it; all six of those are done too.
-  `docs/CODEX_REVIEW_4_REMEDIATION.md` -- 6 partials -> 3, STAYS in `docs/`. M-A2-6 and
-  M-B1-13 were both already fixed and simply never marked (the verify-before-swap restructure,
-  and the pool capacity cap the entry itself proposed); M-B2-31 is a documented decision.
-  H6 and M-B3-1 Part A are now CLOSED (2026-08-27); M-A4-6 is the only one left.
-  H6's own entry was what held it up: it called the fix "a privilege-architecture change too
-  risky to retrofit", when ElevationManager::isElevated() already existed and the defect was
-  simply that requires_admin (the MODEL'S CLAIM) was being read as the fact. AiToolCallRequest
-  now carries an INJECTED host_elevated so the policy stays pure, effective elevation is
-  claim-or-host, and AiCommandResult::elevated records what the plain QProcess path actually
-  did instead of reporting false while inheriting an elevated token. Drilled RED.
-  M-B3-1 Part A needed a decision, and it is made: a FULL SHA-256, not a sampled fingerprint,
-  because this gates a raw whole-disk overwrite and a sampled digest is only probabilistic
-  against an attacker who picks the content and can read the offsets out of the emitted
-  script. The queue hashes behind a cancellable progress dialog and stores the digest; the
-  script re-hashes before the copy and refuses both a mismatch AND a missing pin. Drilled
-  3/3 RED -- and the drill caught the FIRST version of that test asserting only the message
-  text, which survives mutating the guard to `if ($false)`.
-  M-A4-6 stays open: the single-checkpoint APFS replace. It is not blocked on design (the
-  machinery exists -- commitInPlaceFilePatch is already a single-checkpoint re-emit that
-  frees the old extents) but the fusion's delicate part is the diverge extent-ref
-  interaction, where the delete leg REMOVES live extent-ref records while the insert leg
-  sizes and extends them; getting that wrong publishes a mis-sliced COW chain. It needs the
-  crash-safety round trip on the rig before it can be trusted.
+  `docs/archive/CODEX_REVIEW_4_REMEDIATION.md` -- 6 partials -> 0, ARCHIVED 2026-08-28.
+  M-A2-6 and M-B1-13 were already fixed and never marked; M-B2-31 is a documented decision.
+  The last three were the ones carried as "deferred", and none of them was a decision:
+    H6        CLOSED. The entry over-stated its own difficulty -- it called the fix a
+              "privilege-architecture change" when ElevationManager::isElevated() already
+              existed and the defect was that requires_admin (the model's CLAIM) was read as
+              the fact. Effective elevation is now injected into the policy and recorded on
+              the result. Drilled RED.
+    M-B3-1 A  CLOSED. The open question was which digest; the answer is a FULL SHA-256, because
+              this gates a raw whole-disk overwrite and a sampled fingerprint is only
+              probabilistic against an attacker who picks the content. Drilled 3/3 RED.
+    M-A4-6    CLOSED and CERTIFIED ON THE RIG. The APFS replace is now ONE checkpoint instead
+              of a delete commit followed by an insert commit, so an interruption can only
+              leave the old file or the new one. Host apfsck clean across create / grow /
+              big-grow / shrink / three compression shapes / a SNAPSHOTTED volume; Apple
+              fsck_apfs clean on the macOS VM with "Verifying allocated space" passing; kernel
+              RW-mount with byte-correct content and the snapshot intact. Drilled 2/2 RED.
+              The first version of the fusion had a real bug that every unit test missed --
+              it trusted the caller's payload for the replaced file instead of recovering its
+              extents from the live tree, so nothing was freed and a block leaked. apfsck named
+              it exactly ("ALLOC stored=7 computed=6"). That is the argument for the rig.
 - [x] R5-IDX-6 `docs/archive/CODEX_FULL_SCAN_BACKLOG_2026-07-20.md` -- CLOSED 2026-08-27, ARCHIVED. All 311
   confirmed findings dispositioned one at a time against the live tree: 285 already fixed,
   16 obsolete (the cited file was deleted), 10 STILL OPEN and fixed in that pass. The full
@@ -864,7 +861,7 @@ a parked design, per the bucket convention. Open work is what remains after thos
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-27: 668 [x] / 25 [~] / 0 [ ] MARKERS IN THIS FILE. That is not the same as the
+as of 2026-08-28: 669 [x] / 24 [~] / 0 [ ] MARKERS IN THIS FILE. That is not the same as the
 amount of open work, and the difference matters: 3 of those [~] are POINTERS at other
 documents (R5-IDX-3, -4, -5), and a pointer is one marker whether it stands for one item or
 forty. The other R5-IDX entries are native findings that merely share the prefix.
@@ -880,11 +877,15 @@ error both showed up:
   - R5-IDX-3's "three gate scripts still carry real debt" was stale in the OPPOSITE
     direction: all three had reached zero and were wired as blocking hooks, and re-running
     them confirms it. 7 -> 5, of which branch protection is blocked on the owner.
-  - R5-IDX-5: CODEX_REVIEW_REMEDIATION 5 -> 0 (closed and ARCHIVED); CODEX_REVIEW_4 6 -> 3.
+  - R5-IDX-5: CODEX_REVIEW_REMEDIATION 5 -> 0 and CODEX_REVIEW_4 6 -> 0. BOTH now closed and
+    ARCHIVED, the last three (H6, M-B3-1 A, M-A4-6) fixed rather than re-deferred -- M-A4-6
+    with a full rig certification.
   - R5-IDX-4 (FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN, 7 open + 6 partial) is unchanged and
     is now the largest referenced block.
-So the honest figure is 22 native [~] plus 16 referenced items = 38 open things, indexed by
-25 markers -- down from 64 indexed by 27, with 11 real defects fixed on the way. One marker can also stand for more than one
+Updated 2026-08-28: R5-IDX-5 is now closed too, so the referenced figure is 13 -- the whole of
+it the FILE_MANAGEMENT_EXPLORER plan (R5-IDX-4), which is manual GUI QA against the Files
+reference. The honest figure is 22 native [~] plus 13 referenced = 35 open things, indexed by
+24 markers -- down from 64 indexed by 27, with 14 real defects fixed on the way. One marker can also stand for more than one
 finding WITHOUT being a pointer: R5-IDX-19 carried three distinct network defects (19a a
 locale-broken private wifi scan, 19b duplicate netsh transport, 19c three operations with no
 headless counterpart at all), because they shared a fix and splitting them would misrepresent
