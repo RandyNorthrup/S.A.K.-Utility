@@ -75,17 +75,17 @@ constexpr int kHexadecimalBase = 16;
 /// reporting a value inside one. Used as the block terminator so a setting's readings are never
 /// read out of the following block.
 [[nodiscard]] bool lineOpensGuidBlock(const QString& line) {
-    static const QRegularExpression guid_re(
+    static const QRegularExpression kGuidRe(
         QStringLiteral("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"),
         QRegularExpression::CaseInsensitiveOption);
-    return guid_re.match(line).hasMatch();
+    return kGuidRe.match(line).hasMatch();
 }
 
 /// Extract a `0x...` reading from @p line, or -1 when it carries none.
 [[nodiscard]] qint64 hexReading(const QString& line) {
-    static const QRegularExpression hex_re(QStringLiteral("0x([0-9a-f]+)"),
+    static const QRegularExpression kHexRe(QStringLiteral("0x([0-9a-f]+)"),
                                            QRegularExpression::CaseInsensitiveOption);
-    const QRegularExpressionMatch match = hex_re.match(line);
+    const QRegularExpressionMatch match = kHexRe.match(line);
     if (!match.hasMatch()) {
         return -1;
     }

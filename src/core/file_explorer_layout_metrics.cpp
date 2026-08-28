@@ -21,8 +21,13 @@ constexpr std::array<int, 5> kListRowHeights{24, 32, 36, 40, 44};
 // GetGridViewItemWidth: kinds 1..12.
 constexpr std::array<int, 12> kGridItemWidths{
     80, 100, 120, 140, 160, 180, 200, 220, 240, 260, 280, 300};
-// GetIconSize for Details/List/Columns: Compact and Small 16, then 20/24/48.
-constexpr std::array<int, 5> kCompactLayoutIconSizes{16, 16, 20, 24, 48};
+// GetIconSize for Details/List/Columns: Compact and Small are
+// Constants.ShellIconSizes.Small (16), then 20, 24, and -- at ExtraLarge --
+// Constants.ShellIconSizes.LARGE, which upstream is 32, NOT ShellIconSizes
+// .ExtraLarge (48). This table said 48, so the biggest Details row (48px tall)
+// was filled edge to edge by its own icon with no vertical breathing room,
+// where Files leaves 8px above and below.
+constexpr std::array<int, 5> kCompactLayoutIconSizes{16, 16, 20, 24, 32};
 // GetIconSize for Cards: Small and Medium 64, Large 80, ExtraLarge 96.
 constexpr std::array<int, 4> kCardsIconSizes{64, 64, 80, 96};
 // Files GridLayoutPage grid cells stack the square thumbnail over a fixed

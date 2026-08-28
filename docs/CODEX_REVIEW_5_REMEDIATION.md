@@ -205,7 +205,29 @@ a parked design, per the bucket convention. Open work is what remains after thos
   (26 inline suppressions and 26 file entries, each needing its justification re-checked);
   and the test-infra program (G14 coverage ledger, G18 mutation testing, fuzz harnesses,
   fault injection, G20/G21 gate wiring).
-- [~] R5-IDX-4 `docs/FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md` -- 7 open plus 6 partial.
+- [x] R5-IDX-4 `docs/archive/FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md` -- 7 open plus 6 partial
+  -> 0. CLOSED AND ARCHIVED 2026-08-28. Two of the thirteen were stale doc, not open work: the
+  local-file Properties lane was already covered end to end, and progress/cancel had shipped as
+  a full Files StatusCenter clone with four tests. The rest were done, and doing them found six
+  real defects that the checklist's own wording had been hiding.
+  Four GUI lanes were marked "needs a live/local target". None did -- a QTemporaryDir IS a
+  local target and the Add Raw/Image dialog synthesizes a target for any file system, with the
+  APFS range gate driven by the image file's own size. The safety-pane matrix, the preview lane,
+  and both dual-pane lanes are now real tests.
+  Defects found and fixed: (1) `applyCapabilities` handed the NORMALIZED name to
+  `displayFileSystem`, so any file system without an explicit case rendered lowercase -- one
+  target showed "XFS" in its label and "xfs" in the Safety pane and blocker text.
+  (2) a press on empty space in the inactive pane activated nothing, so the next command ran
+  against the other pane's folder; the pane losing focus also kept its selection.
+  (3) the Details/List/Columns ExtraLarge icon was 48px where upstream is 32, filling the 48px
+  row edge to edge. (4) sidebar rows carried a second text line Qt never draws, which collapsed
+  into an ellipsis and made every badge look truncated. (5) the baseline screenshot captures showed
+  clipped status text the shipped UI never had, because they were grabbed before the first
+  listing landed -- inaccurate evidence, not an inaccurate product. (6) the icon import
+  rules required a repeatable script for the XAML-to-SVG mapping and none existed.
+  `scripts/check_files_icon_parity.ps1` now re-derives all 26 from a Files clone: 26/26
+  byte-identical, and against a clone HEAD newer than the manifest's recorded commit.
+  Twelve mutation drills, all RED.
 - [x] R5-IDX-5 EARLIER CAMPAIGNS DRIVEN TO ZERO AND ARCHIVED. CLOSED 2026-08-28.
   Both were re-checked against the live tree under the standing rule that an item is INCOMPLETE
   or a DESIGN DECISION -- never an indefinite "partial", which is the middle category that lets
@@ -738,7 +760,8 @@ a parked design, per the bucket convention. Open work is what remains after thos
   `isSafeCategoryName` had no coverage anywhere in the suite while gating a recursive file-move.
   A SECOND CORRECTION CAME OUT OF THE SAME TEST RUN. Unifying the migration report onto
   `sak::csvEscape` turned an existing assertion red, and the reason was real: the shared rule
-  tests the TRIMMED value, so the `'	'` and `''` entries in its own trigger set are
+  tests the TRIMMED value, so the `'	'` and `'
+'` entries in its own trigger set are
   unreachable -- trimming strips exactly those characters. That is harmless (a bare leading tab
   in front of ordinary text is not a formula, and the old copy prefixing it was over-eager, not
   safer) but it was undocumented, and the test had been pinning the over-eager behaviour. The
@@ -880,12 +903,17 @@ error both showed up:
   - R5-IDX-5: CODEX_REVIEW_REMEDIATION 5 -> 0 and CODEX_REVIEW_4 6 -> 0. BOTH now closed and
     ARCHIVED, the last three (H6, M-B3-1 A, M-A4-6) fixed rather than re-deferred -- M-A4-6
     with a full rig certification.
-  - R5-IDX-4 (FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN, 7 open + 6 partial) is unchanged and
-    is now the largest referenced block.
+  - R5-IDX-4 (FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN, 7 open + 6 partial) was, at that point,
+    unchanged and the largest referenced block. It closed 2026-08-28; see its entry above.
 Updated 2026-08-28: R5-IDX-5 is now closed too, so the referenced figure is 13 -- the whole of
 it the FILE_MANAGEMENT_EXPLORER plan (R5-IDX-4), which is manual GUI QA against the Files
-reference. The honest figure is 22 native [~] plus 13 referenced = 35 open things, indexed by
-24 markers -- down from 64 indexed by 27, with 14 real defects fixed on the way. One marker can also stand for more than one
+reference. Updated again the same day: R5-IDX-4 is closed and archived, so the referenced figure
+is 0 and every remaining open thing is a native [~] on this doc. "Manual GUI QA" was the wrong
+description of it -- four of its thirteen items were marked "needs a live/local target" and none
+did; the other nine were spacing, theme, and screenshot work that turned out to be mechanically
+checkable, and doing it that way surfaced six defects an eyeball pass would have missed. The
+honest figure is now 22 native [~] plus 0 referenced = 22 open things, indexed by 23 markers --
+down from 64 indexed by 27, with 20 real defects fixed on the way. One marker can also stand for more than one
 finding WITHOUT being a pointer: R5-IDX-19 carried three distinct network defects (19a a
 locale-broken private wifi scan, 19b duplicate netsh transport, 19c three operations with no
 headless counterpart at all), because they shared a fix and splitting them would misrepresent

@@ -333,7 +333,14 @@ FileManagementTarget applyCapabilities(FileManagementTarget target) {
     // volume the OS will reject writes on.
     const bool inbound_read_only = target.read_only;
 
-    target.file_system = displayFileSystem(fs);
+    // Pass the ORIGINAL spelling, not the normalized one: displayFileSystem
+    // normalizes internally to pick its special cases, and falls back to the string
+    // it was handed. Feeding it the lowercased form made every file system without
+    // an explicit case render lowercase -- "xfs", "btrfs", "ntfs" -- in the Safety
+    // pane, the sidebar subtitle, and the "No directory browser is registered for %1"
+    // blocker, while the same target's own label (built from the original) said
+    // "XFS". One target, two spellings.
+    target.file_system = displayFileSystem(target.file_system);
     target.local_file_system = target.kind == FileManagementTargetKind::LocalPath || native;
     target.read_only = inbound_read_only || !target.local_file_system;
     target.can_browse = target.local_file_system || readableNonNative;

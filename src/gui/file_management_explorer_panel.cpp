@@ -1616,6 +1616,13 @@ bool FileManagementExplorerPanel::handleViewportMouseEvent(QAbstractItemView* vi
 
 bool FileManagementExplorerPanel::handleViewportMousePress(QAbstractItemView* view,
                                                            const QMouseEvent* mouse) {
+    // Files ShellPanesPage Pane_PointerPressed: a press anywhere inside a pane
+    // focuses -- and so activates -- that pane. Clicking a ROW was already covered:
+    // connectPaneSignals promotes a pane whose selection becomes non-empty. This
+    // covers the press that produces no selection change -- empty space below the
+    // rows, or a click that re-selects what was already selected -- after which the
+    // pane the user is visibly working in was still not the one commands routed to.
+    activatePaneForView(view);
     // Files BaseShellPage CoreWindow_PointerPressed: mouse4/5 navigate
     // back/forward (NavigateBack Mouse4 / NavigateForward Mouse5 hotkeys).
     if (mouse->button() == Qt::BackButton) {
@@ -2091,15 +2098,24 @@ void FileManagementExplorerPanel::appendSidebarHeader(const QString& text) {
 void FileManagementExplorerPanel::appendSidebarTarget(const FileManagementTarget& target,
                                                       const int target_index) {
     const QIcon icon = FileExplorerIconRegistry::iconForKey(sidebarIconKeyForTarget(target));
-    const QString label = QStringLiteral("%1  [%2]\n%3")
-                              .arg(target.label, targetBadge(target), targetSubtitle(target));
+    // Files SidebarStyles.xaml ItemNameTextBlock: one line, TextWrapping="NoWrap",
+    // TextTrimming="CharacterEllipsis" -- the upstream sidebar row carries a name and
+    // an optional decorator, never a second text line. This label used to append
+    // "\n" + targetSubtitle(), which the item view never draws: Qt's item text
+    // rendering collapses the newline and elides, so every row read as
+    // "Home (Randy)  [Writable]..." -- a badge that looked truncated and a subtitle
+    // the user could not see at any width. The subtitle moved into the tooltip.
+    const QString label = QStringLiteral("%1  [%2]").arg(target.label, targetBadge(target));
     auto* item = new QListWidgetItem(icon, label, m_target_list);
     item->setData(kSidebarKindRole, static_cast<int>(SidebarEntryKind::Target));
     item->setData(kTargetIndexRole, target_index);
     // root_path names a mounted medium (including MTP/phone device names), so the tooltip -- a
     // sink with no plain-text mode -- shows it literally.
-    item->setToolTip(ui::asLiteralRichText(QStringLiteral("%1\n%2").arg(
-        target.root_path, FileManagementFileSystemBridge::capabilitySummary(target))));
+    item->setToolTip(
+        ui::asLiteralRichText(QStringLiteral("%1\n%2\n%3")
+                                  .arg(target.root_path,
+                                       FileManagementFileSystemBridge::capabilitySummary(target),
+                                       targetSubtitle(target))));
     if (!target.blockers.isEmpty()) {
         item->setStatusTip(target.blockers.join(QStringLiteral("; ")));
     }
@@ -7606,6 +7622,21 @@ void FileManagementExplorerPanel::ensureSecondPane() {
     connectPaneSignals(m_pane_b, 1);
 }
 
+// Files ShellPanesPage Pane_GotFocus: the pane that just lost focus drops its
+// selection. A command reads the ACTIVE pane's path but the selection came from
+// whichever view the user last clicked, so a selection left behind in the other
+// pane is a selection naming entries that do not live under the path the command
+// is about to act on.
+void FileManagementExplorerPanel::clearInactivePaneSelection(const int active_index) {
+    FileExplorerPane* inactive = (active_index == 0) ? m_pane_b : m_pane_a;
+    if (inactive == nullptr) {
+        return;
+    }
+    if (auto* selection = inactive->sharedSelectionModel()) {
+        selection->clearSelection();
+    }
+}
+
 void FileManagementExplorerPanel::activatePane(int index) {
     if (index == m_active_pane_index || index < 0 || index > 1 || (m_pane_a == nullptr)) {
         return;
@@ -7616,6 +7647,7 @@ void FileManagementExplorerPanel::activatePane(int index) {
     std::swap(m_pane_state, m_secondary_state);
     m_active_pane_index = index;
     m_pane = (index == 0) ? m_pane_a : m_pane_b;
+    clearInactivePaneSelection(index);
     m_item_model = m_pane->itemModel();
     installTagProvider(m_item_model);
     installIconProvider(m_item_model);

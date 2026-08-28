@@ -662,10 +662,30 @@ private Q_SLOTS:
         QCOMPARE(sak::fileExplorerGridItemWidth(8), 220);
         QCOMPARE(sak::fileExplorerGridItemWidth(12), 300);
 
-        // GetIconSize: compact layouts 16/16/20/24/48, Cards 64/64/80/96,
-        // Grid 96 then 128 through kind 8 then 256.
-        QCOMPARE(sak::fileExplorerIconSize(FileExplorerViewMode::Details, 2), 16);
-        QCOMPARE(sak::fileExplorerIconSize(FileExplorerViewMode::List, 5), 48);
+        // GetIconSize: compact layouts 16/16/20/24/32, Cards 64/64/80/96,
+        // Grid 96 then 128 through kind 8 then 256. The ExtraLarge compact kind is
+        // upstream Constants.ShellIconSizes.Large (32), not ShellIconSizes.ExtraLarge
+        // (48) -- a 48 there filled the 48px ExtraLarge Details row edge to edge.
+        // Pin the whole compact table: the two probes it had left the middle kinds
+        // and the top of the ramp unchecked.
+        for (const auto layout : {FileExplorerViewMode::Details,
+                                  FileExplorerViewMode::List,
+                                  FileExplorerViewMode::Columns}) {
+            const QVector<int> expected{16, 16, 20, 24, 32};
+            for (int kind = 1; kind <= expected.size(); ++kind) {
+                QCOMPARE(sak::fileExplorerIconSize(layout, kind), expected.at(kind - 1));
+            }
+            // The icon never fills its own row: Files leaves vertical padding at
+            // every size kind, which is what keeps the dense layouts readable.
+            for (int kind = 1; kind <= expected.size(); ++kind) {
+                QVERIFY2(sak::fileExplorerIconSize(layout, kind) <
+                             sak::fileExplorerRowHeight(layout, kind),
+                         qPrintable(QStringLiteral("kind %1: icon %2, row %3")
+                                        .arg(kind)
+                                        .arg(sak::fileExplorerIconSize(layout, kind))
+                                        .arg(sak::fileExplorerRowHeight(layout, kind))));
+            }
+        }
         QCOMPARE(sak::fileExplorerIconSize(FileExplorerViewMode::Cards, 4), 96);
         QCOMPARE(sak::fileExplorerIconSize(FileExplorerViewMode::Grid, 1), 96);
         QCOMPARE(sak::fileExplorerIconSize(FileExplorerViewMode::Grid, 8), 128);

@@ -36,7 +36,7 @@ certified is [PARTITION_MANAGER_CROSS_FILESYSTEM_PLAN.md](PARTITION_MANAGER_CROS
 the File Explorer surface that consumes these writers is
 [FILE_EXPLORER_FILES_CLONE_PLAN.md](FILE_EXPLORER_FILES_CLONE_PLAN.md) (the
 certified Files functional clone; the older milestone history lives in
-[FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md](FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md)).
+[FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md](archive/FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md)).
 This document does not restate their history; it defines the gap to "full driver"
 and the milestones to close it.
 
@@ -422,7 +422,7 @@ Additional rules for this program:
 Surfacing issues in the existing plan + code the user flagged as possibly flawed:
 
 1. **Two capability matrices can drift.** The explorer plan
-   ([FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md](FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md#L322))
+   ([FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md](archive/FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md#L322))
    hardcodes "Certified slices" / "No" for HFS/APFS, while the cross-fs plan holds
    the real boundary. As driver milestones land, both must update. **Fix**: I1/I2
    make this doc the single matrix owner; the other two link here.
@@ -455,7 +455,7 @@ Update in the same change that lands each capability's proof:
   narrow the "Enterprise Arbitrary-Write Scope" blocker list.
 - [FILE_EXPLORER_FILES_CLONE_PLAN.md](FILE_EXPLORER_FILES_CLONE_PLAN.md):
   update the parity/capability claims (this replaced
-  FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md as the live explorer tracker).
+  archive/FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md -- driven to zero and archived 2026-08-28).
 - `docs/PARTITION_MANAGER_CERTIFICATION.md`: live proof section.
 - `docs/RELEASE_READINESS.md`: release gate.
 - `README.md`: only completed capabilities (A8/H8 have passed; the README now

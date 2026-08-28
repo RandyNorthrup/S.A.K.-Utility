@@ -519,7 +519,11 @@ Each row:
 
 - Icon.
 - Label.
-- Secondary text for file system / serial / size.
+- Secondary text for file system / serial / size -- in the TOOLTIP, not a second text line.
+  Corrected 2026-08-28 against `Files.App.Controls/Sidebar/SidebarStyles.xaml`: the upstream
+  sidebar item is a single line (`TextWrapping="NoWrap"`, CharacterEllipsis) with an
+  icon, a name, and an optional decorator. A second line is not just off-reference -- Qt's item
+  view collapses it into an ellipsis, so it was never visible at any width.
 - Badge for read-only, certified write, blocked, or pending Apple validation.
 
 Sidebar behavior:
@@ -1268,10 +1272,20 @@ Safety pane checklist:
 Tests:
 
 - [x] Unit preview cap test. (`renderPreviewHexDumpCapsLargeBinary`)
-- [ ] GUI preview text file. (needs a live/local target)
+- [x] GUI preview text file. (`previewPaneShowsLocalTextFileContents`: selects a real local
+  .txt through the panel and asserts BOTH of its lines reach the persistent preview pane;
+  `detailsPanePreviewSwitchesBetweenTextAndImage` only proved the text/image views swap)
 - [x] GUI preview binary hex. (`renderPreviewDecodesTextAndDumpsBinary`, bridge-level)
-- [ ] GUI properties for local file. (needs a live/local target)
-- [ ] GUI safety pane for ext4, HFS, APFS generated-layout, APFS large/arbitrary, XFS/Btrfs.
+- [x] GUI properties for local file. (`propertiesWindowShowsGeneralComputesHashesAndRenames`:
+  Alt+Enter on a local file opens the Properties window, the size resolves, the Hashes tab
+  computes the correct SHA-256, and an edited name commits a rename through the bridge)
+- [x] GUI safety pane for ext4, HFS, APFS generated-layout, APFS large/arbitrary, XFS/Btrfs.
+  (`safetyPaneNamesBlockerForEachRawFileSystem` adds a manual image target per file system
+  through the real Add Raw/Image dialog -- a 64 MiB image is the write-enabled APFS case and
+  a 1 KiB image the out-of-range one -- then pins each pane's Write/Read/Browse verdict as
+  WHOLE LINES plus the file-system note, and for XFS/Btrfs the "No directory browser is
+  registered" blocker. `targetSelectionFeedsOmnibarAndSafetyPane` only ever saw this host's
+  own mounted volume, so no per-file-system blocker was pinned in the GUI at all.)
 - [x] Evidence path rendering test. (`evidenceReportsMatchTargetByPath`: matches by target path, ignores non-matching and malformed reports)
 
 Exit gate:
@@ -1323,8 +1337,18 @@ Tests:
 - [x] Unit pane state isolation. (`dualPaneStatesTrackIndependentHistories`)
 - [x] GUI create/close/duplicate tab. (`explorerTabsOpenAndSwitch`, `explorerTabCloseRemovesTabKeepingLast`, `duplicateTabClonesCurrentTab`)
 - [x] GUI dual-pane toggle. (`dualPaneToggleAddsSecondPane`)
-- [ ] GUI open folder in second pane. (needs a selected directory / live target)
-- [ ] GUI command affects active pane only.
+- [x] GUI open folder in second pane. (`openFolderInSecondPaneListsThatFolderInPaneB`:
+  Ctrl+Shift+Enter on a selected subfolder lists ITS contents in pane B while pane A still
+  shows the parent -- a second pane that mirrored pane A satisfied the old pane-count check)
+- [x] GUI command affects active pane only. (`commandsActOnTheActivePaneOnly`: with pane B
+  active, New Folder lands under pane B's folder and not the parent; clicking into pane A
+  transfers activation -- read off the omnibar, which activatePane() re-points -- and clears
+  pane B's selection; the same command then lands under the parent. Found and fixed a real
+  gap while writing it: a press on EMPTY space in the inactive pane changed no selection, so
+  the selectionChanged promotion in connectPaneSignals never fired and the next command ran
+  against the other pane's folder. handleViewportMousePress now activates on any press
+  (Files ShellPanesPage Pane_PointerPressed) and activatePane clears the pane losing focus
+  (Files Pane_GotFocus).)
 
 Exit gate:
 
@@ -1340,7 +1364,13 @@ Copy-out checklist:
 - [x] Copy selected local files to clipboard/reference. (`CopyItemPath` / `CopyPath` commands)
 - [x] Copy selected raw readable file out to local destination. (`CopyOut` command -> `FileManagementFileSystemBridge::copyFileToHost`; local sources copied in full, raw sources up to the read cap; runs on a worker thread)
 - [x] Copy selected raw folder out recursively where reader supports export. (`FileManagementFileSystemBridge::exportDirectoryToHost` walks the tree with depth/entry bounds, re-creates directories, copies files through `copyFileToHost`, skips symlinks with a warning, and counts capped raw files; Copy Out on a selected folder runs it on a worker thread. `exportDirectoryToHostRecursesLocalTree`)
-- [~] Add progress and cancel. (copy-out and folder export run on worker threads with status updates; a progress bar / cancel button remains a follow-on)
+- [x] Add progress and cancel. (`FileExplorerStatusCenterModel` / `FileExplorerStatusCenterItem`
+  clone the Files StatusCenter: per-card byte and item progress, throttled 100ms reporting with
+  derived speeds, a speed graph, and a cancel command that drops the card to a canceling state.
+  `FileExplorerTransferWorker` discovers then transfers off the GUI thread and honours the
+  card's cancel token. `transferWorkerCopiesTreeReportsProgressAndCancels`,
+  `pasteCopyRunsOnWorkerWithStatusCards`, `statusCenterCardsRenderCancelAndDismiss`,
+  `permanentDeleteRunsOnWorkerWithDeleteCard`.)
 - [x] Add overwrite/collision policy. (the save-file dialog prompts before overwriting an existing destination)
 - [x] Add read-back/hash proof for raw copy-out where useful. (`copyFileToHost` returns the SHA-256 of the written bytes, surfaced in the Evidence pane)
 
@@ -1452,15 +1482,41 @@ Tags checklist:
 
 Polish checklist:
 
-- [ ] Review spacing and density against Files reference.
-- [ ] Ensure command bar icons and labels are consistent.
+- [x] Review spacing and density against Files reference. (Audited `file_explorer_layout_metrics`
+  against upstream `Helpers/Layout/LayoutSizeKindHelper.cs` and the sidebar against
+  `Files.App.Controls/Sidebar/SidebarStyles.xaml`. Two real divergences found and fixed:
+  (1) the ExtraLarge icon for Details/List/Columns was 48px, but upstream returns
+  `Constants.ShellIconSizes.Large` = 32 -- a 48px icon exactly filled the 48px ExtraLarge
+  Details row, leaving no vertical breathing room; the test now pins the whole table and
+  asserts the icon is smaller than its row at every size kind. (2) sidebar rows built a
+  two-line label, but the Files item template is one line (`TextWrapping="NoWrap"`,
+  CharacterEllipsis) and Qt's item view never draws the second line -- it collapsed into an
+  ellipsis, so every row read "Home (Randy)  [Writable]..." with a badge that looked
+  truncated and a subtitle no width could reveal; the row is now single-line and the subtitle
+  moved to the tooltip (`sidebarTargetRowsAreSingleLineWithTheDetailInTheTooltip`).
+  Grid/Cards/Columns tables, the layout ring, and the row-height tables already matched
+  upstream exactly.)
+- [x] Ensure command bar icons and labels are consistent.
+  (`commandBarIconsAndLabelsAreConsistent`: every command-bar control carries a registry icon
+  that renders visible pixels, a tooltip, and an accessible name; the icon-only item commands
+  carry NO text; the two labelled flyout groups (New, View) use ToolButtonTextBesideIcon; and
+  every glyph in the row -- QPushButton and QToolButton alike, which default to different icon
+  sizes in Qt -- renders at the same size.)
 - [x] Ensure imported Files icons are used for generic commands before custom S.A.K. icons are considered. (`FileExplorerIconRegistry` maps commands to bundled MIT Files SVGs; render coverage in the panel/icon tests)
 - [x] Ensure Files brand/app logos and excluded integration icons are absent from S.A.K. resources. (only generic UI icons imported; manifest + THIRD_PARTY_LICENSES.md traceable, no brand/store/cloud/Git/FTP assets)
 - [x] Ensure all icon-only commands have tooltips and accessible names. (`verifyShellAccessibilityAndIcons`; command buttons carry status text + blocker tooltips)
 - [x] Add empty states. (`FileExplorerPane::showEmptyState`; "This folder is empty." / "No items match current view settings.")
 - [x] Add loading states. (`paneStateLabelTracksLoadingEmptyAndError`)
 - [x] Add blocked states. (Safety pane blockers + disabled-command tooltips; `showErrorState`)
-- [~] Add final dark/light theme pass if supported. (the panel uses shared S.A.K. style constants; a dedicated theme QA pass is a follow-on)
+- [x] Add final dark/light theme pass. (`explorerIconsAndShellFollowTheApplicationPalette`
+  renders every registry icon under both palettes and asserts the ink gets LIGHTER under the
+  dark one -- the bundled SVGs carry a fixed dark fill and only `PaletteTintedIconEngine`
+  recolors them, so the previous check, which only asked whether some pixel was opaque under
+  the ambient light palette, would have passed an engine that ignored the palette entirely.
+  It then builds the shell under each palette and compares the RENDERED item-view ground, not
+  the QPalette the widget carries: Qt propagates the palette on its own, so reading
+  `table->palette()` stays green against a style sheet that hardcoded its colors. Captures
+  desktop-light.png and desktop-dark.png.)
 - [x] Add desktop/narrow screenshots to artifacts. (artifacts/file-management-explorer-baseline/{desktop,narrow}.png)
 
 Tests:
@@ -1469,7 +1525,19 @@ Tests:
 - [x] Recent persistence tests. (same round-trip test seeds `RecentTargetIds`; `clearRecentTargets` covered by the target context menu)
 - [x] Tags persistence tests. (`test_file_explorer_tag_store`: normalize, key-by-target+path, empty-removes, aggregate)
 - [x] GUI tag add/remove/filter. (`proxyTagFilterRestrictsToTaggedPaths`, `tagColumnShowsProviderTagsInDetailsView`; add/remove through `editSelectedItemTags` context action)
-- [~] Visual QA screenshots. (baseline capture wired behind `SAK_CAPTURE_FILE_EXPLORER_BASELINE`; a manual capture pass remains an M12 item)
+- [x] Visual QA screenshots. (Capture pass run 2026-08-28 on the native Windows platform, NOT
+  offscreen: the offscreen plugin has no fonts deployed, so every glyph renders as tofu and the
+  artifact is useless for visual review. The pass found two defects. One was in the product (the
+  sidebar's undrawn second line, fixed above). The other was in the EVIDENCE: the baseline
+  captures (artifacts/ is gitignored, so these are local evidence, never committed files) were
+  grabbed before the first listing landed, so the status labels had been laid out for shorter
+  text and the screenshots showed "29 item(s" and
+  "85 item(s) - Local - local fil" -- clipping the shipped UI never had.
+  `shellCreatesFilesLikeRegions` now waits for listing quiescence before grabbing, and
+  `statusRowLabelsRenderWithoutClipping` makes the checklist's "no clipped text" rule
+  mechanical by measuring each label's CONTENT box against its own text advance -- a
+  sizeHint()-vs-width() check passes while the 8px style-sheet padding eats the last
+  characters.)
 - [x] Accessibility checks. (`verifyShellAccessibilityAndIcons` asserts accessible names on the shell controls)
 
 Exit gate:
@@ -1501,9 +1569,23 @@ Certification checklist:
 - [x] Run local mounted copy/paste smoke. (`copyPasteRoundTripsLocalFileThroughClipboard` GUI test drives the Copy/Paste command route to a byte-exact local copy; `writeFileFromHostPathStreamsLocalCopyWithNoCap`, `copyFileToHostCopiesLocalFileByteExactWithHash`)
 - [x] Capture desktop screenshot. (2026-07-12 via `SAK_CAPTURE_FILE_EXPLORER_BASELINE=1`, artifacts/file-management-explorer-baseline/desktop.png)
 - [x] Capture narrow screenshot. (artifacts/file-management-explorer-baseline/narrow.png)
-- [~] Capture dual-pane screenshot. (dual pane is GUI-tested; a dedicated capture hook is a follow-on)
-- [~] Capture details pane screenshot. (details pane appears in the desktop capture; a dedicated hook is a follow-on)
-- [~] Capture icon comparison screenshot against Files reference surfaces. (icon registry render is unit-tested; a side-by-side reference capture is a follow-on)
+- [x] Capture dual-pane screenshot. (artifacts/file-management-explorer-baseline/dual-pane.png,
+  captured from `openFolderInSecondPaneListsThatFolderInPaneB` with pane B genuinely showing a
+  different folder than pane A)
+- [x] Capture details pane screenshot.
+  (artifacts/file-management-explorer-baseline/details-pane.png, captured from
+  `previewPaneShowsLocalTextFileContents` so Preview, Properties, Safety, and Evidence are all
+  populated from a real selection rather than empty)
+- [x] Capture icon comparison screenshot against Files reference surfaces.
+  (artifacts/file-management-explorer-baseline/icon-comparison.png: every registry descriptor at
+  16/20/24/32px on a light and a dark ground, each row naming the upstream Files key it derives
+  from, with each column painted under its own palette. Backed by a mechanical check rather than
+  an eyeball: `scripts/check_files_icon_parity.ps1 -UpstreamRoot <Files clone>` re-reads each
+  upstream XAML Setter's OutlineIconData and compares it to the "d" attribute of the SVG
+  S.A.K. ships. 2026-08-28 run: 26/26 MATCH, byte-identical -- and against clone HEAD cdb263b,
+  later than the manifest's recorded 8ea6d30, so the assets match current upstream too. This is
+  also the "repeatable script" the plan's icon import rules require and previously
+  lacked. Report: artifacts/file-management-explorer-baseline/icon-parity-report.txt)
 
 Documentation checklist:
 

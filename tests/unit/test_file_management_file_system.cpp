@@ -580,6 +580,38 @@ private Q_SLOTS:
                                             "browse/read/copy-out; no write path ships.")});
     }
 
+    void targetKeepsOneSpellingOfItsFileSystem() {
+        using Bridge = sak::FileManagementFileSystemBridge;
+        // displayFileSystem() maps the file systems it knows and otherwise echoes the
+        // string it was handed. applyCapabilities used to hand it the NORMALIZED
+        // (lowercased) name, so anything without an explicit case rendered lowercase
+        // everywhere the capability-stamped target was read -- Safety pane, sidebar
+        // subtitle, blocker text -- while the target's own label, built from the
+        // original spelling, still said "XFS". Pin both halves: the echoed spelling
+        // survives, and the mapped ones still win.
+        const auto xfs = Bridge::manualTarget(QStringLiteral("C:/x.img"), QStringLiteral("XFS"));
+        QCOMPARE(xfs.file_system, QStringLiteral("XFS"));
+        QCOMPARE(
+            Bridge::manualTarget(QStringLiteral("C:/b.img"), QStringLiteral("Btrfs")).file_system,
+            QStringLiteral("Btrfs"));
+        QCOMPARE(
+            Bridge::manualTarget(QStringLiteral("C:/n.img"), QStringLiteral("NTFS")).file_system,
+            QStringLiteral("NTFS"));
+        // The mapped cases normalize regardless of how they were spelled in.
+        QCOMPARE(
+            Bridge::manualTarget(QStringLiteral("C:/h.img"), QStringLiteral("hfs+")).file_system,
+            QStringLiteral("HFS+"));
+        QCOMPARE(
+            Bridge::manualTarget(QStringLiteral("C:/a.img"), QStringLiteral("apfs")).file_system,
+            QStringLiteral("APFS"));
+        // The blocker the user reads names the same spelling as the target does; the
+        // display string and the blocker are built at different points, so a fix that
+        // only corrected the label would leave "registered for xfs" behind.
+        QVERIFY2(xfs.blockers.contains(
+                     QStringLiteral("No directory browser is registered for XFS")),
+                 qPrintable(xfs.blockers.join(QStringLiteral(" | "))));
+    }
+
     void exportDirectoryToHostRecursesLocalTree() {
         // Recursive copy-out: a nested source tree exports byte-complete into the host
         // destination, with directories re-created and counts reported.

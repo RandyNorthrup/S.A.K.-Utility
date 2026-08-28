@@ -34,6 +34,7 @@
 #include <QDir>
 #include <QDragEnterEvent>
 #include <QDropEvent>
+#include <QHash>
 #include <QHeaderView>
 #include <QImage>
 #include <QInputDialog>
@@ -45,6 +46,9 @@
 #include <QMenu>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QPainter>
+#include <QPalette>
+#include <QPixmap>
 #include <QPlainTextEdit>
 #include <QProgressBar>
 #include <QPushButton>
@@ -211,7 +215,7 @@ sak::FileManagementEntry testEntry(const QString& name, const bool directory) {
     return entry;
 }
 
-void captureBaseline(QWidget* widget, const QString& name) {
+void captureBaselineImage(const QImage& image, const QString& name) {
     if (qEnvironmentVariableIsEmpty("SAK_CAPTURE_FILE_EXPLORER_BASELINE")) {
         return;
     }
@@ -220,7 +224,150 @@ void captureBaseline(QWidget* widget, const QString& name) {
     QVERIFY(dir.mkpath(QStringLiteral("artifacts/file-management-explorer-baseline")));
     const QString path = dir.filePath(
         QStringLiteral("artifacts/file-management-explorer-baseline/%1.png").arg(name));
-    QVERIFY2(widget->grab().save(path), qPrintable(path));
+    QVERIFY2(image.save(path), qPrintable(path));
+}
+
+void captureBaseline(QWidget* widget, const QString& name) {
+    if (qEnvironmentVariableIsEmpty("SAK_CAPTURE_FILE_EXPLORER_BASELINE")) {
+        return;
+    }
+    captureBaselineImage(widget->grab().toImage(), name);
+}
+
+// Mean perceived luminance (0..255) of the pixels an icon actually inks, ignoring
+// transparent ones. -1 when the pixmap is empty. The bundled SVGs carry a fixed
+// dark fill and are recolored at paint time by PaletteTintedIconEngine, so this is
+// how a test sees WHICH color the engine chose rather than merely that it drew.
+double iconInkLuminance(const QPixmap& pixmap) {
+    const QImage image = pixmap.toImage().convertToFormat(QImage::Format_ARGB32);
+    double total = 0.0;
+    qint64 inked = 0;
+    for (int y = 0; y < image.height(); ++y) {
+        for (int x = 0; x < image.width(); ++x) {
+            const QColor color = image.pixelColor(x, y);
+            if (color.alpha() == 0) {
+                continue;
+            }
+            // Weight by alpha so a faint antialiased edge cannot outvote solid ink.
+            const double weight = color.alpha() / 255.0;
+            total += weight * (0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue());
+            inked += 1;
+        }
+    }
+    return inked == 0 ? -1.0 : total / static_cast<double>(inked);
+}
+
+// Restores the application palette however the body exits, so a theme test can
+// never leak its palette into the rest of the suite.
+struct ApplicationPaletteGuard {
+    QPalette original = QApplication::palette();
+    ~ApplicationPaletteGuard() { QApplication::setPalette(original); }
+};
+
+// Dark application palette matching the shell's dark theme well enough for the
+// palette-driven style sheet and the icon tinting engine to resolve against it.
+QPalette darkTestPalette() {
+    QPalette palette;
+    const QColor ground(0x1F, 0x1F, 0x1F);
+    const QColor ink(0xF0, 0xF0, 0xF0);
+    palette.setColor(QPalette::Window, ground);
+    palette.setColor(QPalette::Base, QColor(0x2B, 0x2B, 0x2B));
+    palette.setColor(QPalette::AlternateBase, QColor(0x33, 0x33, 0x33));
+    palette.setColor(QPalette::Button, ground);
+    palette.setColor(QPalette::WindowText, ink);
+    palette.setColor(QPalette::Text, ink);
+    palette.setColor(QPalette::ButtonText, ink);
+    palette.setColor(QPalette::ToolTipBase, ground);
+    palette.setColor(QPalette::ToolTipText, ink);
+    palette.setColor(QPalette::Highlight, QColor(0x2D, 0x5E, 0xA8));
+    palette.setColor(QPalette::HighlightedText, ink);
+    return palette;
+}
+
+// Geometry of the icon comparison sheet, shared by the frame pass and the two
+// per-palette icon passes.
+struct IconSheetLayout {
+    static constexpr int kRowHeight = 44;
+    static constexpr int kLabelWidth = 460;
+    static constexpr int kCellWidth = 44;
+    static constexpr int kHeaderHeight = 34;
+    static constexpr int kGroundGap = 12;
+
+    QVector<int> sizes{16, 20, 24, 32};
+    int rows{0};
+
+    [[nodiscard]] int groundWidth() const { return sizes.size() * kCellWidth; }
+    [[nodiscard]] int lightX() const { return kLabelWidth; }
+    [[nodiscard]] int darkX() const { return kLabelWidth + groundWidth() + kGroundGap; }
+    [[nodiscard]] int width() const { return kLabelWidth + (2 * groundWidth()) + (2 * kGroundGap); }
+    [[nodiscard]] int height() const { return kHeaderHeight + (rows * kRowHeight) + kGroundGap; }
+    [[nodiscard]] int rowY(int row) const { return kHeaderHeight + (row * kRowHeight); }
+};
+
+// Labels, rules, and the dark band. Palette-independent, so it is painted once.
+QImage renderIconSheetFrame(const QVector<sak::FileExplorerIconDescriptor>& descriptors,
+                            const IconSheetLayout& layout) {
+    QImage sheet(layout.width(), layout.height(), QImage::Format_ARGB32);
+    sheet.fill(QColor(0xFA, 0xFA, 0xFA));
+    QPainter painter(&sheet);
+    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setPen(QColor(0x20, 0x20, 0x20));
+    painter.drawText(
+        QRect(8, 6, IconSheetLayout::kLabelWidth - 16, IconSheetLayout::kHeaderHeight - 10),
+        Qt::AlignVCenter | Qt::AlignLeft,
+        QStringLiteral("icon key  <-  Files upstream key"));
+    painter.drawText(
+        QRect(layout.lightX(), 6, layout.groundWidth(), IconSheetLayout::kHeaderHeight - 10),
+        Qt::AlignCenter,
+        QStringLiteral("light palette"));
+    painter.drawText(
+        QRect(layout.darkX(), 6, layout.groundWidth(), IconSheetLayout::kHeaderHeight - 10),
+        Qt::AlignCenter,
+        QStringLiteral("dark palette"));
+    for (int row = 0; row < descriptors.size(); ++row) {
+        const auto& descriptor = descriptors.at(row);
+        const int y = layout.rowY(row);
+        painter.fillRect(
+            QRect(layout.darkX(), y, layout.groundWidth(), IconSheetLayout::kRowHeight),
+            QColor(0x1F, 0x1F, 0x1F));
+        painter.setPen(QColor(0x20, 0x20, 0x20));
+        const QString upstream = descriptor.upstream_key.isEmpty()
+                                     ? QStringLiteral("(S.A.K. original glyph)")
+                                     : descriptor.upstream_key;
+        painter.drawText(
+            QRect(8, y, IconSheetLayout::kLabelWidth - 16, IconSheetLayout::kRowHeight),
+            Qt::AlignVCenter | Qt::AlignLeft,
+            QStringLiteral("%1  <-  %2").arg(descriptor.key, upstream));
+        painter.setPen(QColor(0xDD, 0xDD, 0xDD));
+        painter.drawLine(0,
+                         y + IconSheetLayout::kRowHeight - 1,
+                         layout.width(),
+                         y + IconSheetLayout::kRowHeight - 1);
+    }
+    return sheet;
+}
+
+// Paints one column of icons at @p column_x. The caller has already installed the
+// palette this column is meant to show, because PaletteTintedIconEngine resolves
+// its tint from the application palette at paint time -- rendering both columns
+// under one palette would print the same ink twice and prove nothing.
+void paintIconSheetColumn(QImage* sheet,
+                          const QVector<sak::FileExplorerIconDescriptor>& descriptors,
+                          const IconSheetLayout& layout,
+                          int column_x) {
+    QPainter painter(sheet);
+    for (int row = 0; row < descriptors.size(); ++row) {
+        const int y = layout.rowY(row);
+        const QIcon icon = sak::FileExplorerIconRegistry::iconForKey(descriptors.at(row).key);
+        for (int column = 0; column < layout.sizes.size(); ++column) {
+            const int size = layout.sizes.at(column);
+            const int offset = (column * IconSheetLayout::kCellWidth) +
+                               ((IconSheetLayout::kCellWidth - size) / 2);
+            painter.drawPixmap(column_x + offset,
+                               y + ((IconSheetLayout::kRowHeight - size) / 2),
+                               icon.pixmap(size, size));
+        }
+    }
 }
 
 // Probe each selectable sidebar row until the omnibar shows a path on the wanted drive
@@ -328,6 +475,91 @@ bool waitForListingQuiescence(QTableView* table) {
         5000);
 }
 
+// The first selectable TARGET row. Target rows are the only selectable sidebar
+// entries carrying a capability badge ("Label  [Writable]"); Home and Tag rows
+// carry plain text, and stale-favorite rows are Qt::NoItemFlags. This used to key
+// on a newline, which stopped identifying anything once the row became one line
+// to match the Files sidebar template.
+// One Safety-pane expectation: the manual image target to add, and the verdict the
+// pane must then show for it.
+struct SafetyPaneCase {
+    QString image;
+    QString file_system;
+    bool write_enabled{false};
+    bool readable{true};  // browse + read; false only for the metadata-only pair
+    QString note_fragment;
+};
+
+// A sparse image file of exactly @p size bytes. QVERIFY expands to a bare return,
+// so this writes through an out-parameter rather than returning the path.
+void makeSizedImage(const QDir& root, const QString& name, qint64 size, QString* out) {
+    QFile file(root.filePath(name));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QVERIFY(file.resize(size));
+    file.close();
+    *out = root.filePath(name);
+}
+
+// The six raw families the Safety pane must speak for. A manual image target takes
+// its size from the file on disk, and that size is what decides the APFS range
+// gate -- so the 64 MiB image is the write-enabled APFS case and the 1 KiB image
+// the out-of-range one.
+void buildSafetyPaneCases(const QDir& root, QVector<SafetyPaneCase>* cases) {
+    constexpr qint64 kCertifiedApfsBytes = 64LL * 1024LL * 1024LL;
+    constexpr qint64 kTokenImageBytes = 4096;
+    struct Seed {
+        const char* file_name;
+        qint64 size;
+        const char* file_system;
+        bool write_enabled;
+        bool readable;
+        const char* note_fragment;
+    };
+    const std::array<Seed, 6> seeds{{
+        {"lane-ext4.img",
+         kTokenImageBytes,
+         "ext4",
+         false,
+         true,
+         "ext2/ext3/ext4 targets are read-only browse/read/copy-out"},
+        {"lane-hfs.img",
+         kTokenImageBytes,
+         "HFS+",
+         true,
+         true,
+         "HFS+/HFSX writes commit through the Apple-certified"},
+        {"lane-apfs-ok.img",
+         kCertifiedApfsBytes,
+         "APFS",
+         true,
+         true,
+         "APFS writes commit through the Apple-certified in-place COW engine"},
+        {"lane-apfs-small.img", 1024, "APFS", false, true, "its size is unknown or out of range"},
+        {"lane-xfs.img",
+         kTokenImageBytes,
+         "XFS",
+         false,
+         false,
+         "XFS/Btrfs targets are metadata-only in this build"},
+        {"lane-btrfs.img",
+         kTokenImageBytes,
+         "Btrfs",
+         false,
+         false,
+         "XFS/Btrfs targets are metadata-only in this build"},
+    }};
+    for (const Seed& seed : seeds) {
+        QString image;
+        makeSizedImage(root, QString::fromLatin1(seed.file_name), seed.size, &image);
+        QVERIFY(!image.isEmpty());
+        cases->append(SafetyPaneCase{.image = image,
+                                     .file_system = QString::fromLatin1(seed.file_system),
+                                     .write_enabled = seed.write_enabled,
+                                     .readable = seed.readable,
+                                     .note_fragment = QString::fromLatin1(seed.note_fragment)});
+    }
+}
+
 int firstTargetRow(QListWidget* list) {
     if (!list) {
         return -1;
@@ -335,7 +567,7 @@ int firstTargetRow(QListWidget* list) {
     for (int row = 0; row < list->count(); ++row) {
         const auto* item = list->item(row);
         if (item && item->flags().testFlag(Qt::ItemIsSelectable) &&
-            item->text().contains(QLatin1Char('\n'))) {
+            item->text().contains(QStringLiteral("  ["))) {
             return row;
         }
     }
@@ -667,6 +899,14 @@ private Q_SLOTS:
         verifyShellCoreWidgetsExist(panel);
         verifyShellDetailsAndPreviewPanes(panel);
         verifyShellAccessibilityAndIcons(panel);
+        // Let the first listing land before grabbing. The status labels size
+        // themselves from their text, and the initial listing arrives after the
+        // first layout pass -- a grab taken before it caught the summary label at
+        // its pre-listing width, so the committed baseline showed "local fil".
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(table);
+        QVERIFY(waitForListingQuiescence(table));
+        QApplication::processEvents();
         captureBaseline(&panel, QStringLiteral("desktop"));
     }
 
@@ -853,6 +1093,203 @@ private Q_SLOTS:
         // a whole descriptor group (e.g. the 21 fluent glyphs, leaving 26) stayed green. Pin the
         // exact count so any added/removed descriptor group is caught.
         QCOMPARE(sak::FileExplorerIconRegistry::descriptors().size(), static_cast<qsizetype>(47));
+    }
+
+    void explorerIconsAndShellFollowTheApplicationPalette() {
+        // M11/M12 lane: the shell is styled through palette() references and the
+        // bundled SVGs carry a FIXED dark fill that PaletteTintedIconEngine recolors
+        // at paint time. verifyAllDescriptorIconsRenderVisiblePixels only ever ran
+        // under the ambient light palette and only asked whether SOME pixel was
+        // opaque -- so an engine that ignored the palette entirely, leaving dark ink
+        // invisible on the dark theme, passed it. Compare the ink the engine actually
+        // chose under each palette.
+        ApplicationPaletteGuard guard;
+        const auto descriptors = sak::FileExplorerIconRegistry::descriptors();
+        QVERIFY(!descriptors.isEmpty());
+        IconSheetLayout layout;
+        layout.rows = static_cast<int>(descriptors.size());
+        QImage sheet = renderIconSheetFrame(descriptors, layout);
+
+        QHash<QString, double> light_ink;
+        QApplication::setPalette(guard.original);
+        for (const auto& descriptor : descriptors) {
+            const QIcon icon = sak::FileExplorerIconRegistry::iconForKey(descriptor.key);
+            const double ink = iconInkLuminance(icon.pixmap(24, 24));
+            QVERIFY2(ink >= 0.0, qPrintable(descriptor.key));
+            light_ink.insert(descriptor.key, ink);
+        }
+        paintIconSheetColumn(&sheet, descriptors, layout, layout.lightX());
+
+        QApplication::setPalette(darkTestPalette());
+        for (const auto& descriptor : descriptors) {
+            const QIcon icon = sak::FileExplorerIconRegistry::iconForKey(descriptor.key);
+            const double ink = iconInkLuminance(icon.pixmap(24, 24));
+            QVERIFY2(ink >= 0.0, qPrintable(descriptor.key));
+            // The dark theme's foreground is light, so the ink must get LIGHTER. A
+            // generous margin: the claim is "the tint tracked the palette", not a
+            // particular shade. Equal values mean the engine ignored the palette.
+            QVERIFY2(ink > light_ink.value(descriptor.key) + 32.0,
+                     qPrintable(QStringLiteral("%1: light ink %2, dark ink %3")
+                                    .arg(descriptor.key)
+                                    .arg(light_ink.value(descriptor.key))
+                                    .arg(ink)));
+        }
+        paintIconSheetColumn(&sheet, descriptors, layout, layout.darkX());
+        captureBaselineImage(sheet, QStringLiteral("icon-comparison"));
+
+        // The shell resolves through the same palette. Compare what the widgets
+        // actually PAINT, not the QPalette they carry: Qt propagates the palette to
+        // every child on its own, so reading table->palette() would stay green
+        // against a style sheet that hardcoded its colors and rendered the light
+        // theme's dark-on-light in dark mode.
+        const double dark_ground = renderShellGroundLuminance(QStringLiteral("desktop-dark"));
+        QApplication::setPalette(guard.original);
+        const double light_ground = renderShellGroundLuminance(QStringLiteral("desktop-light"));
+        QVERIFY2(light_ground - dark_ground > 64.0,
+                 qPrintable(QStringLiteral("shell ground: light %1, dark %2")
+                                .arg(light_ground)
+                                .arg(dark_ground)));
+    }
+
+    // Build the explorer under the CURRENT application palette, capture it under
+    // @p capture_name, and return the mean luminance of its item-view region.
+    double renderShellGroundLuminance(const QString& capture_name) {
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1280, 800);
+        panel.show();
+        if (!QTest::qWaitForWindowExposed(&panel)) {
+            return -1.0;
+        }
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        if (table == nullptr) {
+            return -1.0;
+        }
+        captureBaseline(&panel, capture_name);
+        const QImage rendered =
+            table->viewport()->grab().toImage().convertToFormat(QImage::Format_ARGB32);
+        if (rendered.isNull() || rendered.width() == 0 || rendered.height() == 0) {
+            return -1.0;
+        }
+        double total = 0.0;
+        for (int y = 0; y < rendered.height(); ++y) {
+            for (int x = 0; x < rendered.width(); ++x) {
+                const QColor color = rendered.pixelColor(x, y);
+                total += (0.299 * color.red()) + (0.587 * color.green()) + (0.114 * color.blue());
+            }
+        }
+        return total / static_cast<double>(rendered.width() * rendered.height());
+    }
+
+    void statusRowLabelsRenderWithoutClipping() {
+        // M12 Visual QA lane ("no clipped text"), made mechanical. A QLabel does not
+        // elide -- it clips -- so a status label narrower than its own text loses
+        // characters silently. The desktop capture showed exactly that at 1280 with
+        // the info pane open: "29 item(s" and "85 item(s) - Local - local fil".
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1280, 800);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
+        const int row = firstTargetRow(targetList);
+        if (row < 0) {
+            QSKIP("No mounted File Explorer targets on this test host.");
+        }
+        targetList->setCurrentRow(row);
+        QVERIFY(waitForListingQuiescence(table));
+        QApplication::processEvents();
+
+        for (const QString& name : {QStringLiteral("fileExplorerItemsCountLabel"),
+                                    QStringLiteral("fileExplorerSummaryLabel"),
+                                    QStringLiteral("fileExplorerStatusLabel")}) {
+            auto* label = panel.findChild<QLabel*>(name);
+            QVERIFY2(label != nullptr, qPrintable(name));
+            if (!label->isVisible() || label->text().trimmed().isEmpty()) {
+                continue;
+            }
+            // Measure the CONTENT box, not the widget: the status labels carry an
+            // 8px style-sheet padding on each side, and a sizeHint()-versus-width()
+            // check passes while those 16px are eating the last characters.
+            const int available = label->contentsRect().width();
+            const int needed = label->fontMetrics().horizontalAdvance(label->text());
+            QVERIFY2(available >= needed,
+                     qPrintable(QStringLiteral("%1 has %2px of content box but needs %3px "
+                                               "for \"%4\" (widget %5px, sizeHint %6px)")
+                                    .arg(name)
+                                    .arg(available)
+                                    .arg(needed)
+                                    .arg(label->text())
+                                    .arg(label->width())
+                                    .arg(label->sizeHint().width())));
+        }
+    }
+
+    void commandBarIconsAndLabelsAreConsistent() {
+        // M11 polish lane: the command bar follows Files ToolbarSections -- labelled
+        // flyout groups (New, View) and icon-only item commands. "Consistent" is
+        // testable: every control carries a registry icon, a tooltip and an
+        // accessible name; the icon-only ones carry NO text; and every icon-only
+        // glyph in the row renders at the SAME size, which is what stops the row
+        // from looking ragged.
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1280, 800);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+
+        const QStringList icon_only{QStringLiteral("fileExplorerCutButton"),
+                                    QStringLiteral("fileExplorerCopyButton"),
+                                    QStringLiteral("fileExplorerPasteButton"),
+                                    QStringLiteral("fileExplorerRenameButton"),
+                                    QStringLiteral("fileExplorerDeleteButton"),
+                                    QStringLiteral("fileExplorerPropertiesButton"),
+                                    QStringLiteral("fileExplorerDetailsToggleButton"),
+                                    QStringLiteral("fileExplorerSelectionButton"),
+                                    QStringLiteral("fileExplorerSortButton")};
+        const QStringList labelled{QStringLiteral("fileExplorerNewButton"),
+                                   QStringLiteral("fileExplorerViewButton")};
+
+        QSize shared_icon_size;
+        for (const QString& name : icon_only) {
+            auto* button = panel.findChild<QAbstractButton*>(name);
+            QVERIFY2(button != nullptr, qPrintable(name));
+            QVERIFY2(!button->icon().isNull(), qPrintable(name));
+            QVERIFY2(button->text().isEmpty(),
+                     qPrintable(name + QStringLiteral(": ") + button->text()));
+            QVERIFY2(!button->toolTip().trimmed().isEmpty(), qPrintable(name));
+            QVERIFY2(!button->accessibleName().trimmed().isEmpty(), qPrintable(name));
+            // A control with no text must not fall back to a stock/blank glyph.
+            QVERIFY2(hasVisiblePixel(button->icon().pixmap(button->iconSize())), qPrintable(name));
+            if (!shared_icon_size.isValid()) {
+                shared_icon_size = button->iconSize();
+            }
+            QVERIFY2(button->iconSize() == shared_icon_size,
+                     qPrintable(QStringLiteral("%1 renders %2x%3, the rest %4x%5")
+                                    .arg(name)
+                                    .arg(button->iconSize().width())
+                                    .arg(button->iconSize().height())
+                                    .arg(shared_icon_size.width())
+                                    .arg(shared_icon_size.height())));
+        }
+        for (const QString& name : labelled) {
+            auto* button = panel.findChild<QToolButton*>(name);
+            QVERIFY2(button != nullptr, qPrintable(name));
+            QVERIFY2(!button->icon().isNull(), qPrintable(name));
+            QVERIFY2(!button->text().trimmed().isEmpty(), qPrintable(name));
+            QCOMPARE(button->toolButtonStyle(), Qt::ToolButtonTextBesideIcon);
+            QVERIFY2(!button->toolTip().trimmed().isEmpty(), qPrintable(name));
+            QVERIFY2(!button->accessibleName().trimmed().isEmpty(), qPrintable(name));
+            QVERIFY2(button->iconSize() == shared_icon_size,
+                     qPrintable(QStringLiteral("%1 renders %2x%3, the icon-only row %4x%5")
+                                    .arg(name)
+                                    .arg(button->iconSize().width())
+                                    .arg(button->iconSize().height())
+                                    .arg(shared_icon_size.width())
+                                    .arg(shared_icon_size.height())));
+        }
     }
 
     void layoutPickerExposesFunctionalViewModesWithoutMilestoneText() {
@@ -1712,6 +2149,46 @@ private Q_SLOTS:
         QVERIFY(labels.contains(QStringLiteral("Certification Targets")));
     }
 
+    void sidebarTargetRowsAreSingleLineWithTheDetailInTheTooltip() {
+        // M11 density lane, measured against Files SidebarStyles.xaml: the sidebar
+        // item template is ONE line (TextWrapping="NoWrap", CharacterEllipsis). A
+        // second line in the display string is not merely off-spec -- Qt's item view
+        // never renders it, so it silently became an ellipsis and made every row read
+        // as a truncated badge. The detail belongs in the tooltip, where it is
+        // actually reachable.
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1280, 760);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        QVERIFY(targetList);
+        const int row = firstTargetRow(targetList);
+        if (row < 0) {
+            QSKIP("No mounted File Explorer targets on this test host.");
+        }
+
+        int checked = 0;
+        for (int index = 0; index < targetList->count(); ++index) {
+            const auto* item = targetList->item(index);
+            QVERIFY2(!item->text().contains(QLatin1Char('\n')),
+                     qPrintable(QStringLiteral("sidebar row %1 is multi-line: \"%2\"")
+                                    .arg(index)
+                                    .arg(item->text())));
+            if (item->flags().testFlag(Qt::ItemIsSelectable) &&
+                item->text().contains(QStringLiteral("  ["))) {
+                // The row still says WHICH target and what it may do; the rest --
+                // identity path, capability summary, and the mounted/raw subtitle --
+                // is in the tooltip.
+                QVERIFY2(!item->toolTip().trimmed().isEmpty(), qPrintable(item->text()));
+                QVERIFY2(item->toolTip().contains(QStringLiteral("mounted")) ||
+                             item->toolTip().contains(QStringLiteral("raw/image")),
+                         qPrintable(item->toolTip()));
+                ++checked;
+            }
+        }
+        QVERIFY2(checked > 0, "no sidebar target row was examined");
+    }
+
     void commandButtonsExposeBlockersWithoutSelection() {
         sak::FileManagementExplorerPanel panel;
         panel.resize(1100, 700);
@@ -1787,6 +2264,187 @@ private Q_SLOTS:
             QVERIFY2(line == capabilities.at(i) + QStringLiteral("enabled") ||
                          line == capabilities.at(i) + QStringLiteral("blocked"),
                      qPrintable(line));
+        }
+    }
+
+    void previewPaneShowsLocalTextFileContents() {
+        // M7 lane: selecting a readable local text file must put the FILE'S OWN
+        // TEXT in the persistent preview pane. detailsPanePreviewSwitchesBetweenTextAndImage
+        // only proves the text/image views swap; it never reads a file, so a preview
+        // that rendered a hint (or the previous selection's bytes) would satisfy it.
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QByteArray payload =
+            QByteArrayLiteral("preview-lane-marker: the quick brown fox\nsecond line\n");
+        {
+            QFile file(QDir(dir.path()).filePath(QStringLiteral("preview.txt")));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QCOMPARE(file.write(payload), payload.size());
+        }
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1200, 760);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        auto* preview = child<QPlainTextEdit>(&panel, "fileExplorerPreviewText");
+        QVERIFY(targetList);
+        QVERIFY(pathEdit);
+        QVERIFY(table);
+        QVERIFY(preview);
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("preview")) >= 0);
+        QVERIFY(waitForListingQuiescence(table));
+        QVERIFY(selectRowStable(table, QStringLiteral("preview")));
+
+        // The read is asynchronous (QFutureWatcher), so wait for the decoded text.
+        // Pin BOTH lines: a decoder that stopped at the first newline, or one that
+        // rendered a hex dump of a plainly decodable file, would pass a single-line check.
+        QTRY_VERIFY2(preview->toPlainText().contains(QStringLiteral("preview-lane-marker")),
+                     qPrintable(preview->toPlainText()));
+        QVERIFY2(preview->toPlainText().contains(QStringLiteral("second line")),
+                 qPrintable(preview->toPlainText()));
+
+        // Capture the info pane while it is actually populated -- Preview, Properties,
+        // Safety, and Evidence all filled from a real selection.
+        auto* info = child<sak::FileExplorerDetailsPane>(&panel, "fileExplorerInfoPane");
+        QVERIFY(info);
+        captureBaseline(info, QStringLiteral("details-pane"));
+    }
+
+    // Drive the "Add Raw/Image" dialog once: fill its path field, pick @p file_system
+    // in its combo, and accept. The dialog runs its own exec() loop, so this arms a
+    // timer the way the QInputDialog helpers above do.
+    void armAutoAcceptManualTargetDialog(const QString& path, const QString& file_system) {
+        auto* accept = new QTimer(this);
+        accept->setInterval(50);
+        connect(accept, &QTimer::timeout, this, [accept, path, file_system]() {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            if (dialog == nullptr) {
+                return;
+            }
+            auto* edit = dialog->findChild<QLineEdit*>();
+            auto* combo = dialog->findChild<QComboBox*>();
+            if (edit == nullptr || combo == nullptr) {
+                return;
+            }
+            const int fs_index = combo->findText(file_system);
+            if (fs_index < 0) {
+                return;
+            }
+            edit->setText(path);
+            combo->setCurrentIndex(fs_index);
+            accept->stop();
+            accept->deleteLater();
+            dialog->accept();
+        });
+        accept->start();
+    }
+
+    // Add a manual raw/image target through the real Add Raw/Image button and select
+    // its sidebar row. Returns the row, or -1 when it never appeared.
+    int addManualTargetAndSelect(sak::FileManagementExplorerPanel& panel,
+                                 QListWidget* targetList,
+                                 const QString& image_path,
+                                 const QString& file_system) {
+        auto* add = child<QPushButton>(&panel, "fileExplorerAddRawImageButton");
+        if (add == nullptr) {
+            return -1;
+        }
+        armAutoAcceptManualTargetDialog(image_path, file_system);
+        add->click();
+        const QString needle = QFileInfo(image_path).fileName();
+        int row = -1;
+        std::ignore = QTest::qWaitFor(
+            [targetList, &needle, &row]() {
+                for (int i = 0; i < targetList->count(); ++i) {
+                    const auto* item = targetList->item(i);
+                    if (item != nullptr && item->flags().testFlag(Qt::ItemIsSelectable) &&
+                        item->text().contains(needle)) {
+                        row = i;
+                        return true;
+                    }
+                }
+                return false;
+            },
+            5000);
+        if (row < 0) {
+            return -1;
+        }
+        targetList->setCurrentRow(row);
+        QApplication::processEvents();
+        return row;
+    }
+
+    void safetyPaneNamesBlockerForEachRawFileSystem() {
+        // M7 lane: the Safety pane must state the write/read/browse verdict AND the
+        // file-system-specific reason for every raw family S.A.K. can be pointed at.
+        // targetSelectionFeedsOmnibarAndSafetyPane only ever sees this host's own
+        // mounted volume, so no per-file-system blocker text was pinned in the GUI.
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        QVector<SafetyPaneCase> cases;
+        buildSafetyPaneCases(QDir(dir.path()), &cases);
+        QCOMPARE(cases.size(), 6);
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1280, 800);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* safety = child<QPlainTextEdit>(&panel, "fileExplorerSafetyText");
+        QVERIFY(targetList);
+        QVERIFY(safety);
+
+        for (const SafetyPaneCase& item : cases) {
+            const QString label = QStringLiteral("%1 (%2)").arg(item.file_system, item.image);
+            QVERIFY2(addManualTargetAndSelect(panel, targetList, item.image, item.file_system) >= 0,
+                     qPrintable(label));
+            verifySafetyPaneCase(safety, item);
+        }
+    }
+
+    // One Safety-pane verdict: identity, capability words, and the file-system note.
+    void verifySafetyPaneCase(QPlainTextEdit* safety, const SafetyPaneCase& expected) {
+        const QString& file_system = expected.file_system;
+        const QString& image_path = expected.image;
+        const bool write_enabled = expected.write_enabled;
+        const bool readable = expected.readable;
+        const QString& note_fragment = expected.note_fragment;
+        // The pane repaints from the selection change; wait for THIS target's identity
+        // line so a stale previous verdict can never be read as this one's.
+        const QString identity = QStringLiteral("Identity: %1").arg(image_path);
+        QTRY_VERIFY2(safety->toPlainText().contains(identity), qPrintable(safety->toPlainText()));
+        const QString text = safety->toPlainText();
+        const QStringList lines = text.split(QLatin1Char('\n'));
+        const auto verdict = [](bool enabled) {
+            return enabled ? QStringLiteral("enabled") : QStringLiteral("blocked");
+        };
+        QVERIFY2(lines.contains(QStringLiteral("File system: %1").arg(file_system)),
+                 qPrintable(text));
+        // Whole-line compares: "Write state: blocked" must not be satisfied by a
+        // substring of some other line, and the capability vocabulary is closed.
+        QVERIFY2(lines.contains(QStringLiteral("Write state: %1").arg(verdict(write_enabled))),
+                 qPrintable(text));
+        QVERIFY2(lines.contains(QStringLiteral("Read state: %1").arg(verdict(readable))),
+                 qPrintable(text));
+        QVERIFY2(lines.contains(QStringLiteral("Browse state: %1").arg(verdict(readable))),
+                 qPrintable(text));
+        QVERIFY2(text.contains(note_fragment), qPrintable(text));
+        // Every raw target carries the non-native confirmation rule, whatever its
+        // file system: this is what keeps a write-enabled raw slice from reading
+        // like a mounted volume.
+        QVERIFY2(text.contains(QStringLiteral("Raw/non-native target:")), qPrintable(text));
+        // A target with no reader must SAY it has none, in the blocker list -- the
+        // metadata-only note alone does not name what is missing.
+        if (!readable) {
+            QVERIFY2(
+                text.contains(
+                    QStringLiteral("No directory browser is registered for %1").arg(file_system)),
+                qPrintable(text));
         }
     }
 
@@ -3990,6 +4648,218 @@ private Q_SLOTS:
         dualPane->trigger();
         QApplication::processEvents();
         QCOMPARE(panel.findChildren<sak::FileExplorerPane*>().size(), 2);
+    }
+
+    // Shared M8 dual-pane fixture: a parent folder holding "sub/inner.txt" and
+    // "top.txt", navigated to in pane A with "sub" selected. Returns false (after
+    // QSKIP/QVERIFY inside) when this host has no local target for the temp drive.
+    bool openDualPaneFixture(sak::FileManagementExplorerPanel& panel,
+                             const QString& parent_path,
+                             sak::FileExplorerPane** pane_a) {
+        auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        auto* table = child<QTableView>(&panel, "fileExplorerTable");
+        if (targetList == nullptr || pathEdit == nullptr || table == nullptr) {
+            return false;
+        }
+        if (selectLocalTargetRowForDrive(targetList, pathEdit, parent_path.left(2).toUpper()) < 0) {
+            return false;
+        }
+        if (navigateAndFindRow(pathEdit, table, parent_path, QStringLiteral("sub")) < 0) {
+            return false;
+        }
+        if (!waitForListingQuiescence(table) || !selectRowStable(table, QStringLiteral("sub"))) {
+            return false;
+        }
+        const auto panes = panel.findChildren<sak::FileExplorerPane*>();
+        if (panes.size() != 1) {
+            return false;
+        }
+        *pane_a = panes.first();
+        // Files FileList_PreviewKeyDown: Ctrl+Shift+Enter opens the selection in
+        // the other pane (OpenInSecondPane), creating that pane if needed.
+        panel.activateWindow();
+        table->setFocus();
+        QApplication::processEvents();
+        QTest::keyClick(table, Qt::Key_Return, Qt::ControlModifier | Qt::ShiftModifier);
+        return true;
+    }
+
+    // The pane that is not @p pane_a, once the split exists.
+    static sak::FileExplorerPane* otherPane(sak::FileManagementExplorerPanel& panel,
+                                            sak::FileExplorerPane* pane_a) {
+        for (auto* pane : panel.findChildren<sak::FileExplorerPane*>()) {
+            if (pane != pane_a) {
+                return pane;
+            }
+        }
+        return nullptr;
+    }
+
+    // Names listed in @p pane's own item model (the unfiltered source rows).
+    static QStringList paneEntryNames(const sak::FileExplorerPane* pane) {
+        QStringList names;
+        const auto* model = pane->itemModel();
+        for (int row = 0; row < model->rowCount(); ++row) {
+            names.append(model->index(row, 0).data().toString());
+        }
+        return names;
+    }
+
+    void openFolderInSecondPaneListsThatFolderInPaneB() {
+        // M8 lane: Open In Second Pane must land the SELECTED FOLDER's contents in
+        // pane B and leave pane A where it was. dualPaneToggleAddsSecondPane only
+        // counts panes, so a second pane that opened the wrong path -- or mirrored
+        // pane A -- satisfied it.
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        QVERIFY(root.mkpath(QStringLiteral("sub")));
+        const auto write = [&root](const QString& relative) {
+            QFile file(root.filePath(relative));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QVERIFY(file.write("dual-pane fixture") > 0);
+        };
+        write(QStringLiteral("top.txt"));
+        write(QStringLiteral("sub/inner.txt"));
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1280, 800);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        sak::FileExplorerPane* pane_a = nullptr;
+        if (!openDualPaneFixture(panel, dir.path(), &pane_a)) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+
+        QTRY_COMPARE(panel.findChildren<sak::FileExplorerPane*>().size(), 2);
+        auto* pane_b = otherPane(panel, pane_a);
+        QVERIFY(pane_b);
+        // Pane B shows sub/, pane A still shows the parent. Both halves matter: a
+        // second pane that simply cloned pane A would show "sub" and "top.txt" too.
+        QTRY_VERIFY2(paneEntryNames(pane_b).contains(QStringLiteral("inner.txt")),
+                     qPrintable(paneEntryNames(pane_b).join(QLatin1Char(','))));
+        QVERIFY2(!paneEntryNames(pane_b).contains(QStringLiteral("top.txt")),
+                 qPrintable(paneEntryNames(pane_b).join(QLatin1Char(','))));
+        const QStringList left = paneEntryNames(pane_a);
+        QVERIFY2(left.contains(QStringLiteral("top.txt")), qPrintable(left.join(QLatin1Char(','))));
+        QVERIFY2(left.contains(QStringLiteral("sub")), qPrintable(left.join(QLatin1Char(','))));
+        captureBaseline(&panel, QStringLiteral("dual-pane"));
+    }
+
+    void commandsActOnTheActivePaneOnly() {
+        // M8 lane: a command must act on the ACTIVE pane's folder, and clicking into
+        // the other pane must make that pane active first (Files ShellPanesPage
+        // Pane_PointerPressed -> Pane_GotFocus). Before that wiring existed, only
+        // Enter / mouse4-5 / middle-click / double-click-empty switched panes, so a
+        // left-click in the inactive pane followed by New Folder or Delete acted on
+        // the pane the user had visibly left.
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QDir root(dir.path());
+        QVERIFY(root.mkpath(QStringLiteral("sub")));
+        {
+            QFile file(root.filePath(QStringLiteral("sub/inner.txt")));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QVERIFY(file.write("dual-pane fixture") > 0);
+        }
+        {
+            QFile file(root.filePath(QStringLiteral("top.txt")));
+            QVERIFY(file.open(QIODevice::WriteOnly));
+            QVERIFY(file.write("dual-pane fixture") > 0);
+        }
+
+        sak::FileManagementExplorerPanel panel;
+        panel.resize(1280, 800);
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        sak::FileExplorerPane* pane_a = nullptr;
+        if (!openDualPaneFixture(panel, dir.path(), &pane_a)) {
+            QSKIP("No mounted local target for the temp drive on this test host.");
+        }
+        QTRY_COMPARE(panel.findChildren<sak::FileExplorerPane*>().size(), 2);
+        auto* pane_b = otherPane(panel, pane_a);
+        QVERIFY(pane_b);
+        QTRY_VERIFY(paneEntryNames(pane_b).contains(QStringLiteral("inner.txt")));
+        // activatePane() re-points the omnibar at the newly active pane, so the
+        // address field is the direct read-out of WHICH pane is active -- pin it
+        // rather than inferring activation from where a command happened to land.
+        auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        QVERIFY(pathEdit);
+        const QString sub_path = root.filePath(QStringLiteral("sub"));
+        QTRY_COMPARE(pathEdit->text(), sub_path);
+
+        verifyNewFolderFollowsTheActivePane(panel, pane_a, pane_b, pathEdit, root);
+        verifyEmptySpacePressActivatesPane(pane_b, pathEdit, sub_path);
+    }
+
+    // New Folder must land under whichever pane is active, and clicking into the
+    // other pane must move activation there and drop the selection left behind.
+    void verifyNewFolderFollowsTheActivePane(sak::FileManagementExplorerPanel& panel,
+                                             sak::FileExplorerPane* pane_a,
+                                             sak::FileExplorerPane* pane_b,
+                                             QLineEdit* pathEdit,
+                                             const QDir& root) {
+        const QString in_sub = root.filePath(QStringLiteral("sub/New Folder"));
+        const QString in_parent = root.filePath(QStringLiteral("New Folder"));
+        QString label;
+        armAutoAcceptInputDialog(&label);
+        panel.activateWindow();
+        pane_b->tableView()->setFocus();
+        QApplication::processEvents();
+        QTest::keyClick(pane_b->tableView(), Qt::Key_N, Qt::ControlModifier | Qt::ShiftModifier);
+        QTRY_VERIFY2(QFileInfo(in_sub).isDir(), qPrintable(in_sub));
+        QVERIFY2(!QFileInfo::exists(in_parent), "New Folder landed in the INACTIVE pane's folder");
+
+        // Selecting a row in pane B and then clicking into pane A must transfer
+        // activation AND clear pane B's selection, so the next command can neither
+        // read pane B's path nor its rows.
+        QVERIFY(selectRowStable(pane_b->tableView(), QStringLiteral("inner.txt")));
+        auto* view_a = pane_a->tableView();
+        QVERIFY(view_a->model()->rowCount() > 0);
+        const QRect row_rect = view_a->visualRect(view_a->model()->index(0, 0));
+        QVERIFY2(row_rect.isValid() && !row_rect.isEmpty(), "pane A has no laid-out row to click");
+        QTest::mouseClick(view_a->viewport(), Qt::LeftButton, Qt::NoModifier, row_rect.center());
+        QApplication::processEvents();
+        QTRY_COMPARE(pathEdit->text(), root.path());
+        QTRY_COMPARE(pane_b->sharedSelectionModel()->selectedRows().size(), 0);
+
+        // Pane A is now the active pane: the same command lands under the parent.
+        QString second_label;
+        armAutoAcceptInputDialog(&second_label);
+        panel.activateWindow();
+        view_a->setFocus();
+        QApplication::processEvents();
+        QTest::keyClick(view_a, Qt::Key_N, Qt::ControlModifier | Qt::ShiftModifier);
+        QTRY_VERIFY2(QFileInfo(in_parent).isDir(), qPrintable(in_parent));
+        // sub/ still holds exactly the one folder made while pane B was active.
+        QCOMPARE(QDir(root.filePath(QStringLiteral("sub")))
+                     .entryList(QDir::Dirs | QDir::NoDotAndDotDot)
+                     .size(),
+                 1);
+    }
+
+    // Files Pane_PointerPressed: a press on EMPTY space in the inactive pane
+    // activates it too. This is the case selection cannot cover -- clicking a row
+    // promotes a pane through connectPaneSignals' selectionChanged handler, but a
+    // press below the last row changes no selection, so without the press-time
+    // activation the pane the user just clicked into stays inactive and the next
+    // command silently runs against the other pane's folder.
+    void verifyEmptySpacePressActivatesPane(sak::FileExplorerPane* pane_b,
+                                            QLineEdit* pathEdit,
+                                            const QString& sub_path) {
+        auto* view_b = pane_b->tableView();
+        const int last_row = view_b->model()->rowCount() - 1;
+        QVERIFY(last_row >= 0);
+        const QRect last_rect = view_b->visualRect(view_b->model()->index(last_row, 0));
+        const QPoint empty_space(view_b->viewport()->rect().center().x(),
+                                 view_b->viewport()->rect().bottom() - 4);
+        QVERIFY2(empty_space.y() > last_rect.bottom(), "pane B has no empty space to click");
+        QVERIFY(!view_b->indexAt(empty_space).isValid());
+        QTest::mouseClick(view_b->viewport(), Qt::LeftButton, Qt::NoModifier, empty_space);
+        QApplication::processEvents();
+        QTRY_COMPARE(pathEdit->text(), sub_path);
+        QCOMPARE(pane_b->sharedSelectionModel()->selectedRows().size(), 0);
     }
 
     void staleFavoriteRendersOfflineSidebarRow() {

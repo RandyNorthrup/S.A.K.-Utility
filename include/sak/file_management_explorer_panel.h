@@ -816,6 +816,9 @@ private:
     void nameTabCloseButtons();
     void ensureSecondPane();
     void activatePane(int index);
+    /// Drop the selection of the pane that is NOT @p active_index (Files
+    /// ShellPanesPage Pane_GotFocus).
+    void clearInactivePaneSelection(int active_index);
     void toggleDualPane();
     void togglePaneOrientation();
     void openSelectionInSecondPane();
