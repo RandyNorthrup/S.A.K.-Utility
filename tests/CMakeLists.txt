@@ -1468,6 +1468,9 @@ add_executable(test_file_management_explorer_panel
     ../src/core/partition_file_system_registry.cpp
     ../src/core/partition_manager_types.cpp
     ../src/core/storage_inventory_worker.cpp
+    # sak::jsonUInt64 lives beside the other shared partition helpers, so the inventory
+    # parser that reads disk geometry and the panel share one clamped implementation.
+    ../src/core/partition_safety_validator.cpp
     ../src/core/elevation_broker.cpp
     ${SAK_PROCESS_RUNNER_SOURCES}
     ../src/core/logger.cpp
@@ -6831,6 +6834,52 @@ add_test(NAME test_format_utils COMMAND test_format_utils
 message(STATUS "Added unit test: test_format_utils")
 
 # test_wifi_profile_scanner - WiFi profile name/security parsing
+# test_csv_escape --- the single CSV cell writer. Four writers existed and two of them carried no
+# formula guard, on paths that export externally-sourced text (advisory feeds, WiFi SSIDs).
+# Header-only and pure, so this needs no production source.
+add_executable(test_csv_escape
+    unit/test_csv_escape.cpp
+    ../include/sak/csv_escape.h
+)
+set_target_properties(test_csv_escape PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_csv_escape PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_csv_escape PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_csv_escape COMMAND test_csv_escape
+         -o "${TEST_OUTPUT_DIR}/test_csv_escape.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_csv_escape")
+
+# test_windows_path_policy --- the shared screening dialect in windows_path_policy.h. It gates two
+# real authorities and had NO direct unit test: literalLocalPathTrusted screens a registry string
+# any user can write under HKCU before the uninstaller launches it ELEVATED or deletes a directory
+# RECURSIVELY, and isSafeChildName screens a name about to become a file or folder in a chosen
+# directory. Header-only and pure, so this needs no production source.
+add_executable(test_windows_path_policy
+    unit/test_windows_path_policy.cpp
+    ../include/sak/windows_path_policy.h
+)
+set_target_properties(test_windows_path_policy PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_windows_path_policy PRIVATE
+    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_windows_path_policy PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_windows_path_policy COMMAND test_windows_path_policy
+         -o "${TEST_OUTPUT_DIR}/test_windows_path_policy.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_windows_path_policy")
+
 # test_network_adapter_admin --- the pure half of enable/disable/rename (R5-IDX-19c):
 # new-name validation, resolution against the system's own adapter list, and the exact netsh
 # argument vectors. No adapter is touched, so this runs anywhere.

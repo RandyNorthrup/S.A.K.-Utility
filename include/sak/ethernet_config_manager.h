@@ -6,6 +6,9 @@
 
 #pragma once
 
+// EthernetConfigInfo: the parsed shape scanEthernetConfigs returns.
+#include "sak/user_profile_types.h"
+
 #include <QJsonObject>
 #include <QObject>
 #include <QString>
@@ -42,11 +45,19 @@ struct EthernetConfigSnapshot {
     [[nodiscard]] bool isValid() const;
 };
 
+/// @brief Scan every adapter's IPv4 configuration, language-neutrally.
+/// @param scan_ok Optional out: true only when the scan RAN and succeeded. A succeeded scan that
+///        found nothing and a failed scan both return an empty list, and they call for opposite
+///        next actions, so a caller that shows "no adapters found" must check this first.
+/// @note This is the only place an adapter scan is launched. The backup wizard used to launch its
+///       own copy -- same PowerShell script, but a different resolver, argument list and timeout.
+[[nodiscard]] QVector<EthernetConfigInfo> scanEthernetConfigs(bool* scan_ok = nullptr);
+
 /// @brief Manages backup and restore of Ethernet adapter settings
 ///
-/// Uses `netsh interface ip show config` to capture settings and
-/// `netsh interface ip set` commands to restore them. Backups are
-/// stored as JSON files for portability across machines.
+/// Captures settings with a language-neutral Get-NetIPConfiguration scan (see
+/// scanEthernetConfigs) and restores them through the shared netsh command builders in
+/// network_adapter_admin.h. Backups are stored as JSON files for portability across machines.
 class EthernetConfigManager : public QObject {
     Q_OBJECT
 

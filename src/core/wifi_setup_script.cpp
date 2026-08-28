@@ -318,10 +318,10 @@ static bool writeProfileXmlTempFile(QTemporaryFile& file, const QString& xml, QS
     return true;
 }
 
-WifiConnectResult connectWifiWindows(const QString& ssid,
-                                     const QString& password,
-                                     const QString& security,
-                                     bool hidden) {
+WifiConnectResult addWifiProfileWindows(const QString& ssid,
+                                        const QString& password,
+                                        const QString& security,
+                                        bool hidden) {
     WifiConnectResult result;
     const std::optional<WlanAuthConfig> auth = validateConnectInputs(ssid, security, result.error);
     if (!auth) {
@@ -372,17 +372,41 @@ WifiConnectResult connectWifiWindows(const QString& ssid,
         return result;
     }
     result.profile_added = true;
+    return result;
+}
 
+WifiConnectResult connectWifiWindows(const QString& ssid,
+                                     const QString& password,
+                                     const QString& security,
+                                     bool hidden) {
+    // Connecting is installing the profile and then asking netsh to associate. Sharing the install
+    // half means the WiFi panel's "add these networks to Windows" button and the assistant's
+    // connect_wifi action build the SAME profile from the SAME security resolver, rather than each
+    // deciding for itself what "WPA/WPA2/WPA3" means.
+    WifiConnectResult result = addWifiProfileWindows(ssid, password, security, hidden);
+    if (!result.profile_added) {
+        return result;
+    }
+
+    const QString netsh_exe = sak::system32Path(QStringLiteral("netsh.exe"));
+    if (netsh_exe.isEmpty()) {
+        result.error = QStringLiteral(
+            "profile added, but the System32 netsh.exe path could not be "
+            "resolved to issue connect");
+        return result;
+    }
+    constexpr int kNetshTimeoutMs = 15'000;
     const ProcessResult conn = runProcess(
         netsh_exe,
         {QStringLiteral("wlan"), QStringLiteral("connect"), QStringLiteral("name=") + ssid},
         kNetshTimeoutMs);
     result.connect_issued = conn.succeeded();
     if (!result.connect_issued) {
+        const QString err = conn.std_err.trimmed();
         result.error = conn.timed_out
                            ? QStringLiteral("netsh timed out issuing connect")
                            : QStringLiteral("profile added, but connect could not be issued: %1")
-                                 .arg(netsh_error(conn));
+                                 .arg(err.isEmpty() ? conn.std_out.trimmed() : err);
     }
     return result;
 }

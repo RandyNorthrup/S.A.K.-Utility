@@ -58,6 +58,38 @@ on that would have meant rebuilding a finished subsystem.
 If a search turns up something close but not identical, that is a decision to make and state,
 not a reason to add another one quietly.
 
+**The GUI has no commands.** A panel does not build an argument vector and does not launch a
+process whose output it reads or whose effect changes the machine. It calls the headless seam --
+the same code the assistant drives -- and keeps only what is genuinely its own: the worker
+thread, the confirmation dialog, the progress and the reporting. Owner ruling, 2026-08-27.
+
+Launching a UI is not running a command: `explorer.exe ms-settings:`, `control.exe ncpa.cpl`, a
+troubleshooter, or a terminal opened in the browsed folder all stay in the GUI, because nothing
+is parsed and nothing is mutated by us. The test is whether the panel consumes the result or the
+machine changes.
+
+When the two sides already disagree, do NOT pick a winner while merging. Every difference that
+changes what the machine does becomes a named, documented parameter, and each caller passes what
+it has always passed -- so unifying the code path changes no behaviour and the remaining decision
+stays visible and cheap to flip. `AdapterIpv4Dialect` is the worked example: `gwmetric` and
+`register` differed between the panel and the restore path, both change live networking, and
+neither can be certified on this machine.
+
+**Unify duplicates, and expect the copies to already disagree.** A second implementation is not
+a future drift risk, it is a present disagreement, and the copy nobody is looking at is the weak
+one. Sweeping for functions defined in both `src/gui` and `src/core` found 47 name collisions and
+six real duplicates, every one of which had diverged: a path-traversal guard that let `..`
+through, a WiFi security resolver that turned the panel's own default into an unusable profile,
+an SSD test that disagreed with the validator blocking on it, two CSV writers with no
+formula-injection guard, five byte formatters, and an inventory parser reading a negative size as
+18 exabytes. Note the direction of that last one: the weak copy was the CORE one. "Core is the
+trustworthy side" is a heuristic that stops a sweep early.
+
+Merging is still a decision. Two functions can share a name and answer different questions --
+`detectImageMime` sniffs four magic bytes for what a report may embed in one place, and asks
+QImageReader what Qt can render in the other. Forcing those together breaks one of them. State
+that outcome; do not merge on the strength of a matching name.
+
 **Fail closed. No fallbacks.** A fallback disguises an error and ships the failure silently.
 No PATH fallback, no stale-cache fallback, no guessed default, no "log it and return success".
 Surface the real error and refuse. This is the single most load-bearing rule in the codebase.

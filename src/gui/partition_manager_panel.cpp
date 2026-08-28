@@ -18,6 +18,8 @@
 #include "sak/partition_file_system_tool_manifest.h"
 #include "sak/partition_file_system_tool_runner.h"
 #include "sak/partition_hfs_file_system_reader.h"
+// sak::diskLooksSsd / diskLooksHdd -- the same judgement the validator blocks an SSD defrag on.
+#include "sak/partition_safety_validator.h"
 #include "sak/process_runner.h"
 #include "sak/ribbon_tool_button.h"
 #include "sak/rich_text_safety.h"
@@ -1260,23 +1262,6 @@ QAction* addContextMenuAction(QMenu& menu,
     return action;
 }
 
-uint64_t jsonUInt64(const QJsonObject& payload, const QString& key) {
-    const auto value = payload.value(key);
-    if (value.isDouble()) {
-        return static_cast<uint64_t>(std::max(0.0, value.toDouble()));
-    }
-    bool ok = false;
-    const auto parsed = value.toString().toULongLong(&ok);
-    return ok ? parsed : 0;
-}
-
-uint64_t saturatingAdd(uint64_t left, uint64_t right) {
-    if (std::numeric_limits<uint64_t>::max() - left < right) {
-        return std::numeric_limits<uint64_t>::max();
-    }
-    return left + right;
-}
-
 bool cancelRequested(const std::shared_ptr<std::atomic_bool>& cancel_flag) {
     return cancel_flag && cancel_flag->load(std::memory_order_relaxed);
 }
@@ -1453,17 +1438,13 @@ uint64_t partitionUsedBytesForResize(const PartitionInfoEx& partition) {
     return partition.volume->total_bytes - partition.volume->free_bytes;
 }
 
+// Nullable wrapper over the shared region-adjacency rule the safety validator applies. Nothing is
+// claimed when no disk or partition is selected.
 uint64_t adjacentFreeBytesAfter(const PartitionDiskInfo* disk, const PartitionInfoEx* partition) {
     if ((disk == nullptr) || (partition == nullptr)) {
         return 0;
     }
-    const uint64_t partition_end = saturatingAdd(partition->offset_bytes, partition->size_bytes);
-    const auto it = std::ranges::find_if(disk->unallocated_regions,
-
-                                         [partition_end](const auto& region) {
-                                             return region.offset_bytes == partition_end;
-                                         });
-    return it == disk->unallocated_regions.cend() ? 0 : it->size_bytes;
+    return sak::adjacentFreeBytesAfter(*disk, *partition);
 }
 
 const PartitionInfoEx* partitionBeforeRegion(const PartitionDiskInfo* disk,
@@ -6914,16 +6895,16 @@ QString optimizeMountPoint(const PartitionVolumeInfo* volume) {
     return QStringLiteral("%1:").arg(volume->drive_letter.left(1).toUpper());
 }
 
+// Nullable wrappers over the SAME judgement the safety validator uses to block an SSD defrag.
+// The panel used to carry its own copies, and they searched fewer fields -- so the panel could
+// offer an operation the validator then refused. A null disk is neither: nothing is claimed
+// about a drive that is not selected.
 bool diskLooksSsd(const PartitionDiskInfo* disk) {
-    const QString media =
-        (disk != nullptr) ? QStringLiteral("%1 %2").arg(disk->media_type, disk->bus_type).toUpper()
-                          : QString();
-    return media.contains(QStringLiteral("SSD")) || media.contains(QStringLiteral("NVME"));
+    return disk != nullptr && sak::diskLooksSsd(*disk);
 }
 
 bool diskLooksHdd(const PartitionDiskInfo* disk) {
-    const QString media = (disk != nullptr) ? disk->media_type.toUpper() : QString();
-    return media.contains(QStringLiteral("HDD")) || media.contains(QStringLiteral("HARD"));
+    return disk != nullptr && sak::diskLooksHdd(*disk);
 }
 
 QString optimizeModeText(const PartitionDiskInfo* disk) {
@@ -11824,10 +11805,9 @@ int PartitionManagerPanel::usedPercent(const PartitionInfoEx& partition) {
 }
 
 uint64_t PartitionManagerPanel::usedBytes(const PartitionInfoEx& partition) {
-    if (!partition.volume || partition.volume->total_bytes < partition.volume->free_bytes) {
-        return 0;
-    }
-    return partition.volume->total_bytes - partition.volume->free_bytes;
+    // The shrink guard in the safety validator compares a requested size against this exact
+    // figure, so the panel must not compute its own.
+    return sak::usedBytes(partition);
 }
 
 QString PartitionManagerPanel::partitionLabel(const PartitionInfoEx& partition) {

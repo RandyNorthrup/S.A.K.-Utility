@@ -24,6 +24,12 @@ private Q_SLOTS:
 
     // -- formatBytes(uint64_t) overload ----------------------------------
     void formatBytes_unsignedOverload();
+
+    // -- formatBytesCompact(qint64) --------------------------------------
+    void formatBytesCompact_usesTheShortUnitNames();
+    void formatBytesCompact_precisionPerUnit();
+    void formatBytesCompact_boundaries();
+    void formatBytesCompact_differsFromTheLongStyleOnPurpose();
 };
 
 // ============================================================================
@@ -118,6 +124,53 @@ void TestFormatUtils::formatBytes_unsignedOverload() {
     const uint64_t value = 1'048'576;
     const QString result = sak::formatBytes(value);
     QCOMPARE(result, QStringLiteral("1.0 MB"));
+}
+
+// ============================================================================
+// formatBytesCompact(qint64)
+//
+// The second of exactly two byte styles. Five call sites had independently written it -- the
+// email inspector, the OST converter widget, the email attachments browser, the email report
+// generator and the conversion report generator -- and they disagreed in trivia: one truncated
+// KB with integer division, another printed GB to one decimal instead of two.
+// ============================================================================
+
+void TestFormatUtils::formatBytesCompact_usesTheShortUnitNames() {
+    // "B", never "bytes": that is the whole reason this style exists alongside formatBytes().
+    QCOMPARE(sak::formatBytesCompact(0), QStringLiteral("0 B"));
+    QCOMPARE(sak::formatBytesCompact(512), QStringLiteral("512 B"));
+    QCOMPARE(sak::formatBytesCompact(1023), QStringLiteral("1023 B"));
+}
+
+void TestFormatUtils::formatBytesCompact_precisionPerUnit() {
+    // KB and MB take one decimal; GB takes two. Pinned exactly, because two of the five copies
+    // this replaced differed on precisely this and nobody noticed.
+    QCOMPARE(sak::formatBytesCompact(1536), QStringLiteral("1.5 KB"));
+    QCOMPARE(sak::formatBytesCompact(1024 * 1024 * 3 / 2), QStringLiteral("1.5 MB"));
+    QCOMPARE(sak::formatBytesCompact(qint64(1024) * 1024 * 1024 * 3 / 2),
+             QStringLiteral("1.50 GB"));
+    // The conversion report generator used integer division here and rendered this as "1 KB".
+    QVERIFY(sak::formatBytesCompact(1536) != QStringLiteral("1 KB"));
+    // The attachments browser rendered GB to one decimal and produced "1.5 GB".
+    QVERIFY(sak::formatBytesCompact(qint64(1024) * 1024 * 1024 * 3 / 2) !=
+            QStringLiteral("1.5 GB"));
+}
+
+void TestFormatUtils::formatBytesCompact_boundaries() {
+    QCOMPARE(sak::formatBytesCompact(1024), QStringLiteral("1.0 KB"));
+    QCOMPARE(sak::formatBytesCompact(1024 * 1024), QStringLiteral("1.0 MB"));
+    QCOMPARE(sak::formatBytesCompact(qint64(1024) * 1024 * 1024), QStringLiteral("1.00 GB"));
+    // One byte below each boundary stays in the smaller unit.
+    QCOMPARE(sak::formatBytesCompact(1024 * 1024 - 1), QStringLiteral("1024.0 KB"));
+}
+
+void TestFormatUtils::formatBytesCompact_differsFromTheLongStyleOnPurpose() {
+    // The two styles are kept apart deliberately, so this asserts they REMAIN different. Merging
+    // them would silently change every compact table cell in the app.
+    QVERIFY(sak::formatBytesCompact(0) != sak::formatBytes(qint64(0)));
+    QVERIFY(sak::formatBytesCompact(512) != sak::formatBytes(qint64(512)));
+    // Above 1 KB the two agree on the unit names, so only the small end diverges.
+    QCOMPARE(sak::formatBytesCompact(1536), sak::formatBytes(qint64(1536)));
 }
 
 QTEST_MAIN(TestFormatUtils)

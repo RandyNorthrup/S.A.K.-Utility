@@ -172,17 +172,17 @@ private Q_SLOTS:
     void onStartLanTransferServer();
     void onStopLanTransferServer();
     void onRunLanTransferTest();
-    void onLanTransferProgress(double currentMbps, double elapsedSec, qint64 totalBytes);
+    void onLanTransferProgress(double current_mbps, double elapsed_sec, qint64 total_bytes);
     void onLanTransferComplete(sak::LanTransferResult result);
 
     // Controller
-    void onStateChanged(int newState);
-    void onOperationFinished(int finishedState);
+    void onStateChanged(int new_state);
+    void onOperationFinished(int finished_state);
     void onError(QString error);
 
     // Button reset helpers for onOperationFinished
-    void resetDiagnosticButtons(int finishedState);
-    void resetToolButtons(int finishedState);
+    void resetDiagnosticButtons(int finished_state);
+    void resetToolButtons(int finished_state);
 
     // Quick Action
     void onResetNetworkClicked();
@@ -218,9 +218,9 @@ private:
     void setupPortScanControls(QWidget* widget, QVBoxLayout* layout);
     void setupPortScanResults(QWidget* widget, QVBoxLayout* layout);
     QWidget* createBandwidthTab();
-    void setupBandwidthIperfConfig(QWidget* widget, QVBoxLayout* iperfLayout);
-    void setupBandwidthIperfControls(QWidget* widget, QVBoxLayout* iperfLayout);
-    void setupBandwidthIperfResults(QWidget* widget, QVBoxLayout* iperfLayout);
+    void setupBandwidthIperfConfig(QWidget* widget, QVBoxLayout* iperf_layout);
+    void setupBandwidthIperfControls(QWidget* widget, QVBoxLayout* iperf_layout);
+    void setupBandwidthIperfResults(QWidget* widget, QVBoxLayout* iperf_layout);
     void setupBandwidthHttpSection(QWidget* widget, QVBoxLayout* layout);
     QWidget* createWiFiTab();
     void setupWifiControls(QWidget* widget, QVBoxLayout* layout);
@@ -455,7 +455,7 @@ private:
     QVector<FirewallRule> m_cachedFwRules;  ///< Cached for local filtering
 
     void filterFirewallRules();
-    void populateFirewallTable(const QVector<FirewallRule>& rules);
+    void populateFirewallTable(const QVector<FirewallRule>& filtered);
 
     // -- Shares UI --
     QLineEdit* m_shareHostname = nullptr;

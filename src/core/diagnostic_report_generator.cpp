@@ -5,7 +5,8 @@
 /// @brief Diagnostic report generation implementation (HTML, JSON, CSV)
 
 #include "sak/diagnostic_report_generator.h"
-
+// sak::csvEscape -- the one CSV cell writer, with the CWE-1236 formula guard.
+#include "sak/csv_escape.h"
 #include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
@@ -28,35 +29,6 @@ namespace sak {
 namespace {
 
 constexpr qsizetype kDiagnosticHtmlInitialReserveChars = 32'768;
-
-/// @brief True if a value leads with a character that spreadsheet apps treat as a formula.
-bool startsWithFormulaChar(const QString& value) {
-    const QString trimmed = value.trimmed();
-    if (trimmed.isEmpty()) {
-        return false;
-    }
-    const QChar first = trimmed.at(0);
-    return first == QLatin1Char('=') || first == QLatin1Char('+') || first == QLatin1Char('-') ||
-           first == QLatin1Char('@') || first == QLatin1Char('\t') || first == QLatin1Char('\r');
-}
-
-/// @brief Escape a value for CSV output (RFC 4180 compliant)
-/// If the value contains commas, quotes, or newlines, wrap in quotes and
-/// double any embedded quotes.
-QString csvEscape(const QString& value) {
-    QString sanitized = value;
-    // Formula/CSV injection (CWE-1236): a cell like =HYPERLINK(...) is executed when the report is
-    // opened in Excel/Calc. A leading apostrophe forces the cell to plain text (even unquoted).
-    if (startsWithFormulaChar(sanitized)) {
-        sanitized.prepend(QLatin1Char('\''));
-    }
-    if (sanitized.contains(QLatin1Char(',')) || sanitized.contains(QLatin1Char('"')) ||
-        sanitized.contains(QLatin1Char('\n')) || sanitized.contains(QLatin1Char('\r'))) {
-        sanitized.replace(QLatin1Char('"'), QStringLiteral("\"\""));
-        return QLatin1Char('"') + sanitized + QLatin1Char('"');
-    }
-    return sanitized;
-}
 
 QJsonArray stringListToJsonArray(const QStringList& values) {
     QJsonArray array;

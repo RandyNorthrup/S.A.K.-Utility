@@ -4,6 +4,8 @@
 #include "sak/app_scanner.h"
 #include "sak/backup_destination_guard.h"
 #include "sak/layout_constants.h"
+// sak::scanEthernetConfigs -- the shared, language-neutral adapter scan this page runs.
+#include "sak/ethernet_config_manager.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
 #include "sak/per_user_customization_dialog.h"
@@ -1387,18 +1389,6 @@ static qint64 calculateSourceSize(const QString& path, const std::atomic_bool* c
     return size;
 }
 
-// PowerShell that reads each adapter's IPv4 config through Get-NetIPConfiguration +
-// Get-NetIPInterface and emits it as JSON. It replaces a parse of
-// `netsh interface ipv4 show config`, whose "Configuration for interface" / "DHCP enabled" /
-// "IP Address" labels are LOCALIZED -- so the text parse silently captured NOTHING on a
-// non-English Windows and the backup lost every adapter. The cmdlets, their
-// Name/Dhcp/IPv4/Prefix/Gateway/Dns fields, and the Enabled/Disabled DHCP enum are all
-// language-neutral. EthernetConfigInfo::parseNetIpConfigJson consumes the JSON (and converts the
-// CIDR Prefix to the dotted-quad subnet mask the restore path feeds to `netsh set address`).
-// The scan command now lives beside its parser in user_profile_types.h, because
-// EthernetConfigManager needs the identical command -- see kNetIpConfigPowerShell.
-constexpr auto kEthernetConfigPowerShell = sak::kNetIpConfigPowerShell;
-
 static const auto kCommonAppDataSources = std::to_array<AppDataSourceInfo>({
     // Browsers
     {.name = "Chrome Profiles",
@@ -2322,20 +2312,25 @@ void UserProfileBackupEthernetSettingsPage::onScanEthernet() {
     m_scanProgress->setRange(0, 0);
     m_ethernetTable->setRowCount(0);
 
-    auto* watcher = new QFutureWatcher<QPair<bool, QString>>(this);
-    connect(watcher, &QFutureWatcher<QPair<bool, QString>>::finished, this, [this, watcher]() {
-        const auto [success, output] = watcher->result();
+    // The scan itself is sak::scanEthernetConfigs -- this page supplies the worker thread and the
+    // progress UI, not the command. It used to launch its own PowerShell with a different
+    // resolver, argument list and timeout from the identical scan in EthernetConfigManager.
+    using ScanResult = QPair<bool, QVector<EthernetConfigInfo>>;
+    auto* watcher = new QFutureWatcher<ScanResult>(this);
+    connect(watcher, &QFutureWatcher<ScanResult>::finished, this, [this, watcher]() {
+        const auto [success, configs] = watcher->result();
         watcher->deleteLater();
 
         m_scanButton->setEnabled(true);
         m_scanProgress->setVisible(false);
 
+        // A FAILED scan is not an empty machine. Reporting "found 0 adapters" for a scan that
+        // never ran would tell the technician there is nothing to back up.
         if (!success) {
-            m_statusLabel->setText(output);
+            m_statusLabel->setText(tr("Failed to scan ethernet adapters"));
             return;
         }
 
-        auto configs = EthernetConfigInfo::parseNetIpConfigJson(output);
         m_scanned = true;
         m_selectAllButton->setEnabled(true);
         m_selectNoneButton->setEnabled(true);
@@ -2346,31 +2341,10 @@ void UserProfileBackupEthernetSettingsPage::onScanEthernet() {
         updateNextButtonText();
     });
 
-    watcher->setFuture(QtConcurrent::run([]() -> QPair<bool, QString> {
-        // System32-qualified powershell, never the bare name: CreateProcess searches the current
-        // directory ahead of System32, so a planted powershell could fabricate the adapter list
-        // that a restore later applies. Unresolvable -> FAILED scan (fail closed).
-        const QString powershell_exe = sak::systemPowerShellPath();
-        if (powershell_exe.isEmpty()) {
-            sak::logError("Cannot resolve the System32 powershell.exe path; ethernet scan aborted");
-            return {false, QStringLiteral("Cannot resolve the System32 powershell.exe path")};
-        }
-        const auto process = runProcess(powershell_exe,
-                                        {QStringLiteral("-NoProfile"),
-                                         QStringLiteral("-NonInteractive"),
-                                         QStringLiteral("-Command"),
-                                         QString::fromLatin1(kEthernetConfigPowerShell)},
-                                        sak::kTimeoutNetworkReadMs);
-        if (process.timed_out) {
-            sak::logError("Timed out scanning ethernet adapters for backup");
-            return {false, QStringLiteral("Ethernet scan timed out")};
-        }
-        if (process.exit_code != 0) {
-            sak::logError("Get-NetIPConfiguration failed for ethernet adapter scan: {}",
-                          process.std_err.toStdString());
-            return {false, QStringLiteral("Failed to scan ethernet adapters")};
-        }
-        return {true, process.std_out};
+    watcher->setFuture(QtConcurrent::run([]() -> ScanResult {
+        bool scan_ok = false;
+        const QVector<EthernetConfigInfo> configs = sak::scanEthernetConfigs(&scan_ok);
+        return {scan_ok, configs};
     }));
 }
 

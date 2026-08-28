@@ -5,9 +5,10 @@
 /// @brief Main UI panel for Network Diagnostics & Troubleshooting
 
 #include "sak/network_diagnostic_panel.h"
-
+// sak::csvEscape -- the one CSV cell writer, with the CWE-1236 formula guard.
 #include "sak/action_constants.h"
 #include "sak/actions/reset_network_action.h"
+#include "sak/csv_escape.h"
 #include "sak/detachable_log_window.h"
 #include "sak/dns_diagnostic_tool.h"
 #include "sak/layout_constants.h"
@@ -3801,13 +3802,17 @@ struct PortScanRange {
 };
 
 QVector<uint16_t> getPresetPorts(int preset_idx) {
+    // Index 0 is the combo's "Custom" entry, so the preset list starts at 1.
     if (preset_idx <= 0) {
         return {};
     }
 
     const auto presets = sak::PortScanner::getPresets();
+    // Only the upper bound is checked: the guard above already established preset_idx >= 1, so
+    // index >= 0 is not something this function can observe. The redundant lower-bound test read
+    // as defence and was dead.
     const int index = preset_idx - 1;
-    if (index < 0 || index >= presets.size()) {
+    if (index >= presets.size()) {
         return {};
     }
     return presets[index].ports;
@@ -4824,7 +4829,7 @@ void NetworkDiagnosticPanel::exportTableToCsv(QTableWidget* table, const QString
     QStringList headers;
     for (int col = 0; col < table->columnCount(); ++col) {
         auto* item = table->horizontalHeaderItem(col);
-        headers << QStringLiteral("\"%1\"").arg((item != nullptr) ? item->text() : QString());
+        headers << sak::csvEscape((item != nullptr) ? item->text() : QString());
     }
     out << headers.join(QLatin1Char(',')) << "\n";
 
@@ -4833,9 +4838,10 @@ void NetworkDiagnosticPanel::exportTableToCsv(QTableWidget* table, const QString
         QStringList cells;
         for (int col = 0; col < table->columnCount(); ++col) {
             auto* item = table->item(row, col);
-            QString cell_text = (item != nullptr) ? item->text() : QString();
-            cell_text.replace(QLatin1Char('"'), QStringLiteral("\"\""));
-            cells << QStringLiteral("\"%1\"").arg(cell_text);
+            // Quoting alone does NOT stop a spreadsheet evaluating a leading '=': these tables
+            // carry WiFi SSIDs, remote hosts, share names and firewall rule names, none of which
+            // this program authored. sak::csvEscape adds the formula guard.
+            cells << sak::csvEscape((item != nullptr) ? item->text() : QString());
         }
         out << cells.join(QLatin1Char(',')) << "\n";
     }

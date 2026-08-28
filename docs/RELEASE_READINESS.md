@@ -1,6 +1,6 @@
 # Release Readiness
 
-## PUBLISHED CREDENTIAL: rotate the macOS cert-rig VM password
+## PUBLISHED CREDENTIAL: macOS cert-rig VM password (accepted risk, SETTLED)
 
 The section that stood here described this as a PRE-PUSH blocker and stated that the finding was
 being left failing rather than allowlisted. Both statements stopped being true on 2026-08-26 and
@@ -28,9 +28,16 @@ been deliberately, and correctly, stood down. Recorded as R5-IDX-20.
   allowlist entry, scans the staged diff before a commit exists. The full-history scan could
   only ever report a credential that had already been committed; this one refuses it at the
   point it would enter history.
-- STILL OPEN: rotate the VM password. It costs nothing and it is the only remaining action that
-  turns the published string into a dead credential. Owner action -- an agent must never cert
-  netsh or VM changes against the live rig. Tracked as R5-IDX-20.
+- NOT BEING ROTATED, and that is a decision rather than an omission. The owner ruled on
+  2026-08-27 that the password stays: the certification-rig VMs are reachable only from this
+  machine's local network, are not exposed on any external route, and hold nothing beyond the
+  rigs themselves. The published string is a credential to a LAN-only target, which is the same
+  basis on which the allowlist entry was authorized the day before. Nothing is waiting on
+  anyone, and no agent should re-raise it as an open action.
+- WHAT WOULD CHANGE THAT: if a cert rig is ever reachable from outside the LAN, or reused for
+  anything beyond certification, the risk this decision accepted no longer holds and the
+  password must be rotated before that happens. That is the condition to check, not the calendar.
+- Tracked as R5-IDX-20, now closed.
 
 ## Automated Gates
 

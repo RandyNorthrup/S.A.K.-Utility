@@ -75,15 +75,32 @@ public:
     ///       success (NO FALLBACKS / FAIL CLOSED).
     [[nodiscard]] static bool jsonWriteSucceeded(qint64 written, qint64 expected, bool committed);
 
-    /// @brief Map a security-type label to WLAN-profile {authentication, encryption}.
-    /// @return {authType, encType}; an EMPTY authType means the security type is unsupported by
-    ///         this PSK/open profile builder (WPA/WPA2/WPA3 Enterprise, or an unknown/malformed
-    ///         value) and the profile MUST be refused. Fail closed: never silently downgrade a
-    ///         WPA3 or Enterprise network to WPA2-PSK (NO FALLBACKS / FAIL CLOSED).
-    /// @note Public + static so the fail-closed refusal and the WPA3-vs-WPA2 mapping can be unit
-    ///       tested; the security string reaches here untrusted (imported JSON / scanned profile).
-    [[nodiscard]] static std::pair<QString, QString> wlanAuthEncForSecurity(
-        const QString& security);
+    /// @brief One row of the credential table: a network as the technician entered or imported it.
+    /// @note Public because wifiProfileInstallRefusal takes one, so the refusal rule can be
+    ///       exercised by a test that builds a row directly.
+    struct WifiConfig {
+        QString location;
+        QString ssid;
+        QString password;
+        QString security;
+        bool hidden{false};
+    };
+
+    /// @brief Why a table row cannot be installed as a Windows WLAN profile, or an empty string
+    ///        when it can.
+    /// @note This is the panel's OWN precondition, not security resolution -- what a given
+    ///       security label means is decided once, in sak::addWifiProfileWindows, which both this
+    ///       panel and the assistant's connect_wifi action install through.
+    ///       An empty security label is refused HERE even though the shared seam would accept it
+    ///       as "caller did not specify, use the interoperable default". That default is right for
+    ///       connect_wifi, where security is an optional argument; it is wrong for this table,
+    ///       where every row has a security column, so an empty one means an imported or
+    ///       hand-edited row is malformed and guessing would install a profile the technician
+    ///       never described.
+    /// @note Public + static and PURE so the refusal can be unit tested without installing
+    ///       anything. A test that asserted this by calling the installer would run a live
+    ///       `netsh wlan add profile` the moment the refusal regressed.
+    [[nodiscard]] static QString wifiProfileInstallRefusal(const WifiConfig& cfg);
 
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
@@ -125,17 +142,6 @@ private:
     void setupTableActionButtons(QVBoxLayout* layout);
     void setupActionButtons();
     void connectSignals();
-
-    // -------------------------------------------------------------------------
-    // Data types
-    // -------------------------------------------------------------------------
-    struct WifiConfig {
-        QString location;
-        QString ssid;
-        QString password;
-        QString security;
-        bool hidden{false};
-    };
 
     struct QrExportFormats {
         bool png{false};
@@ -289,17 +295,18 @@ private:
     bool rowMatchesSearch(int row, const QString& text) const;
     // -------------------------------------------------------------------------
     // Windows WiFi profile helpers
+    //
+    // This panel does not build WLAN profile XML and does not run netsh. It calls
+    // sak::addWifiProfileWindows, the same seam the assistant's connect_wifi action installs
+    // through. It used to carry its own copy of both, and the copies disagreed -- see that
+    // function's header comment for what the panel's own resolver did to its own default
+    // security label.
     // -------------------------------------------------------------------------
-    /** Build WLAN profile XML for netsh import */
-    static QString buildWlanProfileXml(const WifiConfig& cfg);
-
-    /** Write XML to a temp file and install via netsh; returns true on success */
-    static bool installWlanProfile(const QString& xml, int row);
     QList<int> checkedWifiRows() const;
     QList<WifiConfig> configsFromRows(const QList<int>& rows) const;
     void startAddToWindowsProfiles(const QList<WifiConfig>& configs);
-    /// Install each profile via netsh, checking @p cancel between profiles so teardown can stop the
-    /// loop after at most one bounded netsh call rather than after all N.
+    /// Install each profile through the shared seam, checking @p cancel between profiles so
+    /// teardown can stop the loop after at most one bounded netsh call rather than after all N.
     static QPair<int, int> installWlanProfiles(const QList<WifiConfig>& configs,
                                                const std::atomic<bool>* cancel);
 

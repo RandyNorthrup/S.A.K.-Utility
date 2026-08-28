@@ -4,6 +4,10 @@
 #include "sak/file_explorer_archive_worker.h"
 
 #include "sak/file_explorer_archive_service.h"
+// sak::isSafeChildName -- the one rule for "this name must land as a single child of the chosen
+// directory". This file used to carry its own copy; so did the File Explorer panel, and the
+// panel's was weaker on exactly the rules that matter.
+#include "sak/windows_path_policy.h"
 
 #include <QDir>
 #include <QFileInfo>
@@ -19,26 +23,6 @@ namespace {
 
 // Matches the panel's listing bound for the collision probe.
 constexpr int kArchiveListMaxEntries = 10'000;
-
-// A name that must land as a SINGLE child of the destination folder. QDir::filePath() returns an
-// ABSOLUTE name unchanged and a ".." component walks out of the folder, so an unvalidated name --
-// a request field, or an entry name read back out of an archive through a foreign filesystem --
-// would place the zip, the wrap folder or an extracted entry outside the destination the user
-// chose. A colon is a drive letter or an NTFS alternate data stream.
-bool isSafeChildName(const QString& name) {
-    if (name.isEmpty() || name == QLatin1String(".") || name == QLatin1String("..")) {
-        return false;
-    }
-    if (QDir::isAbsolutePath(name)) {
-        return false;
-    }
-    for (const QChar ch : name) {
-        if (ch == QLatin1Char('/') || ch == QLatin1Char('\\') || ch == QLatin1Char(':')) {
-            return false;
-        }
-    }
-    return true;
-}
 
 }  // namespace
 

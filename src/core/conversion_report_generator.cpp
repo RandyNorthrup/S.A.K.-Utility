@@ -6,6 +6,7 @@
 
 #include "sak/conversion_report_generator.h"
 
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/report_style_constants.h"
@@ -447,17 +448,9 @@ QString ConversionReportGenerator::formatDuration(qint64 ms) {
 }
 
 QString ConversionReportGenerator::formatBytes(qint64 bytes) {
-    if (bytes < kBytesPerKB) {
-        return QStringLiteral("%1 B").arg(bytes);
-    }
-    if (static_cast<double>(bytes) < kBytesPerMBf) {
-        return QStringLiteral("%1 KB").arg(bytes / kBytesPerKB);
-    }
-    if (static_cast<double>(bytes) < kBytesPerGBf) {
-        return QStringLiteral("%1 MB").arg(static_cast<double>(bytes) / kBytesPerMBf, 0, 'f', 1);
-    }
-    return QStringLiteral("%1 GB").arg(
-        static_cast<double>(bytes) / kBytesPerGBf, 0, 'f', kGigabyteDisplayPrecision);
+    // KB now renders to one decimal instead of truncating with integer division, which is what
+    // every other compact caller already did. 1536 bytes reads "1.5 KB" rather than "1 KB".
+    return sak::formatBytesCompact(bytes);
 }
 
 }  // namespace sak

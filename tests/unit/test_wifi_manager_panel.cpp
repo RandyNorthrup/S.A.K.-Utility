@@ -21,7 +21,7 @@ private Q_SLOTS:
     void controlCharSsidIsRejected();
     void envVarSsidNotExpandedInConnect();
     void jsonWriteFailsClosedOnShortWrite();
-    void securityMappingRefusesUnsupportedAndPreservesWpa3();
+    void installRefusesIncompleteRows();
 };
 
 // A benign SSID yields a runnable script with the base64 profile and netsh call.
@@ -89,38 +89,50 @@ void WifiManagerPanelTests::jsonWriteFailsClosedOnShortWrite() {
     QVERIFY(!WifiManagerPanel::jsonWriteSucceeded(-1, 128, true));
 }
 
-// Fail-closed rule: WLAN profile security must never be silently downgraded. WPA3-Personal maps
-// to WPA3SAE (not WPA2-PSK), the supported personal/open/WEP types map to concrete auth+enc, and
-// Enterprise / unknown / malformed / empty values are REFUSED (empty authType) rather than coerced
-// to WPA2-PSK.
-void WifiManagerPanelTests::securityMappingRefusesUnsupportedAndPreservesWpa3() {
-    const auto wpa2 = WifiManagerPanel::wlanAuthEncForSecurity(QStringLiteral("WPA2-Personal"));
-    QCOMPARE(wpa2.first, QStringLiteral("WPA2PSK"));
-    QCOMPARE(wpa2.second, QStringLiteral("AES"));
+// What a security label MEANS is no longer decided here. This panel used to carry its own
+// resolver, and it disagreed with the shared one on the panel's OWN default label: it tested for
+// "WPA3" before "WPA", so "WPA/WPA2/WPA3" -- the first entry in the panel's security combo, and
+// therefore the setting every network gets unless the technician changes it -- resolved to a
+// WPA3SAE-ONLY profile, which cannot associate with a WPA2-only access point and is rejected
+// outright by pre-1903 Windows. Resolution now happens once, in sak::addWifiProfileWindows, whose
+// own test pins every mapping including that combined label.
+//
+// What remains the panel's own rule is whether a ROW is complete enough to install at all.
+void WifiManagerPanelTests::installRefusesIncompleteRows() {
+    const auto row = [](const QString& ssid, const QString& security) {
+        WifiManagerPanel::WifiConfig cfg;
+        cfg.ssid = ssid;
+        cfg.security = security;
+        return cfg;
+    };
 
-    const auto wpa = WifiManagerPanel::wlanAuthEncForSecurity(QStringLiteral("WPA-Personal"));
-    QCOMPARE(wpa.first, QStringLiteral("WPA2PSK"));
+    // A complete row is NOT refused -- without this the assertions below would pass just as
+    // happily against a rule that refused everything.
+    QCOMPARE(WifiManagerPanel::wifiProfileInstallRefusal(
+                 row(QStringLiteral("Lab"), QStringLiteral("WPA/WPA2/WPA3"))),
+             QString());
 
-    // WPA3-Personal must NOT be downgraded to WPA2-PSK.
-    const auto wpa3 = WifiManagerPanel::wlanAuthEncForSecurity(QStringLiteral("WPA3-Personal"));
-    QCOMPARE(wpa3.first, QStringLiteral("WPA3SAE"));
-    QCOMPARE(wpa3.second, QStringLiteral("AES"));
+    QVERIFY(!WifiManagerPanel::wifiProfileInstallRefusal(
+                 row(QString(), QStringLiteral("WPA/WPA2/WPA3")))
+                 .isEmpty());
+    QVERIFY(!WifiManagerPanel::wifiProfileInstallRefusal(
+                 row(QStringLiteral("   "), QStringLiteral("WPA/WPA2/WPA3")))
+                 .isEmpty());
 
-    const auto open = WifiManagerPanel::wlanAuthEncForSecurity(QStringLiteral("Open"));
-    QCOMPARE(open.first, QStringLiteral("open"));
-    QCOMPARE(open.second, QStringLiteral("none"));
+    // An EMPTY security label is refused HERE, even though the shared installer would read it as
+    // "caller did not specify, use the interoperable default". That default is right for the
+    // assistant's connect_wifi, where security is an optional argument; it is wrong for this
+    // table, where every row has a security column, so an empty one means the row is malformed.
+    QVERIFY(!WifiManagerPanel::wifiProfileInstallRefusal(row(QStringLiteral("Lab"), QString()))
+                 .isEmpty());
+    QVERIFY(!WifiManagerPanel::wifiProfileInstallRefusal(
+                 row(QStringLiteral("Lab"), QStringLiteral("  ")))
+                 .isEmpty());
 
-    const auto wep = WifiManagerPanel::wlanAuthEncForSecurity(QStringLiteral("WEP"));
-    QCOMPARE(wep.first, QStringLiteral("open"));
-    QCOMPARE(wep.second, QStringLiteral("WEP"));
-
-    // Refused (fail closed): empty authType means the caller must not install a profile.
-    QVERIFY(WifiManagerPanel::wlanAuthEncForSecurity(QStringLiteral("WPA2-Enterprise"))
-                .first.isEmpty());
-    QVERIFY(WifiManagerPanel::wlanAuthEncForSecurity(QStringLiteral("WPA3-Enterprise"))
-                .first.isEmpty());
-    QVERIFY(WifiManagerPanel::wlanAuthEncForSecurity(QStringLiteral("not-a-mode")).first.isEmpty());
-    QVERIFY(WifiManagerPanel::wlanAuthEncForSecurity(QString()).first.isEmpty());
+    // The two refusals name different causes, so a log line says which field was missing.
+    QVERIFY(WifiManagerPanel::wifiProfileInstallRefusal(
+                row(QString(), QStringLiteral("WPA/WPA2/WPA3"))) !=
+            WifiManagerPanel::wifiProfileInstallRefusal(row(QStringLiteral("Lab"), QString())));
 }
 
 QTEST_MAIN(WifiManagerPanelTests)

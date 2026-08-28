@@ -38,6 +38,25 @@ struct WifiConnectResult {
     QString error;
 };
 
+/// Install a machine-wide WLAN profile for @p ssid WITHOUT connecting, by running
+/// `netsh wlan add profile` shell-free (argv vector, no interpolation). Requires administrator
+/// rights -- a non-elevated call fails honestly (profile_added stays false). Fails closed for an
+/// empty/unsafe SSID (a double quote or control character), an over-length SSID, or an
+/// enterprise/802.1X security type, before running anything. connect_issued is always false: this
+/// function does not attempt to associate.
+///
+/// This is the seam the WiFi manager panel installs through. The panel used to carry its own
+/// security resolver and its own profile-XML builder, and they disagreed with these: the panel's
+/// resolver mapped its OWN default label "WPA/WPA2/WPA3" to a WPA3SAE-ONLY profile, because it
+/// tested for "WPA3" before "WPA". Such a profile cannot associate with a WPA2-only access point
+/// and is rejected outright by pre-1903 Windows, so the panel's default setting produced profiles
+/// that could not connect. resolveWlanAuth treats a combined label as the interoperable WPA2-PSK
+/// it is.
+[[nodiscard]] WifiConnectResult addWifiProfileWindows(const QString& ssid,
+                                                      const QString& password,
+                                                      const QString& security,
+                                                      bool hidden);
+
 /// Install a WLAN profile for @p ssid and connect to it NOW, by running `netsh wlan add profile` +
 /// `netsh wlan connect` shell-free (argv vector, no interpolation). Requires administrator rights
 /// -- a non-elevated call fails honestly (profile_added stays false). Fails closed for an

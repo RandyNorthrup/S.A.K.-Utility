@@ -7,6 +7,7 @@
 #include "sak/ethernet_config_manager.h"
 
 #include "sak/io_write_utils.h"
+#include "sak/logger.h"
 // The single owner of every netsh adapter command and of the dotted-IPv4 check.
 #include "sak/network_adapter_admin.h"
 #include "sak/process_runner.h"
@@ -460,13 +461,18 @@ QString EthernetConfigManager::runNetsh(const QStringList& args, bool* ok) {
     return result.std_out;
 }
 
-QString EthernetConfigManager::runPowerShellCapture(const QString& script) {
-    // Same System32-qualified, fail-closed launch rule as runNetsh: never whatever powershell
-    // PATH or the current directory happens to supply.
-    const QString ps_exe =
-        sak::system32Path(QStringLiteral("WindowsPowerShell\\v1.0\\powershell.exe"));
+namespace {
+
+// The ONE place a PowerShell adapter scan is launched. The backup wizard used to launch its own,
+// with a different PowerShell resolver, a different argument list and a shorter timeout, even
+// though it ran the identical script -- so the two could fail on different machines for different
+// reasons while claiming to do the same thing.
+// System32-qualified, fail-closed: never whatever powershell PATH or the current directory
+// happens to supply, because the adapter list this produces is what a RESTORE later replays.
+QString runAdapterScanRaw(const QString& script, QString& error) {
+    const QString ps_exe = sak::systemPowerShellPath();
     if (ps_exe.isEmpty()) {
-        Q_EMIT errorOccurred(QStringLiteral("Cannot resolve the System32 powershell.exe path"));
+        error = QStringLiteral("Cannot resolve the System32 powershell.exe path");
         return {};
     }
     const auto result = sak::runProcess(ps_exe,
@@ -478,10 +484,41 @@ QString EthernetConfigManager::runPowerShellCapture(const QString& script) {
                                          script},
                                         kAdapterScanTimeoutMs);
     if (result.timed_out || !result.succeeded()) {
-        Q_EMIT errorOccurred(QStringLiteral("Adapter configuration scan failed"));
+        error = QStringLiteral("Adapter configuration scan failed");
         return {};
     }
     return result.std_out;
+}
+
+}  // namespace
+
+QVector<EthernetConfigInfo> scanEthernetConfigs(bool* scan_ok) {
+    if (scan_ok != nullptr) {
+        *scan_ok = false;
+    }
+    QString error;
+    const QString json = runAdapterScanRaw(QString::fromLatin1(sak::kNetIpConfigPowerShell), error);
+    if (!error.isEmpty()) {
+        sak::logError("Ethernet adapter scan failed: {}", error.toStdString());
+        return {};
+    }
+    // A SUCCEEDED scan that found nothing and a FAILED scan are different states calling for
+    // opposite next actions, so the caller is told which it got rather than being handed an empty
+    // list for both.
+    if (scan_ok != nullptr) {
+        *scan_ok = true;
+    }
+    return EthernetConfigInfo::parseNetIpConfigJson(json);
+}
+
+QString EthernetConfigManager::runPowerShellCapture(const QString& script) {
+    QString error;
+    const QString output = runAdapterScanRaw(script, error);
+    if (!error.isEmpty()) {
+        Q_EMIT errorOccurred(error);
+        return {};
+    }
+    return output;
 }
 
 EthernetConfigSnapshot EthernetConfigManager::snapshotFromNetIpConfig(const QString& json,

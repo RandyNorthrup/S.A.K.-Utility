@@ -45,7 +45,49 @@ private Q_SLOTS:
     void connectRefusesEmptySsid();
     void connectRefusesUnsafeSsid();
     void connectRefusesOverlongSsid();
+    void addProfileAppliesTheSameRefusalsAsConnect();
+    void addProfileNeverIssuesAConnect();
 };
+
+// addWifiProfileWindows is the half of connectWifiWindows the WiFi manager panel installs
+// through. It must fail closed on exactly the same inputs -- if the two ever diverge, the panel
+// regains a way to install a profile the assistant would have refused, which is the duplication
+// this seam was extracted to remove. Every case below returns before any process is run, so these
+// tests have no system side effects.
+void TestWifiSetupScript::addProfileAppliesTheSameRefusalsAsConnect() {
+    struct Case {
+        QString ssid;
+        QString security;
+    };
+    const QList<Case> refused = {
+        {QString(), QStringLiteral("wpa2")},                         // empty SSID
+        {QStringLiteral("Net\"work"), QStringLiteral("wpa2")},       // quote in SSID
+        {QStringLiteral("Net\nwork"), QStringLiteral("wpa2")},       // control char in SSID
+        {QString(33, QLatin1Char('a')), QStringLiteral("wpa2")},     // over the 32-byte WLAN limit
+        {QStringLiteral("Lab"), QStringLiteral("WPA2-Enterprise")},  // 802.1X needs EAP config
+        {QStringLiteral("Lab"), QStringLiteral("Frobnicate9")},      // unrecognized: no downgrade
+    };
+    for (const Case& c : refused) {
+        const auto added =
+            sak::addWifiProfileWindows(c.ssid, QStringLiteral("pw"), c.security, false);
+        const auto connected =
+            sak::connectWifiWindows(c.ssid, QStringLiteral("pw"), c.security, false);
+        QVERIFY(!added.profile_added);
+        QVERIFY(!added.error.isEmpty());
+        // The SAME refusal, word for word. A test that only checked "both failed" would pass even
+        // if the two disagreed about why, which is how the panel's old resolver stayed wrong.
+        QCOMPARE(added.error, connected.error);
+    }
+}
+
+void TestWifiSetupScript::addProfileNeverIssuesAConnect() {
+    // Installing a profile must not associate. The panel's "add these networks to Windows" button
+    // saves credentials for later; it does not move the technician's machine onto the network it
+    // is saving. A refused input proves it without touching the radio.
+    const auto result =
+        sak::addWifiProfileWindows(QString(), QStringLiteral("pw"), QStringLiteral("wpa2"), false);
+    QVERIFY(!result.connect_issued);
+}
 
 // connectWifiWindows must fail closed (no netsh, no temp file) for an empty/unsafe/over-length
 // SSID. These paths return before any process is run, so the tests have no system side effects.

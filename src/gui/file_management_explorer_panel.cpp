@@ -28,6 +28,9 @@
 #include "sak/storage_inventory_worker.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
+// sak::isSafeChildName -- the shared rule for a name that must land as a single child of the
+// browsed directory. This panel used to carry a weaker copy that let "..", "." and ':' through.
+#include "sak/windows_path_policy.h"
 
 #include <QAbstractItemView>
 #include <QAction>
@@ -369,12 +372,6 @@ QString nameForPath(const QString& path, bool local) {
     }
     const int slash = static_cast<int>(clean.lastIndexOf(QLatin1Char('/')));
     return slash >= 0 ? clean.mid(slash + 1) : clean;
-}
-
-bool isSafeChildName(const QString& name) {
-    const QString clean = name.trimmed();
-    return !clean.isEmpty() && !clean.contains(QLatin1Char('/')) &&
-           !clean.contains(QLatin1Char('\\'));
 }
 
 // Files FilesystemHelpers.RestrictedFileNames: reserved DOS device names,
@@ -940,7 +937,7 @@ namespace {
 
 // Sums the byte sizes of the selected FILE rows (directories excluded),
 // mirroring the Files status-bar ItemSize readout.
-uint64_t selectedFileBytes(FileExplorerPane* pane, const QModelIndexList& rows) {
+uint64_t selectedFileBytes(const FileExplorerPane* pane, const QModelIndexList& rows) {
     uint64_t bytes = 0;
     for (const QModelIndex& row : rows) {
         const FileManagementEntry entry = pane->entryAtViewRow(row.row());
@@ -2986,7 +2983,7 @@ void FileManagementExplorerPanel::copySelectionToClipboard(const bool move) {
     updateActionButtons();
 }
 
-void FileManagementExplorerPanel::clearCutMarks() {
+void FileManagementExplorerPanel::clearCutMarks() const {
     for (const FileExplorerPane* pane : {m_pane_a, m_pane_b}) {
         if ((pane != nullptr) && (pane->itemModel() != nullptr)) {
             pane->itemModel()->setCutPaths({});
@@ -3464,7 +3461,7 @@ FileManagementExplorerPanel::PasteEntryKind FileManagementExplorerPanel::rawDest
 }
 
 FileManagementExplorerPanel::PasteEntryKind FileManagementExplorerPanel::destinationEntryKind(
-    const FileManagementTarget& target, const QString& directory, const QString& name) const {
+    const FileManagementTarget& target, const QString& directory, const QString& name) {
     if (target.local_file_system) {
         return localDestinationEntryKind(directory, name);
     }
@@ -3473,7 +3470,7 @@ FileManagementExplorerPanel::PasteEntryKind FileManagementExplorerPanel::destina
 
 bool FileManagementExplorerPanel::destinationOccupied(const FileManagementTarget& target,
                                                       const QString& directory,
-                                                      const QString& name) const {
+                                                      const QString& name) {
     // Unknown (non-authoritative listing) counts as occupied so name-generation
     // fails closed onto a fresh incremental name.
     return destinationEntryKind(target, directory, name) != PasteEntryKind::None;
@@ -4236,11 +4233,17 @@ bool FileManagementExplorerPanel::undoByDeletingCreatedEntries(
         return false;
     }
     QStringList blockers;
-    const bool resolved = executeHistoryDelete(history, target, undo_of_create, &blockers);
+    executeHistoryDelete(history, target, undo_of_create, &blockers);
     if (!blockers.isEmpty()) {
         sak::showWarningLogged(this, tr("Undo"), blockers.join(QStringLiteral("\n")));
     }
-    return resolved;
+    // True means the undo RAN, not that every entry was removed. That is what the caller needs to
+    // distinguish it from the two cases above, where nothing was attempted at all -- the target is
+    // gone, or the operator declined the confirmation. A blocked entry is reported through
+    // `blockers` and recorded on the posted card; it does not turn a performed undo into one that
+    // never happened. executeHistoryDelete used to return a bool that was unconditionally true,
+    // which made this read as a real outcome check when nothing was being checked.
+    return true;
 }
 
 // Redo of a create recreates the entries (folders, or empty files), but never
@@ -4536,7 +4539,7 @@ bool FileManagementExplorerPanel::historyDeleteOneEntry(const FileManagementTarg
 // (Files undoes these with permanently:false), raw paths delete through the
 // certified writers. The Copy source (when still mounted) is the identity
 // oracle re-checked per item.
-bool FileManagementExplorerPanel::executeHistoryDelete(const FileExplorerStorageHistory& history,
+void FileManagementExplorerPanel::executeHistoryDelete(const FileExplorerStorageHistory& history,
                                                        const FileManagementTarget& target,
                                                        const bool undo_of_create,
                                                        QStringList* blockers) {
@@ -4560,7 +4563,6 @@ bool FileManagementExplorerPanel::executeHistoryDelete(const FileExplorerStorage
                     removed,
                     QString(),
                     blockers->isEmpty());
-    return true;
 }
 
 // Enumerate the paths an undo will remove, capped so a huge batch does not
@@ -5527,7 +5529,7 @@ void FileManagementExplorerPanel::installIconProvider(FileExplorerItemModel* mod
     });
 }
 
-void FileManagementExplorerPanel::clearCurrentTagFilter() {
+void FileManagementExplorerPanel::clearCurrentTagFilter() const {
     if ((m_pane != nullptr) && (m_pane->sortFilterModel() != nullptr)) {
         m_pane->sortFilterModel()->clearTagFilter();
     }
@@ -5898,7 +5900,7 @@ QList<FileExplorerArchiveExtractItem> FileManagementExplorerPanel::extractArchiv
 }
 
 FileExplorerStatusCardRequest FileManagementExplorerPanel::archiveCardRequest(
-    const FileExplorerArchiveRequest& request, const FileExplorerReturnResult result) const {
+    const FileExplorerArchiveRequest& request, const FileExplorerReturnResult result) {
     FileExplorerStatusCardRequest card;
     card.result = result;
     card.operation = request.compress ? FileExplorerOperationType::Compressed

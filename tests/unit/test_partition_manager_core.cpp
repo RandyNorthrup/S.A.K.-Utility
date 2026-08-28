@@ -1662,6 +1662,8 @@ private Q_SLOTS:
     void scriptBuilder_buildsBitLockerMutationScripts();
     void scriptBuilder_buildsDirectDefragScript();
     void safetyValidator_allowsHddDefragOnlyOnReportedHdd();
+    void diskMediaHeuristics_readTheModelStringToo();
+    void jsonUInt64_clampsNegativesInsteadOfWrapping();
     void scriptBuilder_buildsBiosBootRepairScript();
     void operationQueue_blocksLayoutMismatch();
     void operationQueue_redoAvailableOnlyAfterUndo();
@@ -20398,6 +20400,73 @@ void PartitionManagerCoreTests::safetyValidator_allowsHddDefragOnlyOnReportedHdd
     inventory.disks.first().model = QStringLiteral("Disposable HDD");
     preview = planner.previewOperation(inventory, operation);
     QVERIFY(preview.canApply());
+}
+
+void PartitionManagerCoreTests::jsonUInt64_clampsNegativesInsteadOfWrapping() {
+    // Two copies of this existed and only the GUI's clamped. The one that did NOT is the core
+    // inventory parser -- the code that reads a disk's actual geometry. A negative double cast
+    // straight to uint64_t wraps to roughly 1.8e19, so a single malformed field would not yield a
+    // small wrong number, it would yield an exabyte-scale one that then feeds offset arithmetic
+    // and the free-space checks.
+    QJsonObject object;
+    object[QStringLiteral("Size")] = -1.0;
+    QCOMPARE(sak::jsonUInt64(object, QStringLiteral("Size")), uint64_t{0});
+
+    object[QStringLiteral("Size")] = -4096.0;
+    QCOMPARE(sak::jsonUInt64(object, QStringLiteral("Size")), uint64_t{0});
+
+    // Ordinary values are unaffected, so the clamp is not simply refusing everything.
+    object[QStringLiteral("Size")] = 4096.0;
+    QCOMPARE(sak::jsonUInt64(object, QStringLiteral("Size")), uint64_t{4096});
+
+    // A numeric STRING is still parsed, and a non-numeric one reads as 0 rather than as garbage.
+    object[QStringLiteral("Size")] = QStringLiteral("8192");
+    QCOMPARE(sak::jsonUInt64(object, QStringLiteral("Size")), uint64_t{8192});
+    object[QStringLiteral("Size")] = QStringLiteral("not-a-number");
+    QCOMPARE(sak::jsonUInt64(object, QStringLiteral("Size")), uint64_t{0});
+
+    // An absent key is 0, not undefined behaviour.
+    QCOMPARE(sak::jsonUInt64(object, QStringLiteral("NoSuchKey")), uint64_t{0});
+}
+
+void PartitionManagerCoreTests::diskMediaHeuristics_readTheModelStringToo() {
+    // The panel carried its own copies of these and searched FEWER fields: diskLooksSsd looked at
+    // media_type and bus_type only, diskLooksHdd at media_type only. Both now call these, so the
+    // guidance the panel offers cannot disagree with the blocker the validator applies.
+    //
+    // The model string is the field that matters and the one the panel's copies dropped. Windows
+    // reports media type inconsistently across drivers, and for a great many drives the only place
+    // "SSD" or "NVMe" appears is the model.
+    PartitionDiskInfo unspecified_ssd;
+    unspecified_ssd.media_type = QStringLiteral("Unspecified");
+    unspecified_ssd.bus_type = QStringLiteral("SATA");
+    unspecified_ssd.model = QStringLiteral("Samsung SSD 990 PRO");
+    QVERIFY(sak::diskLooksSsd(unspecified_ssd));
+    // Neither SSD nor HDD is a real third state: an UNKNOWN drive must not be treated as
+    // rotational, because the validator allows a defrag only on a drive reported as HDD.
+    QVERIFY(!sak::diskLooksHdd(unspecified_ssd));
+
+    PartitionDiskInfo model_only_hdd;
+    model_only_hdd.media_type = QStringLiteral("Unspecified");
+    model_only_hdd.bus_type = QStringLiteral("SATA");
+    model_only_hdd.model = QStringLiteral("WDC WD40EFRX Hard Disk");
+    QVERIFY(sak::diskLooksHdd(model_only_hdd));
+    QVERIFY(!sak::diskLooksSsd(model_only_hdd));
+
+    // Still found where it was already looked for, so widening the search did not move the field.
+    PartitionDiskInfo nvme_by_bus;
+    nvme_by_bus.media_type = QStringLiteral("Unspecified");
+    nvme_by_bus.bus_type = QStringLiteral("NVMe");
+    nvme_by_bus.model = QStringLiteral("Generic Disk");
+    QVERIFY(sak::diskLooksSsd(nvme_by_bus));
+
+    // A drive that says nothing useful is neither, in both directions.
+    PartitionDiskInfo unknown;
+    unknown.media_type = QStringLiteral("Unspecified");
+    unknown.bus_type = QStringLiteral("USB");
+    unknown.model = QStringLiteral("Virtual Disk");
+    QVERIFY(!sak::diskLooksSsd(unknown));
+    QVERIFY(!sak::diskLooksHdd(unknown));
 }
 
 void PartitionManagerCoreTests::scriptBuilder_buildsBiosBootRepairScript() {

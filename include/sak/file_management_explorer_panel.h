@@ -355,13 +355,13 @@ private:
     [[nodiscard]] static PasteEntryKind rawDestinationEntryKind(const FileManagementTarget& target,
                                                                 const QString& directory,
                                                                 const QString& name);
-    [[nodiscard]] PasteEntryKind destinationEntryKind(const FileManagementTarget& target,
-                                                      const QString& directory,
-                                                      const QString& name) const;
-    [[nodiscard]] bool destinationOccupied(const FileManagementTarget& target,
-                                           const QString& directory,
-                                           const QString& name) const;
-    void clearCutMarks();
+    [[nodiscard]] static PasteEntryKind destinationEntryKind(const FileManagementTarget& target,
+                                                             const QString& directory,
+                                                             const QString& name);
+    [[nodiscard]] static bool destinationOccupied(const FileManagementTarget& target,
+                                                  const QString& directory,
+                                                  const QString& name);
+    void clearCutMarks() const;
     void finishMovePaste();
     void exportSelectedDirectoryOut(const FileManagementEntry& entry);
     void crossPaneCopySelection();
@@ -550,9 +550,9 @@ private:
                           const QString& current,
                           int depth,
                           QStringList* blockers);
-    void removeEmptiedSubfolder(const FileManagementTarget& target,
-                                const QString& path,
-                                QStringList* blockers);
+    static void removeEmptiedSubfolder(const FileManagementTarget& target,
+                                       const QString& path,
+                                       QStringList* blockers);
     void installSelectionCheckboxes(FileExplorerPane* pane);
     void appendViewToggleActions(QMenu* menu, const FileExplorerCommandContext& context);
     void recordHistory(FileExplorerHistoryOperation operation,
@@ -615,7 +615,7 @@ private:
     void historyRemoveVerifiedEntry(const FileManagementTarget& target,
                                     const FileExplorerHistoryItem& item,
                                     QStringList* blockers);
-    bool executeHistoryDelete(const FileExplorerStorageHistory& history,
+    void executeHistoryDelete(const FileExplorerStorageHistory& history,
                               const FileManagementTarget& target,
                               bool undo_of_create,
                               QStringList* blockers);
@@ -677,17 +677,17 @@ private:
         ExtractMode mode, const FileManagementTarget& target);
     /// Card skeleton shared by the in-progress and terminal archive cards
     /// (the zip codec reports no progress, so both are indeterminate).
-    [[nodiscard]] FileExplorerStatusCardRequest archiveCardRequest(
-        const FileExplorerArchiveRequest& request, FileExplorerReturnResult result) const;
+    [[nodiscard]] static FileExplorerStatusCardRequest archiveCardRequest(
+        const FileExplorerArchiveRequest& request, FileExplorerReturnResult result);
     void startArchiveWorker(const FileExplorerArchiveRequest& request,
                             const QString& failure_title);
     void finishArchiveWorker(FileExplorerArchiveWorker* worker,
                              FileExplorerStatusCenterItem* card,
                              const QString& failure_title);
     void addArchiveSubmenus(QMenu* menu, const FileExplorerCommandContext& context);
-    void applyCommandState(QPushButton* button,
-                           FileExplorerCommandId command,
-                           const FileExplorerCommandContext& context);
+    static void applyCommandState(QPushButton* button,
+                                  FileExplorerCommandId command,
+                                  const FileExplorerCommandContext& context);
     QAction* addCommandMenuAction(QMenu* menu,
                                   FileExplorerCommandId command,
                                   const FileExplorerCommandContext& context);
@@ -731,7 +731,7 @@ private:
     void showSelectedItemProperties();
     void editSelectedItemTags();
     void applyTagFilter(const QString& tag);
-    void clearCurrentTagFilter();
+    void clearCurrentTagFilter() const;
     [[nodiscard]] QStringList tagsForSelectedItem() const;
     [[nodiscard]] QStringList allKnownTags() const;
     void installTagProvider(FileExplorerItemModel* model);

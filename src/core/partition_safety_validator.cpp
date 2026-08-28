@@ -222,17 +222,6 @@ bool blocksUnsafeSystemStyleConversion(const PartitionDiskInfo& disk,
            (mode != QStringLiteral("mbr2gpt") || target_style != QStringLiteral("GPT"));
 }
 
-bool diskLooksSsd(const PartitionDiskInfo& disk) {
-    const QString media =
-        QStringLiteral("%1 %2 %3").arg(disk.media_type, disk.bus_type, disk.model).toUpper();
-    return media.contains(QStringLiteral("SSD")) || media.contains(QStringLiteral("NVME"));
-}
-
-bool diskLooksHdd(const PartitionDiskInfo& disk) {
-    const QString media = QStringLiteral("%1 %2").arg(disk.media_type, disk.model).toUpper();
-    return media.contains(QStringLiteral("HDD")) || media.contains(QStringLiteral("HARD"));
-}
-
 bool requiresTargetOverwriteConfirmation(const PartitionOperation& operation) {
     return (operation.type == PartitionOperationType::CloneDisk ||
             operation.type == PartitionOperationType::MigrateOs ||
@@ -750,30 +739,6 @@ void validateCreateUnallocatedPayload(const PartitionOperation& operation,
     addBlockerIf(result,
                  !createTypeMatchesFileSystem(operation),
                  QStringLiteral("Create partition type is incompatible with the file system"));
-}
-
-uint64_t saturatingAdd(uint64_t left, uint64_t right) {
-    if (std::numeric_limits<uint64_t>::max() - left < right) {
-        return std::numeric_limits<uint64_t>::max();
-    }
-    return left + right;
-}
-
-uint64_t usedBytes(const PartitionInfoEx& partition) {
-    if (!partition.volume || partition.volume->total_bytes < partition.volume->free_bytes) {
-        return 0;
-    }
-    return partition.volume->total_bytes - partition.volume->free_bytes;
-}
-
-uint64_t adjacentFreeBytesAfter(const PartitionDiskInfo& disk, const PartitionInfoEx& partition) {
-    const uint64_t partitionEnd = saturatingAdd(partition.offset_bytes, partition.size_bytes);
-    const auto it = std::ranges::find_if(disk.unallocated_regions,
-
-                                         [partitionEnd](const auto& region) {
-                                             return region.offset_bytes == partitionEnd;
-                                         });
-    return it == disk.unallocated_regions.cend() ? 0 : it->size_bytes;
 }
 
 bool resizeTargetMissing(const PartitionOperation& operation) {
@@ -1963,6 +1928,55 @@ void validatePartitionCompositeOperation(const PartitionDiskInfo& disk,
 }
 
 }  // namespace
+
+uint64_t jsonUInt64(const QJsonObject& object, const QString& key) {
+    const auto value = object.value(key);
+    if (value.isDouble()) {
+        // Clamped at zero: a negative cast straight to uint64_t wraps to ~1.8e19, and this reads
+        // partition offsets and sizes.
+        return static_cast<uint64_t>(std::max(0.0, value.toDouble()));
+    }
+    bool ok = false;
+    const uint64_t parsed = value.toString().toULongLong(&ok);
+    return ok ? parsed : 0;
+}
+
+uint64_t saturatingAdd(uint64_t left, uint64_t right) {
+    if (std::numeric_limits<uint64_t>::max() - left < right) {
+        return std::numeric_limits<uint64_t>::max();
+    }
+    return left + right;
+}
+
+uint64_t usedBytes(const PartitionInfoEx& partition) {
+    if (!partition.volume || partition.volume->total_bytes < partition.volume->free_bytes) {
+        return 0;
+    }
+    return partition.volume->total_bytes - partition.volume->free_bytes;
+}
+
+uint64_t adjacentFreeBytesAfter(const PartitionDiskInfo& disk, const PartitionInfoEx& partition) {
+    const uint64_t partitionEnd = saturatingAdd(partition.offset_bytes, partition.size_bytes);
+    const auto it = std::ranges::find_if(disk.unallocated_regions,
+
+                                         [partitionEnd](const auto& region) {
+                                             return region.offset_bytes == partitionEnd;
+                                         });
+    return it == disk.unallocated_regions.cend() ? 0 : it->size_bytes;
+}
+
+
+bool diskLooksSsd(const PartitionDiskInfo& disk) {
+    const QString media =
+        QStringLiteral("%1 %2 %3").arg(disk.media_type, disk.bus_type, disk.model).toUpper();
+    return media.contains(QStringLiteral("SSD")) || media.contains(QStringLiteral("NVME"));
+}
+
+bool diskLooksHdd(const PartitionDiskInfo& disk) {
+    const QString media = QStringLiteral("%1 %2").arg(disk.media_type, disk.model).toUpper();
+    return media.contains(QStringLiteral("HDD")) || media.contains(QStringLiteral("HARD"));
+}
+
 
 const PartitionDiskInfo* PartitionSafetyValidator::findDisk(const PartitionInventory& inventory,
                                                             DiskNumber disk_number) {

@@ -73,8 +73,8 @@ private Q_SLOTS:
     void onItemDetailLoaded(sak::PstItemDetail detail);
     void onAttachmentContentReady(uint64_t message_id,
                                   int index,
-                                  QByteArray content,
-                                  QString filename);
+                                  const QByteArray& content,
+                                  const QString& filename);
     void onAttachmentContentFailed(uint64_t message_id, int index, const QString& error);
     void onErrorOccurred(const QString& message);
 

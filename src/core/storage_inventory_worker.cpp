@@ -5,10 +5,11 @@
 /// @brief Storage inventory collection for Partition Manager.
 
 #include "sak/storage_inventory_worker.h"
-
+// sak::jsonUInt64 -- the clamped inventory field reader.
 #include "sak/elevation_broker.h"
 #include "sak/layout_constants.h"
 #include "sak/partition_file_system_detector.h"
+#include "sak/partition_safety_validator.h"
 #include "sak/process_runner.h"
 
 #include <QCryptographicHash>
@@ -22,16 +23,6 @@
 namespace sak {
 
 namespace {
-
-uint64_t jsonUInt64(const QJsonObject& object, const QString& key) {
-    const auto value = object.value(key);
-    if (value.isDouble()) {
-        return static_cast<uint64_t>(value.toDouble());
-    }
-    bool ok = false;
-    const uint64_t parsed = value.toString().toULongLong(&ok);
-    return ok ? parsed : 0;
-}
 
 bool jsonBool(const QJsonObject& object, const QString& key) {
     const auto value = object.value(key);

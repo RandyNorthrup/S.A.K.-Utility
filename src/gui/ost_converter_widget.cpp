@@ -6,6 +6,7 @@
 
 #include "sak/ost_converter_widget.h"
 
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
@@ -681,17 +682,9 @@ void OstConverterWidget::updateQueueRow(int row, const OstConversionJob& job) {
 }
 
 QString OstConverterWidget::formatBytes(qint64 bytes) {
-    if (bytes < kBytesPerKB) {
-        return QStringLiteral("%1 B").arg(bytes);
-    }
-    if (bytes < kBytesPerMB) {
-        return QStringLiteral("%1 KB").arg(static_cast<double>(bytes) / kBytesPerKBf, 0, 'f', 1);
-    }
-    if (bytes < kBytesPerGB) {
-        return QStringLiteral("%1 MB").arg(static_cast<double>(bytes) / kBytesPerMBf, 0, 'f', 1);
-    }
-    return QStringLiteral("%1 GB").arg(
-        static_cast<double>(bytes) / kBytesPerGBf, 0, 'f', kLargeByteDisplayPrecision);
+    // The shared compact byte style. This class carried its own copy; five existed across
+    // the tree, differing only in which unit got which precision.
+    return sak::formatBytesCompact(bytes);
 }
 
 QString OstConverterWidget::statusLabel(OstConversionJob::Status status) {

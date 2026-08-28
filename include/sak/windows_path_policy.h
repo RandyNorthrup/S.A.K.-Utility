@@ -94,4 +94,44 @@ namespace sak {
     return pathSegmentsAreLiteral(path) && driveQualifiedPath(path);
 }
 
+/// @brief Whether @p name is safe to use as a SINGLE child entry inside an already-chosen
+///        directory -- a new file or folder name, a rename target, or an entry name read back
+///        out of an archive.
+/// @return false for empty or whitespace-only, for "." and "..", for an absolute path, and for
+///         any name containing '/', '\\' or ':'.
+///
+/// Every rule refuses a name that would place the entry somewhere other than the directory the
+/// caller chose:
+///   * ".." walks OUT of that directory -- a rename or create-folder that accepts it targets the
+///     parent instead. This is the classic zip-slip shape, and it applies just as much to a name
+///     a user types into a rename box as to one read out of an archive.
+///   * "." names the directory itself rather than a child.
+///   * a name carrying '/' or '\\' abandons the chosen directory outright.
+///   * ':' is a drive letter ("C:") or an NTFS ALTERNATE DATA STREAM ("notes.txt:hidden"), which
+///     writes content that does not appear in any listing of the folder.
+///
+/// There is deliberately NO separate QDir::isAbsolutePath() check. The copy this replaced carried
+/// one, but every absolute path begins with a separator, a UNC "\\\\", or a drive letter and
+/// colon -- all already refused above -- so no input could reach it. A drill proved it: deleting
+/// the check left every test green, which is the definition of a guard that does not guard.
+///
+/// It REFUSES rather than sanitizes: silently stripping a traversal hides the manipulation that
+/// has to be rejected, and a caller that fails closed on false is always correct.
+///
+/// @note There were two of these, and the copies disagreed on exactly the rules that matter. The
+///       File Explorer panel's copy checked only for empty, '/' and '\\' -- so "..", "." and a
+///       colon all passed it, on the paths that build a rename destination and a new folder name.
+///       The archive worker's copy had the full rule. This is the full rule, for both.
+[[nodiscard]] inline bool isSafeChildName(const QString& name) {
+    // Trimmed first, so surrounding whitespace cannot launder a rejected name: " .. " must be
+    // refused exactly as ".." is, since the filesystem call downstream trims it too.
+    const QString trimmed = name.trimmed();
+    if (trimmed.isEmpty() || trimmed == QLatin1String(".") || trimmed == QLatin1String("..")) {
+        return false;
+    }
+    return std::none_of(trimmed.cbegin(), trimmed.cend(), [](const QChar ch) {
+        return ch == QLatin1Char('/') || ch == QLatin1Char('\\') || ch == QLatin1Char(':');
+    });
+}
+
 }  // namespace sak

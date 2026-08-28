@@ -89,7 +89,6 @@ private Q_SLOTS:
 
     // -- Search ----------------------------------------------------------
     void onSearchClicked();
-    void onSearchTextChanged();
 
     // -- Export ----------------------------------------------------------
     void onExportClicked();
@@ -114,7 +113,7 @@ private Q_SLOTS:
     void onItemPropertiesLoaded(uint64_t item_id, QVector<sak::MapiProperty> properties);
     void onAttachmentContentReady(uint64_t message_id,
                                   int index,
-                                  QByteArray data,
+                                  QByteArray attachment_data,
                                   QString filename);
     void onAttachmentContentFailed(uint64_t message_id, int index, const QString& error);
     void onSearchHit(sak::EmailSearchHit hit);

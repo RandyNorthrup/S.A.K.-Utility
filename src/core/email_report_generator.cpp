@@ -7,6 +7,7 @@
 #include "sak/email_report_generator.h"
 
 #include "sak/email_constants.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/report_style_constants.h"
 
@@ -40,27 +41,10 @@ QString csvCell(const QString& value) {
     return QLatin1Char('"') + out + QLatin1Char('"');
 }
 
-/// Format bytes into a human-readable string
+/// Format bytes into a human-readable string. The shared compact style: this file carried one
+/// of five copies of it.
 QString formatBytes(qint64 bytes) {
-    if (bytes < sak::kBytesPerKB) {
-        return QString::number(bytes) + QStringLiteral(" B");
-    }
-    if (bytes < sak::kBytesPerMB) {
-        return QString::number(static_cast<double>(bytes) / sak::kBytesPerKBf,
-                               'f',
-                               kByteSizePrecisionSmall) +
-               QStringLiteral(" KB");
-    }
-    if (bytes < sak::kBytesPerGB) {
-        return QString::number(static_cast<double>(bytes) / sak::kBytesPerMBf,
-                               'f',
-                               kByteSizePrecisionSmall) +
-               QStringLiteral(" MB");
-    }
-    return QString::number(static_cast<double>(bytes) / sak::kBytesPerGBf,
-                           'f',
-                           kByteSizePrecisionLarge) +
-           QStringLiteral(" GB");
+    return sak::formatBytesCompact(bytes);
 }
 
 /// Build an HTML table row

@@ -1807,132 +1807,49 @@ void WifiManagerPanel::startAddToWindowsProfiles(const QList<WifiConfig>& config
     watcher->setFuture(m_wlanInstallFuture);
 }
 
+// static
+QString WifiManagerPanel::wifiProfileInstallRefusal(const WifiConfig& cfg) {
+    if (cfg.ssid.trimmed().isEmpty()) {
+        return QStringLiteral("the row has no SSID");
+    }
+    if (cfg.security.trimmed().isEmpty()) {
+        return QStringLiteral("the row has no security type");
+    }
+    return {};
+}
+
 QPair<int, int> WifiManagerPanel::installWlanProfiles(const QList<WifiConfig>& configs,
                                                       const std::atomic<bool>* cancel) {
     int added = 0;
     int failed = 0;
-    for (int index = 0; index < configs.size(); ++index) {
+    for (const WifiConfig& cfg : configs) {
         // Cooperative cancellation: stop between profiles so teardown does not wait for every
         // remaining netsh call. Already-installed profiles stay (a partial install is honest).
         if ((cancel != nullptr) && cancel->load()) {
             break;
         }
-        const QString xml = WifiManagerPanel::buildWlanProfileXml(configs.at(index));
-        // Empty XML means the security type was refused (unsupported/unknown): count it as a
-        // failure rather than installing a downgraded profile.
-        if (!xml.isEmpty() && WifiManagerPanel::installWlanProfile(xml, index)) {
+        const QString refusal = wifiProfileInstallRefusal(cfg);
+        if (!refusal.isEmpty()) {
+            sak::logWarning("WLAN profile install refused for '{}': {}",
+                            cfg.ssid.toStdString(),
+                            refusal.toStdString());
+            ++failed;
+            continue;
+        }
+        // The SAME installer the assistant's connect_wifi action uses -- same security resolver,
+        // same profile XML, same fail-closed refusals.
+        const sak::WifiConnectResult result =
+            sak::addWifiProfileWindows(cfg.ssid, cfg.password, cfg.security, cfg.hidden);
+        if (result.profile_added) {
             ++added;
         } else {
+            sak::logWarning("WLAN profile install refused for '{}': {}",
+                            cfg.ssid.toStdString(),
+                            result.error.toStdString());
             ++failed;
         }
     }
     return QPair<int, int>{added, failed};
-}
-
-std::pair<QString, QString> WifiManagerPanel::wlanAuthEncForSecurity(const QString& security) {
-    const QString upper = security.toUpper();
-    // Enterprise (802.1X/EAP) profiles need EAP configuration this PSK/open builder cannot
-    // produce; refuse rather than emit a broken or downgraded profile.
-    if (upper.contains(QStringLiteral("ENTERPRISE"))) {
-        return {};
-    }
-    if (upper.contains(QStringLiteral("WEP"))) {
-        return {QStringLiteral("open"), QStringLiteral("WEP")};
-    }
-    if (upper.contains(QStringLiteral("NONE")) || upper.contains(QStringLiteral("OPEN"))) {
-        return {QStringLiteral("open"), QStringLiteral("none")};
-    }
-    // WPA3-Personal uses SAE: map it to WPA3SAE rather than silently downgrading it to WPA2-PSK.
-    if (upper.contains(QStringLiteral("WPA3")) || upper.contains(QStringLiteral("SAE"))) {
-        return {QStringLiteral("WPA3SAE"), QStringLiteral("AES")};
-    }
-    if (upper.contains(QStringLiteral("WPA"))) {  // WPA/WPA2 Personal (PSK)
-        return {QStringLiteral("WPA2PSK"), QStringLiteral("AES")};
-    }
-    return {};  // unknown / malformed -> refuse (fail closed)
-}
-
-QString WifiManagerPanel::buildWlanProfileXml(const WifiConfig& cfg) {
-    Q_ASSERT(!cfg.ssid.isEmpty());
-    const auto [authType, encType] = wlanAuthEncForSecurity(cfg.security);
-    // Empty authType == unsupported/unknown security: return an empty document so the caller
-    // refuses the install instead of writing a downgraded or malformed profile.
-    if (authType.isEmpty()) {
-        return {};
-    }
-
-    QString xml;
-    xml += "<?xml version=\"1.0\"?>\r\n";
-    xml += "<WLANProfile xmlns=\"http://www.microsoft.com/networking/WLAN/profile/v1\">\r\n";
-    xml += "  <name>" + cfg.ssid.toHtmlEscaped() + "</name>\r\n";
-    xml += "  <SSIDConfig>\r\n";
-    xml += "    <SSID><name>" + cfg.ssid.toHtmlEscaped() + "</name></SSID>\r\n";
-    xml += QString("    <nonBroadcast>%1</nonBroadcast>\r\n").arg(cfg.hidden ? "true" : "false");
-    xml += "  </SSIDConfig>\r\n";
-    xml += "  <connectionType>ESS</connectionType>\r\n";
-    xml += "  <connectionMode>auto</connectionMode>\r\n";
-    xml += "  <MSM><security><authEncryption>\r\n";
-    xml += "    <authentication>" + authType + "</authentication>\r\n";
-    xml += "    <encryption>" + encType + "</encryption>\r\n";
-    xml += "    <useOneX>false</useOneX>\r\n";
-    xml += "  </authEncryption>\r\n";
-    // WEP maps to auth "open" but still carries a key: emit it as <networkKey> so a WEP key is NOT
-    // silently discarded (a keyless WEP profile cannot connect). WPA keys stay passPhrase; a
-    // genuinely open network (no key) emits no <sharedKey>.
-    const bool is_wep = encType == QLatin1String("WEP");
-    if (!cfg.password.isEmpty() && (authType != QLatin1String("open") || is_wep)) {
-        xml += "  <sharedKey>\r\n";
-        xml += is_wep ? "    <keyType>networkKey</keyType>\r\n"
-                      : "    <keyType>passPhrase</keyType>\r\n";
-        xml += "    <protected>false</protected>\r\n";
-        xml += "    <keyMaterial>" + cfg.password.toHtmlEscaped() + "</keyMaterial>\r\n";
-        xml += "  </sharedKey>\r\n";
-    }
-    xml += "  </security></MSM>\r\n";
-    xml += "</WLANProfile>\r\n";
-    return xml;
-}
-
-bool WifiManagerPanel::installWlanProfile(const QString& xml, int row) {
-    Q_ASSERT(row >= 0);
-    Q_ASSERT(!xml.isEmpty());
-    (void)row;
-
-    // Adding a WLAN profile is a privileged mutation: resolve the System32 netsh and
-    // refuse outright when it cannot be resolved rather than let CreateProcess search.
-    const QString netsh_exe = sak::system32Path(QStringLiteral("netsh.exe"));
-    if (netsh_exe.isEmpty()) {
-        sak::logError("Cannot resolve the System32 netsh.exe path; WLAN profile install refused");
-        return false;
-    }
-
-    // Use QTemporaryFile with .xml suffix for secure unique temp file
-    QTemporaryFile tmp_file(QDir::tempPath() + QStringLiteral("/sak_wifi_XXXXXX.xml"));
-    tmp_file.setAutoRemove(true);
-    if (!tmp_file.open()) {
-        return false;
-    }
-    {
-        QTextStream ts(&tmp_file);
-        ts.setEncoding(QStringConverter::Utf8);
-        ts << xml;
-    }
-    tmp_file.close();
-
-    const QString tmp_path = tmp_file.fileName();
-
-    const auto result = sak::runProcess(netsh_exe,
-                                        {QStringLiteral("wlan"),
-                                         QStringLiteral("add"),
-                                         QStringLiteral("profile"),
-                                         QStringLiteral("filename=") + tmp_path,
-                                         QStringLiteral("user=all")},
-                                        sak::kTimerNetshWaitMs);
-    if (result.timed_out) {
-        sak::logError("Timed out installing WLAN profile");
-        return false;
-    }
-    return result.succeeded();
 }
 
 // -----------------------------------------------------------------------------

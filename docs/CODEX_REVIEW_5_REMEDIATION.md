@@ -42,7 +42,9 @@ a parked design, per the bucket convention. Open work is what remains after thos
   and MacOSToolValidator all resolve to zero files. FlashWorker and LinuxISODownloadDialog do
   exist, because they are the Linux/Windows infrastructure this plan would build ON, and
   mistaking those for progress is exactly the error this check was designed to avoid.
-- [~] R5-IDX-19 THE GUI NEVER MOVED ONTO THE HEADLESS PATH IT NOW HAS. Verified 2026-08-27 at
+- [x] R5-IDX-19 THE GUI NEVER MOVED ONTO THE HEADLESS PATH IT NOW HAS -- CLOSED 2026-08-27 by
+  the owner's ruling and the three batches under it (19a wifi scan, 19b IPv4 configuration, 19c
+  adapter admin). Verified 2026-08-27 at
   the owner's request. The headless half of the dominion plan is real and complete: zero
   QWidget/QDialog/QMessageBox across all 162 files in src/core and src/actions, and 62 action
   ids the assistant can enumerate and invoke with no widget in the loop. What is NOT true is
@@ -140,6 +142,38 @@ a parked design, per the bucket convention. Open work is what remains after thos
   which interface wins. That is the owner's call, not something to slip into a refactor, so it
   is stated here rather than done. Note this makes the drift risk WORSE than first recorded: the
   two paths are not merely duplicated, they already disagree.
+  R5-IDX-19b CLOSED 2026-08-27. THE OWNER'S RULING: the GUI does not have commands; the GUI
+  points at the headless seam. Applied as stated, and the routing question is answered without
+  either side's behaviour changing.
+  Every netsh adapter command now has exactly ONE construction site and ONE execution site, in
+  network_adapter_admin. The panel supplies the worker thread, the confirmation dialogs and the
+  reporting; it builds nothing and runs nothing. Deleted from the panel: runNetshCommand (which
+  had ZERO callers), runNetshCommandAsync, runCommandAsync, and the whole private step machinery
+  (runNetshStepsSequential, runDnsApplySequence, runDhcpEnableSequence and their message
+  mappers). EthernetConfigManager's three restore legs became thin adapters over the same
+  executors -- they translate an outcome into this class's signals and spell out no arguments.
+  THE TWO GENUINE DIFFERENCES ARE PARAMETERS, NOT A FORK. gwmetric and register are the only
+  places the copies disagreed, and each changes what the machine does:
+    * netsh's OWN help (read on this machine -- help is a read, not an apply) documents gwmetric
+      only as "the metric for the default gateway". It does NOT document 0 as meaning
+      "automatic", so pinned and omitted are NOT known to be equivalent.
+    * the same help does not state the default for `register`.
+  So AdapterIpv4Dialect carries both as named values, with kRestoreIpv4Dialect and
+  kTechnicianIpv4Dialect holding what each caller has always sent. One builder, one test file
+  pinning both vectors exactly, and zero live behaviour change. Flipping either is now a
+  one-line edit in one file instead of a re-merge -- which is the right shape for a decision
+  that cannot be certified here, since live netsh apply certification is forbidden on this
+  machine.
+  A THIRD DIFFERENCE WAS FOUND AND UNIFIED IN THE STRICTER DIRECTION: the two sides classified
+  netsh's OUTCOME differently. EthernetConfigManager failed a run on `!succeeded() || output
+  contains "error"`; the panel looked at the exit code alone. netsh prints an error and can
+  still exit 0, so the same outcome was reported two ways depending on which button was pressed.
+  The shared classifier is the union, i.e. the stricter of the two, with the exit code checked
+  first and unconditionally because netsh localizes its messages. The one documented exception
+  keeps its own rule inside that function rather than as a copy: the DHCP DNS step, where netsh
+  reports the benign "DNS is already automatic" no-op as a NON-ZERO exit, so the shared rule
+  would false-fail a restore that had already reached the target state.
+  DRILLED, each guard separately, 10 of 10 mutations RED. Gate: build exit 0, ctest 252/252.
 - [~] R5-IDX-2 `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md` -- 11 open items. These were
   INVISIBLE to every grep-based scan until 2026-08-26: the file carried 8 raw NUL bytes, so
   grep classified it as binary and silently skipped it. NULs are now escaped as text.
@@ -205,7 +239,7 @@ a parked design, per the bucket convention. Open work is what remains after thos
   verifies `tests/README.md` against the real CTest registration and nothing else. Its header
   is honest about that; the gap is that 68 other tracked docs have no accuracy check of any
   kind, which is what let R5-IDX-7 rot inside files that a different gate does read.
-- [~] R5-IDX-20 THE RELEASE-READINESS SECURITY SECTION DESCRIBED A CONTROL THAT WAS NO LONGER
+- [x] R5-IDX-20 THE RELEASE-READINESS SECURITY SECTION DESCRIBED A CONTROL THAT WAS NO LONGER
   ARMED. Found 2026-08-27 by sweeping active docs for open work that nothing in this file
   pointed at. `docs/RELEASE_READINESS.md` opened with a PRE-PUSH BLOCKER section asserting two
   things: that the branch had never been pushed so the cert-rig VM credential in commit
@@ -223,10 +257,15 @@ a parked design, per the bucket convention. Open work is what remains after thos
   The section is rewritten to state what is actually true: published, allowlisted by one exact
   commit:file:rule:line fingerprint, with the new `gitleaks-staged` pre-commit hook now
   catching the next one before it can enter history at all.
-  WHAT REMAINS OPEN -- BLOCKED-ON-USER: rotate the VM password. That is the only action left
-  that turns the published string into a dead credential, and it is the owner's to take; an
-  agent must never apply a credential change against the live cert rig. Nothing in the build
-  or the suite depends on it, so it blocks no other work here.
+  CLOSED 2026-08-27 BY OWNER DECISION, and nothing remains open. The owner ruled that the
+  password will not be rotated: the certification-rig VMs are reachable only from this machine's
+  local network, are not exposed to any external route, and hold nothing but the rigs
+  themselves. The published string is therefore a credential to a LAN-only target, which is the
+  same basis on which the allowlist entry was authorized on 2026-08-26 (b0355ef9). This is an
+  ACCEPTED RISK recorded as a decision, not an unfinished action -- the distinction that
+  matters, because the defect this entry recorded was a doc claiming a control was armed when it
+  was not. The doc now states what is true, the `gitleaks-staged` hook catches the next one
+  before it can enter history, and no agent is waiting on anything.
 - [x] R5-IDX-21 THE COMPLEXITY GATE SILENTLY SKIPPED FUNCTIONS WHEN LIZARD'S PARSER DESYNCED --
   CLOSED 2026-08-27. Nothing is outstanding: the version is pinned, both surviving triggers are
   rewritten, the desync guard is in the gate and drilled, and all seven C++ violations the fix
@@ -293,7 +332,7 @@ a parked design, per the bucket convention. Open work is what remains after thos
   and by the `&` call operator. The rows are now `Get-Content ("app"+".log")` with a
   single-quoted control, so quote-concat is the only thing that can classify them; the same
   drill is red on the double-quoted row alone.
-- [~] R5-IDX-22 A DEAD PARSER IS STILL COMPILED, AND ITS STATED REASON DOES NOT HOLD.
+- [x] R5-IDX-22 A DEAD PARSER IS STILL COMPILED, AND ITS STATED REASON DOES NOT HOLD.
   `EthernetConfigManager::parseNetshConfig` has ZERO callers -- the only two hits tree-wide are
   its own declaration and definition. Its comment says it is "retained because saved snapshots
   and the restore tooling still reference the netsh text format", but nothing in the tree parses
@@ -307,6 +346,265 @@ a parked design, per the bucket convention. Open work is what remains after thos
   Note also that it is private and untested, so the CCN-16 -> compliant refactor it just
   received is unverified by anything but review. That is acceptable only because it is dead; if
   the decision is KEEP, it needs tests and its access widened to allow them.
+  DECIDED AND DELETED 2026-08-27. The owner's ruling that nothing may parse command TEXT settles
+  it: parseNetshConfig and its two helpers are gone, 76 lines. This is not the queryPowerPlan()
+  shape after all -- that was a function with no caller that turned out to be the missing half of
+  a feature, whereas this one's other half was BUILT and is in use. Capture reads
+  Get-NetIPConfiguration JSON (language-neutral, unlike this parser, which matched the English
+  labels "DHCP enabled:" / "IP Address:" / "Subnet Prefix:"), and restore issues netsh COMMANDS.
+  Deleting it removes the last place in the tree that read netsh's console output as data.
+- [x] R5-IDX-23 THE IPv4 VALIDATOR ACCEPTED ADDRESSES IT PROMISED TO REJECT, IN FOUR COPIES --
+  FOUND AND FIXED 2026-08-27 while unifying the netsh paths for R5-IDX-19b. Four files carried
+  the same one-line check, `QHostAddress::setAddress(v) && protocol()==IPv4Protocol`, and each
+  carried a comment claiming it accepted ONLY a complete address with no CIDR suffix, no
+  whitespace and no trailing junk. None of them did. QHostAddress implements the inet_aton
+  family, so it accepts the ABBREVIATED forms and expands them: "192.168.1" parses as
+  192.168.0.1, "8.8.4" as 8.8.0.4, "127.1" as 127.0.0.1. A technician who typed a three-part
+  address into the static-IP dialog, or a model that emitted one to network.set_adapter_static_ip
+  or set_adapter_dns, would have had a DIFFERENT address configured than the one requested, with
+  no error raised anywhere -- on the code path that reconfigures a machine's networking.
+  FOUND THE ONLY WAY THIS CLASS IS: a test failed for the right reason. A refusal test asserted
+  the message for "192.168.1" and got a netsh failure message instead, because the value had
+  sailed through validation. Reading WHY that message differed is what exposed it; an assertion
+  of "!succeeded" alone would have passed and hidden it.
+  FIXED: one sak::isDottedIpv4, hand-parsed rather than delegated -- exactly four octets, each
+  1-3 plain ASCII decimal digits, value 0-255, and no leading zero unless the octet IS zero
+  (the inet_aton family reads a leading zero as OCTAL, so "010.1.1.1" means 8.1.1.1 to some
+  parsers and 10.1.1.1 to others; the ambiguous spelling is refused outright). ASCII-only is
+  deliberate: QChar::isDigit() accepts non-ASCII decimal digits and QString::toInt() converts
+  them, so a digit-class check would pass an address the operator cannot read back. It needs no
+  QtNetwork, and it made the QHostAddress canonicalization in the DNS path dead code -- a
+  validated address now has exactly one spelling, so two spellings of one server cannot both get
+  through the de-duplication.
+  SECOND DEFECT IN THE SAME PLACE, in the tests rather than the code: the first version of the
+  refusal tests called the EXECUTOR to assert a refusal. The moment the validator regressed --
+  which is exactly what had happened -- that test ran a live `netsh interface ipv4 set address`
+  against a real adapter named "Ethernet". Validation is now a pure function
+  (staticIpv4ConfigurationProblem, staticDnsProblem) and the tests call that, so a regression
+  cannot turn a unit test into a live apply.
+  DRILLED: the octet count, the leading-zero rule, the ASCII-only digit rule and the octet upper
+  bound each turn their own test red.
+- [x] R5-IDX-24 THE WIFI PANEL'S OWN DEFAULT SECURITY SETTING BUILT A PROFILE THAT COULD NOT
+  CONNECT -- FOUND AND FIXED 2026-08-27 while applying the no-commands-in-the-GUI ruling.
+  wifi_manager_panel.cpp carried its own security resolver (wlanAuthEncForSecurity) and its own
+  WLAN profile XML builder, duplicating resolveWlanAuth and buildWlanXmlContent in
+  wifi_setup_script.cpp. The panel's copy tested for "WPA3" BEFORE "WPA", so any combined label
+  containing WPA3 resolved to a WPA3SAE-ONLY profile. The panel's security combo is populated
+  with {"WPA/WPA2/WPA3", "WEP", "None (Open)"} and the first entry is the default, so THAT is
+  what every network got unless the technician changed it. A WPA3SAE-only profile cannot
+  associate with a WPA2-only access point and is rejected outright by pre-1903 Windows. The
+  shared resolver has excluded exactly this case since it was written -- isWpa3SaeOnly requires
+  the label to name WPA3 or SAE and NOT WPA2 and NOT "WPA/" -- and the comment in the core test
+  that pins it already said "notably the WiFi panel's OWN default". The panel simply never
+  called it.
+  That is the cost of a duplicate stated plainly: the correct implementation, the test for it,
+  and a comment naming the exact victim all existed, and the victim still shipped broken,
+  because a second copy was what actually ran.
+  FIXED: new sak::addWifiProfileWindows -- connectWifiWindows minus the connect step -- is the
+  one installer. connectWifiWindows now calls it, so the panel's "add to Windows profiles"
+  button and the assistant's connect_wifi action share the resolver, the XML and the fail-closed
+  refusals. The panel's resolver, XML builder and netsh call are deleted (106 lines).
+  ONE BEHAVIOURAL DIFFERENCE KEPT, DELIBERATELY: the shared seam reads an EMPTY security label
+  as "caller did not specify, use the interoperable default", which is right for connect_wifi
+  where security is an optional argument, and wrong for the panel's table where every row has a
+  security column. The panel refuses an empty label itself, through a pure, public, testable
+  wifiProfileInstallRefusal -- not by calling the installer and hoping.
+  DRILLED, 5 of 5 RED. The first mutation restores the panel's exact bug (dropping the WPA2 and
+  "WPA/" exclusions) and turns the CORE test red -- demonstrating that the test which would have
+  caught this has existed all along, and only the duplicate kept it away from the panel.
+- [x] R5-IDX-25 THE BACKUP WIZARD LAUNCHED ITS OWN ADAPTER SCAN -- FIXED 2026-08-27.
+  user_profile_backup_wizard_pages.cpp ran the IDENTICAL PowerShell script as
+  EthernetConfigManager (they already shared the script constant, kNetIpConfigPowerShell) but
+  launched it separately: a different PowerShell resolver, a different argument list (no
+  -ExecutionPolicy) and a 15s timeout against the manager's 30s. So the same scan could fail on
+  one machine through one path and succeed through the other, while both claimed to do the same
+  thing. Sharing a constant is not sharing an implementation.
+  Now one sak::scanEthernetConfigs owns the launch and the parse, and reports scan_ok so the
+  page distinguishes a FAILED scan from a machine with no adapters -- it previously showed
+  "Found 0 ethernet adapter(s)" for a scan that never ran, telling the technician there was
+  nothing to back up.
+- [x] R5-IDX-26 THE FILE EXPLORER'S PATH-TRAVERSAL GUARD WAS THE WEAK COPY OF TWO -- FOUND AND
+  FIXED 2026-08-27 by a systematic sweep for functions defined in BOTH src/gui and src/core,
+  run after R5-IDX-24 showed what a duplicated guard costs. 47 name collisions, most of them
+  benign (Qt slot names on unrelated classes, one-line GUI delegations to core). One was not.
+  `isSafeChildName` existed twice, and the copies disagreed on exactly the rules that matter:
+    * src/core/file_explorer_archive_worker.cpp refused empty, ".", "..", an absolute path, and
+      any name containing '/', '\' or ':'.
+    * src/gui/file_management_explorer_panel.cpp refused empty, '/' and '\' -- and nothing else.
+  So ".." passed the panel's guard. The panel hands an accepted name to childPathFor(), which
+  resolves `<browsed directory>/..` to the PARENT directory, and the guard sits in front of
+  targetPathForName, the Properties-dialog rename, the inline rename, and create-folder-with-
+  selection. A colon passed too, which is a drive letter ("C:") or an NTFS ALTERNATE DATA STREAM
+  ("notes.txt:hidden") -- content that no listing of the folder shows.
+  This is the same shape as R5-IDX-24 and worth stating as a rule rather than an anecdote: when
+  a guard is duplicated, the two copies do not merely risk drifting apart later, they are
+  ALREADY apart, and the weaker one is the one nobody was looking at.
+  FIXED: one sak::isSafeChildName in windows_path_policy.h -- the header that already describes
+  itself as "one shared dialect for screening a Windows path that arrived as UNTRUSTED input" --
+  carrying the strict rule plus trimming, so " .. " cannot launder ".." past it. Both call sites
+  point at it.
+  A GUARD THAT DID NOT GUARD, removed rather than kept for comfort: the core copy's
+  QDir::isAbsolutePath() check is unreachable, because every absolute path begins with a
+  separator, a UNC "\\", or a drive letter and colon, all of which the other rules already
+  refuse. The drill is what proved it -- deleting the check left every test green -- so it was
+  deleted with the reasoning recorded, not left in as decoration.
+  ALSO CLOSED A COVERAGE HOLE THIS EXPOSED: windows_path_policy.h had NO direct unit test at
+  all, though literalLocalPathTrusted gates an ELEVATED launch in uninstall_worker and a
+  RECURSIVE delete in leftover_scanner, both on a registry string any user can write under HKCU.
+  New test_windows_path_policy (suite 252 -> 253) covers all five predicates.
+  DRILLED, 6 of 6 RED after two rounds. The FIRST round mattered more than the second: three
+  mutations survived, and each was a real hole in the tests I had just written -- the '%'
+  refusal, the alternate-data-stream rule and the absolute-path check were all asserted by cases
+  that some OTHER rule already refused, so the assertions would have passed against code with
+  those rules deleted. Two got isolating cases; the third turned out to be dead code.
+- [x] R5-IDX-27 THE PARTITION PANEL AND THE SAFETY VALIDATOR DISAGREED ABOUT WHAT AN SSD IS --
+  FOUND AND FIXED 2026-08-27, third hit from the same GUI/core duplicate sweep as R5-IDX-26.
+  `diskLooksSsd` and `diskLooksHdd` existed twice, and the panel's copies searched fewer fields:
+    * core searched media_type + bus_type + MODEL for SSD, and media_type + MODEL for HDD.
+    * the panel searched media_type + bus_type for SSD, and media_type ONLY for HDD.
+  The model string is exactly where solid-state identity usually appears -- Windows reports media
+  type inconsistently across drivers, and for many drives "SSD" or "NVMe" is in the model and
+  nowhere else. So a drive like "Samsung SSD 990 PRO" reporting media_type "Unspecified" read as
+  an SSD to the validator and as NEITHER to the panel.
+  The consequence is a disagreement about a DESTRUCTIVE-adjacent operation: the validator BLOCKS
+  "HDD defrag is blocked on SSD/NVMe media", while the panel used its weaker copy to decide what
+  to OFFER (ssd_mode / hdd_mode, and which command lines to display). The panel would present and
+  let the operator queue a defrag the validator then refuses. It fails CLOSED -- no SSD was ever
+  defragged -- so this is a consistency and honesty defect rather than a data-loss one, and it is
+  recorded that way rather than inflated.
+  FIXED: the two heuristics are promoted out of the validator's anonymous namespace into
+  sak::, documented as the judgement the SSD-defrag blocker rests on, and the panel keeps only
+  nullable one-line wrappers over them. Widening the panel's view is a real behaviour change and
+  an improvement: drives it previously classified as neither are now correctly offered ReTrim
+  instead of defrag guidance.
+  Note diskLooksHdd is deliberately NOT the negation of diskLooksSsd. A drive reporting neither
+  is UNKNOWN, and the validator requires a positive HDD report before allowing a defrag, so
+  collapsing the two would let a defrag through on an unidentified drive. A drill proves it:
+  rewriting HDD as !SSD turns the test red.
+  DRILLED, 4 of 4 RED, including the two mutations that restore the panel's exact old rule.
+- [x] R5-IDX-28 TWO CSV EXPORTS HAD NO FORMULA-INJECTION GUARD (CWE-1236) -- FOUND AND FIXED
+  2026-08-27, fourth hit from the GUI/core duplicate sweep. Four places wrote a CSV cell and only
+  two of them were safe:
+    * src/core/diagnostic_report_generator.cpp and src/core/email_export_worker.cpp each carried
+      a csvEscape with RFC 4180 quoting AND a leading-apostrophe guard for a value starting
+      '=', '+', '-', '@', tab or CR.
+    * src/gui/vulnerability_panel.cpp carried a csvEscape with the quoting and NO guard.
+    * src/gui/network_diagnostic_panel.cpp's table export had no csvEscape at all: it wrapped
+      every cell in quotes and doubled embedded quotes inline.
+  Quoting is the wrong control for this. It stops a value BREAKING OUT of its cell; it does not
+  stop the cell being EXECUTED, because a spreadsheet evaluates a leading '=' inside a quoted
+  cell exactly as it does outside one. Wrapping every cell unconditionally, as the network panel
+  did, therefore looks careful and defends against the wrong thing.
+  BOTH UNGUARDED PATHS EXPORT TEXT THIS PROGRAM DID NOT AUTHOR, which is what makes it a finding
+  rather than a style note. Vulnerability findings come from external advisory feeds. The network
+  panel's tables carry WiFi SSIDs, remote hosts, share names and firewall rule names -- and an
+  SSID is chosen by whoever operates the access point. `=HYPERLINK("http://attacker/","Click")`
+  is a legal SSID; it becomes a live formula the moment the technician opens the export.
+  FIXED: one sak::csvEscape in a new include/sak/csv_escape.h, used by all four. It takes the
+  active delimiter, so the email exporter's semicolon mode keeps working, and it applies the
+  guard BEFORE the quoting decision so the apostrophe lands inside the cell rather than stranded
+  outside it. 65 lines of duplicate deleted.
+  New test_csv_escape (suite 253 -> 254). DRILLED, 6 of 6 RED: removing the guard, moving it
+  after the quoting decision, dropping the trim so leading whitespace hides the trigger
+  character, dropping the '@' lead-in, dropping quote doubling, and hardcoding a comma in place
+  of the delimiter each turn their own test red.
+- [x] R5-IDX-29 A SHARED BYTE FORMATTER EXISTED AND FIVE PLACES STILL DID NOT USE IT -- FIXED
+  2026-08-27, last item from the GUI/core duplicate sweep, and the only one with NO defect behind
+  it. Recorded anyway, because the SHAPE is the same one R5-IDX-19 named for
+  wifi_profile_scanner: the extraction landed and the reuse did not.
+  `sak::formatBytes` in include/sak/format_utils.h has been the canonical formatter all along,
+  and six call sites correctly delegate to it (quick_action, per_user_customization_dialog,
+  image_flasher_panel, linux_iso_downloader, linux_iso_download_dialog, advanced_uninstall_panel,
+  plus both uint64 report variants). Five others wrote their own: email_inspector_panel,
+  ost_converter_widget, email_attachments_browser_dialog, email_report_generator and
+  conversion_report_generator.
+  Those five all wanted the same COMPACT style -- "512 B" rather than "512 bytes" -- which the
+  canonical formatter deliberately does not produce, so writing a local one was a reasonable
+  thing to do five separate times. They then drifted in trivia, which is the actual cost:
+  conversion_report_generator truncated KB with integer division ("1 KB" for 1536 bytes) and
+  email_attachments_browser_dialog printed GB to one decimal instead of two. Same intent, five
+  spellings, none wrong enough to notice.
+  FIXED: sak::formatBytesCompact joins sak::formatBytes in format_utils.h, and all five delegate.
+  The two styles are deliberately NOT merged -- one reads correctly in a sentence or a wide
+  report column, the other fits a table cell -- so this is two named styles with one
+  implementation each, and a test asserts they REMAIN different, since merging them would
+  silently change every compact cell in the app.
+  TWO VISIBLE CHANGES, both toward the majority spelling and both stated rather than slipped in:
+  the conversion report renders 1536 bytes as "1.5 KB" instead of "1 KB", and the attachments
+  browser renders GB to two decimals. No test asserted on either -- only test_format_utils covers
+  byte formatting, and it covers the canonical function.
+- [x] R5-IDX-30 THE INVENTORY PARSER READ A NEGATIVE SIZE AS 18 EXABYTES -- FOUND AND FIXED
+  2026-08-27, and it is the one hit from the duplicate sweep where the GUI copy was the SAFE one.
+  `jsonUInt64` existed twice. src/gui/partition_manager_panel.cpp clamped at zero
+  (`std::max(0.0, value.toDouble())`); src/core/storage_inventory_worker.cpp did not. The
+  unclamped copy is the one that matters: it is the parser that reads a disk's actual geometry,
+  and it feeds partition Offset and Size and volume Size and SizeRemaining. A negative double
+  cast straight to uint64_t wraps to roughly 1.8e19, so a malformed field would not produce a
+  small wrong number -- it would produce an exabyte-scale one, which then flows into the offset
+  arithmetic (saturatingAdd, adjacentFreeBytesAfter) and the free-space checks on a tool that
+  writes to raw disks.
+  Worth stating because it corrects the lesson from R5-IDX-24, -26 and -27 rather than repeating
+  it: the weak copy is not always the GUI's. It is whichever one nobody was looking at, and here
+  that was the core parser. "Core is the trustworthy one" is a heuristic, not a rule, and it is
+  the kind of heuristic that stops a sweep early.
+  FIXED: one sak::jsonUInt64 beside the other shared partition helpers, clamped. Both call sites
+  use it. DRILLED, 2 of 2 RED: removing the clamp, and removing the numeric-string fallback, each
+  turn the new test red.
+  ALSO UNIFIED, with no defect behind them: saturatingAdd, usedBytes and adjacentFreeBytesAfter
+  were duplicated between the validator and the panel with identical bodies. Pure dedup, no
+  behaviour change, done because an identical duplicate is simply a divergence that has not
+  happened yet -- which is exactly what the four findings above were.
+  EXAMINED AND DELIBERATELY LEFT SEPARATE: `detectImageMime` also exists twice, but the two
+  answer different questions. The core copy sniffs four magic-byte signatures to decide what may
+  be embedded in a generated HTML report; the GUI copy asks QImageReader what Qt can decode, to
+  render an inline image in an email. Forcing the core allowlist onto the GUI would stop
+  legitimate inline images rendering, and forcing the open set onto the report writer would widen
+  what it embeds. Same name, different responsibility -- merging them would be the wrong answer,
+  and the name collision is the only real problem. Recorded here so the next sweep does not
+  re-open it. `stringListToJsonArray` likewise differs on purpose (the assistant panel drops
+  blank entries; the report serializer keeps them) and is six lines in two unrelated modules.
+- [x] R5-IDX-31 THE CPPCHECK GATE ONLY SEES FILES A COMMIT TOUCHES, SO DEBT SITS UNTIL SOMETHING
+  ELSE REACHES IT -- 16 findings cleared 2026-08-27. The pre-commit cppcheck hook runs on the
+  files in the commit, which is the right scope for a hook, but it means a file nobody has
+  touched carries its findings indefinitely and they all arrive at once for whoever next edits
+  it. Deduplicating byte formatters brought four such files into scope.
+  This is not a complaint about the hook. It is the reason the "fix every issue found,
+  preexisting or not" rule exists: the alternative is to revert the harmless edit so the debt
+  goes back to sleep, which is the make-the-problem-go-away failure.
+  CLEARED, by category:
+    * 10 funcArgNamesDifferent in network_diagnostic_panel: the HEADER declared camelCase while
+      every definition used snake_case. The definitions match the tree's convention, so the
+      declarations moved. Not cosmetic where a signature is long -- onLanTransferProgress takes
+      three numbers, and a reader checking a call against the header was reading different names
+      than the code uses.
+    * 6 functionStatic / functionConst in file_management_explorer_panel and email_export_worker:
+      members that touch no state. Verified none is a Q_SLOT first, because a slot cannot be
+      static and cppcheck does not know that.
+    * 2 knownConditionTrueFalse, both REAL and both the same shape -- a check that reads as
+      defence and cannot fire. getPresetPorts tested `index < 0` after a guard had already
+      established the value was at least 1. executeHistoryDelete returned a bool that was
+      unconditionally true, and its caller stored it in a variable named `resolved` and returned
+      it -- so the undo path looked like it was checking an outcome when nothing was checked.
+      The bool is gone and the caller now states plainly what its own `true` means: the undo RAN,
+      as distinct from never being attempted. Blocked entries were, and still are, reported
+      through the blockers list and the posted card.
+    * 1 constParameterPointer, made const.
+    * 1 passedByValueCallback FIXED, after a first attempt to suppress it was wrong. The
+      suppression's justification was that a queued signal/slot connection needs the parameter by
+      value because a const reference would dangle. That is not how Qt works: on a queued
+      connection Qt copies each argument into the receiving thread's event queue and binds the
+      parameter to THAT copy, which outlives the slot body, so a const reference is both safe and
+      one copy cheaper -- and the copy here is a whole email attachment. The slot only reads its
+      arguments, so both became const references. Worth recording because the failure mode was
+      mine and it is the dangerous kind: a suppression carrying a confident, plausible and false
+      reason is harder to unpick later than no suppression at all.
+  ONE DEAD FUNCTION REMOVED ON EVIDENCE: EmailInspectorPanel::onSearchTextChanged had an empty
+  body, no connect() anywhere in the tree, and no debounce timer in the class it was a
+  "placeholder for debounced incremental search" for. Every sibling class implements the same
+  slot with a `const QString&` parameter and a real body. This is NOT the queryPowerPlan shape
+  the non-negotiables warn about -- that was a function with no caller that turned out to be the
+  missing HALF of a built feature. An empty body cannot be the missing half of anything; there
+  is no work inside it to destroy.
 - [x] R5-IDX-17 NO PRODUCTION CODE POINTS INTO docs/ ANY MORE, per the owner 2026-08-26:
   code and tests should stand on their own, and anything the code genuinely NEEDS should be
   structured data, not prose. Seven comment citations in partition_apfs_writer.{h,cpp} named
@@ -419,18 +717,35 @@ a parked design, per the bucket convention. Open work is what remains after thos
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-27: 654 [x] / 30 [~] / 0 [ ] MARKERS IN THIS FILE. That is not the same as the
+as of 2026-08-27: 665 [x] / 27 [~] / 0 [ ] MARKERS IN THIS FILE. That is not the same as the
 amount of open work, and the difference matters: 5 of those [~] are POINTERS at other
 documents (R5-IDX-2, -3, -4, -5, -6), and a pointer is one marker whether it stands for one
 item or forty. The other R5-IDX entries are native findings that merely share the prefix. Behind them sit 42 open or
 partial items counted in the files they name (APFS_HFS_FULL_DRIVER_WRITE_PLAN 11,
 APFS_LIVE_RECERT_FOLLOWONS 7, FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN 7 plus 6 partial,
 CODEX_REVIEW_4 6 partial, CODEX_REVIEW_REMEDIATION 5 partial), plus a 2294-line backlog that
-carries no checkbox markers at all. So the honest figure is 25 native [~] plus 42 referenced
-items = 67 open things, indexed by 30 markers. One marker can also stand for more than one
-finding WITHOUT being a pointer: R5-IDX-19 now carries two distinct network defects (19b
-duplicate transport, 19c three operations with no headless counterpart at all), because they
-share a fix and splitting them would misrepresent that. Indexing work into pointers made the marker
+carries no checkbox markers at all. So the honest figure is 22 native [~] plus 42 referenced
+items = 64 open things, indexed by 27 markers. One marker can also stand for more than one
+finding WITHOUT being a pointer: R5-IDX-19 carried three distinct network defects (19a a
+locale-broken private wifi scan, 19b duplicate netsh transport, 19c three operations with no
+headless counterpart at all), because they shared a fix and splitting them would misrepresent
+that. It closed 2026-08-27 with the owner's ruling that the GUI has no commands and points at
+the headless seam; unifying the last of it exposed two live defects that are now their own
+entries, R5-IDX-23 (an IPv4 validator that accepted "192.168.1" and silently configured
+192.168.0.1) and R5-IDX-24 (the WiFi panel's own default security setting building a
+WPA3SAE-only profile that cannot associate with a WPA2 access point). Sweeping for the same
+SHAPE rather than the same symptom then found four more: R5-IDX-26 (a path-traversal guard whose
+GUI copy let ".." through), R5-IDX-27 (the partition panel and the safety validator disagreeing
+about what an SSD is), R5-IDX-28 (two CSV exports with no formula-injection guard, on WiFi SSIDs
+and external advisory text), R5-IDX-29 (five byte formatters that had drifted apart in
+precision) and R5-IDX-30 (an inventory parser reading a negative size as 18 exabytes). The rule
+those establish, and the reason the sweep was worth running: a duplicated guard is not a future
+drift risk, it is a present disagreement, and the copy nobody is looking at is the weak one --
+which in R5-IDX-30 turned out to be the CORE one, not the GUI's. They were found by asking which
+functions are defined in BOTH src/gui and src/core: 47 name collisions, most of them benign
+(Qt slot names on unrelated classes, one-line GUI delegations already pointing at core), six
+real, and one -- detectImageMime -- examined and correctly left alone as two different questions
+sharing a name. Indexing work into pointers made the marker
 count go DOWN per unit of real work, which is precisely the kind of true-but-misleading number
 this campaign exists to remove. Recount both sides before quoting either (reconciled to the live marker counts; F25, the
 last [ ], closed 2026-08-25; the R5-IDX items added 2026-08-26 index open work that was

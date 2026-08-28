@@ -9,6 +9,7 @@
 #include "sak/email_attachment_saver.h"
 #include "sak/email_constants.h"
 #include "sak/email_inspector_controller.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/style_constants.h"
@@ -702,10 +703,14 @@ bool EmailAttachmentsBrowserDialog::collectVisibleAttachmentRefs(QVector<Attachm
     return true;
 }
 
+// Attachment payloads arrive here from the parser thread. Both are taken by const reference:
+// on a QUEUED connection Qt copies each argument into the receiving thread's event queue and binds
+// the parameter to THAT copy, which outlives the slot body -- so a const reference is safe and
+// avoids a second copy of the whole attachment. The body only reads them.
 void EmailAttachmentsBrowserDialog::onAttachmentContentReady(uint64_t message_id,
                                                              int index,
-                                                             QByteArray content,
-                                                             QString filename) {
+                                                             const QByteArray& content,
+                                                             const QString& filename) {
     // Record only what this batch asked for. A stray arrival -- a leftover from a
     // previous batch, or one requested by another view -- would otherwise be
     // written into one of this batch's slots and counted as that slot's save.
@@ -775,20 +780,9 @@ void EmailAttachmentsBrowserDialog::onErrorOccurred(const QString& message) {
 // ============================================================================
 
 QString EmailAttachmentsBrowserDialog::formatBytes(qint64 bytes) {
-    constexpr qint64 kKilo = 1024;
-    constexpr qint64 kMega = kKilo * 1024;
-    constexpr qint64 kGiga = kMega * 1024;
-
-    if (bytes >= kGiga) {
-        return QStringLiteral("%1 GB").arg(static_cast<double>(bytes) / kGiga, 0, 'f', 1);
-    }
-    if (bytes >= kMega) {
-        return QStringLiteral("%1 MB").arg(static_cast<double>(bytes) / kMega, 0, 'f', 1);
-    }
-    if (bytes >= kKilo) {
-        return QStringLiteral("%1 KB").arg(static_cast<double>(bytes) / kKilo, 0, 'f', 1);
-    }
-    return QStringLiteral("%1 B").arg(bytes);
+    // GB now renders to two decimals rather than one, matching every other compact caller. That
+    // is the only visible change from sharing the formatter, and it is the point of sharing it.
+    return sak::formatBytesCompact(bytes);
 }
 
 // Data-driven extension -> category mapping

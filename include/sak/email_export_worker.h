@@ -91,11 +91,11 @@ private:
                                 const sak::PstItemDetail& item,
                                 const QVector<QPair<QString, QByteArray>>& attachment_data,
                                 qint64& bytes_written,
-                                bool include_headers);
+                                bool include_headers) const;
     [[nodiscard]] bool writeHtml(sak::HtmlEmailWriter& writer,
                                  const sak::PstItemDetail& item,
                                  const QVector<QPair<QString, QByteArray>>& attachment_data,
-                                 qint64& bytes_written);
+                                 qint64& bytes_written) const;
     [[nodiscard]] bool writePdf(sak::PdfEmailWriter& writer,
                                 const sak::PstItemDetail& item,
                                 const QVector<QPair<QString, QByteArray>>& attachment_data,
