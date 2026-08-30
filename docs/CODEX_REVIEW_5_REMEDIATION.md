@@ -46,8 +46,9 @@ a parked design, per the bucket convention. Open work is what remains after thos
   the owner's ruling and the three batches under it (19a wifi scan, 19b IPv4 configuration, 19c
   adapter admin). Verified 2026-08-27 at
   the owner's request. The headless half of the dominion plan is real and complete: zero
-  QWidget/QDialog/QMessageBox across all 162 files in src/core and src/actions, and 62 action
-  ids the assistant can enumerate and invoke with no widget in the loop. What is NOT true is
+  QWidget/QDialog/QMessageBox across all 163 .cpp files in src/core and src/actions, and 64
+  action ids the assistant can enumerate and invoke with no widget in the loop (both counts
+  re-measured 2026-08-30; they read 162 and 62 and had drifted with the tree). What is NOT true is
   the plan's actual goal -- "the assistant drives the SAME code the technician's buttons
   drive". Two panels kept a private second implementation and never switched:
     * src/gui/wifi_manager_panel.cpp runs its own netsh scan and parse in
@@ -201,10 +202,59 @@ a parked design, per the bucket convention. Open work is what remains after thos
   BLOCKED-ON-USER: branch protection needs the GitHub repo admin (the owner).
   STILL GENUINELY OPEN, and each is a program rather than an item: WS3c foreign multi-chunk
   in-place COW (corruption-critical, deferred WITH a design) and its WS3c-2 shrink inverse;
-  the clang-tidy backlog (~995 findings, unremeasured); the cppcheck inline-suppression audit
-  (26 inline suppressions and 26 file entries, each needing its justification re-checked);
   and the test-infra program (G14 coverage ledger, G18 mutation testing, fuzz harnesses,
   fault injection, G20/G21 gate wiring).
+  TWO OF THE FIVE ARE NOW MEASURED AND ONE IS CLOSED (2026-08-30). Both carried numbers
+  nobody had re-run, and both numbers were wrong.
+  CPPCHECK INLINE-SUPPRESSION AUDIT -- CLOSED. The 26 inline count was exactly right; the
+  "26 file entries" was not -- cppcheck_suppressions.txt holds 10 entries, not 26. Each of
+  the 26 was re-checked by running cppcheck with inline suppressions DISABLED and asking
+  whether the named check still fires at the suppressed line. 5 suppress nothing and are
+  removed: advanced_search_worker.h:47 duplInheritedMember, strong_index.h:45 and :49
+  passedByValue, advanced_search_worker.cpp:1829 and :2318 knownConditionTrueFalse.
+  Two holes in that method had to be closed first, and both would have produced a wrong
+  answer: (a) useStlAlgorithm is ALSO suppressed globally, so its three inline sites looked
+  dead when they were merely masked -- re-run without the global entry, all three fire and
+  are live; (b) a header analyzed on its own instantiates nothing, so every check comes back
+  silent and a live suppression reads as dead -- the three header sites were re-judged
+  through .cpp files that include them.
+  WHY THIS WAS INVISIBLE, and the durable fix: cppcheck's own unmatchedSuppression is the
+  only check that reports a suppression matching nothing, and it is globally suppressed as
+  "meta-noise from the suppression file itself". That is true of the FILE-level entries and
+  false of the inline ones. Enabled whole-project it reports exactly those same 5 and
+  nothing else -- two independent methods agreeing site for site -- so the audit can become
+  a standing gate instead of a sweep somebody has to remember to redo.
+  A BIGGER FINDING CAME OUT OF IT: the cppcheck pre-commit hook runs run_cppcheck.ps1
+  -Files, i.e. CHANGED FILES ONLY. Nothing runs it whole-project, so R5-G10-3's "cppcheck
+  clean project-wide" (marked [x] settled) is enforced by no gate -- and measured on
+  2026-08-30 it was false: 84 findings sat in files nobody had touched (48 after this pass). They are real in the
+  hook's own mode (running the script on two of those files exits 1), so each is a landmine
+  for whoever next edits that file. All 13 non-style findings were triaged with an
+  adversarial second pass: ZERO real defects, all style or tool limitation. The style bulk
+  is 40 funcArgNamesDifferent + 12 functionConst + 10 useInitializationList + 6
+  functionStatic. The triage did surface dead code: FileExplorerTransferEngine::
+  removeReplacedDestination was declared, defined, documented and never called -- it
+  implements the pre-B8-06 design (delete the occupant BEFORE the copy) -- and the doc
+  comment on FileExplorerTransferItem::replace_destination still described that removed
+  design. Both fixed.
+  CLANG-TIDY BACKLOG -- MEASURED, not closed. Not ~995. Across 301 first-party TUs the
+  real figure is 5,624 unique (check, file, line) findings. The other recorded number,
+  ~38k, was true BEFORE the naming/narrowing/security tiers were driven to zero, so it is
+  stale rather than wrong. The bulk is the owner-scoped style tier: 2,371
+  pro-bounds-avoid-unchecked-container-access, 872 use-designated-initializers, 307
+  use-anonymous-namespace, 167 avoid-c-arrays. 46 findings are bug-SHAPED, and all 46 were
+  triaged: ZERO real defects. The three most alarming were checked by hand rather than
+  delegated -- partition_apfs_writer.cpp:21692 was flagged as a possibly swapped
+  KEK/plaintext-key in the FileVault wrap path, and the call is correct
+  (aesKeyWrap(kek, plaintextKey), wrapping the volume KEK with the password-derived key);
+  flash_worker.cpp:1225 and partition_script_builder.cpp:3846 are likewise correct.
+  readability-suspicious-call-argument is a name-similarity heuristic and this codebase's
+  naming sets it off. What IS worth acting on is the parameter-name class: 40 cppcheck
+  funcArgNamesDifferent and 51 clang-tidy inconsistent-declaration-parameter-name are ONE
+  defect -- header declarations in camelCase against definitions in snake_case -- and
+  clang-tidy's own fixer resolved it across 9 headers. One of those was substantive:
+  pst_parser.h declared readContentsTable(folder_nid) while the definition and the only
+  caller both say contents_nid, so the header was actively misleading about what it takes.
 - [x] R5-IDX-4 `docs/archive/FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md` -- 7 open plus 6 partial
   -> 0. CLOSED AND ARCHIVED 2026-08-28. Two of the thirteen were stale doc, not open work: the
   local-file Properties lane was already covered end to end, and progress/cancel had shipped as
@@ -326,6 +376,32 @@ a parked design, per the bucket convention. Open work is what remains after thos
   verifies `tests/README.md` against the real CTest registration and nothing else. Its header
   is honest about that; the gap is that 68 other tracked docs have no accuracy check of any
   kind, which is what let R5-IDX-7 rot inside files that a different gate does read.
+  PROGRESS 2026-08-30, and a demonstration of exactly what the gap costs.
+  (1) The gate now covers a SECOND claim: this file's own "N [x] / M [~] / K [ ]" tally line,
+  checked against the markers actually present. That line went stale TWICE in one session --
+  669/24 -> 671/23 when R5-IDX-4 closed, then 670/24 when R5-G10-3 was reopened -- while its
+  date stamp stayed current each time. Drilled 4/4 red, including the realistic case of a
+  marker flipped without the tally re-run.
+  (2) A sweep of the 27 live docs for machine-verifiable claims found real rot at a rate that
+  makes the case for gating the rest. It is PARTIAL and must not be read as a clean bill: the
+  run hit the account's weekly limit with 43 of 100 agents unfinished, so two whole batches
+  (release-readiness, field-notes) never ran and roughly 46 of the 93 reported findings were
+  never independently verified. What WAS verified and fixed: the APFS capability cap stated as
+  32 TiB in 9 places across 6 docs when the certified constant is 24 TiB (32 TiB is a different
+  constant, an internal ceiling documented as unreachable -- so a blanket replace would have
+  been wrong, and each of the 18 occurrences was classified first); a README advertising eight
+  OST-converter output formats, IMAP upload with XOAUTH2, and PST splitting, none of which
+  exist; a README crediting duplicate detection to MD5 when the worker uses SHA-256 and rejects
+  MD5 by name; a 142-test badge against 254 tests; a 10-tool network suite against 11 tabs;
+  portable mode documented as `portable.ini` detection that nothing reads; AGENTS.md describing
+  the commit-time secret scan as regex-only after `gitleaks-staged` landed; CONTRIBUTING
+  crediting the naming gate with catching single-letter names that its disabled sibling check
+  would have caught; THIRD_PARTY_LICENSES listing HFS+ attribute writes and APFS
+  write/repair/format/resize as blocked when both ship; and a `sak_win32_mcp` target and exe
+  named in browser/README and register_native_host.ps1 long after they stopped existing, which
+  left the documented registration flow unable to resolve its own default path.
+  The pattern across all of them is one thing: a number or a name that was true when written
+  and that nothing re-reads.
 - [x] R5-IDX-20 THE RELEASE-READINESS SECURITY SECTION DESCRIBED A CONTROL THAT WAS NO LONGER
   ARMED. Found 2026-08-27 by sweeping active docs for open work that nothing in this file
   pointed at. `docs/RELEASE_READINESS.md` opened with a PRE-PUSH BLOCKER section asserting two
@@ -806,9 +882,12 @@ a parked design, per the bucket convention. Open work is what remains after thos
   What the plan names is AppActionRegistry, AppServiceHub and the sak_app_actions tool.
   Grepping THOSE finds include/sak/app_action_registry.h, src/core/app_action_registry.cpp, a
   registered unit test, plus app_action_bridge.cpp, app_action_service.cpp,
-  app_readonly_actions.cpp and app_mutating_actions.cpp. 62 action ids are registered across
-  12 domains (network 17, email 11, imaging 6, files 6, diagnostics 6, software 4, partition 3,
+  app_readonly_actions.cpp and app_mutating_actions.cpp. 64 action ids are registered across
+  12 domains (network 20, email 11, imaging 6, files 6, diagnostics 6, software 4, partition 3,
   organizer 3, security 2, system, search, backup), wired through isKnownLocalTool,
+  (measured 2026-08-30: 40 makeDescriptor + 24 mutatingDescriptor. This said 62 / network 17
+  until then -- stale since R5-IDX-19c added network.enable_adapter, network.disable_adapter
+  and network.rename_adapter without the count being re-run.)
   kindForName and registerToolHandlers, invoked by the sak_app_action tool.
   Wave 4, the one TRAPPED item, is done as well: the wifi builders are extracted to
   src/core/wifi_setup_script.cpp (the panel keeps zero static builders and delegates to
@@ -884,10 +963,17 @@ a parked design, per the bucket convention. Open work is what remains after thos
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-28: 669 [x] / 24 [~] / 0 [ ] MARKERS IN THIS FILE. That is not the same as the
-amount of open work, and the difference matters: 3 of those [~] are POINTERS at other
-documents (R5-IDX-3, -4, -5), and a pointer is one marker whether it stands for one item or
-forty. The other R5-IDX entries are native findings that merely share the prefix.
+as of 2026-08-30, MEASURED not hand-carried: 670 [x] / 24 [~] / 0 [ ] MARKERS IN THIS FILE
+(`grep -oE '^\s*- \[[x~ ]\]' docs/CODEX_REVIEW_5_REMEDIATION.md | sort | uniq -c`). It said
+669 / 24 until 2026-08-30: the R5-IDX-4 closure flipped a marker and added entries, and the
+tally was not re-run, so the date stamp stayed current while the numbers behind it went
+stale -- the exact failure this file exists to catch, in this file's own summary line.
+It moved twice on 2026-08-30 alone -- 669/24 -> 671/23 when R5-IDX-4 closed, then 670/24 when
+R5-G10-3 was reopened -- which is the argument for checking it rather than re-typing it, so
+`scripts/check_doc_accuracy.ps1` now verifies this line against the file's real marker counts.
+That is not the same as the amount of open work, and the difference matters: 2 of those [~]
+are POINTERS at other documents (R5-IDX-3, -5; R5-IDX-4 closed), and a pointer is one marker
+whether it stands for one item or forty. The other R5-IDX entries are native findings that merely share the prefix.
 
 REFERENCED-WORK RECOUNT, 2026-08-27, after every pointer was chased into the file it names:
 42 -> 16. The drop is almost entirely bookkeeping, not fixing, and the two directions of
@@ -1049,7 +1135,14 @@ INFRA PROGRESS (user "do all", ordered crash > CI > coverage/test-quality > fuzz
   decision, not pending work; the rest of the CI-analysis track was dispositioned in d3cfca7.
 - G18: G18-9 (the 62 QSignalSpy::wait sites) was ALREADY remediated (converted to QTRY_COMPARE);
   G18-2 vacuous asserts -- the few remaining QVERIFY(true) are documented-intentional smoke checks;
-  G18-6 skip-count gate (check_test_skips.ps1 + tests/skip_baseline.txt) WIRED into pre-commit + CI
+  G18-6 skip-count gate (check_test_skips.ps1 + tests/skip_baseline.txt) WIRED into CI ONLY
+  (corrected 2026-08-30: this line said "pre-commit + CI" and was false toward SAFETY -- a reader
+  was told an unreviewed skip is blocked at commit time when it is only caught on a CI
+  build-release run. It cannot be a pre-commit hook by construction: the script reads the
+  per-test QtTest logs a full ctest writes into build/test_results and hard-fails without them.
+  The only wiring is .github/workflows/build-release.yml:617, and the cited commit fa37485
+  does not touch .pre-commit-config.yaml at all. The file's own detailed G18-6 entry always
+  said CI; only this rollup line overstated it.)
   on a deterministic baseline (fa37485);
   G18-5 (3d9c88a) env-gated the three live-UUP-API tests behind SAK_RUN_LIVE_UUP_TESTS so the suite
   is network-deterministic.
@@ -9721,7 +9814,7 @@ The campaign is complete only when ALL of the following are simultaneously true:
       (764 executed; 35 of 723 verification briefs adjudicated -- see PHASE 2 status)
 - [~] R5-G10-2 Zero open findings in this document -- BLOCKED-ON-USER: the binding remaining items are the LEDGER units (Codex account budget); the other open items are local/actionable but zero-open cannot be reached until the blocked LEDGER work clears.
   - OPEN: zero open findings in this document. Several items remain in progress (G18-3, G18-4, the G21 gate-hardening items, and the G10 acceptance criteria).
-- [x] R5-G10-3 cppcheck clean project-wide with only documented tool-limitation suppressions -- settled: cppcheck_suppressions.txt holds only fundamental cppcheck limits (no Qt/system headers, single-TU unusedFunction/unusedStructMember, unknownMacro, unmatchedSuppression) plus a recorded owner style decision (useStlAlgorithm) and tests-scoped entries; the 'delete the file' criterion is superseded because those suppressions must remain for the tool.
+- [~] R5-G10-3 cppcheck clean project-wide with only documented tool-limitation suppressions -- REOPENED 2026-08-30. The suppressions half is settled as written below, but the "clean project-wide" half was never true and no gate checks it: the pre-commit hook runs run_cppcheck.ps1 -Files, i.e. CHANGED FILES ONLY. Measured whole-project on 2026-08-30: 84 findings, all style or tool-limitation -- 40 funcArgNamesDifferent, 12 functionConst, 10 useInitializationList, 6 functionStatic and 16 singles. RE-measured after this commit's fixes: 48. The parameter-name pass took funcArgNamesDifferent 40 -> 6 and the transfer-engine work took functionConst 12 -> 10; the remainder is useInitializationList 10, functionConst 10, functionStatic 6, funcArgNamesDifferent 6, and 16 singles. Zero are real defects (all 13 non-style ones were triaged with an adversarial second pass). They are real in the HOOK's own mode though: three of them blocked this very commit the moment file_explorer_transfer_worker.cpp became a changed file, which is what the whole finding predicted -- and fixing those three cascaded, because reserveStagingPath calls destinationPathVacant and so became const-able itself, blocking the NEXT attempt in turn. Four const fixes to land one commit, in a file whose only real change was deleting a dead function. Settled part follows: cppcheck_suppressions.txt holds only fundamental cppcheck limits (no Qt/system headers, single-TU unusedFunction/unusedStructMember, unknownMacro, unmatchedSuppression) plus a recorded owner style decision (useStlAlgorithm) and tests-scoped entries; the 'delete the file' criterion is superseded because those suppressions must remain for the tool.
   - OPEN: cppcheck_suppressions.txt still exists in the tree; the requirement (file deleted, cppcheck clean project-wide) is not yet reached.
 - [x] R5-G10-4 clang-tidy wired and clean with all checks enabled -- clang-tidy 22.1.1 IS installed (C:/Program Files/LLVM) and the naming subset is wired; "all checks enabled" is intentionally not the goal (owner safe-subsets-only, R5-G12-4).
   - SETTLED 2026-08-18 [design-decision]: the accepted scope is the owner's safe-subset model (R5-G12-4, settled), not literally all checks; clang-tidy is wired (.clang-tidy) and clean at that subset. The one remaining candidate bug-class check, misc-no-recursion, was settled by R5-G2 (2026-08-18): a whole-tree run found 118 recursive functions, ALL already depth/visited/symlink-guarded (zero defects), so enabling it would add 118 false-positive NOLINTs for no caught bug -- it stays off by-design in .clang-tidy. With the last candidate check dispositioned and the subset clean, the clang-tidy acceptance is met at the owner's chosen scope; there is no remaining binding local work.
@@ -9932,6 +10025,9 @@ false positives. They are recorded so a future review does not re-litigate them.
 - [x] R5-P8-9 [DESIGN_INTENT] Export/conversion return success=true after partial item failures -- buildExportResult (274) and buildConvertResult (3095) set ok when items_exported>0; per-item failures are NOT hidden -- they are surfaced in the message ('(N failed)') and structured payload (items_failed/errors). This is documented best-ef
 - [x] R5-P8-10 [DESIGN_INTENT] Cleanup/uninstall timeout uses QThread::terminate() during mutations -- terminate() is a documented LAST RESORT only after a cooperative requestStop() + bounded wait (1801-1805, 2108-2112); the workers honor requestStop. The timeout is large and not attacker-controlled; the alternative (block the app forever) i
 - [x] R5-P8-11 [DESIGN_INTENT] technician_override trusts a parent-controlled environment variable -- The env var SAK_LEFTOVER_TECHNICIAN_OVERRIDE is the DELIBERATE out-of-band control (comment 2169-2174): a prompt-injected model can set only the JSON flag, which is honored solely when the human technician/launcher has set the env var (out
+
+
+
 - [x] R5-P8-12 [ALREADY_GUARDED] OS-drive detection falls back to C: when %SystemDrive% absent -- The C: fallback is one of several INDEPENDENT signals. unsafeFlashReason checks disk.is_system/is_boot (1122) and diskHostsSystemVolume checks each partition's is_boot/is_system/is_efi (1106) independent of the drive letter, so the running
 - [x] R5-P8-18 [DESIGN_INTENT] Windows permission probe: only ERROR_ACCESS_DENIED counts as denied; dir write untested -- windowsAccessDenied deliberately treats only ERROR_ACCESS_DENIED as a denial (327) to avoid false positives on sharing/transient errors -- documented advisory check (comment 313-316). Directory GENERIC_WRITE cannot be opened so the write pr
 - [x] R5-P8-34 [DESIGN_INTENT] Logger prefix unsanitized in filesystem path + rotation matching -- m_prefix is set from the logger::initialize(prefix) argument (41), an app-controlled startup constant, not untrusted input. Traversal via the log filename (45) or over-broad rotation deletion (288 starts_with + 259 remove) would require the

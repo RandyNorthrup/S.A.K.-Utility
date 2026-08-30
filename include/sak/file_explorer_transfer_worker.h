@@ -26,9 +26,10 @@ struct FileExplorerTransferItem {
     QString destination_path;
     quint64 size_bytes{0};
     bool directory{false};
-    /// Replace-resolved collision: the engine removes the destination's current
-    /// occupant right before this item's own copy (not batch-up-front), so a
-    /// cancel or failure earlier in the batch leaves it untouched.
+    /// Replace-resolved collision: the engine stages the copy beside the destination
+    /// and swaps it in only once it has landed whole, setting the current occupant
+    /// aside for rollback and dropping it only after the swap succeeds -- so a cancel
+    /// or a failure never costs the original (B8-06, @ref transferReplacing).
     bool replace_destination{false};
 };
 
@@ -82,7 +83,6 @@ private:
     /// the caller explicitly asked for (an allowed capped raw read), which still
     /// blocks a move's source delete but not the completed-item report.
     void noteIncompleteTransfer(bool sanctioned);
-    [[nodiscard]] bool removeReplacedDestination(const FileExplorerTransferItem& item);
     /// Dispatch @p item to the correct copy leg, writing to @p destination.
     [[nodiscard]] bool transferItemTo(const FileExplorerTransferItem& item,
                                       const QString& destination,
@@ -102,19 +102,19 @@ private:
     /// short of proof of absence -- an occupant, an undecidable stat, a failed or
     /// truncated listing -- reports false so the caller fails closed instead of
     /// planting a staging/backup sibling on top of existing data.
-    [[nodiscard]] bool destinationPathVacant(const QString& path);
+    [[nodiscard]] bool destinationPathVacant(const QString& path) const;
     /// Claim @p path as this engine's staging sibling: a local destination gets a
     /// genuine exclusive create (a directory when @p directory, otherwise an empty
     /// file), so a pre-existing entry or a planted symlink at the name fails rather
     /// than being merged into, overwritten, or deleted by the cleanup. Raw
     /// destinations have no exclusive-create primitive and fall back to proving the
     /// name vacant through @ref destinationPathVacant.
-    [[nodiscard]] bool reserveStagingPath(const QString& path, bool directory);
+    [[nodiscard]] bool reserveStagingPath(const QString& path, bool directory) const;
     // Best-effort cleanup of a staged/backup sibling, resolving its kind at
     // execution time; the caller reports the real outcome, so the removal result is
     // advisory (not [[nodiscard]]).
-    bool removeDestinationEntry(const QString& path);
-    [[nodiscard]] bool renameDestination(const QString& from, const QString& to);
+    bool removeDestinationEntry(const QString& path) const;
+    [[nodiscard]] bool renameDestination(const QString& from, const QString& to) const;
     /// Source and destination name the SAME entry: parent and last component match
     /// case-insensitively (an exact spelling, or a case-only change on a
     /// case-insensitive volume). Such a rename has no true occupant to replace -- it

@@ -219,11 +219,12 @@ Required before a release candidate is published:
   root listing and can require selected-file read proof, HFS+ selected-attribute
   proof, plus APFS bounded export proof with
   `scripts/run_partition_manager_physical_apple_probe_validation.ps1 -RequireHfsFileProof -RequireHfsAttributeProof -RequireApfsFileProof -RequireApfsExportProof`.
-  Current physical proof read `/Fonts/00TT.TTF` from the expendable APFS
-  partition and recorded SHA-256
-  `d075a134b3092fd36c6e45acc88d2efd163e60857cb2f0a2621569f446fa06d2`;
-  APFS bounded export proof exported `/Fonts` with 63 files, 1 directory,
-  64 scanned entries, and 21161830 bytes. The same report records HFS+
+  Current physical proof read `/.fseventsd/0000000000d34037` from the
+  expendable APFS partition and recorded SHA-256
+  `d5b58364da8b5f9e7996bcc9494db9f93a76484fc137e5aa6153809b8935c0d4`;
+  APFS bounded export proof exported `/.fseventsd` with 6 files,
+  0 directories, 6 scanned entries, and 67906 bytes.
+  (Corrected 2026-08-30: these figures said `/Fonts/00TT.TTF` at 25056 bytes, sha `d075a134...`, and an export of `/Fonts` with 63 files / 1 directory / 64 scanned entries / 21161830 bytes -- values that appear in no artifact in the tree. The APFS proof picks its subject by bounded candidate search, so a re-run selected a different file; the HFS+ half of the same report still matches, which is how the drift was isolated. Quote the artifact, not the filename: this proof rewrites its own subject every run.) The same report records HFS+
   detection, root metadata, `total_bytes=127724052480`,
   `free_bytes=125197647872`, and selected-file proof for
   `/polyhavenassets_blendermarket_v1.2.0  (Blender 4.5+).zip` with SHA-256
@@ -561,7 +562,7 @@ raw root-file write/patch/delete, empty root-directory create/delete, and
 root-directory child-file write/patch/delete plus volume-label change
 queue/apply routes, and generated-layout checksum repair only. Production helper
 physical proof is Apple-native certified across the A1-A8 driver track to a
-32 TiB cap, incl. the A8 physical-USB destructive/crash/rollback gate
+24 TiB cap, incl. the A8 physical-USB destructive/crash/rollback gate
 (`external.apfs-a8-physical`). The earlier 128 MiB JMicron Windows-side run
 (`artifacts\file-management-live-certification\disk2-apfs-128mb-raw-format\report.json`)
 and `run-20260612-192652` are retained as the I1-era Windows-side evidence the

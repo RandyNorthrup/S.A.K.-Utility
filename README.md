@@ -10,7 +10,7 @@
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
 [![Version](https://img.shields.io/badge/Version-0.9.2.0-orange.svg)](VERSION)
-[![Tests](https://img.shields.io/badge/Tests-142%20passing-brightgreen.svg)](tests/)
+[![Tests](https://img.shields.io/badge/Tests-254%20passing-brightgreen.svg)](tests/)
 
 Migration - Maintenance - Recovery - Imaging - Deployment - one portable toolkit.
 
@@ -38,8 +38,8 @@ See [CHANGELOG.md](CHANGELOG.md) for the full version history.
 | **Image Flasher** | Flash ISOs/IMGs to USB. Build Windows ISOs from Microsoft UUP payloads and download Linux ISOs from the curated catalog. |
 | **File Management** | Organize mounted files by extension, find duplicates across mounted or supported raw/image file-system targets, browse supported file systems in a native explorer with full driver-level certified HFS+/HFSX and APFS write actions, and run grep-style content search with regex, metadata, archive, and binary/hex modes. |
 | **Application Management** | Scan installed apps, match to Chocolatey packages, bulk-install on a new PC. Offline deployment with direct installer downloads. Deep application removal and vulnerability checks across CISA KEV, NVD, GitHub Advisories, and OSV. |
-| **Network Management** | Diagnostic suite (ping, traceroute, MTR, DNS, port scan, bandwidth, WiFi, connections, firewall, shares), adapter inspector with ethernet backup/restore and network reset, WiFi QR code manager. |
-| **Email Tools** | Browse PST, OST, and MBOX email archives. Search, checkbox-select, export (HTML/TXT/EML/PDF/CSV/VCF/ICS), contacts, calendar (month/week/day), attachments browser - no Outlook required. Multi-threaded OST/PST converter with 8 output formats including IMAP cloud upload. |
+| **Network Management** | Diagnostic suite (ping, traceroute, MTR, DNS, port scan, bandwidth, WiFi, connections, firewall, shares, LAN transfer), adapter inspector with ethernet backup/restore and network reset, WiFi QR code manager. |
+| **Email Tools** | Browse PST, OST, and MBOX email archives. Search, checkbox-select, export (HTML/TXT/EML/PDF/CSV/VCF/ICS), contacts, calendar (month/week/day), attachments browser - no Outlook required. Multi-threaded OST/PST-to-MBOX converter with folder/date/sender filtering and deleted-item recovery. |
 | **Modern UI** | Windows 11-style rounded corners, light/dark themes, fixed 300x300 px custom splash screen, shared Icons8 control icons, and responsive layouts. |
 
 ---
@@ -355,7 +355,7 @@ Modern disk and partition workspace for technician-safe Windows storage work. Th
 - SSD ReTrim/optimization and clear-level wipe paths for free space, partitions, and non-system disks, with warnings when SSD purge/secure-erase semantics require vendor tooling
 - Selection-aware sidebar buttons plus table and disk-map right-click menus expose supported disk, partition, and unallocated actions backed by queued operation generation, Explore, safety blocker reasons where validation fails, plus a copyable Properties dialog with disk, partition, volume, SMART, flag, and free-space details
 - Advanced Windows-supported actions include file-system checks, surface tests, hide/unhide, active/inactive, partition type ID changes, initialize-disk, and delete-all-partitions
-- Cross-filesystem support is tracked in [docs/archive/PARTITION_MANAGER_CROSS_FILESYSTEM_PLAN.md](docs/archive/PARTITION_MANAGER_CROSS_FILESYSTEM_PLAN.md) and the driver-capability matrix is owned by [docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md](docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md): no runtime installs, no driver dependency, bundled/open-source or original-code tools only, and all write/repair paths route through the Partition Manager queue, safety validators, Apply review, and certification harness. ext2/ext3/ext4 supports detection, browse/extract/export, read-only `e2fsck`, confirmed create/format/repair, confirmed grow, and confirmed same-start shrink through bundled e2fsprogs. Linux swap supports read-only metadata plus confirmed original SWAPSPACE2 create/format. HFS+/HFSX is full driver-level write-certified (H1-H8 - Apple `fsck_hfs` + macOS-kernel RW mount, with physical-USB destructive/crash/rollback at the H8 gate): read+write catalog/attribute/resource-fork workflows; streaming catalog, attributes, and extents-overflow B-trees of arbitrary depth/width with split + underflow merge/rebalance; data/resource-fork and inline/fork-backed-attribute write plus attribute overflow records; the fragmenting allocator with multi-leaf extents; hard-links, symlinks, and complex/hard-linked delete; little- and big-endian journal replay; the embedded HFS-wrapper write edge; and decmpfs read+write of all types through `sak_hfs_writer_cli.exe`, plus sparse-staged create/format/repair through bundled hfsprogs. APFS is full driver-level write-certified (A1-A8 - Apple `fsck_apfs` + macOS-kernel mount, with physical-USB destructive/crash/rollback at the A8 gate): read-only metadata/browse/extract/export plus multi-CIB/CAB create/format and checksum repair to a 32 TiB cap, in-place crash-safe COW mutation of files and directories (write/patch/delete/rename/cross-directory move/object-id-preserving patch), snapshots (create/delete/revert), multi-volume containers, inline zlib compression, credential-gated FileVault encryption, and file clones / sparse files / hard-links / xattr-ACL / in-chunk container resize through queue/apply via `sak_apfs_writer_cli.exe`, gated to S.A.K. generated-layout containers with explicit confirmation. Remaining fail-closed by design: APFS Fusion/Tier2 multi-device (out of scope, no rig), encryption without the user credential, sealed-system-volume writes without a typed seal-invalidation confirmation, APFS container shrink and chunk-adding grow (documented follow-ons), arbitrary non-generated Apple-media mutation at the Apply layer, and XFS/Btrfs writes plus deep XFS/Btrfs tool checks (read-only metadata stays the shipped scope).
+- Cross-filesystem support is tracked in [docs/archive/PARTITION_MANAGER_CROSS_FILESYSTEM_PLAN.md](docs/archive/PARTITION_MANAGER_CROSS_FILESYSTEM_PLAN.md) and the driver-capability matrix is owned by [docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md](docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md): no runtime installs, no driver dependency, bundled/open-source or original-code tools only, and all write/repair paths route through the Partition Manager queue, safety validators, Apply review, and certification harness. ext2/ext3/ext4 supports detection, browse/extract/export, read-only `e2fsck`, confirmed create/format/repair, confirmed grow, and confirmed same-start shrink through bundled e2fsprogs. Linux swap supports read-only metadata plus confirmed original SWAPSPACE2 create/format. HFS+/HFSX is full driver-level write-certified (H1-H8 - Apple `fsck_hfs` + macOS-kernel RW mount, with physical-USB destructive/crash/rollback at the H8 gate): read+write catalog/attribute/resource-fork workflows; streaming catalog, attributes, and extents-overflow B-trees of arbitrary depth/width with split + underflow merge/rebalance; data/resource-fork and inline/fork-backed-attribute write plus attribute overflow records; the fragmenting allocator with multi-leaf extents; hard-links, symlinks, and complex/hard-linked delete; little- and big-endian journal replay; the embedded HFS-wrapper write edge; and decmpfs read+write of all types through `sak_hfs_writer_cli.exe`, plus sparse-staged create/format/repair through bundled hfsprogs. APFS is full driver-level write-certified (A1-A8 - Apple `fsck_apfs` + macOS-kernel mount, with physical-USB destructive/crash/rollback at the A8 gate): read-only metadata/browse/extract/export plus multi-CIB/CAB create/format and checksum repair to a 24 TiB cap, in-place crash-safe COW mutation of files and directories (write/patch/delete/rename/cross-directory move/object-id-preserving patch), snapshots (create/delete/revert), multi-volume containers, inline zlib compression, credential-gated FileVault encryption, and file clones / sparse files / hard-links / xattr-ACL / in-chunk container resize through queue/apply via `sak_apfs_writer_cli.exe`, gated to S.A.K. generated-layout containers with explicit confirmation. Remaining fail-closed by design: APFS Fusion/Tier2 multi-device (out of scope, no rig), encryption without the user credential, sealed-system-volume writes without a typed seal-invalidation confirmation, APFS container shrink and chunk-adding grow (documented follow-ons), arbitrary non-generated Apple-media mutation at the Apply layer, and XFS/Btrfs writes plus deep XFS/Btrfs tool checks (read-only metadata stays the shipped scope).
 
 **Safety**
 - Destructive operations queue first and execute only through cancellable Apply
@@ -405,7 +405,7 @@ Create bootable USB drives from disk images.
 
 Current File Management has four subtabs: **File Organizer**, **Duplicate Finder**, **File Explorer**, and **Advanced Search**.
 
-The File Management target layer recognizes mounted Windows-native volumes plus disk/partition inventory targets and manual raw/image targets. ext2/ext3/ext4, HFS+/HFSX, and APFS browse and read through the same original S.A.K. readers used by Partition Manager. Generic organizer moves stay limited to local/mounted file APIs; raw/non-native writes are exposed only as explicit File Explorer create/write/rename/delete actions where certified. HFS+/HFSX and APFS writes run the full driver-level write engines (HFS+ H1-H8, APFS A1-A8, Apple-certified - see [docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md](docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md)); APFS writes are gated to S.A.K. generated-layout containers (multi-CIB/CAB to a 32 TiB cap) with explicit confirmation, while arbitrary non-generated Apple media, Fusion/Tier2 multi-device, and unprovided-credential encrypted volumes stay fail-closed.
+The File Management target layer recognizes mounted Windows-native volumes plus disk/partition inventory targets and manual raw/image targets. ext2/ext3/ext4, HFS+/HFSX, and APFS browse and read through the same original S.A.K. readers used by Partition Manager. Generic organizer moves stay limited to local/mounted file APIs; raw/non-native writes are exposed only as explicit File Explorer create/write/rename/delete actions where certified. HFS+/HFSX and APFS writes run the full driver-level write engines (HFS+ H1-H8, APFS A1-A8, Apple-certified - see [docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md](docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md)); APFS writes are gated by container size to the certified engine range (64 MiB through 24 TiB, multi-CIB/CAB) with explicit confirmation, and cover both S.A.K.-generated and real Apple-created (foreign) containers whose size is known and in range; unknown-size or out-of-range containers, Fusion/Tier2 multi-device, snapshot-frozen deletes/renames, and unprovided-credential encrypted volumes stay fail-closed.
 
 
 #### File Organizer
@@ -423,7 +423,9 @@ Organize files by extension into configurable categories.
 
 Detect duplicate files via content-based hashing.
 
-- MD5 hash-based duplicate detection with configurable minimum-size filtering
+- SHA-256 hash-based duplicate detection with configurable minimum-size filtering
+  (deliberately not MD5: files are grouped purely by digest equality, so a practical
+  collision would report two different files as duplicates)
 - Multi-directory recursive scan with duplicate directory prevention
 - Parallel hashing with configurable thread count (auto-detects ideal thread count)
 - Read-only duplicate scans for supported raw/image ext2/ext3/ext4, HFS+/HFSX, and APFS targets
@@ -472,7 +474,7 @@ Three-tab network panel covering diagnostics, adapter configuration, and WiFi cr
 
 #### Network Diagnostics
 
-10-tool diagnostic suite with report generation.
+11-tool diagnostic suite with report generation.
 
 | Tool | Capabilities |
 |---|---|
@@ -582,22 +584,18 @@ Multi-threaded bulk OST/PST conversion engine integrated as a second tab in the 
 
 | Format | Description |
 |---|---|
-| **PST** | Outlook Personal Storage (Unicode) |
-| **EML** | RFC 5322 email files |
-| **MSG** | Outlook message files |
-| **MBOX** | Unix mailbox format |
-| **DBX** | Outlook Express format |
-| **HTML** | Styled HTML email archives |
-| **PDF** | PDF email archives |
-| **IMAP Upload** | Direct upload to IMAP servers (Office 365, Gmail, Yahoo) |
+| **MBOX** | Unix mailbox format -- one `.mbox` per source folder, or a single mailbox |
+
+The converter has exactly one output: an MBOX mailbox another mail client can import.
+Per-message export (HTML, TXT, EML, PDF, CSV, VCF, ICS) is the Email Inspector's job,
+so the two do not overlap.
 
 **Key Features**
-- Multi-threaded conversion with configurable worker count (1-8 threads)
+- Multi-threaded conversion with configurable worker count
 - Deleted item recovery (soft and hard delete scanning)
-- PST splitting for large archives with configurable size limits
-- IMAP cloud upload with PLAIN, LOGIN, and XOAUTH2 authentication
-- Advanced filtering by date range, folder, sender, and subject
-- Corruption handling with automatic recovery
+- Filtering by date range, folder include/exclude, sender, and recipient
+- Corruption handling with a selectable recovery mode
+- HTML conversion report with optional source checksums
 - Metadata preservation across all output formats
 - Detailed conversion reporting
 
@@ -784,7 +782,7 @@ Full license texts: [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)
 cmake --build build --config Release --target RUN_TESTS
 ```
 
-Automated tests cover AI assistant clients, MCP HTTP parsing, provider registry, workflow store/evals, orchestration, subagents, tool policy/dispatch, execution broker, cancellation, run state, trace store, credential redaction, Advanced Search, Advanced Uninstall (types, controller, leftover scanner, registry snapshot engine), Network Diagnostics (types, utils, report generation), Partition Manager (inventory parsing, safety blockers, script generation, layout-hash queue guards, panel chrome, direct destructive queue dialogs, disk-map resizing, and feature-matrix release gating), Email Inspector (PST/OST parsing, MBOX parsing, email types, search, export, profile manager, report generator), OST Converter (types, controller, PST splitter, integration), Offline Deployment (install script parsing, NuGet API, script rewriting, package builder), Elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX components, hardening), diagnostics, security, encryption, configuration, ISO download, and quick action validation.
+Automated tests cover AI assistant clients, MCP HTTP parsing, provider registry, workflow store/evals, orchestration, subagents, tool policy/dispatch, execution broker, cancellation, run state, trace store, credential redaction, Advanced Search, Advanced Uninstall (types, controller, leftover scanner, registry snapshot engine), Network Diagnostics (types, utils, report generation), Partition Manager (inventory parsing, safety blockers, script generation, layout-hash queue guards, panel chrome, direct destructive queue dialogs, disk-map resizing, and feature-matrix release gating), Email Inspector (PST/OST parsing, MBOX parsing, email types, search, export, profile manager, report generator), OST Converter (types, controller, integration), Offline Deployment (install script parsing, NuGet API, script rewriting, package builder), Elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX components, hardening), diagnostics, security, encryption, configuration, ISO download, and quick action validation.
 
 ---
 

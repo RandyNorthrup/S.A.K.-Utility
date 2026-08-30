@@ -150,13 +150,13 @@ private:
     QFrame* createCommunityCard(QWidget* parent);
 
     /// @brief Load splash screen icon into the About panel header
-    void loadAboutPanelIcon(QLabel* iconLabel);
+    void loadAboutPanelIcon(QLabel* icon_label);
 
     /// @brief Register all tool tabs as lazy placeholders (built on first activation).
     void registerLazyToolTabs();
 
     /// @brief Add a lightweight placeholder tab for a not-yet-built tool panel.
-    void addLazyPlaceholder(const char* title, const char* tooltip, const char* iconPath);
+    void addLazyPlaceholder(const char* title, const char* tooltip, const char* icon_path);
 
     /// @brief Build (if needed) the tool panel occupying a lazy tab slot.
     void materializeTab(int slot);
@@ -200,7 +200,7 @@ private:
 #endif
 
     /// @brief Add a synchronized dark-mode toggle immediately after a panel log toggle.
-    void attachThemeToggleToLogToggle(LogToggleSwitch* logToggle);
+    void attachThemeToggleToLogToggle(LogToggleSwitch* log_toggle);
 
     /// @brief Apply light or dark theme and synchronize all theme toggle widgets.
     void setDarkThemeEnabled(bool enabled);
@@ -224,7 +224,7 @@ private:
     void saveWindowState();
 
     /// @brief Append a log line and show it if the tab is active
-    void appendLogIfActive(int tabIdx, const QString& formatted);
+    void appendLogIfActive(int tab_idx, const QString& formatted);
 
     /// @brief Hide the progress bar if it has reached maximum
     void hideProgressBarIfComplete();

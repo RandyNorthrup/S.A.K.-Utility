@@ -236,7 +236,7 @@ The first four rows below are NOT aspirational: each is a pre-commit hook that r
 | Cyclomatic complexity | CCN <=10 | `lizard-complexity` hook -- BLOCKING |
 | Magic numbers | Named `constexpr` constants | `magic-numbers` hook -- BLOCKING |
 | Line length | <=100 columns | `.clang-format` hook -- BLOCKING |
-| Naming | No abbreviations, no single-letter vars | `readability-identifier-naming`, run in CI on every build |
+| Naming | Case conventions (snake_case locals, `k` prefix for constants, `m_` members) | `readability-identifier-naming`, run in CI on every build. NOT enforced: "no abbreviations, no single-letter vars" -- `readability-identifier-length` is deliberately disabled (`.clang-tidy:142`, reason at line 102: it flags idiomatic `i`, `x`, `id`), so short names are a review convention, not a gate |
 | Nesting depth | <=3 levels | Code review (Lizard measures complexity, not nesting depth) |
 | Assertions | Meaningful preconditions/postconditions | Code review |
 | `catch(...)` | Should have explanatory comment | Code review |

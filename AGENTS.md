@@ -218,8 +218,12 @@ false -- every one of them a number that had been true when written. Cite the so
 ## Secrets
 
 A push uploads HISTORY, not the working tree, so redacting a file does not unpublish what an
-earlier commit already contains. The commit-time scan is regex-only over current files by
-design; the FULL-HISTORY scan runs at push time.
+earlier commit already contains. There are TWO commit-time scans -- `scan_secrets.ps1`
+(regex over current files) and the `gitleaks-staged` hook (`gitleaks protect --staged`,
+the full rule set against the staged diff, so a secret is rejected before it can enter
+history at all) -- and the FULL-HISTORY gitleaks scan runs at push time.
+(Corrected 2026-08-30: this said the commit-time scan is "regex-only over current files by
+design", which stopped being true when `gitleaks-staged` was added.)
 
 Install it -- `pre-commit install` alone does not:
 

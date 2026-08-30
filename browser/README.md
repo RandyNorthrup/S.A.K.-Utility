@@ -13,10 +13,10 @@ over -- the agent gets its own cursor.
   native messaging, and (in later units) attaches the DevTools protocol to the
   active tab and draws the agent cursor.
 - `native-host/` -- the native messaging host manifest and a registration
-  script. The host itself is the `sak_win32_mcp` executable: when Chrome launches
-  it with the calling extension's `chrome-extension://<id>/` origin as an
-  argument, it runs in native-host mode (length-prefixed frames) instead of its
-  MCP JSON-RPC mode.
+  script. The host itself is the app binary (`sak_utility`; the standalone
+  `sak_win32_mcp.exe` was folded into it): when Chrome launches it with the calling
+  extension's `chrome-extension://<id>/` origin as an argument, it runs in
+  native-host mode (length-prefixed frames) instead of its MCP JSON-RPC mode.
 
 The message framing, the DOM/tool contract, the pipe transport, and the relay are
 implemented and unit-tested in C++ under `src/win32mcp/` (`native_messaging`,
@@ -56,10 +56,10 @@ for developing an unpacked build.
 
 Two processes speak on each side of a hardened named pipe:
 
-- The long-lived `sak_win32_mcp` (the assistant's MCP server) owns the browser
+- The long-lived MCP server process (the app binary in `SAK_WIN32_MCP_MODE`) owns the browser
   authority: it creates the pipe, publishes a rendezvous record, and turns a
   `browser_*` tool call into a command frame.
-- Chrome launches a SECOND `sak_win32_mcp` in relay mode when the extension opens the
+- Chrome launches a SECOND instance of the same binary in relay mode when the extension opens the
   native port. The relay discovers the pipe from the rendezvous record, verifies the
   server's code identity, and pumps frames between Chrome and the pipe.
 
@@ -80,14 +80,16 @@ replies exactly once with `{type:"result", id, cmd, payload}` or
 
 ## Try the read path (unit 6)
 
-1. Build the host: `cmake --build build --target sak_win32_mcp --config Debug`.
+1. Build the app: `cmake --build build --target sak_utility --config Debug`.
+   (There is no `sak_win32_mcp` target any more -- the standalone host was folded into the
+   app binary; see the note at `CMakeLists.txt:1379`.)
 2. Load the extension: `chrome://extensions` -> enable Developer mode -> "Load
    unpacked" -> select `browser/extension`. Copy the extension id it shows.
 3. Register the host (PowerShell):
    `./browser/native-host/register_native_host.ps1 -ExtensionId <id>`
    (add `-ExePath` for a non-Debug build).
 4. Start the MCP server so the pipe + rendezvous exist (normally the app does this; for a
-   standalone smoke, run `build/Debug/sak_win32_mcp.exe` and leave it reading stdin).
+   standalone smoke, run `build/Debug/sak_utility.exe` and leave it reading stdin).
 5. Reload the extension. Open its service-worker console (Inspect views on
    `chrome://extensions`) and confirm `[SAK] bridge ready, protocol 1`.
 6. Drive a snapshot: paste one JSON-RPC line into the server's stdin (from step 4):
@@ -103,8 +105,9 @@ To remove the host registration:
 The assistant can also act on the page: `browser_click`, `browser_type`,
 `browser_press_key`, and `browser_scroll`. These are injected at the DevTools-protocol
 level (CDP `Input`), so the user's real mouse and keyboard are never taken over, and the
-agent draws its OWN cursor on the page (a small blue dot) so the user can see where it is
-acting. Targets come only from the latest snapshot's `[ref=eN]` handles (validated by the
+agent draws its OWN cursor on the page -- a neon-pink pointer with a pulsing halo, a
+viewport frame, and an "AI CONTROL" badge -- so the user can see at a glance that the
+page is being driven and where it is acting. Targets come only from the latest snapshot's `[ref=eN]` handles (validated by the
 bridge), never from page content; `browser_type` requires a ref so page-controlled focus
 cannot redirect typed text.
 

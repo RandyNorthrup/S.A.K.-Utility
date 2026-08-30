@@ -80,16 +80,16 @@ private Q_SLOTS:
     void onEnumerationFinished(QVector<sak::ProgramInfo> programs);
     void onEnumerationFailed(const QString& error);
 
-    void onUninstallStarted(const QString& programName);
+    void onUninstallStarted(const QString& program_name);
     void onUninstallProgress(int percent, const QString& phase);
     void onLeftoverScanFinished(QVector<sak::LeftoverItem> leftovers);
     void onUninstallFinished(sak::UninstallReport report);
     void onUninstallFailed(const QString& error);
     void onUninstallCancelled();
 
-    void onCleanupStarted(int totalItems);
+    void onCleanupStarted(int total_items);
     void onItemCleaned(const QString& path, bool success);
-    void onCleanupFinished(int succeeded, int failed, qint64 bytesRecovered);
+    void onCleanupFinished(int succeeded, int failed, qint64 bytes_recovered);
     void onCleanupCancelled();
     void onRebootPendingItems(QStringList paths);
     void onRecycleFallbackItems(QStringList paths);
@@ -137,8 +137,8 @@ private:
 
     // Dialog helper builders -- split to stay under the 70-line function gate
     void populateBatchUninstallQueueList(const QVector<UninstallQueueItem>& queue,
-                                         QListWidget* queueList,
-                                         qint64* totalBytesOut) const;
+                                         QListWidget* queue_list,
+                                         qint64* total_bytes_out) const;
     /// @brief Widget pointers for batch uninstall queue dialog
     struct BatchQueueWidgets {
         QListWidget* queue_list;
@@ -154,17 +154,17 @@ private:
     QDialogButtonBox* addBatchUninstallButtons(QDialog* dialog, QVBoxLayout* layout) const;
 
     void populateProgramPropertiesForm(const ProgramInfo& program,
-                                       QWidget* scrollWidget,
-                                       QFormLayout* formLayout) const;
+                                       QWidget* scroll_widget,
+                                       QFormLayout* form_layout) const;
 
     QCheckBox* addSettingsSelectionGroup(QDialog* dialog, QVBoxLayout* layout) const;
     QCheckBox* addSettingsDeletionGroup(QDialog* dialog, QVBoxLayout* layout) const;
     QCheckBox* addSettingsRestorePointGroup(QDialog* dialog, QVBoxLayout* layout) const;
     void addSettingsScanLevelGroup(QDialog* dialog,
                                    QVBoxLayout* layout,
-                                   QRadioButton*& safeRadio,
-                                   QRadioButton*& moderateRadio,
-                                   QRadioButton*& advancedRadio) const;
+                                   QRadioButton*& safe_radio,
+                                   QRadioButton*& moderate_radio,
+                                   QRadioButton*& advanced_radio) const;
     QCheckBox* addSettingsDisplayGroup(QDialog* dialog, QVBoxLayout* layout) const;
 
     // -- Table Population --

@@ -167,10 +167,20 @@ patch, runtime DLL license texts, and OpenSSL license text for the crypto runtim
 dependency used by `newfs_hfs`. User-visible ext format, repair, resize, Linux
 swap format, and HFS+/HFSX format/repair workflows route through the same
 Partition Manager queue/apply, safety, manifest/hash, and confirmation model.
-XFS, Btrfs, HFS+ attribute value writes, APFS write/repair/format/resize, and
-additional non-native write paths remain blocked until a tool has source,
-license, upstream URL, source SHA-256, binary SHA-256, supported-operation
-metadata, safety coverage, and certification evidence.
+XFS and Btrfs writes, and any additional non-native write path that would need a
+THIRD-PARTY tool, remain blocked until that tool has source, license, upstream
+URL, source SHA-256, binary SHA-256, supported-operation metadata, safety
+coverage, and certification evidence.
+
+HFS+ attribute value writes and APFS write/repair/format/resize are NOT in that
+set and are not blocked: they ship through S.A.K.'s own original writers
+(`sak_hfs_writer_cli`, `sak_apfs_writer_cli`), so they carry no third-party
+license obligation, and they are gated by certification rather than by tool
+provenance -- Apple `fsck_hfs`/`fsck_apfs` plus macOS-kernel mounts across the
+H1-H8 and A1-A8 milestones. `partition_file_system_registry.cpp` lists inline
+and fork-backed HFS+ attribute replacement, and bounded fork-attribute growth,
+in `available_actions`. (Corrected 2026-08-30: this paragraph listed all of them
+as blocked, which had not been true since those milestones landed.)
 
 ---
 

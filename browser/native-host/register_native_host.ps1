@@ -6,7 +6,7 @@
 # extension calls chrome.runtime.connectNative("com.sak.browsercontrol").
 #
 # Usage:
-#   ./register_native_host.ps1 [-ExtensionId <id>] [-ExePath <path-to-sak_win32_mcp.exe>]
+#   ./register_native_host.ps1 [-ExtensionId <id>] [-ExePath <path-to-sak_utility.exe>]
 #   ./register_native_host.ps1 -Unregister
 #
 # ExtensionId defaults to the pinned production id; pass it only for an unpacked
@@ -67,7 +67,11 @@ if ($Unregister) {
 
 # Resolve the host executable.
 if (-not $ExePath) {
-    $ExePath = Join-Path $ScriptDir "..\..\build\Debug\sak_win32_mcp.exe"
+    # The standalone sak_win32_mcp.exe no longer exists -- its sources were folded into the
+    # app binary, which detects the chrome-extension:// origin Chrome passes and runs
+    # headless on stdio (src/main.cpp:601, CMakeLists.txt:1379). This default named the
+    # removed exe, so it could only ever reach the not-found throw below.
+    $ExePath = Join-Path $ScriptDir "..\..\build\Debug\sak_utility.exe"
 }
 $ExePath = [System.IO.Path]::GetFullPath($ExePath)
 # Chrome re-resolves this path on every launch, so it must name a local file this
@@ -95,7 +99,7 @@ if ($ExeDriveType -ne [System.IO.DriveType]::Fixed -and
 # is what gets written, and -PathType Leaf so a directory is not accepted as the
 # executable. Otherwise a registration Chrome can never launch is reported as success.
 if (-not (Test-Path -LiteralPath $ExePath -PathType Leaf)) {
-    throw "Host executable not found: $ExePath (build sak_win32_mcp, or pass -ExePath)."
+    throw "Host executable not found: $ExePath (build sak_utility, or pass -ExePath)."
 }
 
 # Normalize the extension id (accept a bare id or a full chrome-extension:// origin).

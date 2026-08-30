@@ -170,8 +170,58 @@ Add-NumberClaimViolations $readmeText 'End-to-end workflow tests\s*\((\d+)\s+fil
 Add-TableNameViolations $readmeText $registered $violations
 Add-TreeFileViolations $readmeText $fileNames $violations
 
+# ---------------------------------------------------------------------------
+# 2. docs/CODEX_REVIEW_5_REMEDIATION.md -- its own checkbox tally.
+#
+# That file opens with a "Tally as of <date>: N [x] / M [~] / K [ ] MARKERS IN THIS
+# FILE" line. It is the first thing a reader uses to judge how much is left, and it
+# is hand-carried: on 2026-08-30 alone it went stale twice in one session, once when
+# an item closed and once when an item was reopened, while the date stamp beside it
+# stayed current. A number nobody re-runs is exactly the failure that file exists to
+# record, so it is checked here instead of retyped.
+# ---------------------------------------------------------------------------
+
+$remediationPath = Join-Path $root "docs/CODEX_REVIEW_5_REMEDIATION.md"
+if (Test-Path -LiteralPath $remediationPath) {
+    $remediationLines = Get-Content -LiteralPath $remediationPath
+
+    # Count only markers that OPEN a list item, matching how the file is read; a
+    # "[x]" appearing mid-prose is not a checkbox.
+    $doneCount = 0
+    $partialCount = 0
+    $openCount = 0
+    foreach ($line in $remediationLines) {
+        if ($line -match '^\s*- \[x\]') { $doneCount++ }
+        elseif ($line -match '^\s*- \[~\]') { $partialCount++ }
+        elseif ($line -match '^\s*- \[ \]') { $openCount++ }
+    }
+
+    $tallyPattern = '(\d+)\s*\[x\]\s*/\s*(\d+)\s*\[~\]\s*/\s*(\d+)\s*\[ \]'
+    $tallyText = ($remediationLines -join "`n")
+    $tallyMatch = [regex]::Match($tallyText, $tallyPattern)
+    if (-not $tallyMatch.Success) {
+        $violations.Add("CODEX_REVIEW_5_REMEDIATION.md: no 'N [x] / M [~] / K [ ]' tally line found")
+    } else {
+        $claimedDone = [int]$tallyMatch.Groups[1].Value
+        $claimedPartial = [int]$tallyMatch.Groups[2].Value
+        $claimedOpen = [int]$tallyMatch.Groups[3].Value
+        if ($claimedDone -ne $doneCount) {
+            $violations.Add(
+                "CODEX_REVIEW_5_REMEDIATION.md tally claims $claimedDone [x], file has $doneCount")
+        }
+        if ($claimedPartial -ne $partialCount) {
+            $violations.Add(
+                "CODEX_REVIEW_5_REMEDIATION.md tally claims $claimedPartial [~], file has $partialCount")
+        }
+        if ($claimedOpen -ne $openCount) {
+            $violations.Add(
+                "CODEX_REVIEW_5_REMEDIATION.md tally claims $claimedOpen [ ], file has $openCount")
+        }
+    }
+}
+
 if ($violations.Count -gt 0) {
-    Write-Host "Doc-accuracy gate FAILED: tests/README.md does not match reality --"
+    Write-Host "Doc-accuracy gate FAILED: a doc does not match reality --"
     $violations | ForEach-Object { Write-Host "  $_" }
     Write-Host ""
     Write-Host "Reality: $registeredCount registered ctest tests, $totalCppCount C++ test"
@@ -182,5 +232,6 @@ if ($violations.Count -gt 0) {
 
 Write-Host ("Doc-accuracy gate passed: tests/README.md matches reality " +
     "($registeredCount registered ctest tests, $totalCppCount C++ test source files, " +
-    "$unitCount unit, $integrationCount integration).")
+    "$unitCount unit, $integrationCount integration); " +
+    "CODEX_REVIEW_5_REMEDIATION.md tally matches its own markers.")
 exit 0

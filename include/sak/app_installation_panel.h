@@ -139,13 +139,13 @@ private:
     /** @brief Build the search bar section */
     void setupUi_searchBar(QVBoxLayout* layout);
     /** @brief Build the package results table panel */
-    void setupUi_packageTable(QHBoxLayout* sideBySide);
+    void setupUi_packageTable(QHBoxLayout* side_by_side);
     /** @brief Build the install queue section panel */
-    void setupUi_queueSection(QHBoxLayout* sideBySide);
+    void setupUi_queueSection(QHBoxLayout* side_by_side);
     /** @brief Build the online install queue button row */
-    void setupUi_queueButtons(QVBoxLayout* queueLayout);
+    void setupUi_queueButtons(QVBoxLayout* queue_layout);
     /** @brief Build the online install progress widgets */
-    void setupUi_queueProgress(QVBoxLayout* queueLayout);
+    void setupUi_queueProgress(QVBoxLayout* queue_layout);
     /** @brief Build the bottom bar with log toggle */
     void setupUi_bottomBar(QVBoxLayout* layout);
     /** @brief Build the offline deployment tab content */
@@ -165,11 +165,11 @@ private:
     void setupOfflineWorkerConnections();
     void setupOfflineWorkerProgressConnections();
     void setupOfflineWorkerCompletionConnections();
-    void setupOfflinePresetRow(QVBoxLayout* offlineLayout);
-    void setupOfflineSearchGroup(QHBoxLayout* sideBySide);
-    void setupOfflineDeployListGroup(QHBoxLayout* sideBySide);
-    void setupOfflineActionsGroup(QVBoxLayout* offlineLayout);
-    void setupPayloadModeControls(QVBoxLayout* actionsLayout);
+    void setupOfflinePresetRow(QVBoxLayout* offline_layout);
+    void setupOfflineSearchGroup(QHBoxLayout* side_by_side);
+    void setupOfflineDeployListGroup(QHBoxLayout* side_by_side);
+    void setupOfflineActionsGroup(QVBoxLayout* offline_layout);
+    void setupPayloadModeControls(QVBoxLayout* actions_layout);
     /** @brief Handle NuGet search completion on the main thread */
     void onOfflineSearchCompleted(bool success,
                                   const QString& output,
@@ -177,7 +177,7 @@ private:
     /** @brief Parse Chocolatey search output into the results model */
     void updateResultsFromSearch(const QString& output);
     /** @brief Handle search completion on the main thread */
-    void onSearchCompleted(bool success, const QString& output, const QString& errorMessage);
+    void onSearchCompleted(bool success, const QString& output, const QString& error_message);
     /** @brief Refresh the queue list widget from m_installQueue */
     void updateQueueDisplay();
     /** @brief Enable or disable interactive controls during install */
@@ -186,10 +186,10 @@ private:
     void saveQueueToFile();
     /** @brief Load a previously saved install queue from disk */
     void loadQueueFromFile();
-    bool parseQueueFile(const QString& filePath, QJsonArray& out_array);
+    bool parseQueueFile(const QString& file_path, QJsonArray& out_array);
     void importQueueEntries(const QJsonArray& arr, int& added, int& skipped);
-    QIcon publisherIcon(const QString& packageId) const;
-    static QString lookupPublisher(const QString& packageId);
+    QIcon publisherIcon(const QString& package_id) const;
+    static QString lookupPublisher(const QString& package_id);
     std::shared_ptr<MigrationReport> buildInstallMigrationReport() const;
     void setInstallInProgressUi(bool running);
 

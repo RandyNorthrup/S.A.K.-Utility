@@ -543,7 +543,7 @@ private:
 
     /// Read the contents table for a folder
     [[nodiscard]] std::expected<QVector<sak::PstItemSummary>, sak::error_code> readContentsTable(
-        uint64_t folder_nid, int offset, int limit);
+        uint64_t contents_nid, int offset, int limit);
 
     /// Read a full message/contact/calendar/task item
     [[nodiscard]] std::expected<sak::PstItemDetail, sak::error_code> readMessage(

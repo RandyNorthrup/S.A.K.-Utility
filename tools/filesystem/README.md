@@ -27,8 +27,11 @@ Current state:
   ext format, repair, grow, and shrink have destructive VM proof on disposable
   raw media; HFS+/HFSX image proof and guarded physical raw-partition
   destructive proof are recorded.
-  XFS/Btrfs/APFS write paths remain blocked until operation-specific
-  VM/destructive certification or tool proof is complete.
+  XFS and Btrfs write paths remain blocked until operation-specific
+  VM/destructive certification or tool proof is complete. APFS and HFS+/HFSX
+  writes are NOT in that set: they ship on S.A.K.'s own writers (no bundled
+  third-party tool is involved), certified against Apple `fsck_apfs`/`fsck_hfs`
+  plus macOS-kernel mounts across the A1-A8 and H1-H8 tracks.
   The ext destructive VM proof runner is
   `scripts/run_partition_manager_ext_filesystem_vm_gate.ps1`; its launcher is
   `scripts/launch_partition_manager_ext_filesystem_vm_gate_local.ps1`.
@@ -84,11 +87,15 @@ Selected first target:
   detector evidence only, not runtime checker approval.
 - APFS parser-backed read-only container superblock metadata with lightweight
   block-geometry sanity notes, plus read-only browse/extract/export for normal
-  unencrypted/uncompressed files. Write support remains blocked.
+  unencrypted/uncompressed files. Write support SHIPS through S.A.K.'s own
+  `sak_apfs_writer_cli` (create/format, metadata-checksum repair, and in-place
+  COW file/directory mutation), not through any bundled tool -- see
+  `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md`, the capability-matrix owner.
 - HFS+/HFSX parser-backed read-only catalog browse, data/resource-fork extract,
   selected attribute-value extract, and bounded recursive directory export with
-  resource forks written as `.rsrc` sidecars. Attribute value writes remain
-  blocked.
+  resource forks written as `.rsrc` sidecars. Attribute value writes SHIP:
+  `partition_file_system_registry.cpp` lists inline and fork-backed attribute
+  replacement, and bounded fork-attribute growth, in `available_actions`.
 - Do not approve stale Cygwin e2fsprogs builds for production write/check
   support. Current Cygwin package metadata showed e2fsprogs 1.44.5-1 and
   `System Unmaintained`; build or source-pinned newer tooling first.
@@ -96,6 +103,16 @@ Selected first target:
 Deferred targets:
 
 - XFS/Btrfs read-only checks after a Windows-portable toolchain is proven.
-- Btrfs repair and APFS write support stay blocked by default.
-- HFS+ file/folder writes and attribute-value writes stay blocked until a
-  separate original-code or tool-backed write workflow is designed and certified.
+- Btrfs repair stays blocked by default. (APFS write support no longer does --
+  it ships on original code; this line listed it as blocked long after A1-A8.)
+- HFS+ file/folder writes and attribute-value writes SHIP. That original-code
+  write workflow is the H1-H8 track: streaming catalog/attributes/extents
+  B-trees, hardlinks/symlinks, journal replay, and the embedded-wrapper edge,
+  validated by Apple `fsck_hfs` + macOS-kernel RW mount and the H8 physical-USB
+  destructive/crash/rollback gate.
+
+> Corrected 2026-08-30: six statements in this file listed APFS write and HFS+
+> file/attribute writes as blocked pending certification. Both had shipped --
+> `partition_file_system_registry.cpp` lists them in `available_actions`, and the
+> A1-A8 / H1-H8 tracks certified them. The distinction that matters for a file
+> about bundled tools: those paths needed no third-party tool at all.

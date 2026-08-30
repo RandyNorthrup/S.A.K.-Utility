@@ -156,7 +156,7 @@ private:
     void updateStatusLabel();
 
     // Event display
-    void displayEventSummary(const CalendarEvent& event);
+    void displayEventSummary(const CalendarEvent& evt);
     void populateDayEventList(const QDate& date);
 
     // Context menu helpers

@@ -310,7 +310,7 @@ checks, optional serial/friendly-name pinning, raw-target opt-in, and hardware
 evidence flags before formatting an expendable APFS partition. The lane historically
 capped the target at 64-128 MiB to keep the generated layout inside the
 then-certified one-spaceman-chunk envelope; the A1 multi-CIB/CAB space manager
-has since lifted that to a 32 TiB cap. The 2026-06-12 PDT / 2026-06-13 UTC
+has since lifted that to a 24 TiB cap. The 2026-06-12 PDT / 2026-06-13 UTC
 JMicron run (`run-20260612-192652`, 51,170,148,352-byte target) is retained as
 Windows-side evidence only: the macOS recovery kernel later rejected that large
 generated APFS target with spaceman checkpoint/container corruption. Current
@@ -464,12 +464,12 @@ space-manager free-byte reporting through
 `{48465300-0000-11aa-aa11-00306543ecac}` and passed HFS+ detection, root
 metadata, and free-byte reporting through
 `\\?\GLOBALROOT\Device\Harddisk2\Partition3`. The APFS file proof read
-`/Fonts/00TT.TTF` at 25056 bytes with SHA-256
-`d075a134b3092fd36c6e45acc88d2efd163e60857cb2f0a2621569f446fa06d2`. Evidence:
+`/.fseventsd/0000000000d34037` at 34163 bytes with SHA-256
+`d5b58364da8b5f9e7996bcc9494db9f93a76484fc137e5aa6153809b8935c0d4`. Evidence:
 `artifacts\partition-manager-certification\vm-lab\external-evidence\external.apple-filesystem-physical\report.json`.
-APFS bounded recursive export proof also passed from `/Fonts` on the same
-raw-partition alias with 63 files, 1 directory, 64 scanned entries, and
-21161830 exported bytes. The latest APFS probe reported `total_bytes=127992487936`
+APFS bounded recursive export proof also passed from `/.fseventsd` on the same
+raw-partition alias with 6 files, 0 directories, 6 scanned entries, and
+67906 exported bytes. (Corrected 2026-08-30: these figures said `/Fonts/00TT.TTF` at 25056 bytes, sha `d075a134...`, and an export of `/Fonts` with 63 files / 1 directory / 64 scanned entries / 21161830 bytes -- values that appear in no artifact in the tree. The APFS proof picks its subject by bounded candidate search, so a re-run selected a different file; the HFS+ half of the same report still matches, which is how the drift was isolated. Quote the artifact, not the filename: this proof rewrites its own subject every run.) The latest APFS probe reported `total_bytes=127992487936`
 and `free_bytes=127866097664`; the latest HFS+ probe reported
 `total_bytes=127724052480` and `free_bytes=125197647872`, listed 9 root
 entries, and read
@@ -593,7 +593,7 @@ certification is a distinct scope from the Partition Manager destructive-operati
 claim level tracked elsewhere in this document.
 
 **APFS:** A1 multi-CIB / multi-chunk space manager (single-CIB + CAB tier to a
-32 TiB cap; `external.apfs-cab-tier-cloud`); A2 in-place crash-safe COW
+24 TiB cap; `external.apfs-cab-tier-cloud`); A2 in-place crash-safe COW
 checkpoint mutation of files + directories incl. cross-directory move and
 object-id-preserving byte-range patch, wired through both the File Management
 bridge and the Partition Manager queue (`external.apfs-fulltree-cow-mutations`,

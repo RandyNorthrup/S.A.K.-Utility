@@ -671,8 +671,8 @@ through `\\?\GLOBALROOT\Device\Harddisk2\Partition2` and `Partition3`. Inventory
 raw detection now tries that partition alias before requesting elevated
 PhysicalDrive offset reads. The physical validation script detected APFS on
 partition 2 and HFS+ on partition 3 with sane metadata, browsed both roots,
-read `/Fonts/00TT.TTF` read-only from APFS with SHA-256
-`d075a134b3092fd36c6e45acc88d2efd163e60857cb2f0a2621569f446fa06d2`, read
+read `/.fseventsd/0000000000d34037` read-only from APFS with SHA-256
+`d5b58364da8b5f9e7996bcc9494db9f93a76484fc137e5aa6153809b8935c0d4`, read
 `/polyhavenassets_blendermarket_v1.2.0  (Blender 4.5+).zip` from HFS+ with
 SHA-256 `72222f9f83d177ea9a2970edb756ab9f3f9f6b00a12f47af63259f215d970709`,
 read inline HFS+ attribute `com.apple.decmpfs` for file ID 1894 at 16 bytes
@@ -906,8 +906,9 @@ Bundle path rules:
   selected file-read proof, HFS+ selected-attribute proof, and APFS bounded
   export proof with
   `-RequireHfsFileProof -RequireHfsAttributeProof -RequireApfsFileProof -RequireApfsExportProof`;
-  the current physical proof read `/Fonts/00TT.TTF` from APFS, exported `/Fonts`
-  from APFS with 63 files, 1 directory, 64 scanned entries, and 21161830 bytes,
+  the current physical proof read `/.fseventsd/0000000000d34037` from APFS,
+  exported `/.fseventsd` from APFS with 6 files, 0 directories, 6 scanned
+  entries, and 67906 bytes,
   read the HFS+ zip fixture, read inline HFS+ attribute `com.apple.decmpfs`,
   and recorded HFS+ metadata/free-byte proof. It writes
   `artifacts/partition-manager-certification/vm-lab/external-evidence/external.apple-filesystem-physical/report.json`.

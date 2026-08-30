@@ -43,11 +43,6 @@ public:
 
     // Join the worker thread while this class's members are still alive (the base
     // ~WorkerBase runs after they are destroyed). See WorkerBase::stopAndJoin.
-    //
-    // cppcheck-suppress duplInheritedMember  ; false positive: this destructor CALLS
-    // WorkerBase::stopAndJoin(), it does not redeclare it. cppcheck attributes the call inside
-    // an inline destructor body to the derived class and reports a duplicate member that does
-    // not exist -- this class declares no stopAndJoin of its own.
     ~AdvancedSearchWorker() override { stopAndJoin(); }
 
     // Disable copy/move (inherited from WorkerBase)

@@ -56,7 +56,7 @@ public:
     [[nodiscard]] bool isServerRunning() const;
 
     /// @brief Run iPerf3 client test (blocking)
-    void runIperfTest(const IperfConfig& config);
+    void runIperfTest(const IperfConfig& requested);
 
     /// @brief Run HTTP-based internet speed test (blocking)
     void runHttpSpeedTest();

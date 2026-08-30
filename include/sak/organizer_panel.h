@@ -80,10 +80,10 @@ private Q_SLOTS:
 
     void onWorkerStarted();
     void onWorkerFinished();
-    void onWorkerFailed(int errorCode, const QString& errorMessage);
+    void onWorkerFailed(int error_code, const QString& error_message);
     void onWorkerCancelled();
-    void onFileProgress(int current, int total, const QString& filePath);
-    void onPreviewResults(const QString& summary, int operationCount);
+    void onFileProgress(int current, int total, const QString& file_path);
+    void onPreviewResults(const QString& summary, int operation_count);
 
     // Duplicate detection slots
     void onDedupAddDirectoryClicked();
@@ -95,10 +95,10 @@ private Q_SLOTS:
     void onDedupTargetChanged(int index);
     void onDedupWorkerStarted();
     void onDedupWorkerFinished();
-    void onDedupWorkerFailed(int errorCode, const QString& errorMessage);
+    void onDedupWorkerFailed(int error_code, const QString& error_message);
     void onDedupWorkerCancelled();
     void onDedupScanProgress(int current, int total, const QString& path);
-    void onDedupResultsReady(const QString& summary, int duplicateCount, qint64 wastedSpace);
+    void onDedupResultsReady(const QString& summary, int duplicate_count, qint64 wasted_space);
 
 private:
     void setupUi();
@@ -111,19 +111,19 @@ private:
     [[nodiscard]] FileManagementTarget currentDedupTarget() const;
     void updateHeaderForTab(int index);
     QWidget* createOrganizerTab();
-    void connectOrganizerTabSignals(QPushButton* settingsBtn);
+    void connectOrganizerTabSignals(QPushButton* settings_btn);
     QGroupBox* createTargetDirectoryGroup();
     QGroupBox* createCategoryMappingGroup();
-    void createOrganizerControls(QVBoxLayout* layout, QPushButton*& settingsBtn);
+    void createOrganizerControls(QVBoxLayout* layout, QPushButton*& settings_btn);
     QWidget* createDuplicateFinderTab();
-    void connectDuplicateFinderTabSignals(QPushButton* settingsBtn);
+    void connectDuplicateFinderTabSignals(QPushButton* settings_btn);
     QGroupBox* createScanDirectoriesGroup();
-    void createDedupControls(QVBoxLayout* layout, QPushButton*& settingsBtn);
+    void createDedupControls(QVBoxLayout* layout, QPushButton*& settings_btn);
     void setupDefaultCategories();
     QMap<QString, QStringList> getCategoryMapping() const;
     bool validateCategoryMapping() const;
     bool validateOrganizerTarget();
-    bool confirmOrganizerExecution(const QDir& targetDir);
+    bool confirmOrganizerExecution(const QDir& target_dir);
     OrganizerWorker::Config buildOrganizerConfig() const;
     void connectOrganizerWorkerSignals();
     void connectDedupWorkerSignals();

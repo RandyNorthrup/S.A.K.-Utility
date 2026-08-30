@@ -41,12 +41,10 @@ public:
 
     // A StrongIndex holds a single trivially-copyable integer, so by-value is the correct and
     // cheaper calling convention for these comparison operands; a const reference would only add
-    // an indirection. cppcheck's inconclusive passedByValue does not model tiny value types.
-    // cppcheck-suppress passedByValue
+    // an indirection.
     [[nodiscard]] friend constexpr bool operator==(StrongIndex lhs, StrongIndex rhs) noexcept {
         return lhs.m_value == rhs.m_value;
     }
-    // cppcheck-suppress passedByValue
     [[nodiscard]] friend constexpr bool operator!=(StrongIndex lhs, StrongIndex rhs) noexcept {
         return lhs.m_value != rhs.m_value;
     }

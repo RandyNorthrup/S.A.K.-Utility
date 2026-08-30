@@ -391,8 +391,8 @@ Central action registry:
 | Local Windows | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes | Yes |
 | ext2/ext3/ext4 raw/image | Yes | Yes | Yes | No | No | No | No | Yes | No |
 | HFS+/HFSX raw/image | Yes | Yes | Yes | Yes[2] | Yes[2] | Yes[2] | Yes[2] | Yes | Yes[2] |
-| APFS raw/image generated (<=32 TiB) | Yes | Yes | Yes | Yes[1] | Yes[1] | Yes[1] | Yes[1] | Yes | Yes[1] |
-| APFS real Apple (foreign) media, known size <=32 TiB | Yes where readable | Yes where readable | Yes | Yes[1] | Yes[1] | Yes[1] | Yes[1] | Yes | Yes[1] |
+| APFS raw/image generated (<=24 TiB) | Yes | Yes | Yes | Yes[1] | Yes[1] | Yes[1] | Yes[1] | Yes | Yes[1] |
+| APFS real Apple (foreign) media, known size <=24 TiB | Yes where readable | Yes where readable | Yes | Yes[1] | Yes[1] | Yes[1] | Yes[1] | Yes | Yes[1] |
 | APFS unknown-size / out-of-range / locked media | Yes where readable | Yes where readable | Yes | No | No | No | No | Yes | No |
 | XFS/Btrfs current | Metadata only | No | No | No | No | No | No | No | No |
 
@@ -400,7 +400,7 @@ Central action registry:
 the foreign-volume campaign - see the single capability-matrix owner
 [APFS_HFS_FULL_DRIVER_WRITE_PLAN.md](APFS_HFS_FULL_DRIVER_WRITE_PLAN.md),
 driver matrix rows A-a..A-h). Certified scope on S.A.K. generated-layout
-containers, 64 MiB through a 32 TiB cap (the former ~2.9-7.8 TiB
+containers, 64 MiB through a 24 TiB cap (the former ~2.9-7.8 TiB
 metadata-overflow dead zone is closed): in-place file + directory
 create/delete/write/rename/cross-directory move/object-id-preserving patch,
 snapshots (create/delete/revert), multi-volume containers, inline zlib
@@ -722,7 +722,7 @@ Hard rules:
 - Read-only parser paths stay read-only.
 - Raw/non-native writes require explicit command, explicit confirmation, and capability proof.
 - No generic organizer moves on raw/non-native targets.
-- APFS writes run on the certified A1-A8 + foreign-campaign in-place COW engine (multi-CIB/CAB to a 32 TiB cap, Apple-validated through the A8 physical-USB gate and the foreign-volume kernel certs). S.A.K.-generated and real Apple-created containers are both write-enabled when the container size is known and in range; raw imports take a typed WRITE confirmation. Unknown-size/out-of-range targets, snapshot-frozen deletes/renames, Fusion/Tier2, and unprovided-credential encrypted volumes stay fail-closed.
+- APFS writes run on the certified A1-A8 + foreign-campaign in-place COW engine (multi-CIB/CAB to a 24 TiB cap, Apple-validated through the A8 physical-USB gate and the foreign-volume kernel certs). S.A.K.-generated and real Apple-created containers are both write-enabled when the container size is known and in range; raw imports take a typed WRITE confirmation. Unknown-size/out-of-range targets, snapshot-frozen deletes/renames, Fusion/Tier2, and unprovided-credential encrypted volumes stay fail-closed.
 - Every destructive command shows target identity, file system, operation, selected item count, and irreversibility.
 - Bulk destructive operations require typed confirmation for raw targets.
 - Operation results must include warnings/blockers and update status/log panes.
@@ -839,7 +839,7 @@ GUI:
 Live certification:
 
 - HFS+ raw create/write/read/rename/delete through new command registry.
-- APFS generated raw create/write/read/delete (multi-CIB/CAB to a 32 TiB cap) through new command registry.
+- APFS generated raw create/write/read/delete (multi-CIB/CAB to a 24 TiB cap) through new command registry.
 - ext4 raw read-only browse/copy-out.
 - Unsupported XFS/Btrfs action blockers.
 - Arbitrary non-generated / Fusion / unprovided-credential-encrypted APFS write blockers.
@@ -943,7 +943,7 @@ Checklist:
 - [x] Define command IDs for the implemented registry commands.
 - [x] Implement command enablement without UI dependencies.
 - [x] Return exact blocker text for disabled raw write commands.
-- [x] Keep the APFS generated-layout write gate (64 MiB through the certified 32 TiB cap) centralized in `FileManagementFileSystemBridge`.
+- [x] Keep the APFS generated-layout write gate (64 MiB through the certified 24 TiB cap) centralized in `FileManagementFileSystemBridge`.
 - [x] Keep HFS+/HFSX certified-write state centralized in `FileManagementFileSystemBridge`.
 
 Tests:
@@ -1264,7 +1264,7 @@ Safety pane checklist:
 - [x] Shows raw target identity. (Safety block now leads with Target / Identity root-path lines)
 - [x] Shows file system. (Safety block "File system" line)
 - [x] Shows write capability.
-- [x] Shows why APFS large target is read-only. (`FileManagementFileSystemBridge::safetyNotes` names the 64 MiB-32 TiB generated-layout limit; `safetyNotesNameTheRealBlocker`)
+- [x] Shows why APFS large target is read-only. (`FileManagementFileSystemBridge::safetyNotes` names the 64 MiB-24 TiB certified-engine range; `safetyNotesNameTheRealBlocker`)
 - [x] Shows why arbitrary APFS is read-only. (same generated-layout / arbitrary-Apple-media note)
 - [x] Shows why XFS/Btrfs browse/write is blocked. (metadata-only note; `safetyNotesNameTheRealBlocker`)
 - [x] Shows destructive-operation confirmation requirements.

@@ -176,8 +176,16 @@ the rest is a debt-reduction + test-infra program (multi-session, much of it cos
       it is the mirror of R5-IDX-6: there, unwritten dispositions made finished work look open
       and invited a re-triage; here, a stale line made a wired blocking gate look unwired. Both
       cost the same thing -- the next reader cannot trust the status without redoing the check.
-- [ ] clang-tidy backlog (~995 findings) -- a full clang-tidy pass + fix program.
-- [ ] cppcheck-suppression audit -- review every inline suppression is still justified.
+- [ ] clang-tidy backlog -- MEASURED 2026-08-30: 5,624 unique findings across 301 first-party
+      TUs, not the ~995 recorded here. The bulk is the owner-scoped style tier (2,371
+      pro-bounds container access, 872 designated initializers, 307 anonymous namespace).
+      All 46 bug-shaped findings were triaged with an adversarial second pass: zero real
+      defects. Still a fix program, but a style one.
+- [x] cppcheck-suppression audit -- DONE 2026-08-30. All 26 inline suppressions re-checked by
+      running cppcheck with inline suppressions disabled; 5 suppressed nothing and were removed.
+      cppcheck_suppressions.txt holds 10 file entries, not the 26 recorded here. See R5-IDX-3 in
+      docs/CODEX_REVIEW_5_REMEDIATION.md for the method, the two measurement holes it had to close,
+      and the whole-project gate gap it exposed.
 - [ ] Test-infra program (each a dedicated effort): G14 coverage ledger, G18 mutation
       testing, fuzz harnesses, fault injection, G20/G21 remaining gate wiring.
 - [ ] Branch protection -- needs the GitHub repo admin (Randy); flag once ready.

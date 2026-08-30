@@ -266,8 +266,14 @@ cmake/                -- CMake modules and build config
 
 ### Important Conventions
 
-- **Portable mode** -- Detected by `portable.ini` in the exe directory.
-  All paths relative to exe, no registry writes.
+- **Portable mode** -- Detected by a WRITABLE `data/` directory beside the executable
+  (`dataRoot()` in `src/core/app_paths.cpp`), and only when the build is not running as a
+  packaged (MSIX) app. All paths relative to exe, no registry writes; if that directory is
+  absent or not writable the app falls back to the OS per-user writable location.
+  (Corrected 2026-08-30: this said "Detected by `portable.ini` in the exe directory".
+  Nothing in `src/` or `include/` reads, writes, or mentions `portable.ini` -- the only
+  reference in the repo is `scripts/stage_portable_release.ps1`, which CREATES the file
+  into the release package as a marker nothing consumes.)
 - **Signal naming** -- `Q_SIGNALS` use past tense: `scanFinished`, `errorOccurred`,
   `progressUpdated`.
 - **Slot naming** -- Private slots use `on` prefix: `onScanClicked`, `onTimerExpired`.

@@ -147,7 +147,7 @@ QString FileExplorerTransferEngine::siblingTempPath(const QString& destination_p
     return split.parent.isEmpty() ? temp : split.parent + QLatin1Char('/') + temp;
 }
 
-bool FileExplorerTransferEngine::destinationPathVacant(const QString& path) {
+bool FileExplorerTransferEngine::destinationPathVacant(const QString& path) const {
     if (m_destination_target.local_file_system) {
         // symlink_status, not QFileInfo::exists: QFileInfo also reports "missing"
         // when the stat itself failed (a permission-denied ancestor), and only a
@@ -176,7 +176,8 @@ bool FileExplorerTransferEngine::destinationPathVacant(const QString& path) {
     return true;
 }
 
-bool FileExplorerTransferEngine::reserveStagingPath(const QString& path, const bool directory) {
+bool FileExplorerTransferEngine::reserveStagingPath(const QString& path,
+                                                    const bool directory) const {
     if (!m_destination_target.local_file_system) {
         // The raw backends have no exclusive-create primitive; the bounded probe
         // plus an unguessable name is the strongest claim available there.
@@ -197,7 +198,7 @@ bool FileExplorerTransferEngine::reserveStagingPath(const QString& path, const b
     return true;
 }
 
-bool FileExplorerTransferEngine::removeDestinationEntry(const QString& path) {
+bool FileExplorerTransferEngine::removeDestinationEntry(const QString& path) const {
     // Resolve the entry's kind (file/dir/symlink) at execution time -- a staged copy
     // matches the source's kind, but a set-aside backup matches the OLD occupant's,
     // which the item does not describe.
@@ -207,7 +208,7 @@ bool FileExplorerTransferEngine::removeDestinationEntry(const QString& path) {
         .ok;
 }
 
-bool FileExplorerTransferEngine::renameDestination(const QString& from, const QString& to) {
+bool FileExplorerTransferEngine::renameDestination(const QString& from, const QString& to) const {
     return FileManagementFileSystemBridge::renameEntry(m_destination_target, from, to).ok;
 }
 
@@ -353,23 +354,6 @@ bool FileExplorerTransferEngine::renameWithinTarget(const FileExplorerTransferIt
     }
     dropSetAsideRenameOccupant(item, occupant_set_aside, backup);
     return true;
-}
-
-bool FileExplorerTransferEngine::removeReplacedDestination(const FileExplorerTransferItem& item) {
-    if (!item.replace_destination) {
-        return true;
-    }
-    // The Replace delete is deferred from collision resolution to right before
-    // this item's own copy: a cancel or failure earlier in the batch must not
-    // cost destinations that were never rewritten.
-    const auto removed = FileManagementFileSystemBridge::removeExistingEntry(
-        m_destination_target, item.destination_path, kDiscoveryMaxEntriesPerDirectory);
-    if (!removed.ok) {
-        m_blockers.append(QStringLiteral("Could not replace %1: %2")
-                              .arg(transferItemName(item.destination_path),
-                                   removed.blockers.join(QStringLiteral("; "))));
-    }
-    return removed.ok;
 }
 
 bool FileExplorerTransferEngine::deleteMovedSource(const FileExplorerTransferItem& item) {

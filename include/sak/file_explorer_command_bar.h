@@ -43,8 +43,8 @@ public:
     [[nodiscard]] QPushButton* detailsToggleButton() const;
 
 private:
-    void createLeftCommands(QHBoxLayout* commandRow);
-    void createRightCommands(QHBoxLayout* commandRow);
+    void createLeftCommands(QHBoxLayout* command_row);
+    void createRightCommands(QHBoxLayout* command_row);
 
     QToolButton* m_new_button{nullptr};
     QMenu* m_new_menu{nullptr};

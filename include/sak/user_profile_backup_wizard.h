@@ -201,7 +201,7 @@ private:
     void setupUi();
     void populateUserList();
     /// @brief Find the nth selected user in m_users
-    UserProfile* findSelectedUserByRow(int selectedRow);
+    UserProfile* findSelectedUserByRow(int selected_row);
 
     QVector<UserProfile>& m_users;
 

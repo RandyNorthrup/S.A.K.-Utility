@@ -1826,7 +1826,6 @@ QVector<SearchMatch> AdvancedSearchWorker::searchImageMetadata(const QString& fi
 
     int field_index = 1;
     for (auto it = metadata.constBegin(); it != metadata.constEnd(); ++it) {
-        // cppcheck-suppress knownConditionTrueFalse ; atomic stop flag checked across threads
         if (checkStop()) {
             return matches;
         }
@@ -2315,7 +2314,6 @@ QVector<SearchMatch> AdvancedSearchWorker::collectMetadataMatches(
     QVector<SearchMatch> matches;
     int fieldIndex = 1;
     for (auto it = metadata.constBegin(); it != metadata.constEnd(); ++it) {
-        // cppcheck-suppress knownConditionTrueFalse ; atomic stop flag checked across threads
         if (checkStop()) {
             return matches;
         }
