@@ -120,7 +120,8 @@ byte-identical (full Release ctest 225/225).
       refusal is safe; the feature is the work.
       WHY IT IS A DEDICATED PASS, not a quick reuse: the resize foreignOverflow machinery is
       OVERFLOW-specific -- it is entered only when a mutation SPILLS past chunk 0 (the boundary
-      chunk allocation at partition_apfs_writer.cpp configureOverflowAllocation, which sets
+      chunk allocation at partition_apfs_writer.cpp reanchorForeignOverflowAllocation (line
+      10936; the name here was configureOverflowAllocation, which exists nowhere), which sets
       ctx->foreignOverflow). A small file mutation on a multi-chunk container never spills, so
       it takes the GENERAL ring rotation (computeIpRotation -> nextIpSlot -> advanceCheckpoint),
       which is hard-coded to the S.A.K.-generated 3-slot co-located ring (cib0Base + k*stride,

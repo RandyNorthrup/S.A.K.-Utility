@@ -132,8 +132,16 @@ Required before a release candidate is published:
   execution evidence, and expose only generated-layout create/format,
   checksum-repair, bounded root-file write/patch/delete, empty
   root-directory create/delete, root-directory child-file write/patch/delete,
-  and volume-label change
-  actions through UI/queue/apply. The certifier-generated format image must detect as
+  volume-label change, snapshot create/delete/revert, file clone,
+  file hard-link, and in-chunk container resize actions through UI/queue/apply.
+  (Corrected 2026-08-30: the list ended at volume-label change and was closed
+  with "only", but `partition_manager_panel.cpp:10285-10291` reaches snapshot
+  create/delete/revert and container resize from the APFS Container dialog, and
+  `ApfsCloneRootFile`/`ApfsHardlinkRootFile` are declared operation types. Those
+  shipped with the A1-A8 certification, so the code is not exceeding policy --
+  but a readiness doc that UNDERSTATES which destructive operations are
+  UI-reachable is wrong in the direction that matters, since a reviewer using it
+  to decide what needs certifying would never look at snapshot-revert or resize.) The certifier-generated format image must detect as
   APFS, report nonzero spaceman free bytes, round-trip the requested volume name,
   list the generated root directory, and read back the seeded multi-block proof
   file through the read-only APFS browser. The certifier-only write lane may copy
@@ -212,7 +220,9 @@ Required before a release candidate is published:
   images
   (`artifacts\file-management-live-certification\ro-ext-xfs-btrfs-20260712\`).
   Unknown-size / out-of-range / snapshot-frozen / Fusion / locked-encrypted APFS
-  targets stay read-only with exact blockers. Full local CTest is 142/142.
+  targets stay read-only with exact blockers. Full local CTest is 254/254
+  (corrected 2026-08-30; this said 142/142, the same stale figure the README
+  test badge carried).
 - Partition Manager ext/HFS+/APFS image browsers must open both normal image
   files and read-only Windows raw partition aliases through
   `openFileOrRawDeviceReadOnly`; physical Apple proof requires HFS+ and APFS
@@ -417,7 +427,9 @@ first-prompt role inference with explicit user role-switch support, and an exact
 `Ctx: x/y` context-window meter tied to the selected model through OpenAI
 `/v1/responses/input_tokens` so operators can judge when summary/report
 compaction is needed.
-The current local package proof staged `S.A.K.-Utility-0.9.1.9`, passed portable
+The current local package proof staged `S.A.K.-Utility-0.9.1.9` (STALE: `VERSION`
+is 0.9.2.0 and the recipe below produces `SAK-Utility-v0.9.2.0`; this proof
+predates the version bump and needs re-running before release), passed portable
 dependency smoke, passed portable startup E2E smoke, passed package-root release
 readiness, and rebuilt `S.A.K.-Utility-0.9.1.9-Windows-x64.zip` after the
 refactors.

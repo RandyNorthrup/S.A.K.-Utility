@@ -402,6 +402,41 @@ a parked design, per the bucket convention. Open work is what remains after thos
   left the documented registration flow unable to resolve its own default path.
   The pattern across all of them is one thing: a number or a name that was true when written
   and that nothing re-reads.
+  SWEEP COMPLETED 2026-08-30 once the weekly limit reset. The two batches that had died
+  (release-readiness, field-notes) ran, and all 43 previously-unverified findings were
+  independently re-checked. Result: 15 new findings, 18 of the 43 CONFIRMED, and 11
+  CLEARED -- the original finder had been wrong on those, which is why the second pass
+  exists. Two of the eleven were misidentified line numbers: the file grew +93 lines
+  mid-sweep, so a finding recorded against line 9719 had to be re-located by CONTENT at
+  9812. Line numbers are not a stable address for a doc under edit.
+  The worst of the new ones, by kind rather than by count:
+  - PRODUCTION_GRADE_AUDIT said the gitleaks scan is clean "after exact FALSE-POSITIVE
+    fingerprints were documented in .gitleaksignore". Entry 4 of that file is an accepted
+    REAL credential, and the allowlist says so in its own words -- "Recorded honestly
+    rather than described as a false positive -- it is not one." The allowlist was
+    honest; the audit summarising it was not. Same class as R5-IDX-20: a wrong
+    "we are protected" is the one kind of stale doc that stops someone acting.
+  - RELEASE_READINESS closed its APFS UI/queue/apply exposure list with "only", while
+    the APFS Container dialog also reaches snapshot create/delete/revert and container
+    resize. Those shipped WITH the A1-A8 certification, so the code is not exceeding
+    policy -- but a readiness doc that UNDERSTATES which destructive operations are
+    UI-reachable is wrong in the direction that matters.
+  - Three driver-plan rows described dialog affordances (HFS+ symlink/hardlink modes, an
+    APFS "Store compressed" checkbox, Format-dialog Clone/Hard-link modes) that commit
+    0ec54a64 removed when it dropped the file-level mutation UI. The CAPABILITIES are
+    still wired through the operation types, the script builder and the CLI, so the rows
+    were wrong about the ROUTE, not about the feature -- and one finder claim was itself
+    wrong, since buildApfsCloneHardlinkResizeScript does exist.
+  - PRODUCTION_GRADE_AUDIT named seven APFS writer APIs; five do not exist (the in-place
+    COW engine renamed them to commitRaw*). It also recorded 136/136 CTest against a
+    254-test suite, and metadata block 6 where the runner's own default is 199.
+  - tools/filesystem/e2fsprogs/BUILD-NOTES.md said ext shrink "remains blocked until a
+    separate shrink-specific destructive certification path exists". That path exists
+    and ran. A blocked-capability note that outlives its blocker is the same defect as
+    an overstated one, pointing the other way.
+  Editing that BUILD-NOTES file tripped the bundled-tool manifest hash gate, which pins
+  a sha256 for every runtime file in the tool payload. That is the gate working: the
+  recorded hash was re-derived from the edited bytes and only that one line changed.
 - [x] R5-IDX-20 THE RELEASE-READINESS SECURITY SECTION DESCRIBED A CONTROL THAT WAS NO LONGER
   ARMED. Found 2026-08-27 by sweeping active docs for open work that nothing in this file
   pointed at. `docs/RELEASE_READINESS.md` opened with a PRE-PUSH BLOCKER section asserting two

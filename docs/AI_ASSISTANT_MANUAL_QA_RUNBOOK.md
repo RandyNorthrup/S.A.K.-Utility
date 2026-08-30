@@ -190,8 +190,13 @@ Expected:
 
 - The assistant checks the `superantispyware` app manifest before launching
   executables.
-- It reports that quick/full/update actions are not yet validated for
-  non-interactive execution.
+- It reports that quick_scan, full_scan and definition_update ARE supported for
+  the `superantispyware` manifest, each via a `method: win32_gui` recipe -- an
+  ordered list of desktop-control steps the win32 step runner drives against the
+  already-running GUI, with a per-step risk check. (Corrected 2026-08-30: this
+  expected the assistant to report those actions "not yet validated for
+  non-interactive execution". The manifest marks all three `supported: true`, so a
+  tester following this runbook would have failed a pass the product passes.)
 - It does not reinstall SUPERAntiSpyware, brute-force helper EXEs, or exhaust
   tool iterations.
 - If the model asks `sak_package_manager` to install/upgrade/uninstall during
