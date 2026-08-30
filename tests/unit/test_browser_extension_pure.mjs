@@ -66,6 +66,7 @@ const EXPORTED = [
   "applyCookieScope", "applyCookieLifetime", "COOKIE_SAME_SITE",
   "downloadOptions", "downloadReply", "httpAuthCredentials", "httpAuthOriginError",
   "deviceMetricsOverride", "deviceMetricsError",
+  "waitForRequest",
 ];
 
 function loadWorker() {
@@ -192,6 +193,43 @@ test("scrollAmountPx refuses a non-positive or non-finite distance", () => {
   assert.throws(() => w.scrollAmountPx(-40), /positive/);
   assert.throws(() => w.scrollAmountPx("lots"), /positive/);
   assert.throws(() => w.scrollAmountPx(Infinity), /positive/);
+});
+
+test("waitForRequest requires exactly one condition with no precedence fallback", () => {
+  for (const invalid of [
+    {},
+    { text: "" },
+    { selector: ".ready", text: "done" },
+    { url_contains: "/done", network_idle: true },
+  ]) {
+    assert.throws(() => w.waitForRequest(invalid), /exactly one/);
+  }
+
+  assert.deepEqual(crossRealm(w.waitForRequest({ text: "done" }).condition),
+                   { kind: "text", value: "done" });
+  assert.deepEqual(crossRealm(w.waitForRequest({ url_contains: "/done" }).condition),
+                   { kind: "url", value: "/done" });
+  assert.deepEqual(crossRealm(w.waitForRequest({ selector: ".ready" }).condition),
+                   { kind: "selector", value: ".ready" });
+  assert.deepEqual(crossRealm(w.waitForRequest({ network_idle: true }).condition),
+                   { kind: "network_idle", value: null });
+});
+
+test("waitForRequest preserves explicit zero and bounds both durations", () => {
+  const defaults = w.waitForRequest({ text: "done" });
+  assert.equal(defaults.timeout, 8000);
+  assert.equal(defaults.idleMs, 500);
+  assert.equal(defaults.absent, false);
+
+  const bounded = w.waitForRequest({ selector: ".gone", absent: true,
+                                     timeout_ms: 0, idle_ms: 999999 });
+  assert.equal(bounded.timeout, 0);
+  assert.equal(bounded.idleMs, 30000);
+  assert.equal(bounded.absent, true);
+  for (const bad of [-1, NaN, Infinity, "later"] ) {
+    assert.throws(() => w.waitForRequest({ text: "done", timeout_ms: bad }), /timeout_ms/);
+    assert.throws(() => w.waitForRequest({ text: "done", idle_ms: bad }), /idle_ms/);
+  }
 });
 
 test("selectCallArgs requires exactly one selection criterion", () => {

@@ -7667,6 +7667,16 @@ if(PLATFORM_WINDOWS)
              COMMAND "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
                      -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1")
     set_tests_properties(test_process_capture_windows_powershell PROPERTIES TIMEOUT 60)
+
+    find_program(SAK_PYTHON_EXECUTABLE NAMES python3 python)
+    if(NOT SAK_PYTHON_EXECUTABLE)
+        message(FATAL_ERROR
+                "Python was not found, so the lizard JavaScript-baseline gate test cannot run.")
+    endif()
+    add_test(NAME test_run_lizard_js_baseline
+             COMMAND "${SAK_PYTHON_EXECUTABLE}"
+                     "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_run_lizard_js_baseline.py")
+    set_tests_properties(test_run_lizard_js_baseline PROPERTIES TIMEOUT 60)
 endif()
 
 # The browser-control service worker is ~3300 lines of privileged JavaScript that drives a

@@ -124,10 +124,18 @@ def assert_scan_is_not_empty(files: list[str], language: str, default_dirs: list
     lizard exits 0 when the paths it is given are missing or hold nothing it recognises, so a
     whole-tree run launched from the wrong working directory -- or against a renamed tree --
     produces no warnings, no non-zero exit, and a confident "PASSED -- all functions within
-    limits." That is a gate certifying a scan it never performed. The explicit-files case is
-    NOT checked here: pre-commit legitimately passes a commit with no files of this language,
-    and main() already returns 0 for that."""
+    limits." That is a gate certifying a scan it never performed. main() already skips a
+    language when pre-commit supplies no files of that type; once this function receives an
+    explicit path, every path must resolve to a real source or the scan is partial."""
     if files:
+        for raw in files:
+            path = Path(raw)
+            if not path.is_absolute():
+                path = PROJECT_ROOT / path
+            if not path.is_file() or path.suffix.lower() not in extensions:
+                raise SystemExit(
+                    f"ABORT: lizard ({language}) explicit source {raw!r} is missing or has "
+                    "the wrong extension; refusing to certify a partial scan.")
         return
     found = 0
     for directory in default_dirs:
@@ -173,6 +181,18 @@ def run_lizard(files: list[str], language: str, default_dirs: list[str]) -> list
             f"ABORT: lizard ({language}) exited {result.returncode} with no parseable "
             f"violations; refusing to certify this run.\n{output.strip()}")
     return hard
+
+
+def project_relative_path(raw: str) -> str:
+    """Return one stable forward-slashed path for a file under the repository."""
+    path = Path(raw)
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(PROJECT_ROOT).as_posix()
+    except ValueError:
+        return resolved.as_posix()
 
 
 # ---------------------------------------------------------------------------
@@ -329,7 +349,7 @@ def parse_violation(line: str) -> tuple[str, int, int, int] | None:
     location = WARNING_LOCATION_RE.match(line)
     if not metrics or not location:
         return None
-    path = location.group(1).replace("\\", "/")
+    path = project_relative_path(location.group(1))
     return (f"{location.group(3)}@{path}",
             int(metrics.group(2)), int(metrics.group(3)), int(metrics.group(4)))
 
@@ -350,6 +370,18 @@ def load_baseline() -> dict[str, tuple[int, int, int]]:
                 "Expected 'function@path | ccn | params | length'.")
         baseline[parts[0]] = (int(parts[1]), int(parts[2]), int(parts[3]))
     return baseline
+
+
+def baseline_keys_in_scope(
+        baseline: dict[str, tuple[int, int, int]], files: list[str]) -> set[str]:
+    """Baseline entries whose source file this invocation actually scanned."""
+    if not files:
+        return set(baseline)
+    scanned_paths = {project_relative_path(raw) for raw in files}
+    return {
+        key for key in baseline
+        if key.rsplit("@", 1)[-1] in scanned_paths
+    }
 
 
 def check_javascript(files: list[str]) -> int:
@@ -375,13 +407,15 @@ def check_javascript(files: list[str]) -> int:
                 f"WORSE than its baseline: {key} was {base_ccn} CCN / {base_params} PARAM / "
                 f"{base_length} length, is now {ccn} / {params} / {length}")
 
-    # A baseline scan is only meaningful over the whole tree; when pre-commit passes a subset
-    # of files, a function that simply was not scanned must not read as one that was fixed.
-    if not files:
-        for key in sorted(set(baseline) - set(violations)):
-            failures.append(
-                f"STALE baseline entry: {key} no longer violates. Delete its row from "
-                f"{BASELINE_PATH.name} -- the baseline may only shrink.")
+    # Pre-commit passes only changed files, but every baseline entry names its file. A function
+    # in a scanned file that no longer violates is proven fixed and its row must be deleted;
+    # entries in unscanned files are untouched. The old whole-tree-only check let every normal
+    # pre-commit run improve background.js while leaving stale rows forever.
+    scoped_baseline = baseline_keys_in_scope(baseline, files)
+    for key in sorted(scoped_baseline - set(violations)):
+        failures.append(
+            f"STALE baseline entry: {key} no longer violates. Delete its row from "
+            f"{BASELINE_PATH.name} -- the baseline may only shrink.")
 
     if failures:
         print(f"=== JavaScript complexity: {len(failures)} problem(s) ===")

@@ -34,7 +34,6 @@ handleDrag@browser/extension/background.js           | 11 | 2 | 46
 handleMedia@browser/extension/background.js          | 17 | 2 | 45
 handlePermission@browser/extension/background.js     | 22 | 1 | 47
 handleScreenshot@browser/extension/background.js     | 14 | 2 | 78
-handleWaitFor@browser/extension/background.js        | 12 | 2 | 38
 mediaFn@browser/extension/background.js              | 15 | 2 | 23
 occlusionAt@browser/extension/background.js          | 18 | 4 | 36
 selectOptionFn@browser/extension/background.js       | 26 | 5 | 56

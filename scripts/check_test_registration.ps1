@@ -16,16 +16,17 @@
 #
 # The rule that produced this gate: an assertion is only evidence once it runs.
 #
-# Three directions are checked, because each is a way for a test to stop running:
+# Four directions are checked, because each is a way for a test to stop running:
 #   1. a test source with no add_executable  -> it never builds
 #   2. a test target with no add_test        -> it builds but ctest never runs it
 #   3. a test_*.ps1 with no add_test         -> it needs no build, so nothing else
 #                                               would ever notice it does not run
+#   4. a test_*.mjs/.js/.py with no add_test -> same no-build blind spot in another language
 #
 # Direction 3 was added after two PowerShell guard tests landed in tests/unit/ during
 # the R5 campaign. This gate scanned only test_*.cpp, so they sat in the tree looking
 # like coverage while ctest never invoked them -- the same failure this gate exists to
-# stop, one file extension over.
+# stop, one file extension over. JavaScript and Python are checked for the same reason.
 #
 # Fails closed: a missing file, an unreadable CMakeLists, or zero discovered
 # tests is an error, never a silent pass.
@@ -184,6 +185,15 @@ foreach ($js in $jsSources) {
     $jsUnregistered += $js.FullName.Substring($ProjectRoot.Length + 1)
 }
 
+# Python gate tests have the same no-build shape. Keep this list exact: a test_*.py source is
+# evidence only when CTest names and executes its stem.
+$pySources = @(Get-ChildItem -Path $TestsDir -Recurse -File -Filter 'test_*.py')
+$pyUnregistered = @()
+foreach ($py in $pySources) {
+    if ($registeredTests -contains $py.BaseName) { continue }
+    $pyUnregistered += $py.FullName.Substring($ProjectRoot.Length + 1)
+}
+
 $failed = $false
 
 if ($unbuilt.Count -gt 0) {
@@ -226,15 +236,25 @@ if ($jsUnregistered.Count -gt 0) {
     Write-Host 'else will ever notice that it is not running.'
 }
 
+if ($pyUnregistered.Count -gt 0) {
+    $failed = $true
+    Write-Host ''
+    Write-Host 'PYTHON TESTS THAT ctest NEVER RUNS:' -ForegroundColor Red
+    $pyUnregistered | Sort-Object | ForEach-Object { Write-Host "  $_" }
+    Write-Host ''
+    Write-Host 'Add an add_test(NAME <stem> COMMAND python <path>) entry in tests/CMakeLists.txt.'
+}
+
 if ($failed) {
     Write-Host ''
-    Write-Error ("Test registration gate failed: {0} unbuilt source(s), {1} unregistered target(s), {2} unregistered PowerShell test(s), {3} unregistered JavaScript test(s)." -f
-                 $unbuilt.Count, $unregistered.Count, $psUnregistered.Count, $jsUnregistered.Count)
+    Write-Error ("Test registration gate failed: {0} unbuilt source(s), {1} unregistered target(s), {2} unregistered PowerShell test(s), {3} unregistered JavaScript test(s), {4} unregistered Python test(s)." -f
+                 $unbuilt.Count, $unregistered.Count, $psUnregistered.Count,
+                 $jsUnregistered.Count, $pyUnregistered.Count)
     exit 1
 }
 
 $psExempt = @($psSources | Where-Object { $NonTestScripts -contains $_.BaseName }).Count
-Write-Host ("Test registration: {0} test sources, all built; {1} targets, all registered ({2} certifiers exempt); {3} PowerShell test(s), all registered ({4} exempt as non-tests); {5} JavaScript test(s), all registered." -f
+Write-Host ("Test registration: {0} test sources, all built; {1} targets, all registered ({2} certifiers exempt); {3} PowerShell test(s), all registered ({4} exempt as non-tests); {5} JavaScript test(s), all registered; {6} Python test(s), all registered." -f
             $sources.Count, $declaredTargets.Count, $IntentionallyUnregistered.Count,
-            ($psSources.Count - $psExempt), $psExempt, $jsSources.Count)
+            ($psSources.Count - $psExempt), $psExempt, $jsSources.Count, $pySources.Count)
 exit 0

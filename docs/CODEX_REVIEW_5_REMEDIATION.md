@@ -9570,7 +9570,26 @@ gate teaches people to disable both.
            collectMediaNodes (page-injected, need a DOM), occlusionAt and ensureAttached (CDP
            round-trips whose decisions ARE the round-trip), and handleWaitFor (a polling loop).
            Those need the heavier harness described above, not another decision extraction.
-        3. DONE. tests/unit/test_browser_extension_pure.mjs, 77 tests, registered with ctest.
+           2026-08-30 (ext 0.3.20): lizard 1.24's corrected parser had since exposed eight more
+           pre-existing violations, so the live baseline was 14, not the stale 6 above. It is
+           now 13. handleWaitFor closed through a smaller decision extraction after all:
+           waitForRequest owns exactly-one condition selection plus timeout/idle bounds as a
+           pure function (79 node tests, up from 77), while the CDP polling/read shell stays
+           behavior-identical. Mutating its zero-condition guard from `!== 1` to `> 1` turns the
+           named test red; restored. The signed CRX was repacked at 0.3.20 and retained id
+           ofodhfbipljnhenjjjpbdaglkjdphoec.
+           This also found the ratchet itself was not enforcing its written contract:
+           pre-commit passes explicit filenames, but stale-row rejection ran only on a
+           whole-tree call, so the normal hook could improve a function and leave its baseline
+           row forever. `./browser/...` also formed a different key from `browser/...`, and an
+           explicit missing `.js` path exited 0 with "PASSED" after scanning nothing. Paths are
+           now canonical repo-relative keys; an explicit scan checks stale rows belonging to
+           every file it actually scanned and refuses every missing source. The planted live
+           stale handleWaitFor row now makes both path spellings red until deleted. Registered
+           test_run_lizard_js_baseline pins canonicalization, scoped pruning, unscanned-row
+           preservation and missing-path refusal (4/4). Release build exit 0; full Release
+           CTest 257/257, zero failures (914.06 seconds).
+        3. DONE. tests/unit/test_browser_extension_pure.mjs, 79 tests, registered with ctest.
 
       The harness loads background.js AS SHIPPED under a stubbed chrome rather than splitting
       the pure functions into a separate module. Extracting them would have meant changing the

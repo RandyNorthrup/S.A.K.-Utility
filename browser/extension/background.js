@@ -2281,6 +2281,34 @@ function waitDurationMs(raw, name, fallback, cap) {
   return Math.min(cap, ms);
 }
 
+function nonEmptyWaitString(raw) {
+  return typeof raw === "string" && raw.length > 0 ? raw : null;
+}
+
+// Pure: normalize one browser_wait_for request before the polling shell talks to the page.
+// Exactly one condition survives this function, so the loop cannot grow a precedence rule that
+// silently chooses one of several caller requests. An explicit zero timeout stays a check-once
+// request; waitDurationMs owns the bounds and refusal text for both durations.
+function waitForRequest(args) {
+  const timeout = waitDurationMs(args.timeout_ms, "timeout_ms", 8000, 25000);
+  const absent = args.absent === true;
+  const text = nonEmptyWaitString(args.text);
+  const urlSub = nonEmptyWaitString(args.url_contains);
+  const selector = nonEmptyWaitString(args.selector);
+  const conditions = [
+    text !== null ? { kind: "text", value: text } : null,
+    urlSub !== null ? { kind: "url", value: urlSub } : null,
+    selector !== null ? { kind: "selector", value: selector } : null,
+    args.network_idle === true ? { kind: "network_idle", value: null } : null,
+  ].filter(Boolean);
+  if (conditions.length !== 1) {
+    throw new Error(
+      "browser_wait_for needs exactly one of text, url_contains, selector, or network_idle.");
+  }
+  const idleMs = waitDurationMs(args.idle_ms, "idle_ms", 500, 30000);
+  return { timeout, absent, idleMs, condition: conditions[0] };
+}
+
 // Poll until a page condition holds or the timeout elapses. Read-only: it reads text/URL or
 // checks element presence, never mutating the page. Exactly one of text / url_contains /
 // selector; `absent` inverts the wait (gone instead of present). Text/selector conditions run
@@ -2294,20 +2322,10 @@ async function handleWaitFor(tabId, args) {
   // outlast it leaves the app reporting a transport reset while this loop keeps polling and
   // finally posts its reply into a dead relay. Stay inside the deadline so the timeout the
   // caller sees is this handler's honest "not satisfied", not a torn-down connection.
-  const timeout = waitDurationMs(args.timeout_ms, "timeout_ms", 8000, 25000);
-  const absent = args.absent === true;
-  const text = typeof args.text === "string" && args.text.length > 0 ? args.text : null;
-  const urlSub = typeof args.url_contains === "string" && args.url_contains.length > 0 ? args.url_contains : null;
-  const selector = typeof args.selector === "string" && args.selector.length > 0 ? args.selector : null;
-  const netIdle = args.network_idle === true;
-  if ((text ? 1 : 0) + (urlSub ? 1 : 0) + (selector ? 1 : 0) + (netIdle ? 1 : 0) !== 1) {
-    throw new Error(
-      "browser_wait_for needs exactly one of text, url_contains, selector, or network_idle.");
-  }
+  const request = waitForRequest(args);
   // network_idle: no in-flight requests for a quiet window (idle_ms). Not subject to `absent`.
-  const idleMs = waitDurationMs(args.idle_ms, "idle_ms", 500, 30000);
   const holds = async () => {
-    if (netIdle) {
+    if (request.condition.kind === "network_idle") {
       // The predicate is read entirely off the Network domain's events. Without the domain
       // enabled no event ever fires, so the set stays empty and the timestamp stays at attach
       // time: the first poll would report a quiet page on the strength of no observation at all.
@@ -2315,13 +2333,18 @@ async function handleWaitFor(tabId, args) {
         throw new Error(
           "network_idle is unavailable: the Network domain is not instrumenting this tab.");
       }
-      return inflightRequests.size === 0 && Date.now() - lastNetworkActivityMs >= idleMs;
+      return inflightRequests.size === 0 &&
+        Date.now() - lastNetworkActivityMs >= request.idleMs;
     }
     let hit;
     try {
-      if (text) { hit = (await bodyText(tabId)).includes(text); }
-      else if (urlSub) { hit = (await tabInfo(tabId)).url.includes(urlSub); }
-      else { hit = await selectorPresent(tabId, selector); }
+      if (request.condition.kind === "text") {
+        hit = (await bodyText(tabId)).includes(request.condition.value);
+      } else if (request.condition.kind === "url") {
+        hit = (await tabInfo(tabId)).url.includes(request.condition.value);
+      } else {
+        hit = await selectorPresent(tabId, request.condition.value);
+      }
     } catch (e) {
       // A page that could not be read this poll establishes NOTHING, so the condition does not
       // hold -- in either polarity. Returning false rather than !hit is the point: under
@@ -2332,7 +2355,7 @@ async function handleWaitFor(tabId, args) {
       if (e && e.transient === true) { return false; }
       throw e;
     }
-    return absent ? !hit : hit;
+    return request.absent ? !hit : hit;
   };
   const started = Date.now();
   for (;;) {
@@ -2342,7 +2365,7 @@ async function handleWaitFor(tabId, args) {
     if (await holds()) {
       return { ok: true, satisfied: true, waited_ms: Date.now() - started };
     }
-    if (Date.now() - started >= timeout) {
+    if (Date.now() - started >= request.timeout) {
       return { ok: true, satisfied: false, timed_out: true, waited_ms: Date.now() - started };
     }
     await delay(250);
