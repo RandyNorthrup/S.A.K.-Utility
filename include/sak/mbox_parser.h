@@ -151,7 +151,7 @@ private:
     [[nodiscard]] std::expected<QByteArray, sak::error_code> readRawMessage(int message_index);
 
     /// Parse RFC 5322 headers from raw bytes
-    [[nodiscard]] QMap<QString, QString> parseHeaders(const QByteArray& raw_message);
+    [[nodiscard]] static QMap<QString, QString> parseHeaders(const QByteArray& raw_message);
 
     /// Parse MIME structure for body and attachments. If m_attachment_sink is set (see
     /// readAllAttachments), each attachment's decoded content is appended to it in lock-step with

@@ -434,16 +434,24 @@ jobs:
       run: |
         python scripts/run_all_mutation_catalogs.py --validate
 
-    # G7-2: cppcheck runs in pre-commit on CHANGED files only; run it whole-tree in CI
-    # so a defect in an unchanged file (or a bypassed local hook) is still caught.
-    - name: Static analysis (cppcheck, whole first-party tree)
+    # G7-2 / R5-G10-3: cppcheck runs in pre-commit on CHANGED files only; run it whole-tree
+    # in CI so a defect in an unchanged file (or a bypassed local hook) is still caught.
+    #
+    # This step used to build its own src/**/*.cpp file list. That was narrower than it
+    # looked in two ways -- it never passed include/ (so a header was only ever analyzed
+    # through whatever .cpp happened to include it) and it never passed tests/ -- and, more
+    # to the point, this workflow has not executed for 776+ commits (R5-G21-7 is an owner
+    # cost decision), so the step was not enforcing anything in practice. The gate script is
+    # now the single definition of the whole-project scope, shared with the manual-stage
+    # pre-commit hook, so the two cannot drift. It also carries the false-green tripwire:
+    # cppcheck degrades SILENTLY to "Active checkers: 4/186" on an unparseable macro and
+    # still exits 0 finding nothing, so the gate asserts the checker count as well as the
+    # finding count. Its second pass re-enables unmatchedSuppression to catch inline
+    # // cppcheck-suppress comments that have gone dead.
+    - name: Static analysis (cppcheck whole-project gate)
       shell: pwsh
       run: |
-        $files = Get-ChildItem -Path src -Recurse -Include *.cpp |
-          Where-Object { $_.FullName -notmatch '\\third_party\\' } |
-          ForEach-Object { $_.FullName }
-        Write-Host "cppcheck over $($files.Count) first-party sources"
-        & scripts/run_cppcheck.ps1 -Files $files
+        & scripts/cppcheck_whole_project_gate.ps1
 
     # G15-3: the pre-commit ASCII gate only sees the changed files of a commit. Run it over the
     # WHOLE tracked tree in CI (the script defaults to git ls-files with no arguments) so a

@@ -763,6 +763,7 @@ std::expected<QByteArray, error_code> MboxWriter::buildMimeMessage(
 
 std::expected<QByteArray, error_code> MboxWriter::formatMboxEntry(
     const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments) {
+    // static (declaration only, per the header): every callee is free or already static.
     QByteArray entry;
 
     if (auto envelope = validateEnvelope(item); !envelope) {

@@ -529,6 +529,10 @@ QVector<FirewallRule> FirewallRuleAuditor::findRulesByName(const QString& nameFi
 
 namespace {
 
+// The returned enumerator is only usable while the caller's apartment stays initialized, so
+// `com` is a non-const lvalue reference: that makes passing a temporary ComInitializer a compile
+// error rather than a CoUninitialize that lands before the caller has finished enumerating.
+// cppcheck-suppress constParameterReference ; a const& would bind a temporary ComInitializer
 std::optional<ComPtr<IEnumVARIANT>> initFirewallRuleEnumerator(ComInitializer& com,
                                                                QString& error_out) {
     if (!com.ok()) {

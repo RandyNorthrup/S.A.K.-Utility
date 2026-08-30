@@ -241,7 +241,7 @@ FileExplorerViewMode FileExplorerPane::viewMode() const {
     return m_view_mode;
 }
 
-FileExplorerLayoutSizes FileExplorerPane::layoutSizes() const {
+const FileExplorerLayoutSizes& FileExplorerPane::layoutSizes() const {
     return m_layout_sizes;
 }
 

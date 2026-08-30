@@ -1566,9 +1566,6 @@ void AdvancedUninstallPanel::setOperationRunning(bool running) {
     m_deselect_all_button->setEnabled(!running);
     if (running) {
         m_delete_selected_button->setEnabled(false);
-    }
-
-    if (running) {
         m_uninstall_button->setEnabled(false);
         m_forced_uninstall_button->setEnabled(false);
     } else {

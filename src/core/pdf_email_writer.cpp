@@ -319,8 +319,8 @@ QString PdfEmailWriter::resolveCollisionPath(const QString& target_dir, const QS
     return full_path;
 }
 
-QString PdfEmailWriter::buildHtmlForPdf(
-    const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments) const {
+QString PdfEmailWriter::buildHtmlForPdf(const PstItemDetail& item,
+                                        const QVector<QPair<QString, QByteArray>>& attachments) {
     QString html;
     html.reserve(kPdfHtmlInitialReserveChars);
 

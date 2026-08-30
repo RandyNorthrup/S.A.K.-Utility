@@ -373,8 +373,13 @@ QString tabShortcutHint(int index) {
     if (index == kTenthTabIndex) {
         return QStringLiteral(" (Ctrl+0)");
     }
-    if (index >= kTabShortcutBaseOffset &&
-        index < kTabShortcutBaseOffset + kShiftTabShortcutCount) {
+    // The two branches above have already returned for every index below
+    // kTabShortcutBaseOffset, negative ones included, so only the upper bound is left to
+    // test. The assert fails the build if the constants ever stop lining up that way.
+    static_assert(kDirectTabShortcutCount == kTenthTabIndex &&
+                      kTenthTabIndex + 1 == kTabShortcutBaseOffset,
+                  "tab shortcut ranges drifted; tabShortcutHint lost its lower bound");
+    if (index < kTabShortcutBaseOffset + kShiftTabShortcutCount) {
         return QStringLiteral(" (Ctrl+Shift+%1)").arg(index - kTabShortcutBaseOffset + 1);
     }
     return {};
@@ -1782,7 +1787,7 @@ void MainWindow::createKeyboardShortcuts() {
 
 void MainWindow::loadWindowState() {
     Q_ASSERT(m_tab_widget);
-    auto& config = ConfigManager::instance();
+    const auto& config = ConfigManager::instance();
 
     if (config.getRestoreWindowGeometry()) {
         restoreGeometry(config.getWindowGeometry());

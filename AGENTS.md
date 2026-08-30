@@ -149,6 +149,13 @@ ceiling that was four times what the enforcer accepted.
 
 Drill each guard SEPARATELY. A combined drill cannot tell you which guard the red belongs to.
 
+A drill harness restores the original bytes in a `finally`. **Killing the process defeats that
+`finally` and leaves production source mutated.** It happened here: a drill was stopped
+mid-run and left a planted `// cppcheck-suppress` in `eml_writer.cpp`, in a file that also
+carried a real change, so `git checkout` was not the way back. Let a drill finish, or expect to
+un-plant by hand -- and check `git diff` afterwards either way, because the drill's own report
+cannot tell you about a restore it never reached.
+
 ---
 
 ## Ways a green run means nothing
@@ -160,10 +167,16 @@ Every one of these has happened here.
 | Stale binary | Build FAILED, ctest runs the previous .exe and prints "Passed" | Capture and read BUILD EXIT separately |
 | Wrong exit code | `ctest ... \| Select-String` leaves `$LASTEXITCODE` from the cmdlet, printing 0 for a failed run | Capture the code straight after the native command |
 | Mutation that will not compile | `if (false && ...)` trips C4127 under warnings-as-errors; the build dies and the old binary runs green | Write mutations that still compile and still use their operands (`if (indent < 0 && ...)`, or compare a value with itself) |
-| PowerShell `-File` array binding | `powershell -File x.ps1 -Files $arr` passes only the FIRST element; a scan "PASSED" having read 1 of 11 files | Call it in-process: `& ./x.ps1 -Files $files` |
+| PowerShell `-File` array binding | `powershell -File x.ps1 -Files a.cpp b.cpp c.cpp` binds ONLY `a.cpp` to a plain `[string[]]` parameter and drops the rest **silently**. Dropping the `-Files` name does not help; bare positional values behave the same. This is how pre-commit invokes every PowerShell hook, so **four gates -- cppcheck, clang-format, powershell-syntax, ascii-only -- were each checking one file per invocation while printing PASSED**. Proven end to end: a file containing `function Broken( {` in SECOND position exited 0 with "PowerShell syntax check passed" | In-process (`& ./x.ps1 -Files $files`) binds correctly and is what CI uses -- but a pre-commit hook CANNOT call in-process, which is why documenting only that defence did not prevent this. The fix a hook needs is in the SCRIPT: `[CmdletBinding(PositionalBinding = $false)]` plus `[Parameter(ValueFromRemainingArguments = $true)] [string[]]$Files`, and the hook `entry` must NOT name `-Files`. Verified against both call styles. `PositionalBinding` alone is not enough -- it turns the silent drop into a hard error on the hook's normal case |
+| A trap you already wrote down | The `-File` binding trap above was in this table while four gates shipped with it, because the recorded defence ("call it in-process") did not apply to the caller that actually had the bug | When recording a trap, record the defence for EVERY caller shape, not just the one you hit. A defence that the failing caller cannot use reads as covered and is not |
 | Persistent working directory | A stale `cd build` from an earlier tool call runs the wrong binary | `Set-Location` explicitly each call; prefer absolute paths |
 | Search tool skips gitignored paths | `Grep` (and other repo-aware search) honours .gitignore, and `artifacts/` IS gitignored -- so a hunt for a certification value reports "appears in no artifact" having never opened the evidence directory. The same shape hid a live guard: grepping one function name and not finding it read as "no such guard exists" when the guard was three functions away under another name | For anything under `artifacts/`, `build*/`, `temp/` or any other ignored path, use a plain `grep`/`rg` that does not respect gitignore. And before concluding something is ABSENT, prove the search would have found it -- search for a string you know is there |
 | .NET ignores the shell cwd | `[System.IO.File]::ReadAllBytes("docs/x.md")` resolves against the PROCESS cwd and can throw while a relative `Get-Content` succeeds -- a null result then reads as "0 problems found" | Absolute paths with .NET APIs, and assert the byte count actually read |
+| Gate wired where it never runs | A step sits in `.github/workflows/`, reads as enforcement in every review, and has never executed -- this workflow has not run for 776+ commits (an owner cost decision), so its whole-tree cppcheck step was enforcing nothing while 84 findings accumulated | Before citing a gate as enforcement, establish that it has RUN. A CI-only gate on a repo whose CI is off is a comment. Give every gate a local manual-stage twin |
+| Changed-files scope read as whole-tree | The cppcheck pre-commit hook checks the files YOUR commit touched -- correct for a commit hook, and no evidence at all for "clean project-wide". The findings that accumulate are invisible until someone edits that file, then block THEIR commit | State a gate's SCOPE next to its claim. `scripts/cppcheck_whole_project_gate.ps1` is the whole-tree twin |
+| Analyzer degrades silently | cppcheck drops to "Active checkers: 4/186" on an unparseable macro, finds nothing, and exits 0 -- 65 of 238 test files were once unanalyzed while the gate printed PASSED | Assert the tool's own self-report, not just its finding count. The gate fails under 170/186 |
+| Suppression that suppresses nothing | A `// cppcheck-suppress` whose check no longer fires looks like documented risk and is dead code -- it will silence the check again the day an edit makes it fire | The gate's reveal pass re-enables `unmatchedSuppression`. It found two dead ones on its first run |
+| Static-analysis fix that compiles | Making a member const or static is a LOCAL edit with a NON-LOCAL consequence: it can remove the last instance-bound call from its own CALLER, which the analyzer then reports as newly const-able. The build stays green, and the file you just "cleaned" is a fresh landmine. Four of these were introduced in one batch | Re-run the analyzer, not the compiler, and diff against the pre-fix baseline. "I followed the cascade" is a reading; a cascade check is a re-run |
 
 ---
 

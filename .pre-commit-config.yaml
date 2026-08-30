@@ -153,8 +153,12 @@ repos:
       - id: clang-format
         name: "clang-format (strict)"
         description: "Enforce .clang-format style on all C++ files"
+        # NO trailing -Files: pre-commit appends the staged paths, and naming the parameter
+        # binds ONLY the value immediately after it, stranding the rest. The script collects
+        # them via ValueFromRemainingArguments instead. See scripts/run_cppcheck.ps1's
+        # parameter-block note for the measurement.
         entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/run_clang_format.ps1 -Check -Files
+          -File scripts/run_clang_format.ps1 -Check
         language: system
         types_or: [c, c++]
         files: \.(cpp|h|hpp|cxx|cc|hxx)$
@@ -176,12 +180,19 @@ repos:
       # -------------------------------------------------------------------
       # 6. cppcheck - deep static analysis
       #    All checks, exhaustive level, inconclusive, C++23
+      #
+      #    NO trailing -Files. `-File script.ps1 -Files a.cpp b.cpp` binds ONLY
+      #    a.cpp and silently drops the rest, so this hook analyzed ONE FILE per
+      #    invocation while printing PASSED -- a large part of why 84
+      #    whole-project findings accumulated under a gate advertised as
+      #    "cppcheck on changed files". The script now collects the bare paths
+      #    via ValueFromRemainingArguments; see its parameter-block note.
       # -------------------------------------------------------------------
       - id: cppcheck
         name: "cppcheck (exhaustive)"
         description: "Static analysis: all checks enabled, exhaustive depth, C++23"
         entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/run_cppcheck.ps1 -Files
+          -File scripts/run_cppcheck.ps1
         language: system
         types_or: [c, c++]
         files: \.(cpp|h|hpp|cxx|cc|hxx)$
@@ -202,6 +213,34 @@ repos:
         description: "readability-identifier-naming must stay at zero outside src/core"
         entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
           -File scripts/clang_tidy_naming_gate.ps1
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [manual]
+
+      # -------------------------------------------------------------------
+      # 6a2. cppcheck WHOLE-PROJECT gate (MANUAL stage) -- R5-G10-3.
+      #     Hook 6 above runs cppcheck on the CHANGED files of the commit,
+      #     which is the right shape for a commit hook and the wrong shape for
+      #     the claim "cppcheck clean project-wide": a finding in a file nobody
+      #     has touched is invisible until somebody touches it, and then it
+      #     blocks THEIR commit for a defect they did not introduce. Measured
+      #     2026-08-30, 84 such findings sat in the tree while every commit
+      #     passed. This gate walks src/ and include/ whole and fails on any
+      #     finding, and then runs a second pass with unmatchedSuppression
+      #     enabled to catch inline // cppcheck-suppress comments that have
+      #     gone dead (it found two on its first run, in test_secure_memory).
+      #
+      #     Manual-stage, like the clang-tidy naming gate: two exhaustive
+      #     cppcheck passes take minutes, too slow for every commit. CI runs it
+      #     on every build. Check locally with:
+      #       pre-commit run --hook-stage manual cppcheck-whole-project --all-files
+      # -------------------------------------------------------------------
+      - id: cppcheck-whole-project
+        name: "cppcheck whole-project gate (+ stale-suppression reveal)"
+        description: "Zero findings across src/ and include/; no dead inline suppressions"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/cppcheck_whole_project_gate.ps1
         language: system
         pass_filenames: false
         always_run: true
@@ -421,7 +460,9 @@ repos:
       #     months, mojibake test data) rather than typography. See the
       #     scripts/check_ascii_only.ps1 header for the rule and the \u-escape
       #     escape hatch for a codepoint that must reach a user. Wired now that
-      #     the whole tree is clean (1467 files pass); the script self-excludes
+      #     the whole tree is clean (1582 files pass as of 2026-08-30; the
+      #     comment said 1467, measured when the gate was first wired -- the
+      #     figure is informational, the gate counts for itself); the script self-excludes
       #     binary extensions and vendored/evidence trees, and pre-commit passes
       #     only the changed files.
       # -------------------------------------------------------------------

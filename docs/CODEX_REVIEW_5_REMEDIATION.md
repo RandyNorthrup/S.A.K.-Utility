@@ -1003,8 +1003,11 @@ as of 2026-08-30, MEASURED not hand-carried: 670 [x] / 24 [~] / 0 [ ] MARKERS IN
 669 / 24 until 2026-08-30: the R5-IDX-4 closure flipped a marker and added entries, and the
 tally was not re-run, so the date stamp stayed current while the numbers behind it went
 stale -- the exact failure this file exists to catch, in this file's own summary line.
-It moved twice on 2026-08-30 alone -- 669/24 -> 671/23 when R5-IDX-4 closed, then 670/24 when
-R5-G10-3 was reopened -- which is the argument for checking it rather than re-typing it, so
+It moved three times on 2026-08-30 alone -- 669/24 -> 671/23 when R5-IDX-4 closed, then 670/24
+when R5-G10-3 was reopened, and then TWICE MORE IN ONE COMMIT that lands back on 670/24:
+R5-G10-3 closed (+1 [x]) and R5-G10-6 reopened (-1 [x], +1 [~]). That last pair is the case
+that would defeat a human re-typing the line, because the number does not change while two of
+its constituents do -- which is the argument for checking it rather than re-typing it, so
 `scripts/check_doc_accuracy.ps1` now verifies this line against the file's real marker counts.
 That is not the same as the amount of open work, and the difference matters: 2 of those [~]
 are POINTERS at other documents (R5-IDX-3, -5; R5-IDX-4 closed), and a pointer is one marker
@@ -9849,14 +9852,109 @@ The campaign is complete only when ALL of the following are simultaneously true:
       (764 executed; 35 of 723 verification briefs adjudicated -- see PHASE 2 status)
 - [~] R5-G10-2 Zero open findings in this document -- BLOCKED-ON-USER: the binding remaining items are the LEDGER units (Codex account budget); the other open items are local/actionable but zero-open cannot be reached until the blocked LEDGER work clears.
   - OPEN: zero open findings in this document. Several items remain in progress (G18-3, G18-4, the G21 gate-hardening items, and the G10 acceptance criteria).
-- [~] R5-G10-3 cppcheck clean project-wide with only documented tool-limitation suppressions -- REOPENED 2026-08-30. The suppressions half is settled as written below, but the "clean project-wide" half was never true and no gate checks it: the pre-commit hook runs run_cppcheck.ps1 -Files, i.e. CHANGED FILES ONLY. Measured whole-project on 2026-08-30: 84 findings, all style or tool-limitation -- 40 funcArgNamesDifferent, 12 functionConst, 10 useInitializationList, 6 functionStatic and 16 singles. RE-measured after this commit's fixes: 48. The parameter-name pass took funcArgNamesDifferent 40 -> 6 and the transfer-engine work took functionConst 12 -> 10; the remainder is useInitializationList 10, functionConst 10, functionStatic 6, funcArgNamesDifferent 6, and 16 singles. Zero are real defects (all 13 non-style ones were triaged with an adversarial second pass). They are real in the HOOK's own mode though: three of them blocked this very commit the moment file_explorer_transfer_worker.cpp became a changed file, which is what the whole finding predicted -- and fixing those three cascaded, because reserveStagingPath calls destinationPathVacant and so became const-able itself, blocking the NEXT attempt in turn. Four const fixes to land one commit, in a file whose only real change was deleting a dead function. Settled part follows: cppcheck_suppressions.txt holds only fundamental cppcheck limits (no Qt/system headers, single-TU unusedFunction/unusedStructMember, unknownMacro, unmatchedSuppression) plus a recorded owner style decision (useStlAlgorithm) and tests-scoped entries; the 'delete the file' criterion is superseded because those suppressions must remain for the tool.
-  - OPEN: cppcheck_suppressions.txt still exists in the tree; the requirement (file deleted, cppcheck clean project-wide) is not yet reached.
+- [x] R5-G10-3 cppcheck clean project-wide with only documented tool-limitation suppressions -- REOPENED 2026-08-30. The suppressions half is settled as written below, but the "clean project-wide" half was never true and no gate checks it: the pre-commit hook runs run_cppcheck.ps1 -Files, i.e. CHANGED FILES ONLY. Measured whole-project on 2026-08-30: 84 findings, all style or tool-limitation -- 40 funcArgNamesDifferent, 12 functionConst, 10 useInitializationList, 6 functionStatic and 16 singles. RE-measured after this commit's fixes: 48. The parameter-name pass took funcArgNamesDifferent 40 -> 6 and the transfer-engine work took functionConst 12 -> 10; the remainder is useInitializationList 10, functionConst 10, functionStatic 6, funcArgNamesDifferent 6, and 16 singles. Zero are real defects (all 13 non-style ones were triaged with an adversarial second pass). They are real in the HOOK's own mode though: three of them blocked this very commit the moment file_explorer_transfer_worker.cpp became a changed file, which is what the whole finding predicted -- and fixing those three cascaded, because reserveStagingPath calls destinationPathVacant and so became const-able itself, blocking the NEXT attempt in turn. Four const fixes to land one commit, in a file whose only real change was deleting a dead function. Settled part follows: cppcheck_suppressions.txt holds only fundamental cppcheck limits (no Qt/system headers, single-TU unusedFunction/unusedStructMember, unknownMacro, unmatchedSuppression) plus a recorded owner style decision (useStlAlgorithm) and tests-scoped entries; the 'delete the file' criterion is superseded because those suppressions must remain for the tool.
+  - CLOSED 2026-08-30. The 48 remaining findings were driven to ZERO (measured whole-project:
+    0 findings, 183/186 checkers active) and the acceptance is now ENFORCED by
+    scripts/cppcheck_whole_project_gate.ps1 -- manual-stage in pre-commit, and on every CI
+    build. The 'delete the suppressions file' half stays superseded as a design decision: those
+    entries are fundamental cppcheck limits and must remain for the tool.
+  - CORRECTION to what this entry said when it was reopened. It claimed the acceptance was
+    "enforced by no gate" and that "nothing runs it whole-project". Both were wrong.
+    .github/workflows/build-release.yml has carried a whole-tree cppcheck step since G7-2. What
+    is true is narrower and worse: that step built its own src/**/*.cpp list, so it never passed
+    include/ (a header was analyzed only through whatever .cpp happened to include it) and never
+    passed tests/ -- and this workflow has not executed for 776+ commits (R5-G21-7, the owner's
+    cost decision), so it was enforcing nothing in practice. A gate wired where it never runs is
+    a comment. That is now a row in AGENTS.md's green-run-means-nothing table, along with three
+    siblings this work produced. The CI step now calls the gate script, so CI and the local
+    manual hook share ONE definition of the whole-project scope and cannot drift.
+  - THE BIGGEST FINDING OF THIS COMMIT, and it was not the one being looked for. Four
+    pre-commit gates -- cppcheck, clang-format, powershell-syntax, ascii-only -- were each
+    checking ONE FILE PER INVOCATION while printing PASSED. `powershell.exe -File script.ps1
+    -Files a.cpp b.cpp c.cpp` binds only `a.cpp` to a plain `[string[]]$Files` and drops the
+    rest SILENTLY; removing the `-Files` name does not help, bare positional values behave
+    identically. Measured on a probe script, then proven end to end on a real gate: a file
+    containing `function Broken( {` placed SECOND exited 0 with "PowerShell syntax check
+    passed", and first exited 1. pre-commit chunks the staged files across cores and invokes
+    the hook once per chunk, so roughly one file per chunk was ever examined.
+    THIS IS A LARGE PART OF THE ANSWER to the question this item opened with -- how 84
+    whole-project cppcheck findings accumulated under a gate advertised as "cppcheck on
+    changed files". The whole-project scope gap was real, and so was this: even the changed
+    files were mostly not being read.
+    It surfaced by accident. Adding -SuppressionsFile and -ErrorsFile to run_cppcheck.ps1 gave
+    the stranded values somewhere to land, so the second staged file became the suppressions
+    list and cppcheck died with `Failed to add suppression. Invalid id "namespace sak {"`.
+    A loud failure caused by the same defect that had been silent for the life of the hook.
+    THE TRAP WAS ALREADY IN AGENTS.md and did not prevent this, which is the part worth
+    keeping: the recorded defence was "call it in-process", and a pre-commit hook cannot. A
+    defence that the failing caller cannot use reads as covered and is not. The row now
+    carries the fix a hook actually needs -- `[CmdletBinding(PositionalBinding = $false)]`
+    plus `[Parameter(ValueFromRemainingArguments = $true)]`, and no `-Files` in the entry --
+    verified against both call styles, and each of the four gates re-drilled with its defect
+    in second position: all four now RED, all four were GREEN before.
+  - HOW THE 47 WERE FIXED, and the trap in it. Nine agents fixed one file group each, then nine
+    adversarial verifiers re-ran cppcheck against BOTH HEAD and the working tree. That second
+    pass is what made the difference: making a member const or static is a LOCAL edit with a
+    NON-LOCAL consequence, because it can remove the last instance-bound call from its own
+    CALLER, which cppcheck then reports as newly const-able or static-able. Four such cascades
+    were introduced and caught -- scanStandardDirs/scanStandardFiles -> scanKnownPaths,
+    appendRunKeyValue -> scanRunKey, buildHtmlHeaderFields -> buildHtmlPage, buildMimeMessage ->
+    formatMboxEntry. Each would have traded 8 findings for 2 and turned the file into a fresh
+    landmine. NONE would have been caught by the build: they all compile. One fixer wrote "the
+    const cascade is empty" and "followed the cascade" having never run the tool. A cascade
+    check is a cppcheck re-run, not a reading.
+  - ONE SUPPRESSION WAS REFUTED BY EXPERIMENT. The registry_snapshot_engine unreadVariable fixer
+    argued a reference fix could not help "because passing SnapshotSink by reference does not
+    change that the member is a reference". Its verifier tested that claim instead of accepting
+    it: `const SnapshotSink&` yields ZERO findings with no suppression, and compiles clean under
+    the project's own /W4 /WX /permissive- /sdl flags -- reference members do not inherit the
+    enclosing object's constness, so the store still reaches the caller's bool. Suppressions
+    went 4 -> 3 for this batch. The three that remain are a cross-thread atomic
+    (duplicateCondition), a Qt-parented single-call allocation (publicAllocationError), and a
+    ComInitializer& that must stay non-const so a temporary cannot bind (constParameterReference).
 - [x] R5-G10-4 clang-tidy wired and clean with all checks enabled -- clang-tidy 22.1.1 IS installed (C:/Program Files/LLVM) and the naming subset is wired; "all checks enabled" is intentionally not the goal (owner safe-subsets-only, R5-G12-4).
   - SETTLED 2026-08-18 [design-decision]: the accepted scope is the owner's safe-subset model (R5-G12-4, settled), not literally all checks; clang-tidy is wired (.clang-tidy) and clean at that subset. The one remaining candidate bug-class check, misc-no-recursion, was settled by R5-G2 (2026-08-18): a whole-tree run found 118 recursive functions, ALL already depth/visited/symlink-guarded (zero defects), so enabling it would add 118 false-positive NOLINTs for no caught bug -- it stays off by-design in .clang-tidy. With the last candidate check dispositioned and the subset clean, the clang-tidy acceptance is met at the owner's chosen scope; there is no remaining binding local work.
 - [x] R5-G10-5 Zero inline suppressions without a proven tool-limitation justification
-  - SETTLED 2026-08-18 [rollup]: the acceptance rollup of R5-G5-1 (enumerate every inline suppression with its justification text) and R5-G5-2 (each is a proven tool limitation, not removable-by-fix), both [x]. Re-verified against the LIVE tree 2026-08-18: every first-party inline ANALYSIS suppression (cppcheck-suppress + NOLINT) carries a proven single-TU tool-limitation justification -- an adjacent reason comment or an inline ; reason. (clang-format off/on regions are formatting directives, not analysis suppressions, and the only pragma warning(disable) are in vendored third_party/lzfse, out of first-party scope.) The cppcheck --inline-suppr + unmatchedSuppression gate (G6-5, wired) stays green, so no suppression is stale. The one site the earlier audit had left with only an implicit reason -- test_uup_conversion_pipeline.cpp:228, unknownMacro on the Qt QTEST_SET_MAIN_SOURCE_PATH driver macro cppcheck cannot preprocess -- now carries an explicit inline justification. Zero unjustified suppressions remain.
-- [x] R5-G10-6 Dead-code scanner wired and reporting zero dead first-party code
-  - DONE via G19-5/G6: the dead-code scanner (cppcheck --enable=all, scripts/run_cppcheck.ps1) is wired and reports zero dead first-party code.
+  - SETTLED 2026-08-18 [rollup]: the acceptance rollup of R5-G5-1 (enumerate every inline suppression with its justification text) and R5-G5-2 (each is a proven tool limitation, not removable-by-fix), both [x]. Re-verified against the LIVE tree 2026-08-18: every first-party inline ANALYSIS suppression (cppcheck-suppress + NOLINT) carries a proven single-TU tool-limitation justification -- an adjacent reason comment or an inline ; reason. (clang-format off/on regions are formatting directives, not analysis suppressions, and the only pragma warning(disable) are in vendored third_party/lzfse, out of first-party scope.) The one site the earlier audit had left with only an implicit reason -- test_uup_conversion_pipeline.cpp:228, unknownMacro on the Qt QTEST_SET_MAIN_SOURCE_PATH driver macro cppcheck cannot preprocess -- now carries an explicit inline justification. Zero unjustified suppressions remain.
+  - CORRECTION 2026-08-30. This entry used to read "The cppcheck --inline-suppr +
+    unmatchedSuppression gate (G6-5, wired) stays green, so no suppression is stale." That was
+    false, and false in the direction that matters: unmatchedSuppression is SUPPRESSED GLOBALLY
+    in cppcheck_suppressions.txt (as "meta-noise from the suppression file itself"), so the only
+    check that can report a suppression matching nothing was itself silenced. Nothing was
+    verifying staleness, and the sentence was reading a permanently-quiet check as a green gate
+    -- the same shape as the G7-2 CI step that had never run. Two suppressions WERE stale:
+    tests/unit/test_secure_memory.cpp:214 and :216, a pair of accessMoved suppressions on reads
+    after a self-move through a reference alias, which cppcheck never flagged because it does
+    not follow the move through the reference. Both removed. The global entry is legitimate for
+    the FILE-level suppressions and wrong for the inline ones, so the fix is not to delete it
+    but to run a second pass without it: scripts/cppcheck_whole_project_gate.ps1 does exactly
+    that, over an explicit .cpp list (a header analyzed standalone instantiates nothing, so
+    every live suppression in it reads as dead) and with useStlAlgorithm stripped too (a global
+    entry that MASKS its own three inline sites). Zero stale inline suppressions after the fix,
+    now checked on every run rather than asserted.
+- [~] R5-G10-6 Dead-code scanner wired and reporting zero dead first-party code -- REOPENED
+  2026-08-30. The closure below credited cppcheck --enable=all with dead-code coverage it does
+  not have.
+  - WAS: "DONE via G19-5/G6: the dead-code scanner (cppcheck --enable=all,
+    scripts/run_cppcheck.ps1) is wired and reports zero dead first-party code."
+  - WHY THAT IS FALSE. The check that finds an unused function is cppcheck's `unusedFunction`,
+    and it is disabled TWICE OVER in this configuration. (1) cppcheck_suppressions.txt suppresses
+    it globally, with the honest reason "Single-file analysis cannot determine cross-TU
+    function/member usage". (2) Independently of that, run_cppcheck.ps1 passes `-j 4`, and
+    cppcheck prints on every run -- including every "PASSED" run -- "cppcheck: unusedFunction
+    check requires --cppcheck-build-dir to be active with -j." So the scanner reports zero dead
+    code because it never looks, and the line that says so has been sitting in the run output
+    the whole time. This is not theoretical: FileExplorerTransferEngine::removeReplacedDestination
+    was declared, defined, documented and never called for an entire design cycle (it implemented
+    the pre-B8-06 delete-before-copy design), and it was found by hand during the R5-G10-3 triage,
+    not by this "wired" scanner.
+  - THE LIKELY FIX, to be measured before it is claimed: cppcheck's own message names the
+    remedy -- passing `--cppcheck-build-dir` restores unusedFunction under `-j`, and that
+    directory is also what gives cppcheck the whole-program view the suppression's reason says
+    it lacks. Requires re-judging the global suppression, and expecting a real yield: a function
+    used only by tests will read as unused in a src-only run, so the run scope has to include
+    tests/ or the finding set has to be triaged against it. Deliberately NOT folded into the
+    R5-G10-3 commit -- that one is a measured zero, and this is an unmeasured question.
 - [x] R5-G10-7 All style, literal, and accessibility gates wired and green
   - DONE: the style-token, magic-number and accessibility gates (G8-5, G20-5) are wired and green.
 - [~] R5-G10-8 Full Release ctest green, with a regression test for every fix

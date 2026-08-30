@@ -502,7 +502,8 @@ QVector<LeftoverItem> LeftoverScanner::reportOnlyInstallLocation() const {
 // Phase 2: Known Application Paths
 // ======================================================================
 
-QVector<LeftoverItem> LeftoverScanner::scanKnownPaths(const std::atomic<bool>& stopRequested) {
+QVector<LeftoverItem> LeftoverScanner::scanKnownPaths(
+    const std::atomic<bool>& stopRequested) const {
     QVector<LeftoverItem> items;
 
     // Scan roots come from environment variables (there is no OS-agnostic other source), while
@@ -538,8 +539,8 @@ QVector<LeftoverItem> LeftoverScanner::scanKnownPaths(const std::atomic<bool>& s
     return items;
 }
 
-QVector<LeftoverItem> LeftoverScanner::scanStandardDirs(const QString& basePath,
-                                                        const std::atomic<bool>& stopRequested) {
+QVector<LeftoverItem> LeftoverScanner::scanStandardDirs(
+    const QString& basePath, const std::atomic<bool>& stopRequested) const {
     QVector<LeftoverItem> items;
     const QDir base(basePath);
     if (!base.exists()) {
@@ -592,8 +593,8 @@ QVector<LeftoverItem> LeftoverScanner::scanStandardDirs(const QString& basePath,
     return items;
 }
 
-QVector<LeftoverItem> LeftoverScanner::scanStandardFiles(const QString& basePath,
-                                                         const std::atomic<bool>& stopRequested) {
+QVector<LeftoverItem> LeftoverScanner::scanStandardFiles(
+    const QString& basePath, const std::atomic<bool>& stopRequested) const {
     QVector<LeftoverItem> items;
     const QDir base(basePath);
     if (!base.exists()) {
@@ -887,13 +888,14 @@ QVector<LeftoverItem> LeftoverScanner::scanScheduledTasks(const std::atomic<bool
                                                           bool& ok) {
     QVector<LeftoverItem> items;
 
-    QString schtasks = QStringLiteral("schtasks.exe");
 #ifdef Q_OS_WIN
-    schtasks = system32Exe(QStringLiteral("schtasks.exe"));
+    const QString schtasks = system32Exe(QStringLiteral("schtasks.exe"));
     if (schtasks.isEmpty()) {
         ok = false;  // cannot resolve a trusted System32 schtasks -> fail closed
         return items;
     }
+#else
+    const QString schtasks = QStringLiteral("schtasks.exe");
 #endif
     const auto result = sak::runProcess(schtasks,
                                         {QStringLiteral("/query"),
@@ -1028,13 +1030,14 @@ void LeftoverScanner::scanFirewallDirection(const QStringList& netsh_args,
                                             const std::atomic<bool>& stopRequested,
                                             QVector<LeftoverItem>& items,
                                             bool& ok) {
-    QString netsh = QStringLiteral("netsh.exe");
 #ifdef Q_OS_WIN
-    netsh = system32Exe(QStringLiteral("netsh.exe"));
+    const QString netsh = system32Exe(QStringLiteral("netsh.exe"));
     if (netsh.isEmpty()) {
         ok = false;  // cannot resolve a trusted System32 netsh -> fail closed
         return;
     }
+#else
+    const QString netsh = QStringLiteral("netsh.exe");
 #endif
     const auto result =
         sak::runProcess(netsh, netsh_args, kPowerShellTimeoutMs, [&stopRequested]() {
@@ -1176,7 +1179,7 @@ bool LeftoverScanner::appendRunKeyValue(HKEY key,
                                         DWORD index,
                                         const QString& hive_name,
                                         const wchar_t* subkey,
-                                        QVector<LeftoverItem>& items) {
+                                        QVector<LeftoverItem>& items) const {
     const RunValueRead read = readRunKeyValue(key, index);
     if (!read.ok) {
         // The value could not be read (genuine error or grow ceiling) and was dropped. Signal the
@@ -1203,7 +1206,7 @@ bool LeftoverScanner::scanRunKey(HKEY hive,
                                  const wchar_t* subkey,
                                  const QString& hive_name,
                                  const std::atomic<bool>& stopRequested,
-                                 QVector<LeftoverItem>& items) {
+                                 QVector<LeftoverItem>& items) const {
     HKEY key = nullptr;
     const LONG rc = RegOpenKeyExW(hive, subkey, 0, KEY_READ, &key);
     if (rc != ERROR_SUCCESS) {
@@ -1268,6 +1271,7 @@ QVector<LeftoverItem> LeftoverScanner::scanStartupEntries(const std::atomic<bool
     Q_UNUSED(ok);
 #endif
 
+    // cppcheck-suppress duplicateCondition ; atomic stop flag checked across threads
     if (!stopRequested.load()) {
         scanStartupFolder(stopRequested, items);
     }
@@ -1276,7 +1280,7 @@ QVector<LeftoverItem> LeftoverScanner::scanStartupEntries(const std::atomic<bool
 }
 
 void LeftoverScanner::scanStartupFolder(const std::atomic<bool>& stopRequested,
-                                        QVector<LeftoverItem>& items) {
+                                        QVector<LeftoverItem>& items) const {
     const QString startup_folder =
         QStandardPaths::writableLocation(QStandardPaths::ApplicationsLocation) + "/Startup";
     if (!QDir(startup_folder).exists()) {
@@ -1332,7 +1336,7 @@ LeftoverItem::RiskLevel LeftoverScanner::classifyFileRisk(const QString& path_lo
     return LeftoverItem::RiskLevel::Review;
 }
 
-LeftoverItem::RiskLevel LeftoverScanner::classifyTypeRisk(LeftoverItem::Type type) const {
+LeftoverItem::RiskLevel LeftoverScanner::classifyTypeRisk(LeftoverItem::Type type) {
     switch (type) {
     case LeftoverItem::Type::File:
     case LeftoverItem::Type::Folder:

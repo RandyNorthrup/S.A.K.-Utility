@@ -58,13 +58,13 @@ public:
     ConnectivityTester& operator=(ConnectivityTester&&) = delete;
 
     /// @brief Run ping (blocking)
-    void ping(const PingConfig& config);
+    void ping(const PingConfig& rawConfig);
 
     /// @brief Run traceroute (blocking)
-    void traceroute(const TracerouteConfig& config);
+    void traceroute(const TracerouteConfig& rawConfig);
 
     /// @brief Run MTR -- continuous ping+traceroute (blocking)
-    void mtr(const MtrConfig& config);
+    void mtr(const MtrConfig& rawConfig);
 
     /// @brief Cancel current operation
     void cancel();

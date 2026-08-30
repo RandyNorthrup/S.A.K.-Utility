@@ -169,14 +169,18 @@ QSet<QString> RegistrySnapshotEngine::captureSnapshot(bool* reliable) {
 
 #ifdef Q_OS_WIN
 
-void RegistrySnapshotEngine::enumerateKeys(
-    HKEY hive, const QString& subkey, const QString& hiveName, SnapshotSink sink, int maxDepth) {
+void RegistrySnapshotEngine::enumerateKeys(HKEY hive,
+                                           const QString& subkey,
+                                           const QString& hiveName,
+                                           const SnapshotSink& sink,
+                                           int maxDepth) {
     if (maxDepth <= 0) {
         return;
     }
     if (sink.keys.size() >= kMaxSnapshotKeys) {
         // Total-size budget reached: stop and flag rather than letting attacker-controlled
-        // breadth grow the key set without bound.
+        // breadth grow the key set without bound. SnapshotSink::reliable is a bool& bound to
+        // captureSnapshot's local ok, which it copies out through its reliable* out-parameter.
         sink.reliable = false;
         return;
     }

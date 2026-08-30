@@ -7627,8 +7627,8 @@ void FileManagementExplorerPanel::ensureSecondPane() {
 // whichever view the user last clicked, so a selection left behind in the other
 // pane is a selection naming entries that do not live under the path the command
 // is about to act on.
-void FileManagementExplorerPanel::clearInactivePaneSelection(const int active_index) {
-    FileExplorerPane* inactive = (active_index == 0) ? m_pane_b : m_pane_a;
+void FileManagementExplorerPanel::clearInactivePaneSelection(const int active_index) const {
+    const FileExplorerPane* inactive = (active_index == 0) ? m_pane_b : m_pane_a;
     if (inactive == nullptr) {
         return;
     }

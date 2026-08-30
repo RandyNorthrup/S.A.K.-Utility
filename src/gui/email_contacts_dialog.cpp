@@ -296,7 +296,7 @@ void EmailContactsDialog::onItemsLoaded(uint64_t /*folder_id*/,
     }
 }
 
-void EmailContactsDialog::onDetailLoaded(sak::PstItemDetail detail) {
+void EmailContactsDialog::onDetailLoaded(const sak::PstItemDetail& detail) {
     if (detail.item_type == EmailItemType::Contact || detail.item_type == EmailItemType::DistList) {
         displayContactDetail(detail);
     }

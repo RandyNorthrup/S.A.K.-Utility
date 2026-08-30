@@ -271,7 +271,7 @@ private:
         const QByteArray& page_data, const PageFormatSizes& fmt, uint64_t page_offset);
 
     /// Parse the format-dependent BTree page metadata (entry count/size, level).
-    void parsePageMeta(BTreePageInfo& info, int meta_offset);
+    void parsePageMeta(BTreePageInfo& info, int meta_offset) const;
 
     /// Load the Node BTree from the given page offset. Public entry point: seeds a fresh
     /// per-traversal visited-page-offset set and delegates to loadNodeBTreeGuarded.
@@ -503,7 +503,7 @@ private:
     /// Read sub-node BTree leaf entries
     [[nodiscard]] QHash<uint64_t, sak::PstNode> readSubNodeLeafEntries(const QByteArray& data,
                                                                        int header_size,
-                                                                       uint16_t entry_count);
+                                                                       uint16_t entry_count) const;
 
     /// Read sub-node BTree intermediate entries (recursive)
     [[nodiscard]] std::expected<QHash<uint64_t, sak::PstNode>, sak::error_code>

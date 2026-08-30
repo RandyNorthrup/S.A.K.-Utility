@@ -679,7 +679,7 @@ bool AppInstallationWorker::verifyInstallation(const MigrationJob& job,
 // ======================================================================
 
 bool AppInstallationWorker::isNewerVersionInstalled(const MigrationJob& job,
-                                                    QString& installed_version) {
+                                                    QString& installed_version) const {
     installed_version.clear();
 
     const auto requested = NuGetVersion::parse(job.version);

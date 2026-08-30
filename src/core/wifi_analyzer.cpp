@@ -779,14 +779,14 @@ WiFiBssSecurity WiFiAnalyzer::deriveBssSecurity(bool privacyBit,
                                                 const unsigned char* ie,
                                                 int ieLen) {
     WiFiBssSecurity sec;
-    const IeSecurityScan scan = scanSecurityIes(ie, ieLen);
-    if (scan.rsn) {
-        sec.authentication = scan.sae ? QStringLiteral("WPA3") : QStringLiteral("WPA2");
+    const IeSecurityScan ieScan = scanSecurityIes(ie, ieLen);
+    if (ieScan.rsn) {
+        sec.authentication = ieScan.sae ? QStringLiteral("WPA3") : QStringLiteral("WPA2");
         sec.encryption = QStringLiteral("AES-CCMP");
         sec.isSecure = true;
         return sec;
     }
-    if (scan.wpa1) {
+    if (ieScan.wpa1) {
         sec.authentication = QStringLiteral("WPA");
         sec.encryption = QStringLiteral("TKIP");
         sec.isSecure = true;

@@ -165,11 +165,11 @@ private:
     QVector<LeftoverItem> scanInstallLocation(const std::atomic<bool>& stopRequested);
 
     // Phase 2: Known application directories
-    QVector<LeftoverItem> scanKnownPaths(const std::atomic<bool>& stopRequested);
+    QVector<LeftoverItem> scanKnownPaths(const std::atomic<bool>& stopRequested) const;
     QVector<LeftoverItem> scanStandardDirs(const QString& basePath,
-                                           const std::atomic<bool>& stopRequested);
+                                           const std::atomic<bool>& stopRequested) const;
     QVector<LeftoverItem> scanStandardFiles(const QString& basePath,
-                                            const std::atomic<bool>& stopRequested);
+                                            const std::atomic<bool>& stopRequested) const;
 
     // Phase 3: Registry (snapshot diff + known paths)
 #ifdef Q_OS_WIN
@@ -204,7 +204,7 @@ private:
                                   const wchar_t* subkey,
                                   const QString& hive_name,
                                   const std::atomic<bool>& stopRequested,
-                                  QVector<LeftoverItem>& items);
+                                  QVector<LeftoverItem>& items) const;
     /// Match + append a single Run-key value (nesting/complexity split out of scanRunKey). Returns
     /// TRUE when the value was READ reliably (whether or not it matched this program), FALSE when
     /// the read itself failed (a genuine error or the grow ceiling) so the caller can flag the
@@ -214,14 +214,15 @@ private:
                                          DWORD index,
                                          const QString& hive_name,
                                          const wchar_t* subkey,
-                                         QVector<LeftoverItem>& items);
+                                         QVector<LeftoverItem>& items) const;
 #endif
-    void scanStartupFolder(const std::atomic<bool>& stopRequested, QVector<LeftoverItem>& items);
+    void scanStartupFolder(const std::atomic<bool>& stopRequested,
+                           QVector<LeftoverItem>& items) const;
 
     // Classification and matching
     LeftoverItem::RiskLevel classifyRisk(const QString& path, LeftoverItem::Type type) const;
     LeftoverItem::RiskLevel classifyFileRisk(const QString& path_lower) const;
-    LeftoverItem::RiskLevel classifyTypeRisk(LeftoverItem::Type type) const;
+    static LeftoverItem::RiskLevel classifyTypeRisk(LeftoverItem::Type type);
     void extractInstallDirNames();
     [[nodiscard]] bool isProtectedPath(const QString& path) const;
     [[nodiscard]] bool matchesProgramExact(const QString& nameLower) const;

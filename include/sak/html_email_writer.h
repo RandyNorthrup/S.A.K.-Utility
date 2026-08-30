@@ -42,10 +42,10 @@ private:
     [[nodiscard]] std::expected<QString, error_code> resolveMessageDirectory(
         const QString& subfolder_path) const;
 
-    [[nodiscard]] QString buildHtmlPage(
-        const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments) const;
+    [[nodiscard]] static QString buildHtmlPage(
+        const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments);
 
-    void buildHtmlHeaderFields(QTextStream& ts, const PstItemDetail& item) const;
+    static void buildHtmlHeaderFields(QTextStream& ts, const PstItemDetail& item);
 
     /// Saves each listed attachment into a per-message _files dir. Returns false if
     /// ANY listed attachment fails to save (fail closed) so the caller can refuse to

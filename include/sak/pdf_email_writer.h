@@ -40,8 +40,8 @@ private:
     [[nodiscard]] std::expected<QString, error_code> resolveTargetDirectory(
         const QString& subfolder_path) const;
 
-    [[nodiscard]] QString buildHtmlForPdf(
-        const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments) const;
+    [[nodiscard]] static QString buildHtmlForPdf(
+        const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments);
 
     [[nodiscard]] QString sanitizeFilename(const QString& subject, const QDateTime& date) const;
 

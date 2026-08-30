@@ -42,7 +42,7 @@ private Q_SLOTS:
     void onExportVcfClicked();
     void onExportCsvClicked();
     void onItemsLoaded(uint64_t folder_id, QVector<sak::PstItemSummary> items, int total);
-    void onDetailLoaded(sak::PstItemDetail detail);
+    void onDetailLoaded(const sak::PstItemDetail& detail);
     void onControllerError(const QString& error);
 
 private:

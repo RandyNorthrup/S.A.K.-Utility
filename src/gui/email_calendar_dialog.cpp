@@ -842,7 +842,7 @@ void EmailCalendarDialog::setupUi() {
 // UI Setup -- toolbar (navigation, view switch, search)
 // ============================================================================
 
-void EmailCalendarDialog::setupToolbar(QVBoxLayout* parent) {
+void EmailCalendarDialog::setupToolbar(QVBoxLayout* parent_layout) {
     auto* toolbar = new QWidget(this);
     toolbar->setStyleSheet(ui::topOrBottomBarStyle(ui::kColorBgSurface, ui::kColorBorderDefault));
     auto* layout = new QHBoxLayout(toolbar);
@@ -856,7 +856,7 @@ void EmailCalendarDialog::setupToolbar(QVBoxLayout* parent) {
     layout->addStretch();
     setupSearchBar(layout);
 
-    parent->addWidget(toolbar);
+    parent_layout->addWidget(toolbar);
     updateNavigationLabel();
 }
 
@@ -965,7 +965,7 @@ void EmailCalendarDialog::setupSearchBar(QHBoxLayout* layout) {
 // UI Setup -- main content (sidebar + views + detail)
 // ============================================================================
 
-void EmailCalendarDialog::setupMainContent(QVBoxLayout* parent) {
+void EmailCalendarDialog::setupMainContent(QVBoxLayout* parent_layout) {
     auto* outer_splitter = new QSplitter(Qt::Horizontal, this);
     outer_splitter->setChildrenCollapsible(false);
 
@@ -982,7 +982,7 @@ void EmailCalendarDialog::setupMainContent(QVBoxLayout* parent) {
     outer_splitter->addWidget(right_splitter);
     outer_splitter->setSizes(
         {email::kCalendarSidebarDefaultWidth, email::kCalendarContentDefaultWidth});
-    parent->addWidget(outer_splitter, 1);
+    parent_layout->addWidget(outer_splitter, 1);
 }
 
 // ============================================================================
@@ -1152,7 +1152,7 @@ void EmailCalendarDialog::setupDetailPanel(QSplitter* splitter) {
 // UI Setup -- footer (status, export, close)
 // ============================================================================
 
-void EmailCalendarDialog::setupFooter(QVBoxLayout* parent) {
+void EmailCalendarDialog::setupFooter(QVBoxLayout* parent_layout) {
     auto* footer = new QWidget(this);
     footer->setStyleSheet(
         ui::topOrBottomBarStyle(ui::kColorBgSurface, ui::kColorBorderDefault, "top"));
@@ -1189,7 +1189,7 @@ void EmailCalendarDialog::setupFooter(QVBoxLayout* parent) {
     connect(m_close_button, &QPushButton::clicked, this, &QDialog::accept);
     layout->addWidget(m_close_button);
 
-    parent->addWidget(footer);
+    parent_layout->addWidget(footer);
 }
 
 // ============================================================================

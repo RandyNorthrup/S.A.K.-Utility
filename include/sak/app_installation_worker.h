@@ -299,7 +299,7 @@ private:
      * @param[out] installed_version The version found on the system
      * @return True if a newer or equal version is already present
      */
-    bool isNewerVersionInstalled(const MigrationJob& job, QString& installed_version);
+    bool isNewerVersionInstalled(const MigrationJob& job, QString& installed_version) const;
 
     /**
      * @brief Update job status (thread-safe)

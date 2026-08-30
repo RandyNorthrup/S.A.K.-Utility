@@ -35,7 +35,13 @@
     loudly until it is named here, rather than slipping through an allowlist unnoticed.
 #>
 
+# PositionalBinding=$false + ValueFromRemainingArguments. With a plain [string[]]$Files this
+# script received ONLY the first path pre-commit handed it and silently ignored the rest, so a
+# non-ASCII byte in any file but the first of a chunk passed the commit gate. See the note in
+# scripts/run_cppcheck.ps1 for the measurement behind this.
+[CmdletBinding(PositionalBinding = $false)]
 param(
+    [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$Files
 )
 

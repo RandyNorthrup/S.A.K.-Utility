@@ -523,11 +523,13 @@ void EmailInspectorController::connectPstSignals() {
                 setState(State::Idle);
             });
 
-    connect(
-        m_pst_parser.get(), &PstParser::itemDetailLoaded, this, [this](sak::PstItemDetail detail) {
-            Q_EMIT itemDetailLoaded(detail);
-            setState(State::Idle);
-        });
+    connect(m_pst_parser.get(),
+            &PstParser::itemDetailLoaded,
+            this,
+            [this](const sak::PstItemDetail& detail) {
+                Q_EMIT itemDetailLoaded(detail);
+                setState(State::Idle);
+            });
 
     connect(m_pst_parser.get(),
             &PstParser::itemPropertiesLoaded,

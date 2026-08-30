@@ -49,7 +49,7 @@ public:
     /// @brief Update comparison state with a single query result
     void updateComparisonWithResult(const DnsQueryResult& result,
                                     DnsServerComparison& comparison,
-                                    QVector<QString>& firstAnswers);
+                                    QVector<QString>& firstAnswers) const;
 
     /// @brief Inspect the local DNS cache (blocking)
     void inspectDnsCache();

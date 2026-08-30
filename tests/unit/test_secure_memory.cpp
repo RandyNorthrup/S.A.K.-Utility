@@ -211,9 +211,12 @@ void SecureMemoryTests::secureBuffer_moveAssignment() {
     // its own storage and then zero its own size, destroying a live buffer.
     sak::secure_buffer<int>& alias = b;
     b = std::move(alias);
-    // cppcheck-suppress accessMoved
+    // No accessMoved suppression here, unlike the two reads above: cppcheck does not follow
+    // the move through the reference, so it never flags these two lines and a suppression on
+    // them would be dead -- silencing a check that is not firing, and hiding it if one day it
+    // does. cppcheck_whole_project_gate.ps1's reveal pass is what caught the pair that used
+    // to sit here.
     const std::size_t self_size = b.size();
-    // cppcheck-suppress accessMoved
     const int self_head = b[0];
     QCOMPARE(self_size, std::size_t{16});
     QCOMPARE(self_head, 100);

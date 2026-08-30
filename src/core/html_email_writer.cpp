@@ -345,7 +345,7 @@ bool HtmlEmailWriter::saveFileAttachments(
 // HTML Generation
 // ============================================================================
 
-void HtmlEmailWriter::buildHtmlHeaderFields(QTextStream& ts, const PstItemDetail& item) const {
+void HtmlEmailWriter::buildHtmlHeaderFields(QTextStream& ts, const PstItemDetail& item) {
     ts << QStringLiteral("<div class=\"header\">\n");
     ts << QStringLiteral("<h2>") << escapeHtml(item.subject) << QStringLiteral("</h2>\n");
 
@@ -382,8 +382,8 @@ void HtmlEmailWriter::buildHtmlHeaderFields(QTextStream& ts, const PstItemDetail
     ts << QStringLiteral("</div>\n");
 }
 
-QString HtmlEmailWriter::buildHtmlPage(
-    const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments) const {
+QString HtmlEmailWriter::buildHtmlPage(const PstItemDetail& item,
+                                       const QVector<QPair<QString, QByteArray>>& attachments) {
     QString html;
     QTextStream ts(&html);
 

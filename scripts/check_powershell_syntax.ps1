@@ -7,7 +7,14 @@
     pre-commit without executing installer, bundle, signing, or release logic.
 #>
 
+# PositionalBinding=$false + ValueFromRemainingArguments. With a plain [string[]]$Files this
+# script received ONLY the first path pre-commit handed it and silently ignored the rest --
+# proven here directly: a file with `function Broken( {` in second position exited 0 with
+# "PowerShell syntax check passed." See the note in scripts/run_cppcheck.ps1 for the
+# measurement behind this.
+[CmdletBinding(PositionalBinding = $false)]
 param(
+    [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$Files
 )
 

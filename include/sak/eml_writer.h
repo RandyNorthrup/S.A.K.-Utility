@@ -33,8 +33,8 @@ public:
     [[nodiscard]] qint64 totalBytesWritten() const { return m_bytes_written; }
 
 private:
-    [[nodiscard]] std::expected<QByteArray, error_code> buildEmlContent(
-        const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments) const;
+    [[nodiscard]] static std::expected<QByteArray, error_code> buildEmlContent(
+        const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments);
 
     [[nodiscard]] QString sanitizeFilename(const QString& subject, const QDateTime& date) const;
 

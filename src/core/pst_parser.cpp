@@ -1521,7 +1521,7 @@ std::expected<void, error_code> PstParser::verifyPageTrailer(const QByteArray& p
     return {};
 }
 
-void PstParser::parsePageMeta(BTreePageInfo& info, int meta_offset) {
+void PstParser::parsePageMeta(BTreePageInfo& info, int meta_offset) const {
     if (m_is_4k) {
         info.entry_count = readLE<uint16_t>(info.data, meta_offset);
         info.entry_size = static_cast<uint8_t>(info.data[meta_offset + kUnicode4kEntrySizeOffset]);
@@ -2038,10 +2038,11 @@ std::expected<QByteArray, error_code> PstParser::readBthLeafDataGuarded(uint32_t
         return *node_data;
     }
 
+    // walk.key_size is uint8_t, so it promotes to a non-negative int and entry_size is never zero
+    // or negative: the division below needs no runtime divisor guard. (The key_size + data_size
+    // record sizes elsewhere in this file do need one -- both halves can be zero.)
+    static_assert(kBthChildHidSize > 0, "entry_size must stay a positive divisor");
     const int entry_size = walk.key_size + kBthChildHidSize;
-    if (entry_size == 0) {
-        return QByteArray{};
-    }
 
     const int entry_count = static_cast<int>(node_data->size() / entry_size);
     QByteArray combined;
@@ -2648,7 +2649,7 @@ std::expected<QHash<uint64_t, sak::PstNode>, error_code> PstParser::readSubNodeB
 
 QHash<uint64_t, sak::PstNode> PstParser::readSubNodeLeafEntries(const QByteArray& data,
                                                                 int header_size,
-                                                                uint16_t entry_count) {
+                                                                uint16_t entry_count) const {
     QHash<uint64_t, sak::PstNode> result;
     const int entry_size = m_is_unicode ? kSubnodeLeafSizeUnicode : kSubnodeLeafSizeAnsi;
 

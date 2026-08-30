@@ -653,7 +653,10 @@ void NetworkDiagnosticReportGenerator::appendHtmlSections(QString& html) const {
 }
 
 void NetworkDiagnosticReportGenerator::appendJsonSections(QJsonObject& root) const {
-    using Appender = void (NetworkDiagnosticReportGenerator::*)(QJsonObject&) const;
+    // The `root` parameter name is load-bearing, not decoration: without it cppcheck parses
+    // `(QJsonObject&)` as a C-style cast to a reference and reports cstyleCast here. Deleting
+    // it -- as a "drop unused parameter names" tidy-up would -- silently re-breaks the gate.
+    using Appender = void (NetworkDiagnosticReportGenerator::*)(QJsonObject& root) const;
     struct SectionAppender {
         Section section;
         Appender appender;

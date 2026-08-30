@@ -64,6 +64,8 @@ any tool, so they hold only if a human notices.
 | Magic numbers | Named `constexpr` constants | `magic-numbers` -- BLOCKING (`scripts/check_magic_numbers.py`); `0`, `1`, `-1` stay bare |
 | Line length | <=100 columns | `clang-format` -- BLOCKING |
 | Single-letter variables | Avoid, except tiny lambda predicates | `readability-identifier-naming`, run in CI on every build |
+| cppcheck findings | Zero across `src/` and `include/` | `cppcheck` -- BLOCKING on the files YOUR commit changed; `cppcheck-whole-project` (manual stage + CI) -- BLOCKING whole-tree |
+| Dead analysis suppressions | A `// cppcheck-suppress` must actually suppress something | `cppcheck-whole-project` reveal pass -- BLOCKING (`scripts/cppcheck_whole_project_gate.ps1`) |
 | Nesting depth | <=3 levels | Review -- lizard measures complexity, not nesting depth |
 | Assertions | Meaningful preconditions/postconditions | Review -- every assertion should catch a real bug |
 | `catch(...)` | Should have explanatory comment | Review -- only the logger is exempt |
@@ -75,6 +77,25 @@ any tool, so they hold only if a human notices.
 When lizard rejects a function, fix it STRUCTURALLY by extracting a seam -- never by deleting
 the comments that explain why the code is shaped the way it is. A function over the length
 limit at CCN 2 is a comment-density signal, not a complexity problem.
+
+When cppcheck reports something, the fix is the code, not the suppression. A suppression is
+permitted only where the finding is a proven tool limitation that no reasonable code change
+resolves, and it goes inline at the site, never in `cppcheck_suppressions.txt` (that file is
+closed: it holds only the global tool limits -- no Qt/system headers, single-TU
+`unusedFunction`/`unusedStructMember`, `unknownMacro` -- plus one recorded owner style
+decision and two tests-scoped entries). The form is:
+
+```cpp
+// cppcheck-suppress knownConditionTrueFalse ; atomic stop flag checked across threads
+```
+
+The text after `;` must state the FACT that makes cppcheck wrong -- an atomic another thread
+writes, a struct whose members are references, a Qt parent that already owns the allocation.
+"False positive" and "by design" are not reasons; they are assertions that the next reader
+cannot check. And a suppression that stops matching is worse than none: it silences a check
+that is not firing today and will keep silencing it the day an edit makes it fire again.
+The whole-project gate's second pass exists to find exactly those, and found two on its
+first run.
 
 Data-only initializers may exceed the length target where splitting hurts readability; they
 still have to pass the hook, so extract the data rather than arguing with it.

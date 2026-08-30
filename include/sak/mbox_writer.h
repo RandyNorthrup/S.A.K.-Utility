@@ -84,13 +84,13 @@ private:
     /// Enforce the open-handle cap by closing least-recently-used mailboxes.
     void evictOldestOpenFiles();
 
-    [[nodiscard]] std::expected<QByteArray, error_code> buildMimeMessage(
+    [[nodiscard]] static std::expected<QByteArray, error_code> buildMimeMessage(
         const PstItemDetail& item,
         const QString& sender,
         const QDateTime& date,
         const QVector<QPair<QString, QByteArray>>& attachments);
 
-    [[nodiscard]] std::expected<QByteArray, error_code> formatMboxEntry(
+    [[nodiscard]] static std::expected<QByteArray, error_code> formatMboxEntry(
         const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments);
 
     /// Generate a high-entropy multipart boundary verified not to occur in the message body, so no

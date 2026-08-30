@@ -48,7 +48,7 @@ public:
     [[nodiscard]] FileManagementEntry entryAtViewRow(int row) const;
     [[nodiscard]] bool hasViewEntry(int row) const;
     [[nodiscard]] FileExplorerViewMode viewMode() const;
-    [[nodiscard]] FileExplorerLayoutSizes layoutSizes() const;
+    [[nodiscard]] const FileExplorerLayoutSizes& layoutSizes() const;
     [[nodiscard]] bool showHiddenItems() const;
     [[nodiscard]] bool showFileExtensions() const;
 

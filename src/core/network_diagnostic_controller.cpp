@@ -81,19 +81,25 @@ void rejectExtraPendingClients(QTcpServer* server) {
 }
 }  // namespace
 
-NetworkDiagnosticController::NetworkDiagnosticController(QObject* parent) : QObject(parent) {
-    // Create all worker objects -- they live in this thread initially
-    // Long-running operations use runOnThread() to execute on a worker thread.
-    m_adapterInspector = std::make_unique<NetworkAdapterInspector>();
-    m_connectivityTester = std::make_unique<ConnectivityTester>();
-    m_dnsTool = std::make_unique<DnsDiagnosticTool>();
-    m_portScanner = std::make_unique<PortScanner>();
-    m_bandwidthTester = std::make_unique<BandwidthTester>();
-    m_wifiAnalyzer = std::make_unique<WiFiAnalyzer>();
-    m_connectionMonitor = std::make_unique<ActiveConnectionsMonitor>();
-    m_firewallAuditor = std::make_unique<FirewallRuleAuditor>();
-    m_shareBrowser = std::make_unique<NetworkShareBrowser>();
-    m_reportGenerator = std::make_unique<NetworkDiagnosticReportGenerator>();
+// The worker objects live in this thread initially; long-running operations use runOnThread()
+// to execute on a worker thread. They are listed here in member declaration order.
+NetworkDiagnosticController::NetworkDiagnosticController(QObject* parent)
+    : QObject(parent)
+    , m_adapterInspector(std::make_unique<NetworkAdapterInspector>())
+    , m_connectivityTester(std::make_unique<ConnectivityTester>())
+    , m_dnsTool(std::make_unique<DnsDiagnosticTool>())
+    , m_portScanner(std::make_unique<PortScanner>())
+    , m_bandwidthTester(std::make_unique<BandwidthTester>())
+    , m_wifiAnalyzer(std::make_unique<WiFiAnalyzer>())
+    , m_connectionMonitor(std::make_unique<ActiveConnectionsMonitor>())
+    , m_firewallAuditor(std::make_unique<FirewallRuleAuditor>())
+    , m_shareBrowser(std::make_unique<NetworkShareBrowser>())
+    , m_reportGenerator(std::make_unique<NetworkDiagnosticReportGenerator>()) {
+    // Left in the body deliberately, and NOT because the init list could not take it: this is
+    // the last unique_ptr member declared, so an init-list entry would construct at exactly the
+    // same point. It is the one worker with a QObject parent, and moving a `this`-parented
+    // construction into an init list hands the child a partially constructed parent. cppcheck
+    // does not flag it, and the useInitializationList findings above were all parentless.
     m_ethernetConfigManager = std::make_unique<EthernetConfigManager>(this);
 
     connectWorkerSignals();
@@ -1117,6 +1123,11 @@ public:
         , m_blockSize(m_request.block_size_kb * static_cast<int>(sak::kBytesPerKB)) {}
 
     void start() {
+        // A worker is allocated per runLanUpload() call and start() runs exactly once on it, from
+        // the single QThread::started connection made there, so no prior socket can be overwritten.
+        // The socket is parented to this worker, which the thread's finished signal deleteLater()s,
+        // so it is released even on a path where finish() never runs.
+        // cppcheck-suppress publicAllocationError ; parented to this worker, allocated once
         m_socket = new QTcpSocket(this);
         m_connectTimer = new QTimer(this);
         m_connectTimer->setSingleShot(true);

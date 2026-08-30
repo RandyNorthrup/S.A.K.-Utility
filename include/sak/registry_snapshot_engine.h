@@ -59,6 +59,12 @@ private:
 
     /// @brief Accumulator threaded through the recursive walk: the captured key set
     ///        plus the reliability flag that any enumeration failure clears.
+    ///
+    /// Both members are REFERENCES, so the const on the parameter below is only about the
+    /// binding: writing through `reliable` or inserting into `keys` stays legal on a const
+    /// SnapshotSink, because a reference member does not inherit the enclosing object's
+    /// constness. The const is what tells cppcheck the struct is not a private copy, which
+    /// is what it needs to stop reporting the store to `reliable` as an unread write.
     struct SnapshotSink {
         QSet<QString>& keys;
         bool& reliable;
@@ -68,7 +74,7 @@ private:
     static void enumerateKeys(HKEY hive,
                               const QString& subkey,
                               const QString& hiveName,
-                              SnapshotSink sink,
+                              const SnapshotSink& sink,
                               int maxDepth = kDefaultMaxDepth);
 #endif
 

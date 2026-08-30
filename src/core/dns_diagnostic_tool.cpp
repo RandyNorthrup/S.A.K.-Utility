@@ -337,7 +337,7 @@ void DnsDiagnosticTool::reverseLookup(const QString& ipAddress, const QString& d
 
 void DnsDiagnosticTool::updateComparisonWithResult(const DnsQueryResult& result,
                                                    DnsServerComparison& comparison,
-                                                   QVector<QString>& firstAnswers) {
+                                                   QVector<QString>& firstAnswers) const {
     comparison.results.append(result);
 
     if (result.success && result.responseTimeMs < comparison.fastestTimeMs) {

@@ -8,8 +8,15 @@
     Studio edition in pre-commit while keeping formatting strict.
 #>
 
+# PositionalBinding=$false + ValueFromRemainingArguments: `-File run_clang_format.ps1 -Check
+# a.cpp b.cpp` binds ONLY a.cpp to a plain [string[]] parameter and silently drops the rest,
+# which is how pre-commit calls this. Measured, and proven end to end on the sibling syntax
+# gate: a deliberately broken file in SECOND position passed. See the long note in
+# scripts/run_cppcheck.ps1 for the full measurement. The hook entry must not pass `-Files`.
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [switch]$Check,
+    [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$Files,
     # Fail closed when the resolved file list is EMPTY. Pre-commit hands this script the staged
     # files, so an empty list there legitimately means "nothing C++ was staged" and exiting 0 is

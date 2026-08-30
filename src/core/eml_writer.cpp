@@ -430,7 +430,7 @@ QString EmlWriter::resolveCollisionPath(const QString& target_dir, const QString
 // ============================================================================
 
 std::expected<QByteArray, error_code> EmlWriter::buildEmlContent(
-    const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments) const {
+    const PstItemDetail& item, const QVector<QPair<QString, QByteArray>>& attachments) {
     QByteArray eml;
     eml.reserve(kEmlInitialReserveBytes);
 

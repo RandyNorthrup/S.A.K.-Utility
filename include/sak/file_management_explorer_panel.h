@@ -818,7 +818,7 @@ private:
     void activatePane(int index);
     /// Drop the selection of the pane that is NOT @p active_index (Files
     /// ShellPanesPage Pane_GotFocus).
-    void clearInactivePaneSelection(int active_index);
+    void clearInactivePaneSelection(int active_index) const;
     void toggleDualPane();
     void togglePaneOrientation();
     void openSelectionInSecondPane();

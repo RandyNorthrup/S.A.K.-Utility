@@ -248,7 +248,21 @@ clang-format --dry-run -Werror <changed-files>
 
 # Run pre-commit hooks (format, complexity, cppcheck)
 pre-commit run --all-files
+
+# The two slowest gates are MANUAL-stage and are NOT run by the line above.
+# Each takes minutes (a full clang-tidy sweep; two exhaustive cppcheck passes),
+# which is why they are not on every commit -- CI runs them on every build.
+pre-commit run --hook-stage manual clang-tidy-naming --all-files
+pre-commit run --hook-stage manual cppcheck-whole-project --all-files
 ```
+
+`cppcheck-whole-project` is the one that catches what the per-commit `cppcheck` hook
+structurally cannot: that hook checks the files YOUR commit changed, so a finding sitting in
+a file nobody has touched stays invisible until somebody touches it -- and then it blocks
+their commit for a defect they did not introduce. Its second pass re-enables cppcheck's
+`unmatchedSuppression` to find `// cppcheck-suppress` comments that have gone dead, which is
+worth knowing about: a suppression that matches nothing is silencing a check that is not
+firing, and will keep silencing it after the next edit to that line makes it fire again.
 
 ### CMake Standards
 
