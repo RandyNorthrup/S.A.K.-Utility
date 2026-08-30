@@ -18,6 +18,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$processCaptureScript = Join-Path $PSScriptRoot "process_capture.ps1"
+if (-not (Test-Path -LiteralPath $processCaptureScript -PathType Leaf)) {
+    throw "Captured-process helper not found: $processCaptureScript"
+}
+. $processCaptureScript
+
 function Assert-Condition([bool]$Condition, [string]$Message) {
     if (-not $Condition) {
         throw $Message
@@ -74,68 +80,6 @@ function Resolve-ProbeCertifier([string]$Root) {
         return (Resolve-Path -LiteralPath $candidate).Path
     }
     throw "partition_filesystem_probe_certifier.exe was not found. Build target partition_filesystem_probe_certifier first."
-}
-
-function ConvertTo-WindowsProcessArgument([string]$Argument) {
-    if ($null -eq $Argument) {
-        return '""'
-    }
-    if ($Argument.Length -gt 0 -and $Argument -notmatch '[\s"]') {
-        return $Argument
-    }
-
-    $builder = [System.Text.StringBuilder]::new()
-    [void]$builder.Append('"')
-    $backslashes = 0
-    foreach ($char in $Argument.ToCharArray()) {
-        if ($char -eq '\') {
-            $backslashes += 1
-            continue
-        }
-        if ($char -eq '"') {
-            [void]$builder.Append(('\' * (($backslashes * 2) + 1)))
-            [void]$builder.Append('"')
-            $backslashes = 0
-            continue
-        }
-        if ($backslashes -gt 0) {
-            [void]$builder.Append(('\' * $backslashes))
-            $backslashes = 0
-        }
-        [void]$builder.Append($char)
-    }
-    if ($backslashes -gt 0) {
-        [void]$builder.Append(('\' * ($backslashes * 2)))
-    }
-    [void]$builder.Append('"')
-    return $builder.ToString()
-}
-
-function Join-ProcessArguments([string[]]$Arguments) {
-    return ($Arguments | ForEach-Object { ConvertTo-WindowsProcessArgument -Argument $_ }) -join ' '
-}
-
-function Invoke-CapturedProcess([string]$FilePath, [string[]]$Arguments, [int[]]$AllowedExitCodes) {
-    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
-    $startInfo.FileName = $FilePath
-    $startInfo.Arguments = Join-ProcessArguments -Arguments $Arguments
-    $startInfo.UseShellExecute = $false
-    $startInfo.RedirectStandardOutput = $true
-    $startInfo.RedirectStandardError = $true
-    $process = [System.Diagnostics.Process]::Start($startInfo)
-    $stdout = $process.StandardOutput.ReadToEnd()
-    $stderr = $process.StandardError.ReadToEnd()
-    $process.WaitForExit()
-    $result = [ordered]@{
-        file = $FilePath
-        args = $Arguments
-        exit_code = $process.ExitCode
-        stdout = $stdout.Trim()
-        stderr = $stderr.Trim()
-    }
-    Assert-Condition -Condition ($AllowedExitCodes -contains $process.ExitCode) `
-        -Message "Command failed ($($process.ExitCode)): $FilePath $($Arguments -join ' ')`n$stderr"
-    return $result
 }
 
 function Read-Json([string]$Path) {

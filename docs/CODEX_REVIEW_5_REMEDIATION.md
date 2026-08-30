@@ -9351,16 +9351,23 @@ gate teaches people to disable both.
       check_logged_message_boxes.ps1 called bare `& rg` (fail-closed via Stop, but a shadowing
       alias could be invoked); both now pin the native exe via
       @(Get-Command rg -CommandType Application ...)[0], matching check_blocking_patterns.ps1.
-  - FOUND DURING THIS AUDIT (separate OPEN item, not a fail-open): check_accessibility_patterns.ps1
-    fails CLOSED with a FALSE red under Windows PowerShell 5.1 -- Start-Process -PassThru with
-    redirected stdout/stderr returns a process whose .ExitCode is null under 5.1 even after
-    WaitForExit plus a parameterless flush (a documented 5.1 cmdlet bug), so the
-    "$proc.ExitCode -ne 0" check throws "printed OK but exited with code unknown" on a SUCCESSFUL
-    audit (missing=0). It passes correctly under pwsh 7, the shell CI uses (build-release.yml
-    `shell: pwsh`) and the only path that runs this CI-only gate, so CI is unaffected. Real fix
-    (tracked, not quick): replace Start-Process -PassThru with a [System.Diagnostics.Process] +
-    ProcessStartInfo run (async stream drain to avoid the redirect deadlock) so ExitCode is
-    captured reliably under both shells. Confirmed pre-existing (fails identically on HEAD).
+  - CLOSED 2026-08-30: check_accessibility_patterns.ps1 no longer false-reds under Windows
+    PowerShell 5.1. The old Start-Process -PassThru path was re-proven RED on an exit-0 child:
+    after redirected execution, timed WaitForExit, parameterless WaitForExit and Refresh,
+    ExitCode was still null. New scripts/process_capture.ps1 uses ProcessStartInfo directly,
+    drains stdout/stderr asynchronously before waiting, captures the real exit code under both
+    PowerShell hosts, and terminates a timed-out child. The same seam replaces the duplicate,
+    sequential-stream implementation in run_partition_manager_hfsprogs_image_validation.ps1,
+    preserving its argument quoting, allowed-exit-code checks and trimmed report output while
+    removing the dual-full-pipe deadlock. Registered test_process_capture proves exit 7 is
+    captured, disallowed exit 7 fails closed, 200000 bytes on BOTH streams drain without
+    deadlock, and timeout terminates the child. CTest registers that same contract under BOTH
+    pwsh 7 and Windows PowerShell 5.1 so the host-specific bug cannot regress. Both pass on
+    pwsh 7.6.5 and Windows PowerShell 5.1.22621.6060. Real accessibility audit passes under
+    both (637 explicit accessors, no fallback). Separate gate drill: a real stub wrote an OK
+    audit header then exited 7; the gate rejected it with the exact exit code, so output cannot
+    launder failure. Release build exit 0; full Release CTest 256/256, zero failures (761.11
+    seconds).
       whole toolchain is present before anything runs
 - [~] R5-G21-5 Every fixed defect has a regression test, so the specific bug cannot
   - IN PROGRESS: a regression test for every fixed defect. Fixes landed this campaign carry per-item non-vacuous notes; the full per-defect regression audit is still open.

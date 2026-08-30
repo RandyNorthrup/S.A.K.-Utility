@@ -220,7 +220,7 @@ Required before a release candidate is published:
   images
   (`artifacts\file-management-live-certification\ro-ext-xfs-btrfs-20260712\`).
   Unknown-size / out-of-range / snapshot-frozen / Fusion / locked-encrypted APFS
-  targets stay read-only with exact blockers. Full local CTest is 254/254
+  targets stay read-only with exact blockers. Full local CTest is 256/256
   (corrected 2026-08-30; this said 142/142, the same stale figure the README
   test badge carried).
 - Partition Manager ext/HFS+/APFS image browsers must open both normal image

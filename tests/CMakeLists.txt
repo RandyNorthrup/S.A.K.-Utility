@@ -7645,6 +7645,28 @@ if(PLATFORM_WINDOWS)
                      -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_manager_certification_tools.ps1"
                      -OutputRoot "${TEST_OUTPUT_DIR}/partition-manager-certification-tools")
     set_tests_properties(test_partition_manager_certification_tools PROPERTIES TIMEOUT 600)
+
+    # Start-Process with redirected output can leave ExitCode null under Windows PowerShell
+    # 5.1, and sequential pipe reads can deadlock when both streams fill. This hermetic test
+    # drives the shared ProcessStartInfo seam through exit 0/7, large dual-stream output,
+    # argument quoting, and a bounded timeout. The two registrations below run the same
+    # contract under pwsh and Windows PowerShell 5.1.
+    add_test(NAME test_process_capture
+             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1")
+    set_tests_properties(test_process_capture PROPERTIES TIMEOUT 60)
+
+    set(SAK_WINDOWS_POWERSHELL_EXECUTABLE
+        "$ENV{SystemRoot}/System32/WindowsPowerShell/v1.0/powershell.exe")
+    if(NOT EXISTS "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}")
+        message(FATAL_ERROR
+                "Windows PowerShell 5.1 was not found, so its redirected-process exit-code "
+                "regression test cannot run.")
+    endif()
+    add_test(NAME test_process_capture_windows_powershell
+             COMMAND "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1")
+    set_tests_properties(test_process_capture_windows_powershell PROPERTIES TIMEOUT 60)
 endif()
 
 # The browser-control service worker is ~3300 lines of privileged JavaScript that drives a

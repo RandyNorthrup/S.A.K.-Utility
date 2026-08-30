@@ -14,6 +14,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$processCaptureScript = Join-Path $PSScriptRoot "process_capture.ps1"
+if (-not (Test-Path -LiteralPath $processCaptureScript -PathType Leaf)) {
+    throw "Captured-process helper not found: $processCaptureScript"
+}
+. $processCaptureScript
+
 $repo = (Resolve-Path -LiteralPath $Root).Path
 Push-Location $repo
 try {
@@ -94,60 +100,37 @@ try {
     }
     New-Item -ItemType Directory -Path $auditDir | Out-Null
     $auditPath = Join-Path $auditDir "audit.txt"
-    $stdoutPath = Join-Path $auditDir "stdout.txt"
-    $stderrPath = Join-Path $auditDir "stderr.txt"
 
-    $proc = Start-Process -FilePath $ExePath `
-        -ArgumentList @("--accessibility-audit", "--no-splash", "--accessibility-audit-output=$auditPath") `
-        -PassThru `
-        -RedirectStandardOutput $stdoutPath `
-        -RedirectStandardError $stderrPath `
-        -WindowStyle Hidden `
-        -WorkingDirectory $repo
-    if (-not $proc.WaitForExit($TimeoutSeconds * 1000)) {
-        $pidText = $proc.Id
-        Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
-        $stdoutOutput = if (Test-Path -LiteralPath $stdoutPath) {
-            Get-Content -LiteralPath $stdoutPath -Tail 80
-        } else {
-            @()
-        }
-        $stderrOutput = if (Test-Path -LiteralPath $stderrPath) {
-            Get-Content -LiteralPath $stderrPath -Tail 80
-        } else {
-            @()
-        }
+    $auditProcess = Invoke-CapturedProcess -FilePath $ExePath -Arguments @(
+        "--accessibility-audit",
+        "--no-splash",
+        "--accessibility-audit-output=$auditPath"
+    ) -WorkingDirectory $repo -TimeoutSeconds $TimeoutSeconds
+    if ($auditProcess.timed_out) {
+        $stdoutOutput = @($auditProcess.stdout -split '\r?\n' | Select-Object -Last 80)
+        $stderrOutput = @($auditProcess.stderr -split '\r?\n' | Select-Object -Last 80)
         $auditOutput = if (Test-Path -LiteralPath $auditPath) {
             Get-Content -LiteralPath $auditPath -Tail 80
         } else {
             @("No audit output written.")
         }
-        throw "Accessibility runtime audit timed out after ${TimeoutSeconds}s (pid ${pidText}).`nAUDIT:`n$($auditOutput -join "`n")`nSTDOUT:`n$($stdoutOutput -join "`n")`nSTDERR:`n$($stderrOutput -join "`n")"
+        throw "Accessibility runtime audit timed out after ${TimeoutSeconds}s.`nAUDIT:`n$($auditOutput -join "`n")`nSTDOUT:`n$($stdoutOutput -join "`n")`nSTDERR:`n$($stderrOutput -join "`n")"
     }
-    $proc.Refresh()
     $auditOutput = if (Test-Path -LiteralPath $auditPath) {
         Get-Content -LiteralPath $auditPath
     } else {
-        $stdoutOutput = if (Test-Path -LiteralPath $stdoutPath) {
-            Get-Content -LiteralPath $stdoutPath -Tail 80
-        } else {
-            @()
-        }
-        $stderrOutput = if (Test-Path -LiteralPath $stderrPath) {
-            Get-Content -LiteralPath $stderrPath -Tail 80
-        } else {
-            @()
-        }
+        $stdoutOutput = @($auditProcess.stdout -split '\r?\n' | Select-Object -Last 80)
+        $stderrOutput = @($auditProcess.stderr -split '\r?\n' | Select-Object -Last 80)
         @("No audit output written.", "STDOUT:", $stdoutOutput, "STDERR:", $stderrOutput)
     }
-    $exitCode = if ($null -eq $proc.ExitCode) { "unknown" } else { $proc.ExitCode }
+    $exitCode = $auditProcess.exit_code
     $auditHeader = ($auditOutput | Select-Object -First 1)
     if ($auditHeader -notmatch '^SAK_ACCESSIBILITY_AUDIT_OK\b') {
         throw "Accessibility runtime audit failed with exit code ${exitCode}:`n$($auditOutput -join "`n")"
     }
     # An OK header is not sufficient on its own: the process must also have finished cleanly
     # and must not have reported a failure anywhere later in the same audit output.
-    if ($proc.ExitCode -ne 0) {
+    if ($exitCode -ne 0) {
         throw "Accessibility runtime audit printed OK but exited with code ${exitCode}:`n$($auditOutput -join "`n")"
     }
     if (@($auditOutput | Select-String -SimpleMatch -Pattern "SAK_ACCESSIBILITY_AUDIT_FAILED").Count -gt 0) {
