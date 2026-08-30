@@ -51,7 +51,7 @@ Two failures in this repo, in both directions. `wifi_profile_scanner` was writte
 scanner and then sat UNUSED while the same logic lived on as static members of the wifi widget
 -- a parallel implementation shipped and drifted before anything reached it. And a plan was
 reported as having "no code in the tree" because a grep for a word from its FILENAME returned
-nothing, when the feature was fully built: 62 registered action ids, a registry, a bridge, a
+nothing, when the feature was fully built: 64 registered action ids, a registry, a bridge, a
 service and a unit test, all findable by grepping the names the plan itself specified. Acting
 on that would have meant rebuilding a finished subsystem.
 
@@ -162,6 +162,7 @@ Every one of these has happened here.
 | Mutation that will not compile | `if (false && ...)` trips C4127 under warnings-as-errors; the build dies and the old binary runs green | Write mutations that still compile and still use their operands (`if (indent < 0 && ...)`, or compare a value with itself) |
 | PowerShell `-File` array binding | `powershell -File x.ps1 -Files $arr` passes only the FIRST element; a scan "PASSED" having read 1 of 11 files | Call it in-process: `& ./x.ps1 -Files $files` |
 | Persistent working directory | A stale `cd build` from an earlier tool call runs the wrong binary | `Set-Location` explicitly each call; prefer absolute paths |
+| Search tool skips gitignored paths | `Grep` (and other repo-aware search) honours .gitignore, and `artifacts/` IS gitignored -- so a hunt for a certification value reports "appears in no artifact" having never opened the evidence directory. The same shape hid a live guard: grepping one function name and not finding it read as "no such guard exists" when the guard was three functions away under another name | For anything under `artifacts/`, `build*/`, `temp/` or any other ignored path, use a plain `grep`/`rg` that does not respect gitignore. And before concluding something is ABSENT, prove the search would have found it -- search for a string you know is there |
 | .NET ignores the shell cwd | `[System.IO.File]::ReadAllBytes("docs/x.md")` resolves against the PROCESS cwd and can throw while a relative `Get-Content` succeeds -- a null result then reads as "0 problems found" | Absolute paths with .NET APIs, and assert the byte count actually read |
 
 ---
@@ -206,7 +207,7 @@ comments a dependency and used it to justify leaving files where they were.
 **Check a plan against the deliverables it NAMES, never against a keyword from its title.**
 A plan called ASSISTANT_HEADLESS_DOMINION was reported as having "no code in the tree" because
 a grep for "headless" returned nothing. It was fully built: the plan names AppActionRegistry
-and the sak_app_actions tool, and 62 registered action ids were sitting right there.
+and the sak_app_actions tool, and 64 registered action ids were sitting right there.
 
 **Never keep a second copy of a status in an agent's private notes.** Counts, tallies,
 percentages and COMPLETE labels rot on the next commit, and nothing updates the copy. An audit of
