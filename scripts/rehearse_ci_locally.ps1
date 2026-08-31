@@ -43,7 +43,17 @@ param(
     [string]$ScratchRoot = "$env:TEMP\sak-ci-rehearsal",
 
     # Skip the packaging chain (use when only the fresh-clone build is wanted).
-    [switch]$SkipPackaging
+    [switch]$SkipPackaging,
+
+    # Explicit local dependency roots. Empty values resolve from environment, then existing
+    # conventional installs; unresolved roots fail before configure rather than becoming an
+    # accidental absolute path such as /scripts/buildsystems/vcpkg.cmake.
+    [string]$QtPrefix = "",
+    [string]$VcpkgRootPath = "",
+
+    # Resolve and validate fresh-clone dependency roots, then exit before clone/build. Used by
+    # registered regression coverage and useful for fast workstation preflight.
+    [switch]$ResolveFreshCloneInputsOnly
 )
 
 $ErrorActionPreference = 'Stop'
@@ -61,6 +71,53 @@ $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $env:PATH = (@($machinePath, $userPath) | Where-Object { $_ }) -join ';'
 $phases = New-Object System.Collections.Generic.List[string]
+
+function Resolve-DirectoryChoice([string[]]$Candidates, [string]$Label) {
+    foreach ($candidate in $Candidates) {
+        if (-not [string]::IsNullOrWhiteSpace($candidate) -and
+            (Test-Path -LiteralPath $candidate -PathType Container)) {
+            return (Resolve-Path -LiteralPath $candidate).Path
+        }
+    }
+    throw "$Label was not found. Pass its explicit rehearsal parameter."
+}
+
+$resolvedVcpkgRoot = ""
+$resolvedQtPrefix = ""
+$toolchainPath = ""
+if ($FreshClone -or $ResolveFreshCloneInputsOnly) {
+    $vcpkgCandidates = if (-not [string]::IsNullOrWhiteSpace($VcpkgRootPath)) {
+        @($VcpkgRootPath)
+    }
+    else {
+        @($env:VCPKG_ROOT, $env:VCPKG_INSTALLATION_ROOT, "C:\vcpkg")
+    }
+    $resolvedVcpkgRoot = Resolve-DirectoryChoice -Label "vcpkg root" `
+        -Candidates $vcpkgCandidates
+
+    $qtCandidates = if (-not [string]::IsNullOrWhiteSpace($QtPrefix)) {
+        @($QtPrefix)
+    }
+    else {
+        $candidates = @($env:SAK_QT_PREFIX)
+        if (-not [string]::IsNullOrWhiteSpace($env:Qt6_DIR)) {
+            $candidates += [System.IO.Path]::GetFullPath((Join-Path $env:Qt6_DIR "..\..\.."))
+        }
+        $candidates += @(Get-ChildItem -LiteralPath "C:\Qt" -Directory `
+            -ErrorAction SilentlyContinue |
+            ForEach-Object { Join-Path $_.FullName "msvc2022_64" } | Sort-Object -Descending)
+        $candidates
+    }
+    $resolvedQtPrefix = Resolve-DirectoryChoice -Label "Qt prefix" -Candidates $qtCandidates
+    $toolchainPath = Join-Path $resolvedVcpkgRoot "scripts\buildsystems\vcpkg.cmake"
+    if (-not (Test-Path -LiteralPath $toolchainPath -PathType Leaf)) {
+        throw "vcpkg toolchain file not found: $toolchainPath"
+    }
+}
+if ($ResolveFreshCloneInputsOnly) {
+    Write-Host "Fresh clone inputs resolved: Qt=$resolvedQtPrefix; vcpkg=$resolvedVcpkgRoot"
+    exit 0
+}
 
 function Start-Phase([string]$name) {
     Write-Host ''
@@ -137,9 +194,13 @@ if ($FreshClone) {
     # Clone from the local repository, not the remote: the point is to test the
     # COMMITTED state of this working tree, including commits never pushed.
     git clone --local --no-hardlinks "$RepoRoot" "$cloneDir" 2>&1 | Out-Null
-    Assert-LastExit 'git clone of the local repository'
+    $cloneExit = $LASTEXITCODE
+    if ($cloneExit -ne 0) {
+        $failures.Add("git clone of the local repository (exit $cloneExit)")
+        Write-Host "FAILED: git clone of the local repository (exit $cloneExit)" -ForegroundColor Red
+    }
 
-    if (Test-Path $cloneDir) {
+    if ($cloneExit -eq 0 -and (Test-Path $cloneDir)) {
         $missing = @()
         foreach ($needed in @('CMakeLists.txt', 'tests/CMakeLists.txt', 'VERSION')) {
             if (-not (Test-Path (Join-Path $cloneDir $needed))) { $missing += $needed }
@@ -151,14 +212,20 @@ if ($FreshClone) {
         $cloneBuild = Join-Path $cloneDir 'build'
         # Mirror the workflow's configure line, including the declared triplet.
         cmake -B $cloneBuild -S $cloneDir -G "Visual Studio 17 2022" -A x64 `
-            -DCMAKE_PREFIX_PATH="$env:SAK_QT_PREFIX" `
+            -DCMAKE_PREFIX_PATH="$resolvedQtPrefix" `
             -DVCPKG_APPLOCAL_DEPS=OFF `
             -DVCPKG_TARGET_TRIPLET=x64-windows `
-            -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake"
-        Assert-LastExit 'cmake configure of the fresh clone'
-
-        cmake --build $cloneBuild --config Release --parallel
-        Assert-LastExit 'cmake build of the fresh clone'
+            -DCMAKE_TOOLCHAIN_FILE="$toolchainPath"
+        $configureExit = $LASTEXITCODE
+        if ($configureExit -ne 0) {
+            $failures.Add("cmake configure of the fresh clone (exit $configureExit)")
+            Write-Host "FAILED: cmake configure of the fresh clone (exit $configureExit)" `
+                -ForegroundColor Red
+        }
+        else {
+            cmake --build $cloneBuild --config Release --parallel
+            Assert-LastExit 'cmake build of the fresh clone'
+        }
     }
 }
 
