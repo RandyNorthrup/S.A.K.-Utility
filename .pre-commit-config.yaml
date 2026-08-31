@@ -76,7 +76,19 @@ repos:
         always_run: true
 
       # -------------------------------------------------------------------
-      # 0c. Mutation-catalog coverage ratchet (R5-G18-1) - fast integrity.
+      # 0c. Gate parity - pre-commit claims must have a CI route.
+      # -------------------------------------------------------------------
+      - id: gate-parity
+        name: "Pre-commit to CI gate parity"
+        description: "Reject custom/generic/secret pre-commit gates with no CI twin"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_gate_parity.ps1
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # -------------------------------------------------------------------
+      # 0d. Mutation-catalog coverage ratchet (R5-G18-1) - fast integrity.
       #     The per-catalog mutation harness proves a catalog's mutations are
       #     all detected; this gate keeps the SET honest between full runs. It
       #     asserts every catalog's find-string still occurs exactly once in the

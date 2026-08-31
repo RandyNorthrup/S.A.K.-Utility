@@ -32,6 +32,8 @@ $RequiredTools = @(
     @{ Name = "cppcheck"; Purpose = "static analysis gate"; VersionArgs = @("--version") },
     @{ Name = "cmake"; Purpose = "build and test gates"; VersionArgs = @("--version") },
     @{ Name = "git"; Purpose = "repository gates"; VersionArgs = @("--version") },
+    @{ Name = "lizard"; Purpose = "C++ and JavaScript complexity gate"; VersionArgs = @("--version") },
+    @{ Name = "pre-commit"; Purpose = "local hooks and CI repository hygiene"; VersionArgs = @("--version") },
     # The browser-control service worker is ~3300 lines of privileged JavaScript that no
     # C/C++ gate can see. node runs its ctest unit suite (tests/unit/test_browser_extension_pure.mjs,
     # R5-G21-9); without node that whole surface silently returns to being ungated. (The lizard

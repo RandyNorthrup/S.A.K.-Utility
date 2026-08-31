@@ -7677,6 +7677,11 @@ if(PLATFORM_WINDOWS)
              COMMAND "${SAK_PYTHON_EXECUTABLE}"
                      "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_run_lizard_js_baseline.py")
     set_tests_properties(test_run_lizard_js_baseline PROPERTIES TIMEOUT 60)
+
+    add_test(NAME test_gate_parity
+             COMMAND "${SAK_PYTHON_EXECUTABLE}"
+                     "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_gate_parity.py")
+    set_tests_properties(test_gate_parity PROPERTIES TIMEOUT 60)
 endif()
 
 # The browser-control service worker is ~3300 lines of privileged JavaScript that drives a

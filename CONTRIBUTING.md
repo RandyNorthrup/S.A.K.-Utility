@@ -237,6 +237,7 @@ The first four rows below are NOT aspirational: each is a pre-commit hook that r
 | Magic numbers | Named `constexpr` constants | `magic-numbers` hook -- BLOCKING |
 | Line length | <=100 columns | `.clang-format` hook -- BLOCKING |
 | Dead source functions | No unique unreferenced definition in `src/*.cpp` | `dead-code` hook -- BLOCKING; whole-tree in CI |
+| Gate parity | Every pre-commit gate has a CI route | `gate-parity` hook -- BLOCKING; regression-tested indirect and secret-scan routes |
 | Naming | Case conventions (snake_case locals, `k` prefix for constants, `m_` members) | `readability-identifier-naming`, run in CI on every build. NOT enforced: "no abbreviations, no single-letter vars" -- `readability-identifier-length` is deliberately disabled (`.clang-tidy:142`, reason at line 102: it flags idiomatic `i`, `x`, `id`), so short names are a review convention, not a gate |
 | Nesting depth | <=3 levels | Code review (Lizard measures complexity, not nesting depth) |
 | Assertions | Meaningful preconditions/postconditions | Code review |
@@ -258,6 +259,10 @@ pre-commit run --hook-stage manual cppcheck-whole-project --all-files
 
 # Whole-tree high-confidence unused-function scan (CI runs this too)
 powershell scripts/check_dead_code.ps1
+
+# Pre-commit-to-CI route audit plus generic whole-tree hygiene
+powershell scripts/check_gate_parity.ps1
+powershell scripts/check_repository_hygiene.ps1
 ```
 
 `cppcheck-whole-project` is the one that catches what the per-commit `cppcheck` hook
