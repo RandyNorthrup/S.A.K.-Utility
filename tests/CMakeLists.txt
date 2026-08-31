@@ -7668,6 +7668,11 @@ if(PLATFORM_WINDOWS)
                      -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1")
     set_tests_properties(test_process_capture_windows_powershell PROPERTIES TIMEOUT 60)
 
+    add_test(NAME test_startup_budget
+             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_startup_budget.ps1")
+    set_tests_properties(test_startup_budget PROPERTIES TIMEOUT 180)
+
     find_program(SAK_PYTHON_EXECUTABLE NAMES python3 python)
     if(NOT SAK_PYTHON_EXECUTABLE)
         message(FATAL_ERROR

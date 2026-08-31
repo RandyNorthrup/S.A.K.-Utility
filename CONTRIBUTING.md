@@ -256,6 +256,7 @@ pre-commit run --all-files
 # which is why they are not on every commit -- CI runs them on every build.
 pre-commit run --hook-stage manual clang-tidy-naming --all-files
 pre-commit run --hook-stage manual cppcheck-whole-project --all-files
+pre-commit run --hook-stage manual startup-budget --all-files
 
 # Whole-tree high-confidence unused-function scan (CI runs this too)
 powershell scripts/check_dead_code.ps1

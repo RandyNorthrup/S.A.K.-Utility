@@ -6,12 +6,20 @@
 # Fails closed: a missing exe, a smoke run that never prints SAK_STARTUP_SMOKE_OK, a
 # non-zero exit, or an over-budget / hung run are all hard failures.
 param(
+    [ValidateRange(1, 2147483647)]
     [int]$BudgetMs = 15000,
+    [ValidateRange(1, 3600)]
     [int]$HardTimeoutSec = 60,
     [string]$ExePath
 )
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
+$processCaptureScript = Join-Path $PSScriptRoot "process_capture.ps1"
+if (-not (Test-Path -LiteralPath $processCaptureScript -PathType Leaf)) {
+    throw "Startup budget captured-process helper not found: $processCaptureScript"
+}
+. $processCaptureScript
+
 if ([string]::IsNullOrWhiteSpace($ExePath)) {
     $ExePath = Join-Path $root "build\Release\sak_utility.exe"
 }
@@ -22,25 +30,23 @@ if (-not (Test-Path -LiteralPath $ExePath -PathType Leaf)) {
 $env:QT_QPA_PLATFORM = "offscreen"
 $env:SAK_STARTUP_SMOKE_CI_HEADLESS = "1"
 
-$outFile = Join-Path ([System.IO.Path]::GetTempPath()) "sak_startup_smoke.out"
 $sw = [System.Diagnostics.Stopwatch]::StartNew()
-$proc = Start-Process -FilePath $ExePath -ArgumentList @("--smoke-test", "--no-splash") `
-    -NoNewWindow -PassThru -RedirectStandardOutput $outFile
-# Touch .Handle so $proc.ExitCode is populated after exit (Start-Process -PassThru quirk).
-$null = $proc.Handle
-if (-not $proc.WaitForExit($HardTimeoutSec * 1000)) {
-    try { $proc.Kill() } catch {}
+$result = Invoke-CapturedProcess -FilePath $ExePath -Arguments @("--smoke-test", "--no-splash") `
+    -WorkingDirectory (Split-Path -Parent $ExePath) -TimeoutSeconds $HardTimeoutSec
+$sw.Stop()
+
+if ($result.timed_out) {
     throw "Startup budget: smoke run did not exit within ${HardTimeoutSec}s (hung startup)."
 }
-$sw.Stop()
 $elapsedMs = [int]$sw.Elapsed.TotalMilliseconds
-$stdout = if (Test-Path -LiteralPath $outFile) { Get-Content -LiteralPath $outFile -Raw } else { "" }
 
-if ($proc.ExitCode -ne 0) {
-    throw "Startup budget: smoke run exited ${($proc.ExitCode)} (expected 0). Output:`n$stdout"
+if ($result.exit_code -ne 0) {
+    throw ("Startup budget: smoke run exited $($result.exit_code) (expected 0). " +
+        "Stdout:`n$($result.stdout)`nStderr:`n$($result.stderr)")
 }
-if ($stdout -notmatch "SAK_STARTUP_SMOKE_OK") {
-    throw "Startup budget: smoke run did not report SAK_STARTUP_SMOKE_OK. Output:`n$stdout"
+if ($result.stdout -notmatch "SAK_STARTUP_SMOKE_OK") {
+    throw ("Startup budget: smoke run did not report SAK_STARTUP_SMOKE_OK. " +
+        "Stdout:`n$($result.stdout)`nStderr:`n$($result.stderr)")
 }
 if ($elapsedMs -gt $BudgetMs) {
     throw "Startup budget EXCEEDED: cold smoke startup took ${elapsedMs} ms > ${BudgetMs} ms budget (a startup regression)."

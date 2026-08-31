@@ -275,6 +275,17 @@ repos:
         always_run: true
         stages: [manual]
 
+      # Build-dependent CI gate. Manual stage gives it a local route after Release build;
+      # normal pre-commit cannot assume a current executable exists.
+      - id: startup-budget
+        name: "Startup performance budget (built Release app)"
+        description: "Run real --smoke-test startup under the CI wall-clock budget"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_startup_budget.ps1
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
       # -------------------------------------------------------------------
       # 6b. Nested event loops and unbounded blocking waits
       #     Debt reached zero, so this one is now wired. Every gated site
