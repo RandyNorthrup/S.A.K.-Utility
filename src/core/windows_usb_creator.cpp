@@ -22,6 +22,8 @@
 #include <QTemporaryFile>
 #include <QThread>
 
+#include <algorithm>
+
 namespace {
 
 constexpr int kFormatVerificationProgress = 5;
@@ -607,17 +609,22 @@ bool WindowsUSBCreator::extractAndVerifyFiles(const QString& isoPath, const QStr
     const QString basePath = driveLetter + ":\\";
     const QStringList criticalFiles = {"setup.exe", "sources\\boot.wim", "bootmgr"};
 
-    // cppcheck-suppress useStlAlgorithm ; loop has side effects (per-file error + logging)
-    for (const QString& file : criticalFiles) {
-        const QString fullPath = basePath + file;
-        if (!QFile::exists(fullPath)) {
-            setError(QString("STEP 2 VERIFICATION FAILED: Missing critical file: %1").arg(file));
-            sak::logError(lastError().toStdString());
-            Q_EMIT failed(lastError());
-            return false;
-        }
-        const QFileInfo info(fullPath);
-        sak::logInfo(QString("  [x] %1 (%2 bytes)").arg(file).arg(info.size()).toStdString());
+    const bool criticalFilesPresent =
+        std::ranges::all_of(criticalFiles, [this, &basePath](const QString& file) {
+            const QString fullPath = basePath + file;
+            if (!QFile::exists(fullPath)) {
+                setError(
+                    QString("STEP 2 VERIFICATION FAILED: Missing critical file: %1").arg(file));
+                sak::logError(lastError().toStdString());
+                Q_EMIT failed(lastError());
+                return false;
+            }
+            const QFileInfo info(fullPath);
+            sak::logInfo(QString("  [x] %1 (%2 bytes)").arg(file).arg(info.size()).toStdString());
+            return true;
+        });
+    if (!criticalFilesPresent) {
+        return false;
     }
 
     // Check for install image

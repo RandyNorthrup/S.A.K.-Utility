@@ -16,6 +16,7 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#include <algorithm>
 #include <limits>
 
 #include <zlib.h>
@@ -971,13 +972,9 @@ void AdvancedSearchWorkerTests::hexSearch_exclusiveMode() {
         QCOMPARE(m.match_end, 5);
 
         // ...and hex context is attached to every one of them.
-        bool hasHex = false;
-        for (const auto& ctx : m.context_before) {
-            if (ctx.startsWith("Hex:")) {
-                hasHex = true;
-                break;
-            }
-        }
+        const bool hasHex = std::ranges::any_of(m.context_before, [](const QString& ctx) {
+            return ctx.startsWith("Hex:");
+        });
         QVERIFY2(hasHex, "Binary search should provide hex context");
     }
     // Every occurrence was consumed: no fourth "Hello" was left unreported.
@@ -1005,13 +1002,9 @@ void AdvancedSearchWorkerTests::imageMetadataSearch_findsEmbeddedMetadata() {
     QCOMPARE(matches[0].match_end, 30);
 
     // Verify metadata format
-    bool hasMetadataLine = false;
-    for (const auto& m : matches) {
-        if (m.line_content.startsWith("[Metadata]")) {
-            hasMetadataLine = true;
-            break;
-        }
-    }
+    const bool hasMetadataLine = std::ranges::any_of(matches, [](const SearchMatch& match) {
+        return match.line_content.startsWith("[Metadata]");
+    });
     QVERIFY2(hasMetadataLine, "Image metadata results should have [Metadata] prefix");
 
     // Image metadata mode should not rely on generic filesystem fields.
@@ -1036,13 +1029,10 @@ void AdvancedSearchWorkerTests::imageMetadataSearch_matchesByTagName() {
     QCOMPARE(matches[0].match_start, 11);
     QCOMPARE(matches[0].match_end, 18);
 
-    bool found_key_match = false;
-    for (const auto& m : matches) {
-        if (m.line_content.startsWith("[Metadata]") && m.line_content.contains("Comment")) {
-            found_key_match = true;
-            break;
-        }
-    }
+    const bool found_key_match = std::ranges::any_of(matches, [](const SearchMatch& match) {
+        return match.line_content.startsWith("[Metadata]") &&
+               match.line_content.contains("Comment");
+    });
     QVERIFY2(found_key_match, "Should match the metadata key name 'Comment'");
 }
 
@@ -1060,13 +1050,9 @@ void AdvancedSearchWorkerTests::imageMetadataSearch_matchesDimensions() {
     QCOMPARE(matches[0].match_start, 23);
     QCOMPARE(matches[0].match_end, 28);
 
-    bool found_dimensions = false;
-    for (const auto& m : matches) {
-        if (m.line_content.contains("Dimensions") && m.line_content.contains("32x24")) {
-            found_dimensions = true;
-            break;
-        }
-    }
+    const bool found_dimensions = std::ranges::any_of(matches, [](const SearchMatch& match) {
+        return match.line_content.contains("Dimensions") && match.line_content.contains("32x24");
+    });
     QVERIFY2(found_dimensions, "Should find Dimensions metadata field");
 }
 
@@ -1094,13 +1080,10 @@ void AdvancedSearchWorkerTests::imageMetadataSearch_jpegExifExtraction() {
         QCOMPARE(matches.size(), 1);
         QCOMPARE(matches[0].line_content, QStringLiteral("[Metadata] Software: TestCamera"));
 
-        bool found_software = false;
-        for (const auto& m : matches) {
-            if (m.line_content.contains("Software") && m.line_content.contains("TestCamera")) {
-                found_software = true;
-                break;
-            }
-        }
+        const bool found_software = std::ranges::any_of(matches, [](const SearchMatch& match) {
+            return match.line_content.contains("Software") &&
+                   match.line_content.contains("TestCamera");
+        });
         QVERIFY2(found_software, "Should find Software value in JPEG EXIF metadata");
     }
 
@@ -1119,13 +1102,9 @@ void AdvancedSearchWorkerTests::imageMetadataSearch_jpegExifExtraction() {
         QCOMPARE(matches[0].match_start, 21);
         QCOMPARE(matches[0].match_end, 25);
 
-        bool found_date = false;
-        for (const auto& m : matches) {
-            if (m.line_content.contains("DateTime") && m.line_content.contains("2025")) {
-                found_date = true;
-                break;
-            }
-        }
+        const bool found_date = std::ranges::any_of(matches, [](const SearchMatch& match) {
+            return match.line_content.contains("DateTime") && match.line_content.contains("2025");
+        });
         QVERIFY2(found_date, "Should find DateTime value in JPEG EXIF metadata");
     }
 
@@ -1162,13 +1141,9 @@ void AdvancedSearchWorkerTests::imageMetadataSearch_directorySearch() {
     QCOMPARE(matches[0].line_content, QStringLiteral("[Metadata] Software: TestCamera"));
 
     // Verify the match came from the JPEG file
-    bool from_jpeg = false;
-    for (const auto& m : matches) {
-        if (m.file_path.endsWith(".jpg") && m.line_content.contains("TestCamera")) {
-            from_jpeg = true;
-            break;
-        }
-    }
+    const bool from_jpeg = std::ranges::any_of(matches, [](const SearchMatch& match) {
+        return match.file_path.endsWith(".jpg") && match.line_content.contains("TestCamera");
+    });
     QVERIFY2(from_jpeg, "Directory search should find metadata in JPEG files");
 }
 
@@ -1192,12 +1167,9 @@ void AdvancedSearchWorkerTests::imageMetadataSearch_realDirectory() {
 
     auto matches = runWorker(config);
 
-    int metadata_count = 0;
-    for (const auto& match : matches) {
-        if (match.line_content.startsWith("[Metadata]")) {
-            ++metadata_count;
-        }
-    }
+    const auto metadata_count = std::ranges::count_if(matches, [](const SearchMatch& match) {
+        return match.line_content.startsWith("[Metadata]");
+    });
     QVERIFY2(metadata_count >= 1, "Should find [Metadata] EXIF matches in Canon JPEG files");
 }
 
@@ -1247,13 +1219,9 @@ void AdvancedSearchWorkerTests::fileMetadataSearch_hasMetadataFormat() {
     QCOMPARE(matches[0].match_end, 19);
 
     // Verify the metadata output format uses [Metadata] prefix
-    bool has_metadata_prefix = false;
-    for (const auto& m : matches) {
-        if (m.line_content.startsWith("[Metadata]")) {
-            has_metadata_prefix = true;
-            break;
-        }
-    }
+    const bool has_metadata_prefix = std::ranges::any_of(matches, [](const SearchMatch& match) {
+        return match.line_content.startsWith("[Metadata]");
+    });
     QVERIFY2(has_metadata_prefix, "File metadata results should use [Metadata] prefix format");
 }
 
@@ -1277,13 +1245,9 @@ void AdvancedSearchWorkerTests::archiveSearch_validZip() {
     QCOMPARE(matches[0].line_content, QStringLiteral("Hello from inside ZIP!"));
 
     // Check that matches reference the archive path format
-    bool hasArchivePath = false;
-    for (const auto& m : matches) {
-        if (m.file_path.contains("!/")) {
-            hasArchivePath = true;
-            break;
-        }
-    }
+    const bool hasArchivePath = std::ranges::any_of(matches, [](const SearchMatch& match) {
+        return match.file_path.contains("!/");
+    });
     QVERIFY2(hasArchivePath, "Archive matches should use path!/entry format");
 }
 
@@ -1302,13 +1266,9 @@ void AdvancedSearchWorkerTests::archiveSearch_zipEntryNames() {
     QCOMPARE(matches[0].line_content, QStringLiteral("[Archive Entry] readme.txt"));
 
     // Should have an archive entry match
-    bool hasEntryMatch = false;
-    for (const auto& m : matches) {
-        if (m.line_content.contains("[Archive Entry]")) {
-            hasEntryMatch = true;
-            break;
-        }
-    }
+    const bool hasEntryMatch = std::ranges::any_of(matches, [](const SearchMatch& match) {
+        return match.line_content.contains("[Archive Entry]");
+    });
     QVERIFY2(hasEntryMatch, "Should match archive entry filenames");
 }
 
@@ -1326,13 +1286,9 @@ void AdvancedSearchWorkerTests::archiveSearch_deflateCompressed() {
     QCOMPARE(matches[0].line_number, 1);
 
     // Verify it found the match inside the archive
-    bool foundInArchive = false;
-    for (const auto& m : matches) {
-        if (m.file_path.contains("!/") && m.line_content.contains("SearchableToken")) {
-            foundInArchive = true;
-            break;
-        }
-    }
+    const bool foundInArchive = std::ranges::any_of(matches, [](const SearchMatch& match) {
+        return match.file_path.contains("!/") && match.line_content.contains("SearchableToken");
+    });
     QVERIFY2(foundInArchive, "Should find content match inside deflate-compressed archive entry");
 }
 

@@ -11,7 +11,7 @@
 # A skip is only acceptable when the thing it needs genuinely cannot exist on
 # a build machine. "Hard to set up" is not a reason - it is a fixture to write.
 #
-# Re-measured on 2026-08-31: 4947 test functions passed and 35 skipped, so
+# Re-measured on 2026-08-31: 4948 test functions passed and 35 skipped, so
 # 0.70 percent of what the suite could execute did not execute.
 # That number is the point of this file. ctest reports a binary as Passed when
 # every one of its functions skipped, so without this the suite can report

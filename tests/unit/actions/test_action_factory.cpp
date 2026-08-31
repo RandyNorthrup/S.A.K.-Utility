@@ -14,6 +14,7 @@
 #include <QSet>
 #include <QTest>
 
+#include <algorithm>
 #include <vector>
 
 using namespace sak;
@@ -201,13 +202,9 @@ void TestActionFactory::testRequiresAdminIsBool() {
 // ============================================================================
 
 int TestActionFactory::countByCategory(QuickAction::ActionCategory cat) const {
-    int count = 0;
-    for (const auto& action : m_actions) {
-        if (action->category() == cat) {
-            ++count;
-        }
-    }
-    return count;
+    return static_cast<int>(std::ranges::count_if(m_actions, [cat](const auto& action) {
+        return action->category() == cat;
+    }));
 }
 
 void TestActionFactory::testAllCategoriesPopulated() {

@@ -54,6 +54,28 @@ private Q_SLOTS:
         QCOMPARE(writer.totalBytesWritten(), static_cast<qint64>(273));
     }
 
+    void unicodeHeadersSerializeExactRfc2047Mime() {
+        sak::PstItemDetail item;
+        item.subject = QString::fromUtf8("\xc3\xa9");
+        item.sender_name = QString::fromUtf8("Jos\xc3\xa9");
+        item.sender_email = QStringLiteral("sender@example.com");
+        item.body_plain = QStringLiteral("body");
+        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+
+        const auto mime = sak::MboxWriter::buildMimeMessage(item, item.sender_email, item.date, {});
+        QVERIFY(mime.has_value());
+        const QByteArray expected =
+            "From: =?UTF-8?B?Sm9zw6k=?= <sender@example.com>\r\n"
+            "Subject: =?UTF-8?B?w6k=?=\r\n"
+            "Date: 01 Jan 2025 00:00:00 +0000\r\n"
+            "MIME-Version: 1.0\r\n"
+            "Content-Type: text/plain; charset=utf-8\r\n"
+            "Content-Transfer-Encoding: 8bit\r\n"
+            "\r\n"
+            "body";
+        QCOMPARE(*mime, expected);
+    }
+
     // ====================================================================
     // From_ line format
     // ====================================================================

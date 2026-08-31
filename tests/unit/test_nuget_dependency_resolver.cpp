@@ -11,6 +11,8 @@
 #include <QHash>
 #include <QtTest/QtTest>
 
+#include <algorithm>
+
 using sak::FeedPackageVersion;
 using sak::NuGetDependency;
 using sak::NuGetDependencyResolver;
@@ -48,22 +50,23 @@ QVector<ResolvedPackage> drive(NuGetDependencyResolver& r, const Feed& feed) {
 }
 
 QString versionOf(const QVector<ResolvedPackage>& resolved, const char* id) {
-    for (const ResolvedPackage& p : resolved) {
-        if (p.package_id.compare(QString::fromLatin1(id), Qt::CaseInsensitive) == 0) {
-            return p.version;
-        }
+    const QString package_id = QString::fromLatin1(id);
+    const auto match =
+        std::ranges::find_if(resolved, [&package_id](const ResolvedPackage& package) {
+            return package.package_id.compare(package_id, Qt::CaseInsensitive) == 0;
+        });
+    if (match != resolved.cend()) {
+        return match->version;
     }
     return {};
 }
 
 int countOf(const QVector<ResolvedPackage>& resolved, const char* id) {
-    int n = 0;
-    for (const ResolvedPackage& p : resolved) {
-        if (p.package_id.compare(QString::fromLatin1(id), Qt::CaseInsensitive) == 0) {
-            ++n;
-        }
-    }
-    return n;
+    const QString package_id = QString::fromLatin1(id);
+    return static_cast<int>(
+        std::ranges::count_if(resolved, [&package_id](const ResolvedPackage& package) {
+            return package.package_id.compare(package_id, Qt::CaseInsensitive) == 0;
+        }));
 }
 
 }  // namespace

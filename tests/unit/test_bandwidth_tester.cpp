@@ -10,6 +10,8 @@
 
 #include <QtTest/QtTest>
 
+#include <algorithm>
+
 using namespace sak;
 
 class TestBandwidthTester : public QObject {
@@ -115,13 +117,9 @@ void TestBandwidthTester::isIperf3Available_matchesBundledToolOnDisk() {
         appDir + QStringLiteral("/../tools/iperf3/iperf3.exe"),
         appDir + QStringLiteral("/iperf3.exe"),
     };
-    bool anyCandidateOnDisk = false;
-    for (const QString& candidate : candidates) {
-        if (QFileInfo::exists(candidate)) {
-            anyCandidateOnDisk = true;
-            break;
-        }
-    }
+    const bool anyCandidateOnDisk = std::ranges::any_of(candidates, [](const QString& candidate) {
+        return QFileInfo::exists(candidate);
+    });
 
     BandwidthTester tester;
     QCOMPARE(tester.isIperf3Available(), anyCandidateOnDisk);

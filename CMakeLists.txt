@@ -230,7 +230,7 @@ if(ENABLE_COVERAGE)
     # fiction. Linting is the MSVC build's job and is unaffected.
     add_compile_options(-Wno-missing-designated-field-initializers)
     #   * missing-field-initializers / unused-variable / unused-function / unused-parameter /
-    #     unused-lambda-capture / trigraphs: clang diagnoses these where MSVC does not. They are
+    #     unused-lambda-capture: clang diagnoses these where MSVC does not. They are
     #     style differences between two compilers, not defects in code that MSVC builds warning
     #     free under /W4 /WX every commit.
     add_compile_options(
@@ -238,8 +238,7 @@ if(ENABLE_COVERAGE)
         -Wno-unused-variable
         -Wno-unused-function
         -Wno-unused-parameter
-        -Wno-unused-lambda-capture
-        -Wno-trigraphs)
+        -Wno-unused-lambda-capture)
     set(SAK_COVERAGE_STATE "ENABLED (source-based, all configurations)")
     message(STATUS "Branch coverage:    ${SAK_COVERAGE_STATE}")
 endif()

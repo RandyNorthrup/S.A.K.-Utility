@@ -11,6 +11,8 @@
 #include <QTemporaryDir>
 #include <QTest>
 
+#include <algorithm>
+
 class AiWorkflowStoreTests : public QObject {
     Q_OBJECT
 
@@ -212,12 +214,10 @@ void AiWorkflowStoreTests::userDirectoryOverridesBuiltInWorkflow() {
     // override's title. Pin the catalog and the role listing, which do see it.
     const auto all_workflows = store.workflows();
     QCOMPARE(all_workflows.size(), 25);  // 25 built-ins; the override replaces one, adds no 26th
-    int copies_of_overridden_id = 0;
-    for (const auto& candidate : all_workflows) {
-        if (candidate.id == QStringLiteral("download_offline_installer")) {
-            ++copies_of_overridden_id;
-        }
-    }
+    const auto copies_of_overridden_id =
+        std::ranges::count_if(all_workflows, [](const sak::ai::WorkflowTemplate& candidate) {
+            return candidate.id == QStringLiteral("download_offline_installer");
+        });
     QCOMPARE(copies_of_overridden_id, 1);
     // The replacement declares role "PC Technician", so the built-in's old role listing must lose
     // it: four built-ins are "Software Deployment Technician", three survive the override.

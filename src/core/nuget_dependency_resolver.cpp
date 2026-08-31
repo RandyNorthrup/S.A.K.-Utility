@@ -377,11 +377,12 @@ void NuGetDependencyResolver::applyReselection(int idx, const FeedPackageVersion
 void NuGetDependencyResolver::withdrawOldContribution(const QString& pkg_id,
                                                       const QString& old_version) {
     const QVector<FeedPackageVersion> feed = m_feeds.value(pkg_id.toLower());
-    for (const FeedPackageVersion& fv : feed) {
-        if (fv.version == old_version) {
-            retractContribution(contributorKey(pkg_id, old_version), fv.dependencies);
-            return;
-        }
+    const auto match = std::ranges::find_if(feed,
+                                            [&old_version](const FeedPackageVersion& version) {
+                                                return version.version == old_version;
+                                            });
+    if (match != feed.cend()) {
+        retractContribution(contributorKey(pkg_id, old_version), match->dependencies);
     }
 }
 

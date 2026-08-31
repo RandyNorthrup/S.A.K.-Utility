@@ -32,9 +32,9 @@
 #include <QTextEdit>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <array>
 #include <iterator>
-
 
 namespace sak {
 namespace {
@@ -74,10 +74,9 @@ void DiagnosticBenchmarkPanel::onCopyInventoryClicked() {
                 .arg(formatBytes(inv.memory.total_bytes))
                 .arg(inv.memory.slots_used)
                 .arg(inv.memory.slots_total);
-    for (const auto& gpu : inv.gpus) {
-        // cppcheck-suppress useStlAlgorithm ; string formatting not suited for std::accumulate
+    std::ranges::for_each(inv.gpus, [&text](const auto& gpu) {
         text += QString("GPU: %1 (%2)\n").arg(gpu.name, formatBytes(gpu.vram_bytes));
-    }
+    });
     text +=
         QString("Motherboard: %1 %2\n").arg(inv.motherboard.manufacturer, inv.motherboard.product);
     text += QString("OS: %1 %2 (Build %3)\n").arg(inv.os_name, inv.os_version, inv.os_build);

@@ -1272,14 +1272,9 @@ bool FlashCoordinator::validateTargets(const QStringList& targetDrives) {
         return false;
     }
 
-    // cppcheck-suppress useStlAlgorithm ; early-return with per-device error reporting
-    for (const QString& devicePath : targetDrives) {
-        if (!validateSingleTarget(devicePath)) {
-            return false;
-        }
-    }
-
-    return true;
+    return std::ranges::all_of(targetDrives, [this](const QString& devicePath) {
+        return validateSingleTarget(devicePath);
+    });
 }
 
 bool FlashCoordinator::validateSingleTarget(const QString& devicePath) {

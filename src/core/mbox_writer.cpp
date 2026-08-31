@@ -117,7 +117,10 @@ QByteArray rfc2047Encode(const QString& value) {
         i += units;
     }
     flush_chunk();
-    return out.isEmpty() ? QByteArray("=?UTF-8?B??=") : out;
+    return out.isEmpty() ? QByteArray(
+                               "=?UTF-8?B?"
+                               "?=")
+                         : out;
 }
 
 // True when @p value contains a whitespace-free run too long to fold inside an RFC 5322 line.

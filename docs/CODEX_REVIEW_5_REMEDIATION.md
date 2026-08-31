@@ -1042,15 +1042,29 @@ a parked design, per the bucket convention. Open work is what remains after thos
   All changed-file hooks and the two-pass whole-tree gate pass with 183/186 checkers, zero normal
   findings, and zero stale inline suppressions. Release build exit 0; full CTest 267/267, zero
   failures, 744.35 seconds.
-  INLINE SUPPRESSION NECESSITY AUDIT: 31 markers remain. Nine have safe direct structural removal
-  paths and are open work; 21 are currently proven analyzer limitations. The final marker exposes
+  INLINE SUPPRESSION NECESSITY AUDIT: 28 markers remain after three raw-loop markers were fixed
+  directly. Six more have safe structural removal paths and are open work; 21 are currently
+  proven analyzer limitations. The final marker exposes
   a larger exception-unwind lifetime weakness in PartitionExecutor and needs owned active-broker
   state, not comment deletion. It remains open rather than being accepted as permanent policy.
+  CPPCHECK SUPPRESSION WAVE 6, 2026-08-31: 20 more `useStlAlgorithm` findings are fixed through
+  equivalent find/any/count algorithms across two production files and six test suites. The
+  whole-tree reveal fell 315 -> 295 (236 production, 59 tests). Three individually suppressed
+  raw loops now use order-preserving/short-circuit ranges algorithms, reducing inline markers
+  31 -> 28 without changing per-target error, signal, logging, or inventory output behavior.
+  COVERAGE SILENCE REMOVAL: `-Wno-trigraphs` is gone. The single RFC 2047 fallback token is split
+  across adjacent compile-time literals with identical bytes, and a deterministic Unicode MIME
+  golden test pins the complete reachable encoded output. The clang-cl coverage tree reconfigured
+  and built `test_mbox_writer` with the warning active; its CTest passes. Seven coverage-only
+  warning suppressions remain open for separate reveal/direct-fix slices.
+  WAVE 6 FINAL GATE: all changed-file hooks passed; two-pass whole-tree cppcheck ran with 183/186
+  checkers, zero normal findings, exactly 58 classified Qt slots, and zero stale inline
+  suppressions. Release build exit 0; full CTest 267/267, zero failures, 923.00 seconds.
   OWNER RULE NOW RECORDED IN `AGENTS.md`: fix code, test, tool, or gate first; suppression is the
   last resort only after no direct fix is possible and the exact reason is proven. Existing
   suppressions are re-audited, not inherited as permanent policy. Current batch: all pre-commit
   hooks passed; Release build exit 0; full CTest 265/265, zero failures, 804.48 seconds.
-  STILL OPEN: core's 5,271 naming findings; the 315-item `useStlAlgorithm` program;
+  STILL OPEN: core's 5,271 naming findings; the 295-item `useStlAlgorithm` program;
   coverage compiler suppressions; directly
   closable fixture/resource skips; and the historical VM credential rotation/history-rewrite
   decision.

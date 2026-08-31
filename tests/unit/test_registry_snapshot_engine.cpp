@@ -9,6 +9,7 @@
 #include <QSet>
 #include <QtTest/QtTest>
 
+#include <algorithm>
 #include <type_traits>
 
 using sak::RegistrySnapshotEngine;
@@ -57,12 +58,9 @@ void RegistrySnapshotEngineTests::captureSnapshot_idempotent() {
     auto snapshot1 = RegistrySnapshotEngine::captureSnapshot();
     auto snapshot2 = RegistrySnapshotEngine::captureSnapshot();
 
-    int common = 0;
-    for (const auto& key : snapshot1) {
-        if (snapshot2.contains(key)) {
-            ++common;
-        }
-    }
+    const auto common = std::ranges::count_if(snapshot1, [&snapshot2](const QString& key) {
+        return snapshot2.contains(key);
+    });
 
     // At least 95% overlap expected
     double overlap = static_cast<double>(common) / snapshot1.size();

@@ -532,10 +532,11 @@ bool AdvancedSearchWorker::checkNetworkPathAccessible(const QString& path) const
 
 std::optional<QString> AdvancedSearchWorker::firstInvalidExcludePattern(
     const QStringList& patterns) {
-    for (const auto& pattern : patterns) {
-        if (!QRegularExpression(pattern).isValid()) {
-            return pattern;
-        }
+    const auto invalid = std::ranges::find_if(patterns, [](const QString& pattern) {
+        return !QRegularExpression(pattern).isValid();
+    });
+    if (invalid != patterns.cend()) {
+        return *invalid;
     }
     return std::nullopt;
 }
