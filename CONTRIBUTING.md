@@ -257,6 +257,15 @@ pre-commit run --all-files
 pre-commit run --hook-stage manual clang-tidy-naming --all-files
 pre-commit run --hook-stage manual cppcheck-whole-project --all-files
 pre-commit run --hook-stage manual startup-budget --all-files
+pre-commit run --hook-stage manual accessibility-runtime --all-files
+pre-commit run --hook-stage manual test-skip-audit --all-files
+pre-commit run --hook-stage manual build-verification --all-files
+pre-commit run --hook-stage manual coverage-measurement --all-files
+pre-commit run --hook-stage manual release-readiness --all-files
+pre-commit run --hook-stage manual portable-release-smoke --all-files
+pre-commit run --hook-stage manual portable-e2e-smoke --all-files
+pre-commit run --hook-stage manual windows-runtime-dependencies --all-files
+pre-commit run --hook-stage manual signed-release-verification --all-files
 
 # Whole-tree high-confidence unused-function scan (CI runs this too)
 powershell scripts/check_dead_code.ps1

@@ -67,6 +67,10 @@ function Test-IsSystemDll {
         "bcrypt.dll",
         "comdlg32.dll",
         "crypt32.dll",
+        # DbgHelp is a Windows System32 component. CrashReporter links dbghelp.lib for
+        # MiniDumpWriteDump; copying a private dbghelp.dll beside the app would replace the
+        # serviced OS implementation and is neither required nor desirable.
+        "dbghelp.dll",
         "dnsapi.dll",
         "dwmapi.dll",
         "dxgi.dll",

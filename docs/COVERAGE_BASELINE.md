@@ -26,7 +26,8 @@ aggregate below is therefore pessimistic for src/core: these exes statically lin
 core files (via logger, error_codes, email_types) that this set does not exercise, and
 every such line counts against the total. The per-file table is the sharper signal.
 
-Measured 2026-08-12. Exclusion inventory (R5-G14-16c) added 2026-08-17.
+Measured 2026-08-30 with the CI-matched curated core regex. Exclusion inventory
+(R5-G14-16c) added 2026-08-17.
 
 ## Per subsystem (curated core set)
 
@@ -35,8 +36,8 @@ Measured 2026-08-12. Exclusion inventory (R5-G14-16c) added 2026-08-17.
 | src\ai         | 624 / 702       | 88.89%    |
 | include\sak    | 448 / 515       | 86.99%    |
 | src\win32mcp   | 34 / 34         | 100.00%   |
-| src\core       | 2657 / 6536     | 40.65%    |
-| TOTAL measured | 3763 / 7787     | 48.32%    |
+| src\core       | 4073 / 6494     | 62.72%    |
+| TOTAL measured | 5179 / 7745     | 66.87%    |
 
 ## Per file (the directly-tested files)
 
@@ -53,15 +54,14 @@ Measured 2026-08-12. Exclusion inventory (R5-G14-16c) added 2026-08-17.
 | input_validator.cpp       | 262 / 337       | 77.7%  |
 | encryption.cpp            | 288 / 385       | 74.8%  |
 | path_utils.cpp            | 107 / 157       | 68.2%  |
-| pst_parser.cpp            | 470 / 1534      | 30.6%  |
+| pst_parser.cpp            | 1178 / 1513     | 77.9%  |
 | crash_reporter.cpp        | 15 / 60         | 25.0%  |
 
 ## What the low numbers tell us (and the follow-ups they name)
 
-- **pst_parser.cpp 30.6%.** The PST fuzz seeds fail closed at the header / CRC layer, so
-  the deep BTree, LTP, and messaging code is never reached. This is the exact gap already
-  noted for R5-G14-5: adding page-trailer-valid store seeds so accepted files exercise
-  those layers is the next increment, and this number will move when it lands.
+- **pst_parser.cpp improved from 30.6% to 77.9%.** Page-trailer-valid store seeds now reach
+  the deep BTree, LTP, and messaging layers instead of stopping at header/CRC refusal. The
+  remaining uncovered lines are the narrower malformed/degraded tails, not an unopened parser.
 - **crash_reporter.cpp 25.0%.** Only the pure helpers are unit-tested; the actual
   SetUnhandledExceptionFilter / MiniDumpWriteDump path needs a real fault to exercise and
   is certified manually (see R5-G23-2). Coverage cannot reach it from a normal test.

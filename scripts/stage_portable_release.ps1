@@ -120,7 +120,7 @@ function Remove-PathIfExists([string]$Path, [string]$ExpectedType) {
 # $ErrorActionPreference does not fail this script on a nonzero exit code coming out of a
 # child script or the native tools it drives, so a failed runtime bundle or a failed
 # dependency verification would otherwise fall through to "Package staged successfully".
-function Invoke-RequiredScript([string]$ScriptPath, [string[]]$ScriptArguments) {
+function Invoke-RequiredScript([string]$ScriptPath, [hashtable]$ScriptArguments) {
     if (-not (Test-Path -LiteralPath $ScriptPath -PathType Leaf)) {
         throw "Required script missing: $ScriptPath"
     }
@@ -205,7 +205,7 @@ foreach ($pattern in @("vcruntime*.dll", "msvcp*.dll", "concrt*.dll")) {
 }
 
 Invoke-RequiredScript (Join-Path $repoRootPath "scripts/bundle_vcpkg_runtime.ps1") `
-    @("-DestinationPath", $packageRoot)
+    @{ DestinationPath = $packageRoot }
 
 $toolsSource = Join-Path $buildRoot "tools"
 if (-not (Test-Path -LiteralPath $toolsSource -PathType Container)) {
@@ -295,7 +295,7 @@ if ($localFiles) {
 }
 
 Invoke-RequiredScript (Join-Path $repoRootPath "scripts/verify_windows_runtime_dependencies.ps1") `
-    @("-RootDir", $packageRoot, "-PrimaryExe", "sak_utility.exe")
+    @{ RootDir = $packageRoot; PrimaryExe = "sak_utility.exe" }
 
 $files = Get-ChildItem -LiteralPath $packageRoot -Recurse -File
 $totalSize = ($files | Measure-Object -Property Length -Sum).Sum

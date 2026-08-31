@@ -67,7 +67,7 @@ any tool, so they hold only if a human notices.
 | cppcheck findings | Zero across `src/` and `include/` | `cppcheck` -- BLOCKING on the files YOUR commit changed; `cppcheck-whole-project` (manual stage + CI) -- BLOCKING whole-tree |
 | Dead source functions | Zero high-confidence unreferenced definitions in `src/*.cpp` | `dead-code` -- BLOCKING on changed source files; `scripts/check_dead_code.ps1` in CI -- BLOCKING whole-tree |
 | Dead analysis suppressions | A `// cppcheck-suppress` must actually suppress something | `cppcheck-whole-project` reveal pass -- BLOCKING (`scripts/cppcheck_whole_project_gate.ps1`) |
-| Pre-commit/CI gate parity | Every custom and generic pre-commit gate has a verified CI route | `gate-parity` -- BLOCKING (`scripts/check_gate_parity.ps1`) |
+| Local/CI gate parity | Every custom/generic local gate has a CI route; every CI grading script has a local/manual route | `gate-parity` -- BLOCKING (`scripts/check_gate_parity.ps1`) |
 | Cold startup performance | <=15 seconds through real `--smoke-test` initialization | `startup-budget` -- MANUAL after Release build; CI -- BLOCKING |
 | Nesting depth | <=3 levels | Review -- lizard measures complexity, not nesting depth |
 | Assertions | Meaningful preconditions/postconditions | Review -- every assertion should catch a real bug |

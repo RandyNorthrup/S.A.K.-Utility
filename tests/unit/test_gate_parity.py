@@ -31,7 +31,8 @@ def make_fixture(directory: str) -> Path:
     shutil.copy2(PROJECT_ROOT / ".pre-commit-config.yaml", root)
     for workflow in (PROJECT_ROOT / ".github" / "workflows").glob("*.yml"):
         shutil.copy2(workflow, root / ".github" / "workflows")
-    for script in ("cppcheck_whole_project_gate.ps1", "check_repository_hygiene.ps1"):
+    for script in ("cppcheck_whole_project_gate.ps1", "check_repository_hygiene.ps1",
+                   "verify_signed_release.ps1"):
         shutil.copy2(PROJECT_ROOT / "scripts" / script, root / "scripts")
     return root
 
@@ -77,6 +78,18 @@ class GateParityTests(unittest.TestCase):
             result = run_gate(root)
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("gitleaks", (result.stdout + result.stderr).lower())
+
+    def test_missing_local_route_for_ci_gate_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = make_fixture(directory)
+            config = root / ".pre-commit-config.yaml"
+            text = config.read_text(encoding="utf-8")
+            start = text.index("      - id: startup-budget")
+            end = text.index("      - id: accessibility-runtime", start)
+            config.write_text(text[:start] + text[end:], encoding="utf-8")
+            result = run_gate(root)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("check_startup_budget.ps1", result.stdout + result.stderr)
 
 
 if __name__ == "__main__":

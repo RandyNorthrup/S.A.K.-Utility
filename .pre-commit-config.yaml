@@ -286,6 +286,93 @@ repos:
         pass_filenames: false
         stages: [manual]
 
+      - id: accessibility-runtime
+        name: "Accessibility runtime audit (built Release app)"
+        description: "Run explicit-accessor audit against the real built application"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_accessibility_patterns.ps1
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      - id: test-skip-audit
+        name: "CTest skip-log audit"
+        description: "Reject unreviewed, stale, or missing QtTest result logs after full CTest"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_test_skips.ps1
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      - id: build-verification
+        name: "Full build-output verification"
+        description: "Run the same build/configuration verification used by CI"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/verify_build.ps1
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      - id: coverage-measurement
+        name: "RelWithDebInfo line coverage measurement"
+        description: "Run OpenCppCoverage over registered tests after coverage build"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/run_coverage.ps1
+          -TestRegex ^test_(pst_parser|fuzz_pst_parser|mbox_parser|fuzz_mbox_headers|fuzz_mbox_transfer_decoder|iso_analyzer|fuzz_iso_analyzer|ai_tool_policy|fuzz_command_classifier|fuzz_email_sanitizer|fuzz_mcp_framing|crash_reporter|encryption|input_validator|path_utils|email_types)$
+          -OutDir build/coverage
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      - id: release-readiness
+        name: "Release readiness against staged Release tree"
+        description: "Run aggregate release gates against clean extracted portable package"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_release_readiness.ps1
+          -PackageRoot build/Release/clean-smoke-extract
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      - id: portable-release-smoke
+        name: "Portable release static smoke"
+        description: "Verify required packaged files and reject leaked mutable state"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/verify_portable_release_smoke.ps1
+          -PackageRoot build/Release/clean-smoke-extract
+          -RepoRoot .
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      - id: portable-e2e-smoke
+        name: "Portable release startup E2E smoke"
+        description: "Boot real packaged application and verify clean portable behavior"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/run_portable_e2e_smoke.ps1
+          -PackageRoot build/Release/clean-smoke-extract
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      - id: windows-runtime-dependencies
+        name: "Windows runtime dependency audit"
+        description: "Verify every non-system imported DLL is present in build/Release"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/verify_windows_runtime_dependencies.ps1 -RootDir build/Release
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      - id: signed-release-verification
+        name: "Signed release signatures and readiness"
+        description: "Resolve current VERSION package and require signatures plus signed readiness"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/verify_signed_release.ps1
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
       # -------------------------------------------------------------------
       # 6b. Nested event loops and unbounded blocking waits
       #     Debt reached zero, so this one is now wired. Every gated site

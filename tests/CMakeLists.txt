@@ -7673,6 +7673,16 @@ if(PLATFORM_WINDOWS)
                      -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_startup_budget.ps1")
     set_tests_properties(test_startup_budget PROPERTIES TIMEOUT 180)
 
+    add_test(NAME test_windows_runtime_dependencies
+             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_windows_runtime_dependencies.ps1")
+    set_tests_properties(test_windows_runtime_dependencies PROPERTIES TIMEOUT 120)
+
+    add_test(NAME test_stage_portable_release
+             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_stage_portable_release.ps1")
+    set_tests_properties(test_stage_portable_release PROPERTIES TIMEOUT 240)
+
     find_program(SAK_PYTHON_EXECUTABLE NAMES python3 python)
     if(NOT SAK_PYTHON_EXECUTABLE)
         message(FATAL_ERROR
