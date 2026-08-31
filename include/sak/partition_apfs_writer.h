@@ -297,6 +297,8 @@ struct PartitionApfsLiveLayoutProbe {
     uint32_t sm_main_cib_count{0};
     uint32_t sm_main_cab_count{0};
     uint64_t sm_main_free_count{0};
+    uint64_t ip_fq_tree_oid{0};
+    uint64_t main_fq_tree_oid{0};
     uint64_t ip_base{0};
     uint64_t ip_block_count{0};
     uint32_t ip_bm_size_blocks{0};
@@ -961,6 +963,19 @@ public:
     ///        reclamation. Diagnostic for the keystone S3 COW: the old spilled-chunk
     ///        bitmap slot a repeated spill retired must appear here.
     [[nodiscard]] static QVector<quint64> readGeneratedIpFreeQueueGhosts(const QString& image_path);
+    /// @brief Read-only WS3c seam: load a genuine foreign internal-pool context and return the
+    ///        next CIB/chunk-0-bitmap COW addresses selected from its real bitmap/free queue.
+    ///        Returns {0,0} with blockers when the image is not a validated foreign layout.
+    [[nodiscard]] static QPair<quint64, quint64> nextForeignIpRotationForTesting(
+        const QString& image_path, QStringList* blockers);
+    /// @brief Read-only WS3c candidate classifier for an exact internal-pool block.
+    [[nodiscard]] static bool foreignIpBlockAvailableForTesting(const QString& image_path,
+                                                                quint64 block,
+                                                                QStringList* blockers);
+    /// @brief Read-only WS3c graph walk: true when an exact block is a live CIB/CAB/chunk bitmap.
+    [[nodiscard]] static bool foreignIpBlockIsLiveMetadataForTesting(const QString& image_path,
+                                                                     quint64 block,
+                                                                     QStringList* blockers);
     [[nodiscard]] static QStringList enterpriseCertificationRequirements();
     [[nodiscard]] static PartitionApfsWritePreflight preflightExistingContainer(
         const PartitionFileSystemDetection& detection,

@@ -235,6 +235,19 @@ commit. Evidence
 and `...\apfs-cab-inplace-commit-kernel-read-files.png`. The in-place commit cap
 (`kApfsInPlaceCommitMaxBytes`) was raised to 32 TiB so the validator accepts CAB sources; the
 only remaining fail-closed tier is the >~10 TiB case where the boundary chunk leaves cib 0.
+
+WS3c closed the genuine Apple scattered-internal-pool mutation gap on 2026-08-31. A freshly
+Apple-created 256 MiB source and a genuine 18,043,854,848-byte, 135-chunk/2-CIB source each
+completed chained insert, patch, replace, and delete commits. Every stage passed host `apfsck
+-cw`, Apple `fsck_apfs -n` before mount, exact macOS-kernel read-back, and Apple fsck after the
+kernel continued the checkpoint. The same 135-chunk source then shrank to 17,179,869,184 bytes
+(128 chunks) without losing the replacement or neighboring file. The foreign path adopts the
+source's authenticated CIB, chunk-bitmap, CAB, and free-queue geometry, excludes every live
+metadata block, and keeps S.A.K.-formatted media on its byte-identical generated rotation path.
+Machine-readable evidence and genuine-byte compact fixtures are in
+`artifacts\partition-manager-certification\vm-lab\external-evidence\external.apfs-foreign-multicib-cow\report.json`
+and `tests\fixtures\apfs\`.
+
 The writer now also formats existing image targets in place only after explicit
 destructive wipe confirmation, clears stale edge signatures, writes generated
 APFS metadata through a seekable-device block writer, and proves post-format
@@ -593,7 +606,8 @@ certification is a distinct scope from the Partition Manager destructive-operati
 claim level tracked elsewhere in this document.
 
 **APFS:** A1 multi-CIB / multi-chunk space manager (single-CIB + CAB tier to a
-24 TiB cap; `external.apfs-cab-tier-cloud`); A2 in-place crash-safe COW
+24 TiB cap, plus genuine Apple scattered-IP 135-chunk/2-CIB mutation and shrink;
+`external.apfs-cab-tier-cloud`, `external.apfs-foreign-multicib-cow`); A2 in-place crash-safe COW
 checkpoint mutation of files + directories incl. cross-directory move and
 object-id-preserving byte-range patch, wired through both the File Management
 bridge and the Partition Manager queue (`external.apfs-fulltree-cow-mutations`,
@@ -604,8 +618,9 @@ bridge and the Partition Manager queue (`external.apfs-fulltree-cow-mutations`,
 on a real Mac); A4 multi-volume containers (`external.apfs-multi-volume`); A5
 inline zlib `com.apple.decmpfs` compression (`external.apfs-compression`); A6
 credential-gated FileVault encryption (`external.apfs-encryption`); A7 clones /
-sparse files / hard-links / xattr-ACL / in-chunk container resize
-(`external.apfs-a7-kernel-cert`, `external.apfs-a7-raw-physical`); A8 the
+sparse files / hard-links / xattr-ACL / cross-chunk container grow and shrink
+(`external.apfs-a7-kernel-cert`, `external.apfs-a7-raw-physical`,
+`external.apfs-foreign-multicib-cow`); A8 the
 physical-USB full-driver gate - a S.A.K. multi-volume + snapshot container on a
 disposable 7.3 TiB USB: the macOS kernel mounted both volumes, read the file,
 and enumerated the snapshot; Apple `fsck_apfs` was clean; then a kernel write +

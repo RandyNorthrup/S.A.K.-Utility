@@ -1,0 +1,70 @@
+{
+  "status": "Passed",
+  "gate_id": "external.apfs-foreign-multicib-cow",
+  "tier": "WS3c genuine-Apple scattered internal-pool COW plus WS3c-2 multi-CIB shrink",
+  "destructive": false,
+  "host": "macOS 26.6 VM at the pinned lab address, apfs_kext/newfs_apfs 2811.160.7.0.4",
+  "completed_at_utc": "2026-08-31T10:38:29Z",
+  "source_fixtures": [
+    {
+      "volume": "SAKWS3C",
+      "bytes": 268435456,
+      "geometry": "2 chunks, 1 CIB, one-block IP bitmap",
+      "uuid": "0D4A4E0B-EA62-498B-9F28-C40C762EEA8A",
+      "creation": "hdiutil create -size 256m -layout NONE -fs APFS",
+      "uncompressed_sha256": "6532b126b276a38acecf2248d744f52379c1d2d59fcf03ef30ab084990e1049b"
+    },
+    {
+      "volume": "SAKWS3C2",
+      "bytes": 18043854848,
+      "geometry": "135 chunks, 2 CIBs, no CAB, ip_base 10897, ip_block_count 411",
+      "uuid": "0E729D54-F8FA-42B2-BAA9-718B66AFF0AB",
+      "creation": "hdiutil 17 GiB sparse image; bare Apple_APFS partition harvested after clean detach"
+    }
+  ],
+  "implementation": {
+    "foreign_detection": "A live CIB outside the generated three-slot model adopts authenticated real spaceman geometry. Later commits retain the foreign path from the authenticated volume-superblock formatted_by record rather than address coincidence.",
+    "rotation": "New CIB, chunk-0 bitmap, optional CAB, spill bitmaps, and CIB copies are selected from the real IP bitmap plus the two-checkpoint IP free-queue window.",
+    "live_metadata_guard": "Every live CAB, CIB, and nonzero ci_bitmap_addr is authenticated, required marked-used, and excluded from allocation.",
+    "queue_update": "Consumed aged IP ghosts leave the rebuilt IP free queue; old live COW blocks enter it at the new xid. The used-set clears reclaimed ghosts and marks every new copy.",
+    "generated_layout_behavior": "S.A.K.-formatted containers that still match generated packing and slot geometry keep the existing byte-identical three-slot path."
+  },
+  "defects_caught_during_certification": [
+    "The original path rejected genuine multi-chunk Apple COW at nextIpSlot.",
+    "Using the four-checkpoint main-data rollback window for the IP queue left no reusable CIB/bitmap pair; the IP ring requires its documented two-checkpoint window.",
+    "After the first foreign commit, the new CIB landed at a generated-looking address and the next commit forgot the volume was foreign.",
+    "That misclassification reused live chunk-3 bitmap block 10900 as chunk 0's new bitmap; host apfsck reported Chunk-info: wrong count of free blocks from the patch checkpoint onward.",
+    "sak_apfs_writer_cli commit-image-resize parsed --new-size-bytes but passed --size-bytes to the writer, making every image resize request current-to-current.",
+    "The full 262-test gate caught a classifier regression: an S.A.K.-formatted >1.35 TiB generated container with a relocated multi-block IP ring was routed into the one-block foreign path. Authenticated S.A.K. formatter provenance plus generated inline-array packing now retain the generated path, while nextIpSlot still validates the re-anchored live ring before any write."
+  ],
+  "cow_chain": {
+    "operations": [
+      {"operation": "insert", "xid": "4->5", "host_apfsck_exit": 0},
+      {"operation": "patch", "xid": "5->6", "host_apfsck_exit": 0},
+      {"operation": "create-or-replace write", "xid": "6->7", "host_apfsck_exit": 0},
+      {"operation": "delete", "xid": "7->8", "host_apfsck_exit": 0}
+    ],
+    "apple_pre_mount_fsck": "All four checkpoints: volume and container appear to be OK; space manager, both free-queue trees, object maps, fsroot, extent-ref, volume-object-map space, and allocated space clean.",
+    "kernel_readback": "Insert and patch contents matched exactly; replacement matched exactly; delete target was absent; original/nested neighbor data stayed intact.",
+    "kernel_continuation": "The kernel advanced the four independent candidates to xids 8, 9, 10, and 11 respectively.",
+    "apple_post_kernel_fsck": "All four kernel-advanced candidates: volume and container appear to be OK."
+  },
+  "shrink_inverse": {
+    "source": "The xid-8 final foreign multi-CIB COW result",
+    "size": "18043854848 -> 17179869184 bytes (135 -> 128 chunks; remains multi-CIB)",
+    "xid": "8->9",
+    "host_apfsck_exit": 0,
+    "apple_pre_mount_fsck": "Volume and container appear to be OK at xid 9.",
+    "kernel_readback": "Replacement and nested neighbor matched; deleted file remained absent.",
+    "kernel_continuation": "xid 9->12",
+    "apple_post_kernel_fsck": "Volume and container appear to be OK at xid 12."
+  },
+  "hermetic_regression": {
+    "fixtures": [
+      "tests/fixtures/apfs/foreign-apple-256m.dmg.gz",
+      "tests/fixtures/apfs/foreign-apple-multicib-17g.bin",
+      "tests/fixtures/apfs/foreign-apple-multicib-after-insert.bin"
+    ],
+    "coverage": "Shipped tests run the chained 256 MiB COW path and reconstruct the genuine post-insert 135-chunk/two-CIB metadata state to prove foreign classification and exact live far-bitmap exclusion."
+  }
+}

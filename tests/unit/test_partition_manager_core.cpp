@@ -47,6 +47,8 @@
 #include <tuple>
 #include <type_traits>
 
+#include <zlib.h>
+
 using namespace sak;
 
 // R5-G14-19: the strong-index guarantee is a COMPILE-TIME gate, not a runtime hope.
@@ -248,6 +250,157 @@ constexpr qsizetype kTestApfsReaperOidOffset = 0xA8;
 constexpr qsizetype kTestApfsMaxFileSystemsOffset = 0xB4;
 constexpr qsizetype kTestApfsFileSystemOidArrayOffset = 0xB8;
 constexpr uint32_t kTestApfsBlockSize = 4096;
+constexpr qint64 kForeignAppleFixtureBytes = 256LL * 1024LL * 1024LL;
+constexpr int kGzipReadBufferBytes = 64 * 1024;
+constexpr qint64 kApfsBlockMapHeaderBytes = 24;
+constexpr qint64 kApfsBlockMapRecordHeaderBytes = 8;
+constexpr uint32_t kApfsBlockMapMaxRecords = 4096;
+constexpr char kApfsBlockMapMagic[] = "SAKAPFS1";
+constexpr qint64 kForeignAppleMultiCibBytes = 18'043'854'848LL;
+constexpr QLatin1StringView kForeignAppleFixtureSha256(
+    "6532b126b276a38acecf2248d744f52379c1d2d59fcf03ef30ab084990e1049b");
+
+QString foreignAppleFixturePath() {
+    return QDir(QString::fromUtf8(SAK_TEST_FIXTURE_DIR))
+        .filePath(QStringLiteral("apfs/foreign-apple-256m.dmg.gz"));
+}
+
+QString foreignAppleAfterInsertBlockMapPath() {
+    return QDir(QString::fromUtf8(SAK_TEST_FIXTURE_DIR))
+        .filePath(QStringLiteral("apfs/foreign-apple-multicib-after-insert.bin"));
+}
+
+QString foreignAppleMultiCibBlockMapPath() {
+    return QDir(QString::fromUtf8(SAK_TEST_FIXTURE_DIR))
+        .filePath(QStringLiteral("apfs/foreign-apple-multicib-17g.bin"));
+}
+
+bool expandGzipFixture(const QString& source, const QString& destination, QString* error) {
+    const QByteArray encodedSource = QFile::encodeName(source);
+    gzFile input = gzopen(encodedSource.constData(), "rb");
+    if (input == nullptr) {
+        *error = QStringLiteral("unable to open gzip fixture");
+        return false;
+    }
+    QFile output(destination);
+    if (!output.open(QIODevice::WriteOnly)) {
+        gzclose(input);
+        *error = output.errorString();
+        return false;
+    }
+    QByteArray buffer(kGzipReadBufferBytes, '\0');
+    int readResult = 0;
+    while ((readResult = gzread(input, buffer.data(), static_cast<unsigned int>(buffer.size()))) >
+           0) {
+        if (output.write(buffer.constData(), readResult) != readResult) {
+            gzclose(input);
+            *error = output.errorString();
+            return false;
+        }
+    }
+    if (readResult < 0) {
+        int gzipError = Z_OK;
+        *error = QString::fromUtf8(gzerror(input, &gzipError));
+        gzclose(input);
+        return false;
+    }
+    if (gzclose(input) != Z_OK) {
+        *error = QStringLiteral("gzip fixture close failed");
+        return false;
+    }
+    output.close();
+    return true;
+}
+
+struct ApfsBlockMapHeader {
+    uint64_t imageBytes{0};
+    uint32_t blockBytes{0};
+    uint32_t records{0};
+};
+
+std::optional<ApfsBlockMapHeader> readApfsBlockMapHeader(QFile* input, QString* error) {
+    const QByteArray expectedMagic(kApfsBlockMapMagic, sizeof(kApfsBlockMapMagic) - 1);
+    const QByteArray header = input->read(kApfsBlockMapHeaderBytes);
+    if (header.size() != kApfsBlockMapHeaderBytes ||
+        header.left(expectedMagic.size()) != expectedMagic) {
+        *error = QStringLiteral("invalid APFS block-map header");
+        return std::nullopt;
+    }
+    const ApfsBlockMapHeader decoded{qFromLittleEndian<uint64_t>(header.constData() + 8),
+                                     qFromLittleEndian<uint32_t>(header.constData() + 16),
+                                     qFromLittleEndian<uint32_t>(header.constData() + 20)};
+    const qint64 expectedBytes = kApfsBlockMapHeaderBytes +
+                                 (static_cast<qint64>(decoded.records) *
+                                  (kApfsBlockMapRecordHeaderBytes + decoded.blockBytes));
+    if (decoded.imageBytes != kForeignAppleMultiCibBytes ||
+        decoded.blockBytes != kTestApfsBlockSize || decoded.records == 0 ||
+        decoded.records > kApfsBlockMapMaxRecords || input->size() != expectedBytes) {
+        *error = QStringLiteral("invalid APFS block-map geometry");
+        return std::nullopt;
+    }
+    return decoded;
+}
+
+bool writeApfsBlockMapRecord(QFile* input,
+                             QFile* output,
+                             const ApfsBlockMapHeader& header,
+                             QSet<uint64_t>* seen,
+                             QString* error) {
+    const QByteArray indexBytes = input->read(kApfsBlockMapRecordHeaderBytes);
+    const QByteArray block = input->read(header.blockBytes);
+    if (indexBytes.size() != kApfsBlockMapRecordHeaderBytes ||
+        block.size() != static_cast<qsizetype>(header.blockBytes)) {
+        *error = QStringLiteral("truncated APFS block-map record");
+        return false;
+    }
+    const uint64_t index = qFromLittleEndian<uint64_t>(indexBytes.constData());
+    if (index >= header.imageBytes / header.blockBytes || seen->contains(index) ||
+        !output->seek(static_cast<qint64>(index * header.blockBytes)) ||
+        output->write(block) != header.blockBytes) {
+        *error = QStringLiteral("invalid APFS block-map record");
+        return false;
+    }
+    seen->insert(index);
+    return true;
+}
+
+bool expandApfsBlockMap(const QString& source, const QString& destination, QString* error) {
+    QFile input(source);
+    if (!input.open(QIODevice::ReadOnly)) {
+        *error = input.errorString();
+        return false;
+    }
+    const auto header = readApfsBlockMapHeader(&input, error);
+    if (!header) {
+        return false;
+    }
+    QFile output(destination);
+    if (!output.open(QIODevice::WriteOnly) ||
+        !output.resize(static_cast<qint64>(header->imageBytes))) {
+        *error = output.errorString();
+        return false;
+    }
+    QSet<uint64_t> seen;
+    for (uint32_t record = 0; record < header->records; ++record) {
+        if (!writeApfsBlockMapRecord(&input, &output, *header, &seen, error)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+QString sha256File(const QString& path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return QString();
+    }
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    while (!file.atEnd()) {
+        hash.addData(file.read(kGzipReadBufferBytes));
+    }
+    return QString::fromLatin1(hash.result().toHex());
+}
+
 constexpr qsizetype kTestApfsSpacemanBlock = 15;
 constexpr qsizetype kTestApfsVolumeCandidateBlock = 16;
 constexpr qsizetype kTestApfsObjectMapBlock = 17;
@@ -1558,6 +1711,9 @@ private Q_SLOTS:
     void apfsWriter_manyDataFileInsertOverflowsExtentRefTree();
     void apfsWriter_multiNodeOmapCommitReadsAndFreesWholeTree();
     void apfsWriter_crashSafeIpSlotRoundRobinsThreeSlots();
+    void apfsWriter_foreignMultiChunkCowInsertRoundTrips();
+    void apfsWriter_foreignMultiChunkCowPatchWriteDeleteRoundTrips();
+    void apfsWriter_foreignMultiCibRotationExcludesEveryLiveBitmap();
     void apfsWriter_readsGeneratedLiveCibAddr();
     void apfsWriter_crashBeforeCheckpointDurableRollsBack();
     void apfsWriter_crashDuringReplaceKeepsTheOldFile();  // M-A4-6
@@ -16221,6 +16377,163 @@ void PartitionManagerCoreTests::apfsWriter_crashSafeIpSlotRoundRobinsThreeSlots(
         cib = PartitionApfsWriter::nextCrashSafeIpSlot(cib, blocks).first;
     }
     QCOMPARE(cib, static_cast<quint64>(187));
+}
+
+void PartitionManagerCoreTests::apfsWriter_foreignMultiChunkCowInsertRoundTrips() {
+    // WS3c regression: a genuine Apple-created 256 MiB container uses a scattered internal-pool
+    // CIB/bitmap layout, not S.A.K.'s generated three-slot ring. Before WS3c the commit reached
+    // nextIpSlot and refused this exact fixture as an unsupported real multi-chunk Apple pool.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString source = dir.filePath(QStringLiteral("foreign-source.dmg"));
+    QString expandError;
+    QVERIFY2(expandGzipFixture(foreignAppleFixturePath(), source, &expandError),
+             qPrintable(expandError));
+    QCOMPARE(QFileInfo(source).size(), kForeignAppleFixtureBytes);
+    QCOMPARE(sha256File(source), QString(kForeignAppleFixtureSha256));
+
+    const auto probe = PartitionApfsWriter::probeLiveLayout(source);
+    QVERIFY2(probe.ok, qPrintable(probe.blockers.join(QStringLiteral("; "))));
+    QVERIFY2(probe.sm_main_chunk_count > 1, "fixture must exercise a multi-chunk container");
+    QCOMPARE(probe.ip_bm_size_blocks, static_cast<uint32_t>(1));
+
+    const QByteArray payload = QByteArrayLiteral("foreign multi-chunk COW proof payload\n");
+    const QString written = dir.filePath(QStringLiteral("foreign-inserted.dmg"));
+    const auto insert = PartitionApfsWriter::commitImageOnlyFileInsert(
+        {.source_image_path = source,
+         .written_image_path = written,
+         .file_name = QStringLiteral("sak-added.txt"),
+         .file_data = payload,
+         .options = certifiedApfsImageOnlyOptions()});
+    QVERIFY2(insert.ok, qPrintable(insert.blockers.join(QStringLiteral("; "))));
+
+    // The foreign queue must retire the OLD live pair and remove the NEW pair it consumed from
+    // the queue. Leaving the source queue unchanged advertises the new live CIB as reusable.
+    const quint64 oldCib = PartitionApfsWriter::readGeneratedLiveCibAddr(source);
+    const quint64 oldBitmap = PartitionApfsWriter::readGeneratedChunkBitmapAddr(source, 0);
+    const quint64 newCib = PartitionApfsWriter::readGeneratedLiveCibAddr(written);
+    const quint64 newBitmap = PartitionApfsWriter::readGeneratedChunkBitmapAddr(written, 0);
+    const QVector<quint64> ghosts = PartitionApfsWriter::readGeneratedIpFreeQueueGhosts(written);
+    QVERIFY(ghosts.contains(oldCib));
+    QVERIFY(ghosts.contains(oldBitmap));
+    QVERIFY(!ghosts.contains(newCib));
+    QVERIFY(!ghosts.contains(newBitmap));
+
+    const auto added = PartitionApfsFileSystemReader::readFileFromImage(
+        written, QStringLiteral("/sak-added.txt"), payload.size());
+    QVERIFY2(added.ok, qPrintable(added.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(added.data, payload);
+    const auto original = PartitionApfsFileSystemReader::readFileFromImage(
+        written, QStringLiteral("/original.txt"), 128);
+    QVERIFY2(original.ok, qPrintable(original.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(original.data, QByteArrayLiteral("foreign-multichunk-original-2026-08-31\n"));
+}
+
+void PartitionManagerCoreTests::apfsWriter_foreignMultiChunkCowPatchWriteDeleteRoundTrips() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString source = dir.filePath(QStringLiteral("foreign-source.dmg"));
+    QString expandError;
+    QVERIFY2(expandGzipFixture(foreignAppleFixturePath(), source, &expandError),
+             qPrintable(expandError));
+    const auto options = certifiedApfsImageOnlyOptions();
+    const QByteArray insertedData = QByteArrayLiteral("foreign multi-chunk COW proof payload\n");
+    const QString inserted = dir.filePath(QStringLiteral("foreign-inserted.dmg"));
+    const auto insert = PartitionApfsWriter::commitImageOnlyFileInsert(
+        {.source_image_path = source,
+         .written_image_path = inserted,
+         .file_name = QStringLiteral("sak-added.txt"),
+         .file_data = insertedData,
+         .options = options});
+    QVERIFY2(insert.ok, qPrintable(insert.blockers.join(QStringLiteral("; "))));
+
+    const QByteArray patchData = QByteArrayLiteral("PATCHED\n");
+    const QString patched = dir.filePath(QStringLiteral("foreign-patched.dmg"));
+    const auto patch =
+        PartitionApfsWriter::commitImageOnlyFilePatch({.source_image_path = inserted,
+                                                       .written_image_path = patched,
+                                                       .file_name = QStringLiteral("sak-added.txt"),
+                                                       .patch_offset_bytes = 8,
+                                                       .patch_data = patchData,
+                                                       .options = options});
+    QVERIFY2(patch.ok, qPrintable(patch.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(patch.new_xid, insert.new_xid + 1);
+    const auto patchedRead = PartitionApfsFileSystemReader::readFileFromImage(
+        patched, QStringLiteral("/sak-added.txt"), insertedData.size());
+    QVERIFY2(patchedRead.ok, qPrintable(patchedRead.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(patchedRead.data, QByteArrayLiteral("foreign PATCHED\nunk COW proof payload\n"));
+
+    const QByteArray replacement = QByteArrayLiteral("replacement written by S.A.K. foreign COW\n");
+    const QString written = dir.filePath(QStringLiteral("foreign-written.dmg"));
+    const auto write =
+        PartitionApfsWriter::commitImageOnlyFileWrite({.source_image_path = patched,
+                                                       .written_image_path = written,
+                                                       .file_name = QStringLiteral("original.txt"),
+                                                       .file_data = replacement,
+                                                       .options = options});
+    QVERIFY2(write.ok, qPrintable(write.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(write.new_xid, patch.new_xid + 1);
+
+    const QString deleted = dir.filePath(QStringLiteral("foreign-deleted.dmg"));
+    const auto remove = PartitionApfsWriter::commitImageOnlyFileDelete(
+        {.source_image_path = written,
+         .written_image_path = deleted,
+         .file_name = QStringLiteral("sak-added.txt"),
+         .options = options});
+    QVERIFY2(remove.ok, qPrintable(remove.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(remove.new_xid, write.new_xid + 1);
+    const auto original = PartitionApfsFileSystemReader::readFileFromImage(
+        deleted, QStringLiteral("/original.txt"), replacement.size());
+    QVERIFY2(original.ok, qPrintable(original.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(original.data, replacement);
+    const auto removed = PartitionApfsFileSystemReader::readFileFromImage(
+        deleted, QStringLiteral("/sak-added.txt"), insertedData.size());
+    QVERIFY(!removed.ok);
+    QVERIFY(removed.blockers.join(QStringLiteral(" ")).contains(QStringLiteral("not found")));
+}
+
+void PartitionManagerCoreTests::apfsWriter_foreignMultiCibRotationExcludesEveryLiveBitmap() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    QString expandError;
+    const QString source = dir.filePath(QStringLiteral("foreign-source.dmg"));
+    QVERIFY2(expandApfsBlockMap(foreignAppleMultiCibBlockMapPath(), source, &expandError),
+             qPrintable(expandError));
+    const auto sourceProbe = PartitionApfsWriter::probeLiveLayout(source);
+    QVERIFY2(sourceProbe.ok, qPrintable(sourceProbe.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(sourceProbe.sm_main_chunk_count, static_cast<uint64_t>(135));
+    QCOMPARE(sourceProbe.sm_main_cib_count, static_cast<uint32_t>(2));
+
+    const QString image = dir.filePath(QStringLiteral("foreign-after-insert.dmg"));
+    QVERIFY2(expandApfsBlockMap(foreignAppleAfterInsertBlockMapPath(), image, &expandError),
+             qPrintable(expandError));
+    QCOMPARE(QFileInfo(image).size(), kForeignAppleMultiCibBytes);
+    const auto probe = PartitionApfsWriter::probeLiveLayout(image);
+    QVERIFY2(probe.ok, qPrintable(probe.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(probe.sm_main_chunk_count, static_cast<uint64_t>(135));
+    QCOMPARE(probe.sm_main_cib_count, static_cast<uint32_t>(2));
+
+    const quint64 farBitmap = PartitionApfsWriter::readGeneratedChunkBitmapAddr(image, 3);
+    QCOMPARE(farBitmap, static_cast<quint64>(10'900));
+    QStringList blockers;
+    const auto rotation = PartitionApfsWriter::nextForeignIpRotationForTesting(image, &blockers);
+    QVERIFY2(blockers.isEmpty(), qPrintable(blockers.join(QStringLiteral("; "))));
+    QVERIFY(rotation.first != 0);
+    QVERIFY(rotation.second != 0);
+    QVERIFY(rotation.first != rotation.second);
+    QVERIFY2(rotation.first != farBitmap && rotation.second != farBitmap,
+             "foreign rotation reused a live far-chunk allocation bitmap");
+    QStringList candidateBlockers;
+    QVERIFY(PartitionApfsWriter::foreignIpBlockIsLiveMetadataForTesting(
+        image, farBitmap, &candidateBlockers));
+    QVERIFY2(candidateBlockers.isEmpty(), qPrintable(candidateBlockers.join(QStringLiteral("; "))));
+    candidateBlockers.clear();
+    QVERIFY(!PartitionApfsWriter::foreignIpBlockAvailableForTesting(
+        image, farBitmap, &candidateBlockers));
+    QVERIFY2(candidateBlockers.isEmpty(), qPrintable(candidateBlockers.join(QStringLiteral("; "))));
 }
 
 void PartitionManagerCoreTests::apfsWriter_readsGeneratedLiveCibAddr() {

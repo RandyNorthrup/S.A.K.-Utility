@@ -406,6 +406,9 @@ constexpr qsizetype kApfsVolumeIncompatibleFeaturesOffset = 0x38;
 constexpr uint64_t kApfsVolumeIncompatSealed = 0x00'00'00'20;
 constexpr uint64_t kApfsVolumeIncompatCaseInsensitive = 0x00'00'00'01;
 constexpr qsizetype kApfsVolumeIntegrityMetaOidOffset = 0x400;
+constexpr qsizetype kApfsVolumeFormattedByOffset = 0x110;
+constexpr qsizetype kApfsVolumeFormattedByBytes = 32;
+constexpr char kApfsSakFormatterName[] = "S.A.K. Utility APFS writer";
 constexpr qsizetype kApfsVolumeAllocatedBlockCountOffset = 0x58;
 constexpr qsizetype kApfsVolumeOmapOidOffset = 0x80;
 constexpr qsizetype kApfsVolumeRootTreeOidOffset = 0x88;
@@ -4827,7 +4830,10 @@ QByteArray buildVolumeSuperblock(const ApfsVolumeSuperblockFields& fields, QStri
     // newfs_apfs output (fsck enforces apfs_next_doc_id >= MIN_DOC_ID).
     writeLe64(&block, 0x100, 0x18'B8'30'5B'1F'32'81'92ULL);
     writeLe64(&block, kApfsVolumeFsFlagsOffset, fields.fsFlags);
-    writeAscii(&block, 0x110, QByteArrayLiteral("S.A.K. Utility APFS writer"), 32);
+    writeAscii(&block,
+               kApfsVolumeFormattedByOffset,
+               QByteArray(kApfsSakFormatterName, sizeof(kApfsSakFormatterName) - 1),
+               kApfsVolumeFormattedByBytes);
     writeLe64(&block, 0x130, 0x18'B8'30'5B'1A'D4'FB'FBULL);
     writeLe64(&block, 0x138, kApfsFormatXid);
     writeLe32(&block, 0x3C0, 3);
@@ -7078,6 +7084,8 @@ struct ApfsLiveContainerLayout {
     uint32_t smMainCibCount{0};
     uint32_t smMainCabCount{0};
     uint64_t smMainFreeCount{0};
+    uint64_t ipFqTreeOid{0};
+    uint64_t mainFqTreeOid{0};
     uint64_t ipBase{0};          // sm_ip_base       (first block of the internal pool)
     uint64_t ipBlockCount{0};    // sm_ip_block_count
     uint32_t ipBmSizeBlocks{0};  // sm_ip_bm_size_in_blocks (one bitmap's block span)
@@ -7148,6 +7156,8 @@ bool parseLiveContainerSpaceman(QIODevice* image,
     layout->smMainCibCount = le32(sm, dev + kApfsSpacemanDeviceCibCountOffset);
     layout->smMainCabCount = le32(sm, dev + kApfsSpacemanDeviceCabCountOffset);
     layout->smMainFreeCount = le64(sm, dev + kApfsSpacemanDeviceFreeCountOffset);
+    layout->ipFqTreeOid = le64(sm, kApfsSpacemanFqIpCountOffset + 8);
+    layout->mainFqTreeOid = le64(sm, kApfsSpacemanFqMainCountOffset + 8);
     layout->ipBase = le64(sm, kApfsSpacemanIpBaseOffset);
     layout->ipBlockCount = le64(sm, kApfsSpacemanIpBlockCountOffset);
     layout->ipBmSizeBlocks = le32(sm, kApfsSpacemanIpBmSizeOffset);
@@ -7675,6 +7685,14 @@ struct ApfsIpSlot {
     uint64_t bitmap{0};
 };
 
+[[nodiscard]] bool generatedIpSlotMatches(uint64_t liveCib, const ApfsGeneratedLayout& layout) {
+    constexpr uint64_t kIpSlotCount = 3;
+    const uint64_t base = layout.cib0Base;
+    const uint64_t stride = layout.ipGroupStride;
+    return stride != 0 && liveCib >= base && (liveCib - base) % stride == 0 &&
+           (liveCib - base) / stride < kIpSlotCount;
+}
+
 // The slot a crash-safe commit writes next: the round-robin successor of the
 // live slot, so the new cib(s)/bitmap land in a slot that is neither the live
 // one nor the most recent ghost, leaving the previous checkpoint's slot intact
@@ -7696,13 +7714,10 @@ struct ApfsIpSlot {
     // and narrow to an arbitrary in-range slot (F16); the index stays a uint64_t.
     const uint64_t cib0Base = layout.cib0Base;
     const uint64_t stride = layout.ipGroupStride;
-    if (stride == 0 || liveCib < cib0Base || (liveCib - cib0Base) % stride != 0 ||
-        (liveCib - cib0Base) / stride >= kIpSlotCount) {
+    if (!generatedIpSlotMatches(liveCib, layout)) {
         blockers->append(QStringLiteral(
             "APFS in-place commit: the live internal-pool cib address does not match the generated "
-            "rotation model -- in-place file mutation of a real multi-chunk Apple internal pool is "
-            "not yet supported (use import-image or resize); on a S.A.K.-generated container this "
-            "indicates checkpoint corruption"));
+            "rotation model and no validated foreign internal-pool geometry was adopted"));
         return false;
     }
     const uint64_t liveIndex = (liveCib - cib0Base) / stride;
@@ -10620,15 +10635,16 @@ struct ApfsFsCommitContext {
     uint64_t liveBitmap{0};        // the live cib's allocation bitmap
     uint64_t allocChunkBitmap{0};  // overflow: live bitmap of the boundary chunk (M-1); 0 = chunk-0
     uint64_t liveCab0{0};          // CAB tier: live cab 0 (spaceman addr[0]); 0 below CAB
-    // Foreign (real Apple) overflow volume: set when the behavioral probe finds a real scattered
-    // internal pool. The finalize then allocates its rotation slots (new cib / new bitmaps) from
-    // REAL free IP blocks and builds the used-set from the live IP bitmap, instead of the
-    // synthesized 3-slot rotation + contiguous prefix used-set. All defaults on a generated volume.
+    // Foreign (real Apple or kernel-advanced) scattered internal pool. The finalize allocates its
+    // rotation slots from REAL free IP blocks and rebuilds the real used-set instead of applying
+    // the generated three-slot model. foreignOverflow is the narrower boundary-allocation tier.
+    bool foreignIp{false};
     bool foreignOverflow{false};
     uint64_t liveIpBitmapBlock{
         0};                    // absolute block of the live IP-bitmap (ring live slot, block 0)
     uint64_t ipBmBase{0};      // sm_ip_bm_base (ring first block)
     uint64_t ipBlockCount{0};  // sm_ip_block_count (IP-relative bit range)
+    QVector<ApfsFreeQueueEntry> liveIpFqEntries;
 };
 
 // Fail closed unless `block` lies inside the live internal pool [ipBase, ipBase+ipBlockCount) -
@@ -10789,6 +10805,21 @@ bool appendSealedVolumeBlocker(QIODevice* image,
     return true;
 }
 
+std::optional<bool> liveVolumeWasFormattedBySak(const ApfsFsCommitContext& ctx,
+                                                QStringList* blockers) {
+    QByteArray volume(ctx.geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(ctx.image, ctx.geometry, ctx.chain.volSb, &volume, blockers) ||
+        !authenticateApfsVolumeSuperblock(volume, 0, blockers)) {
+        return std::nullopt;
+    }
+    QByteArray formatter = volume.mid(kApfsVolumeFormattedByOffset, kApfsVolumeFormattedByBytes);
+    const qsizetype terminator = formatter.indexOf('\0');
+    if (terminator >= 0) {
+        formatter.truncate(terminator);
+    }
+    return formatter == QByteArray(kApfsSakFormatterName, sizeof(kApfsSakFormatterName) - 1);
+}
+
 // A7 (A-g) chunk-adding grow re-homes the internal pool out of its canonical base into the
 // grow region (the fresh-format base collides with pinned file-system metadata once
 // ip_block_count grows). Re-anchor layout.cib0Base/ipBase on the spaceman's actual on-disk
@@ -10853,87 +10884,93 @@ bool foreignIpGeometryInRange(const QByteArray& sm, uint64_t blockCount) {
            ipBmBase + liveSlot0 < blockCount;
 }
 
-// F34/F36: fail closed before a foreign internal pool is adopted as the overflow anchor. Rejects an
-// out-of-range bitmap-offset field before le16 reads a ghost slot (F34), a multi-block
-// internal-pool bitmap this path cannot materialize (only IP-bitmap block 0 is written; F36), and
-// any pool/ring geometry that escapes the container (F34).
-bool validateForeignOverflowIpGeometry(const QByteArray& sm,
-                                       uint64_t blockCount,
-                                       QStringList* blockers) {
+// Fail closed before a scattered internal pool is adopted. This commit path materializes bitmap
+// block 0 only, so a wider IP bitmap remains outside this increment even though the ring advancer
+// itself supports it.
+bool validateForeignIpGeometry(const QByteArray& sm, uint64_t blockCount, QStringList* blockers) {
     const qsizetype bmAddrOff = static_cast<qsizetype>(le32(sm, kApfsSpacemanIpBitmapOffsetField));
     if (bmAddrOff <= 0 || bmAddrOff + 2 > sm.size()) {
         blockers->append(QStringLiteral(
-            "APFS foreign overflow commit: internal-pool bitmap-offset field is out of range"));
+            "APFS foreign internal-pool commit: bitmap-offset field is out of range"));
         return false;
     }
     if (le32(sm, kApfsSpacemanIpBmSizeOffset) > 1) {
         blockers->append(QStringLiteral(
-            "APFS foreign overflow commit: multi-block internal-pool bitmap (ip_bm_size > 1) is "
+            "APFS foreign internal-pool commit: multi-block bitmap (ip_bm_size > 1) is "
             "not supported"));
         return false;
     }
     if (!foreignIpGeometryInRange(sm, blockCount)) {
         blockers->append(
-            QStringLiteral("APFS foreign overflow commit: internal-pool geometry out of range"));
+            QStringLiteral("APFS foreign internal-pool commit: geometry is out of range"));
         return false;
     }
     return true;
 }
 
-bool reanchorForeignOverflowAllocation(ApfsFsCommitContext* ctx, QStringList* blockers) {
-    if (ctx->layout.allocChunk == 0) {
-        return true;  // non-overflow: certified chunk-0 path, proceed
-    }
-    QByteArray cib(ctx->geometry.blockSize, '\0');
-    if (!readApfsRepairBlock(ctx->image, ctx->geometry, ctx->liveCib, &cib, blockers)) {
+bool adoptForeignIpGeometry(ApfsFsCommitContext* ctx, const QByteArray& sm, QStringList* blockers) {
+    if (!validateForeignIpGeometry(sm, ctx->geometry.blockCount, blockers)) {
         return false;
     }
-    const auto synthBitmap =
-        readChunkAllocationBitmap(ctx->image, ctx->geometry, cib, ctx->layout.allocChunk, blockers);
-    if (!synthBitmap) {
+    const qsizetype bitmapAddressOffset =
+        static_cast<qsizetype>(le32(sm, kApfsSpacemanIpBitmapOffsetField));
+    const uint16_t liveSlot0 = le16(sm, bitmapAddressOffset);
+    const uint64_t ipBlockCount = le64(sm, kApfsSpacemanIpBlockCountOffset);
+    if (ipBlockCount > static_cast<uint64_t>(ctx->geometry.blockSize) * 8) {
+        blockers->append(QStringLiteral(
+            "APFS foreign internal-pool commit: block count exceeds its one-block bitmap"));
         return false;
     }
-    const uint64_t synthBase = ctx->layout.allocChunk * kApfsSpacemanBlocksPerChunk;
-    QVector<uint64_t> synthFree;
-    findFreeBlocksInBitmapContent(
-        *synthBitmap,
-        {synthBase, ctx->layout.seedData, synthBase + kApfsSpacemanBlocksPerChunk},
-        1,
-        &synthFree);
-    if (!synthFree.isEmpty()) {
-        return true;  // S.A.K.-generated: the synthesized boundary chunk holds the free region.
-    }
-    // Foreign (real Apple) metadata-overflow volume: the synthesized boundary chunk is fully used,
-    // its real free region begins at ip_base + ip_block_count. Re-anchor the overflow allocation
-    // there and FLAG the finalize to drive the real internal-pool bitmap ring: allocate the
-    // rotation slots (new cib / new chunk bitmaps) from REAL free IP blocks and build the used-set
-    // from the live IP bitmap (a scattered set), instead of the synthesized 3-slot rotation +
-    // contiguous prefix. Read the live spaceman once for the real internal-pool geometry.
+    ctx->foreignIp = true;
+    ctx->ipBmBase = le64(sm, kApfsSpacemanIpBmBaseOffset);
+    ctx->ipBlockCount = ipBlockCount;
+    ctx->liveIpBitmapBlock = ctx->ipBmBase + liveSlot0;
+    ctx->layout.ipBase = le64(sm, kApfsSpacemanIpBaseOffset);
+    const uint64_t ipFqRoot = findEphemeralPaddrByOid(
+        ctx->image, ctx->geometry, ctx->live, ctx->chain.ipFqTreeOid, blockers);
+    ctx->liveIpFqEntries =
+        parseMainFreeQueueTree(ctx->image, ctx->geometry, ctx->live, ipFqRoot, blockers);
+    return blockers->isEmpty();
+}
+
+bool adoptForeignIpRotationIfNeeded(ApfsFsCommitContext* ctx, QStringList* blockers) {
     const QByteArray sm = readLiveSpacemanObject(ctx->image, ctx->geometry, ctx->nxsb, blockers);
     if (sm.isEmpty()) {
-        blockers->append(
-            QStringLiteral("APFS foreign overflow commit: unable to read the live spaceman "
-                           "internal-pool geometry"));
+        blockers->append(QStringLiteral(
+            "APFS foreign internal-pool commit: unable to read the live spaceman geometry"));
         return false;
     }
-    if (!validateForeignOverflowIpGeometry(sm, ctx->geometry.blockCount, blockers)) {
+    const uint64_t ipBitmapSize = le32(sm, kApfsSpacemanIpBmSizeOffset);
+    const uint64_t addressOffset =
+        le32(sm, kApfsSpacemanMainDeviceOffset + kApfsSpacemanDeviceAddrOffsetOffset);
+    const bool generatedPacking = addressOffset == spacemanCibArrayOffset(ipBitmapSize);
+    const auto sakFormatted = liveVolumeWasFormattedBySak(*ctx, blockers);
+    if (!sakFormatted) {
         return false;
     }
-    const uint64_t ipBase = le64(sm, kApfsSpacemanIpBaseOffset);
-    const uint64_t ipBlockCount = le64(sm, kApfsSpacemanIpBlockCountOffset);
-    const uint64_t ipBmBase = le64(sm, kApfsSpacemanIpBmBaseOffset);
-    const qsizetype bmAddrOff = static_cast<qsizetype>(le32(sm, kApfsSpacemanIpBitmapOffsetField));
-    const uint16_t liveSlot0 = le16(sm, bmAddrOff);    // ring slot of the live IP-bitmap block 0
-    const uint64_t firstFree = ipBase + ipBlockCount;  // first block past the internal pool
-    ctx->foreignOverflow = true;
-    ctx->ipBmBase = ipBmBase;
-    ctx->ipBlockCount = ipBlockCount;
-    ctx->liveIpBitmapBlock = ipBmBase + liveSlot0;
-    ctx->layout.ipBase = ipBase;
+    // Formatter provenance plus S.A.K.'s inline-array packing selects the generated path. A
+    // chunk-adding grow can relocate a multi-block IP ring such that its current cib does not
+    // match the canonical slot model computed from the new size, but resolveRelocatedIpLayout has
+    // already re-anchored that certified generated layout. nextIpSlot still validates the live cib
+    // against the re-anchored ring before any write, so a forged or corrupt S.A.K. marker remains
+    // fail-closed rather than being trusted as an address.
+    if (*sakFormatted && generatedPacking) {
+        return true;
+    }
+    return adoptForeignIpGeometry(ctx, sm, blockers);
+}
+
+void reanchorForeignOverflowAllocation(ApfsFsCommitContext* ctx) {
+    if (!ctx->foreignIp || ctx->layout.allocChunk == 0) {
+        return;
+    }
+    const uint64_t firstFree = ctx->layout.ipBase + ctx->ipBlockCount;
     ctx->layout.allocChunk = firstFree / kApfsSpacemanBlocksPerChunk;
     ctx->layout.seedData = firstFree;
-    return true;
+    ctx->foreignOverflow = true;
 }
+
+bool foreignIpMetadataIsConsistent(const ApfsFsCommitContext& ctx, QStringList* blockers);
 
 // Resolve the commit's allocation view once the live chain is loaded: the generated layout, the
 // relocated internal pool, the old fs-tree node list, the live allocation slot, and a foreign
@@ -10961,10 +10998,14 @@ bool resolveFsCommitAllocation(ApfsFsCommitContext* ctx,
     if (!loadLiveAllocationSlot(ctx, blockers)) {
         return false;
     }
-    // Foreign (real macOS) overflow-tier volume: detect it (needs the live cib loaded above) and
-    // fail closed cleanly - the crash-safe internal-pool finalize is not yet generalized. No-op for
-    // generated / non-overflow (returns true).
-    if (!reanchorForeignOverflowAllocation(ctx, blockers)) {
+    // A live CIB outside the generated three-slot ring is accepted only after the real spaceman
+    // geometry and bitmap are authenticated. Generated and grow-relocated layouts remain on their
+    // existing byte-identical path.
+    if (!adoptForeignIpRotationIfNeeded(ctx, blockers)) {
+        return false;
+    }
+    reanchorForeignOverflowAllocation(ctx);
+    if (ctx->foreignIp && !foreignIpMetadataIsConsistent(*ctx, blockers)) {
         return false;
     }
     // Metadata-overflow tier: the boundary chunk (metadataChunks - 1) must live in cib 0
@@ -11051,6 +11092,9 @@ struct ApfsCommitBlockSizing {
 // ring depth (8 desc blocks / 2 = 4 checkpoints) - the same depth that guarantees
 // an interrupted commit's predecessor keeps its blocks (the truncation test).
 constexpr uint64_t kMainFqRollbackWindow = 4;
+// The generated CIB/bitmap ring has three slots: live, previous, and spare. A block is reusable
+// after two later checkpoints, matching buildIpFreeQueueWindow's rolling two-entry ghost window.
+constexpr uint64_t kIpFqRollbackWindow = 2;
 
 // Chunk-0 metadata headroom a spilling commit must leave free. A multi-chunk spill
 // used to take EVERY free chunk-0 block (the data filled chunk 0, then chunks 1..K),
@@ -11092,21 +11136,180 @@ QVector<uint64_t> foreignLiveIpUsedSet(const QByteArray& ipBitmap, uint64_t ipBl
 // immutable cib address. foreignLiveChunkBitmapBlock is defined later in the file, so it is
 // forward-declared here.
 uint64_t foreignLiveChunkBitmapBlock(const ApfsFsCommitContext& ctx, QStringList* blockers);
-QSet<uint64_t> foreignLiveIpMetadataBlocks(const ApfsFsCommitContext& ctx, QStringList* blockers) {
-    QSet<uint64_t> live{ctx.liveCib, ctx.liveBitmap};
-    if (ctx.liveCab0 != 0) {
-        live.insert(ctx.liveCab0);
-    }
-    const uint64_t boundary = foreignLiveChunkBitmapBlock(ctx, blockers);
-    if (boundary != 0) {
-        live.insert(boundary);
-    }
-    for (uint64_t addr : ctx.liveCibAddrs) {
-        if (addr != 0) {
-            live.insert(addr);
+QSet<uint64_t> directForeignCibBlocks(const ApfsFsCommitContext& ctx) {
+    QSet<uint64_t> cibs;
+    for (uint64_t address : ctx.liveCibAddrs) {
+        if (address != 0) {
+            cibs.insert(address);
         }
     }
+    cibs.insert(ctx.liveCib);
+    return cibs;
+}
+
+bool appendForeignCabCibs(const ApfsFsCommitContext& ctx,
+                          uint64_t cabAddress,
+                          QSet<uint64_t>* cibs,
+                          QStringList* blockers) {
+    QByteArray cab(ctx.geometry.blockSize, '\0');
+    if (cabAddress == 0 ||
+        !readApfsRepairBlock(ctx.image, ctx.geometry, cabAddress, &cab, blockers) ||
+        !authenticateApfsObject(
+            cab,
+            {kApfsObjectTypeCibAddrBlock, 0, cabAddress, "live cib-address block"},
+            blockers)) {
+        return false;
+    }
+    const uint32_t count = le32(cab, kApfsCibAddrCibCountOffset);
+    const uint32_t capacity = static_cast<uint32_t>((cab.size() - kApfsCibAddrEntriesOffset) /
+                                                    static_cast<qsizetype>(sizeof(uint64_t)));
+    if (count > capacity) {
+        blockers->append(QStringLiteral(
+            "APFS foreign internal-pool commit: CAB declares too many CIB addresses"));
+        return false;
+    }
+    for (uint32_t index = 0; index < count; ++index) {
+        const uint64_t address =
+            le64(cab, kApfsCibAddrEntriesOffset + (static_cast<qsizetype>(index) * 8));
+        if (address != 0) {
+            cibs->insert(address);
+        }
+    }
+    return true;
+}
+
+QSet<uint64_t> foreignLiveCibBlocks(const ApfsFsCommitContext& ctx, QStringList* blockers) {
+    if (ctx.layout.cabCount == 0) {
+        return directForeignCibBlocks(ctx);
+    }
+    QSet<uint64_t> cibs;
+    for (uint64_t cabIndex = 0; cabIndex < ctx.layout.cabCount; ++cabIndex) {
+        const uint64_t cabAddress = ctx.liveCibAddrs.value(static_cast<qsizetype>(cabIndex), 0);
+        if (!appendForeignCabCibs(ctx, cabAddress, &cibs, blockers)) {
+            return {};
+        }
+    }
+    if (cibs.contains(ctx.liveCib)) {
+        return cibs;
+    }
+    blockers->append(QStringLiteral(
+        "APFS foreign internal-pool commit: live CIB is absent from the CAB address set"));
+    return {};
+}
+
+QSet<uint64_t> foreignLiveChunkBitmapBlocks(const ApfsFsCommitContext& ctx,
+                                            const QSet<uint64_t>& cibs,
+                                            QStringList* blockers) {
+    QSet<uint64_t> bitmaps;
+    for (uint64_t cibAddress : cibs) {
+        QByteArray cib(ctx.geometry.blockSize, '\0');
+        if (!readApfsRepairBlock(ctx.image, ctx.geometry, cibAddress, &cib, blockers) ||
+            !authenticateApfsObject(
+                cib,
+                {kApfsObjectTypeChunkInfoBlock, 0, cibAddress, "live chunk-info block"},
+                blockers)) {
+            return {};
+        }
+        const uint32_t count = le32(cib, kApfsChunkInfoCountOffset);
+        const uint32_t capacity = static_cast<uint32_t>((cib.size() - kApfsChunkInfoEntriesOffset) /
+                                                        kApfsChunkInfoEntryStride);
+        if (count > capacity) {
+            blockers->append(QStringLiteral(
+                "APFS foreign internal-pool commit: CIB declares too many chunk entries"));
+            return {};
+        }
+        for (uint32_t index = 0; index < count; ++index) {
+            const qsizetype entry = kApfsChunkInfoEntriesOffset +
+                                    (static_cast<qsizetype>(index) * kApfsChunkInfoEntryStride);
+            const uint64_t bitmap = le64(cib, entry + kApfsChunkInfoEntryBitmapAddrOffset);
+            if (bitmap != 0) {
+                bitmaps.insert(bitmap);
+            }
+        }
+    }
+    return bitmaps;
+}
+
+QSet<uint64_t> foreignLiveIpMetadataBlocks(const ApfsFsCommitContext& ctx, QStringList* blockers) {
+    QSet<uint64_t> live;
+    for (uint64_t cabIndex = 0; cabIndex < ctx.layout.cabCount; ++cabIndex) {
+        const uint64_t cab = ctx.liveCibAddrs.value(static_cast<qsizetype>(cabIndex), 0);
+        if (cab != 0) {
+            live.insert(cab);
+        }
+    }
+    const QSet<uint64_t> cibs = foreignLiveCibBlocks(ctx, blockers);
+    live.unite(cibs);
+    live.unite(foreignLiveChunkBitmapBlocks(ctx, cibs, blockers));
     return live;
+}
+
+bool foreignIpMetadataIsConsistent(const ApfsFsCommitContext& ctx, QStringList* blockers) {
+    QByteArray bitmap(ctx.geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(ctx.image, ctx.geometry, ctx.liveIpBitmapBlock, &bitmap, blockers)) {
+        return false;
+    }
+    const QSet<uint64_t> live = foreignLiveIpMetadataBlocks(ctx, blockers);
+    for (uint64_t block : live) {
+        if (block < ctx.layout.ipBase || block - ctx.layout.ipBase >= ctx.ipBlockCount) {
+            blockers->append(QStringLiteral(
+                "APFS foreign internal-pool commit: live metadata is outside the pool"));
+            return false;
+        }
+        const uint64_t relative = block - ctx.layout.ipBase;
+        const auto byte =
+            static_cast<unsigned char>(bitmap.at(static_cast<qsizetype>(relative / 8)));
+        if (((byte >> (relative % 8)) & 1U) == 0u) {
+            blockers->append(QStringLiteral(
+                "APFS foreign internal-pool commit: bitmap marks live metadata free"));
+            return false;
+        }
+    }
+    return blockers->isEmpty();
+}
+
+QSet<uint64_t> reclaimableForeignIpBlocks(const ApfsFsCommitContext& ctx, QStringList* blockers) {
+    QSet<uint64_t> reclaimable;
+    for (const ApfsFreeQueueEntry& entry : ctx.liveIpFqEntries) {
+        if (entry.xid > ctx.live.xid || ctx.live.xid - entry.xid < kIpFqRollbackWindow) {
+            continue;
+        }
+        for (uint64_t offset = 0; offset < entry.length; ++offset) {
+            const uint64_t block = entry.paddr + offset;
+            if (block < ctx.layout.ipBase || block - ctx.layout.ipBase >= ctx.ipBlockCount) {
+                blockers->append(QStringLiteral(
+                    "APFS foreign internal-pool commit: IP free-queue block is outside the pool"));
+                return {};
+            }
+            reclaimable.insert(block);
+        }
+    }
+    return reclaimable;
+}
+
+enum class ForeignIpCandidate {
+    Unavailable,
+    Available,
+    Invalid
+};
+
+ForeignIpCandidate classifyForeignIpCandidate(uint64_t absolute,
+                                              bool bitmapSet,
+                                              const QSet<uint64_t>& reclaimable,
+                                              const QSet<uint64_t>& liveMetadata,
+                                              QStringList* blockers) {
+    if (bitmapSet && !reclaimable.contains(absolute)) {
+        return ForeignIpCandidate::Unavailable;
+    }
+    if (!liveMetadata.contains(absolute)) {
+        return ForeignIpCandidate::Available;
+    }
+    if (!bitmapSet) {
+        blockers->append(QStringLiteral(
+            "APFS foreign internal-pool commit: bitmap marks known-live metadata free"));
+        return ForeignIpCandidate::Invalid;
+    }
+    return ForeignIpCandidate::Unavailable;
 }
 
 // Foreign overflow: allocate `count` free internal-pool blocks by scanning the live IP bitmap for
@@ -11127,6 +11330,10 @@ bool allocateForeignIpBlocks(const ApfsFsCommitContext& ctx,
     // known-live metadata block means the bitmap is inconsistent with a live block, so fail closed
     // rather than hand it out to be overwritten (which would destroy crash-safety).
     const QSet<uint64_t> liveMeta = foreignLiveIpMetadataBlocks(ctx, blockers);
+    const QSet<uint64_t> reclaimable = reclaimableForeignIpBlocks(ctx, blockers);
+    if (!blockers->isEmpty()) {
+        return false;
+    }
     const uint64_t bits = std::min<uint64_t>(ctx.ipBlockCount,
                                              static_cast<uint64_t>(ipBitmap.size()) * 8);
     for (uint64_t bit = 0; bit < bits && outAbs->size() < count; ++bit) {
@@ -11134,15 +11341,14 @@ bool allocateForeignIpBlocks(const ApfsFsCommitContext& ctx,
             ((static_cast<unsigned char>(ipBitmap.at(static_cast<qsizetype>(bit / 8))) >>
               (bit % 8)) &
              1U) != 0u;
-        if (set) {
-            continue;
-        }
         const uint64_t abs = ctx.layout.ipBase + bit;
-        if (liveMeta.contains(abs)) {
-            blockers->append(QStringLiteral(
-                "APFS foreign overflow commit: the on-disk internal-pool bitmap marks a known-live "
-                "metadata block free"));
+        const ForeignIpCandidate candidate =
+            classifyForeignIpCandidate(abs, set, reclaimable, liveMeta, blockers);
+        if (candidate == ForeignIpCandidate::Invalid) {
             return false;
+        }
+        if (candidate == ForeignIpCandidate::Unavailable) {
+            continue;
         }
         if (!takenAbs.contains(abs)) {
             outAbs->append(abs);
@@ -11150,7 +11356,7 @@ bool allocateForeignIpBlocks(const ApfsFsCommitContext& ctx,
     }
     if (outAbs->size() < count) {
         blockers->append(
-            QStringLiteral("APFS foreign overflow commit: internal pool has no free block"));
+            QStringLiteral("APFS foreign internal-pool commit: no reusable block is available"));
         return false;
     }
     return true;
@@ -12246,6 +12452,84 @@ bool planTouchedChunkSlots(const ApfsFsCommitFinalize& f,
     return true;
 }
 
+bool takeForeignIpSlot(const ApfsFsCommitContext& ctx,
+                       QVector<uint64_t>* taken,
+                       uint64_t* slot,
+                       QStringList* blockers) {
+    QVector<uint64_t> allocated;
+    if (!allocateForeignIpBlocks(ctx, *taken, 1, &allocated, blockers)) {
+        return false;
+    }
+    *slot = allocated.first();
+    taken->append(*slot);
+    return true;
+}
+
+bool planForeignTouchedChunkSlots(const ApfsFsCommitFinalize& f,
+                                  const QVector<uint64_t>& freed,
+                                  QVector<uint64_t>* taken,
+                                  ApfsSpilledChunkPlan* plan,
+                                  QStringList* blockers) {
+    const ApfsFsCommitContext& ctx = f.ctx;
+    for (uint64_t chunk : touchedSpilledChunkIndices(f.newBlocks, freed, ctx.layout.chunk0Blocks)) {
+        const auto current = liveChunkBitmapAddr(ctx, chunk, blockers);
+        uint64_t slot = 0;
+        if (!current || !takeForeignIpSlot(ctx, taken, &slot, blockers)) {
+            return false;
+        }
+        plan->chunkSlots.append({chunk, slot});
+        if (*current != 0) {
+            plan->freedOldSlots.append(*current);
+        }
+    }
+    return true;
+}
+
+bool planForeignCibKCopyOnWrite(const ApfsFsCommitFinalize& f,
+                                const QVector<uint64_t>& freed,
+                                QVector<uint64_t>* taken,
+                                ApfsSpilledChunkPlan* plan,
+                                QStringList* blockers) {
+    QVector<uint64_t> touchedCibs;
+    for (uint64_t chunk :
+         touchedSpilledChunkIndices(f.newBlocks, freed, f.ctx.layout.chunk0Blocks)) {
+        const uint64_t cib = cibIndexForChunk(chunk);
+        if (cib != 0 && !touchedCibs.contains(cib)) {
+            touchedCibs.append(cib);
+        }
+    }
+    std::ranges::sort(touchedCibs);
+    for (uint64_t cib : touchedCibs) {
+        uint64_t slot = 0;
+        if (!takeForeignIpSlot(f.ctx, taken, &slot, blockers)) {
+            return false;
+        }
+        const uint64_t old = f.ctx.liveCibAddrs.value(static_cast<qsizetype>(cib), 0);
+        if (old == 0) {
+            blockers->append(
+                QStringLiteral("APFS foreign internal-pool commit: no live address for cib %1")
+                    .arg(cib));
+            return false;
+        }
+        plan->cibRepoints.append({cib, slot});
+        plan->freedOldSlots.append(old);
+    }
+    return true;
+}
+
+bool planForeignSpilledChunkBitmaps(const ApfsFsCommitFinalize& f,
+                                    const ApfsIpRotation& rotation,
+                                    const QVector<uint64_t>& freed,
+                                    ApfsSpilledChunkPlan* plan,
+                                    QStringList* blockers) {
+    QVector<uint64_t> taken{rotation.newCib, rotation.newBitmap};
+    if (rotation.newCab0 != 0) {
+        taken.append(rotation.newCab0);
+    }
+    return planForeignTouchedChunkSlots(f, freed, &taken, plan, blockers) &&
+           planForeignCibKCopyOnWrite(f, freed, &taken, plan, blockers);
+}
+
 bool planSpilledChunkBitmaps(const ApfsFsCommitFinalize& f,
                              const ApfsIpRotation& rotation,
                              const QVector<uint64_t>& freed,
@@ -12377,59 +12661,113 @@ bool computeForeignIpRotation(const ApfsFsCommitContext& ctx,
     return true;
 }
 
-// Foreign overflow: the complete IP-bitmap block-0 used-set for this commit = the live scattered
-// used-set, with this commit's three old IP blocks (live cib, live chunk-0 bitmap, live boundary
-// bitmap) RELEASED and its three new COW copies (new cib, new chunk-0 bitmap, new boundary bitmap)
-// MARKED, as IP-relative indices. Deferred-free reclaim adds its own swap: every reclaimed far
-// chunk's old bitmap + old owning cib is RELEASED and its COW copy MARKED (plan.freedIpBlocks /
-// plan.newIpBlocks). Written to a fresh ring slot, so the live slot the previous checkpoint
-// references is untouched (crash-safe). An empty reclaim plan leaves the set byte-identical.
+std::optional<uint64_t> foreignIpRelative(const ApfsFsCommitContext& ctx,
+                                          uint64_t absolute,
+                                          QStringList* blockers) {
+    if (absolute < ctx.layout.ipBase || absolute - ctx.layout.ipBase >= ctx.ipBlockCount) {
+        blockers->append(QStringLiteral(
+            "APFS foreign internal-pool commit: changed metadata block is outside the pool"));
+        return std::nullopt;
+    }
+    return absolute - ctx.layout.ipBase;
+}
+
+QVector<uint64_t> foreignFreedIpBlocks(const ApfsFsCommitFinalize& f,
+                                       const ApfsFinalizeApply& in,
+                                       QStringList* blockers) {
+    QVector<uint64_t> freed{in.rotation.liveCib, in.rotation.liveBitmap};
+    if (in.rotation.newCab0 != 0) {
+        freed.append(f.ctx.liveCab0);
+    }
+    if (f.ctx.foreignOverflow) {
+        freed.append(foreignLiveChunkBitmapBlock(f.ctx, blockers));
+    }
+    freed += in.plan.freedOldSlots;
+    freed += in.reclaim.freedIpBlocks;
+    return freed;
+}
+
+QVector<uint64_t> foreignMarkedIpBlocks(const ApfsFsCommitFinalize& f,
+                                        const ApfsFinalizeApply& in) {
+    QVector<uint64_t> marked{in.rotation.newCib, in.rotation.newBitmap};
+    if (in.rotation.newCab0 != 0) {
+        marked.append(in.rotation.newCab0);
+    }
+    if (f.chunk1BitmapBlock != 0) {
+        marked.append(f.chunk1BitmapBlock);
+    }
+    for (const auto& slot : in.plan.chunkSlots) {
+        marked.append(slot.second);
+    }
+    for (const auto& repoint : in.plan.cibRepoints) {
+        marked.append(repoint.second);
+    }
+    marked += in.reclaim.newIpBlocks;
+    return marked;
+}
+
+struct ApfsForeignIpUsedSetChanges {
+    QVector<uint64_t> liveUsed;
+    QVector<uint64_t> freed;
+    QVector<uint64_t> marked;
+};
+
+bool applyForeignIpUsedSetChanges(const ApfsFsCommitContext& ctx,
+                                  const ApfsForeignIpUsedSetChanges& changes,
+                                  QVector<uint64_t>* out,
+                                  QStringList* blockers) {
+    QSet<uint64_t> freedRelative;
+    for (uint64_t absolute : changes.freed) {
+        const auto relative = foreignIpRelative(ctx, absolute, blockers);
+        if (!relative) {
+            return false;
+        }
+        freedRelative.insert(*relative);
+    }
+    out->clear();
+    for (uint64_t relative : changes.liveUsed) {
+        if (!freedRelative.contains(relative)) {
+            out->append(relative);
+        }
+    }
+    for (uint64_t absolute : changes.marked) {
+        const auto relative = foreignIpRelative(ctx, absolute, blockers);
+        if (!relative) {
+            return false;
+        }
+        if (!out->contains(*relative)) {
+            out->append(*relative);
+        }
+    }
+    std::ranges::sort(*out);
+    return true;
+}
+
+// Complete IP-bitmap block-0 used-set for a scattered pool. Old live COW blocks are released,
+// new rotation/spill/reclaim copies are marked, and every untouched live bit carries forward.
 bool buildForeignIpUsedSet(const ApfsFsCommitFinalize& f,
-                           const ApfsIpRotation& rotation,
-                           const ApfsForeignReclaimPlan& reclaim,
+                           const ApfsFinalizeApply& in,
                            QVector<uint64_t>* out,
+                           QVector<ApfsFreeQueueEntry>* queue,
                            QStringList* blockers) {
     QByteArray ipBitmap(f.ctx.geometry.blockSize, '\0');
     if (!readApfsRepairBlock(
             f.ctx.image, f.ctx.geometry, f.ctx.liveIpBitmapBlock, &ipBitmap, blockers)) {
         return false;
     }
-    const uint64_t oldBoundaryBitmap = foreignLiveChunkBitmapBlock(f.ctx, blockers);
-    QVector<uint64_t> used = foreignLiveIpUsedSet(ipBitmap, f.ctx.ipBlockCount);
-    const uint64_t ipBase = f.ctx.layout.ipBase;
-    const auto relOf = [ipBase](uint64_t abs) {
-        return abs - ipBase;
-    };
-    QSet<uint64_t> freedRel = {relOf(rotation.liveCib),
-                               relOf(rotation.liveBitmap),
-                               relOf(oldBoundaryBitmap)};
-    for (uint64_t abs : reclaim.freedIpBlocks) {
-        freedRel.insert(relOf(abs));
+    const QVector<uint64_t> newlyFreed = foreignFreedIpBlocks(f, in, blockers);
+    const ApfsMainFqAdvance advanced = advanceMainFreeQueue(
+        f.ctx.liveIpFqEntries, newlyFreed, f.newXid, kIpFqRollbackWindow, blockers);
+    if (!advanced.ok) {
+        return false;
     }
-    // CAB tier: the rotated cab 0 swaps IP slots exactly like the cib -- the old copy
-    // releases, the new one marks -- or apfsck's computed pool usage disagrees with the
-    // written bitmap ("bad ip allocation bitmap").
-    if (rotation.newCab0 != 0) {
-        freedRel.insert(relOf(f.ctx.liveCab0));
-    }
-    out->clear();
-    for (uint64_t rel : used) {
-        if (!freedRel.contains(rel)) {
-            out->append(rel);
-        }
-    }
-    QVector<uint64_t> marked = {rotation.newCib, rotation.newBitmap, f.chunk1BitmapBlock};
-    if (rotation.newCab0 != 0) {
-        marked.append(rotation.newCab0);
-    }
-    marked += reclaim.newIpBlocks;
-    for (uint64_t abs : marked) {
-        const uint64_t rel = relOf(abs);
-        if (!out->contains(rel)) {
-            out->append(rel);
-        }
-    }
-    return true;
+    *queue = advanced.entries;
+    return applyForeignIpUsedSetChanges(f.ctx,
+                                        {foreignLiveIpUsedSet(ipBitmap, f.ctx.ipBlockCount),
+                                         advanced.reclaimed,
+                                         foreignMarkedIpBlocks(f, in)},
+                                        out,
+                                        blockers);
 }
 
 // Reclaimed blocks grouped for the COW: by data chunk, and by owning cib. A slot cursor hands out
@@ -12694,21 +13032,20 @@ struct ApfsFinalizeIpPlan {
     uint64_t freedCibSlot{0};
     uint64_t prevFreedCibSlot{0};
     QVector<uint64_t> extraFreedIpBlocks;
+    QVector<ApfsFreeQueueEntry> ipFqEntries;
 };
 
-// The IP-bitmap ring's used-set + freed-slot plan the checkpoint advance consumes. Foreign overflow
-// uses the real scattered live used-set with this commit's three old IP blocks released and its
-// three new copies marked, plus the deferred-free reclaim swap (each reclaimed far chunk's old
-// bitmap + owning cib released, its COW copy marked). Generated uses the exact S3 sparse set
-// (single-CIB) or the contiguous prefix, plus the rotation ghost window + spill freed slots.
+// The IP-bitmap ring's used-set + freed-slot plan the checkpoint advance consumes. A foreign
+// scattered pool carries its exact live bits through the COW swaps. Generated uses the S3 sparse
+// set (single-CIB) or contiguous prefix plus its rotation ghost window.
 bool computeFinalizeIpPlan(const ApfsFsCommitFinalize& f,
                            const ApfsFinalizeApply& in,
                            ApfsFinalizeIpPlan* out,
                            QStringList* blockers) {
     const ApfsIpRotation& rotation = in.rotation;
     const ApfsSpilledChunkPlan& plan = in.plan;
-    if (f.ctx.foreignOverflow) {
-        if (!buildForeignIpUsedSet(f, rotation, in.reclaim, &out->ipUsedSet, blockers)) {
+    if (f.ctx.foreignIp) {
+        if (!buildForeignIpUsedSet(f, in, &out->ipUsedSet, &out->ipFqEntries, blockers)) {
             return false;
         }
         out->ipBitmapUsage = static_cast<uint64_t>(out->ipUsedSet.size());
@@ -12824,7 +13161,8 @@ bool finalizeApplyBitmapsAndAdvance(const ApfsFsCommitFinalize& f,
                               .extraFreedIpBlocks = ip.extraFreedIpBlocks,
                               .mainFqEntries = in.fq.mainFq.entries,
                               .ipUsedSet = ip.ipUsedSet,
-                              .cibArrayRepoints = cibArrayRepoints},
+                              .cibArrayRepoints = cibArrayRepoints,
+                              .explicitIpFqEntries = ip.ipFqEntries},
                              result,
                              blockers);
 }
@@ -12860,10 +13198,10 @@ bool finalizeApplyAndAdvance(const ApfsFsCommitFinalize& f,
 bool computeCommitIpRotation(const ApfsFsCommitFinalize& f,
                              ApfsIpRotation* rotation,
                              QStringList* blockers) {
-    if (f.ctx.foreignOverflow) {
+    if (f.ctx.foreignIp) {
         // Real internal pool: allocate the new cib / new chunk-0 bitmap from real free IP blocks
         // (the boundary bitmap was already taken by allocateOverflowCommitBlocks into
-        // f.chunk1BitmapBlock) instead of the synthesized 3-slot rotation.
+        // f.chunk1BitmapBlock on the overflow tier) instead of the synthesized 3-slot rotation.
         return computeForeignIpRotation(f.ctx, f.chunk1BitmapBlock, rotation, blockers);
     }
     return computeIpRotation(f.ctx.liveCib, f.ctx.liveBitmap, f.ctx.layout, rotation, blockers);
@@ -12906,9 +13244,14 @@ bool finalizeFsCommit(const ApfsFsCommitFinalize& f,
     // into OR freed from) into a free-pool slot and mark the exact sparse IP used-set; the
     // overflow tier keeps its certified fixed-slot + prefix path (plan empty).
     ApfsSpilledChunkPlan plan;
-    if (f.ctx.layout.allocChunk == 0 &&
-        !planSpilledChunkBitmaps(f, rotation, fq.mainFq.reclaimed, &plan, blockers)) {
-        return false;
+    if (f.ctx.layout.allocChunk == 0) {
+        const bool planned =
+            f.ctx.foreignIp
+                ? planForeignSpilledChunkBitmaps(f, rotation, fq.mainFq.reclaimed, &plan, blockers)
+                : planSpilledChunkBitmaps(f, rotation, fq.mainFq.reclaimed, &plan, blockers);
+        if (!planned) {
+            return false;
+        }
     }
     // Foreign overflow: the reclaimed runs live in far data chunks (owned by cibs > 0), so plan the
     // multi-cib bitmap/cib COW that returns them to free. Empty on generated volumes and when there
@@ -14131,7 +14474,7 @@ uint64_t snapshotGeneratedIpBitmapUsage(const ApfsFsCommitContext& ctx,
 bool commitSnapshotCheckpointTail(const ApfsSnapshotCheckpointTail& t,
                                   ApfsInPlaceCheckpointResult* result,
                                   QStringList* blockers) {
-    if (t.ctx.foreignOverflow) {
+    if (t.ctx.foreignIp) {
         return commitSnapshotCheckpointTailForeign(t, result, blockers);
     }
     const ApfsFsCommitContext& ctx = t.ctx;
@@ -23745,6 +24088,8 @@ PartitionApfsLiveLayoutProbe PartitionApfsWriter::probeLiveLayout(const QString&
     probe.sm_main_cib_count = layout.smMainCibCount;
     probe.sm_main_cab_count = layout.smMainCabCount;
     probe.sm_main_free_count = layout.smMainFreeCount;
+    probe.ip_fq_tree_oid = layout.ipFqTreeOid;
+    probe.main_fq_tree_oid = layout.mainFqTreeOid;
     probe.ip_base = layout.ipBase;
     probe.ip_block_count = layout.ipBlockCount;
     probe.ip_bm_size_blocks = layout.ipBmSizeBlocks;
@@ -26146,6 +26491,74 @@ QVector<quint64> PartitionApfsWriter::readGeneratedIpFreeQueueGhosts(const QStri
         }
     }
     return ghosts;
+}
+
+QPair<quint64, quint64> PartitionApfsWriter::nextForeignIpRotationForTesting(
+    const QString& image_path, QStringList* blockers) {
+    QFile image(image_path);
+    if (!image.open(QIODevice::ReadOnly)) {
+        blockers->append(QStringLiteral("APFS foreign rotation test: unable to open image"));
+        return {};
+    }
+    ApfsFsCommitContext ctx;
+    if (!loadFsCommitContext(&image, &ctx, blockers)) {
+        return {};
+    }
+    if (!ctx.foreignIp) {
+        blockers->append(QStringLiteral(
+            "APFS foreign rotation test: image resolved to the generated rotation model"));
+        return {};
+    }
+    ApfsIpRotation rotation;
+    if (!computeForeignIpRotation(ctx, 0, &rotation, blockers)) {
+        return {};
+    }
+    return {rotation.newCib, rotation.newBitmap};
+}
+
+bool PartitionApfsWriter::foreignIpBlockAvailableForTesting(const QString& image_path,
+                                                            quint64 block,
+                                                            QStringList* blockers) {
+    QFile image(image_path);
+    ApfsFsCommitContext ctx;
+    if (!image.open(QIODevice::ReadOnly) || !loadFsCommitContext(&image, &ctx, blockers)) {
+        blockers->append(
+            QStringLiteral("APFS foreign candidate test: unable to load image context"));
+        return false;
+    }
+    if (!ctx.foreignIp || block < ctx.layout.ipBase ||
+        block - ctx.layout.ipBase >= ctx.ipBlockCount) {
+        blockers->append(QStringLiteral(
+            "APFS foreign candidate test: block is not in a validated foreign pool"));
+        return false;
+    }
+    QByteArray bitmap(ctx.geometry.blockSize, '\0');
+    if (!readApfsRepairBlock(&image, ctx.geometry, ctx.liveIpBitmapBlock, &bitmap, blockers)) {
+        return false;
+    }
+    const uint64_t relative = block - ctx.layout.ipBase;
+    const auto byte = static_cast<unsigned char>(bitmap.at(static_cast<qsizetype>(relative / 8)));
+    const bool bitmapSet = ((byte >> (relative % 8)) & 1U) != 0u;
+    const ForeignIpCandidate candidate =
+        classifyForeignIpCandidate(block,
+                                   bitmapSet,
+                                   reclaimableForeignIpBlocks(ctx, blockers),
+                                   foreignLiveIpMetadataBlocks(ctx, blockers),
+                                   blockers);
+    return blockers->isEmpty() && candidate == ForeignIpCandidate::Available;
+}
+
+bool PartitionApfsWriter::foreignIpBlockIsLiveMetadataForTesting(const QString& image_path,
+                                                                 quint64 block,
+                                                                 QStringList* blockers) {
+    QFile image(image_path);
+    ApfsFsCommitContext ctx;
+    if (!image.open(QIODevice::ReadOnly) || !loadFsCommitContext(&image, &ctx, blockers)) {
+        blockers->append(
+            QStringLiteral("APFS foreign metadata test: unable to load image context"));
+        return false;
+    }
+    return foreignLiveIpMetadataBlocks(ctx, blockers).contains(block);
 }
 
 }  // namespace sak

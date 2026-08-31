@@ -355,9 +355,9 @@ struct CliInvocation {
     QString m_command;
     QString m_target_path;
     uint64_t m_target_size_bytes{0};
-    // Grow-to size for commit-raw-resize (--new-size-bytes). Defaults to
+    // Resize-to size for commit-image/raw-resize (--new-size-bytes). Defaults to
     // m_target_size_bytes when the option is unset (grow the container to fill the
-    // device); only commit-raw-resize reads it.
+    // device for the raw grow default); both resize commands read it.
     uint64_t m_new_size_bytes{0};
     uint32_t m_block_size_bytes{kDefaultApfsBlockSizeBytes};
     QString m_volume_name;
@@ -1081,6 +1081,8 @@ std::optional<QJsonObject> buildProbeLayoutReport(const CliInvocation& invocatio
                   static_cast<qint64>(probe.sm_main_cab_count));
     report.insert(QStringLiteral("sm_main_free_count"),
                   static_cast<qint64>(probe.sm_main_free_count));
+    report.insert(QStringLiteral("ip_fq_tree_oid"), static_cast<qint64>(probe.ip_fq_tree_oid));
+    report.insert(QStringLiteral("main_fq_tree_oid"), static_cast<qint64>(probe.main_fq_tree_oid));
     report.insert(QStringLiteral("ip_base"), static_cast<qint64>(probe.ip_base));
     report.insert(QStringLiteral("ip_block_count"), static_cast<qint64>(probe.ip_block_count));
     report.insert(QStringLiteral("ip_bm_size_blocks"),
@@ -1431,7 +1433,7 @@ std::optional<QJsonObject> buildCommitResizeReport(const CliInvocation& invocati
     const auto commit = sak::PartitionApfsWriter::commitImageOnlyResize(
         {.source_image_path = invocation.m_target_path,
          .written_image_path = invocation.m_output_image_path,
-         .new_size_bytes = invocation.m_target_size_bytes,
+         .new_size_bytes = invocation.m_new_size_bytes,
          .options = imageWriteOptions(invocation.m_evidence_id)});
     QJsonObject report;
     report.insert(QStringLiteral("ok"), commit.ok);
@@ -1440,7 +1442,7 @@ std::optional<QJsonObject> buildCommitResizeReport(const CliInvocation& invocati
     report.insert(QStringLiteral("source_image"), commit.source_image_path);
     report.insert(QStringLiteral("output_image"), commit.written_image_path);
     report.insert(QStringLiteral("new_size_bytes"),
-                  static_cast<qint64>(invocation.m_target_size_bytes));
+                  static_cast<qint64>(invocation.m_new_size_bytes));
     report.insert(QStringLiteral("previous_xid"), static_cast<qint64>(commit.previous_xid));
     report.insert(QStringLiteral("new_xid"), static_cast<qint64>(commit.new_xid));
     report.insert(QStringLiteral("superblock_block"), static_cast<qint64>(commit.superblock_block));

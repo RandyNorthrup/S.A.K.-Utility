@@ -171,6 +171,10 @@ $blockedRawDirectoryCreateReportPath = Join-Path $runRoot "blocked-raw-directory
 $blockedRawDirectoryDeleteReportPath = Join-Path $runRoot "blocked-raw-directory-delete.json"
 $blockedRawLabelReportPath = Join-Path $runRoot "blocked-raw-volume-label.json"
 $blockedReportPath = Join-Path $runRoot "blocked-raw-repair.json"
+$resizeGrowImagePath = Join-Path $runRoot "resize-grown.apfs"
+$resizeGrowReportPath = Join-Path $runRoot "commit-image-resize-grow.json"
+$resizeShrinkImagePath = Join-Path $runRoot "resize-shrunk.apfs"
+$resizeShrinkReportPath = Join-Path $runRoot "commit-image-resize-shrink.json"
 
 $rawGuardSubstring = "Windows raw-device path"
 
@@ -191,6 +195,38 @@ if (-not (Test-Path -LiteralPath $imagePath -PathType Leaf)) {
 }
 if ((Get-Item -LiteralPath $imagePath).Length -ne $sizeBytes) {
     Fail "format-image size mismatch"
+}
+
+# --- Image resize must bind --new-size-bytes, not silently reuse the current --size-bytes.
+# The pre-fix CLI passed $sizeBytes as BOTH values, so the writer rejected every image resize as
+# current -> current. Grow by one APFS block, then shrink back to prove both directions.
+$grownSizeBytes = $sizeBytes + 4096
+& $CliPath commit-image-resize `
+    --target $imagePath `
+    --size-bytes $sizeBytes `
+    --new-size-bytes $grownSizeBytes `
+    --output-image $resizeGrowImagePath `
+    --output-json $resizeGrowReportPath
+if ($LASTEXITCODE -ne 0) {
+    Fail "commit-image-resize grow exited $LASTEXITCODE"
+}
+Assert-CommitOk -Report (Read-Report $resizeGrowReportPath) -Label "commit-image-resize grow" -OutputImage $resizeGrowImagePath
+if ((Get-Item -LiteralPath $resizeGrowImagePath).Length -ne $grownSizeBytes) {
+    Fail "commit-image-resize grow size mismatch"
+}
+
+& $CliPath commit-image-resize `
+    --target $resizeGrowImagePath `
+    --size-bytes $grownSizeBytes `
+    --new-size-bytes $sizeBytes `
+    --output-image $resizeShrinkImagePath `
+    --output-json $resizeShrinkReportPath
+if ($LASTEXITCODE -ne 0) {
+    Fail "commit-image-resize shrink exited $LASTEXITCODE"
+}
+Assert-CommitOk -Report (Read-Report $resizeShrinkReportPath) -Label "commit-image-resize shrink" -OutputImage $resizeShrinkImagePath
+if ((Get-Item -LiteralPath $resizeShrinkImagePath).Length -ne $sizeBytes) {
+    Fail "commit-image-resize shrink size mismatch"
 }
 
 # The plain generated container (repairable minimal layout) is retained for the

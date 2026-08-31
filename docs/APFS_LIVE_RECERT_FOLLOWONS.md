@@ -101,6 +101,10 @@ byte-identical (full Release ctest 225/225).
 --------------------------------------------------------------------------------
 ## WORKSTREAM 3 -- foreign multi-chunk in-place COW + grow increments
 
+Status: DONE 2026-08-31. Genuine Apple 2-chunk and 135-chunk/2-CIB containers passed the full
+chained COW matrix, host apfsck, Apple fsck before mount, kernel read-back, and Apple fsck after
+kernel continuation. The multi-CIB shrink inverse also passed.
+
 - [x] WS3a HONEST MESSAGE (commit 3789c41): the nextIpSlot refusal now names both real
       causes -- "in-place file mutation of a real multi-chunk Apple internal pool is not yet
       supported (use import-image or resize); on a S.A.K.-generated container this indicates
@@ -114,7 +118,7 @@ byte-identical (full Release ctest 225/225).
       MiB are apfsck-clean and fsck_apfs "container appears to be OK" on the macOS kernel with
       all files sha-preserved. Sub-chunk sources unchanged; 225/225.
 
-- [ ] WS3c FOREIGN MULTI-CHUNK IN-PLACE COW -- DEFERRED WITH DESIGN (corruption-critical,
+- [x] WS3c FOREIGN MULTI-CHUNK IN-PLACE COW -- CLOSED 2026-08-31 (corruption-critical,
       dedicated pass). In-place COW file mutation (patch/insert/write/delete) on a real
       MULTI-chunk Apple internal pool fails closed at nextIpSlot (correctly, per WS3a). The
       refusal is safe; the feature is the work.
@@ -142,10 +146,24 @@ byte-identical (full Release ctest 225/225).
       new cib / chunk-0 bitmap from real free IP blocks (ip_base+ip_block_count onward) and build
       the IP used-set from the live IP bitmap. (4) cert on the rig: patch/insert/write/delete on
       real 256 MiB + multi-CIB Apple containers, apfsck + Apple kernel fsck clean, chained.
-- [ ] WS3c-2 (smaller follow-on): shrink is the inverse; audit whether a real multi-chunk
-      Apple SHRINK hits the same general-rotation limitation (resize shrink certified clean on
-      the generated + the first-pass real container, but the foreign-IP shrink ring path should
-      be re-confirmed once WS3c lands).
+      LANDED: foreign detection is authenticated and persists by the volume superblock's
+      formatted_by provenance, not by a CIB address that can later resemble the generated ring.
+      New metadata copies come from the real IP bitmap plus the IP queue's two-checkpoint window;
+      the rebuilt queue consumes aged ghosts and enqueues old live COW blocks. Every live CAB,
+      CIB, and nonzero ci_bitmap_addr is authenticated, marked-used, and excluded.
+      CERT: genuine Apple 256 MiB and 18,043,854,848-byte (135 chunks, 2 CIBs) sources; chained
+      insert xid 4->5, patch 5->6, replace 6->7, delete 7->8. Host apfsck clean at every step.
+      Apple fsck_apfs clean pre-mount and post-kernel at every step; kernel read-back exact and
+      neighbor data preserved. Evidence `external.apfs-foreign-multicib-cow`.
+- [x] WS3c-2 -- CLOSED 2026-08-31. The xid-8 genuine Apple multi-CIB chain result shrank from
+      18,043,854,848 to 17,179,869,184 bytes (135 -> 128 chunks; still multi-CIB), xid 8->9.
+      Host apfsck clean; Apple fsck clean before mount; kernel read-back preserved replacement +
+      neighbor and absence; kernel advanced to xid 12; Apple fsck clean again. This also exposed
+      and fixed the CLI binding that ignored --new-size-bytes for commit-image-resize.
+      FINAL LOCAL GATE: all changed-file pre-commit hooks passed. Release build exit 0. The first
+      full CTest run was 261/262 and exposed the generated >1.35 TiB classifier regression; the
+      existing failing test was the red proof. After the fix, the full core binary passed and a
+      fresh complete CTest run passed 262/262 in 627.25 seconds.
 
 --------------------------------------------------------------------------------
 ## WORKSTREAM 4 -- infra / gate backlog (no live rig needed)

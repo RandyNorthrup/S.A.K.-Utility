@@ -188,9 +188,11 @@ a parked design, per the bucket convention. Open work is what remains after thos
   a checkbox counter cannot tell a work item from a template, and R5-IDX-7 was an entry about
   stale capability claims that had itself gone stale. Both times the scan produced a number
   and the number was believed. Read the section heading before trusting the count.
-- [~] R5-IDX-3 `docs/APFS_LIVE_RECERT_FOLLOWONS.md` -- RE-TRIAGED 2026-08-27, 7 items ->
-  5 genuinely open, and one of the two closed had been reported as debt while it was already
-  zero.
+- [~] R5-IDX-3 `docs/APFS_LIVE_RECERT_FOLLOWONS.md` -- CURRENT 2026-08-31: three open
+  programs remain -- clang-tidy style debt, test infrastructure, and branch protection.
+  WS3c foreign multi-chunk in-place COW and WS3c-2 shrink are closed and Apple-certified.
+  Historical 2026-08-27 re-triage: 7 items -> 5 genuinely open, and one of the two closed had
+  been reported as debt while it was already zero.
   CLOSED: "three gate scripts still carry real debt" was STALE. The counts it quotes are
   measured 2026-08-10 (18 gui-magic-numbers / 74 gui-stylesheet-literals / 452 magic-numbers);
   all three reached zero, all three are wired as BLOCKING pre-commit hooks (sections 6d/6e/6f
@@ -199,19 +201,22 @@ a parked design, per the bucket convention. Open work is what remains after thos
   updated when the work landed -- the same not-writing-it-down failure as R5-IDX-6, in the
   opposite direction: there it made finished work look open, here it made a wired gate look
   unwired.
-  BLOCKED-ON-USER: branch protection needs the GitHub repo admin (the owner).
-  STILL GENUINELY OPEN, and each is a program rather than an item: WS3c foreign multi-chunk
-  in-place COW (corruption-critical, deferred WITH a design) and its WS3c-2 shrink inverse;
-  and the test-infra program (G14 coverage ledger, G18 mutation testing, fuzz harnesses,
-  fault injection, G20/G21 gate wiring).
-  TWO OF THE FIVE ARE NOW MEASURED AND ONE IS CLOSED (2026-08-30). Both carried numbers
+  OWNER ACTION: branch protection needs the GitHub repo admin (the owner).
+  STILL GENUINELY OPEN: clang-tidy style debt and the test-infra program (G14 coverage ledger,
+  G18 mutation testing, fuzz harnesses, fault injection, G20/G21 gate wiring).
+  HISTORICAL 2026-08-30 MEASUREMENT: two of the then-five items were measured and one closed.
+  Both carried numbers
   nobody had re-run, and both numbers were wrong.
   CPPCHECK INLINE-SUPPRESSION AUDIT -- CLOSED. The 26 inline count was exactly right; the
   "26 file entries" was not -- cppcheck_suppressions.txt holds 10 entries, not 26. Each of
   the 26 was re-checked by running cppcheck with inline suppressions DISABLED and asking
-  whether the named check still fires at the suppressed line. 5 suppress nothing and are
-  removed: advanced_search_worker.h:47 duplInheritedMember, strong_index.h:45 and :49
-  passedByValue, advanced_search_worker.cpp:1829 and :2318 knownConditionTrueFalse.
+  whether the named check still fires at the suppressed line. The first pass classified 5 as
+  dead. A later changed-file compile proved the two `strong_index.h` function suppressions live:
+  cppcheck emits four inconclusive passedByValue findings when the template is instantiated, while
+  passing its single trivial integer by reference would add indirection. Those two justified
+  suppressions are restored. The 3 genuinely dead suppressions remain removed:
+  advanced_search_worker.h:47 duplInheritedMember and advanced_search_worker.cpp:1829/:2318
+  knownConditionTrueFalse.
   Two holes in that method had to be closed first, and both would have produced a wrong
   answer: (a) useStlAlgorithm is ALSO suppressed globally, so its three inline sites looked
   dead when they were merely masked -- re-run without the global entry, all three fire and
@@ -221,8 +226,9 @@ a parked design, per the bucket convention. Open work is what remains after thos
   WHY THIS WAS INVISIBLE, and the durable fix: cppcheck's own unmatchedSuppression is the
   only check that reports a suppression matching nothing, and it is globally suppressed as
   "meta-noise from the suppression file itself". That is true of the FILE-level entries and
-  false of the inline ones. Enabled whole-project it reports exactly those same 5 and
-  nothing else -- two independent methods agreeing site for site -- so the audit can become
+  false of the inline ones. Enabled whole-project initially reported those same 5; the
+  template-instantiating changed-file run corrected two false dead classifications. The reveal
+  pass plus a real include-path run now form the standing gate, so the audit can become
   a standing gate instead of a sweep somebody has to remember to redo.
   A BIGGER FINDING CAME OUT OF IT: the cppcheck pre-commit hook runs run_cppcheck.ps1
   -Files, i.e. CHANGED FILES ONLY. Nothing runs it whole-project, so R5-G10-3's "cppcheck
@@ -255,6 +261,22 @@ a parked design, per the bucket convention. Open work is what remains after thos
   clang-tidy's own fixer resolved it across 9 headers. One of those was substantive:
   pst_parser.h declared readContentsTable(folder_nid) while the definition and the only
   caller both say contents_nid, so the header was actively misleading about what it takes.
+  WS3c + WS3c-2 CLOSED 2026-08-31. Genuine Apple scattered-IP COW now supports chained
+  insert/patch/replace/delete on 2-chunk and 135-chunk/2-CIB containers. Host apfsck and Apple
+  fsck pass every checkpoint before mount and after kernel continuation; kernel read-back is
+  exact. The chained multi-CIB result also shrank 135 -> 128 chunks cleanly. Certification found
+  and fixed four defects: foreign classification was not persistent after a CIB landed on a
+  generated-looking slot; the live-metadata exclusion did not enumerate every chunk bitmap;
+  commit-image-resize ignored --new-size-bytes; and the first full gate misrouted an S.A.K.-formatted
+  >1.35 TiB relocated multi-block ring into the one-block foreign path. Authenticated formatter
+  provenance plus generated packing now retain that generated path, with nextIpSlot still validating
+  its re-anchored ring before writes. Hermetic genuine-byte fixtures and four separate
+  mutation drills pin provenance, all-live-bitmap collection, the two-checkpoint IP queue window,
+  queue replacement, and CLI binding. Evidence: external.apfs-foreign-multicib-cow. IDX-3 now
+  has three unrelated open programs: clang-tidy style debt, test-infra, and branch protection.
+  FINAL LOCAL GATE: all changed-file pre-commit hooks passed; Release build exit 0; the first full
+  CTest run was 261/262 and supplied the generated-ring red proof; after the fix, the full core
+  binary passed and a fresh complete CTest run passed 262/262 in 627.25 seconds.
 - [x] R5-IDX-4 `docs/archive/FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md` -- 7 open plus 6 partial
   -> 0. CLOSED AND ARCHIVED 2026-08-28. Two of the thirteen were stale doc, not open work: the
   local-file Properties lane was already covered end to end, and progress/cancel had shipped as

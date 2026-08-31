@@ -349,10 +349,13 @@ set_target_properties(test_partition_manager_core PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_partition_manager_core PRIVATE
-    Qt6::Core Qt6::Test sak_lzfse ${PLATFORM_LIBS}
+    Qt6::Core Qt6::Test ZLIB::ZLIB sak_lzfse ${PLATFORM_LIBS}
 )
 target_include_directories(test_partition_manager_core PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+target_compile_definitions(test_partition_manager_core PRIVATE
+    SAK_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
 )
 add_test(NAME test_partition_manager_core COMMAND test_partition_manager_core
          -o "${TEST_OUTPUT_DIR}/test_partition_manager_core.txt,txt" -o -,txt
