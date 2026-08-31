@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <array>
+#include <utility>
 
 namespace sak::ai {
 
@@ -296,6 +297,12 @@ void applyBrokerPreconditions(AiCommandTarget target, AiCommandRequest& request)
 }
 
 }  // namespace
+
+AiCommandToolPlan AiCommandToolPlanner::buildPlan(const QString& tool_name,
+                                                  const QJsonObject& args,
+                                                  AiToolPolicy policy) {
+    return buildPlan(tool_name, args, std::move(policy), Options{});
+}
 
 AiCommandToolPlan AiCommandToolPlanner::buildPlan(const QString& tool_name,
                                                   const QJsonObject& args,

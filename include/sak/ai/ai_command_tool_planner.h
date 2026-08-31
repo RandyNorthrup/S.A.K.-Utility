@@ -57,8 +57,11 @@ public:
     /// risk-classified, approved by a human and leased before anything notices.
     [[nodiscard]] static AiCommandToolPlan buildPlan(const QString& tool_name,
                                                      const QJsonObject& args,
+                                                     AiToolPolicy policy);
+    [[nodiscard]] static AiCommandToolPlan buildPlan(const QString& tool_name,
+                                                     const QJsonObject& args,
                                                      AiToolPolicy policy,
-                                                     Options options = {});
+                                                     Options options);
     /// @brief Text-based destructive classification for a shell command. A direct
     /// process launch is classified risky by buildPlan() regardless of this result:
     /// an arbitrary executable cannot be proven safe from its command line.

@@ -241,30 +241,38 @@ DocsToolPlan context7DocsPlan(const QString& query, const QJsonObject& extra) {
                                                      QStringLiteral("library_name")},
                                                     QStringLiteral("docs_query arguments"));
     if (!type_error.isEmpty()) {
-        return {.m_error = type_error};
+        return {.m_provider_tool = QString(),
+                .m_tool_arguments = QJsonObject(),
+                .m_error = type_error};
     }
     const QString library_id =
         firstNonEmpty(extra, QStringLiteral("libraryId"), QStringLiteral("library_id"));
     const QString library_name =
         firstNonEmpty(extra, QStringLiteral("libraryName"), QStringLiteral("library_name"));
     if (!library_id.isEmpty() && query.isEmpty()) {
-        return {.m_error = QStringLiteral("Context7 query-docs requires query")};
+        return {.m_provider_tool = QString(),
+                .m_tool_arguments = QJsonObject(),
+                .m_error = QStringLiteral("Context7 query-docs requires query")};
     }
     if (!library_id.isEmpty()) {
         return {.m_provider_tool = QStringLiteral("query-docs"),
                 .m_tool_arguments = QJsonObject{{QStringLiteral("libraryId"), library_id},
-                                                {QStringLiteral("query"), query}}};
+                                                {QStringLiteral("query"), query}},
+                .m_error = QString()};
     }
 
     const QString resolved_name = library_name.isEmpty() ? query : library_name;
     if (resolved_name.isEmpty()) {
-        return {
-            .m_error = QStringLiteral("Context7 resolve-library-id requires libraryName or query")};
+        return {.m_provider_tool = QString(),
+                .m_tool_arguments = QJsonObject(),
+                .m_error =
+                    QStringLiteral("Context7 resolve-library-id requires libraryName or query")};
     }
     return {.m_provider_tool = QStringLiteral("resolve-library-id"),
             .m_tool_arguments =
                 QJsonObject{{QStringLiteral("libraryName"), resolved_name},
-                            {QStringLiteral("query"), query.isEmpty() ? resolved_name : query}}};
+                            {QStringLiteral("query"), query.isEmpty() ? resolved_name : query}},
+            .m_error = QString()};
 }
 
 DocsToolPlan microsoftCodeSamplePlan(const QString& query,
@@ -275,14 +283,17 @@ DocsToolPlan microsoftCodeSamplePlan(const QString& query,
         return {};
     }
     if (query.isEmpty()) {
-        return {.m_error = QStringLiteral("Microsoft code sample search requires query")};
+        return {.m_provider_tool = QString(),
+                .m_tool_arguments = QJsonObject(),
+                .m_error = QStringLiteral("Microsoft code sample search requires query")};
     }
     QJsonObject arguments{{QStringLiteral("query"), query}};
     if (!language.isEmpty()) {
         arguments[QStringLiteral("language")] = language;
     }
     return {.m_provider_tool = QStringLiteral("microsoft_code_sample_search"),
-            .m_tool_arguments = arguments};
+            .m_tool_arguments = arguments,
+            .m_error = QString()};
 }
 
 bool isKnownMicrosoftDocsTool(const QString& requested_tool) {
@@ -305,11 +316,14 @@ DocsToolPlan microsoftFetchPlan(const QString& query,
     }
     const QString target = url.isEmpty() ? query : url;
     if (!isAbsoluteHttpUrl(target, false)) {
-        return {.m_error = QStringLiteral(
+        return {.m_provider_tool = QString(),
+                .m_tool_arguments = QJsonObject(),
+                .m_error = QStringLiteral(
                     "microsoft_docs_fetch requires an absolute http(s) url in arguments.url")};
     }
     return {.m_provider_tool = QStringLiteral("microsoft_docs_fetch"),
-            .m_tool_arguments = QJsonObject{{QStringLiteral("url"), target}}};
+            .m_tool_arguments = QJsonObject{{QStringLiteral("url"), target}},
+            .m_error = QString()};
 }
 
 DocsToolPlan microsoftDocsPlan(const QString& query, const QJsonObject& extra) {
@@ -318,7 +332,9 @@ DocsToolPlan microsoftDocsPlan(const QString& query, const QJsonObject& extra) {
         {QStringLiteral("tool"), QStringLiteral("url"), QStringLiteral("language")},
         QStringLiteral("docs_query arguments"));
     if (!type_error.isEmpty()) {
-        return {.m_error = type_error};
+        return {.m_provider_tool = QString(),
+                .m_tool_arguments = QJsonObject(),
+                .m_error = type_error};
     }
     const QString requested_tool = extra.value(QStringLiteral("tool")).toString().trimmed();
     const QString url = extra.value(QStringLiteral("url")).toString().trimmed();
@@ -326,7 +342,9 @@ DocsToolPlan microsoftDocsPlan(const QString& query, const QJsonObject& extra) {
     // Fail CLOSED on an explicit tool request this provider does not implement, instead of
     // quietly downgrading it to an ordinary docs search the caller never asked for.
     if (!requested_tool.isEmpty() && !isKnownMicrosoftDocsTool(requested_tool)) {
-        return {.m_error = QStringLiteral("Unknown microsoft_docs tool: %1").arg(requested_tool)};
+        return {.m_provider_tool = QString(),
+                .m_tool_arguments = QJsonObject(),
+                .m_error = QStringLiteral("Unknown microsoft_docs tool: %1").arg(requested_tool)};
     }
 
     DocsToolPlan fetch = microsoftFetchPlan(query, url, requested_tool);
@@ -339,10 +357,13 @@ DocsToolPlan microsoftDocsPlan(const QString& query, const QJsonObject& extra) {
         return code_sample;
     }
     if (query.isEmpty()) {
-        return {.m_error = QStringLiteral("Microsoft docs search requires query")};
+        return {.m_provider_tool = QString(),
+                .m_tool_arguments = QJsonObject(),
+                .m_error = QStringLiteral("Microsoft docs search requires query")};
     }
     return {.m_provider_tool = QStringLiteral("microsoft_docs_search"),
-            .m_tool_arguments = QJsonObject{{QStringLiteral("query"), query}}};
+            .m_tool_arguments = QJsonObject{{QStringLiteral("query"), query}},
+            .m_error = QString()};
 }
 
 DocsToolPlan docsToolPlan(const QString& provider_id,
@@ -354,7 +375,9 @@ DocsToolPlan docsToolPlan(const QString& provider_id,
     if (provider_id == QLatin1String("microsoft_docs")) {
         return microsoftDocsPlan(query, extra);
     }
-    return {.m_error = QStringLiteral("docs_query supports context7 and microsoft_docs")};
+    return {.m_provider_tool = QString(),
+            .m_tool_arguments = QJsonObject(),
+            .m_error = QStringLiteral("docs_query supports context7 and microsoft_docs")};
 }
 
 QJsonObject loadHttpDocsProvider(const AiProviderRegistry& registry,

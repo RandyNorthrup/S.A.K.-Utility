@@ -258,6 +258,8 @@ bool BrowserBridgePipeServer::ancestorChainContainsImageForTesting(
     return ancestorChainContainsImage(pid, parent, image, target_basename_lower, max_depth);
 }
 
+BrowserBridgePipeServer::BrowserBridgePipeServer() : BrowserBridgePipeServer(Options{}) {}
+
 BrowserBridgePipeServer::BrowserBridgePipeServer(Options options) : options_(std::move(options)) {
     rendezvous_path_ = options_.rendezvous_path.isEmpty() ? browserBridgeRendezvousPath()
                                                           : options_.rendezvous_path;

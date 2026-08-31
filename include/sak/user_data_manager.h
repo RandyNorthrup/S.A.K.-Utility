@@ -97,21 +97,27 @@ public:
     // Backup operations
     std::optional<BackupEntry> backupAppData(const QString& app_name,
                                              const QStringList& source_paths,
+                                             const QString& backup_dir);
+    std::optional<BackupEntry> backupAppData(const QString& app_name,
+                                             const QStringList& source_paths,
                                              const QString& backup_dir,
-                                             const BackupConfig& config = BackupConfig());
+                                             const BackupConfig& config);
 
+    bool backupMultipleApps(const QStringList& app_names, const QString& backup_dir);
     bool backupMultipleApps(const QStringList& app_names,
                             const QString& backup_dir,
-                            const BackupConfig& config = BackupConfig());
+                            const BackupConfig& config);
 
     // Restore operations
+    bool restoreAppData(const QString& backup_path, const QString& restore_dir);
     bool restoreAppData(const QString& backup_path,
                         const QString& restore_dir,
-                        const RestoreConfig& config = RestoreConfig());
+                        const RestoreConfig& config);
 
+    bool restoreMultipleApps(const QStringList& backup_paths, const QString& restore_dir);
     bool restoreMultipleApps(const QStringList& backup_paths,
                              const QString& restore_dir,
-                             const RestoreConfig& config = RestoreConfig());
+                             const RestoreConfig& config);
 
     // Data discovery
     QStringList discoverAppDataPaths(const QString& app_name) const;

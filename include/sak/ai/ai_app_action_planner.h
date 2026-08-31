@@ -63,8 +63,12 @@ public:
     [[nodiscard]] static AiAppActionPlan buildPlan(const QString& app_id,
                                                    const QString& action,
                                                    const QJsonObject& manifest,
+                                                   const QJsonObject& arguments);
+    [[nodiscard]] static AiAppActionPlan buildPlan(const QString& app_id,
+                                                   const QString& action,
+                                                   const QJsonObject& manifest,
                                                    const QJsonObject& arguments,
-                                                   Options options = {});
+                                                   Options options);
 };
 
 static_assert(AiAppActionPlanner::Options{}.max_output_bytes <= kAiCommandOutputBytesCeiling,

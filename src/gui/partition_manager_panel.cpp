@@ -434,7 +434,7 @@ struct ContextActionSpec {
     QString text;
     QString icon_path;
     bool enabled{true};
-    QString disabled_reason;
+    QString disabled_reason{};
 };
 
 struct PartitionActionAvailability {
@@ -9895,7 +9895,7 @@ void PartitionManagerPanel::addDiskContextMenuActions(QMenu& menu) {
                           kIconSurface,
                           false,
                           tr("Select a mounted partition to analyze volume space.")},
-                         [this]() {});
+                         []() {});
     addContextMenuAction(menu, this, {tr("Disk Defrag"), kIconAlign}, [this]() {
         onOpenOptimizeDrives();
     });
@@ -10127,9 +10127,9 @@ enum class NonNativeCheckActionKind {
 
 struct NonNativeCheckAction {
     NonNativeCheckActionKind kind{NonNativeCheckActionKind::StatusOnly};
-    QJsonObject payload;
-    QString target_path;
-    QString status;
+    QJsonObject payload{};
+    QString target_path{};
+    QString status{};
 };
 
 static QString metadataConsistencyStatusText(const NonNativeFilesystemCheckState& state) {

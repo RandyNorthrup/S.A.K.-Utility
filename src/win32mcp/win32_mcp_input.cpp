@@ -42,13 +42,17 @@ constexpr int kInputEventsPerChar = 2;
 
 ToolResult jsonResult(const QJsonObject& object) {
     return {.text = QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact)),
-            .is_error = false};
+            .is_error = false,
+            .image_base64 = {},
+            .image_mime = {}};
 }
 
 ToolResult errorResult(const QString& message) {
     return {.text = QJsonDocument(QJsonObject{{QStringLiteral("error"), message}})
                         .toJson(QJsonDocument::Compact),
-            .is_error = true};
+            .is_error = true,
+            .image_base64 = {},
+            .image_mime = {}};
 }
 
 QJsonObject stringProperty(const QString& description) {

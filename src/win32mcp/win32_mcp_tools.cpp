@@ -38,13 +38,17 @@ constexpr char kServerVersion[] = "1.0.0";
 
 ToolResult jsonResult(const QJsonObject& object) {
     return {.text = QString::fromUtf8(QJsonDocument(object).toJson(QJsonDocument::Compact)),
-            .is_error = false};
+            .is_error = false,
+            .image_base64 = {},
+            .image_mime = {}};
 }
 
 ToolResult errorResult(const QString& message) {
     return {.text = QJsonDocument(QJsonObject{{QStringLiteral("error"), message}})
                         .toJson(QJsonDocument::Compact),
-            .is_error = true};
+            .is_error = true,
+            .image_base64 = {},
+            .image_mime = {}};
 }
 
 QString wideToQString(const wchar_t* text, int length) {

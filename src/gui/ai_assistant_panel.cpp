@@ -152,20 +152,9 @@ AiApprovalPromptTestHook& aiApprovalPromptTestHook() {
 
 namespace {
 
-constexpr int kDefaultCommandTimeoutSec = 120;
 constexpr int kDefaultOutputCapKb = 256;
 constexpr qint64 kContextMaxFileBytes = 50LL * sak::kBytesPerMB;
 constexpr qint64 kContextTextPreviewBytes = 512LL * sak::kBytesPerKB;
-// Cumulative ceiling on attached context. The per-file cap alone bounds nothing: many
-// 50 MiB images/PDFs stay resident in m_contextItems and are base64-expanded into every
-// request, so the whole attachment set is bounded too.
-constexpr int kContextMaxItems = 64;
-constexpr qint64 kContextMaxTotalBytes = 200LL * sak::kBytesPerMB;
-// A citation URL is provider/model-controlled text that ends up as a clickable link in a
-// generated report the panel opens automatically, so both its length and how many may be
-// retained per session are bounded (the dedup below is O(n^2) in that count).
-constexpr int kMaxSessionCitations = 500;
-constexpr int kCitationUrlMaxChars = 2048;
 constexpr const char* kWheelRequiresFocusProperty = "sakWheelRequiresFocus";
 constexpr int kApprovalDialogWidth = 760;
 constexpr int kApprovalDialogHeight = 520;
@@ -319,14 +308,6 @@ constexpr int kAsyncDrainDeadlineMs = 30'000;
 // shared run token this often so a Stop (or panel teardown) aborts the in-flight
 // offline worker instead of blocking on an unbounded semaphore acquire.
 constexpr int kOfflineWaitSliceMs = 50;
-// Overall ceiling on one blocking offline operation. A bundle build/install over a slow
-// link is legitimately long, so this is generous; reaching it force-cancels the worker
-// and fails the run closed instead of waiting on a stuck worker forever.
-constexpr qint64 kOfflineWaitMaxMs = 4LL * 60 * 60 * 1000;
-// Caps on what one offline run may accumulate from worker-controlled (package script)
-// output before the result-side truncation ever runs.
-constexpr int kOfflineWorkerLogLineMax = 5000;
-constexpr int kOfflineWorkerPackageEventMax = 5000;
 constexpr int kPackageResultOutputMaxChars = 8000;
 constexpr int kPackageFileResultLimit = 200;
 constexpr int kPackageArtifactDisplayLimit = 20;
@@ -336,7 +317,6 @@ constexpr int kAccessModeUnattendedComboIndex = 2;
 constexpr int kWorkflowPhaseStatusMessageMs = 2500;
 constexpr int kRunStateMessageMaxChars = 200;
 constexpr int kHumanApprovalInfoMaxChars = 600;
-constexpr int kCommandPreviewMaxChars = 500;
 constexpr int kCommandResultPreviewMaxChars = 1200;
 constexpr int kOpenAiResponsePreviewMaxChars = 3000;
 // A human can meaningfully review only so many destructive items in one catastrophic-confirm modal.
@@ -11123,8 +11103,12 @@ void AiAssistantPanel::appendTraceEventRecord(const QString& run_id,
                                               const QString& status,
                                               const QJsonObject& metadata) {
     QString error;
-    const auto event = ai::TraceStore::event(
-        {.run_id = run_id, .kind = kind, .name = name, .status = status, .metadata = metadata});
+    const auto event = ai::TraceStore::event({.run_id = run_id,
+                                              .kind = kind,
+                                              .name = name,
+                                              .status = status,
+                                              .metadata = metadata,
+                                              .parent_span_id = QString()});
     if (!m_traceStore->appendEvent(event, &error) && !error.isEmpty()) {
         Q_EMIT logOutput(
             ai::CredentialStore::redactSecrets(tr("AI trace write failed: %1").arg(error)));

@@ -69,17 +69,23 @@ public:
 
     // Matching operations
     std::optional<MatchResult> findMatch(const AppScanner::AppInfo& app,
-                                         ChocolateyManager* choco_mgr = nullptr,
-                                         const MatchConfig& config = MatchConfig());
+                                         ChocolateyManager* choco_mgr = nullptr);
+    std::optional<MatchResult> findMatch(const AppScanner::AppInfo& app,
+                                         ChocolateyManager* choco_mgr,
+                                         const MatchConfig& config);
 
     std::vector<MatchResult> findMatches(const std::vector<AppScanner::AppInfo>& apps,
-                                         ChocolateyManager* choco_mgr = nullptr,
-                                         const MatchConfig& config = MatchConfig());
+                                         ChocolateyManager* choco_mgr = nullptr);
+    std::vector<MatchResult> findMatches(const std::vector<AppScanner::AppInfo>& apps,
+                                         ChocolateyManager* choco_mgr,
+                                         const MatchConfig& config);
 
     // Parallel batch processing (optimized for many apps)
     std::vector<MatchResult> findMatchesParallel(const std::vector<AppScanner::AppInfo>& apps,
-                                                 ChocolateyManager* choco_mgr = nullptr,
-                                                 const MatchConfig& config = MatchConfig());
+                                                 ChocolateyManager* choco_mgr = nullptr);
+    std::vector<MatchResult> findMatchesParallel(const std::vector<AppScanner::AppInfo>& apps,
+                                                 ChocolateyManager* choco_mgr,
+                                                 const MatchConfig& config);
 
     // Manual mapping management
     void addMapping(const QString& app_name, const QString& choco_package);

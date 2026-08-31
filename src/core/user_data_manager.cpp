@@ -140,6 +140,11 @@ constexpr int kFastCompressionMaxLevel = 3;
 UserDataManager::UserDataManager(QObject* parent) : QObject(parent) {}
 
 std::optional<UserDataManager::BackupEntry> UserDataManager::backupAppData(
+    const QString& app_name, const QStringList& source_paths, const QString& backup_dir) {
+    return backupAppData(app_name, source_paths, backup_dir, BackupConfig{});
+}
+
+std::optional<UserDataManager::BackupEntry> UserDataManager::backupAppData(
     const QString& app_name,
     const QStringList& source_paths,
     const QString& backup_dir,
@@ -326,6 +331,10 @@ bool UserDataManager::encryptedArchiveSizeOk(qint64 size) {
     return size >= 0 && size <= kMaxEncryptedArchiveBytes;
 }
 
+bool UserDataManager::backupMultipleApps(const QStringList& app_names, const QString& backup_dir) {
+    return backupMultipleApps(app_names, backup_dir, BackupConfig{});
+}
+
 bool UserDataManager::backupMultipleApps(const QStringList& app_names,
                                          const QString& backup_dir,
                                          const BackupConfig& config) {
@@ -353,6 +362,10 @@ bool UserDataManager::backupMultipleApps(const QStringList& app_names,
     }
 
     return all_success;
+}
+
+bool UserDataManager::restoreAppData(const QString& backup_path, const QString& restore_dir) {
+    return restoreAppData(backup_path, restore_dir, RestoreConfig{});
 }
 
 bool UserDataManager::restoreAppData(const QString& backup_path,
@@ -453,6 +466,11 @@ bool UserDataManager::verifyRestoreIntegrity(const QString& backup_path,
         return false;
     }
     return true;
+}
+
+bool UserDataManager::restoreMultipleApps(const QStringList& backup_paths,
+                                          const QString& restore_dir) {
+    return restoreMultipleApps(backup_paths, restore_dir, RestoreConfig{});
 }
 
 bool UserDataManager::restoreMultipleApps(const QStringList& backup_paths,

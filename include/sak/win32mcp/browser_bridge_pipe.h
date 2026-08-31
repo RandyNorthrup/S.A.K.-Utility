@@ -57,7 +57,8 @@ public:
         QString error;
     };
 
-    explicit BrowserBridgePipeServer(Options options = {});
+    BrowserBridgePipeServer();
+    explicit BrowserBridgePipeServer(Options options);
     ~BrowserBridgePipeServer();
 
     BrowserBridgePipeServer(const BrowserBridgePipeServer&) = delete;

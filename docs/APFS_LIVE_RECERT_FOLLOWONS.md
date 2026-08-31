@@ -205,8 +205,11 @@ the rest is a debt-reduction + test-infra program (multi-session, much of it cos
       target CTest passed. The naming gate's prior zero was then proven false: 147/147 TUs had
       processing failures hidden by disabled clang diagnostics. The gate now strips only 588
       driver-only flags and rejects unhealthy/incomplete analysis. Seven PS5.1/PS7 tests pass;
-      all 10 unused-const/parameter diagnostics are cleared. It correctly remains red on 122
-      compiler diagnostics across 26 TUs. The wider style/compiler backlog remains open.
+      all 10 initial unused-const/parameter diagnostics are cleared. Wave 2 then fixed all 68
+      logged/newly-exposed missing-field diagnostics, 9 newly revealed dead constants, 2 local
+      names, nested default-config construction, and generated MOC preparation. The real non-core
+      gate now passes 150/150 TUs with zero compiler/processing errors and zero naming findings.
+      Core's measured 5,271-name style program and the wider style backlog remain open.
 - [x] cppcheck-suppression audit -- DONE, corrected 2026-08-31. All 26 inline suppressions were
       re-checked with inline suppressions disabled. Three genuinely suppressed nothing and remain
       removed. A real template-instantiating include-path run later proved two `strong_index.h`
@@ -233,6 +236,8 @@ the rest is a debt-reduction + test-infra program (multi-session, much of it cos
       0; full CTest 265/265, zero failures, 804.48 seconds.
       Suppression direct-fix wave 1: all changed-file hooks passed; Release build exit 0; full
       CTest 266/266, zero failures, 820.46 seconds.
+      Non-core clang-health wave 2: real naming gate passed 150/150 healthy TUs; all changed-file
+      hooks passed; Release build exit 0; full CTest 266/266, zero failures, 878.41 seconds.
 - [x] Branch protection -- CLOSED BY OWNER DECISION under R5-G21-6. The owner explicitly dropped
       this requirement; it is not deferred work and does not block the campaign.
 

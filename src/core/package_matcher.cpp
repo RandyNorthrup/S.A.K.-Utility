@@ -169,6 +169,11 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::trySearchMatch(
 }
 
 std::optional<PackageMatcher::MatchResult> PackageMatcher::findMatch(const AppScanner::AppInfo& app,
+                                                                     ChocolateyManager* choco_mgr) {
+    return findMatch(app, choco_mgr, MatchConfig{});
+}
+
+std::optional<PackageMatcher::MatchResult> PackageMatcher::findMatch(const AppScanner::AppInfo& app,
                                                                      ChocolateyManager* choco_mgr,
                                                                      const MatchConfig& config) {
     QString base_name = extractBaseAppName(app.name);
@@ -195,6 +200,11 @@ std::optional<PackageMatcher::MatchResult> PackageMatcher::findMatch(const AppSc
 }
 
 std::vector<PackageMatcher::MatchResult> PackageMatcher::findMatches(
+    const std::vector<AppScanner::AppInfo>& apps, ChocolateyManager* choco_mgr) {
+    return findMatches(apps, choco_mgr, MatchConfig{});
+}
+
+std::vector<PackageMatcher::MatchResult> PackageMatcher::findMatches(
     const std::vector<AppScanner::AppInfo>& apps,
     ChocolateyManager* choco_mgr,
     const MatchConfig& config) {
@@ -210,6 +220,11 @@ std::vector<PackageMatcher::MatchResult> PackageMatcher::findMatches(
     }
 
     return results;
+}
+
+std::vector<PackageMatcher::MatchResult> PackageMatcher::findMatchesParallel(
+    const std::vector<AppScanner::AppInfo>& apps, ChocolateyManager* choco_mgr) {
+    return findMatchesParallel(apps, choco_mgr, MatchConfig{});
 }
 
 std::vector<PackageMatcher::MatchResult> PackageMatcher::findMatchesParallel(

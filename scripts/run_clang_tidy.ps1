@@ -32,6 +32,7 @@ param(
     [int]$Jobs = 6,
     [string]$LogPath = "",
     [string]$FileFilter = "",
+    [string]$AutogenTarget = "sak_utility_autogen",
     # PrepareOnly writes the filtered, analysis-safe compilation database but does not
     # launch clang-tidy. The registered regression test uses this seam under PowerShell
     # 5.1 and 7 so compile-command sanitization cannot silently regress.
@@ -128,6 +129,17 @@ try {
     $applyBin = "${env:ProgramFiles}\LLVM\bin\clang-apply-replacements.exe"
     foreach ($t in @($vcvars, $tidyBin, $applyBin)) {
         if (-not (Test-Path $t)) { throw "required tool missing: $t" }
+    }
+
+    if (-not [string]::IsNullOrWhiteSpace($AutogenTarget)) {
+        $autogenBuildDir = Join-Path $Root $TidyBuildDir
+        $autogenCommand = "call `"$vcvars`" >nul 2>&1 && cmake --build " +
+            "`"$autogenBuildDir`" --target `"$AutogenTarget`""
+        Write-Host "preparing generated analysis inputs: $AutogenTarget"
+        & cmd.exe /c $autogenCommand
+        if ($LASTEXITCODE -ne 0) {
+            throw "Failed to build generated analysis inputs for $AutogenTarget."
+        }
     }
 
     if (-not $LogPath) { $LogPath = Join-Path $Root "$FirstPartyDir/clang-tidy.log" }

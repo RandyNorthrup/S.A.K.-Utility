@@ -351,6 +351,7 @@ void OptimizePowerSettingsAction::finalizeDiscoveryFailure(const QDateTime& star
                                      .report = report,
                                      .previous_plan_name = previous_plan_name,
                                      .high_perf_guid = QString(),
+                                     .effective_timeouts = PowerTimeouts(),
                                      .already_optimized = false,
                                      .success = false});
 }

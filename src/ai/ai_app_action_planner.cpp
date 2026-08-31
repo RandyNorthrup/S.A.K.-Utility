@@ -131,6 +131,13 @@ void applyCommandMethod(AiAppActionPlan& plan) {
 AiAppActionPlan AiAppActionPlanner::buildPlan(const QString& app_id,
                                               const QString& action,
                                               const QJsonObject& manifest,
+                                              const QJsonObject& arguments) {
+    return buildPlan(app_id, action, manifest, arguments, Options{});
+}
+
+AiAppActionPlan AiAppActionPlanner::buildPlan(const QString& app_id,
+                                              const QString& action,
+                                              const QJsonObject& manifest,
                                               const QJsonObject& arguments,
                                               Options options) {
     AiAppActionPlan plan;

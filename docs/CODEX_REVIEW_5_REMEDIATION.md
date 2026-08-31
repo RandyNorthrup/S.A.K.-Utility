@@ -959,6 +959,13 @@ a parked design, per the bucket convention. Open work is what remains after thos
   and 3 parse-recovery unused-parameter diagnostics; both categories now measure zero. Naming
   itself measures zero outside core. The core naming exclusion was revealed separately: 154/154
   TUs analyze and carry 5,271 naming findings, so that exclusion cannot yet be removed.
+  NON-CORE HEALTH CLOSED 2026-08-31: wave 2 explicitly initialized all 68 logged/newly-exposed
+  aggregate fields across Win32 MCP, AI, APFS CLI and Partition UI, removed 9 more dead constants,
+  fixed 2 local naming violations, moved nested default-config construction behind complete-type
+  overloads, and makes the analysis runner build generated MOC inputs under the VS developer
+  environment. The real gate now passes 150/150 TUs with zero compiler/processing errors and zero
+  naming findings. No warning or clang-diagnostic suppression was added. Core's 5,271-name style
+  program remains open and measured, not hidden.
   DIRECT-FIX RUNTIME SILENCES: the screenshot report ignores its supplied timestamp; deadline
   callback exceptions disappear; DHCP-query failure becomes DHCP-disabled; dirty-bit query
   failure becomes clean; and partition script paths swallow volume/dismount, online-restore,
@@ -987,12 +994,15 @@ a parked design, per the bucket convention. Open work is what remains after thos
   last resort only after no direct fix is possible and the exact reason is proven. Existing
   suppressions are re-audited, not inherited as permanent policy. Current batch: all pre-commit
   hooks passed; Release build exit 0; full CTest 265/265, zero failures, 804.48 seconds.
-  STILL OPEN: the 122 real non-core clang compiler diagnostics above; broad cppcheck/compiler
-  suppressions; directly closable fixture/resource skips; remaining generated PowerShell
+  STILL OPEN: core's 5,271 naming findings; broad cppcheck/compiler suppressions; directly
+  closable fixture/resource skips; remaining generated PowerShell
   SilentlyContinue sites (storage probes, post-mutation refresh, cleanup, SMART/report fields);
   and the historical VM credential rotation/history-rewrite decision.
   DIRECT-FIX WAVE 1 FINAL GATE: all changed-file pre-commit hooks passed; Release build exit 0;
   full CTest 266/266, zero failures, 820.46 seconds.
+  NON-CORE CLANG HEALTH FINAL GATE: all changed-file pre-commit hooks passed; real naming gate
+  passed 150/150 TUs with zero compiler/processing errors and zero naming findings; Release build
+  exit 0; full CTest 266/266, zero failures, 878.41 seconds.
 - [x] R5-IDX-17 NO PRODUCTION CODE POINTS INTO docs/ ANY MORE, per the owner 2026-08-26:
   code and tests should stand on their own, and anything the code genuinely NEEDS should be
   structured data, not prose. Seven comment citations in partition_apfs_writer.{h,cpp} named
