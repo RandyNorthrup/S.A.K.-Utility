@@ -3,6 +3,8 @@
 import contextlib
 import importlib.util
 import io
+import re
+import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -58,6 +60,49 @@ class JavascriptBaselineTests(unittest.TestCase):
                 RUN_LIZARD.JS_EXTENSIONS,
             )
         self.assertIn("refusing to certify a partial scan", str(raised.exception))
+
+    def test_javascript_parse_desync_is_rejected(self) -> None:
+        source = """function downloadOptions(rawArgs) {
+  const args = rawArgs || {};
+  const url = args.url ? String(args.url) : "";
+  if (!/^https?:/i.test(url)) {
+    return { error: "bad url" };
+  }
+  const opts = { url };
+  if (typeof args.filename === "string" && args.filename.trim().length > 0) {
+    const fn = args.filename.trim();
+    if (/^([a-zA-Z]:|\\\\|\\/)/.test(fn) || fn.indexOf("..") >= 0) {
+      return { error: "bad filename" };
+    }
+    opts.filename = fn;
+  }
+  const timeoutMs = Number.isFinite(args.timeout_ms) ? args.timeout_ms : 30000;
+  return { opts, timeoutMs: Math.min(120000, Math.max(1000, timeoutMs)) };
+}
+function downloadReply() { return true; }
+async function handleDownload() { return false; }
+function fetchStateReply() { return true; }
+function httpAuthCredentials() { return true; }
+function httpAuthOriginError() { return true; }
+async function resolveTabOrigin() { return true; }
+async function handleHttpAuth() { return true; }
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "trigger.js"
+            path.write_text(source, encoding="utf-8")
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                status = RUN_LIZARD.check_javascript_parse_desync([str(path)])
+        self.assertEqual(status, 1)
+        self.assertIn("functions UNMEASURED", output.getvalue())
+
+    def test_precommit_lizard_hook_includes_javascript(self) -> None:
+        config = (PROJECT_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
+        start = config.index("- id: lizard-complexity")
+        end = config.index("\n      # -------------------------------------------------------------------", start)
+        hook = config[start:end]
+        self.assertRegex(hook, r"types_or:\s*\[[^\]]*\bjavascript\b")
+        self.assertRegex(hook, re.compile(r"files:.*\bjs\b"))
 
 
 if __name__ == "__main__":

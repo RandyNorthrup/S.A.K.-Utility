@@ -232,8 +232,8 @@ The first four rows below are NOT aspirational: each is a pre-commit hook that r
 
 | Rule | Target | Enforced By |
 |---|---|---|
-| Function length | <=70 lines | `lizard-complexity` hook -- BLOCKING |
-| Cyclomatic complexity | CCN <=10 | `lizard-complexity` hook -- BLOCKING |
+| Function length | <=70 lines in C++ and JavaScript | `lizard-complexity` hook -- BLOCKING |
+| Cyclomatic complexity | CCN <=10 in C++ and JavaScript | `lizard-complexity` hook -- BLOCKING |
 | Magic numbers | Named `constexpr` constants | `magic-numbers` hook -- BLOCKING |
 | Line length | <=100 columns | `.clang-format` hook -- BLOCKING |
 | Dead source functions | No unique unreferenced definition in `src/*.cpp` | `dead-code` hook -- BLOCKING; whole-tree in CI |

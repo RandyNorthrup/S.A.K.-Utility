@@ -3959,6 +3959,18 @@ const DOWNLOAD_TIMEOUT_DEFAULT_MS = 30000;
 const DOWNLOAD_TIMEOUT_MIN_MS = 1000;
 const DOWNLOAD_TIMEOUT_MAX_MS = 120000;
 
+// Pure: true when a caller-supplied download name could address outside Chrome's download
+// tree. Spell the rooted-path checks without a regex literal: lizard's JavaScript tokenizer
+// loses its place on the previous drive/root regex and silently swallows every function after
+// downloadOptions through handleHttpAuth, leaving those functions unmeasured by the gate.
+function unsafeDownloadFilename(filename) {
+  const firstCode = filename.charCodeAt(0);
+  const startsWithDrive = filename.length >= 2 && filename[1] === ":" &&
+    ((firstCode >= 65 && firstCode <= 90) || (firstCode >= 97 && firstCode <= 122));
+  return startsWithDrive || filename.startsWith("\\") || filename.startsWith("/") ||
+    filename.includes("..");
+}
+
 // Pure: build the chrome.downloads payload and the wait budget, or state why the request is
 // refused. The filename guard is the load-bearing one: chrome.downloads rejects an absolute or
 // parent-relative path itself, but a page-supplied name that escaped the download tree would be
@@ -3974,7 +3986,7 @@ function downloadOptions(rawArgs) {
   const opts = { url, conflictAction: "uniquify", saveAs: false };
   if (typeof args.filename === "string" && args.filename.trim().length > 0) {
     const fn = args.filename.trim();
-    if (/^([a-zA-Z]:|\\|\/)/.test(fn) || fn.indexOf("..") >= 0) {
+    if (unsafeDownloadFilename(fn)) {
       return { error: "browser_download filename must be a relative name without '..'." };
     }
     opts.filename = fn;

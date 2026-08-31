@@ -196,7 +196,7 @@ def project_relative_path(raw: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Parse-desync detection (R5-IDX-21)
+# Parse-desync detection (R5-IDX-21, R5-G21-9)
 # ---------------------------------------------------------------------------
 # lizard's C++ tokenizer can lose its place -- a literal double quote inside a raw string
 # literal has done it -- and when it does it does not warn: it silently merges the remaining
@@ -210,10 +210,12 @@ def project_relative_path(raw: str) -> str:
 # extension. Upgrading to 1.24.0 fixed most of it; a literal quote inside a raw string still
 # triggers it, so detection, not a version bump, is what keeps this closed.
 #
-# The detector needs no knowledge of the bug's cause. C++ has no column-0 nested function
-# definitions, so if lizard reports a function spanning lines A..B and a line strictly inside
-# that range starts a definition at column 0, lizard merged two or more functions. Verified
-# across 902 files: 2 true positives, 0 false positives.
+# The detector needs no knowledge of the bug's cause. C++ and this extension have no column-0
+# nested function definitions, so if lizard reports a function spanning lines A..B and a line
+# strictly inside that range starts a definition at column 0, lizard merged two or more
+# functions. Verified across 902 C++ files: 2 true positives, 0 false positives. The same class
+# was then found in JavaScript: a regex literal in downloadOptions swallowed seven later
+# top-level functions while the ratchet printed PASSED.
 
 # A definition at column 0: no leading whitespace, an identifier head, a parameter list, and no
 # terminating ';' (which would make it a declaration).
@@ -234,6 +236,9 @@ NOT_A_DEFINITION_RE = re.compile(
 )
 
 CPP_EXTENSIONS = {".cpp", ".h", ".hpp", ".cxx", ".cc", ".hxx"}
+JAVASCRIPT_DEFINITION_RE = re.compile(
+    r"^(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)\s*\("
+)
 
 
 def definition_line_numbers(path: Path) -> set[int]:
@@ -248,6 +253,16 @@ def definition_line_numbers(path: Path) -> set[int]:
         if raw.rstrip().endswith(";"):
             continue
         if DEFINITION_RE.match(raw):
+            numbers.add(number)
+    return numbers
+
+
+def javascript_definition_line_numbers(path: Path) -> set[int]:
+    """1-based lines that begin a named top-level JavaScript function."""
+    numbers: set[int] = set()
+    text = path.read_text(encoding="utf-8", errors="replace")
+    for number, raw in enumerate(text.splitlines(), start=1):
+        if raw and not raw[0].isspace() and JAVASCRIPT_DEFINITION_RE.match(raw):
             numbers.add(number)
     return numbers
 
@@ -270,7 +285,26 @@ def cpp_files_to_check(files: list[str]) -> list[Path]:
     return found
 
 
-def reported_spans(paths: list[Path]) -> dict[str, list[tuple[str, int, int]]]:
+def javascript_files_to_check(files: list[str]) -> list[Path]:
+    """The JavaScript files this run covers, as paths that exist."""
+    if files:
+        return [Path(f) for f in files
+                if Path(f).suffix.lower() in JS_EXTENSIONS and Path(f).is_file()]
+    found: list[Path] = []
+    for directory in JS_DIRS:
+        root = PROJECT_ROOT / directory
+        if not root.is_dir():
+            continue
+        found.extend(p for p in root.rglob("*")
+                     if p.suffix.lower() in JS_EXTENSIONS
+                     and not any(part in ("third_party", "3rdparty", "external", "build",
+                                          ".venv")
+                                 for part in p.parts))
+    return found
+
+
+def reported_spans(
+        paths: list[Path], language: str = "cpp") -> dict[str, list[tuple[str, int, int]]]:
     """Ask lizard for EVERY function it found: {file -> [(name, start_line, end_line)]}.
 
     Deliberately shells out to the same executable find_lizard() gives the threshold check,
@@ -282,7 +316,7 @@ def reported_spans(paths: list[Path]) -> dict[str, list[tuple[str, int, int]]]:
     # Windows caps a command line near 32k, and a whole-tree run is ~900 paths. Chunk it.
     for start in range(0, len(paths), 40):
         chunk = [str(p) for p in paths[start:start + 40]]
-        command = [lizard_exe, "--csv", "-l", "cpp", "--", *chunk]
+        command = [lizard_exe, "--csv", "-l", language, "--", *chunk]
         try:
             result = subprocess.run(
                 command, capture_output=True, text=True, cwd=str(PROJECT_ROOT))
@@ -339,6 +373,36 @@ def check_for_parse_desync(files: list[str]) -> int:
     return 0
 
 
+def check_javascript_parse_desync(files: list[str]) -> int:
+    """Fail when lizard merges named top-level JavaScript functions."""
+    paths = javascript_files_to_check(files)
+    if not paths:
+        return 0
+    spans = reported_spans(paths, "javascript")
+
+    problems: list[str] = []
+    for path in paths:
+        definitions = javascript_definition_line_numbers(path)
+        for name, start_line, end_line in spans.get(str(path.resolve()).lower(), []):
+            swallowed = sorted(n for n in definitions if start_line < n <= end_line)
+            if swallowed:
+                shown = ", ".join(str(n) for n in swallowed[:5])
+                more = "" if len(swallowed) <= 5 else f" (+{len(swallowed) - 5} more)"
+                problems.append(
+                    f"{path}: lizard reports '{name}' as lines {start_line}-{end_line}, but "
+                    f"{len(swallowed)} top-level function definition(s) START inside it, at "
+                    f"line(s) {shown}{more}. The parser merged them, so none was measured.")
+
+    if not problems:
+        return 0
+    print(f"=== {len(problems)} JavaScript parse desync(s) -- functions UNMEASURED ===")
+    for problem in problems:
+        print(f"  {problem}")
+    print()
+    print("Rewrite the tokenizer trigger without changing behavior; do not baseline a merged span.")
+    return 1
+
+
 def parse_violation(line: str) -> tuple[str, int, int, int] | None:
     """Return (key, ccn, params, length) for a warning line, or None.
 
@@ -386,6 +450,7 @@ def baseline_keys_in_scope(
 
 def check_javascript(files: list[str]) -> int:
     """Hold JavaScript against the baseline ratchet. Returns an exit code."""
+    status = check_javascript_parse_desync(files)
     violations = {}
     for line in run_lizard(files, "javascript", JS_DIRS):
         parsed = parse_violation(line)
@@ -428,7 +493,7 @@ def check_javascript(files: list[str]) -> int:
 
     if violations:
         print(f"JavaScript: {len(violations)} known violation(s), none new, none worse.")
-    return 0
+    return status
 
 
 def classify_warning(line: str) -> str | None:

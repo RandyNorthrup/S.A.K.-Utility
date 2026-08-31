@@ -173,8 +173,8 @@ repos:
         description: "CCN <=10, function length <=70, parameters <=5"
         entry: python scripts/run_lizard.py
         language: system
-        types_or: [c, c++]
-        files: \.(cpp|h|hpp|cxx|cc|hxx)$
+        types_or: [c, c++, javascript]
+        files: \.(cpp|h|hpp|cxx|cc|hxx|js)$
         exclude: (third_party|3rdparty|external|_archived)/
 
       # -------------------------------------------------------------------

@@ -59,8 +59,8 @@ any tool, so they hold only if a human notices.
 
 | Guideline | Target | Enforced by |
 |---|---|---|
-| Function body length | <=70 lines | `lizard-complexity` -- BLOCKING (`MAX_FUNC_LENGTH` in `scripts/run_lizard.py`) |
-| Cyclomatic complexity | CCN <=10 | `lizard-complexity` -- BLOCKING (`MAX_CCN`) |
+| Function body length | <=70 lines in C++ and JavaScript | `lizard-complexity` -- BLOCKING (`MAX_FUNC_LENGTH` in `scripts/run_lizard.py`) |
+| Cyclomatic complexity | CCN <=10 in C++ and JavaScript | `lizard-complexity` -- BLOCKING (`MAX_CCN`) |
 | Magic numbers | Named `constexpr` constants | `magic-numbers` -- BLOCKING (`scripts/check_magic_numbers.py`); `0`, `1`, `-1` stay bare |
 | Line length | <=100 columns | `clang-format` -- BLOCKING |
 | Single-letter variables | Avoid, except tiny lambda predicates | `readability-identifier-naming`, run in CI on every build |

@@ -9625,6 +9625,28 @@ gate teaches people to disable both.
            test_run_lizard_js_baseline pins canonicalization, scoped pruning, unscanned-row
            preservation and missing-path refusal (4/4). Release build exit 0; full Release
            CTest 257/257, zero failures (914.06 seconds).
+           2026-08-30 (ext 0.3.21): 13 -> 12, and another false-green gate path closed.
+           `downloadOptions` is physically 21 lines, but lizard reported it as lines 3968-4126
+           (159 lines) because the rooted-download-path regex desynchronized its JavaScript
+           tokenizer. Seven later top-level functions were swallowed into that span and therefore
+           not independently measured. The filename guard now uses equivalent drive-letter,
+           slash, backslash, and parent-component character checks in `unsafeDownloadFilename`;
+           all 79 shipped-worker Node tests remain green and the parent-relative refusal was
+           mutation-proved red. The durable fix is in the gate: `run_lizard.py` now compares every
+           reported JavaScript span against named top-level function definitions and rejects a
+           nested start as parser desync, before applying the baseline. An exact old-shape fixture
+           pins that behavior in `test_run_lizard_js_baseline.py` (5/5); returning success from the
+           detector turns only its named test red. Deleting the baseline row before the source fix
+           also made the live gate red naming `downloadOptions`, proving the ratchet closure.
+           Final wiring audit found the pre-commit hook still declared only C/C++ in both
+           `types_or` and `files`, so invoking it on the shipped `background.js` printed
+           `(no files to check) Skipped` even though direct runs and CI analyzed JavaScript.
+           The hook now includes `javascript` and `.js`; the Python suite structurally pins both
+           fields (6/6), and the real pre-commit invocation on `background.js` executes and prints
+           Passed. The test was run before the config fix and failed only its named wiring case.
+           Re-signed CRX3 version 0.3.21 retains id
+           ofodhfbipljnhenjjjpbdaglkjdphoec; targeted installer/package/Python/Node CTest 4/4.
+           Full Release build exit 0; full Release CTest 257/257, zero failures (866.17 seconds).
         3. DONE. tests/unit/test_browser_extension_pure.mjs, 79 tests, registered with ctest.
 
       The harness loads background.js AS SHIPPED under a stubbed chrome rather than splitting

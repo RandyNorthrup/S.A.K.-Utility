@@ -26,7 +26,6 @@
 # Format:  function@path | ccn | params | length
 (anonymous)@browser/extension/background.js          | 37 | 0 | 106
 collectMediaNodes@browser/extension/background.js    | 15 | 2 | 35
-downloadOptions@browser/extension/background.js      |  9 | 1 | 159
 ensureAttached@browser/extension/background.js       | 11 | 1 | 32
 getFn@browser/extension/background.js                | 11 | 0 | 27
 handleBox@browser/extension/background.js            | 15 | 2 | 38
