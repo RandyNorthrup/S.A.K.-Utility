@@ -200,13 +200,21 @@ the rest is a debt-reduction + test-infra program (multi-session, much of it cos
       pro-bounds container access, 872 designated initializers, 307 anonymous namespace).
       All 46 bug-shaped findings were triaged with an adversarial second pass: zero real
       defects. Still a fix program, but a style one.
-- [x] cppcheck-suppression audit -- DONE 2026-08-30. All 26 inline suppressions re-checked by
-      running cppcheck with inline suppressions disabled; 5 suppressed nothing and were removed.
-      cppcheck_suppressions.txt holds 10 file entries, not the 26 recorded here. See R5-IDX-3 in
-      docs/CODEX_REVIEW_5_REMEDIATION.md for the method, the two measurement holes it had to close,
-      and the whole-project gate gap it exposed.
+- [x] cppcheck-suppression audit -- DONE, corrected 2026-08-31. All 26 inline suppressions were
+      re-checked with inline suppressions disabled. Three genuinely suppressed nothing and remain
+      removed. A real template-instantiating include-path run later proved two `strong_index.h`
+      function suppressions live (four inconclusive by-value parameter findings), so those two are
+      restored with the single-integer calling-convention reason. `cppcheck_suppressions.txt` holds
+      10 file entries, not the 26 recorded here. See R5-IDX-3 in
+      docs/CODEX_REVIEW_5_REMEDIATION.md for the method, the measurement holes, and the whole-project
+      gate gap it exposed.
 - [ ] Test-infra program (each a dedicated effort): G14 coverage ledger, G18 mutation
       testing, fuzz harnesses, fault injection, G20/G21 remaining gate wiring.
+      PROGRESS 2026-08-31: WS3c's six manual red drills are now two registered mutation catalogs.
+      The ratchet validates 27 catalogs; real serial execution killed 6/6 new mutants with zero
+      survivors and restored production sources. G14 fuzz/coverage, fault-injection, and G20 are
+      already closed in the R5 owner doc; remaining work is the broader G18/G10-12 mutation surface
+      plus G21 clean-runner parity.
 - [ ] Branch protection -- needs the GitHub repo admin (Randy); flag once ready.
 
 --------------------------------------------------------------------------------

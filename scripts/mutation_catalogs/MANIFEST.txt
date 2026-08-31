@@ -8,7 +8,9 @@
 
 apfs_compression.json
 apfs_crypto_keybag.json
+apfs_foreign_cow.json
 apfs_reader.json
+apfs_resize_cli.json
 backup_file_codec.json
 decompressor_factory.json
 email_html_sanitizer.json

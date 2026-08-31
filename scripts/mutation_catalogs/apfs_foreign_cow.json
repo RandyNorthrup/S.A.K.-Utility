@@ -1,0 +1,48 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_partition_manager_core",
+  "ctest_regex": "^test_partition_manager_core$",
+  "mutants": [
+    {
+      "id": "generated-relocated-ring-requires-canonical-slot",
+      "file": "src/core/partition_apfs_writer.cpp",
+      "find": "if (*sakFormatted && generatedPacking) {",
+      "replace": "if (*sakFormatted && generatedPacking && generatedIpSlotMatches(ctx->liveCib, ctx->layout)) {",
+      "expect": "killed",
+      "why": "This restores the closeout regression caught by the first full gate: an S.A.K.-formatted >1.35 TiB container whose multi-block IP ring moved during chunk-adding grow does not match the canonical slot computed from its new size. Routing it into the one-block foreign path blocks the certified shrink. apfsWriter_growsMultiChunkSourceContainer builds that exact 11000->11500->10900-chunk chain and requires commit.ok; the mutant fails with the multi-block foreign-bitmap blocker."
+    },
+    {
+      "id": "foreign-provenance-dropped-for-address-heuristic",
+      "file": "src/core/partition_apfs_writer.cpp",
+      "find": "if (*sakFormatted && generatedPacking) {",
+      "replace": "if (generatedPacking && generatedIpSlotMatches(ctx->liveCib, ctx->layout)) {",
+      "expect": "killed",
+      "why": "A genuine Apple commit can place its newly allocated CIB at an address that resembles one of S.A.K.'s generated slots. Removing authenticated formatted_by provenance then forgets the media is foreign and re-enters the generated allocator. apfsWriter_foreignMultiCibRotationExcludesEveryLiveBitmap reconstructs the genuine post-insert 135-chunk/2-CIB state; the mutant misclassifies it and the exact live far-bitmap assertions fail."
+    },
+    {
+      "id": "foreign-ip-queue-uses-main-queue-window",
+      "file": "src/core/partition_apfs_writer.cpp",
+      "find": "constexpr uint64_t kIpFqRollbackWindow = 2;",
+      "replace": "constexpr uint64_t kIpFqRollbackWindow = 4;",
+      "expect": "killed",
+      "why": "The IP CIB/bitmap ring has live, previous, and spare slots, so a block ages into reuse after two later checkpoints. Reusing the main-data queue's four-checkpoint window leaves the genuine 256 MiB internal pool with no reusable CIB/bitmap pair. apfsWriter_foreignMultiChunkCowInsertRoundTrips requires the real Apple insert to succeed; the mutant returns the exact no-reusable-block refusal."
+    },
+    {
+      "id": "far-chunk-live-bitmaps-omitted",
+      "file": "src/core/partition_apfs_writer.cpp",
+      "find": "live.unite(foreignLiveChunkBitmapBlocks(ctx, cibs, blockers));",
+      "replace": "live.insert(ctx.liveBitmap);",
+      "expect": "killed",
+      "why": "Keeping only chunk 0's bitmap omits live allocation bitmaps owned by later CIB entries; the allocator can then overwrite one as if it were a free IP block. apfsWriter_foreignMultiCibRotationExcludesEveryLiveBitmap pins genuine chunk-3 bitmap block 10900 as authenticated live metadata and unavailable. The mutant makes foreignIpBlockIsLiveMetadataForTesting return false."
+    },
+    {
+      "id": "rebuilt-ip-free-queue-discarded",
+      "file": "src/core/partition_apfs_writer.cpp",
+      "find": ".explicitIpFqEntries = ip.ipFqEntries},",
+      "replace": ".explicitIpFqEntries = {}},",
+      "expect": "killed",
+      "why": "The foreign finalize must publish the rebuilt IP free queue: the old live CIB/bitmap enter it and the newly consumed pair leave it. Dropping explicitIpFqEntries silently retains the source queue. apfsWriter_foreignMultiChunkCowInsertRoundTrips asserts the output queue contains both old live blocks and excludes both new live blocks, so this mutant fails."
+    }
+  ]
+}
