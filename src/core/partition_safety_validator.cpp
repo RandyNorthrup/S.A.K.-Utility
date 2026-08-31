@@ -270,6 +270,11 @@ bool hasUnlockedBitLockerVolume(const PartitionInfoEx& partition) {
            !partition.volume->bitlocker_locked;
 }
 
+bool hasUnknownBitLockerState(const PartitionInfoEx& partition) {
+    return partition.volume && !partition.volume->bitlocker_state_known &&
+           !partition.volume->bitlocker_state_error.trimmed().isEmpty();
+}
+
 bool hasDirtyVolume(const PartitionInfoEx& partition, PartitionOperationType type) {
     return partition.volume && partition.volume->dirty_bit_known &&
            partition.volume->dirty_bit_set && type != PartitionOperationType::RepairBoot;
@@ -280,8 +285,9 @@ bool hasUnknownDirtyVolume(const PartitionInfoEx& partition, PartitionOperationT
            !partition.volume->dirty_bit_known && type != PartitionOperationType::RepairBoot;
 }
 
-QString unknownDirtyVolumeWarning(const PartitionVolumeInfo& volume) {
-    const QString reason = volume.dirty_bit_error.trimmed();
+QString unknownDirtyVolumeWarning(const PartitionInfoEx& partition) {
+    const QString reason = partition.volume ? partition.volume->dirty_bit_error.trimmed()
+                                            : QString();
     return reason.isEmpty()
                ? QStringLiteral("File system dirty state could not be determined")
                : QStringLiteral("File system dirty state could not be determined: %1").arg(reason);
@@ -1531,6 +1537,12 @@ void validatePartitionTargetState(const PartitionDiskInfo& disk,
                                   const PartitionOperation& operation,
                                   PartitionValidationResult* result) {
     addBlockerIf(result,
+                 partition.volume_lookup_failed,
+                 QStringLiteral("Mounted volume metadata is unknown because its lookup failed"));
+    addBlockerIf(result,
+                 hasUnknownBitLockerState(partition),
+                 QStringLiteral("BitLocker protection and lock state could not be determined"));
+    addBlockerIf(result,
                  disk.is_read_only || partition.is_read_only,
                  QStringLiteral("Target partition is read-only"));
     addBlockerIf(result,
@@ -1562,7 +1574,7 @@ void validatePartitionTargetState(const PartitionDiskInfo& disk,
                  QStringLiteral("File system dirty bit is set; run repair first"));
     addWarningIf(result,
                  hasUnknownDirtyVolume(partition, operation.type),
-                 unknownDirtyVolumeWarning(partition.volume.value()));
+                 unknownDirtyVolumeWarning(partition));
 }
 
 void validatePartitionMetadataOperation(const PartitionDiskInfo& disk,

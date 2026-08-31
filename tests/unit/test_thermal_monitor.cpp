@@ -18,9 +18,21 @@ private Q_SLOTS:
     void startStop();
     void startFiresInitialPollImmediately();
     void pollOnceReadingsAreWellFormed();
+    void sensorScriptSurfacesUnavailableQueries();
     void singleShotTimerBehavior();
     void clampPollInterval_flooring();
 };
+
+void ThermalMonitorTests::sensorScriptSurfacesUnavailableQueries() {
+    const QString script = ThermalMonitor::buildCombinedThermalScript();
+    QVERIFY2(!script.contains(QStringLiteral("SilentlyContinue")), qPrintable(script));
+    QVERIFY2(!script.contains(QStringLiteral("2>$null")), qPrintable(script));
+    QVERIFY2(!script.contains(QStringLiteral("catch{}")), qPrintable(script));
+    QVERIFY(script.contains(QStringLiteral("status_cpu=unavailable:")));
+    QVERIFY(script.contains(QStringLiteral("status_gpu=unavailable:")));
+    QVERIFY(script.contains(QStringLiteral("status_disk=unavailable:")));
+    QVERIFY(script.contains(QStringLiteral("-ErrorAction Stop")));
+}
 
 void ThermalMonitorTests::initialState() {
     ThermalMonitor monitor;
@@ -102,18 +114,15 @@ void ThermalMonitorTests::singleShotTimerBehavior() {
     // Verify the timer doesn't accumulate concurrent polls.
     // With async polling, each cycle takes several seconds (PS startup + WMI),
     // so we allow generous time and just verify no runaway accumulation.
-    int cycles = 0;
     ThermalMonitor monitor;
-    QObject::connect(&monitor,
-                     &ThermalMonitor::readingsUpdated,
-                     &monitor,
-                     [&cycles](const QVector<sak::ThermalReading>&) { ++cycles; });
+    QSignalSpy readings_spy(&monitor, &ThermalMonitor::readingsUpdated);
+    QVERIFY(readings_spy.isValid());
     monitor.start(500);
 
     // processReadings emits readingsUpdated for EVERY completed cycle -- with an empty
     // reading vector on a box whose sensors need admin -- so this counts poll CYCLES on
     // any machine. Bounded by the sensor-query timeout, so it always arrives.
-    QTRY_VERIFY_WITH_TIMEOUT(cycles >= 1, 30'000);
+    QTRY_VERIFY_WITH_TIMEOUT(readings_spy.count() >= 1, 30'000);
 
     // A completed cycle must leave the monitor ARMED for the next one: onPollComplete re-arms
     // the single-shot timer in the same slot invocation that emitted the readings. Drop that
@@ -121,7 +130,7 @@ void ThermalMonitorTests::singleShotTimerBehavior() {
     // bound below then passes VACUOUSLY with window_cycles == 0.
     QTRY_VERIFY_WITH_TIMEOUT(monitor.isRunning(), 5000);
 
-    const int cycles_before_window = cycles;
+    const int cycles_before_window = readings_spy.count();
     QTest::qWait(3000);
     monitor.stop();
 
@@ -129,10 +138,7 @@ void ThermalMonitorTests::singleShotTimerBehavior() {
     // poll completes, and onTimerTick defers while one is in flight. A 3s window at a
     // 500ms interval can therefore retire only a handful of cycles even if every poll
     // returned instantly; a timer that stacked a poll per tick would blow past this.
-    // cppcheck-suppress duplicateExpression  // `cycles` is incremented from the readingsUpdated
-    // connection above during qWait(), which cppcheck cannot model: it sees no assignment between
-    // the two reads and concludes they are the same value. They are not.
-    const int window_cycles = cycles - cycles_before_window;
+    const int window_cycles = readings_spy.count() - cycles_before_window;
     // The bound is TWO-SIDED. An upper bound alone is satisfied by window_cycles == 0, i.e. by a
     // monitor that went silent -- and isRunning() above does not rule that out, because a monitor
     // that never re-arms its single-shot timer still reports running. A 3s window at the 500ms

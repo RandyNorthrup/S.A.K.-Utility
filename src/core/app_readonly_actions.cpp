@@ -331,13 +331,20 @@ QString imageFormatToString(ImageFormat format) {
 }
 
 QJsonObject serializeVolume(const PartitionVolumeInfo& volume) {
-    return QJsonObject{{QStringLiteral("drive_letter"), volume.drive_letter},
+    QJsonObject object{{QStringLiteral("drive_letter"), volume.drive_letter},
                        {QStringLiteral("label"), volume.label},
                        {QStringLiteral("file_system"), volume.file_system},
                        {QStringLiteral("total_bytes"), static_cast<double>(volume.total_bytes)},
                        {QStringLiteral("free_bytes"), static_cast<double>(volume.free_bytes)},
-                       {QStringLiteral("bitlocker_enabled"), volume.bitlocker_enabled},
-                       {QStringLiteral("bitlocker_locked"), volume.bitlocker_locked}};
+                       {QStringLiteral("bitlocker_state_known"), volume.bitlocker_state_known},
+                       {QStringLiteral("bitlocker_state_error"), volume.bitlocker_state_error}};
+    object.insert(QStringLiteral("bitlocker_enabled"),
+                  volume.bitlocker_state_known ? QJsonValue(volume.bitlocker_enabled)
+                                               : QJsonValue(QJsonValue::Null));
+    object.insert(QStringLiteral("bitlocker_locked"),
+                  volume.bitlocker_state_known ? QJsonValue(volume.bitlocker_locked)
+                                               : QJsonValue(QJsonValue::Null));
+    return object;
 }
 
 QJsonObject serializePartition(const PartitionInfoEx& part) {
@@ -348,7 +355,9 @@ QJsonObject serializePartition(const PartitionInfoEx& part) {
                     {QStringLiteral("is_system"), part.is_system},
                     {QStringLiteral("is_efi"), part.is_efi},
                     {QStringLiteral("is_recovery"), part.is_recovery},
-                    {QStringLiteral("is_read_only"), part.is_read_only}};
+                    {QStringLiteral("is_read_only"), part.is_read_only},
+                    {QStringLiteral("volume_lookup_failed"), part.volume_lookup_failed},
+                    {QStringLiteral("volume_lookup_error"), part.volume_lookup_error}};
     if (part.hasVolume()) {
         obj.insert(QStringLiteral("volume"), serializeVolume(*part.volume));
     }
@@ -360,22 +369,24 @@ QJsonObject serializeDisk(const PartitionDiskInfo& disk) {
     for (const PartitionInfoEx& part : disk.partitions) {
         partitions.append(serializePartition(part));
     }
-    return QJsonObject{{QStringLiteral("disk_number"), static_cast<int>(disk.disk_number.value())},
-                       {QStringLiteral("model"), disk.model},
-                       {QStringLiteral("bus_type"), disk.bus_type},
-                       {QStringLiteral("media_type"), disk.media_type},
-                       {QStringLiteral("partition_style"), disk.partition_style},
-                       {QStringLiteral("size_bytes"), static_cast<double>(disk.size_bytes)},
-                       {QStringLiteral("health_status"), disk.health_status},
-                       {QStringLiteral("smart_summary"), disk.smart_summary},
-                       {QStringLiteral("is_system"), disk.is_system},
-                       {QStringLiteral("is_removable"), disk.is_removable},
-                       {QStringLiteral("is_read_only"), disk.is_read_only},
-                       // Honesty channel: true means the partition query for this disk FAILED,
-                       // so an empty partitions array is "unknown layout", never "empty disk".
-                       {QStringLiteral("partition_enumeration_failed"),
-                        disk.partition_enumeration_failed},
-                       {QStringLiteral("partitions"), partitions}};
+    return QJsonObject{
+        {QStringLiteral("disk_number"), static_cast<int>(disk.disk_number.value())},
+        {QStringLiteral("model"), disk.model},
+        {QStringLiteral("bus_type"), disk.bus_type},
+        {QStringLiteral("media_type"), disk.media_type},
+        {QStringLiteral("partition_style"), disk.partition_style},
+        {QStringLiteral("size_bytes"), static_cast<double>(disk.size_bytes)},
+        {QStringLiteral("health_status"), disk.health_status},
+        {QStringLiteral("smart_summary"), disk.smart_summary},
+        {QStringLiteral("reliability_query_succeeded"), disk.reliability_query_succeeded},
+        {QStringLiteral("reliability_query_error"), disk.reliability_query_error},
+        {QStringLiteral("is_system"), disk.is_system},
+        {QStringLiteral("is_removable"), disk.is_removable},
+        {QStringLiteral("is_read_only"), disk.is_read_only},
+        // Honesty channel: true means the partition query for this disk FAILED,
+        // so an empty partitions array is "unknown layout", never "empty disk".
+        {QStringLiteral("partition_enumeration_failed"), disk.partition_enumeration_failed},
+        {QStringLiteral("partitions"), partitions}};
 }
 
 AppActionResult listInventory(const QJsonObject&) {

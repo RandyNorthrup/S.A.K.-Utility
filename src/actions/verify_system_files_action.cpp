@@ -86,7 +86,7 @@ void VerifySystemFilesAction::runSFC() {
             "Get-Content $sfcOutput | Write-Output; "
             "$cbsLog = \"$env:SystemRoot\\Logs\\CBS\\CBS.log\"; "
             "if (Test-Path $cbsLog) { Write-Output \"CBS_LOG_PATH:$cbsLog\" }; "
-            "Remove-Item $sfcOutput -ErrorAction SilentlyContinue")
+            "Remove-Item -LiteralPath $sfcOutput -Force -ErrorAction Stop")
             .arg(sfc_out_name);
 
     Q_EMIT executionProgress("SFC scanning...", progress::kStep25);

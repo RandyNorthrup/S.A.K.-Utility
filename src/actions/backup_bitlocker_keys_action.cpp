@@ -127,13 +127,17 @@ try {
         $convStatus = $vol.GetConversionStatus()
         $lockStatus = $vol.GetLockStatus()
 
-        $driveInfo = Get-Volume -DriveLetter ($vol.DriveLetter -replace ':',
-            '') -ErrorAction SilentlyContinue
+        $driveInfo = $null
+        if ($vol.DriveLetter) {
+            $driveInfo = Get-Volume -DriveLetter ($vol.DriveLetter -replace ':',
+                '') -ErrorAction Stop
+        }
 
         $obj = @{
             DriveLetter      = $vol.DriveLetter
             DeviceID         = $vol.DeviceID
             VolumeLabel      = if ($driveInfo) { $driveInfo.FileSystemLabel } else { "" }
+            VolumeMetadataKnown = [bool]$driveInfo
             VolumeType       = $vol.VolumeType
             ProtectionStatus = $status.ProtectionStatus
             EncryptionMethod = $encMethod.EncryptionMethod
@@ -405,6 +409,7 @@ QVector<BackupBitlockerKeysAction::VolumeInfo> BackupBitlockerKeysAction::parseD
         vi.drive_letter = obj["DriveLetter"].toString();
         vi.device_id = obj["DeviceID"].toString();
         vi.volume_label = obj["VolumeLabel"].toString();
+        vi.volume_metadata_known = obj["VolumeMetadataKnown"].toBool(false);
         vi.volume_type = formatVolumeType(obj["VolumeType"].toInt());
         vi.volume_size_bytes = static_cast<qint64>(obj["SizeBytes"].toDouble());
         vi.protection_status = protectionStatusLabel(obj["ProtectionStatus"].toInt(-1));
@@ -585,10 +590,13 @@ void BackupBitlockerKeysAction::scan() {
 
         QStringList volume_details;
         for (const auto& vol : m_volumes) {
+            const QString metadata = !vol.volume_metadata_known
+                                         ? QStringLiteral("Metadata unavailable")
+                                         : (vol.volume_label.isEmpty() ? QStringLiteral("No Label")
+                                                                       : vol.volume_label);
             const QString detail = QString("%1 (%2) -- Protection: %3, Encryption: %4")
                                        .arg(vol.drive_letter)
-                                       .arg(vol.volume_label.isEmpty() ? "No Label"
-                                                                       : vol.volume_label)
+                                       .arg(metadata)
                                        .arg(vol.protection_status)
                                        .arg(vol.encryption_method);
             volume_details.append(detail);
@@ -1137,6 +1145,8 @@ void BackupBitlockerKeysAction::writeRecoveryDocumentVolumes(QTextStream& out) c
         out << "  Encryption Method:    " << vol.encryption_method << "\n";
         out << "  Encryption Progress:  " << vol.encryption_percentage << "\n";
         out << "  Lock Status:          " << vol.lock_status << "\n";
+        out << "  Volume Metadata:      "
+            << (vol.volume_metadata_known ? "Available" : "Unavailable") << "\n";
 
         if (vol.volume_size_bytes > 0) {
             const double size_gb = static_cast<double>(vol.volume_size_bytes) / sak::kBytesPerGBf;
@@ -1341,6 +1351,7 @@ QJsonObject BackupBitlockerKeysAction::buildVolumeJson(const VolumeInfo& vol) co
     QJsonObject vol_obj;
     vol_obj["drive_letter"] = vol.drive_letter;
     vol_obj["volume_label"] = vol.volume_label;
+    vol_obj["volume_metadata_known"] = vol.volume_metadata_known;
     vol_obj["device_id"] = vol.device_id;
     vol_obj["protection_status"] = vol.protection_status;
     vol_obj["encryption_method"] = vol.encryption_method;

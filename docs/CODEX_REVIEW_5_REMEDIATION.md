@@ -980,6 +980,22 @@ a parked design, per the bucket convention. Open work is what remains after thos
   APFS dismount, create/restore-image same-disk guards, and allocate-free-space backup-root guards
   now fail closed. Old emitted scripts failed 9 new assertions; repaired scripts and the full
   partition-core target pass.
+  DIRECT-FIX WAVE 3 TARGETED COMPLETE 2026-08-31. Storage inventory now carries explicit
+  volume-lookup, BitLocker-state, reliability-query and per-metric known/error fields; safety
+  blocks mutation on unknown volume/BitLocker authority, while UI and headless JSON show Unknown
+  or null instead of false/zero. Generated system reports and thermal polling distinguish
+  unsupported/no-data/query-failed states instead of omitting fields. Every remaining Partition
+  Manager cache-refresh, temporary payload/script/staged-image cleanup, VSS cleanup, diskpart
+  volume lookup, SMART query and access-path mutation now stops or reports failure. Provisioned
+  package discovery stops on query failure; SFC temporary-output deletion is enforced; BitLocker
+  backup records whether volume label/size metadata is known. Restore-point warnings now continue
+  visibly while still being captured and converted to failure. Six combined targeted tests pass.
+  Production source now has zero error/failure-silencing `SilentlyContinue`, empty-catch, NOLINT,
+  or stderr-null patterns. The one remaining literal is `$ProgressPreference =
+  'SilentlyContinue'`: progress records are non-error host noise and would corrupt the inventory's
+  single JSON stdout document; every command error remains terminating or an explicit error field.
+  DIRECT-FIX WAVE 3 FINAL GATE: all changed-file pre-commit hooks passed; Release build exit 0;
+  full CTest 266/266, zero failures, 760.35 seconds.
   EXISTING SUPPRESSIONS: cppcheck reveal proves all 32 inline suppressions still match today, but
   matching is not necessity. Global `useStlAlgorithm` hides 340 findings; test-wide
   `knownConditionTrueFalse` hides 14, `functionStatic` hides 62, and `unusedStructMember` has no
@@ -995,9 +1011,8 @@ a parked design, per the bucket convention. Open work is what remains after thos
   suppressions are re-audited, not inherited as permanent policy. Current batch: all pre-commit
   hooks passed; Release build exit 0; full CTest 265/265, zero failures, 804.48 seconds.
   STILL OPEN: core's 5,271 naming findings; broad cppcheck/compiler suppressions; directly
-  closable fixture/resource skips; remaining generated PowerShell
-  SilentlyContinue sites (storage probes, post-mutation refresh, cleanup, SMART/report fields);
-  and the historical VM credential rotation/history-rewrite decision.
+  closable fixture/resource skips; and the historical VM credential rotation/history-rewrite
+  decision.
   DIRECT-FIX WAVE 1 FINAL GATE: all changed-file pre-commit hooks passed; Release build exit 0;
   full CTest 266/266, zero failures, 820.46 seconds.
   NON-CORE CLANG HEALTH FINAL GATE: all changed-file pre-commit hooks passed; real naming gate

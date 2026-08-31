@@ -34,6 +34,7 @@ constexpr int kUwpScanProgress = 75;
 constexpr int kProvisionedScanProgress = 85;
 constexpr int kMetadataScanProgress = 95;
 constexpr int kQuotedPathTrimChars = 2;
+constexpr int kPackageScanTimeoutMs = 30'000;
 
 [[nodiscard]] QString normalizeUninstallExePath(QString uninstallString) {
     QString exePath = std::move(uninstallString);
@@ -661,7 +662,7 @@ QVector<ProgramInfo> ProgramEnumerator::scanUwpPackages(bool& scanOk) {
                                          QStringLiteral("-NonInteractive"),
                                          QStringLiteral("-Command"),
                                          kUwpPackagesCommand},
-                                        30'000);
+                                        kPackageScanTimeoutMs);
     scanOk = appxScanSucceeded(result);
     if (!scanOk) {
         return results;
@@ -688,15 +689,15 @@ QVector<ProgramInfo> ProgramEnumerator::scanProvisionedPackages(bool& scanOk) {
         return results;
     }
 
-    const auto result = sak::runProcess(
-        powershell,
-        {QStringLiteral("-NoProfile"),
-         QStringLiteral("-NonInteractive"),
-         QStringLiteral("-Command"),
-         QStringLiteral("Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | "
-                        "Select-Object DisplayName, PackageName, Version | "
-                        "ConvertTo-Json -Compress")},
-        30'000);
+    const auto result =
+        sak::runProcess(powershell,
+                        {QStringLiteral("-NoProfile"),
+                         QStringLiteral("-NonInteractive"),
+                         QStringLiteral("-Command"),
+                         QStringLiteral("Get-AppxProvisionedPackage -Online -ErrorAction Stop | "
+                                        "Select-Object DisplayName, PackageName, Version | "
+                                        "ConvertTo-Json -Compress")},
+                        kPackageScanTimeoutMs);
     scanOk = appxScanSucceeded(result);
     if (!scanOk) {
         return results;

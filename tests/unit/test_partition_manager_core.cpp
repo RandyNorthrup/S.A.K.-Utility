@@ -1726,6 +1726,9 @@ private Q_SLOTS:
     void fileSystemToolRunner_resolvesApprovedToolPath();
     void inventoryParser_parsesDiskAndPartition();
     void inventoryParser_surfacesUnknownDirtyState();
+    void inventoryParser_surfacesUnknownReliabilityState();
+    void inventoryParser_blocksFailedVolumeLookup();
+    void inventoryParser_blocksUnknownBitLockerState();
     void inventoryParser_infersHiddenProtectedPartitionFileSystems();
     void inventoryParser_keepsRawBasicDiskInitializable();
     void inventoryParser_failedPartitionQueryIsNeverUnallocated();
@@ -1861,6 +1864,7 @@ QByteArray fixtureJson() {
                                  {QStringLiteral("SizeRemaining"), QStringLiteral("26843545600")},
                                  {QStringLiteral("BitLockerEnabled"), true},
                                  {QStringLiteral("BitLockerLocked"), false},
+                                 {QStringLiteral("BitLockerStateKnown"), true},
                                  {QStringLiteral("DirtyBitKnown"), true},
                                  {QStringLiteral("DirtyBitSet"), true}};
     const QJsonObject dataPartition{{QStringLiteral("PartitionNumber"), 2},
@@ -1884,10 +1888,15 @@ QByteArray fixtureJson() {
         {QStringLiteral("MediaType"), QStringLiteral("SSD")},
         {QStringLiteral("PartitionStyle"), QStringLiteral("GPT")},
         {QStringLiteral("SmartSummary"), QStringLiteral("Storage reliability counters available")},
+        {QStringLiteral("ReliabilityQuerySucceeded"), true},
         {QStringLiteral("TemperatureCelsius"), 38},
+        {QStringLiteral("PowerOnHoursKnown"), true},
         {QStringLiteral("PowerOnHours"), QStringLiteral("1234")},
+        {QStringLiteral("ReadErrorsTotalKnown"), true},
         {QStringLiteral("ReadErrorsTotal"), QStringLiteral("2")},
+        {QStringLiteral("WriteErrorsTotalKnown"), true},
         {QStringLiteral("WriteErrorsTotal"), QStringLiteral("3")},
+        {QStringLiteral("WearPercentKnown"), true},
         {QStringLiteral("WearPercent"), QStringLiteral("4")},
         {QStringLiteral("Size"), QStringLiteral("107374182400")},
         {QStringLiteral("IsBoot"), true},
@@ -1906,6 +1915,7 @@ QByteArray rawBasicDiskFixtureJson() {
                            {QStringLiteral("BusType"), QStringLiteral("SATA")},
                            {QStringLiteral("MediaType"), QStringLiteral("HDD")},
                            {QStringLiteral("PartitionStyle"), QStringLiteral("RAW")},
+                           {QStringLiteral("ReliabilityQuerySucceeded"), true},
                            {QStringLiteral("Size"), QStringLiteral("4294967296")},
                            {QStringLiteral("IsBoot"), false},
                            {QStringLiteral("IsSystem"), false},
@@ -16891,11 +16901,14 @@ void PartitionManagerCoreTests::inventoryParser_parsesDiskAndPartition() {
              PartitionFileSystemDetector::inferredProtectedSource());
     QCOMPARE(inventory.disks.first().operational_status, QStringLiteral("Online"));
     QCOMPARE(inventory.disks.first().temperature_celsius, 38);
+    QVERIFY(inventory.disks.first().reliability_query_succeeded);
+    QVERIFY(inventory.disks.first().power_on_hours_known);
     QCOMPARE(inventory.disks.first().power_on_hours, 1234ULL);
     QCOMPARE(inventory.disks.first().read_errors_total, 2ULL);
     QCOMPARE(inventory.disks.first().write_errors_total, 3ULL);
     QCOMPARE(inventory.disks.first().wear_percent, 4ULL);
     QVERIFY(inventory.disks.first().partitions.at(1).volume->bitlocker_enabled);
+    QVERIFY(inventory.disks.first().partitions.at(1).volume->bitlocker_state_known);
     QVERIFY(inventory.disks.first().partitions.at(1).volume->dirty_bit_known);
     QVERIFY(inventory.disks.first().partitions.at(1).volume->dirty_bit_set);
     QCOMPARE(inventory.disks.first().partitions.at(1).volume->file_system_source,
@@ -16945,6 +16958,98 @@ void PartitionManagerCoreTests::inventoryParser_surfacesUnknownDirtyState() {
              qPrintable(validationWarnings));
     QVERIFY2(validationWarnings.contains(QStringLiteral("Access is denied.")),
              qPrintable(validationWarnings));
+}
+
+void PartitionManagerCoreTests::inventoryParser_surfacesUnknownReliabilityState() {
+    QJsonDocument document = QJsonDocument::fromJson(fixtureJson());
+    QJsonArray disks = document.array();
+    QJsonObject disk = disks.at(0).toObject();
+    disk[QStringLiteral("ReliabilityQuerySucceeded")] = false;
+    disk[QStringLiteral("ReliabilityQueryError")] = QStringLiteral("Access is denied.");
+    disk[QStringLiteral("PowerOnHoursKnown")] = false;
+    disk[QStringLiteral("ReadErrorsTotalKnown")] = false;
+    disk[QStringLiteral("WriteErrorsTotalKnown")] = false;
+    disk[QStringLiteral("WearPercentKnown")] = false;
+    disks[0] = disk;
+
+    const auto inventory = StorageInventoryWorker::parseInventoryJson(
+        QJsonDocument(disks).toJson(QJsonDocument::Compact));
+    const auto& parsed = inventory.disks.first();
+    QVERIFY(!parsed.reliability_query_succeeded);
+    QVERIFY(!parsed.power_on_hours_known);
+    QVERIFY(!parsed.read_errors_total_known);
+    QVERIFY(!parsed.write_errors_total_known);
+    QVERIFY(!parsed.wear_percent_known);
+    QCOMPARE(parsed.reliability_query_error, QStringLiteral("Access is denied."));
+    const QString warnings = inventory.warnings.join(QStringLiteral("; "));
+    QVERIFY2(warnings.contains(QStringLiteral("Storage reliability query failed for disk 0")),
+             qPrintable(warnings));
+    QVERIFY2(warnings.contains(QStringLiteral("SMART metrics are unknown")), qPrintable(warnings));
+}
+
+void PartitionManagerCoreTests::inventoryParser_blocksFailedVolumeLookup() {
+    QJsonDocument document = QJsonDocument::fromJson(fixtureJson());
+    QJsonArray disks = document.array();
+    QJsonObject disk = disks.at(0).toObject();
+    QJsonArray partitions = disk.value(QStringLiteral("Partitions")).toArray();
+    QJsonObject dataPartition = partitions.at(1).toObject();
+    dataPartition[QStringLiteral("Volume")] = QJsonValue();
+    dataPartition[QStringLiteral("VolumeLookupFailed")] = true;
+    dataPartition[QStringLiteral("VolumeLookupError")] = QStringLiteral("RPC server unavailable");
+    dataPartition[QStringLiteral("IsBoot")] = false;
+    dataPartition[QStringLiteral("IsSystem")] = false;
+    partitions[1] = dataPartition;
+    disk[QStringLiteral("Partitions")] = partitions;
+    disk[QStringLiteral("IsBoot")] = false;
+    disk[QStringLiteral("IsSystem")] = false;
+    disks[0] = disk;
+
+    const auto inventory = StorageInventoryWorker::parseInventoryJson(
+        QJsonDocument(disks).toJson(QJsonDocument::Compact));
+    const auto& partition = inventory.disks.first().partitions.at(1);
+    QVERIFY(partition.volume_lookup_failed);
+    QVERIFY(inventory.warnings.join(' ').contains(QStringLiteral("RPC server unavailable")));
+    PartitionTarget target{.kind = PartitionTargetKind::Partition,
+                           .disk_number = DiskNumber{0},
+                           .partition_number = PartitionNumber{2},
+                           .size_bytes = partition.size_bytes};
+    const auto operation = PartitionOperationPlanner::makeOperation(PartitionOperationType::Delete,
+                                                                    target);
+    const auto validation = PartitionSafetyValidator::validate(inventory, operation);
+    QVERIFY(validation.blockers.join(' ').contains(QStringLiteral("metadata is unknown")));
+}
+
+void PartitionManagerCoreTests::inventoryParser_blocksUnknownBitLockerState() {
+    QJsonDocument document = QJsonDocument::fromJson(fixtureJson());
+    QJsonArray disks = document.array();
+    QJsonObject disk = disks.at(0).toObject();
+    QJsonArray partitions = disk.value(QStringLiteral("Partitions")).toArray();
+    QJsonObject dataPartition = partitions.at(1).toObject();
+    QJsonObject volume = dataPartition.value(QStringLiteral("Volume")).toObject();
+    volume[QStringLiteral("BitLockerStateKnown")] = false;
+    volume[QStringLiteral("BitLockerStateError")] = QStringLiteral("Access is denied.");
+    dataPartition[QStringLiteral("Volume")] = volume;
+    dataPartition[QStringLiteral("IsBoot")] = false;
+    dataPartition[QStringLiteral("IsSystem")] = false;
+    partitions[1] = dataPartition;
+    disk[QStringLiteral("Partitions")] = partitions;
+    disk[QStringLiteral("IsBoot")] = false;
+    disk[QStringLiteral("IsSystem")] = false;
+    disks[0] = disk;
+
+    const auto inventory = StorageInventoryWorker::parseInventoryJson(
+        QJsonDocument(disks).toJson(QJsonDocument::Compact));
+    const auto& partition = inventory.disks.first().partitions.at(1);
+    QVERIFY(!partition.volume->bitlocker_state_known);
+    QVERIFY(inventory.warnings.join(' ').contains(QStringLiteral("protection and lock state")));
+    PartitionTarget target{.kind = PartitionTargetKind::Partition,
+                           .disk_number = DiskNumber{0},
+                           .partition_number = PartitionNumber{2},
+                           .size_bytes = partition.size_bytes};
+    const auto operation = PartitionOperationPlanner::makeOperation(PartitionOperationType::Delete,
+                                                                    target);
+    const auto validation = PartitionSafetyValidator::validate(inventory, operation);
+    QVERIFY(validation.blockers.join(' ').contains(QStringLiteral("could not be determined")));
 }
 
 void PartitionManagerCoreTests::inventoryParser_infersHiddenProtectedPartitionFileSystems() {
@@ -17081,6 +17186,15 @@ void PartitionManagerCoreTests::inventoryScript_handlesRawDisksWithoutAbort() {
              "Inventory JSON must distinguish clean from unknown dirty state.");
     QVERIFY2(script.contains(QStringLiteral("DirtyBitError = \"$dirtyError\"")),
              "Dirty-bit query failures must be surfaced in inventory JSON.");
+    QCOMPARE(script.count(QStringLiteral("SilentlyContinue")), 1);
+    QVERIFY2(script.contains(QStringLiteral("Get-PhysicalDisk -ErrorAction Stop")),
+             "Physical-disk discovery errors must be captured, not silenced.");
+    QVERIFY2(script.contains(QStringLiteral("Get-StorageReliabilityCounter -ErrorAction Stop")),
+             "Storage reliability errors must be captured, not silenced.");
+    QVERIFY2(script.contains(QStringLiteral("VolumeLookupFailed")),
+             "Volume lookup failures must be carried to the parser.");
+    QVERIFY2(script.contains(QStringLiteral("BitLockerStateKnown")),
+             "BitLocker false must be distinguishable from an unknown query result.");
     QVERIFY2(!script.contains(QStringLiteral("dirty query \"$($volume.DriveLetter):\" 2>$null")),
              "Dirty-bit query stderr must not be discarded into a false-clean result.");
 }
@@ -17626,6 +17740,13 @@ void PartitionManagerCoreTests::scriptBuilder_buildsApfsRootFileMutationScripts(
     const auto plainWrite = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::ApfsWriteRootFile, target, baseApfsRootFileMutationPayload()));
     QVERIFY(!plainWrite.script.contains(QStringLiteral("-CompressZlib")));
+    QVERIFY(plainWrite.script.contains(
+        QStringLiteral("function Remove-SakTemporaryPath([string]$Path)")));
+    QVERIFY(plainWrite.script.contains(
+        QStringLiteral("try {\n$payloadPath = Join-Path ([System.IO.Path]::GetTempPath()) ")));
+    QVERIFY(plainWrite.script.contains(
+        QStringLiteral("Remove-Item -LiteralPath $Path -Force -ErrorAction Stop")));
+    QVERIFY(!plainWrite.script.contains(QStringLiteral("-ErrorAction SilentlyContinue")));
 
     const auto compressedPatch = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::ApfsPatchRootFile, target, compressPayload));
@@ -18005,6 +18126,23 @@ void PartitionManagerCoreTests::scriptBuilder_setsPartitionLabelByMountedDriveLe
     QVERIFY(script.script.contains(QStringLiteral("-NewFileSystemLabel 'Backup Data'")));
 }
 
+namespace {
+
+void verifyAdvancedScriptFailureReporting(const PartitionScript& hidden,
+                                          const PartitionScript& surface) {
+    QVERIFY(hidden.script.contains(QStringLiteral(
+        "Remove-PartitionAccessPath -DiskNumber 1 -PartitionNumber 3 -AccessPath 'E:\\' "
+        "-ErrorAction Stop")));
+    QVERIFY(!hidden.script.contains(QStringLiteral("-ErrorAction SilentlyContinue")));
+    QVERIFY(
+        surface.script.contains(QStringLiteral("Get-StorageReliabilityCounter -ErrorAction Stop")));
+    QVERIFY(
+        surface.script.contains(QStringLiteral("Storage reliability target mapping unavailable")));
+    QVERIFY(!surface.script.contains(QStringLiteral("-ErrorAction SilentlyContinue")));
+}
+
+}  // namespace
+
 void PartitionManagerCoreTests::scriptBuilder_buildsAdvancedParityScripts() {
     PartitionTarget partitionTarget;
     partitionTarget.kind = PartitionTargetKind::Partition;
@@ -18062,6 +18200,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsAdvancedParityScripts() {
         PartitionOperationPlanner::makeOperation(PartitionOperationType::SurfaceTest, diskTarget));
     QVERIFY(surface.valid());
     QVERIFY(surface.script.contains(QStringLiteral("Get-StorageReliabilityCounter")));
+    verifyAdvancedScriptFailureReporting(hidden, surface);
 
     auto recovery = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::PartitionRecoveryScan,
@@ -19062,6 +19201,13 @@ void PartitionManagerCoreTests::scriptBuilder_vssFallbackFailsClosedForVssCapabl
     QVERIFY(script.script.contains(QStringLiteral("DriveFormat")));
     QVERIFY(script.script.contains(
         QStringLiteral("refusing to reformat without a point-in-time-consistent backup")));
+    QVERIFY(script.script.contains(QStringLiteral("$shadowFailure = ''")));
+    QVERIFY(script.script.contains(
+        QStringLiteral("Remove-CimInstance -InputObject $shadow -ErrorAction Stop")));
+    QVERIFY(script.script.contains(QStringLiteral("VSS failure: {2}")));
+    QVERIFY(!script.script.contains(QStringLiteral("catch { $shadow = $null }")));
+    QVERIFY(!script.script.contains(QStringLiteral("catch { }")));
+    QVERIFY(!script.script.contains(QStringLiteral("-ErrorAction SilentlyContinue")));
 }
 
 void PartitionManagerCoreTests::scriptBuilder_waveCDriveLetterAndSizeFailClosed() {
@@ -19205,6 +19351,12 @@ void PartitionManagerCoreTests::scriptBuilder_waveCHfsStagedWritebackFailsClosed
     QVERIFY(hfs.script.contains(QStringLiteral("Assert-SakFileRangeReadBack")));
     QVERIFY(hfs.script.contains(QStringLiteral("Post-copy read-back mismatch")));
     QVERIFY(hfs.script.contains(QStringLiteral("$target.Flush($true)")));
+    QVERIFY(hfs.script.contains(QStringLiteral("function Remove-SakTemporaryPath([string]$Path)")));
+    QVERIFY(hfs.script.contains(
+        QStringLiteral("Remove-Item -LiteralPath $Path -Force -ErrorAction Stop")));
+    QVERIFY(hfs.script.contains(
+        QStringLiteral("Staged HFS image path already exists; refusing to overwrite")));
+    QVERIFY(!hfs.script.contains(QStringLiteral("-ErrorAction SilentlyContinue")));
     QVERIFY(!hfs.script.contains(QStringLiteral("clipped={2}")));
 }
 
@@ -21570,6 +21722,14 @@ void PartitionManagerCoreTests::scriptBuilder_diskPartRunnerProvesSuccessBeyondE
     QVERIFY(script.script.contains(
         QStringLiteral("Assert-SakDiskPartVolume $drive (Get-SakManifestBytes $backupManifest)")));
     QVERIFY(script.script.contains(QStringLiteral("DiskPart did not leave a usable volume")));
+    QVERIFY(
+        script.script.contains(QStringLiteral("function Remove-SakTemporaryPath([string]$Path)")));
+    QVERIFY(script.script.contains(
+        QStringLiteral("Remove-Item -LiteralPath $Path -Force -ErrorAction Stop")));
+    QVERIFY(script.script.contains(QStringLiteral("function Get-SakOptionalVolumeByDriveLetter")));
+    QVERIFY(script.script.contains(QStringLiteral("CmdletizationQuery_NotFound")));
+    QVERIFY(script.script.contains(QStringLiteral("Update-HostStorageCache -ErrorAction Stop")));
+    QVERIFY(!script.script.contains(QStringLiteral("-ErrorAction SilentlyContinue")));
     // The old exit-code-only gate must be gone.
     QVERIFY(!script.script.contains(
         QStringLiteral("diskpart.exe /s $scriptPath; if ($LASTEXITCODE -ne 0)")));

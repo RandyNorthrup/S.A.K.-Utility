@@ -366,11 +366,23 @@ QString GenerateSystemReportAction::gatherOsAndHardwareInfo() {
     return proc_info.std_out + "\n";
 }
 
-QString GenerateSystemReportAction::gatherStorageInfo() {
-    const QString ps_cmd_storage =
+QString GenerateSystemReportAction::buildStorageInfoScript() {
+    return QStringLiteral(
         "$ErrorActionPreference = 'Stop'\n"
         "Write-Output \"=== STORAGE DEVICES ===\"\n"
-        "$disks = Get-PhysicalDisk\n"
+        "try {\n"
+        "    $disks = @(Get-PhysicalDisk -ErrorAction Stop)\n"
+        "} catch [System.Management.Automation.CommandNotFoundException] {\n"
+        "    Write-Output \"Storage inventory: unavailable (command not supported)\"\n"
+        "    $disks = @()\n"
+        "}\n"
+        "$smartCommandAvailable = $true\n"
+        "try {\n"
+        "    Get-Command Get-StorageReliabilityCounter -CommandType Cmdlet "
+        "-ErrorAction Stop | Out-Null\n"
+        "} catch [System.Management.Automation.CommandNotFoundException] {\n"
+        "    $smartCommandAvailable = $false\n"
+        "}\n"
         "foreach ($disk in $disks) {\n"
         "    Write-Output \"\"\n"
         "    Write-Output \"Physical Disk $($disk.DeviceID):\"\n"
@@ -381,17 +393,52 @@ QString GenerateSystemReportAction::gatherStorageInfo() {
         "    Write-Output \"  Size: $([math]::Round($disk.Size / 1GB, 2)) GB\"\n"
         "    Write-Output \"  Health Status: $($disk.HealthStatus)\"\n"
         "    Write-Output \"  Operational Status: $($disk.OperationalStatus)\"\n"
-        "    \n"
+        "\n"
+        "    if (-not $smartCommandAvailable) {\n"
+        "        Write-Output \"  Storage reliability counters: unavailable (command not "
+        "supported)\"\n"
+        "        continue\n"
+        "    }\n"
         "    try {\n"
-        "        $smart = $disk | Get-StorageReliabilityCounter -ErrorAction SilentlyContinue\n"
-        "        if ($smart) {\n"
+        "        $smart = $disk | Get-StorageReliabilityCounter -ErrorAction Stop\n"
+        "        if ($null -eq $smart) {\n"
+        "            Write-Output \"  Storage reliability counters: unavailable (no data "
+        "returned)\"\n"
+        "            continue\n"
+        "        }\n"
+        "        if ($null -eq $smart.Temperature) {\n"
+        "            Write-Output \"  Temperature: unavailable\"\n"
+        "        } else {\n"
         "            Write-Output \"  Temperature: $($smart.Temperature) degC\"\n"
+        "        }\n"
+        "        if ($null -eq $smart.PowerOnHours) {\n"
+        "            Write-Output \"  Power On Hours: unavailable\"\n"
+        "        } else {\n"
         "            Write-Output \"  Power On Hours: $($smart.PowerOnHours)\"\n"
+        "        }\n"
+        "        if ($null -eq $smart.Wear) {\n"
+        "            Write-Output \"  Wear: unavailable\"\n"
+        "        } else {\n"
         "            Write-Output \"  Wear: $($smart.Wear)%\"\n"
         "        }\n"
-        "    } catch {}\n"
+        "    } catch [System.NotSupportedException] {\n"
+        "        Write-Output \"  Storage reliability counters: unavailable (command not "
+        "supported)\"\n"
+        "    } catch {\n"
+        "        if ($_.CategoryInfo.Reason -match 'NotSupported') {\n"
+        "            Write-Output \"  Storage reliability counters: unavailable (command not "
+        "supported)\"\n"
+        "        } else {\n"
+        "            Write-Output \"  Storage reliability counter query failed: "
+        "$($_.Exception.Message)\"\n"
+        "        }\n"
+        "    }\n"
         "}\n"
-        "Write-Output \"\"";
+        "Write-Output \"\"");
+}
+
+QString GenerateSystemReportAction::gatherStorageInfo() {
+    const QString ps_cmd_storage = buildStorageInfoScript();
 
     const ProcessResult proc_storage =
         runPowerShell(ps_cmd_storage, sak::kTimeoutProcessMediumMs, true, true, [this]() {
@@ -410,11 +457,20 @@ QString GenerateSystemReportAction::gatherStorageInfo() {
     return proc_storage.std_out + "\n";
 }
 
-QString GenerateSystemReportAction::gatherNetworkInfo() {
-    const QString ps_cmd_network =
+QString GenerateSystemReportAction::buildNetworkInfoScript() {
+    return QStringLiteral(
         "$ErrorActionPreference = 'Stop'\n"
         "Write-Output \"=== NETWORK ADAPTERS ===\"\n"
-        "$adapters = Get-NetAdapter | Where-Object {$_.Status -eq 'Up'}\n"
+        "try {\n"
+        "    $adapters = @(Get-NetAdapter -ErrorAction Stop | "
+        "Where-Object {$_.Status -eq 'Up'})\n"
+        "} catch [System.Management.Automation.CommandNotFoundException] {\n"
+        "    Write-Output \"Network adapter inventory: unavailable (command not supported)\"\n"
+        "    $adapters = @()\n"
+        "}\n"
+        "if ($adapters.Count -eq 0) {\n"
+        "    Write-Output \"Active network adapters: unavailable (none reported)\"\n"
+        "}\n"
         "foreach ($adapter in $adapters) {\n"
         "    Write-Output \"\"\n"
         "    Write-Output \"$($adapter.Name):\"\n"
@@ -422,17 +478,29 @@ QString GenerateSystemReportAction::gatherNetworkInfo() {
         "    Write-Output \"  MAC Address: $($adapter.MacAddress)\"\n"
         "    Write-Output \"  Link Speed: $($adapter.LinkSpeed)\"\n"
         "    Write-Output \"  Status: $($adapter.Status)\"\n"
-        "    \n"
-        "    $ipconfig = Get-NetIPAddress -InterfaceIndex $adapter.ifIndex -ErrorAction "
-        "SilentlyContinue\n"
-        "    foreach ($ip in $ipconfig) {\n"
-        "        if ($ip.AddressFamily -eq 'IPv4') {\n"
+        "\n"
+        "    try {\n"
+        "        $ipconfig = @(Get-NetIPAddress -InterfaceIndex $adapter.ifIndex "
+        "-ErrorAction Stop)\n"
+        "        $ipv4 = @($ipconfig | Where-Object {$_.AddressFamily -eq 'IPv4'})\n"
+        "        if ($ipv4.Count -eq 0) {\n"
+        "            Write-Output \"  IPv4 Address: unavailable (none assigned)\"\n"
+        "        }\n"
+        "        foreach ($ip in $ipv4) {\n"
         "            Write-Output \"  IPv4 Address: $($ip.IPAddress)\"\n"
         "            Write-Output \"  Subnet Prefix: $($ip.PrefixLength)\"\n"
         "        }\n"
+        "    } catch [System.Management.Automation.CommandNotFoundException] {\n"
+        "        Write-Output \"  IP configuration: unavailable (command not supported)\"\n"
+        "    } catch {\n"
+        "        Write-Output \"  IP configuration query failed: $($_.Exception.Message)\"\n"
         "    }\n"
         "}\n"
-        "Write-Output \"\"";
+        "Write-Output \"\"");
+}
+
+QString GenerateSystemReportAction::gatherNetworkInfo() {
+    const QString ps_cmd_network = buildNetworkInfoScript();
 
     const ProcessResult proc_network =
         runPowerShell(ps_cmd_network, sak::kTimeoutProcessMediumMs, true, true, [this]() {

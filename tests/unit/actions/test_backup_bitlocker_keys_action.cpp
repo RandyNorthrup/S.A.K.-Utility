@@ -251,6 +251,7 @@ void BackupBitlockerKeysActionTests::parseDetectedVolumes_signalsParseState() {
     // The success path must MAP fields, not merely count records: drive_letter is what
     // routes getKeyProtectors/buildKeyProtectorScript per volume.
     QCOMPARE(one[0].drive_letter, QStringLiteral("C:"));
+    QVERIFY(!one[0].volume_metadata_known);
     // Omitted status fields must reach the -1 sentinels and read "Unknown"/"N/A",
     // never index 0 ("Off"/"Unlocked"/"0%") -- an encrypted volume must not be
     // documented as unprotected just because the field was absent.
@@ -264,7 +265,8 @@ void BackupBitlockerKeysActionTests::parseDetectedVolumes_signalsParseState() {
     const QVector<BackupBitlockerKeysAction::VolumeInfo> many = action.parseDetectedVolumes(
         QStringLiteral("[{\"DriveLetter\":\"C:\","
                        "\"DeviceID\":\"Volume{11111111-2222-3333-4444-555555555555}\","
-                       "\"VolumeLabel\":\"OS-Disk\",\"ProtectionStatus\":1,\"LockStatus\":0,"
+                       "\"VolumeLabel\":\"OS-Disk\",\"VolumeMetadataKnown\":true,"
+                       "\"ProtectionStatus\":1,\"LockStatus\":0,"
                        "\"EncryptionPct\":100,\"EncryptionMethod\":7,\"VolumeType\":0,"
                        "\"SizeBytes\":1024},{\"DriveLetter\":\"D:\",\"ProtectionStatus\":0}]"),
         parse_ok);
@@ -277,6 +279,7 @@ void BackupBitlockerKeysActionTests::parseDetectedVolumes_signalsParseState() {
     QCOMPARE(many[0].encryption_method, QStringLiteral("XTS-AES-256"));
     QCOMPARE(many[0].volume_type, QStringLiteral("Operating System"));
     QCOMPARE(many[0].volume_size_bytes, Q_INT64_C(1024));
+    QVERIFY(many[0].volume_metadata_known);
     // Two of VolumeInfo's nine mapped fields were asserted NOWHERE in the repository, though both
     // reach the technician: device_id prints as "Device ID:" in the recovery document and as
     // "device_id" in bitlocker_keys.json, and volume_label appears in the volume header, the scan
@@ -290,6 +293,7 @@ void BackupBitlockerKeysActionTests::parseDetectedVolumes_signalsParseState() {
     // from element 0's OWN keys rather than a constant or a carry-over between records.
     QVERIFY2(many[1].device_id.isEmpty(), qPrintable(many[1].device_id));
     QVERIFY2(many[1].volume_label.isEmpty(), qPrintable(many[1].volume_label));
+    QVERIFY(!many[1].volume_metadata_known);
 }
 
 void BackupBitlockerKeysActionTests::parseDetectedVolumes_pinsBoundariesAndPerElementGuard() {

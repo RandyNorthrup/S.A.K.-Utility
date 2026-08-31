@@ -5619,6 +5619,15 @@ QString dirtyBitProperty(const PartitionVolumeInfo& volume) {
                : QObject::tr("Unknown (%1)").arg(volume.dirty_bit_error.trimmed());
 }
 
+QString bitLockerStateProperty(const PartitionVolumeInfo& volume, bool value) {
+    if (volume.bitlocker_state_known) {
+        return propertyYesNo(value);
+    }
+    return volume.bitlocker_state_error.trimmed().isEmpty()
+               ? QObject::tr("Unknown")
+               : QObject::tr("Unknown (%1)").arg(volume.bitlocker_state_error.trimmed());
+}
+
 QString bytesProperty(uint64_t bytes) {
     return QObject::tr("%1 (%2 bytes)").arg(formatPartitionBytes(bytes), QString::number(bytes));
 }
@@ -5674,15 +5683,29 @@ void appendDiskProperties(QVector<PropertyRow>* rows, const PartitionDiskInfo& d
 }
 
 void appendSmartProperties(QVector<PropertyRow>* rows, const PartitionDiskInfo& disk) {
-    addProperty(rows, QObject::tr("SMART summary"), disk.smart_summary);
+    const QString unknown = QObject::tr("Unknown");
+    addProperty(rows,
+                QObject::tr("SMART summary"),
+                disk.reliability_query_succeeded ? disk.smart_summary
+                : disk.reliability_query_error.trimmed().isEmpty()
+                    ? unknown
+                    : QObject::tr("Unknown (%1)").arg(disk.reliability_query_error));
     addProperty(rows,
                 QObject::tr("Temperature"),
                 disk.temperature_celsius >= 0 ? QObject::tr("%1 C").arg(disk.temperature_celsius)
-                                              : QString());
-    addProperty(rows, QObject::tr("Power-on hours"), QString::number(disk.power_on_hours));
-    addProperty(rows, QObject::tr("Read errors"), QString::number(disk.read_errors_total));
-    addProperty(rows, QObject::tr("Write errors"), QString::number(disk.write_errors_total));
-    addProperty(rows, QObject::tr("Wear"), QObject::tr("%1%").arg(disk.wear_percent));
+                                              : unknown);
+    addProperty(rows,
+                QObject::tr("Power-on hours"),
+                disk.power_on_hours_known ? QString::number(disk.power_on_hours) : unknown);
+    addProperty(rows,
+                QObject::tr("Read errors"),
+                disk.read_errors_total_known ? QString::number(disk.read_errors_total) : unknown);
+    addProperty(rows,
+                QObject::tr("Write errors"),
+                disk.write_errors_total_known ? QString::number(disk.write_errors_total) : unknown);
+    addProperty(rows,
+                QObject::tr("Wear"),
+                disk.wear_percent_known ? QObject::tr("%1%").arg(disk.wear_percent) : unknown);
 }
 
 void appendPartitionProperties(QVector<PropertyRow>* rows, const PartitionInfoEx& partition) {
@@ -5732,7 +5755,7 @@ void appendPartitionProperties(QVector<PropertyRow>* rows, const PartitionInfoEx
     addProperty(rows, QObject::tr("Free space"), partition.volume->free_bytes);
     addProperty(rows,
                 QObject::tr("BitLocker locked"),
-                propertyYesNo(partition.volume->bitlocker_locked));
+                bitLockerStateProperty(*partition.volume, partition.volume->bitlocker_locked));
 }
 
 QString fileSystemTooltipText(const PartitionVolumeInfo& volume) {
@@ -6764,12 +6787,24 @@ QString bitLockerProtectionText(const PartitionVolumeInfo* volume) {
     if (volume == nullptr) {
         return QObject::tr("No mounted volume selected");
     }
-    return volume->bitlocker_enabled ? QObject::tr("Protection on")
-                                     : QObject::tr("Protection off or not detected");
+    if (!volume->bitlocker_state_known) {
+        return volume->bitlocker_state_error.trimmed().isEmpty()
+                   ? QObject::tr("Unknown")
+                   : QObject::tr("Unknown (%1)").arg(volume->bitlocker_state_error.trimmed());
+    }
+    return volume->bitlocker_enabled ? QObject::tr("Protection on") : QObject::tr("Protection off");
 }
 
 QString bitLockerLockText(const PartitionVolumeInfo* volume) {
-    if ((volume == nullptr) || !volume->bitlocker_enabled) {
+    if (volume == nullptr) {
+        return QObject::tr("Not locked");
+    }
+    if (!volume->bitlocker_state_known) {
+        return volume->bitlocker_state_error.trimmed().isEmpty()
+                   ? QObject::tr("Unknown")
+                   : QObject::tr("Unknown (%1)").arg(volume->bitlocker_state_error.trimmed());
+    }
+    if (!volume->bitlocker_enabled) {
         return QObject::tr("Not locked");
     }
     return volume->bitlocker_locked ? QObject::tr("Locked") : QObject::tr("Unlocked");
@@ -6826,7 +6861,7 @@ QVector<PropertyRow> bitLockerRows(const PartitionDiskInfo* disk,
                 (volume != nullptr) ? volume->volume_guid : QString());
     addProperty(&rows,
                 QObject::tr("In-app mutation"),
-                (volume != nullptr) && volume->bitlocker_enabled
+                (volume != nullptr) && volume->bitlocker_state_known && volume->bitlocker_enabled
                     ? QObject::tr("Queue unlock, suspend, or resume through elevated Apply")
                     : QObject::tr("Select a BitLocker-protected mounted volume"));
     addProperty(&rows, QObject::tr("Safe commands"), bitLockerCommandLines(volume).join('\n'));
@@ -10495,8 +10530,8 @@ void PartitionManagerPanel::onManageBitLocker() {
     const PartitionVolumeInfo* volume =
         (partition != nullptr) && partition->volume ? &partition->volume.value() : nullptr;
     const QStringList commands = bitLockerCommandLines(volume);
-    const bool can_manage = (volume != nullptr) && volume->bitlocker_enabled &&
-                            !bitLockerMountPoint(volume).isEmpty();
+    const bool can_manage = (volume != nullptr) && volume->bitlocker_state_known &&
+                            volume->bitlocker_enabled && !bitLockerMountPoint(volume).isEmpty();
     const bool locked = (volume != nullptr) && volume->bitlocker_locked;
     const auto action = showBitLockerDialog(
         this, bitLockerRows(selectedDisk(), partition), commands, can_manage, locked);

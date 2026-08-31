@@ -87,9 +87,17 @@ private:
     /// @return Report section text.
     QString gatherStorageInfo();
 
+    /// @brief Builds the PowerShell storage collector script.
+    /// @return PowerShell script string.
+    static QString buildStorageInfoScript();
+
     /// @brief Gathers active network adapters and IP configuration.
     /// @return Report section text.
     QString gatherNetworkInfo();
+
+    /// @brief Builds the PowerShell network collector script.
+    /// @return PowerShell script string.
+    static QString buildNetworkInfoScript();
 
     /// @brief Gathers Qt system info and mounted volume details.
     /// @return Report section text.

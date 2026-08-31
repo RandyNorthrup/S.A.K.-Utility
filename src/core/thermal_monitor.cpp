@@ -20,6 +20,7 @@ namespace sak {
 
 namespace {
 constexpr qsizetype kDiskKeyPrefixLength = 4;
+constexpr auto kSensorStatusPrefix = "status_";
 constexpr double kWmiTenthsKelvinDivisor = 10.0;
 constexpr double kKelvinZeroCelsius = 273.15;
 // No silicon or drive sensor reports above this; a larger value is telemetry corruption,
@@ -42,6 +43,78 @@ constexpr double kMaxPlausibleCelsius = 150.0;
         return false;
     }
     return std::ranges::all_of(device_id, [](const QChar ch) { return ch.isDigit(); });
+}
+
+void logSensorStatuses(const QString& output) {
+    const auto lines = output.split('\n', Qt::SkipEmptyParts);
+    for (const QString& line : lines) {
+        const QString status = line.trimmed();
+        if (!status.startsWith(QLatin1String(kSensorStatusPrefix))) {
+            continue;
+        }
+        logWarning("Thermal sensor {}", status.toStdString());
+    }
+}
+
+[[nodiscard]] QString cpuThermalScript() {
+    return QStringLiteral(
+        "try{"
+        "$t=Get-CimInstance -Namespace root/WMI "
+        "-ClassName MSAcpi_ThermalZoneTemperature "
+        "-ErrorAction Stop|Select-Object -First 1;"
+        "if($t.CurrentTemperature -gt 0){"
+        "$r['cpu']=[math]::Round(($t.CurrentTemperature/10)-273.15,1)"
+        "}else{Write-Output 'status_cpu=unavailable:no_reading'}"
+        "}catch [System.Management.Automation.CommandNotFoundException]{"
+        "Write-Output 'status_cpu=unavailable:command_not_supported'"
+        "}catch{"
+        "if($_.CategoryInfo.Category -eq 'ObjectNotFound' -or "
+        "$_.CategoryInfo.Reason -match 'NotSupported'){"
+        "Write-Output 'status_cpu=unavailable:command_not_supported'"
+        "}else{throw}};");
+}
+
+[[nodiscard]] QString gpuThermalScript() {
+    return QStringLiteral(
+        "$nvp=@("
+        "'C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvidia-smi.exe',"
+        "'C:\\Windows\\System32\\nvidia-smi.exe');"
+        "$gpuFound=$false;"
+        "foreach($p in $nvp){"
+        "if(-not (Test-Path -LiteralPath $p -PathType Leaf)){continue};"
+        "$gpuFound=$true;"
+        "$o=&$p --query-gpu=temperature.gpu --format=csv,noheader,nounits;"
+        "if($LASTEXITCODE -ne 0){throw 'nvidia-smi temperature query failed'};"
+        "if($o){"
+        "$g=@($o)|ForEach-Object{$_.ToString().Split(\"`n\")}|"
+        "ForEach-Object{$_.Trim()}|Where-Object{$_}|ForEach-Object{[double]$_};"
+        "if($g){$r['gpu']=($g|Measure-Object -Maximum).Maximum;break}};"
+        "Write-Output 'status_gpu=unavailable:no_reading';break};"
+        "if(-not $gpuFound){"
+        "Write-Output 'status_gpu=unavailable:command_not_supported'};");
+}
+
+[[nodiscard]] QString diskThermalScript() {
+    return QStringLiteral(
+        "try{$d=@(Get-PhysicalDisk -ErrorAction Stop)"
+        "}catch [System.Management.Automation.CommandNotFoundException]{"
+        "Write-Output 'status_disk=unavailable:command_not_supported';$d=@()"
+        "}catch{"
+        "if($_.CategoryInfo.Reason -match 'NotSupported'){"
+        "Write-Output 'status_disk=unavailable:command_not_supported';$d=@()"
+        "}else{throw}};"
+        "if($d.Count -eq 0){Write-Output 'status_disk=unavailable:no_devices'};"
+        "$d|ForEach-Object{try{"
+        "$c=$_|Get-StorageReliabilityCounter -ErrorAction Stop;"
+        "if($c -and $c.Temperature -gt 0){"
+        "$r[\"disk$($_.DeviceId)\"]=$c.Temperature"
+        "}else{Write-Output \"status_disk$($_.DeviceId)=unavailable:no_reading\"}"
+        "}catch [System.NotSupportedException]{"
+        "Write-Output \"status_disk$($_.DeviceId)=unavailable:command_not_supported\""
+        "}catch{"
+        "if($_.CategoryInfo.Reason -match 'NotSupported'){"
+        "Write-Output \"status_disk$($_.DeviceId)=unavailable:command_not_supported\""
+        "}else{throw}}};");
 }
 }  // namespace
 
@@ -126,9 +199,15 @@ QVector<ThermalReading> ThermalMonitor::pollOnce(bool& queryOk) {
                                          buildCombinedThermalScript()},
                                         sak::kTimeoutThermalQueryMs);
     if (!result.succeeded()) {
+        const QString detail =
+            result.std_err.trimmed().isEmpty()
+                ? QStringLiteral("exit=%1 timeout=%2").arg(result.exit_code).arg(result.timed_out)
+                : result.std_err.trimmed();
+        logWarning("Thermal sensor query failed: {}", detail.toStdString());
         return {};  // query FAILED (non-zero exit / timeout) -> queryOk stays false
     }
 
+    logSensorStatuses(result.std_out);
     // The script runs to completion and emits key=value lines only for available sensors; an
     // empty parse is a genuine "no readable sensors", not a failure.
     queryOk = true;
@@ -178,52 +257,11 @@ void ThermalMonitor::onPollComplete() {
 QString ThermalMonitor::buildCombinedThermalScript() {
     // Single PowerShell invocation that queries CPU, GPU, and all disks.
     // Output format: key=value lines (e.g. "cpu=52.3", "gpu=61", "disk0=38")
-    return QStringLiteral(
-        "$r=@{};"
-
-        // CPU via WMI ACPI thermal zone (admin required)
-        "try{"
-        "$t=Get-CimInstance -Namespace root/WMI "
-        "-ClassName MSAcpi_ThermalZoneTemperature "
-        "-ErrorAction Stop|Select-Object -First 1;"
-        "if($t.CurrentTemperature -gt 0){"
-        "$r['cpu']=[math]::Round(($t.CurrentTemperature/10)-273.15,1)"
-        "}}catch{};"
-
-        // GPU: nvidia-smi at its absolute install paths ONLY. A bare "nvidia-smi" resolved
-        // through PATH/CWD is a forbidden fallback here -- the poll can run from an elevated
-        // session, where an attacker-planted nvidia-smi would then execute as admin.
-        // nvidia-smi prints one line per GPU: report the HOTTEST so a second, overheating
-        // card is never hidden behind a cool first one.
-        "$nvp=@("
-        "'C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvidia-smi.exe',"
-        "'C:\\Windows\\System32\\nvidia-smi.exe');"
-        "foreach($p in $nvp){"
-        "if(-not (Test-Path -LiteralPath $p -PathType Leaf)){continue};"
-        "try{"
-        "$o=&$p --query-gpu=temperature.gpu "
-        "--format=csv,noheader,nounits 2>$null;"
-        "if($LASTEXITCODE -eq 0 -and $o){"
-        "$g=@($o)|ForEach-Object{$_.ToString().Split(\"`n\")}|"
-        "ForEach-Object{$_.Trim()}|Where-Object{$_}|ForEach-Object{[double]$_};"
-        "if($g){"
-        "$r['gpu']=($g|Measure-Object -Maximum).Maximum;"
-        "break"
-        "}}}catch{}};"
-
-        // Disk temps via StorageReliabilityCounter (admin required)
-        "try{"
-        "Get-PhysicalDisk -ErrorAction Stop|ForEach-Object{"
-        "$c=$_|Get-StorageReliabilityCounter "
-        "-ErrorAction SilentlyContinue;"
-        "if($c -and $c.Temperature -gt 0){"
-        "$r[\"disk$($_.DeviceId)\"]=$c.Temperature"
-        "}}}catch{};"
-
-        // Output key=value pairs
-        "$r.GetEnumerator()|ForEach-Object{"
-        "\"$($_.Key)=$($_.Value)\""
-        "}");
+    // Unsupported/not-present is a legitimate unavailable state. Any other failure escapes
+    // the script and makes the process fail, so pollOnce cannot report it as "no sensors".
+    return QStringLiteral("$r=@{};") + cpuThermalScript() + gpuThermalScript() +
+           diskThermalScript() +
+           QStringLiteral("$r.GetEnumerator()|ForEach-Object{\"$($_.Key)=$($_.Value)\"}");
 }
 
 QVector<ThermalReading> ThermalMonitor::parseThermalOutput(const QString& output) {

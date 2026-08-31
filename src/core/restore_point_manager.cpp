@@ -83,7 +83,7 @@ QString buildCheckpointScript(const QString& safe_desc) {
                "    -RestorePointType 'APPLICATION_UNINSTALL' "
                "    -ErrorAction Stop "
                "    -WarningVariable wv "
-               "    -WarningAction SilentlyContinue; "
+               "    -WarningAction Continue; "
                "  if ($wv) { Write-Error $wv; exit 1; } "
                "  Write-Output 'SUCCESS'; "
                "} catch { "

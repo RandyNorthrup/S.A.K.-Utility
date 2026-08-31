@@ -2243,6 +2243,7 @@ void PartitionManagerPanelTests::manageBitLockerShowsStatusDialog() {
     auto inventory = applyReviewInventoryFixture();
     inventory.disks[0].model = QStringLiteral("Fixture SSD");
     inventory.disks[0].partitions[0].volume->volume_guid = QStringLiteral("volume-guid");
+    inventory.disks[0].partitions[0].volume->bitlocker_state_known = true;
     inventory.disks[0].partitions[0].volume->bitlocker_enabled = true;
     inventory.disks[0].partitions[0].volume->bitlocker_locked = true;
     panel.setTestInventoryForReview(inventory);

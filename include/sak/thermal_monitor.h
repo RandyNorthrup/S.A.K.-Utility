@@ -14,6 +14,8 @@
 #include <QTimer>
 #include <QVector>
 
+class ThermalMonitorTests;
+
 namespace sak {
 
 inline constexpr int kDefaultThermalPollIntervalMs = kTimerBroadcastMs;
@@ -31,7 +33,8 @@ inline constexpr int kMinThermalPollIntervalMs = 250;
 /// QtConcurrent so the UI thread is never blocked.
 ///
 /// Note: MSAcpi_ThermalZoneTemperature and StorageReliabilityCounter require
-/// administrator privileges. Unavailable sensors are omitted from readings.
+/// administrator privileges. Legitimately unavailable sensors are omitted from readings and
+/// logged with an explicit unavailable reason. Query failures fail the poll.
 ///
 /// Usage:
 /// @code
@@ -42,6 +45,8 @@ inline constexpr int kMinThermalPollIntervalMs = 250;
 ///   monitor.stop();
 /// @endcode
 class ThermalMonitor : public QObject {
+    friend class ::ThermalMonitorTests;
+
     Q_OBJECT
 
 public:

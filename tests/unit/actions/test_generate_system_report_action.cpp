@@ -22,9 +22,31 @@ class GenerateSystemReportActionTests : public QObject {
 
 private Q_SLOTS:
     void collectorFailed_truthTable();
+    void collectorScriptsSurfaceUnavailableQueries();
     void reportGenerationSucceeded_requiresSaveAndCollectors();
     void saveReportCountsUtf8BytesNotUtf16Units();
 };
+
+void GenerateSystemReportActionTests::collectorScriptsSurfaceUnavailableQueries() {
+    const QString storage = Action::buildStorageInfoScript();
+    QVERIFY2(!storage.contains(QStringLiteral("SilentlyContinue")), qPrintable(storage));
+    QVERIFY2(!storage.contains(QStringLiteral("catch {}")), qPrintable(storage));
+    QVERIFY(storage.contains(QStringLiteral("Get-StorageReliabilityCounter -ErrorAction Stop")));
+    QVERIFY(storage.contains(
+        QStringLiteral("Storage reliability counters: unavailable (command not supported)")));
+    QVERIFY(storage.contains(QStringLiteral("Storage reliability counter query failed:")));
+    QVERIFY(storage.contains(QStringLiteral("Temperature: unavailable")));
+
+    const QString network = Action::buildNetworkInfoScript();
+    QVERIFY2(!network.contains(QStringLiteral("SilentlyContinue")), qPrintable(network));
+    QVERIFY2(!network.contains(QStringLiteral("catch {}")), qPrintable(network));
+    QVERIFY(network.contains(QStringLiteral("Get-NetIPAddress -InterfaceIndex ")));
+    QVERIFY(network.contains(QStringLiteral("-ErrorAction Stop")));
+    QVERIFY(
+        network.contains(QStringLiteral("IP configuration: unavailable (command not supported)")));
+    QVERIFY(network.contains(QStringLiteral("IP configuration query failed:")));
+    QVERIFY(network.contains(QStringLiteral("IPv4 Address: unavailable")));
+}
 
 void GenerateSystemReportActionTests::collectorFailed_truthTable() {
     QVERIFY(!Action::collectorFailed(false, 0));  // clean run

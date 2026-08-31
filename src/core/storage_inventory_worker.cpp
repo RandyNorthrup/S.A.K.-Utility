@@ -92,6 +92,9 @@ PartitionVolumeInfo parseVolume(const QJsonObject& object) {
     volume.free_bytes = jsonUInt64(object, QStringLiteral("SizeRemaining"));
     volume.bitlocker_enabled = jsonBool(object, QStringLiteral("BitLockerEnabled"));
     volume.bitlocker_locked = jsonBool(object, QStringLiteral("BitLockerLocked"));
+    volume.bitlocker_state_known = jsonBool(object, QStringLiteral("BitLockerStateKnown"));
+    volume.bitlocker_state_error =
+        object.value(QStringLiteral("BitLockerStateError")).toString().trimmed();
     volume.dirty_bit_known = jsonBool(object, QStringLiteral("DirtyBitKnown"));
     volume.dirty_bit_set = volume.dirty_bit_known &&
                            jsonBool(object, QStringLiteral("DirtyBitSet"));
@@ -113,6 +116,9 @@ PartitionInfoEx parsePartition(uint32_t disk_number, const QJsonObject& object) 
     partition.is_boot = jsonBool(object, QStringLiteral("IsBoot"));
     partition.is_system = jsonBool(object, QStringLiteral("IsSystem"));
     partition.is_read_only = jsonBool(object, QStringLiteral("IsReadOnly"));
+    partition.volume_lookup_failed = jsonBool(object, QStringLiteral("VolumeLookupFailed"));
+    partition.volume_lookup_error =
+        object.value(QStringLiteral("VolumeLookupError")).toString().trimmed();
     const auto volume = object.value(QStringLiteral("Volume"));
     if (volume.isObject()) {
         partition.volume = parseVolume(volume.toObject());
@@ -449,6 +455,10 @@ PartitionDiskInfo parseDisk(const QJsonObject& object) {
     disk.health_status = object.value(QStringLiteral("HealthStatus")).toString();
     disk.operational_status = object.value(QStringLiteral("OperationalStatus")).toString();
     disk.smart_summary = object.value(QStringLiteral("SmartSummary")).toString();
+    disk.reliability_query_succeeded = jsonBool(object,
+                                                QStringLiteral("ReliabilityQuerySucceeded"));
+    disk.reliability_query_error =
+        object.value(QStringLiteral("ReliabilityQueryError")).toString().trimmed();
     const auto temperatureValue = object.value(QStringLiteral("TemperatureCelsius"));
     disk.temperature_celsius =
         static_cast<int>(jsonUInt64(object, QStringLiteral("TemperatureCelsius")));
@@ -456,9 +466,13 @@ PartitionDiskInfo parseDisk(const QJsonObject& object) {
         disk.temperature_celsius = -1;
     }
     disk.power_on_hours = jsonUInt64(object, QStringLiteral("PowerOnHours"));
+    disk.power_on_hours_known = jsonBool(object, QStringLiteral("PowerOnHoursKnown"));
     disk.read_errors_total = jsonUInt64(object, QStringLiteral("ReadErrorsTotal"));
+    disk.read_errors_total_known = jsonBool(object, QStringLiteral("ReadErrorsTotalKnown"));
     disk.write_errors_total = jsonUInt64(object, QStringLiteral("WriteErrorsTotal"));
+    disk.write_errors_total_known = jsonBool(object, QStringLiteral("WriteErrorsTotalKnown"));
     disk.wear_percent = jsonUInt64(object, QStringLiteral("WearPercent"));
+    disk.wear_percent_known = jsonBool(object, QStringLiteral("WearPercentKnown"));
     disk.is_system = jsonBool(object, QStringLiteral("IsSystem"));
     disk.is_boot = jsonBool(object, QStringLiteral("IsBoot"));
     disk.is_read_only = jsonBool(object, QStringLiteral("IsReadOnly"));
@@ -525,6 +539,42 @@ void appendVolumeProbeWarnings(PartitionInventory* inventory) {
     }
 }
 
+void appendInventoryMetadataWarnings(PartitionInventory* inventory) {
+    for (const auto& disk : inventory->disks) {
+        if (!disk.reliability_query_succeeded) {
+            const QString reason = disk.reliability_query_error.trimmed().isEmpty()
+                                       ? QStringLiteral("no error text reported")
+                                       : disk.reliability_query_error.trimmed();
+            inventory->warnings.append(
+                QStringLiteral("Storage reliability query failed for disk %1: %2; SMART metrics "
+                               "are unknown")
+                    .arg(disk.disk_number.value())
+                    .arg(reason));
+        }
+        for (const auto& partition : disk.partitions) {
+            if (partition.volume_lookup_failed) {
+                const QString reason = partition.volume_lookup_error.trimmed().isEmpty()
+                                           ? QStringLiteral("no error text reported")
+                                           : partition.volume_lookup_error.trimmed();
+                inventory->warnings.append(
+                    QStringLiteral("Volume lookup failed for disk %1 partition %2: %3; mounted "
+                                   "volume metadata is unknown")
+                        .arg(disk.disk_number.value())
+                        .arg(partition.partition_number.value())
+                        .arg(reason));
+            }
+            if (partition.volume && !partition.volume->bitlocker_state_known &&
+                !partition.volume->bitlocker_state_error.trimmed().isEmpty()) {
+                inventory->warnings.append(
+                    QStringLiteral("BitLocker query failed for volume %1: %2; protection and "
+                                   "lock state are unknown")
+                        .arg(partition.volume->drive_letter,
+                             partition.volume->bitlocker_state_error.trimmed()));
+            }
+        }
+    }
+}
+
 }  // namespace
 
 StorageInventoryWorker::StorageInventoryWorker(QObject* parent) : QObject(parent) {}
@@ -581,6 +631,7 @@ PartitionInventory StorageInventoryWorker::parseInventoryJson(const QByteArray& 
     }
     appendPartitionEnumerationWarnings(&inventory);
     appendVolumeProbeWarnings(&inventory);
+    appendInventoryMetadataWarnings(&inventory);
     inventory.layout_hash = buildLayoutHash(inventory);
     return inventory;
 }
@@ -588,9 +639,25 @@ PartitionInventory StorageInventoryWorker::parseInventoryJson(const QByteArray& 
 static QString inventoryPowerShellHeaderScript() {
     return QStringLiteral(R"PS(
 $ErrorActionPreference = 'Stop'
+# Progress records are not errors. Suppress this host-only stream so stdout remains one JSON
+# document; every command error still terminates or is captured into an explicit error field.
 $ProgressPreference = 'SilentlyContinue'
-$hasBitLocker = [bool](Get-Command Get-BitLockerVolume -ErrorAction SilentlyContinue)
-$physicalDisks = @(Get-PhysicalDisk -ErrorAction SilentlyContinue)
+$bitLockerCommandAvailable = $false
+$bitLockerCommandError = ''
+try {
+  $bitLockerCommandAvailable = $null -ne (Get-Command Get-BitLockerVolume -ErrorAction Stop)
+} catch {
+  $bitLockerCommandError = "Get-BitLockerVolume is unavailable: $($_.Exception.Message)"
+}
+$physicalDiskQueryFailed = $false
+$physicalDiskQueryError = ''
+$physicalDisks = @()
+try {
+  $physicalDisks = @(Get-PhysicalDisk -ErrorAction Stop)
+} catch {
+  $physicalDiskQueryFailed = $true
+  $physicalDiskQueryError = "$($_.Exception.Message)"
+}
 )PS");
 }
 
@@ -599,19 +666,45 @@ static QString inventoryPowerShellVolumeLookupScript() {
 function Get-SakVolumeForPartition {
   param([Parameter(Mandatory = $true)]$Partition)
 
-  $volume = $Partition | Get-Volume -ErrorAction SilentlyContinue
-  if (-not $volume -and $Partition.DriveLetter) {
-    $volume = Get-Volume -DriveLetter $Partition.DriveLetter -ErrorAction SilentlyContinue
+  $errors = @()
+  $volume = $null
+  try {
+    $volume = $Partition | Get-Volume -ErrorAction Stop | Select-Object -First 1
+  } catch {
+    if ("$($_.FullyQualifiedErrorId)" -notlike 'CmdletizationQuery_NotFound*') {
+      $errors += "$($_.Exception.Message)"
+    }
   }
-  if (-not $volume -and $Partition.PSObject.Properties.Name -contains 'AccessPaths') {
+  if (-not $volume -and $Partition.DriveLetter) {
+    try {
+      $volume = Get-Volume -DriveLetter $Partition.DriveLetter -ErrorAction Stop |
+        Select-Object -First 1
+    } catch {
+      if ("$($_.FullyQualifiedErrorId)" -notlike 'CmdletizationQuery_NotFound*') {
+        $errors += "$($_.Exception.Message)"
+      }
+    }
+  }
+  if (-not $volume -and
+      $Partition.PSObject.Properties.Name -contains 'AccessPaths') {
     foreach ($accessPath in @($Partition.AccessPaths)) {
       if ([string]::IsNullOrWhiteSpace($accessPath)) { continue }
-      $volume = Get-Volume -Path $accessPath -ErrorAction SilentlyContinue
+      try {
+        $volume = Get-Volume -Path $accessPath -ErrorAction Stop | Select-Object -First 1
+      } catch {
+        if ("$($_.FullyQualifiedErrorId)" -notlike 'CmdletizationQuery_NotFound*') {
+          $errors += "$($_.Exception.Message)"
+        }
+      }
       if ($volume) { break }
     }
   }
 
-  $volume | Select-Object -First 1
+  [pscustomobject]@{
+    Volume = $volume
+    Failed = (-not $volume -and $errors.Count -gt 0)
+    Error = ($errors | Select-Object -Unique) -join '; '
+  }
 }
 )PS");
 }
@@ -625,10 +718,21 @@ $disks = Get-Disk | ForEach-Object {
     ($_.SerialNumber -and $disk.SerialNumber -and "$($_.SerialNumber)" -eq "$($disk.SerialNumber)") -or
     ($_.FriendlyName -and $disk.FriendlyName -and "$($_.FriendlyName)" -eq "$($disk.FriendlyName)")
   } | Select-Object -First 1
-  $reliability = if ($physical) {
-    $physical | Get-StorageReliabilityCounter -ErrorAction SilentlyContinue
+  $reliability = $null
+  $reliabilityError = ''
+  if ($physicalDiskQueryFailed) {
+    $reliabilityError = "Get-PhysicalDisk failed: $physicalDiskQueryError"
+  } elseif (-not $physical) {
+    $reliabilityError = 'No matching physical disk was reported'
   } else {
-    $null
+    try {
+      $reliability = $physical | Get-StorageReliabilityCounter -ErrorAction Stop
+      if (-not $reliability) {
+        $reliabilityError = 'No storage reliability counters were reported'
+      }
+    } catch {
+      $reliabilityError = "$($_.Exception.Message)"
+    }
   }
   $partitionQuery = Get-SakPartitionsForDisk -DiskNumber $disk.Number
   [pscustomobject]@{
@@ -641,11 +745,17 @@ $disks = Get-Disk | ForEach-Object {
     MediaType = "$($disk.MediaType)"
     PartitionScheme = "$($disk.PartitionStyle)"
     SmartSummary = if ($reliability) { 'Storage reliability counters available' } else { '' }
+    ReliabilityQuerySucceeded = [bool]$reliability
+    ReliabilityQueryError = "$reliabilityError"
     TemperatureCelsius = if ($reliability -and $null -ne $reliability.Temperature) { [int]$reliability.Temperature } else { $null }
-    PowerOnHours = if ($reliability -and $null -ne $reliability.PowerOnHours) { [uint64]$reliability.PowerOnHours } else { 0 }
-    ReadErrorsTotal = if ($reliability -and $null -ne $reliability.ReadErrorsTotal) { [uint64]$reliability.ReadErrorsTotal } else { 0 }
-    WriteErrorsTotal = if ($reliability -and $null -ne $reliability.WriteErrorsTotal) { [uint64]$reliability.WriteErrorsTotal } else { 0 }
-    WearPercent = if ($reliability -and $null -ne $reliability.Wear) { [uint64]$reliability.Wear } else { 0 }
+    PowerOnHoursKnown = [bool]($reliability -and $null -ne $reliability.PowerOnHours)
+    PowerOnHours = if ($reliability -and $null -ne $reliability.PowerOnHours) { [uint64]$reliability.PowerOnHours } else { $null }
+    ReadErrorsTotalKnown = [bool]($reliability -and $null -ne $reliability.ReadErrorsTotal)
+    ReadErrorsTotal = if ($reliability -and $null -ne $reliability.ReadErrorsTotal) { [uint64]$reliability.ReadErrorsTotal } else { $null }
+    WriteErrorsTotalKnown = [bool]($reliability -and $null -ne $reliability.WriteErrorsTotal)
+    WriteErrorsTotal = if ($reliability -and $null -ne $reliability.WriteErrorsTotal) { [uint64]$reliability.WriteErrorsTotal } else { $null }
+    WearPercentKnown = [bool]($reliability -and $null -ne $reliability.Wear)
+    WearPercent = if ($reliability -and $null -ne $reliability.Wear) { [uint64]$reliability.Wear } else { $null }
     Size = [uint64]$disk.Size
     IsBoot = [bool]$disk.IsBoot
     IsSystem = [bool]$disk.IsSystem
@@ -654,16 +764,37 @@ $disks = Get-Disk | ForEach-Object {
 )PS");
 }
 
-static QString inventoryPowerShellPartitionScript() {
+static QString inventoryPowerShellPartitionProbeScript() {
     return QStringLiteral(R"PS(
     PartitionQueryFailed = [bool]$partitionQuery.Failed
     PartitionQueryError = "$($partitionQuery.Error)"
     Partitions = @($partitionQuery.Items | ForEach-Object {
       $partition = $_
-      $volume = Get-SakVolumeForPartition -Partition $partition
-      $bitlocker = if ($hasBitLocker -and $volume -and $volume.DriveLetter) {
-        Get-BitLockerVolume -MountPoint "$($volume.DriveLetter):" -ErrorAction SilentlyContinue
-      } else { $null }
+      $volumeQuery = Get-SakVolumeForPartition -Partition $partition
+      $volume = $volumeQuery.Volume
+      $bitlocker = $null
+      $bitLockerKnown = $false
+      $bitLockerError = ''
+      if ($volume -and $volume.DriveLetter) {
+        if (-not $bitLockerCommandAvailable) {
+          $bitLockerError = $bitLockerCommandError
+        } else {
+          try {
+            $bitlocker = Get-BitLockerVolume -MountPoint "$($volume.DriveLetter):" -ErrorAction Stop
+            $bitLockerKnown = $null -ne $bitlocker
+            if (-not $bitLockerKnown) {
+              $bitLockerError = 'Get-BitLockerVolume returned no result'
+            }
+          } catch {
+            $bitLockerError = "$($_.Exception.Message)"
+          }
+        }
+      }
+)PS");
+}
+
+static QString inventoryPowerShellPartitionResultScript() {
+    return QStringLiteral(R"PS(
       $dirty = $false
       $dirtyKnown = $false
       $dirtyError = ''
@@ -699,6 +830,8 @@ static QString inventoryPowerShellPartitionScript() {
         IsBoot = [bool]$partition.IsBoot
         IsSystem = [bool]$partition.IsSystem
         IsReadOnly = [bool]$partition.IsReadOnly
+        VolumeLookupFailed = [bool]$volumeQuery.Failed
+        VolumeLookupError = "$($volumeQuery.Error)"
         Volume = if ($volume) {
           [pscustomobject]@{
             UniqueId = "$($volume.UniqueId)"
@@ -708,6 +841,8 @@ static QString inventoryPowerShellPartitionScript() {
             HealthStatus = "$($volume.HealthStatus)"
             Size = [uint64]$volume.Size
             SizeRemaining = [uint64]$volume.SizeRemaining
+            BitLockerStateKnown = [bool]$bitLockerKnown
+            BitLockerStateError = "$bitLockerError"
             BitLockerEnabled = if ($bitlocker) { "$($bitlocker.ProtectionStatus)" -eq 'On' } else { $false }
             BitLockerLocked = if ($bitlocker) { "$($bitlocker.LockStatus)" -eq 'Locked' } else { $false }
             DirtyBitKnown = [bool]$dirtyKnown
@@ -758,7 +893,8 @@ QString StorageInventoryWorker::inventoryPowerShellScript() {
     // Both helper functions must be defined BEFORE the Get-Disk pipeline that calls them.
     return inventoryPowerShellHeaderScript() + inventoryPowerShellVolumeLookupScript() +
            inventoryPowerShellPartitionQueryScript() + inventoryPowerShellDiskPrefixScript() +
-           inventoryPowerShellPartitionScript() + inventoryPowerShellFooterScript();
+           inventoryPowerShellPartitionProbeScript() + inventoryPowerShellPartitionResultScript() +
+           inventoryPowerShellFooterScript();
 }
 
 }  // namespace sak

@@ -289,6 +289,17 @@ QString optionalDiskPartitionsFunctionScript() {
         "}\n");
 }
 
+QString temporaryPathCleanupFunctionScript() {
+    return QStringLiteral(
+        "function Remove-SakTemporaryPath([string]$Path) {\n"
+        "  if (-not (Test-Path -LiteralPath $Path -ErrorAction Stop)) { return }\n"
+        "  Remove-Item -LiteralPath $Path -Force -ErrorAction Stop\n"
+        "  if (Test-Path -LiteralPath $Path -ErrorAction Stop) {\n"
+        "    throw ('Temporary path cleanup did not remove {0}' -f $Path)\n"
+        "  }\n"
+        "}\n");
+}
+
 QString linuxSwapFormatBodyScript(const QString& targetPathExpression,
                                   const QString& partitionSizeExpression,
                                   QString label,
@@ -345,7 +356,7 @@ QString linuxSwapFormatBodyScript(const QString& targetPathExpression,
                "} finally {\n"
                "  $stream.Dispose()\n"
                "}\n"
-               "Update-HostStorageCache -ErrorAction SilentlyContinue\n"
+               "Update-HostStorageCache -ErrorAction Stop\n"
                "Write-Output ('Linux swap header written: page_size={0}; pages={1}; label={2}' -f "
                "$pageSize, $pageCount, $label)\n")
                .arg(targetPathExpression,
@@ -552,7 +563,7 @@ PartitionScript buildApfsRawFormatScript(const PartitionOperation& operation,
                      "Invoke-SakApfsWriterCli -Command 'format-raw' -TargetPath $targetPath "
                      "-SizeBytes $targetSizeBytes -VolumeName %2 -AdditionalVolumeNames %3 "
                      "-EvidenceId 'ui.apfs-generated-raw-format'%4\n"
-                     "Update-HostStorageCache -ErrorAction SilentlyContinue\n")
+                     "Update-HostStorageCache -ErrorAction Stop\n")
                      .arg(PartitionScriptBuilder::quotePowerShell(targetPath),
                           PartitionScriptBuilder::quotePowerShell(label),
                           extraVolumes.powershell_list,
@@ -596,7 +607,7 @@ PartitionScript buildApfsRawRepairScript(const PartitionOperation& operation,
                      "Invoke-SakApfsWriterCli -Command 'repair-raw' -TargetPath $targetPath "
                      "-SizeBytes $targetSizeBytes -VolumeName '' -EvidenceId "
                      "'ui.apfs-generated-raw-repair'\n"
-                     "Update-HostStorageCache -ErrorAction SilentlyContinue\n")
+                     "Update-HostStorageCache -ErrorAction Stop\n")
                      .arg(PartitionScriptBuilder::quotePowerShell(targetPath));
     out.dry_run_script = out.preview + QStringLiteral("\nRun sak_apfs_writer_cli.exe repair-raw ") +
                          PartitionScriptBuilder::quotePowerShell(targetPath);
@@ -1012,8 +1023,14 @@ QString apfsRootFilePayloadScript(const QString& payloadBase64) {
     return QStringLiteral(
                "$payloadPath = Join-Path ([System.IO.Path]::GetTempPath()) "
                "('sak-apfs-root-file-' + [guid]::NewGuid().ToString('N') + '.bin')\n"
-               "[System.IO.File]::WriteAllBytes($payloadPath, "
-               "[Convert]::FromBase64String(%1))\n")
+               "$payloadOwned = $false\n"
+               "$payloadBytes = [Convert]::FromBase64String(%1)\n"
+               "$payloadStream = [System.IO.File]::Open($payloadPath, "
+               "[System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, "
+               "[System.IO.FileShare]::None)\n"
+               "$payloadOwned = $true\n"
+               "try { $payloadStream.Write($payloadBytes, 0, $payloadBytes.Length); "
+               "$payloadStream.Flush($true) } finally { $payloadStream.Dispose() }\n")
         .arg(PartitionScriptBuilder::quotePowerShell(payloadBase64));
 }
 
@@ -1024,8 +1041,14 @@ QString hfsPayloadScript(const QString& payloadBase64) {
     return QStringLiteral(
                "$payloadPath = Join-Path ([System.IO.Path]::GetTempPath()) "
                "('sak-hfs-payload-' + [guid]::NewGuid().ToString('N') + '.bin')\n"
-               "[System.IO.File]::WriteAllBytes($payloadPath, "
-               "[Convert]::FromBase64String(%1))\n")
+               "$payloadOwned = $false\n"
+               "$payloadBytes = [Convert]::FromBase64String(%1)\n"
+               "$payloadStream = [System.IO.File]::Open($payloadPath, "
+               "[System.IO.FileMode]::CreateNew, [System.IO.FileAccess]::Write, "
+               "[System.IO.FileShare]::None)\n"
+               "$payloadOwned = $true\n"
+               "try { $payloadStream.Write($payloadBytes, 0, $payloadBytes.Length); "
+               "$payloadStream.Flush($true) } finally { $payloadStream.Dispose() }\n")
         .arg(PartitionScriptBuilder::quotePowerShell(payloadBase64));
 }
 
@@ -1035,7 +1058,7 @@ QString apfsRootFileCleanupScript(const QString& payloadBase64) {
     }
     return QStringLiteral(
         "} finally {\n"
-        "  Remove-Item -LiteralPath $payloadPath -Force -ErrorAction SilentlyContinue\n"
+        "  if ($payloadOwned) { Remove-SakTemporaryPath $payloadPath }\n"
         "}\n");
 }
 
@@ -1043,8 +1066,7 @@ QString hfsPayloadCleanupScript(const QString& payloadBase64) {
     if (payloadBase64.isEmpty()) {
         return {};
     }
-    return QStringLiteral(
-        "  Remove-Item -LiteralPath $payloadPath -Force -ErrorAction SilentlyContinue\n");
+    return QStringLiteral("  if ($payloadOwned) { Remove-SakTemporaryPath $payloadPath }\n");
 }
 
 struct ApfsRootFileMutationScriptInput {
@@ -1863,24 +1885,30 @@ QString sakShadowBackupFunctionScript() {
         "function Invoke-SakBackupViaShadow([string]$sourceRoot, [string]$backupPath) {\n"
         "  $volume = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetFullPath($sourceRoot))\n"
         "  $shadow = $null\n"
+        "  $shadowFailure = ''\n"
         "  try {\n"
         "    $result = Invoke-CimMethod -ClassName Win32_ShadowCopy -MethodName Create -Arguments "
         "@{ Volume = $volume; Context = 'ClientAccessible' } -ErrorAction Stop\n"
-        "    if ($result.ReturnValue -eq 0) { $shadow = Get-CimInstance Win32_ShadowCopy -Filter "
-        "(\"ID='{0}'\" -f $result.ShadowID) }\n"
-        "  } catch { $shadow = $null }\n"
+        "    if ($result.ReturnValue -ne 0) {\n"
+        "      $shadowFailure = ('Win32_ShadowCopy.Create returned {0}' -f $result.ReturnValue)\n"
+        "    } else {\n"
+        "      $shadow = Get-CimInstance Win32_ShadowCopy -Filter "
+        "(\"ID='{0}'\" -f $result.ShadowID) -ErrorAction Stop\n"
+        "      if (-not $shadow) { $shadowFailure = 'created shadow could not be resolved' }\n"
+        "    }\n"
+        "  } catch { $shadowFailure = $_.Exception.Message; $shadow = $null }\n"
         "  if ($shadow -and $shadow.DeviceObject) {\n"
         "    try { Invoke-SakRobocopy ($shadow.DeviceObject + '\\') $backupPath }\n"
-        "    finally { Remove-CimInstance -InputObject $shadow -ErrorAction SilentlyContinue }\n"
+        "    finally { Remove-CimInstance -InputObject $shadow -ErrorAction Stop }\n"
         "  } else {\n"
-        "    $fsFormat = ''\n"
-        "    try { $fsFormat = [System.IO.DriveInfo]::new($volume).DriveFormat } catch { }\n"
+        "    $fsFormat = [System.IO.DriveInfo]::new($volume).DriveFormat\n"
         "    if ($fsFormat -notmatch '^(FAT|FAT32|exFAT)$') { throw ('VSS shadow copy unavailable "
         "for {0} (filesystem {1}); refusing to reformat without a point-in-time-consistent backup. "
-        "Enable the Volume Shadow Copy service and run elevated, then retry.' -f $volume, "
-        "$fsFormat) }\n"
+        "Enable the Volume Shadow Copy service and run elevated, then retry. VSS failure: {2}' -f "
+        "$volume, $fsFormat, $shadowFailure) }\n"
         "    Write-Output ('WARNING: VSS shadow copy unavailable for {0} ({1}); backing up the "
-        "live volume (not point-in-time consistent)' -f $volume, $fsFormat)\n"
+        "live volume (not point-in-time consistent). VSS failure: {2}' -f $volume, $fsFormat, "
+        "$shadowFailure)\n"
         "    Invoke-SakRobocopy $sourceRoot $backupPath\n"
         // The live (non-point-in-time) copy has no snapshot, so verify the backup actually
         // matches the source before the caller destroys the source. If a file changed or
@@ -1950,53 +1978,69 @@ QString backupRestoreHelpersScript() {
 // POSITIVELY -- and language-independently -- by Assert-SakDiskPartVolume below, which proves
 // the recreated volume actually exists at the expected size before the restore continues.
 QString diskPartRunnerScript() {
-    return QStringLiteral(
-        "function Invoke-SakDiskPart([string[]]$lines) {\n"
-        "  $scriptPath = Join-Path $env:TEMP ('sak-diskpart-{0}.txt' -f "
-        "[guid]::NewGuid().ToString('N'))\n"
-        "  try {\n"
-        "    $lines | Set-Content -LiteralPath $scriptPath -Encoding ASCII\n"
-        // 2>&1 under $ErrorActionPreference='Stop' would turn any stderr line into a
-        // terminating error before the markers below can be inspected, so the preference is
-        // relaxed for the capture only and restored immediately.
-        "    $oldPreference = $ErrorActionPreference\n"
-        "    $ErrorActionPreference = 'Continue'\n"
-        "    try { $output = (& diskpart.exe /s $scriptPath 2>&1 | Out-String); $code = "
-        "[int]$LASTEXITCODE } finally { $ErrorActionPreference = $oldPreference }\n"
-        "    Write-Output $output\n"
-        "    if ($code -ne 0) { exit $code }\n"
-        "    if ([string]::IsNullOrWhiteSpace($output)) { throw 'DiskPart produced no output; the "
-        "script was not executed' }\n"
-        "    if ($output -match 'DiskPart has encountered an error|Virtual Disk Service error|"
-        "Access is denied|There is no (disk|volume|partition) selected|is not valid|"
-        "DiskPart failed|could not complete the operation|write protected|not convertible|"
-        "not enough usable space|The operation is not supported') { throw ('DiskPart reported a "
-        "failure despite exit code 0: {0}' -f $output.Trim()) }\n"
-        "  }\n"
-        "  finally { Remove-Item -LiteralPath $scriptPath -Force -ErrorAction SilentlyContinue }\n"
-        "}\n"
-        "function Get-SakManifestBytes($manifest) {\n"
-        "  $sum = ($manifest | Measure-Object -Property Length -Sum).Sum\n"
-        "  if ($null -eq $sum) { return [uint64]0 }\n"
-        "  return [uint64]$sum\n"
-        "}\n"
-        "function Assert-SakDiskPartVolume([string]$driveLetter, [uint64]$minimumBytes) {\n"
-        "  Update-HostStorageCache -ErrorAction SilentlyContinue\n"
-        "  $volume = $null\n"
-        "  for ($attempt = 0; $attempt -lt 20 -and $null -eq $volume; $attempt++) {\n"
-        "    $volume = Get-Volume -DriveLetter $driveLetter -ErrorAction SilentlyContinue\n"
-        "    if ($null -eq $volume) { Start-Sleep -Milliseconds 500 }\n"
-        "  }\n"
-        "  if ($null -eq $volume) { throw ('DiskPart did not leave a usable volume on {0}; the "
-        "recreate failed' -f $driveLetter) }\n"
-        // The recreate size comes from a payload-declared byte count, so prove the new volume
-        // can actually hold the backup before the restore is attempted. This catches an
-        // undersized recreate (e.g. a wrapped size collapsing to the 1 MiB floor) immediately
-        // instead of part-way through the robocopy that would otherwise surface it.
-        "  if ([uint64]$volume.Size -lt $minimumBytes) { throw ('Recreated volume {0} is {1} "
-        "bytes, smaller than the {2} bytes of backed-up data it must hold' -f $driveLetter, "
-        "$volume.Size, $minimumBytes) }\n"
-        "}\n");
+    return temporaryPathCleanupFunctionScript() +
+           QStringLiteral(
+               "function Get-SakOptionalVolumeByDriveLetter([string]$DriveLetter) {\n"
+               "  try { return Get-Volume -DriveLetter $DriveLetter -ErrorAction Stop }\n"
+               "  catch {\n"
+               "    if (\"$($_.FullyQualifiedErrorId)\" -like 'CmdletizationQuery_NotFound*') {\n"
+               "      return $null\n"
+               "    }\n"
+               "    throw\n"
+               "  }\n"
+               "}\n"
+               "function Invoke-SakDiskPart([string[]]$lines) {\n"
+               "  $scriptPath = Join-Path $env:TEMP ('sak-diskpart-{0}.txt' -f "
+               "[guid]::NewGuid().ToString('N'))\n"
+               "  try {\n"
+               "    $lines | Set-Content -LiteralPath $scriptPath -Encoding ASCII\n"
+               // 2>&1 under $ErrorActionPreference='Stop' would turn any stderr line into a
+               // terminating error before the markers below can be inspected, so the preference is
+               // relaxed for the capture only and restored immediately.
+               "    $oldPreference = $ErrorActionPreference\n"
+               "    $ErrorActionPreference = 'Continue'\n"
+               "    try { $output = (& diskpart.exe /s $scriptPath 2>&1 | Out-String); $code = "
+               "[int]$LASTEXITCODE } finally { $ErrorActionPreference = $oldPreference }\n"
+               "    Write-Output $output\n"
+               "    if ($code -ne 0) { exit $code }\n"
+               "    if ([string]::IsNullOrWhiteSpace($output)) { throw 'DiskPart produced no "
+               "output; the "
+               "script was not executed' }\n"
+               "    if ($output -match 'DiskPart has encountered an error|Virtual Disk Service "
+               "error|"
+               "Access is denied|There is no (disk|volume|partition) selected|is not valid|"
+               "DiskPart failed|could not complete the operation|write protected|not convertible|"
+               "not enough usable space|The operation is not supported') { throw ('DiskPart "
+               "reported a "
+               "failure despite exit code 0: {0}' -f $output.Trim()) }\n"
+               "  }\n"
+               "  finally { Remove-SakTemporaryPath $scriptPath }\n"
+               "}\n"
+               "function Get-SakManifestBytes($manifest) {\n"
+               "  $sum = ($manifest | Measure-Object -Property Length -Sum).Sum\n"
+               "  if ($null -eq $sum) { return [uint64]0 }\n"
+               "  return [uint64]$sum\n"
+               "}\n"
+               "function Assert-SakDiskPartVolume([string]$driveLetter, [uint64]$minimumBytes) {\n"
+               "  Update-HostStorageCache -ErrorAction Stop\n"
+               "  $volume = $null\n"
+               "  for ($attempt = 0; $attempt -lt 20 -and $null -eq $volume; $attempt++) {\n"
+               "    $volume = Get-SakOptionalVolumeByDriveLetter $driveLetter\n"
+               "    if ($null -eq $volume) { Start-Sleep -Milliseconds 500 }\n"
+               "  }\n"
+               "  if ($null -eq $volume) { throw ('DiskPart did not leave a usable volume on {0}; "
+               "the "
+               "recreate failed' -f $driveLetter) }\n"
+               // The recreate size comes from a payload-declared byte count, so prove the new
+               // volume can actually hold the backup before the restore is attempted. This catches
+               // an undersized recreate (e.g. a wrapped size collapsing to the 1 MiB floor)
+               // immediately instead of part-way through the robocopy that would otherwise surface
+               // it.
+               "  if ([uint64]$volume.Size -lt $minimumBytes) { throw ('Recreated volume {0} is "
+               "{1} "
+               "bytes, smaller than the {2} bytes of backed-up data it must hold' -f $driveLetter, "
+               "$volume.Size, $minimumBytes) }\n"
+               "}\n");
 }
 
 // Raw-device classification is ONE authority (sak::isWindowsRawDevicePath /
@@ -2428,8 +2472,8 @@ QString cloneTransferRawTargetFunctionsScript() {
 
 QString cloneTransferCopyBodyScript() {
     return QStringLiteral(
-        "try { if ($expectedBytes -eq 0) { try { $expectedBytes = [uint64]$in.Length "
-        "- $sourceOffset } catch {} }; [void]$in.Seek([int64]$sourceOffset, "
+        "try { if ($expectedBytes -eq 0) { $expectedBytes = [uint64]$in.Length "
+        "- $sourceOffset }; [void]$in.Seek([int64]$sourceOffset, "
         "[System.IO.SeekOrigin]::Begin); $out = Open-SakWrite $dst; try { "
         "[void]$out.Seek([int64]$targetOffset, [System.IO.SeekOrigin]::Begin); "
         "Copy-SakBytes $in $out $expectedBytes; $out.Flush($true) } finally { $out.Dispose() } } "
@@ -2739,7 +2783,7 @@ static QString growExtResizePreToolScript(const PartitionOperation& operation,
     return QStringLiteral(
                "$targetSizeBytes = [uint64]%1\n"
                "Resize-Partition -DiskNumber %2 -PartitionNumber %3 -Size $targetSizeBytes\n"
-               "Update-HostStorageCache -ErrorAction SilentlyContinue\n"
+               "Update-HostStorageCache -ErrorAction Stop\n"
                "$p = Get-Partition -DiskNumber %2 -PartitionNumber %3 -ErrorAction Stop\n"
                "if ([uint64]$p.Size -ne $targetSizeBytes) { throw 'Partition resize did not reach "
                "target size' }\n")
@@ -2780,7 +2824,7 @@ static QString extShrinkPreToolScript(uint64_t targetSize) {
 static QString extShrinkPartitionScript(const PartitionOperation& operation) {
     return QStringLiteral(
                "Resize-Partition -DiskNumber %1 -PartitionNumber %2 -Size $targetSizeBytes\n"
-               "Update-HostStorageCache -ErrorAction SilentlyContinue\n"
+               "Update-HostStorageCache -ErrorAction Stop\n"
                "$p = Get-Partition -DiskNumber %1 -PartitionNumber %2 -ErrorAction Stop\n"
                "if ([uint64]$p.Size -ne $targetSizeBytes) { throw 'Partition shrink did not "
                "reach target size' }\n")
@@ -2838,7 +2882,7 @@ static PartitionScript buildExtShrinkResizeScript(const PartitionOperation& oper
                                           e2fsck,
                                           {QStringLiteral("-n"), QStringLiteral("-f"), targetPath},
                                           {QStringLiteral("0")}) +
-                 QStringLiteral("Update-HostStorageCache -ErrorAction SilentlyContinue\n");
+                 QStringLiteral("Update-HostStorageCache -ErrorAction Stop\n");
     out.dry_run_script =
         out.preview + QStringLiteral("\n") +
         PartitionScriptBuilder::quotePowerShell(QDir::toNativeSeparators(resize2fs.tool_path)) +
@@ -3145,9 +3189,12 @@ static QString hfsCheckedToolFunctionScript() {
 static QString hfsSparseFileFunctionsScript() {
     return QStringLiteral(
         "function New-SakSparseImageFile {\n"
-        "  param([string]$Path, [uint64]$SizeBytes)\n"
-        "  Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue\n"
-        "  New-Item -ItemType File -Path $Path -Force | Out-Null\n"
+        "  param([string]$Path, [uint64]$SizeBytes, [ref]$Owned)\n"
+        "  if (Test-Path -LiteralPath $Path -ErrorAction Stop) {\n"
+        "    throw 'Staged HFS image path already exists; refusing to overwrite'\n"
+        "  }\n"
+        "  New-Item -ItemType File -Path $Path -ErrorAction Stop | Out-Null\n"
+        "  $Owned.Value = $true\n"
         "  $sparseOutput = fsutil sparse setflag $Path 2>&1\n"
         "  if ($LASTEXITCODE -ne 0) { throw ('Failed to mark staged HFS image sparse: {0}' "
         "-f (($sparseOutput | Out-String).Trim())) }\n"
@@ -3469,16 +3516,17 @@ static QString hfsRepairFunctionScript() {
 }
 
 static QString hfsStagedFunctionsScript() {
-    return hfsCheckedToolFunctionScript() + hfsSparseFileFunctionsScript() +
-           hfsVolumeStagingSizeFunctionScript() + hfsRangeCopyFunctionsScript() +
-           hfsSparseImageWritebackFunctionScript() + hfsRawTargetStagingFunctionScript() +
-           hfsRepairFunctionScript();
+    return temporaryPathCleanupFunctionScript() + hfsCheckedToolFunctionScript() +
+           hfsSparseFileFunctionsScript() + hfsVolumeStagingSizeFunctionScript() +
+           hfsRangeCopyFunctionsScript() + hfsSparseImageWritebackFunctionScript() +
+           hfsRawTargetStagingFunctionScript() + hfsRepairFunctionScript();
 }
 
 static QString hfsStagedImagePathScript(const QString& prefix) {
     return QStringLiteral(
                "$stagedImagePath = Join-Path ([System.IO.Path]::GetTempPath()) "
-               "('%1-' + [guid]::NewGuid().ToString('N') + '.img')\n")
+               "('%1-' + [guid]::NewGuid().ToString('N') + '.img')\n"
+               "$stagedImageOwned = $false\n")
         .arg(prefix);
 }
 
@@ -3491,39 +3539,38 @@ static PartitionScript buildStagedHfsFormatScript(
     PartitionScript out;
     out.preview = request.preview + QStringLiteral(" using sparse staging");
     const QStringList formatArgs = request.command.arguments;
-    out.script =
-        commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
-        hfsStagedFunctionsScript() +
-        QStringLiteral(
-            "$targetPath = %1\n"
-            "$targetSizeBytes = [uint64]$p.Size\n")
-            .arg(PartitionScriptBuilder::quotePowerShell(rawTargetPath)) +
-        hfsStagedImagePathScript(QStringLiteral("sak-hfs-format")) +
-        QStringLiteral(
-            "try {\n"
-            "  New-SakSparseImageFile -Path $stagedImagePath -SizeBytes $targetSizeBytes\n"
-            "  $formatArgs = %1\n"
-            "  [void](Invoke-SakCheckedHfsTool -Name 'newfs_hfs format' -FilePath %2 "
-            "-ExpectedHash %3 -Arguments $formatArgs -AcceptedExitCodes @(0))\n"
-            "  Invoke-SakHfsRepairUntilClean -FsckPath %4 -ExpectedHash %5 "
-            "-ImagePath $stagedImagePath -FileSystem %6\n"
-            "  Copy-SakSparseImageToRawTarget -ImagePath $stagedImagePath -RawTarget "
-            "$targetPath -TargetSizeBytes $targetSizeBytes\n"
-            "} finally {\n"
-            "  Remove-Item -LiteralPath $stagedImagePath -Force -ErrorAction SilentlyContinue\n"
-            "}\n"
-            "Update-HostStorageCache -ErrorAction SilentlyContinue\n")
-            .arg(powerShellArrayLiteralWithTrailingExpression(formatArgs,
-                                                              QStringLiteral("$stagedImagePath")),
-                 PartitionScriptBuilder::quotePowerShell(
-                     QDir::toNativeSeparators(formatResolution.tool_path)),
-                 PartitionScriptBuilder::quotePowerShell(
-                     formatResolution.tool.binary_sha256.toLower()),
-                 PartitionScriptBuilder::quotePowerShell(
-                     QDir::toNativeSeparators(fsckResolution.tool_path)),
-                 PartitionScriptBuilder::quotePowerShell(
-                     fsckResolution.tool.binary_sha256.toLower()),
-                 PartitionScriptBuilder::quotePowerShell(request.command.file_system));
+    out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
+                 hfsStagedFunctionsScript() +
+                 QStringLiteral(
+                     "$targetPath = %1\n"
+                     "$targetSizeBytes = [uint64]$p.Size\n")
+                     .arg(PartitionScriptBuilder::quotePowerShell(rawTargetPath)) +
+                 hfsStagedImagePathScript(QStringLiteral("sak-hfs-format")) +
+                 QStringLiteral(
+                     "try {\n"
+                     "  New-SakSparseImageFile -Path $stagedImagePath -SizeBytes $targetSizeBytes\n"
+                     "  $formatArgs = %1\n"
+                     "  [void](Invoke-SakCheckedHfsTool -Name 'newfs_hfs format' -FilePath %2 "
+                     "-ExpectedHash %3 -Arguments $formatArgs -AcceptedExitCodes @(0))\n"
+                     "  Invoke-SakHfsRepairUntilClean -FsckPath %4 -ExpectedHash %5 "
+                     "-ImagePath $stagedImagePath -FileSystem %6\n"
+                     "  Copy-SakSparseImageToRawTarget -ImagePath $stagedImagePath -RawTarget "
+                     "$targetPath -TargetSizeBytes $targetSizeBytes\n"
+                     "} finally {\n"
+                     "  Remove-SakTemporaryPath $stagedImagePath\n"
+                     "}\n"
+                     "Update-HostStorageCache -ErrorAction Stop\n")
+                     .arg(powerShellArrayLiteralWithTrailingExpression(
+                              formatArgs, QStringLiteral("$stagedImagePath")),
+                          PartitionScriptBuilder::quotePowerShell(
+                              QDir::toNativeSeparators(formatResolution.tool_path)),
+                          PartitionScriptBuilder::quotePowerShell(
+                              formatResolution.tool.binary_sha256.toLower()),
+                          PartitionScriptBuilder::quotePowerShell(
+                              QDir::toNativeSeparators(fsckResolution.tool_path)),
+                          PartitionScriptBuilder::quotePowerShell(
+                              fsckResolution.tool.binary_sha256.toLower()),
+                          PartitionScriptBuilder::quotePowerShell(request.command.file_system));
     out.dry_run_script = out.preview + QStringLiteral("\nStage HFS image with ") +
                          PartitionScriptBuilder::quotePowerShell(formatResolution.tool_path) +
                          QStringLiteral("; copy sparse ranges to ") +
@@ -3557,9 +3604,9 @@ static PartitionScript buildStagedHfsRepairScript(
             "  Copy-SakSparseImageToRawTarget -ImagePath $stagedImagePath -RawTarget "
             "$targetPath -TargetSizeBytes $targetSizeBytes\n"
             "} finally {\n"
-            "  Remove-Item -LiteralPath $stagedImagePath -Force -ErrorAction SilentlyContinue\n"
+            "  Remove-SakTemporaryPath $stagedImagePath\n"
             "}\n"
-            "Update-HostStorageCache -ErrorAction SilentlyContinue\n")
+            "Update-HostStorageCache -ErrorAction Stop\n")
             .arg(PartitionScriptBuilder::quotePowerShell(
                      QDir::toNativeSeparators(fsckResolution.tool_path)),
                  PartitionScriptBuilder::quotePowerShell(
@@ -3685,7 +3732,7 @@ static QString newPartitionCommandScript(const PartitionOperation& operation,
 static QString refreshCreatedPartitionAndRawTargetScript(const PartitionOperation& operation,
                                                          const CreateScriptSpec& spec) {
     return QStringLiteral(
-               "Update-HostStorageCache -ErrorAction SilentlyContinue\n"
+               "Update-HostStorageCache -ErrorAction Stop\n"
                "$p = Get-Partition -DiskNumber %1 -PartitionNumber $p.PartitionNumber "
                "-ErrorAction Stop\n"
                "if ([uint64]$p.Size -lt [uint64]%2) { throw 'Created partition is smaller than "
@@ -3740,7 +3787,7 @@ static PartitionScript buildCreateApfsScript(const PartitionOperation& operation
                      "Invoke-SakApfsWriterCli -Command 'format-raw' -TargetPath $rawTargetPath "
                      "-SizeBytes ([uint64]$p.Size) -VolumeName %1 -EvidenceId "
                      "'ui.apfs-generated-raw-create-format'\n"
-                     "Update-HostStorageCache -ErrorAction SilentlyContinue\n"
+                     "Update-HostStorageCache -ErrorAction Stop\n"
                      "$p | ConvertTo-Json -Compress\n")
                      .arg(PartitionScriptBuilder::quotePowerShell(spec.label));
     out.dry_run_script =
@@ -3775,7 +3822,7 @@ static PartitionScript buildCreateExtScript(const PartitionOperation& operation,
                                                                   QStringLiteral("$rawTargetPath")),
                      {QStringLiteral("0")}) +
                  QStringLiteral(
-                     "Update-HostStorageCache -ErrorAction SilentlyContinue\n"
+                     "Update-HostStorageCache -ErrorAction Stop\n"
                      "$p | ConvertTo-Json -Compress\n");
     out.dry_run_script = out.preview +
                          QStringLiteral("\nCreate partition, derive raw target, run ") +
@@ -3815,9 +3862,9 @@ static PartitionScript buildCreateStagedHfsScript(
             "  Copy-SakSparseImageToRawTarget -ImagePath $stagedImagePath -RawTarget "
             "$targetPath -TargetSizeBytes $targetSizeBytes\n"
             "} finally {\n"
-            "  Remove-Item -LiteralPath $stagedImagePath -Force -ErrorAction SilentlyContinue\n"
+            "  Remove-SakTemporaryPath $stagedImagePath\n"
             "}\n"
-            "Update-HostStorageCache -ErrorAction SilentlyContinue\n"
+            "Update-HostStorageCache -ErrorAction Stop\n"
             "$p | ConvertTo-Json -Compress\n")
             .arg(powerShellArrayLiteralWithTrailingExpression(formatArgs,
                                                               QStringLiteral("$stagedImagePath")),
@@ -4274,10 +4321,11 @@ PartitionScript PartitionScriptBuilder::buildApfsRootFileMutationScript(
                      "$targetPath = %1\n"
                      "$targetSizeBytes = [uint64]$p.Size\n")
                      .arg(quotePowerShell(rawPartitionTargetPath(operation))) +
-                 payloadScript + apfsRootFilePayloadTryPrefix(payloadScript) +
+                 (payloadScript.isEmpty() ? QString() : temporaryPathCleanupFunctionScript()) +
+                 apfsRootFilePayloadTryPrefix(payloadScript) + payloadScript +
                  apfsRootFileMutationInvoke(operation, input) +
                  apfsRootFileCleanupScript(input.payload_base64) +
-                 QStringLiteral("Update-HostStorageCache -ErrorAction SilentlyContinue\n");
+                 QStringLiteral("Update-HostStorageCache -ErrorAction Stop\n");
     out.dry_run_script = out.preview + QStringLiteral("\nRun sak_apfs_writer_cli.exe ") +
                          input.command + QStringLiteral(" ") +
                          quotePowerShell(rawPartitionTargetPath(operation));
@@ -4310,7 +4358,7 @@ PartitionScript PartitionScriptBuilder::buildApfsSnapshotScript(
                      "Invoke-SakApfsWriterCli -Command %2 -TargetPath $targetPath "
                      "-SizeBytes $targetSizeBytes -VolumeName '' -EvidenceId %3 "
                      "-SnapshotName %4\n"
-                     "Update-HostStorageCache -ErrorAction SilentlyContinue\n")
+                     "Update-HostStorageCache -ErrorAction Stop\n")
                      .arg(quotePowerShell(rawPartitionTargetPath(operation)),
                           quotePowerShell(command),
                           quotePowerShell(evidenceId),
@@ -4351,7 +4399,7 @@ PartitionScript PartitionScriptBuilder::buildApfsCloneHardlinkResizeScript(
                      "$targetSizeBytes = [uint64]$p.Size\n"
                      "Invoke-SakApfsWriterCli -Command %2 -TargetPath $targetPath "
                      "-SizeBytes $targetSizeBytes -VolumeName '' -EvidenceId %3%4\n"
-                     "Update-HostStorageCache -ErrorAction SilentlyContinue\n")
+                     "Update-HostStorageCache -ErrorAction Stop\n")
                      .arg(quotePowerShell(rawPartitionTargetPath(operation)),
                           quotePowerShell(command),
                           quotePowerShell(apfsA7EvidenceId(operation.type)),
@@ -4393,9 +4441,9 @@ PartitionScript PartitionScriptBuilder::buildHfsFileMutationScript(
             "Write-Output ('HFS file mutation staging bytes: {0}; partition bytes: {1}' "
             "-f $targetSizeBytes, $targetPartitionSizeBytes)\n")
             .arg(quotePowerShell(rawPartitionTargetPath(operation))) +
-        hfsStagedImagePathScript(QStringLiteral("sak-hfs-file-mutation")) + payloadScript +
+        hfsStagedImagePathScript(QStringLiteral("sak-hfs-file-mutation")) +
+        QStringLiteral("try {\n") + payloadScript +
         QStringLiteral(
-            "try {\n"
             "  New-SakSparseImageFile -Path $stagedImagePath -SizeBytes $targetSizeBytes\n"
             "  Copy-SakRawTargetToImage -RawTarget $targetPath -ImagePath $stagedImagePath "
             "-SizeBytes $targetSizeBytes\n") +
@@ -4412,9 +4460,9 @@ PartitionScript PartitionScriptBuilder::buildHfsFileMutationScript(
                  input.allow_journaled ? QStringLiteral(" -AllowJournaledIncomplete") : QString()) +
         hfsPayloadCleanupScript(input.payload_base64) +
         QStringLiteral(
-            "  Remove-Item -LiteralPath $stagedImagePath -Force -ErrorAction SilentlyContinue\n"
+            "  Remove-SakTemporaryPath $stagedImagePath\n"
             "}\n"
-            "Update-HostStorageCache -ErrorAction SilentlyContinue\n");
+            "Update-HostStorageCache -ErrorAction Stop\n");
     out.dry_run_script =
         out.preview + QStringLiteral("\nStage raw HFS target, run sak_hfs_writer_cli.exe ") +
         input.command + QStringLiteral(", repair/check, copy sparse ranges back to ") +
@@ -4469,8 +4517,7 @@ PartitionScript PartitionScriptBuilder::buildExternalFileSystemToolScript(
                                           resolution,
                                           request.command.arguments,
                                           request.accepted_exit_codes) +
-                 postTool.script +
-                 QStringLiteral("Update-HostStorageCache -ErrorAction SilentlyContinue\n");
+                 postTool.script + QStringLiteral("Update-HostStorageCache -ErrorAction Stop\n");
     out.dry_run_script = out.preview + QStringLiteral("\n") +
                          quotePowerShell(resolution.tool_path) + QStringLiteral(" ") +
                          request.command.arguments.join(QLatin1Char(' '));
@@ -4488,12 +4535,13 @@ PartitionScript PartitionScriptBuilder::buildSurfaceTestScript(
             commonHeader(out.preview) +
             QStringLiteral(
                 "$disk = Get-Disk -Number %1 -ErrorAction Stop\n"
-                "$physical = Get-PhysicalDisk | Where-Object { $_.DeviceId -eq $disk.Number } | "
-                "Select-Object -First 1\n"
-                "if ($physical) {\n"
-                "  $physical | Get-StorageReliabilityCounter -ErrorAction SilentlyContinue | "
-                "Format-List | Out-String | Write-Output\n"
+                "$physical = Get-PhysicalDisk -ErrorAction Stop | Where-Object { "
+                "$_.DeviceId -eq $disk.Number } | Select-Object -First 1\n"
+                "if (-not $physical) { throw 'Storage reliability target mapping unavailable' }\n"
+                "$reliability = $physical | Get-StorageReliabilityCounter -ErrorAction Stop\n"
+                "if ($null -eq $reliability) { throw 'Storage reliability query returned no data' "
                 "}\n"
+                "$reliability | Format-List | Out-String | Write-Output\n"
                 "Get-Partition -DiskNumber %1 | Where-Object DriveLetter | ForEach-Object {\n"
                 "  Write-Output \"Scanning volume $($_.DriveLetter):\"\n"
                 "  Repair-Volume -DriveLetter $_.DriveLetter -Scan -Verbose\n"
@@ -4613,7 +4661,7 @@ PartitionScript PartitionScriptBuilder::buildSetPartitionHiddenScript(
     if (hidden && isValidDriveLetter(operation.target.drive_letter.left(1))) {
         out.script += QStringLiteral(
                           "Remove-PartitionAccessPath -DiskNumber %1 -PartitionNumber %2 "
-                          "-AccessPath %3 -ErrorAction SilentlyContinue\n")
+                          "-AccessPath %3 -ErrorAction Stop\n")
                           .arg(operation.target.disk_number.value())
                           .arg(operation.target.partition_number.value())
                           .arg(quotePowerShell(operation.target.drive_letter.left(1).toUpper() +
@@ -5429,7 +5477,7 @@ PartitionScript PartitionScriptBuilder::buildConvertDynamicDiskToBasicScript(
             "%6','convert basic',('create partition primary size={0}' -f $sourceSizeMb),('format "
             "fs={0} quick label=\"{1}\"' -f $fileSystem, $label),('assign letter={0}' -f $drive))\n"
             "Invoke-SakDiskPart $lines\n"
-            "Update-HostStorageCache -ErrorAction SilentlyContinue\n"
+            "Update-HostStorageCache -ErrorAction Stop\n"
             "Assert-SakDiskPartVolume $drive (Get-SakManifestBytes $backupManifest)\n"
             "Invoke-SakRobocopy $backupPath $sourceRoot\n"
             "$restoredManifest = @(Get-SakFileManifest $sourceRoot)\n"

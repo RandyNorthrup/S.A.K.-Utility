@@ -238,6 +238,9 @@ the rest is a debt-reduction + test-infra program (multi-session, much of it cos
       CTest 266/266, zero failures, 820.46 seconds.
       Non-core clang-health wave 2: real naming gate passed 150/150 healthy TUs; all changed-file
       hooks passed; Release build exit 0; full CTest 266/266, zero failures, 878.41 seconds.
+      Failure-silence wave 3: production error/failure-silencing patterns reached zero; all
+      changed-file hooks passed; Release build exit 0; full CTest 266/266, zero failures,
+      760.35 seconds.
 - [x] Branch protection -- CLOSED BY OWNER DECISION under R5-G21-6. The owner explicitly dropped
       this requirement; it is not deferred work and does not block the campaign.
 

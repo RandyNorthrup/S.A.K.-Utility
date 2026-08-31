@@ -187,6 +187,8 @@ struct PartitionVolumeInfo {
     bool dirty_bit_known{false};
     bool dirty_bit_set{false};
     QString dirty_bit_error;
+    bool bitlocker_state_known{false};
+    QString bitlocker_state_error;
 
     [[nodiscard]] bool hasDriveLetter() const noexcept { return !drive_letter.isEmpty(); }
 };
@@ -207,6 +209,8 @@ struct PartitionInfoEx {
     bool is_active{false};
     bool is_read_only{false};
     std::optional<PartitionVolumeInfo> volume;
+    bool volume_lookup_failed{false};
+    QString volume_lookup_error;
 
     [[nodiscard]] bool hasVolume() const noexcept { return volume.has_value(); }
 };
@@ -248,6 +252,12 @@ struct PartitionDiskInfo {
     bool partition_enumeration_failed{false};
     /// The reported reason the partition enumeration failed (empty when it succeeded).
     QString partition_enumeration_error;
+    bool reliability_query_succeeded{false};
+    QString reliability_query_error;
+    bool power_on_hours_known{false};
+    bool read_errors_total_known{false};
+    bool write_errors_total_known{false};
+    bool wear_percent_known{false};
 };
 
 struct PartitionInventory {

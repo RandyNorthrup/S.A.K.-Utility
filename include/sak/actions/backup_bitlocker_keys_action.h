@@ -65,15 +65,16 @@ private:
      * @brief Information about a BitLocker-protected volume
      */
     struct VolumeInfo {
-        QString drive_letter;           // e.g., "C:"
-        QString volume_label;           // User-assigned label
-        QString device_id;              // WMI device ID
-        QString protection_status;      // On, Off, Unknown
-        QString encryption_method;      // XTS-AES-128, XTS-AES-256, etc.
-        QString encryption_percentage;  // Encryption progress (0-100%)
-        QString lock_status;            // Locked, Unlocked
-        QString volume_type;            // OperatingSystem, FixedData, Removable
-        qint64 volume_size_bytes{0};    // Total volume size
+        QString drive_letter;               // e.g., "C:"
+        QString volume_label;               // User-assigned label
+        bool volume_metadata_known{false};  // Label/size came from Get-Volume.
+        QString device_id;                  // WMI device ID
+        QString protection_status;          // On, Off, Unknown
+        QString encryption_method;          // XTS-AES-128, XTS-AES-256, etc.
+        QString encryption_percentage;      // Encryption progress (0-100%)
+        QString lock_status;                // Locked, Unlocked
+        QString volume_type;                // OperatingSystem, FixedData, Removable
+        qint64 volume_size_bytes{0};        // Total volume size
         QVector<KeyProtectorInfo> key_protectors;
     };
 
