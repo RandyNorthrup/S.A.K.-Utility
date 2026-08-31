@@ -670,9 +670,9 @@ void NetworkDiagnosticTypesTests::firewallRule_profileEnum() {
     QVERIFY(FirewallRule::Profile::Domain != FirewallRule::Profile::Private);
     QVERIFY(FirewallRule::Profile::Private != FirewallRule::Profile::Public);
     // Profile is a bitmask: Domain=1, Private=2, Public=4
-    QVERIFY(static_cast<int>(FirewallRule::Profile::Domain) == 1);
-    QVERIFY(static_cast<int>(FirewallRule::Profile::Private) == 2);
-    QVERIFY(static_cast<int>(FirewallRule::Profile::Public) == 4);
+    QCOMPARE(static_cast<int>(FirewallRule::Profile::Domain), 1);
+    QCOMPARE(static_cast<int>(FirewallRule::Profile::Private), 2);
+    QCOMPARE(static_cast<int>(FirewallRule::Profile::Public), 4);
 }
 
 // ============================================================================

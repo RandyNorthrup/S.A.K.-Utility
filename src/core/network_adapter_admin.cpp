@@ -10,6 +10,8 @@
 #include "sak/logger.h"
 #include "sak/process_runner.h"
 
+#include <algorithm>
+
 namespace sak {
 
 namespace {
@@ -39,12 +41,12 @@ bool isIpv4Octet(QStringView octet) {
     if (octet.isEmpty() || octet.size() > kMaxOctetDigits) {
         return false;
     }
-    for (const QChar ch : octet) {
-        // Deliberately ASCII-only: QChar::isDigit() also accepts non-ASCII decimal digits, which
-        // QString::toInt would then convert, letting a non-ASCII spelling of an address through.
-        if (ch < QLatin1Char('0') || ch > QLatin1Char('9')) {
-            return false;
-        }
+    // Deliberately ASCII-only: QChar::isDigit() also accepts non-ASCII decimal digits, which
+    // QString::toInt would then convert, letting a non-ASCII spelling of an address through.
+    if (!std::all_of(octet.cbegin(), octet.cend(), [](const QChar ch) {
+            return ch >= QLatin1Char('0') && ch <= QLatin1Char('9');
+        })) {
+        return false;
     }
     if (octet.size() > 1 && octet.front() == QLatin1Char('0')) {
         return false;
@@ -64,12 +66,7 @@ bool isDottedIpv4(const QString& value) {
     if (octets.size() != kIpv4OctetCount) {
         return false;
     }
-    for (const QStringView octet : octets) {
-        if (!isIpv4Octet(octet)) {
-            return false;
-        }
-    }
-    return true;
+    return std::all_of(octets.cbegin(), octets.cend(), isIpv4Octet);
 }
 
 bool isValidNewAdapterName(const QString& name) {
@@ -82,15 +79,10 @@ bool isValidNewAdapterName(const QString& name) {
     if (trimmed.startsWith(QLatin1Char('-')) || trimmed.startsWith(QLatin1Char('/'))) {
         return false;
     }
-    for (const QChar ch : trimmed) {
-        if (ch.unicode() < kFirstPrintableAscii || ch.unicode() == kDeleteCodepoint) {
-            return false;
-        }
-        if (ch == QLatin1Char('=') || ch == QLatin1Char('"')) {
-            return false;
-        }
-    }
-    return true;
+    return std::none_of(trimmed.cbegin(), trimmed.cend(), [](const QChar ch) {
+        return ch.unicode() < kFirstPrintableAscii || ch.unicode() == kDeleteCodepoint ||
+               ch == QLatin1Char('=') || ch == QLatin1Char('"');
+    });
 }
 
 QString resolveAdapterName(const QStringList& available, const QString& requested) {
@@ -98,12 +90,10 @@ QString resolveAdapterName(const QStringList& available, const QString& requeste
     if (wanted.isEmpty()) {
         return {};
     }
-    for (const QString& candidate : available) {
-        if (candidate.compare(wanted, Qt::CaseInsensitive) == 0) {
-            return candidate;  // the system's own spelling, not the caller's
-        }
-    }
-    return {};
+    const auto found = std::find_if(available.cbegin(), available.cend(), [&](const QString& name) {
+        return name.compare(wanted, Qt::CaseInsensitive) == 0;
+    });
+    return found == available.cend() ? QString{} : *found;
 }
 
 QStringList adapterAdminStateArgs(const QString& adapter_name, bool enabled) {
@@ -224,12 +214,12 @@ QString staticDnsProblem(const QStringList& servers) {
     }
     // The WHOLE list is checked before anything is applied. Validating lazily would let a bad
     // third entry stop the sequence after the primary had already replaced the adapter's resolver.
-    for (const QString& server : servers) {
-        if (!isDottedIpv4(server)) {
-            return QStringLiteral("'%1' is not a valid IPv4 DNS server address").arg(server);
-        }
-    }
-    return {};
+    const auto invalid = std::find_if(servers.cbegin(), servers.cend(), [](const QString& server) {
+        return !isDottedIpv4(server);
+    });
+    return invalid == servers.cend()
+               ? QString{}
+               : QStringLiteral("'%1' is not a valid IPv4 DNS server address").arg(*invalid);
 }
 
 AdapterAdminOutcome setAdapterEnabled(const QString& adapter_name, bool enabled) {

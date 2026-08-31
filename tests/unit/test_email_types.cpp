@@ -217,11 +217,9 @@ void TestEmailTypes::emailItemTypeValues() {
 
     // Unknown is the terminal member: the search worker reads it as "match every
     // type" (email_search_worker.cpp:379-382) and the parser as "message class
-    // not resolved yet" (pst_parser.cpp:3176, 3189), so it must stay the highest
-    // of the nine and must not collide with a real type.
+    // not resolved yet" (pst_parser.cpp:3176, 3189), so pinning its ordinal after
+    // all eight real types proves both terminal placement and non-collision.
     QCOMPARE(static_cast<int>(sak::EmailItemType::Unknown), 8);
-    QVERIFY(static_cast<int>(sak::EmailItemType::Unknown) >
-            static_cast<int>(sak::EmailItemType::MeetingRequest));
 }
 
 void TestEmailTypes::exportFormatValues() {

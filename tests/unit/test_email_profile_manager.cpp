@@ -100,10 +100,10 @@ void TestEmailProfileManager::defaultConstruction() {
 // ============================================================================
 
 void TestEmailProfileManager::clientTypeDefaults() {
-    QVERIFY(static_cast<int>(sak::EmailClientType::Outlook) == 0);
-    QVERIFY(static_cast<int>(sak::EmailClientType::Thunderbird) == 1);
-    QVERIFY(static_cast<int>(sak::EmailClientType::WindowsMail) == 2);
-    QVERIFY(static_cast<int>(sak::EmailClientType::Other) == 3);
+    QCOMPARE(static_cast<int>(sak::EmailClientType::Outlook), 0);
+    QCOMPARE(static_cast<int>(sak::EmailClientType::Thunderbird), 1);
+    QCOMPARE(static_cast<int>(sak::EmailClientType::WindowsMail), 2);
+    QCOMPARE(static_cast<int>(sak::EmailClientType::Other), 3);
 }
 
 void TestEmailProfileManager::profileDefaults() {

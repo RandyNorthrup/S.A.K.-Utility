@@ -44,10 +44,10 @@ private Q_SLOTS:
     void stats_initiallyZero();
 
 private:
-    sak::AppScanner::AppInfo makeAppInfo(const QString& name) const;
+    static sak::AppScanner::AppInfo makeAppInfo(const QString& name);
 };
 
-sak::AppScanner::AppInfo PackageMatcherTests::makeAppInfo(const QString& name) const {
+sak::AppScanner::AppInfo PackageMatcherTests::makeAppInfo(const QString& name) {
     sak::AppScanner::AppInfo info;
     info.name = name;
     return info;

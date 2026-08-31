@@ -264,7 +264,6 @@ void SecureMemoryTests::secureBuffer_spanAccess() {
 void SecureMemoryTests::secureAllocator_allocDeallocRoundTrip() {
     sak::secure_allocator<int> alloc;
     int* ptr = alloc.allocate(10);
-    QVERIFY(ptr != nullptr);
 
     // The size-overflow guard is the ONLY rejection allocate() has, and it had no coverage: a
     // count whose byte size wraps must throw, never hand back the minimal operator new(0) block

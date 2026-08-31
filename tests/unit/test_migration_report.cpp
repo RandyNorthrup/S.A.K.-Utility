@@ -67,11 +67,11 @@ private Q_SLOTS:
 private:
     MigrationReport m_report;
 
-    MigrationReport::MigrationEntry makeEntry(const QString& name,
-                                              const QString& choco,
-                                              double confidence,
-                                              const QString& matchType,
-                                              bool selected = false);
+    static MigrationReport::MigrationEntry makeEntry(const QString& name,
+                                                     const QString& choco,
+                                                     double confidence,
+                                                     const QString& matchType,
+                                                     bool selected = false);
 };
 
 void TestMigrationReport::init() {

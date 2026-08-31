@@ -1170,6 +1170,60 @@ set(ALL_SOURCES
 )
 
 # ============================================================================
+# Build-integrated static analysis -- configure BEFORE any target is created.
+# ============================================================================
+#
+# CMAKE_CXX_CLANG_TIDY and CMAKE_CXX_CPPCHECK initialize target properties at target creation
+# time. Defining them below add_executable/add_library leaves every existing target uninstrumented
+# while configure still prints ENABLED. Keep this block before sak_lzfse and every product/test
+# target so an opt-in analysis build runs what it claims.
+option(ENABLE_CLANG_TIDY "Enable clang-tidy analysis during build" OFF)
+
+if(ENABLE_CLANG_TIDY)
+    find_program(CLANG_TIDY clang-tidy)
+    if(CLANG_TIDY)
+        set(CMAKE_CXX_CLANG_TIDY
+            ${CLANG_TIDY}
+            --warnings-as-errors=*
+            --header-filter=include/sak/.*\.h$
+        )
+        message(STATUS "clang-tidy:         ENABLED (warnings-as-errors)")
+    else()
+        message(FATAL_ERROR
+            "ENABLE_CLANG_TIDY is ON but clang-tidy was not found on PATH. Install it (LLVM, or "
+            "the 'C++ Clang tools for Windows' Visual Studio component), or configure with "
+            "-DENABLE_CLANG_TIDY=OFF.")
+    endif()
+endif()
+
+option(ENABLE_CPPCHECK "Enable cppcheck analysis during build" OFF)
+
+if(ENABLE_CPPCHECK)
+    find_program(CPPCHECK cppcheck HINTS "C:/Program Files/Cppcheck")
+    if(CPPCHECK)
+        set(CMAKE_CXX_CPPCHECK
+            ${CPPCHECK}
+            --enable=all
+            --check-level=exhaustive
+            --inconclusive
+            --std=c++23
+            --error-exitcode=1
+            --force
+            --inline-suppr
+            --platform=win64
+            --quiet
+            --suppressions-list=${CMAKE_CURRENT_SOURCE_DIR}/cppcheck_suppressions.txt
+        )
+        message(STATUS "cppcheck:           ENABLED (exhaustive, all checks, C++23)")
+    else()
+        message(FATAL_ERROR
+            "ENABLE_CPPCHECK is ON but cppcheck was not found (searched PATH and "
+            "'C:/Program Files/Cppcheck'). Install it from https://cppcheck.sourceforge.io/, "
+            "or configure with -DENABLE_CPPCHECK=OFF.")
+    endif()
+endif()
+
+# ============================================================================
 # Vendored lzfse/lzvn reference library (Apple, BSD-3) for HFS+ decmpfs codecs
 # ============================================================================
 
@@ -1975,65 +2029,13 @@ else()
 endif()
 
 # ============================================================================
-# Static Analysis Integration -- Strictest Settings
+# Static Analysis Integration -- standalone targets
 # ============================================================================
 #
 # Enable during build:   cmake -B build -DENABLE_CLANG_TIDY=ON -DENABLE_CPPCHECK=ON
 # Standalone scripts:    python scripts/run_lizard.py
 #                        powershell scripts/run_cppcheck.ps1
 # Pre-commit hooks:      pre-commit run --all-files
-# ============================================================================
-
-option(ENABLE_CLANG_TIDY "Enable clang-tidy analysis during build" OFF)
-
-if(ENABLE_CLANG_TIDY)
-    find_program(CLANG_TIDY clang-tidy)
-    if(CLANG_TIDY)
-        set(CMAKE_CXX_CLANG_TIDY
-            ${CLANG_TIDY}
-            --warnings-as-errors=*
-            --header-filter=include/sak/.*\.h$
-        )
-        message(STATUS "clang-tidy:         ENABLED (warnings-as-errors)")
-    else()
-        # The analysis was requested. Continuing without it produces a build that
-        # passed a check nobody ran.
-        message(FATAL_ERROR
-            "ENABLE_CLANG_TIDY is ON but clang-tidy was not found on PATH. Install it (LLVM, or "
-            "the 'C++ Clang tools for Windows' Visual Studio component), or configure with "
-            "-DENABLE_CLANG_TIDY=OFF.")
-    endif()
-endif()
-
-option(ENABLE_CPPCHECK "Enable cppcheck analysis during build" OFF)
-
-if(ENABLE_CPPCHECK)
-    find_program(CPPCHECK cppcheck HINTS "C:/Program Files/Cppcheck")
-    if(CPPCHECK)
-        set(CMAKE_CXX_CPPCHECK
-            ${CPPCHECK}
-            --enable=all
-            --check-level=exhaustive
-            --inconclusive
-            --std=c++23
-            --error-exitcode=1
-            --force
-            --inline-suppr
-            --platform=win64
-            --quiet
-            --suppressions-list=${CMAKE_CURRENT_SOURCE_DIR}/cppcheck_suppressions.txt
-        )
-        message(STATUS "cppcheck:           ENABLED (exhaustive, all checks, C++23)")
-    else()
-        # Same rule as clang-tidy above: a requested analysis either runs or the
-        # configure fails; it never silently does not happen.
-        message(FATAL_ERROR
-            "ENABLE_CPPCHECK is ON but cppcheck was not found (searched PATH and "
-            "'C:/Program Files/Cppcheck'). Install it from https://cppcheck.sourceforge.io/, "
-            "or configure with -DENABLE_CPPCHECK=OFF.")
-    endif()
-endif()
-
 # ---------------------------------------------------------------------------
 # Custom analysis targets (run independently of build)
 # ---------------------------------------------------------------------------

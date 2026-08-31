@@ -125,7 +125,7 @@ void AiAppActionPlannerTests::clampsOutputAndTimeout() {
     // Same correction: the old ceiling of 14'400 was four times what the broker honours.
     QCOMPARE(plan.request.timeout_seconds, sak::ai::kAiCommandMaxTimeoutSeconds);
     // And the two bounds are the SAME constant, which is what stops them drifting again.
-    QVERIFY(sak::ai::kAiCommandMaxTimeoutSeconds == 3600);
+    QCOMPARE(sak::ai::kAiCommandMaxTimeoutSeconds, 3600);
     QCOMPARE(plan.request.max_output_bytes, 4096);
 }
 

@@ -996,9 +996,9 @@ a parked design, per the bucket convention. Open work is what remains after thos
   single JSON stdout document; every command error remains terminating or an explicit error field.
   DIRECT-FIX WAVE 3 FINAL GATE: all changed-file pre-commit hooks passed; Release build exit 0;
   full CTest 266/266, zero failures, 760.35 seconds.
-  EXISTING SUPPRESSIONS: cppcheck reveal proves all 32 inline suppressions still match today, but
-  matching is not necessity. Global `useStlAlgorithm` hides 340 findings; test-wide
-  `knownConditionTrueFalse` hides 14, `functionStatic` hides 62, and `unusedStructMember` has no
+  INITIAL SUPPRESSION AUDIT: cppcheck reveal proved all 32 inline suppressions matched, but
+  matching was not necessity. Global `useStlAlgorithm` hid 340 findings; test-wide
+  `knownConditionTrueFalse` hid 12, `functionStatic` hid 62, and `unusedStructMember` had no
   equivalent dedicated gate. All four audited NOLINT sites are now gone: three stale/direct
   markers were removed or structurally fixed and the deadline boundary now reports failure.
   Eight coverage-only compiler warning silences have structural fixes. Thirty-five active test
@@ -1006,11 +1006,31 @@ a parked design, per the bucket convention. Open work is what remains after thos
   plus slow omap/sparse-container cases remain directly closable. Eight exact gitleaks history
   fingerprints are bounded; one is a real historical VM credential and needs rotation plus
   explicit history-rewrite authorization before removal.
+  CPPCHECK SUPPRESSION WAVE 4, 2026-08-31: the test-wide suppressions are gone.
+  `knownConditionTrueFalse` measured 12 current findings; six test suites now use stronger
+  QCOMPARE/ordinal contracts or remove redundant truths, reveal is zero, and the path suppression
+  is deleted. `functionStatic` measured 62: four ordinary helpers were made static; the other 58
+  are Qt meta-object callbacks that cannot be static. The broad path suppression is deleted.
+  `run_cppcheck.ps1` now captures every raw finding with a reliable exit code and source-validates
+  only exact methods whose unique declaration sits under Q_SLOTS; missing Python, ambiguity,
+  stale lines, non-test paths and ordinary helpers remain red. Seven registered classifier tests
+  pass, and a real all-files hook classified 47+11 exact slots while reporting zero actionable
+  findings. The `useStlAlgorithm` direct-fix program started: 5 adapter loops are converted and
+  the reveal fell 340 -> 335 (257 production, 78 tests). Its global suppression remains until
+  zero. `unusedStructMember` and the coverage-only compiler warning suppressions remain open.
+  ADJACENT GATE FIX: build-integrated CMAKE_CXX_CLANG_TIDY/CMAKE_CXX_CPPCHECK were assigned after
+  every target existed, so ENABLE_* could print enabled while instrumenting zero targets. Setup
+  now precedes the first target, and build-system lint enforces that ordering.
+  CPPCHECK SUPPRESSION WAVE 4 FINAL GATE: all changed-file hooks passed; all-files cppcheck
+  classified exactly 58 Qt slots and reported zero actionable findings; two-pass whole-project
+  cppcheck passed with 183/186 checkers and zero stale inline suppressions; Release build exit 0;
+  full CTest 267/267, zero failures, 898.60 seconds.
   OWNER RULE NOW RECORDED IN `AGENTS.md`: fix code, test, tool, or gate first; suppression is the
   last resort only after no direct fix is possible and the exact reason is proven. Existing
   suppressions are re-audited, not inherited as permanent policy. Current batch: all pre-commit
   hooks passed; Release build exit 0; full CTest 265/265, zero failures, 804.48 seconds.
-  STILL OPEN: core's 5,271 naming findings; broad cppcheck/compiler suppressions; directly
+  STILL OPEN: core's 5,271 naming findings; the 335-item `useStlAlgorithm` program;
+  `unusedStructMember` and coverage compiler suppressions; directly
   closable fixture/resource skips; and the historical VM credential rotation/history-rewrite
   decision.
   DIRECT-FIX WAVE 1 FINAL GATE: all changed-file pre-commit hooks passed; Release build exit 0;

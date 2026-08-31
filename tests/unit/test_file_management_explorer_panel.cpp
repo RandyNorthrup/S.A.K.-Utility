@@ -297,11 +297,11 @@ struct IconSheetLayout {
     int rows{0};
 
     [[nodiscard]] int groundWidth() const { return sizes.size() * kCellWidth; }
-    [[nodiscard]] int lightX() const { return kLabelWidth; }
+    [[nodiscard]] static int lightX() { return kLabelWidth; }
     [[nodiscard]] int darkX() const { return kLabelWidth + groundWidth() + kGroundGap; }
     [[nodiscard]] int width() const { return kLabelWidth + (2 * groundWidth()) + (2 * kGroundGap); }
     [[nodiscard]] int height() const { return kHeaderHeight + (rows * kRowHeight) + kGroundGap; }
-    [[nodiscard]] int rowY(int row) const { return kHeaderHeight + (row * kRowHeight); }
+    [[nodiscard]] static int rowY(int row) { return kHeaderHeight + (row * kRowHeight); }
 };
 
 // Labels, rules, and the dark band. Palette-independent, so it is painted once.

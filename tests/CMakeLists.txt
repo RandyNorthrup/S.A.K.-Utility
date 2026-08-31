@@ -7739,6 +7739,11 @@ if(PLATFORM_WINDOWS)
                      "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_active_doc_references.py")
     set_tests_properties(test_active_doc_references PROPERTIES TIMEOUT 60)
 
+    add_test(NAME test_cppcheck_qt_slot_classifier
+             COMMAND "${SAK_PYTHON_EXECUTABLE}"
+                     "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_cppcheck_qt_slot_classifier.py")
+    set_tests_properties(test_cppcheck_qt_slot_classifier PROPERTIES TIMEOUT 60)
+
     add_test(NAME test_clang_tidy_naming_gate
              COMMAND "${SAK_PYTHON_EXECUTABLE}"
                      "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_clang_tidy_naming_gate.py")

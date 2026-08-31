@@ -10,6 +10,7 @@
       - C++23 standard
       - Error exit code on any finding
       - Inline suppressions respected
+      - Exact Qt test-slot functionStatic findings source-validated, classified, and reported
 
     Usage:
         .\scripts\run_cppcheck.ps1                       # Full project scan
@@ -97,6 +98,12 @@ $ErrorActionPreference = "Stop"
 # Configuration
 # ---------------------------------------------------------------------------
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
+$processCaptureScript = Join-Path $PSScriptRoot "process_capture.ps1"
+if (-not (Test-Path -LiteralPath $processCaptureScript -PathType Leaf)) {
+    throw "Required process capture helper not found: $processCaptureScript"
+}
+. $processCaptureScript
+
 if ([string]::IsNullOrWhiteSpace($SuppressionsFile)) {
     $SuppressionsFile = Join-Path $ProjectRoot "cppcheck_suppressions.txt"
 } elseif (-not (Test-Path -LiteralPath $SuppressionsFile -PathType Leaf)) {
@@ -142,6 +149,7 @@ $CppcheckArgs = @(
     "--language=c++"                # Force C++ language
     "--max-configs=12"              # Check up to 12 configurations
     "--quiet"                       # Suppress progress messages
+    "--template={file}:{line}:{column}: {severity}: {message} [{id}]"
     "-j", "$Jobs"                   # Parallel normally; unusedFunction gate deliberately uses 1
     "-I", (Join-Path $ProjectRoot "include")
     "-I", (Join-Path $ProjectRoot "src")
@@ -289,18 +297,91 @@ $errDir = Split-Path -Parent $ErrorsFile
 if ($errDir -and -not (Test-Path -LiteralPath $errDir -PathType Container)) {
     New-Item -ItemType Directory -Path $errDir -Force | Out-Null
 }
+$rawErrorsFile = Join-Path ([System.IO.Path]::GetTempPath()) `
+    ("sak_cppcheck_raw_errors_{0}.txt" -f $PID)
+$classifier = Join-Path $PSScriptRoot "classify_cppcheck_qt_slots.py"
 
 try {
-    $process = Start-Process -FilePath $CppcheckExe `
-        -ArgumentList $CppcheckArgs `
-        -NoNewWindow -PassThru -Wait `
-        -RedirectStandardError $ErrorsFile
+    # Start-Process -PassThru can return a null ExitCode after redirected execution under
+    # Windows PowerShell 5.1. Use the shared async-drain helper so a stale/null code cannot turn
+    # a real cppcheck failure into an ambiguous result.
+    $captured = Invoke-CapturedProcess -FilePath $CppcheckExe -Arguments $CppcheckArgs
+    if (-not [string]::IsNullOrWhiteSpace($captured.stdout)) {
+        Write-Host $captured.stdout
+    }
+    Set-Content -LiteralPath $rawErrorsFile -Value $captured.stderr -Encoding utf8
 
-    $exitCode = $process.ExitCode
+    # Do not hide functionStatic at cppcheck invocation. Qt Test callbacks declared under
+    # Q_SLOTS are a real tool limitation: making them static removes them from Qt's meta-object
+    # table. Source-classify only exact Class::method findings at their reported definition line.
+    # Any ordinary helper, parser ambiguity, missing Python, or classifier failure stays red.
+    $rawLines = @()
+    if (Test-Path -LiteralPath $rawErrorsFile -PathType Leaf) {
+        $rawLines = @(Get-Content -LiteralPath $rawErrorsFile)
+    }
+    $hasFunctionStatic = @($rawLines | Where-Object { $_ -match '\[functionStatic\]$' }).Count -gt 0
+    $classifiedQtSlots = 0
+    $classificationFailed = $false
+
+    if ($hasFunctionStatic) {
+        $python = Get-Command python.exe -ErrorAction SilentlyContinue
+        if (-not $python) {
+            $python = Get-Command python -ErrorAction SilentlyContinue
+        }
+
+        if (-not $python -or -not (Test-Path -LiteralPath $classifier -PathType Leaf)) {
+            Write-Host "Qt slot classification unavailable; functionStatic findings stay actionable." `
+                -ForegroundColor Red
+            $classificationFailed = $true
+            Copy-Item -LiteralPath $rawErrorsFile -Destination $ErrorsFile -Force
+        } else {
+            $classifierOutput = @(& $python.Source $classifier `
+                --input $rawErrorsFile --output $ErrorsFile --project-root $ProjectRoot)
+            if ($LASTEXITCODE -ne 0) {
+                Write-Host "Qt slot classifier failed; functionStatic findings stay actionable." `
+                    -ForegroundColor Red
+                $classificationFailed = $true
+                Copy-Item -LiteralPath $rawErrorsFile -Destination $ErrorsFile -Force
+            } else {
+                $classifiedLine = $classifierOutput |
+                    Where-Object { $_ -match '^CLASSIFIED_QT_SLOT_FUNCTION_STATIC=(\d+)$' } |
+                    Select-Object -First 1
+                if (-not $classifiedLine) {
+                    Write-Host "Qt slot classifier emitted no count; refusing a silent pass." `
+                        -ForegroundColor Red
+                    $classificationFailed = $true
+                    Copy-Item -LiteralPath $rawErrorsFile -Destination $ErrorsFile -Force
+                } else {
+                    $classifiedQtSlots = [int]($classifiedLine -replace '^.*=', '')
+                }
+            }
+        }
+    } else {
+        Copy-Item -LiteralPath $rawErrorsFile -Destination $ErrorsFile -Force
+    }
+
+    $errors = @()
+    if (Test-Path -LiteralPath $ErrorsFile -PathType Leaf) {
+        $errors = @(Get-Content -LiteralPath $ErrorsFile -ErrorAction SilentlyContinue)
+    }
+    $remainingSignals = @($errors | Where-Object {
+        (-not [string]::IsNullOrWhiteSpace($_)) -and ($_ -notmatch '\[checkersReport\]$')
+    })
+
+    $exitCode = $captured.exit_code
+    if (-not $classificationFailed -and $classifiedQtSlots -gt 0 -and
+        $exitCode -ne 0 -and $remainingSignals.Count -eq 0) {
+        $exitCode = 0
+    }
+    if ($classifiedQtSlots -gt 0) {
+        Write-Host ("  Classified $classifiedQtSlots exact Qt Q_SLOTS functionStatic " +
+                    "finding(s); raw findings were analyzed, not blanket-suppressed.") `
+            -ForegroundColor DarkGray
+    }
+
     $errFile = $ErrorsFile
 
     if ((Test-Path $errFile) -and -not $SuppressFindingOutput) {
-        $errors = Get-Content $errFile -ErrorAction SilentlyContinue
         if ($errors) {
             Write-Host ""
             Write-Host "cppcheck findings:" -ForegroundColor Red
@@ -314,6 +395,9 @@ try {
     if (-not [string]::IsNullOrWhiteSpace($FileListPath) -and
         (Test-Path -LiteralPath $FileListPath -PathType Leaf)) {
         Remove-Item -LiteralPath $FileListPath -Force
+    }
+    if (Test-Path -LiteralPath $rawErrorsFile -PathType Leaf) {
+        Remove-Item -LiteralPath $rawErrorsFile -Force
     }
 }
 

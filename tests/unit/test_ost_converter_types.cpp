@@ -133,10 +133,9 @@ private Q_SLOTS:
     // ====================================================================
 
     void testRecoveryModeValues() {
-        QVERIFY(static_cast<int>(sak::RecoveryMode::Normal) !=
-                static_cast<int>(sak::RecoveryMode::SkipCorrupt));
-        QVERIFY(static_cast<int>(sak::RecoveryMode::SkipCorrupt) !=
-                static_cast<int>(sak::RecoveryMode::DeepRecovery));
+        QCOMPARE(static_cast<int>(sak::RecoveryMode::Normal), 0);
+        QCOMPARE(static_cast<int>(sak::RecoveryMode::SkipCorrupt), 1);
+        QCOMPARE(static_cast<int>(sak::RecoveryMode::DeepRecovery), 2);
     }
 
     void testJobStatusValues() {

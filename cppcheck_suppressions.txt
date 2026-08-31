@@ -18,16 +18,6 @@ unknownMacro
 // Style suggestion to use STL algorithms; Qt-idiomatic loops are preferred.
 useStlAlgorithm
 
-// Qt Test slots are invoked by the meta-object system and cannot be static. Scoped to tests/ ONLY
-// -- a global silence hid 114 production "can be static" findings. All were resolved: every pure
-// helper across the HFS/APFS/ext readers, parsers, preset builders, and stateless validators was
-// made static (166 methods over the cascade, R5-G3/G5). Re-verified whole-tree 2026-08-16 after
-// the G22-12 scanOk refactor re-opened the AppScanner cascade (scanRegistryHive/scanRegistry/
-// scanAll); all three qualified static. Production reports 0.
-functionStatic:*tests*
-
-// Test assertions intentionally verify enum distinctness with known values. Scoped to tests/
-// ONLY -- a global silence hid real always-true/false logic findings in production code (R5-G5
-// audit surfaced 9; the genuine false positives now carry inline // cppcheck-suppress with a
-// justification, and two fail-open questions in the raw-filesystem writers are logged for review).
-knownConditionTrueFalse:*tests*
+// functionStatic has no file-level suppression. scripts/run_cppcheck.ps1 reports every finding,
+// then source-validates and classifies only exact methods declared under Q_SLOTS. Ordinary test
+// helpers remain actionable, while Qt meta-object callbacks are never made static.
