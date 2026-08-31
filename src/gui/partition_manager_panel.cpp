@@ -5610,6 +5610,15 @@ QString propertyYesNo(bool value) {
     return value ? QObject::tr("Yes") : QObject::tr("No");
 }
 
+QString dirtyBitProperty(const PartitionVolumeInfo& volume) {
+    if (volume.dirty_bit_known) {
+        return propertyYesNo(volume.dirty_bit_set);
+    }
+    return volume.dirty_bit_error.trimmed().isEmpty()
+               ? QObject::tr("Unknown")
+               : QObject::tr("Unknown (%1)").arg(volume.dirty_bit_error.trimmed());
+}
+
 QString bytesProperty(uint64_t bytes) {
     return QObject::tr("%1 (%2 bytes)").arg(formatPartitionBytes(bytes), QString::number(bytes));
 }
@@ -5718,6 +5727,7 @@ void appendPartitionProperties(QVector<PropertyRow>* rows, const PartitionInfoEx
                     PartitionFileSystemRegistry::actionSummary(capability.required_tools));
     }
     addProperty(rows, QObject::tr("Volume health"), partition.volume->health_status);
+    addProperty(rows, QObject::tr("Dirty bit"), dirtyBitProperty(partition.volume.value()));
     addProperty(rows, QObject::tr("Volume size"), partition.volume->total_bytes);
     addProperty(rows, QObject::tr("Free space"), partition.volume->free_bytes);
     addProperty(rows,

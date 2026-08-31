@@ -184,7 +184,9 @@ struct PartitionVolumeInfo {
     uint64_t free_bytes{0};
     bool bitlocker_enabled{false};
     bool bitlocker_locked{false};
+    bool dirty_bit_known{false};
     bool dirty_bit_set{false};
+    QString dirty_bit_error;
 
     [[nodiscard]] bool hasDriveLetter() const noexcept { return !drive_letter.isEmpty(); }
 };

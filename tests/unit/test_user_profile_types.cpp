@@ -614,6 +614,17 @@ private Q_SLOTS:
 
     // --- EthernetConfigInfo language-neutral scan (G23-4) ---
 
+    void netIpConfigPowerShell_failsClosedWhenDhcpQueryFails() {
+        const QString script = QString::fromLatin1(kNetIpConfigPowerShell);
+        QVERIFY(script.contains(QStringLiteral("$ErrorActionPreference='Stop'")));
+        QVERIFY(script.contains(
+            QStringLiteral("Get-NetIPInterface -InterfaceAlias $a -AddressFamily IPv4 "
+                           "-ErrorAction Stop")));
+        QVERIFY2(!script.contains(QStringLiteral("-ErrorAction SilentlyContinue")),
+                 "A failed DHCP-state query must fail capture, not serialize an empty value as "
+                 "DHCP disabled.");
+    }
+
     void prefixLengthToSubnetMask_knownPrefixes() {
         QCOMPARE(EthernetConfigInfo::prefixLengthToSubnetMask(24), QStringLiteral("255.255.255.0"));
         QCOMPARE(EthernetConfigInfo::prefixLengthToSubnetMask(16), QStringLiteral("255.255.0.0"));

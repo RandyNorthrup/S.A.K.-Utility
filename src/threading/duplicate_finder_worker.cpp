@@ -26,7 +26,6 @@ namespace {
 constexpr std::size_t kExpectedDuplicateScanFiles = 1000;
 constexpr int kDuplicateSummarySizePrecision = 2;
 constexpr int kDuplicateSummaryGroupLimit = 10;
-constexpr int kDuplicateProgressInterval = 10;
 constexpr uint64_t kDuplicateVirtualReadMaxBytes = 512ULL * 1024ULL * 1024ULL;
 constexpr int kDuplicateVirtualBrowseMaxEntries = 10'000;
 // How often the cancel-monitor thread polls the worker's cooperative stop. Small enough that an

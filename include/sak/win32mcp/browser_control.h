@@ -11,8 +11,6 @@
 #include <QJsonObject>
 #include <QString>
 
-#include <utility>
-
 /// @file browser_control.h
 /// @brief The MCP-process facade that binds the browser-control session brain
 /// (BrowserBridgeSession) to the pipe transport (BrowserBridgePipeServer) and exposes
@@ -33,8 +31,8 @@ public:
     /// Production uses the default options (real per-user rendezvous path, Chrome
     /// ancestry required). Tests inject a temp rendezvous path and relax the ancestor
     /// check via the pipe server's Options.
-    explicit BrowserControl(BrowserBridgePipeServer::Options options = {})
-        : pipe_(std::move(options)) {}
+    BrowserControl();
+    explicit BrowserControl(BrowserBridgePipeServer::Options options);
 
     BrowserControl(const BrowserControl&) = delete;
     BrowserControl& operator=(const BrowserControl&) = delete;

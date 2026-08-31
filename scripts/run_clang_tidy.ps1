@@ -32,6 +32,10 @@ param(
     [int]$Jobs = 6,
     [string]$LogPath = "",
     [string]$FileFilter = "",
+    # PrepareOnly writes the filtered, analysis-safe compilation database but does not
+    # launch clang-tidy. The registered regression test uses this seam under PowerShell
+    # 5.1 and 7 so compile-command sanitization cannot silently regress.
+    [switch]$PrepareOnly,
     # Drop translation units whose (forward-slashed) path matches this regex BEFORE the
     # database is written, so they are never analyzed. Applied in PowerShell, not as a
     # run-clang-tidy positional regex, because a negative-lookahead file filter does not
@@ -41,6 +45,39 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+function Remove-AnalysisIncompatibleDriverFlags {
+    param([Parameter(Mandatory = $true)] [object]$Entry)
+
+    # These flags control cl.exe's build driver rather than C/C++ language semantics.
+    # clang-tidy invokes clang's frontend directly, where they are unused-command-line
+    # errors. Remove only those proven driver-only flags from the analysis COPY of the
+    # database. Source build commands remain untouched.
+    $driverOnlyPattern = '(?i)^/(?:GL|MP(?:\d+)?|Zc:preprocessor|external:anglebrackets)$'
+    $removed = 0
+
+    if ($Entry.PSObject.Properties.Name -contains "arguments") {
+        $keptArguments = [System.Collections.Generic.List[string]]::new()
+        foreach ($argument in @($Entry.arguments)) {
+            if ([string]$argument -match $driverOnlyPattern) {
+                $removed++
+                continue
+            }
+            $keptArguments.Add([string]$argument)
+        }
+        $Entry.arguments = @($keptArguments)
+        return $removed
+    }
+
+    if ($Entry.PSObject.Properties.Name -notcontains "command") {
+        throw "Compilation database entry has neither command nor arguments: $($Entry.file)"
+    }
+
+    $commandPattern = '(?i)(?<!\S)/(?:GL|MP(?:\d+)?|Zc:preprocessor|external:anglebrackets)(?=\s|$)'
+    $matches = [regex]::Matches([string]$Entry.command, $commandPattern)
+    $Entry.command = [regex]::Replace([string]$Entry.command, $commandPattern, "")
+    return $matches.Count
+}
 
 Push-Location $Root
 try {
@@ -55,12 +92,16 @@ try {
     $entries = Get-Content -Raw -LiteralPath $db | ConvertFrom-Json
     $seen = [System.Collections.Generic.HashSet[string]]::new()
     $kept = [System.Collections.Generic.List[object]]::new()
+    $removedDriverFlags = 0
     foreach ($e in $entries) {
         $f = ($e.file -replace '\\', '/')
         if ($f -notmatch $want -or $f -match $skip) { continue }
         if ($ExcludeFilter -and $f -match $ExcludeFilter) { continue }
         $key = $f.ToLowerInvariant()
-        if ($seen.Add($key)) { $kept.Add($e) }
+        if ($seen.Add($key)) {
+            $removedDriverFlags += Remove-AnalysisIncompatibleDriverFlags -Entry $e
+            $kept.Add($e)
+        }
     }
     if ($kept.Count -eq 0) { throw "No first-party entries found in $db." }
     $fpDir = Join-Path $Root $FirstPartyDir
@@ -71,6 +112,12 @@ try {
     [System.IO.File]::WriteAllText((Join-Path $fpDir "compile_commands.json"), $json,
         [System.Text.UTF8Encoding]::new($false))
     Write-Host "first-party translation units: $($kept.Count)"
+    Write-Host "analysis-only driver flags removed: $removedDriverFlags"
+
+    if ($PrepareOnly) {
+        Write-Host "analysis compilation database prepared: $fpDir"
+        return
+    }
 
     # Locate the developer environment and the LLVM tools.
     $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"

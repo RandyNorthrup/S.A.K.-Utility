@@ -12,7 +12,6 @@
 #include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
-#include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QtTest/QtTest>
@@ -89,8 +88,8 @@ void ScreenshotSettingsActionTests::buildScreenshotReportText_containsPagesAndSe
     const QString text = Action::buildScreenshotReportText(
         7, capture, QStringLiteral("C:/out"), QStringLiteral("20260731_010203"));
 
-    // The builder is pure and deterministic apart from the Timestamp line, so pin the whole
-    // report shape: every header counter, WHICH marker each page gets ([x] captured vs [ ]
+    // The builder is pure and deterministic, so pin the whole report shape: every header
+    // counter, WHICH marker each page gets ([x] captured vs [ ]
     // failed), and the trailing Output Location line. Compared on simplified() lines because
     // the column-padding constant is file-local to the .cpp.
     QStringList lines;
@@ -105,7 +104,7 @@ void ScreenshotSettingsActionTests::buildScreenshotReportText_containsPagesAndSe
         bar,
         QStringLiteral("| WINDOWS SETTINGS SCREENSHOT REPORT |"),
         bar,
-        lines.value(3),  // Timestamp: wall clock, the only non-deterministic line
+        QStringLiteral("| Timestamp: 20260731_010203 |"),
         QStringLiteral("| Monitors Detected: 7 |"),
         QStringLiteral("| Total Pages: 3 |"),  // captured + failed, not captured alone
         QStringLiteral("| Successful: 2 |"),   // captured_pages.size(), NOT screenshots_taken (5)
@@ -125,15 +124,6 @@ void ScreenshotSettingsActionTests::buildScreenshotReportText_containsPagesAndSe
         bar,
     };
     QCOMPARE(lines, expected);
-
-    // The one line left free above is deliberately its own oracle in `expected`, so the QCOMPARE
-    // asserts nothing whatever about it -- which left a bare prefix check as the row's ONLY
-    // constraint, saying nothing about the stamp's format, its presence, or the closing bar. This
-    // row is the sole record of WHEN the evidence was taken (the builder ignores the passed
-    // timestamp -- Q_UNUSED -- and stamps the wall clock instead), so the format IS the contract.
-    const QRegularExpression timestamp_row(
-        QStringLiteral(R"(^\| Timestamp: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} \|$)"));
-    QVERIFY2(timestamp_row.match(lines.value(3)).hasMatch(), qPrintable(lines.value(3)));
 }
 
 void ScreenshotSettingsActionTests::buildScreenshotReportText_omitsFailedSectionOnCleanRun() {
@@ -172,23 +162,14 @@ void ScreenshotSettingsActionTests::generateReport_writesAndDetectsFailure() {
     const int kMonitorCount = 4;
     QVERIFY(action.generateReport(dir.path(), QStringLiteral("ts1"), kMonitorCount, capture));
     // The committed file must BE the report for THIS capture, not merely a name on disk:
-    // compare it line-for-line against the pure builder, skipping only the wall-clock
-    // "Timestamp:" line.
+    // compare it byte-for-byte against the pure deterministic builder.
     QFile written(dir.filePath(QStringLiteral("Screenshot_Report_ts1.txt")));
     QVERIFY(written.open(QIODevice::ReadOnly | QIODevice::Text));
     const QString report_text = QString::fromUtf8(written.readAll());
     written.close();
-    const QStringList file_lines = report_text.split(QLatin1Char('\n'));
-    const QStringList built_lines =
-        Action::buildScreenshotReportText(kMonitorCount, capture, dir.path(), QStringLiteral("ts1"))
-            .split(QLatin1Char('\n'));
-    QCOMPARE(file_lines.size(), built_lines.size());
-    for (int i = 0; i < built_lines.size(); ++i) {
-        if (built_lines.at(i).contains(QStringLiteral("| Timestamp:"))) {
-            continue;  // wall clock, not a wiring contract
-        }
-        QCOMPARE(file_lines.at(i), built_lines.at(i));
-    }
+    const QString built_text = Action::buildScreenshotReportText(
+        kMonitorCount, capture, dir.path(), QStringLiteral("ts1"));
+    QCOMPARE(report_text, built_text);
     QVERIFY(report_text.contains(QStringLiteral("Display_Settings")));
 
     // Non-existent parent directory -> open fails -> reported as a write failure.

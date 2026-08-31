@@ -7739,6 +7739,11 @@ if(PLATFORM_WINDOWS)
                      "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_active_doc_references.py")
     set_tests_properties(test_active_doc_references PROPERTIES TIMEOUT 60)
 
+    add_test(NAME test_clang_tidy_naming_gate
+             COMMAND "${SAK_PYTHON_EXECUTABLE}"
+                     "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_clang_tidy_naming_gate.py")
+    set_tests_properties(test_clang_tidy_naming_gate PROPERTIES TIMEOUT 60)
+
     add_test(NAME test_apple_filesystem_capability_matrix
              COMMAND "${SAK_PYTHON_EXECUTABLE}"
                      "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_apple_filesystem_capability_matrix.py")

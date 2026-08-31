@@ -263,12 +263,39 @@ PartitionScript invalidPartitionScript(const QString& blocker) {
     return script;
 }
 
+QString optionalPartitionVolumeFunctionScript() {
+    return QStringLiteral(
+        "function Get-SakOptionalPartitionVolume($Partition) {\n"
+        "  try { return $Partition | Get-Volume -ErrorAction Stop }\n"
+        "  catch {\n"
+        "    if (\"$($_.FullyQualifiedErrorId)\" -like 'CmdletizationQuery_NotFound*') {\n"
+        "      return $null\n"
+        "    }\n"
+        "    throw\n"
+        "  }\n"
+        "}\n");
+}
+
+QString optionalDiskPartitionsFunctionScript() {
+    return QStringLiteral(
+        "function Get-SakOptionalDiskPartitions([uint32]$DiskNumber) {\n"
+        "  try { return @(Get-Partition -DiskNumber $DiskNumber -ErrorAction Stop) }\n"
+        "  catch {\n"
+        "    if (\"$($_.FullyQualifiedErrorId)\" -like 'CmdletizationQuery_NotFound*') {\n"
+        "      return @()\n"
+        "    }\n"
+        "    throw\n"
+        "  }\n"
+        "}\n");
+}
+
 QString linuxSwapFormatBodyScript(const QString& targetPathExpression,
                                   const QString& partitionSizeExpression,
                                   QString label,
                                   uint64_t pageSize) {
     label = label.trimmed().left(kLinuxSwapLabelMaxChars);
-    return QStringLiteral(
+    return optionalPartitionVolumeFunctionScript() +
+           QStringLiteral(
                "$targetPath = %1\n"
                "$label = %2\n"
                "$pageSize = [int]%3\n"
@@ -277,8 +304,7 @@ QString linuxSwapFormatBodyScript(const QString& targetPathExpression,
                "if ($pageCount -lt 2) { throw 'Linux swap partition is too small' }\n"
                "if ($pageCount -gt [uint64]4294967295) { throw 'Linux swap page count exceeds v1 "
                "header limit' }\n"
-               "$volume = $null\n"
-               "try { $volume = $p | Get-Volume -ErrorAction Stop } catch { }\n"
+               "$volume = Get-SakOptionalPartitionVolume $p\n"
                "if ($volume -and $volume.DriveLetter) {\n"
                "  Dismount-Volume -DriveLetter $volume.DriveLetter -Force -ErrorAction Stop\n"
                "}\n"
@@ -322,10 +348,10 @@ QString linuxSwapFormatBodyScript(const QString& targetPathExpression,
                "Update-HostStorageCache -ErrorAction SilentlyContinue\n"
                "Write-Output ('Linux swap header written: page_size={0}; pages={1}; label={2}' -f "
                "$pageSize, $pageCount, $label)\n")
-        .arg(targetPathExpression,
-             PartitionScriptBuilder::quotePowerShell(label),
-             uintArg(pageSize),
-             partitionSizeExpression);
+               .arg(targetPathExpression,
+                    PartitionScriptBuilder::quotePowerShell(label),
+                    uintArg(pageSize),
+                    partitionSizeExpression);
 }
 
 QString rawPartitionTargetPath(const PartitionOperation& operation) {
@@ -1757,16 +1783,14 @@ QString filesystemToolCallScriptWithArgsExpression(
 }
 
 QString dismountSelectedPartitionVolumeScript() {
-    // A partition with no OS-mountable volume (the normal case for APFS/HFS foreign
-    // targets) yields nothing under SilentlyContinue -- that is expected and safe. But we
-    // must NOT swallow a terminating failure the way a blanket `catch {}` did: if a volume
-    // IS present with a drive letter, the dismount runs with -ErrorAction Stop so a failed
-    // dismount fails the whole op closed rather than raw-writing a still-mounted volume.
-    return QStringLiteral(
-        "$volume = $p | Get-Volume -ErrorAction SilentlyContinue\n"
-        "if ($volume -and $volume.DriveLetter) {\n"
-        "  Dismount-Volume -DriveLetter $volume.DriveLetter -Force -ErrorAction Stop\n"
-        "}\n");
+    // Foreign/RAW partitions legitimately have no Windows volume. Permit only that exact
+    // cmdlet not-found result; access, CIM, and provider failures must stop the raw write.
+    return optionalPartitionVolumeFunctionScript() +
+           QStringLiteral(
+               "$volume = Get-SakOptionalPartitionVolume $p\n"
+               "if ($volume -and $volume.DriveLetter) {\n"
+               "  Dismount-Volume -DriveLetter $volume.DriveLetter -Force -ErrorAction Stop\n"
+               "}\n");
 }
 
 QString diskPartLabel(QString label) {
@@ -2394,12 +2418,12 @@ QString cloneTransferRawTargetFunctionsScript() {
         "Stop; if ($disk.IsBoot -or $disk.IsSystem) { throw 'Target disk is current OS "
         "disk' }; if ($disk.IsReadOnly) { throw 'Target disk is read-only' }; if "
         "($disk.BusType -eq 'Spaces') { throw 'Storage Spaces target disks are blocked' }; "
-        "Set-Disk -Number $n -IsOffline $true -ErrorAction SilentlyContinue; $verify = "
+        "Set-Disk -Number $n -IsOffline $true -ErrorAction Stop; $verify = "
         "Get-Disk -Number $n -ErrorAction Stop; if (-not $verify.IsOffline) { throw "
         "'Could not take target disk offline (locked/pagefile); aborting to avoid "
         "corrupting mounted volumes' }; return $n }\n"
         "function Restore-SakRawWriteTarget($n) { if ($null -ne $n) { Set-Disk -Number $n "
-        "-IsOffline $false -ErrorAction SilentlyContinue } }\n");
+        "-IsOffline $false -ErrorAction Stop } }\n");
 }
 
 QString cloneTransferCopyBodyScript() {
@@ -2450,7 +2474,8 @@ QString cloneTransferExecutionScript() {
 QString createImageDestinationGuardScript(const QString& target,
                                           uint32_t sourceDiskNumber,
                                           bool overwriteConfirmed) {
-    return sakVolumeGuidFunctionScript() +
+    return sakVolumeGuidFunctionScript() + optionalDiskPartitionsFunctionScript() +
+           optionalPartitionVolumeFunctionScript() +
            QStringLiteral(
                "$imgDest = %1\n"
                "$srcDiskNumber = %2\n"
@@ -2470,9 +2495,10 @@ QString createImageDestinationGuardScript(const QString& target,
                "if (-not $destGuid) { throw ('Create Image destination volume identity for {0} "
                "resolved empty; refusing to proceed without the off-source-disk guard' -f "
                "$imgDest) }\n"
-               "$srcVolGuids = @(Get-Partition -DiskNumber $srcDiskNumber -ErrorAction Stop | "
-               "Get-Volume -ErrorAction SilentlyContinue | ForEach-Object "
-               "{ if ($_.UniqueId) { $_.UniqueId.TrimEnd('\\') } })\n"
+               "$srcPartitions = @(Get-SakOptionalDiskPartitions -DiskNumber $srcDiskNumber)\n"
+               "$srcVolGuids = @($srcPartitions | ForEach-Object { "
+               "$volume = Get-SakOptionalPartitionVolume $_; "
+               "if ($volume -and $volume.UniqueId) { $volume.UniqueId.TrimEnd('\\') } })\n"
                "if ($srcVolGuids -contains $destGuid) { throw 'Create Image destination "
                "resolves onto the source disk; choose an off-disk destination' }\n")
                .arg(PartitionScriptBuilder::quotePowerShell(QDir::toNativeSeparators(target)),
@@ -2515,7 +2541,8 @@ QString restoreImageContentPinScript(const QString& source, const QString& expec
 }
 
 QString restoreImageSourceGuardScript(const QString& source, uint32_t targetDiskNumber) {
-    return sakVolumeGuidFunctionScript() +
+    return sakVolumeGuidFunctionScript() + optionalDiskPartitionsFunctionScript() +
+           optionalPartitionVolumeFunctionScript() +
            QStringLiteral(
                "$imgSrc = %1\n"
                "$tgtDiskNumber = %2\n"
@@ -2529,9 +2556,10 @@ QString restoreImageSourceGuardScript(const QString& source, uint32_t targetDisk
                "$_.Exception.Message) }\n"
                "if (-not $srcGuid) { throw ('Restore Image source volume identity for {0} resolved "
                "empty; refusing to proceed without the off-target-disk guard' -f $imgSrc) }\n"
-               "$tgtVolGuids = @(Get-Partition -DiskNumber $tgtDiskNumber -ErrorAction Stop | "
-               "Get-Volume -ErrorAction SilentlyContinue | ForEach-Object "
-               "{ if ($_.UniqueId) { $_.UniqueId.TrimEnd('\\') } })\n"
+               "$tgtPartitions = @(Get-SakOptionalDiskPartitions -DiskNumber $tgtDiskNumber)\n"
+               "$tgtVolGuids = @($tgtPartitions | ForEach-Object { "
+               "$volume = Get-SakOptionalPartitionVolume $_; "
+               "if ($volume -and $volume.UniqueId) { $volume.UniqueId.TrimEnd('\\') } })\n"
                "if ($tgtVolGuids -contains $srcGuid) { throw 'Restore Image source resides on the "
                "target disk; it would be overwritten mid-restore' }\n")
                .arg(PartitionScriptBuilder::quotePowerShell(QDir::toNativeSeparators(source)),
@@ -2739,14 +2767,14 @@ static ExternalFileSystemToolScriptRequest growExtResizeRequest(const PartitionO
 }
 
 static QString extShrinkPreToolScript(uint64_t targetSize) {
-    return QStringLiteral(
+    return optionalPartitionVolumeFunctionScript() +
+           QStringLiteral(
                "$targetSizeBytes = [uint64]%1\n"
-               "$volume = $null\n"
-               "try { $volume = $p | Get-Volume -ErrorAction Stop } catch { }\n"
+               "$volume = Get-SakOptionalPartitionVolume $p\n"
                "if ($volume -and $volume.DriveLetter) {\n"
                "  Dismount-Volume -DriveLetter $volume.DriveLetter -Force -ErrorAction Stop\n"
                "}\n")
-        .arg(uintArg(targetSize));
+               .arg(uintArg(targetSize));
 }
 
 static QString extShrinkPartitionScript(const PartitionOperation& operation) {
@@ -2919,7 +2947,7 @@ static QString allocateSetupScript(const PartitionOperation& operation,
                "$backupRoot = %10\n"
                "$sourceRoot = ('{0}:\\' -f $sourceDrive)\n"
                "$backupRootFull = [System.IO.Path]::GetFullPath($backupRoot)\n"
-               "$targetVolume = $target | Get-Volume -ErrorAction SilentlyContinue\n"
+               "$targetVolume = Get-SakOptionalPartitionVolume $target\n"
                "$targetRoot = if ($targetVolume -and $targetVolume.DriveLetter) { ('{0}:\\' -f "
                "$targetVolume.DriveLetter) } else { '' }\n"
                "if ($backupRootFull.StartsWith($sourceRoot, "
@@ -3734,10 +3762,9 @@ static PartitionScript buildCreateExtScript(const PartitionOperation& operation,
                            command.tool_id);
     out.script = commonHeader(out.preview) + newPartitionCommandScript(operation, spec, QString()) +
                  refreshCreatedPartitionAndRawTargetScript(operation, spec) +
-                 filesystemToolFunctionScript() +
+                 filesystemToolFunctionScript() + optionalPartitionVolumeFunctionScript() +
                  QStringLiteral(
-                     "$volume = $null\n"
-                     "try { $volume = $p | Get-Volume -ErrorAction Stop } catch { }\n"
+                     "$volume = Get-SakOptionalPartitionVolume $p\n"
                      "if ($volume -and $volume.DriveLetter) {\n"
                      "  Dismount-Volume -DriveLetter $volume.DriveLetter -Force -ErrorAction Stop\n"
                      "}\n") +
@@ -4726,7 +4753,7 @@ PartitionScript PartitionScriptBuilder::buildAllocateFreeSpaceScript(
                       .arg(payload.source_partition)
                       .arg(operation.target.partition_number.value());
     out.script = commonHeader(out.preview) + requirePartitionIdentity(operation.target) +
-                 sakVolumeGuidFunctionScript() +
+                 sakVolumeGuidFunctionScript() + optionalPartitionVolumeFunctionScript() +
                  allocateSetupScript(operation, payload, targetSize, donorRemainingBytes) +
                  robocopyManifestFunctionsScript() + allocateExecutionScript(operation, payload);
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
@@ -5046,14 +5073,18 @@ PartitionScript PartitionScriptBuilder::buildDefragVolumeScript(
                      "$partition = Get-Partition -DriveLetter $driveLetter -ErrorAction Stop\n"
                      "$disk = Get-Disk -Number $partition.DiskNumber -ErrorAction Stop\n"
                      "$mediaText = \"$($disk.FriendlyName) $($disk.BusType) $($disk.MediaType)\"\n"
-                     "try {\n"
-                     "    $physical = Get-PhysicalDisk -ErrorAction SilentlyContinue |\n"
-                     "        Where-Object { $_.DeviceId -eq \"$($disk.Number)\" } |\n"
-                     "        Select-Object -First 1\n"
-                     "    if ($physical) { $mediaText = \"$mediaText $($physical.MediaType)\" }\n"
-                     "} catch { }\n"
+                     "$physical = Get-PhysicalDisk -ErrorAction Stop |\n"
+                     "    Where-Object { $_.DeviceId -eq \"$($disk.Number)\" } |\n"
+                     "    Select-Object -First 1\n"
+                     "if ($physical) { $mediaText = \"$mediaText $($physical.MediaType)\" }\n"
                      "if ($mediaText -match '(?i)SSD|NVMe') {\n"
                      "    throw \"Refusing HDD defrag on SSD/NVMe media: $mediaText\"\n"
+                     "}\n"
+                     "$diskIsHdd = \"$($disk.MediaType)\" -match '(?i)^HDD$'\n"
+                     "$physicalIsHdd = $physical -and \"$($physical.MediaType)\" -match "
+                     "'(?i)^HDD$'\n"
+                     "if (-not $diskIsHdd -and -not $physicalIsHdd) {\n"
+                     "    throw \"Could not confirm HDD media classification: $mediaText\"\n"
                      "}\n"
                      "Optimize-Volume -DriveLetter $driveLetter -Analyze -Verbose\n"
                      "Optimize-Volume -DriveLetter $driveLetter -Defrag -Verbose\n"
@@ -5134,14 +5165,14 @@ PartitionScript PartitionScriptBuilder::buildWipeScript(const PartitionOperation
         out.preview = QStringLiteral("Wipe Disk %1").arg(operation.target.disk_number.value());
         const QString ssdPrelude =
             payloadBool(operation, QStringLiteral("ssd_secure_erase"))
-                ? QStringLiteral(
-                      "$trimVolumes = @(Get-Partition -DiskNumber %1 -ErrorAction SilentlyContinue "
-                      "| "
-                      "Get-Volume -ErrorAction SilentlyContinue | Where-Object { $_.DriveLetter "
-                      "})\n"
-                      "foreach ($volume in $trimVolumes) { Optimize-Volume -DriveLetter "
-                      "$volume.DriveLetter -ReTrim -Verbose -ErrorAction SilentlyContinue }\n")
-                      .arg(operation.target.disk_number.value())
+                ? optionalDiskPartitionsFunctionScript() + optionalPartitionVolumeFunctionScript() +
+                      QStringLiteral(
+                          "$trimPartitions = @(Get-SakOptionalDiskPartitions -DiskNumber %1)\n"
+                          "$trimVolumes = @($trimPartitions | ForEach-Object { "
+                          "Get-SakOptionalPartitionVolume $_ } | Where-Object { $_.DriveLetter })\n"
+                          "foreach ($volume in $trimVolumes) { Optimize-Volume -DriveLetter "
+                          "$volume.DriveLetter -ReTrim -Verbose -ErrorAction Stop }\n")
+                          .arg(operation.target.disk_number.value())
                 : QString();
         out.script = commonHeader(out.preview) + ssdPrelude +
                      QStringLiteral(

@@ -202,7 +202,11 @@ the rest is a debt-reduction + test-infra program (multi-session, much of it cos
       defects. Still a fix program, but a style one. PROGRESS 2026-08-31: the first safe
       designated-initializer slice cleared all 3 findings in
       `src/actions/optimize_power_settings_action.cpp`; formatter, lizard, target build, and
-      target CTest passed. The wider style backlog remains open.
+      target CTest passed. The naming gate's prior zero was then proven false: 147/147 TUs had
+      processing failures hidden by disabled clang diagnostics. The gate now strips only 588
+      driver-only flags and rejects unhealthy/incomplete analysis. Seven PS5.1/PS7 tests pass;
+      all 10 unused-const/parameter diagnostics are cleared. It correctly remains red on 122
+      compiler diagnostics across 26 TUs. The wider style/compiler backlog remains open.
 - [x] cppcheck-suppression audit -- DONE, corrected 2026-08-31. All 26 inline suppressions were
       re-checked with inline suppressions disabled. Three genuinely suppressed nothing and remain
       removed. A real template-instantiating include-path run later proved two `strong_index.h`
@@ -227,6 +231,8 @@ the rest is a debt-reduction + test-infra program (multi-session, much of it cos
       CTest 264/264, zero failures, 738.44 seconds.
       Current plan-archive/doc-gate/clang slice: all pre-commit hooks passed; Release build exit
       0; full CTest 265/265, zero failures, 804.48 seconds.
+      Suppression direct-fix wave 1: all changed-file hooks passed; Release build exit 0; full
+      CTest 266/266, zero failures, 820.46 seconds.
 - [x] Branch protection -- CLOSED BY OWNER DECISION under R5-G21-6. The owner explicitly dropped
       this requirement; it is not deferred work and does not block the campaign.
 

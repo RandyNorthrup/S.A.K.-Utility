@@ -249,7 +249,7 @@ constexpr auto kNetIpConfigPowerShell =
     "$ErrorActionPreference='Stop'; Get-NetIPConfiguration | ForEach-Object { "
     "$a=$_.InterfaceAlias; "
     "$d=(Get-NetIPInterface -InterfaceAlias $a -AddressFamily IPv4 "
-    "-ErrorAction SilentlyContinue).Dhcp; "
+    "-ErrorAction Stop).Dhcp; "
     "[PSCustomObject]@{ Name=$a; Dhcp=\"$d\"; "
     "IPv4=($_.IPv4Address.IPAddress | Select-Object -First 1); "
     "Prefix=($_.IPv4Address.PrefixLength | Select-Object -First 1); "

@@ -5,7 +5,14 @@
 
 #include "sak/win32mcp/browser_contract.h"
 
+#include <utility>
+
 namespace sak::win32mcp {
+
+BrowserControl::BrowserControl() : BrowserControl(BrowserBridgePipeServer::Options{}) {}
+
+BrowserControl::BrowserControl(BrowserBridgePipeServer::Options options)
+    : pipe_(std::move(options)) {}
 
 bool BrowserControl::start(QString* error) {
     started_ = pipe_.start(error);

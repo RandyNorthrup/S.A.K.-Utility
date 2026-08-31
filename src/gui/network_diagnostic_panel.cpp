@@ -94,7 +94,6 @@ constexpr int kMtrMaxCycles = 1000;
 constexpr int kMtrDefaultCycles = 100;
 constexpr int kMtrDefaultIntervalMs = 1000;
 constexpr int kMtrDefaultTimeoutMs = 5000;
-constexpr int kMtrLossWarningPercent = 5;
 constexpr int kPortScanMaxTimeoutMs = 30'000;
 constexpr int kPortScanDefaultTimeoutMs = 3000;
 constexpr int kPortScanMaxConcurrent = 200;

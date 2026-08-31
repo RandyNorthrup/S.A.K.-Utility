@@ -8,6 +8,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <exception>
 #include <functional>
 #include <stop_token>
 #include <thread>
@@ -32,6 +33,15 @@ namespace sak {
 /// concurrent finish() calls; use from a single owning thread.
 class DeadlineCanceller {
 public:
+    /// Outcome of invoking the cancellation callback after the deadline wins. Kept separate from
+    /// fired(): the deadline still elapsed even when the callback itself failed.
+    enum class CallbackFailure {
+        None,
+        MissingCallback,
+        StandardException,
+        UnknownException
+    };
+
     DeadlineCanceller(std::function<void()> on_deadline, int timeout_ms)
         : m_monitor([this, on_deadline = std::move(on_deadline), timeout_ms](std::stop_token st) {
             const auto deadline = std::chrono::steady_clock::now() +
@@ -40,15 +50,23 @@ public:
                 if (std::chrono::steady_clock::now() >= deadline) {
                     State expected = State::Running;
                     if (m_state.compare_exchange_strong(expected, State::Fired)) {
-                        // We won the race -> a real timeout. The callback runs on this detached
-                        // monitor thread, so an empty target (std::bad_function_call) or any
-                        // exception escaping it would reach std::terminate and crash the process.
-                        // Guard both; fired() still reports the timeout honestly for the caller.
-                        if (on_deadline) {
-                            try {
-                                on_deadline();
-                            } catch (...) {  // NOLINT: a monitor-thread throw must not terminate
-                            }
+                        // We won the race -> a real timeout. Nothing may escape this monitor thread
+                        // into std::terminate. Record every failure class in an atomic observation
+                        // seam so the owning thread can report it after finish() joins the monitor.
+                        if (!on_deadline) {
+                            m_callback_failure.store(CallbackFailure::MissingCallback);
+                            return;
+                        }
+                        try {
+                            on_deadline();
+                        } catch (const std::exception&) {
+                            m_callback_failure.store(CallbackFailure::StandardException);
+                        } catch (...) {
+                            // A std::function target may throw a non-standard value. This final
+                            // process-safety boundary records that distinct failure; its test
+                            // throws an int so removal would terminate instead of producing
+                            // evidence.
+                            m_callback_failure.store(CallbackFailure::UnknownException);
                         }
                     }
                     return;
@@ -58,15 +76,24 @@ public:
         }) {}
 
     /// Call the instant the engine returns. Claims the "completed" outcome unless the deadline has
-    /// already fired, then stops the monitor thread.
+    /// already fired, then stops and joins the monitor thread so callbackFailure() is final.
     void finish() {
         State expected = State::Running;
         m_state.compare_exchange_strong(expected, State::Done);
         m_monitor.request_stop();
+        if (m_monitor.joinable()) {
+            m_monitor.join();
+        }
     }
 
     /// True only if the deadline elapsed AND won the race against finish() (i.e. a real timeout).
-    [[nodiscard]] bool fired() const { return m_state.load() == State::Fired; }
+    [[nodiscard]] bool fired() const noexcept { return m_state.load() == State::Fired; }
+
+    /// Callback failure observed after a real timeout. finish() joins the monitor first, so this
+    /// value is final when queried afterward. Atomic reads remain safe before finish().
+    [[nodiscard]] CallbackFailure callbackFailure() const noexcept {
+        return m_callback_failure.load();
+    }
 
 private:
     static constexpr int kPollMs = 50;
@@ -76,6 +103,7 @@ private:
         Done
     };
     std::atomic<State> m_state{State::Running};
+    std::atomic<CallbackFailure> m_callback_failure{CallbackFailure::None};
     std::jthread m_monitor;  // declared LAST -> stopped+joined FIRST on destruction
 };
 

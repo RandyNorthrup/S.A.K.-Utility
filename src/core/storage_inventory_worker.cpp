@@ -92,7 +92,10 @@ PartitionVolumeInfo parseVolume(const QJsonObject& object) {
     volume.free_bytes = jsonUInt64(object, QStringLiteral("SizeRemaining"));
     volume.bitlocker_enabled = jsonBool(object, QStringLiteral("BitLockerEnabled"));
     volume.bitlocker_locked = jsonBool(object, QStringLiteral("BitLockerLocked"));
-    volume.dirty_bit_set = jsonBool(object, QStringLiteral("DirtyBitSet"));
+    volume.dirty_bit_known = jsonBool(object, QStringLiteral("DirtyBitKnown"));
+    volume.dirty_bit_set = volume.dirty_bit_known &&
+                           jsonBool(object, QStringLiteral("DirtyBitSet"));
+    volume.dirty_bit_error = object.value(QStringLiteral("DirtyBitError")).toString().trimmed();
     return volume;
 }
 
@@ -504,6 +507,24 @@ void appendPartitionEnumerationWarnings(PartitionInventory* inventory) {
     }
 }
 
+void appendVolumeProbeWarnings(PartitionInventory* inventory) {
+    for (const auto& disk : inventory->disks) {
+        for (const auto& partition : disk.partitions) {
+            if (!partition.volume || !partition.volume->hasDriveLetter() ||
+                partition.volume->dirty_bit_known) {
+                continue;
+            }
+            const QString reason = partition.volume->dirty_bit_error.trimmed().isEmpty()
+                                       ? QStringLiteral("no error text reported")
+                                       : partition.volume->dirty_bit_error.trimmed();
+            inventory->warnings.append(
+                QStringLiteral("Dirty-bit query failed for volume %1: %2; its file-system "
+                               "dirty state is unknown")
+                    .arg(partition.volume->drive_letter, reason));
+        }
+    }
+}
+
 }  // namespace
 
 StorageInventoryWorker::StorageInventoryWorker(QObject* parent) : QObject(parent) {}
@@ -559,6 +580,7 @@ PartitionInventory StorageInventoryWorker::parseInventoryJson(const QByteArray& 
         }
     }
     appendPartitionEnumerationWarnings(&inventory);
+    appendVolumeProbeWarnings(&inventory);
     inventory.layout_hash = buildLayoutHash(inventory);
     return inventory;
 }
@@ -643,9 +665,27 @@ static QString inventoryPowerShellPartitionScript() {
         Get-BitLockerVolume -MountPoint "$($volume.DriveLetter):" -ErrorAction SilentlyContinue
       } else { $null }
       $dirty = $false
+      $dirtyKnown = $false
+      $dirtyError = ''
       if ($volume -and $volume.DriveLetter) {
-        $dirtyText = (& fsutil.exe dirty query "$($volume.DriveLetter):" 2>$null) -join ' '
-        $dirty = ($dirtyText -match 'dirty') -and -not ($dirtyText -match 'not\s+dirty')
+        $dirtyOutput = @(& fsutil.exe dirty query "$($volume.DriveLetter):" 2>&1)
+        $dirtyExit = $LASTEXITCODE
+        $dirtyText = ($dirtyOutput | ForEach-Object { "$_" }) -join ' '
+        if ($dirtyExit -ne 0) {
+          $dirtyError = if ([string]::IsNullOrWhiteSpace($dirtyText)) {
+            "fsutil exited $dirtyExit without error text"
+          } else {
+            "fsutil exited $dirtyExit`: $dirtyText"
+          }
+        } elseif ($dirtyText -match 'not\s+dirty') {
+          $dirtyKnown = $true
+          $dirty = $false
+        } elseif ($dirtyText -match 'dirty') {
+          $dirtyKnown = $true
+          $dirty = $true
+        } else {
+          $dirtyError = "fsutil returned unrecognized output: $dirtyText"
+        }
       }
       [pscustomobject]@{
         PartitionNumber = $partition.PartitionNumber
@@ -670,7 +710,9 @@ static QString inventoryPowerShellPartitionScript() {
             SizeRemaining = [uint64]$volume.SizeRemaining
             BitLockerEnabled = if ($bitlocker) { "$($bitlocker.ProtectionStatus)" -eq 'On' } else { $false }
             BitLockerLocked = if ($bitlocker) { "$($bitlocker.LockStatus)" -eq 'Locked' } else { $false }
+            DirtyBitKnown = [bool]$dirtyKnown
             DirtyBitSet = [bool]$dirty
+            DirtyBitError = "$dirtyError"
           }
         } else { $null }
       }

@@ -405,4 +405,4 @@ struct BitCursor {
 
 }  // namespace sak::zbm
 
-#include "apfs_lzbitmap_encode.h"  // NOLINT(build/include) encoder shares the constants above
+#include "apfs_lzbitmap_encode.h"  // Encoder shares the constants above.

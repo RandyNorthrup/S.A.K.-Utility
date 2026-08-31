@@ -41,8 +41,6 @@ namespace sak {
 namespace {
 
 constexpr int kQueueTableMinHeight = 120;
-constexpr int kMaxTcpPort = 65'535;
-constexpr int kLargeByteDisplayPrecision = 2;
 
 void applyOstGroupLayout(QVBoxLayout* layout) {
     Q_ASSERT(layout != nullptr);

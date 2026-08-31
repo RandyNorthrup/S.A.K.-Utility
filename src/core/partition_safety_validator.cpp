@@ -271,8 +271,20 @@ bool hasUnlockedBitLockerVolume(const PartitionInfoEx& partition) {
 }
 
 bool hasDirtyVolume(const PartitionInfoEx& partition, PartitionOperationType type) {
-    return partition.volume && partition.volume->dirty_bit_set &&
-           type != PartitionOperationType::RepairBoot;
+    return partition.volume && partition.volume->dirty_bit_known &&
+           partition.volume->dirty_bit_set && type != PartitionOperationType::RepairBoot;
+}
+
+bool hasUnknownDirtyVolume(const PartitionInfoEx& partition, PartitionOperationType type) {
+    return partition.volume && partition.volume->hasDriveLetter() &&
+           !partition.volume->dirty_bit_known && type != PartitionOperationType::RepairBoot;
+}
+
+QString unknownDirtyVolumeWarning(const PartitionVolumeInfo& volume) {
+    const QString reason = volume.dirty_bit_error.trimmed();
+    return reason.isEmpty()
+               ? QStringLiteral("File system dirty state could not be determined")
+               : QStringLiteral("File system dirty state could not be determined: %1").arg(reason);
 }
 
 uint64_t payloadUInt64(const PartitionOperation& operation, const QString& key) {
@@ -1548,6 +1560,9 @@ void validatePartitionTargetState(const PartitionDiskInfo& disk,
     addWarningIf(result,
                  hasDirtyVolume(partition, operation.type),
                  QStringLiteral("File system dirty bit is set; run repair first"));
+    addWarningIf(result,
+                 hasUnknownDirtyVolume(partition, operation.type),
+                 unknownDirtyVolumeWarning(partition.volume.value()));
 }
 
 void validatePartitionMetadataOperation(const PartitionDiskInfo& disk,

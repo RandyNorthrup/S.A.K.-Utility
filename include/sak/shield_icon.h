@@ -44,6 +44,8 @@ namespace sak {
     bih.biPlanes = 1;
     bih.biBitCount = kShieldIconBitmapBitCount;
     bih.biCompression = BI_RGB;
+    BITMAPINFO bitmap_info{};
+    bitmap_info.bmiHeader = bih;
 
     QImage buffer(width, height, QImage::Format_ARGB32_Premultiplied);
     buffer.fill(Qt::transparent);  // never leave scan lines uninitialized on a partial copy
@@ -51,15 +53,12 @@ namespace sak {
     if (hdc == nullptr) {
         return {};
     }
-    // GetDIBits wants a BITMAPINFO*; bih is a BITMAPINFOHEADER, which is BITMAPINFO's first
-    // member. At biBitCount 32 (BI_RGB) GetDIBits writes only the header and never reads or
-    // writes a color table, so passing the header alone is the documented, safe Win32 idiom.
     const int copied = GetDIBits(hdc,
                                  color_bitmap,
                                  0,
                                  static_cast<UINT>(height),
                                  buffer.bits(),
-                                 reinterpret_cast<BITMAPINFO*>(&bih),  // NOLINT
+                                 &bitmap_info,
                                  DIB_RGB_COLORS);
     ReleaseDC(nullptr, hdc);
     if (copied != height) {

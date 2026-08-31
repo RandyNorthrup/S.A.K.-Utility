@@ -367,7 +367,6 @@ QString ScreenshotSettingsAction::buildScreenshotReportText(int monitor_count,
                                                             const CaptureResult& capture,
                                                             const QString& output_dir_path,
                                                             const QString& timestamp) {
-    Q_UNUSED(timestamp);
     const int total_pages =
         static_cast<int>(capture.captured_pages.size() + capture.failed_pages.size());
 
@@ -378,8 +377,7 @@ QString ScreenshotSettingsAction::buildScreenshotReportText(int monitor_count,
     report << "+==============================================================+\n";
     report << "|         WINDOWS SETTINGS SCREENSHOT REPORT                   |\n";
     report << "+==============================================================+\n";
-    report << QString("| Timestamp:         %1                    |\n")
-                  .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd HH:mm:ss"));
+    report << QString("| Timestamp:         %1                    |\n").arg(timestamp);
     report << QString("| Monitors Detected: %1                                       |\n")
                   .arg(monitor_count);
     report << QString("| Total Pages:       %1                                      |\n")

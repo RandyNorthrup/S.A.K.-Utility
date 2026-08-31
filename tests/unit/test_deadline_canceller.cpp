@@ -10,6 +10,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <stdexcept>
 #include <thread>
 
 class TestDeadlineCanceller : public QObject {
@@ -20,6 +21,9 @@ private Q_SLOTS:
     void finishBeforeTimeoutNeverFires();
     void destructorWithoutFinishDoesNotFire();
     void finishAfterTimeoutStaysFired();
+    void missingCallbackIsObservable();
+    void standardCallbackFailureIsObservable();
+    void unknownCallbackFailureIsObservable();
 };
 
 // A short timeout with a longer wait: the monitor must fire, invoke the callback exactly once, and
@@ -31,8 +35,44 @@ void TestDeadlineCanceller::firesAndInvokesCallbackOnceOnTimeout() {
         std::this_thread::sleep_for(std::chrono::milliseconds(120));
         canceller.finish();
         QVERIFY(canceller.fired());
+        QCOMPARE(canceller.callbackFailure(), sak::DeadlineCanceller::CallbackFailure::None);
     }
     QCOMPARE(calls.load(), 1);
+}
+
+// A missing cancel target makes a fired deadline unable to interrupt its engine. Surface that
+// configuration error through the same no-throw observation seam.
+void TestDeadlineCanceller::missingCallbackIsObservable() {
+    sak::DeadlineCanceller canceller({}, 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    canceller.finish();
+
+    QVERIFY(canceller.fired());
+    QCOMPARE(canceller.callbackFailure(), sak::DeadlineCanceller::CallbackFailure::MissingCallback);
+}
+
+// A deadline callback is an external boundary. A standard exception must not terminate the
+// monitor thread or disappear: finish() joins it, then callbackFailure() reports the exact class.
+void TestDeadlineCanceller::standardCallbackFailureIsObservable() {
+    sak::DeadlineCanceller canceller([]() { throw std::runtime_error("cancel failed"); }, 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    canceller.finish();
+
+    QVERIFY(canceller.fired());
+    QCOMPARE(canceller.callbackFailure(),
+             sak::DeadlineCanceller::CallbackFailure::StandardException);
+}
+
+// The catch-all is required, not a warning suppression: C++ callbacks can throw non-standard
+// values. That failure class must also remain observable instead of escaping to std::terminate.
+void TestDeadlineCanceller::unknownCallbackFailureIsObservable() {
+    sak::DeadlineCanceller canceller([]() { throw 7; }, 1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    canceller.finish();
+
+    QVERIFY(canceller.fired());
+    QCOMPARE(canceller.callbackFailure(),
+             sak::DeadlineCanceller::CallbackFailure::UnknownException);
 }
 
 // finish() called well before the deadline claims completion: fired() stays false and the callback
@@ -42,15 +82,14 @@ void TestDeadlineCanceller::finishBeforeTimeoutNeverFires() {
     {
         // 60 ms deadline, finish() immediately: the deadline instant then elapses WHILE the
         // canceller is still alive, so a green result requires finish() to have CLAIMED the outcome
-        // (compare_exchange Running -> Done, deadline_canceller.h:62-66) rather than merely being
-        // read before the deadline could arrive. With a 100 s timeout the assertion was true by
-        // construction: fired() is false for BOTH Running and Done (:69), so a no-op finish() -- no
-        // CAS, no request_stop -- passed, and so did a monitor that stores Fired after its loop
-        // exits on a stop (the over-reporting the header rejects at :24-28).
+        // (compare_exchange Running -> Done) rather than merely being read before the deadline
+        // could arrive. With a 100 s timeout the assertion was true by construction: fired() is
+        // false for BOTH Running and Done, so a no-op finish() -- no CAS, no request_stop --
+        // passed, and so did a monitor that stores Fired after its loop exits on a stop.
         sak::DeadlineCanceller canceller([&calls]() { ++calls; }, 60);
         canceller.finish();
-        // Outlive the deadline: kPollMs is 50 (:72), so a monitor NOT claimed by finish() reaches
-        // its deadline poll by ~110 ms and fires.
+        // Outlive the deadline: kPollMs is 50, so a monitor NOT claimed by finish() reaches its
+        // deadline poll by ~110 ms and fires.
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
         QVERIFY(!canceller.fired());
         QCOMPARE(calls.load(), 0);
@@ -63,12 +102,11 @@ void TestDeadlineCanceller::destructorWithoutFinishDoesNotFire() {
     std::atomic<int> calls{0};
     {
         // 300 ms deadline (not 100 s): the deadline instant elapses during the wait below, so the
-        // monitor must actually have been stopped AND JOINED by destruction -- the contract at
-        // deadline_canceller.h:79 (jthread declared LAST -> stopped+joined FIRST, before m_state
-        // and before the caller's engine/stop_source die, :30-32). A 100 s timeout made this
-        // vacuous: read microseconds after the scope closed and 100 s before anything could fire,
-        // it read calls == 0 even for a monitor that was detached instead of joined, or one whose
-        // loop ignores st.stop_requested() (:39).
+        // monitor must actually have been stopped AND JOINED by destruction -- the jthread is
+        // declared LAST, so it is stopped+joined FIRST, before m_state and before the caller's
+        // engine/stop_source die. A 100 s timeout made this vacuous: read microseconds after the
+        // scope closed and 100 s before anything could fire, it read calls == 0 even for a monitor
+        // that was detached instead of joined, or one whose loop ignores st.stop_requested().
         sak::DeadlineCanceller canceller([&calls]() { ++calls; }, 300);
         // Immediately leaves scope -> dtor requests stop and joins.
     }

@@ -107,7 +107,6 @@ constexpr int kDefaultNoteColorIndex = 3;
 constexpr int kInlineImageAttrPrefixCaptureGroup = 1;
 constexpr int kInlineImageAttrQuoteCaptureGroup = 2;
 constexpr int kInlineImageSrcCaptureGroup = 3;
-constexpr int kLargeByteDisplayPrecision = 2;
 
 class EmailSelectHeaderView : public QHeaderView {
 public:
@@ -2507,8 +2506,12 @@ void EmailInspectorPanel::displayAttachments(const QVector<sak::PstAttachmentInf
     for (int row = 0; row < count; ++row) {
         const auto& att = attachments.at(row);
         const QString name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
-        m_attachments_table->setItem(row, 0, new QTableWidgetItem(name));
-        m_attachments_table->setItem(row, 1, new QTableWidgetItem(formatBytes(att.size_bytes)));
+        m_attachments_table->setItem(row,
+                                     kAttachmentTableColumnFilename,
+                                     new QTableWidgetItem(name));
+        m_attachments_table->setItem(row,
+                                     kAttachmentTableColumnSize,
+                                     new QTableWidgetItem(formatBytes(att.size_bytes)));
         m_attachments_table->setItem(row,
                                      kAttachmentTableColumnMimeType,
                                      new QTableWidgetItem(att.mime_type));

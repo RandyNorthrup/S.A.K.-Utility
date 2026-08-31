@@ -1725,6 +1725,7 @@ private Q_SLOTS:
     void fileSystemToolRunner_blocksUnapprovedOrUnsupportedReadOnlyChecks();
     void fileSystemToolRunner_resolvesApprovedToolPath();
     void inventoryParser_parsesDiskAndPartition();
+    void inventoryParser_surfacesUnknownDirtyState();
     void inventoryParser_infersHiddenProtectedPartitionFileSystems();
     void inventoryParser_keepsRawBasicDiskInitializable();
     void inventoryParser_failedPartitionQueryIsNeverUnallocated();
@@ -1860,6 +1861,7 @@ QByteArray fixtureJson() {
                                  {QStringLiteral("SizeRemaining"), QStringLiteral("26843545600")},
                                  {QStringLiteral("BitLockerEnabled"), true},
                                  {QStringLiteral("BitLockerLocked"), false},
+                                 {QStringLiteral("DirtyBitKnown"), true},
                                  {QStringLiteral("DirtyBitSet"), true}};
     const QJsonObject dataPartition{{QStringLiteral("PartitionNumber"), 2},
                                     {QStringLiteral("Guid"), QStringLiteral("{data}")},
@@ -2922,6 +2924,10 @@ void verifyExtFormatScript(const PartitionScriptBuilder* builder, const Partitio
     QVERIFY(script.script.contains(QStringLiteral("Get-FileHash")));
     QVERIFY(script.script.contains(QStringLiteral("mke2fs")));
     QVERIFY(script.script.contains(QStringLiteral("Dismount-Volume")));
+    QVERIFY(script.script.contains(QStringLiteral("function Get-SakOptionalPartitionVolume")));
+    QVERIFY(script.script.contains(QStringLiteral("CmdletizationQuery_NotFound")));
+    QVERIFY(script.script.contains(QStringLiteral("$Partition | Get-Volume -ErrorAction Stop")));
+    QVERIFY(!script.script.contains(QStringLiteral("Get-Volume -ErrorAction Stop } catch { }")));
     QVERIFY(script.script.contains(QStringLiteral("'ext4'")));
     QVERIFY(script.script.contains(extToolRawTargetPath()));
 }
@@ -3112,6 +3118,10 @@ void verifyExtResizeScripts(const PartitionScriptBuilder* builder, const Partiti
     QVERIFY(shrink.script.contains(QStringLiteral("resize2fs shrink")));
     QVERIFY(shrink.script.contains(QStringLiteral("524288K")));
     QVERIFY(shrink.script.contains(QStringLiteral("Partition shrink did not reach target size")));
+    QVERIFY(shrink.script.contains(QStringLiteral("function Get-SakOptionalPartitionVolume")));
+    QVERIFY(shrink.script.contains(QStringLiteral("CmdletizationQuery_NotFound")));
+    QVERIFY(shrink.script.contains(QStringLiteral("$Partition | Get-Volume -ErrorAction Stop")));
+    QVERIFY(!shrink.script.contains(QStringLiteral("Get-Volume -ErrorAction Stop } catch { }")));
 }
 
 void verifyExtTargetPathGates(const PartitionScriptBuilder* builder,
@@ -16886,10 +16896,55 @@ void PartitionManagerCoreTests::inventoryParser_parsesDiskAndPartition() {
     QCOMPARE(inventory.disks.first().write_errors_total, 3ULL);
     QCOMPARE(inventory.disks.first().wear_percent, 4ULL);
     QVERIFY(inventory.disks.first().partitions.at(1).volume->bitlocker_enabled);
+    QVERIFY(inventory.disks.first().partitions.at(1).volume->dirty_bit_known);
     QVERIFY(inventory.disks.first().partitions.at(1).volume->dirty_bit_set);
     QCOMPARE(inventory.disks.first().partitions.at(1).volume->file_system_source,
              PartitionFileSystemDetector::windowsVolumeSource());
     QVERIFY(!inventory.layout_hash.isEmpty());
+}
+
+void PartitionManagerCoreTests::inventoryParser_surfacesUnknownDirtyState() {
+    QJsonDocument document = QJsonDocument::fromJson(fixtureJson());
+    QJsonArray disks = document.array();
+    QJsonObject disk = disks.at(0).toObject();
+    QJsonArray partitions = disk.value(QStringLiteral("Partitions")).toArray();
+    QJsonObject dataPartition = partitions.at(1).toObject();
+    QJsonObject volume = dataPartition.value(QStringLiteral("Volume")).toObject();
+    volume[QStringLiteral("DirtyBitKnown")] = false;
+    volume[QStringLiteral("DirtyBitSet")] = true;
+    volume[QStringLiteral("DirtyBitError")] = QStringLiteral("Access is denied.");
+    dataPartition[QStringLiteral("Volume")] = volume;
+    partitions[1] = dataPartition;
+    disk[QStringLiteral("Partitions")] = partitions;
+    disks[0] = disk;
+
+    auto inventory = StorageInventoryWorker::parseInventoryJson(
+        QJsonDocument(disks).toJson(QJsonDocument::Compact));
+    const auto& parsedVolume = inventory.disks.first().partitions.at(1).volume.value();
+    QVERIFY(!parsedVolume.dirty_bit_known);
+    QVERIFY2(!parsedVolume.dirty_bit_set,
+             "An unverified DirtyBitSet value must not be presented as a known state.");
+    QCOMPARE(parsedVolume.dirty_bit_error, QStringLiteral("Access is denied."));
+    const QString inventoryWarnings = inventory.warnings.join(QStringLiteral("; "));
+    QVERIFY2(inventoryWarnings.contains(QStringLiteral("Dirty-bit query failed for volume C")),
+             qPrintable(inventoryWarnings));
+    QVERIFY2(inventoryWarnings.contains(QStringLiteral("Access is denied.")),
+             qPrintable(inventoryWarnings));
+
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = DiskNumber{0};
+    target.partition_number = PartitionNumber{2};
+    target.size_bytes = inventory.disks.first().partitions.at(1).size_bytes;
+    const auto operation =
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::CheckFileSystem, target);
+    const auto validation = PartitionSafetyValidator::validate(inventory, operation);
+    const QString validationWarnings = validation.warnings.join(QStringLiteral("; "));
+    QVERIFY2(validationWarnings.contains(
+                 QStringLiteral("File system dirty state could not be determined")),
+             qPrintable(validationWarnings));
+    QVERIFY2(validationWarnings.contains(QStringLiteral("Access is denied.")),
+             qPrintable(validationWarnings));
 }
 
 void PartitionManagerCoreTests::inventoryParser_infersHiddenProtectedPartitionFileSystems() {
@@ -17018,6 +17073,16 @@ void PartitionManagerCoreTests::inventoryScript_handlesRawDisksWithoutAbort() {
              "Hidden partitions should use a resilient volume lookup helper.");
     QVERIFY2(script.contains(QStringLiteral("Get-Volume -Path $accessPath")),
              "Volume GUID access paths should be tried when direct partition lookup fails.");
+    QVERIFY2(script.contains(QStringLiteral("$dirtyOutput = @(& fsutil.exe dirty query")),
+             "Dirty-bit output must be captured for an explicit result or error.");
+    QVERIFY2(script.contains(QStringLiteral("$dirtyExit = $LASTEXITCODE")),
+             "Dirty-bit query success must be decided by the native exit code.");
+    QVERIFY2(script.contains(QStringLiteral("DirtyBitKnown = [bool]$dirtyKnown")),
+             "Inventory JSON must distinguish clean from unknown dirty state.");
+    QVERIFY2(script.contains(QStringLiteral("DirtyBitError = \"$dirtyError\"")),
+             "Dirty-bit query failures must be surfaced in inventory JSON.");
+    QVERIFY2(!script.contains(QStringLiteral("dirty query \"$($volume.DriveLetter):\" 2>$null")),
+             "Dirty-bit query stderr must not be discarded into a false-clean result.");
 }
 
 void PartitionManagerCoreTests::safetyValidator_blocksSystemPartitionDelete() {
@@ -17174,6 +17239,10 @@ void PartitionManagerCoreTests::scriptBuilder_buildsNonNativeCreateFormatScripts
     QVERIFY(extScript.script.contains(QStringLiteral("$rawTargetPath")));
     QVERIFY(extScript.script.contains(QStringLiteral("mke2fs")));
     QVERIFY(extScript.script.contains(QStringLiteral("'ext4'")));
+    QVERIFY(extScript.script.contains(QStringLiteral("function Get-SakOptionalPartitionVolume")));
+    QVERIFY(extScript.script.contains(QStringLiteral("CmdletizationQuery_NotFound")));
+    QVERIFY(extScript.script.contains(QStringLiteral("$Partition | Get-Volume -ErrorAction Stop")));
+    QVERIFY(!extScript.script.contains(QStringLiteral("Get-Volume -ErrorAction Stop } catch { }")));
     QVERIFY(!extScript.script.contains(QStringLiteral("-AssignDriveLetter")));
     QVERIFY(!extScript.script.contains(QStringLiteral("Format-Volume")));
     QVERIFY(!extScript.script.contains(QStringLiteral("__SAK_NEW_PARTITION_RAW_TARGET__")));
@@ -17838,6 +17907,10 @@ void PartitionManagerCoreTests::scriptBuilder_buildsLinuxSwapFormatScript() {
     QVERIFY(script.script.contains(QStringLiteral("Offset 1028")));
     QVERIFY(script.script.contains(QStringLiteral("SAK_SWAP")));
     QVERIFY(script.script.contains(rawTarget));
+    QVERIFY(script.script.contains(QStringLiteral("function Get-SakOptionalPartitionVolume")));
+    QVERIFY(script.script.contains(QStringLiteral("CmdletizationQuery_NotFound")));
+    QVERIFY(script.script.contains(QStringLiteral("$Partition | Get-Volume -ErrorAction Stop")));
+    QVERIFY(!script.script.contains(QStringLiteral("Get-Volume -ErrorAction Stop } catch { }")));
     QVERIFY(!script.script.contains(QStringLiteral("mke2fs")));
 
     QJsonObject forgedTargetPayload = payload;
@@ -18159,6 +18232,17 @@ void PartitionManagerCoreTests::scriptBuilder_buildsClearLevelDiskWipeScript() {
     QVERIFY(ssdScript.valid());
     QVERIFY(ssdScript.script.contains(QStringLiteral("Optimize-Volume -DriveLetter")));
     QVERIFY(ssdScript.script.contains(QStringLiteral("-ReTrim -Verbose")));
+    QVERIFY(ssdScript.script.contains(QStringLiteral("function Get-SakOptionalDiskPartitions")));
+    QVERIFY(ssdScript.script.contains(QStringLiteral("function Get-SakOptionalPartitionVolume")));
+    QVERIFY(ssdScript.script.contains(QStringLiteral("CmdletizationQuery_NotFound")));
+    QVERIFY(ssdScript.script.contains(
+        QStringLiteral("Get-Partition -DiskNumber $DiskNumber -ErrorAction Stop")));
+    QVERIFY(ssdScript.script.contains(
+        QStringLiteral("Optimize-Volume -DriveLetter $volume.DriveLetter -ReTrim -Verbose "
+                       "-ErrorAction Stop")));
+    QVERIFY(
+        !ssdScript.script.contains(QStringLiteral("Get-Partition -DiskNumber 4 "
+                                                  "-ErrorAction SilentlyContinue")));
 }
 
 void PartitionManagerCoreTests::scriptBuilder_mergeRejectsTraversalTargetFolder() {
@@ -18417,6 +18501,13 @@ void PartitionManagerCoreTests::scriptBuilder_restoreImageGuardsUncAndOnTargetDi
     QVERIFY(script.script.contains(QStringLiteral("UNC/network sources are not supported")));
     QVERIFY(script.script.contains(QStringLiteral("resides on the target disk")));
     QVERIFY(script.script.contains(QStringLiteral("$tgtDiskNumber = 2")));
+    QVERIFY(script.script.contains(QStringLiteral("function Get-SakOptionalPartitionVolume")));
+    QVERIFY(script.script.contains(QStringLiteral("function Get-SakOptionalDiskPartitions")));
+    QVERIFY(script.script.contains(QStringLiteral("CmdletizationQuery_NotFound")));
+    QVERIFY(script.script.contains(QStringLiteral("Get-SakOptionalPartitionVolume $_")));
+    QVERIFY(script.script.contains(
+        QStringLiteral("Get-SakOptionalDiskPartitions -DiskNumber $tgtDiskNumber")));
+    QVERIFY(!script.script.contains(QStringLiteral("Get-Volume -ErrorAction SilentlyContinue")));
 }
 
 void PartitionManagerCoreTests::scriptBuilder_restoreImagePinsSourceContent() {
@@ -19058,9 +19149,8 @@ void PartitionManagerCoreTests::scriptBuilder_waveCIdentityDismountImageGuardFai
     QVERIFY(fmt.script.contains(QStringLiteral("[uint64]$p.Offset -ne [uint64]1048576")));
     QVERIFY(fmt.script.contains(QStringLiteral("Partition identity mismatch (GUID)")));
 
-    // Codex-3 F10: APFS raw mutation dismount must not swallow terminating errors -- the
-    // blanket `catch {}` is gone; volume lookup is SilentlyContinue and a real dismount
-    // failure still propagates via -ErrorAction Stop.
+    // Codex-3 F10: APFS raw mutation dismount permits only the exact no-volume condition.
+    // Any other Get-Volume failure and every real dismount failure propagate.
     PartitionTarget apfsTarget = extToolPartitionTarget();
     apfsTarget.size_bytes = 128ULL * 1024ULL * 1024ULL;
     QJsonObject apfsPayload = baseExtToolPayload();
@@ -19069,7 +19159,11 @@ void PartitionManagerCoreTests::scriptBuilder_waveCIdentityDismountImageGuardFai
     const auto apfs = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::Format, apfsTarget, apfsPayload));
     QVERIFY2(apfs.valid(), qPrintable(apfs.blockers.join(QStringLiteral("; "))));
-    QVERIFY(apfs.script.contains(QStringLiteral("$p | Get-Volume -ErrorAction SilentlyContinue")));
+    QVERIFY(apfs.script.contains(QStringLiteral("function Get-SakOptionalPartitionVolume")));
+    QVERIFY(apfs.script.contains(QStringLiteral("CmdletizationQuery_NotFound")));
+    QVERIFY(apfs.script.contains(QStringLiteral("$Partition | Get-Volume -ErrorAction Stop")));
+    QVERIFY(apfs.script.contains(QStringLiteral("Get-SakOptionalPartitionVolume $p")));
+    QVERIFY(!apfs.script.contains(QStringLiteral("Get-Volume -ErrorAction SilentlyContinue")));
     QVERIFY(!apfs.script.contains(QStringLiteral("Get-Volume -ErrorAction Stop } catch { }")));
 
     // Codex-3 F5: Create Image's destination off-source-disk guard must fail closed when
@@ -19087,7 +19181,12 @@ void PartitionManagerCoreTests::scriptBuilder_waveCIdentityDismountImageGuardFai
     QVERIFY(
         image.script.contains(QStringLiteral("cannot resolve the destination volume identity")));
     QVERIFY(image.script.contains(
-        QStringLiteral("Get-Partition -DiskNumber $srcDiskNumber -ErrorAction Stop")));
+        QStringLiteral("Get-SakOptionalDiskPartitions -DiskNumber $srcDiskNumber")));
+    QVERIFY(image.script.contains(QStringLiteral("function Get-SakOptionalPartitionVolume")));
+    QVERIFY(image.script.contains(QStringLiteral("function Get-SakOptionalDiskPartitions")));
+    QVERIFY(image.script.contains(QStringLiteral("CmdletizationQuery_NotFound")));
+    QVERIFY(image.script.contains(QStringLiteral("Get-SakOptionalPartitionVolume $_")));
+    QVERIFY(!image.script.contains(QStringLiteral("Get-Volume -ErrorAction SilentlyContinue")));
 }
 
 void PartitionManagerCoreTests::scriptBuilder_waveCHfsStagedWritebackFailsClosed() {
@@ -20364,6 +20463,12 @@ void PartitionManagerCoreTests::scriptBuilder_buildsAllocateFreeSpaceScript() {
     QVERIFY(script.script.contains(QStringLiteral("Repair-Volume -DriveLetter $sourceDrive")));
     // P03-10: donor/target backup-root exclusion compares volume identity.
     QVERIFY(script.script.contains(QStringLiteral("function Get-SakVolumeGuid")));
+    QVERIFY(script.script.contains(QStringLiteral("function Get-SakOptionalPartitionVolume")));
+    QVERIFY(script.script.contains(QStringLiteral("CmdletizationQuery_NotFound")));
+    QVERIFY(script.script.contains(QStringLiteral("$Partition | Get-Volume -ErrorAction Stop")));
+    QVERIFY(script.script.contains(QStringLiteral("Get-SakOptionalPartitionVolume $target")));
+    QVERIFY(!script.script.contains(
+        QStringLiteral("$target | Get-Volume -ErrorAction SilentlyContinue")));
     QVERIFY(
         script.script.contains(QStringLiteral("$backupGuid -eq (Get-SakVolumeGuid $sourceRoot)")));
     QVERIFY(
@@ -20795,6 +20900,12 @@ void PartitionManagerCoreTests::scriptBuilder_buildsDirectDefragScript() {
     QVERIFY(script.valid());
     QVERIFY(script.script.contains(QStringLiteral("$driveLetter = 'T'")));
     QVERIFY(script.script.contains(QStringLiteral("Refusing HDD defrag on SSD/NVMe media")));
+    QVERIFY(script.script.contains(QStringLiteral("Get-PhysicalDisk -ErrorAction Stop")));
+    QVERIFY(script.script.contains(QStringLiteral("Could not confirm HDD media classification")));
+    QVERIFY(
+        !script.script.contains(QStringLiteral("Get-PhysicalDisk -ErrorAction "
+                                               "SilentlyContinue")));
+    QVERIFY(!script.script.contains(QStringLiteral("} catch { }")));
     QVERIFY(script.script.contains(
         QStringLiteral("Optimize-Volume -DriveLetter $driveLetter -Analyze")));
     QVERIFY(script.script.contains(
@@ -21375,6 +21486,12 @@ void PartitionManagerCoreTests::scriptBuilder_emitsCanonicalRawTargetForExtended
     QVERIFY(script.script.contains(QStringLiteral("$dst = '\\\\.\\PhysicalDrive2'")));
     QVERIFY(script.script.contains(QStringLiteral("$src = '\\\\.\\PhysicalDrive0'")));
     QVERIFY(!script.script.contains(QStringLiteral("\\\\?\\PhysicalDrive")));
+    QVERIFY(script.script.contains(
+        QStringLiteral("Set-Disk -Number $n -IsOffline $true -ErrorAction Stop")));
+    QVERIFY(script.script.contains(
+        QStringLiteral("Set-Disk -Number $n -IsOffline $false -ErrorAction Stop")));
+    QVERIFY(!script.script.contains(
+        QStringLiteral("Set-Disk -Number $n -IsOffline $true -ErrorAction SilentlyContinue")));
 
     // An image-file destination keeps file semantics and is not rewritten.
     QJsonObject imagePayload;

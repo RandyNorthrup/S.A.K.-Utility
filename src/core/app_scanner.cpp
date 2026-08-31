@@ -204,8 +204,7 @@ void AppScanner::enumerateHiveApps(
     }
 }
 
-QString AppScanner::readRegistryValue(void* key,
-                                      const QString& valueName) {  // NOLINT - static member
+QString AppScanner::readRegistryValue(void* key, const QString& valueName) {
     // scanRegistryHive is the only caller; it passes a key from a RegOpenKeyExW that returned
     // ERROR_SUCCESS and a literal value name.
     Q_ASSERT(key);
