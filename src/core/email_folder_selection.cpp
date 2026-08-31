@@ -8,6 +8,8 @@
 
 #include <QStringList>
 
+#include <algorithm>
+
 namespace sak {
 
 namespace {
@@ -58,20 +60,19 @@ void collectInto(const PstFolder& folder, QVector<uint64_t>& out) {
 }  // namespace
 
 bool isMailFolder(const QString& display_name, const QString& container_class) {
-    for (const QString& prefix : nonMailContainerPrefixes()) {
-        if (container_class.startsWith(prefix)) {
-            return false;
-        }
+    const bool has_non_mail_prefix =
+        std::ranges::any_of(nonMailContainerPrefixes(), [&container_class](const QString& prefix) {
+            return container_class.startsWith(prefix);
+        });
+    if (has_non_mail_prefix) {
+        return false;
     }
     if (container_class == QLatin1String("IPF.Configuration")) {
         return false;
     }
-    for (const QString& name : nonMailFolderNames()) {
-        if (display_name.compare(name, Qt::CaseInsensitive) == 0) {
-            return false;
-        }
-    }
-    return true;
+    return std::ranges::none_of(nonMailFolderNames(), [&display_name](const QString& name) {
+        return display_name.compare(name, Qt::CaseInsensitive) == 0;
+    });
 }
 
 const PstFolder* findIpmSubtree(const QVector<PstFolder>& folders) {

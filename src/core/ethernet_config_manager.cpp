@@ -26,6 +26,8 @@
 #include <QSysInfo>
 #include <QTextStream>
 
+#include <algorithm>
+
 namespace sak {
 
 namespace {
@@ -54,12 +56,8 @@ bool ipv4FieldsWellFormed(const EthernetConfigSnapshot& snap) {
     if (!snap.ipv4Gateway.isEmpty() && !isDottedIpv4(snap.ipv4Gateway)) {
         return false;
     }
-    for (const QString& dns : snap.ipv4DnsServers) {
-        if (!isDottedIpv4(dns)) {
-            return false;
-        }
-    }
-    return true;
+    return std::ranges::all_of(snap.ipv4DnsServers,
+                               [](const QString& dns) { return isDottedIpv4(dns); });
 }
 }  // namespace
 
@@ -133,12 +131,15 @@ QString EthernetConfigManager::lookupAdapterMac(const QString& adapterName) {
     if (adapterName.isEmpty()) {
         return {};
     }
-    for (const QNetworkInterface& iface : QNetworkInterface::allInterfaces()) {
-        if (iface.humanReadableName() == adapterName || iface.name() == adapterName) {
-            return iface.hardwareAddress();  // "AA:BB:CC:DD:EE:FF", or empty for virtual adapters
-        }
+    const QList<QNetworkInterface> interfaces = QNetworkInterface::allInterfaces();
+    const auto match =
+        std::ranges::find_if(interfaces, [&adapterName](const QNetworkInterface& iface) {
+            return iface.humanReadableName() == adapterName || iface.name() == adapterName;
+        });
+    if (match == interfaces.cend()) {
+        return {};
     }
-    return {};
+    return match->hardwareAddress();  // "AA:BB:CC:DD:EE:FF", or empty for virtual adapters
 }
 
 EthernetConfigSnapshot EthernetConfigManager::captureSettings(const QString& adapterName) {

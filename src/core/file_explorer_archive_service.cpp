@@ -597,13 +597,15 @@ FileExplorerArchiveResult FileExplorerArchiveService::extractZip(const QString& 
     // Bounded per-entry extraction (Qt's extractAll enforces no caps): reject a
     // zip-bomb or zip-slip before writing, and cap entry count / expanded bytes.
     ExtractionContext ctx{.destination_dir = destination_dir, .result = &result};
-    for (const QZipReader::FileInfo& info : *entries) {
-        if (!extractZipEntry(reader, info, &ctx)) {
-            // Roll the partial extraction back so a mid-extraction failure never
-            // leaves a half-written tree behind (B8-08).
-            performExtractionRollback(ctx.rollback);
-            return result;
-        }
+    const bool extracted_all =
+        std::ranges::all_of(*entries, [&reader, &ctx](const QZipReader::FileInfo& info) {
+            return extractZipEntry(reader, info, &ctx);
+        });
+    if (!extracted_all) {
+        // Roll the partial extraction back so a mid-extraction failure never
+        // leaves a half-written tree behind (B8-08).
+        performExtractionRollback(ctx.rollback);
+        return result;
     }
     result.ok = true;
     return result;

@@ -342,14 +342,10 @@ QString ConversionReportGenerator::buildFileResultsTableHtml(
 }
 
 QString ConversionReportGenerator::buildErrorLogHtml(const OstConversionBatchResult& batch) {
-    bool has_errors = false;
-    for (const auto& result : batch.file_results) {
-        if (!result.errors.isEmpty()) {
-            has_errors = true;
-            break;
-        }
-    }
-
+    const bool has_errors = std::ranges::any_of(batch.file_results,
+                                                [](const OstConversionResult& result) {
+                                                    return !result.errors.isEmpty();
+                                                });
     if (!has_errors) {
         return {};
     }

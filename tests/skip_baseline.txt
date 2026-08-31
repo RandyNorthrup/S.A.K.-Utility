@@ -11,8 +11,8 @@
 # A skip is only acceptable when the thing it needs genuinely cannot exist on
 # a build machine. "Hard to set up" is not a reason - it is a fixture to write.
 #
-# Measured on the run that produced this file: 4203 test functions passed and
-# 33 skipped, so 0.78 percent of what the suite could execute did not execute.
+# Re-measured on 2026-08-31: 4947 test functions passed and 35 skipped, so
+# 0.70 percent of what the suite could execute did not execute.
 # That number is the point of this file. ctest reports a binary as Passed when
 # every one of its functions skipped, so without this the suite can report
 # 222/222 while a subsystem quietly stops being exercised.
@@ -57,13 +57,16 @@ test_linux_iso_downloader::LinuxISODownloaderTests::testGitHubVersionCheck_Netwo
 test_ai_mcp_stdio_client::AiMcpStdioClientTests::liveWin32McpListWindows_optIn = Spawns the bundled Win32 control engine and drives real windows on the host desktop. SAK_WIN32_MCP_LIVE_TEST=1 opts in.
 test_ai_mcp_stdio_session::AiMcpStdioSessionTests::liveWin32McpPersistentSession_optIn = Same live engine, held open across calls. SAK_MCP_SESSION_LIVE_TEST=1 opts in.
 test_ai_mcp_session_pool::AiMcpSessionPoolTests::liveWin32McpReuseAndIsolation_optIn = Same live engine, several concurrent sessions. SAK_MCP_SESSION_LIVE_TEST=1 opts in.
+test_windows_iso_downloader::WindowsISODownloaderTests::testFetchBuilds = Live UUP dump API network test; init() skips it unless SAK_RUN_LIVE_UUP_TESTS is set, so the automated suite never depends on live network (G18-5).
+test_windows_iso_downloader::WindowsISODownloaderTests::testGetFilesReturnsResults = Live UUP dump API network test; init() skips it unless SAK_RUN_LIVE_UUP_TESTS is set (G18-5).
+test_windows_iso_downloader::WindowsISODownloaderTests::testFileUrlsAreValid = Live UUP dump API network test; init() skips it unless SAK_RUN_LIVE_UUP_TESTS is set (G18-5).
 
 # ---------------------------------------------------------------------------
-# D. MISSING FIXTURE - the honest gaps. THIS GROUP SHOULD SHRINK.
+# D. EXTERNAL MEDIA, CERTIFICATION INPUTS, TIME BUDGET, AND REAL SAMPLES.
 #
-# Nothing about a build machine prevents these; they are skipped because no
-# committed fixture exists. Two distinct sub-cases, and only the first is a
-# real constraint:
+# These are not one generic missing-fixture class. They require large or
+# redistributability-limited real samples, raw external media, cert/probe
+# inputs, substantial sparse containers, or an explicit slow-test budget.
 #
 #   * the APFS cert-emit tests each stage a sparse container of roughly 16 GiB,
 #     which is a disk-space decision rather than a missing file;
@@ -90,6 +93,3 @@ test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_spillsIntoCib
 test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_multiNodeOmapCommitReadsAndFreesWholeTree = Slow full-tree omap read/free walk; SAK_OMAP_DRIFT=1 opts in so the default suite stays under its time budget.
 test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_probeForeignMultiBlockIp = Needs a container produced by a real mkapfs with a multi-block internal-pool bitmap; SAK_IPBM_ORACLE.
 test_partition_manager_core::PartitionManagerCoreTests::apfsWriter_probeForeignSparsePreserve = Probe-emit only: needs a real-Apple sparse oracle via SAK_SPARSE_ORACLE plus SAK_CERT_OUT.
-test_windows_iso_downloader::WindowsISODownloaderTests::testFetchBuilds = Live UUP dump API network test; init() skips it unless SAK_RUN_LIVE_UUP_TESTS is set, so the automated suite never depends on live network (G18-5).
-test_windows_iso_downloader::WindowsISODownloaderTests::testGetFilesReturnsResults = Live UUP dump API network test; init() skips it unless SAK_RUN_LIVE_UUP_TESTS is set (G18-5).
-test_windows_iso_downloader::WindowsISODownloaderTests::testFileUrlsAreValid = Live UUP dump API network test; init() skips it unless SAK_RUN_LIVE_UUP_TESTS is set (G18-5).

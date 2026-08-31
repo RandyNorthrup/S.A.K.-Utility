@@ -81,17 +81,14 @@ bool DnsDiagnosticTool::isNumericIpv4(const QString& ipAddress) {
     if (parts.size() != kIpv4OctetCount) {
         return false;
     }
-    for (const auto& part : parts) {
+    return std::ranges::all_of(parts, [](const QString& part) {
         if (part.isEmpty()) {
             return false;
         }
         bool ok = false;
         const int value = part.toInt(&ok);
-        if (!ok || value < 0 || value > kMaxOctetValue) {
-            return false;
-        }
-    }
-    return true;
+        return ok && value >= 0 && value <= kMaxOctetValue;
+    });
 }
 
 bool DnsDiagnosticTool::answersEquivalent(const QVector<QString>& a, const QVector<QString>& b) {
@@ -128,10 +125,11 @@ WORD mapRecordType(const QString& recordType) {
     // (case-sensitive) name compare -- otherwise "aaaa"/"mx" would fall through and silently query
     // an A record instead of the type the caller asked for.
     const QString normalized = recordType.toUpper();
-    for (const auto& entry : kTypes) {
-        if (normalized == QLatin1String(entry.name)) {
-            return entry.type;
-        }
+    const auto match = std::ranges::find_if(kTypes, [&normalized](const TypeMapping& entry) {
+        return normalized == QLatin1String(entry.name);
+    });
+    if (match != std::ranges::end(kTypes)) {
+        return match->type;
     }
     return DNS_TYPE_A;
 }

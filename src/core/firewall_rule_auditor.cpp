@@ -349,33 +349,25 @@ void markPortRange(std::bitset<kMaxPortValue + 1>& seen, int start, int end) {
 // the pair cannot be proven disjoint and must be treated as overlapping (B9-11).
 [[nodiscard]] bool portExprHasUnknownToken(const QString& portStr) {
     const auto parts = portStr.split(QLatin1Char(','), Qt::SkipEmptyParts);
-    for (const auto& part : parts) {
+    return std::ranges::any_of(parts, [](const QString& part) {
         const auto trimmed = part.trimmed();
         if (trimmed.isEmpty()) {
-            continue;
+            return false;
         }
         int start = 0;
         int end = 0;
         if (tryParsePortRange(trimmed, start, end)) {
-            continue;
+            return false;
         }
         uint16_t port = 0;
-        if (!tryParsePortValue(trimmed, port)) {
-            return true;
-        }
-    }
-    return false;
+        return !tryParsePortValue(trimmed, port);
+    });
 }
 
 // True if the two parsed port sets share at least one concrete port. Split out of
 // portsOverlap so that function stays within the complexity budget.
 [[nodiscard]] bool portVectorsIntersect(const QVector<uint16_t>& a, const QVector<uint16_t>& b) {
-    for (const auto port : a) {
-        if (b.contains(port)) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(a, [&b](uint16_t port) { return b.contains(port); });
 }
 
 // True when the pair cannot be proven disjoint before parsing and portsOverlap must fail SAFE

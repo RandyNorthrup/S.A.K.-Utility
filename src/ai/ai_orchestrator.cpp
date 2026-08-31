@@ -344,12 +344,16 @@ QString AiOrchestrator::missingRequiredSoftware(const WorkflowTemplate& workflow
     if (!m_software_resolver) {
         return {};
     }
-    for (const auto& requirement : workflow.required_software) {
-        if (requirement.required && !m_software_resolver(requirement)) {
-            return requirement.id.isEmpty() ? requirement.kind : requirement.id;
-        }
+    const auto missing = std::find_if(workflow.required_software.cbegin(),
+                                      workflow.required_software.cend(),
+                                      [this](const auto& requirement) {
+                                          return requirement.required &&
+                                                 !m_software_resolver(requirement);
+                                      });
+    if (missing == workflow.required_software.cend()) {
+        return {};
     }
-    return {};
+    return missing->id.isEmpty() ? missing->kind : missing->id;
 }
 
 QString AiOrchestrator::resolveWorkflowGuidance(const WorkflowTemplate& workflow) const {
@@ -386,13 +390,13 @@ AiToolPolicy AiOrchestrator::policyForAgent(const WorkflowTemplate& workflow,
     // agent can never be more permissive than the session that launched it. Without this a
     // Chat/Research session could gain package/mutating capability through a catalog agent's
     // verbatim tool_policy. An unknown agent falls back to the most restrictive policy.
-    AiToolPolicy resolved = AiToolPolicy::NoLocalExecution;
-    for (const auto& agent : workflow.agents) {
-        if (agent.id == agent_id) {
-            resolved = toolPolicyFromString(agent.tool_policy);
-            break;
-        }
-    }
+    const auto matching_agent =
+        std::find_if(workflow.agents.cbegin(), workflow.agents.cend(), [&](const auto& agent) {
+            return agent.id == agent_id;
+        });
+    const AiToolPolicy resolved = matching_agent == workflow.agents.cend()
+                                      ? AiToolPolicy::NoLocalExecution
+                                      : toolPolicyFromString(matching_agent->tool_policy);
     return clampToolPolicy(resolved, m_options.session_policy_ceiling);
 }
 
@@ -539,16 +543,17 @@ AiSubagentTask AiOrchestrator::buildDelegateTask(const WorkflowTemplate& workflo
             QStringLiteral("\n\nWorkflow guidance to follow (skills and instructions):\n%1")
                 .arg(guidance);
     }
-    for (const auto& agent : workflow.agents) {
-        if (agent.id == phase.agent) {
-            if (agent.token_budget > 0) {
-                task.token_budget = agent.token_budget;
-            }
-            // Honor the agent's model_policy by selecting its reasoning-effort tier.
-            task.reasoning_effort = reasoningEffortForModelPolicy(
-                agent.model_policy, m_options.default_reasoning_effort);
-            break;
+    const auto matching_agent =
+        std::find_if(workflow.agents.cbegin(), workflow.agents.cend(), [&](const auto& agent) {
+            return agent.id == phase.agent;
+        });
+    if (matching_agent != workflow.agents.cend()) {
+        if (matching_agent->token_budget > 0) {
+            task.token_budget = matching_agent->token_budget;
         }
+        // Honor the agent's model_policy by selecting its reasoning-effort tier.
+        task.reasoning_effort = reasoningEffortForModelPolicy(matching_agent->model_policy,
+                                                              m_options.default_reasoning_effort);
     }
     return task;
 }

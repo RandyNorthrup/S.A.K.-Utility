@@ -19,6 +19,8 @@
 #include <QThread>
 #include <QTimer>
 
+#include <algorithm>
+
 namespace sak {
 
 namespace {
@@ -94,13 +96,10 @@ QSet<QString> snapshotMatchingApps(const MigrationJob& job, bool& reliable) {
 // (R5-P7-47).
 bool outputConfirmsInstall(const QString& output, const QString& packageId) {
     const auto lines = output.split(QChar(u'\n'), Qt::SkipEmptyParts);
-    for (const auto& line : lines) {
-        if (line.contains(packageId, Qt::CaseInsensitive) &&
-            line.contains(QStringLiteral("was successful"), Qt::CaseInsensitive)) {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(lines.cbegin(), lines.cend(), [&](const QString& line) {
+        return line.contains(packageId, Qt::CaseInsensitive) &&
+               line.contains(QStringLiteral("was successful"), Qt::CaseInsensitive);
+    });
 }
 
 // Choco's completion line "Chocolatey installed 0/Y packages." is a definitive
@@ -115,15 +114,17 @@ bool chocoReportedZeroInstalled(const QString& output) {
 // changed version -- so a pre-existing install cannot certify the job.
 bool newInstallInRegistry(const MigrationJob& job, const QSet<QString>& preInstallApps) {
     AppScanner scanner;
-    for (const auto& app : scanner.scanRegistry()) {
-        if (AppInstallationWorker::nameIndicatesApp(app.name, job.appName) &&
-            !preInstallApps.contains(appSignature(app))) {
-            sak::logInfo("[AppInstallationWorker] Verified new install via registry: {}",
-                         app.name.toStdString());
-            return true;
-        }
+    const auto apps = scanner.scanRegistry();
+    const auto new_app = std::find_if(apps.cbegin(), apps.cend(), [&](const auto& app) {
+        return AppInstallationWorker::nameIndicatesApp(app.name, job.appName) &&
+               !preInstallApps.contains(appSignature(app));
+    });
+    if (new_app == apps.cend()) {
+        return false;
     }
-    return false;
+    sak::logInfo("[AppInstallationWorker] Verified new install via registry: {}",
+                 new_app->name.toStdString());
+    return true;
 }
 
 // AppX/MSIX match that is NOT in the pre-install snapshot (R5-P7-47).
@@ -688,11 +689,15 @@ bool AppInstallationWorker::isNewerVersionInstalled(const MigrationJob& job,
     }
 
     AppScanner scanner;
-    for (const auto& app : scanner.scanRegistry()) {
-        if (nameIndicatesApp(app.name, job.appName) && isVersionNewer(app.version, *requested)) {
-            installed_version = app.version;
-            return true;
-        }
+    const auto registry_apps = scanner.scanRegistry();
+    const auto newer_registry_app =
+        std::find_if(registry_apps.cbegin(), registry_apps.cend(), [&](const auto& app) {
+            return nameIndicatesApp(app.name, job.appName) &&
+                   isVersionNewer(app.version, *requested);
+        });
+    if (newer_registry_app != registry_apps.cend()) {
+        installed_version = newer_registry_app->version;
+        return true;
     }
 
     for (const auto& app : AppScanner::scanAppX()) {

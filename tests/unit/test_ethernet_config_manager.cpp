@@ -15,6 +15,8 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#include <algorithm>
+
 using namespace sak;
 
 class TestEthernetConfigManager : public QObject {
@@ -477,20 +479,16 @@ void TestEthernetConfigManager::lookupAdapterMac_unknownAdapterEmpty() {
 void TestEthernetConfigManager::lookupAdapterMac_realAdapterHasMacFormat() {
     // If the host exposes any interface with a hardware address, the lookup must return
     // it in canonical MAC form. Skips cleanly on a host with no such interface.
-    QString anyName;
-    QString anySystemName;
-    QString expectedMac;
-    for (const QNetworkInterface& iface : QNetworkInterface::allInterfaces()) {
-        if (!iface.hardwareAddress().isEmpty() && !iface.humanReadableName().isEmpty()) {
-            anyName = iface.humanReadableName();
-            anySystemName = iface.name();
-            expectedMac = iface.hardwareAddress();
-            break;
-        }
-    }
-    if (anyName.isEmpty()) {
+    const QList<QNetworkInterface> interfaces = QNetworkInterface::allInterfaces();
+    const auto match = std::ranges::find_if(interfaces, [](const QNetworkInterface& iface) {
+        return !iface.hardwareAddress().isEmpty() && !iface.humanReadableName().isEmpty();
+    });
+    if (match == interfaces.cend()) {
         QSKIP("No interface with a hardware address on this host");
     }
+    const QString anyName = match->humanReadableName();
+    const QString anySystemName = match->name();
+    const QString expectedMac = match->hardwareAddress();
     const QString mac = EthernetConfigManager::lookupAdapterMac(anyName);
     QCOMPARE(mac, expectedMac);
     // Canonical form: six colon-separated hex octets.

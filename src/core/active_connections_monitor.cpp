@@ -66,10 +66,11 @@ constexpr int kMaxHostnameLen = 256;
         {.code = MIB_TCP_STATE_TIME_WAIT, .name = "TIME_WAIT"},
         {.code = MIB_TCP_STATE_DELETE_TCB, .name = "DELETE_TCB"},
     };
-    for (const auto& entry : kStates) {
-        if (entry.code == state) {
-            return QString::fromLatin1(entry.name);
-        }
+    const auto match = std::ranges::find_if(kStates, [state](const StateEntry& entry) {
+        return entry.code == state;
+    });
+    if (match != std::ranges::end(kStates)) {
+        return QString::fromLatin1(match->name);
     }
     return QStringLiteral("UNKNOWN");
 }

@@ -20,6 +20,7 @@
 #include <QTimer>
 #include <QVariant>
 
+#include <algorithm>
 #include <memory>
 
 namespace sak {
@@ -95,12 +96,9 @@ bool isHiveRootedKeyPath(const QString& path) {
         QStringLiteral("HKU\\"),
         QStringLiteral("HKCC\\"),
     };
-    for (const QString& root : kHiveRoots) {
-        if (path.startsWith(root, Qt::CaseInsensitive)) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(kHiveRoots, [&path](const QString& root) {
+        return path.startsWith(root, Qt::CaseInsensitive);
+    });
 }
 
 UninstallWorker::Mode uninstallModeForProgram(const ProgramInfo& program) {

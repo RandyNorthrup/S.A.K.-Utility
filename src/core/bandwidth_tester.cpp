@@ -260,12 +260,12 @@ QString BandwidthTester::findIperf3Path() const {
         appDir + QStringLiteral("/") + kIperf3Exe,
     };
 
-    for (const auto& path : candidates) {
-        if (QFileInfo::exists(path)) {
-            return QDir::cleanPath(path);
-        }
+    const auto match = std::ranges::find_if(candidates, [](const QString& path) {
+        return QFileInfo::exists(path);
+    });
+    if (match != candidates.cend()) {
+        return QDir::cleanPath(*match);
     }
-
     return {};
 }
 

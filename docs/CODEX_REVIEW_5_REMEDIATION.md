@@ -1025,11 +1025,24 @@ a parked design, per the bucket convention. Open work is what remains after thos
   classified exactly 58 Qt slots and reported zero actionable findings; two-pass whole-project
   cppcheck passed with 183/186 checkers and zero stale inline suppressions; Release build exit 0;
   full CTest 267/267, zero failures, 898.60 seconds.
+  CPPCHECK SUPPRESSION WAVE 5, 2026-08-31: 20 more `useStlAlgorithm` findings were fixed
+  directly across 11 production files and one directly related Ethernet test. First-match,
+  early-exit, logging, archive rollback, and fail-safe port-token behavior are preserved. The
+  whole-tree reveal fell 335 -> 315 (238 production, 77 tests); no suppression or silence was
+  added. Two existing `knownConditionTrueFalse` markers and the firewall COM-apartment
+  `constParameterReference` marker were revealed separately and still match their documented
+  constraints. All changed-file hooks passed. The two-pass whole-tree gate ran with 183/186
+  checkers, classified exactly 58 Qt slots, reported zero normal findings and zero stale inline
+  suppressions. Release build exit 0; full CTest 267/267, zero failures, 666.05 seconds.
+  NEXT SUPPRESSION MEASURED: removing only `unusedStructMember` from a temporary suppression
+  copy reveals exactly one production finding and zero findings across 252 test sources. The
+  finding is `ApfsInPlaceCheckpointResult::ok`, a written but never-read field; the function's
+  bool return is the live success contract. This is directly removable, with no tool-limit case.
   OWNER RULE NOW RECORDED IN `AGENTS.md`: fix code, test, tool, or gate first; suppression is the
   last resort only after no direct fix is possible and the exact reason is proven. Existing
   suppressions are re-audited, not inherited as permanent policy. Current batch: all pre-commit
   hooks passed; Release build exit 0; full CTest 265/265, zero failures, 804.48 seconds.
-  STILL OPEN: core's 5,271 naming findings; the 335-item `useStlAlgorithm` program;
+  STILL OPEN: core's 5,271 naming findings; the 315-item `useStlAlgorithm` program;
   `unusedStructMember` and coverage compiler suppressions; directly
   closable fixture/resource skips; and the historical VM credential rotation/history-rewrite
   decision.
