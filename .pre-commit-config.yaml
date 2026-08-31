@@ -199,7 +199,24 @@ repos:
         exclude: (third_party|3rdparty|external|_archived)/
 
       # -------------------------------------------------------------------
-      # 6a. clang-tidy naming regression gate (MANUAL stage)
+      # 6a. High-confidence dead-code gate -- R5-G10-6.
+      #     cppcheck's raw unusedFunction stream is noisy under Qt/meta-object
+      #     dispatch and public headers. This gate rejects only source definitions
+      #     whose exact identifier occurs nowhere else in src/include/tests. It
+      #     plants an unused probe on every run so a disabled checker cannot pass.
+      # -------------------------------------------------------------------
+      - id: dead-code
+        name: "Dead first-party source function check"
+        description: "Reject cppcheck unusedFunction definitions with no declaration or caller"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_dead_code.ps1
+        language: system
+        types_or: [c++]
+        files: ^src/.*\.cpp$
+        exclude: (third_party|3rdparty|external|_archived)/
+
+      # -------------------------------------------------------------------
+      # 6a1. clang-tidy naming regression gate (MANUAL stage)
       #     readability-identifier-naming reached zero in every first-party
       #     directory except src/core (a documented carve-out; see
       #     src/core/.clang-tidy). A full run is ~5 minutes over 147 TUs and

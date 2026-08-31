@@ -20,7 +20,6 @@ inline constexpr int kAiHealthReportMaxWidthPx = 1080;
 inline constexpr int kReportCssPercentFull = 100;
 inline constexpr int kReportCssFractionDigits = 2;
 inline constexpr double kEnterpriseReportBodyLineHeight = 1.55;
-inline constexpr double kMarkdownReportBodyLineHeight = 1.48;
 inline constexpr int kReportPageMarginPx = 24;
 inline constexpr int kReportContainerVerticalMarginPx = 20;
 inline constexpr int kReportContainerPaddingPx = 24;
@@ -77,12 +76,6 @@ inline constexpr int kAiReportFindingPaddingVerticalPx = 12;
 inline constexpr int kAiReportFindingPaddingHorizontalPx = 14;
 inline constexpr int kAiReportSeverityFontPx = 12;
 
-inline constexpr int kMarkdownReportMaxWidthPx = 980;
-inline constexpr int kMarkdownHeading1FontPx = 26;
-inline constexpr int kMarkdownHeading1MarginBottomPx = 18;
-inline constexpr int kMarkdownHeading2FontPx = 18;
-inline constexpr int kMarkdownHeading2MarginTopPx = 24;
-inline constexpr int kMarkdownHeading2PaddingBottomPx = 6;
 inline constexpr int kSavedEmailMaxWidthPx = 800;
 inline constexpr int kMigrationReportMetadataLabelWidthPx = 200;
 inline constexpr int kSavedEmailBodyFontPt = 10;
@@ -401,35 +394,6 @@ inline QString aiHealthReportStyleSheet() {
     detail::appendAiReportShellStyles(css);
     detail::appendAiReportGridStyles(css);
     detail::appendAiReportFindingStyles(css);
-    return css;
-}
-
-inline QString markdownReportStyleSheet() {
-    QString css;
-    css += QStringLiteral(
-               "body { font-family: 'Segoe UI', Arial, sans-serif; line-height: %1; "
-               "color: %2; max-width: %3; margin: %4 auto; padding: 0 %4; background: %5; }")
-               .arg(detail::cssNumber(kMarkdownReportBodyLineHeight),
-                    detail::cssColor(ui::kColorTextBody),
-                    detail::cssPx(kMarkdownReportMaxWidthPx),
-                    detail::cssPx(kReportPageMarginPx),
-                    detail::cssColor(ui::kColorBgWhite));
-    css += QStringLiteral("h1 { font-size: %1; margin: 0 0 %2; color: %3; }")
-               .arg(detail::cssPx(kMarkdownHeading1FontPx),
-                    detail::cssPx(kMarkdownHeading1MarginBottomPx),
-                    detail::cssColor(ui::kColorTextPrimary));
-    css += QStringLiteral(
-               "h2 { font-size: %1; margin-top: %2; border-bottom: %3 solid %4; "
-               "padding-bottom: %5; color: %6; }")
-               .arg(detail::cssPx(kMarkdownHeading2FontPx),
-                    detail::cssPx(kMarkdownHeading2MarginTopPx),
-                    detail::cssPx(ui::kCssBorderWidthDefaultPx),
-                    detail::cssColor(ui::kColorBorderDefault),
-                    detail::cssPx(kMarkdownHeading2PaddingBottomPx),
-                    detail::cssColor(ui::kColorTextPrimary));
-    css += QStringLiteral("li { margin: %1 0; } a { color: %2; }")
-               .arg(detail::cssPx(kReportListItemMarginVerticalPx),
-                    detail::cssColor(ui::kStatusColorRunning));
     return css;
 }
 

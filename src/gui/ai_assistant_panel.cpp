@@ -608,23 +608,6 @@ QString activitySummaryFromTrace(const QString& name,
     return QStringLiteral("%1: %2").arg(status, name).left(kActivitySummaryMaxChars);
 }
 
-QString runTimelineStateColor(const QString& state) {
-    const QString value = state.trimmed().toLower();
-    if (containsAny(value, {"cancel", "fail", "error", "denied"})) {
-        return QString::fromLatin1(sak::ui::kStatusColorError);
-    }
-    if (containsAny(value, {"wait", "queue", "recover"})) {
-        return QString::fromLatin1(sak::ui::kStatusColorWarning);
-    }
-    if (containsAny(value, {"complete", "success", "approved"})) {
-        return QString::fromLatin1(sak::ui::kStatusColorSuccess);
-    }
-    if (containsAny(value, {"running", "brief", "think", "tool", "model"})) {
-        return QString::fromLatin1(sak::ui::kStatusColorRunning);
-    }
-    return QString::fromLatin1(sak::ui::kStatusColorIdle);
-}
-
 bool isReportableActivityState(const QString& state) {
     const QString normalized = state.trimmed().toLower();
     return normalized.contains(QStringLiteral("complete")) ||
@@ -661,40 +644,6 @@ QString workflowPhaseOwnerLabel(const ai::WorkflowPhase& phase) {
         return phase.tool.trimmed();
     }
     return phase.type.trimmed();
-}
-
-QString runTimelineBadge(const QString& text, const QString& color) {
-    if (text.trimmed().isEmpty()) {
-        return {};
-    }
-    return QString::fromLatin1(sak::ui::kHtmlTimelineBadge)
-        .arg(sak::ui::kHtmlTimelineBadgeBorderPx)
-        .arg(color)
-        .arg(sak::ui::htmlColor(sak::ui::kColorBgSurface))
-        .arg(sak::ui::kHtmlTimelineBadgeRadiusPx)
-        .arg(sak::ui::kHtmlTimelineBadgePaddingVerticalPx)
-        .arg(sak::ui::kHtmlTimelineBadgePaddingHorizontalPx)
-        .arg(sak::ui::kFontSizeSmall)
-        .arg(sak::ui::kFontWeightSemibold)
-        .arg(text.toHtmlEscaped());
-}
-
-QString runTimelineMeta(const QStringList& tags) {
-    QStringList clean;
-    for (const auto& tag : tags) {
-        const QString value = tag.trimmed();
-        if (!value.isEmpty()) {
-            clean << value.toHtmlEscaped();
-        }
-    }
-    if (clean.isEmpty()) {
-        return {};
-    }
-    return QString::fromLatin1(sak::ui::kHtmlTimelineMeta)
-        .arg(sak::ui::htmlColor(sak::ui::kColorTextMuted))
-        .arg(sak::ui::kFontSizeSmall)
-        .arg(sak::ui::kHtmlTimelineMetaMarginTopPx)
-        .arg(clean.join(QStringLiteral(" | ")));
 }
 
 enum class ApprovalPromptChoice {
@@ -858,14 +807,6 @@ ApprovalPromptChoice showApprovalPrompt(const ApprovalPromptSpec& spec) {
     return dialog.exec() == QDialog::Accepted ? choice : ApprovalPromptChoice::Cancel;
 }
 
-QString redactedHtml(const QString& text, int max_chars = 0) {
-    QString value = ai::CredentialStore::redactSecrets(text).simplified();
-    if (max_chars > 0 && value.size() > max_chars) {
-        value = value.left(max_chars - 1).trimmed() + QStringLiteral("...");
-    }
-    return value.toHtmlEscaped();
-}
-
 QString fromStringView(std::string_view value) {
     return QString::fromUtf8(value.data(), static_cast<qsizetype>(value.size()));
 }
@@ -962,106 +903,6 @@ QStringList findingSummaries(const QJsonValue& value, int max_items) {
         }
     }
     return summaries;
-}
-
-QStringList findingEvidenceRefs(const QJsonValue& value) {
-    QStringList refs;
-    const auto array = value.toArray();
-    for (const auto& entry : array) {
-        if (!entry.isObject()) {
-            continue;
-        }
-        refs << jsonStringList(entry.toObject().value(QStringLiteral("evidence_refs")));
-    }
-    refs.removeDuplicates();
-    return refs;
-}
-
-void appendWorkflowRequiredInputs(QStringList* lines, const ai::WorkflowTemplate& workflow) {
-    if (workflow.required_inputs.isEmpty()) {
-        return;
-    }
-    *lines << QString() << QStringLiteral("Required inputs:");
-    for (const auto& input : workflow.required_inputs) {
-        *lines << QStringLiteral("- %1 (%2)%3")
-                      .arg(input.label.isEmpty() ? input.id : input.label,
-                           input.type.isEmpty() ? QStringLiteral("text") : input.type,
-                           input.required ? QStringLiteral(", required") : QString());
-    }
-}
-
-void appendWorkflowRequiredSoftware(QStringList* lines, const ai::WorkflowTemplate& workflow) {
-    if (workflow.required_software.isEmpty()) {
-        return;
-    }
-    *lines << QString() << QStringLiteral("Required tools/software:");
-    for (const auto& requirement : workflow.required_software) {
-        *lines << QStringLiteral("- %1 [%2, %3]")
-                      .arg(requirement.id, requirement.kind, requirement.install_policy);
-    }
-}
-
-void appendWorkflowAgents(QStringList* lines, const ai::WorkflowTemplate& workflow) {
-    if (workflow.agents.isEmpty()) {
-        return;
-    }
-    *lines << QString() << QStringLiteral("Agents:");
-    for (const auto& agent : workflow.agents) {
-        *lines << QStringLiteral("- %1: %2, budget %3")
-                      .arg(agent.id, agent.tool_policy, QString::number(agent.token_budget));
-    }
-}
-
-void appendWorkflowPhases(QStringList* lines, const ai::WorkflowTemplate& workflow) {
-    if (workflow.phases.isEmpty()) {
-        return;
-    }
-    *lines << QString() << QStringLiteral("Phases:");
-    for (const auto& phase : workflow.phases) {
-        const QString owner = phase.agent.isEmpty() ? phase.type : phase.agent;
-        *lines << QStringLiteral("- %1 [%2]").arg(phase.id, owner);
-        if (!phase.prompt.isEmpty()) {
-            *lines << QStringLiteral("  %1").arg(phase.prompt);
-        }
-        if (!phase.completion.isEmpty()) {
-            *lines << QStringLiteral("  Done when: %1").arg(phase.completion);
-        }
-    }
-}
-
-void appendWorkflowStringList(QStringList* lines,
-                              const QString& heading,
-                              const QStringList& values) {
-    if (values.isEmpty()) {
-        return;
-    }
-    *lines << QString() << heading;
-    for (const auto& value : values) {
-        *lines << QStringLiteral("- %1").arg(value);
-    }
-}
-
-QString workflowDetailsText(const ai::WorkflowTemplate& workflow) {
-    QStringList lines;
-    lines << QStringLiteral("Role: %1").arg(workflow.role);
-    if (!workflow.category.isEmpty()) {
-        lines << QStringLiteral("Category: %1").arg(workflow.category);
-    }
-    if (!workflow.description.isEmpty()) {
-        lines << QStringLiteral("Purpose: %1").arg(workflow.description);
-    }
-
-    appendWorkflowRequiredInputs(&lines, workflow);
-    appendWorkflowRequiredSoftware(&lines, workflow);
-    appendWorkflowAgents(&lines, workflow);
-    appendWorkflowPhases(&lines, workflow);
-    appendWorkflowStringList(&lines,
-                             QStringLiteral("Acceptance criteria:"),
-                             workflow.acceptance_criteria);
-    appendWorkflowStringList(&lines, QStringLiteral("Instruction files:"), workflow.instructions);
-    appendWorkflowStringList(&lines, QStringLiteral("Skills:"), workflow.skills);
-
-    return lines.join(QLatin1Char('\n'));
 }
 
 QString workflowCatalogInputs(const ai::WorkflowTemplate& workflow) {
@@ -3298,13 +3139,6 @@ constexpr QTextDocument::MarkdownFeatures kMarkdownNoRawHtml =
     QTextDocument::MarkdownFeatures(QTextDocument::MarkdownDialectGitHub) |
     QTextDocument::MarkdownFeatures(QTextDocument::MarkdownNoHTML);
 
-QString markdownReportToHtml(const QString& markdown) {
-    QTextDocument document;
-    document.setDefaultStyleSheet(report::markdownReportStyleSheet());
-    document.setMarkdown(markdown, kMarkdownNoRawHtml);
-    return document.toHtml();
-}
-
 bool writeReportText(const QString& path, const QString& text, QString* error_message) {
     QSaveFile file(path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
@@ -3605,10 +3439,6 @@ void configureReadableCombo(QComboBox* combo,
         view->setTextElideMode(Qt::ElideNone);
         view->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     }
-}
-
-QString workbenchListStyle() {
-    return sak::ui::aiWorkbenchListStyle();
 }
 
 QString composerEditStyle() {

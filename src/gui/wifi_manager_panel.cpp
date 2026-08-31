@@ -91,8 +91,6 @@ public:
         setSectionsClickable(true);
     }
 
-    Qt::CheckState triState() const { return m_state; }
-
     void setTriState(Qt::CheckState state) {
         if (m_state == state) {
             return;

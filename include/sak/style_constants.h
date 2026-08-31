@@ -229,12 +229,6 @@ constexpr int kHtmlPreviewBodyPaddingPx = 8;
 constexpr int kHtmlDetailPaddingPx = 12;
 constexpr int kHtmlDetailLargePaddingPx = 16;
 constexpr int kHtmlNoteMinHeightPx = 200;
-constexpr int kHtmlTimelineBadgeBorderPx = 1;
-constexpr int kHtmlTimelineBadgeRadiusPx = 4;
-constexpr int kHtmlTimelineBadgePaddingVerticalPx = 1;
-constexpr int kHtmlTimelineBadgePaddingHorizontalPx = 5;
-constexpr int kHtmlTimelineMetaMarginTopPx = 2;
-
 // -- HTML/Rich-Text Style Templates -----------------------------------------
 
 inline constexpr auto kHtmlStyledDocumentOpen =
@@ -287,13 +281,6 @@ inline constexpr auto kHtmlHorizontalRuleColorPreWrapParagraph =
 inline constexpr auto kHtmlLogMessage =
     "<span style='color: %1;'>%2</span> "
     "<span style='color: %3; font-weight: %4;'>[%5]</span> %6";
-inline constexpr auto kHtmlTimelineBadge =
-    "<span style=\"display:inline-block;border:%1px solid %2;"
-    "color:%2;background:%3;border-radius:%4px;padding:%5px %6px;"
-    "font-size:%7pt;font-weight:%8;white-space:nowrap;\">%9</span>";
-inline constexpr auto kHtmlTimelineMeta =
-    "<div style=\"color:%1;font-size:%2pt;margin-top:%3px;\">%4</div>";
-
 // -- Windows 11 Theme Style Templates ---------------------------------------
 
 inline constexpr auto kWindows11ThemeBaseAndChromeStyles = R"SAK(
@@ -721,12 +708,6 @@ inline constexpr auto kAiWorkflowMarkdownStyle =
     "body{font-family:'Segoe UI',Arial,sans-serif;font-size:%1pt;color:%2;background:%3;}"
     "h1{font-size:%4pt;margin:0 0 %5px;color:%6;}h2{font-size:%7pt;margin:%8px 0 "
     "%9px;color:%6;}li{margin:%10px 0;}";
-inline constexpr auto kAiWorkbenchListStyle =
-    "QListWidget { background: %1; border: %2px solid %3; border-radius: %4px; "
-    "padding: %5px; color: %6; }"
-    "QListWidget::item { padding: %7px %8px; border-radius: %9px; }"
-    "QListWidget::item:selected { background: %10; color: %6; }"
-    "QListWidget::item:hover { background: %11; }";
 inline constexpr auto kAiComposerEditStyle =
     "QPlainTextEdit { background: transparent; border: 0; color: %1; padding: %2px; "
     "font-size: %3pt; }";
@@ -1913,20 +1894,6 @@ inline QString aiWorkflowMarkdownStyle() {
              QString::number(kSpacingMedium),
              QString::number(kCssPaddingTinyPx))
         .arg(kSpacingTight);
-}
-
-inline QString aiWorkbenchListStyle() {
-    return QString::fromLatin1(kAiWorkbenchListStyle)
-        .arg(cssColor(kColorBgWhite),
-             QString::number(kCssBorderWidthDefaultPx),
-             cssColor(kColorBorderDefault),
-             QString::number(kCssRadiusSmallPx),
-             QString::number(kCssPaddingTinyPx),
-             cssColor(kColorTextBody),
-             QString::number(kCssPaddingSmallPx),
-             QString::number(kCssPaddingMediumPx),
-             QString::number(kCssRadiusTinyPx))
-        .arg(cssColor(kColorBgInfoPanel), cssColor(kColorBgPageHover));
 }
 
 inline QString aiComposerEditStyle() {

@@ -97,14 +97,6 @@ QString toIcsDateTime(const QDateTime& datetime) {
     return datetime.toUTC().toString(QStringLiteral("yyyyMMdd'T'HHmmss'Z'"));
 }
 
-/// Format a datetime for vCard
-QString toVcardDateTime(const QDateTime& datetime) {
-    if (!datetime.isValid()) {
-        return {};
-    }
-    return datetime.toUTC().toString(QStringLiteral("yyyyMMdd'T'HHmmss'Z'"));
-}
-
 /// Check if a format is one of the CSV variants
 bool isCsvFormat(sak::ExportFormat format) {
     return format == sak::ExportFormat::CsvEmails || format == sak::ExportFormat::CsvContacts ||

@@ -208,19 +208,6 @@ PartitionFileSystemCapability linuxSwapCapability() {
             .non_native = true};
 }
 
-PartitionFileSystemCapability detectionOnlyCapability(const QString& id,
-                                                      const QString& displayName,
-                                                      const QStringList& blockedActions) {
-    return {.id = id,
-            .display_name = displayName,
-            .support_level = QStringLiteral("Detection only"),
-            .aliases = {displayName, id},
-            .available_actions = {QStringLiteral("Read-only signature detection")},
-            .blocked_actions = blockedActions,
-            .required_tools = {},
-            .non_native = true};
-}
-
 PartitionFileSystemCapability unidentifiedCapability() {
     return {.id = QStringLiteral("unknown"),
             .display_name = QStringLiteral("Unknown"),

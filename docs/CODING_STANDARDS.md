@@ -65,6 +65,7 @@ any tool, so they hold only if a human notices.
 | Line length | <=100 columns | `clang-format` -- BLOCKING |
 | Single-letter variables | Avoid, except tiny lambda predicates | `readability-identifier-naming`, run in CI on every build |
 | cppcheck findings | Zero across `src/` and `include/` | `cppcheck` -- BLOCKING on the files YOUR commit changed; `cppcheck-whole-project` (manual stage + CI) -- BLOCKING whole-tree |
+| Dead source functions | Zero high-confidence unreferenced definitions in `src/*.cpp` | `dead-code` -- BLOCKING on changed source files; `scripts/check_dead_code.ps1` in CI -- BLOCKING whole-tree |
 | Dead analysis suppressions | A `// cppcheck-suppress` must actually suppress something | `cppcheck-whole-project` reveal pass -- BLOCKING (`scripts/cppcheck_whole_project_gate.ps1`) |
 | Nesting depth | <=3 levels | Review -- lizard measures complexity, not nesting depth |
 | Assertions | Meaningful preconditions/postconditions | Review -- every assertion should catch a real bug |
@@ -96,6 +97,13 @@ cannot check. And a suppression that stops matching is worse than none: it silen
 that is not firing today and will keep silencing it the day an edit makes it fire again.
 The whole-project gate's second pass exists to find exactly those, and found two on its
 first run.
+
+`unusedFunction` is a special case. The normal parallel cppcheck run suppresses it because raw
+results misclassify Qt meta-object callbacks and public/header APIs. The dead-code gate runs that
+checker single-process, plants a known-unused probe to prove it is active, and blocks only the
+reliable intersection: a definition in `src/*.cpp` whose exact identifier occurs nowhere else in
+`src/`, `include/`, or `tests/`. Header-only APIs remain review decisions, never bulk-deleted from
+the noisy raw list.
 
 Data-only initializers may exceed the length target where splitting hurts readability; they
 still have to pass the hook, so extract the data rather than arguing with it.

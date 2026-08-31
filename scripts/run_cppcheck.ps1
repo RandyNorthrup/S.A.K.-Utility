@@ -29,6 +29,18 @@
     Optional override for where cppcheck's stderr is written. Defaults to
     build/cppcheck_errors.txt. The gate runs two passes and needs each one's findings kept
     apart; without this the second pass overwrites the first pass's evidence.
+
+.PARAMETER EnabledChecks
+    Cppcheck check group to enable. Defaults to all. The dead-code gate requests only
+    unusedFunction so its candidate stream is bounded and machine-parseable.
+
+.PARAMETER Jobs
+    Cppcheck worker count. Defaults to 4. unusedFunction requires a single-process run unless
+    a cppcheck build directory is supplied, so the dead-code gate explicitly passes 1.
+
+.PARAMETER SuppressFindingOutput
+    Keep findings in ErrorsFile without echoing every line. Used by gates that parse the file
+    themselves and print only their actionable subset.
 #>
 
 # THE PARAMETER BLOCK IS LOAD-BEARING. Read this before changing it.
@@ -68,7 +80,15 @@ param(
 
     [string]$SuppressionsFile,
 
-    [string]$ErrorsFile
+    [string]$ErrorsFile,
+
+    [ValidateSet("all", "unusedFunction")]
+    [string]$EnabledChecks = "all",
+
+    [ValidateRange(1, 64)]
+    [int]$Jobs = 4,
+
+    [switch]$SuppressFindingOutput
 )
 
 $ErrorActionPreference = "Stop"
@@ -113,7 +133,7 @@ $CppcheckExe = Find-Cppcheck
 # Build command arguments -- STRICTEST settings
 # ---------------------------------------------------------------------------
 $CppcheckArgs = @(
-    "--enable=all"                  # All check categories
+    "--enable=$EnabledChecks"       # All checks normally; a named focused gate may narrow this
     "--check-level=exhaustive"      # Deepest analysis (slowest, most thorough)
     "--inconclusive"                # Report uncertain findings
     "--std=c++23"                   # C++23 standard
@@ -122,7 +142,7 @@ $CppcheckArgs = @(
     "--language=c++"                # Force C++ language
     "--max-configs=12"              # Check up to 12 configurations
     "--quiet"                       # Suppress progress messages
-    "-j", "4"                       # Parallel checking (4 threads)
+    "-j", "$Jobs"                   # Parallel normally; unusedFunction gate deliberately uses 1
     "-I", (Join-Path $ProjectRoot "include")
     "-I", (Join-Path $ProjectRoot "src")
 )
@@ -270,7 +290,7 @@ $process = Start-Process -FilePath $CppcheckExe `
 $exitCode = $process.ExitCode
 $errFile = $ErrorsFile
 
-if (Test-Path $errFile) {
+if ((Test-Path $errFile) -and -not $SuppressFindingOutput) {
     $errors = Get-Content $errFile -ErrorAction SilentlyContinue
     if ($errors) {
         Write-Host ""
@@ -280,8 +300,10 @@ if (Test-Path $errFile) {
 }
 
 if ($exitCode -ne 0) {
-    Write-Host ""
-    Write-Host "FAILED: cppcheck found issues (exit code $exitCode)" -ForegroundColor Red
+    if (-not $SuppressFindingOutput) {
+        Write-Host ""
+        Write-Host "FAILED: cppcheck found issues (exit code $exitCode)" -ForegroundColor Red
+    }
     exit $exitCode
 }
 

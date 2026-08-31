@@ -2122,10 +2122,6 @@ uint64_t roundedBlockCount(uint64_t bytes, uint32_t blockSize) {
     return (bytes + blockSize - 1) / blockSize;
 }
 
-qsizetype alignApfsValueBytes(qsizetype bytes) {
-    return ((bytes + kApfsXfieldAlignmentPadding) / kApfsXfieldAlignment) * kApfsXfieldAlignment;
-}
-
 bool isSafeSeedFileName(const QString& fileName) {
     return !fileName.trimmed().isEmpty() && !fileName.contains(QLatin1Char('/')) &&
            !fileName.contains(QLatin1Char('\\')) && fileName != QStringLiteral(".") &&
@@ -4917,10 +4913,6 @@ QString fileSha256Hex(const QString& path, QStringList* blockers) {
     return QString::fromLatin1(hash.result().toHex());
 }
 
-QString bytesSha256Hex(const QByteArray& bytes) {
-    return QString::fromLatin1(QCryptographicHash::hash(bytes, QCryptographicHash::Sha256).toHex());
-}
-
 bool imagePathIsSafeForCreate(const QString& imagePath, QStringList* blockers) {
     if (imagePath.trimmed().isEmpty()) {
         blockers->append(QStringLiteral("APFS format image path is required"));
@@ -5266,18 +5258,6 @@ uint64_t readLiveSpacemanIpBase(QIODevice* image,
                                 QStringList* blockers) {
     const QByteArray object = readLiveSpacemanObject(image, geometry, nxsb, blockers);
     return object.isEmpty() ? 0 : le64(object, kApfsSpacemanIpBaseOffset);
-}
-
-// The live spaceman's internal-pool block span (sm_ip_block_count). The first block AFTER the pool
-// (ip_base + this) is where the container's general free region begins - the seed a foreign
-// (real macOS) overflow-tier commit allocates from, in place of computeGeneratedLayout's
-// synthesized prefix length. 0 on a spaceman-less read.
-uint64_t readLiveSpacemanIpBlockCount(QIODevice* image,
-                                      const ApfsRepairGeometry& geometry,
-                                      const QByteArray& nxsb,
-                                      QStringList* blockers) {
-    const QByteArray object = readLiveSpacemanObject(image, geometry, nxsb, blockers);
-    return object.isEmpty() ? 0 : le64(object, kApfsSpacemanIpBlockCountOffset);
 }
 
 // Read the live spaceman's cib-address array (entries 0..cibCount-1) - the CURRENT
@@ -7762,39 +7742,6 @@ struct ApfsIpRotation {
         return false;
     }
     *out = {liveCib, liveBitmap, newSlot.cib, newSlot.bitmap, freeSlot.cib, freeSlot.bitmap};
-    return true;
-}
-
-struct ApfsFreeBlockScan {
-    QIODevice* image{nullptr};
-    ApfsRepairGeometry geometry;
-    uint64_t bitmapBlock{0};
-    uint64_t startBlock{0};
-    uint64_t maxBlock{0};
-    int count{0};
-};
-
-// Scan the raw allocation bitmap for `count` free blocks at or after
-// `startBlock` (capped at maxBlock, the chunk-0 boundary), returning their
-// addresses in ascending order.
-bool findFreeBlocksInBitmap(const ApfsFreeBlockScan& scan,
-                            QVector<uint64_t>* freeBlocks,
-                            QStringList* blockers) {
-    QByteArray bitmap(scan.geometry.blockSize, '\0');
-    if (!readApfsRepairBlock(scan.image, scan.geometry, scan.bitmapBlock, &bitmap, blockers)) {
-        return false;
-    }
-    for (uint64_t block = scan.startBlock; block < scan.maxBlock && freeBlocks->size() < scan.count;
-         ++block) {
-        const bool used = ((bitmap.at(static_cast<qsizetype>(block / 8)) >> (block % 8)) & 1) != 0;
-        if (!used) {
-            freeBlocks->append(block);
-        }
-    }
-    if (freeBlocks->size() < scan.count) {
-        blockers->append(QStringLiteral("APFS in-place file insert: not enough free blocks"));
-        return false;
-    }
     return true;
 }
 
@@ -20404,29 +20351,6 @@ bool repairApfsObjectChecksumBlock(const ApfsRepairBlockContext& context,
     *repaired = true;
     return writeApfsRepairBlock(
         context.image, context.geometry, context.blockIndex, *context.block, blockers);
-}
-
-bool repairApfsObjectChecksumBlocks(QIODevice* image,
-                                    const ApfsRepairGeometry& geometry,
-                                    ApfsRepairCounters* counters,
-                                    QStringList* blockers) {
-    if ((image == nullptr) || (counters == nullptr) || (blockers == nullptr)) {
-        return false;
-    }
-    *counters = {};
-    QByteArray block(static_cast<qsizetype>(geometry.blockSize), '\0');
-    for (uint64_t blockIndex = 0; blockIndex < geometry.blockCount; ++blockIndex) {
-        bool repaired = false;
-        if (!repairApfsObjectChecksumBlock(
-                {.image = image, .geometry = geometry, .blockIndex = blockIndex, .block = &block},
-                &repaired,
-                blockers)) {
-            return false;
-        }
-        ++counters->scannedBlocks;
-        counters->repairedBlocks += repaired ? 1 : 0;
-    }
-    return true;
 }
 
 bool repairGeneratedApfsObjectChecksumBlocks(QIODevice* image,

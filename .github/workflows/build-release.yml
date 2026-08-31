@@ -453,6 +453,14 @@ jobs:
       run: |
         & scripts/cppcheck_whole_project_gate.ps1
 
+    # R5-G10-6: cppcheck suppresses unusedFunction in its normal multi-file/parallel mode.
+    # This single-process pass intersects its candidates with exact repository references and
+    # self-plants a dead probe, so a disabled checker or an unchanged-file orphan cannot pass.
+    - name: Dead first-party source function gate
+      shell: pwsh
+      run: |
+        & scripts/check_dead_code.ps1
+
     # G15-3: the pre-commit ASCII gate only sees the changed files of a commit. Run it over the
     # WHOLE tracked tree in CI (the script defaults to git ls-files with no arguments) so a
     # non-ASCII byte can never accumulate on a branch that skipped the hook.
