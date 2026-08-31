@@ -1034,16 +1034,24 @@ a parked design, per the bucket convention. Open work is what remains after thos
   constraints. All changed-file hooks passed. The two-pass whole-tree gate ran with 183/186
   checkers, classified exactly 58 Qt slots, reported zero normal findings and zero stale inline
   suppressions. Release build exit 0; full CTest 267/267, zero failures, 666.05 seconds.
-  NEXT SUPPRESSION MEASURED: removing only `unusedStructMember` from a temporary suppression
+  `unusedStructMember` REMOVED 2026-08-31: removing only that entry from a temporary suppression
   copy reveals exactly one production finding and zero findings across 252 test sources. The
   finding is `ApfsInPlaceCheckpointResult::ok`, a written but never-read field; the function's
-  bool return is the live success contract. This is directly removable, with no tool-limit case.
+  bool return is the live success contract. The dead field and its positional initializer are
+  removed, and the global suppression is deleted. Reveal is now zero with no tool-limit case.
+  All changed-file hooks and the two-pass whole-tree gate pass with 183/186 checkers, zero normal
+  findings, and zero stale inline suppressions. Release build exit 0; full CTest 267/267, zero
+  failures, 744.35 seconds.
+  INLINE SUPPRESSION NECESSITY AUDIT: 31 markers remain. Nine have safe direct structural removal
+  paths and are open work; 21 are currently proven analyzer limitations. The final marker exposes
+  a larger exception-unwind lifetime weakness in PartitionExecutor and needs owned active-broker
+  state, not comment deletion. It remains open rather than being accepted as permanent policy.
   OWNER RULE NOW RECORDED IN `AGENTS.md`: fix code, test, tool, or gate first; suppression is the
   last resort only after no direct fix is possible and the exact reason is proven. Existing
   suppressions are re-audited, not inherited as permanent policy. Current batch: all pre-commit
   hooks passed; Release build exit 0; full CTest 265/265, zero failures, 804.48 seconds.
   STILL OPEN: core's 5,271 naming findings; the 315-item `useStlAlgorithm` program;
-  `unusedStructMember` and coverage compiler suppressions; directly
+  coverage compiler suppressions; directly
   closable fixture/resource skips; and the historical VM credential rotation/history-rewrite
   decision.
   DIRECT-FIX WAVE 1 FINAL GATE: all changed-file pre-commit hooks passed; Release build exit 0;
@@ -4837,10 +4845,13 @@ need --cppcheck-build-dir, unknown Qt macros) plus THREE style-preference checks
 - [x] R5-G3-2 shadowFunction DELETED (9f7a8e8): the Q_EMIT false positive no longer occurs (-DQ_EMIT=);
       the 20 real local-shadows-a-member-function findings were fixed by renaming the locals. unknownMacro
       stays -- a genuine Qt-macro tool limitation.
-- [x] R5-G3-3 unusedFunction/unusedStructMember: genuine cppcheck tool limitation (single-file -j cannot resolve cross-TU usage); suppressions kept in cppcheck_suppressions.txt with justification and the whole-program pass done under G6. Settled.
-  - SETTLED 2026-08-11 [tool-limitation, suppression kept]: cppcheck single-file -j cannot determine cross-TU usage (unusedFunction/unusedStructMember need whole-program + --cppcheck-build-dir), so the suppression is a genuine tool limitation; the whole-program unusedFunction pass is done under G6.
-      --cppcheck-build-dir, incompatible with -j). Kept.
-- [x] R5-G3-4 knownConditionTrueFalse: production driven to zero; blanket suppression scoped to knownConditionTrueFalse:*tests* with justification, false positives inline-suppressed, the one real dead re-check removed, and the by-design guards kept after the fail-close over-reach was disproven by round-trip tests. Settled.
+- [x] R5-G3-3 unusedFunction: genuine cppcheck tool limitation (single-file -j cannot resolve cross-TU usage); suppression kept in cppcheck_suppressions.txt with justification and the whole-program pass done under G6. Settled.
+  - CORRECTED 2026-08-31: `unusedStructMember` was not a required tool-limit suppression.
+    Revealing it produced one real dead APFS checkpoint-result field and zero test findings; the
+    field and suppression are removed. `unusedFunction` remains because cross-TU and Qt callers
+    require the separate planted-probe/exact-reference gate under G6.
+- [x] R5-G3-4 knownConditionTrueFalse: file-wide suppression removed; exact live inline markers
+  remain individually justified and reveal-audited. Settled.
       The blanket suppression existed for legitimate test enum-distinctness assertions (10 of them:
       `Normal != SkipCorrupt`, `ptr != nullptr`, `kMinThreads >= 1`, ...), but it also hid every
       production always-true/false finding. Re-measured with it removed: 9 in src/, 10 in tests/.
@@ -4874,7 +4885,9 @@ need --cppcheck-build-dir, unknown Qt macros) plus THREE style-preference checks
           guards stay with their inline suppressions and their headers now note the paths are
           intentionally tolerant.
       cppcheck now reports 0 knownConditionTrueFalse in src/ with the scoped list; tests unchanged.
-- [x] R5-G3-5 functionStatic/functionConst driven to zero in production (functionStatic:*tests* scoped for Qt Test slots); useStlAlgorithm blanket suppression kept as a documented style-only house policy that cannot mask a correctness defect. Settled.
+- [x] R5-G3-5 functionStatic/functionConst driven to zero in production; the test-wide
+  `functionStatic` suppression is removed and exact Qt slots are source-classified. The
+  `useStlAlgorithm` suppression now owns a measured direct-fix backlog. Settled.
       slots stay silenced). 114 production findings; functionStatic CASCADES (a static helper frees its
       this-only caller to be static too), so it was iterated to the fixpoint over 5 rounds
       (114 -> 25 -> 9 -> 7 -> 1 -> 0) = 163 methods static across the HFS/APFS/ext readers, the parsers,
@@ -4917,12 +4930,12 @@ need --cppcheck-build-dir, unknown Qt macros) plus THREE style-preference checks
 - [x] R5-G3-7 Delete cppcheck_suppressions.txt entirely once the above are closed
   - SETTLED 2026-08-16 [not-deletable-by-design, no residual work]: this is the correct permanent
     state, not pending work. Every remaining entry is a proven cppcheck tool limitation
-    (missingInclude/System without Qt headers; single-TU unusedFunction/unusedStructMember -- also
-    force-disabled by -j; unknownMacro for Qt keywords; unmatchedSuppression meta-noise) plus two
-    test-scoped scopes (functionStatic/knownConditionTrueFalse for Qt Test slots invoked by the
-    meta-object system) and one documented style policy (useStlAlgorithm; see G4-14). Deleting any
-    entry re-introduces false findings that would fail the gate. There is no residual work behind
-    this line -- the file is minimal and every line is load-bearing.
+    (missingInclude/System without Qt headers; single-TU unusedFunction -- also force-disabled by
+    `-j`; unknownMacro for Qt keywords; unmatchedSuppression meta-noise) plus one documented style
+    debt program (`useStlAlgorithm`; see G4-14). Qt test slots are source-classified rather than
+    file-suppressed, and the old `knownConditionTrueFalse:*tests*`, `functionStatic:*tests*`, and
+    `unusedStructMember` entries are gone. The file remains required, but only its currently
+    measured entries are load-bearing.
 
 ### G4 - findings from running cppcheck with suppressions removed (VERIFIED)
 
@@ -4970,8 +4983,10 @@ knownConditionTrueFalse suppression and replace it with narrow, individually jus
 inline suppressions at these verified sites, so that a NEW vacuous condition introduced
 later is still caught instead of being silently absorbed by a project-wide rule.
 
-- [x] R5-G4-15 Replace the blanket knownConditionTrueFalse suppression with per-site
-  - DONE 2026-08-11 (commit 0b7ba723): the blanket knownConditionTrueFalse suppression is scoped to tests only and every verified production site carries a per-site inline // cppcheck-suppress with its justification (ai_orchestrator x2, advanced_search_worker, partition_apfs_writer, partition_manager_panel, per_user_customization_dialog, browser_bridge_pipe), so a NEW vacuous condition is still caught.
+- [x] R5-G4-15 Replace the blanket knownConditionTrueFalse suppression with per-site evidence
+  - CORRECTED 2026-08-31: the remaining test-wide suppression is also gone after all 12 current
+    findings were fixed directly. Exact live production markers remain individually justified,
+    and every normal test/production finding is actionable.
       inline suppressions carrying the verified justification recorded above
 
 STANDING LESSON, now demonstrated twice in this campaign: a static-analysis finding is a
@@ -5122,7 +5137,8 @@ and 2 on the Chocolatey authenticity gate: knownConditionTrueFalse fell from 36 
 
 - [x] R5-G13-1 Define _WIN32 and _MSC_VER; drop --force so the real configuration is analyzed
 - [x] R5-G13-2 Re-verify the remaining 24 vacuous conditions individually (tracked as G4)
-  - RESOLVED 2026-08-11 [done]: the 24 vacuous knownConditionTrueFalse conditions were re-verified individually and were all artifacts of the analyzed-config defect fixed in G13-1; none were real. The blanket suppression stays scoped to tests (tracked in G4-15).
+  - SUPERSEDED 2026-08-31: the test-wide suppression is removed; all 12 findings it still hid
+    were fixed directly under R5-IDX-33.
 - [x] R5-G13-3 Audit every other gate for the analyze-the-wrong-config defect: only the two config-consuming gates apply (cppcheck fixed in G13-1, clang-tidy compile DB in G12-2/G12-7); the PowerShell/regex source scanners have no build configuration to mismatch. Audit complete. Settled.
   - RESOLVED 2026-08-11 [design-decision]: the analyze-the-wrong-config defect class applies only to the two config-consuming gates, cppcheck (fixed in G13-1) and clang-tidy's compile DB (fixed in G12-2/G12-7); the remaining PowerShell/regex source scanners have no build configuration to mismatch, so no further audit is outstanding.
       that is not the one actually built
@@ -5167,7 +5183,9 @@ produced results.
 - [x] R5-G6-1 cppcheck unusedFunction and unusedStructMember, project-wide with a build dir
   - RESOLVED 2026-08-12 [fixed]: ran the whole-program cppcheck unusedFunction with a build-dir AND tests/ included (557 candidates), then EVIDENCE-VERIFIED the check is unusable as a dead-code oracle in this Qt/GUI codebase: sampled candidates are LIVE (aiComposerStyle is called in ai_assistant_panel.cpp:4555, activeLeaseCount in test_ai_tool_dispatcher.cpp:188) -- cppcheck cannot connect header-inline/GUI/moc/test callers. Per the skill ('public API unused internally is the point') bulk deletion would delete working code, so none was done.
 - [x] R5-G6-2 clang-tidy misc-unused-* and unusedPrivateFunction (2 already reported)
-  - RESOLVED 2026-08-12 [fixed]: cppcheck --enable=all (whole-tree, now a CI job via G7-2) reports no unusedPrivateFunction/unusedStructMember; the 2 historical clang-tidy reports are addressed. No reliably-detectable dead private members remain.
+  - CORRECTED 2026-08-31: the global `unusedStructMember` suppression made the earlier zero claim
+    false. A suppression-free reveal found one dead APFS checkpoint-result field; it is removed,
+    and the now-unsuppressed whole-tree check reports zero.
 - [x] R5-G6-3 clang-include-cleaner for dead includes (ships with the installed LLVM)
   - PROGRESS 2026-08-18: clang-include-cleaner was RUN tree-wide over all 304 first-party src TUs
     (against a clang-cl compile_commands.json emitted via a Ninja+clang-cl+vcpkg configure). It
@@ -5220,8 +5238,9 @@ produced results.
     needs the exact manual per-symbol judgment G6-1 identified (it sampled static "unused" hits and found
     them live: aiComposerStyle is called at ai_assistant_panel.cpp:4555, activeLeaseCount in a test), so a
     raw never-executed list published as a "dead-code report" would be a misleading artifact. The reliable,
-    wired dead-code detection is cppcheck --enable=all (unusedFunction / unusedPrivateFunction /
-    unusedStructMember) whole-tree in CI per G6-5, plus the G18-1 mutation ratchet as the every-commit
+    wired dead-code detection is the planted-probe/exact-reference `unusedFunction` gate plus
+    unsuppressed whole-tree `unusedPrivateFunction` / `unusedStructMember` checks in CI per G6-5,
+    plus the G18-1 mutation ratchet as the every-commit
     test-quality gate (a surviving mutant IS an unexercised behaviour -- a sharper signal than a line or
     function hit-count). run_coverage.ps1 keeps its actual purpose: per-subsystem line-coverage measurement
     (the COVERAGE_BASELINE.md denominator), not dead-code detection.
@@ -9490,7 +9509,9 @@ gate teaches people to disable both.
       * clang-format vs clang-tidy readability FIXES: resolved by config -- .clang-tidy sets FormatStyle: file, so every clang-tidy fix is re-formatted through the SAME .clang-format and can never propose a format-inconsistent edit.
       * clang-tidy magic-number checks vs the project magic-number gate: resolved by config -- cppcoreguidelines-avoid-magic-numbers and readability-magic-numbers are DISABLED in favor of scripts/check_magic_numbers.py, whose on-disk-format/crypto allowlist the clang-tidy versions cannot express (both running would flag byte offsets the project gate intentionally exempts).
       * clang-tidy readability-function-cognitive-complexity vs lizard CCN: resolved by config -- the cognitive-complexity check is disabled so lizard (CCN<=10) is the single, un-contradicted complexity gate.
-      * clang-tidy readability-convert-member-functions-to-static vs cppcheck functionStatic: resolved by config -- the clang-tidy version is disabled; cppcheck functionStatic is the single owner (active in production, tests-scoped suppression).
+      * clang-tidy readability-convert-member-functions-to-static vs cppcheck functionStatic:
+        cppcheck is the single owner; production is active and Qt test slots are exact
+        source-classified rather than file-suppressed.
     Every resolution is by CONFIGURATION, not per-site suppression, as the item requires. The per-exclusion rationale now lives in .clang-tidy itself (R5-G21-3).
       line breaking versus lizard function length versus clang-tidy readability rules,
       where satisfying one can violate another. Resolve by configuration, not by
@@ -9615,7 +9636,9 @@ gate teaches people to disable both.
   - DONE 2026-08-17: audited every gate's relaxations for an IN-CONFIG written justification.
       * .clang-tidy: previously the 26 check exclusions carried only a blanket "tracked in the doc" comment. Each now carries a per-check justification in the config, grouped by reason (restore-pending bug class / superseded by a dedicated project gate / intrinsic to a raw-filesystem+Qt codebase / pure style). clang-tidy --verify-config passes, so the folded-scalar check-glob is intact.
       * src/core/.clang-tidy: the one carve-out (readability-identifier-naming) already carried a full in-config rationale (unreliable rename fix at multi-thousand-line parser scale).
-      * cppcheck_suppressions.txt: every suppression already carries an inline justification, each scoped as tightly as possible (functionStatic / knownConditionTrueFalse are tests-ONLY, after a global silence was found hiding production findings).
+      * cppcheck_suppressions.txt: every remaining entry is reveal-audited. The former test-wide
+        functionStatic and knownConditionTrueFalse entries are removed; exact live inline markers
+        carry local justification and Qt slots are source-classified.
       * lizard: CCN<=10 / PARAM<=5 / length<=70 ARE the strict target, no relaxation; the JavaScript baseline is a shrink-only ratchet (justified in scripts/run_lizard.py), not an exclusion.
       * .pre-commit-config.yaml: the two relaxations (check-added-large-files maxkb cap for intentional release bundles; the ascii-only vendored-dir excludes) each carry an inline justification.
     Every relaxation now carries its justification in the config that sets it, not only in this tracking doc.

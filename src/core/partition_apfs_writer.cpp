@@ -6016,7 +6016,6 @@ void advanceNxSuperblockCheckpoint(QByteArray* nxsb,
 }
 
 struct ApfsInPlaceCheckpointResult {
-    bool ok{false};
     uint64_t previous_xid{0};
     uint64_t new_xid{0};
     uint64_t checkpoint_map_block{0};
@@ -6363,7 +6362,7 @@ bool publishCheckpoint(ApfsCheckpointAdvanceRequest& request,
             request.image, geometry, kApfsFormatNxsbBlock, request.nxsb, blockers)) {
         return false;
     }
-    *result = {true, live.xid, newXid, cpmBlock, nxsbBlock};
+    *result = {live.xid, newXid, cpmBlock, nxsbBlock};
     return true;
 }
 

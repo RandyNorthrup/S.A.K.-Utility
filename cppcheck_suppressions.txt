@@ -5,9 +5,8 @@
 missingInclude
 missingIncludeSystem
 
-// Single-file analysis cannot determine cross-TU function/member usage.
+// Single-file analysis cannot determine cross-TU function usage.
 unusedFunction
-unusedStructMember
 
 // Meta-noise from the suppression file itself.
 unmatchedSuppression
