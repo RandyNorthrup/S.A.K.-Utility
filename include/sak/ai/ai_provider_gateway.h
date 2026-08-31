@@ -25,11 +25,9 @@ public:
         int timeout_ms = kDefaultProviderGatewayTimeoutMs;
         bool read_only = false;
         bool high_risk = false;
-        // Set for tools that inject input into the user's logged-in browser
-        // (click/type/press-key/scroll). These demand a HARD human confirmation in every
-        // non-chat access mode -- including Unattended, where other win32 automation
-        // would otherwise auto-run -- so an autonomous or injected model cannot silently
-        // act as the user in their browser.
+        // Set for any tool that needs a HARD human confirmation in every non-chat access mode:
+        // browser/desktop input, clipboard writes, extension changes, and unclassified tools.
+        // Unattended does not bypass this explicit plan flag.
         bool requires_confirmation = false;
         QString preview;
     };

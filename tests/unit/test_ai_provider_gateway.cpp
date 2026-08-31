@@ -51,6 +51,7 @@ private Q_SLOTS:
     void checkAvailabilityAcceptsReadOnlyWin32Tool();
     void mutatingToolsAreNeverReadOnly();
     void authorizeWin32Mcp_browserInputRequiresConfirmEveryMode();
+    void authorizeWin32Mcp_hardConfirmUsesNeutralIdentity();
     void authorizeWin32Mcp_assistedMutatingRequiresConfirm();
     void authorizeWin32Mcp_unattendedHighRiskRequiresRestorePoint();
     void win32McpEnvironment_refusesProtectedAndNonStringVars();  // R5-G10-9
@@ -707,7 +708,7 @@ void AiProviderGatewayTests::authorizeWin32Mcp_browserInputRequiresConfirmEveryM
         const QJsonObject result = sak::ai::authorizeWin32McpCall(plan, access, declines);
         QVERIFY(!result.isEmpty());
         QCOMPARE(result.value(QStringLiteral("error_message")).toString(),
-                 QStringLiteral("User declined the browser input action"));
+                 QStringLiteral("User declined Win32 MCP action"));
     }
     QCOMPARE(confirmCalls, 2);  // the confirm gate was actually consulted in each mode
 
@@ -719,6 +720,40 @@ void AiProviderGatewayTests::authorizeWin32Mcp_browserInputRequiresConfirmEveryM
     for (const Access access : {Access::AssistedFullAccess, Access::UnattendedFullAccess}) {
         QVERIFY2(sak::ai::authorizeWin32McpCall(plan, access, accepts).isEmpty(),
                  "an accepted browser-input confirm must authorize the call");
+    }
+}
+
+void AiProviderGatewayTests::authorizeWin32Mcp_hardConfirmUsesNeutralIdentity() {
+    using Access = sak::ai::AiProviderGatewayToolAccess;
+    const QStringList toolNames = {QStringLiteral("browser_click"),
+                                   QStringLiteral("mouse_click"),
+                                   QStringLiteral("clipboard_write"),
+                                   QStringLiteral("browser_extension_install"),
+                                   QStringLiteral("mystery_tool")};
+    for (const QString& toolName : toolNames) {
+        sak::ai::AiProviderGateway::Win32McpCallPlan plan;
+        plan.tool_name = toolName;
+        plan.requires_confirmation = true;
+        plan.preview = QStringLiteral("%1 exact preview").arg(toolName);
+        for (const Access access : {Access::AssistedFullAccess, Access::UnattendedFullAccess}) {
+            QString title;
+            QString preview;
+            bool risky = false;
+            sak::ai::AiProviderGatewayToolCallbacks callbacks;
+            callbacks.confirm =
+                [&](const QString& actualTitle, const QString& actualPreview, bool actualRisky) {
+                    title = actualTitle;
+                    preview = actualPreview;
+                    risky = actualRisky;
+                    return false;
+                };
+            const QJsonObject result = sak::ai::authorizeWin32McpCall(plan, access, callbacks);
+            QCOMPARE(title, QStringLiteral("Win32 MCP action"));
+            QCOMPARE(preview, plan.preview);
+            QVERIFY(risky);
+            QCOMPARE(result.value(QStringLiteral("error_message")).toString(),
+                     QStringLiteral("User declined Win32 MCP action"));
+        }
     }
 }
 

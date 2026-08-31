@@ -1,0 +1,16 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_ai_provider_gateway",
+  "ctest_regex": "^test_ai_provider_gateway$",
+  "mutants": [
+    {
+      "id": "hard-confirm-mislabels-every-tool-as-browser-input",
+      "file": "src/ai/ai_provider_gateway_authorization.cpp",
+      "find": "QStringLiteral(\"Win32 MCP action\")",
+      "replace": "QStringLiteral(\"Browser input action\")",
+      "expect": "killed",
+      "why": "requires_confirmation covers browser/desktop input, clipboard writes, extension changes, and unknown tools. authorizeWin32Mcp_hardConfirmUsesNeutralIdentity runs representative plans in both access modes and requires the trusted approval title to remain neutral while exact tool details stay in preview."
+    }
+  ]
+}

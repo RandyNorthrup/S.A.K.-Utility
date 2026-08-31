@@ -9,6 +9,10 @@
 #include <QObject>
 #include <QString>
 
+#include <functional>
+
+class QThread;
+
 namespace sak::ai {
 
 /// @brief IAiModelClient adapter over OpenAIResponsesClient.
@@ -28,6 +32,9 @@ public:
     ~OpenAIResponsesModelClient() override;
 
     void setEnableWebSearch(bool enabled);
+    /// @brief Replaces QThread::start for deterministic launch-failure tests.
+    /// @note Set before invoke(); an empty function restores normal thread startup.
+    void setThreadStarterForTesting(std::function<void(QThread&)> starter);
 
     [[nodiscard]] Response invoke(const Request& request, const CancellationToken& token) override;
     [[nodiscard]] Response continueWithToolOutputs(const Request& request,
@@ -40,6 +47,7 @@ private:
                                               const CancellationToken& token) const;
 
     bool m_enable_web_search{false};
+    std::function<void(QThread&)> m_thread_starter;
 };
 
 }  // namespace sak::ai

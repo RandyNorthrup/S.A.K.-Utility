@@ -1,0 +1,72 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_ai_package_selection",
+  "ctest_regex": "^test_ai_package_selection$",
+  "mutants": [
+    {
+      "id": "lossy-key-authorizes-exact-selection",
+      "file": "src/ai/ai_package_selection.cpp",
+      "find": "candidate.package_id.compare(clean_query, Qt::CaseInsensitive) == 0",
+      "replace": "normalizePackageQueryKey(candidate.package_id) == normalizePackageQueryKey(clean_query)",
+      "expect": "killed",
+      "why": "Lossy normalization removes punctuation, so foo-bar and foobar share a key. lossyNormalizedKeyNeverAuthorizesSelection requires the sole foobar candidate to stay human-gated for query foo-bar while raw case-insensitive foo-bar still selects."
+    },
+    {
+      "id": "package-id-whitespace-rewrite-restored",
+      "file": "src/ai/ai_package_selection.cpp",
+      "find": "if (value != trimmed || trimmed.size() > kMaxPackageIdChars ||",
+      "replace": "if ((value != trimmed && false) || trimmed.size() > kMaxPackageIdChars ||",
+      "expect": "killed",
+      "why": "Silencing the surrounding-whitespace guard turns a padded id into another valid token after trim. rejectsUnsafePackageIdDomain requires the padded record to be rejected before selection."
+    },
+    {
+      "id": "raw-query-cap-applied-after-trim",
+      "file": "src/ai/ai_package_selection.cpp",
+      "find": "if (query.size() > kMaxPackageQueryChars) {",
+      "replace": "if (query.trimmed().size() > kMaxPackageQueryChars) {",
+      "expect": "killed",
+      "why": "Capping only trimmed input lets an arbitrarily large whitespace query bypass the work bound. rejectsOversizedRawQueryBeforeTrimming feeds limit+1 spaces and requires the too-long refusal."
+    },
+    {
+      "id": "known-metadata-field-cap-dropped",
+      "file": "src/ai/ai_package_selection.cpp",
+      "find": "if (raw.size() > max_chars) {",
+      "replace": "if (raw.size() > max_chars && false) {",
+      "expect": "killed",
+      "why": "Every present alias is attacker-controlled. boundsAndSanitizesCandidateMetadata requires an oversized title and an oversized whitespace description to be rejected before retention."
+    },
+    {
+      "id": "arbitrary-source-object-retained",
+      "file": "src/ai/ai_package_selection.cpp",
+      "find": "candidate->source = QJsonObject{{QStringLiteral(\"package_id\"), candidate->package_id}};",
+      "replace": "candidate->source = object;",
+      "expect": "killed",
+      "why": "Copying the complete search object retains unlimited unknown metadata. boundsAndSanitizesCandidateMetadata supplies a 100000-character blob and requires it absent from both source and serialized candidate."
+    },
+    {
+      "id": "later-alias-validation-short-circuited",
+      "file": "src/ai/ai_package_selection.cpp",
+      "find": "*out = raw;",
+      "replace": "*out = raw;\n            return true;",
+      "expect": "killed",
+      "why": "Returning after the first usable alias skips type validation of later present aliases. rejectsMalformedLaterAlias provides package_id=firefox plus numeric id=7 and requires the whole record rejected."
+    },
+    {
+      "id": "duplicate-version-conflict-forgotten",
+      "file": "src/ai/ai_package_selection.cpp",
+      "find": "parsed.m_conflicting_ids.insert(candidate.package_id);",
+      "replace": "parsed.m_conflicting_ids.remove(candidate.package_id);",
+      "expect": "killed",
+      "why": "Forgetting the conflict falls back to generic exact-id ambiguity even though repeating the id cannot resolve contradictory versions. exposesConflictingDuplicateVersions requires explicit conflict text, no human exact-id question, and both versions visible."
+    },
+    {
+      "id": "successful-selection-hides-rejected-count",
+      "file": "src/ai/ai_package_selection.cpp",
+      "find": "return selectedPackageResult(exact_matches.first(), parsed.m_rejected_entries);",
+      "replace": "return selectedPackageResult(exact_matches.first(), 0);",
+      "expect": "killed",
+      "why": "A mixed valid/malformed response must not hide rejected records just because one candidate selected. reportsRejectedEntriesOnSuccessfulSelection requires rejected_entries=1 in the result and JSON."
+    }
+  ]
+}

@@ -744,9 +744,10 @@ QJsonObject appActionTool() {
             "reset, power optimization, reports, backups, and more). Call operation=\"list\" first "
             "to discover actions and their risk flags, then operation=\"run\" with an action_id. "
             "PREFER these app actions over raw run_powershell when an action already covers the "
-            "task. Mutating or admin actions are gated with a confirmation and, when destructive, "
-            "a "
-            "restore point."),
+            "task. Assisted Full Access confirms every non-read-only action; Unattended Full "
+            "Access may run non-catastrophic actions without confirmation; Catastrophic actions "
+            "always require explicit confirmation. A restore point is offered when eligible and "
+            "must not be claimed unless creation succeeds."),
         properties,
         QJsonArray{
             QStringLiteral("operation"), QStringLiteral("action_id"), QStringLiteral("arguments")});

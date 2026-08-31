@@ -18,6 +18,10 @@ inline constexpr int kDefaultPackageCandidateLimit = 5;
 /// truncated scan could drop the package the user asked for and select a different one.
 inline constexpr qsizetype kMaxPackageQueryChars = 256;
 inline constexpr qsizetype kMaxPackagesConsidered = 500;
+inline constexpr qsizetype kMaxPackageIdChars = 100;
+inline constexpr qsizetype kMaxPackageVersionChars = 64;
+inline constexpr qsizetype kMaxPackageTitleChars = 256;
+inline constexpr qsizetype kMaxPackageDescriptionChars = 2000;
 
 struct AiPackageCandidate {
     QString package_id;
@@ -36,6 +40,7 @@ struct AiPackageSelectionResult {
     bool requires_human{false};
     AiPackageCandidate selected;
     QVector<AiPackageCandidate> candidates;
+    int rejected_entries{0};
     QString error_message;
     QString question_for_human;
 

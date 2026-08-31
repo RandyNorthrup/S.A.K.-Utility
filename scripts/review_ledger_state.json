@@ -2241,12 +2241,18 @@
       "status": "reviewed"
     },
     "src/ai/ai_offline_downloader_tool_runner.cpp": {
+      "brief": "docs/review_briefs/src_ai_ai_offline_downloader_tool_runner.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "de35bc9a26fb5f2f4a08d3d25fb90b4a93b5dc5e",
+      "status": "reviewed"
     },
     "src/ai/ai_openai_model_client.cpp": {
+      "brief": "docs/review_briefs/src_ai_ai_openai_model_client.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "5e819cd6c0d68218d8c89d8840c2c04ccc7526af",
+      "status": "reviewed"
     },
     "src/ai/ai_orchestrator.cpp": {
       "evidence": "cited",
@@ -2255,8 +2261,11 @@
       "status": "reviewed"
     },
     "src/ai/ai_package_selection.cpp": {
+      "brief": "docs/review_briefs/src_ai_ai_package_selection.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "fc9d720569ee496275b25d30ebfc5f3c94020523",
+      "status": "reviewed"
     },
     "src/ai/ai_package_tool_planner.cpp": {
       "evidence": "cited",
@@ -2271,8 +2280,11 @@
       "status": "reviewed"
     },
     "src/ai/ai_prompt_assembler.cpp": {
+      "brief": "docs/review_briefs/src_ai_ai_prompt_assembler.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "3aaeac3603d472f25539886fb1eea9e6e98996a0",
+      "status": "reviewed"
     },
     "src/ai/ai_provider_gateway.cpp": {
       "evidence": "cited",
@@ -2281,8 +2293,11 @@
       "status": "reviewed"
     },
     "src/ai/ai_provider_gateway_authorization.cpp": {
+      "brief": "docs/review_briefs/src_ai_ai_provider_gateway_authorization.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "b28b48522a5bde799345977a4a270fb5bb94e6f2",
+      "status": "reviewed"
     },
     "src/ai/ai_provider_gateway_tool_runner.cpp": {
       "evidence": "cited",

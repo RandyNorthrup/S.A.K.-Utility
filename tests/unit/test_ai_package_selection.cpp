@@ -30,6 +30,13 @@ private Q_SLOTS:
     void reportsNoCandidatesWithoutGuessing();
     void doesNotAutoSelectLoneNonExactCandidate();
     void dropsCandidateWithDisallowedIdCharacters();
+    void lossyNormalizedKeyNeverAuthorizesSelection();
+    void rejectsUnsafePackageIdDomain();
+    void rejectsOversizedRawQueryBeforeTrimming();
+    void boundsAndSanitizesCandidateMetadata();
+    void rejectsMalformedLaterAlias();
+    void exposesConflictingDuplicateVersions();
+    void reportsRejectedEntriesOnSuccessfulSelection();
 };
 
 void AiPackageSelectionTests::normalizesHumanPackageNames() {
@@ -127,6 +134,116 @@ void AiPackageSelectionTests::dropsCandidateWithDisallowedIdCharacters() {
     QCOMPARE(result.error_message,
              QStringLiteral("Package search returned no candidates for 'firefox' (1 malformed "
                             "search result(s) rejected)"));
+}
+
+void AiPackageSelectionTests::lossyNormalizedKeyNeverAuthorizesSelection() {
+    QJsonArray lossy;
+    lossy.append(packageObject(QStringLiteral("foobar"), QStringLiteral("Foo Bar")));
+    const auto refused = sak::ai::selectPackageForWorkflow(QStringLiteral("foo-bar"), lossy);
+    QVERIFY(!refused.success);
+    QVERIFY(refused.requires_human);
+    QVERIFY(refused.selected.package_id.isEmpty());
+
+    QJsonArray exact;
+    exact.append(packageObject(QStringLiteral("foo-bar"), QStringLiteral("Foo Bar")));
+    const auto selected = sak::ai::selectPackageForWorkflow(QStringLiteral("FOO-BAR"), exact);
+    QVERIFY(selected.success);
+    QCOMPARE(selected.selected.package_id, QStringLiteral("foo-bar"));
+}
+
+void AiPackageSelectionTests::rejectsUnsafePackageIdDomain() {
+    const QStringList invalidIds = {
+        QStringLiteral(" padded"),
+        QStringLiteral("-force"),
+        QStringLiteral("."),
+        QStringLiteral(".."),
+        QStringLiteral("all"),
+        QString(sak::ai::kMaxPackageIdChars + 1, QLatin1Char('a')),
+    };
+    for (const QString& id : invalidIds) {
+        QJsonArray packages;
+        packages.append(packageObject(id, QStringLiteral("Unsafe")));
+        const auto result = sak::ai::selectPackageForWorkflow(QStringLiteral("unsafe"), packages);
+        QVERIFY2(!result.success, qPrintable(id));
+        QCOMPARE(result.rejected_entries, 1);
+        QVERIFY(result.candidates.isEmpty());
+    }
+}
+
+void AiPackageSelectionTests::rejectsOversizedRawQueryBeforeTrimming() {
+    const QString query(sak::ai::kMaxPackageQueryChars + 1, QLatin1Char(' '));
+    const auto result = sak::ai::selectPackageForWorkflow(query, {});
+    QVERIFY(!result.success);
+    QVERIFY(result.error_message.contains(QStringLiteral("too long")));
+    QVERIFY(!result.error_message.contains(QStringLiteral("no usable candidates")));
+}
+
+void AiPackageSelectionTests::boundsAndSanitizesCandidateMetadata() {
+    QJsonObject oversized = packageObject(QStringLiteral("oversized"), QStringLiteral("Title"));
+    oversized[QStringLiteral("title")] = QString(sak::ai::kMaxPackageTitleChars + 1,
+                                                 QLatin1Char('t'));
+    QJsonArray rejected;
+    rejected.append(oversized);
+    const auto rejectedResult = sak::ai::selectPackageForWorkflow(QStringLiteral("oversized"),
+                                                                  rejected);
+    QVERIFY(!rejectedResult.success);
+    QCOMPARE(rejectedResult.rejected_entries, 1);
+
+    QJsonObject whitespace = packageObject(QStringLiteral("whitespace"), QStringLiteral("Title"));
+    whitespace[QStringLiteral("description")] = QString(sak::ai::kMaxPackageDescriptionChars + 1,
+                                                        QLatin1Char(' '));
+    QJsonArray whitespacePackages;
+    whitespacePackages.append(whitespace);
+    QCOMPARE(sak::ai::selectPackageForWorkflow(QStringLiteral("whitespace"), whitespacePackages)
+                 .rejected_entries,
+             1);
+
+    QJsonObject bounded = packageObject(QStringLiteral("bounded"), QStringLiteral("Bounded"));
+    bounded[QStringLiteral("blob")] = QString(100'000, QLatin1Char('x'));
+    QJsonArray accepted;
+    accepted.append(bounded);
+    const auto acceptedResult = sak::ai::selectPackageForWorkflow(QStringLiteral("bounded"),
+                                                                  accepted);
+    QVERIFY(acceptedResult.success);
+    QVERIFY(!acceptedResult.selected.source.contains(QStringLiteral("blob")));
+    QVERIFY(!acceptedResult.selected.toJson().contains(QStringLiteral("blob")));
+}
+
+void AiPackageSelectionTests::rejectsMalformedLaterAlias() {
+    QJsonObject malformed = packageObject(QStringLiteral("firefox"), QStringLiteral("Firefox"));
+    malformed[QStringLiteral("id")] = 7;
+    QJsonArray packages;
+    packages.append(malformed);
+    const auto result = sak::ai::selectPackageForWorkflow(QStringLiteral("firefox"), packages);
+    QVERIFY(!result.success);
+    QCOMPARE(result.rejected_entries, 1);
+}
+
+void AiPackageSelectionTests::exposesConflictingDuplicateVersions() {
+    QJsonArray packages;
+    packages.append(
+        packageObject(QStringLiteral("tool"), QStringLiteral("Tool"), QStringLiteral("1.0")));
+    packages.append(
+        packageObject(QStringLiteral("tool"), QStringLiteral("Tool"), QStringLiteral("2.0")));
+    const auto result = sak::ai::selectPackageForWorkflow(QStringLiteral("tool"), packages);
+    QVERIFY(!result.success);
+    QVERIFY(result.ambiguous);
+    QVERIFY(!result.requires_human);
+    QVERIFY(result.error_message.contains(QStringLiteral("conflicting versions")));
+    QVERIFY(!result.error_message.contains(QStringLiteral("Choose an exact package_id")));
+    QCOMPARE(result.candidates.size(), 2);
+    QCOMPARE(result.candidates.at(0).version, QStringLiteral("1.0"));
+    QCOMPARE(result.candidates.at(1).version, QStringLiteral("2.0"));
+}
+
+void AiPackageSelectionTests::reportsRejectedEntriesOnSuccessfulSelection() {
+    QJsonArray packages;
+    packages.append(packageObject(QStringLiteral("firefox"), QStringLiteral("Firefox")));
+    packages.append(QJsonObject{{QStringLiteral("package_id"), 7}});
+    const auto result = sak::ai::selectPackageForWorkflow(QStringLiteral("firefox"), packages);
+    QVERIFY(result.success);
+    QCOMPARE(result.rejected_entries, 1);
+    QCOMPARE(result.toJson().value(QStringLiteral("rejected_entries")).toInt(), 1);
 }
 
 QTEST_GUILESS_MAIN(AiPackageSelectionTests)

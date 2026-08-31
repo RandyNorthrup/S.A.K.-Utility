@@ -35,6 +35,7 @@ private Q_SLOTS:
     void buildPayload_functionToolsUseStrictSchemas();
     void buildPayload_providerGatewayArgumentsAreStrictSchemaSafe();
     void buildPayload_packageToolWarnsAgainstScanInstalls();
+    void buildPayload_appActionDescriptionMatchesRiskPolicy();
     void realModelSmokeTest_optIn();
     void realInputTokenCountSmokeTest_optIn();
     void realModelToolLoopSmokeTest_optIn();
@@ -806,6 +807,24 @@ void OpenAIResponsesClientTests::buildPayload_packageToolWarnsAgainstScanInstall
                             "status and app capabilities through sak_provider_gateway; "
                             "only install when the user explicitly asks to install, "
                             "repair-install, or upgrade software."));
+}
+
+void OpenAIResponsesClientTests::buildPayload_appActionDescriptionMatchesRiskPolicy() {
+    sak::ai::OpenAIResponseRequest request;
+    request.model = QStringLiteral("gpt-test");
+    request.input = QStringLiteral("test");
+    request.enable_local_tools = true;
+    const QJsonObject payload = payloadObject(request);
+    const QJsonObject tool = functionToolByName(payload.value(QStringLiteral("tools")).toArray(),
+                                                QStringLiteral("sak_app_action"));
+    QVERIFY(!tool.isEmpty());
+    const QString description = tool.value(QStringLiteral("description")).toString();
+    QVERIFY(description.contains(QStringLiteral("Assisted Full Access confirms")));
+    QVERIFY(description.contains(QStringLiteral("Unattended Full Access may run")));
+    QVERIFY(description.contains(QStringLiteral("Catastrophic actions always require")));
+    QVERIFY(description.contains(QStringLiteral("restore point is offered")));
+    QVERIFY(!description.contains(QStringLiteral("Mutating or admin actions are gated")));
+    QVERIFY(!description.contains(QStringLiteral("when destructive, a restore point")));
 }
 
 void OpenAIResponsesClientTests::realModelSmokeTest_optIn() {

@@ -22,19 +22,18 @@ bool unattended(AiProviderGatewayToolAccess access) {
     return access == AiProviderGatewayToolAccess::UnattendedFullAccess;
 }
 
-// Browser input injection (click/type/press-key/scroll) drives the user's logged-in
-// browser. It demands an explicit human confirmation in EVERY non-chat access mode --
-// including Unattended, where other win32 automation would otherwise auto-run or merely
-// offer a restore point -- so an autonomous or injected model cannot silently act as the
-// user. The prompt is the app's trusted UI; nothing the page or model controls can
-// satisfy this gate. Returns empty on approval, a tool error on refusal / misconfig.
-QJsonObject requireInputConfirmation(const AiProviderGateway::Win32McpCallPlan& plan,
-                                     const AiProviderGatewayToolCallbacks& callbacks) {
+// Tools carrying requires_confirmation span browser/desktop input, clipboard writes,
+// extension changes, and unclassified operations. They demand explicit human confirmation in
+// every non-chat access mode, including Unattended. Use a neutral identity: the exact tool and
+// arguments remain in plan.preview, while the trusted dialog title must never mislabel a desktop
+// or extension action as browser input. Returns empty on approval, a tool error on refusal.
+QJsonObject requireHardConfirmation(const AiProviderGateway::Win32McpCallPlan& plan,
+                                    const AiProviderGatewayToolCallbacks& callbacks) {
     if (!callbacks.confirm) {
         return toolError(QStringLiteral("Win32 MCP confirmation callback is not configured"));
     }
-    if (!callbacks.confirm(QStringLiteral("Browser input action"), plan.preview, /*risky=*/true)) {
-        return toolError(QStringLiteral("User declined the browser input action"));
+    if (!callbacks.confirm(QStringLiteral("Win32 MCP action"), plan.preview, /*risky=*/true)) {
+        return toolError(QStringLiteral("User declined Win32 MCP action"));
     }
     return {};
 }
@@ -45,7 +44,7 @@ QJsonObject authorizeWin32McpCall(const AiProviderGateway::Win32McpCallPlan& pla
                                   AiProviderGatewayToolAccess access,
                                   const AiProviderGatewayToolCallbacks& callbacks) {
     if (plan.requires_confirmation) {
-        return requireInputConfirmation(plan, callbacks);
+        return requireHardConfirmation(plan, callbacks);
     }
     if (assisted(access) && !plan.read_only) {
         if (!callbacks.confirm) {

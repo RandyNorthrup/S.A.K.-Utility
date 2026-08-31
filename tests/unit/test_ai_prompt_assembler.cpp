@@ -13,6 +13,9 @@ private Q_SLOTS:
     void assembleIncludesWorkflowOrchestrationGuardrails();
     void assembleIncludesAutomationSurfaceGuardrails();
     void assembleIncludesAppActionGuardrails();
+    void assembleChatDoesNotAdvertiseUnavailableLocalTools();
+    void assembleStatesCurrentDesktopCapabilities();
+    void assembleStatesActualRiskPolicy();
 };
 
 void AiPromptAssemblerTests::assembleIncludesRequiredGuardrails() {
@@ -250,16 +253,19 @@ void AiPromptAssemblerTests::assembleIncludesAutomationSurfaceGuardrails() {
         "infrastructure (emulate a device, print a page to PDF, set site permissions, read/write "
         "storage and cookies, download a file, answer HTTP auth). Desktop control observes native "
         "application windows (list_windows, get_window_info, list_monitors, mouse_position) and "
-        "reads/writes the clipboard; deeper UIA inspect/click, screen capture, OCR, and input "
-        "injection are being added, so rely on the tools actually advertised to you this session "
-        "rather than assuming a desktop capability exists.");
+        "reads/writes the clipboard. Its current catalog also includes "
+        "capture_window/capture_screen, uia_inspect_window and uia_click_control, OCR tools such "
+        "as ocr_screen, and gated input such as mouse_click/send_keys. The advertised tool catalog "
+        "is the authority: call only tools present in this session and honor any "
+        "provider-unavailable result.");
     QVERIFY(prompt.split(QLatin1Char('\n')).contains(kAutomationSurfacesRule));
     const QString kDesktopWhenRule = QStringLiteral(
         "Use desktop control when the task lives in a native app's GUI that offers no headless "
         "path: reading window/monitor layout, checking which app windows are open, or reading and "
-        "writing the clipboard. When a task needs to actually read a control tree or click inside "
-        "a window and no such tool is advertised, say the desktop-control surface does not yet "
-        "cover it rather than faking it with coordinates.");
+        "writing the clipboard, inspecting a UIA control tree, capturing/OCR-reading a window or "
+        "screen, and using an advertised ref-based or input tool. If the needed tool is absent "
+        "from this session, report that exact capability gap rather than faking it with guessed "
+        "coordinates.");
     QVERIFY(prompt.split(QLatin1Char('\n')).contains(kDesktopWhenRule));
     const QString kBrowserWhenRule = QStringLiteral(
         "Use browser control when the task lives in a web page or web app: signing into a portal, "
@@ -279,9 +285,9 @@ void AiPromptAssemblerTests::assembleIncludesAutomationSurfaceGuardrails() {
         "Proactively suggest these surfaces: treat browser and desktop control like any other "
         "recommendation. When the user's request implies a web or GUI task -- even if they did not "
         "name a tool -- offer to do it with the matching surface, say briefly what you will do, "
-        "and note that input actions confirm first (and that browser control shows a visible AI "
-        "cursor and control markers on the page). Do not silently drop a web or GUI task just "
-        "because the user did not mention automation.");
+        "and note that input actions follow the selected access-mode gates (and that browser "
+        "control shows a visible AI cursor and control markers on the page). Do not silently drop "
+        "a web or GUI task just because the user did not mention automation.");
     QVERIFY(prompt.split(QLatin1Char('\n')).contains(kProactiveSurfaceRule));
 }
 
@@ -321,9 +327,11 @@ void AiPromptAssemblerTests::assembleIncludesAppActionGuardrails() {
     QVERIFY(prompt.split(QLatin1Char('\n')).contains(kProactiveAppActionRule));
     const QString kRiskTierRule = QStringLiteral(
         "sak_app_action risk tiers come from each action's flags in the list catalog: read-only "
-        "actions run ungated; mutating actions confirm; destructive actions also take a restore "
-        "point; catastrophic actions (e.g. partition.apply_operation) always require explicit "
-        "human confirmation even in Unattended mode.");
+        "actions run ungated; Assisted Full Access confirms every non-read-only action; "
+        "Unattended Full Access may run non-catastrophic actions without confirmation but still "
+        "applies restore-point policy when eligible; catastrophic actions always require explicit "
+        "human confirmation. A restore point is offered when policy applies and may be skipped or "
+        "unavailable -- never claim one was taken without explicit success evidence.");
     const QString kUnattendedGuidance = QStringLiteral(
         "Unattended full access is selected. You may run local commands through tools without "
         "per-command confirmation, but destructive or privacy-sensitive changes still need clear "
@@ -337,6 +345,69 @@ void AiPromptAssemblerTests::assembleIncludesAppActionGuardrails() {
     QVERIFY(app_action_lines.contains(
         QStringLiteral("Access mode selected by user: Unattended Full Access.")));
     QVERIFY(!prompt.contains(QStringLiteral("Run read-only diagnostic commands through tools.")));
+}
+
+void AiPromptAssemblerTests::assembleChatDoesNotAdvertiseUnavailableLocalTools() {
+    sak::ai::AiPromptAssemblyInput chat;
+    chat.access_mode_label = QStringLiteral("Chat");
+    const QString chatPrompt = sak::ai::AiPromptAssembler::assemble(chat);
+    const QStringList unavailableClaims = {
+        QStringLiteral("run_powershell"),
+        QStringLiteral("run_cmd"),
+        QStringLiteral("run_process"),
+        QStringLiteral("take_screenshot"),
+        QStringLiteral("download_file"),
+        QStringLiteral("sak_"),
+        QStringLiteral("win32_mcp"),
+        QStringLiteral("delegate_subagent"),
+        QStringLiteral("run_workflow"),
+    };
+    for (const QString& claim : unavailableClaims) {
+        QVERIFY2(!chatPrompt.contains(claim), qPrintable(claim));
+    }
+    QVERIFY(chatPrompt.contains(QStringLiteral("Prompt injection defense")));
+    QVERIFY(chatPrompt.contains(QStringLiteral("Local execution is disabled")));
+
+    sak::ai::AiPromptAssemblyInput assisted;
+    assisted.access_mode_label = QStringLiteral("Assisted Full Access");
+    assisted.local_execution_enabled = true;
+    assisted.assisted_full_access = true;
+    const QString assistedPrompt = sak::ai::AiPromptAssembler::assemble(assisted);
+    for (const QString& claim : unavailableClaims) {
+        QVERIFY2(assistedPrompt.contains(claim), qPrintable(claim));
+    }
+}
+
+void AiPromptAssemblerTests::assembleStatesCurrentDesktopCapabilities() {
+    sak::ai::AiPromptAssemblyInput input;
+    input.access_mode_label = QStringLiteral("Assisted Full Access");
+    input.local_execution_enabled = true;
+    input.assisted_full_access = true;
+    const QString prompt = sak::ai::AiPromptAssembler::assemble(input);
+    QVERIFY(prompt.contains(QStringLiteral("uia_inspect_window")));
+    QVERIFY(prompt.contains(QStringLiteral("capture_screen")));
+    QVERIFY(prompt.contains(QStringLiteral("ocr_screen")));
+    QVERIFY(prompt.contains(QStringLiteral("send_keys")));
+    QVERIFY(prompt.contains(QStringLiteral("advertised tool catalog is the authority")));
+    QVERIFY(!prompt.contains(QStringLiteral("are being added")));
+}
+
+void AiPromptAssemblerTests::assembleStatesActualRiskPolicy() {
+    sak::ai::AiPromptAssemblyInput input;
+    input.access_mode_label = QStringLiteral("Unattended Full Access");
+    input.local_execution_enabled = true;
+    input.unattended_full_access = true;
+    const QString prompt = sak::ai::AiPromptAssembler::assemble(input);
+    const QString expected = QStringLiteral(
+        "sak_app_action risk tiers come from each action's flags in the list catalog: read-only "
+        "actions run ungated; Assisted Full Access confirms every non-read-only action; "
+        "Unattended Full Access may run non-catastrophic actions without confirmation but still "
+        "applies restore-point policy when eligible; catastrophic actions always require explicit "
+        "human confirmation. A restore point is offered when policy applies and may be skipped or "
+        "unavailable -- never claim one was taken without explicit success evidence.");
+    QVERIFY(prompt.split(QLatin1Char('\n')).contains(expected));
+    QVERIFY(!prompt.contains(QStringLiteral("mutating actions confirm")));
+    QVERIFY(!prompt.contains(QStringLiteral("destructive actions also take a restore point")));
 }
 
 QTEST_GUILESS_MAIN(AiPromptAssemblerTests)

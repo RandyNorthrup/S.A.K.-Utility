@@ -1,0 +1,16 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_openai_responses_client",
+  "ctest_regex": "^test_openai_responses_client$",
+  "mutants": [
+    {
+      "id": "app-action-tool-description-overclaims-risk-policy",
+      "file": "src/ai/openai_responses_client.cpp",
+      "find": "\"task. Assisted Full Access confirms every non-read-only action; Unattended Full \"",
+      "replace": "\"task. Mutating or admin actions are gated with a confirmation and, when destructive, a \"",
+      "expect": "killed",
+      "why": "The Responses tool description is privileged guidance too. buildPayload_appActionDescriptionMatchesRiskPolicy requires truthful mode-specific confirmation, catastrophic gating, and offered-not-guaranteed restore wording."
+    }
+  ]
+}

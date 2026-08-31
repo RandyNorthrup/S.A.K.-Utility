@@ -3,9 +3,36 @@
 
 #include "sak/ai/ai_offline_downloader_tool_runner.h"
 
+#include <atomic>
+
 namespace sak::ai {
 
 namespace {
+
+std::atomic_bool g_run_operation_claimed{false};
+
+class ScopedRunOperationClaim final {
+public:
+    ScopedRunOperationClaim() {
+        bool expected = false;
+        m_acquired = g_run_operation_claimed.compare_exchange_strong(
+            expected, true, std::memory_order_acq_rel, std::memory_order_acquire);
+    }
+
+    ~ScopedRunOperationClaim() {
+        if (m_acquired) {
+            g_run_operation_claimed.store(false, std::memory_order_release);
+        }
+    }
+
+    ScopedRunOperationClaim(const ScopedRunOperationClaim&) = delete;
+    ScopedRunOperationClaim& operator=(const ScopedRunOperationClaim&) = delete;
+
+    [[nodiscard]] bool acquired() const { return m_acquired; }
+
+private:
+    bool m_acquired{false};
+};
 
 QJsonObject toolError(const QString& message) {
     QJsonObject result;
@@ -18,6 +45,22 @@ bool runOperationSupported(const QString& operation) {
     return operation == QLatin1String("direct_download") ||
            operation == QLatin1String("build_bundle") ||
            operation == QLatin1String("install_bundle");
+}
+
+QJsonObject runSupportedOperation(const QJsonObject& args,
+                                  const QString& operation,
+                                  const AiOfflineDownloaderToolCallbacks& callbacks) {
+    if (!callbacks.is_running || !callbacks.run_operation) {
+        return toolError(QStringLiteral("Offline downloader runner is not configured"));
+    }
+    // Claim check plus worker dispatch as one process-wide critical section. Worker isRunning()
+    // remains runtime authority, but checking it alone lets two callers both observe idle before
+    // either callback starts worker.
+    const ScopedRunOperationClaim operation_claim;
+    if (!operation_claim.acquired() || callbacks.is_running()) {
+        return toolError(QStringLiteral("An offline deployment operation is already running"));
+    }
+    return callbacks.run_operation(args, operation);
 }
 
 }  // namespace
@@ -47,13 +90,7 @@ QJsonObject AiOfflineDownloaderToolRunner::run(const QJsonObject& args,
         return toolError(
             QStringLiteral("Unsupported offline downloader operation: %1").arg(operation));
     }
-    if (!callbacks.is_running || !callbacks.run_operation) {
-        return toolError(QStringLiteral("Offline downloader runner is not configured"));
-    }
-    if (callbacks.is_running()) {
-        return toolError(QStringLiteral("An offline deployment operation is already running"));
-    }
-    return callbacks.run_operation(args, operation);
+    return runSupportedOperation(args, operation, callbacks);
 }
 
 }  // namespace sak::ai

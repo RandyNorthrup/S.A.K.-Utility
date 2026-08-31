@@ -1,0 +1,2 @@
+- MEDIUM - `src/ai/ai_openai_model_client.cpp:102-112,137-139,186-189`: Thread-start failure blocks 330 seconds, falsely reports model timeout, and leaks `worker` because `finished` never fires.
+- LOW - `src/ai/ai_openai_model_client.cpp:66-71,172-176`: Cancellation writes `state.m_error`, but response path always rereads `token.cancelReason()`; assignment is dead code.

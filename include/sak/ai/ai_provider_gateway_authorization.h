@@ -19,9 +19,9 @@ namespace sak::ai {
 /// requires_confirmation / read_only / high_risk, so gating on them is this function's job.
 ///
 /// The gate, by design:
-///  - requires_confirmation (browser input injection: click/type/press-key/scroll): a HARD human
-///    confirm in EVERY non-chat mode, including Unattended; a missing confirm callback fails
-///    closed.
+///  - requires_confirmation (browser/desktop input, clipboard writes, extension changes, or an
+///    unclassified tool): a HARD human confirm in EVERY non-chat mode, including Unattended; a
+///    missing confirm callback fails closed.
 ///  - Assisted + not read_only: a human confirm (carrying the plan's high_risk flag); missing
 ///    callback fails closed.
 ///  - Unattended + high_risk: an offered restore point; a missing restore-point callback fails

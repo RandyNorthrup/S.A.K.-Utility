@@ -1,0 +1,2 @@
+- **Medium** - Every `requires_confirmation` call is labeled "Browser input action," misrepresenting desktop input, clipboard, extension, and unclassified tools. [src/ai/ai_provider_gateway_authorization.cpp:25](src/ai/ai_provider_gateway_authorization.cpp:25)
+- **Low** - `toolError`, `assisted`, and `unattended` duplicate identical helpers in `ai_provider_gateway_tool_runner.cpp`. [src/ai/ai_provider_gateway_authorization.cpp:10](src/ai/ai_provider_gateway_authorization.cpp:10)

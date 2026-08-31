@@ -6,6 +6,11 @@
 # without listing it fails closed, and deleting a listed catalog fails closed.
 # Blank lines and '#' comments are ignored.
 
+ai_offline_downloader_runner.json
+ai_openai_model_client.json
+ai_package_selection.json
+ai_prompt_assembler.json
+ai_provider_authorization.json
 apfs_compression.json
 apfs_crypto_keybag.json
 apfs_foreign_cow.json
@@ -26,6 +31,7 @@ mbox_parser.json
 mbox_transfer_decoder.json
 native_messaging.json
 nuget_version_range.json
+openai_tool_descriptions.json
 package_matcher.json
 pst_block_decoder.json
 pst_field_decoders.json

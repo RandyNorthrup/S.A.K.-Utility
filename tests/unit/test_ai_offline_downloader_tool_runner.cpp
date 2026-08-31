@@ -3,7 +3,11 @@
 
 #include "sak/ai/ai_offline_downloader_tool_runner.h"
 
+#include <QSemaphore>
 #include <QtTest/QtTest>
+
+#include <atomic>
+#include <thread>
 
 class AiOfflineDownloaderToolRunnerTests : public QObject {
     Q_OBJECT
@@ -14,6 +18,7 @@ private Q_SLOTS:
     void routesSearch();
     void blocksRunWhenWorkerBusy();
     void routesSupportedRunOperation();
+    void serializesConcurrentRunOperationsProcessWide();
 };
 
 void AiOfflineDownloaderToolRunnerTests::rejectsMissingOperation() {
@@ -86,6 +91,54 @@ void AiOfflineDownloaderToolRunnerTests::routesSupportedRunOperation() {
     QVERIFY(result.value(QStringLiteral("success")).toBool(false));
     QCOMPARE(seen_operation, QStringLiteral("build_bundle"));
     QCOMPARE(result.value(QStringLiteral("operation")).toString(), QStringLiteral("build_bundle"));
+}
+
+void AiOfflineDownloaderToolRunnerTests::serializesConcurrentRunOperationsProcessWide() {
+    QSemaphore first_callback_entered;
+    QSemaphore release_first_callback;
+    std::atomic_int run_callback_count{0};
+
+    sak::ai::AiOfflineDownloaderToolCallbacks first_callbacks;
+    first_callbacks.is_running = [] {
+        return false;
+    };
+    first_callbacks.run_operation = [&](const QJsonObject&, const QString&) {
+        run_callback_count.fetch_add(1, std::memory_order_relaxed);
+        first_callback_entered.release();
+        release_first_callback.acquire();
+        return QJsonObject{{QStringLiteral("success"), true}};
+    };
+
+    sak::ai::AiOfflineDownloaderToolCallbacks contender_callbacks;
+    contender_callbacks.is_running = [] {
+        return false;
+    };
+    contender_callbacks.run_operation = [&](const QJsonObject&, const QString&) {
+        run_callback_count.fetch_add(1, std::memory_order_relaxed);
+        return QJsonObject{{QStringLiteral("success"), true}};
+    };
+
+    const QJsonObject args{{QStringLiteral("operation"), QStringLiteral("direct_download")}};
+    QJsonObject first_result;
+    std::thread first_thread([&]() {
+        first_result = sak::ai::AiOfflineDownloaderToolRunner::run(args, first_callbacks);
+    });
+
+    first_callback_entered.acquire();
+    const QJsonObject contender_result =
+        sak::ai::AiOfflineDownloaderToolRunner::run(args, contender_callbacks);
+    release_first_callback.release();
+    first_thread.join();
+
+    const QJsonObject after_release_result =
+        sak::ai::AiOfflineDownloaderToolRunner::run(args, contender_callbacks);
+
+    QVERIFY(first_result.value(QStringLiteral("success")).toBool(false));
+    QVERIFY(!contender_result.value(QStringLiteral("success")).toBool(true));
+    QCOMPARE(contender_result.value(QStringLiteral("error_message")).toString(),
+             QStringLiteral("An offline deployment operation is already running"));
+    QVERIFY(after_release_result.value(QStringLiteral("success")).toBool(false));
+    QCOMPARE(run_callback_count.load(std::memory_order_relaxed), 2);
 }
 
 QTEST_GUILESS_MAIN(AiOfflineDownloaderToolRunnerTests)

@@ -1,0 +1,32 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_ai_prompt_assembler",
+  "ctest_regex": "^test_ai_prompt_assembler$",
+  "mutants": [
+    {
+      "id": "chat-advertises-unavailable-local-tools",
+      "file": "src/ai/ai_prompt_assembler.cpp",
+      "find": "if (input.local_execution_enabled) {",
+      "replace": "if (input.local_execution_enabled || !input.local_execution_enabled) {",
+      "expect": "killed",
+      "why": "Chat requests omit every local function definition. assembleChatDoesNotAdvertiseUnavailableLocalTools requires Chat instructions to omit shell, sak_*, win32_mcp, delegation, and workflow claims while Assisted still advertises them."
+    },
+    {
+      "id": "desktop-capabilities-called-future-work",
+      "file": "src/ai/ai_prompt_assembler.cpp",
+      "find": "\"clipboard. Its current catalog also includes capture_window/capture_screen, \"",
+      "replace": "\"clipboard; deeper UIA inspect/click, screen capture, OCR, and input injection are being added. \"",
+      "expect": "killed",
+      "why": "UIA, capture, OCR, and input tools already ship. assembleStatesCurrentDesktopCapabilities requires current tool names, catalog authority, and absence of the stale 'are being added' refusal."
+    },
+    {
+      "id": "app-action-policy-overclaims-confirm-and-restore",
+      "file": "src/ai/ai_prompt_assembler.cpp",
+      "find": "\"actions run ungated; Assisted Full Access confirms every non-read-only action; \"",
+      "replace": "\"actions run ungated; mutating actions confirm; destructive actions also take a restore point; \"",
+      "expect": "killed",
+      "why": "Unattended non-catastrophic mutations may skip confirmation and restore points are offered, not guaranteed. assembleStatesActualRiskPolicy pins the real Assisted/Unattended/catastrophic policy and rejects the old claims."
+    }
+  ]
+}

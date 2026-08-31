@@ -1672,6 +1672,34 @@ add_test(NAME test_openai_responses_client COMMAND test_openai_responses_client
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_openai_responses_client")
 
+add_executable(test_ai_openai_model_client
+    unit/test_ai_openai_model_client.cpp
+    ../src/ai/ai_openai_model_client.cpp
+    ../src/ai/openai_responses_client.cpp
+    ../src/ai/ai_cancellation_token.cpp
+    ../src/ai/ai_subagent_runner.cpp
+    ../src/ai/ai_token_usage_tracker.cpp
+    ../src/ai/ai_tool_policy.cpp
+    ../include/sak/ai/ai_openai_model_client.h
+    ../include/sak/ai/openai_responses_client.h
+    ../include/sak/ai/ai_cancellation_token.h
+    ../include/sak/ai/ai_subagent_runner.h
+)
+set_target_properties(test_ai_openai_model_client PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ai_openai_model_client PRIVATE
+    Qt6::Core Qt6::Test Qt6::Network ${PLATFORM_LIBS}
+)
+target_include_directories(test_ai_openai_model_client PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ai_openai_model_client COMMAND test_ai_openai_model_client
+         -o "${TEST_OUTPUT_DIR}/test_ai_openai_model_client.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ai_openai_model_client")
+
 add_executable(test_ai_provider_registry
     unit/test_ai_provider_registry.cpp
     ../src/ai/ai_provider_registry.cpp
