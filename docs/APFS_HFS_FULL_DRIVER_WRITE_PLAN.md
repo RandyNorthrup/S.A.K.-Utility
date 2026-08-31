@@ -19,6 +19,12 @@ disposable USB media.
 > confirmation. See section 3 for the per-capability evidence IDs and the section 6 milestone
 > tables for the full certification record.
 
+The machine-readable capability-status owner is
+`certification/APPLE_FILESYSTEM_CAPABILITY_MATRIX.json`. The section 3 rows below mirror that
+data and carry the engineering narrative; `scripts/check_apple_filesystem_capability_matrix.ps1`
+rejects a missing row, status drift, missing evidence contract, or release-facing claim document
+that stops citing the matrix.
+
 **Locked scope (2026-06-13)**:
 
 - In scope: APFS full driver-level write. HFS+/HFSX full driver-level write.

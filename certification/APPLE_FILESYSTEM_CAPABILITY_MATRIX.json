@@ -1,0 +1,223 @@
+{
+  "schema_version": 1,
+  "matrix_id": "apple-filesystem-driver-capabilities",
+  "owner_document": "docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md",
+  "claim_documents": [
+    "docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md",
+    "docs/PARTITION_MANAGER_CERTIFICATION.md",
+    "docs/PRODUCTION_GRADE_AUDIT.md",
+    "docs/RELEASE_READINESS.md"
+  ],
+  "capabilities": [
+    {
+      "id": "H-a",
+      "filesystem": "HFS+",
+      "name": "Special-file node-pool growth",
+      "status": "certified",
+      "certified_on": "2026-06-14",
+      "evidence_refs": [
+        {"type": "apple_tool_report", "id": "apple-tool-evidence/hfs-node-pool-growth.report.json"},
+        {"type": "unit_test", "id": "hfsFileSystemWriter_growsCatalogNodePoolOrFailsClosed"}
+      ]
+    },
+    {
+      "id": "H-b",
+      "filesystem": "HFS+",
+      "name": "Depth-general and width-general catalog and attributes B-trees",
+      "status": "certified",
+      "certified_on": "2026-06-17",
+      "evidence_refs": [
+        {"type": "apple_tool_artifact", "id": "apple-tool-evidence/hfs.h2-apple-written-catalog-apple-fsck-PASS.png"},
+        {"type": "unit_test", "id": "hfsFileSystemWriter_mutatesDepthThreeCatalogs"}
+      ]
+    },
+    {
+      "id": "H-c",
+      "filesystem": "HFS+",
+      "name": "B-tree underflow merge and rebalance",
+      "status": "certified",
+      "certified_on": "2026-06-21",
+      "evidence_refs": [
+        {"type": "apple_tool_report", "id": "apple-tool-evidence/hfs-h3-underfull-leaf-merge.report.json"},
+        {"type": "unit_test", "id": "hfsFileSystemWriter_mergesUnderfullCatalogLeavesOnDelete"}
+      ]
+    },
+    {
+      "id": "H-d",
+      "filesystem": "HFS+",
+      "name": "General allocator and multi-leaf extents-overflow trees",
+      "status": "certified",
+      "certified_on": "2026-06-25",
+      "evidence_refs": [
+        {"type": "external_report", "id": "external.hfs-multi-leaf-extents"},
+        {"type": "unit_test", "id": "hfsFileSystemWriter_splitsExtentsOverflowRootLeaf"}
+      ]
+    },
+    {
+      "id": "H-e",
+      "filesystem": "HFS+",
+      "name": "Hardlinks, symlinks, private metadata, and complex delete",
+      "status": "certified",
+      "certified_on": "2026-06-27",
+      "evidence_refs": [
+        {"type": "external_report", "id": "external.hfs-hardlinks-symlinks"},
+        {"type": "unit_test", "id": "hfsFileSystemWriter_createsHardlinksAndSymlinks"}
+      ]
+    },
+    {
+      "id": "H-f",
+      "filesystem": "HFS+",
+      "name": "Broad attribute growth and attribute overflow records",
+      "status": "certified",
+      "certified_on": "2026-06-27",
+      "evidence_refs": [
+        {"type": "external_report", "id": "external.hfs-attribute-overflow-multileaf"},
+        {"type": "unit_test", "id": "hfsFileSystemWriter_growsAttributesNodePoolOnRootLeafSplit"}
+      ]
+    },
+    {
+      "id": "H-g",
+      "filesystem": "HFS+",
+      "name": "Big-endian journal replay",
+      "status": "certified",
+      "certified_on": "2026-06-27",
+      "evidence_refs": [
+        {"type": "external_report", "id": "external.hfs-bigendian-journal-wrapper"},
+        {"type": "unit_test", "id": "hfsFileSystemWriter_replaysBigEndianJournal"}
+      ]
+    },
+    {
+      "id": "H-h",
+      "filesystem": "HFS+",
+      "name": "HFS wrapper and embedded HFS+ offset writes",
+      "status": "certified",
+      "certified_on": "2026-06-27",
+      "evidence_refs": [
+        {"type": "external_report", "id": "external.hfs-bigendian-journal-wrapper"},
+        {"type": "unit_test", "id": "hfsFileSystemWriter_writesIntoWrappedVolume"}
+      ]
+    },
+    {
+      "id": "A-a",
+      "filesystem": "APFS",
+      "name": "Multi-CIB and multi-chunk space manager",
+      "status": "certified",
+      "certified_on": "2026-08-31",
+      "evidence_refs": [
+        {"type": "external_report", "id": "external.apfs-cab-tier-cloud"},
+        {"type": "external_report", "id": "external.apfs-foreign-multicib-cow"},
+        {"type": "unit_test", "id": "apfsWriter_foreignMultiCibRotationExcludesEveryLiveBitmap"}
+      ]
+    },
+    {
+      "id": "A-b",
+      "filesystem": "APFS",
+      "name": "Crash-safe in-place COW mutation of Apple containers",
+      "status": "certified",
+      "certified_on": "2026-08-31",
+      "evidence_refs": [
+        {"type": "external_report", "id": "external.apfs-cow-directory-mutations"},
+        {"type": "external_report", "id": "external.apfs-fulltree-cow-mutations"},
+        {"type": "physical_gate", "id": "external.apfs-production-raw-physical"},
+        {"type": "external_report", "id": "external.apfs-foreign-multicib-cow"}
+      ]
+    },
+    {
+      "id": "A-c",
+      "filesystem": "APFS",
+      "name": "Snapshot create, delete, and revert",
+      "status": "certified",
+      "certified_on": "2026-06-26",
+      "evidence_refs": [
+        {"type": "external_report", "id": "external.apfs-cow-snapshot-create"},
+        {"type": "external_report", "id": "external.apfs-cow-snapshot-delete"},
+        {"type": "external_report", "id": "external.apfs-cow-snapshot-revert"}
+      ]
+    },
+    {
+      "id": "A-d",
+      "filesystem": "APFS",
+      "name": "Multi-volume containers",
+      "status": "certified",
+      "certified_on": "2026-06-26",
+      "evidence_refs": [
+        {"type": "external_report", "id": "external.apfs-multi-volume"},
+        {"type": "unit_test", "id": "apfsWriter_formatsMultiVolumeContainer"}
+      ]
+    },
+    {
+      "id": "A-e",
+      "filesystem": "APFS",
+      "name": "Compression read and write",
+      "status": "certified",
+      "certified_on": "2026-06-27",
+      "evidence_refs": [
+        {"type": "external_report", "id": "external.apfs-compression"},
+        {"type": "unit_test", "id": "apfsWriter_resourceForkLzfseCompressedFileRoundTrips"}
+      ]
+    },
+    {
+      "id": "A-f",
+      "filesystem": "APFS",
+      "name": "Credential-gated FileVault encryption",
+      "status": "certified",
+      "certified_on": "2026-06-27",
+      "evidence_refs": [
+        {"type": "external_report", "id": "external.apfs-encryption"},
+        {"type": "unit_test", "id": "apfsReader_decryptsEncryptedVolumeWithCredential"}
+      ]
+    },
+    {
+      "id": "A-g",
+      "filesystem": "APFS",
+      "name": "Container grow and shrink",
+      "status": "certified",
+      "certified_on": "2026-08-31",
+      "evidence_refs": [
+        {"type": "external_report", "id": "external.apfs-a7-kernel-cert"},
+        {"type": "physical_gate", "id": "external.apfs-a7-raw-physical"},
+        {"type": "external_report", "id": "external.apfs-foreign-multicib-cow"}
+      ]
+    },
+    {
+      "id": "A-h",
+      "filesystem": "APFS",
+      "name": "Clones, sparse files, hardlinks, xattr and ACL, sealed-volume policy",
+      "status": "certified",
+      "certified_on": "2026-06-28",
+      "evidence_refs": [
+        {"type": "external_report", "id": "external.apfs-a7-kernel-cert"},
+        {"type": "physical_gate", "id": "external.apfs-a7-raw-physical"},
+        {"type": "unit_test", "id": "apfsWriter_rawA7CloneHardlinkResizeMutateConfirmedTarget"}
+      ]
+    },
+    {
+      "id": "A-i",
+      "filesystem": "APFS",
+      "name": "Fusion and multi-device Tier2 containers",
+      "status": "design_decision",
+      "reason": "No Fusion or multi-device certification rig is available; this layout is outside the supported single-device driver scope.",
+      "fail_closed_behavior": "Detect a Tier2 or Fusion container and refuse mutation with an explicit blocker."
+    }
+  ],
+  "track_gates": [
+    {
+      "id": "hfs-full-driver",
+      "filesystem": "HFS+",
+      "status": "certified",
+      "certified_on": "2026-06-28",
+      "evidence_refs": [
+        {"type": "physical_gate", "id": "external.hfs-h8-physical"}
+      ]
+    },
+    {
+      "id": "apfs-full-driver",
+      "filesystem": "APFS",
+      "status": "certified",
+      "certified_on": "2026-06-28",
+      "evidence_refs": [
+        {"type": "physical_gate", "id": "external.apfs-a8-physical"}
+      ]
+    }
+  ]
+}

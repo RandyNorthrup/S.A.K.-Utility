@@ -537,6 +537,14 @@ repos:
         language: system
         pass_filenames: false
 
+      - id: apple-filesystem-capability-matrix
+        name: "Apple filesystem capability matrix"
+        description: "HFS+/APFS capability claims match machine-readable status and evidence contracts"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_apple_filesystem_capability_matrix.ps1
+        language: system
+        pass_filenames: false
+
       - id: partition-commercial-gate-matrix
         name: "Partition Manager commercial gate matrix"
         description: "Each commercial gate has its required code/UI/test/cert evidence"

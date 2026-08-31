@@ -390,6 +390,7 @@ jobs:
         & scripts/check_partition_manager_release_claims.ps1
         & scripts/check_partition_manager_feature_matrix.ps1
         & scripts/check_partition_manager_certification_matrix_integrity.ps1
+        & scripts/check_apple_filesystem_capability_matrix.ps1
         & scripts/check_partition_manager_commercial_gate_matrix.ps1
         & scripts/check_partition_manager_certification_gap_report.ps1
         & scripts/check_partition_manager_external_checklist.ps1

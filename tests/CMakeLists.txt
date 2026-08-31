@@ -7705,6 +7705,11 @@ if(PLATFORM_WINDOWS)
              COMMAND "${SAK_PYTHON_EXECUTABLE}"
                      "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_gate_parity.py")
     set_tests_properties(test_gate_parity PROPERTIES TIMEOUT 60)
+
+    add_test(NAME test_apple_filesystem_capability_matrix
+             COMMAND "${SAK_PYTHON_EXECUTABLE}"
+                     "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_apple_filesystem_capability_matrix.py")
+    set_tests_properties(test_apple_filesystem_capability_matrix PROPERTIES TIMEOUT 60)
 endif()
 
 # The browser-control service worker is ~3300 lines of privileged JavaScript that drives a

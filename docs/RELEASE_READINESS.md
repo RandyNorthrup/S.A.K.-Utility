@@ -1,5 +1,9 @@
 # Release Readiness
 
+Current HFS+/APFS driver capability status is owned by
+`certification/APPLE_FILESYSTEM_CAPABILITY_MATRIX.json`. Historical milestone text below is not a
+second status owner; release-facing Apple filesystem claims must mirror the gated matrix.
+
 ## PUBLISHED CREDENTIAL: macOS cert-rig VM password (accepted risk, SETTLED)
 
 The section that stood here described this as a PRE-PUSH blocker and stated that the finding was

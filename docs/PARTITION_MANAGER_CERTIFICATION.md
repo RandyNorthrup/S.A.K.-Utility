@@ -3,6 +3,9 @@
 This document separates code-complete automated proof from destructive VM and hardware certification. Unit tests and release-readiness gates prove script generation, safety blockers, queue state, UI chrome, and non-destructive behavior. Destructive storage behavior needs disposable media evidence before release claims can say it is hardware-certified.
 
 `certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json` is the machine-readable source for certification scenario IDs, required evidence keys, and safety contracts. The harness stamps those contracts into each result, the external-evidence JSON scaffold, Markdown checklist, and per-gate lab package carry them for lab runs, the verifier rejects missing contracts or missing/blank passed-scenario evidence payload values, and the claim-level script counts only evidence that satisfies the matrix with non-empty values.
+Apple filesystem driver capability status is owned separately by
+`certification/APPLE_FILESYSTEM_CAPABILITY_MATRIX.json`; the narrative and historical evidence
+below must mirror that matrix rather than restating an independent capability list.
 `scripts/new_partition_manager_certification_gap_report.ps1` and
 `scripts/check_partition_manager_certification_gap_report.ps1` turn that status
 into JSON/Markdown gap output listing every incomplete VHD or external gate,
@@ -597,8 +600,9 @@ As of 2026-06-28, both Apple filesystem write tracks are full driver-level
 Apple-certified, each milestone proven by Apple `fsck_apfs` / `fsck_hfs` and
 macOS-kernel mount in the qemu/KVM macOS Sequoia VMs, and the two track gates by
 physical-USB destructive + crash-interruption + rollback on disposable media.
-The single capability-matrix owner is
-`docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md`; the per-milestone narrative above is a
+The capability-status owner is
+`certification/APPLE_FILESYSTEM_CAPABILITY_MATRIX.json`; the section 3 table in
+`docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md` mirrors it, and the per-milestone narrative above is a
 chronological record, and its A1/A2-era "remains blocked" / "remains
 uncertified" / "rows A-b..A-h remain open" conclusions were accurate when
 written and are closed by the milestones below. This Apple-filesystem driver

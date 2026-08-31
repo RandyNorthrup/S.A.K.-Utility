@@ -214,7 +214,11 @@ the rest is a debt-reduction + test-infra program (multi-session, much of it cos
       The ratchet validates 27 catalogs; real serial execution killed 6/6 new mutants with zero
       survivors and restored production sources. G14 fuzz/coverage, fault-injection, and G20 are
       already closed in the R5 owner doc; remaining work is the broader G18/G10-12 mutation surface
-      plus G21 clean-runner parity.
+      plus G21-7 fresh-host/hosted execution. G21-2 route parity itself is closed: the live gate
+      verifies 43 custom scripts, 8 generic hooks, 43 CI routes, and full-history gitleaks.
+      R5-IDX-7 is also closed: 17 Apple capability rows and 2 full-driver track gates are now
+      machine-owned, four claim docs are citation-gated, route parity is 43/8/43, and the final
+      Release gate passed 263/263 in 652.72 seconds.
 - [ ] Branch protection -- needs the GitHub repo admin (Randy); flag once ready.
 
 --------------------------------------------------------------------------------
