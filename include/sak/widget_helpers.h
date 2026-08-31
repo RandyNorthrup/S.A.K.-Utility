@@ -12,7 +12,6 @@
 #include "style_constants.h"
 
 #include <QAbstractItemView>
-#include <QColor>
 #include <QFont>
 #include <QFrame>
 #include <QHBoxLayout>
@@ -24,11 +23,8 @@
 #include <QSizePolicy>
 #include <QString>
 #include <QTableView>
-#include <QTableWidgetItem>
 #include <QVBoxLayout>
 #include <QWidget>
-
-#include <algorithm>
 
 namespace sak {
 
@@ -265,63 +261,6 @@ inline void setAccessible(QWidget* widget, const QString& name, const QString& d
     if (!description.isEmpty()) {
         widget->setAccessibleDescription(description);
     }
-}
-
-/// @brief Map a status string to an appropriate semantic color
-/// @param status The status text (e.g., "Success", "Failed", "Active")
-/// @return Green for success/complete/ready, Red for fail/error,
-///     Orange for active/progress, Gray default
-[[nodiscard]] inline QColor statusColor(const QString& status) {
-    const QString value = status.trimmed().toLower();
-    struct StatusKeyword {
-        const char* keyword;
-        const char* color;
-    };
-    static constexpr StatusKeyword kSuccess[] = {
-        {"success", nullptr},
-        {"complete", nullptr},
-        {"ready", nullptr},
-    };
-    if (std::any_of(std::begin(kSuccess), std::end(kSuccess), [&value](const StatusKeyword& e) {
-            return value.contains(QLatin1String(e.keyword));
-        })) {
-        return QColor(ui::kStatusColorSuccess);
-    }
-    static constexpr const char* kError[] = {
-        "fail",
-        "error",
-        "reject",
-        "cancel",
-    };
-    if (std::any_of(std::begin(kError), std::end(kError), [&value](const char* kw) {
-            return value.contains(QLatin1String(kw));
-        })) {
-        return QColor(ui::kStatusColorError);
-    }
-    static constexpr const char* kWarning[] = {
-        "active",
-        "transfer",
-        "approved",
-        "queued",
-        "progress",
-    };
-    if (std::any_of(std::begin(kWarning), std::end(kWarning), [&value](const char* kw) {
-            return value.contains(QLatin1String(kw));
-        })) {
-        return QColor(ui::kStatusColorWarning);
-    }
-    return QColor(ui::kStatusColorIdle);
-}
-
-/// @brief Apply background and foreground colors to a table widget item
-/// @param item The table widget item to style (null-safe)
-/// @param color The background color to apply (foreground set to white)
-inline void applyStatusColors(QTableWidgetItem* item, const QColor& color) {
-    if (!item) {
-        return;
-    }
-    item->setBackground(color);
-    item->setForeground(Qt::white);
 }
 
 /// @brief Apply the standard read-only table baseline shared across panels.

@@ -285,8 +285,6 @@ struct PartitionOperation {
     QString summary;
     QStringList warnings;
     QStringList blockers;
-
-    [[nodiscard]] bool isBlocked() const noexcept { return !blockers.isEmpty(); }
 };
 
 struct OperationPreview {

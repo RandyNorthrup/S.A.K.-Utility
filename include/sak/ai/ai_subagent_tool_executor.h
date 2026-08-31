@@ -40,7 +40,6 @@ public:
     /// Only these (lowercased) tool names may be dispatched; every other call
     /// fails closed. Defaults to empty (deny all) until the panel populates it.
     void setAllowedTools(QSet<QString> tool_names);
-    [[nodiscard]] const QSet<QString>& allowedTools() const { return m_allowed_tools; }
 
     [[nodiscard]] AiSubagentToolOutput executeToolCall(const AiSubagentTask& task,
                                                        const AiSubagentToolCall& call,

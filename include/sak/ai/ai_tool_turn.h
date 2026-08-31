@@ -33,7 +33,6 @@ public:
     [[nodiscard]] bool active() const noexcept { return m_active; }
     [[nodiscard]] const QString& responseId() const noexcept { return m_response_id; }
     [[nodiscard]] int callIndex() const noexcept { return m_call_index; }
-    [[nodiscard]] int callCount() const noexcept { return m_calls.size(); }
     [[nodiscard]] int completedOutputCount() const noexcept { return m_outputs.size(); }
     [[nodiscard]] int remainingCallCount() const noexcept;
     [[nodiscard]] bool hasCurrentCall() const noexcept;

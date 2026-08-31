@@ -28,7 +28,6 @@ public:
     ~OpenAIResponsesModelClient() override;
 
     void setEnableWebSearch(bool enabled);
-    [[nodiscard]] bool enableWebSearch() const { return m_enable_web_search; }
 
     [[nodiscard]] Response invoke(const Request& request, const CancellationToken& token) override;
     [[nodiscard]] Response continueWithToolOutputs(const Request& request,

@@ -57,9 +57,6 @@ public:
     /** @brief Access the internal tab widget to add external tabs */
     QTabWidget* tabWidget() const { return m_tabs; }
 
-    /** @brief Access the dynamic header widgets for runtime updates */
-    const PanelHeaderWidgets& headerWidgets() const { return m_headerWidgets; }
-
 Q_SIGNALS:
     void statusMessage(const QString& message, int timeout_ms);
     void progressUpdate(int current, int maximum);

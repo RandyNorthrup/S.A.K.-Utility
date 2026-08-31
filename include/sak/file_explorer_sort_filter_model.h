@@ -25,9 +25,6 @@ public:
     void setFolderSortPlacement(FileExplorerFolderSortPlacement placement);
     [[nodiscard]] QString nameFilter() const;
     [[nodiscard]] bool showHiddenItems() const;
-    [[nodiscard]] FileExplorerFolderSortPlacement folderSortPlacement() const {
-        return m_folder_placement;
-    }
 
     /// Restrict visible rows to the given set of item paths (a tag filter). An
     /// empty active set hides everything; clearTagFilter() disables the filter.

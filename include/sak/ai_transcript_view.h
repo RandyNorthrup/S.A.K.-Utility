@@ -53,8 +53,6 @@ public:
     void jumpToNewest();
     void renderMessages(bool scroll_to_bottom = true);
 
-    [[nodiscard]] QScrollArea* scrollArea() const noexcept { return m_scroll; }
-
 private:
     struct Message {
         QString id;

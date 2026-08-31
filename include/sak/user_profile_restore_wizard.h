@@ -417,9 +417,6 @@ public:
     bool createBackup() const { return m_createBackup; }
     void setCreateBackup(bool backup) { m_createBackup = backup; }
 
-    QVector<RestoreAppInfo> restoreApps() const { return m_restoreApps; }
-    void setRestoreApps(const QVector<RestoreAppInfo>& apps) { m_restoreApps = apps; }
-
     QVector<WifiProfileInfo> wifiProfiles() const { return m_wifiProfiles; }
     void setWifiProfiles(const QVector<WifiProfileInfo>& profiles) { m_wifiProfiles = profiles; }
 
@@ -437,7 +434,6 @@ private:
     QString m_backupPath;
     BackupManifest m_manifest;
     QVector<UserMapping> m_userMappings;
-    QVector<RestoreAppInfo> m_restoreApps;
     QVector<WifiProfileInfo> m_wifiProfiles;
     QVector<EthernetConfigInfo> m_ethernetConfigs;
     QVector<AppDataSourceInfo> m_appDataSources;

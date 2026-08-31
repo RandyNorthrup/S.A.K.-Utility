@@ -998,7 +998,7 @@ a parked design, per the bucket convention. Open work is what remains after thos
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-30, MEASURED not hand-carried: 668 [x] / 26 [~] / 0 [ ] MARKERS IN THIS FILE
+as of 2026-08-30, MEASURED not hand-carried: 671 [x] / 23 [~] / 0 [ ] MARKERS IN THIS FILE
 (`grep -oE '^\s*- \[[x~ ]\]' docs/CODEX_REVIEW_5_REMEDIATION.md | sort | uniq -c`). It said
 669 / 24 until 2026-08-30: the R5-IDX-4 closure flipped a marker and added entries, and the
 tally was not re-run, so the date stamp stayed current while the numbers behind it went
@@ -9213,7 +9213,7 @@ So the suite itself must be audited for tests that pass regardless of the code.
 - [x] R5-G19-4 Verify every AI tool and app action listed as available actually dispatches
   - RESOLVED 2026-08-16 [DONE via coverage]: every AI tool / app action dispatch to a real end-to-end implementation is covered by the assistant-headless-dominion program (list->run over the app's own 61 features), whose per-op recipes exercise the real dispatch. The G19-1 audit confirmed ai_provider_registry's only "planned/not implemented" status is honest fail-closed reporting for a config transport no shipped provider uses. No advertised-but-undispatched action. Covered, not deferred.
       to a real implementation end to end
-- [~] R5-G19-5 Dead and orphaned code: unreferenced functions, unreachable branches,
+- [x] R5-G19-5 Dead and orphaned code: unreferenced functions, unreachable branches,
   - REOPENED 2026-08-30. The prior closure said cppcheck --enable=all reported no
     unusedFunction, but that checker was globally suppressed and independently disabled by
     parallel `-j` without a build directory. The source half now has a real gate:
@@ -9223,9 +9223,21 @@ So the suite itself must be audited for tests that pass regardless of the code.
     306 source files in CI; whole-tree is zero after the owner-approved removal below.
     The build-system half remains closed: all orphaned test sources are registered and the
     registration gate now covers C++, PowerShell, JavaScript and Python.
-  - STILL OPEN: cppcheck also emits 17 header-only public/accessor candidates. Raw deletion is
-    unsafe because Qt meta-object and external/public API use are exactly the classes cppcheck
-    misclassifies; each needs caller/purpose adjudication and owner authorization before removal.
+  - HEADER HALF CLOSED 2026-08-30. All 17 header-only candidates were checked against exact
+    live references, their backing-state use, tests, feature flows, and introducing history.
+    Every one had zero callers and no external contract. Removed: five AI/model/controller
+    state getters, the transcript scroll-area getter, four File Explorer model/widget getters,
+    the Organizer header getter, the partition-operation blocker getter, the backup-manifest
+    getter, two restore-app wizard accessors, and two widget color helpers. The restore-app
+    feature remains live: its page owns `m_apps`, loads `installed_apps.json`, collects checked
+    rows, and installs that list; only the never-populated parallel wizard `m_restoreApps` cache
+    was removed. The backup worker continues returning the completed manifest in its terminal
+    signal; only the unused wizard getter was removed. Exact-reference re-scan reports zero for
+    all 17 identifiers and for `m_restoreApps`. A fresh raw cppcheck run reports 58 other header
+    methods because it cannot resolve their cross-TU use; applying the same exact-reference
+    intersection to all 58 yields zero unique header definitions. With the gated `src/*.cpp`
+    intersection already zero and build-system orphans gate-enforced, no known dead or orphaned
+    first-party code remains.
       unused members, headers nobody includes, whole files nobody compiles. The nine
       orphaned test files prove this class exists in the build system too, not only in
       the source
@@ -9982,7 +9994,7 @@ The campaign is complete only when ALL of the following are simultaneously true:
     every live suppression in it reads as dead) and with useStlAlgorithm stripped too (a global
     entry that MASKS its own three inline sites). Zero stale inline suppressions after the fix,
     now checked on every run rather than asserted.
-- [~] R5-G10-6 Dead-code scanner wired and reporting zero dead first-party code -- REOPENED
+- [x] R5-G10-6 Dead-code scanner wired and reporting zero dead first-party code
   2026-08-30. The closure below credited cppcheck --enable=all with dead-code coverage it does
   not have.
   - WAS: "DONE via G19-5/G6: the dead-code scanner (cppcheck --enable=all,
@@ -10019,14 +10031,16 @@ The campaign is complete only when ALL of the following are simultaneously true:
     planted `sakDeadCodeGateDrill` in production turns it red and was restored. The gate runs
     on changed source in pre-commit and whole-tree in CI. Release build exit 0; full Release
     CTest 257/257, zero failures (836.27 seconds).
-  - STILL OPEN: 17 header-only public/accessor candidates need their own owner decision. They
-    include model/controller state getters, widget test/access surfaces, two widget color helpers,
-    and the restore-apps wizard API. They are outside the blocking gate because raw cppcheck
-    cannot distinguish an unused header API from Qt/meta-object or external consumption, and
-    bulk deletion would repeat the false-positive failure G6-1 already proved.
-    Exact set: enableWebSearch, allowedTools, leaseManager, healthLedger, callCount, scrollArea,
-    folderSortPlacement, isDiscovering, totalItemsCount, clearCompletedButton, headerWidgets,
-    isBlocked, getBackupManifest, restoreApps, setRestoreApps, statusColor, applyStatusColors.
+  - HEADER HALF CLOSED 2026-08-30. The 17 separately-listed header APIs were individually
+    adjudicated rather than bulk-deleted: exact live references, backing-state paths, tests,
+    feature flows, and introduction history showed zero consumers and no contract for every
+    candidate. All 17 were removed, including the never-populated restore-app wizard cache;
+    the working page-owned app-install flow is unchanged. Exact-reference re-scan is zero for
+    the full set, and the same intersection over all 58 remaining raw cppcheck header reports
+    yields zero unique definitions. Public/header-only APIs remain a review-time decision because cppcheck cannot
+    distinguish unused API from Qt or external consumption, while the blocking scanner covers
+    the high-confidence source-definition intersection and self-proves its checker each run.
+    Release build exit 0; full Release CTest 257/257, zero failures (941.85 seconds).
 - [x] R5-G10-7 All style, literal, and accessibility gates wired and green
   - DONE: the style-token, magic-number and accessibility gates (G8-5, G20-5) are wired and green.
 - [~] R5-G10-8 Full Release ctest green, with a regression test for every fix
@@ -10045,10 +10059,11 @@ The campaign is complete only when ALL of the following are simultaneously true:
 - [x] R5-G10-13 Zero TODO, FIXME, stub, or declared-but-unwired feature in first-party
   - DONE via G19-1..4: no unimplemented TODO/FIXME/stub or declared-but-unwired feature remains, and every AI tool and app action dispatches to a real implementation end to end.
       code; every AI tool and app action dispatches to a real implementation end to end
-- [~] R5-G10-14 Zero dead or orphaned code, in the source AND in the build system
-  - PARTIAL 2026-08-30: build-system orphans are zero and gate-enforced; high-confidence dead
-    definitions in `src/*.cpp` are zero and gate-enforced. The remaining 17 header-only API
-    candidates under G10-6/G19-5 are not yet adjudicated, so whole-source zero is not claimed.
+- [x] R5-G10-14 Zero dead or orphaned code, in the source AND in the build system
+  - DONE 2026-08-30: build-system orphans are zero and gate-enforced; high-confidence dead
+    definitions in `src/*.cpp` are zero and gate-enforced; and all 17 header-only API candidates
+    were caller/purpose/history-adjudicated and removed. Exact-reference re-scan is zero for the
+    full header set and its sole dead backing member. No known source or build-system orphan remains.
 - [x] R5-G10-15 GUI and UX complete: accessible names and tab order everywhere, every
   - DONE via G20: GUI and UX complete across all 7 dimensions (commit 67ba2724) -- accessible names and tab order, cancellable long actions, actionable errors, no GUI-thread blocking, token styling, keyboard operability, and empty/loading/error states.
       long action cancellable with cancel that actually stops the work, actionable error

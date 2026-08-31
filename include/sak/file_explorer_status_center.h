@@ -159,7 +159,6 @@ public:
     [[nodiscard]] QString currentItemName() const { return m_current_item_name; }
     [[nodiscard]] int progressPercentage() const { return m_progress_percentage; }
     [[nodiscard]] bool isInProgress() const { return m_in_progress; }
-    [[nodiscard]] bool isDiscovering() const { return m_discovering; }
     [[nodiscard]] bool isIndeterminate() const { return m_indeterminate; }
     [[nodiscard]] bool isCancelable() const { return m_cancelable; }
     [[nodiscard]] bool isCancelRequested() const { return m_cancel_requested; }
@@ -167,7 +166,6 @@ public:
     [[nodiscard]] bool isExpanded() const { return m_expanded; }
     void setExpanded(bool expanded);
     [[nodiscard]] qint64 totalSize() const { return m_total_size; }
-    [[nodiscard]] qint64 totalItemsCount() const { return m_total_items; }
     /// Speed graph points, x = progress percent, y = speed
     /// (Files SpeedGraphValues).
     [[nodiscard]] const QList<QPointF>& graphPoints() const { return m_graph_points; }

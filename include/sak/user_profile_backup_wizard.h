@@ -63,11 +63,6 @@ public:
     ~UserProfileBackupWizard() override;
 
     /**
-     * @brief Get the backup manifest after completion
-     */
-    BackupManifest getBackupManifest() const { return m_manifest; }
-
-    /**
      * @brief Stable accessor for the scanned/selected users.
      *
      * Returns the wizard-owned vector (populated by the Select Users page) so

@@ -57,9 +57,7 @@ public:
     [[nodiscard]] int handlerCount() const;
 
     void setLeaseManager(AiLeaseManager* manager);
-    [[nodiscard]] AiLeaseManager* leaseManager() const { return m_lease_manager; }
     void setHealthLedger(AiToolHealthLedger* ledger);
-    [[nodiscard]] AiToolHealthLedger* healthLedger() const { return m_health_ledger; }
 
     [[nodiscard]] DispatchOutcome dispatch(AiToolPolicy policy,
                                            const AiToolCallRequest& request,

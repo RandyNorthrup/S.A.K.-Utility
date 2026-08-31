@@ -94,7 +94,6 @@ public:
     /// Placement=BottomEdgeAlignedRight) and notifies the model.
     void openAt(const QPoint& top_right);
 
-    [[nodiscard]] QPushButton* clearCompletedButton() const { return m_clear_button; }
     [[nodiscard]] QList<FileExplorerStatusCardWidget*> cardWidgets() const;
 
 private:
