@@ -5,8 +5,8 @@
 /// @brief HFS+/HFSX engine (HfsReader), shared by the read-only browser and the
 ///        writer via their thin .cpp wrappers. Header-only, internal anonymous
 ///        namespace; shared primitives live in partition_hfs_core.h. Follow-up
-///        (docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md): promote to a compiled-once
-///        sak::hfs_detail module.
+///        (docs/archive/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md): promote to a
+///        compiled-once sak::hfs_detail module.
 
 #pragma once
 

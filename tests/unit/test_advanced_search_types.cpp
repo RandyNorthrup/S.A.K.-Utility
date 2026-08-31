@@ -252,7 +252,7 @@ void compareSearchConfigOwnFields(const sak::SearchConfig& actual,
 void AdvancedSearchTypesTests::searchConfig_valueSemantics() {
     const sak::SearchConfig config = fullyPopulatedSearchConfig();
 
-    const sak::SearchConfig copy = config;
+    sak::SearchConfig copy = config;
     compareSearchConfigOwnFields(copy, config);
     // A QCOMPARE failure inside a helper returns from the HELPER, not from this slot, so bail
     // out explicitly rather than reporting cascading failures from an already-broken copy.
@@ -263,6 +263,9 @@ void AdvancedSearchTypesTests::searchConfig_valueSemantics() {
     if (QTest::currentTestFailed()) {
         return;
     }
+    copy.pattern = QStringLiteral("mutated-copy-pattern");
+    QCOMPARE(config.pattern, QStringLiteral("test_pattern"));
+    QVERIFY(copy.pattern != config.pattern);
 
     // Copy ASSIGNMENT is a separate special member and crosses the same boundary.
     sak::SearchConfig assigned;

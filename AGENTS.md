@@ -102,6 +102,13 @@ in a real commit or file:line against the LIVE tree, not against what you rememb
 gets fixed on the spot if it is quick, or logged to the tracking doc if it is not. Never step
 over one.
 
+**Suppressions and silences are a last resort.** Fix the code, test, tool invocation, or gate
+first. Add a suppression or silence only when no real fix is possible, after proving why, and
+record the exact bounded reason beside it. Convenience, warning volume, and legacy behavior are
+not reasons. Existing suppressions and silences are not grandfathered: each quality/review
+campaign must re-run the relevant reveal check, verify whether the underlying condition still
+fires, and identify any that can now be replaced by a direct fix or removed.
+
 **Do the optionals.** Anything an agent flags as "optional" or "nice to have" is required.
 
 **Docs are 7-bit ASCII.** No em dash, en dash, arrows, checkmarks or smart quotes in tracked
@@ -183,6 +190,7 @@ Every one of these has happened here.
 | Gate parity exists only in prose | R5 said every pre-commit gate had a CI twin, while test registration and the real tool preflight were absent and eight generic hooks had no CI route | `scripts/check_gate_parity.ps1` derives custom hooks from live config, verifies direct/indirect CI routes, generic-hook wrapper coverage, and full-history gitleaks; registered tests remove each route and require red |
 | Build tree mistaken for package tree | Portable smoke correctly rejected `build/Release` because it contains mutable `data/temp`; manual hook pointed at build output instead of clean extracted archive | Stage/archive first, then run package gates against `build/Release/clean-smoke-extract`; parity proves route exists, rehearsal proves route executes |
 | Redirected Start-Process loses the exit code | Windows PowerShell 5.1 can leave `.ExitCode` null after `Start-Process -PassThru` with redirected output, even after both WaitForExit forms and Refresh; a successful accessibility audit then false-reds as "code unknown" | Use `scripts/process_capture.ps1`: ProcessStartInfo plus asynchronous stdout/stderr drain, bounded wait, and captured integer exit code. Its registered test runs the exit/pipe/timeout contract |
+| Concurrent analyzer redirects share one file | `pre-commit run --all-files` may split one hook into parallel processes. `run_cppcheck.ps1` once redirected every process to `build/cppcheck_errors.txt`, so they truncated each other's diagnostics, emitted NUL-corrupted output, and hid the real findings behind unexplained exit 1 failures. The dead-code wrapper had the same defect in its generated suppression/findings files and failed with `Stream was not readable` | Both cppcheck hooks are `require_serial: true`, and every default/generated capture is PID-local in the system temp directory. Explicit `-ErrorsFile` paths remain available for callers that deliberately retain separate passes |
 | Suppression that suppresses nothing | A `// cppcheck-suppress` whose check no longer fires looks like documented risk and is dead code -- it will silence the check again the day an edit makes it fire | The gate's reveal pass re-enables `unmatchedSuppression`. It found two dead ones on its first run |
 | Static-analysis fix that compiles | Making a member const or static is a LOCAL edit with a NON-LOCAL consequence: it can remove the last instance-bound call from its own CALLER, which the analyzer then reports as newly const-able. The build stays green, and the file you just "cleaned" is a fresh landmine. Four of these were introduced in one batch | Re-run the analyzer, not the compiler, and diff against the pre-fix baseline. "I followed the cascade" is a reading; a cascade check is a re-run |
 

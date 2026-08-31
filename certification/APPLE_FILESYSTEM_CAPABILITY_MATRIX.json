@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "matrix_id": "apple-filesystem-driver-capabilities",
-  "owner_document": "docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md",
+  "owner_document": "docs/archive/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md",
   "claim_documents": [
-    "docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md",
+    "docs/archive/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md",
     "docs/PARTITION_MANAGER_CERTIFICATION.md",
     "docs/PRODUCTION_GRADE_AUDIT.md",
     "docs/RELEASE_READINESS.md"

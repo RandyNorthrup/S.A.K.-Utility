@@ -10,7 +10,7 @@ This document does NOT describe the surface. Those live elsewhere and are author
 | Topology, install, protocol, per-tool behaviour | `browser/README.md` |
 | Which win32 tools exist at all | `resources/ai/providers/providers.json` |
 | Extension version, permissions | `browser/extension/manifest.json` |
-| Harness guardrail design, threat model | `docs/AI_ASSISTANT_PANEL_PLAN.md`, `docs/SECURITY_THREAT_MODEL.md` |
+| Harness guardrail design, threat model | `docs/archive/AI_ASSISTANT_PANEL_PLAN.md`, `docs/SECURITY_THREAT_MODEL.md` |
 | A worked GUI recipe with its app-specific rulings | `resources/ai/app_manifests/superantispyware.json` (`notes`) |
 
 Two owner rulings sit underneath everything here. Untrusted page content may INFORM a decision and

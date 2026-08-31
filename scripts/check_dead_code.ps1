@@ -69,14 +69,11 @@ if ($Files -and $Files.Count -gt 0) {
     }
 }
 
-$buildDir = Join-Path $ProjectRoot "build"
-if (-not (Test-Path -LiteralPath $buildDir -PathType Container)) {
-    New-Item -ItemType Directory -Path $buildDir -Force | Out-Null
-}
-$probePath = Join-Path ([System.IO.Path]::GetTempPath()) "sak_dead_code_probe_$PID.cpp"
+$temporaryRoot = [System.IO.Path]::GetTempPath()
+$probePath = Join-Path $temporaryRoot "sak_dead_code_probe_$PID.cpp"
 $probeName = "sakDeadCodeGateProbe"
-$suppressionsPath = Join-Path $buildDir "cppcheck_dead_code_suppressions.txt"
-$errorsPath = Join-Path $buildDir "cppcheck_dead_code_gate.txt"
+$suppressionsPath = Join-Path $temporaryRoot "sak_dead_code_suppressions_$PID.txt"
+$errorsPath = Join-Path $temporaryRoot "sak_dead_code_findings_$PID.txt"
 
 try {
     Set-Content -LiteralPath $probePath -Encoding ascii -Value @(
@@ -139,7 +136,9 @@ try {
     exit 0
 }
 finally {
-    if (Test-Path -LiteralPath $probePath -PathType Leaf) {
-        Remove-Item -LiteralPath $probePath -Force
+    foreach ($temporaryPath in @($probePath, $suppressionsPath, $errorsPath)) {
+        if (Test-Path -LiteralPath $temporaryPath -PathType Leaf) {
+            Remove-Item -LiteralPath $temporaryPath -Force
+        }
     }
 }

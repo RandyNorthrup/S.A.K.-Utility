@@ -88,7 +88,19 @@ repos:
         always_run: true
 
       # -------------------------------------------------------------------
-      # 0d. Mutation-catalog coverage ratchet (R5-G18-1) - fast integrity.
+      # 0d. Active-doc references - status buckets must not hide broken paths.
+      # -------------------------------------------------------------------
+      - id: active-doc-references
+        name: "Tracked active-document local references"
+        description: "Reject missing, untracked, escaping, or case-mismatched local doc targets"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_active_doc_references.ps1
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      # -------------------------------------------------------------------
+      # 0e. Mutation-catalog coverage ratchet (R5-G18-1) - fast integrity.
       #     The per-catalog mutation harness proves a catalog's mutations are
       #     all detected; this gate keeps the SET honest between full runs. It
       #     asserts every catalog's find-string still occurs exactly once in the
@@ -209,6 +221,7 @@ repos:
         types_or: [c, c++]
         files: \.(cpp|h|hpp|cxx|cc|hxx)$
         exclude: (third_party|3rdparty|external|_archived)/
+        require_serial: true
 
       # -------------------------------------------------------------------
       # 6a. High-confidence dead-code gate -- R5-G10-6.
@@ -226,6 +239,7 @@ repos:
         types_or: [c++]
         files: ^src/.*\.cpp$
         exclude: (third_party|3rdparty|external|_archived)/
+        require_serial: true
 
       # -------------------------------------------------------------------
       # 6a1. clang-tidy naming regression gate (MANUAL stage)

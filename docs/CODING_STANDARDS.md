@@ -264,16 +264,16 @@ says which rules block and which rely on review.
 ### Directory Structure
 
 ```
-include/sak/          -- Public headers (one .h per class, 160 headers)
-include/sak/actions/  -- Action headers (7 files, 167 headers total)
-src/core/             -- Core business logic, workers, parsers, managers (106 files)
-src/gui/              -- Qt widget panels, dialogs, and themes (37 files)
-src/actions/          -- Quick action workers (one file per action, 7 files)
-src/threading/        -- Thread workers (backup, scan, hash, flash, 4 files)
+include/sak/          -- Public headers (one .h per class)
+include/sak/actions/  -- Action headers
+src/core/             -- Core business logic, workers, parsers, managers
+src/gui/              -- Qt widget panels, dialogs, and themes
+src/actions/          -- Quick action workers (one file per action)
+src/threading/        -- Thread workers (backup, scan, hash, flash)
 src/third_party/      -- Bundled third-party source (qrcodegen)
-tests/unit/           -- Qt Test unit tests (112 files)
-tests/unit/actions/   -- Action validation tests (2 files)
-tests/integration/    -- End-to-end workflow tests (3 files)
+tests/unit/           -- Qt Test unit tests
+tests/unit/actions/   -- Action validation tests
+tests/integration/    -- End-to-end workflow tests
 resources/            -- QRC files, icons, themes
 scripts/              -- Build/lint/utility scripts
 docs/                 -- Project documentation

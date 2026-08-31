@@ -10,7 +10,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = PROJECT_ROOT / "scripts" / "check_apple_filesystem_capability_matrix.ps1"
 MATRIX = Path("certification/APPLE_FILESYSTEM_CAPABILITY_MATRIX.json")
 CLAIM_DOCS = (
-    Path("docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md"),
+    Path("docs/archive/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md"),
     Path("docs/PARTITION_MANAGER_CERTIFICATION.md"),
     Path("docs/PRODUCTION_GRADE_AUDIT.md"),
     Path("docs/RELEASE_READINESS.md"),

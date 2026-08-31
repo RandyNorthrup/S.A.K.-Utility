@@ -488,9 +488,9 @@ void OptimizePowerSettingsAction::appendEffectiveTimeouts(const PowerTimeouts& t
         const PowerTimeout* timeout;
     };
     const Row rows[] = {
-        {"Display off", &timeouts.display},
-        {"Sleep after", &timeouts.sleep},
-        {"Hibernate after", &timeouts.hibernate},
+        {.label = "Display off", .timeout = &timeouts.display},
+        {.label = "Sleep after", .timeout = &timeouts.sleep},
+        {.label = "Hibernate after", .timeout = &timeouts.hibernate},
     };
     log += "EFFECTIVE IDLE TIMEOUTS (read back from powercfg):\n";
     for (const Row& row : rows) {

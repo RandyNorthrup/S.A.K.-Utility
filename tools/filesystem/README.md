@@ -90,7 +90,7 @@ Selected first target:
   unencrypted/uncompressed files. Write support SHIPS through S.A.K.'s own
   `sak_apfs_writer_cli` (create/format, metadata-checksum repair, and in-place
   COW file/directory mutation), not through any bundled tool -- see
-  `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md`, the capability-matrix owner.
+  `docs/archive/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md`, the narrative mirror of `certification/APPLE_FILESYSTEM_CAPABILITY_MATRIX.json`.
 - HFS+/HFSX parser-backed read-only catalog browse, data/resource-fork extract,
   selected attribute-value extract, and bounded recursive directory export with
   resource forks written as `.rsrc` sidecars. Attribute value writes SHIP:

@@ -97,8 +97,8 @@ foreach ($id in $expectedTrackIds) {
 }
 
 $ownerDocument = [string]$matrix.owner_document
-Assert-Condition ($ownerDocument -eq "docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md") `
-    "Apple capability owner_document must be docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md."
+Assert-Condition ($ownerDocument -eq "docs/archive/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md") `
+    "Apple capability owner_document must be docs/archive/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md."
 $claimDocuments = @($matrix.claim_documents | ForEach-Object { [string]$_ })
 Assert-Condition ($claimDocuments.Count -eq 4) "Apple capability matrix must name four claim documents."
 Assert-Condition (($claimDocuments | Sort-Object -Unique).Count -eq $claimDocuments.Count) `

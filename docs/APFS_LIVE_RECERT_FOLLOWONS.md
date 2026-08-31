@@ -199,7 +199,10 @@ the rest is a debt-reduction + test-infra program (multi-session, much of it cos
       TUs, not the ~995 recorded here. The bulk is the owner-scoped style tier (2,371
       pro-bounds container access, 872 designated initializers, 307 anonymous namespace).
       All 46 bug-shaped findings were triaged with an adversarial second pass: zero real
-      defects. Still a fix program, but a style one.
+      defects. Still a fix program, but a style one. PROGRESS 2026-08-31: the first safe
+      designated-initializer slice cleared all 3 findings in
+      `src/actions/optimize_power_settings_action.cpp`; formatter, lizard, target build, and
+      target CTest passed. The wider style backlog remains open.
 - [x] cppcheck-suppression audit -- DONE, corrected 2026-08-31. All 26 inline suppressions were
       re-checked with inline suppressions disabled. Three genuinely suppressed nothing and remain
       removed. A real template-instantiating include-path run later proved two `strong_index.h`
@@ -216,13 +219,16 @@ the rest is a debt-reduction + test-infra program (multi-session, much of it cos
       mutant was killed and production sources restored. G14 fuzz/coverage, fault-injection, and G20 are
       already closed in the R5 owner doc; remaining work is the broader G18/G10-12 mutation surface
       plus G21-7 fresh-host/hosted execution. G21-2 route parity itself is closed: the live gate
-      verifies 43 custom scripts, 8 generic hooks, 43 CI routes, and full-history gitleaks.
+      verifies 44 custom scripts, 8 generic hooks, 44 CI routes, and full-history gitleaks.
       R5-IDX-7 is also closed: 17 Apple capability rows and 2 full-driver track gates are now
-      machine-owned, four claim docs are citation-gated, route parity is 43/8/43, and the final
+      machine-owned, four claim docs are citation-gated, route parity is 44/8/44, and the final
       Release gate passed 263/263 in 652.72 seconds.
       Latest R5 AI review batch: 33 mutation catalogs / 289 mutants; Release build exit 0; full
       CTest 264/264, zero failures, 738.44 seconds.
-- [ ] Branch protection -- needs the GitHub repo admin (Randy); flag once ready.
+      Current plan-archive/doc-gate/clang slice: all pre-commit hooks passed; Release build exit
+      0; full CTest 265/265, zero failures, 804.48 seconds.
+- [x] Branch protection -- CLOSED BY OWNER DECISION under R5-G21-6. The owner explicitly dropped
+      this requirement; it is not deferred work and does not block the campaign.
 
 --------------------------------------------------------------------------------
 ## Cert rig quick reference (reuse)

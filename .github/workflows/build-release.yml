@@ -329,11 +329,12 @@ jobs:
       run: |
         & scripts/check_repository_hygiene.ps1
 
-    - name: Test registration and gate parity
+    - name: Test registration, gate parity, and active-doc references
       shell: pwsh
       run: |
         & scripts/check_test_registration.ps1
         & scripts/check_gate_parity.ps1
+        & scripts/check_active_doc_references.ps1
 
     - name: Verify Qt resource manifests
       shell: pwsh

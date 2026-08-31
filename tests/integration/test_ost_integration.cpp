@@ -244,14 +244,14 @@ class TestOstIntegration : public QObject {
 
 private Q_SLOTS:
 
-    void openRealOstFile() {
+    void openRealOstFile() const {
         openConfiguredStoreFile(configuredOstPath(),
                                 true,
                                 "Set SAK_TEST_OST_PATH to run this integration test",
                                 "OST file not found - skipping integration test");
     }
 
-    void openRealPstFile() {
+    void openRealPstFile() const {
         openConfiguredStoreFile(configuredPstPath(),
                                 false,
                                 "Set SAK_TEST_PST_PATH to run this integration test",

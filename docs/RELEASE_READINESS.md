@@ -53,7 +53,7 @@ Required before a release candidate is published:
 - Blocking-pattern guard passes.
 - Accessibility, raw style-token, raw style-literal, GUI magic-number, global magic-number, logged dialog, Partition Manager certification-matrix-integrity/commercial-destructive-feature-matrix/external-checklist/external-lab-package/certification-gap-report/VHD-preflight/certification-artifact-bundle/feature-matrix/evidence-payload/release-claim/strict-handoff, and Lizard gates pass.
 - Third-party license audit passes.
-- Full driver-level APFS (A1-A8) and HFS+/HFSX (H1-H8) write is Apple-certified - Apple `fsck_apfs`/`fsck_hfs` + macOS-kernel mount at every milestone, with physical-USB destructive + crash-interruption + rollback at the A8/H8 track gates (evidence `external.apfs-a8-physical`, `external.hfs-h8-physical`). The driver-capability matrix owner is `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md`; this is a distinct scope from the Partition Manager destructive-operations claim level.
+- Full driver-level APFS (A1-A8) and HFS+/HFSX (H1-H8) write is Apple-certified - Apple `fsck_apfs`/`fsck_hfs` + macOS-kernel mount at every milestone, with physical-USB destructive + crash-interruption + rollback at the A8/H8 track gates (evidence `external.apfs-a8-physical`, `external.hfs-h8-physical`). Capability status is owned by `certification/APPLE_FILESYSTEM_CAPABILITY_MATRIX.json`; the archived driver plan is its narrative realization record; this is a distinct scope from the Partition Manager destructive-operations claim level.
 - Partition Manager non-native filesystem tools remain blocked unless
   `tools/filesystem/manifest.json` has pinned id/version/upstream/license/source-hash/binary-hash/file-system/operation metadata,
   matching bundled binary hashes, and hashed `runtime_files` for companion
@@ -125,7 +125,7 @@ Required before a release candidate is published:
   the H1-H8 HFS+ track (streaming B-trees, underflow merge, hard-links/symlinks,
   attribute overflow records, big-endian journal replay, wrapper write,
   decmpfs read+write) are Apple-certified (see
-  `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md`). Deep XFS/Btrfs tool checks and
+  `docs/archive/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md`). Deep XFS/Btrfs tool checks and
   XFS/Btrfs writes remain blocked; APFS Fusion/Tier2, container shrink +
   chunk-adding grow, and arbitrary non-generated Apple-media mutation at the
   Apply layer stay fail-closed by design.
@@ -590,7 +590,7 @@ credential-gated encryption - all Apple-certified), never blanket-on.
 Fusion/Tier2 multi-device stays out of scope and unsupported incompatible
 feature flags remain fail-closed.
 APFS and HFS+/HFSX are now full driver-level write-certified (A1-A8 / H1-H8 -
-see `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md`). Release wording must keep
+see `docs/archive/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md`). Release wording must keep
 XFS/Btrfs to read-only metadata, and may state full driver-level APFS + HFS+/HFSX
 read/write with the standing hard boundaries: APFS Fusion/Tier2 multi-device out
 of scope, encryption credential-gated, sealed-system-volume writes behind a typed

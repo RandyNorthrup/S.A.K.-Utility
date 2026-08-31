@@ -129,7 +129,7 @@ foreach ($file in $Files) {
         # "Binary file <path> matches" and SUPPRESSES the matching lines -- so a sweep still
         # reports a hit while showing nothing usable, and a count returns that same line
         # instead of a number. The file meanwhile reads normally in an editor. Not
-        # hypothetical: docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md carried eight NULs (a literal
+        # hypothetical: docs/archive/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md carried eight NULs (a literal
         # HFS+ private-directory name pasted in raw) and eleven open work items in it could
         # not be listed by any grep-based sweep, while this gate passed the file every time
         # because it checked only for bytes above 0x7F.

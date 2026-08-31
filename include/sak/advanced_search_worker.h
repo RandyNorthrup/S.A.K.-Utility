@@ -43,7 +43,7 @@ public:
 
     // Join the worker thread while this class's members are still alive (the base
     // ~WorkerBase runs after they are destroyed). See WorkerBase::stopAndJoin.
-    ~AdvancedSearchWorker() override { stopAndJoin(); }
+    ~AdvancedSearchWorker() override { WorkerBase::stopAndJoin(); }
 
     // Disable copy/move (inherited from WorkerBase)
     AdvancedSearchWorker(const AdvancedSearchWorker&) = delete;

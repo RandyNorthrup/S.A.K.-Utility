@@ -26,9 +26,9 @@
     pass -- see that script's header for why those two entries have to come out.
 
 .PARAMETER ErrorsFile
-    Optional override for where cppcheck's stderr is written. Defaults to
-    build/cppcheck_errors.txt. The gate runs two passes and needs each one's findings kept
-    apart; without this the second pass overwrites the first pass's evidence.
+    Optional override for where cppcheck's stderr is written. Without an override, a
+    process-unique system-temp file is used and removed after capture. The gate runs two
+    passes and supplies explicit paths because it needs each one's findings kept apart.
 
 .PARAMETER EnabledChecks
     Cppcheck check group to enable. Defaults to all. The dead-code gate requests only
@@ -204,6 +204,7 @@ $CppcheckArgs += @(
 # ---------------------------------------------------------------------------
 # Determine files to check
 # ---------------------------------------------------------------------------
+$FileListPath = ""
 if ($Files -and $Files.Count -gt 0) {
     # Filter to real C++ source files only. Each value is passed straight to cppcheck, so
     # reject anything option-shaped (leading '-') or that does not exist as a real file on
@@ -275,27 +276,44 @@ Write-Host "Running cppcheck (strictest settings)..." -ForegroundColor Cyan
 Write-Host "  Command: cppcheck $($CppcheckArgs -join ' ')" -ForegroundColor DarkGray
 
 if ([string]::IsNullOrWhiteSpace($ErrorsFile)) {
-    $ErrorsFile = Join-Path $ProjectRoot "build\cppcheck_errors.txt"
+    # Pre-commit may start more than one hook process. A shared redirect file lets those
+    # processes truncate and overwrite each other's diagnostics, producing NUL-corrupted
+    # output and false failures with no actionable finding. Keep capture process-local.
+    $ErrorsFile = Join-Path ([System.IO.Path]::GetTempPath()) `
+        ("sak_cppcheck_errors_{0}.txt" -f $PID)
+    $removeDefaultErrorsFile = $true
+} else {
+    $removeDefaultErrorsFile = $false
 }
 $errDir = Split-Path -Parent $ErrorsFile
 if ($errDir -and -not (Test-Path -LiteralPath $errDir -PathType Container)) {
     New-Item -ItemType Directory -Path $errDir -Force | Out-Null
 }
 
-$process = Start-Process -FilePath $CppcheckExe `
-    -ArgumentList $CppcheckArgs `
-    -NoNewWindow -PassThru -Wait `
-    -RedirectStandardError $ErrorsFile
+try {
+    $process = Start-Process -FilePath $CppcheckExe `
+        -ArgumentList $CppcheckArgs `
+        -NoNewWindow -PassThru -Wait `
+        -RedirectStandardError $ErrorsFile
 
-$exitCode = $process.ExitCode
-$errFile = $ErrorsFile
+    $exitCode = $process.ExitCode
+    $errFile = $ErrorsFile
 
-if ((Test-Path $errFile) -and -not $SuppressFindingOutput) {
-    $errors = Get-Content $errFile -ErrorAction SilentlyContinue
-    if ($errors) {
-        Write-Host ""
-        Write-Host "cppcheck findings:" -ForegroundColor Red
-        $errors | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow }
+    if ((Test-Path $errFile) -and -not $SuppressFindingOutput) {
+        $errors = Get-Content $errFile -ErrorAction SilentlyContinue
+        if ($errors) {
+            Write-Host ""
+            Write-Host "cppcheck findings:" -ForegroundColor Red
+            $errors | ForEach-Object { Write-Host "  $_" -ForegroundColor Yellow }
+        }
+    }
+} finally {
+    if ($removeDefaultErrorsFile -and (Test-Path -LiteralPath $ErrorsFile -PathType Leaf)) {
+        Remove-Item -LiteralPath $ErrorsFile -Force
+    }
+    if (-not [string]::IsNullOrWhiteSpace($FileListPath) -and
+        (Test-Path -LiteralPath $FileListPath -PathType Leaf)) {
+        Remove-Item -LiteralPath $FileListPath -Force
     }
 }
 

@@ -16,7 +16,7 @@ repeated:
 | CAB spaceman tier (`cibs_per_cab`, cab addressing) | `docs/archive/APFS_A2_CAB_TIER_DESIGN.md` |
 | Snapshot create/revert byte recipes harvested from macOS | `docs/apfs-harvest/snapshot-create-recipe.txt`, `snapshot-revert-recipe.txt` |
 | Cert rig invocations, credentials policy, foreign-volume workstreams | `docs/APFS_LIVE_RECERT_FOLLOWONS.md` |
-| Roadmap, acceptance definition, cross-cutting promotion rules | `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md` |
+| Roadmap, acceptance definition, cross-cutting promotion rules | `docs/archive/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md` |
 | decmpfs / resource-fork / lzbitmap byte layouts | `include/sak/apfs_compression.h`, `apfs_resource_fork.h`, `apfs_lzbitmap.h`, `apfs_lzbitmap_codec.h` |
 | FileVault keybag, DER key blobs, XTS keying, outer-HMAC formula | `include/sak/apfs_keybag.h` |
 | HFS+ node/catalog/extent offsets and hard-link record shapes | `include/sak/partition_hfs_core.h`; B-tree engine in `partition_hfs_internal.h` |

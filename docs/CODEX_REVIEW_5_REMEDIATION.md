@@ -175,7 +175,7 @@ a parked design, per the bucket convention. Open work is what remains after thos
   reports the benign "DNS is already automatic" no-op as a NON-ZERO exit, so the shared rule
   would false-fail a restore that had already reached the target state.
   DRILLED, each guard separately, 10 of 10 mutations RED. Gate: build exit 0, ctest 252/252.
-- [x] R5-IDX-2 `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md` -- CLOSED 2026-08-27: THE ELEVEN
+- [x] R5-IDX-2 `docs/archive/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md` -- CLOSED 2026-08-27: THE ELEVEN
   ITEMS ARE A BLANK TEMPLATE, NOT OPEN WORK. The NUL-byte part of this entry was real and is
   fixed (the file carried 8 raw NULs, so grep classified it as binary and silently skipped it;
   NULs are now escaped as text, and R5-IDX-15 taught the ASCII gate to reject control bytes).
@@ -188,8 +188,9 @@ a parked design, per the bucket convention. Open work is what remains after thos
   a checkbox counter cannot tell a work item from a template, and R5-IDX-7 was an entry about
   stale capability claims that had itself gone stale. Both times the scan produced a number
   and the number was believed. Read the section heading before trusting the count.
-- [~] R5-IDX-3 `docs/APFS_LIVE_RECERT_FOLLOWONS.md` -- CURRENT 2026-08-31: three open
-  programs remain -- clang-tidy style debt, test infrastructure, and branch protection.
+- [~] R5-IDX-3 `docs/APFS_LIVE_RECERT_FOLLOWONS.md` -- CURRENT 2026-08-31: two open
+  programs remain -- clang-tidy style debt and test infrastructure. Branch protection was
+  owner-dropped under G21-6 and is not work.
   WS3c foreign multi-chunk in-place COW and WS3c-2 shrink are closed and Apple-certified.
   Historical 2026-08-27 re-triage: 7 items -> 5 genuinely open, and one of the two closed had
   been reported as debt while it was already zero.
@@ -201,7 +202,7 @@ a parked design, per the bucket convention. Open work is what remains after thos
   updated when the work landed -- the same not-writing-it-down failure as R5-IDX-6, in the
   opposite direction: there it made finished work look open, here it made a wired gate look
   unwired.
-  OWNER ACTION: branch protection needs the GitHub repo admin (the owner).
+  CLOSED BY OWNER DECISION: branch protection was explicitly dropped under G21-6.
   STILL GENUINELY OPEN: clang-tidy style debt and the test-infra program (G14 coverage ledger,
   G18 mutation testing, fuzz harnesses, fault injection, G20/G21 gate wiring).
   HISTORICAL 2026-08-30 MEASUREMENT: two of the then-five items were measured and one closed.
@@ -261,6 +262,20 @@ a parked design, per the bucket convention. Open work is what remains after thos
   clang-tidy's own fixer resolved it across 9 headers. One of those was substantive:
   pst_parser.h declared readContentsTable(folder_nid) while the definition and the only
   caller both say contents_nid, so the header was actively misleading about what it takes.
+  SAFE-SLICE PROGRESS 2026-08-31: all 3 `modernize-use-designated-initializers` findings in
+  `src/actions/optimize_power_settings_action.cpp` are fixed. Formatter, lizard, target build,
+  and target CTest pass. The resulting full-tree cppcheck run exposed two existing
+  `functionConst` findings in the OST/PST integration slots; both were turned const, cppcheck
+  went red before and green after, and the target build/CTest prove Qt MOC invocation still
+  works. Full-tree execution also exposed a gate-reliability defect: parallel pre-commit
+  cppcheck batches shared `build/cppcheck_errors.txt`, truncating each other's diagnostics and
+  producing NUL-corrupted false failures. The dead-code wrapper also shared its generated
+  suppression/findings files and failed with `Stream was not readable`. Both hooks now run
+  serially, every default/generated artifact is PID-local/temporary, and the repaired all-files
+  hook exposed and cleared the SearchConfig copy-independence gap plus an inherited-worker call
+  false-positive through explicit base qualification. Serialized full-tree cppcheck passes;
+  planted-probe dead-code scan passes all 306 source files with zero candidates. The measured
+  whole-tree style program remains open.
   WS3c + WS3c-2 CLOSED 2026-08-31. Genuine Apple scattered-IP COW now supports chained
   insert/patch/replace/delete on 2-chunk and 135-chunk/2-CIB containers. Host apfsck and Apple
   fsck pass every checkpoint before mount and after kernel continuation; kernel read-back is
@@ -273,7 +288,8 @@ a parked design, per the bucket convention. Open work is what remains after thos
   its re-anchored ring before writes. Hermetic genuine-byte fixtures and four separate
   mutation drills pin provenance, all-live-bitmap collection, the two-checkpoint IP queue window,
   queue replacement, and CLI binding. Evidence: external.apfs-foreign-multicib-cow. IDX-3 now
-  has three unrelated open programs: clang-tidy style debt, test-infra, and branch protection.
+  has two unrelated open programs: clang-tidy style debt and test infrastructure. Branch
+  protection was owner-dropped under G21-6 and is not work.
   FINAL LOCAL GATE: all changed-file pre-commit hooks passed; Release build exit 0; the first full
   CTest run was 261/262 and supplied the generated-ring red proof; after the fix, the full core
   binary passed and a fresh complete CTest run passed 262/262 in 627.25 seconds.
@@ -374,7 +390,7 @@ a parked design, per the bucket convention. Open work is what remains after thos
   PARTIALLY FIXED. Two of the three restatements had ALREADY been annotated as superseded and
   already name one owner: PARTITION_MANAGER_CERTIFICATION.md:589 and CHANGELOG.md:18 both say
   their in-development "remains blocked" text was accurate when written and both name
-  `docs/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md` as the single capability-matrix owner.
+  `docs/archive/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md` as the single capability-matrix owner.
   What was NOT annotated, and what this pass fixes, is `docs/PRODUCTION_GRADE_AUDIT.md`. Its
   row 57 asserted that "B-tree split/rebalance ... compressed-file writes, and recursive
   extents-overflow-file overflow remain blocked" -- flatly contradicting the H1-H8 record --
@@ -399,7 +415,7 @@ a parked design, per the bucket convention. Open work is what remains after thos
   exact row set, filesystem, dates, evidence types/IDs, track gates, claim-doc citations, and every
   owner-table status. It runs in pre-commit and CI; six registered adversarial tests prove missing
   rows, blank evidence, prose drift, missing citations, and a forged Fusion certification all turn
-  red. Live proof: 17 capabilities, 2 track gates, 4 claim docs; gate parity 43/8/43.
+  red. Live proof: 17 capabilities, 2 track gates, 4 claim docs; current gate parity 44/8/44.
   FINAL LOCAL GATE: Release build exit 0; full CTest 263/263, zero failures, 652.72 seconds.
 - [x] R5-IDX-8 THE ASCII GATE DOES NOT REJECT CONTROL BYTES -- CLOSED by R5-IDX-15. `scripts/check_ascii_only.ps1`
   checks for bytes above 0x7F and a BOM, so NUL and other C0 controls pass. That is how
@@ -439,6 +455,14 @@ a parked design, per the bucket convention. Open work is what remains after thos
   four claim docs by `check_apple_filesystem_capability_matrix.ps1`, with a six-case adversarial
   registered test. IDX-9 remains partial for factual claim classes not yet represented as
   structured data, but this removes the highest-risk raw-disk capability drift class.
+  ACTIVE-REFERENCE PROGRESS 2026-08-31: `check_active_doc_references.ps1` now gates every tracked
+  top-level `docs/*.md` file in pre-commit and CI. It rejects missing, untracked, case-mismatched,
+  repository-escaping, and incorrectly relative local targets, while archive/future contents stay
+  outside active-work scans and active docs may cite either status bucket. Eleven registered
+  adversarial tests pin those boundaries and vacuous-scan refusal. First live run found and fixed
+  one stale archived AI-plan path. Current parity is 44 custom / 8 generic / 44 CI routes.
+  IDX-9 remains partial because non-reference factual claims still need structured owners or
+  dedicated gates.
   SWEEP COMPLETED 2026-08-30 once the weekly limit reset. The two batches that had died
   (release-readiness, field-notes) ran, and all 43 previously-unverified findings were
   independently re-checked. Result: 15 new findings, 18 of the 43 CONFIRMED, and 11
@@ -920,6 +944,31 @@ a parked design, per the bucket convention. Open work is what remains after thos
   volume on this machine is in use -- that is the destructive act the guard exists to prevent.
   The failed-lock half IS tested. P11-14 has no test harness at all: the save is driven from a
   file dialog, and the fix is the same QSaveFile swap already proven elsewhere in the tree.
+- [~] R5-IDX-33 SUPPRESSIONS AND SILENCES ARE NOT GRANDFATHERED -- OWNER RULING 2026-08-31.
+  A read-only whole-tree audit re-ran reveal checks and classified existing suppression classes.
+  CRITICAL: `clang_tidy_naming_gate.ps1` returned zero and printed PASS while all 147 analyzed
+  translation units logged `Error while processing`; the log held 588 driver-only unused-flag
+  diagnostics plus 133 compiler errors and zero naming findings. This is a false green, not a
+  naming-clean tree. Fix the compile-database/tool invocation and source diagnostics, then make
+  the gate reject processing errors and incomplete TU coverage. Do not silence the diagnostics.
+  DIRECT-FIX RUNTIME SILENCES: the screenshot report ignores its supplied timestamp; deadline
+  callback exceptions disappear; DHCP-query failure becomes DHCP-disabled; dirty-bit query
+  failure becomes clean; and partition script paths swallow volume/dismount, online-restore,
+  physical-media classification, and requested SSD ReTrim failures around destructive work.
+  Those must fail closed or report unknown/failure, not keep a fallback value.
+  EXISTING SUPPRESSIONS: cppcheck reveal proves all 32 inline suppressions still match today, but
+  matching is not necessity. Global `useStlAlgorithm` hides 340 findings; test-wide
+  `knownConditionTrueFalse` hides 14, `functionStatic` hides 62, and `unusedStructMember` has no
+  equivalent dedicated gate. Four NOLINT sites include one stale marker and two direct fixes.
+  Eight coverage-only compiler warning silences have structural fixes. Thirty-five active test
+  skips have no stale identifiers, but fixture-backed PST/OST/EXIF/ISO/raw-image/network cases
+  plus slow omap/sparse-container cases remain directly closable. Eight exact gitleaks history
+  fingerprints are bounded; one is a real historical VM credential and needs rotation plus
+  explicit history-rewrite authorization before removal.
+  OWNER RULE NOW RECORDED IN `AGENTS.md`: fix code, test, tool, or gate first; suppression is the
+  last resort only after no direct fix is possible and the exact reason is proven. Existing
+  suppressions are re-audited, not inherited as permanent policy. Current batch: all pre-commit
+  hooks passed; Release build exit 0; full CTest 265/265, zero failures, 804.48 seconds.
 - [x] R5-IDX-17 NO PRODUCTION CODE POINTS INTO docs/ ANY MORE, per the owner 2026-08-26:
   code and tests should stand on their own, and anything the code genuinely NEEDS should be
   structured data, not prose. Seven comment citations in partition_apfs_writer.{h,cpp} named
@@ -1006,10 +1055,12 @@ a parked design, per the bucket convention. Open work is what remains after thos
   whose features are in the tree (network diagnostic -- kept at the owner's request as working
   reference, file explorer clone, AI assistant panel, AI multi-agent workflow, partition
   cross-filesystem, partition manager panel). All gate and doc references were repointed and
-  the partition gates re-run green. Still ACTIVE in docs/ because they hold real open work:
-  APFS_HFS_FULL_DRIVER_WRITE_PLAN (11), MACOS_BOOTABLE_USB_PLAN (40, unbuilt),
-  FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN (7) and ASSISTANT_HEADLESS_DOMINION_PLAN (no code
-  in the tree at all).
+  the partition gates re-run green. The then-active list below is now fully dispositioned:
+  `MACOS_BOOTABLE_USB_PLAN.md` is parked under `docs/future/`; File Management Explorer and
+  Assistant Headless Dominion are realized under `docs/archive/`; and the fully certified
+  APFS/HFS driver plan moved to `docs/archive/` on 2026-08-31 after its 11 unchecked boxes were
+  proven template-only. The machine-readable Apple capability matrix remains the live status
+  owner and the archived plan its narrative realization record.
 - [x] R5-IDX-13 THE CERTIFICATION MATRIX WAS DATA FILED AS A DOCUMENT -- CLOSED by R5-IDX-16.
   It is schema-versioned machine input with required_evidence_keys per scenario, and 23
   scripts plus tests/certification read it. NOT MOVED, deliberately: the path is also recorded
@@ -1035,7 +1086,7 @@ a parked design, per the bucket convention. Open work is what remains after thos
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-31, MEASURED not hand-carried: 674 [x] / 20 [~] / 0 [ ] MARKERS IN THIS FILE
+as of 2026-08-31, MEASURED not hand-carried: 675 [x] / 20 [~] / 0 [ ] MARKERS IN THIS FILE
 (`grep -oE '^\s*- \[[x~ ]\]' docs/CODEX_REVIEW_5_REMEDIATION.md | sort | uniq -c`). It said
 669 / 24 until 2026-08-30: the R5-IDX-4 closure flipped a marker and added entries, and the
 tally was not re-run, so the date stamp stayed current while the numbers behind it went
@@ -9134,7 +9185,7 @@ So the suite itself must be audited for tests that pass regardless of the code.
       message into a multi-hour investigation, twice. The QtTest FILE logger
       (-o file,txt) flushes per line and does not have this problem; consider making
       it the default for CI runs so a failure is always legible
-- [~] R5-G18-8 Ban the assumption that a test binary's functions are independent.
+- [x] R5-G18-8 Ban the assumption that a test binary's functions are independent.
   - PROGRESS 2026-08-16: the named instance is fixed and the whole-binary guarantee is in
     place; the tree-wide flake soak is the remaining residual. (1) pauseResumeToggles
     (test_app_installation_worker.cpp:164) no longer passes on timing: it forces concurrency 1
@@ -9194,6 +9245,10 @@ So the suite itself must be audited for tests that pass regardless of the code.
     30'000 rather than the implicit 5s default. Bounded generously, NOT removed: a scan that
     never completes must still fail the test, so this is a longer deadline and not an unbounded
     wait. The suite now takes ~115s and passes.
+  - CLOSED 2026-08-31. Both promised dimensions exist and have fired on planted and real defects:
+    whole-binary vs per-function isolation, and repeated whole-suite load soak. The shared-fixture
+    order dependency and hardware-enumeration deadline were fixed; no residual acceptance item
+    remains in this section.
       pauseResumeToggles passed in isolation 40 times in a row and failed inside the
       full binary, because ordering and load changed the timing. Any flake hunt that
       only runs the single failing function will conclude, wrongly, that nothing is

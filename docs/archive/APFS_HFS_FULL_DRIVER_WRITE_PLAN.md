@@ -37,16 +37,15 @@ that stops citing the matrix.
   mount + physical USB destructive + crash-interruption + rollback). No capability
   flips to "Yes" in any user-facing matrix before its proof artifact lands.
 
-This plan is the forward roadmap. The authoritative record of what is *already*
-certified is [archive/PARTITION_MANAGER_CROSS_FILESYSTEM_PLAN.md](archive/PARTITION_MANAGER_CROSS_FILESYSTEM_PLAN.md)
+This archived plan is the realization record for the completed driver program. The historical
+cross-filesystem record is [PARTITION_MANAGER_CROSS_FILESYSTEM_PLAN.md](PARTITION_MANAGER_CROSS_FILESYSTEM_PLAN.md)
 (archived; the LIVE certification record is
-[PARTITION_MANAGER_CERTIFICATION.md](PARTITION_MANAGER_CERTIFICATION.md));
+[PARTITION_MANAGER_CERTIFICATION.md](../PARTITION_MANAGER_CERTIFICATION.md));
 the File Explorer surface that consumes these writers is
-[archive/FILE_EXPLORER_FILES_CLONE_PLAN.md](archive/FILE_EXPLORER_FILES_CLONE_PLAN.md) (the
+[FILE_EXPLORER_FILES_CLONE_PLAN.md](FILE_EXPLORER_FILES_CLONE_PLAN.md) (the
 certified Files functional clone; the older milestone history lives in
-[FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md](archive/FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md)).
-This document does not restate their history; it defines the gap to "full driver"
-and the milestones to close it.
+[FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md](FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md)).
+This document records the gap to "full driver" and the milestones that closed it.
 
 > **"Driver-level" means capability parity, not a kernel driver.** Everything in
 > this plan is **userspace** raw-block read/write against a **dismounted** volume
@@ -172,12 +171,12 @@ Summary of what already passes external validation:
   one), VM-certified.
 
 Code anchors: `PartitionHfsFileSystemWriter` declared in
-[partition_hfs_file_system_reader.h](include/sak/partition_hfs_file_system_reader.h) and
+[partition_hfs_file_system_reader.h](../../include/sak/partition_hfs_file_system_reader.h) and
 implemented in
-[partition_hfs_file_system_writer.cpp](src/core/partition_hfs_file_system_writer.cpp)
+[partition_hfs_file_system_writer.cpp](../../src/core/partition_hfs_file_system_writer.cpp)
 (the reader TU named here carries zero occurrences of the symbol);
-`PartitionApfsWriter` in [partition_apfs_writer.cpp](src/core/partition_apfs_writer.cpp)
-and [partition_apfs_writer.h](include/sak/partition_apfs_writer.h); helper CLIs
+`PartitionApfsWriter` in [partition_apfs_writer.cpp](../../src/core/partition_apfs_writer.cpp)
+and [partition_apfs_writer.h](../../include/sak/partition_apfs_writer.h); helper CLIs
 `sak_hfs_writer_cli.exe`, `sak_apfs_writer_cli.exe`; certifier
 `partition_filesystem_probe_certifier.exe`.
 
@@ -224,8 +223,8 @@ Grounding sources (read-only research; no code import of GPL drivers):
 - **Apple File System Reference** (Apple Developer PDF) - authoritative on-disk
   format for APFS objects, omap, spaceman, checkpoints, snapshots, encryption,
   fs-tree `j_*` records. The single most important reference for the APFS track.
-- **`hfs_format.h`** already vendored at
-  [tools/filesystem/_build/.../include/hfs/hfs_format.h](tools/filesystem/_build/hfsprogs-build/diskdev_cmds-540.1.linux3/include/hfs/hfs_format.h)
+- **`hfs_format.h`** is carried in the tracked upstream source archive
+  [hfsprogs_540.1.linux3.orig.tar.gz](../../tools/filesystem/hfsprogs/hfsprogs_540.1.linux3.orig.tar.gz)
   and the bundled **`fsck_hfs` / `newfs_hfs` (hfs-650 / diskdev_cmds-540.1)**
   source - authoritative HFS+ node, catalog, extents, attribute, journal layout
   and the exact checks S.A.K. output must satisfy. Use fsck source as the spec for
@@ -405,7 +404,7 @@ Additional rules for this program:
   operation time, holds it only in memory, never persists keys or unlocked state.
 - **No size/shape cap left as a silent blocker**: once H-a/A-a land, remove the
   "exceeds ... cap" blocker strings (see grep hits in
-  [partition_apfs_writer.cpp](src/core/partition_apfs_writer.cpp)) and replace with
+  [partition_apfs_writer.cpp](../../src/core/partition_apfs_writer.cpp)) and replace with
   real allocation, not a higher hardcoded number.
 - **Zero base-install footprint** (per [section 1A](#1a-runtime-footprint-and-optional-component-gating)):
   no milestone may make a core read/write capability depend on an installed kernel
@@ -433,7 +432,7 @@ Additional rules for this program:
 Surfacing issues in the existing plan + code the user flagged as possibly flawed:
 
 1. **Two capability matrices can drift.** The explorer plan
-   ([FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md](archive/FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md#L322))
+   ([FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md](FILE_MANAGEMENT_EXPLORER_FILES_LIKE_PLAN.md#L322))
    hardcodes "Certified slices" / "No" for HFS/APFS, while the cross-fs plan holds
    the real boundary. As driver milestones land, both must update. **Fix**: I1/I2
    make this doc the single matrix owner; the other two link here.
@@ -443,7 +442,7 @@ Surfacing issues in the existing plan + code the user flagged as possibly flawed
    bigger constant - otherwise the same class of `spaceman_sanity_check` rejection
    recurs at the new size.
 3. **HFS writer lives inside the 12k-line reader file.** `PartitionHfsFileSystemWriter`
-   is in [partition_hfs_file_system_reader.cpp](src/core/partition_hfs_file_system_reader.cpp).
+   is in [partition_hfs_file_system_reader.cpp](../../src/core/partition_hfs_file_system_reader.cpp).
    Before H2/H3/H4 add a streaming B-tree engine and a general allocator, consider
    splitting the writer (and a shared B-tree/allocator module) into its own
    translation unit to keep the driver core reviewable and testable. Non-blocking
@@ -494,7 +493,7 @@ Resolved (2026-06-13):
   how HFS+ compressed-file writes ship CLI-only today).
 - **HFS-writer refactor (flaw #3)**: **split at H1.** Extract
   `PartitionHfsFileSystemWriter` and a shared B-tree + allocation-bitmap module out
-  of [partition_hfs_file_system_reader.cpp](src/core/partition_hfs_file_system_reader.cpp)
+  of [partition_hfs_file_system_reader.cpp](../../src/core/partition_hfs_file_system_reader.cpp)
   into their own translation units before H2-H4 add the streaming B-tree engine and
   general allocator. Keeps the driver core reviewable and unit-testable.
 
