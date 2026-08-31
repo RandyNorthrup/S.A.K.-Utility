@@ -998,7 +998,7 @@ a parked design, per the bucket convention. Open work is what remains after thos
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-30, MEASURED not hand-carried: 671 [x] / 23 [~] / 0 [ ] MARKERS IN THIS FILE
+as of 2026-08-30, MEASURED not hand-carried: 672 [x] / 22 [~] / 0 [ ] MARKERS IN THIS FILE
 (`grep -oE '^\s*- \[[x~ ]\]' docs/CODEX_REVIEW_5_REMEDIATION.md | sort | uniq -c`). It said
 669 / 24 until 2026-08-30: the R5-IDX-4 closure flipped a marker and added entries, and the
 tally was not re-run, so the date stamp stayed current while the numbers behind it went
@@ -9463,6 +9463,13 @@ gate teaches people to disable both.
       whole toolchain is present before anything runs
 - [~] R5-G21-5 Every fixed defect has a regression test, so the specific bug cannot
   - IN PROGRESS: a regression test for every fixed defect. Fixes landed this campaign carry per-item non-vacuous notes; the full per-defect regression audit is still open.
+  - RESOLVED 2026-08-31 in-flight find: full Release CTest exposed
+    test_network_diagnostic_report failing only when generateJson() and the independently-called
+    toJson() crossed a one-second timestamp boundary. The test compared two correct moving
+    timestamps as though they were stable. Pre-fix `ctest --repeat until-fail` reproduced red;
+    the test now requires a valid generated timestamp in the written JSON and compares every
+    stable field, and the same repeat passed 100/100. This closes this defect only; the
+    full-campaign per-defect audit remains open.
       return even if the gate that would catch its class is later weakened
 - [x] R5-G21-6 Branch protection: the gates are required checks, not advisory.
   - SETTLED 2026-08-16 [owner-dropped, NOT deferred]: the user explicitly dropped this item ('dont worry about branch protection'). An owner decision to not pursue, not work left undone.
@@ -9572,20 +9579,18 @@ gate teaches people to disable both.
       mutate ONE thing at a time, assert the build succeeded before running the test, and
       treat "mutant survived" as a claim requiring the build exit code as evidence.
 
-- [~] R5-G21-9 NO GATE HAD EVER SEEN THE EXTENSION JAVASCRIPT. Gate and harness LANDED
-      2026-08-05; the enumerated violation list is being worked down. Status:
+- [x] R5-G21-9 NO GATE HAD EVER SEEN THE EXTENSION JAVASCRIPT. Gate and harness LANDED
+      2026-08-05; all enumerated violations reached zero on 2026-08-30. Status:
 
         1. DONE. scripts/run_lizard.py now runs JavaScript at the repo's own thresholds
            (CCN <= 10, PARAM <= 5, length <= 70) against browser/, and node is a REQUIRED
            entry in the toolchain preflight so the gate cannot silently stop running.
-        2. IN PROGRESS. 24 violations at the start, 6 now. dispatchCommand (41 CCN, the
-           worst), axNodeToCapture (33), selectCallArgs (13), printPageOptions (13),
-           buildBoundsMap (13) and buildNodes (15) are closed. The rest are held by
-           scripts/lizard_js_baseline.txt, which is a RATCHET rather than an exclusion: a
-           violation not in the list fails, a listed function that gets worse fails, and a
-           listed function that no longer violates fails until its row is deleted. That last
-           rule is the point -- a baseline nobody must prune is an exclusion list with extra
-           steps. All three directions were proven to fail before the gate was wired.
+        2. DONE. 24 violations at the start, zero now. scripts/lizard_js_baseline.txt remains
+           wired as an EMPTY RATCHET rather than an exclusion: any future violation is new debt
+           and fails. While rows existed, an unlisted violation failed, a listed function that
+           worsened failed, and a listed function that improved failed until its row was deleted.
+           All three directions were proven red before the gate was wired, and the final empty
+           baseline passes only because every measured function is within the unchanged limits.
            selectCallArgs (2026-08-19, ext 0.3.15): the four criterion booleans plus the
            parallel-ternary return became a table-driven SELECT_CRITERIA (one {present, row} row
            per criterion) and a flat "exactly one matches" check -- CCN 13 -> 3, behaviour identical
@@ -9710,7 +9715,25 @@ gate teaches people to disable both.
            Re-signed CRX3 version 0.3.21 retains id
            ofodhfbipljnhenjjjpbdaglkjdphoec; targeted installer/package/Python/Node CTest 4/4.
            Full Release build exit 0; full Release CTest 257/257, zero failures (866.17 seconds).
-        3. DONE. tests/unit/test_browser_extension_pure.mjs, 79 tests, registered with ctest.
+           2026-08-30 (ext 0.3.22): 12 -> 0. Decision extraction and serialized-page-function
+           tests closed ensureAttached, handleDrag, getFn, handleBox, handlePermission,
+           collectMediaNodes, selectOptionFn, handleMedia/mediaFn, handleScreenshot, occlusionAt
+           and the debugger-event listener. The shipped-worker Node suite grew 79 -> 116. It now
+           pins atomic selection, bounded page/media capture, attachment errors, permission/auth
+           origin binding, trustworthy screenshot and box geometry, fail-closed hit testing,
+           navigation invalidation and one-shot dialog answers. Six real fail-closed gaps found
+           while writing those tests were fixed: absent drag coordinates no longer become (0,0),
+           malformed viewport metrics are unknown rather than a definite out-of-view result,
+           non-finite/negative media values cannot be silently substituted, full-page capture
+           requires trustworthy scale/layout, an id-less hit test blocks as unknown, and an
+           id-less Fetch pause records the reason instead of throwing. Every new decision guard
+           was mutation-drilled separately; one surviving fractional-layout mutant exposed and
+           closed a missing test case. Re-signed CRX3 version 0.3.22 retains id
+           ofodhfbipljnhenjjjpbdaglkjdphoec. Release build exit 0; full Release CTest 262/262,
+           zero failures (622.73 seconds). The first full run exposed the JSON timestamp test
+           defect recorded under R5-G21-5; the corrected test then passed 100/100 repeat runs
+           before this clean full-suite result.
+        3. DONE. tests/unit/test_browser_extension_pure.mjs, 116 tests, registered with ctest.
 
       The harness loads background.js AS SHIPPED under a stubbed chrome rather than splitting
       the pure functions into a separate module. Extracting them would have meant changing the

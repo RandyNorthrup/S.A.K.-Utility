@@ -66,7 +66,15 @@ const EXPORTED = [
   "applyCookieScope", "applyCookieLifetime", "COOKIE_SAME_SITE",
   "downloadOptions", "downloadReply", "httpAuthCredentials", "httpAuthOriginError",
   "deviceMetricsOverride", "deviceMetricsError",
-  "waitForRequest",
+  "waitForRequest", "attachFailureMessage", "sessionPreparationFailureMessage",
+  "dragUsesSnapshot", "dragCoordinatePoint", "dragPathError", "dragTiming",
+  "getValueFn", "boxReading", "originPattern", "permissionRequest",
+  "permissionAmbientChanged", "permissionReply", "selectOptionFn",
+  "mediaCaptureBudget", "mediaNodeCandidate", "mediaRequest", "mediaFn",
+  "screenshotRequest", "screenshotData", "shotBinding", "screenshotPayload",
+  "initialOcclusion", "callShowsDescendant", "occlusionDescription",
+  "debuggerEventRoute", "authChallengeResponse", "fetchContinuation",
+  "navigationEvent", "dialogDetails", "dialogAnswer",
 ];
 
 function loadWorker() {
@@ -76,6 +84,9 @@ function loadWorker() {
     console: { log() {}, warn() {}, error() {}, debug() {} },
     setTimeout, clearTimeout, setInterval, clearInterval,
     URL, TextEncoder, TextDecoder, structuredClone,
+    Event: class Event {
+      constructor(type, options = {}) { this.type = type; this.bubbles = options.bubbles === true; }
+    },
   });
   const epilogue = `\n;globalThis.__sak_exports = { ${EXPORTED.join(", ")} };\n`;
   vm.runInContext(source + epilogue, context, { filename: workerPath });
@@ -1280,4 +1291,517 @@ test("deviceMetricsOverride reports a scale factor only when one was asked for",
     assert.equal(w.deviceMetricsOverride({ width: 800, height: 600, device_scale_factor: bad })
                   .error, "browser_emulate device_scale_factor must be a positive number.");
   }
+});
+
+// --------------------------------------------------------------------------------------
+// Debugger attachment and drag request decisions (R5-G21-9)
+// --------------------------------------------------------------------------------------
+
+test("attachFailureMessage distinguishes a competing debugger from a failed attach", () => {
+  assert.equal(
+    w.attachFailureMessage({ message: "Another debugger is already attached" }),
+    "Cannot inspect the tab: DevTools (or another debugger) is attached.");
+  assert.equal(w.attachFailureMessage({ message: "Access denied" }),
+               "Cannot attach to the tab: Access denied");
+  assert.equal(w.attachFailureMessage("transport closed"),
+               "Cannot attach to the tab: transport closed");
+});
+
+test("sessionPreparationFailureMessage preserves the failed domain reason", () => {
+  assert.equal(w.sessionPreparationFailureMessage({ message: "Network.enable refused" }),
+               "Cannot prepare the tab for control: Network.enable refused");
+  assert.equal(w.sessionPreparationFailureMessage("session closed"),
+               "Cannot prepare the tab for control: session closed");
+});
+
+test("dragUsesSnapshot requires freshness when either endpoint is a ref", () => {
+  assert.equal(w.dragUsesSnapshot({ from_x: 1, from_y: 2, to_x: 3, to_y: 4 }), false);
+  assert.equal(w.dragUsesSnapshot({ backendNodeId: 10, to_x: 3, to_y: 4 }), true);
+  assert.equal(w.dragUsesSnapshot({ from_x: 1, from_y: 2, to_backendNodeId: 20 }), true);
+  // The bridge resolves refs to numeric backend ids. A numeric-looking string is not a ref.
+  assert.equal(w.dragUsesSnapshot({ backendNodeId: "10", to_backendNodeId: "20" }), false);
+});
+
+test("dragCoordinatePoint refuses absent coordinates instead of inventing zero", () => {
+  assert.deepEqual(crossRealm(w.dragCoordinatePoint({ from_x: 12, from_y: " 34 " },
+                                                     "from_x", "from_y")),
+                   { x: 12, y: 34 });
+  for (const absent of [undefined, null, "", "   ", [], {}, true, false]) {
+    const point = w.dragCoordinatePoint({ from_x: absent, from_y: 2 }, "from_x", "from_y");
+    assert.ok(Number.isNaN(point.x), `${JSON.stringify(absent)} must not become coordinate zero`);
+    assert.ok(w.dragPathError(point, { x: 3, y: 4 }).includes("browser_drag needs a from"));
+  }
+});
+
+test("dragPathError accepts only four finite endpoint coordinates", () => {
+  assert.equal(w.dragPathError({ x: 1, y: 2 }, { x: 3, y: 4 }), "");
+  for (const bad of [NaN, Infinity, -Infinity]) {
+    assert.match(w.dragPathError({ x: bad, y: 2 }, { x: 3, y: 4 }),
+                 /browser_drag needs a from/);
+    assert.match(w.dragPathError({ x: 1, y: 2 }, { x: 3, y: bad }),
+                 /browser_drag needs a from/);
+  }
+});
+
+test("dragTiming keeps the existing bounded gesture contract", () => {
+  assert.deepEqual(crossRealm(w.dragTiming({})), { steps: 12, hold: 0 });
+  assert.deepEqual(crossRealm(w.dragTiming({ steps: 1, hold_ms: -1 })), { steps: 2, hold: 0 });
+  assert.deepEqual(crossRealm(w.dragTiming({ steps: 100, hold_ms: 9000 })),
+                   { steps: 60, hold: 5000 });
+  assert.deepEqual(crossRealm(w.dragTiming({ steps: "7", hold_ms: "125" })),
+                   { steps: 7, hold: 125 });
+});
+
+test("getValueFn caps page-controlled values and reports every cap that bit", () => {
+  // Chrome serializes this function into the page. Re-evaluate its source in a blank realm so
+  // the test fails if a future refactor accidentally gives it a worker-only closure dependency.
+  const injectedGetValue = vm.runInNewContext(`(${w.getValueFn.toString()})`);
+  const long = "x".repeat(5001);
+  const out = injectedGetValue.call({
+    tagName: "INPUT", value: long, checked: false, isContentEditable: true,
+    textContent: long, disabled: true,
+  });
+  assert.equal(out.ok, true);
+  assert.equal(out.tag, "input");
+  assert.equal(out.value.length, 5000);
+  assert.equal(out.value_truncated, true);
+  assert.equal(out.checked, false);
+  assert.equal(out.text.length, 5000);
+  assert.equal(out.text_truncated, true);
+  assert.equal(out.disabled, true);
+});
+
+test("getValueFn bounds selected options without hiding that rows were omitted", () => {
+  const injectedGetValue = vm.runInNewContext(`(${w.getValueFn.toString()})`);
+  const selectedOptions = Array.from({ length: 201 }, (_, index) => ({
+    value: `value-${index}-${"v".repeat(2100)}`,
+    text: `label-${index}-${"l".repeat(2100)}`,
+  }));
+  const out = injectedGetValue.call({ tagName: "SELECT", selectedOptions, multiple: true });
+  assert.equal(out.selected.length, 200);
+  assert.equal(out.selected_capped, true);
+  assert.equal(out.selected[0].value.length, 2048);
+  assert.equal(out.selected[0].label.length, 2048);
+  assert.equal(out.multiple, true);
+  assert.equal(out.disabled, false);
+});
+
+test("boxReading reports geometry only from trustworthy viewport measurements", () => {
+  const quad = [10.2, 20.4, 30.8, 20.4, 30.8, 40.9, 10.2, 40.9];
+  const occ = { occluded: false, unknown: false };
+  const measured = w.boxReading(
+    quad, { clientWidth: 100, clientHeight: 80 }, { ok: true, dpr: 2 }, occ);
+  assert.deepEqual(crossRealm(measured), {
+    ok: true, laid_out: true, x: 10, y: 20, width: 21, height: 21,
+    center: { x: 21, y: 31 }, in_viewport: true, dpr: 2, occluded: false,
+  });
+
+  for (const unusable of [null, {}, { clientWidth: 100 },
+                          { clientWidth: 100, clientHeight: 0 },
+                          { clientWidth: Infinity, clientHeight: 80 }]) {
+    const out = w.boxReading(quad, unusable, { ok: false }, { occluded: true, unknown: true,
+                                                              by: { tag: "dialog" } });
+    assert.equal(out.in_viewport, undefined);
+    assert.equal(out.viewport_unknown, true);
+    assert.equal(out.dpr, undefined);
+    assert.equal(out.dpr_unknown, true);
+    assert.equal(out.occluded, true);
+    assert.equal(out.occlusion_unknown, true);
+    assert.deepEqual(crossRealm(out.occluded_by), { tag: "dialog" });
+  }
+});
+
+test("boxReading distinguishes an element with no layout box", () => {
+  assert.deepEqual(crossRealm(w.boxReading(null, null, null, null)),
+                   { ok: true, laid_out: false });
+});
+
+test("originPattern permits one concrete http host and refuses widened scope", () => {
+  assert.equal(w.originPattern("https://example.com/path?q=1"), "https://example.com/*");
+  assert.equal(w.originPattern("http://localhost:8080/path"), "http://localhost:8080/*");
+  assert.equal(w.originPattern("https://[2001:db8::1]:444/a"), "https://[2001:db8::1]:444/*");
+  for (const hostile of ["https://*", "https://*.example.com", "file:///C:/x",
+                         "chrome://settings", "not a url", ""]) {
+    assert.equal(w.originPattern(hostile), null, `must refuse ${hostile}`);
+  }
+});
+
+test("permissionRequest validates the complete grant before Chrome is touched", () => {
+  assert.match(w.permissionRequest({ name: "unknown", setting: "allow",
+                                     origin: "https://example.com" }).error,
+               /name must be one of/);
+  assert.equal(w.permissionRequest({ name: "camera", setting: "sometimes",
+                                     origin: "https://example.com" }).error,
+               "browser_permission setting must be allow, block, or ask.");
+  assert.match(w.permissionRequest({ name: "camera", setting: "allow" }).error,
+               /allow needs an explicit http\(s\) origin/);
+
+  assert.deepEqual(crossRealm(w.permissionRequest({
+    name: "CAMERA", setting: "ALLOW", origin: "https://example.com/path",
+  })), {
+    name: "camera", typeKey: "camera", setting: "allow", origin: "https://example.com/path",
+  });
+  assert.deepEqual(crossRealm(w.permissionRequest({ name: "images", setting: "block" })),
+                   { name: "images", typeKey: "images", setting: "block", origin: null });
+});
+
+test("permissionAmbientChanged refuses a tab switch, navigation, or missing tab", () => {
+  const before = { id: 7, url: "https://example.com/a" };
+  const pattern = "https://example.com/*";
+  assert.equal(w.permissionAmbientChanged(before, { id: 7, url: "https://example.com/b" },
+                                           pattern), false);
+  assert.equal(w.permissionAmbientChanged(before, { id: 8, url: before.url }, pattern), true);
+  assert.equal(w.permissionAmbientChanged(before, { id: 7, url: "https://other.example/" },
+                                           pattern), true);
+  assert.equal(w.permissionAmbientChanged(before, null, pattern), true);
+});
+
+test("permissionReply echoes the normalized permission and exact pattern", () => {
+  assert.deepEqual(crossRealm(w.permissionReply(
+    { name: "camera", setting: "allow" }, "https://example.com/*")),
+    { ok: true, name: "camera", setting: "allow", pattern: "https://example.com/*" });
+});
+
+function selectFixture(options, multiple = false) {
+  const events = [];
+  const element = {
+    tagName: "SELECT", multiple, options, selectedIndex: -1,
+    dispatchEvent(event) { events.push({ type: event.type, bubbles: event.bubbles }); },
+  };
+  Object.defineProperty(element, "value", {
+    get() {
+      return this.selectedIndex >= 0 ? this.options[this.selectedIndex].value : "";
+    },
+  });
+  return { element, events };
+}
+
+function serializedSelect() {
+  const Event = class Event {
+    constructor(type, options = {}) { this.type = type; this.bubbles = options.bubbles === true; }
+  };
+  return vm.runInNewContext(`(${w.selectOptionFn.toString()})`, { Event });
+}
+
+test("selectOptionFn resolves single value, label, and index without interpolation", () => {
+  const select = serializedSelect();
+  for (const [mode, value, label, index, chosen] of [
+    ["value", "b", "", -1, 1],
+    ["label", "", "Alpha", -1, 0],
+    ["index", "", "", 1, 1],
+  ]) {
+    const { element, events } = selectFixture([
+      { value: "a", label: "A", text: "Alpha", selected: false },
+      { value: "b", label: "B", text: "Beta", selected: false },
+    ]);
+    const result = select.call(element, mode, value, label, index, []);
+    assert.equal(result.ok, true);
+    assert.equal(result.selectedIndex, chosen);
+    assert.equal(result.value, element.options[chosen].value);
+    assert.deepEqual(events, [
+      { type: "input", bubbles: true }, { type: "change", bubbles: true },
+    ]);
+  }
+});
+
+test("selectOptionFn resolves every multi value before changing any selection", () => {
+  const select = serializedSelect();
+  const { element, events } = selectFixture([
+    { value: "a", text: "Alpha", selected: true },
+    { value: "b", text: "Beta", selected: false },
+  ], true);
+  const missing = select.call(element, "values", "", "", -1, ["a", "missing"]);
+  assert.equal(missing.ok, false);
+  assert.match(missing.error, /no option matched: missing/);
+  assert.deepEqual(element.options.map((option) => option.selected), [true, false]);
+  assert.deepEqual(events, []);
+
+  const picked = select.call(element, "values", "", "", -1, ["Beta"]);
+  assert.equal(picked.ok, true);
+  assert.deepEqual(element.options.map((option) => option.selected), [false, true]);
+  assert.deepEqual(crossRealm(picked.selected), [{ value: "b", label: "Beta" }]);
+});
+
+test("selectOptionFn never treats Object prototype names as requested options", () => {
+  const select = serializedSelect();
+  const { element } = selectFixture([
+    { value: "toString", text: "constructor", selected: false },
+  ], true);
+  const result = select.call(element, "values", "", "", -1, ["different"]);
+  assert.equal(result.ok, false);
+  assert.equal(element.options[0].selected, false);
+});
+
+test("mediaCaptureBudget honors both snapshot and media ceilings", () => {
+  assert.equal(w.mediaCaptureBudget(0), 100);
+  assert.equal(w.mediaCaptureBudget(w.MAX_CAPTURE_NODES - 3), 3);
+  assert.equal(w.mediaCaptureBudget(w.MAX_CAPTURE_NODES), 0);
+  assert.equal(w.mediaCaptureBudget(w.MAX_CAPTURE_NODES + 50), 0);
+});
+
+test("mediaNodeCandidate distinguishes vanished, duplicate, and capturable nodes", () => {
+  assert.deepEqual(crossRealm(w.mediaNodeCandidate(null, new Set())),
+                   { node: null, truncated: true });
+  assert.deepEqual(crossRealm(w.mediaNodeCandidate({ node: {} }, new Set())),
+                   { node: null, truncated: false });
+  assert.deepEqual(crossRealm(w.mediaNodeCandidate(
+    { node: { backendNodeId: 7, nodeName: "VIDEO" } }, new Set([7]))),
+    { node: null, truncated: false });
+  assert.deepEqual(crossRealm(w.mediaNodeCandidate({
+    node: { backendNodeId: 8, nodeName: "VIDEO",
+            attributes: ["title", "fallback", "aria-label", "Camera"] },
+  }, new Set())), {
+    node: { role: "video", name: "Camera", depth: 0, interactable: true, visible: true,
+            backendNodeId: 8 },
+    truncated: false,
+  });
+  assert.equal(w.mediaNodeCandidate({
+    node: { backendNodeId: 9, nodeName: "AUDIO", attributes: ["title", "Song"] },
+  }, new Set()).node.name, "Song");
+});
+
+test("mediaRequest validates action and numeric value before the page is touched", () => {
+  assert.match(w.mediaRequest({ action: "unknown" }).error, /unknown media action/);
+  for (const action of ["seek", "volume", "rate"]) {
+    for (const bad of [undefined, null, "", "   ", [], {}, NaN, Infinity, -Infinity]) {
+      assert.match(w.mediaRequest({ action, value: bad }).error, /needs a finite numeric value/,
+                   `${action} must refuse ${String(bad)}`);
+    }
+  }
+  assert.match(w.mediaRequest({ action: "seek", value: -1 }).error, /zero or greater/);
+  assert.match(w.mediaRequest({ action: "volume", value: 1.1 }).error, /between 0 and 1/);
+  assert.match(w.mediaRequest({ action: "rate", value: 0 }).error, /greater than 0/);
+  assert.deepEqual(crossRealm(w.mediaRequest({ action: "VOLUME", value: "0.25" })),
+                   { action: "volume", num: 0.25 });
+  assert.deepEqual(crossRealm(w.mediaRequest({ action: "pause" })),
+                   { action: "pause", num: 0 });
+});
+
+function serializedMedia() {
+  return vm.runInNewContext(`(${w.mediaFn.toString()})`);
+}
+
+function mediaFixture(overrides = {}) {
+  return {
+    tagName: "VIDEO", paused: true, muted: false, currentTime: 0, duration: 120,
+    volume: 1, playbackRate: 1,
+    async play() { this.paused = false; },
+    pause() { this.paused = true; },
+    ...overrides,
+  };
+}
+
+test("mediaFn applies one known action and returns the state after it settles", async () => {
+  const media = serializedMedia();
+  const element = mediaFixture();
+  const played = await media.call(element, "play", 0);
+  assert.equal(played.ok, true);
+  assert.equal(played.paused, false);
+  const changed = await media.call(element, "volume", 0.4);
+  assert.equal(changed.volume, 0.4);
+  assert.equal(changed.duration, 120);
+  const unknown = await media.call(element, "explode", 0);
+  assert.equal(unknown.ok, false);
+  assert.match(unknown.error, /unknown media action/);
+});
+
+test("mediaFn reports rejected play and never fabricates a finite duration", async () => {
+  const media = serializedMedia();
+  const blocked = mediaFixture({
+    duration: Infinity,
+    async play() { throw new Error("autoplay blocked"); },
+  });
+  const result = await media.call(blocked, "play", 0);
+  assert.deepEqual(crossRealm(result), { ok: false, error: "autoplay blocked" });
+  const paused = await media.call(blocked, "pause", 0);
+  assert.equal(paused.ok, true);
+  assert.equal(paused.duration, null);
+});
+
+test("screenshotRequest leaves a viewport capture unbounded", () => {
+  assert.deepEqual(crossRealm(w.screenshotRequest({}, null, { ok: false, dpr: 1 })), {
+    fullPage: false,
+    params: { format: "png", captureBeyondViewport: false },
+    clipped: { applied: false },
+  });
+});
+
+test("screenshotRequest refuses full-page capture without trustworthy scale and dimensions", () => {
+  const metrics = { cssContentSize: { width: 1000, height: 2000 } };
+  assert.match(w.screenshotRequest({ full_page: true }, metrics, { ok: false, dpr: 1 }).error,
+               /device scale/);
+  for (const unusable of [null, {}, { cssContentSize: {} },
+                           { cssContentSize: { width: 0, height: 10 } },
+                           { cssContentSize: { width: 0.4, height: 10 } },
+                           { contentSize: { width: Infinity, height: 10 } }]) {
+    assert.match(w.screenshotRequest({ full_page: true }, unusable, { ok: true, dpr: 2 }).error,
+                 /layout metrics/, JSON.stringify(unusable));
+  }
+});
+
+test("screenshotRequest bounds the device raster and reports any clipped document", () => {
+  const result = w.screenshotRequest(
+    { full_page: true }, { cssContentSize: { width: 10000.4, height: 9000.6 } },
+    { ok: true, dpr: 2 });
+  assert.deepEqual(crossRealm(result), {
+    fullPage: true,
+    params: {
+      format: "png", captureBeyondViewport: true,
+      clip: { x: 0, y: 0, width: 8192, height: 8192, scale: 1 },
+    },
+    clipped: {
+      applied: true, content_width: 10000, content_height: 9001,
+      captured_width: 8192, captured_height: 8192,
+    },
+  });
+});
+
+test("screenshotData refuses absent and oversized image bytes", () => {
+  assert.match(w.screenshotData(null).error, /no image data/);
+  assert.match(w.screenshotData({ data: "" }).error, /no image data/);
+  assert.match(w.screenshotData({ data: "x".repeat(16 * 1024 * 1024 + 1) }).error,
+               /too large/);
+  assert.deepEqual(crossRealm(w.screenshotData({ data: "png-base64" })),
+                   { data: "png-base64" });
+});
+
+test("shotBinding exists only for a trustworthy render fingerprint", () => {
+  assert.equal(w.shotBinding(4, true, { ok: false }, 8), null);
+  assert.deepEqual(crossRealm(w.shotBinding(4, false, {
+    ok: true, dpr: 1.5, scrollX: 2, scrollY: 3, href: "https://example.com/",
+    width: 800, height: 600,
+  }, 8)), {
+    tabId: 4, fullPage: false, dpr: 1.5, scrollX: 2, scrollY: 3,
+    href: "https://example.com/", width: 800, height: 600, epoch: 8,
+  });
+});
+
+test("screenshotPayload names clipping without inventing it", () => {
+  const plain = w.screenshotPayload("data", { url: "u", title: "t" }, { applied: false });
+  assert.deepEqual(crossRealm(plain), { data: "data", mimeType: "image/png", url: "u", title: "t" });
+  const clipped = w.screenshotPayload("data", { url: "u", title: "t" }, {
+    applied: true, content_width: 100, content_height: 200,
+    captured_width: 90, captured_height: 180,
+  });
+  assert.equal(clipped.clipped, true);
+  assert.equal(clipped.content_height, 200);
+  assert.equal(clipped.captured_height, 180);
+});
+
+test("initialOcclusion fails closed when the hit test names no node", () => {
+  assert.deepEqual(crossRealm(w.initialOcclusion(null, 7)), {
+    result: { occluded: true, unknown: true, by: { tag: "", backendNodeId: null } },
+  });
+  assert.deepEqual(crossRealm(w.initialOcclusion({}, 7)), {
+    result: { occluded: true, unknown: true, by: { tag: "", backendNodeId: null } },
+  });
+  assert.deepEqual(crossRealm(w.initialOcclusion({ backendNodeId: 7 }, 7)),
+                   { result: { occluded: false } });
+  assert.deepEqual(crossRealm(w.initialOcclusion({ backendNodeId: 8 }, 7)),
+                   { hitBackendId: 8 });
+});
+
+test("callShowsDescendant trusts only an explicit true CDP result", () => {
+  assert.equal(w.callShowsDescendant({ result: { value: true } }), true);
+  for (const other of [null, {}, { result: {} }, { result: { value: 1 } },
+                       { result: { value: "true" } }]) {
+    assert.equal(w.callShowsDescendant(other), false);
+  }
+});
+
+test("occlusionDescription reports the exact blocking backend node", () => {
+  assert.deepEqual(crossRealm(w.occlusionDescription(12, { node: { nodeName: "DIALOG" } })),
+                   { occluded: true, by: { tag: "dialog", backendNodeId: 12 } });
+  assert.deepEqual(crossRealm(w.occlusionDescription(13, null)),
+                   { occluded: true, by: { tag: "", backendNodeId: 13 } });
+});
+
+test("debuggerEventRoute ignores other tabs and classifies every handled CDP event", () => {
+  assert.equal(w.debuggerEventRoute(null, 7, "Network.requestWillBeSent"), "ignore");
+  assert.equal(w.debuggerEventRoute({ tabId: 8 }, 7, "Network.requestWillBeSent"), "ignore");
+  const source = { tabId: 7 };
+  const routes = new Map([
+    ["Network.requestWillBeSent", "network_start"],
+    ["Network.loadingFinished", "network_end"],
+    ["Network.loadingFailed", "network_end"],
+    ["Fetch.authRequired", "fetch_auth"],
+    ["Fetch.requestPaused", "fetch_continue"],
+    ["Page.frameNavigated", "navigation"],
+    ["Page.navigatedWithinDocument", "navigation"],
+    ["Page.javascriptDialogOpening", "dialog"],
+  ]);
+  for (const [method, expected] of routes) {
+    assert.equal(w.debuggerEventRoute(source, 7, method), expected, method);
+  }
+  assert.equal(w.debuggerEventRoute(source, 7, "Runtime.consoleAPICalled"), "ignore");
+});
+
+test("authChallengeResponse never sends credentials across origins", () => {
+  const creds = { origin: "https://safe.example", username: "u", password: "p" };
+  assert.deepEqual(crossRealm(w.authChallengeResponse({
+    authChallenge: { origin: "https://safe.example/login" },
+  }, creds)), { response: "ProvideCredentials", username: "u", password: "p" });
+  for (const params of [null, {}, { authChallenge: { origin: "https://evil.example" } }]) {
+    assert.deepEqual(crossRealm(w.authChallengeResponse(params, creds)), { response: "Default" });
+  }
+  assert.deepEqual(crossRealm(w.authChallengeResponse({
+    authChallenge: { origin: "https://safe.example" },
+  }, null)), { response: "Default" });
+});
+
+test("fetchContinuation requires an addressable request and chooses the exact CDP method", () => {
+  for (const params of [null, {}, { requestId: "" }, { requestId: 4 }]) {
+    assert.match(w.fetchContinuation("fetch_continue", params, null).error, /requestId/);
+  }
+  assert.deepEqual(crossRealm(w.fetchContinuation(
+    "fetch_continue", { requestId: "r1" }, null)), {
+    method: "Fetch.continueRequest", params: { requestId: "r1" },
+  });
+  assert.deepEqual(crossRealm(w.fetchContinuation("fetch_auth", {
+    requestId: "r2", authChallenge: { origin: "https://safe.example" },
+  }, { origin: "https://safe.example", username: "u", password: "p" })), {
+    method: "Fetch.continueWithAuth",
+    params: { requestId: "r2", authChallengeResponse: {
+      response: "ProvideCredentials", username: "u", password: "p",
+    } },
+  });
+});
+
+test("navigationEvent distinguishes top-document, same-document, and subframe events", () => {
+  assert.deepEqual(crossRealm(w.navigationEvent(
+    "Page.frameNavigated", { frame: { id: "top" } })),
+    { navigated: true, topFrame: true });
+  assert.deepEqual(crossRealm(w.navigationEvent(
+    "Page.frameNavigated", { frame: { id: "child", parentId: "top" } })),
+    { navigated: false, topFrame: false });
+  assert.deepEqual(crossRealm(w.navigationEvent("Page.navigatedWithinDocument", {})),
+                   { navigated: true, topFrame: false });
+  assert.deepEqual(crossRealm(w.navigationEvent("other", {})),
+                   { navigated: false, topFrame: false });
+});
+
+test("dialogDetails normalizes unreadable page metadata to a dismissing type", () => {
+  assert.deepEqual(crossRealm(w.dialogDetails({
+    type: "prompt", message: "Name?", url: "https://example.com/form",
+  })), { type: "prompt", message: "Name?", frameUrl: "https://example.com/form" });
+  assert.deepEqual(crossRealm(w.dialogDetails({ type: "invented", message: 7, url: null })),
+                   { type: "unknown", message: "", frameUrl: "" });
+});
+
+test("dialogAnswer consumes only a matching active one-shot arm", () => {
+  const prompt = { type: "prompt", message: "Name?", frameUrl: "https://example.com/form" };
+  assert.deepEqual(crossRealm(w.dialogAnswer(prompt, null, false)),
+                   { answer: { accept: false }, consume: false });
+  const policy = { origin: "https://example.com", accept: true, text: "Randy" };
+  assert.deepEqual(crossRealm(w.dialogAnswer(prompt, policy, true)),
+                   { answer: { accept: true, promptText: "Randy" }, consume: true });
+  assert.deepEqual(crossRealm(w.dialogAnswer(
+    { ...prompt, frameUrl: "https://third-party.example/frame" }, policy, true)),
+    { answer: { accept: false }, consume: false });
+  assert.deepEqual(crossRealm(w.dialogAnswer(prompt, policy, false)),
+                   { answer: { accept: false }, consume: false });
+  assert.deepEqual(crossRealm(w.dialogAnswer(
+    { type: "alert", message: "hi", frameUrl: "https://example.com" },
+    { ...policy, accept: false, text: "ignored" }, true)),
+    { answer: { accept: false }, consume: true });
 });

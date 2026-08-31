@@ -24,15 +24,6 @@
 # number here was re-measured under 1.24.0; none was raised to accommodate a change.
 #
 # Format:  function@path | ccn | params | length
-(anonymous)@browser/extension/background.js          | 37 | 0 | 106
-collectMediaNodes@browser/extension/background.js    | 15 | 2 | 35
-ensureAttached@browser/extension/background.js       | 11 | 1 | 32
-getFn@browser/extension/background.js                | 11 | 0 | 27
-handleBox@browser/extension/background.js            | 15 | 2 | 38
-handleDrag@browser/extension/background.js           | 11 | 2 | 46
-handleMedia@browser/extension/background.js          | 17 | 2 | 45
-handlePermission@browser/extension/background.js     | 22 | 1 | 47
-handleScreenshot@browser/extension/background.js     | 14 | 2 | 78
-mediaFn@browser/extension/background.js              | 15 | 2 | 23
-occlusionAt@browser/extension/background.js          | 18 | 4 | 36
-selectOptionFn@browser/extension/background.js       | 26 | 5 | 56
+#
+# CLOSED 2026-08-30 (extension 0.3.22): zero rows remain. Keep this empty ratchet file wired so
+# any future JavaScript violation is rejected as new debt rather than silently re-baselined.

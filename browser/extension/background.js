@@ -612,6 +612,28 @@ async function enableSessionDomains(tabId) {
   lastNetworkActivityMs = Date.now();
 }
 
+// Pure: turn an exception-shaped value into the reason shown to the operator. Keeping this in
+// one place makes the attachment refusal testable without pretending the Chrome round-trip is
+// pure. The truthy message check deliberately matches the former inline ternaries exactly.
+function extensionErrorText(error) {
+  if (error && error.message) {
+    return String(error.message);
+  }
+  return String(error);
+}
+
+function attachFailureMessage(error) {
+  const message = extensionErrorText(error);
+  if (message.includes("Another debugger")) {
+    return "Cannot inspect the tab: DevTools (or another debugger) is attached.";
+  }
+  return "Cannot attach to the tab: " + message;
+}
+
+function sessionPreparationFailureMessage(error) {
+  return "Cannot prepare the tab for control: " + extensionErrorText(error);
+}
+
 async function ensureAttached(tabId) {
   if (attachedTabId !== tabId) {
     if (attachedTabId !== null) {
@@ -620,11 +642,7 @@ async function ensureAttached(tabId) {
     try {
       await chrome.debugger.attach({ tabId }, "1.3");
     } catch (e) {
-      const m = String(e && e.message ? e.message : e);
-      if (m.includes("Another debugger")) {
-        throw new Error("Cannot inspect the tab: DevTools (or another debugger) is attached.");
-      }
-      throw new Error("Cannot attach to the tab: " + m);
+      throw new Error(attachFailureMessage(e));
     }
     // Claim the tab only once initialization has fully succeeded. Committing attachedTabId first
     // makes a failed enable PERMANENT: every later command finds the tab already attached, skips
@@ -634,8 +652,7 @@ async function ensureAttached(tabId) {
       await enableSessionDomains(tabId);
     } catch (e) {
       await chrome.debugger.detach({ tabId }).catch(() => {});
-      throw new Error(
-        "Cannot prepare the tab for control: " + String(e && e.message ? e.message : e));
+      throw new Error(sessionPreparationFailureMessage(e));
     }
     attachedTabId = tabId;
   }
@@ -718,112 +735,149 @@ function recordFetchError(e) {
 // that default ACCEPTS. Anything unrecognized is normalized to a type that dismisses.
 const DIALOG_TYPES = new Set(["alert", "confirm", "prompt", "beforeunload"]);
 
-chrome.debugger.onEvent.addListener((source, method, params) => {
-  if (!source || source.tabId !== attachedTabId) {
-    return;
+const DEBUGGER_EVENT_ROUTES = new Map([
+  ["Network.requestWillBeSent", "network_start"],
+  ["Network.loadingFinished", "network_end"],
+  ["Network.loadingFailed", "network_end"],
+  ["Fetch.authRequired", "fetch_auth"],
+  ["Fetch.requestPaused", "fetch_continue"],
+  ["Page.frameNavigated", "navigation"],
+  ["Page.navigatedWithinDocument", "navigation"],
+  ["Page.javascriptDialogOpening", "dialog"],
+]);
+
+function debuggerEventRoute(source, currentTabId, method) {
+  if (!source || source.tabId !== currentTabId) { return "ignore"; }
+  return DEBUGGER_EVENT_ROUTES.get(method) || "ignore";
+}
+
+function authChallengeResponse(params, credentials) {
+  const challengeOrigin = params && params.authChallenge ? params.authChallenge.origin : null;
+  const matches = credentials && originsMatch(challengeOrigin, credentials.origin);
+  if (!matches) { return { response: "Default" }; }
+  return { response: "ProvideCredentials", username: credentials.username,
+    password: credentials.password };
+}
+
+function fetchContinuation(route, params, credentials) {
+  const requestId = params && params.requestId;
+  if (typeof requestId !== "string" || requestId.length === 0) {
+    return { error: "Chrome emitted a Fetch event without a usable requestId." };
   }
-  // Network-activity tracking for browser_wait_for network_idle. A request starting records its
-  // id; finishing/failing drops it. Set semantics are what make a REDIRECT harmless: the hop
-  // re-sends requestWillBeSent under the same requestId and only one completion ever arrives, so
-  // a count would keep a phantom request in flight for the life of the document. An event without
-  // an id is not recorded -- an entry nothing can ever remove would wedge idle permanently.
-  if (method === "Network.requestWillBeSent") {
-    if (params && params.requestId) { inflightRequests.add(params.requestId); }
-    lastNetworkActivityMs = Date.now();
-    return;
+  if (route === "fetch_continue") {
+    return { method: "Fetch.continueRequest", params: { requestId } };
   }
-  if (method === "Network.loadingFinished" || method === "Network.loadingFailed") {
-    if (params && params.requestId) { inflightRequests.delete(params.requestId); }
-    lastNetworkActivityMs = Date.now();
-    return;
+  if (route !== "fetch_auth") { return { error: "Unknown Fetch event route: " + route }; }
+  return { method: "Fetch.continueWithAuth", params: {
+    requestId, authChallengeResponse: authChallengeResponse(params, credentials),
+  } };
+}
+
+function navigationEvent(method, params) {
+  if (method === "Page.navigatedWithinDocument") {
+    return { navigated: true, topFrame: false };
   }
-  // HTTP-auth interception (browser_http_auth). While Fetch is enabled we MUST answer every
-  // paused request or the page wedges: an auth challenge gets the armed credentials (or the
-  // browser default when disarmed), and every other paused request is continued untouched.
-  if (method === "Fetch.authRequired") {
-    // Only hand the armed credentials to a challenge from the SAME origin they were
-    // armed for. A bare urlPattern:"*" makes Fetch pause every request, so without
-    // this an armed 401 answer would also be sent to a cross-origin subresource or a
-    // redirected challenger and silently leak the password. Every other challenger
-    // gets the browser default (native dialog / cancel).
-    const challengeOrigin =
-      params && params.authChallenge ? params.authChallenge.origin : null;
-    const originMatches =
-      httpAuthCreds && originsMatch(challengeOrigin, httpAuthCreds.origin);
-    const response = originMatches
-      ? { response: "ProvideCredentials", username: httpAuthCreds.username,
-          password: httpAuthCreds.password }
-      : { response: "Default" };
-    sendCdp(source.tabId, "Fetch.continueWithAuth",
-      { requestId: params.requestId, authChallengeResponse: response }).catch(recordFetchError);
-    return;
-  }
-  if (method === "Fetch.requestPaused") {
-    sendCdp(source.tabId, "Fetch.continueRequest", { requestId: params.requestId })
-      .catch(recordFetchError);
-    return;
-  }
-  // A navigation ends the page an armed response was meant for; drop it so an accept armed
-  // for page A cannot auto-confirm page B's first dialog. Cover both a real document swap
-  // (top-frame Page.frameNavigated) and a client-side/SPA route change
-  // (Page.navigatedWithinDocument). A beforeunload for the navigation itself fires BEFORE the
-  // commit, so an arm meant for it is still honored.
-  const topFrameNav =
-    method === "Page.frameNavigated" && params && params.frame && !params.frame.parentId;
-  if (topFrameNav || method === "Page.navigatedWithinDocument") {
-    domEpoch++;  // the document/route changed: any prior ref_index is stale
-    pendingDialogPolicy = null;
-    if (topFrameNav) {
-      // A new document: any in-flight request from the old page is moot -- reset so a request
-      // that never reported completion cannot keep network_idle from ever resolving.
-      inflightRequests.clear();
-      lastNetworkActivityMs = Date.now();
-      // Armed HTTP-auth credentials were meant for the page being left; disarm them so a
-      // navigation (or an attacker-driven redirect) cannot carry them into a new document.
-      httpAuthCreds = null;
-    }
-    // A navigation wiped the injected overlay; re-assert the control presence on the new
-    // document so the assistant's control stays visible without waiting for the next action.
-    refreshControlPresence(source.tabId);
-    return;
-  }
-  if (method !== "Page.javascriptDialogOpening") {
-    return;
-  }
+  const frame = params && params.frame;
+  const topFrame = method === "Page.frameNavigated" && !!frame && !frame.parentId;
+  return { navigated: topFrame, topFrame };
+}
+
+function dialogDetails(params) {
   const rawType = params && typeof params.type === "string" ? params.type : "";
-  const type = DIALOG_TYPES.has(rawType) ? rawType : "unknown";
-  const message = params && typeof params.message === "string" ? params.message : "";
-  const frameUrl = params && typeof params.url === "string" ? params.url : "";
-  let accept = defaultDialogAccept(type);
+  return {
+    type: DIALOG_TYPES.has(rawType) ? rawType : "unknown",
+    message: params && typeof params.message === "string" ? params.message : "",
+    frameUrl: params && typeof params.url === "string" ? params.url : "",
+  };
+}
+
+function dialogAnswer(dialog, policy, armActive) {
+  let accept = defaultDialogAccept(dialog.type);
   let promptText;
+  let consume = false;
   // An arm belongs to the document it was armed against, and to the command it was armed for.
-  // Page.javascriptDialogOpening reports the frame that opened the dialog, and a page can embed a
-  // third-party iframe -- or simply wait for the gap between tool calls -- to fire a confirm()
-  // that would otherwise consume an accept armed for the top document's next action. A dialog
-  // that matches neither gets the type default and leaves the arm in place for its own dialog.
-  if (pendingDialogPolicy && dialogArmActive &&
-      dialogSourceMatches(frameUrl, pendingDialogPolicy.origin)) {
-    accept = pendingDialogPolicy.accept;
-    promptText = pendingDialogPolicy.text;
-    pendingDialogPolicy = null;  // one-shot: never carry an armed response to a later dialog
+  // A third-party iframe -- or a dialog fired between tool calls -- cannot consume it.
+  if (policy && armActive && dialogSourceMatches(dialog.frameUrl, policy.origin)) {
+    accept = policy.accept;
+    promptText = policy.text;
+    consume = true;
   }
   const answer = { accept };
-  if (accept && typeof promptText === "string") {
-    answer.promptText = promptText;
+  if (accept && typeof promptText === "string") { answer.promptText = promptText; }
+  return { answer, consume };
+}
+
+// Network-activity tracking for browser_wait_for network_idle. Set semantics make a redirect
+// harmless: its repeated requestId still needs only one completion. An id-less event is never
+// inserted because nothing could remove it and network_idle would wedge permanently.
+function trackNetworkEvent(route, params) {
+  const requestId = params && params.requestId;
+  if (requestId && route === "network_start") { inflightRequests.add(requestId); }
+  if (requestId && route === "network_end") { inflightRequests.delete(requestId); }
+  lastNetworkActivityMs = Date.now();
+}
+
+// While Fetch is enabled every addressed pause must be answered or the page wedges. Credentials
+// go only to the origin they were armed for; all other challenges use Chrome's default response.
+function continueFetchEvent(route, source, params) {
+  const continuation = fetchContinuation(route, params, httpAuthCreds);
+  if (continuation.error) {
+    recordFetchError({ message: continuation.error });
+    return;
   }
-  // The record follows the ANSWER, never the intent. Page.handleJavaScriptDialog can reject (the
-  // dialog was already gone, the session detached mid-answer), and the page then stays PAUSED --
-  // every later command on the tab blocks to the transport deadline. Reporting that dialog as
-  // handled would hide the one fact that explains it, and the one-shot arm is already spent.
-  sendCdp(source.tabId, "Page.handleJavaScriptDialog", answer).then(
-    () => {
-      lastDialog = { type, message, accepted: accept, url: frameUrl };
-    },
-    (e) => {
-      lastDialog = { type, message, accepted: null, url: frameUrl,
-        answer_failed: String(e && e.message ? e.message : e) };
-    });
-});
+  sendCdp(source.tabId, continuation.method, continuation.params).catch(recordFetchError);
+}
+
+// A navigation ends the page an armed dialog/auth response was meant for. Same-document routes
+// stale refs and dialog arms; a top-document swap also clears old network and auth state.
+function handleNavigationEvent(source, method, params) {
+  const navigation = navigationEvent(method, params);
+  if (!navigation.navigated) { return; }
+  domEpoch++;
+  pendingDialogPolicy = null;
+  if (navigation.topFrame) {
+    inflightRequests.clear();
+    lastNetworkActivityMs = Date.now();
+    httpAuthCreds = null;
+  }
+  refreshControlPresence(source.tabId);
+}
+
+function handledDialogRecord(dialog, accepted) {
+  return { type: dialog.type, message: dialog.message, accepted, url: dialog.frameUrl };
+}
+
+function failedDialogRecord(dialog, error) {
+  const record = handledDialogRecord(dialog, null);
+  record.answer_failed = extensionErrorText(error);
+  return record;
+}
+
+function handleDialogEvent(source, params) {
+  const dialog = dialogDetails(params);
+  const decision = dialogAnswer(dialog, pendingDialogPolicy, dialogArmActive);
+  if (decision.consume) { pendingDialogPolicy = null; }
+  // The record follows the ANSWER, never intent. A rejected CDP answer leaves the page paused and
+  // is recorded as failure; the one-shot arm remains spent because replay could answer another dialog.
+  sendCdp(source.tabId, "Page.handleJavaScriptDialog", decision.answer).then(
+    () => { lastDialog = handledDialogRecord(dialog, decision.answer.accept); },
+    (error) => { lastDialog = failedDialogRecord(dialog, error); });
+}
+
+function handleDebuggerEvent(source, method, params) {
+  const route = debuggerEventRoute(source, attachedTabId, method);
+  switch (route) {
+    case "network_start":
+    case "network_end": trackNetworkEvent(route, params); return;
+    case "fetch_auth":
+    case "fetch_continue": continueFetchEvent(route, source, params); return;
+    case "navigation": handleNavigationEvent(source, method, params); return;
+    case "dialog": handleDialogEvent(source, params); return;
+    default: return;
+  }
+}
+
+chrome.debugger.onEvent.addListener(handleDebuggerEvent);
 
 // Refs are valid only on the tab the snapshot was taken from AND only against the DOM
 // generation it was captured at; refuse a ref action when either moved (a tab switch, a
@@ -1157,6 +1211,40 @@ function collectOmittedFrames(snapshot, frameTree) {
 // whatever is left of the snapshot's node budget. A cap that bit is reported, never hidden.
 const MAX_MEDIA_NODES = 100;
 
+function mediaCaptureBudget(existingLength) {
+  return Math.max(0, Math.min(MAX_MEDIA_NODES, MAX_CAPTURE_NODES - existingLength));
+}
+
+function mediaAttributes(pairs) {
+  const attrs = Object.create(null);
+  for (let i = 0; i + 1 < pairs.length; i += 2) { attrs[pairs[i]] = pairs[i + 1]; }
+  return attrs;
+}
+
+function mediaRole(nodeName) {
+  return String(nodeName || "").toLowerCase() === "video" ? "video" : "audio";
+}
+
+function mediaName(attrs, role) {
+  return attrs["aria-label"] || attrs.title || role;
+}
+
+function mediaNodeCandidate(description, have) {
+  const node = description && description.node;
+  if (!node) { return { node: null, truncated: true }; }
+  if (typeof node.backendNodeId !== "number" || have.has(node.backendNodeId)) {
+    return { node: null, truncated: false };
+  }
+  const attrs = mediaAttributes(node.attributes || []);
+  const role = mediaRole(node.nodeName);
+  const name = mediaName(attrs, role);
+  return {
+    node: { role, name, depth: 0, interactable: true, visible: true,
+            backendNodeId: node.backendNodeId },
+    truncated: false,
+  };
+}
+
 async function collectMediaNodes(tabId, existing) {
   const have = new Set(
     existing.filter((n) => typeof n.backendNodeId === "number").map((n) => n.backendNodeId));
@@ -1172,23 +1260,19 @@ async function collectMediaNodes(tabId, existing) {
   }
   const found = await sendCdp(tabId, "DOM.querySelectorAll", { nodeId: root, selector: "audio,video" });
   const all = (found && found.nodeIds) || [];
-  const budget = Math.max(0, Math.min(MAX_MEDIA_NODES, MAX_CAPTURE_NODES - existing.length));
+  const budget = mediaCaptureBudget(existing.length);
   let truncated = all.length > budget;
   for (const nodeId of all.slice(0, budget)) {
     // One element that went away between the query and the describe is a node this capture could
     // not cover -- not a failed scan. It counts as partiality, which the snapshot already reports,
     // instead of silently shortening the list.
-    const d = await sendCdp(tabId, "DOM.describeNode", { nodeId }).catch(() => null);
-    const node = d && d.node;
-    if (!node) { truncated = true; continue; }
-    if (typeof node.backendNodeId !== "number" || have.has(node.backendNodeId)) { continue; }
-    const attrs = {};
-    const a = node.attributes || [];
-    for (let i = 0; i + 1 < a.length; i += 2) { attrs[a[i]] = a[i + 1]; }
-    const role = (node.nodeName || "").toLowerCase() === "video" ? "video" : "audio";
-    const name = attrs["aria-label"] || attrs["title"] || role;
-    out.push({ role, name, depth: 0, interactable: true, visible: true, backendNodeId: node.backendNodeId });
-    have.add(node.backendNodeId);
+    const description = await sendCdp(
+      tabId, "DOM.describeNode", { nodeId }).catch(() => null);
+    const candidate = mediaNodeCandidate(description, have);
+    if (candidate.truncated) { truncated = true; }
+    if (!candidate.node) { continue; }
+    out.push(candidate.node);
+    have.add(candidate.node.backendNodeId);
   }
   return { nodes: out, truncated };
 }
@@ -1379,83 +1463,111 @@ function shotMatchesRender(shot, now) {
     now.width === shot.width && now.height === shot.height && domEpoch === shot.epoch;
 }
 
-async function handleScreenshot(tabId, args) {
-  await ensureAttached(tabId);
+function screenshotContentSize(metrics) {
+  const content = metrics && (metrics.cssContentSize || metrics.contentSize);
+  if (!content || !positiveFinite(content.width) || !positiveFinite(content.height)) {
+    return null;
+  }
+  const width = Math.round(content.width);
+  const height = Math.round(content.height);
+  return width >= 1 && height >= 1 ? { width, height } : null;
+}
+
+function fullPageScreenshot(size, dpr) {
+  const maxCssEdge = Math.max(1, Math.floor(MAX_SHOT_EDGE_PX / dpr));
+  const params = {
+    format: "png", captureBeyondViewport: true,
+    clip: { x: 0, y: 0, width: Math.min(size.width, maxCssEdge),
+      height: Math.min(size.height, maxCssEdge), scale: 1 },
+  };
+  return {
+    fullPage: true,
+    params,
+    clipped: {
+      applied: size.width > maxCssEdge || size.height > maxCssEdge,
+      content_width: size.width, content_height: size.height,
+      captured_width: params.clip.width, captured_height: params.clip.height,
+    },
+  };
+}
+
+function screenshotRequest(args, metrics, state) {
   const fullPage = !!(args && args.full_page === true);
   const params = { format: "png", captureBeyondViewport: fullPage };
+  const clipped = { applied: false };
+  if (!fullPage) { return { fullPage, params, clipped }; }
+  if (!state || !state.ok || !positiveFinite(state.dpr)) {
+    return { error: "Cannot capture the full page: the browser did not report a trustworthy " +
+      "device scale." };
+  }
+  const size = screenshotContentSize(metrics);
+  if (!size) {
+    return { error: "Cannot capture the full page: the browser did not report usable document " +
+      "layout metrics." };
+  }
+  return fullPageScreenshot(size, state.dpr);
+}
+
+function screenshotData(result) {
+  const data = result && typeof result.data === "string" ? result.data : "";
+  if (!data) { return { error: "Screenshot capture returned no image data." }; }
+  if (data.length > MAX_SHOT_BASE64) {
+    return { error: "The captured image is too large to return; capture the viewport instead " +
+      "of the full page." };
+  }
+  return { data };
+}
+
+function shotBinding(tabId, fullPage, state, epoch) {
+  if (!state || !state.ok) { return null; }
+  return {
+    tabId, fullPage, dpr: state.dpr, scrollX: state.scrollX, scrollY: state.scrollY,
+    href: state.href, width: state.width, height: state.height, epoch,
+  };
+}
+
+function screenshotPayload(data, info, clipped) {
+  const payload = { data, mimeType: "image/png", url: info.url, title: info.title };
+  if (!clipped.applied) { return payload; }
+  payload.clipped = true;
+  payload.content_width = clipped.content_width;
+  payload.content_height = clipped.content_height;
+  payload.captured_width = clipped.captured_width;
+  payload.captured_height = clipped.captured_height;
+  return payload;
+}
+
+async function handleScreenshot(tabId, args) {
+  await ensureAttached(tabId);
   const metrics = await sendCdp(tabId, "Page.getLayoutMetrics", {}).catch(() => null);
   const state = await viewportState(tabId);
-  // Bound the CSS clip so the DEVICE raster (css x dpr) stays within Skia's 16384 cap; a
-  // plain CSS clamp would let a tall page overflow the surface and fail the capture on any
-  // dpr > 1 display (Windows scaling, Retina).
-  const maxCssEdge = Math.max(1, Math.floor(MAX_SHOT_EDGE_PX / state.dpr));
-  const clipped = { applied: false };
-  if (fullPage) {
-    const content = metrics && (metrics.cssContentSize || metrics.contentSize);
-    // Without the metrics there is no document-sized clip, and the capture would silently fall
-    // back to captureBeyondViewport with no bounds -- a different image than the full page that
-    // was asked for, returned as though it were it.
-    if (!content) {
-      throw new Error(
-        "Cannot capture the full page: the browser did not report the document's layout metrics.");
-    }
-    const rawWidth = Math.round(content.width);
-    const rawHeight = Math.round(content.height);
-    params.clip = {
-      x: 0,
-      y: 0,
-      width: Math.min(rawWidth, maxCssEdge),
-      height: Math.min(rawHeight, maxCssEdge),
-      scale: 1,
-    };
-    // A document taller (or wider) than Skia's raster cap is CLIPPED, and the image then shows
-    // the top slice of a long page. Say so: the model otherwise reasons about "the full page"
-    // from a fraction of it.
-    clipped.applied = rawWidth > maxCssEdge || rawHeight > maxCssEdge;
-    clipped.content_width = rawWidth;
-    clipped.content_height = rawHeight;
-    clipped.captured_width = params.clip.width;
-    clipped.captured_height = params.clip.height;
-  }
+  // Bound the CSS clip so the DEVICE raster (css x dpr) stays within Skia's 16384 cap. Without
+  // trustworthy scale and layout metrics, a requested full-page image has no safe bound and is
+  // refused instead of silently becoming a different capture.
+  const request = screenshotRequest(args, metrics, state);
+  if (request.error) { throw new Error(request.error); }
   // Hide the control presence for the capture so it never bleeds into the image the model reads
   // or obscures page media (video/pictures); restore it right after.
   await setPresenceVisible(tabId, false);
   let res;
   try {
-    res = await sendCdp(tabId, "Page.captureScreenshot", params);
+    res = await sendCdp(tabId, "Page.captureScreenshot", request.params);
   } finally {
     await setPresenceVisible(tabId, true);
   }
-  const data = res && typeof res.data === "string" ? res.data : "";
-  if (!data) {
-    throw new Error("Screenshot capture returned no image data.");
-  }
-  if (data.length > MAX_SHOT_BASE64) {
-    throw new Error(
-      "The captured image is too large to return; capture the viewport instead of the full page.");
-  }
+  const captured = screenshotData(res);
+  if (captured.error) { throw new Error(captured.error); }
   // Bind this image to the exact render so a later browser_click_at can convert with the
   // same dpr and refuse if the tab, dpr, scroll, or document moved. Only bind when the
   // fingerprint was read successfully; otherwise leave no binding so a coordinate click
   // fails closed ("no current screenshot") rather than trusting placeholder values.
-  lastShot = state.ok
-    ? { tabId, fullPage, dpr: state.dpr, scrollX: state.scrollX, scrollY: state.scrollY,
-        href: state.href, width: state.width, height: state.height, epoch: domEpoch }
-    : null;
+  lastShot = shotBinding(tabId, request.fullPage, state, domEpoch);
   const info = await tabInfo(tabId);
   // Dimensions are read authoritatively from the PNG header on the bridge side, so they
   // reflect the real device pixels regardless of dpr/clip. What the header cannot show is that a
   // full-page capture was CUT to the raster cap -- the image looks whole -- so the document's own
   // size rides along whenever the clamp bit.
-  const payload = { data, mimeType: "image/png", url: info.url, title: info.title };
-  if (clipped.applied) {
-    payload.clipped = true;
-    payload.content_width = clipped.content_width;
-    payload.content_height = clipped.content_height;
-    payload.captured_width = clipped.captured_width;
-    payload.captured_height = clipped.captured_height;
-  }
-  return payload;
+  return screenshotPayload(captured.data, info, request.clipped);
 }
 
 // -- input: browser-level injection (the user's OS cursor is never touched) ---
@@ -1714,40 +1826,62 @@ async function leftClickAt(tabId, x, y) {
 // honours pointer-events, so a node it names over the target is a node the user's own click
 // would hit instead. A hit-test that could not be taken returns occluded with unknown:true --
 // it proves nothing, and "not occluded" would assert exactly what was never established.
+function unknownOcclusion() {
+  return { occluded: true, unknown: true, by: { tag: "", backendNodeId: null } };
+}
+
+function initialOcclusion(hit, targetBackendId) {
+  const hitBackendId = hit && hit.backendNodeId;
+  if (typeof hitBackendId !== "number") { return { result: unknownOcclusion() }; }
+  if (hitBackendId === targetBackendId) { return { result: { occluded: false } }; }
+  return { hitBackendId };
+}
+
+function callShowsDescendant(call) {
+  return !!call && !!call.result && call.result.value === true;
+}
+
+function occlusionDescription(hitBackendId, description) {
+  const node = description && description.node;
+  const tag = node ? String(node.nodeName || "").toLowerCase() : "";
+  return { occluded: true, by: { tag, backendNodeId: hitBackendId } };
+}
+
+async function hitIsWithinTarget(tabId, targetBackendId, hitBackendId) {
+  const targetObjectId = await resolveNodeObjectId(tabId, targetBackendId).catch(() => null);
+  const resolved = await sendCdp(tabId, "DOM.resolveNode",
+    { backendNodeId: hitBackendId, objectGroup: CDP_OBJECT_GROUP }).catch(() => null);
+  const hitObjectId = resolved && resolved.object && resolved.object.objectId;
+  if (!targetObjectId || !hitObjectId) { return false; }
+  const call = await sendCdp(tabId, "Runtime.callFunctionOn", {
+    objectId: targetObjectId,
+    functionDeclaration: "function(other){return this===other||this.contains(other);}",
+    arguments: [{ objectId: hitObjectId }],
+    returnByValue: true,
+  });
+  return callShowsDescendant(call);
+}
+
 async function occlusionAt(tabId, x, y, targetBackendId) {
   try {
     const hit = await sendCdp(tabId, "DOM.getNodeForLocation",
       { x: Math.round(x), y: Math.round(y), includeUserAgentShadowDOM: false });
-    const hitBackend = hit && hit.backendNodeId;
-    if (typeof hitBackend !== "number" || hitBackend === targetBackendId) {
-      return { occluded: false };
-    }
+    const initial = initialOcclusion(hit, targetBackendId);
+    if (initial.result) { return initial.result; }
+    const hitBackend = initial.hitBackendId;
     // The hit node may be a descendant of the target (e.g. clicking a button lands on its inner
     // <span>); that is not occlusion. Ask the target whether it contains the hit node.
-    const targetObj = await resolveNodeObjectId(tabId, targetBackendId).catch(() => null);
-    const hitResolved = await sendCdp(tabId, "DOM.resolveNode",
-      { backendNodeId: hitBackend, objectGroup: CDP_OBJECT_GROUP }).catch(() => null);
-    const hitObj = hitResolved && hitResolved.object && hitResolved.object.objectId;
-    if (targetObj && hitObj) {
-      const call = await sendCdp(tabId, "Runtime.callFunctionOn", {
-        objectId: targetObj,
-        functionDeclaration: "function(other){return this===other||this.contains(other);}",
-        arguments: [{ objectId: hitObj }],
-        returnByValue: true,
-      });
-      if (call && call.result && call.result.value === true) {
-        return { occluded: false };
-      }
+    if (await hitIsWithinTarget(tabId, targetBackendId, hitBackend)) {
+      return { occluded: false };
     }
-    const d = await sendCdp(tabId, "DOM.describeNode", { backendNodeId: hitBackend }).catch(() => null);
-    const node = d && d.node;
-    const tag = node ? String(node.nodeName || "").toLowerCase() : "";
-    return { occluded: true, by: { tag, backendNodeId: hitBackend } };
+    const description = await sendCdp(
+      tabId, "DOM.describeNode", { backendNodeId: hitBackend }).catch(() => null);
+    return occlusionDescription(hitBackend, description);
   } catch (_e) {
     // The hit-test is the only evidence that the click will land on the intended element.
     // Reporting "not occluded" because the test itself failed asserts exactly what could not
     // be established, so an unusable hit-test blocks the click instead of waving it through.
-    return { occluded: true, unknown: true, by: { tag: "", backendNodeId: null } };
+    return unknownOcclusion();
   }
 }
 
@@ -1788,29 +1922,40 @@ async function handleHover(tabId, args) {
 
 // Drag from a source (ref or x,y) to a target (ref or x,y) with interpolated moves so drag
 // thresholds trigger. hold_ms pauses after press (long-press pickup for sortables/kanban).
-async function handleDrag(tabId, args) {
-  await ensureAttached(tabId);
-  // Both endpoints take a ref, and this was the one ref-taking handler that never checked the
-  // snapshot. Either ref alone is enough to land the drag on a tab or a document the model
-  // never saw, so the gate is keyed on either being present -- matching the bridge, which
-  // refuses a stale-snapshot command carrying ref OR to_ref.
-  if (typeof args.backendNodeId === "number" || typeof args.to_backendNodeId === "number") {
-    requireSnapshotTab(tabId);
+function dragUsesSnapshot(args) {
+  return typeof args.backendNodeId === "number" || typeof args.to_backendNodeId === "number";
+}
+
+function dragCoordinatePoint(args, xKey, yKey) {
+  return { x: suppliedNumber(args[xKey]), y: suppliedNumber(args[yKey]) };
+}
+
+function dragPathError(from, to) {
+  if ([from.x, from.y, to.x, to.y].every(Number.isFinite)) {
+    return "";
   }
-  const from = typeof args.backendNodeId === "number"
-    ? await resolveActionPoint(tabId, args.backendNodeId)
-    : { x: Number(args.from_x), y: Number(args.from_y) };
-  const to = typeof args.to_backendNodeId === "number"
-    ? await resolveActionPoint(tabId, args.to_backendNodeId)
-    : { x: Number(args.to_x), y: Number(args.to_y) };
-  if (![from.x, from.y, to.x, to.y].every(Number.isFinite)) {
-    throw new Error("browser_drag needs a from (ref or from_x/from_y) and a to (to_ref or to_x/to_y).");
+  return "browser_drag needs a from (ref or from_x/from_y) and a to (to_ref or to_x/to_y).";
+}
+
+function dragTiming(args) {
+  return {
+    steps: Math.min(60, Math.max(2, Number(args.steps) || 12)),
+    hold: Math.min(5000, Math.max(0, Number(args.hold_ms) || 0)),
+  };
+}
+
+async function resolveDragEndpoint(tabId, args, nodeKey, xKey, yKey) {
+  if (typeof args[nodeKey] === "number") {
+    return await resolveActionPoint(tabId, args[nodeKey]);
   }
-  const steps = Math.min(60, Math.max(2, Number(args.steps) || 12));
-  const hold = Math.min(5000, Math.max(0, Number(args.hold_ms) || 0));
+  return dragCoordinatePoint(args, xKey, yKey);
+}
+
+async function runDragGesture(tabId, from, to, steps, hold) {
   await moveAgentCursor(tabId, from.x, from.y);
   await dispatchMouse(tabId, "mouseMoved", from.x, from.y, {});
-  await dispatchMouse(tabId, "mousePressed", from.x, from.y, { button: "left", buttons: 1, clickCount: 1 });
+  await dispatchMouse(
+    tabId, "mousePressed", from.x, from.y, { button: "left", buttons: 1, clickCount: 1 });
   // The button is DOWN from here. Anything that throws mid-drag would otherwise leave the page
   // holding a pressed button forever -- every later hover reads as a drag and the next click
   // completes a drag the model never asked for -- so the release always runs.
@@ -1819,7 +1964,7 @@ async function handleDrag(tabId, args) {
   let atX = from.x;
   let atY = from.y;
   try {
-    if (hold > 0) { await new Promise((r) => setTimeout(r, hold)); }
+    if (hold > 0) { await new Promise((resolve) => setTimeout(resolve, hold)); }
     for (let i = 1; i <= steps; i++) {
       const x = from.x + ((to.x - from.x) * i) / steps;
       const y = from.y + ((to.y - from.y) * i) / steps;
@@ -1829,9 +1974,31 @@ async function handleDrag(tabId, args) {
       atY = y;
     }
   } finally {
-    await dispatchMouse(tabId, "mouseReleased", atX, atY, { button: "left", buttons: 0, clickCount: 1 })
+    await dispatchMouse(
+      tabId, "mouseReleased", atX, atY, { button: "left", buttons: 0, clickCount: 1 })
       .catch(() => {});
   }
+}
+
+async function handleDrag(tabId, args) {
+  await ensureAttached(tabId);
+  // Both endpoints take a ref, and this was the one ref-taking handler that never checked the
+  // snapshot. Either ref alone is enough to land the drag on a tab or a document the model
+  // never saw, so the gate is keyed on either being present -- matching the bridge, which
+  // refuses a stale-snapshot command carrying ref OR to_ref.
+  if (dragUsesSnapshot(args)) {
+    requireSnapshotTab(tabId);
+  }
+  const from = await resolveDragEndpoint(
+    tabId, args, "backendNodeId", "from_x", "from_y");
+  const to = await resolveDragEndpoint(
+    tabId, args, "to_backendNodeId", "to_x", "to_y");
+  const pathError = dragPathError(from, to);
+  if (pathError) {
+    throw new Error(pathError);
+  }
+  const { steps, hold } = dragTiming(args);
+  await runDragGesture(tabId, from, to, steps, hold);
   return { ok: true, from: { x: Math.round(from.x), y: Math.round(from.y) }, to: { x: Math.round(to.x), y: Math.round(to.y) } };
 }
 
@@ -1939,61 +2106,79 @@ async function handleType(tabId, args) {
 // all match criteria arrive as CDP argument VALUES, never interpolated into code. It runs in the
 // PAGE, serialized by source, so it closes over nothing here -- everything it needs is a
 // parameter. Kept at module scope for that reason: nesting it would imply a closure it cannot have.
+// Multi-selection matches the requested LIST, never a keyed object: option values such as
+// "toString" and "constructor" are page-controlled and must not hit Object.prototype. It also
+// resolves every requested value before touching the control, so a missing value cannot leave a
+// half-applied selection behind while the command reports failure.
 const selectOptionFn = function (mode, value, label, index, values) {
+  function emitSelectionEvents(element) {
+    element.dispatchEvent(new Event("input", { bubbles: true }));
+    element.dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  function requestedValues(raw) {
+    var want = []; for (var i = 0; i < raw.length; i++) { want[i] = String(raw[i]); }
+    return want;
+  }
+  function requestedIndex(want, option) {
+    for (var i = 0; i < want.length; i++) {
+      if (want[i] === option.value || want[i] === option.text) { return i; } }
+    return -1;
+  }
+  function locateRequested(options, want) {
+    var hit = [], take = []; for (var k = 0; k < want.length; k++) { hit[k] = false; }
+    for (var j = 0; j < options.length; j++) {
+      var at = requestedIndex(want, options[j]);
+      if (at >= 0) { hit[at] = true; }
+      take[j] = at >= 0;
+    }
+    return { hit: hit, take: take };
+  }
+  function missingRequested(want, hit) {
+    var missing = ""; for (var k = 0; k < want.length; k++) {
+      if (!hit[k]) { missing = missing ? missing + ", " + want[k] : want[k]; }
+    }
+    return missing;
+  }
+  function applyMultiple(element, take) {
+    var picked = [];
+    for (var i = 0; i < element.options.length; i++) {
+      element.options[i].selected = take[i];
+      if (take[i]) { picked.push({ value: element.options[i].value,
+        label: element.options[i].text }); }
+    }
+    emitSelectionEvents(element);
+    return { ok: true, multiple: true, selected: picked };
+  }
+  function selectMultiple(element, rawValues) {
+    if (!element.multiple) { return { ok: false,
+      error: "the <select> is not a multiple-select; use value/label/index" }; }
+    var want = requestedValues(rawValues);
+    var located = locateRequested(element.options, want);
+    var missing = missingRequested(want, located.hit);
+    if (missing) { return { ok: false, error: "no option matched: " + missing }; }
+    return applyMultiple(element, located.take);
+  }
+  function optionMatches(kind, option, optionIndex) {
+    if (kind === "value") { return option.value === value; }
+    if (kind === "label") { return option.label === label || option.text === label; }
+    return kind === "index" && optionIndex === index;
+  }
+  function selectOne(element) {
+    var chosen = -1; for (var i = 0; i < element.options.length; i++) {
+      if (optionMatches(mode, element.options[i], i)) { chosen = i; break; }
+    }
+    if (chosen < 0) { return { ok: false, error: "no option matched" }; }
+    element.selectedIndex = chosen;
+    emitSelectionEvents(element);
+    return { ok: true, selectedIndex: chosen, value: element.value,
+      label: element.options[chosen].text };
+  }
   var el = this;
   if (!el || el.tagName !== "SELECT") {
     return { ok: false, error: "the ref is not a <select> element" };
   }
-  if (mode === "values") {
-    if (!el.multiple) {
-      return { ok: false, error: "the <select> is not a multiple-select; use value/label/index" };
-    }
-    // A keyed object literal inherits Object.prototype, so want["toString"] / want["constructor"]
-    // / want["valueOf"] read back truthy for options that were never requested -- and option
-    // values and labels are page-controlled data, so a page could have any of them selected by
-    // any call. Match against the requested list itself: only what was asked for can hit.
-    var want = [];
-    var hit = [];
-    for (var k = 0; k < values.length; k++) { want[k] = String(values[k]); hit[k] = false; }
-    // Resolve every requested value BEFORE touching the control: a value naming an option this
-    // <select> does not have was not honored, and half-applying the request would leave a
-    // selection the caller never asked for while reporting a clean success.
-    var take = [];
-    for (var j = 0; j < el.options.length; j++) {
-      var o = el.options[j];
-      var at = -1;
-      for (var w = 0; w < want.length; w++) {
-        if (want[w] === o.value || want[w] === o.text) { at = w; break; }
-      }
-      if (at >= 0) { hit[at] = true; }
-      take[j] = at >= 0;
-    }
-    var missing = "";
-    for (k = 0; k < want.length; k++) {
-      if (!hit[k]) { missing = missing ? missing + ", " + want[k] : want[k]; }
-    }
-    if (missing) { return { ok: false, error: "no option matched: " + missing }; }
-    var picked = [];
-    for (j = 0; j < el.options.length; j++) {
-      el.options[j].selected = take[j];
-      if (take[j]) { picked.push({ value: el.options[j].value, label: el.options[j].text }); }
-    }
-    el.dispatchEvent(new Event("input", { bubbles: true }));
-    el.dispatchEvent(new Event("change", { bubbles: true }));
-    return { ok: true, multiple: true, selected: picked };
-  }
-  var chosen = -1;
-  for (var i = 0; i < el.options.length; i++) {
-    var opt = el.options[i];
-    if (mode === "value" && opt.value === value) { chosen = i; break; }
-    if (mode === "label" && (opt.label === label || opt.text === label)) { chosen = i; break; }
-    if (mode === "index" && i === index) { chosen = i; break; }
-  }
-  if (chosen < 0) { return { ok: false, error: "no option matched" }; }
-  el.selectedIndex = chosen;
-  el.dispatchEvent(new Event("input", { bubbles: true }));
-  el.dispatchEvent(new Event("change", { bubbles: true }));
-  return { ok: true, selectedIndex: chosen, value: el.value, label: el.options[chosen].text };
+  if (mode === "values") { return selectMultiple(el, values); }
+  return selectOne(el);
 };
 
 // The CDP argument values for selectOptionFn: the match mode plus one slot per criterion.
@@ -2147,48 +2332,87 @@ async function handleSetValue(tabId, args) {
 
 // Control an <audio>/<video> element: play/pause/mute/unmute/seek/volume/rate. Returns the
 // resulting media state. Constant function body; the numeric argument arrives as a value.
+const MEDIA_ACTIONS = new Set(["play", "pause", "mute", "unmute", "seek", "volume", "rate"]);
+const MEDIA_VALUE_RULES = new Map([
+  ["seek", { valid: (value) => value >= 0,
+             error: "browser_media seek value must be zero or greater." }],
+  ["volume", { valid: (value) => value >= 0 && value <= 1,
+               error: "browser_media volume must be between 0 and 1." }],
+  ["rate", { valid: (value) => value > 0,
+             error: "browser_media rate must be greater than 0." }],
+]);
+
+function mediaRequest(args) {
+  const supplied = args || {};
+  const action = String(supplied.action || "").toLowerCase();
+  if (!MEDIA_ACTIONS.has(action)) {
+    return { error: "unknown media action: " + action };
+  }
+  const rule = MEDIA_VALUE_RULES.get(action);
+  if (!rule) { return { action, num: 0 }; }
+  const num = suppliedNumber(supplied.value);
+  if (!Number.isFinite(num)) {
+    return { error: "browser_media " + action + " needs a finite numeric value." };
+  }
+  if (!rule.valid(num)) { return { error: rule.error }; }
+  return { action, num };
+}
+
+async function mediaFn(action, num) {
+  function isMediaElement(candidate) {
+    return !!candidate && (candidate.tagName === "VIDEO" || candidate.tagName === "AUDIO");
+  }
+  function findAction(actions, name) {
+    for (var at = 0; at < actions.length; at++) {
+      if (actions[at][0] === name) { return actions[at][1]; }
+    }
+    return null;
+  }
+  function finiteDuration(value) {
+    return typeof value === "number" && value === value &&
+      value !== Infinity && value !== -Infinity;
+  }
+  function mediaErrorText(error) {
+    return String(error && error.message ? error.message : error);
+  }
+  var el = this;
+  if (!isMediaElement(el)) {
+    return { ok: false, error: "the ref is not an <audio> or <video> element" };
+  }
+  var actions = [
+    ["play", async function () { await el.play(); }],
+    ["pause", async function () { el.pause(); }],
+    ["mute", async function () { el.muted = true; }],
+    ["unmute", async function () { el.muted = false; }],
+    ["seek", async function () { el.currentTime = num; }],
+    ["volume", async function () { el.volume = num; }],
+    ["rate", async function () { el.playbackRate = num; }],
+  ];
+  var apply = findAction(actions, action);
+  if (!apply) { return { ok: false, error: "unknown media action: " + action }; }
+  try {
+    await apply();
+  } catch (error) {
+    return { ok: false, error: mediaErrorText(error) };
+  }
+  var duration = el.duration;
+  return {
+    ok: true, paused: el.paused, muted: el.muted, currentTime: el.currentTime,
+    duration: finiteDuration(duration) ? duration : null,
+    volume: el.volume, rate: el.playbackRate,
+  };
+}
+
 async function handleMedia(tabId, args) {
   await ensureAttached(tabId);
   requireSnapshotTab(tabId);
-  const action = String(args.action || "").toLowerCase();
-  const num = args.value !== undefined && args.value !== null && String(args.value) !== ""
-    ? Number(args.value) : NaN;
-  // A seek/volume/rate without a usable number is a request this cannot carry out. Doing nothing
-  // and answering ok:true reports an action that never happened, and the caller is left believing
-  // the media moved to a position it never went to. Checked before the page is touched at all.
-  if ((action === "seek" || action === "volume" || action === "rate") && isNaN(num)) {
-    throw new Error("browser_media " + action + " needs a numeric value.");
-  }
-  // Clamping is a silent substitution: volume 5 becomes 1 and is reported as done. The valid
-  // range is the caller's to respect.
-  if (action === "volume" && (num < 0 || num > 1)) {
-    throw new Error("browser_media volume must be between 0 and 1.");
-  }
+  const request = mediaRequest(args);
+  if (request.error) { throw new Error(request.error); }
   const objectId = await resolveNodeObjectId(tabId, args.backendNodeId);
-  const mediaFn = async function (action, num) {
-    var el = this;
-    if (!el || (el.tagName !== "VIDEO" && el.tagName !== "AUDIO")) {
-      return { ok: false, error: "the ref is not an <audio> or <video> element" };
-    }
-    try {
-      // play() is asynchronous and REJECTS when the browser refuses it (autoplay policy, no user
-      // gesture). Sampling el.paused right after the call reads the state before the refusal has
-      // landed, so a blocked play reports paused:false -- playing -- for silence.
-      if (action === "play") { await el.play(); }
-      else if (action === "pause") { el.pause(); }
-      else if (action === "mute") { el.muted = true; }
-      else if (action === "unmute") { el.muted = false; }
-      else if (action === "seek") { el.currentTime = num; }
-      else if (action === "volume") { el.volume = num; }
-      else if (action === "rate") { el.playbackRate = num; }
-      else { return { ok: false, error: "unknown media action: " + action }; }
-    } catch (e) { return { ok: false, error: String(e && e.message ? e.message : e) }; }
-    return {
-      ok: true, paused: el.paused, muted: el.muted, currentTime: el.currentTime,
-      duration: isFinite(el.duration) ? el.duration : null, volume: el.volume, rate: el.playbackRate,
-    };
-  };
-  const r = await callOnNode(tabId, objectId, mediaFn, [action, isNaN(num) ? 0 : num], true);
+  // play() is asynchronous and REJECTS when the browser refuses it (autoplay policy, no user
+  // gesture). awaitPromise keeps the reply behind that decision instead of sampling early.
+  const r = await callOnNode(
+    tabId, objectId, mediaFn, [request.action, request.num], true);
   if (!r || !r.ok) { throw new Error((r && r.error) || "browser_media failed"); }
   return r;
 }
@@ -2376,38 +2600,36 @@ async function handleWaitFor(tabId, args) {
 // text, disabled). Read-only; constant function body. Everything read here is page-controlled
 // data of unbounded size, so each string and the option list are capped -- and a cap that BIT is
 // reported, because a silently truncated value reads as the whole value to the model.
+function getValueFn() {
+  var el = this;
+  if (!el) { return { ok: false, error: "no element" }; }
+  function cap(s, n) { return s.length > n ? s.slice(0, n) : s; }
+  function capture(out, key, raw, limit) {
+    var text = String(raw);
+    out[key] = cap(text, limit);
+    if (text.length > limit) { out[key + "_truncated"] = true; }
+  }
+  var out = { ok: true, tag: String(el.tagName || "").toLowerCase() };
+  if ("value" in el) { capture(out, "value", el.value, 5000); }
+  if (typeof el.checked === "boolean") { out.checked = el.checked; }
+  if (el.tagName === "SELECT") {
+    out.multiple = !!el.multiple;
+    var picked = el.selectedOptions || [];
+    out.selected = Array.prototype.slice.call(picked, 0, 200).map(function (option) {
+      return { value: cap(String(option.value), 2048), label: cap(String(option.text), 2048) };
+    });
+    out.selected_capped = picked.length > 200;
+  }
+  if (el.isContentEditable) { capture(out, "text", el.textContent || "", 5000); }
+  out.disabled = !!el.disabled;
+  return out;
+}
+
 async function handleGetValue(tabId, args) {
   await ensureAttached(tabId);
   requireSnapshotTab(tabId);
   const objectId = await resolveNodeObjectId(tabId, args.backendNodeId);
-  const getFn = function () {
-    var el = this;
-    if (!el) { return { ok: false, error: "no element" }; }
-    var cap = function (s, n) { return s.length > n ? s.slice(0, n) : s; };
-    var out = { ok: true, tag: String(el.tagName || "").toLowerCase() };
-    if ("value" in el) {
-      var v = String(el.value);
-      out.value = cap(v, 5000);
-      if (v.length > 5000) { out.value_truncated = true; }
-    }
-    if (typeof el.checked === "boolean") { out.checked = el.checked; }
-    if (el.tagName === "SELECT") {
-      out.multiple = !!el.multiple;
-      var picked = el.selectedOptions || [];
-      out.selected = Array.prototype.slice.call(picked, 0, 200).map(function (o) {
-        return { value: cap(String(o.value), 2048), label: cap(String(o.text), 2048) };
-      });
-      out.selected_capped = picked.length > 200;
-    }
-    if (el.isContentEditable) {
-      var t = String(el.textContent || "");
-      out.text = cap(t, 5000);
-      if (t.length > 5000) { out.text_truncated = true; }
-    }
-    out.disabled = !!el.disabled;
-    return out;
-  };
-  const r = await callOnNode(tabId, objectId, getFn, []);
+  const r = await callOnNode(tabId, objectId, getValueFn, []);
   if (!r || !r.ok) { throw new Error((r && r.error) || "browser_get_value failed"); }
   return r;
 }
@@ -2475,14 +2697,57 @@ async function boxModelQuad(tabId, backendNodeId) {
   return quad && quad.length >= 8 ? quad : null;
 }
 
-// The axis-aligned CSS-pixel rectangle a CDP content quad covers.
-function quadRect(quad) {
+function quadExtents(quad) {
   const xs = [quad[0], quad[2], quad[4], quad[6]];
   const ys = [quad[1], quad[3], quad[5], quad[7]];
   const left = Math.min.apply(null, xs), top = Math.min.apply(null, ys);
   const right = Math.max.apply(null, xs), bottom = Math.max.apply(null, ys);
+  return { left, top, right, bottom };
+}
+
+// The axis-aligned CSS-pixel rectangle a CDP content quad covers.
+function quadRect(quad) {
+  const { left, top, right, bottom } = quadExtents(quad);
   return { x: Math.round(left), y: Math.round(top),
            width: Math.round(right - left), height: Math.round(bottom - top) };
+}
+
+// Pure: merge the independently-read layout, viewport, scale and occlusion facts. A malformed
+// Page.getLayoutMetrics reply is UNKNOWN, not a definite claim that the element is outside the
+// viewport. The old `clientWidth || 0` path mislabeled that read failure as in_viewport:false.
+function boxViewport(extents, view) {
+  if (!view || !positiveFinite(view.clientWidth) || !positiveFinite(view.clientHeight)) {
+    return { viewport_unknown: true };
+  }
+  return {
+    in_viewport: extents.left >= 0 && extents.top >= 0 &&
+      extents.right <= view.clientWidth && extents.bottom <= view.clientHeight,
+  };
+}
+
+function boxScale(viewport) {
+  return viewport && viewport.ok ? { dpr: viewport.dpr } : { dpr_unknown: true };
+}
+
+function boxOcclusion(occlusion) {
+  const occ = occlusion || { occluded: false, unknown: true };
+  const result = { occluded: !!occ.occluded };
+  if (occ.unknown) { result.occlusion_unknown = true; }
+  if (occ.occluded) { result.occluded_by = occ.by; }
+  return result;
+}
+
+function boxReading(quad, view, viewport, occlusion) {
+  if (!quad) { return { ok: true, laid_out: false }; }
+  const extents = quadExtents(quad);
+  const center = quadCenter(quad);
+  return {
+    ok: true, laid_out: true, ...quadRect(quad),
+    center: { x: Math.round(center.x), y: Math.round(center.y) },
+    ...boxViewport(extents, view),
+    ...boxScale(viewport),
+    ...boxOcclusion(occlusion),
+  };
 }
 
 // Report a ref's geometry, whether it is inside the viewport, and whether an overlay covers its
@@ -2496,35 +2761,12 @@ async function handleBox(tabId, args) {
   }
   const quad = await boxModelQuad(tabId, args.backendNodeId);
   if (!quad) { return { ok: true, laid_out: false }; }
-  const xs = [quad[0], quad[2], quad[4], quad[6]];
-  const ys = [quad[1], quad[3], quad[5], quad[7]];
-  const left = Math.min.apply(null, xs), top = Math.min.apply(null, ys);
-  const right = Math.max.apply(null, xs), bottom = Math.max.apply(null, ys);
   const center = quadCenter(quad);
-  const out = {
-    ok: true, laid_out: true,
-    x: Math.round(left), y: Math.round(top),
-    width: Math.round(right - left), height: Math.round(bottom - top),
-    center: { x: Math.round(center.x), y: Math.round(center.y) },
-  };
   const vp = await viewportState(tabId);
   const metrics = await sendCdp(tabId, "Page.getLayoutMetrics", {}).catch(() => null);
   const view = metrics && (metrics.cssVisualViewport || metrics.visualViewport);
-  if (view) {
-    const vw = view.clientWidth || 0, vh = view.clientHeight || 0;
-    out.in_viewport = left >= 0 && top >= 0 && right <= vw && bottom <= vh;
-  } else {
-    out.viewport_unknown = true;
-  }
-  // viewportState's contract: a failed read returns placeholders behind ok:false, so the dpr is
-  // only a real measurement when ok. Emitting the placeholder 1 would state a scale factor the
-  // page never reported, which a caller converting device pixels would act on.
-  if (vp.ok) { out.dpr = vp.dpr; } else { out.dpr_unknown = true; }
   const occ = await occlusionAt(tabId, center.x, center.y, args.backendNodeId);
-  out.occluded = occ.occluded;
-  if (occ.unknown) { out.occlusion_unknown = true; }
-  if (occ.occluded) { out.occluded_by = occ.by; }
-  return out;
+  return boxReading(quad, view, vp, occ);
 }
 
 // Focus a ref (fires the page's focus events, like a real tab-into). Pointer-adjacent and
@@ -3548,52 +3790,76 @@ function originPattern(origin) {
   return parsed.protocol + "//" + parsed.host + "/*";
 }
 
-async function handlePermission(args) {
-  const typeKey = PERMISSION_TYPES[String((args && args.name) || "").toLowerCase()];
+function permissionRequest(args) {
+  const supplied = args || {};
+  const name = String(supplied.name || "").toLowerCase();
+  const typeKey = PERMISSION_TYPES[name];
   if (!typeKey) {
-    throw new Error(
-      "browser_permission name must be one of: " + Object.keys(PERMISSION_TYPES).join(", ") + ".");
+    return {
+      error: "browser_permission name must be one of: " +
+        Object.keys(PERMISSION_TYPES).join(", ") + ".",
+    };
   }
-  const setting = String((args && args.setting) || "").toLowerCase();
+  const setting = String(supplied.setting || "").toLowerCase();
   if (!PERMISSION_SETTINGS.includes(setting)) {
-    throw new Error("browser_permission setting must be allow, block, or ask.");
+    return { error: "browser_permission setting must be allow, block, or ask." };
   }
-  let origin = args && args.origin ? String(args.origin) : null;
+  const origin = supplied.origin ? String(supplied.origin) : null;
+  if (!origin && setting === "allow") {
+    return {
+      error: "browser_permission allow needs an explicit http(s) origin, so the site being " +
+        "granted the permission is named in the request.",
+    };
+  }
+  return { name, typeKey, setting, origin };
+}
+
+function permissionAmbientChanged(before, now, pattern) {
+  return !now || now.id !== before.id || originPattern(now.url || "") !== pattern;
+}
+
+function permissionReply(request, pattern) {
+  return { ok: true, name: request.name, setting: request.setting, pattern };
+}
+
+async function resolvePermissionTarget(request) {
+  if (request.origin) {
+    return { origin: request.origin, ambientTab: null };
+  }
+  const ambientTab = await activeTab();
+  const origin = ambientTab && ambientTab.url ? ambientTab.url : null;
+  return { origin, ambientTab };
+}
+
+async function handlePermission(args) {
+  const request = permissionRequest(args);
+  if (request.error) { throw new Error(request.error); }
   // A grant is persistent, origin-scoped, and outlives the session, and the human approves the
   // ARGUMENTS -- with the origin omitted nobody in the chain can see which site is being handed
   // the camera. Only the restrictive settings may name the site by "whatever is in front of us".
-  if (!origin && setting === "allow") {
-    throw new Error(
-      "browser_permission allow needs an explicit http(s) origin, so the site being granted the " +
-        "permission is named in the request.");
-  }
-  let ambientTab = null;
-  if (!origin) {
-    ambientTab = await activeTab();
-    origin = ambientTab && ambientTab.url ? ambientTab.url : null;
-  }
+  const { origin, ambientTab } = await resolvePermissionTarget(request);
   const pattern = origin ? originPattern(origin) : null;
   if (!pattern) {
     throw new Error("browser_permission needs a valid http(s) origin (or an active http(s) tab).");
   }
-  const store = chrome.contentSettings[typeKey];
+  const store = chrome.contentSettings[request.typeKey];
   if (!store || typeof store.set !== "function") {
-    throw new Error("This browser cannot set the '" + args.name + "' permission.");
+    throw new Error("This browser cannot set the '" + request.name + "' permission.");
   }
   // The ambient origin was read before the store lookup; a tab switch or a navigation in between
   // would redirect the setting to a site nobody named. Prove the same tab still shows the same
   // origin immediately before the write.
   if (ambientTab !== null) {
     const now = await activeTab();
-    if (now.id !== ambientTab.id || originPattern(now.url || "") !== pattern) {
+    if (permissionAmbientChanged(ambientTab, now, pattern)) {
       throw new Error(
         "The active tab changed while applying the permission; name the origin explicitly.");
     }
   }
   // set() rejects when a setting does not apply to a type (e.g. 'ask' on images); that error
   // surfaces honestly to the caller rather than being swallowed.
-  await store.set({ primaryPattern: pattern, setting });
-  return { ok: true, name: String(args.name).toLowerCase(), setting, pattern };
+  await store.set({ primaryPattern: pattern, setting: request.setting });
+  return permissionReply(request, pattern);
 }
 
 // -- web storage (localStorage / sessionStorage) -----------------------------

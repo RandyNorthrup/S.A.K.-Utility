@@ -616,7 +616,24 @@ void NetworkDiagnosticReportTests::generateJson_writesValidJsonAndEmitsSignal() 
     const QJsonDocument doc = QJsonDocument::fromJson(bytes, &err);
     QCOMPARE(err.error, QJsonParseError::NoError);
     QVERIFY(!doc.isNull());
-    QCOMPARE(QString::fromUtf8(bytes).remove(QLatin1Char('\r')), gen.toJson());
+
+    // generateJson() and this expected-value read each call currentDateTime() with one-second
+    // precision. A run crossing that boundary compared correct output at second N with correct
+    // output at second N+1 and failed nondeterministically (reproduced under CTest --repeat).
+    // Require the moving field to exist in the written report, then compare every stable field.
+    QJsonObject actual = doc.object();
+    const QString generated = actual.value(QStringLiteral("generated")).toString();
+    static const QRegularExpression isoSecond(
+        QStringLiteral(R"(^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}$)"));
+    QVERIFY2(isoSecond.match(generated).hasMatch(),
+             "written JSON has no valid generated timestamp");
+
+    QJsonParseError expectedError{};
+    QJsonObject expected = QJsonDocument::fromJson(gen.toJson().toUtf8(), &expectedError).object();
+    QCOMPARE(expectedError.error, QJsonParseError::NoError);
+    actual.remove(QStringLiteral("generated"));
+    expected.remove(QStringLiteral("generated"));
+    QCOMPARE(QJsonDocument(actual).toJson(), QJsonDocument(expected).toJson());
 }
 
 QTEST_GUILESS_MAIN(NetworkDiagnosticReportTests)
