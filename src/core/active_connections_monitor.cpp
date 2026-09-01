@@ -82,6 +82,10 @@ ActiveConnectionsMonitor::~ActiveConnectionsMonitor() {
     stopMonitoring();
 }
 
+void ActiveConnectionsMonitor::startMonitoring() {
+    startMonitoring(MonitorConfig{});
+}
+
 void ActiveConnectionsMonitor::startMonitoring(const MonitorConfig& config) {
     stopMonitoring();
     m_config = config;

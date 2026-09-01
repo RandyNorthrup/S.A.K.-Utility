@@ -4929,7 +4929,7 @@ private Q_SLOTS:
             }
             QVERIFY2(staleRow >= 0, "offline favorite row not rendered");
 
-            QTimer::singleShot(0, [&panel]() {
+            QTimer::singleShot(0, []() {
                 auto* menu = qobject_cast<QMenu*>(QApplication::activePopupWidget());
                 if (!menu) {
                     return;

@@ -1093,6 +1093,26 @@ a parked design, per the bucket convention. Open work is what remains after thos
   WAVE 8 FINAL GATE: all changed-file hooks and two-pass whole-tree cppcheck passed with 183/186
   checkers, zero normal findings, and zero stale inline suppressions. Release build exit 0; full
   CTest 267/267, zero failures, 1027.78 seconds.
+  COVERAGE SILENCE WAVE 9, 2026-08-31: `unused-lambda-capture` and `unused-parameter` are active.
+  The former revealed one unused test capture and zero tool-limit cases; the capture is removed.
+  The latter was stale: zero findings across 558 first-party plus 264 generated TUs. Both CMake
+  flags and their explanatory text are deleted. Build-system lint now rejects their return and
+  the already-removed trigraph flag; planting `-Wno-unused-parameter` made the gate red, and
+  deleting the probe restored green. The refreshed coverage compile database contains zero of
+  those forbidden flags.
+  FULL COVERAGE REBUILD: rebuilding every clang-cl coverage target under `/WX` exposed two
+  unrelated cross-compiler defects that stale objects had hidden. Generated MOC rejected a nested
+  `MonitorConfig` default argument, so `ActiveConnectionsMonitor` now has explicit default/config
+  overloads. `test_quick_action` named its own derived class in three protected-member using
+  declarations; they now correctly name `QuickAction`. The complete coverage tree then built with
+  exit 0, and instrumented `test_file_management_explorer_panel`, `test_quick_action`, and
+  `test_active_connections_monitor` passed 3/3. Five coverage-only warning flags remain open:
+  driver-only unused command arguments, both missing-field classes, unused variables, and unused
+  functions. Current exact unused-variable/function probes were interrupted for authoritative
+  build resources and produced no count; they remain open rather than being inferred clean.
+  WAVE 9 FINAL GATE: changed-file hooks and two-pass whole-tree cppcheck passed with 183/186
+  checkers, zero normal findings, and zero stale inline suppressions. Release build exit 0; full
+  CTest 267/267, zero failures, 899.26 seconds.
   OWNER RULE NOW RECORDED IN `AGENTS.md`: fix code, test, tool, or gate first; suppression is the
   last resort only after no direct fix is possible and the exact reason is proven. Existing
   suppressions are re-audited, not inherited as permanent policy. Current batch: all pre-commit

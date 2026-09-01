@@ -17,9 +17,9 @@ public:
     using QuickAction::QuickAction;
 
     // Expose protected static methods for testing
-    using StubAction::formatFileSize;
-    using StubAction::formatLogBox;
-    using StubAction::sanitizePathForBackup;
+    using QuickAction::formatFileSize;
+    using QuickAction::formatLogBox;
+    using QuickAction::sanitizePathForBackup;
 
     // Expose the protected cancellation flag so cancel() can be asserted on
     // instead of merely called.

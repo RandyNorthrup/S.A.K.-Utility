@@ -45,7 +45,8 @@ public:
     ActiveConnectionsMonitor& operator=(ActiveConnectionsMonitor&&) = delete;
 
     /// @brief Start periodic monitoring
-    void startMonitoring(const MonitorConfig& config = {});
+    void startMonitoring();
+    void startMonitoring(const MonitorConfig& config);
 
     /// @brief Stop monitoring
     void stopMonitoring();

@@ -18,6 +18,11 @@ $cmakeFiles += Get-ChildItem -Path (Join-Path $root "cmake") -Filter "*.cmake" -
 # comment (a "#" before the "if" on the line means it is documentation, which is how
 # the removed anti-patterns are memorialized).
 $pattern = '^\s*if\s*\(\s*CMAKE_BUILD_TYPE\s+STREQUAL'
+$forbiddenWarningSilences = @(
+    "-Wno-trigraphs",
+    "-Wno-unused-lambda-capture",
+    "-Wno-unused-parameter"
+)
 $violations = @()
 foreach ($f in ($cmakeFiles | Sort-Object FullName -Unique)) {
     $lineNo = 0
@@ -26,6 +31,16 @@ foreach ($f in ($cmakeFiles | Sort-Object FullName -Unique)) {
         if ($line -match $pattern) {
             $rel = $f.FullName.Substring($root.Length).TrimStart('\', '/')
             $violations += "${rel}:${lineNo}: $($line.Trim())"
+        }
+        if ($line.TrimStart().StartsWith("#")) {
+            continue
+        }
+        foreach ($silence in $forbiddenWarningSilences) {
+            if ($line.Contains($silence)) {
+                $rel = $f.FullName.Substring($root.Length).TrimStart('\', '/')
+                $violations += ("${rel}:${lineNo}: forbidden coverage warning silence " +
+                                "'$silence'; fix the diagnostic instead")
+            }
         }
     }
 }
@@ -69,6 +84,7 @@ if ($violations.Count -gt 0) {
     exit 1
 }
 
-Write-Host ("Build-system lint passed: no dead CMAKE_BUILD_TYPE guards and analyzer setup " +
-           "precedes target creation ($($cmakeFiles.Count) CMake files).")
+Write-Host ("Build-system lint passed: no dead CMAKE_BUILD_TYPE guards, no forbidden coverage " +
+           "warning silences, and analyzer setup precedes target creation " +
+           "($($cmakeFiles.Count) CMake files).")
 exit 0

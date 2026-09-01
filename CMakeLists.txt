@@ -229,16 +229,14 @@ if(ENABLE_COVERAGE)
     # Everything else stays an error, so this does not turn the coverage build into a warning-free
     # fiction. Linting is the MSVC build's job and is unaffected.
     add_compile_options(-Wno-missing-designated-field-initializers)
-    #   * missing-field-initializers / unused-variable / unused-function / unused-parameter /
-    #     unused-lambda-capture: clang diagnoses these where MSVC does not. They are
+    #   * missing-field-initializers / unused-variable / unused-function: clang diagnoses these
+    #     where MSVC does not. They are
     #     style differences between two compilers, not defects in code that MSVC builds warning
     #     free under /W4 /WX every commit.
     add_compile_options(
         -Wno-missing-field-initializers
         -Wno-unused-variable
-        -Wno-unused-function
-        -Wno-unused-parameter
-        -Wno-unused-lambda-capture)
+        -Wno-unused-function)
     set(SAK_COVERAGE_STATE "ENABLED (source-based, all configurations)")
     message(STATUS "Branch coverage:    ${SAK_COVERAGE_STATE}")
 endif()
