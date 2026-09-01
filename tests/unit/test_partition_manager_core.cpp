@@ -9,6 +9,7 @@
 #include "sak/apfs_keybag.h"
 #include "sak/apfs_lzbitmap.h"
 #include "sak/apfs_resource_fork.h"
+#include "sak/elevation_broker.h"
 #include "sak/file_recovery_engine.h"
 #include "sak/partition_apfs_file_system_reader.h"
 #include "sak/partition_apfs_writer.h"
@@ -37,6 +38,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QPointer>
 #include <QRandomGenerator>
 #include <QSet>
 #include <QTemporaryDir>
@@ -44,6 +46,7 @@
 #include <QtTest/QtTest>
 
 #include <algorithm>
+#include <stdexcept>
 #include <tuple>
 #include <type_traits>
 
@@ -1600,6 +1603,7 @@ private Q_SLOTS:
     void apfsWriter_blocksOversizedGeneratedContainers();
     void apfsWriter_preflightFailsClosedUntilCertified();
     void partitionExecutor_honorsPreDispatchCancel();
+    void partitionExecutor_exceptionClearsOwnedBroker();
     void apfsWriter_inPlaceCheckpointCommitAdvancesTransaction();
     void apfsWriter_checkpointDataRingWrapsOnRepeatedCommit();
     void apfsWriter_streamedFileWriteMatchesInMemoryByteForByte();
@@ -8358,6 +8362,35 @@ void PartitionManagerCoreTests::partitionExecutor_honorsPreDispatchCancel() {
     QVERIFY(result.cancelled);
     QVERIFY(!result.success);
     QVERIFY(result.steps.isEmpty());  // returned before any operation ran
+}
+
+void PartitionManagerCoreTests::partitionExecutor_exceptionClearsOwnedBroker() {
+    PartitionExecutor executor;
+    QPointer<ElevationBroker> observed_broker;
+    executor.m_active_broker_registered_for_testing =
+        [&observed_broker](const std::shared_ptr<ElevationBroker>& broker) {
+            observed_broker = broker.get();
+            throw std::runtime_error("post-registration lifetime drill");
+        };
+
+    PartitionOperation operation;
+    operation.id = QStringLiteral("owned-broker-drill");
+    operation.summary = QStringLiteral("owned broker exception drill");
+    PartitionScript script;
+    script.script = QStringLiteral("Write-Output 'not reached'");
+
+    bool threw = false;
+    try {
+        std::ignore = executor.executeElevatedScript(operation, script);
+    } catch (const std::runtime_error& error) {
+        QCOMPARE(QString::fromUtf8(error.what()),
+                 QStringLiteral("post-registration lifetime drill"));
+        threw = true;
+    }
+    QVERIFY(threw);
+    QVERIFY(executor.m_active_broker == nullptr);
+    QVERIFY(observed_broker.isNull());
+    executor.cancel();
 }
 
 void PartitionManagerCoreTests::apfsWriter_inPlaceCheckpointCommitAdvancesTransaction() {

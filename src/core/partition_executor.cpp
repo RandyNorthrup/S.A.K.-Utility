@@ -12,6 +12,7 @@
 
 #include <QDir>
 #include <QJsonObject>
+#include <QScopeGuard>
 #include <QTemporaryFile>
 #include <QUuid>
 
@@ -240,15 +241,19 @@ PartitionExecutionStep PartitionExecutor::executeElevatedScript(const PartitionO
         step.error_message = credentials.error();
         return step;
     }
-    ElevationBroker broker;
-    connect(&broker, &ElevationBroker::progressUpdated, this, &PartitionExecutor::progressUpdated);
-    setActiveBroker(&broker);
+    const auto broker = std::make_shared<ElevationBroker>();
+    connect(
+        broker.get(), &ElevationBroker::progressUpdated, this, &PartitionExecutor::progressUpdated);
+    const auto clear_broker = qScopeGuard([this, broker]() { clearActiveBroker(broker); });
+    setActiveBroker(broker);
+    if (m_active_broker_registered_for_testing) {
+        m_active_broker_registered_for_testing(broker);
+    }
     if (m_cancelled.load(std::memory_order_relaxed)) {
         // A cancel that raced in before the broker was registered would have found
         // m_active_broker null and been unable to stop this task. Now that the broker is
         // registered, re-check so a cancelled batch never launches the elevated
         // (destructive) task through the gap.
-        setActiveBroker(nullptr);
         step.error_message = QStringLiteral("Command cancelled");
         return step;
     }
@@ -258,8 +263,7 @@ PartitionExecutionStep PartitionExecutor::executeElevatedScript(const PartitionO
                                                           kDefaultPartitionTaskTimeoutSeconds);
     payload[QStringLiteral("max_output_bytes")] = kMaxPartitionTaskOutputBytes;
     const auto elevated =
-        broker.executeTask(QStringLiteral("RunPowerShell"), operation.summary, payload);
-    setActiveBroker(nullptr);
+        broker->executeTask(QStringLiteral("RunPowerShell"), operation.summary, payload);
     if (!elevated) {
         step.error_message = QStringLiteral("Elevation helper failed");
         return step;
@@ -310,13 +314,16 @@ PartitionExecutionStep PartitionExecutor::executeLocalScript(const PartitionOper
     return step;
 }
 
-void PartitionExecutor::setActiveBroker(ElevationBroker* broker) {
+void PartitionExecutor::setActiveBroker(std::shared_ptr<ElevationBroker> broker) {
     const std::lock_guard<std::mutex> lock(m_active_broker_mutex);
-    // Stores a borrowed pointer by design: every caller that passes a local
-    // ElevationBroker clears it with setActiveBroker(nullptr) before that broker is
-    // destroyed, so m_active_broker never dangles.
-    // cppcheck-suppress danglingLifetime
-    m_active_broker = broker;
+    m_active_broker = std::move(broker);
+}
+
+void PartitionExecutor::clearActiveBroker(const std::shared_ptr<ElevationBroker>& broker) {
+    const std::lock_guard<std::mutex> lock(m_active_broker_mutex);
+    if (m_active_broker == broker) {
+        m_active_broker.reset();
+    }
 }
 
 }  // namespace sak

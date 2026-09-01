@@ -1042,10 +1042,9 @@ a parked design, per the bucket convention. Open work is what remains after thos
   All changed-file hooks and the two-pass whole-tree gate pass with 183/186 checkers, zero normal
   findings, and zero stale inline suppressions. Release build exit 0; full CTest 267/267, zero
   failures, 744.35 seconds.
-  INLINE SUPPRESSION NECESSITY AUDIT: 22 markers remain after all nine safe structural removals.
-  Twenty-one are currently proven analyzer limitations. The final marker exposes
-  a larger exception-unwind lifetime weakness in PartitionExecutor and needs owned active-broker
-  state, not comment deletion. It remains open rather than being accepted as permanent policy.
+  INLINE SUPPRESSION NECESSITY AUDIT: 21 markers remain after all nine safe structural removals
+  and the PartitionExecutor lifetime repair below. All 21 are currently reveal-proven analyzer
+  limitations; none is carried merely because it already existed.
   CPPCHECK SUPPRESSION WAVE 6, 2026-08-31: 20 more `useStlAlgorithm` findings are fixed through
   equivalent find/any/count algorithms across two production files and six test suites. The
   whole-tree reveal fell 315 -> 295 (236 production, 59 tests). Three individually suppressed
@@ -1078,6 +1077,22 @@ a parked design, per the bucket convention. Open work is what remains after thos
   WAVE 7 FINAL GATE: all changed-file hooks and two-pass whole-tree cppcheck passed with 183/186
   checkers, zero normal findings, and zero stale inline suppressions. Release build exit 0; full
   CTest 267/267, zero failures, 902.64 seconds.
+  CPPCHECK SUPPRESSION WAVE 8, 2026-08-31: the PartitionExecutor `danglingLifetime` marker hid a
+  real exception-unwind use-after-free. An exception after publishing a stack ElevationBroker
+  skipped both manual clears, destroyed the broker, and left `cancel()` a dangling pointer. The
+  active broker is now shared owned state, conditionally cleared by a scope guard so an older run
+  cannot clear a newer broker. Cancellation retains its mutex through `cancelCurrentTask()`, and
+  final destruction remains on the execution thread. A friend-only post-registration hook drives
+  the exact exception window. Disabling the scope guard built successfully but made the focused
+  test red; restoring it made the focused test and full Partition Manager core CTest green.
+  Inline markers fell 22 -> 21; every remaining marker is currently a proven analyzer limitation.
+  COVERAGE SILENCE AUDIT CONTINUES: re-enabling `unused-lambda-capture` over all 558 first-party
+  coverage TUs found exactly one removable test capture and zero tool-limit cases. Re-enabling
+  `unused-parameter` over 558 first-party plus 264 generated TUs found zero diagnostics, so that
+  suppression is stale. Both are ready for direct removal in the next coverage-tree batch.
+  WAVE 8 FINAL GATE: all changed-file hooks and two-pass whole-tree cppcheck passed with 183/186
+  checkers, zero normal findings, and zero stale inline suppressions. Release build exit 0; full
+  CTest 267/267, zero failures, 1027.78 seconds.
   OWNER RULE NOW RECORDED IN `AGENTS.md`: fix code, test, tool, or gate first; suppression is the
   last resort only after no direct fix is possible and the exact reason is proven. Existing
   suppressions are re-audited, not inherited as permanent policy. Current batch: all pre-commit

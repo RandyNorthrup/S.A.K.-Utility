@@ -12,7 +12,11 @@
 #include <QObject>
 
 #include <atomic>
+#include <functional>
+#include <memory>
 #include <mutex>
+
+class PartitionManagerCoreTests;
 
 namespace sak {
 
@@ -34,10 +38,14 @@ Q_SIGNALS:
     void logMessage(const QString& message);
 
 private:
+    friend class ::PartitionManagerCoreTests;
+
     PartitionScriptBuilder m_script_builder;
     std::atomic_bool m_cancelled{false};
     mutable std::mutex m_active_broker_mutex;
-    ElevationBroker* m_active_broker{nullptr};
+    std::shared_ptr<ElevationBroker> m_active_broker;
+    std::function<void(const std::shared_ptr<ElevationBroker>&)>
+        m_active_broker_registered_for_testing;
 
     [[nodiscard]] PartitionExecutionStep executeOperation(const PartitionOperation& operation,
                                                           bool dry_run,
@@ -49,7 +57,8 @@ private:
                                                                const PartitionScript& script);
     [[nodiscard]] PartitionExecutionStep executeLocalScript(const PartitionOperation& operation,
                                                             const PartitionScript& script);
-    void setActiveBroker(ElevationBroker* broker);
+    void setActiveBroker(std::shared_ptr<ElevationBroker> broker);
+    void clearActiveBroker(const std::shared_ptr<ElevationBroker>& broker);
 };
 
 }  // namespace sak
