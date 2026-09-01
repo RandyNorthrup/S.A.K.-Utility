@@ -1112,7 +1112,7 @@ a parked design, per the bucket convention. Open work is what remains after thos
   build resources and produced no count; they remain open rather than being inferred clean.
   WAVE 9 FINAL GATE: changed-file hooks and two-pass whole-tree cppcheck passed with 183/186
   checkers, zero normal findings, and zero stale inline suppressions. Release build exit 0; full
-  CTest 267/267, zero failures, 899.26 seconds.
+  CTest 267/267, zero failures, 1328.01 seconds.
   OWNER RULE NOW RECORDED IN `AGENTS.md`: fix code, test, tool, or gate first; suppression is the
   last resort only after no direct fix is possible and the exact reason is proven. Existing
   suppressions are re-audited, not inherited as permanent policy. Current batch: all pre-commit
