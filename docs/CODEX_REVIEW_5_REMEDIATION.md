@@ -1042,9 +1042,8 @@ a parked design, per the bucket convention. Open work is what remains after thos
   All changed-file hooks and the two-pass whole-tree gate pass with 183/186 checkers, zero normal
   findings, and zero stale inline suppressions. Release build exit 0; full CTest 267/267, zero
   failures, 744.35 seconds.
-  INLINE SUPPRESSION NECESSITY AUDIT: 28 markers remain after three raw-loop markers were fixed
-  directly. Six more have safe structural removal paths and are open work; 21 are currently
-  proven analyzer limitations. The final marker exposes
+  INLINE SUPPRESSION NECESSITY AUDIT: 22 markers remain after all nine safe structural removals.
+  Twenty-one are currently proven analyzer limitations. The final marker exposes
   a larger exception-unwind lifetime weakness in PartitionExecutor and needs owned active-broker
   state, not comment deletion. It remains open rather than being accepted as permanent policy.
   CPPCHECK SUPPRESSION WAVE 6, 2026-08-31: 20 more `useStlAlgorithm` findings are fixed through
@@ -1060,11 +1059,30 @@ a parked design, per the bucket convention. Open work is what remains after thos
   WAVE 6 FINAL GATE: all changed-file hooks passed; two-pass whole-tree cppcheck ran with 183/186
   checkers, zero normal findings, exactly 58 classified Qt slots, and zero stale inline
   suppressions. Release build exit 0; full CTest 267/267, zero failures, 923.00 seconds.
+  CPPCHECK SUPPRESSION WAVE 7, 2026-08-31: six exact `knownConditionTrueFalse` markers are gone.
+  Stale workflow-input/approval helpers now return `void` and their caller exits explicitly;
+  per-user directory traversal returns totals by value; HFS valence/record scans expose their
+  warning/soft-skip contract as `void`; and APFS relocation preserves blocker propagation without
+  never-failing bool plumbing. Inline markers fell 28 -> 22. The STL reveal also fell 295 -> 294.
+  ADJACENT HEADER-GATE FIX: after the global `unusedStructMember` silence was removed, pre-commit
+  correctly went red but for the wrong reason: it passed changed headers to cppcheck alone, so
+  dozens of live members whose uses sit in `.cpp` files appeared dead. Any header-containing batch
+  now expands to whole first-party `src`/`include`/`tests` context; source-only batches stay narrow,
+  and a header outside those roots is refused. Eleven scope/classifier tests pass, as does the real
+  header-triggered hook with 183/186 checkers and 58 exact Qt slots classified.
+  BROKER LIFETIME FINDING: the remaining PartitionExecutor `danglingLifetime` marker is not a
+  false positive. An exception after registering a stack ElevationBroker skips both manual clears,
+  destroys the broker, and leaves `cancel()` a dangling pointer. The next fix is shared owned state
+  plus scope-guarded conditional clearing and a deterministic exception-unwind regression; the
+  marker stays open until that code and test land.
+  WAVE 7 FINAL GATE: all changed-file hooks and two-pass whole-tree cppcheck passed with 183/186
+  checkers, zero normal findings, and zero stale inline suppressions. Release build exit 0; full
+  CTest 267/267, zero failures, 902.64 seconds.
   OWNER RULE NOW RECORDED IN `AGENTS.md`: fix code, test, tool, or gate first; suppression is the
   last resort only after no direct fix is possible and the exact reason is proven. Existing
   suppressions are re-audited, not inherited as permanent policy. Current batch: all pre-commit
   hooks passed; Release build exit 0; full CTest 265/265, zero failures, 804.48 seconds.
-  STILL OPEN: core's 5,271 naming findings; the 295-item `useStlAlgorithm` program;
+  STILL OPEN: core's 5,271 naming findings; the 294-item `useStlAlgorithm` program;
   coverage compiler suppressions; directly
   closable fixture/resource skips; and the historical VM credential rotation/history-rewrite
   decision.

@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import importlib.util
+import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -16,6 +18,7 @@ if SPEC is None or SPEC.loader is None:
     raise RuntimeError(f"Could not load classifier: {CLASSIFIER_PATH}")
 CLASSIFIER = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(CLASSIFIER)
+RUNNER_PATH = PROJECT_ROOT / "scripts" / "run_cppcheck.ps1"
 
 
 def finding(path: Path, line: int, member: str) -> str:
@@ -47,6 +50,42 @@ class QtSlotClassifierTests(unittest.TestCase):
 
     def classify_one(self, diagnostic: str) -> tuple[list[str], int, int]:
         return CLASSIFIER.classify([diagnostic], self.root)
+
+    def cppcheck_input_scope(self, *paths: Path) -> tuple[str, list[str]]:
+        powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+        if powershell is None:
+            self.skipTest("Windows PowerShell is required for the cppcheck scope contract")
+        result = subprocess.run(
+            [
+                powershell,
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                str(RUNNER_PATH),
+                "-PrintInputScope",
+                *(str(path) for path in paths),
+            ],
+            cwd=PROJECT_ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        scope_lines = [
+            line.removeprefix("CPPCHECK_INPUT_SCOPE=")
+            for line in result.stdout.splitlines()
+            if line.startswith("CPPCHECK_INPUT_SCOPE=")
+        ]
+        self.assertEqual(len(scope_lines), 1, result.stdout + result.stderr)
+        input_paths = [
+            line.removeprefix("CPPCHECK_INPUT_PATH=")
+            for line in result.stdout.splitlines()
+            if line.startswith("CPPCHECK_INPUT_PATH=")
+        ]
+        return scope_lines[0], input_paths
 
     def test_new_out_of_class_qt_slot_is_classified_from_live_source(self) -> None:
         source = """class ExampleTest : public QObject {
@@ -164,6 +203,64 @@ void Product::callback() {}
         self.assertIn("classify_cppcheck_qt_slots.py", runner)
         self.assertIn("Invoke-CapturedProcess", runner)
         self.assertNotIn("Start-Process -FilePath $CppcheckExe", runner)
+
+    def test_changed_source_keeps_fast_exact_file_scope(self) -> None:
+        source = PROJECT_ROOT / "src" / "core" / "mbox_writer.cpp"
+        scope, paths = self.cppcheck_input_scope(source)
+        self.assertEqual(scope, "file-list")
+        self.assertEqual(paths, [str(source)])
+
+    def test_changed_header_expands_to_real_translation_units(self) -> None:
+        header = PROJECT_ROOT / "include" / "sak" / "ai_assistant_panel.h"
+        scope, paths = self.cppcheck_input_scope(header)
+        self.assertEqual(scope, "whole-project-with-tests")
+        self.assertEqual(
+            {Path(path).resolve() for path in paths},
+            {
+                (PROJECT_ROOT / "src").resolve(),
+                (PROJECT_ROOT / "include").resolve(),
+                (PROJECT_ROOT / "tests").resolve(),
+            },
+        )
+
+    def test_one_header_forces_safe_scope_for_mixed_batch(self) -> None:
+        header = PROJECT_ROOT / "include" / "sak" / "per_user_customization_dialog.h"
+        source = PROJECT_ROOT / "src" / "gui" / "per_user_customization_dialog.cpp"
+        scope, paths = self.cppcheck_input_scope(source, header)
+        self.assertEqual(scope, "whole-project-with-tests")
+        resolved_paths = {str(Path(path).resolve()) for path in paths}
+        self.assertIn(str((PROJECT_ROOT / "tests").resolve()), resolved_paths)
+
+    def test_header_outside_first_party_roots_fails_closed(self) -> None:
+        outside_header = PROJECT_ROOT / "temp" / "cppcheck_scope_outside.h"
+        outside_header.parent.mkdir(exist_ok=True)
+        outside_header.write_text("struct Outside { int value; };\n", encoding="ascii")
+        try:
+            powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+            if powershell is None:
+                self.skipTest("Windows PowerShell is required for the cppcheck scope contract")
+            result = subprocess.run(
+                [
+                    powershell,
+                    "-NoProfile",
+                    "-NonInteractive",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(RUNNER_PATH),
+                    "-PrintInputScope",
+                    str(outside_header),
+                ],
+                cwd=PROJECT_ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("outside the first-party cppcheck scope", result.stdout + result.stderr)
+        finally:
+            outside_header.unlink(missing_ok=True)
 
 
 if __name__ == "__main__":

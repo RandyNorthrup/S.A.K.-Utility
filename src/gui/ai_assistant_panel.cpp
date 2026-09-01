@@ -9732,25 +9732,21 @@ bool AiAssistantPanel::collectClarifyingWorkflowInputs(const ai::WorkflowTemplat
     }
     return true;
 }
-bool AiAssistantPanel::resumeWorkflowInputGate(const ai::AiHumanGate& gate) {
-    Q_UNUSED(gate);
+void AiAssistantPanel::resumeWorkflowInputGate(const ai::AiHumanGate&) {
     sak::showInformationLogged(
         this,
         tr("Workflow Input"),
         tr("This workflow input gate is not active in the current chat. Start "
            "the workflow again to provide fresh inputs."));
     updateCredentialControls();
-    return false;
 }
-bool AiAssistantPanel::resumeApprovalGate(const ai::AiHumanGate& gate) {
-    Q_UNUSED(gate);
+void AiAssistantPanel::resumeApprovalGate(const ai::AiHumanGate&) {
     sak::showInformationLogged(
         this,
         tr("AI Approval"),
         tr("This approval prompt is no longer active. Re-run the action so "
            "SAK can show a fresh approval prompt with the current command."));
     updateCredentialControls();
-    return false;
 }
 bool AiAssistantPanel::resumeWorkflowRecoveryGate(const ai::AiHumanGate& gate) {
     QJsonObject metadata;
@@ -11234,28 +11230,26 @@ void AiAssistantPanel::onResumeGateClicked() {
         return;
     }
     const ai::AiHumanGate gate = m_runState.pending_human_gate;
-    bool resumed = false;
     if (gate.kind == QLatin1String("workflow_input")) {
-        // cppcheck-suppress knownConditionTrueFalse ; deliberate: a stale workflow-input gate
-        // cannot be resumed, so the handler always explains and refuses. The assignment keeps
-        // this branch the same shape as the resumable kinds below.
-        resumed = resumeWorkflowInputGate(gate);
-    } else if (gate.kind == QLatin1String("approval")) {
-        // cppcheck-suppress knownConditionTrueFalse ; deliberate, as above: a stale approval
-        // prompt must be re-issued against the CURRENT command, never silently reused.
-        resumed = resumeApprovalGate(gate);
-    } else if (gate.kind == QLatin1String("workflow_recovery")) {
-        resumed = resumeWorkflowRecoveryGate(gate);
-    } else {
-        sak::showInformationLogged(
-            this,
-            tr("AI Run Waiting"),
-            tr("This waiting gate is not resumable yet. Open Run Details to review it."));
-        showRunDetails();
+        resumeWorkflowInputGate(gate);
+        return;
     }
-    if (!resumed) {
-        updateCredentialControls();
+    if (gate.kind == QLatin1String("approval")) {
+        resumeApprovalGate(gate);
+        return;
     }
+    if (gate.kind == QLatin1String("workflow_recovery")) {
+        if (!resumeWorkflowRecoveryGate(gate)) {
+            updateCredentialControls();
+        }
+        return;
+    }
+    sak::showInformationLogged(
+        this,
+        tr("AI Run Waiting"),
+        tr("This waiting gate is not resumable yet. Open Run Details to review it."));
+    showRunDetails();
+    updateCredentialControls();
 }
 
 void AiAssistantPanel::onWorkflowDetailsClicked() {

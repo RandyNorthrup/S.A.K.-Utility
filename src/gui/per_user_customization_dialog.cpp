@@ -268,34 +268,25 @@ void PerUserCustomizationDialog::addFolderToTree(const FolderSelection& selectio
     folder_item->setData(0, Qt::UserRole + 1, true);  // Mark as folder
 
     // Recursively add subdirectories and files (with depth limit and lazy loading)
-    qint64 total_size = 0;
-    int total_files = 0;
     const int max_depth = kInitialFolderScanMaxDepth;
-    addDirectoryContents(dir,
-                         folder_item,
-                         {.total_size = total_size,
-                          .total_files = total_files,
-                          .checked = selection.selected,
-                          .depth = 0,
-                          .max_depth = max_depth});
+    const DirTraversalTotals totals = addDirectoryContents(
+        dir, folder_item, {.checked = selection.selected, .depth = 0, .max_depth = max_depth});
 
     // Column 2: Size
     QString size_str;
-    // total_size is filled via the qint64& reference member of DirTraversalState (header line 69);
-    // cppcheck misreads the aggregate field as a value copy and wrongly deems this always-false.
-    // cppcheck-suppress knownConditionTrueFalse
-    if (total_size > 0) {
-        const double size_mb = static_cast<double>(total_size) / sak::kBytesPerMBf;
+    if (totals.total_size > 0) {
+        const double size_mb = static_cast<double>(totals.total_size) / sak::kBytesPerMBf;
         if (size_mb >= sak::kBytesPerKBf) {
             size_str = QString("%1 GB").arg(
                 size_mb / sak::kBytesPerKBf, 0, 'f', kSizeDisplayPrecisionLarge);
         } else if (size_mb >= 1) {
             size_str = QString("%1 MB").arg(size_mb, 0, 'f', kSizeDisplayPrecisionSmall);
         } else {
-            size_str = QString("%1 KB").arg(static_cast<double>(total_size) / sak::kBytesPerKBf,
-                                            0,
-                                            'f',
-                                            kSizeDisplayPrecisionSmall);
+            size_str =
+                QString("%1 KB").arg(static_cast<double>(totals.total_size) / sak::kBytesPerKBf,
+                                     0,
+                                     'f',
+                                     kSizeDisplayPrecisionSmall);
         }
     } else {
         size_str = "0 KB";
@@ -303,7 +294,7 @@ void PerUserCustomizationDialog::addFolderToTree(const FolderSelection& selectio
     folder_item->setText(1, size_str);
 
     // Column 2: File count
-    folder_item->setText(FolderColFiles, QString::number(total_files));
+    folder_item->setText(FolderColFiles, QString::number(totals.total_files));
 }
 
 void PerUserCustomizationDialog::setAllFolderSelected(bool selected) {
@@ -520,14 +511,15 @@ QString PerUserCustomizationDialog::formatFileSize(qint64 bytes) {
 
 void PerUserCustomizationDialog::addDirectoryChildItem(const QFileInfo& entry,
                                                        QTreeWidgetItem* parent,
-                                                       DirTraversalState& state) {
+                                                       const DirTraversalOptions& options,
+                                                       DirTraversalTotals& totals) {
     QTreeWidgetItem* child_item = new QTreeWidgetItem(parent);
 
     if (entry.isDir()) {
         // Skip symbolic links to prevent infinite loops
         if (entry.isSymLink()) {
             child_item->setFlags(child_item->flags() | Qt::ItemIsUserCheckable);
-            child_item->setCheckState(0, state.checked ? Qt::Checked : Qt::Unchecked);
+            child_item->setCheckState(0, options.checked ? Qt::Checked : Qt::Unchecked);
             child_item->setText(0, QString("[LINK] %1").arg(entry.fileName()));
             child_item->setData(0, Qt::UserRole + 1, true);
             child_item->setText(1, "-");
@@ -538,49 +530,48 @@ void PerUserCustomizationDialog::addDirectoryChildItem(const QFileInfo& entry,
         // Directory - add tri-state checkbox
         child_item->setFlags(child_item->flags() | Qt::ItemIsUserCheckable |
                              Qt::ItemIsAutoTristate);
-        child_item->setCheckState(0, state.checked ? Qt::Checked : Qt::Unchecked);
+        child_item->setCheckState(0, options.checked ? Qt::Checked : Qt::Unchecked);
         child_item->setText(0, QString("[DIR] %1").arg(entry.fileName()));
         child_item->setData(0, Qt::UserRole + 1, true);
 
         // Recursively add subdirectory contents
-        qint64 sub_dir_size = 0;
-        int sub_dir_files = 0;
         const QDir sub_dir(entry.filePath());
-        addDirectoryContents(sub_dir,
-                             child_item,
-                             {.total_size = sub_dir_size,
-                              .total_files = sub_dir_files,
-                              .checked = state.checked,
-                              .depth = state.depth + 1,
-                              .max_depth = state.max_depth});
+        const DirTraversalTotals sub_totals =
+            addDirectoryContents(sub_dir,
+                                 child_item,
+                                 {.checked = options.checked,
+                                  .depth = options.depth + 1,
+                                  .max_depth = options.max_depth});
 
-        state.total_size += sub_dir_size;
-        state.total_files += sub_dir_files;
+        totals.total_size += sub_totals.total_size;
+        totals.total_files += sub_totals.total_files;
 
-        child_item->setText(1, formatFileSize(sub_dir_size));
-        child_item->setText(FolderColFiles, QString::number(sub_dir_files));
+        child_item->setText(1, formatFileSize(sub_totals.total_size));
+        child_item->setText(FolderColFiles, QString::number(sub_totals.total_files));
 
     } else if (entry.isFile()) {
         child_item->setFlags(child_item->flags() | Qt::ItemIsUserCheckable);
-        child_item->setCheckState(0, state.checked ? Qt::Checked : Qt::Unchecked);
+        child_item->setCheckState(0, options.checked ? Qt::Checked : Qt::Unchecked);
         child_item->setText(0, entry.fileName());
         child_item->setData(0, Qt::UserRole + 1, false);
 
         const qint64 file_size = entry.size();
-        state.total_size += file_size;
-        state.total_files++;
+        totals.total_size += file_size;
+        ++totals.total_files;
 
         child_item->setText(FolderColSize, formatFileSize(file_size));
         child_item->setText(FolderColFiles, "-");
     }
 }
 
-void PerUserCustomizationDialog::addDirectoryContents(const QDir& dir,
+auto PerUserCustomizationDialog::addDirectoryContents(const QDir& dir,
                                                       QTreeWidgetItem* parent,
-                                                      DirTraversalState state) {
+                                                      DirTraversalOptions options)
+    -> DirTraversalTotals {
+    DirTraversalTotals totals;
     // Depth limit to prevent stack overflow
-    if (state.depth >= state.max_depth) {
-        return;
+    if (options.depth >= options.max_depth) {
+        return totals;
     }
 
     // Get all entries (files and directories) with error handling
@@ -592,7 +583,7 @@ void PerUserCustomizationDialog::addDirectoryContents(const QDir& dir,
         sak::logWarning("Failed to list directory contents: {} ({})",
                         dir.absolutePath().toStdString(),
                         e.what());
-        return;
+        return totals;
     }
 
     // Limit items per directory to prevent UI slowdown
@@ -611,9 +602,10 @@ void PerUserCustomizationDialog::addDirectoryContents(const QDir& dir,
             continue;
         }
 
-        addDirectoryChildItem(entry, parent, state);
+        addDirectoryChildItem(entry, parent, options, totals);
         item_count++;
     }
+    return totals;
 }
 
 void PerUserCustomizationDialog::calculateDirectorySize(

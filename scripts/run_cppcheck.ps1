@@ -42,6 +42,10 @@
 .PARAMETER SuppressFindingOutput
     Keep findings in ErrorsFile without echoing every line. Used by gates that parse the file
     themselves and print only their actionable subset.
+
+.PARAMETER PrintInputScope
+    Test-only seam. Prints the resolved scope and exits before looking up or running cppcheck.
+    The pre-commit hook never passes this switch.
 #>
 
 # THE PARAMETER BLOCK IS LOAD-BEARING. Read this before changing it.
@@ -89,7 +93,11 @@ param(
     [ValidateRange(1, 64)]
     [int]$Jobs = 4,
 
-    [switch]$SuppressFindingOutput
+    [switch]$SuppressFindingOutput,
+
+    # Test seam: resolve and print the real cppcheck input scope, then exit before tool lookup.
+    # The pre-commit hook never passes this switch.
+    [switch]$PrintInputScope
 )
 
 $ErrorActionPreference = "Stop"
@@ -133,8 +141,6 @@ function Find-Cppcheck {
 
     throw "cppcheck.exe was not found. Install from https://cppcheck.sourceforge.io/"
 }
-
-$CppcheckExe = Find-Cppcheck
 
 # ---------------------------------------------------------------------------
 # Build command arguments -- STRICTEST settings
@@ -213,6 +219,8 @@ $CppcheckArgs += @(
 # Determine files to check
 # ---------------------------------------------------------------------------
 $FileListPath = ""
+$InputScopeKind = "whole-project"
+$InputScopePaths = @()
 if ($Files -and $Files.Count -gt 0) {
     # Filter to real C++ source files only. Each value is passed straight to cppcheck, so
     # reject anything option-shaped (leading '-') or that does not exist as a real file on
@@ -231,7 +239,51 @@ if ($Files -and $Files.Count -gt 0) {
         exit 0
     }
 
-    # Hand the paths to cppcheck through --file-list, NOT as positional arguments.
+    # A header is not a translation unit. Passing one to cppcheck by itself makes
+    # unusedStructMember report every member whose use lives in the corresponding .cpp as dead.
+    # Analyze changed headers through all real first-party translation units instead. Include
+    # tests because support/test headers can be consumed only there. This is intentionally the
+    # safe, expensive direction: a header edit must never regain a broad dead-member silence.
+    $headerExtensions = @(".h", ".hpp", ".hxx")
+    $containsHeader = @($CppFiles | Where-Object {
+        [System.IO.Path]::GetExtension($_).ToLower() -in $headerExtensions
+    }).Count -gt 0
+
+    if ($containsHeader) {
+        $InputScopeKind = "whole-project-with-tests"
+        $InputScopePaths = @(
+            (Join-Path $ProjectRoot "src"),
+            (Join-Path $ProjectRoot "include"),
+            (Join-Path $ProjectRoot "tests")
+        )
+        foreach ($scopePath in $InputScopePaths) {
+            if (-not (Test-Path -LiteralPath $scopePath -PathType Container)) {
+                throw "Required cppcheck translation-unit scope is missing: $scopePath"
+            }
+        }
+        $scopePrefixes = @($InputScopePaths | ForEach-Object {
+            [System.IO.Path]::GetFullPath($_).TrimEnd('\', '/') +
+                [System.IO.Path]::DirectorySeparatorChar
+        })
+        foreach ($header in @($CppFiles | Where-Object {
+            [System.IO.Path]::GetExtension($_).ToLower() -in $headerExtensions
+        })) {
+            $headerPath = [System.IO.Path]::GetFullPath($header)
+            $insideFirstPartyScope = @($scopePrefixes | Where-Object {
+                $headerPath.StartsWith($_, [System.StringComparison]::OrdinalIgnoreCase)
+            }).Count -gt 0
+            if (-not $insideFirstPartyScope) {
+                throw "Changed header is outside the first-party cppcheck scope: $header"
+            }
+        }
+        $CppcheckArgs += "-i"
+        $CppcheckArgs += (Join-Path (Join-Path $ProjectRoot "src") "third_party")
+        $CppcheckArgs += $InputScopePaths
+    } else {
+        $InputScopeKind = "file-list"
+        $InputScopePaths = @($CppFiles)
+
+        # Hand the paths to cppcheck through --file-list, NOT as positional arguments.
     #
     # Windows CreateProcess caps a command line at 32,767 characters. The whole-project gate's
     # reveal pass resolves 558 first-party sources, whose absolute paths alone are 41,549
@@ -251,19 +303,22 @@ if ($Files -and $Files.Count -gt 0) {
     # fewer file analyzed, no error. Refuse instead. (The gate's own run is PID-suffixed so two
     # concurrent invocations, e.g. the pre-commit hook and the manual gate, cannot clobber each
     # other's list and analyze the wrong set.)
-    $nonAscii = $CppFiles | Where-Object { $_ -match '[^\x00-\x7F]' }
-    if ($nonAscii) {
-        throw ("Refusing to build a cppcheck file list: these paths contain non-ASCII bytes " +
-               "and would be corrupted by the ASCII-encoded list: " + ($nonAscii -join ', '))
-    }
+        $nonAscii = $CppFiles | Where-Object { $_ -match '[^\x00-\x7F]' }
+        if ($nonAscii) {
+            throw ("Refusing to build a cppcheck file list: these paths contain non-ASCII bytes " +
+                   "and would be corrupted by the ASCII-encoded list: " + ($nonAscii -join ', '))
+        }
 
-    # Written to the system temp dir, not into the repo: this runs inside the pre-commit hook,
-    # and a hook that writes a file under the working tree is a hook that can be reported as
-    # having modified the commit. PID-suffixed so the hook and a concurrent manual gate run
-    # cannot overwrite each other's list and silently analyze the wrong set.
-    $FileListPath = Join-Path ([System.IO.Path]::GetTempPath()) ("sak_cppcheck_files_{0}.txt" -f $PID)
-    Set-Content -LiteralPath $FileListPath -Value $CppFiles -Encoding ascii
-    $CppcheckArgs += "--file-list=$FileListPath"
+        if (-not $PrintInputScope) {
+            # Written to the system temp dir, not into the repo: this runs inside the pre-commit
+            # hook, and a hook that writes under the working tree can be reported as modifying the
+            # commit. PID-suffixed so concurrent hook/manual runs cannot overwrite each other.
+            $FileListPath = Join-Path ([System.IO.Path]::GetTempPath()) `
+                ("sak_cppcheck_files_{0}.txt" -f $PID)
+            Set-Content -LiteralPath $FileListPath -Value $CppFiles -Encoding ascii
+            $CppcheckArgs += "--file-list=$FileListPath"
+        }
+    }
 } else {
     # Full project scan -- exclude third-party code
     $CppcheckArgs += "-i"
@@ -273,13 +328,22 @@ if ($Files -and $Files.Count -gt 0) {
     # positional argument is an error -- so the whole-project branch died with a PowerShell
     # argument exception before cppcheck was ever launched.
     $CppcheckArgs += (Join-Path (Join-Path $ProjectRoot "src") "third_party")
-    $CppcheckArgs += (Join-Path $ProjectRoot "src")
-    $CppcheckArgs += (Join-Path $ProjectRoot "include")
+    $InputScopePaths = @((Join-Path $ProjectRoot "src"), (Join-Path $ProjectRoot "include"))
+    $CppcheckArgs += $InputScopePaths
+}
+
+if ($PrintInputScope) {
+    Write-Output "CPPCHECK_INPUT_SCOPE=$InputScopeKind"
+    foreach ($scopePath in $InputScopePaths) {
+        Write-Output "CPPCHECK_INPUT_PATH=$scopePath"
+    }
+    exit 0
 }
 
 # ---------------------------------------------------------------------------
 # Execute
 # ---------------------------------------------------------------------------
+$CppcheckExe = Find-Cppcheck
 Write-Host "Running cppcheck (strictest settings)..." -ForegroundColor Cyan
 Write-Host "  Command: cppcheck $($CppcheckArgs -join ' ')" -ForegroundColor DarkGray
 

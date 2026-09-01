@@ -741,8 +741,8 @@ private:
     [[nodiscard]] bool collectClarifyingWorkflowInputs(const ai::WorkflowTemplate& workflow,
                                                        const QString& user_message,
                                                        QJsonObject* input_values);
-    [[nodiscard]] bool resumeWorkflowInputGate(const ai::AiHumanGate& gate);
-    [[nodiscard]] bool resumeApprovalGate(const ai::AiHumanGate& gate);
+    void resumeWorkflowInputGate(const ai::AiHumanGate& gate);
+    void resumeApprovalGate(const ai::AiHumanGate& gate);
     [[nodiscard]] bool resumeWorkflowRecoveryGate(const ai::AiHumanGate& gate);
     [[nodiscard]] const ai::WorkflowTemplate* recoveryWorkflowForGate(const ai::AiHumanGate& gate,
                                                                       QJsonObject* metadata,

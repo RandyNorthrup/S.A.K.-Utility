@@ -4714,9 +4714,9 @@ private:
         return true;
     }
 
-    [[nodiscard]] bool applyCatalogModelValence(HfsCatalogTreeModel* model,
-                                                const HfsCatalogValenceUpdate& update,
-                                                QStringList* warnings) const {
+    void applyCatalogModelValence(HfsCatalogTreeModel* model,
+                                  const HfsCatalogValenceUpdate& update,
+                                  QStringList* warnings) const {
         for (auto& leaf : model->leaves) {
             for (const auto& record : leaf.records) {
                 if (record.record_type == kHfsCatalogFolderRecord &&
@@ -4726,13 +4726,12 @@ private:
                         &leaf.records, update.folder_id, update.delta, &localWarnings);
                     warnings->append(localWarnings);
                     leaf.dirty = true;
-                    return true;
+                    return;
                 }
             }
         }
         warnings->append(
             QStringLiteral("HFS+ parent folder record was not present for valence update"));
-        return true;
     }
 
     static void applyCatalogModelTokenRemovals(HfsCatalogTreeModel* model,
@@ -4816,15 +4815,9 @@ private:
             return false;
         }
         for (const auto& update : edit.valence_updates) {
-            // applyCatalogModelValence tolerates an absent parent folder record BY DESIGN (warns
-            // and returns true): a normal create emits a valence update whose parent folder record
-            // is not in the scanned leaves, so the not-found path is hit on valid operations.
-            // Making it fail closed broke test_sak_hfs_writer_cli (R5-G5-FO1, reverted). The guard
-            // is kept for a real future failure signal ([[implement-never-drop]]).
-            // cppcheck-suppress knownConditionTrueFalse
-            if (!applyCatalogModelValence(model, update, warnings)) {
-                return false;
-            }
+            // An absent parent record remains a warning: normal creates can update a parent that
+            // is outside the scanned leaf set.
+            applyCatalogModelValence(model, update, warnings);
         }
         return applyCatalogModelInsertions(model, edit.insertions, blockers);
     }
@@ -10712,37 +10705,30 @@ private:
                 m_blockers.append(QStringLiteral("HFS+ catalog consistency record cap reached"));
                 return false;
             }
-            // scanCatalogRecord soft-skips invalid/unparseable records (counted in
-            // summary->invalid_records and surfaced by appendCatalogScanWarnings) BY DESIGN, so it
-            // always returns true today; the guard is a deliberate fail-closed hook kept for when
-            // a record error should abort the scan.
-            // cppcheck-suppress knownConditionTrueFalse
-            if (!scanCatalogRecord(node, nodeNumber, *offsets, index, summary)) {
-                return false;
-            }
+            // Invalid records remain soft-skips counted in the summary and surfaced as warnings.
+            scanCatalogRecord(node, nodeNumber, *offsets, index, summary);
         }
         return true;
     }
 
-    [[nodiscard]] bool scanCatalogRecord(const QByteArray& node,
-                                         uint32_t nodeNumber,
-                                         const QVector<qsizetype>& offsets,
-                                         int index,
-                                         HfsCatalogScanSummary* summary) const {
+    void scanCatalogRecord(const QByteArray& node,
+                           uint32_t nodeNumber,
+                           const QVector<qsizetype>& offsets,
+                           int index,
+                           HfsCatalogScanSummary* summary) const {
         const qsizetype start = offsets.at(index);
         const qsizetype end = recordEnd(node, offsets, index);
         if (end <= start || end > node.size()) {
             ++summary->invalid_records;
-            return true;
+            return;
         }
         const auto record = parseCatalogRecord(node, start, end, nodeNumber);
         if (!record.has_value()) {
             ++summary->invalid_records;
-            return true;
+            return;
         }
         ++summary->records;
         appendCatalogRecordSummary(*record, summary);
-        return true;
     }
 
     static void appendCatalogRecordSummary(const HfsCatalogRecord& record,

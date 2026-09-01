@@ -10825,7 +10825,7 @@ std::optional<bool> liveVolumeWasFormattedBySak(const ApfsFsCommitContext& ctx,
 // ip_base so rotation + allocation follow the relocated pool; a non-grown container's ip_base
 // equals the canonical base, so this is a no-op for every certified tier (byte-identical). Every
 // mutation caller is relocation-aware (this re-anchor), so there is no fail-close.
-bool resolveRelocatedIpLayout(ApfsFsCommitContext* ctx,
+void resolveRelocatedIpLayout(ApfsFsCommitContext* ctx,
                               uint64_t blockCount,
                               QStringList* blockers) {
     const uint64_t chunkCount = (blockCount + kApfsSpacemanBlocksPerChunk - 1) /
@@ -10835,7 +10835,7 @@ bool resolveRelocatedIpLayout(ApfsFsCommitContext* ctx,
     const uint64_t actualIpBase =
         readLiveSpacemanIpBase(ctx->image, ctx->geometry, ctx->nxsb, blockers);
     if (actualIpBase == 0 || actualIpBase == canonicalIpBase) {
-        return true;
+        return;
     }
     // A chunk-adding grow lays the relocated pool out ROTATION-GROUPS-FIRST: the ghost/live/spare
     // ring occupies ip-rel [0, 3*ipGroupStride) with cib 0 rotating through it, and the immutable
@@ -10848,7 +10848,6 @@ bool resolveRelocatedIpLayout(ApfsFsCommitContext* ctx,
     // == 0), and the immutable cibs stay covered by their read-from-disk liveCibAddrs.
     ctx->layout.cib0Base = actualIpBase;
     ctx->layout.ipBase = actualIpBase;
-    return true;
 }
 
 // Re-anchor the metadata-overflow allocation onto a real Apple (foreign) volume's actual free
@@ -10978,17 +10977,10 @@ bool foreignIpMetadataIsConsistent(const ApfsFsCommitContext& ctx, QStringList* 
 bool resolveFsCommitAllocation(ApfsFsCommitContext* ctx,
                                uint64_t blockCount,
                                QStringList* blockers) {
-    // resolveRelocatedIpLayout re-anchors rather than rejecting (see its header comment) and is
-    // intentionally non-failing: a zero actualIpBase means there is no live spaceman object to
-    // relocate against, which occurs on valid generated containers -- treating it as "no
-    // relocation" is correct. Making a zero ip_base fail closed broke test_partition_manager_core
-    // (R5-G5-FO2, reverted). The guard is kept for a real future failure
-    // ([[implement-never-drop]]).
     ctx->layout = computeGeneratedLayout(blockCount);
-    // cppcheck-suppress knownConditionTrueFalse
-    if (!resolveRelocatedIpLayout(ctx, blockCount, blockers)) {
-        return false;
-    }
+    // A zero or canonical live ip_base needs no relocation; other values re-anchor the generated
+    // layout while preserving any read failure in blockers for the caller's existing gates.
+    resolveRelocatedIpLayout(ctx, blockCount, blockers);
     if (!collectOldFsTreeNodePaddrs(
             ctx->image, ctx->geometry, ctx->chain, &ctx->oldFsNodes, blockers)) {
         return false;
