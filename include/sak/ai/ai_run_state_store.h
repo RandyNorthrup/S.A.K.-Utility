@@ -5,7 +5,11 @@
 
 #include "sak/ai/ai_run_state.h"
 
+#include <QByteArray>
 #include <QString>
+
+class AiRunStateStoreTests;
+class QIODevice;
 
 namespace sak::ai {
 
@@ -28,6 +32,14 @@ public:
     [[nodiscard]] bool clearSnapshot(QString* error_message = nullptr) const;
 
 private:
+    friend class ::AiRunStateStoreTests;
+
+    /// Test seam for deterministic short-read/read-error coverage. Production passes an open
+    /// QFile; tests pass bounded synthetic QIODevices without replacing filesystem behavior.
+    [[nodiscard]] static bool readBoundedSnapshot(QIODevice* device,
+                                                  QByteArray* bytes,
+                                                  QString* error_message);
+
     QString m_session_dir;
 };
 

@@ -1,0 +1,3 @@
+- MEDIUM - `src/ai/ai_subagent_tool_executor.cpp:92-99`: `AiToolCallRequest::user_message` remains empty. Package policy therefore rejects every subagent install, uninstall, upgrade, or bundle mutation, even when user explicitly requested it.
+- LOW - `src/ai/ai_subagent_tool_executor.cpp:20,70-78`: Claimed 1 MiB cap counts UTF-16 code units, not encoded bytes. Accepted non-ASCII JSON can expand to roughly 3 MiB before parsing.
+- LOW - `src/ai/ai_subagent_tool_executor.cpp:83-87`: Valid non-object JSON produces misleading error `"Invalid tool arguments JSON: no error occurred"` because parse succeeded and only shape validation failed.

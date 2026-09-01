@@ -19,8 +19,6 @@
 
 namespace {
 
-constexpr int kByteSizePrecisionSmall = 1;
-constexpr int kByteSizePrecisionLarge = 2;
 constexpr int kFolderTreeIndentSpacesPerLevel = 2;
 // Bound the folder-tree recursion (HTML and JSON alike) so a crafted or corrupt PST/OST
 // with pathologically deep nesting cannot exhaust the stack, and surface the cut instead

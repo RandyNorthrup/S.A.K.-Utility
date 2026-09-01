@@ -1,0 +1,32 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_ai_subagent_tool_executor",
+  "ctest_regex": "^test_ai_subagent_tool_executor$",
+  "mutants": [
+    {
+      "id": "originating-user-message-dropped",
+      "file": "src/ai/ai_subagent_tool_executor.cpp",
+      "find": "request.user_message = task.user_message;",
+      "replace": "request.user_message.clear();",
+      "expect": "killed",
+      "why": "dispatchesAllowedToolWithPolicyAndArgs requires the human request to reach policy separately from the subagent-authored objective."
+    },
+    {
+      "id": "encoded-byte-cap-disabled",
+      "file": "src/ai/ai_subagent_tool_executor.cpp",
+      "find": "if (raw_args.size() > kMaxToolArgumentsBytes) {",
+      "replace": "if (raw_args.size() < 0) {",
+      "expect": "killed",
+      "why": "argumentSizeCapIsExactAtBothSides proves a sub-cap QString with more than 1 MiB of UTF-8 bytes is refused before JSON parsing."
+    },
+    {
+      "id": "non-object-json-admitted",
+      "file": "src/ai/ai_subagent_tool_executor.cpp",
+      "find": "if (!doc.isObject()) {",
+      "replace": "if (doc.isNull() && !doc.isObject()) {",
+      "expect": "killed",
+      "why": "failsClosedOnInvalidArguments requires valid non-object JSON roots to fail with the exact structural diagnostic instead of dispatching an empty object."
+    }
+  ]
+}

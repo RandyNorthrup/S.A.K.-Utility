@@ -1,0 +1,7 @@
+- [HIGH] `src/ai/ai_skill_store.cpp:81-92` - File-count cap occurs after `entryList()` materializes and sorts every matching file, so attacker-stuffed directory still causes unbounded work and memory use.
+- [HIGH] `src/ai/ai_skill_store.cpp:99-108` - Symlink/reparse protection is TOCTOU-prone: pathname can become link after check but before open, allowing reads outside intended directory.
+- [HIGH] `src/ai/ai_skill_store.cpp:33-44` - Size cap is checked only before `readAll()`; concurrent growth bypasses 1 MiB allocation/content limit.
+- [MEDIUM] `src/ai/ai_skill_store.cpp:44-47` - Claimed short-read rejection is missing. Concurrent truncation can return fewer bytes without `QFileDevice` error and admit truncated skill.
+- [MEDIUM] `src/ai/ai_skill_store.cpp:118-133` - `addSkill()` stores untrimmed IDs while `skillById()` trims queries, making otherwise-valid whitespace-padded IDs unreachable and allowing normalized-ID collisions.
+- [LOW] `src/ai/ai_skill_store.cpp:73-82,115` - Directory enumeration errors are indistinguishable from empty directories, causing unreadable directories to report successful loads.
+- [LOW] `src/ai/ai_skill_store.cpp:53-54,112-114,118-129,152-157` - Disk-loaded skills are validated twice, and index is fully rebuilt after `addSkill()` already maintained it.

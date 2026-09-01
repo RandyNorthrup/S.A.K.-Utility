@@ -13,7 +13,7 @@ namespace sak::ai {
 /// id/description/triggers and load on demand via the sak_skill tool, instead of
 /// every skill body being force-injected into the prompt up front.
 ///
-/// Parsed from a Markdown file with optional leading front-matter:
+/// Parsed from a Markdown file with required leading front-matter:
 ///
 ///     ---
 ///     id: package-selection
@@ -23,8 +23,11 @@ namespace sak::ai {
 ///     # Package Selection Skill
 ///     ...guidance body...
 ///
-/// Front-matter is optional; missing fields fall back to the file name and the
-/// first Markdown heading/paragraph so legacy skill files still load.
+/// Missing or malformed front-matter, invalid UTF-8, and oversized input fail
+/// closed with an explicit validation error. A missing title may be derived from
+/// the first valid Markdown heading after front-matter; identity and description
+/// are never guessed from legacy body text. A valid skill requires non-empty id,
+/// title, description, and body.
 struct Skill {
     QString id;
     QString title;
@@ -32,12 +35,13 @@ struct Skill {
     QStringList triggers;  // "when to use" hints advertised for progressive disclosure
     QString body;          // full Markdown guidance, loaded on demand
     QString source_path;
+    QString parse_error;   // exact fromMarkdown rejection reason; empty after a valid parse
 
     [[nodiscard]] bool isValid(QStringList* errors = nullptr) const;
 
-    // Parses a skill from Markdown bytes. `path` supplies the fallback id (file
-    // stem) and is recorded as source_path. Never fails hard: an unparseable or
-    // empty file yields a Skill whose isValid() returns false.
+    // Parses a skill from Markdown bytes. `path` is recorded as source_path and
+    // names any parse error. Never fails hard: rejected input yields a Skill whose
+    // isValid() returns false with the exact parse reason.
     [[nodiscard]] static Skill fromMarkdown(const QByteArray& bytes, const QString& path);
 
     // Cheap catalog view (id/title/description/triggers) with no body, for

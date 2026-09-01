@@ -521,6 +521,7 @@ AiSubagentTask AiOrchestrator::buildDelegateTask(const WorkflowTemplate& workflo
     task.phase_id = phase.id;
     task.agent_id = phase.agent;
     task.objective = substituteWorkflowPlaceholders(phase.prompt, context);
+    task.user_message = context.user_message;
     task.tool_policy = policyForAgent(workflow, phase.agent);
     task.expected_output_schema = phase.expected_output;
     task.model = m_options.default_model;

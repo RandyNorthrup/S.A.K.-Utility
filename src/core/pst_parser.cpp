@@ -109,16 +109,12 @@ static constexpr int kUnicode4kMetadataSize = 8;
 static constexpr int kUnicode4kPaddingSize = 8;
 
 /// ANSI BTree entry size (Node BTree)
-static constexpr int kAnsiNbtEntrySize = 16;
 
 /// Unicode BTree entry size (Node BTree)
-static constexpr int kUnicodeNbtEntrySize = 32;
 
 /// ANSI BTree entry size (Block BTree)
-static constexpr int kAnsiBbtEntrySize = 12;
 
 /// Unicode BTree entry size (Block BTree)
-static constexpr int kUnicodeBbtEntrySize = 24;
 
 static constexpr int kPstOpenProgressHeader = 0;
 static constexpr int kPstOpenProgressNodeBTree = 10;

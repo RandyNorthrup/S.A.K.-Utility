@@ -95,7 +95,6 @@ constexpr uint8_t kZipSignaturePk1 = 0x4B;
 constexpr uint8_t kZipSignatureLocal2 = 0x03;
 constexpr uint8_t kZipSignatureLocal3 = 0x04;
 constexpr int kId3SignatureByte2 = 2;
-constexpr int kUtf16CodeUnitBytes = 2;
 constexpr int kId3SizeByte0 = 6;
 constexpr int kId3SizeByte1 = 7;
 constexpr int kId3SizeByte2 = 8;

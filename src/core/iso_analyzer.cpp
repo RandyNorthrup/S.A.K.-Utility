@@ -41,8 +41,6 @@ constexpr char kUdfNsr02[] = "NSR02";
 constexpr char kUdfNsr03[] = "NSR03";
 
 // Primary Volume Descriptor field offsets (within the 2048-byte sector)
-constexpr int kPvdSystemIdOffset = 8;
-constexpr int kPvdSystemIdLength = 32;
 constexpr int kPvdVolumeIdOffset = 40;
 constexpr int kPvdVolumeIdLength = 32;
 constexpr int kPvdVolumeSizeLsbOffset = 80;

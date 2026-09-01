@@ -3,7 +3,7 @@
 
 /// @file test_ai_skill_store.cpp
 /// @brief Unit tests for the executable skills system (harness Wave 3): Markdown
-/// front-matter parsing with legacy fallback, directory loading + id override, and
+/// strict front-matter parsing, directory loading + id override, and
 /// the cheap catalog view used for progressive disclosure.
 
 #include "sak/ai/ai_skill.h"
@@ -49,43 +49,28 @@ private Q_SLOTS:
                  QStringLiteral("# Package Selection Skill\n\n- Prefer exact vendor IDs."));
     }
 
-    // A legacy file with no front-matter still loads: id from the file name, title
-    // from the first heading, description from the first paragraph.
-    void fromMarkdown_fallsBackWithoutFrontMatter() {
+    // Skills are executable guidance, so missing front-matter is a format error rather
+    // than a request to guess identity/metadata from the filename and body.
+    void fromMarkdown_rejectsMissingFrontMatter() {
         const QByteArray bytes =
             "# Drive Health Diagnostics Skill\n"
             "\n"
             "Collect read-only evidence first.\n"
-            "\n"
-            "- SMART data.\n";
-        const Skill skill = Skill::fromMarkdown(bytes,
-                                                QStringLiteral("/x/drive-health-diagnostics.md"));
-
-        QVERIFY(skill.isValid());
-        QCOMPARE(skill.id, QStringLiteral("drive-health-diagnostics"));
-        QCOMPARE(skill.title, QStringLiteral("Drive Health Diagnostics Skill"));
-        QCOMPARE(skill.description, QStringLiteral("Collect read-only evidence first."));
-        QVERIFY(skill.triggers.isEmpty());
-        // A body whose first lines after the title heading are list items and a
-        // sub-heading: '-' bullets, '*' bullets and '#' headings are all rejected as
-        // prose (ai_skill.cpp:97-100), so the derived description skips past them to
-        // the first real paragraph rather than advertising a bullet to the model.
-        const Skill listy = Skill::fromMarkdown(QByteArray("# Drive Health Diagnostics Skill\n"
-                                                           "\n"
-                                                           "- SMART data.\n"
-                                                           "* Event log.\n"
-                                                           "## Evidence\n"
-                                                           "\n"
-                                                           "Collect read-only evidence first.\n"),
-                                                QStringLiteral("/x/drive-health-diagnostics.md"));
-        QCOMPARE(listy.title, QStringLiteral("Drive Health Diagnostics Skill"));
-        QCOMPARE(listy.description, QStringLiteral("Collect read-only evidence first."));
+            "\n";
+        const Skill skill = Skill::fromMarkdown(bytes, QStringLiteral("/x/no-frontmatter.md"));
+        QStringList errors;
+        QVERIFY(!skill.isValid(&errors));
+        QCOMPARE(errors,
+                 QStringList{QStringLiteral(
+                     "Skill /x/no-frontmatter.md is missing required leading front-matter")});
+        QVERIFY(skill.body.isEmpty());
     }
 
     // A file with no usable body is invalid and is not admitted to the store.
     void fromMarkdown_emptyBodyIsInvalid() {
-        const Skill skill = Skill::fromMarkdown(QByteArray("---\nid: empty\n---\n\n"),
-                                                QStringLiteral("/x/empty.md"));
+        const Skill skill = Skill::fromMarkdown(
+            QByteArray("---\nid: empty\ntitle: Empty\ndescription: d.\n---\n\n"),
+            QStringLiteral("/x/empty.md"));
         QStringList errors;
         QVERIFY(!skill.isValid(&errors));
         QCOMPARE(errors, QStringList{QStringLiteral("Skill /x/empty.md has an empty body")});
@@ -96,29 +81,42 @@ private Q_SLOTS:
     void isValid_emptyIdIsInvalidEvenWithBody() {
         Skill nameless;
         nameless.source_path = QStringLiteral("/x/.md");
+        nameless.title = QStringLiteral("T");
+        nameless.description = QStringLiteral("d.");
         nameless.body = QStringLiteral("# T\nbody");
         QStringList errors;
         QVERIFY(!nameless.isValid(&errors));
         QCOMPARE(errors, QStringList{QStringLiteral("Skill /x/.md is missing an id")});
 
-        // A whitespace-only id is treated the same (isValid trims before testing).
+        // A whitespace-only id is treated as missing.
         Skill blank_id = nameless;
         blank_id.id = QStringLiteral("   ");
         errors.clear();
         QVERIFY(!blank_id.isValid(&errors));
         QCOMPARE(errors.size(), 1);
 
+        // A non-empty but padded id is rejected, not silently normalized: the store
+        // indexes the exact id while lookup trims, making such a record unreachable.
+        Skill padded_id = nameless;
+        padded_id.id = QStringLiteral(" padded ");
+        errors.clear();
+        QVERIFY(!padded_id.isValid(&errors));
+        QCOMPARE(errors,
+                 QStringList{QStringLiteral("Skill /x/.md id has leading or trailing whitespace")});
+
         // Both arms accumulate: a skill with neither id nor body reports two reasons.
         Skill empty;
         empty.source_path = QStringLiteral("/x/.md");
+        empty.title = QStringLiteral("T");
+        empty.description = QStringLiteral("d.");
         errors.clear();
         QVERIFY(!empty.isValid(&errors));
         QCOMPARE(errors.size(), 2);
 
-        // A file with an empty stem really does reach the store with an empty id,
-        // which is exactly what the id arm has to refuse (pins source_path too).
-        const Skill parsed = Skill::fromMarkdown(QByteArray("# T\nbody\n"),
-                                                 QStringLiteral("/x/.md"));
+        // Front-matter without an id reaches the same validation arm; filename identity
+        // is no longer a legacy fallback.
+        const Skill parsed = Skill::fromMarkdown(
+            QByteArray("---\ndescription: d.\n---\n# T\nbody\n"), QStringLiteral("/x/.md"));
         QVERIFY(parsed.id.isEmpty());
         SkillStore store;
         errors.clear();
@@ -217,6 +215,78 @@ private Q_SLOTS:
         QCOMPARE(skill.body, QStringLiteral("# T\nbody") + QChar(0xFEFF) + QStringLiteral("text"));
     }
 
+    // UTF-8 decoding is strict: replacement-decoding corrupt bytes into apparently valid
+    // guidance, so the exact parse reason must surface instead.
+    void fromMarkdown_rejectsInvalidUtf8Explicitly() {
+        QByteArray bytes("---\nid: invalid\ndescription: d.\n---\n# T\nbody ");
+        bytes.append(QByteArray::fromHex("C328"));
+        const Skill skill = Skill::fromMarkdown(bytes, QStringLiteral("/x/invalid.md"));
+        QStringList errors;
+        QVERIFY(!skill.isValid(&errors));
+        QCOMPARE(errors, QStringList{QStringLiteral("Skill /x/invalid.md is not valid UTF-8")});
+    }
+
+    // The parser's own ceiling reports size rejection directly; returning an empty body
+    // would misdiagnose an attacker-sized input as ordinary authored emptiness.
+    void fromMarkdown_reportsOversizeExplicitly() {
+        constexpr qsizetype kParserMaxSkillBytes = 8 * 1024 * 1024;
+        QByteArray bytes(kParserMaxSkillBytes + 1, 'x');
+        const Skill skill = Skill::fromMarkdown(bytes, QStringLiteral("/x/oversized.md"));
+        QStringList errors;
+        QVERIFY(!skill.isValid(&errors));
+        QCOMPARE(errors,
+                 QStringList{QStringLiteral("Skill /x/oversized.md exceeds parser size limit "
+                                            "(8388609 bytes, max 8388608)")});
+    }
+
+    // Only a real ATX heading supplies a derived title. Earlier prose must not stop the
+    // scan, while list/quote/fence/comment text and '#heading' are not headings.
+    void fromMarkdown_derivesTitleFromFirstRealHeading() {
+        const QByteArray bytes =
+            "---\nid: strict-title\ndescription: d.\n---\n"
+            "Paragraph before title.\n"
+            "1. # Numbered list\n"
+            "+ # Plus list\n"
+            "> # Quote\n"
+            "```md\n# Fenced\n```\n"
+            "<!--\n# Commented\n-->\n"
+            "#invalid\n"
+            "## Real Heading\n";
+        const Skill skill = Skill::fromMarkdown(bytes, QStringLiteral("/x/strict-title.md"));
+        QVERIFY(skill.isValid());
+        QCOMPARE(skill.title, QStringLiteral("Real Heading"));
+        QCOMPARE(skill.description, QStringLiteral("d."));
+    }
+
+    void fromMarkdown_requiresDescriptionAndTitle() {
+        const Skill missing_description =
+            Skill::fromMarkdown(QByteArray("---\nid: no-description\n---\n# T\nbody\n"),
+                                QStringLiteral("/x/no-description.md"));
+        QStringList errors;
+        QVERIFY(!missing_description.isValid(&errors));
+        QCOMPARE(errors,
+                 QStringList{
+                     QStringLiteral("Skill /x/no-description.md is missing a description")});
+
+        const Skill missing_title =
+            Skill::fromMarkdown(QByteArray("---\nid: no-title\ndescription: d.\n---\nplain body\n"),
+                                QStringLiteral("/x/no-title.md"));
+        errors.clear();
+        QVERIFY(!missing_title.isValid(&errors));
+        QCOMPARE(errors, QStringList{QStringLiteral("Skill /x/no-title.md is missing a title")});
+    }
+
+    void fromMarkdown_rejectsPaddedFrontMatterId() {
+        const Skill skill =
+            Skill::fromMarkdown(QByteArray("---\nid:  padded \ndescription: d.\n---\n# T\nbody\n"),
+                                QStringLiteral("/x/padded.md"));
+        QStringList errors;
+        QVERIFY(!skill.isValid(&errors));
+        QCOMPARE(errors,
+                 QStringList{
+                     QStringLiteral("Skill /x/padded.md id has leading or trailing whitespace")});
+    }
+
     // "triggers" is accepted as an alias for "when_to_use"; each element is trimmed,
     // kept verbatim (never case-folded -- triggers are advertised to the model as
     // authored), and a whitespace-only element is dropped.
@@ -234,16 +304,17 @@ private Q_SLOTS:
         QCOMPARE(skill.triggers, expected);
     }
 
-    // Front-matter opened with "---" but never closed is treated as body, and the
-    // id falls back to the file stem (legacy-safe, never crashes).
-    void fromMarkdown_unterminatedFrontMatterBecomesBody() {
+    // An opened front-matter block must close; metadata-like text is never reinterpreted
+    // as executable body content.
+    void fromMarkdown_rejectsUnterminatedFrontMatter() {
         const Skill skill =
             Skill::fromMarkdown(QByteArray("---\nid: nope\ndescription: never.\n# Heading\nbody\n"),
-                                QStringLiteral("/x/legacy-file.md"));
-        QCOMPARE(skill.id, QStringLiteral("legacy-file"));
-        // Unterminated front-matter -> the whole (trimmed) input becomes the body verbatim.
-        QCOMPARE(skill.body, QStringLiteral("---\nid: nope\ndescription: never.\n# Heading\nbody"));
-        QVERIFY(skill.isValid());
+                                QStringLiteral("/x/broken.md"));
+        QStringList errors;
+        QVERIFY(!skill.isValid(&errors));
+        QCOMPARE(errors,
+                 QStringList{QStringLiteral("Skill /x/broken.md has unterminated front-matter")});
+        QVERIFY(skill.body.isEmpty());
     }
 
     // A user-directory skill overrides a built-in by id (the layering loadDefaults
@@ -310,6 +381,7 @@ private Q_SLOTS:
         QStringList missing_when_to_use;
         for (const auto& skill : store.skills()) {
             QVERIFY2(skill.isValid(), qPrintable(skill.id));
+            QVERIFY(!skill.title.trimmed().isEmpty());
             QVERIFY(!skill.description.trimmed().isEmpty());
             ids << skill.id;
             // isValid() checks only id+body, so when_to_use -- the whole basis of

@@ -36,7 +36,8 @@ void AiTraceStoreTests::appendEvent_writesTraceJsonl() {
                                              QStringLiteral("phase"),
                                              QStringLiteral("diagnose"),
                                              QStringLiteral("started"),
-                                             metadata});
+                                             metadata,
+                                             {}});
 
     QString error;
     QVERIFY2(store.appendEvent(event, &error), qPrintable(error));
@@ -163,7 +164,9 @@ void AiTraceStoreTests::traceEvent_roundTripsTokenUsageAndMetadata() {
     sak::ai::AiTraceEvent event = sak::ai::TraceStore::event({QStringLiteral("run_3"),
                                                               QStringLiteral("model_call"),
                                                               QStringLiteral("responses.create"),
-                                                              QStringLiteral("completed")});
+                                                              QStringLiteral("completed"),
+                                                              {},
+                                                              {}});
     event.token_usage.input_tokens = 10;
     event.token_usage.output_tokens = 5;
     event.token_usage.total_tokens = 15;
@@ -343,7 +346,9 @@ void AiTraceStoreTests::traceAndActivityMetadata_isRedacted() {
     auto trace = sak::ai::TraceStore::event({QStringLiteral("run_5"),
                                              QStringLiteral("model_call"),
                                              QStringLiteral("responses.create"),
-                                             QStringLiteral("completed")});
+                                             QStringLiteral("completed"),
+                                             {},
+                                             {}});
     trace.metadata = metadata;
     QVERIFY2(store.appendEvent(trace, &error), qPrintable(error));
 
@@ -395,7 +400,9 @@ void AiTraceStoreTests::appendEvent_rotatesInsteadOfDroppingAtCap() {
         auto event = sak::ai::TraceStore::event({QStringLiteral("run_%1").arg(i),
                                                  QStringLiteral("phase"),
                                                  QStringLiteral("diagnose"),
-                                                 QStringLiteral("started")});
+                                                 QStringLiteral("started"),
+                                                 {},
+                                                 {}});
         QVERIFY2(store.appendEvent(event, &error), qPrintable(error));
     }
 
@@ -431,7 +438,9 @@ void AiTraceStoreTests::rotation_keepsBoundedRingAndNewestLive() {
         auto event = sak::ai::TraceStore::event({QStringLiteral("run_%1").arg(i),
                                                  QStringLiteral("phase"),
                                                  QStringLiteral("diagnose"),
-                                                 QStringLiteral("started")});
+                                                 QStringLiteral("started"),
+                                                 {},
+                                                 {}});
         QVERIFY2(store.appendEvent(event, &error), qPrintable(error));
     }
 

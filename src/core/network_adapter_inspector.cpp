@@ -29,7 +29,6 @@
 namespace {
 
 constexpr unsigned long kInitialBufferSize = 15'000;
-constexpr int kMacAddrLen = 6;
 constexpr uint64_t kGigabit = 1'000'000'000ULL;
 constexpr uint64_t kMegabit = 1'000'000ULL;
 constexpr uint64_t kKilobit = 1000ULL;

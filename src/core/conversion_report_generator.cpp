@@ -25,7 +25,6 @@ namespace {
 constexpr int kSecondsPerHour = 3600;
 constexpr int kSha256PreviewChars = 16;
 constexpr qsizetype kReportHtmlReserveChars = 8192;
-constexpr int kGigabyteDisplayPrecision = 2;
 constexpr char16_t kEmDashCodePoint = 0x2014;    // Unicode em dash (U+2014)
 constexpr char16_t kEllipsisCodePoint = 0x2026;  // Unicode horizontal ellipsis (U+2026)
 }  // namespace

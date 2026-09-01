@@ -9973,12 +9973,14 @@ QJsonObject AiAssistantPanel::runDelegateSubagentTool(const QJsonObject& args) {
     // sub-agent off-thread (this handler already runs on the async worker).
     QString api_key;
     QString model;
+    QString user_message;
     ai::AiToolPolicy session_policy = ai::AiToolPolicy::NoLocalExecution;
     ai::CancellationToken token;
     ai::AiModelClientFactory factory_override;
     invokeOnGuiThreadBlocking([&]() {
         api_key = apiKey();
         model = m_modelCombo ? m_modelCombo->currentText().trimmed() : QString();
+        user_message = m_activeUserMessage;
         session_policy = currentAccessToolPolicy();
         token = m_activeToolRunToken.isValid() ? m_activeToolRunToken : m_runToken;
         factory_override = m_delegateSubagentModelFactoryOverride;
@@ -9994,6 +9996,7 @@ QJsonObject AiAssistantPanel::runDelegateSubagentTool(const QJsonObject& args) {
     task.run_id = task.task_id;
     task.agent_id = QStringLiteral("delegate");
     task.objective = objective;
+    task.user_message = user_message;
     task.tool_policy = effective;
     task.expected_output_schema = args.value(QStringLiteral("expected_output")).toString();
     task.model = model;

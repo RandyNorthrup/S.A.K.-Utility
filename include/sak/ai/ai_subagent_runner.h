@@ -28,6 +28,9 @@ struct AiSubagentTask {
     QString phase_id;
     QString agent_id;
     QString objective;
+    // The originating human request, kept separate from the model-authored/scoped objective.
+    // Tool policy uses this field to verify mutation intent without trusting delegated text.
+    QString user_message;
     QString system_instructions;
     QStringList context_refs;
     QStringList instructions_refs;

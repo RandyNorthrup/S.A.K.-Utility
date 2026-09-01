@@ -21,7 +21,10 @@ $pattern = '^\s*if\s*\(\s*CMAKE_BUILD_TYPE\s+STREQUAL'
 $forbiddenWarningSilences = @(
     "-Wno-trigraphs",
     "-Wno-unused-lambda-capture",
-    "-Wno-unused-parameter"
+    "-Wno-unused-parameter",
+    "-Wno-missing-field-initializers",
+    "-Wno-unused-variable",
+    "-Wno-unused-function"
 )
 $violations = @()
 foreach ($f in ($cmakeFiles | Sort-Object FullName -Unique)) {

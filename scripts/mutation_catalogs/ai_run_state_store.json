@@ -1,0 +1,80 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_ai_run_state_store",
+  "ctest_regex": "^test_ai_run_state_store$",
+  "mutants": [
+    {
+      "id": "oversized-save-admitted",
+      "file": "src/ai/ai_run_state_store.cpp",
+      "find": "if (payload.size() > kMaxRunStateBytes) {",
+      "replace": "if (payload.size() < 0) {",
+      "expect": "killed",
+      "why": "saveRejectsOversizedPayload requires the write side to enforce the same cap as the reader before creating a snapshot that cannot be loaded."
+    },
+    {
+      "id": "directory-creation-failure-hidden",
+      "file": "src/ai/ai_run_state_store.cpp",
+      "find": "if (!QDir().mkpath(directory)) {",
+      "replace": "if (directory.isEmpty() && !QDir().mkpath(directory)) {",
+      "expect": "killed",
+      "why": "saveReportsDirectoryCreationFailure pins the direct mkdir failure and its exact path instead of accepting a later indirect QSaveFile error."
+    },
+    {
+      "id": "bounded-reader-admits-growth",
+      "file": "src/ai/ai_run_state_store.cpp",
+      "find": "if (bytes->size() > kMaxRunStateBytes) {\n            setError(error_message,\n                     QStringLiteral(\"Run-state snapshot grew beyond the read size limit\"));\n            return false;\n        }",
+      "replace": "if (bytes->size() > kMaxRunStateBytes) {\n            return true;\n        }",
+      "expect": "killed",
+      "why": "boundedReadRejectsGrowthBeyondCap passes a max+1 sequential payload through the test seam and requires refusal after the bounded read."
+    },
+    {
+      "id": "read-error-accepted-as-eof",
+      "file": "src/ai/ai_run_state_store.cpp",
+      "find": "if (count < 0) {\n            setError(\n                error_message,\n                QStringLiteral(\"Run-state snapshot read failed: %1\").arg(device->errorString()));\n            return false;\n        }",
+      "replace": "if (count < 0) {\n            return true;\n        }",
+      "expect": "killed",
+      "why": "boundedReadRejectsErrorAfterValidPrefix supplies valid JSON followed by a synthetic device failure and requires the exact read error."
+    },
+    {
+      "id": "missing-schema-version-admitted",
+      "file": "src/ai/ai_run_state_store.cpp",
+      "find": "if (!version.isDouble() || version.toDouble() != kRunStateSchemaVersion) {",
+      "replace": "if (version.isDouble() && version.toDouble() != kRunStateSchemaVersion) {",
+      "expect": "killed",
+      "why": "loadRejectsMissingSchemaVersion requires an absent version to fail instead of being read as the current schema."
+    },
+    {
+      "id": "wrong-field-type-admitted",
+      "file": "src/ai/ai_run_state_store.cpp",
+      "find": "if (!object.contains(field) || !object.value(field).isString()) {",
+      "replace": "if (field.isEmpty() && (!object.contains(field) || !object.value(field).isString())) {",
+      "expect": "killed",
+      "why": "loadRejectsWrongFieldType writes a numeric run_id and requires an exact string-type schema failure."
+    },
+    {
+      "id": "unknown-status-falls-back-to-idle",
+      "file": "src/ai/ai_run_state_store.cpp",
+      "find": "if (!knownRunStatus(status)) {",
+      "replace": "if (status.isEmpty() && !knownRunStatus(status)) {",
+      "expect": "killed",
+      "why": "loadRejectsUnknownStatus rejects an unknown status before runStatusFromString can silently turn it into Idle."
+    },
+    {
+      "id": "non-object-root-misdiagnosed",
+      "file": "src/ai/ai_run_state_store.cpp",
+      "find": "if (!doc.isObject()) {",
+      "replace": "if (doc.isNull() && !doc.isObject()) {",
+      "expect": "killed",
+      "why": "loadRejectsNonObjectRoot requires a valid JSON array to receive the exact root-object diagnostic, not a later missing-schema error."
+    },
+    {
+      "id": "json-parse-error-loses-context",
+      "file": "src/ai/ai_run_state_store.cpp",
+      "find": "setError(error_message,\n                 QStringLiteral(\"Run-state snapshot JSON parse failed: %1\")\n                     .arg(parse_error.errorString()));",
+      "replace": "setError(error_message, parse_error.errorString());",
+      "expect": "killed",
+      "why": "loadReportsJsonParseError pins a domain-specific prefix plus Qt's exact parser reason."
+    }
+  ]
+}

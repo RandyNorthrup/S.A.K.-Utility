@@ -372,6 +372,7 @@ void AiSubagentRunnerTests::taskAndResultJsonRoundTrip() {
     task.task_id = QStringLiteral("task_7");
     task.agent_id = QStringLiteral("package_agent");
     task.objective = QStringLiteral("Find chrome");
+    task.user_message = QStringLiteral("install Google Chrome");
     task.tool_policy = sak::ai::AiToolPolicy::PackageToolsOnly;
     task.token_budget = 6000;
     task.context_refs << QStringLiteral("ctx_001");
@@ -381,6 +382,7 @@ void AiSubagentRunnerTests::taskAndResultJsonRoundTrip() {
     QCOMPARE(task_copy.task_id, task.task_id);
     QCOMPARE(task_copy.agent_id, QStringLiteral("package_agent"));
     QCOMPARE(task_copy.objective, QStringLiteral("Find chrome"));
+    QCOMPARE(task_copy.user_message, QStringLiteral("install Google Chrome"));
     QCOMPARE(task_copy.tool_policy, sak::ai::AiToolPolicy::PackageToolsOnly);
     QCOMPARE(task_copy.token_budget, 6000);
     QCOMPARE(task_copy.context_refs, task.context_refs);

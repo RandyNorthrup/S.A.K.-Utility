@@ -47,6 +47,7 @@ void TestKeepAwake::startStop_doubleStart() {
     const auto result1 = KeepAwake::start();
     const auto result2 = KeepAwake::start();
     QVERIFY(result1.has_value());
+    QVERIFY(result2.has_value());
     QVERIFY(KeepAwake::isActive());
     // Two starts require two stops to fully release (reference counted).
     [[maybe_unused]] const auto cleanup2 = KeepAwake::stop();

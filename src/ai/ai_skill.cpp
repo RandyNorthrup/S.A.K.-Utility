@@ -3,9 +3,9 @@
 
 #include "sak/ai/ai_skill.h"
 
-#include <QFileInfo>
 #include <QJsonArray>
 #include <QRegularExpression>
+#include <QStringConverter>
 
 namespace sak::ai {
 
@@ -15,6 +15,7 @@ namespace {
 // so an implausibly large file cannot drive unbounded allocation or narrow the
 // qsizetype line/column counts used as int indices during parsing.
 constexpr qsizetype kMaxSkillBytes = 8 * 1024 * 1024;
+constexpr qsizetype kMarkdownFenceMarkerLength = 3;
 
 // UTF-8 byte-order mark (U+FEFF): QString::fromUtf8 preserves it, so it is stripped explicitly.
 constexpr int kByteOrderMark = 0xFEFF;
@@ -31,16 +32,6 @@ QStringList splitTriggers(const QString& value) {
     return triggers;
 }
 
-QString titleFromId(const QString& id) {
-    QString title = id;
-    title.replace(QLatin1Char('-'), QLatin1Char(' '));
-    title.replace(QLatin1Char('_'), QLatin1Char(' '));
-    if (!title.isEmpty()) {
-        title[0] = title[0].toUpper();
-    }
-    return title;
-}
-
 // Applies one "key: value" front-matter line to the skill under construction.
 void applyFrontMatterField(Skill* skill, const QString& key, const QString& value) {
     if (key == QLatin1String("id")) {
@@ -54,13 +45,44 @@ void applyFrontMatterField(Skill* skill, const QString& key, const QString& valu
     }
 }
 
-// Consumes a leading "---" front-matter block if present, filling fields on the
-// skill and returning the remaining body. Without front-matter the whole text is
-// the body.
+void setParseError(Skill* skill, const QString& detail) {
+    skill->parse_error = QStringLiteral("Skill %1 %2").arg(skill->source_path, detail);
+}
+
+bool applyFrontMatterLines(const QStringList& lines, int close_index, Skill* skill) {
+    for (int i = 1; i < close_index; ++i) {
+        const QString line = lines.at(i);
+        if (line.trimmed().isEmpty()) {
+            continue;
+        }
+        const int colon = static_cast<int>(line.indexOf(QLatin1Char(':')));
+        if (colon <= 0) {
+            setParseError(skill, QStringLiteral("has invalid front-matter at line %1").arg(i + 1));
+            return false;
+        }
+        const QString key = line.left(colon).trimmed().toLower();
+        QString authored_value = line.mid(colon + 1);
+        // Permit the conventional single separator space after ':', but reject
+        // any additional id padding instead of silently normalizing its index key.
+        if (authored_value.startsWith(QLatin1Char(' '))) {
+            authored_value.remove(0, 1);
+        }
+        if (key == QLatin1String("id") && authored_value != authored_value.trimmed()) {
+            setParseError(skill, QStringLiteral("id has leading or trailing whitespace"));
+            return false;
+        }
+        applyFrontMatterField(skill, key, authored_value.trimmed());
+    }
+    return true;
+}
+
+// Consumes the required leading "---" front-matter block, filling fields on the
+// skill and returning the remaining body. Any malformed envelope fails closed.
 QString parseFrontMatter(const QString& text, Skill* skill) {
     const QStringList lines = text.split(QLatin1Char('\n'));
     if (lines.isEmpty() || lines.first().trimmed() != QLatin1String("---")) {
-        return text;
+        setParseError(skill, QStringLiteral("is missing required leading front-matter"));
+        return {};
     }
     int close_index = -1;
     for (int i = 1; i < lines.size(); ++i) {
@@ -70,89 +92,125 @@ QString parseFrontMatter(const QString& text, Skill* skill) {
         }
     }
     if (close_index < 0) {
-        return text;  // unterminated front-matter: treat the whole file as body
+        setParseError(skill, QStringLiteral("has unterminated front-matter"));
+        return {};
     }
-    for (int i = 1; i < close_index; ++i) {
-        const QString line = lines.at(i);
-        const int colon = static_cast<int>(line.indexOf(QLatin1Char(':')));
-        if (colon <= 0) {
-            continue;
-        }
-        applyFrontMatterField(skill,
-                              line.left(colon).trimmed().toLower(),
-                              line.mid(colon + 1).trimmed());
+    if (!applyFrontMatterLines(lines, close_index, skill)) {
+        return {};
     }
     return lines.mid(close_index + 1).join(QLatin1Char('\n'));
 }
 
-QString headingText(const QString& trimmed_line) {
-    QString heading = trimmed_line;
-    while (heading.startsWith(QLatin1Char('#'))) {
-        heading.remove(0, 1);
-    }
-    return heading.trimmed();
-}
-
-// A prose line usable as the fallback description (not a heading or list item).
-bool looksLikeParagraph(const QString& trimmed_line) {
-    return !trimmed_line.startsWith(QLatin1Char('#')) &&
-           !trimmed_line.startsWith(QLatin1Char('-')) && !trimmed_line.startsWith(QLatin1Char('*'));
-}
-
-// Derives a title/description from Markdown headings/paragraphs when front-matter
-// did not supply them.
-void deriveMissingFields(Skill* skill, const QString& body) {
-    const QStringList lines = body.split(QLatin1Char('\n'));
-    for (const auto& line : lines) {
+QString firstMarkdownHeading(const QString& body) {
+    static const QRegularExpression kHeading(
+        QStringLiteral("^#{1,6}[\\t ]+(.+?)(?:[\\t ]+#+[\\t ]*)?$"));
+    bool in_fence = false;
+    bool in_comment = false;
+    QString fence_marker;
+    for (const auto& line : body.split(QLatin1Char('\n'))) {
         const QString trimmed = line.trimmed();
-        if (trimmed.isEmpty()) {
+        if (in_fence) {
+            if (trimmed.startsWith(fence_marker)) {
+                in_fence = false;
+            }
             continue;
         }
-        if (skill->title.isEmpty() && trimmed.startsWith(QLatin1Char('#'))) {
-            skill->title = headingText(trimmed);
+        if (trimmed.startsWith(QLatin1String("```")) || trimmed.startsWith(QLatin1String("~~~"))) {
+            fence_marker = trimmed.left(kMarkdownFenceMarkerLength);
+            in_fence = true;
             continue;
         }
-        if (skill->description.isEmpty() && looksLikeParagraph(trimmed)) {
-            skill->description = trimmed;
-            break;
+        if (in_comment) {
+            if (trimmed.contains(QLatin1String("-->"))) {
+                in_comment = false;
+            }
+            continue;
+        }
+        if (trimmed.startsWith(QLatin1String("<!--"))) {
+            in_comment = !trimmed.contains(QLatin1String("-->"));
+            continue;
+        }
+        const auto match = kHeading.match(trimmed);
+        if (match.hasMatch()) {
+            return match.captured(1).trimmed();
         }
     }
+    return {};
+}
+
+// Bundled skills carry explicit identity/description metadata but derive their
+// display title from the first real body heading when `title` is omitted.
+void deriveMissingFields(Skill* skill, const QString& body) {
     if (skill->title.isEmpty()) {
-        skill->title = titleFromId(skill->id);
+        skill->title = firstMarkdownHeading(body);
     }
+}
+
+bool requireSkillField(const QString& value, const QString& error, QStringList* errors) {
+    if (!value.trimmed().isEmpty()) {
+        return true;
+    }
+    if (errors != nullptr) {
+        errors->append(error);
+    }
+    return false;
 }
 
 }  // namespace
 
 bool Skill::isValid(QStringList* errors) const {
+    if (!parse_error.isEmpty()) {
+        if (errors != nullptr) {
+            errors->append(parse_error);
+        }
+        return false;
+    }
     bool ok = true;
     if (id.trimmed().isEmpty()) {
         if (errors != nullptr) {
             errors->append(QStringLiteral("Skill %1 is missing an id").arg(source_path));
         }
         ok = false;
-    }
-    if (body.trimmed().isEmpty()) {
+    } else if (id != id.trimmed()) {
         if (errors != nullptr) {
-            errors->append(QStringLiteral("Skill %1 has an empty body").arg(source_path));
+            errors->append(
+                QStringLiteral("Skill %1 id has leading or trailing whitespace").arg(source_path));
         }
         ok = false;
     }
+    ok = requireSkillField(title,
+                           QStringLiteral("Skill %1 is missing a title").arg(source_path),
+                           errors) &&
+         ok;
+    ok = requireSkillField(description,
+                           QStringLiteral("Skill %1 is missing a description").arg(source_path),
+                           errors) &&
+         ok;
+    ok = requireSkillField(body,
+                           QStringLiteral("Skill %1 has an empty body").arg(source_path),
+                           errors) &&
+         ok;
     return ok;
 }
 
 Skill Skill::fromMarkdown(const QByteArray& bytes, const QString& path) {
     Skill skill;
     skill.source_path = path;
-    skill.id = QFileInfo(path).completeBaseName().trimmed();
 
     if (bytes.size() > kMaxSkillBytes) {
-        // Over the ceiling: return with an empty body so isValid() rejects it,
-        // rather than parse an oversized file into the int-indexed line loops.
+        skill.parse_error = QStringLiteral("Skill %1 exceeds parser size limit (%2 bytes, max %3)")
+                                .arg(path)
+                                .arg(bytes.size())
+                                .arg(kMaxSkillBytes);
         return skill;
     }
 
-    QString text = QString::fromUtf8(bytes);
+    QStringDecoder decoder(QStringConverter::Utf8);
+    QString text = decoder.decode(bytes);
+    if (decoder.hasError()) {
+        skill.parse_error = QStringLiteral("Skill %1 is not valid UTF-8").arg(path);
+        return skill;
+    }
     // Strip a leading UTF-8 BOM (U+FEFF): QString::fromUtf8 keeps it, and it is not
     // whitespace, so an un-stripped BOM would make the first-line "---" front-matter
     // check fail and the whole file (front-matter included) parse as body.
@@ -163,8 +221,8 @@ Skill Skill::fromMarkdown(const QByteArray& bytes, const QString& path) {
     text.replace(QLatin1Char('\r'), QLatin1Char('\n'));
 
     const QString body = parseFrontMatter(text, &skill);
-    if (skill.id.trimmed().isEmpty()) {
-        skill.id = QFileInfo(path).completeBaseName().trimmed();
+    if (!skill.parse_error.isEmpty()) {
+        return skill;
     }
     skill.body = body.trimmed();
     deriveMissingFields(&skill, skill.body);

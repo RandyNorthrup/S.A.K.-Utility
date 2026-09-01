@@ -65,8 +65,10 @@ constexpr unsigned char kUtf8FourByteMaxLead = 0xF4;       // U+10FFFF cap
 constexpr unsigned char kUtf8FourByteLeadF4 = 0xF4;
 constexpr unsigned char kUtf8FourByteF0MinSecond = 0x90;   // reject F0 80..8F (overlong)
 constexpr unsigned char kUtf8FourByteF4MaxSecond = 0x8F;   // reject F4 90..BF (> U+10FFFF)
+#ifndef _WIN32
 constexpr std::uintmax_t kFileDescriptorWarnNumerator = 4;
 constexpr std::uintmax_t kFileDescriptorWarnDenominator = 5;
+#endif
 constexpr std::size_t kUnknownHardwareThreadLimit = 64;
 constexpr unsigned int kThreadWarningMultiplier = 2;
 constexpr unsigned int kThreadRejectMultiplier = 4;

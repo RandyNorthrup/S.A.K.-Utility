@@ -1,0 +1,6 @@
+- **HIGH** - `src/ai/ai_run_state_store.cpp:96`: Size check is racy; `readAll()` remains unbounded if file grows after check or `size()` returns `-1`, defeating stated hostile-file allocation cap.
+- **MEDIUM** - `src/ai/ai_run_state_store.cpp:68`: Save path permits payloads above `kMaxRunStateBytes`, producing snapshots that save successfully but cannot be loaded.
+- **MEDIUM** - `src/ai/ai_run_state_store.cpp:101`: Read errors are never checked; partial data can be parsed and accepted as successful state.
+- **MEDIUM** - `src/ai/ai_run_state_store.cpp:108`: Any valid JSON object, including `{}` or wrong-typed/missing fields, is accepted without schema validation, silently degrading corrupt snapshots to default/partial state.
+- **LOW** - `src/ai/ai_run_state_store.cpp:104`: Valid non-object JSON reports `QJsonParseError::NoError` text as the failure reason, yielding misleading "no error occurred" diagnostics.
+- **LOW** - `src/ai/ai_run_state_store.cpp:60`: `mkpath()` result is discarded, losing direct directory-creation failure handling.

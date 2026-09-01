@@ -29,10 +29,9 @@
 namespace sak {
 
 namespace {
-constexpr int kProcessTimeout = 120'000;         // 2 minutes max for iPerf3
+constexpr int kProcessTimeout = 120'000;      // 2 minutes max for iPerf3
 constexpr int kServerStartTimeout = 3000;
-constexpr int kSpeedTestChunkBytes = 1'048'576;  // 1 MB
-constexpr int kSpeedTestDurationMs = 10'000;     // 10 seconds
+constexpr int kSpeedTestDurationMs = 10'000;  // 10 seconds
 constexpr int kIperfProgressPollMs = kTimerRetryBaseMs;
 constexpr int kCloudflareLatencyTimeoutMs = kTimeoutProcessShortMs;
 constexpr double kBitsPerByte = 8.0;

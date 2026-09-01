@@ -105,7 +105,6 @@ constexpr qsizetype kDirEntryHeaderBytes = 8;
 constexpr int kDirEntryTypeRegular = 1;
 constexpr int kDirEntryTypeDirectory = 2;
 constexpr int kDirEntryTypeSymlink = 7;
-constexpr int kHexFieldWidth = 8;
 constexpr int kHexBase = 16;
 constexpr int kBitsPerUint32 = 32;
 constexpr uint32_t kMaxExtLogBlockSizeShift = 31;
@@ -212,11 +211,6 @@ uint64_t joinLowHigh32(uint32_t low, uint32_t high, bool useHigh) {
         return low;
     }
     return (static_cast<uint64_t>(high) << kBitsPerUint32) | low;
-}
-
-QString hex32(uint32_t value) {
-    return QStringLiteral("0x%1").arg(
-        static_cast<qulonglong>(value), kHexFieldWidth, kHexBase, QLatin1Char('0'));
 }
 
 bool isPowerOfTwo(uint32_t value) {

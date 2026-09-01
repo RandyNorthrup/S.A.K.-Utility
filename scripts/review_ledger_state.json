@@ -2324,16 +2324,25 @@
       "status": "reviewed"
     },
     "src/ai/ai_run_state_store.cpp": {
+      "brief": "docs/review_briefs/src_ai_ai_run_state_store.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "cd6f7cefb9a270a5cdec408f7ae9166d9b17cf34",
+      "status": "reviewed"
     },
     "src/ai/ai_skill.cpp": {
+      "brief": "docs/review_briefs/src_ai_ai_skill.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "a65e626fabfa3a4c9cb3c97aab9061283ce88e4e",
+      "status": "reviewed"
     },
     "src/ai/ai_skill_store.cpp": {
+      "brief": "docs/review_briefs/src_ai_ai_skill_store.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "158be129f3e2d3c9a4d3a63ddf53f24958c6e851",
+      "status": "reviewed"
     },
     "src/ai/ai_subagent_runner.cpp": {
       "evidence": "cited",
@@ -2342,8 +2351,11 @@
       "status": "reviewed"
     },
     "src/ai/ai_subagent_tool_executor.cpp": {
+      "brief": "docs/review_briefs/src_ai_ai_subagent_tool_executor.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "ecabc11dfa02dd94615f3a9f148f73efb8f978e3",
+      "status": "reviewed"
     },
     "src/ai/ai_token_usage_tracker.cpp": {
       "evidence": "cited",
@@ -2358,8 +2370,11 @@
       "status": "reviewed"
     },
     "src/ai/ai_tool_dispatcher.cpp": {
+      "brief": "docs/review_briefs/src_ai_ai_tool_dispatcher.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "5d5e413d0849bd3f7c8e7255b6c470d1fcf7b603",
+      "status": "reviewed"
     },
     "src/ai/ai_tool_health_ledger.cpp": {
       "group": "src",

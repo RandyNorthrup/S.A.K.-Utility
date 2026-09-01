@@ -54,7 +54,6 @@ constexpr SmartThreshold kSataThresholds[] = {
 /// @brief NVMe percentage_used threshold values
 constexpr uint8_t kNvmeWearWarningPercent = 80;
 constexpr uint8_t kNvmeWearCriticalPercent = 95;
-constexpr uint32_t kNvmeMediaErrorWarning = 1;
 
 constexpr int kSmartctlTimeoutMs = 30'000;  // 30 seconds per drive
 constexpr int kSmartctlFatalExitMask = 0x07;

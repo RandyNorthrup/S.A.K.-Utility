@@ -80,7 +80,6 @@ namespace {
                                                          : std::nullopt;
 }
 
-constexpr qsizetype kApfsObjectHeaderBytes = 0x20;
 constexpr qsizetype kApfsObjectOidOffset = 0x08;
 constexpr qsizetype kApfsObjectXidOffset = 0x10;
 constexpr qsizetype kApfsObjectTypeOffset = 0x18;
@@ -111,14 +110,11 @@ constexpr uint32_t kApfsMagicApsb = 0x42'53'50'41;  // APSB
 constexpr uint32_t kApfsObjectTypeMask = 0x00'00'FF'FF;
 constexpr uint32_t kApfsObjectTypeNxSuperblock = 0x00'00'00'01;
 constexpr uint32_t kApfsObjectTypeBtree = 0x00'00'00'02;
-constexpr uint32_t kApfsObjectTypeBtreeNode = 0x00'00'00'03;
 constexpr uint32_t kApfsObjectTypeObjectMap = 0x00'00'00'0B;
 constexpr uint32_t kApfsObjectTypeCheckpointMap = 0x00'00'00'0C;
 constexpr uint32_t kApfsObjectTypeFs = 0x00'00'00'0D;
 constexpr uint32_t kApfsObjectSubtypeFsTree = 0x00'00'00'0E;
-constexpr uint32_t kApfsObjectPhysical = 0x40'00'00'00;
 constexpr uint16_t kApfsBtreeNodeRoot = 0x0001;
-constexpr uint16_t kApfsBtreeNodeLeaf = 0x0002;
 constexpr uint16_t kApfsBtreeNodeFixedKvSize = 0x0004;
 constexpr uint32_t kApfsBtreePhysical = 0x00'00'00'10;
 constexpr uint32_t kApfsContainerIncompatVersion1 = 0x00'00'00'01;
@@ -204,11 +200,9 @@ constexpr qsizetype kApfsOmapValuePaddrOffset = 8;
 constexpr qsizetype kApfsNxBlockSizeOffset = 0x24;
 constexpr qsizetype kApfsNxBlockCountOffset = 0x28;
 constexpr qsizetype kApfsNxIncompatibleFeaturesOffset = 0x40;
-constexpr qsizetype kApfsNxNextXidOffset = 0x60;
 constexpr qsizetype kApfsNxDescBlocksOffset = 0x68;
 constexpr qsizetype kApfsNxDataBlocksOffset = 0x6C;
 constexpr qsizetype kApfsNxDescBaseOffset = 0x70;
-constexpr qsizetype kApfsNxDataBaseOffset = 0x78;
 constexpr qsizetype kApfsNxDescIndexOffset = 0x88;
 constexpr qsizetype kApfsNxDescLenOffset = 0x8C;
 constexpr qsizetype kApfsNxOmapOidOffset = 0xA0;
@@ -230,7 +224,6 @@ constexpr qsizetype kApfsVolumeUuidOffset = 0xF0;
 constexpr qsizetype kApfsVolumeFsFlagsOffset = 0x108;
 constexpr uint64_t kApfsVolumeFsFlagUnencrypted = 0x1;
 constexpr uint64_t kApfsVolumeFsFlagOneKey = 0x8;
-constexpr qsizetype kApfsVolumeFlagsOffset = 0x198;
 constexpr qsizetype kApfsVolumeNameOffset = 0x2C0;
 constexpr qsizetype kApfsVolumeNameBytes = 256;
 constexpr uint32_t kApfsCheckpointMapLast = 0x00'00'00'01;

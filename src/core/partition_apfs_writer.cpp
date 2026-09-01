@@ -86,10 +86,8 @@ constexpr uint64_t kApfsFormatFqIpTreeBlock = 13;
 constexpr uint64_t kApfsFormatFqMainTreeBlock = 14;
 constexpr uint32_t kApfsFormatIpBitmapBlocks = 16;
 constexpr uint64_t kApfsFormatIpBitmapBaseBlock = 169;
-constexpr uint64_t kApfsFormatIpBlockCount = 6;
 constexpr uint64_t kApfsFormatIpBaseBlock = 185;
 constexpr uint64_t kApfsFormatGhostChunkInfoBlock = 185;
-constexpr uint64_t kApfsFormatGhostChunkBitmapBlock = 186;
 constexpr uint64_t kApfsFormatChunkInfoBlock = 187;
 constexpr uint64_t kApfsFormatChunkBitmapBlock = 188;
 constexpr uint64_t kApfsFormatGhostContainerOmapBlock = 191;
@@ -203,7 +201,6 @@ constexpr uint32_t kApfsContainerIncompatVersion2 = 0x00'00'00'02;
 constexpr uint16_t kApfsBtreeNodeRoot = 0x0001;
 constexpr uint16_t kApfsBtreeNodeLeaf = 0x0002;
 constexpr uint16_t kApfsBtreeNodeFixedKvSize = 0x0004;
-constexpr uint32_t kApfsBtreePhysical = 0x00'00'00'10;
 constexpr uint8_t kApfsRecordInode = 3;
 constexpr uint8_t kApfsRecordXattr = 4;
 constexpr uint8_t kApfsRecordSiblingLink = 5;  // APFS_TYPE_SIBLING_LINK (hard-link names)
@@ -488,7 +485,6 @@ constexpr uint64_t kGeneratedApfsSingleChunkMaxBlocks = kApfsSpacemanBlocksPerCh
 constexpr uint64_t kGeneratedApfsSingleChunkMaxBytes =
     kGeneratedApfsSingleChunkMaxBlocks * static_cast<uint64_t>(kSupportedApfsBlockSizeBytes);
 constexpr uint32_t kApfsSpacemanFlagVersioned = 1;
-constexpr qsizetype kApfsSpacemanCibAddrArrayOffset = 2568;
 constexpr qsizetype kApfsSpacemanIpBmTxMultiplierOffset = 0x94;
 constexpr qsizetype kApfsSpacemanIpBlockCountOffset = 0x98;
 constexpr qsizetype kApfsSpacemanIpBmSizeOffset = 0xA0;
@@ -506,12 +502,6 @@ constexpr qsizetype kApfsSpacemanIpBmXidOffsetField = 0x144;
 constexpr qsizetype kApfsSpacemanIpBitmapOffsetField = 0x148;
 constexpr qsizetype kApfsSpacemanIpBmFreeNextOffsetField = 0x14C;
 constexpr uint32_t kApfsSpacemanIpBmTxMultiplier = 16;
-// IP-bitmap ring detail (offsets within the spaceman, mirrored from the kernel-
-// advanced harvest): the ring transaction id, a per-commit sequence counter, and
-// the 16-entry ring array whose two 0xFFFF markers are the in-use ip-bitmap slots.
-constexpr qsizetype kApfsSpacemanIpBmRingXidOffset = 2520;
-constexpr qsizetype kApfsSpacemanIpBmRingSeqOffset = 2528;
-constexpr qsizetype kApfsSpacemanIpBmRingArrayOffset = 2536;
 constexpr uint16_t kApfsSpacemanIpBmRingInUse = 0xFFFF;
 // Free-queue tree_node_limit values mirrored from the reference container;
 // nonzero even when the queues themselves are empty.
@@ -582,8 +572,6 @@ constexpr qsizetype kApfsInodePrivateIdOffset = 0x08;
 constexpr qsizetype kApfsInodeDefaultProtectionClassOffset = 0x3C;
 constexpr qsizetype kApfsInodeModeOffset = 0x50;
 constexpr qsizetype kApfsInodeXfieldsOffset = 0x5C;
-constexpr qsizetype kApfsFormattedRootInodeValueBytes = 0x60;
-constexpr qsizetype kApfsFormattedFileInodeValueBytes = 0x90;
 constexpr qsizetype kApfsFormattedRootInodeKeyBytes = 8;
 constexpr qsizetype kUint16Size = 2;
 constexpr qsizetype kApfsFileExtentKeyBytes = 16;
@@ -1394,7 +1382,7 @@ QByteArray buildObjectMapTreeBlock(uint32_t blockSize,
         return newApfsObjectBlock(blockSize, oid, xid, kApfsObjectTypeBtreePhysical);
     }
     const QVector<QByteArray> nodes =
-        buildObjectMapTreeNodes({blockSize, oid, xid, oid}, mappings, blockers);
+        buildObjectMapTreeNodes({blockSize, oid, xid, oid, {}}, mappings, blockers);
     return nodes.isEmpty() ? QByteArray() : nodes.first();
 }
 
@@ -2616,12 +2604,6 @@ QByteArray buildRootTreeBlock(uint32_t blockSize,
     writeFsTreeInfoTrailer(&block, records, blockSize, records.size(), 1);
     stampApfsObjectBlock(&block, blockers);
     return block;
-}
-
-QByteArray buildRootTreeBlock(uint32_t blockSize,
-                              const QVector<ApfsRootFilePayload>& files,
-                              QStringList* blockers) {
-    return buildRootTreeBlock(blockSize, files, {}, blockers);
 }
 
 QByteArray buildEmptyRootTreeBlock(uint32_t blockSize,
@@ -6550,27 +6532,12 @@ bool commitInPlaceCheckpoint(QIODevice* image,
     }
     nxsb = newestCheckpointSuperblock(image, geometry, nxsb, blockers);
     const ApfsLiveCheckpoint live = readLiveCheckpoint(nxsb);
-    return advanceCheckpoint({image, geometry, nxsb, live, 0}, result, blockers);
-}
-
-// Single-entry object-map B-tree leaf: the value paddr sits at the very end of
-// the value area (blockSize - info(40) - value(16) + paddr offset(8)).
-// [[maybe_unused]]: walkLiveFsChain's F13 fix stopped seeding chain->volSb from this guessed
-// single-entry read (it now selects the target volume by its real oid), leaving this reader
-// without a caller. Kept rather than deleted (owner authorization required to remove a helper).
-[[maybe_unused]] uint64_t readOmapSingleEntryPaddr(const QByteArray& omapTreeNode,
-                                                   uint32_t blockSize) {
-    // Resolve the single record's value through the TOC value-offset rather than assuming a densely
-    // packed final slot. A S.A.K./mkapfs omap packs entry 0 at voff == kApfsObjectMapValueBytes so
-    // this stays byte-identical; a real macOS omap node offsets its slots (voff != 16), so the
-    // fixed blockSize-16 read landed on the wrong 16 bytes and returned a bogus volume-superblock
-    // paddr.
-    const bool isRoot = (le16(omapTreeNode, kApfsBtreeNodeFlagsOffset) & kApfsBtreeNodeRoot) != 0;
-    const qsizetype valueAreaEnd = static_cast<qsizetype>(blockSize) -
-                                   (isRoot ? kApfsBtreeInfoBytes : 0);
-    const uint16_t valueOffset = le16(omapTreeNode,
-                                      kApfsBtreeNodeHeaderBytes + kApfsBtreeFixedTocValueOffset);
-    return le64(omapTreeNode, valueAreaEnd - valueOffset + kApfsOmapValuePaddrOffset);
+    ApfsCheckpointAdvanceRequest request;
+    request.image = image;
+    request.geometry = geometry;
+    request.nxsb = nxsb;
+    request.live = live;
+    return advanceCheckpoint(request, result, blockers);
 }
 
 // Parse every {oid, xid, paddr, flags} record from a single-leaf object-map
@@ -7620,7 +7587,7 @@ ApfsMultiCibLayout computeMultiCibLayout(uint64_t chunkCount) {
 // Locations of a generated container's chunk-0 allocation structures. The live
 // chunk-info block and its bitmap sit at fixed addresses inside the internal
 // pool regardless of size, but the post-pool free region shifts by
-// ipDelta = 3*(chunk_count+cib_count) - kApfsFormatIpBlockCount (the formula
+// ipDelta = 3*(chunk_count+cib_count) - 6 generated-format internal-pool blocks (the formula
 // emptyFormatBlocks uses), so the in-place engine works on any container size,
 // not only the 64 MiB envelope. Allocation stays inside chunk 0 (the only chunk
 // with a populated bitmap on a fresh container).
@@ -10597,7 +10564,11 @@ bool applyRequestedCompression(const ApfsFileInsertBuildInputs& in,
 bool buildFileInsertRequest(const ApfsFileInsertBuildInputs& in,
                             ApfsFileInsertRequest* request,
                             QStringList* blockers) {
-    *request = {in.existingFiles, in.fileName, in.fileData, in.directories};
+    *request = {};
+    request->existingFiles = in.existingFiles;
+    request->fileName = in.fileName;
+    request->fileData = in.fileData;
+    request->directories = in.directories;
     request->newFileParentId = in.parentDirectoryId;
     request->recoveredMeta = in.recoveredMeta;
     request->xattrs = in.xattrs;
@@ -13276,7 +13247,8 @@ bool sizeInsertFsTree(const ApfsFsCommitContext& ctx,
     const uint64_t dataBlocks = roundedBlockCount(request.payloadSize(), ctx.geometry.blockSize);
     QVector<ApfsRootFilePayload> files;
     QVector<ApfsFsTreeNode> probe;
-    if (!buildChainedFileList({ctx.image, ctx.geometry, ctx.chain, request, 0}, &files, blockers) ||
+    if (!buildChainedFileList(
+            {ctx.image, ctx.geometry, ctx.chain, request, 0, {}}, &files, blockers) ||
         !buildFsTreeNodes({ctx.geometry.blockSize,
                            files,
                            request.directories,
@@ -19387,6 +19359,19 @@ struct ApfsRootFileWriteRequest {
     ApfsRecoveredInodeMetadata recoveredMeta;
 };
 
+ApfsRootFileWriteRequest makeRootFileWriteRequest(
+    const QVector<ApfsRootFilePayload>& allFiles,
+    const QString& fileName,
+    const QByteArray& fileData,
+    const QVector<ApfsRootDirectoryPayload>& directories) {
+    ApfsRootFileWriteRequest request;
+    request.allFiles = allFiles;
+    request.fileName = fileName;
+    request.fileData = fileData;
+    request.directories = directories;
+    return request;
+}
+
 // Build the insert leg of a create-or-replace write through the shared
 // compression preflight, so a write honors the compress flags exactly like a
 // plain insert (previously they were parsed and silently dropped). Runs BEFORE
@@ -24421,11 +24406,10 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyDir
     }
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
-    if (commitInPlaceRootFileWrite(
-            &image,
-            {allFiles, cleanFileName, request.file_data, directories, parentId},
-            &commit,
-            &commitBlockers)) {
+    ApfsRootFileWriteRequest writeRequest =
+        makeRootFileWriteRequest(allFiles, cleanFileName, request.file_data, directories);
+    writeRequest.parentDirectoryId = parentId;
+    if (commitInPlaceRootFileWrite(&image, writeRequest, &commit, &commitBlockers)) {
         result.previous_xid = commit.previous_xid;
         result.new_xid = commit.new_xid;
         result.checkpoint_map_block = commit.checkpoint_map_block;
@@ -24675,6 +24659,35 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
 static bool validateImageOnlyCommitSource(QLatin1StringView operation,
                                           PartitionApfsImageCheckpointCommitResult* result);
 
+static ApfsRootFileWriteRequest imageOnlyFileWriteRequest(
+    const PartitionApfsImageFileInsertCommitRequest& request,
+    const QVector<ApfsRootFilePayload>& allFiles,
+    const QVector<ApfsRootDirectoryPayload>& directories,
+    const QString& cleanFileName) {
+    ApfsRootFileWriteRequest writeRequest =
+        makeRootFileWriteRequest(allFiles, cleanFileName, request.file_data, directories);
+    writeRequest.compress = request.compress_zlib;
+    writeRequest.compressLzfse = request.compress_lzfse;
+    writeRequest.compressLzvn = request.compress_lzvn;
+    writeRequest.compressLzbitmap = request.compress_lzbitmap;
+    // Import fidelity: carry an adopted file's real owner/group/mode/flags/timestamps into the
+    // written inode instead of generated defaults. preserve_inode_metadata is false on every
+    // ordinary file-write, so recoveredMeta stays invalid and the generated inode is
+    // byte-identical.
+    if (request.preserve_inode_metadata) {
+        writeRequest.recoveredMeta = {.valid = true,
+                                      .owner = request.inode_owner,
+                                      .group = request.inode_group,
+                                      .mode = request.inode_mode,
+                                      .bsdFlags = request.inode_bsd_flags,
+                                      .createTime = request.inode_create_time,
+                                      .modTime = request.inode_mod_time,
+                                      .changeTime = request.inode_change_time,
+                                      .accessTime = request.inode_access_time};
+    }
+    return writeRequest;
+}
+
 PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFileWrite(
     const PartitionApfsImageFileInsertCommitRequest& request) {
     PartitionApfsImageCheckpointCommitResult result;
@@ -24712,26 +24725,8 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitImageOnlyFil
                           &result.blockers)) {
         return result;
     }
-    ApfsRootFileWriteRequest writeRequest{allFiles, cleanFileName, request.file_data, directories};
-    writeRequest.compress = request.compress_zlib;
-    writeRequest.compressLzfse = request.compress_lzfse;
-    writeRequest.compressLzvn = request.compress_lzvn;
-    writeRequest.compressLzbitmap = request.compress_lzbitmap;
-    // Import fidelity: carry an adopted file's real owner/group/mode/flags/timestamps into the
-    // written inode instead of generated defaults. preserve_inode_metadata is false on every
-    // ordinary file-write, so recoveredMeta stays invalid and the generated inode is
-    // byte-identical.
-    if (request.preserve_inode_metadata) {
-        writeRequest.recoveredMeta = {.valid = true,
-                                      .owner = request.inode_owner,
-                                      .group = request.inode_group,
-                                      .mode = request.inode_mode,
-                                      .bsdFlags = request.inode_bsd_flags,
-                                      .createTime = request.inode_create_time,
-                                      .modTime = request.inode_mod_time,
-                                      .changeTime = request.inode_change_time,
-                                      .accessTime = request.inode_access_time};
-    }
+    const ApfsRootFileWriteRequest writeRequest =
+        imageOnlyFileWriteRequest(request, allFiles, directories, cleanFileName);
     ApfsInPlaceCheckpointResult commit;
     QStringList commitBlockers;
     if (commitInPlaceRootFileWrite(&image, writeRequest, &commit, &commitBlockers)) {
@@ -25164,7 +25159,8 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawFileWrite
     if (!target) {
         return result;
     }
-    ApfsRootFileWriteRequest writeRequest{allFiles, cleanFileName, request.file_data, directories};
+    ApfsRootFileWriteRequest writeRequest =
+        makeRootFileWriteRequest(allFiles, cleanFileName, request.file_data, directories);
     writeRequest.parentDirectoryId = parentDirectoryId;
     writeRequest.compress = request.compress_zlib;
     writeRequest.compressLzfse = request.compress_lzfse;
@@ -25502,7 +25498,8 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawDirectory
     if (!target) {
         return result;
     }
-    ApfsRootFileWriteRequest writeRequest{allFiles, cleanFileName, request.file_data, directories};
+    ApfsRootFileWriteRequest writeRequest =
+        makeRootFileWriteRequest(allFiles, cleanFileName, request.file_data, directories);
     writeRequest.parentDirectoryId = parentId;
     writeRequest.streamPath = request.file_data_path.trimmed();
     writeRequest.streamSize = request.file_data_stream_size;
@@ -26171,7 +26168,7 @@ QVector<QByteArray> PartitionApfsWriter::buildObjectMapTreeBlocks(uint32_t block
         const uint64_t oid = kApfsFirstUserObjectId + static_cast<uint64_t>(index);
         mappings.append({oid, xid, tree_base_paddr + static_cast<uint64_t>(index) + 1, 0});
     }
-    return buildObjectMapTreeNodes({block_size, tree_base_paddr, xid, tree_base_paddr},
+    return buildObjectMapTreeNodes({block_size, tree_base_paddr, xid, tree_base_paddr, {}},
                                    mappings,
                                    sink);
 }

@@ -15,6 +15,7 @@ struct DispatchRecorder {
     sak::ai::AiToolPolicy policy{sak::ai::AiToolPolicy::NoLocalExecution};
     QString tool_name;
     QString operation;
+    QString user_message;
     QString agent_id;
     QJsonObject arguments;
     // The executor derives TWO fields from the argument object; only `operation` was recorded.
@@ -40,6 +41,7 @@ sak::ai::AiSubagentToolExecutor::RawDispatch recordingDispatch(DispatchRecorder*
         recorder->policy = policy;
         recorder->tool_name = request.tool_name;
         recorder->operation = request.operation;
+        recorder->user_message = request.user_message;
         recorder->command_preview = request.command_preview;
         recorder->agent_id = agent_id;
         recorder->arguments = arguments;
@@ -61,6 +63,7 @@ sak::ai::AiSubagentTask makeTask(sak::ai::AiToolPolicy policy) {
     sak::ai::AiSubagentTask task;
     task.task_id = QStringLiteral("t1");
     task.agent_id = QStringLiteral("package_agent");
+    task.user_message = QStringLiteral("install the selected package");
     task.tool_policy = policy;
     return task;
 }
@@ -106,6 +109,7 @@ void AiSubagentToolExecutorTests::dispatchesAllowedToolWithPolicyAndArgs() {
     QCOMPARE(recorder.policy, sak::ai::AiToolPolicy::PackageToolsOnly);
     QCOMPARE(recorder.tool_name, QStringLiteral("sak_package_manager"));
     QCOMPARE(recorder.operation, QStringLiteral("list"));
+    QCOMPARE(recorder.user_message, QStringLiteral("install the selected package"));
     QCOMPARE(recorder.command_preview, QStringLiteral("winget list --id Foo"));
     QCOMPARE(recorder.agent_id, QStringLiteral("package_agent"));
     // The parsed object must REACH the dispatcher, whole. The operation assertion above proves
@@ -233,26 +237,33 @@ void AiSubagentToolExecutorTests::failsClosedOnInvalidArguments() {
     // was ever fed. With the second gone, doc.object() on a top-level array returns an EMPTY
     // object and the call DISPATCHES with no arguments instead of failing closed -- a fail-open on
     // model-supplied argument text.
-    const QStringList valid_json_non_objects{QStringLiteral("[1,2,3]"),
-                                             QStringLiteral("\"a string\""),
-                                             QStringLiteral("42"),
-                                             QStringLiteral("true"),
-                                             QStringLiteral("null")};
-    for (const QString& args : valid_json_non_objects) {
-        DispatchRecorder shape_recorder;
-        sak::ai::AiSubagentToolExecutor shape_executor(recordingDispatch(&shape_recorder));
-        shape_executor.setAllowedTools({QStringLiteral("sak_package_manager")});
-        const auto refused = shape_executor.executeToolCall(
+    DispatchRecorder shape_recorder;
+    sak::ai::AiSubagentToolExecutor shape_executor(recordingDispatch(&shape_recorder));
+    shape_executor.setAllowedTools({QStringLiteral("sak_package_manager")});
+    const auto refused_array = shape_executor.executeToolCall(
+        makeTask(sak::ai::AiToolPolicy::PackageToolsOnly),
+        makeCall(QStringLiteral("sak_package_manager"), QStringLiteral("[1,2,3]")),
+        sak::ai::CancellationToken::createRoot(QStringLiteral("r")));
+    QCOMPARE(shape_recorder.calls, 0);
+    QCOMPARE(parseOutput(refused_array).value(QStringLiteral("error")).toString(),
+             QStringLiteral("Tool arguments JSON root must be an object"));
+
+    // QJsonDocument accepts only object/array documents. JSON scalar roots are reported by Qt as
+    // parse errors, but they must still fail before dispatch with the parser's real reason.
+    const QStringList scalar_roots{QStringLiteral("\"a string\""),
+                                   QStringLiteral("42"),
+                                   QStringLiteral("true"),
+                                   QStringLiteral("null")};
+    for (const QString& args : scalar_roots) {
+        const auto refused_scalar = shape_executor.executeToolCall(
             makeTask(sak::ai::AiToolPolicy::PackageToolsOnly),
             makeCall(QStringLiteral("sak_package_manager"), args),
             sak::ai::CancellationToken::createRoot(QStringLiteral("r")));
-        QVERIFY2(shape_recorder.calls == 0,
-                 qPrintable(QStringLiteral("'%1' was dispatched instead of refused").arg(args)));
-        QVERIFY2(parseOutput(refused)
-                     .value(QStringLiteral("error"))
-                     .toString()
-                     .startsWith(QStringLiteral("Invalid tool arguments JSON: ")),
-                 qPrintable(args));
+        QCOMPARE(shape_recorder.calls, 0);
+        QVERIFY(parseOutput(refused_scalar)
+                    .value(QStringLiteral("error"))
+                    .toString()
+                    .startsWith(QStringLiteral("Invalid tool arguments JSON: ")));
     }
 }
 
@@ -286,6 +297,22 @@ void AiSubagentToolExecutorTests::argumentSizeCapIsExactAtBothSides() {
                                      sak::ai::CancellationToken::createRoot(QStringLiteral("r")));
     QCOMPARE(cap_recorder.calls, 1);  // unchanged: never dispatched
     QCOMPARE(parseOutput(refused).value(QStringLiteral("error")).toString(),
+             QStringLiteral("Tool arguments JSON exceeds the size limit"));
+
+    // The cap is encoded bytes, not UTF-16 code units. This object stays below the character
+    // pre-cap but exceeds 1 MiB after its three-byte UTF-8 characters are encoded.
+    DispatchRecorder encoded_recorder;
+    sak::ai::AiSubagentToolExecutor encoded_executor(recordingDispatch(&encoded_recorder));
+    encoded_executor.setAllowedTools({QStringLiteral("sak_package_manager")});
+    const QString encoded_over_cap = QStringLiteral("{\"k\":\"") +
+                                     QString((kCap / 3) + 1, QChar(0x20AC)) + QStringLiteral("\"}");
+    QVERIFY(encoded_over_cap.size() < kCap);
+    const auto encoded_refused = encoded_executor.executeToolCall(
+        makeTask(sak::ai::AiToolPolicy::PackageToolsOnly),
+        makeCall(QStringLiteral("sak_package_manager"), encoded_over_cap),
+        sak::ai::CancellationToken::createRoot(QStringLiteral("r")));
+    QCOMPARE(encoded_recorder.calls, 0);
+    QCOMPARE(parseOutput(encoded_refused).value(QStringLiteral("error")).toString(),
              QStringLiteral("Tool arguments JSON exceeds the size limit"));
 }
 

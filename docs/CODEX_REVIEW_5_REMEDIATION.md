@@ -1113,12 +1113,47 @@ a parked design, per the bucket convention. Open work is what remains after thos
   WAVE 9 FINAL GATE: changed-file hooks and two-pass whole-tree cppcheck passed with 183/186
   checkers, zero normal findings, and zero stale inline suppressions. Release build exit 0; full
   CTest 267/267, zero failures, 1328.01 seconds.
+  COVERAGE SILENCE WAVE 10, 2026-08-31: `missing-field-initializers`, `unused-variable`, and
+  `unused-function` are active and fatal. The earlier syntax-only `unused-variable` result was
+  wrong; the mandatory clean rebuild was the authority and exposed 35 dead constants, two
+  POSIX-only constants compiled on Windows, and one unread KeepAwake result. The direct fixes
+  delete the dead constants, guard the POSIX thresholds by platform, and assert both start calls.
+  The missing-field reveal required 37 explicit aggregate fields across APFS production paths and
+  the AI trace/user-profile tests. The unused-function reveal removed two uncalled helpers, and
+  the separately audited `[[maybe_unused]]` APFS omap helper was also uncalled and deleted under
+  the owner's no-dead-code authorization. Build-system lint rejects all three flags if restored.
+  The complete clang-cl coverage build passed with `/WX`; its compile database contains zero
+  references to the removed flags, and 21 affected instrumented tests passed 21/21.
+  FAIL-CLOSED REVIEW-BRIEF WAVE: the review driver stored five new source briefs. Hand verification
+  confirmed every run-state, skill-parser, and subagent-tool finding. Run-state persistence now
+  writes/requires schema version 1, validates every required field/status/pending gate, bounds both
+  save and chunked read allocation, and reports exact mkdir/read/parse/root errors; nine planted
+  regressions are killed. Skill parsing now requires strict UTF-8 plus closed leading frontmatter,
+  rejects padded/programmatic ids, removes filename/paragraph legacy fallbacks, and requires id,
+  title, explicit description, and body; nine isolated broken-code drills went red and all eight
+  bundled skills pass. Subagent tool requests now carry the originating human message separately
+  from model-authored objectives, enforce the 1 MiB cap on encoded UTF-8 JSON, and report non-object
+  roots distinctly; three mutation-catalog regressions are killed. The `ai_skill_store` and
+  `ai_tool_dispatcher` briefs remain INCOMPLETE leads for the next hand-verification/fix wave.
+  ATTRIBUTE/MACRO SILENCE AUDIT: 34 `[[maybe_unused]]` attributes were re-checked. Thirty-three
+  have a direct removal/refactor path; one environment-gated PST smoke-test result is intentionally
+  unassertable because either readable detail or fail-closed refusal is valid. Sixty-nine
+  `Q_UNUSED` sites were also traced: 38 are required interface/platform placeholders, six are
+  direct signature/dead-local cleanups, and 25 mask six supported-path implementation gaps. Those
+  gaps are INCOMPLETE: portable APFS crypto, POSIX cleanup redirect/symlink safety, POSIX raw-device
+  identity unification, strict MBOX separator reads, POSIX process-tree termination, and Windows
+  indexed-icon extraction. No suppression is accepted for those missing implementations.
+  WAVE 10 FINAL GATE: all changed-file hooks passed, full coverage build exit 0, and affected
+  coverage CTest passed 21/21. Release build exit 0; full CTest 267/267, zero failures, 886.81
+  seconds. Two coverage-only compiler flags remain open for direct audit:
+  `unused-command-line-argument` and `missing-designated-field-initializers`.
   OWNER RULE NOW RECORDED IN `AGENTS.md`: fix code, test, tool, or gate first; suppression is the
   last resort only after no direct fix is possible and the exact reason is proven. Existing
   suppressions are re-audited, not inherited as permanent policy. Current batch: all pre-commit
   hooks passed; Release build exit 0; full CTest 265/265, zero failures, 804.48 seconds.
   STILL OPEN: core's 5,271 naming findings; the 294-item `useStlAlgorithm` program;
-  coverage compiler suppressions; directly
+  the two remaining coverage compiler suppressions; the 33 direct `[[maybe_unused]]` removals;
+  six direct `Q_UNUSED` cleanups; six implementation gaps currently masked by `Q_UNUSED`; directly
   closable fixture/resource skips; and the historical VM credential rotation/history-rewrite
   decision.
   DIRECT-FIX WAVE 1 FINAL GATE: all changed-file pre-commit hooks passed; Release build exit 0;

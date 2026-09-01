@@ -951,6 +951,7 @@ QJsonObject AiSubagentTask::toJson() const {
     obj[QStringLiteral("phase_id")] = phase_id;
     obj[QStringLiteral("agent_id")] = agent_id;
     obj[QStringLiteral("objective")] = objective;
+    obj[QStringLiteral("user_message")] = user_message;
     obj[QStringLiteral("system_instructions")] = system_instructions;
     obj[QStringLiteral("context_refs")] = writeStringList(context_refs);
     obj[QStringLiteral("instructions_refs")] = writeStringList(instructions_refs);
@@ -971,6 +972,7 @@ AiSubagentTask AiSubagentTask::fromJson(const QJsonObject& object) {
     task.phase_id = object.value(QStringLiteral("phase_id")).toString();
     task.agent_id = object.value(QStringLiteral("agent_id")).toString();
     task.objective = object.value(QStringLiteral("objective")).toString();
+    task.user_message = object.value(QStringLiteral("user_message")).toString();
     task.system_instructions = object.value(QStringLiteral("system_instructions")).toString();
     task.context_refs = readStringList(object.value(QStringLiteral("context_refs")));
     task.instructions_refs = readStringList(object.value(QStringLiteral("instructions_refs")));
