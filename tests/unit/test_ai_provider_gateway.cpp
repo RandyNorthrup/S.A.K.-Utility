@@ -924,24 +924,43 @@ void AiProviderGatewayTests::planWin32McpCall_refusesMalformedEnvelope() {
     // Qt would silently coerce a non-object tool_arguments to {} and run the tool on server
     // defaults (active tab/window) instead of the model's explicit, constrained arguments; a
     // non-integer timeout_ms would silently become the default. planWin32McpCall fails closed on
-    // both. The envelope guard runs before any provider lookup, so no registry fixture is needed.
-    const sak::ai::AiProviderGateway gateway;
+    // both. The malformed guards run before provider lookup; the well-formed isolation control
+    // uses a deterministic local provider so it proves the success path in every target layout.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString command_path =
+        QDir(temp.path()).filePath(QStringLiteral("tools/mcp/win32-mcp-server/server.exe"));
+    QVERIFY(writeFile(command_path, QByteArray("stub")));
+    const QString providers_path =
+        QDir(temp.path()).filePath(QStringLiteral("data/ai/providers/providers.json"));
+    const QJsonObject provider{
+        {QStringLiteral("id"), QStringLiteral("win32_mcp")},
+        {QStringLiteral("transport"), QStringLiteral("stdio")},
+        {QStringLiteral("command"), QStringLiteral("tools/mcp/win32-mcp-server/server.exe")},
+        {QStringLiteral("tools"), QJsonArray{QStringLiteral("browser_snapshot")}}};
+    QVERIFY(
+        writeFile(providers_path,
+                  QJsonDocument(QJsonObject{{QStringLiteral("providers"), QJsonArray{provider}}})
+                      .toJson(QJsonDocument::Compact)));
+    const sak::ai::AiProviderGateway gateway{sak::ai::AiProviderRegistry(temp.path())};
 
     QString argsError;
-    [[maybe_unused]] const auto argsPlan = gateway.planWin32McpCall(
+    const auto argsPlan = gateway.planWin32McpCall(
         QJsonObject{{QStringLiteral("arguments"),
                      QJsonObject{{QStringLiteral("tool_name"), QStringLiteral("browser_click")},
                                  {QStringLiteral("tool_arguments"), QStringLiteral("e5")}}}},
         &argsError);
+    QVERIFY(argsPlan.provider.isEmpty());
     QCOMPARE(argsError,
              QStringLiteral("win32_mcp_call arguments.tool_arguments must be an object"));
 
     QString timeoutError;
-    [[maybe_unused]] const auto timeoutPlan = gateway.planWin32McpCall(
+    const auto timeoutPlan = gateway.planWin32McpCall(
         QJsonObject{{QStringLiteral("arguments"),
                      QJsonObject{{QStringLiteral("tool_name"), QStringLiteral("browser_snapshot")},
                                  {QStringLiteral("timeout_ms"), QStringLiteral("soon")}}}},
         &timeoutError);
+    QVERIFY(timeoutPlan.provider.isEmpty());
     QCOMPARE(timeoutError,
              QStringLiteral("win32_mcp_call arguments.timeout_ms must be an integer"));
 
@@ -949,13 +968,14 @@ void AiProviderGatewayTests::planWin32McpCall_refusesMalformedEnvelope() {
     // later error would be a registry matter, not the envelope guard), so the guards are scoped to
     // the malformed shapes rather than firing on every call.
     QString okError;
-    [[maybe_unused]] const auto okPlan =
+    const auto okPlan =
         gateway.planWin32McpCall(QJsonObject{{QStringLiteral("arguments"),
                                               QJsonObject{{QStringLiteral("tool_name"),
                                                            QStringLiteral("browser_snapshot")}}}},
                                  &okError);
-    QVERIFY(!okError.contains(QStringLiteral("must be an object")));
-    QVERIFY(!okError.contains(QStringLiteral("must be an integer")));
+    QVERIFY2(!okPlan.provider.isEmpty(), qPrintable(okError));
+    QCOMPARE(okPlan.tool_name, QStringLiteral("browser_snapshot"));
+    QVERIFY(okError.isEmpty());
 }
 
 QTEST_GUILESS_MAIN(AiProviderGatewayTests)

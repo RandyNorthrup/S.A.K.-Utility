@@ -327,12 +327,12 @@ private:
         if ((m_process == nullptr) || m_process->state() == QProcess::NotRunning) {
             return;
         }
+#ifdef Q_OS_WIN
         const qint64 pid = m_process->processId();
+#endif
         m_process->closeWriteChannel();
 #ifdef Q_OS_WIN
         terminateProcessTree(static_cast<DWORD>(pid));
-#else
-        Q_UNUSED(pid);
 #endif
         m_process->kill();
         m_process->waitForFinished(kMinimumRequestTimeoutMs);

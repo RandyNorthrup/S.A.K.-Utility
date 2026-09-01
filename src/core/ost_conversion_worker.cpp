@@ -321,7 +321,7 @@ void OstConversionWorker::processItemInFolder(const PstItemSummary& item_summary
 
     // Count exactly one outcome per item: the writers already increment
     // items_failed on failure, so items_converted must only rise on success.
-    if (writeItemMbox(detail, parser, folder_path, config, result)) {
+    if (writeItemMbox(detail, parser, folder_path, result)) {
         ++result.items_converted;
     }
 
@@ -497,9 +497,7 @@ bool OstConversionWorker::collectAttachments(const PstItemDetail& item,
 bool OstConversionWorker::writeItemMbox(const PstItemDetail& item,
                                         PstParser* parser,
                                         const QString& folder_path,
-                                        const OstConversionConfig& config,
                                         OstConversionResult& result) {
-    Q_UNUSED(config);
     if (!m_mbox_writer) {
         ++result.items_failed;
         result.errors.append("MBOX writer not initialized for: " + item.subject);
@@ -605,7 +603,7 @@ void OstConversionWorker::processRecoveredItems(PstParser* parser,
 
         // Only count a recovered item once it was actually written; a failed
         // write already increments items_failed inside the writer.
-        if (writeItemMbox(item, parser, recovery_folder, config, result)) {
+        if (writeItemMbox(item, parser, recovery_folder, result)) {
             ++result.items_recovered;
         }
 

@@ -3306,7 +3306,7 @@ private:
                 changed = true;
             }
         }
-        appendFolderTreeThreadKeys(context.selection, context.warnings);
+        appendFolderTreeThreadKeys(context.selection);
         return true;
     }
 
@@ -3378,12 +3378,10 @@ private:
         }
     }
 
-    static void appendFolderTreeThreadKeys(HfsFolderTreeDeleteSelection* selection,
-                                           QStringList* warnings) {
+    static void appendFolderTreeThreadKeys(HfsFolderTreeDeleteSelection* selection) {
         for (const auto& record : selection->records) {
             selection->keys_to_remove.insert(catalogKeyToken(record.catalog_id, QString()));
         }
-        Q_UNUSED(warnings);
     }
 
     [[nodiscard]] static int countRemovedFolderTreeRecords(

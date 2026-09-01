@@ -1147,13 +1147,35 @@ a parked design, per the bucket convention. Open work is what remains after thos
   coverage CTest passed 21/21. Release build exit 0; full CTest 267/267, zero failures, 886.81
   seconds. Two coverage-only compiler flags remain open for direct audit:
   `unused-command-line-argument` and `missing-designated-field-initializers`.
+  ATTRIBUTE/MACRO SILENCE WAVE 11, 2026-09-01: all 33 avoidable `[[maybe_unused]]` attributes are
+  gone. Callback-only parameters are unnamed; Windows/browser and generic-random helpers compile
+  only in their exact platform branches; live workload calls are explicitly discarded; and tests
+  assert the results they previously hid. The one remaining attribute is the environment-gated
+  PST real-file smoke result: both readable detail and fail-closed refusal satisfy its crash/hang/
+  sanitizer contract, so asserting either outcome would weaken the test. Six direct `Q_UNUSED`
+  sites are also gone through narrower HFS/OST/stress signatures, a Windows-local MCP pid, direct
+  use of the emitted MBOX path, and removal of a dead compressed-image position local. The 25
+  macros exposing the six cross-platform gaps below remain INCOMPLETE, not justified suppressions.
+  TOOL-DISPATCHER BRIEF CLOSED: provider gateway health keys are bounded and depend only on the
+  operation's real provider/app/tool target; nested object and JSON-string arguments plus `tool`/
+  `tool_name` aliases normalize identically. Missing, wrong-typed, or contradictory handler
+  success fields fail closed. Cancellation, invalid input, policy/lease refusal, user decline,
+  not-found, and busy results no longer disable a healthy tool; infrastructure failures still
+  drive backoff. Handler/checker exceptions are logged, every handler failure has a structured
+  envelope, missing-handler results retain operation, and `clearRegistrations` clears both maps.
+  Seven mutation-catalog regressions are killed. The provider-envelope control test exposed a
+  normal/coverage target difference caused by ambient bundled-command state; it now creates a
+  deterministic temporary provider and command, and passes in both builds.
+  WAVE 11 FINAL GATE: changed-file hooks and full coverage build passed; 17 affected instrumented
+  tests passed, followed by the corrected provider target in both coverage and normal trees.
+  Release build exit 0; full CTest 267/267, zero failures, 719.17 seconds.
   OWNER RULE NOW RECORDED IN `AGENTS.md`: fix code, test, tool, or gate first; suppression is the
   last resort only after no direct fix is possible and the exact reason is proven. Existing
   suppressions are re-audited, not inherited as permanent policy. Current batch: all pre-commit
   hooks passed; Release build exit 0; full CTest 265/265, zero failures, 804.48 seconds.
   STILL OPEN: core's 5,271 naming findings; the 294-item `useStlAlgorithm` program;
-  the two remaining coverage compiler suppressions; the 33 direct `[[maybe_unused]]` removals;
-  six direct `Q_UNUSED` cleanups; six implementation gaps currently masked by `Q_UNUSED`; directly
+  the two remaining coverage compiler suppressions; six implementation gaps currently masked by
+  `Q_UNUSED`; directly
   closable fixture/resource skips; and the historical VM credential rotation/history-rewrite
   decision.
   DIRECT-FIX WAVE 1 FINAL GATE: all changed-file pre-commit hooks passed; Release build exit 0;

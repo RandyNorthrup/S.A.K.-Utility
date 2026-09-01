@@ -323,8 +323,7 @@ void BandwidthTester::connectServerProcessSignals(const QString& ruleName, uint1
     connect(m_serverProcess,
             QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             this,
-            [this, ruleName]([[maybe_unused]] int exitCode,
-                             [[maybe_unused]] QProcess::ExitStatus status) {
+            [this, ruleName](int, QProcess::ExitStatus) {
                 auto* process = qobject_cast<QProcess*>(sender());
                 if (process != nullptr && m_serverProcess == process) {
                     m_serverProcess = nullptr;
@@ -674,7 +673,7 @@ void BandwidthTester::createFirewallRule(const QString& ruleName, uint16_t port)
     connect(proc,
             QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             proc,
-            [this, port, proc](int exitCode, [[maybe_unused]] QProcess::ExitStatus status) {
+            [this, port, proc](int exitCode, QProcess::ExitStatus) {
                 if (exitCode != 0) {
                     sak::logWarning("Failed to add firewall rule for port {}: {}",
                                     port,
@@ -715,10 +714,7 @@ void BandwidthTester::removeFirewallRule(const QString& ruleName) {
         connect(m_firewallAddProcess,
                 QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
                 this,
-                [this, ruleName]([[maybe_unused]] int exitCode,
-                                 [[maybe_unused]] QProcess::ExitStatus status) {
-                    executeFirewallDelete(ruleName);
-                });
+                [this, ruleName](int, QProcess::ExitStatus) { executeFirewallDelete(ruleName); });
         return;
     }
     executeFirewallDelete(ruleName);
@@ -742,7 +738,7 @@ void BandwidthTester::executeFirewallDelete(const QString& ruleName) {
     connect(proc,
             QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
             proc,
-            [proc](int exitCode, [[maybe_unused]] QProcess::ExitStatus status) {
+            [proc](int exitCode, QProcess::ExitStatus) {
                 if (exitCode != 0) {
                     sak::logWarning("Failed to remove firewall rule: {}",
                                     QString::fromUtf8(proc->readAllStandardError()).toStdString());

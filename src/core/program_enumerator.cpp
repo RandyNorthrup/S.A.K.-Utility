@@ -173,7 +173,7 @@ QVector<ProgramInfo> ProgramEnumerator::enumerateUwpPackagesSync(bool& scanOk) {
     // which -- because resolution is an EXACT display-name match -- can only cause a safe
     // not-found refusal, never a wrong match. So a provisioned failure does not fail the scan.
     bool uwp_ok = true;
-    [[maybe_unused]] bool provisioned_ok = true;
+    bool provisioned_ok = true;
     QVector<ProgramInfo> packages = scanUwpPackages(uwp_ok);
     packages.append(scanProvisionedPackages(provisioned_ok));
     // Guard the dedup: unlike enumerateAll (which always has registry entries by here),

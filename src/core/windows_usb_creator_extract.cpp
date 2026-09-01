@@ -307,7 +307,7 @@ bool WindowsUSBCreator::copyISO_runExtraction(const QString& sevenZipPath,
                  }
              },
          .on_started =
-             [this, &started]([[maybe_unused]] qint64 process_id) {
+             [this, &started](qint64) {
                  started = true;
                  sak::logInfo(
                      "7z process started, extracting ISO (this may take several minutes)...");

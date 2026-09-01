@@ -567,9 +567,8 @@ void EmailInspectorController::connectPstSignals() {
 void EmailInspectorController::connectMboxSignals() {
     connect(
         m_mbox_parser.get(), &MboxParser::fileOpened, this, [this](const QString& path, int count) {
-            Q_UNUSED(path);
             sak::PstFileInfo info;
-            info.file_path = m_mbox_parser->filePath();
+            info.file_path = path;
             info.display_name = QFileInfo(info.file_path).fileName();
             info.total_items = count;
             info.is_unicode = true;

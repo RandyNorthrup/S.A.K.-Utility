@@ -150,9 +150,8 @@ private:
     void updateMaxTemperature(double temp) noexcept;
 
     /// @brief Determine target memory allocation based on system available RAM
-    /// @param fallback_bytes Allocation to use if platform detection fails
-    /// @return Target bytes to allocate
-    [[nodiscard]] size_t determineTargetMemoryBytes(size_t fallback_bytes) const;
+    /// @return Target bytes to allocate, or zero when platform detection fails
+    [[nodiscard]] size_t determineTargetMemoryBytes() const;
 
     /// @brief Allocate memory for stress testing (platform-specific)
     /// @return Pointer to allocated memory, or nullptr on failure

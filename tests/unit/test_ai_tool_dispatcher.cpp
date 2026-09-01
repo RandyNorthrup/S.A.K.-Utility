@@ -23,6 +23,11 @@ private Q_SLOTS:
     void availabilityCheckerEmptyResultDeniesCall();
     void requiresLeaseFailsClosedWithoutLeaseManager();
     void healthLedgerSuppressesRepeatedFailures();
+    void malformedHandlerResultsFailClosed();
+    void contradictorySuccessCountsAsHealthFailure();
+    void businessFailuresDoNotTripHealth();
+    void providerGatewayHealthKeyUsesCanonicalTarget();
+    void clearRegistrationsClearsHandlersAndCheckers();
 };
 
 void AiToolDispatcherTests::policyDeniedReturnsStructuredBlock() {
@@ -76,6 +81,7 @@ void AiToolDispatcherTests::allowedCallReachesHandler() {
 
     sak::ai::AiToolCallRequest request;
     request.tool_name = QStringLiteral("take_screenshot");
+    request.operation = QStringLiteral("capture");
 
     QJsonObject args;
     args[QStringLiteral("reason")] = QStringLiteral("snapshot");
@@ -140,6 +146,7 @@ void AiToolDispatcherTests::missingHandlerReportsMissingFlag() {
     sak::ai::AiToolDispatcher dispatcher;
     sak::ai::AiToolCallRequest request;
     request.tool_name = QStringLiteral("take_screenshot");
+    request.operation = QStringLiteral("capture");
 
     const auto outcome = dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {});
     QVERIFY(!outcome.dispatched);
@@ -148,6 +155,7 @@ void AiToolDispatcherTests::missingHandlerReportsMissingFlag() {
     QVERIFY(outcome.result.value(QStringLiteral("handler_missing")).toBool(false));
     QVERIFY(!outcome.result.value(QStringLiteral("success")).toBool(true));
     QCOMPARE(outcome.result.value(QStringLiteral("tool_name")).toString(), request.tool_name);
+    QCOMPARE(outcome.result.value(QStringLiteral("operation")).toString(), request.operation);
     QCOMPARE(outcome.result.value(QStringLiteral("error_message")).toString(),
              QStringLiteral("No handler registered for tool 'take_screenshot'"));
 }
@@ -263,6 +271,8 @@ void AiToolDispatcherTests::leaseReleasedAfterDispatch() {
 
 void AiToolDispatcherTests::availabilityCheckerBlocksBeforeHandler() {
     sak::ai::AiToolDispatcher dispatcher;
+    sak::ai::AiToolHealthLedger ledger(1, 60'000, 60'000);
+    dispatcher.setHealthLedger(&ledger);
     bool handler_called = false;
     dispatcher.registerAvailabilityChecker(
         QStringLiteral("download_file"),
@@ -295,6 +305,7 @@ void AiToolDispatcherTests::availabilityCheckerBlocksBeforeHandler() {
              QStringLiteral("download_file"));
     QCOMPARE(outcome.result.value(QStringLiteral("error_message")).toString(),
              QStringLiteral("bad url"));
+    QCOMPARE(ledger.size(), 0);
 }
 
 void AiToolDispatcherTests::availabilityCheckerEmptyResultDeniesCall() {
@@ -409,6 +420,138 @@ void AiToolDispatcherTests::healthLedgerSuppressesRepeatedFailures() {
              QStringLiteral("Tool/provider 'take_screenshot' is temporarily disabled until %1 "
                             "after 2 consecutive failure(s): capture failed")
                  .arg(disabled_until));
+}
+
+void AiToolDispatcherTests::malformedHandlerResultsFailClosed() {
+    const QVector<QJsonObject> malformed_results{
+        QJsonObject{{QStringLiteral("value"), 7}},
+        QJsonObject{{QStringLiteral("success"), QStringLiteral("yes")}},
+    };
+    for (const QJsonObject& malformed : malformed_results) {
+        sak::ai::AiToolDispatcher dispatcher;
+        dispatcher.registerHandler(QStringLiteral("take_screenshot"),
+                                   [malformed](const QJsonObject&,
+                                               const sak::ai::AiToolPolicyDecision&) {
+                                       return malformed;
+                                   });
+        sak::ai::AiToolCallRequest request;
+        request.tool_name = QStringLiteral("take_screenshot");
+        request.operation = QStringLiteral("capture");
+
+        const auto outcome = dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {});
+        QVERIFY(outcome.dispatched);
+        QVERIFY(!outcome.result.value(QStringLiteral("success")).toBool(true));
+        QCOMPARE(outcome.result.value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("malformed_handler_result"));
+        QCOMPARE(outcome.result.value(QStringLiteral("tool_name")).toString(), request.tool_name);
+        QCOMPARE(outcome.result.value(QStringLiteral("operation")).toString(), request.operation);
+        QCOMPARE(outcome.result.value(QStringLiteral("error_message")).toString(),
+                 QStringLiteral("Tool handler result omitted a boolean success field"));
+    }
+}
+
+void AiToolDispatcherTests::contradictorySuccessCountsAsHealthFailure() {
+    sak::ai::AiToolDispatcher dispatcher;
+    sak::ai::AiToolHealthLedger ledger(1, 60'000, 60'000);
+    dispatcher.setHealthLedger(&ledger);
+    dispatcher.registerHandler(QStringLiteral("take_screenshot"),
+                               [](const QJsonObject&, const sak::ai::AiToolPolicyDecision&) {
+                                   return QJsonObject{{QStringLiteral("success"), true},
+                                                      {QStringLiteral("failure_class"),
+                                                       QStringLiteral("timeout")},
+                                                      {QStringLiteral("error_message"),
+                                                       QStringLiteral("capture timed out")}};
+                               });
+    sak::ai::AiToolCallRequest request;
+    request.tool_name = QStringLiteral("take_screenshot");
+
+    const auto failed = dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {});
+    QVERIFY(failed.dispatched);
+    QVERIFY(!failed.result.value(QStringLiteral("success")).toBool(true));
+    QCOMPARE(failed.result.value(QStringLiteral("failure_class")).toString(),
+             QStringLiteral("timeout"));
+    const auto record = ledger.record(QStringLiteral("take_screenshot"));
+    QCOMPARE(record.failure_count, 1);
+    QCOMPARE(record.success_count, 0);
+
+    const auto suppressed = dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {});
+    QVERIFY(suppressed.health_suppressed);
+    QVERIFY(!suppressed.dispatched);
+}
+
+void AiToolDispatcherTests::businessFailuresDoNotTripHealth() {
+    sak::ai::AiToolDispatcher dispatcher;
+    sak::ai::AiToolHealthLedger ledger(1, 60'000, 60'000);
+    dispatcher.setHealthLedger(&ledger);
+    dispatcher.registerHandler(QStringLiteral("take_screenshot"),
+                               [](const QJsonObject&, const sak::ai::AiToolPolicyDecision&) {
+                                   return QJsonObject{{QStringLiteral("success"), false},
+                                                      {QStringLiteral("failure_class"),
+                                                       QStringLiteral("cancelled")},
+                                                      {QStringLiteral("error_message"),
+                                                       QStringLiteral("cancelled by user")}};
+                               });
+    sak::ai::AiToolCallRequest request;
+    request.tool_name = QStringLiteral("take_screenshot");
+
+    QVERIFY(dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {}).dispatched);
+    QVERIFY(dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {}).dispatched);
+    QCOMPARE(ledger.size(), 0);
+}
+
+void AiToolDispatcherTests::providerGatewayHealthKeyUsesCanonicalTarget() {
+    sak::ai::AiToolDispatcher dispatcher;
+    sak::ai::AiLeaseManager leases;
+    dispatcher.setLeaseManager(&leases);
+    dispatcher.registerHandler(QStringLiteral("sak_provider_gateway"),
+                               [](const QJsonObject&, const sak::ai::AiToolPolicyDecision&) {
+                                   return QJsonObject{{QStringLiteral("success"), true}};
+                               });
+    sak::ai::AiToolCallRequest request;
+    request.tool_name = QStringLiteral("sak_provider_gateway");
+    request.operation = QStringLiteral("win32_mcp_call");
+
+    const QJsonObject object_args{
+        {QStringLiteral("operation"), request.operation},
+        {QStringLiteral("provider_id"), QString(10'000, QLatin1Char('x'))},
+        {QStringLiteral("arguments"),
+         QJsonObject{{QStringLiteral("tool"), QStringLiteral("list_windows")},
+                     {QStringLiteral("irrelevant"), QString(10'000, QLatin1Char('y'))}}},
+    };
+    const QJsonObject string_args{
+        {QStringLiteral("operation"), request.operation},
+        {QStringLiteral("app_id"), QStringLiteral("ignored")},
+        {QStringLiteral("arguments"),
+         QStringLiteral("{\"tool_name\":\"list_windows\",\"noise\":1}")},
+    };
+    const QString expected = QStringLiteral("sak_provider_gateway:win32_mcp_call:list_windows");
+    QCOMPARE(dispatcher.dispatch(sak::ai::AiToolPolicy::MutatingRequiresLease, request, object_args)
+                 .health_key,
+             expected);
+    QCOMPARE(dispatcher.dispatch(sak::ai::AiToolPolicy::MutatingRequiresLease, request, string_args)
+                 .health_key,
+             expected);
+}
+
+void AiToolDispatcherTests::clearRegistrationsClearsHandlersAndCheckers() {
+    sak::ai::AiToolDispatcher dispatcher;
+    dispatcher.registerHandler(QStringLiteral("take_screenshot"),
+                               [](const QJsonObject&, const sak::ai::AiToolPolicyDecision&) {
+                                   return QJsonObject{{QStringLiteral("success"), true}};
+                               });
+    dispatcher.registerAvailabilityChecker(
+        QStringLiteral("take_screenshot"),
+        [](const QJsonObject&, const sak::ai::AiToolPolicyDecision&) {
+            return QJsonObject{{QStringLiteral("success"), false}};
+        });
+    dispatcher.clearRegistrations();
+    QCOMPARE(dispatcher.handlerCount(), 0);
+
+    sak::ai::AiToolCallRequest request;
+    request.tool_name = QStringLiteral("take_screenshot");
+    const auto outcome = dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {});
+    QVERIFY(outcome.handler_missing);
+    QVERIFY(!outcome.availability_denied);
 }
 
 QTEST_GUILESS_MAIN(AiToolDispatcherTests)

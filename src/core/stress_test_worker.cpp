@@ -493,7 +493,7 @@ void StressTestWorker::runCpuStress() {
     while (!childrenShouldStop()) {
         // Integer workload: check if large random numbers are prime
         const uint64_t candidate = rng() | 1ULL;  // Ensure odd
-        [[maybe_unused]] const bool is_prime = isPrimeStress(candidate);
+        (void)isPrimeStress(candidate);
 
         // Re-check after compute-heavy isPrimeStress (atomic; value may change)
         // cppcheck-suppress oppositeInnerCondition
@@ -542,9 +542,8 @@ bool StressTestWorker::isPrimeStress(uint64_t candidate) const {
 int StressTestWorker::runMemoryStress() {
     // No 512 MiB guessed default: if available RAM cannot be read we fail closed
     // (count one error) rather than fabricate an allocation size (no-fallbacks rule).
-    // The argument is vestigial -- the signature is fixed in the public header -- and
-    // ignored; determineTargetMemoryBytes returns 0 to signal a query failure.
-    const size_t target_bytes = determineTargetMemoryBytes(0);
+    // determineTargetMemoryBytes returns 0 to signal a query failure.
+    const size_t target_bytes = determineTargetMemoryBytes();
     if (target_bytes == 0) {
         logError("Memory stress: could not read available RAM -- marking memory stress failed");
         return 1;
@@ -601,12 +600,10 @@ int StressTestWorker::runMemoryStress() {
     return reported_errors;
 }
 
-size_t StressTestWorker::determineTargetMemoryBytes(size_t fallback_bytes) const {
-    // fallback_bytes is vestigial: the old 512 MiB guessed default was removed per the
-    // no-fallbacks rule. A query failure returns 0 so the caller fails the memory
-    // component closed instead of allocating a fabricated size. memory_usage_percent is
-    // validated in (0, 100] by validateStressConfig(), so the cast below is well-defined.
-    Q_UNUSED(fallback_bytes)
+size_t StressTestWorker::determineTargetMemoryBytes() const {
+    // A query failure returns 0 so the caller fails the memory component closed instead of
+    // allocating a fabricated size. memory_usage_percent is validated in (0, 100] by
+    // validateStressConfig(), so the cast below is well-defined.
 #ifdef SAK_PLATFORM_WINDOWS
     MEMORYSTATUSEX mem_status{};
     mem_status.dwLength = sizeof(mem_status);

@@ -98,15 +98,14 @@ QString updateXmlPath(const ExtensionInstallConfig& c) {
     return QDir(c.data_dir).filePath(QStringLiteral("browser_ext_update.xml"));
 }
 
-// The helpers below are referenced only from the Windows-only install/uninstall/state
-// bodies; [[maybe_unused]] keeps the portable #else build (Clang/GCC -Wunused-function
-// -Werror) green while they compile out of the non-Windows path.
-[[maybe_unused]] QString hostManifestPath(const ExtensionInstallConfig& c) {
+#if defined(_WIN32)
+
+QString hostManifestPath(const ExtensionInstallConfig& c) {
     return QDir(c.data_dir)
         .filePath(QString::fromLatin1(kNativeHostName) + QStringLiteral(".json"));
 }
 
-[[maybe_unused]] QString buildUpdateXml(const QString& crx_path) {
+QString buildUpdateXml(const QString& crx_path) {
     // Omaha update manifest; a single force-installed app pointing at the local CRX.
     return QStringLiteral(
                "<?xml version='1.0' encoding='UTF-8'?>\n"
@@ -120,7 +119,7 @@ QString updateXmlPath(const ExtensionInstallConfig& c) {
              QString::fromLatin1(kBrowserExtensionVersion));
 }
 
-[[maybe_unused]] QByteArray buildHostManifest(const QString& host_exe_path) {
+QByteArray buildHostManifest(const QString& host_exe_path) {
     QJsonObject obj;
     obj[QStringLiteral("name")] = QString::fromLatin1(kNativeHostName);
     obj[QStringLiteral("description")] =
@@ -138,7 +137,7 @@ QString updateXmlPath(const ExtensionInstallConfig& c) {
 // over the target on commit() (which flushes + fsyncs first). So a policy is never left
 // pointing at a half-written update.xml, and a failed re-install leaves the prior good
 // file intact instead of a zeroed one. commit() returns false on any flush/rename error.
-[[maybe_unused]] bool writeFileAtomic(const QString& path, const QByteArray& bytes, QString* err) {
+bool writeFileAtomic(const QString& path, const QByteArray& bytes, QString* err) {
     QDir().mkpath(QFileInfo(path).absolutePath());
     QSaveFile f(path);
     if (!f.open(QIODevice::WriteOnly)) {
@@ -165,14 +164,16 @@ QString updateXmlPath(const ExtensionInstallConfig& c) {
 }
 
 // Value data Chrome expects in the ExtensionInstallForcelist policy: "<id>;<update_url>".
-[[maybe_unused]] QString forcelistEntryData(const ExtensionInstallConfig& c) {
+QString forcelistEntryData(const ExtensionInstallConfig& c) {
     return QString::fromLatin1(kBrowserExtensionId) + QStringLiteral(";") +
            toFileUrl(updateXmlPath(c));
 }
 
-[[maybe_unused]] bool isOurForcelistData(const QString& data) {
+bool isOurForcelistData(const QString& data) {
     return data.startsWith(QString::fromLatin1(kBrowserExtensionId) + QStringLiteral(";"));
 }
+
+#endif
 
 }  // namespace
 

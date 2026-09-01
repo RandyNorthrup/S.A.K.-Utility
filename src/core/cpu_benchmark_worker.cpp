@@ -243,7 +243,7 @@ double CpuBenchmarkWorker::runPrimeSieve(uint64_t limit) {
     }
 
     // Count primes (prevents optimizer from eliding the work)
-    [[maybe_unused]] const auto count = std::count(sieve.begin(), sieve.end(), true);
+    const auto count = std::count(sieve.begin(), sieve.end(), true);
 
     const double elapsed_ms = static_cast<double>(timer.nsecsElapsed()) /
                               kNanosecondsPerMillisecond;

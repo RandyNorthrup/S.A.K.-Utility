@@ -9401,7 +9401,7 @@ void AiAssistantPanel::registerToolDispatcherHandlers() {
     if (!ensureToolDispatcherReady()) {
         return;
     }
-    m_toolDispatcher->clearHandlers();
+    m_toolDispatcher->clearRegistrations();
     m_toolDispatcher->setLeaseManager(m_leaseManager.get());
     m_toolDispatcher->setHealthLedger(m_toolHealthLedger.get());
     ensureAppActionService();

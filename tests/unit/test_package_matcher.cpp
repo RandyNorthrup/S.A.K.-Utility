@@ -115,7 +115,7 @@ void PackageMatcherTests::exportImport_roundTrip() {
 
     sak::PackageMatcher original;
     original.addMapping("UniqueTestApp", "unique-test-pkg");
-    [[maybe_unused]] int originalCount = original.getMappingCount();
+    const int original_count = original.getMappingCount();
 
     // export/import now report success/failure so callers can detect I/O errors.
     QVERIFY(original.exportMappings(exportPath));
@@ -124,6 +124,7 @@ void PackageMatcherTests::exportImport_roundTrip() {
     sak::PackageMatcher imported;
     QVERIFY(imported.importMappings(exportPath));
 
+    QCOMPARE(imported.getMappingCount(), original_count);
     QVERIFY(imported.hasMapping("UniqueTestApp"));
     QCOMPARE(imported.getMapping("UniqueTestApp"), QString("unique-test-pkg"));
 }

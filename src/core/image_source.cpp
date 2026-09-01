@@ -422,12 +422,6 @@ QString CompressedImageSource::calculateChecksum() {
         return QString();
     }
 
-    // Save current position
-    const qint64 savedPos = m_totalDecompressed;
-    // Note: Position restoration not possible for compressed streams
-    // Must reopen to reset decompression state
-    Q_UNUSED(savedPos);
-
     // Close and reopen to reset decompression stream
     close();
     if (!open()) {

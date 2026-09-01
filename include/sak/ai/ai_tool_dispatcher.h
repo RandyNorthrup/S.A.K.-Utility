@@ -52,7 +52,7 @@ public:
 
     void registerHandler(const QString& tool_name, Handler handler);
     void registerAvailabilityChecker(const QString& tool_name, AvailabilityChecker checker);
-    void clearHandlers();
+    void clearRegistrations();
     [[nodiscard]] bool hasHandler(const QString& tool_name) const;
     [[nodiscard]] int handlerCount() const;
 

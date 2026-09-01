@@ -128,7 +128,6 @@ private:
     [[nodiscard]] bool writeItemMbox(const PstItemDetail& item,
                                      PstParser* parser,
                                      const QString& folder_path,
-                                     const OstConversionConfig& config,
                                      OstConversionResult& result);
 
 

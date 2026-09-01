@@ -28,7 +28,7 @@ private Q_SLOTS:
 
 void TestKeepAwake::initialState_inactive() {
     // Ensure clean state
-    [[maybe_unused]] const auto stop_result = KeepAwake::stop();
+    QVERIFY(KeepAwake::stop().has_value());
     QVERIFY(!KeepAwake::isActive());
 }
 
@@ -43,20 +43,20 @@ void TestKeepAwake::startStop_cycle() {
 }
 
 void TestKeepAwake::startStop_doubleStart() {
-    [[maybe_unused]] const auto cleanup = KeepAwake::stop();
+    QVERIFY(KeepAwake::stop().has_value());
     const auto result1 = KeepAwake::start();
     const auto result2 = KeepAwake::start();
     QVERIFY(result1.has_value());
     QVERIFY(result2.has_value());
     QVERIFY(KeepAwake::isActive());
     // Two starts require two stops to fully release (reference counted).
-    [[maybe_unused]] const auto cleanup2 = KeepAwake::stop();
-    [[maybe_unused]] const auto cleanup3 = KeepAwake::stop();
+    QVERIFY(KeepAwake::stop().has_value());
+    QVERIFY(KeepAwake::stop().has_value());
     QVERIFY(!KeepAwake::isActive());
 }
 
 void TestKeepAwake::startStop_doubleStop() {
-    [[maybe_unused]] const auto first_stop = KeepAwake::stop();
+    QVERIFY(KeepAwake::stop().has_value());
     const auto result = KeepAwake::stop();
     // A stop with nothing outstanding is a documented SUCCESS no-op, and the slot is named for
     // that contract -- yet the result was computed and never asserted. It must also not
@@ -66,7 +66,7 @@ void TestKeepAwake::startStop_doubleStop() {
     const auto restart = KeepAwake::start();
     QVERIFY(restart.has_value());
     QVERIFY(KeepAwake::isActive());
-    [[maybe_unused]] const auto release = KeepAwake::stop();
+    QVERIFY(KeepAwake::stop().has_value());
     QVERIFY(!KeepAwake::isActive());
 }
 
@@ -74,7 +74,7 @@ void TestKeepAwake::overlapping_refcount() {
     // Regression: overlapping keep-awake guards (e.g. a flash worker and a
     // stress-test worker running at once). The first stop() must NOT drop the
     // request while a second guard is still active.
-    [[maybe_unused]] const auto cleanup = KeepAwake::stop();
+    QVERIFY(KeepAwake::stop().has_value());
     QVERIFY(!KeepAwake::isActive());
 
     const auto worker_a = KeepAwake::start();  // thread A installs
@@ -84,16 +84,16 @@ void TestKeepAwake::overlapping_refcount() {
     QVERIFY(KeepAwake::isActive());
 
     // Worker A finishes first: still-running worker B must stay awake.
-    [[maybe_unused]] const auto stop_a = KeepAwake::stop();
+    QVERIFY(KeepAwake::stop().has_value());
     QVERIFY(KeepAwake::isActive());
 
     // Worker B finishes: now the system may sleep again.
-    [[maybe_unused]] const auto stop_b = KeepAwake::stop();
+    QVERIFY(KeepAwake::stop().has_value());
     QVERIFY(!KeepAwake::isActive());
 }
 
 void TestKeepAwake::guard_construction() {
-    [[maybe_unused]] const auto cleanup = KeepAwake::stop();
+    QVERIFY(KeepAwake::stop().has_value());
     {
         KeepAwakeGuard guard;
         QVERIFY(guard.isActive());
@@ -114,7 +114,7 @@ void TestKeepAwake::guard_nonCopyable() {
 }
 
 void TestKeepAwake::guard_scopeActivation() {
-    [[maybe_unused]] const auto cleanup = KeepAwake::stop();
+    QVERIFY(KeepAwake::stop().has_value());
     QVERIFY(!KeepAwake::isActive());
 
     const auto outer = KeepAwake::start();
@@ -128,7 +128,7 @@ void TestKeepAwake::guard_scopeActivation() {
     // outstanding alongside another request, so a destructor that dropped the process request
     // outright -- over-releasing an overlapping worker's hold -- passed.
     QVERIFY(KeepAwake::isActive());
-    [[maybe_unused]] const auto release_outer = KeepAwake::stop();
+    QVERIFY(KeepAwake::stop().has_value());
     QVERIFY(!KeepAwake::isActive());
 }
 

@@ -1,0 +1,64 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_ai_tool_dispatcher",
+  "ctest_regex": "^test_ai_tool_dispatcher$",
+  "mutants": [
+    {
+      "id": "wrong-typed-success-admitted",
+      "file": "src/ai/ai_tool_dispatcher.cpp",
+      "find": "if (!success.isBool()) {",
+      "replace": "if (success.isUndefined()) {",
+      "expect": "killed",
+      "why": "malformedHandlerResultsFailClosed requires both missing and wrong-typed success fields to become structured failures."
+    },
+    {
+      "id": "contradictory-success-recorded-healthy",
+      "file": "src/ai/ai_tool_dispatcher.cpp",
+      "find": "if (success.toBool() && resultHasFailureMarker(result)) {",
+      "replace": "if (!success.toBool() && resultHasFailureMarker(result)) {",
+      "expect": "killed",
+      "why": "contradictorySuccessCountsAsHealthFailure proves success:true cannot override a failure class and reset the circuit breaker."
+    },
+    {
+      "id": "cancelled-call-poisons-health",
+      "file": "src/ai/ai_tool_dispatcher.cpp",
+      "find": "return !failure_class.isEmpty() && !kNonHealthFailures.contains(failure_class) &&",
+      "replace": "return !failure_class.isEmpty() && (failure_class == QLatin1String(\"cancelled\") || !kNonHealthFailures.contains(failure_class)) &&",
+      "expect": "killed",
+      "why": "businessFailuresDoNotTripHealth runs cancellation twice under a one-failure threshold and requires no health record."
+    },
+    {
+      "id": "provider-tool-alias-ignored",
+      "file": "src/ai/ai_tool_dispatcher.cpp",
+      "find": "tool = boundedHealthPart(extra.value(QStringLiteral(\"tool\")));",
+      "replace": "tool.clear();",
+      "expect": "killed",
+      "why": "providerGatewayHealthKeyUsesCanonicalTarget requires tool and tool_name aliases to identify the same bounded provider operation."
+    },
+    {
+      "id": "provider-string-arguments-ignored",
+      "file": "src/ai/ai_tool_dispatcher.cpp",
+      "find": "if (!value.isString() || value.toString().size() > kHealthNestedArgumentsMaxChars) {",
+      "replace": "if (value.isString() || value.toString().size() > kHealthNestedArgumentsMaxChars) {",
+      "expect": "killed",
+      "why": "providerGatewayHealthKeyUsesCanonicalTarget requires object and JSON-string nested arguments to produce the same key."
+    },
+    {
+      "id": "availability-checkers-survive-reset",
+      "file": "src/ai/ai_tool_dispatcher.cpp",
+      "find": "m_availability_checkers.clear();",
+      "replace": "m_availability_checkers.remove(QString());",
+      "expect": "killed",
+      "why": "clearRegistrationsClearsHandlersAndCheckers proves reset removes both registration maps before reconfiguration."
+    },
+    {
+      "id": "missing-handler-drops-operation",
+      "file": "src/ai/ai_tool_dispatcher.cpp",
+      "find": "QStringLiteral(\"No handler registered for tool '%1'\").arg(request.tool_name);",
+      "replace": "(obj.remove(QStringLiteral(\"operation\")), QStringLiteral(\"No handler registered for tool '%1'\").arg(request.tool_name));",
+      "expect": "killed",
+      "why": "missingHandlerReportsMissingFlag requires the structured refusal to retain the requested operation like every sibling dispatcher failure."
+    }
+  ]
+}

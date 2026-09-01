@@ -31,10 +31,10 @@
 
 namespace {
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(__linux__) && !defined(__APPLE__)
 // Only the generic non-Windows/Linux/Apple fallback branch uses this; Linux and
 // Apple now fail closed on their platform CSPRNG instead of falling back here.
-[[maybe_unused]] bool readFromDevUrandom(void* buffer, std::size_t size) noexcept {
+bool readFromDevUrandom(void* buffer, std::size_t size) noexcept {
     FILE* urandom = fopen("/dev/urandom", "rb");
     if (!urandom) {
         return false;
