@@ -20,6 +20,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "partition_manager_storage.ps1")
 
 $MinimumVhdSizeMB = 512
 $CreatePartitionBytes = 128MB
@@ -264,29 +265,6 @@ function Get-AttachedVhdDisk {
     throw "Attached VHD disk not found for $Path"
 }
 
-function Dismount-DisposableVhd {
-    param([Parameter(Mandatory = $true)] [string]$Path)
-
-    $image = Get-DiskImage -ImagePath $Path -ErrorAction Stop
-    if ($image.Attached) {
-        Dismount-DiskImage -ImagePath $Path -ErrorAction Stop | Out-Null
-    }
-}
-
-function Get-CertificationPartitions {
-    param([Parameter(Mandatory = $true)] [int]$DiskNumber)
-
-    try {
-        return @(Get-Partition -DiskNumber $DiskNumber -ErrorAction Stop)
-    }
-    catch {
-        if ($_.CategoryInfo.Category -eq [System.Management.Automation.ErrorCategory]::ObjectNotFound) {
-            return @()
-        }
-        throw
-    }
-}
-
 function New-DisposableVhdDisk {
     param(
         [Parameter(Mandatory = $true)]
@@ -327,7 +305,7 @@ function New-DisposableVhdDisk {
         # must dismount it rather than leak an attached disk. Then re-throw the real error.
         $preparationError = $_
         try {
-            Dismount-DisposableVhd -Path $path
+            Dismount-SakDiskImageIfAttached -Path $path
         }
         catch {
             throw "VHD preparation failed: $($preparationError.Exception.Message) Cleanup dismount also failed: $($_.Exception.Message)"
@@ -343,7 +321,7 @@ function Remove-DisposableVhdDisk {
     )
 
     try {
-        Dismount-DisposableVhd -Path $Vhd.path
+        Dismount-SakDiskImageIfAttached -Path $Vhd.path
     }
     finally {
         if (-not $KeepVhd -and (Test-Path -LiteralPath $Vhd.path)) {
@@ -726,7 +704,7 @@ function Invoke-CreateFormatResizeDeleteScenario {
         $resized = Get-Partition -DiskNumber $vhd.disk_number -PartitionNumber $partition.PartitionNumber -ErrorAction Stop
         Assert-CertificationCondition -Condition ([Math]::Abs([int64]$resized.Size - [int64]$ResizePartitionBytes) -le $SizeToleranceBytes) -Message "Resize verification failed"
         Remove-Partition -DiskNumber $vhd.disk_number -PartitionNumber $partition.PartitionNumber -Confirm:$false -ErrorAction Stop
-        $remaining = @(Get-CertificationPartitions -DiskNumber $vhd.disk_number |
+        $remaining = @(Get-SakDiskPartitions -DiskNumber $vhd.disk_number |
             Where-Object { $_.Type -ne "Reserved" })
         Assert-CertificationCondition -Condition ($remaining.Count -eq 0) -Message "Delete verification failed: data partition remained"
         return @{
@@ -995,7 +973,7 @@ function Invoke-ClearDiskWipeScenario {
         New-Partition -DiskNumber $vhd.disk_number -Size $CreatePartitionBytes -ErrorAction Stop | Out-Null
         Clear-Disk -Number $vhd.disk_number -RemoveData -Confirm:$false -ErrorAction Stop
         $disk = Get-Disk -Number $vhd.disk_number -ErrorAction Stop
-        $partitions = @(Get-CertificationPartitions -DiskNumber $vhd.disk_number)
+        $partitions = @(Get-SakDiskPartitions -DiskNumber $vhd.disk_number)
         Assert-CertificationCondition -Condition ($disk.PartitionStyle -eq "RAW") -Message "Clear-Disk did not leave RAW disk"
         Assert-CertificationCondition -Condition ($partitions.Count -eq 0) -Message "Clear-Disk left partitions behind"
         return @{

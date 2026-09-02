@@ -1340,15 +1340,45 @@ a parked design, per the bucket convention. Open work is what remains after thos
   0 and focused CTest pass 9/9 in 169.73 seconds.
   SKIP/SILENCE/HANDLE-PINNING WAVE 21 FINAL GATE: all changed-file hooks passed; full clang-cl
   coverage build exit 0; Release build exit 0; full CTest 267/267, zero failures, 669.26 seconds.
-  SUPPRESSION RE-AUDIT REFRESH, 2026-09-01: core naming remains broadly excluded while 5,271
+  ATOMIC-ARTIFACT/EMAIL/NAMING/SILENCE WAVE 22: the shared AI loader now publishes managed leaves
+  through a no-follow CREATE_NEW temporary handle, bounded write/stream, flush, and handle-based
+  no-replace rename under the retained directory pin. Screenshot, download, default report and
+  command log writers use it directly. OfflineDeploymentWorker and AppActionService write only to
+  private staging; every non-reparse file is atomically imported before a managed path is reported,
+  and explicit bottom-up cleanup never follows a staged junction. Testing found and fixed a real
+  QTemporaryDir cleanup escape that deleted an outside junction target. ConversationStore and the
+  shared loader now have zero open review findings and are ledger-credited.
+  Email folder/page and item failures now carry exact request identities. The attachment dialog
+  advances only the matching request, exposes generic errors as accessible plain text without
+  changing counters, and cannot count the specific-plus-generic save failure pair twice. The new
+  dialog target passes 11 tests. Production Q_UNUSED/maybe_unused markers are now gate-enforced at
+  zero.
+  Core naming is no longer measured by an unhealthy lower bound. The gate now rejects every
+  processing/compiler error, incomplete TU execution, invalid/empty clean manifest, stale summary,
+  and clean-TU regression. The current healthy pass covers 156/156 core TUs and measures 5,274
+  unique findings across 89 files; eight one-finding TUs are clean and ratcheted. Non-core passes
+  151/151 with zero findings.
+  Every `run_partition_manager_*` and `launch_partition_manager_*` script now contains zero
+  `SilentlyContinue`. Expected absent partitions/volumes are classified in one shared tested helper;
+  VM/elevation launchers stage and hash-pin that helper, while every other storage, cleanup,
+  discovery and secret-file failure is terminating. Four helper guards and the global zero-silence
+  rule each failed against their isolated old behavior and restored green.
+  The mutation ratchet now holds 46 catalogs / 375 mutants (369 killed, six equivalent). The review
+  inventory holds 1,059 units, 656 pending and 11 self-verifying driver reviews. Focused Release
+  build exit 0; focused CTest 12/12, zero failures, 127.29 seconds.
+  ATOMIC-ARTIFACT/EMAIL/NAMING/SILENCE WAVE 22 FINAL GATE: all changed-file hooks passed; the
+  naming gate passed 151/151 non-core TUs clean and 156/156 core TUs healthy; full clang-cl coverage
+  build exit 0; Release build exit 0; full CTest 268/268, zero failures, 698.06 seconds.
+  SUPPRESSION RE-AUDIT REFRESH, 2026-09-01: core naming remains broadly excluded while 5,274
   findings are tracked as open. The coverage compiler warning silences and unsupported-platform
   runtime branches are closed in Wave 20. The vendored LZFSE target still disables warnings for
   the first-party shim. The cppcheck test-scope and unreadable-
   diagnostic false greens are closed in Wave 19. Another 26
   `Q_UNUSED` and 22 `(void)` warning silences formerly in unsupported-OS branches are removed.
-  The live suite contains 157 QSKIP call sites, while the observed-skip baseline
-  currently covers 35 functions; fixture-backed skips and ignored test results remain direct-fix
-  candidates. Certification PowerShell `SilentlyContinue` paths require fail-closed re-audit.
+  This refresh found 157 QSKIP call sites; Wave 21 reduced the live static inventory to 82 while the
+  observed-skip baseline still covers 35 reviewed functions. Remaining fixture/resource skips stay
+  direct-fix candidates. Wave 22 reduced Partition Manager run/launch `SilentlyContinue` paths to
+  zero and ratchets that state.
   The APFS follow-on document's stale cppcheck-suppression count is corrected. None of the
   exceptions is grandfathered; all remain INCOMPLETE until directly fixed or individually proven
   unavoidable.
@@ -1357,11 +1387,10 @@ a parked design, per the bucket convention. Open work is what remains after thos
   last resort only after no direct fix is possible and the exact reason is proven. Existing
   suppressions are re-audited, not inherited as permanent policy. Current batch: all pre-commit
   hooks passed; Release build exit 0; full CTest 265/265, zero failures, 804.48 seconds.
-  STILL OPEN: core's 5,271 naming findings; the 294-item `useStlAlgorithm` program;
-  the artifact-leaf handle/callback writer migration; the attachment-dialog correlated-error test;
-  remaining directly closable fixture/resource skips; broader certification-script cleanup/query
-  silences; broad magic-number exemptions; and the historical VM credential rotation/history-
-  rewrite decision.
+  STILL OPEN: core's 5,274 naming findings; the 294-item `useStlAlgorithm` program; remaining
+  directly closable fixture/resource skips; broad magic-number exemptions; the wider mutation/
+  fresh-host test-infra program; and the historical VM credential rotation/history-rewrite
+  decision.
   DIRECT-FIX WAVE 1 FINAL GATE: all changed-file pre-commit hooks passed; Release build exit 0;
   full CTest 266/266, zero failures, 820.46 seconds.
   NON-CORE CLANG HEALTH FINAL GATE: all changed-file pre-commit hooks passed; real naming gate

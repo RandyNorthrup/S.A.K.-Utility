@@ -58,6 +58,8 @@ std::function<void(const QString&)> g_before_manifest_child_open_hook;
 std::function<void(const QString&)> g_before_manifest_file_open_hook;
 std::function<void(const QString&)> g_before_manifest_file_read_hook;
 std::function<void(const QString&)> g_before_artifact_child_open_hook;
+std::function<void(const QString&)> g_before_artifact_leaf_temp_open_hook;
+std::function<void(const QString&)> g_before_artifact_leaf_publish_hook;
 
 QString nowIso() {
     return QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
@@ -292,7 +294,9 @@ detail::StoreChildFileLoadPolicy manifestLoadPolicy() {
 detail::StoreFileLoadHooks manifestLoadHooks() {
     return {.before_file_open = g_before_manifest_file_open_hook,
             .before_file_read = g_before_manifest_file_read_hook,
-            .before_child_open = g_before_manifest_child_open_hook};
+            .before_child_open = g_before_manifest_child_open_hook,
+            .before_leaf_temp_open = {},
+            .before_leaf_publish = {}};
 }
 
 std::optional<AiSessionInfo> parseManifestBytes(const QString& directory_name,
@@ -836,6 +840,16 @@ void ConversationStore::setBeforeArtifactChildOpenHookForTesting(
     g_before_artifact_child_open_hook = std::move(hook);
 }
 
+void ConversationStore::setBeforeArtifactLeafTempOpenHookForTesting(
+    std::function<void(const QString&)> hook) {
+    g_before_artifact_leaf_temp_open_hook = std::move(hook);
+}
+
+void ConversationStore::setBeforeArtifactLeafPublishHookForTesting(
+    std::function<void(const QString&)> hook) {
+    g_before_artifact_leaf_publish_hook = std::move(hook);
+}
+
 QString ConversationStore::rootDirectory() const {
     return m_root_dir;
 }
@@ -1286,8 +1300,8 @@ QString ConversationStore::artifactRootDirectory(QString* error_message) const {
     return pinnedArtifactDirectory({}, error_message);
 }
 
-QString ConversationStore::pinnedArtifactDirectory(const QString& subdir,
-                                                   QString* error_message) const {
+detail::StoreDirectoryPin ConversationStore::pinnedArtifactDirectoryPin(
+    const QString& subdir, QString* error_message) const {
     QStringList components{m_current_session.id,
                            QStringLiteral("artifacts"),
                            safeArtifactDirectoryName(m_current_session.title,
@@ -1306,7 +1320,7 @@ QString ConversationStore::pinnedArtifactDirectory(const QString& subdir,
         if (error_message != nullptr) {
             error_message->clear();
         }
-        return existing->path();
+        return *existing;
     }
     detail::StoreFileLoadHooks hooks;
     hooks.before_child_open = g_before_artifact_child_open_hook;
@@ -1315,9 +1329,13 @@ QString ConversationStore::pinnedArtifactDirectory(const QString& subdir,
     if (!pin.valid()) {
         return {};
     }
-    const QString path = pin.path();
-    m_artifact_directory_pins.insert(key, std::move(pin));
-    return path;
+    m_artifact_directory_pins.insert(key, pin);
+    return pin;
+}
+
+QString ConversationStore::pinnedArtifactDirectory(const QString& subdir,
+                                                   QString* error_message) const {
+    return pinnedArtifactDirectoryPin(subdir, error_message).path();
 }
 
 void ConversationStore::clearArtifactDirectoryPins() const {
@@ -1357,6 +1375,56 @@ QString ConversationStore::artifactPath(const QString& subdir,
         return {};
     }
     return resolved;
+}
+
+QString ConversationStore::writeArtifactFile(const QString& subdir,
+                                             const QString& filename,
+                                             const QByteArray& bytes,
+                                             QString* error_message) const {
+    const QReadLocker locker(&m_lock);
+    if (m_current_session.id.isEmpty()) {
+        setError(error_message, QStringLiteral("No active AI session for artifact write"));
+        return {};
+    }
+    const detail::StoreDirectoryPin directory = pinnedArtifactDirectoryPin(subdir, error_message);
+    if (!directory.valid()) {
+        return {};
+    }
+    detail::StoreFileLoadHooks hooks;
+    hooks.before_leaf_temp_open = g_before_artifact_leaf_temp_open_hook;
+    hooks.before_leaf_publish = g_before_artifact_leaf_publish_hook;
+    return detail::writePinnedStoreFile(directory, filename, bytes, hooks, error_message);
+}
+
+QString ConversationStore::copyArtifactFile(const QString& subdir,
+                                            const QString& filename,
+                                            const QString& source_path,
+                                            QString* error_message) const {
+    const QReadLocker locker(&m_lock);
+    if (m_current_session.id.isEmpty()) {
+        setError(error_message, QStringLiteral("No active AI session for artifact copy"));
+        return {};
+    }
+    const detail::StoreDirectoryPin directory = pinnedArtifactDirectoryPin(subdir, error_message);
+    if (!directory.valid()) {
+        return {};
+    }
+    detail::StoreFileLoadHooks hooks;
+    hooks.before_leaf_temp_open = g_before_artifact_leaf_temp_open_hook;
+    hooks.before_leaf_publish = g_before_artifact_leaf_publish_hook;
+    return detail::copyPinnedStoreFile(directory, filename, source_path, hooks, error_message);
+}
+
+QString ConversationStore::writeCommandLog(const QString& command_id,
+                                           const QString& suffix,
+                                           const QByteArray& bytes,
+                                           QString* error_message) const {
+    const QString safe_id = sanitizeLogToken(command_id, QStringLiteral("cmd"));
+    const QString safe_suffix = sanitizeLogToken(suffix, QStringLiteral("output"));
+    return writeArtifactFile(QStringLiteral("logs"),
+                             QStringLiteral("%1_%2.txt").arg(safe_id, safe_suffix),
+                             bytes,
+                             error_message);
 }
 
 bool ConversationStore::appendContext(const QString& kind,

@@ -386,17 +386,21 @@ private Q_SLOTS:
         panel.startNewPersistentSession(QStringLiteral("App Action Artifacts"));
         QVERIFY(panel.m_conversationStore != nullptr);
         QString error;
-        const QString expected = panel.m_conversationStore->artifactRootDirectory(&error);
-        QVERIFY2(!expected.isEmpty(), qPrintable(error));
-        QCOMPARE(panel.m_appActionService->outputDirectory(), expected);
+        const QString artifact_root = panel.m_conversationStore->artifactRootDirectory(&error);
+        QVERIFY2(!artifact_root.isEmpty(), qPrintable(error));
+        const QString staging = panel.m_appActionService->outputDirectory();
+        QVERIFY(!staging.isEmpty());
+        QVERIFY(panel.m_appActionStagingDir && panel.m_appActionStagingDir->isValid());
+        QCOMPARE(staging, panel.m_appActionStagingDir->path());
+        QVERIFY(staging != artifact_root);
 
         QVERIFY(panel.m_conversationStore->renameCurrentSession(
             QStringLiteral("Renamed App Action Artifacts"), &error));
-        const QString renamed = panel.m_conversationStore->artifactRootDirectory(&error);
-        QVERIFY2(!renamed.isEmpty(), qPrintable(error));
-        QVERIFY(renamed != expected);
         panel.ensureAppActionService();
-        QCOMPARE(panel.m_appActionService->outputDirectory(), renamed);
+        const QString renamed_staging = panel.m_appActionService->outputDirectory();
+        QVERIFY(!renamed_staging.isEmpty());
+        QVERIFY(renamed_staging != staging);
+        QVERIFY(renamed_staging != panel.m_conversationStore->artifactRootDirectory(&error));
 
         panel.onNewSessionClicked();
         QCOMPARE(panel.m_appActionService->outputDirectory(), QString());
@@ -7592,6 +7596,95 @@ private Q_SLOTS:
         aiApprovalPromptTestHook() = nullptr;
         QVERIFY(!captured_detail.isEmpty());           // the confirm fired
         QVERIFY(captured_detail.contains(long_path));  // full target, not truncated
+    }
+
+    void appActionArtifactsPublishFromPrivateStaging() {
+        AiAssistantPanel panel;
+        QString error;
+        QVERIFY(
+            panel.m_conversationStore->startSession(QStringLiteral("Action artifacts"), &error));
+        panel.ensureAppActionService();
+        AppActionDescriptor descriptor;
+        descriptor.id = QStringLiteral("test.atomic_output");
+        descriptor.title = QStringLiteral("Atomic output probe");
+        descriptor.description = QStringLiteral("Writes one staged artifact");
+        descriptor.read_only = true;
+        QString staging_root;
+        QVERIFY(panel.m_appActionRegistry.registerAction(
+            descriptor, [&panel, &staging_root](const QJsonObject&) {
+                if (!panel.m_appActionStagingDir || !panel.m_appActionStagingDir->isValid()) {
+                    return AppActionResult{false, QStringLiteral("missing staging"), {}};
+                }
+                staging_root = panel.m_appActionStagingDir->path();
+                const QString staged =
+                    QDir(panel.m_appActionStagingDir->path()).filePath(QStringLiteral("probe.txt"));
+                QFile file(staged);
+                if (!file.open(QIODevice::WriteOnly) || file.write("probe") != 5 || !file.flush()) {
+                    return AppActionResult{false, QStringLiteral("staging write failed"), {}};
+                }
+                return AppActionResult{true,
+                                       QStringLiteral("written"),
+                                       QJsonObject{{QStringLiteral("output_path"), staged}}};
+            }));
+
+        const QJsonObject result = panel.runAppActionRun(descriptor.id, QJsonObject{});
+
+        QVERIFY(result.value(QStringLiteral("success")).toBool(false));
+        const QString published = result.value(QStringLiteral("data"))
+                                      .toObject()
+                                      .value(QStringLiteral("output_path"))
+                                      .toString();
+        QVERIFY2(published.contains(QStringLiteral("/artifacts/")), qPrintable(published));
+        QVERIFY(!published.startsWith(staging_root));
+        QFile file(published);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QCOMPARE(file.readAll(), QByteArray("probe"));
+        QVERIFY(!panel.m_appActionStagingDir);
+    }
+
+    void appActionArtifactImportRejectsStagedJunction() {
+        AiAssistantPanel panel;
+        QString error;
+        QVERIFY(panel.m_conversationStore->startSession(QStringLiteral("Action redirect"), &error));
+        panel.ensureAppActionService();
+        QTemporaryDir outside;
+        QVERIFY(outside.isValid());
+        QFile outside_file(QDir(outside.path()).filePath(QStringLiteral("outside.txt")));
+        QVERIFY(outside_file.open(QIODevice::WriteOnly));
+        QCOMPARE(outside_file.write("outside"), static_cast<qint64>(7));
+        outside_file.close();
+
+        AppActionDescriptor descriptor;
+        descriptor.id = QStringLiteral("test.redirected_output");
+        descriptor.title = QStringLiteral("Redirected output probe");
+        descriptor.description = QStringLiteral("Plants one staged junction");
+        descriptor.read_only = true;
+        QVERIFY(panel.m_appActionRegistry.registerAction(
+            descriptor, [&panel, &outside](const QJsonObject&) {
+                const QString junction =
+                    QDir(panel.m_appActionStagingDir->path()).filePath(QStringLiteral("redirect"));
+                const QString command = QDir(qEnvironmentVariable("SystemRoot"))
+                                            .filePath(QStringLiteral("System32/cmd.exe"));
+                const int exit_code = QProcess::execute(command,
+                                                        {QStringLiteral("/d"),
+                                                         QStringLiteral("/c"),
+                                                         QStringLiteral("mklink"),
+                                                         QStringLiteral("/J"),
+                                                         QDir::toNativeSeparators(junction),
+                                                         QDir::toNativeSeparators(outside.path())});
+                return AppActionResult{exit_code == 0,
+                                       QStringLiteral("junction attempted"),
+                                       QJsonObject{{QStringLiteral("output_path"), junction}}};
+            }));
+
+        const QJsonObject result = panel.runAppActionRun(descriptor.id, QJsonObject{});
+
+        QVERIFY(!result.value(QStringLiteral("success")).toBool(true));
+        QVERIFY2(result.value(QStringLiteral("message"))
+                     .toString()
+                     .contains(QStringLiteral("Refusing redirected staged artifact")),
+                 qPrintable(result.value(QStringLiteral("message")).toString()));
+        QCOMPARE(QFileInfo(outside_file.fileName()).size(), static_cast<qint64>(7));
     }
 
     // CODEX_REVIEW_2 line 182: the workflow tool-dispatch plan must carry the

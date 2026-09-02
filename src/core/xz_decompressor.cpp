@@ -54,9 +54,9 @@ void XzDecompressor::setInputFromBuffer(size_t bytes) {
     m_lzmaStream.avail_in = bytes;
 }
 
-void XzDecompressor::setOutput(char* data, size_t maxSize) {
+void XzDecompressor::setOutput(char* data, size_t max_size) {
     m_lzmaStream.next_out = reinterpret_cast<uint8_t*>(data);
-    m_lzmaStream.avail_out = maxSize;
+    m_lzmaStream.avail_out = max_size;
 }
 
 size_t XzDecompressor::outputRemaining() const {

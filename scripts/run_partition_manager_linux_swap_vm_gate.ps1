@@ -27,6 +27,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "partition_manager_storage.ps1")
 
 $LinuxSwapGptType = "{0657FD6D-A4AB-43C4-84E5-0933C84B4F4F}"
 
@@ -121,7 +122,7 @@ function Get-DiskSnapshot {
 
     $disk = Get-Disk -Number $Number -ErrorAction Stop
     $partitions = @()
-    foreach ($partition in @(Get-Partition -DiskNumber $Number -ErrorAction SilentlyContinue | Sort-Object Offset)) {
+    foreach ($partition in @(Get-SakDiskPartitions -DiskNumber $Number | Sort-Object Offset)) {
         $partitions += [pscustomobject]@{
             partition_number = [int]$partition.PartitionNumber
             drive_letter = if ($partition.DriveLetter) { [string]$partition.DriveLetter } else { "" }
@@ -173,7 +174,7 @@ function Clear-DisposableDisk {
 
     Assert-DisposableDisk -Number $Number
     $disk = Get-Disk -Number $Number -ErrorAction Stop
-    $partitions = @(Get-Partition -DiskNumber $Number -ErrorAction SilentlyContinue)
+    $partitions = @(Get-SakDiskPartitions -DiskNumber $Number)
     if ($disk.PartitionStyle -eq "RAW" -and $partitions.Count -eq 0) {
         return "Disk $Number already RAW."
     }

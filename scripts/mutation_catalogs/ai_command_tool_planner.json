@@ -15,8 +15,8 @@
     {
       "id": "combining-display-mark-is-not-escaped",
       "file": "src/ai/ai_command_tool_planner.cpp",
-      "find": "    constexpr std::array hazard_categories{QChar::Mark_NonSpacing,",
-      "replace": "    constexpr std::array hazard_categories{QChar::Letter_Lowercase,",
+      "find": "    constexpr std::array kHazardCategories{QChar::Mark_NonSpacing,",
+      "replace": "    constexpr std::array kHazardCategories{QChar::Letter_Lowercase,",
       "expect": "killed",
       "why": "previewEncodingDistinguishesControlsFromLiteralTokens requires a combining overlay to render as its visible Unicode token."
     },

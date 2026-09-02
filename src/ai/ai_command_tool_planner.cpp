@@ -37,7 +37,7 @@ bool isDisplayHazardChar(QChar ch) {
     // Categories, not a hand-maintained code-point list. That covers every C0/C1 control,
     // every line/paragraph separator, every bidi/zero-width format character (including
     // U+061C ARABIC LETTER MARK, which the old list missed), and unpaired UTF-16 surrogates.
-    constexpr std::array hazard_categories{QChar::Mark_NonSpacing,
+    constexpr std::array kHazardCategories{QChar::Mark_NonSpacing,
                                            QChar::Mark_SpacingCombining,
                                            QChar::Mark_Enclosing,
                                            QChar::Separator_Space,
@@ -49,7 +49,7 @@ bool isDisplayHazardChar(QChar ch) {
                                            QChar::Other_NotAssigned,
                                            QChar::Other_Surrogate};
     return ch != QLatin1Char(' ') &&
-           std::ranges::find(hazard_categories, ch.category()) != hazard_categories.end();
+           std::ranges::find(kHazardCategories, ch.category()) != kHazardCategories.end();
 }
 
 // Renders a hazardous character visibly so it cannot forge the displayed confirmation command.

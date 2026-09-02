@@ -23,6 +23,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "partition_manager_storage.ps1")
 
 if ($TargetDiskNumber -lt 1) {
     throw "TargetDiskNumber is required and must be >= 1. This gate destroys every partition on that physical disk; run Get-Disk and pass the disposable disk's number explicitly rather than relying on a default."
@@ -113,7 +114,7 @@ function Get-DiskSnapshot {
     param([int]$DiskNumber)
 
     $disk = Get-Disk -Number $DiskNumber
-    $partitions = @(Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue | ForEach-Object {
+    $partitions = @(Get-SakDiskPartitions -DiskNumber $DiskNumber | ForEach-Object {
         [pscustomobject]@{
             partition_number = $_.PartitionNumber
             drive_letter = $_.DriveLetter
@@ -147,7 +148,7 @@ function Clear-DisposableDisk {
     if ($disk.IsOffline) {
         Set-Disk -Number $DiskNumber -IsOffline $false
     }
-    $partitions = @(Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue)
+    $partitions = @(Get-SakDiskPartitions -DiskNumber $DiskNumber)
     if ($disk.PartitionStyle -eq "RAW" -and $partitions.Count -eq 0) {
         return
     }

@@ -45,6 +45,11 @@ private Q_SLOTS:
     void artifactRoot_refusesArtifactsJunction();
     void artifactSubdir_refusesJunctionLeaf();
     void artifactSubdirPinsBlockRenameUntilSessionClears();
+    void writeArtifactFile_atomicallyPublishesNewLeaf();
+    void writeArtifactFile_refusesLeafPlantedBeforePublish();
+    void writeArtifactFile_refusesPreexistingTemporaryLeaf();
+    void artifactWriters_requireActiveSession();
+    void writeCommandLog_usesAtomicArtifactWriter();
     void renameSession_updatesTitleAndArtifactRoot();
     void renameSession_rollsBackTheArtifactMoveWhenTheManifestFails();
     void renameSession_refusesExistingArtifactDestination();
@@ -170,6 +175,8 @@ void AiConversationStoreTests::cleanup() {
     sak::ai::ConversationStore::setBeforeManifestFileOpenHookForTesting({});
     sak::ai::ConversationStore::setBeforeManifestFileReadHookForTesting({});
     sak::ai::ConversationStore::setBeforeArtifactChildOpenHookForTesting({});
+    sak::ai::ConversationStore::setBeforeArtifactLeafTempOpenHookForTesting({});
+    sak::ai::ConversationStore::setBeforeArtifactLeafPublishHookForTesting({});
 }
 
 void AiConversationStoreTests::startSession_writesManifestAndListsSession() {
@@ -823,6 +830,110 @@ void AiConversationStoreTests::artifactSubdirPinsBlockRenameUntilSessionClears()
     QVERIFY(
         QDir(artifact_root).rename(QStringLiteral("downloads"), QStringLiteral("downloads_moved")));
     QVERIFY(QDir(QDir(artifact_root).filePath(QStringLiteral("downloads_moved"))).exists());
+}
+
+void AiConversationStoreTests::writeArtifactFile_atomicallyPublishesNewLeaf() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Atomic"), &error));
+    const QByteArray payload("artifact-bytes");
+
+    const QString path = store.writeArtifactFile(
+        QStringLiteral("downloads"), QStringLiteral("payload.bin"), payload, &error);
+
+    QVERIFY2(!path.isEmpty(), qPrintable(error));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), payload);
+    QCOMPARE(QDir(QFileInfo(path).absolutePath())
+                 .entryList({QStringLiteral(".sak-*.tmp")}, QDir::Files)
+                 .size(),
+             0);
+}
+
+void AiConversationStoreTests::writeArtifactFile_refusesLeafPlantedBeforePublish() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Atomic"), &error));
+    bool planted = false;
+    sak::ai::ConversationStore::setBeforeArtifactLeafPublishHookForTesting(
+        [&](const QString& target) { planted = writeBytes(target, QByteArray("attacker")); });
+
+    const QString path = store.writeArtifactFile(
+        QStringLiteral("downloads"), QStringLiteral("payload.bin"), QByteArray("trusted"), &error);
+
+    QVERIFY(planted);
+    QVERIFY(path.isEmpty());
+    QVERIFY2(error.contains(QStringLiteral("Could not atomically publish artifact")),
+             qPrintable(error));
+    const QString target =
+        store.artifactPath(QStringLiteral("downloads"), QStringLiteral("payload.bin"), &error);
+    QFile file(target);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), QByteArray("attacker"));
+}
+
+void AiConversationStoreTests::writeArtifactFile_refusesPreexistingTemporaryLeaf() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Atomic"), &error));
+    bool planted = false;
+    sak::ai::ConversationStore::setBeforeArtifactLeafTempOpenHookForTesting(
+        [&](const QString& path) { planted = writeBytes(path, QByteArray("planted")); });
+
+    const QString path = store.writeArtifactFile(
+        QStringLiteral("downloads"), QStringLiteral("payload.bin"), QByteArray("trusted"), &error);
+
+    QVERIFY(planted);
+    QVERIFY(path.isEmpty());
+    QVERIFY2(error.contains(QStringLiteral("Could not create artifact temporary file")),
+             qPrintable(error));
+}
+
+void AiConversationStoreTests::artifactWriters_requireActiveSession() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+
+    QVERIFY(store
+                .writeArtifactFile(
+                    QStringLiteral("reports"), QStringLiteral("report.txt"), "data", &error)
+                .isEmpty());
+    QCOMPARE(error, QStringLiteral("No active AI session for artifact write"));
+
+    const QString source_path = temp.filePath(QStringLiteral("source.txt"));
+    QFile source(source_path);
+    QVERIFY(source.open(QIODevice::WriteOnly));
+    QCOMPARE(source.write("source"), qint64{6});
+    source.close();
+    QVERIFY(store
+                .copyArtifactFile(
+                    QStringLiteral("reports"), QStringLiteral("copy.txt"), source_path, &error)
+                .isEmpty());
+    QCOMPARE(error, QStringLiteral("No active AI session for artifact copy"));
+}
+
+void AiConversationStoreTests::writeCommandLog_usesAtomicArtifactWriter() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Logs"), &error));
+
+    const QString path = store.writeCommandLog(
+        QStringLiteral("cmd_001"), QStringLiteral("stdout"), QByteArray("output"), &error);
+
+    QVERIFY2(path.endsWith(QStringLiteral("/logs/cmd_001_stdout.txt")), qPrintable(error));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), QByteArray("output"));
 }
 
 void AiConversationStoreTests::renameSession_updatesTitleAndArtifactRoot() {

@@ -125,7 +125,9 @@ try {
     $resolvedOutputRoot = Resolve-ProjectPath -Path $OutputRoot
     New-Item -ItemType Directory -Path $resolvedOutputRoot -Force | Out-Null
     $Script:StrictFailurePath = Join-Path $resolvedOutputRoot "strict-vhd-certification-error.txt"
-    Remove-Item -LiteralPath $Script:StrictFailurePath -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $Script:StrictFailurePath) {
+        Remove-Item -LiteralPath $Script:StrictFailurePath -Force -ErrorAction Stop
+    }
 
     $externalManifestPath = if ([string]::IsNullOrWhiteSpace($ExternalEvidenceManifest)) {
         Join-Path $resolvedOutputRoot "external-evidence.template.json"

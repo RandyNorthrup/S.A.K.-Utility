@@ -23,6 +23,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "partition_manager_storage.ps1")
 
 if ($TargetDiskNumber -lt 1) {
     throw "TargetDiskNumber is required and must be >= 1. This gate destroys every partition on that physical disk; run Get-Disk and pass the disposable disk's number explicitly rather than relying on a default."
@@ -208,8 +209,8 @@ function Assert-DisposableDisk {
 function Get-DiskSnapshot {
     param([int]$DiskNumber)
 
-    $disk = Get-Disk -Number $DiskNumber
-    $partitions = @(Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue | ForEach-Object {
+    $disk = Get-Disk -Number $DiskNumber -ErrorAction Stop
+    $partitions = @(Get-SakDiskPartitions -DiskNumber $DiskNumber | ForEach-Object {
         [pscustomobject]@{
             partition_number = $_.PartitionNumber
             drive_letter = $_.DriveLetter
@@ -232,7 +233,7 @@ function Get-DiskSnapshot {
 function Clear-DisposableDisk {
     param([int]$DiskNumber)
 
-    $disk = Get-Disk -Number $DiskNumber
+    $disk = Get-Disk -Number $DiskNumber -ErrorAction Stop
     Assert-DisposableDisk -Disk $disk
     if ($disk.IsReadOnly) {
         Set-Disk -Number $DiskNumber -IsReadOnly $false
@@ -240,7 +241,7 @@ function Clear-DisposableDisk {
     if ($disk.IsOffline) {
         Set-Disk -Number $DiskNumber -IsOffline $false
     }
-    $partitions = @(Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue)
+    $partitions = @(Get-SakDiskPartitions -DiskNumber $DiskNumber)
     if ($disk.PartitionStyle -eq "RAW" -and $partitions.Count -eq 0) {
         return
     }
@@ -388,7 +389,10 @@ function New-ExternalReport {
 if (-not (Test-IsAdmin)) {
     throw "Run from an elevated PowerShell session inside the disposable VM."
 }
-if (-not (Get-Command Get-BitLockerVolume -ErrorAction SilentlyContinue)) {
+try {
+    Get-Command Get-BitLockerVolume -ErrorAction Stop | Out-Null
+}
+catch {
     throw "BitLocker PowerShell module is not available in this VM."
 }
 

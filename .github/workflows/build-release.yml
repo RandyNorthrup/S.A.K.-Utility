@@ -368,13 +368,11 @@ jobs:
     - name: Build
       run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel
 
-    # readability-identifier-naming reached zero in every first-party directory
-    # except src/core (a documented carve-out). This gate re-runs the check on the
-    # 147 non-core TUs and fails the build if a single naming finding reappears, so
-    # the convention cannot silently regress. It reconstructs a Ninja compile
-    # database from the configured build/ cache (the VS generator cannot emit one)
-    # and uses clang-tidy / Ninja from the windows-2022 image.
-    - name: Static analysis (clang-tidy naming regression gate)
+    # Non-core naming stays at zero. Core receives a healthy full measurement (no skipped/error
+    # TUs), and each TU already remediated into the clean manifest must stay at zero. The gate
+    # reconstructs Ninja databases from the configured build cache and uses clang-tidy/Ninja from
+    # the windows-2022 image.
+    - name: Static analysis (clang-tidy naming health + ratchet)
       shell: pwsh
       run: |
         & scripts/clang_tidy_naming_gate.ps1

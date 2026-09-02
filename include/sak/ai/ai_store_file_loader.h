@@ -26,6 +26,8 @@ struct StoreFileLoadHooks {
     std::function<void(const QString&)> before_file_open;
     std::function<void(const QString&)> before_file_read;
     std::function<void(const QString&)> before_child_open;
+    std::function<void(const QString&)> before_leaf_temp_open;
+    std::function<void(const QString&)> before_leaf_publish;
 };
 
 using StoreFileConsumer = std::function<bool(const QString&, const QByteArray&)>;
@@ -94,6 +96,16 @@ private:
 
     friend StoreDirectoryPin pinOrCreateStoreDirectory(
         const QString&, const QStringList&, int, const StoreFileLoadHooks&, QString*);
+    friend QString writePinnedStoreFile(const StoreDirectoryPin&,
+                                        const QString&,
+                                        const QByteArray&,
+                                        const StoreFileLoadHooks&,
+                                        QString*);
+    friend QString copyPinnedStoreFile(const StoreDirectoryPin&,
+                                       const QString&,
+                                       const QString&,
+                                       const StoreFileLoadHooks&,
+                                       QString*);
 };
 
 /// @brief Pin @p root_directory and walk direct child components without following reparses.
@@ -104,5 +116,20 @@ private:
                                                           int required_component_count,
                                                           const StoreFileLoadHooks& hooks,
                                                           QString* error_message);
+
+/// @brief Atomically publish one new direct-child file under a retained directory pin.
+/// @details Writes and flushes a unique no-follow temporary handle, verifies its realized parent,
+///          then renames by handle without replacement. Existing/dangling/reparse targets refuse.
+[[nodiscard]] QString writePinnedStoreFile(const StoreDirectoryPin& directory,
+                                           const QString& filename,
+                                           const QByteArray& bytes,
+                                           const StoreFileLoadHooks& hooks,
+                                           QString* error_message);
+/// @brief Stream one source file into the same no-follow atomic publication contract.
+[[nodiscard]] QString copyPinnedStoreFile(const StoreDirectoryPin& directory,
+                                          const QString& filename,
+                                          const QString& source_path,
+                                          const StoreFileLoadHooks& hooks,
+                                          QString* error_message);
 
 }  // namespace sak::ai::detail

@@ -40,6 +40,7 @@
 #include "sak/ai/ai_workflow_store.h"
 #include "sak/ai/openai_responses_client.h"
 #include "sak/ai_transcript_view.h"
+#include "sak/app_action_guards.h"
 #include "sak/app_action_service.h"
 #include "sak/app_mutating_actions.h"
 #include "sak/app_paths.h"
@@ -59,10 +60,12 @@
 #include "sak/rich_text_safety.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
+#include "sak/windows_path_policy.h"
 
 #include <QAbstractItemView>
 #include <QAbstractScrollArea>
 #include <QApplication>
+#include <QBuffer>
 #include <QComboBox>
 #include <QCoreApplication>
 #include <QCryptographicHash>
@@ -119,6 +122,7 @@
 #include <QSplitter>
 #include <QStandardPaths>
 #include <QtConcurrent/QtConcurrentRun>
+#include <QTemporaryDir>
 #include <QTextBrowser>
 #include <QTextCursor>
 #include <QTextDocument>
@@ -2192,43 +2196,6 @@ bool downloadUrlBytes(const QUrl& url,
     return true;
 }
 
-bool writeDownloadBytes(const QString& destination,
-                        const QByteArray& bytes,
-                        QString* error_message) {
-    // The destination was validated as a path string and is now reopened by name, so
-    // refuse anything already sitting there: an existing artifact must never be
-    // overwritten, and a planted link must never be followed to its target. NewOnly
-    // makes the create exclusive (CREATE_NEW), and the pre-check catches a dangling
-    // link whose target does not exist yet.
-    const QFileInfo existing(destination);
-    if (existing.exists() || existing.isSymLink()) {
-        if (error_message != nullptr) {
-            *error_message =
-                QStringLiteral("Download destination already exists: %1").arg(destination);
-        }
-        return false;
-    }
-    QFile file(destination);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
-        if (error_message != nullptr) {
-            *error_message =
-                QStringLiteral("Could not write destination: %1").arg(file.errorString());
-        }
-        return false;
-    }
-    if (file.write(bytes) != bytes.size() || !file.flush()) {
-        if (error_message != nullptr) {
-            *error_message = QStringLiteral("Short write to destination: %1").arg(destination);
-        }
-        file.close();
-        // A half-written artifact must not survive as if it were the download.
-        (void)file.remove();
-        return false;
-    }
-    file.close();
-    return true;
-}
-
 // Hard ceiling on the retained stdout/stderr of one command tool call. The buffers are
 // fed by attacker-influenced process output with no natural end, so past the cap the
 // tail is dropped with an explicit marker instead of growing without bound.
@@ -3163,6 +3130,201 @@ bool offlineNeedsPackages(const QString& operation) {
 
 bool offlineCreatesDefaultOutput(const QString& operation) {
     return offlineNeedsPackages(operation);
+}
+
+QString packedOnlyArgumentError(const QString& operation, const QJsonObject& args) {
+    if (operation != QLatin1String("install_bundle")) {
+        return {};
+    }
+    bool packed_only = false;
+    QString error;
+    return parsePackedOnlyArg(args.value(QStringLiteral("packed_only")), &packed_only, &error)
+               ? QString()
+               : error;
+}
+
+QString offlinePackageRequestError(const QString& operation,
+                                   const QVector<QPair<QString, QString>>& packages,
+                                   const QString& parse_error) {
+    if (!offlineNeedsPackages(operation) || !packages.isEmpty()) {
+        return {};
+    }
+    return parse_error.isEmpty() ? QStringLiteral("%1 requires at least one package").arg(operation)
+                                 : parse_error;
+}
+
+constexpr int kManagedArtifactImportMaxFiles = 4096;
+
+bool removeStagingDirectoryContents(const QString& directory, QString* error_message);
+
+bool removeStagingEntry(const QFileInfo& info, QString* error_message) {
+    const QString path = info.absoluteFilePath();
+    bool removed = false;
+    const bool redirected = info.isSymLink() || sak::pathReparseUnsafe(path);
+    if (redirected) {
+        removed = info.isDir() ? QDir().rmdir(path) : QFile::remove(path);
+    } else if (info.isDir()) {
+        removed = removeStagingDirectoryContents(path, error_message) && QDir().rmdir(path);
+    } else {
+        removed = QFile::remove(path);
+    }
+    if (!removed && QFileInfo::exists(path) && error_message != nullptr) {
+        *error_message = QStringLiteral("Could not safely remove staging entry: %1").arg(path);
+    }
+    return removed || !QFileInfo::exists(path);
+}
+
+bool removeStagingDirectoryContents(const QString& directory, QString* error_message) {
+    const QFileInfoList entries =
+        QDir(directory).entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot);
+    return std::ranges::all_of(entries, [error_message](const QFileInfo& info) {
+        return removeStagingEntry(info, error_message);
+    });
+}
+
+bool removeStagingTreeWithoutFollowingReparse(const QString& root, QString* error_message) {
+    if (!removeStagingDirectoryContents(root, error_message)) {
+        return false;
+    }
+    if (!QDir().rmdir(root) && QDir(root).exists()) {
+        if (error_message != nullptr) {
+            *error_message = QStringLiteral("Could not safely remove staging root: %1").arg(root);
+        }
+        return false;
+    }
+    return true;
+}
+
+std::optional<QStringList> stagedArtifactSources(const QString& staging_root,
+                                                 QString* error_message) {
+    QStringList sources;
+    QDirIterator iterator(staging_root,
+                          QDir::AllEntries | QDir::NoDotAndDotDot,
+                          QDirIterator::Subdirectories);
+    while (iterator.hasNext()) {
+        const QString path = iterator.next();
+        const QFileInfo info = iterator.fileInfo();
+        if (info.isSymLink() || sak::pathReparseUnsafe(path)) {
+            if (error_message != nullptr) {
+                *error_message =
+                    QStringLiteral("Refusing redirected staged artifact: %1").arg(path);
+            }
+            return std::nullopt;
+        }
+        if (!info.isFile()) {
+            continue;
+        }
+        if (sources.size() >= kManagedArtifactImportMaxFiles) {
+            if (error_message != nullptr) {
+                *error_message = QStringLiteral("Managed artifact import exceeds %1 files")
+                                     .arg(kManagedArtifactImportMaxFiles);
+            }
+            return std::nullopt;
+        }
+        sources.append(info.absoluteFilePath());
+    }
+    std::ranges::sort(sources);
+    return sources;
+}
+
+std::optional<QHash<QString, QString>> publishStagedSources(const ai::ConversationStore* store,
+                                                            const QString& staging_root,
+                                                            const QString& artifact_subdir,
+                                                            const QStringList& sources,
+                                                            QString* error_message) {
+    QHash<QString, QString> published;
+    const QDir staging(staging_root);
+    for (const QString& source : sources) {
+        const QString relative = QDir::cleanPath(staging.relativeFilePath(source));
+        const QFileInfo relative_info(relative);
+        const QString parent = relative_info.path() == QLatin1String(".")
+                                   ? artifact_subdir
+                                   : artifact_subdir + QLatin1Char('/') + relative_info.path();
+        const QString target =
+            store->copyArtifactFile(parent, relative_info.fileName(), source, error_message);
+        if (target.isEmpty()) {
+            return std::nullopt;
+        }
+        published.insert(QDir::cleanPath(source), target);
+    }
+    return published;
+}
+
+std::optional<QHash<QString, QString>> importManagedArtifactTree(const ai::ConversationStore* store,
+                                                                 const QString& staging_root,
+                                                                 const QString& artifact_subdir,
+                                                                 QString* error_message) {
+    if (store == nullptr || staging_root.isEmpty() || artifact_subdir.isEmpty()) {
+        if (error_message != nullptr) {
+            *error_message = QStringLiteral("Managed artifact import is not configured");
+        }
+        return std::nullopt;
+    }
+    const auto sources = stagedArtifactSources(staging_root, error_message);
+    return sources
+               ? publishStagedSources(store, staging_root, artifact_subdir, *sources, error_message)
+               : std::nullopt;
+}
+
+QString managedActionSubdir(const QString& action_id) {
+    QString safe = action_id;
+    safe.replace(QRegularExpression(QStringLiteral("[^A-Za-z0-9._-]")), QStringLiteral("_"));
+    const QString unique = QUuid::createUuid().toString(QUuid::WithoutBraces);
+    return QStringLiteral("app_actions/%1_%2").arg(safe, unique);
+}
+
+struct ManagedActionOutputRequest {
+    ai::ConversationStore* store;
+    QString staging_root;
+    QString subdir;
+    const QHash<QString, QString>& published;
+    QString original;
+    QString* error_message;
+};
+
+QString managedActionOutputPath(const ManagedActionOutputRequest& request) {
+    if (!request.original.isEmpty() && QFileInfo(request.original).isFile()) {
+        return request.published.value(request.original);
+    }
+    if (!request.original.isEmpty() && QDir(request.original).exists()) {
+        const QString relative = QDir(request.staging_root).relativeFilePath(request.original);
+        return request.store->artifactSubdir(relative == QLatin1String(".")
+                                                 ? request.subdir
+                                                 : request.subdir + QLatin1Char('/') + relative,
+                                             request.error_message);
+    }
+    return request.published.isEmpty()
+               ? QString()
+               : request.store->artifactSubdir(request.subdir, request.error_message);
+}
+
+bool publishStagedAppActionArtifacts(ai::ConversationStore* store,
+                                     const QString& staging_root,
+                                     const QString& action_id,
+                                     AppActionResult* run,
+                                     QString* error_message) {
+    if (run == nullptr || !run->success) {
+        return true;
+    }
+    const QString subdir = managedActionSubdir(action_id);
+    const auto published = importManagedArtifactTree(store, staging_root, subdir, error_message);
+    if (!published) {
+        return false;
+    }
+    const QString original =
+        QDir::cleanPath(run->data.value(QStringLiteral("output_path")).toString());
+    const QString managed_output = managedActionOutputPath({.store = store,
+                                                            .staging_root = staging_root,
+                                                            .subdir = subdir,
+                                                            .published = *published,
+                                                            .original = original,
+                                                            .error_message = error_message});
+    if (!managed_output.isEmpty()) {
+        run->data.insert(QStringLiteral("output_path"), managed_output);
+    }
+    run->data.insert(QStringLiteral("artifact_files"),
+                     QJsonArray::fromStringList(published->values()));
+    return true;
 }
 
 QString phaseTraceStatus(const ai::AiPhaseExecution& execution, const QJsonObject& metadata) {
@@ -6724,16 +6886,18 @@ QJsonObject AiAssistantPanel::runScreenshotTool(const QString& reason) {
     const QString filename =
         QStringLiteral("screenshot_%1.png")
             .arg(QDateTime::currentDateTimeUtc().toString(QStringLiteral("yyyyMMdd_HHmmsszzz")));
-    QString error;
-    const QString path =
-        m_conversationStore->artifactPath(QStringLiteral("screenshots"), filename, &error);
-    if (path.isEmpty()) {
-        result[QStringLiteral("error_message")] = error;
+    QByteArray png_bytes;
+    QBuffer png_buffer(&png_bytes);
+    if (!png_buffer.open(QIODevice::WriteOnly) || !pixmap.save(&png_buffer, "PNG")) {
+        result[QStringLiteral("error_message")] =
+            QStringLiteral("Failed to encode screenshot as PNG");
         return result;
     }
-    if (!pixmap.save(path, "PNG")) {
-        result[QStringLiteral("error_message")] =
-            QStringLiteral("Failed to save screenshot: %1").arg(path);
+    QString error;
+    const QString path = m_conversationStore->writeArtifactFile(
+        QStringLiteral("screenshots"), filename, png_bytes, &error);
+    if (path.isEmpty()) {
+        result[QStringLiteral("error_message")] = error;
         return result;
     }
     result[QStringLiteral("success")] = true;
@@ -6745,10 +6909,10 @@ QJsonObject AiAssistantPanel::runScreenshotTool(const QString& reason) {
     return result;
 }
 
-QString AiAssistantPanel::resolveDownloadDestination(const QUrl& url,
-                                                     const QString& url_string,
-                                                     const QString& filename,
-                                                     QString* error_message) {
+QString AiAssistantPanel::resolveDownloadFileName(const QUrl& url,
+                                                  const QString& url_string,
+                                                  const QString& filename,
+                                                  QString* error_message) {
     if (!m_conversationStore) {
         *error_message = QStringLiteral("No active AI session for download");
         return {};
@@ -6770,13 +6934,7 @@ QString AiAssistantPanel::resolveDownloadDestination(const QUrl& url,
                              .arg(filename);
         return {};
     }
-    // download_file runs on a worker thread; resolve the artifact path (which
-    // touches the conversation store) on the GUI thread.
-    return runOnGuiThread([this, &safe_name, error_message]() {
-        return m_conversationStore->artifactPath(QStringLiteral("downloads"),
-                                                 safe_name,
-                                                 error_message);
-    });
+    return safe_name;
 }
 
 QJsonObject AiAssistantPanel::runDownloadTool(const QString& url_string, const QString& filename) {
@@ -6784,8 +6942,8 @@ QJsonObject AiAssistantPanel::runDownloadTool(const QString& url_string, const Q
     result[QStringLiteral("success")] = false;
     const QUrl url(url_string);
     QString error;
-    const QString destination = resolveDownloadDestination(url, url_string, filename, &error);
-    if (destination.isEmpty()) {
+    const QString safe_name = resolveDownloadFileName(url, url_string, filename, &error);
+    if (safe_name.isEmpty()) {
         result[QStringLiteral("error_message")] = error;
         return result;
     }
@@ -6804,7 +6962,9 @@ QJsonObject AiAssistantPanel::runDownloadTool(const QString& url_string, const Q
         result[QStringLiteral("error_message")] = QStringLiteral("Download cancelled");
         return result;
     }
-    if (!writeDownloadBytes(destination, bytes, &error)) {
+    const QString destination = m_conversationStore->writeArtifactFile(
+        QStringLiteral("downloads"), safe_name, bytes, &error);
+    if (destination.isEmpty()) {
         result[QStringLiteral("error_message")] = error;
         return result;
     }
@@ -7553,7 +7713,7 @@ QJsonObject AiAssistantPanel::runAppActionRun(const QString& action_id,
 
     appendLocalEvent(tr("Running app action: %1").arg(descriptor->title));
     QString error;
-    const AppActionResult run = m_appActionRegistry.invoke(action_id, action_args, &error);
+    const AppActionResult run = invokeAppActionWithStaging(action_id, action_args, &error);
     QJsonObject result;
     result[QStringLiteral("success")] = run.success;
     result[QStringLiteral("operation")] = QStringLiteral("run");
@@ -7564,6 +7724,51 @@ QJsonObject AiAssistantPanel::runAppActionRun(const QString& action_id,
         result[QStringLiteral("error")] = error;
     }
     return result;
+}
+
+AppActionResult AiAssistantPanel::invokeAppActionWithStaging(const QString& action_id,
+                                                             const QJsonObject& action_args,
+                                                             QString* error_message) {
+    if (m_appActionService && m_conversationStore &&
+        !m_conversationStore->currentSessionId().isEmpty()) {
+        m_appActionStagingDir = std::make_unique<QTemporaryDir>();
+        if (!m_appActionStagingDir->isValid()) {
+            return {false, QStringLiteral("Could not create secure app-action staging"), {}};
+        }
+        m_appActionStagingDir->setAutoRemove(false);
+        m_appActionService->setOutputDirectory(m_appActionStagingDir->path());
+    }
+    AppActionResult run = m_appActionRegistry.invoke(action_id, action_args, error_message);
+    if (m_appActionStagingDir && !publishStagedAppActionArtifacts(m_conversationStore.get(),
+                                                                  m_appActionStagingDir->path(),
+                                                                  action_id,
+                                                                  &run,
+                                                                  error_message)) {
+        run.success = false;
+        run.message = QStringLiteral("App-action artifact publication failed: %1")
+                          .arg(error_message == nullptr ? QString() : *error_message);
+    }
+    cleanupAppActionStaging(&run, error_message);
+    return run;
+}
+
+void AiAssistantPanel::cleanupAppActionStaging(AppActionResult* run, QString* error_message) {
+    if (m_appActionService) {
+        m_appActionService->setOutputDirectory({});
+    }
+    QString cleanup_error;
+    const bool cleaned = !m_appActionStagingDir ||
+                         removeStagingTreeWithoutFollowingReparse(m_appActionStagingDir->path(),
+                                                                  &cleanup_error);
+    m_appActionStagingDir.reset();
+    if (cleaned || run == nullptr) {
+        return;
+    }
+    run->success = false;
+    run->message = QStringLiteral("App-action staging cleanup failed: %1").arg(cleanup_error);
+    if (error_message != nullptr) {
+        *error_message = cleanup_error;
+    }
 }
 
 QJsonObject AiAssistantPanel::packageManagerQueryOperation(const QJsonObject& args,
@@ -7836,36 +8041,80 @@ QJsonObject AiAssistantPanel::offlineRunOperation(const QJsonObject& args,
     QString package_error;
     const QVector<QPair<QString, QString>> packages =
         packagesFromJson(args.value(QStringLiteral("packages")).toArray(), &package_error);
-    if (offlineNeedsPackages(operation) && packages.isEmpty()) {
-        return toolError(package_error.isEmpty()
-                             ? QStringLiteral("%1 requires at least one package").arg(operation)
-                             : package_error);
+    const QString package_request_error =
+        offlinePackageRequestError(operation, packages, package_error);
+    if (!package_request_error.isEmpty()) {
+        return toolError(package_request_error);
     }
     QString output_error;
     const QString output_dir = offlineOutputDirectory(operation, args, &output_error);
     if (!output_error.isEmpty()) {
         return toolError(output_error);
     }
-    // Reject a wrong-typed air-gap flag up front (fail closed): a string/number that
-    // QJsonValue::toBool() would silently read as false must not slip through and
-    // disable the packed-only install so it fetches from the network.
-    if (operation == QLatin1String("install_bundle")) {
-        bool packed_only = false;
-        QString packed_error;
-        if (!parsePackedOnlyArg(
-                args.value(QStringLiteral("packed_only")), &packed_only, &packed_error)) {
-            return toolError(packed_error);
-        }
+    const bool managed_output =
+        args.value(QStringLiteral("output_dir")).toString().trimmed().isEmpty() &&
+        offlineCreatesDefaultOutput(operation);
+    QTemporaryDir staging;
+    if (managed_output && !staging.isValid()) {
+        return toolError(QStringLiteral("Could not create managed offline-output staging"));
+    }
+    if (managed_output) {
+        staging.setAutoRemove(false);
+    }
+    const QString worker_output_dir = managed_output ? staging.path() : output_dir;
+    const QString packed_error = packedOnlyArgumentError(operation, args);
+    if (!packed_error.isEmpty()) {
+        return toolError(packed_error);
     }
     if (!authorizeOfflineOperation(operation, args)) {
         return toolError(QStringLiteral("User declined or cancelled offline downloader operation"));
     }
 
-    const OfflineToolRunResult run_result =
-        executeOfflineOperation(operation, packages, output_dir, args);
+    OfflineToolRunResult run_result =
+        executeOfflineOperation(operation, packages, worker_output_dir, args);
+    publishManagedOfflineArtifacts(managed_output, worker_output_dir, output_dir, &run_result);
+    cleanupManagedOfflineStaging(managed_output, worker_output_dir, &run_result);
     QJsonObject result = offlineOperationResultJson(operation, output_dir, run_result);
     appendOfflineArtifacts(output_dir, run_result.manifest_written, &result);
     return result;
+}
+
+void AiAssistantPanel::publishManagedOfflineArtifacts(bool managed_output,
+                                                      const QString& worker_output_dir,
+                                                      const QString& output_dir,
+                                                      OfflineToolRunResult* run_result) const {
+    if (!managed_output || run_result == nullptr || !run_result->completed ||
+        !run_result->operation_error.isEmpty()) {
+        return;
+    }
+    QString error;
+    const QString artifact_root = m_conversationStore->artifactRootDirectory(&error);
+    const QString managed_subdir =
+        QDir::cleanPath(QDir(artifact_root).relativeFilePath(output_dir));
+    const auto published = importManagedArtifactTree(
+        m_conversationStore.get(), worker_output_dir, managed_subdir, &error);
+    if (!published) {
+        run_result->completed = false;
+        run_result->operation_error = error;
+        return;
+    }
+    if (!run_result->manifest_written.isEmpty()) {
+        run_result->manifest_written =
+            published->value(QDir::cleanPath(run_result->manifest_written));
+    }
+}
+
+void AiAssistantPanel::cleanupManagedOfflineStaging(bool managed_output,
+                                                    const QString& worker_output_dir,
+                                                    OfflineToolRunResult* run_result) {
+    if (!managed_output || run_result == nullptr) {
+        return;
+    }
+    QString error;
+    if (!removeStagingTreeWithoutFollowingReparse(worker_output_dir, &error)) {
+        run_result->completed = false;
+        run_result->operation_error = error;
+    }
 }
 
 void AiAssistantPanel::appendOfflineArtifacts(const QString& output_dir,
@@ -8410,11 +8659,13 @@ void AiAssistantPanel::onGenerateReportClicked() {
 QString AiAssistantPanel::generateReport(QString* error_message,
                                          const QString& output_path,
                                          ReportFormat format) const {
+    const bool managed_artifact = output_path.trimmed().isEmpty();
     const PanelReportFormat output_format = panelReportFormat(format == ReportFormat::Markdown,
                                                               format == ReportFormat::PlainText);
     const QString report_path = resolvePanelReportPath(
         m_conversationStore.get(), output_path, output_format, error_message);
-    if (report_path.isEmpty() || !ensureReportParentDirectory(report_path, error_message)) {
+    if (report_path.isEmpty() ||
+        (!managed_artifact && !ensureReportParentDirectory(report_path, error_message))) {
         return {};
     }
 
@@ -8439,6 +8690,12 @@ QString AiAssistantPanel::generateReport(QString* error_message,
     appendTraceAndGateData(inputs, &report_data);
     evaluatePanelReportData(&report_data);
     const QString output_text = renderPanelReport(report_data, report_path, output_format);
+    if (managed_artifact) {
+        return m_conversationStore->writeArtifactFile(QStringLiteral("reports"),
+                                                      QFileInfo(report_path).fileName(),
+                                                      output_text.toUtf8(),
+                                                      error_message);
+    }
     return writeReportText(report_path, output_text, error_message) ? report_path : QString();
 }
 void AiAssistantPanel::appendCitationsToList(const QVector<ai::OpenAIUrlCitation>& citations) {
@@ -9421,10 +9678,11 @@ void AiAssistantPanel::registerToolDispatcherHandlers() {
 void AiAssistantPanel::ensureAppActionService() {
     QString backup_dir;
     if (m_conversationStore && !m_conversationStore->currentSessionId().isEmpty()) {
-        QString error;
-        backup_dir = m_conversationStore->artifactRootDirectory(&error).trimmed();
-        if (backup_dir.isEmpty()) {
-            appendLocalEvent(tr("App action output disabled: %1").arg(error));
+        m_appActionStagingDir = std::make_unique<QTemporaryDir>();
+        if (m_appActionStagingDir->isValid()) {
+            backup_dir = m_appActionStagingDir->path();
+        } else {
+            appendLocalEvent(tr("App action output disabled: secure staging unavailable"));
         }
     }
     if (m_appActionService) {

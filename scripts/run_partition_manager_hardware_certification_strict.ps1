@@ -65,7 +65,9 @@ function Clear-GeneratedArtifact {
         [string]$Path
     )
 
-    Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $Path) {
+        Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+    }
     if (Test-Path -LiteralPath $Path) {
         throw "Could not clear stale certification artifact before regenerating it: $Path"
     }

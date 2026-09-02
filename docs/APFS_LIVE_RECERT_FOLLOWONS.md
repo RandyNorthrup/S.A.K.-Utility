@@ -209,7 +209,16 @@ the rest is a debt-reduction + test-infra program (multi-session, much of it cos
       logged/newly-exposed missing-field diagnostics, 9 newly revealed dead constants, 2 local
       names, nested default-config construction, and generated MOC preparation. The real non-core
       gate now passes 150/150 TUs with zero compiler/processing errors and zero naming findings.
-      Core's measured 5,271-name style program and the wider style backlog remain open.
+      Core's earlier 5,271-name count was not health-certified and is superseded. PROGRESS
+      2026-09-02: the first core naming slice made scan health machine-verifiable: the gate now
+      rejects any processing/compiler error or incomplete TU run, deletes stale results before
+      scanning, and publishes its JSON count only after a healthy pass. The current pass analyzed
+      156/156 core TUs with zero processing/compiler errors and measured 5,274 unique findings
+      across 89 files. Eight one-finding TUs are now clean and permanently ratcheted:
+      `bzip2_decompressor.cpp`, `gzip_decompressor.cpp`, `xz_decompressor.cpp`,
+      `deleted_item_scanner.cpp`, `email_export_worker.cpp`, `network_transfer_runner.cpp`,
+      `package_internalization_engine.cpp`, and `pdf_email_writer.cpp`. The wider core naming and
+      style backlog remains open.
 - [x] cppcheck-suppression audit -- DONE, corrected 2026-08-31. All 26 inline suppressions were
       re-checked with inline suppressions disabled. Three genuinely suppressed nothing and remain
       removed. A real template-instantiating include-path run later proved two `strong_index.h`
@@ -230,9 +239,10 @@ the rest is a debt-reduction + test-infra program (multi-session, much of it cos
       R5-IDX-7 is also closed: 17 Apple capability rows and 2 full-driver track gates are now
       machine-owned, four claim docs are citation-gated, route parity is 44/8/44, and the final
       Release gate passed 263/263 in 652.72 seconds.
-      Latest R5 review batch: 46 mutation catalogs / 371 mutants (365 killed, six equivalent);
-      all changed-file hooks passed; full clang-cl coverage build exit 0; Release build exit 0;
-      full CTest 267/267, zero failures, 669.26 seconds.
+      Latest R5 review batch: 46 mutation catalogs / 375 mutants (369 killed, six equivalent).
+      All changed-file hooks passed; naming passed 151/151 non-core TUs clean and 156/156 core TUs
+      healthy; full clang-cl coverage build exit 0; Release build exit 0; full CTest 268/268, zero
+      failures, 698.06 seconds.
       Current plan-archive/doc-gate/clang slice: all pre-commit hooks passed; Release build exit
       0; full CTest 265/265, zero failures, 804.48 seconds.
       Suppression direct-fix wave 1: all changed-file hooks passed; Release build exit 0; full

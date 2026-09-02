@@ -24,6 +24,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "partition_manager_storage.ps1")
 
 $MinimumVhdSizeMB = 384
 $Script:RunRoot = $null
@@ -252,15 +253,6 @@ function Assert-DisposableDisk {
     }
 }
 
-function Dismount-DisposableVhd {
-    param([Parameter(Mandatory = $true)] [string]$Path)
-
-    $image = Get-DiskImage -ImagePath $Path -ErrorAction Stop
-    if ($image.Attached) {
-        Dismount-DiskImage -ImagePath $Path -ErrorAction Stop | Out-Null
-    }
-}
-
 function New-DisposableVhdDisk {
     $path = Join-Path $Script:RunRoot "cluster-size.vhdx"
     Assert-PathUnderRoot -Path $path -Root $Script:RunRoot
@@ -292,7 +284,7 @@ function New-DisposableVhdDisk {
         # Never leave a partially prepared VHD attached when validation fails.
         $preparationError = $_
         try {
-            Dismount-DisposableVhd -Path $path
+            Dismount-SakDiskImageIfAttached -Path $path
         }
         catch {
             throw "VHD preparation failed: $($preparationError.Exception.Message) Cleanup dismount also failed: $($_.Exception.Message)"
@@ -311,7 +303,7 @@ function Remove-DisposableVhdDisk {
     param([Parameter(Mandatory = $true)] [object]$Vhd)
 
     try {
-        Dismount-DisposableVhd -Path $Vhd.path
+        Dismount-SakDiskImageIfAttached -Path $Vhd.path
     }
     finally {
         if (-not $KeepVhd -and (Test-Path -LiteralPath $Vhd.path)) {

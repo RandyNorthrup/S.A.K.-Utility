@@ -3,11 +3,16 @@
 
 #include "sak/ai/ai_store_file_loader.h"
 
+#include "sak/windows_path_policy.h"
+
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QScopeGuard>
+#include <QUuid>
 
 #include <algorithm>
+#include <cstring>
 #include <limits>
 #include <optional>
 #include <string>
@@ -880,6 +885,159 @@ bool pinDirectoryComponent(PinWalkContext& context, int index) {
     return true;
 }
 
+struct AtomicStoreTempFile {
+    ScopedHandle handle;
+    QString path;
+};
+
+std::optional<AtomicStoreTempFile> createAtomicStoreTempFile(HANDLE directory_handle,
+                                                             const QString& target_path,
+                                                             const StoreFileLoadHooks& hooks,
+                                                             QString* error_message) {
+    const QString temp_leaf =
+        QStringLiteral(".sak-%1.tmp").arg(QUuid::createUuid().toString(QUuid::WithoutBraces));
+    const QString directory_path = normalizedFinalPath(directory_handle);
+    const QString temp_path = QDir::toNativeSeparators(QDir(directory_path).filePath(temp_leaf));
+    if (hooks.before_leaf_temp_open) {
+        hooks.before_leaf_temp_open(temp_path);
+    }
+    ScopedHandle temp_file(CreateFileW(reinterpret_cast<LPCWSTR>(temp_path.utf16()),
+                                       GENERIC_WRITE | DELETE | FILE_READ_ATTRIBUTES,
+                                       FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                       nullptr,
+                                       CREATE_NEW,
+                                       FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_WRITE_THROUGH |
+                                           FILE_FLAG_OPEN_REPARSE_POINT,
+                                       nullptr));
+    if (!temp_file.valid()) {
+        setError(error_message,
+                 win32Error(QStringLiteral("Could not create artifact temporary file"),
+                            target_path,
+                            GetLastError()));
+        return std::nullopt;
+    }
+    if (handleIsReparsePoint(temp_file.get()) ||
+        !fileParentMatchesDirectory(temp_file.get(), directory_handle)) {
+        setError(
+            error_message,
+            QStringLiteral("Refusing redirected artifact temporary file: %1").arg(target_path));
+        return std::nullopt;
+    }
+    return AtomicStoreTempFile{std::move(temp_file), temp_path};
+}
+
+bool writeAndFlushAtomicStoreFile(HANDLE file_handle,
+                                  const QByteArray& bytes,
+                                  const QString& target_path,
+                                  QString* error_message) {
+    constexpr qsizetype kMaxWriteBytes = static_cast<qsizetype>(std::numeric_limits<DWORD>::max());
+    if (bytes.size() > kMaxWriteBytes) {
+        setError(error_message,
+                 QStringLiteral("Artifact payload exceeds the native write ceiling: %1")
+                     .arg(target_path));
+        return false;
+    }
+    DWORD written = 0;
+    const BOOL write_ok = WriteFile(
+        file_handle, bytes.constData(), static_cast<DWORD>(bytes.size()), &written, nullptr);
+    if (write_ok == 0 || written != static_cast<DWORD>(bytes.size()) ||
+        FlushFileBuffers(file_handle) == 0) {
+        setError(error_message,
+                 win32Error(QStringLiteral("Could not write complete artifact"),
+                            target_path,
+                            GetLastError()));
+        return false;
+    }
+    return true;
+}
+
+bool copyAndFlushAtomicStoreFile(HANDLE file_handle,
+                                 const QString& source_path,
+                                 const QString& target_path,
+                                 QString* error_message) {
+    constexpr qint64 kCopyChunkBytes = 1024 * 1024;
+    QFile source(source_path);
+    if (!source.open(QIODevice::ReadOnly)) {
+        setError(error_message,
+                 QStringLiteral("Could not read artifact source: %1").arg(source_path));
+        return false;
+    }
+    while (!source.atEnd()) {
+        const QByteArray chunk = source.read(kCopyChunkBytes);
+        if (chunk.isEmpty() && source.error() != QFileDevice::NoError) {
+            setError(
+                error_message,
+                QStringLiteral("Could not read complete artifact source: %1").arg(source_path));
+            return false;
+        }
+        DWORD written = 0;
+        if (WriteFile(file_handle,
+                      chunk.constData(),
+                      static_cast<DWORD>(chunk.size()),
+                      &written,
+                      nullptr) == 0 ||
+            written != static_cast<DWORD>(chunk.size())) {
+            setError(error_message,
+                     win32Error(QStringLiteral("Could not copy complete artifact"),
+                                target_path,
+                                GetLastError()));
+            return false;
+        }
+    }
+    if (FlushFileBuffers(file_handle) == 0) {
+        setError(error_message,
+                 win32Error(QStringLiteral("Could not flush copied artifact"),
+                            target_path,
+                            GetLastError()));
+        return false;
+    }
+    return true;
+}
+
+struct AtomicPublishRequest {
+    HANDLE file_handle;
+    HANDLE directory_handle;
+    QString filename;
+    QString target_path;
+    const StoreFileLoadHooks& hooks;
+    QString* error_message;
+};
+
+bool publishAtomicStoreFile(const AtomicPublishRequest& request) {
+    if (request.hooks.before_leaf_publish) {
+        request.hooks.before_leaf_publish(request.target_path);
+    }
+    const std::wstring target_name =
+        QDir::toNativeSeparators(
+            QDir(normalizedFinalPath(request.directory_handle)).filePath(request.filename))
+            .toStdWString();
+    const DWORD target_bytes =
+        static_cast<DWORD>(target_name.size() * sizeof(std::wstring::value_type));
+    QByteArray storage(static_cast<qsizetype>(sizeof(FILE_RENAME_INFO) + target_bytes), 0);
+    auto* rename_info = reinterpret_cast<FILE_RENAME_INFO*>(storage.data());
+    rename_info->ReplaceIfExists = FALSE;
+    rename_info->RootDirectory = nullptr;
+    rename_info->FileNameLength = target_bytes;
+    std::memcpy(rename_info->FileName, target_name.data(), target_bytes);
+    if (SetFileInformationByHandle(
+            request.file_handle, FileRenameInfo, rename_info, static_cast<DWORD>(storage.size())) ==
+        0) {
+        setError(request.error_message,
+                 win32Error(QStringLiteral("Could not atomically publish artifact"),
+                            request.target_path,
+                            GetLastError()));
+        return false;
+    }
+    if (handleIsReparsePoint(request.file_handle) ||
+        !fileParentMatchesDirectory(request.file_handle, request.directory_handle)) {
+        setError(request.error_message,
+                 QStringLiteral("Published artifact identity changed unexpectedly: %1")
+                     .arg(request.target_path));
+        return false;
+    }
+    return true;
+}
+
 }  // namespace
 
 bool loadStoreDirectoryFiles(const QString& directory,
@@ -990,6 +1148,82 @@ StoreDirectoryPin pinOrCreateStoreDirectory(const QString& root_directory,
     }
     setError(error_message, {});
     return StoreDirectoryPin(final_path, std::move(state));
+}
+
+QString writePinnedStoreFile(const StoreDirectoryPin& directory,
+                             const QString& filename,
+                             const QByteArray& bytes,
+                             const StoreFileLoadHooks& hooks,
+                             QString* error_message) {
+    if (!directory.valid() || !sak::isSafeChildName(filename) ||
+        QFileInfo(filename).fileName() != filename) {
+        setError(error_message,
+                 QStringLiteral("Artifact write filename is unsafe: %1").arg(filename));
+        return {};
+    }
+    const auto state = std::static_pointer_cast<NativeDirectoryPinState>(directory.m_state);
+    if (!state || state->handles.empty()) {
+        setError(error_message, QStringLiteral("Artifact write directory pin is unavailable"));
+        return {};
+    }
+    HANDLE directory_handle = state->handles.back().get();
+    const QString target_path =
+        QDir::cleanPath(QDir(normalizedFinalPath(directory_handle)).filePath(filename));
+    auto temp = createAtomicStoreTempFile(directory_handle, target_path, hooks, error_message);
+    if (!temp) {
+        return {};
+    }
+    auto cleanup = qScopeGuard([&] { DeleteFileW(reinterpret_cast<LPCWSTR>(temp->path.utf16())); });
+    if (!writeAndFlushAtomicStoreFile(temp->handle.get(), bytes, target_path, error_message) ||
+        !publishAtomicStoreFile({.file_handle = temp->handle.get(),
+                                 .directory_handle = directory_handle,
+                                 .filename = filename,
+                                 .target_path = target_path,
+                                 .hooks = hooks,
+                                 .error_message = error_message})) {
+        return {};
+    }
+    cleanup.dismiss();
+    setError(error_message, {});
+    return target_path;
+}
+
+QString copyPinnedStoreFile(const StoreDirectoryPin& directory,
+                            const QString& filename,
+                            const QString& source_path,
+                            const StoreFileLoadHooks& hooks,
+                            QString* error_message) {
+    if (!directory.valid() || !sak::isSafeChildName(filename) ||
+        QFileInfo(filename).fileName() != filename) {
+        setError(error_message,
+                 QStringLiteral("Artifact copy filename is unsafe: %1").arg(filename));
+        return {};
+    }
+    const auto state = std::static_pointer_cast<NativeDirectoryPinState>(directory.m_state);
+    if (!state || state->handles.empty()) {
+        setError(error_message, QStringLiteral("Artifact copy directory pin is unavailable"));
+        return {};
+    }
+    HANDLE directory_handle = state->handles.back().get();
+    const QString target_path =
+        QDir::cleanPath(QDir(normalizedFinalPath(directory_handle)).filePath(filename));
+    auto temp = createAtomicStoreTempFile(directory_handle, target_path, hooks, error_message);
+    if (!temp) {
+        return {};
+    }
+    auto cleanup = qScopeGuard([&] { DeleteFileW(reinterpret_cast<LPCWSTR>(temp->path.utf16())); });
+    if (!copyAndFlushAtomicStoreFile(temp->handle.get(), source_path, target_path, error_message) ||
+        !publishAtomicStoreFile({.file_handle = temp->handle.get(),
+                                 .directory_handle = directory_handle,
+                                 .filename = filename,
+                                 .target_path = target_path,
+                                 .hooks = hooks,
+                                 .error_message = error_message})) {
+        return {};
+    }
+    cleanup.dismiss();
+    setError(error_message, {});
+    return target_path;
 }
 
 }  // namespace sak::ai::detail

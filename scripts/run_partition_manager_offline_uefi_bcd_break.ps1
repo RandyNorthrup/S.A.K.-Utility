@@ -17,6 +17,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "partition_manager_storage.ps1")
 $script:TranscriptStarted = $false
 $script:RunRoot = ""
 $script:Actions = @()
@@ -123,7 +124,7 @@ function Get-AvailableDriveLetter {
     # A Get-Volume failure must not silently degrade into an EMPTY used-letter list (which
     # would hand back a letter that is already mounted). Test-Path is the independent second
     # check and also sees network/SUBST mappings Get-Volume never reports.
-    $used = @(Get-Volume -ErrorAction SilentlyContinue | Where-Object DriveLetter | ForEach-Object { [string]$_.DriveLetter })
+    $used = @(Get-Volume -ErrorAction Stop | Where-Object DriveLetter | ForEach-Object { [string]$_.DriveLetter })
     foreach ($letter in @("S", "W", "R", "T", "U", "V", "X", "Y", "Z", "P", "Q", "L", "M", "N")) {
         if ($used -notcontains $letter -and -not (Test-Path -LiteralPath "${letter}:")) {
             return $letter
@@ -137,10 +138,10 @@ function Get-DiskSnapshot {
 
     $disk = Get-Disk -Number $DiskNumber -ErrorAction Stop
     $partitions = @()
-    foreach ($partition in @(Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue | Sort-Object Offset)) {
+    foreach ($partition in @(Get-SakDiskPartitions -DiskNumber $DiskNumber | Sort-Object Offset)) {
         $volume = $null
         if ($partition.DriveLetter) {
-            $volume = Get-Volume -DriveLetter $partition.DriveLetter -ErrorAction SilentlyContinue
+            $volume = Get-SakVolumeByDriveLetter -DriveLetter $partition.DriveLetter
         }
         $partitions += [pscustomobject]@{
             partition_number = [int]$partition.PartitionNumber

@@ -229,6 +229,9 @@ QHBoxLayout* EmailAttachmentsBrowserDialog::createButtonRow() {
     buttons->setSpacing(ui::kSpacingMedium);
 
     m_status_label = new QLabel(this);
+    m_status_label->setObjectName(QStringLiteral("emailAttachmentBrowserStatus"));
+    m_status_label->setTextFormat(Qt::PlainText);
+    m_status_label->setAccessibleName(tr("Attachment browser status"));
     m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorTextSecondary));
     buttons->addWidget(m_status_label, 1);
 
@@ -299,9 +302,17 @@ void EmailAttachmentsBrowserDialog::startScan() {
             this,
             &EmailAttachmentsBrowserDialog::onFolderItemsLoaded);
     connect(m_controller,
+            &::EmailInspectorController::folderItemsFailed,
+            this,
+            &EmailAttachmentsBrowserDialog::onFolderItemsFailed);
+    connect(m_controller,
             &::EmailInspectorController::itemDetailLoaded,
             this,
             &EmailAttachmentsBrowserDialog::onItemDetailLoaded);
+    connect(m_controller,
+            &::EmailInspectorController::itemDetailFailed,
+            this,
+            &EmailAttachmentsBrowserDialog::onItemDetailFailed);
     connect(m_controller,
             &::EmailInspectorController::attachmentContentReady,
             this,
@@ -437,6 +448,31 @@ void EmailAttachmentsBrowserDialog::onItemDetailLoaded(sak::PstItemDetail detail
         updateStatusLabel();
     }
 
+    QTimer::singleShot(0, this, &EmailAttachmentsBrowserDialog::requestNextDetail);
+}
+
+void EmailAttachmentsBrowserDialog::onFolderItemsFailed(uint64_t folder_id,
+                                                        int offset,
+                                                        const QString& error) {
+    if (m_folders_scanned >= m_all_folder_ids.size() ||
+        m_all_folder_ids.at(m_folders_scanned) != folder_id || m_current_folder_offset != offset) {
+        return;
+    }
+    surfaceError(tr("Skipped folder %1").arg(folder_id), error);
+    ++m_folders_scanned;
+    m_current_folder_offset = 0;
+    m_progress_bar->setValue(m_folders_scanned);
+    QTimer::singleShot(0, this, &EmailAttachmentsBrowserDialog::scanNextFolder);
+}
+
+void EmailAttachmentsBrowserDialog::onItemDetailFailed(uint64_t item_id, const QString& error) {
+    if (m_details_loaded >= m_pending_detail_ids.size() ||
+        m_pending_detail_ids.at(m_details_loaded) != item_id) {
+        return;
+    }
+    surfaceError(tr("Skipped item %1").arg(item_id), error);
+    ++m_details_loaded;
+    m_progress_bar->setValue(m_details_loaded);
     QTimer::singleShot(0, this, &EmailAttachmentsBrowserDialog::requestNextDetail);
 }
 
@@ -753,26 +789,20 @@ void EmailAttachmentsBrowserDialog::onAttachmentContentFailed(uint64_t message_i
 }
 
 void EmailAttachmentsBrowserDialog::onErrorOccurred(const QString& message) {
-    // During detail loading -- skip this item and continue
-    if (!m_scan_complete && m_details_total > 0) {
-        ++m_details_loaded;
-        m_progress_bar->setValue(m_details_loaded);
-        QTimer::singleShot(0, this, &EmailAttachmentsBrowserDialog::requestNextDetail);
-        return;
-    }
-    // During folder scanning -- skip this folder and continue
-    if (m_folders_scanned < m_all_folder_ids.size()) {
-        ++m_folders_scanned;
-        m_current_folder_offset = 0;
-        m_progress_bar->setValue(m_folders_scanned);
-        QTimer::singleShot(0, this, &EmailAttachmentsBrowserDialog::scanNextFolder);
-        return;
-    }
-    // A save batch's failures arrive on the identity-carrying attachmentContentFailed
-    // signal (onAttachmentContentFailed), not here. This generic error names no
-    // attachment, so charging it to the batch is exactly the miscount that would count
-    // an unrelated failure as a save failure. Nothing to do for a save-phase error.
-    Q_UNUSED(message);
+    // Generic controller errors carry no request identity. They remain visible and logged,
+    // but only the identity-bearing failure slots above may advance scan/save state.
+    surfaceError(tr("Attachment browser error"), message);
+}
+
+void EmailAttachmentsBrowserDialog::surfaceError(const QString& context, const QString& message) {
+    const QString detail = message.trimmed().isEmpty()
+                               ? tr("Mailbox controller failed without diagnostic detail")
+                               : message.trimmed();
+    m_status_label->setText(tr("%1: %2").arg(context, detail));
+    m_status_label->setStyleSheet(sak::ui::textColorStyle(sak::ui::kColorError));
+    sak::logWarning("Email attachments browser: {}: {}",
+                    context.toStdString(),
+                    detail.toStdString());
 }
 
 // ============================================================================

@@ -25,13 +25,14 @@
   RESOLVED 2026-09-02: the shared loader walks one safe child component at a time, verifies reparse
   and parent identity, and ConversationStore retains no-share-delete directory pins for the active
   session. commandLogPath and artifactSubdir use that single path.
-- [ ] [HIGH] Artifact leaf files are still returned as QString paths to external writers
-  (screenshots, downloads, reports, offline/app-action output). Directory pins prevent ancestor
-  junction swaps, but cannot prevent an attacker replacing the final filename with a file reparse
-  point after artifactPath returns. Closing this requires a handle/callback artifact-write API and
-  migration of those external writer contracts; no ConversationStore-owned artifact write exists
-  to migrate locally.
+- [x] [HIGH] Managed screenshot, download, default-report, and command-log leaves no longer cross a
+  writable QString-path window: the shared loader writes and flushes a no-follow CREATE_NEW temp,
+  then publishes by handle without replacement under the retained directory pin. Managed
+  OfflineDeploymentWorker and AppActionService runs now write only into private temporary staging;
+  every resulting file is streamed through the same pinned atomic publisher before its managed path
+  is reported, and redirected staged entries are refused. Explicit user-selected output directories
+  remain an approved external-output contract, not ConversationStore artifacts.
 
-Re-review remains INCOMPLETE because the artifact-leaf API campaign above is open. The two original
-handle-pinning findings are closed; fourteen conversation-store mutants are killed and focused
-tests pass. This source is not ledger-credited.
+Re-review result: zero open findings. The original handle-pinning findings and every managed
+artifact leaf writer are closed; sixteen conversation-store mutants are killed and focused tests
+pass. Ledger credit remains a separate campaign step.

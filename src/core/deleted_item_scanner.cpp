@@ -73,13 +73,13 @@ QVector<PstItemDetail> DeletedItemScanner::scanRecoverableItems() {
     const PstFolderTree tree = m_parser->folderTree();
 
     // Search for the recoverable items folder by NID
-    std::function<const PstFolder*(const QVector<PstFolder>&)> findFolder;
-    findFolder = [&](const QVector<PstFolder>& folders) -> const PstFolder* {
+    std::function<const PstFolder*(const QVector<PstFolder>&)> find_folder;
+    find_folder = [&](const QVector<PstFolder>& folders) -> const PstFolder* {
         for (const auto& folder : folders) {
             if (folder.node_id == kRecoverableItemsFolderNid) {
                 return &folder;
             }
-            const auto* found = findFolder(folder.children);
+            const auto* found = find_folder(folder.children);
             if (found) {
                 return found;
             }
@@ -87,7 +87,7 @@ QVector<PstItemDetail> DeletedItemScanner::scanRecoverableItems() {
         return nullptr;
     };
 
-    const PstFolder* recov_folder = findFolder(tree);
+    const PstFolder* recov_folder = find_folder(tree);
     if (recov_folder == nullptr) {
         logInfo("DeletedItemScanner: no Recoverable Items folder found");
         return recovered;

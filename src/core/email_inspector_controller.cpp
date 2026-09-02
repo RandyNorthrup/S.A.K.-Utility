@@ -219,24 +219,40 @@ sak::PstFileInfo EmailInspectorController::fileInfo() const {
 
 void EmailInspectorController::loadFolderItems(uint64_t folder_node_id, int offset, int limit) {
     if (isBusyWithBackgroundOp()) {
-        Q_EMIT errorOccurred(QStringLiteral("Cannot navigate: operation in progress"));
+        const QString error = QStringLiteral("Cannot navigate: operation in progress");
+        Q_EMIT folderItemsFailed(folder_node_id, offset, error);
+        Q_EMIT errorOccurred(error);
         return;
     }
     if (m_file_type == FileType::Pst || m_file_type == FileType::Ost) {
+        m_folder_request_pending = true;
+        m_pending_folder_id = folder_node_id;
+        m_pending_folder_offset = offset;
         setState(State::LoadingFolderItems);
         m_pst_parser->loadFolderItems(folder_node_id, offset, limit);
     } else if (m_file_type == FileType::Mbox) {
+        m_folder_request_pending = true;
+        m_pending_folder_id = folder_node_id;
+        m_pending_folder_offset = offset;
         setState(State::LoadingFolderItems);
         m_mbox_parser->loadMessages(offset, limit);
+    } else {
+        const QString error = QStringLiteral("Cannot navigate: no file is open");
+        Q_EMIT folderItemsFailed(folder_node_id, offset, error);
+        Q_EMIT errorOccurred(error);
     }
 }
 
 void EmailInspectorController::loadItemDetail(uint64_t item_node_id) {
     if (isBusyWithBackgroundOp()) {
-        Q_EMIT errorOccurred(QStringLiteral("Cannot navigate: operation in progress"));
+        const QString error = QStringLiteral("Cannot navigate: operation in progress");
+        Q_EMIT itemDetailFailed(item_node_id, error);
+        Q_EMIT errorOccurred(error);
         return;
     }
     if (m_file_type == FileType::Pst || m_file_type == FileType::Ost) {
+        m_detail_request_pending = true;
+        m_pending_detail_id = item_node_id;
         setState(State::LoadingItemDetail);
         m_pst_parser->loadItemDetail(item_node_id);
     } else if (m_file_type == FileType::Mbox) {
@@ -244,11 +260,19 @@ void EmailInspectorController::loadItemDetail(uint64_t item_node_id) {
         // wrap to a different, in-range index and silently load the wrong
         // message, so reject it here instead of casting.
         if (item_node_id > static_cast<uint64_t>(INT_MAX)) {
-            Q_EMIT errorOccurred(QStringLiteral("Invalid MBOX message id: %1").arg(item_node_id));
+            const QString error = QStringLiteral("Invalid MBOX message id: %1").arg(item_node_id);
+            Q_EMIT itemDetailFailed(item_node_id, error);
+            Q_EMIT errorOccurred(error);
             return;
         }
+        m_detail_request_pending = true;
+        m_pending_detail_id = item_node_id;
         setState(State::LoadingItemDetail);
         m_mbox_parser->loadMessageDetail(static_cast<int>(item_node_id));
+    } else {
+        const QString error = QStringLiteral("Cannot navigate: no file is open");
+        Q_EMIT itemDetailFailed(item_node_id, error);
+        Q_EMIT errorOccurred(error);
     }
 }
 
@@ -300,6 +324,10 @@ void EmailInspectorController::loadAttachmentContent(uint64_t message_node_id,
                 Q_EMIT errorOccurred(message);
             }
         });
+    } else {
+        const QString message = QStringLiteral("Cannot load attachment: no file is open");
+        Q_EMIT attachmentContentFailed(message_node_id, attachment_index, message);
+        Q_EMIT errorOccurred(message);
     }
 }
 
@@ -493,6 +521,8 @@ void EmailInspectorController::cancelOperation() {
     // them running inside objects about to be freed.
     m_tasks.waitForFinished();
     m_tasks.clearFutures();
+    m_folder_request_pending = false;
+    m_detail_request_pending = false;
     setState(State::Idle);
 }
 
@@ -519,6 +549,7 @@ void EmailInspectorController::connectPstSignals() {
             &PstParser::folderItemsLoaded,
             this,
             [this](uint64_t fid, QVector<sak::PstItemSummary> items, int total) {
+                m_folder_request_pending = false;
                 Q_EMIT folderItemsLoaded(fid, items, total);
                 setState(State::Idle);
             });
@@ -527,6 +558,7 @@ void EmailInspectorController::connectPstSignals() {
             &PstParser::itemDetailLoaded,
             this,
             [this](const sak::PstItemDetail& detail) {
+                m_detail_request_pending = false;
                 Q_EMIT itemDetailLoaded(detail);
                 setState(State::Idle);
             });
@@ -558,10 +590,10 @@ void EmailInspectorController::connectPstSignals() {
             this,
             &EmailInspectorController::progressUpdated);
 
-    connect(m_pst_parser.get(), &PstParser::errorOccurred, this, [this](QString err) {
-        Q_EMIT errorOccurred(err);
-        setState(State::Idle);
-    });
+    connect(m_pst_parser.get(),
+            &PstParser::errorOccurred,
+            this,
+            &EmailInspectorController::handleParserError);
 }
 
 void EmailInspectorController::connectMboxSignals() {
@@ -582,6 +614,7 @@ void EmailInspectorController::connectMboxSignals() {
             &MboxParser::messagesLoaded,
             this,
             [this](QVector<sak::MboxMessage> msgs, int total) {
+                m_folder_request_pending = false;
                 Q_EMIT mboxMessagesLoaded(msgs, total);
                 setState(State::Idle);
             });
@@ -590,6 +623,7 @@ void EmailInspectorController::connectMboxSignals() {
             &MboxParser::messageDetailLoaded,
             this,
             [this](sak::MboxMessageDetail detail) {
+                m_detail_request_pending = false;
                 Q_EMIT mboxMessageDetailLoaded(detail);
                 setState(State::Idle);
             });
@@ -599,10 +633,22 @@ void EmailInspectorController::connectMboxSignals() {
             this,
             &EmailInspectorController::progressUpdated);
 
-    connect(m_mbox_parser.get(), &MboxParser::errorOccurred, this, [this](QString err) {
-        Q_EMIT errorOccurred(err);
-        setState(State::Idle);
-    });
+    connect(m_mbox_parser.get(),
+            &MboxParser::errorOccurred,
+            this,
+            &EmailInspectorController::handleParserError);
+}
+
+void EmailInspectorController::handleParserError(const QString& error) {
+    if (m_state == State::LoadingFolderItems && m_folder_request_pending) {
+        Q_EMIT folderItemsFailed(m_pending_folder_id, m_pending_folder_offset, error);
+    } else if (m_state == State::LoadingItemDetail && m_detail_request_pending) {
+        Q_EMIT itemDetailFailed(m_pending_detail_id, error);
+    }
+    m_folder_request_pending = false;
+    m_detail_request_pending = false;
+    Q_EMIT errorOccurred(error);
+    setState(State::Idle);
 }
 
 void EmailInspectorController::connectSearchSignals() {

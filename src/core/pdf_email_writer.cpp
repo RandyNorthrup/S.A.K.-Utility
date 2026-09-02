@@ -329,7 +329,7 @@ QString PdfEmailWriter::buildHtmlForPdf(const PstItemDetail& item,
     // Header table
     html += QStringLiteral("<table class='hdr'>");
 
-    auto addRow = [&](const QString& label, const QString& value) {
+    auto add_row = [&](const QString& label, const QString& value) {
         if (!value.isEmpty()) {
             html += QStringLiteral("<tr><td class='lbl'>") + label.toHtmlEscaped() +
                     QStringLiteral(":</td><td>") + value.toHtmlEscaped() +
@@ -337,12 +337,12 @@ QString PdfEmailWriter::buildHtmlForPdf(const PstItemDetail& item,
         }
     };
 
-    addRow(QStringLiteral("From"),
-           item.sender_name + QStringLiteral(" <") + item.sender_email + QStringLiteral(">"));
-    addRow(QStringLiteral("To"), item.display_to);
-    addRow(QStringLiteral("Cc"), item.display_cc);
-    addRow(QStringLiteral("Date"), item.date.toString(Qt::RFC2822Date));
-    addRow(QStringLiteral("Subject"), item.subject);
+    add_row(QStringLiteral("From"),
+            item.sender_name + QStringLiteral(" <") + item.sender_email + QStringLiteral(">"));
+    add_row(QStringLiteral("To"), item.display_to);
+    add_row(QStringLiteral("Cc"), item.display_cc);
+    add_row(QStringLiteral("Date"), item.date.toString(Qt::RFC2822Date));
+    add_row(QStringLiteral("Subject"), item.subject);
 
     html += QStringLiteral("</table><hr>");
 

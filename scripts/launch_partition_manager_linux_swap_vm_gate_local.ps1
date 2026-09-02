@@ -94,7 +94,7 @@ function Copy-OptionalPattern {
         [Parameter(Mandatory = $true)] [string]$DestinationDirectory
     )
 
-    Get-ChildItem -LiteralPath $SourceDirectory -Filter $Pattern -File -ErrorAction SilentlyContinue |
+    Get-ChildItem -LiteralPath $SourceDirectory -Filter $Pattern -File -ErrorAction Stop |
         ForEach-Object {
             Copy-Item -LiteralPath $_.FullName -Destination $DestinationDirectory -Force
             Write-Host "Staged runtime file: $($_.Name)"
@@ -111,6 +111,10 @@ $sharedRunner = Join-Path $SharedRoot "scripts\run_partition_manager_linux_swap_
 if (-not (Test-Path -LiteralPath $sharedRunner -PathType Leaf)) {
     throw "Linux swap VM gate runner not found: $sharedRunner"
 }
+$sharedStorageHelper = Join-Path $SharedRoot "scripts\partition_manager_storage.ps1"
+if (-not (Test-Path -LiteralPath $sharedStorageHelper -PathType Leaf)) {
+    throw "Partition Manager storage helper not found: $sharedStorageHelper"
+}
 
 $sharedBuild = Join-Path $SharedRoot "build\Release"
 $sharedCertifier = Join-Path $sharedBuild "partition_filesystem_probe_certifier.exe"
@@ -121,6 +125,7 @@ if (-not (Test-Path -LiteralPath $sharedCertifier -PathType Leaf)) {
 $sharedEvidenceRoot = Join-Path $SharedRoot "artifacts\partition-manager-certification\vm-lab\external-evidence\external.linux-swap-format-vm"
 $sharedReport = Join-Path $sharedEvidenceRoot "report.json"
 $localRunner = Join-Path $StageRoot "run_partition_manager_linux_swap_vm_gate.ps1"
+$localStorageHelper = Join-Path $StageRoot "partition_manager_storage.ps1"
 $localProjectRoot = Join-Path $StageRoot "repo"
 $localBuild = Join-Path $localProjectRoot "build\Release"
 $localEvidenceRoot = Join-Path $StageRoot "external.linux-swap-format-vm"
@@ -134,12 +139,13 @@ New-Item -ItemType Directory -Path $sharedEvidenceRoot -Force | Out-Null
 Write-Host "Stage directories ready."
 
 Copy-Item -LiteralPath $sharedRunner -Destination $localRunner -Force
+Copy-Item -LiteralPath $sharedStorageHelper -Destination $localStorageHelper -Force
 Copy-Item -LiteralPath $sharedCertifier -Destination $localBuild -Force
 Copy-OptionalPattern -SourceDirectory $sharedBuild -Pattern "Qt6*.dll" -DestinationDirectory $localBuild
 Copy-OptionalPattern -SourceDirectory $sharedBuild -Pattern "msvcp*.dll" -DestinationDirectory $localBuild
 Copy-OptionalPattern -SourceDirectory $sharedBuild -Pattern "vcruntime*.dll" -DestinationDirectory $localBuild
 Copy-OptionalPattern -SourceDirectory $sharedBuild -Pattern "concrt*.dll" -DestinationDirectory $localBuild
-Write-Host "Runner and certifier runtime staged."
+Write-Host "Runner, storage helper, and certifier runtime staged."
 
 $argumentList = @(
     "-NoProfile",

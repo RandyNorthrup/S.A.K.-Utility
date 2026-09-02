@@ -62,12 +62,19 @@ Assert-QualifiedPath -Path $OutputRoot -Name "OutputRoot"
 Assert-NoReparsePoint -Path $StageRoot -Name "StageRoot"
 New-Item -ItemType Directory -Path $StageRoot -Force | Out-Null
 $localScript = Join-Path $StageRoot "run_partition_manager_offline_bios_bcd_break.ps1"
+$sharedStorageHelper = Join-Path $SharedRoot "scripts\partition_manager_storage.ps1"
+$localStorageHelper = Join-Path $StageRoot "partition_manager_storage.ps1"
 Assert-NoReparsePoint -Path $localScript -Name "Staged runner"
 Copy-Item -LiteralPath (Join-Path $SharedRoot "scripts\run_partition_manager_offline_bios_bcd_break.ps1") -Destination $localScript -Force
+Copy-Item -LiteralPath $sharedStorageHelper -Destination $localStorageHelper -Force
 if (-not (Test-Path -LiteralPath $localScript -PathType Leaf)) {
     throw "Runner was not staged: $localScript"
 }
+if (-not (Test-Path -LiteralPath $localStorageHelper -PathType Leaf)) {
+    throw "Storage helper was not staged: $localStorageHelper"
+}
 Assert-NoReparsePoint -Path $localScript -Name "Staged runner"
+Assert-NoReparsePoint -Path $localStorageHelper -Name "Staged storage helper"
 
 $argumentList = @(
     "-NoProfile",
@@ -84,7 +91,7 @@ if ($process.ExitCode -ne 0) {
     throw "Elevated offline BIOS break exited with code $($process.ExitCode)."
 }
 
-$freshReport = @(Get-ChildItem -LiteralPath $OutputRoot -Recurse -Filter "offline-bios-break-report.json" -File -ErrorAction SilentlyContinue |
+$freshReport = @(Get-ChildItem -LiteralPath $OutputRoot -Recurse -Filter "offline-bios-break-report.json" -File -ErrorAction Stop |
     Where-Object { $_.LastWriteTime -ge $launchStart } |
     Sort-Object LastWriteTime -Descending |
     Select-Object -First 1)

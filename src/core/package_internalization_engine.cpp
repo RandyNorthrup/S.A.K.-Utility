@@ -404,10 +404,10 @@ bool PackageInternalizationEngine::isSafePackageComponent(const QString& compone
     // Path separators, the drive colon, and the Win32-illegal filename characters
     // (< > " | ? *) plus control characters are all rejected.
     static const QString kForbidden = QStringLiteral("/\\:<>\"|?*");
-    const bool hasForbiddenChar = std::ranges::any_of(component, [](const QChar c) {
+    const bool has_forbidden_char = std::ranges::any_of(component, [](const QChar c) {
         return kForbidden.contains(c) || c.unicode() < kFirstNonControlCodeUnit;
     });
-    if (hasForbiddenChar) {
+    if (has_forbidden_char) {
         return false;
     }
     // A trailing dot or space is stripped by Win32 path resolution and can alias a

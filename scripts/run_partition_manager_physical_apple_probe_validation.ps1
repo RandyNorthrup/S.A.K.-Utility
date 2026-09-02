@@ -33,6 +33,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "partition_manager_storage.ps1")
 
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 $AppleHfsGptType = "{48465300-0000-11aa-aa11-00306543ecac}"
@@ -165,7 +166,7 @@ function Select-TargetDisk {
     }
 
     $candidateDisks = @($allDisks | Where-Object {
-            $diskPartitions = @(Get-Partition -DiskNumber $_.Number -ErrorAction SilentlyContinue)
+            $diskPartitions = @(Get-SakDiskPartitions -DiskNumber $_.Number)
             -not $_.IsBoot -and
             -not $_.IsSystem -and
             $_.PartitionStyle -eq "GPT" -and
@@ -732,7 +733,9 @@ function Invoke-ApfsExportProof {
         $proof.status = "Failed"
         $proof.error = "APFS directory export proof failed."
         $proof.artifacts = $artifacts
-        Remove-Item -LiteralPath $exportOutput -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $exportOutput) {
+            Remove-Item -LiteralPath $exportOutput -Recurse -Force -ErrorAction Stop
+        }
         return [pscustomobject]@{ proof = $proof; artifacts = $artifacts }
     }
 
@@ -747,7 +750,9 @@ function Invoke-ApfsExportProof {
     if ($proof.status -ne "Passed") {
         $proof.error = "APFS directory export proof returned status $($proof.status)."
     }
-    Remove-Item -LiteralPath $exportOutput -Recurse -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $exportOutput) {
+        Remove-Item -LiteralPath $exportOutput -Recurse -Force -ErrorAction Stop
+    }
     return [pscustomobject]@{ proof = $proof; artifacts = $artifacts }
 }
 

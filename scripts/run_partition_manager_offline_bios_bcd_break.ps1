@@ -11,6 +11,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "partition_manager_storage.ps1")
 $script:TranscriptStarted = $false
 $script:RunRoot = ""
 $script:LocalScriptRoot = ""
@@ -52,7 +53,7 @@ function Add-Action {
 }
 
 function Get-AvailableDriveLetter {
-    $used = @(Get-Volume -ErrorAction SilentlyContinue | Where-Object DriveLetter | ForEach-Object { [string]$_.DriveLetter })
+    $used = @(Get-Volume -ErrorAction Stop | Where-Object DriveLetter | ForEach-Object { [string]$_.DriveLetter })
     foreach ($letter in @("W", "T", "R", "S", "U", "V", "X", "Y", "Z", "P", "Q", "L", "M", "N")) {
         if ($used -notcontains $letter) {
             return $letter
@@ -99,10 +100,10 @@ function Get-DiskSnapshot {
     param([int]$DiskNumber)
     $disk = Get-Disk -Number $DiskNumber -ErrorAction Stop
     $partitions = @()
-    foreach ($partition in @(Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue | Sort-Object Offset)) {
+    foreach ($partition in @(Get-SakDiskPartitions -DiskNumber $DiskNumber | Sort-Object Offset)) {
         $volume = $null
         if ($partition.DriveLetter) {
-            $volume = Get-Volume -DriveLetter $partition.DriveLetter -ErrorAction SilentlyContinue
+            $volume = Get-SakVolumeByDriveLetter -DriveLetter $partition.DriveLetter
         }
         $partitions += [pscustomobject]@{
             partition_number = [int]$partition.PartitionNumber

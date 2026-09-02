@@ -44,7 +44,7 @@ public:
                           NetworkProgressCallback progress,
                           const NetworkTransferSinks& sinks)
         : m_request(std::move(request))
-        , m_shouldCancel(std::move(should_cancel))
+        , m_should_cancel(std::move(should_cancel))
         , m_progress(std::move(progress))
         , m_sinks(sinks) {}
 
@@ -107,13 +107,13 @@ private:
         auto* cancel_timer = new QTimer(this);
         cancel_timer->setInterval(kCancellationPollIntervalMs);
         QObject::connect(cancel_timer, &QTimer::timeout, this, [this, reply]() {
-            if (m_shouldCancel && m_shouldCancel()) {
+            if (m_should_cancel && m_should_cancel()) {
                 m_sinks.result->cancelled = true;
                 m_sinks.result->error_message = QStringLiteral("Network transfer cancelled");
                 reply->abort();
             }
         });
-        if (m_shouldCancel) {
+        if (m_should_cancel) {
             cancel_timer->start();
         }
         return cancel_timer;
@@ -185,7 +185,7 @@ private:
     }
 
     NetworkTransferRequest m_request;
-    NetworkCancelCheck m_shouldCancel;
+    NetworkCancelCheck m_should_cancel;
     NetworkProgressCallback m_progress;
     NetworkTransferSinks m_sinks;
     QElapsedTimer m_elapsed;

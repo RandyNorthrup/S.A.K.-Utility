@@ -115,6 +115,22 @@
       "replace": "    const DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE |\n                        (request.prevent_rename ? FILE_SHARE_DELETE : 0U);",
       "expect": "killed",
       "why": "artifactSubdirPinsBlockRenameUntilSessionClears requires retained artifact handles to deny rename while the session is active and proves the pin is released after clearCurrentSession."
+    },
+    {
+      "id": "artifact-temp-file-reopens-planted-leaf",
+      "file": "src/ai/ai_store_file_loader.cpp",
+      "find": "                                  CREATE_NEW,",
+      "replace": "                                  OPEN_ALWAYS,",
+      "expect": "killed",
+      "why": "writeArtifactFile_refusesPreexistingTemporaryLeaf plants the unpredictable temporary name through the race hook and requires exclusive creation rather than reopening attacker-controlled bytes."
+    },
+    {
+      "id": "artifact-atomic-publish-replaces-existing-leaf",
+      "file": "src/ai/ai_store_file_loader.cpp",
+      "find": "    rename_info->ReplaceIfExists = FALSE;",
+      "replace": "    rename_info->ReplaceIfExists = TRUE;",
+      "expect": "killed",
+      "why": "writeArtifactFile_refusesLeafPlantedBeforePublish creates the final target after the trusted temp is flushed and requires handle-rename to refuse replacement while preserving attacker bytes."
     }
   ]
 }

@@ -1,5 +1,5 @@
 {
-  "head_commit": "3defcf5bde8ed8c0d4a375542f10cfda7dcdd702",
+  "head_commit": "acf67f4869fcb96766488cb665b263c19da9107e",
   "unit_rule": "include/**.h|.hpp, src/**.cpp|.h|.hpp, tests/**.cpp|.h|.mjs, scripts/**.py|.ps1|.sh, browser/**.js",
   "units": {
     "browser/extension/background.js": {
@@ -2298,12 +2298,15 @@
       "group": "src",
       "previous_evidence": "driver",
       "previous_review_blob": "2dfc28836664906f57bdc7072876fa01e527b310",
-      "reviewed_blob": "d8806a2cb76182f27411625daf93aa93874a268b",
+      "reviewed_blob": "aeb661b960f4384041dc6845d5b79b826792796a",
       "status": "reviewed"
     },
     "src/ai/ai_conversation_store.cpp": {
+      "brief": "docs/review_briefs/src_ai_ai_conversation_store.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "a4caf858c911fa69089ba00b798db0321b75d5d5",
+      "status": "reviewed"
     },
     "src/ai/ai_credential_store.cpp": {
       "evidence": "cited",
@@ -2443,15 +2446,17 @@
       "evidence": "driver",
       "group": "src",
       "previous_evidence": "driver",
-      "previous_review_blob": "6b377c275b2a70ff6f2abeda64931ff9ef3619d1",
-      "reviewed_blob": "89596efb173162638e5887e637ae5db661f3ac1e",
+      "previous_review_blob": "89596efb173162638e5887e637ae5db661f3ac1e",
+      "reviewed_blob": "2280ff901c416626950aea8febbd49cd8b0217ca",
       "status": "reviewed"
     },
     "src/ai/ai_store_file_loader.cpp": {
       "brief": "docs/review_briefs/src_ai_ai_store_file_loader.md",
       "evidence": "driver",
       "group": "src",
-      "reviewed_blob": "13a20f58488a3bcebf64e2b2862f791edee39cbf",
+      "previous_evidence": "driver",
+      "previous_review_blob": "13a20f58488a3bcebf64e2b2862f791edee39cbf",
+      "reviewed_blob": "27b11c1b25ae19714f16614dfe7c03b7bf30c324",
       "status": "reviewed"
     },
     "src/ai/ai_subagent_runner.cpp": {
@@ -2550,7 +2555,9 @@
       "brief": "docs/review_briefs/src_ai_ai_workflow_store.md",
       "evidence": "driver",
       "group": "src",
-      "reviewed_blob": "1f98ef216e36a94cea9f2d3d61014f6663a4752b",
+      "previous_evidence": "driver",
+      "previous_review_blob": "1f98ef216e36a94cea9f2d3d61014f6663a4752b",
+      "reviewed_blob": "e534e30da6608f3f52adae6722e7bb0290992e8e",
       "status": "reviewed"
     },
     "src/ai/ai_workflow_template.cpp": {

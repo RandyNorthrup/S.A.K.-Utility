@@ -2,13 +2,13 @@
 
 ## Overview
 
-Comprehensive test suite for SAK Utility using the **Qt Test** framework with **267 registered CTest tests** across **247 C++ test source files** plus script-backed helper tests. Tests cover AI assistant clients, chat-title generation, workflow orchestration, tool execution, cancellation, run state, trace storage, core utilities, security, elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX, hardening), diagnostics, partition management, ISO pipelines, deployment, email inspection, splash sizing, partition filesystem probe certification, and quick action validation.
+Comprehensive test suite for SAK Utility using the **Qt Test** framework with **268 registered CTest tests** across **248 C++ test source files** plus script-backed helper tests. Tests cover AI assistant clients, chat-title generation, workflow orchestration, tool execution, cancellation, run state, trace storage, core utilities, security, elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX, hardening), diagnostics, partition management, ISO pipelines, deployment, email inspection, splash sizing, partition filesystem probe certification, and quick action validation.
 
 ## Structure
 
 ```
 tests/
-+-- unit/                                  # Unit tests (244 C++ files, including actions/)
++-- unit/                                  # Unit tests (245 C++ files, including actions/)
 |   +-- actions/                           # Quick action validation tests
 |   |   +-- test_action_factory.cpp
 |   |   +-- test_all_actions_metadata.cpp
@@ -364,6 +364,7 @@ stay read-only with exact blockers.
 | test_mbox_parser | `mbox_parser` | MBOX parsing, message extraction, header parsing |
 | test_email_search_worker | `email_search_worker` | Full-text search, field filtering |
 | test_email_export_worker | `email_export_worker` | EML/CSV/VCF/ICS export, attachment extraction |
+| test_email_attachments_browser_dialog | `EmailInspectorController`, `EmailAttachmentsBrowserDialog` | Exact folder-page and item-detail failure identities, wrong-ID refusal, matching failure advancement, plain-text accessible generic error reporting without scan-state mutation, and attachment-specific plus generic double-signal save accounting |
 | test_email_profile_manager | `email_profile_manager` | Email client profile discovery, backup/restore |
 | test_email_report_generator | `email_report_generator` | Email analysis report generation |
 
@@ -456,6 +457,6 @@ per-test logs from complete CTest.
 ---
 
 **Test Framework:** Qt Test
-**Registered Tests:** 267 (CTest)
-**Test Files:** 247 C++ test source files plus script-backed helper tests
+**Registered Tests:** 268 (CTest)
+**Test Files:** 248 C++ test source files plus script-backed helper tests
 **Platform:** Windows 10/11

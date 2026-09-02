@@ -22,6 +22,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "partition_manager_storage.ps1")
 
 if ($TargetDiskNumber -lt 1) {
     throw "TargetDiskNumber is required and must be >= 1. This gate destroys every partition on that physical disk; run Get-Disk and pass the disposable disk's number explicitly rather than relying on a default."
@@ -137,7 +138,7 @@ function Assert-DisposableVirtualBoxDisk {
     param([int]$DiskNumber)
 
     $disk = Get-Disk -Number $DiskNumber -ErrorAction Stop
-    $partitions = @(Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue)
+    $partitions = @(Get-SakDiskPartitions -DiskNumber $DiskNumber)
     if ($partitions | Where-Object { $_.IsBoot -or $_.IsSystem }) {
         throw "Refusing disk ${DiskNumber}: boot/system partition present."
     }
@@ -151,7 +152,7 @@ function Assert-DisposableVirtualBoxDisk {
         throw "Refusing disk ${DiskNumber}: expected small disposable data disk, got $($disk.Size) bytes."
     }
 
-    $physical = @(Get-PhysicalDisk -ErrorAction SilentlyContinue |
+    $physical = @(Get-PhysicalDisk -ErrorAction Stop |
         Where-Object { $_.FriendlyName -eq $disk.FriendlyName } |
         Select-Object -First 1)
     $reportedMedia = if ($physical.Count -gt 0) { [string]$physical[0].MediaType } else { "Unavailable" }
@@ -226,7 +227,7 @@ function Clear-DisposableDisk {
     param([int]$DiskNumber)
 
     $disk = Get-Disk -Number $DiskNumber -ErrorAction Stop
-    $partitions = @(Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue)
+    $partitions = @(Get-SakDiskPartitions -DiskNumber $DiskNumber)
 
     # Re-pin identity at the moment of destruction. The disk number can re-resolve to a
     # different physical disk after the initial Assert (hot-plug/renumber), and the failure
@@ -347,7 +348,7 @@ try {
     # Re-verify the drive letter still maps to the pinned disposable disk before running any
     # volume operation, so a drive-letter reassignment cannot redirect the defrag to another
     # volume.
-    $driveLetterOwner = @(Get-Partition -DriveLetter $driveLetter -ErrorAction SilentlyContinue)
+    $driveLetterOwner = @(Get-SakPartitionsByDriveLetter -DriveLetter $driveLetter)
     if ($driveLetterOwner.Count -eq 0 -or $driveLetterOwner[0].DiskNumber -ne $TargetDiskNumber) {
         throw "Drive letter ${driveLetter}: no longer maps to target disk $TargetDiskNumber; refusing to defrag a volume that is not on the pinned disposable disk."
     }

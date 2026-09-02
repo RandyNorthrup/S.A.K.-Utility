@@ -442,14 +442,14 @@ QString validateCsvConfig(const QStringList& columns, QChar delimiter);
 
 /// Build the complete CSV column->extractor dispatch table
 const CsvFieldMap& csvFieldMap() {
-    static const auto map = [] {
+    static const auto kMap = [] {
         CsvFieldMap result;
         addEmailCsvFields(result);
         addContactCsvFields(result);
         addCalendarTaskCsvFields(result);
         return result;
     }();
-    return map;
+    return kMap;
 }
 
 QString validateCsvConfig(const QStringList& columns, QChar delimiter) {

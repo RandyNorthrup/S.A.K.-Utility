@@ -29,6 +29,10 @@ $runner = Join-Path $ProjectRoot "scripts\run_partition_manager_physical_cross_f
 if (-not (Test-Path -LiteralPath $runner -PathType Leaf)) {
     throw "Runner not found: $runner"
 }
+$storageHelper = Join-Path $ProjectRoot "scripts\partition_manager_storage.ps1"
+if (-not (Test-Path -LiteralPath $storageHelper -PathType Leaf)) {
+    throw "Partition Manager storage helper not found: $storageHelper"
+}
 if (-not $Force) {
     throw "Pass -Force after confirming DiskNumber is expendable physical media."
 }
@@ -131,14 +135,18 @@ if ($NoCleanup) {
     $runnerArgs += " -NoCleanup"
 }
 
-# Pin the runner bytes: an existence check here says nothing about what the elevated
-# process opens a moment later, so the child re-hashes before it runs anything.
+# Pin the runner and its dot-sourced helper bytes: existence checks say nothing about what the
+# elevated process opens a moment later, so the child re-hashes both before it runs anything.
 $runnerHash = (Get-FileHash -LiteralPath $runner -Algorithm SHA256).Hash
+$storageHelperHash = (Get-FileHash -LiteralPath $storageHelper -Algorithm SHA256).Hash
 $command = @(
     '$ErrorActionPreference = "Stop"',
-    "`$expectedHash = $(Quote-PowerShellLiteral $runnerHash)",
-    "`$actualHash = (Get-FileHash -LiteralPath $(Quote-PowerShellLiteral $runner) -Algorithm SHA256).Hash",
-    "if (`$actualHash -ne `$expectedHash) { throw ('Runner changed between launch and elevation: ' + $(Quote-PowerShellLiteral $runner)) }",
+    "`$expectedRunnerHash = $(Quote-PowerShellLiteral $runnerHash)",
+    "`$actualRunnerHash = (Get-FileHash -LiteralPath $(Quote-PowerShellLiteral $runner) -Algorithm SHA256).Hash",
+    "if (`$actualRunnerHash -ne `$expectedRunnerHash) { throw ('Runner changed between launch and elevation: ' + $(Quote-PowerShellLiteral $runner)) }",
+    "`$expectedHelperHash = $(Quote-PowerShellLiteral $storageHelperHash)",
+    "`$actualHelperHash = (Get-FileHash -LiteralPath $(Quote-PowerShellLiteral $storageHelper) -Algorithm SHA256).Hash",
+    "if (`$actualHelperHash -ne `$expectedHelperHash) { throw ('Storage helper changed between launch and elevation: ' + $(Quote-PowerShellLiteral $storageHelper)) }",
     "try {",
     "    & $(Quote-PowerShellLiteral $runner) $runnerArgs *>&1 | Tee-Object -FilePath $(Quote-PowerShellLiteral $childLog)",
     "}",

@@ -21,12 +21,12 @@ std::function<void(const QString&)> g_before_file_open_hook;
 std::function<void(const QString&)> g_before_file_read_hook;
 
 const detail::StoreFileLoadPolicy& skillFileLoadPolicy() {
-    static const detail::StoreFileLoadPolicy policy{QStringLiteral("Skill"),
-                                                    QStringLiteral(".md"),
-                                                    QStringLiteral("Markdown"),
-                                                    kMaxSkillFileBytes,
-                                                    kMaxSkillFiles};
-    return policy;
+    static const detail::StoreFileLoadPolicy kPolicy{QStringLiteral("Skill"),
+                                                     QStringLiteral(".md"),
+                                                     QStringLiteral("Markdown"),
+                                                     kMaxSkillFileBytes,
+                                                     kMaxSkillFiles};
+    return kPolicy;
 }
 
 }  // namespace
@@ -55,7 +55,9 @@ bool SkillStore::loadBuiltIn(QStringList* errors) {
 bool SkillStore::loadDirectory(const QString& directory, QStringList* errors) {
     const detail::StoreFileLoadHooks hooks{.before_file_open = g_before_file_open_hook,
                                            .before_file_read = g_before_file_read_hook,
-                                           .before_child_open = {}};
+                                           .before_child_open = {},
+                                           .before_leaf_temp_open = {},
+                                           .before_leaf_publish = {}};
     const detail::StoreFileConsumer consume = [this, errors](const QString& path,
                                                              const QByteArray& bytes) {
         const Skill skill = Skill::fromMarkdown(bytes, path);

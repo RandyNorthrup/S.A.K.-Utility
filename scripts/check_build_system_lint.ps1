@@ -145,6 +145,34 @@ foreach ($relativePath in $windowsOnlyProductFiles) {
     }
 }
 
+# Warning-silencing markers are forbidden across all first-party production C/C++ source. An
+# unused callback parameter can be unnamed; a discarded value must be asserted, reported, or
+# removed. File-wide third-party trees stay byte-identical to upstream and are outside this gate.
+$productionSourceFiles = @()
+foreach ($sourceRoot in @((Join-Path $root "src"), (Join-Path $root "include"))) {
+    $productionSourceFiles += Get-ChildItem -LiteralPath $sourceRoot -Recurse -File |
+        Where-Object {
+            $_.Extension -in @(".c", ".cc", ".cpp", ".cxx", ".h", ".hpp", ".hxx") -and
+            $_.FullName -notmatch '[\\/]third_party[\\/]'
+        }
+}
+foreach ($sourceFile in ($productionSourceFiles | Sort-Object FullName -Unique)) {
+    $relativePath = $sourceFile.FullName.Substring($root.Length).TrimStart('\', '/')
+    $lineNo = 0
+    foreach ($line in (Get-Content -LiteralPath $sourceFile.FullName)) {
+        $lineNo++
+        if ($line.TrimStart().StartsWith("//")) {
+            continue
+        }
+        foreach ($marker in @("Q_UNUSED(", "[[maybe_unused]]")) {
+            if ($line.Contains($marker)) {
+                $violations += ("${relativePath}:${lineNo}: forbidden production warning " +
+                                "silence '$marker'; remove the parameter/value or use it")
+            }
+        }
+    }
+}
+
 # Test registration is part of the Windows-only product contract. A tracked test source or a
 # required PowerShell-driven CTest must fail configure when unavailable, never disappear behind an
 # EXISTS/TARGET/WIN32 guard or a warning that says it was skipped.
@@ -232,6 +260,6 @@ if ($violations.Count -gt 0) {
 }
 
 Write-Host ("Build-system lint passed: Windows-only boundary enforced, no dead CMAKE_BUILD_TYPE " +
-           "guards or forbidden coverage warning silences, and analyzer setup precedes target creation " +
-           "($($cmakeFiles.Count) CMake files).")
+           "guards, coverage warning silences, or production unused-value silences; analyzer " +
+           "setup precedes target creation ($($cmakeFiles.Count) CMake files).")
 exit 0

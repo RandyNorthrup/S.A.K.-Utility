@@ -11,6 +11,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "partition_manager_storage.ps1")
 $script:TranscriptStarted = $false
 $script:RunRoot = ""
 $script:Commands = @()
@@ -101,10 +102,10 @@ function Get-DiskSnapshot {
     param([int]$DiskNumber)
     $disk = Get-Disk -Number $DiskNumber -ErrorAction Stop
     $partitions = @()
-    foreach ($partition in @(Get-Partition -DiskNumber $DiskNumber -ErrorAction SilentlyContinue | Sort-Object Offset)) {
+    foreach ($partition in @(Get-SakDiskPartitions -DiskNumber $DiskNumber | Sort-Object Offset)) {
         $volume = $null
         if ($partition.DriveLetter) {
-            $volume = Get-Volume -DriveLetter $partition.DriveLetter -ErrorAction SilentlyContinue
+            $volume = Get-SakVolumeByDriveLetter -DriveLetter $partition.DriveLetter
         }
         $partitions += [pscustomobject]@{
             partition_number = [int]$partition.PartitionNumber
@@ -221,7 +222,7 @@ if (-not (Test-Path -LiteralPath $windowsPath -PathType Container)) {
 
 # Windows only installs on NTFS; require it before writing boot files so a
 # non-Windows or wrong volume that merely holds a \Windows folder is refused.
-$windowsVolume = Get-Volume -DriveLetter $windowsLetter -ErrorAction SilentlyContinue
+$windowsVolume = Get-SakVolumeByDriveLetter -DriveLetter $windowsLetter
 if ($null -eq $windowsVolume -or [string]$windowsVolume.FileSystem -ne "NTFS") {
     throw "Target volume ${windowsLetter}: is not an NTFS Windows volume; refusing BIOS repair."
 }

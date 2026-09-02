@@ -41,8 +41,16 @@ param(
     # database is written, so they are never analyzed. Applied in PowerShell, not as a
     # run-clang-tidy positional regex, because a negative-lookahead file filter does not
     # survive the PowerShell -> cmd.exe -> python round-trip. Used by the naming gate to
-    # exclude src/core (the documented readability-identifier-naming carve-out).
-    [string]$ExcludeFilter = ""
+    # isolate its zero-debt non-core pass.
+    [string]$ExcludeFilter = "",
+    # Keep only translation units whose forward-slashed path matches this regex. This is applied
+    # before writing the analysis database, so health gates can prove the selected TU count rather
+    # than asking run-clang-tidy to filter a larger database after the fact.
+    [string]$IncludeFilter = "",
+    # Force every selected TU to use one root config. Core normally inherits src/core/.clang-tidy,
+    # which disables naming while debt remains; the core clean-file ratchet explicitly uses the
+    # root config so readability-identifier-naming is observable there.
+    [string]$ConfigFile = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -97,6 +105,7 @@ try {
     foreach ($e in $entries) {
         $f = ($e.file -replace '\\', '/')
         if ($f -notmatch $want -or $f -match $skip) { continue }
+        if ($IncludeFilter -and $f -notmatch $IncludeFilter) { continue }
         if ($ExcludeFilter -and $f -match $ExcludeFilter) { continue }
         $key = $f.ToLowerInvariant()
         if ($seen.Add($key)) {
@@ -145,6 +154,7 @@ try {
     if (-not $LogPath) { $LogPath = Join-Path $Root "$FirstPartyDir/clang-tidy.log" }
     $tidyArgs = "-p `"$fpDir`" -clang-tidy-binary `"$tidyBin`" -j $Jobs -quiet"
     if ($Checks) { $tidyArgs += " -checks=`"-*,$Checks`"" }
+    if ($ConfigFile) { $tidyArgs += " -config-file=`"$ConfigFile`"" }
     if ($Fix) { $tidyArgs += " -fix -clang-apply-replacements-binary `"$applyBin`"" }
 
     # A trailing positional regex restricts run-clang-tidy to matching source paths, so a

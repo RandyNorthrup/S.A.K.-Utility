@@ -114,6 +114,10 @@ $sourceScript = Join-Path $sharedRoot "scripts\run_partition_manager_offline_uef
 if (-not (Test-Path -LiteralPath $sourceScript -PathType Leaf)) {
     throw "Runner not found on the shared root: $sourceScript"
 }
+$sourceStorageHelper = Join-Path $sharedRoot "scripts\partition_manager_storage.ps1"
+if (-not (Test-Path -LiteralPath $sourceStorageHelper -PathType Leaf)) {
+    throw "Storage helper not found on the shared root: $sourceStorageHelper"
+}
 
 # %PUBLIC% is writable by every local user, so a predictable reused stage path can be
 # swapped for attacker content between the copy and the elevated open. Stage into a
@@ -130,11 +134,18 @@ if ($stageDirectory.Attributes.HasFlag([System.IO.FileAttributes]::ReparsePoint)
 Protect-StageDirectory -Path $stageDirectory.FullName
 
 $localScript = Join-Path $stageDirectory.FullName "run_partition_manager_offline_uefi_bcd_break.ps1"
+$localStorageHelper = Join-Path $stageDirectory.FullName "partition_manager_storage.ps1"
 Copy-Item -LiteralPath $sourceScript -Destination $localScript
+Copy-Item -LiteralPath $sourceStorageHelper -Destination $localStorageHelper
 $sourceHash = (Get-FileHash -LiteralPath $sourceScript -Algorithm SHA256).Hash
 $stagedHash = (Get-FileHash -LiteralPath $localScript -Algorithm SHA256).Hash
 if ($stagedHash -ne $sourceHash) {
     throw "Staged runner does not match the shared source (source $sourceHash, staged $stagedHash)."
+}
+$sourceHelperHash = (Get-FileHash -LiteralPath $sourceStorageHelper -Algorithm SHA256).Hash
+$stagedHelperHash = (Get-FileHash -LiteralPath $localStorageHelper -Algorithm SHA256).Hash
+if ($stagedHelperHash -ne $sourceHelperHash) {
+    throw "Staged storage helper does not match the shared source."
 }
 
 $childLog = Join-Path $stageDirectory.FullName "elevated-console.log"
@@ -148,6 +159,9 @@ $command = @(
     "`$expectedHash = $(Quote-PowerShellLiteral $stagedHash)",
     "`$actualHash = (Get-FileHash -LiteralPath $(Quote-PowerShellLiteral $localScript) -Algorithm SHA256).Hash",
     "if (`$actualHash -ne `$expectedHash) { throw ('Staged runner changed between staging and elevation: ' + $(Quote-PowerShellLiteral $localScript)) }",
+    "`$expectedHelperHash = $(Quote-PowerShellLiteral $stagedHelperHash)",
+    "`$actualHelperHash = (Get-FileHash -LiteralPath $(Quote-PowerShellLiteral $localStorageHelper) -Algorithm SHA256).Hash",
+    "if (`$actualHelperHash -ne `$expectedHelperHash) { throw ('Staged storage helper changed between staging and elevation: ' + $(Quote-PowerShellLiteral $localStorageHelper)) }",
     "try {",
     "    & $(Quote-PowerShellLiteral $localScript) $runnerArgs *>&1 | Tee-Object -FilePath $(Quote-PowerShellLiteral $childLog)",
     "}",

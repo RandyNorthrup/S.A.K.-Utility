@@ -1,0 +1,14 @@
+# Core readability-identifier-naming zero-debt ratchet.
+#
+# One repo-relative translation unit per line. Every entry must exist, appear in the healthy core
+# clang-tidy analysis database, and produce zero naming findings. Entries may be added after a
+# focused remediation; removing one is a coverage regression.
+
+src/core/bzip2_decompressor.cpp
+src/core/deleted_item_scanner.cpp
+src/core/email_export_worker.cpp
+src/core/gzip_decompressor.cpp
+src/core/network_transfer_runner.cpp
+src/core/package_internalization_engine.cpp
+src/core/pdf_email_writer.cpp
+src/core/xz_decompressor.cpp

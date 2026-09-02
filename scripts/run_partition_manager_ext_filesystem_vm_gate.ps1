@@ -27,6 +27,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "partition_manager_storage.ps1")
 
 function Test-IsAdmin {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -157,26 +158,12 @@ function Resolve-ApprovedTool {
     }
 }
 
-function Get-CertificationPartitions {
-    param([Parameter(Mandatory = $true)] [int]$DiskNumber)
-
-    try {
-        return @(Get-Partition -DiskNumber $DiskNumber -ErrorAction Stop)
-    }
-    catch {
-        if ($_.CategoryInfo.Category -eq [System.Management.Automation.ErrorCategory]::ObjectNotFound) {
-            return @()
-        }
-        throw
-    }
-}
-
 function Get-DiskSnapshot {
     param([Parameter(Mandatory = $true)] [int]$Number)
 
     $disk = Get-Disk -Number $Number -ErrorAction Stop
     $partitions = @()
-    foreach ($partition in @(Get-CertificationPartitions -DiskNumber $Number | Sort-Object Offset)) {
+    foreach ($partition in @(Get-SakDiskPartitions -DiskNumber $Number | Sort-Object Offset)) {
         $partitions += [pscustomobject]@{
             partition_number = [int]$partition.PartitionNumber
             drive_letter = if ($partition.DriveLetter) { [string]$partition.DriveLetter } else { "" }
@@ -227,7 +214,7 @@ function Clear-DisposableDisk {
 
     Assert-DisposableDisk -Number $Number
     $disk = Get-Disk -Number $Number -ErrorAction Stop
-    $partitions = @(Get-CertificationPartitions -DiskNumber $Number)
+    $partitions = @(Get-SakDiskPartitions -DiskNumber $Number)
     if ($disk.PartitionStyle -eq "RAW" -and $partitions.Count -eq 0) {
         return "Disk $Number already RAW."
     }

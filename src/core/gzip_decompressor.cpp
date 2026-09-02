@@ -41,9 +41,9 @@ void GzipDecompressor::setInputFromBuffer(size_t bytes) {
     m_zstream.avail_in = static_cast<unsigned int>(bytes);
 }
 
-void GzipDecompressor::setOutput(char* data, size_t maxSize) {
+void GzipDecompressor::setOutput(char* data, size_t max_size) {
     m_zstream.next_out = reinterpret_cast<unsigned char*>(data);
-    m_zstream.avail_out = static_cast<unsigned int>(maxSize);
+    m_zstream.avail_out = static_cast<unsigned int>(max_size);
 }
 
 size_t GzipDecompressor::outputRemaining() const {

@@ -18,6 +18,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "partition_manager_storage.ps1")
 $Sys32 = Join-Path $env:SystemRoot "System32"
 $script:TranscriptStarted = $false
 $script:RunRoot = ""
@@ -126,7 +127,7 @@ function Get-DiskSnapshot {
     foreach ($partition in @(Get-DiskPartitionList -DiskNumber $DiskNumber | Sort-Object Offset)) {
         $volume = $null
         if ($partition.DriveLetter) {
-            $volume = Get-Volume -DriveLetter $partition.DriveLetter -ErrorAction SilentlyContinue
+            $volume = Get-SakVolumeByDriveLetter -DriveLetter $partition.DriveLetter
         }
         $partitions += [pscustomobject]@{
             partition_number = [int]$partition.PartitionNumber

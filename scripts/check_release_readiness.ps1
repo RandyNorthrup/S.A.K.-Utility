@@ -122,6 +122,7 @@ try {
             "scripts/new_partition_manager_certification_bundle.ps1",
             "scripts/new_partition_manager_certification_gap_report.ps1",
             "scripts/new_partition_manager_external_evidence_manifest.ps1",
+            "scripts/partition_manager_storage.ps1",
             "scripts/run_partition_manager_allocate_free_space_external_gate.ps1",
             "scripts/run_partition_manager_bitlocker_mutation_external_gate.ps1",
             "scripts/run_partition_manager_cluster_size_external_gate.ps1",
@@ -187,6 +188,7 @@ try {
     $syntaxFiles += "scripts/launch_partition_manager_physical_hfs_file_apply_validation_local.ps1"
     $syntaxFiles += "scripts/run_partition_manager_physical_hfs_file_apply_validation.ps1"
     $syntaxFiles += "scripts/check_partition_manager_release_claims.ps1"
+    $syntaxFiles += "scripts/partition_manager_storage.ps1"
     $syntaxFiles += "scripts/run_partition_manager_allocate_free_space_external_gate.ps1"
     $syntaxFiles += "scripts/run_partition_manager_bitlocker_mutation_external_gate.ps1"
     $syntaxFiles += "scripts/run_partition_manager_cluster_size_external_gate.ps1"

@@ -610,7 +610,10 @@ function Compare-HashManifest {
 function Invoke-RepairScan {
     param([Parameter(Mandatory = $true)] [string]$DriveLetter)
 
-    if (-not (Get-Command -Name "Repair-Volume" -CommandType Cmdlet -ErrorAction SilentlyContinue)) {
+    try {
+        Get-Command -Name "Repair-Volume" -CommandType Cmdlet -ErrorAction Stop | Out-Null
+    }
+    catch {
         throw "Repair-Volume cmdlet is not available; the filesystem health evidence this gate reports cannot be collected."
     }
 

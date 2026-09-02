@@ -318,7 +318,9 @@ function New-SparseImageFile {
         [Parameter(Mandatory = $true)] [uint64]$SizeBytes
     )
 
-    Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $Path) {
+        Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+    }
     New-Item -ItemType File -Path $Path -Force | Out-Null
     Invoke-NativeCommand -Name ("fsutil-sparse-setflag-" + [System.IO.Path]::GetFileName($Path)) `
         -FilePath $FsutilPath -Arguments @("sparse", "setflag", $Path) | Out-Null
@@ -773,7 +775,9 @@ try {
             $copy = Copy-SparseImageToRawTarget -Name "copy-staged-hfs-$safeName" -ImagePath $imagePath -RawTarget $rawTarget -TargetSizeBytes ([uint64]$partition.Size)
         }
         finally {
-            Remove-Item -LiteralPath $imagePath -Force -ErrorAction SilentlyContinue
+            if (Test-Path -LiteralPath $imagePath) {
+                Remove-Item -LiteralPath $imagePath -Force -ErrorAction Stop
+            }
         }
         $probe = Invoke-NativeCommand -Name "sak-probe-$safeName" -FilePath $certifier -Arguments @(
             "--input", $rawTarget,

@@ -107,7 +107,7 @@ protected:
     virtual void setInputFromBuffer(size_t bytes) = 0;
 
     /// @brief Point the stream's output at the caller's buffer
-    virtual void setOutput(char* data, size_t maxSize) = 0;
+    virtual void setOutput(char* data, size_t max_size) = 0;
 
     /// @brief How many output bytes the stream can still produce
     [[nodiscard]] virtual size_t outputRemaining() const = 0;

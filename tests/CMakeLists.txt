@@ -7199,6 +7199,49 @@ add_test(NAME test_email_attachment_saver COMMAND test_email_attachment_saver
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_email_attachment_saver")
 
+# test_email_attachments_browser_dialog --- exact folder/item failure correlation and save errors
+add_executable(test_email_attachments_browser_dialog
+    unit/test_email_attachments_browser_dialog.cpp
+    ../src/gui/email_attachments_browser_dialog.cpp
+    ../src/gui/view_empty_state.cpp
+    ../src/core/email_inspector_controller.cpp
+    ../src/core/email_attachment_saver.cpp
+    ../src/core/email_search_worker.cpp
+    ../src/core/email_export_worker.cpp
+    ../src/core/email_profile_manager.cpp
+    ../src/core/email_report_generator.cpp
+    ../src/core/pst_parser.cpp
+    ../src/core/mbox_parser.cpp
+    ../src/core/eml_writer.cpp
+    ../src/core/html_email_writer.cpp
+    ../src/core/pdf_email_writer.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+    ../include/sak/email_attachments_browser_dialog.h
+    ../include/sak/email_inspector_controller.h
+    ../include/sak/view_empty_state.h
+    ../include/sak/pst_parser.h
+    ../include/sak/mbox_parser.h
+    ../include/sak/email_search_worker.h
+    ../include/sak/email_export_worker.h
+    ../include/sak/email_profile_manager.h
+    ../include/sak/email_report_generator.h
+)
+set_target_properties(test_email_attachments_browser_dialog PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_email_attachments_browser_dialog PRIVATE
+    Qt6::Core Qt6::Concurrent Qt6::Gui Qt6::Widgets Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_email_attachments_browser_dialog PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_email_attachments_browser_dialog COMMAND test_email_attachments_browser_dialog
+         -o "${TEST_OUTPUT_DIR}/test_email_attachments_browser_dialog.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_email_attachments_browser_dialog")
+
 # test_email_view_ids --- fail-closed decoding of view-item folder/message ids
 add_executable(test_email_view_ids
     unit/test_email_view_ids.cpp

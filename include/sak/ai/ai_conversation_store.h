@@ -96,6 +96,19 @@ public:
     [[nodiscard]] QString artifactPath(const QString& subdir,
                                        const QString& filename,
                                        QString* error_message = nullptr) const;
+    /// @brief Atomically create one new managed artifact without exposing a writable leaf path.
+    [[nodiscard]] QString writeArtifactFile(const QString& subdir,
+                                            const QString& filename,
+                                            const QByteArray& bytes,
+                                            QString* error_message = nullptr) const;
+    [[nodiscard]] QString copyArtifactFile(const QString& subdir,
+                                           const QString& filename,
+                                           const QString& source_path,
+                                           QString* error_message = nullptr) const;
+    [[nodiscard]] QString writeCommandLog(const QString& command_id,
+                                          const QString& suffix,
+                                          const QByteArray& bytes,
+                                          QString* error_message = nullptr) const;
     [[nodiscard]] QString memoryText(int max_chars = kDefaultMemoryTextMaxChars,
                                      QString* error_message = nullptr) const;
     [[nodiscard]] bool appendMemoryEntry(const QString& kind,
@@ -115,6 +128,10 @@ public:
     static void setBeforeManifestFileOpenHookForTesting(std::function<void(const QString&)> hook);
     static void setBeforeManifestFileReadHookForTesting(std::function<void(const QString&)> hook);
     static void setBeforeArtifactChildOpenHookForTesting(std::function<void(const QString&)> hook);
+    static void setBeforeArtifactLeafTempOpenHookForTesting(
+        std::function<void(const QString&)> hook);
+    static void setBeforeArtifactLeafPublishHookForTesting(
+        std::function<void(const QString&)> hook);
 
 private:
     [[nodiscard]] QString sessionPath(const QString& session_id) const;
@@ -125,6 +142,8 @@ private:
                                       QString* error_message = nullptr) const;
     [[nodiscard]] QString pinnedArtifactDirectory(const QString& subdir,
                                                   QString* error_message) const;
+    [[nodiscard]] detail::StoreDirectoryPin pinnedArtifactDirectoryPin(
+        const QString& subdir, QString* error_message) const;
     void clearArtifactDirectoryPins() const;
     [[nodiscard]] static QJsonObject usageToJson(const TokenUsage& usage);
     [[nodiscard]] static QString safeArtifactDirectoryName(const QString& title,

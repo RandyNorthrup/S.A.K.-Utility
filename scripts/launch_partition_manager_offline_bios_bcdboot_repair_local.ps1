@@ -172,11 +172,19 @@ $localScript = Join-Path $StageRoot "run_partition_manager_offline_bios_bcdboot_
 $stagedScriptHash = Copy-VerifiedStagedFile `
     -SourcePath (Join-Path $SharedRoot "scripts\run_partition_manager_offline_bios_bcdboot_repair.ps1") `
     -DestinationPath $localScript
+$localStorageHelper = Join-Path $StageRoot "partition_manager_storage.ps1"
+$stagedStorageHelperHash = Copy-VerifiedStagedFile `
+    -SourcePath (Join-Path $SharedRoot "scripts\partition_manager_storage.ps1") `
+    -DestinationPath $localStorageHelper
 
 # Re-verify immediately before the UAC prompt: the staged script may not change in between.
 $hashBeforeLaunch = (Get-FileHash -LiteralPath $localScript -Algorithm SHA256).Hash
 if ($hashBeforeLaunch -ne $stagedScriptHash) {
     throw "Staged offline BIOS repair script changed after staging; refusing to run it elevated: $localScript"
+}
+$helperHashBeforeLaunch = (Get-FileHash -LiteralPath $localStorageHelper -Algorithm SHA256).Hash
+if ($helperHashBeforeLaunch -ne $stagedStorageHelperHash) {
+    throw "Staged storage helper changed after staging; refusing to run it elevated: $localStorageHelper"
 }
 
 $argumentList = @(

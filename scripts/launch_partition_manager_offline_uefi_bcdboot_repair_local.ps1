@@ -34,9 +34,14 @@ $sourceRunner = Join-Path $SharedRoot "scripts\run_partition_manager_offline_uef
 if (-not (Test-Path -LiteralPath $sourceRunner -PathType Leaf)) {
     throw "Runner not found in shared root: $sourceRunner"
 }
+$sourceStorageHelper = Join-Path $SharedRoot "scripts\partition_manager_storage.ps1"
+if (-not (Test-Path -LiteralPath $sourceStorageHelper -PathType Leaf)) {
+    throw "Storage helper not found in shared root: $sourceStorageHelper"
+}
 # Pin the runner content copied from the (lab-trusted) shared root so the elevated child can prove
 # the staged copy was not swapped between the copy and elevated execution.
 $expectedHash = (Get-FileHash -LiteralPath $sourceRunner -Algorithm SHA256).Hash
+$expectedStorageHelperHash = (Get-FileHash -LiteralPath $sourceStorageHelper -Algorithm SHA256).Hash
 
 # Reject a staging root that is a reparse point (symlink/junction) -- it could redirect the copy
 # and the later elevated read to an attacker-chosen location.
@@ -48,7 +53,9 @@ if (Test-Path -LiteralPath $StageRoot) {
 }
 New-Item -ItemType Directory -Path $StageRoot -Force | Out-Null
 $localScript = Join-Path $StageRoot "run_partition_manager_offline_uefi_bcdboot_repair.ps1"
+$localStorageHelper = Join-Path $StageRoot "partition_manager_storage.ps1"
 Copy-Item -LiteralPath $sourceRunner -Destination $localScript -Force
+Copy-Item -LiteralPath $sourceStorageHelper -Destination $localStorageHelper -Force
 
 # Pin the host PowerShell to its System32 location so an attacker-controlled PATH or current
 # directory cannot substitute the binary that is elevated.
@@ -70,6 +77,9 @@ $command = @(
     "`$staged = $(Quote-PowerShellLiteral $localScript)",
     "`$expected = $(Quote-PowerShellLiteral $expectedHash)",
     'if ((Get-FileHash -LiteralPath $staged -Algorithm SHA256).Hash -ne $expected) { throw "Staged runner hash mismatch (possible tampering): $staged" }',
+    "`$stagedHelper = $(Quote-PowerShellLiteral $localStorageHelper)",
+    "`$expectedHelper = $(Quote-PowerShellLiteral $expectedStorageHelperHash)",
+    'if ((Get-FileHash -LiteralPath $stagedHelper -Algorithm SHA256).Hash -ne $expectedHelper) { throw "Staged storage helper hash mismatch (possible tampering): $stagedHelper" }',
     "& `$staged -OutputRoot $(Quote-PowerShellLiteral $OutputRoot) -Force"
 ) -join "`n"
 $encodedCommand = [Convert]::ToBase64String([System.Text.Encoding]::Unicode.GetBytes($command))

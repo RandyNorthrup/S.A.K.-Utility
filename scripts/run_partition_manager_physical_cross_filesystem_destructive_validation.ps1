@@ -36,6 +36,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "partition_manager_storage.ps1")
 $LinuxSwapGptType = "{0657FD6D-A4AB-43C4-84E5-0933C84B4F4F}"
 $LargeDiskGuardBytes = 64GB
 
@@ -173,41 +174,13 @@ function Resolve-ApprovedTool {
     }
 }
 
-function Get-CertificationPartitions {
-    param([Parameter(Mandatory = $true)] [int]$DiskNumber)
-
-    try {
-        return @(Get-Partition -DiskNumber $DiskNumber -ErrorAction Stop)
-    }
-    catch {
-        if ($_.CategoryInfo.Category -eq [System.Management.Automation.ErrorCategory]::ObjectNotFound) {
-            return @()
-        }
-        throw
-    }
-}
-
-function Get-CertificationVolume {
-    param([Parameter(Mandatory = $true)] [object]$Partition)
-
-    try {
-        return $Partition | Get-Volume -ErrorAction Stop
-    }
-    catch {
-        if ($_.CategoryInfo.Category -eq [System.Management.Automation.ErrorCategory]::ObjectNotFound) {
-            return $null
-        }
-        throw
-    }
-}
-
 function Get-DiskSnapshot {
     param([Parameter(Mandatory = $true)] [int]$Number)
 
     $disk = Get-Disk -Number $Number -ErrorAction Stop
     $partitions = @()
-    foreach ($partition in @(Get-CertificationPartitions -DiskNumber $Number | Sort-Object Offset)) {
-        $volume = Get-CertificationVolume -Partition $partition
+    foreach ($partition in @(Get-SakDiskPartitions -DiskNumber $Number | Sort-Object Offset)) {
+        $volume = Get-SakPartitionVolume -Partition $partition
         $partitions += [pscustomobject]@{
             partition_number = [int]$partition.PartitionNumber
             drive_letter = if ($partition.DriveLetter) { [string]$partition.DriveLetter } else { "" }
@@ -278,7 +251,7 @@ function Clear-TargetDisk {
 
     Assert-DisposablePhysicalDisk -Number $Number
     $disk = Get-Disk -Number $Number -ErrorAction Stop
-    $partitions = @(Get-CertificationPartitions -DiskNumber $Number)
+    $partitions = @(Get-SakDiskPartitions -DiskNumber $Number)
     if ($disk.PartitionStyle -eq "RAW" -and $partitions.Count -eq 0) {
         return "Disk $Number already RAW."
     }

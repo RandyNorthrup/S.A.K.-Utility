@@ -10,7 +10,7 @@
       "find": "    QString backup_dir;",
       "replace": "    QString backup_dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral(\"/app_actions\");",
       "expect": "killed",
-      "why": "appActionServiceTracksSessionArtifactRootWithoutFallback requires no-session output to stay empty instead of escaping to an AppData fallback."
+      "why": "appActionServiceTracksSessionArtifactRootWithoutFallback requires no-session output to stay empty instead of escaping to an AppData fallback, and requires active-session output to use private staging rather than the managed artifact tree."
     },
     {
       "id": "existing-service-is-not-retargeted",
@@ -18,7 +18,23 @@
       "find": "        m_appActionService->setOutputDirectory(backup_dir);",
       "replace": "        m_appActionService->setOutputDirectory(QString());",
       "expect": "killed",
-      "why": "appActionServiceTracksSessionArtifactRootWithoutFallback requires a new session and a renamed session to update the existing service's output root."
+      "why": "appActionServiceTracksSessionArtifactRootWithoutFallback requires a new session and a renamed session to retarget the existing service to a fresh private staging directory."
+    },
+    {
+      "id": "staged-artifact-reparse-refusal-disabled",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "        if (info.isSymLink() || sak::pathReparseUnsafe(path)) {",
+      "replace": "        if ((info.isSymLink() || sak::pathReparseUnsafe(path)) && path.isEmpty()) {",
+      "expect": "killed",
+      "why": "appActionArtifactImportRejectsStagedJunction plants a junction in private app-action staging and requires publication to fail before any redirected tree is copied into managed artifacts."
+    },
+    {
+      "id": "staging-cleanup-follows-reparse-target",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "    if (redirected) {",
+      "replace": "    if (redirected && path.isEmpty()) {",
+      "expect": "killed",
+      "why": "appActionArtifactImportRejectsStagedJunction also requires cleanup to remove the junction itself without descending into and deleting the outside target."
     }
   ]
 }

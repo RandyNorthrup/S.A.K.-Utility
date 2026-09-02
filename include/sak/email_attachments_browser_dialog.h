@@ -25,6 +25,7 @@ class QPushButton;
 class QTableWidget;
 class QTimer;
 class QVBoxLayout;
+class EmailAttachmentsBrowserDialogTests;
 
 namespace sak::ui {
 class ViewEmptyState;
@@ -49,6 +50,7 @@ struct AttachmentEntry {
 ///        them in a searchable, filterable table with export capability.
 class EmailAttachmentsBrowserDialog : public QDialog {
     Q_OBJECT
+    friend class ::EmailAttachmentsBrowserDialogTests;
 
 public:
     explicit EmailAttachmentsBrowserDialog(::EmailInspectorController* controller,
@@ -70,7 +72,9 @@ private Q_SLOTS:
     void onSelectionChanged();
     void onTableContextMenu(const QPoint& pos);
     void onFolderItemsLoaded(uint64_t folder_id, QVector<sak::PstItemSummary> items, int total);
+    void onFolderItemsFailed(uint64_t folder_id, int offset, const QString& error);
     void onItemDetailLoaded(sak::PstItemDetail detail);
+    void onItemDetailFailed(uint64_t item_id, const QString& error);
     void onAttachmentContentReady(uint64_t message_id,
                                   int index,
                                   const QByteArray& content,
@@ -101,6 +105,7 @@ private:
     /// Both save buttons stay locked while a batch is running, so a second batch
     /// cannot interleave its arrivals with the first one's.
     void updateSaveControls();
+    void surfaceError(const QString& context, const QString& message);
     [[nodiscard]] static QString formatBytes(qint64 bytes);
     [[nodiscard]] static QString typeCategory(const QString& mime_type, const QString& filename);
 

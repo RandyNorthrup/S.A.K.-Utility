@@ -36,9 +36,9 @@ void Bzip2Decompressor::setInputFromBuffer(size_t bytes) {
     m_bzstream.avail_in = static_cast<unsigned int>(bytes);
 }
 
-void Bzip2Decompressor::setOutput(char* data, size_t maxSize) {
+void Bzip2Decompressor::setOutput(char* data, size_t max_size) {
     m_bzstream.next_out = data;
-    m_bzstream.avail_out = static_cast<unsigned int>(maxSize);
+    m_bzstream.avail_out = static_cast<unsigned int>(max_size);
 }
 
 size_t Bzip2Decompressor::outputRemaining() const {

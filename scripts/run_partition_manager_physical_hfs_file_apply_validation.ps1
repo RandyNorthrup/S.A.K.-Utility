@@ -29,6 +29,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "partition_manager_storage.ps1")
 $LargeDiskGuardBytes = 64GB
 $CopyBufferBytes = 4MB
 $StaleSignatureClearBytes = 16MB
@@ -184,7 +185,9 @@ function Get-Sha256HexFromBytes {
 
 function New-SparseImageFile {
     param([string]$Path, [uint64]$SizeBytes)
-    Remove-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if (Test-Path -LiteralPath $Path) {
+        Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+    }
     New-Item -ItemType File -Path $Path -Force | Out-Null
     $sparseOutput = & $FsutilPath sparse setflag $Path 2>&1
     if ($LASTEXITCODE -ne 0) {
@@ -497,8 +500,8 @@ function Get-DiskSnapshot {
     param([int]$Number)
     $disk = Get-Disk -Number $Number -ErrorAction Stop
     $partitions = @()
-    foreach ($partition in @(Get-Partition -DiskNumber $Number -ErrorAction SilentlyContinue | Sort-Object Offset)) {
-        $volume = $partition | Get-Volume -ErrorAction SilentlyContinue
+    foreach ($partition in @(Get-SakDiskPartitions -DiskNumber $Number | Sort-Object Offset)) {
+        $volume = Get-SakPartitionVolume -Partition $partition
         $partitions += [pscustomobject]@{
             partition_number = [int]$partition.PartitionNumber
             drive_letter = if ($partition.DriveLetter) { [string]$partition.DriveLetter } else { "" }
@@ -815,7 +818,7 @@ try {
     $repair = Invoke-NativeCommand -Name "fsck_hfs-staged-repair" -FilePath $fsck.path -Arguments @("-p", "-f", $stagedImagePath) -AcceptedExitCodes @(0, 8)
     $finalCheck = Invoke-NativeCommand -Name "fsck_hfs-staged-final-check" -FilePath $fsck.path -Arguments @("-n", "-f", $stagedImagePath) -AcceptedExitCodes @(0, 8)
     $copyBack = Copy-SparseImageToRawTarget -ImagePath $stagedImagePath -RawTarget $rawTarget -TargetSizeBytes $stagingSizeBytes
-    Remove-Item -LiteralPath $stagedImagePath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $stagedImagePath -Force -ErrorAction Stop
 
     $finalReadBack = Invoke-NativeCommand -Name "verify-hfs-file-apply-raw-readback" -FilePath $certifier -Arguments @(
         "--input", $rawTarget,
@@ -1001,7 +1004,7 @@ try {
     $phase2StagedRepair = Invoke-NativeCommand -Name "phase2-fsck-staged-repair" -FilePath $fsck.path -Arguments @("-p", "-f", $phase2StagedPath)
     $phase2StagedCheck = Invoke-NativeCommand -Name "phase2-fsck-staged-final" -FilePath $fsck.path -Arguments @("-n", "-f", $phase2StagedPath)
     $null = Copy-SparseImageToRawTarget -ImagePath $phase2StagedPath -RawTarget $rawTarget -TargetSizeBytes ([uint64]$phase2Geometry.size)
-    Remove-Item -LiteralPath $phase2StagedPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $phase2StagedPath -Force -ErrorAction Stop
 
     # Depth-2 staged mutation on the now-split raw volume: create, attribute
     # create, and delete against the two-level catalog with fsck_hfs proof.
@@ -1075,7 +1078,7 @@ try {
     $phase3Repair = Invoke-NativeCommand -Name "phase3-fsck-staged-repair" -FilePath $fsck.path -Arguments @("-p", "-f", $phase3StagedPath)
     $phase3Check = Invoke-NativeCommand -Name "phase3-fsck-staged-final" -FilePath $fsck.path -Arguments @("-n", "-f", $phase3StagedPath)
     $null = Copy-SparseImageToRawTarget -ImagePath $phase3StagedPath -RawTarget $rawTarget -TargetSizeBytes ([uint64]$phase2Geometry.size)
-    Remove-Item -LiteralPath $phase3StagedPath -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $phase3StagedPath -Force -ErrorAction Stop
 
     $phase2FinalPath = Join-Path $runRoot "phase2-raw-final-readback.json"
     $null = Invoke-NativeCommand -Name "phase2-verify-raw-final" -FilePath $certifier -Arguments @(

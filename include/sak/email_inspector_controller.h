@@ -21,9 +21,11 @@ class EmailSearchWorker;
 class EmailExportWorker;
 class EmailProfileManager;
 class EmailReportGenerator;
+class EmailAttachmentsBrowserDialogTests;
 
 class EmailInspectorController : public QObject {
     Q_OBJECT
+    friend class EmailAttachmentsBrowserDialogTests;
 
 public:
     /// Controller state machine
@@ -141,7 +143,11 @@ Q_SIGNALS:
 
     // Navigation
     void folderItemsLoaded(uint64_t folder_id, QVector<sak::PstItemSummary> items, int total_count);
+    /// Terminal failure for the exact folder page requested by loadFolderItems.
+    void folderItemsFailed(uint64_t folder_id, int offset, QString error);
     void itemDetailLoaded(sak::PstItemDetail detail);
+    /// Terminal failure for the exact item requested by loadItemDetail.
+    void itemDetailFailed(uint64_t item_id, QString error);
     void itemPropertiesLoaded(uint64_t item_id, QVector<sak::MapiProperty> properties);
     void attachmentContentReady(uint64_t message_id, int index, QByteArray data, QString filename);
     /// Emitted when a specific attachment's content could NOT be produced (extract
@@ -195,7 +201,16 @@ private:
     void connectSearchSignals();
     void connectExportSignals();
     void connectProfileSignals();
+    void handleParserError(const QString& error);
     State m_state = State::Idle;
+
+    // Identity of the one in-flight navigation request. Parser errorOccurred carries
+    // no request identity, so the controller restores it before forwarding a failure.
+    bool m_folder_request_pending{false};
+    uint64_t m_pending_folder_id{0};
+    int m_pending_folder_offset{0};
+    bool m_detail_request_pending{false};
+    uint64_t m_pending_detail_id{0};
 
     // File type tracking
     enum class FileType {

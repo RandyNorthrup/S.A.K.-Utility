@@ -162,8 +162,14 @@ function Resolve-GuestPasswordFile {
     # take: a broadly readable password file left on disk is worse than no cached file at all.
     & icacls.exe $cachedPasswordFile /inheritance:r /grant:r "$env:USERNAME`:F" /grant:r "SYSTEM:F" | Out-Null
     if ($LASTEXITCODE -ne 0) {
-        Remove-Item -LiteralPath $cachedPasswordFile -Force -ErrorAction SilentlyContinue
-        throw "Failed to restrict ACLs on cached password file '${cachedPasswordFile}'; refusing to leave an unprotected plaintext secret on disk."
+        $aclExitCode = $LASTEXITCODE
+        try {
+            Remove-Item -LiteralPath $cachedPasswordFile -Force -ErrorAction Stop
+        }
+        catch {
+            throw "Failed to restrict ACLs on cached password file '${cachedPasswordFile}' (icacls exit $aclExitCode), and cleanup also failed: $($_.Exception.Message)"
+        }
+        throw "Failed to restrict ACLs on cached password file '${cachedPasswordFile}' (icacls exit $aclExitCode); the unprotected plaintext file was removed."
     }
     return (Resolve-Path -LiteralPath $cachedPasswordFile).Path
 }

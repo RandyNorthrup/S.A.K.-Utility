@@ -51,6 +51,7 @@ class QSplitter;
 class QTextBrowser;
 class QThread;
 class QTimer;
+class QTemporaryDir;
 class QUrl;
 class QVBoxLayout;
 
@@ -504,10 +505,10 @@ private:
     // Validate a download request and resolve where the file will be written, returning an
     // empty path with *error_message set to why it cannot proceed. The artifact path is
     // resolved on the GUI thread because download_file itself runs on a worker thread.
-    [[nodiscard]] QString resolveDownloadDestination(const QUrl& url,
-                                                     const QString& url_string,
-                                                     const QString& filename,
-                                                     QString* error_message);
+    [[nodiscard]] QString resolveDownloadFileName(const QUrl& url,
+                                                  const QString& url_string,
+                                                  const QString& filename,
+                                                  QString* error_message);
     [[nodiscard]] QJsonObject runDownloadTool(const QString& url_string, const QString& filename);
     [[nodiscard]] QJsonObject runWorkflowPowerShellTool(const QJsonObject& args,
                                                         const QString& command_preview);
@@ -533,6 +534,10 @@ private:
     [[nodiscard]] QJsonObject runAppActionTool(const QJsonObject& args);
     [[nodiscard]] QJsonObject runAppActionRun(const QString& action_id,
                                               const QJsonObject& action_args);
+    [[nodiscard]] AppActionResult invokeAppActionWithStaging(const QString& action_id,
+                                                             const QJsonObject& action_args,
+                                                             QString* error_message);
+    void cleanupAppActionStaging(AppActionResult* run, QString* error_message);
     // Access-mode gate for a mutating/destructive/admin app action: returns an error
     // object to abort (blocked/declined), or std::nullopt to proceed. Read-only
     // actions and non-execution sessions are handled by the caller/policy. @p detail
@@ -584,6 +589,13 @@ private:
     [[nodiscard]] QString offlineOutputDirectory(const QString& operation,
                                                  const QJsonObject& args,
                                                  QString* error_message) const;
+    void publishManagedOfflineArtifacts(bool managed_output,
+                                        const QString& worker_output_dir,
+                                        const QString& output_dir,
+                                        OfflineToolRunResult* run_result) const;
+    static void cleanupManagedOfflineStaging(bool managed_output,
+                                             const QString& worker_output_dir,
+                                             OfflineToolRunResult* run_result);
     [[nodiscard]] bool authorizeOfflineOperation(const QString& operation, const QJsonObject& args);
     [[nodiscard]] OfflineToolRunResult executeOfflineOperation(
         const QString& operation,
@@ -986,6 +998,7 @@ private:
     // service owns the app-scoped QuickActionController that backs the seeded actions.
     AppActionRegistry m_appActionRegistry;
     std::unique_ptr<AppActionService> m_appActionService;
+    std::unique_ptr<QTemporaryDir> m_appActionStagingDir;
     // Test seam: when set, delegate_subagent uses this instead of the real OpenAI
     // model client factory, so the tool can be certified deterministically offline.
     ai::AiModelClientFactory m_delegateSubagentModelFactoryOverride;

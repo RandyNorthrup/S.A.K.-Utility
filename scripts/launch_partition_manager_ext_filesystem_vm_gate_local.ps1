@@ -95,10 +95,15 @@ $sharedRunner = Join-Path $SharedRoot "scripts\run_partition_manager_ext_filesys
 if (-not (Test-Path -LiteralPath $sharedRunner -PathType Leaf)) {
     throw "Ext filesystem VM gate runner not found: $sharedRunner"
 }
+$sharedStorageHelper = Join-Path $SharedRoot "scripts\partition_manager_storage.ps1"
+if (-not (Test-Path -LiteralPath $sharedStorageHelper -PathType Leaf)) {
+    throw "Partition Manager storage helper not found: $sharedStorageHelper"
+}
 
 $sharedEvidenceRoot = Join-Path $SharedRoot "artifacts\partition-manager-certification\vm-lab\external-evidence\external.ext-filesystem-write"
 $sharedReport = Join-Path $sharedEvidenceRoot "report.json"
 $localRunner = Join-Path $StageRoot "run_partition_manager_ext_filesystem_vm_gate.ps1"
+$localStorageHelper = Join-Path $StageRoot "partition_manager_storage.ps1"
 $localProjectRoot = Join-Path $StageRoot "repo"
 $localEvidenceRoot = Join-Path $StageRoot "external.ext-filesystem-write"
 $localReport = Join-Path $localEvidenceRoot "report.json"
@@ -110,7 +115,8 @@ New-Item -ItemType Directory -Path $localEvidenceRoot -Force | Out-Null
 New-Item -ItemType Directory -Path $sharedEvidenceRoot -Force | Out-Null
 Write-Host "Stage directories ready."
 Copy-Item -LiteralPath $sharedRunner -Destination $localRunner -Force
-Write-Host "Runner staged."
+Copy-Item -LiteralPath $sharedStorageHelper -Destination $localStorageHelper -Force
+Write-Host "Runner and storage helper staged."
 $localFilesystemTools = Join-Path $localProjectRoot "tools\filesystem"
 New-Item -ItemType Directory -Path $localFilesystemTools -Force | Out-Null
 Copy-Item `
