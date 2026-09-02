@@ -55,6 +55,7 @@ private Q_SLOTS:
     void defaultState();
     void openNonExistentFile();
     void openEmptyFile();
+    void openRejectsUnterminatedSeparator();
     void openAndClose();
     void doubleCloseIsHarmless();
     void cancelDoesNotCrash();
@@ -69,6 +70,9 @@ private Q_SLOTS:
     void loadMessageDetailFromValidFile();
     void readMessagesSync();
     void readMessageDetailSync();
+    void indexRejectsBackingFileChange();
+    void readRejectsChangedSeparator();
+    void readRejectsShortPayload();
     void nestedMultipartRecoversBodyAndAttachment();
     void deepNestedMultipartFailsClosed();  // R5-G10-9
     void readAttachmentDataAlignsWithRecursiveEnumeration();
@@ -94,6 +98,7 @@ private Q_SLOTS:
     void summaryAttachmentHeuristicBroadened();
     void quotedFilenameWithSpacesPreserved();
     void malformedBase64AttachmentFailsClosed();
+    void unknownCharsetFailsClosed();
     void fromPrefixedBodyLineIsNotASeparator();
     void multipartWithManyPartsSplitsCorrectly();
 
@@ -147,6 +152,24 @@ void TestMboxParser::openEmptyFile() {
              QStringLiteral("Not a valid MBOX file (missing 'From ' header): ") +
                  temp_file.fileName());
     QCOMPARE(parser.messageCount(), 0);
+}
+
+void TestMboxParser::openRejectsUnterminatedSeparator() {
+    QTemporaryFile temp_file;
+    QVERIFY(temp_file.open());
+    const QByteArray content = "From sender@example.com Mon Jan  1 00:00:00 2024";
+    QCOMPARE(temp_file.write(content), content.size());
+    temp_file.close();
+
+    MboxParser parser;
+    QSignalSpy error_spy(&parser, &MboxParser::errorOccurred);
+    parser.open(temp_file.fileName());
+
+    QVERIFY(!parser.isOpen());
+    QCOMPARE(error_spy.count(), 1);
+    QCOMPARE(error_spy.first().at(0).toString(),
+             QStringLiteral("Not a valid MBOX file (missing 'From ' header): ") +
+                 temp_file.fileName());
 }
 
 void TestMboxParser::openAndClose() {
@@ -408,6 +431,77 @@ void TestMboxParser::readMessageDetailSync() {
     // Byte-exact: including the header block, or running the slice past the intended end,
     // still contains the sentence.
     QCOMPARE(result->body_plain, QStringLiteral("Body of the second email message.\r\n"));
+    parser.close();
+    delete temp_file;
+}
+
+void TestMboxParser::indexRejectsBackingFileChange() {
+    auto* temp_file = createSampleMboxFile();
+    QVERIFY(temp_file);
+
+    MboxParser parser;
+    parser.open(temp_file->fileName());
+    QVERIFY(parser.isOpen());
+
+    QFile mutator(temp_file->fileName());
+    QVERIFY(mutator.open(QIODevice::ReadWrite));
+    QCOMPARE(mutator.write("X", 1), Q_INT64_C(1));
+    mutator.close();
+
+    const auto messages = parser.readMessages(0, 1);
+    QVERIFY(!messages.has_value());
+    QCOMPARE(messages.error(), sak::error_code::read_error);
+
+    parser.close();
+    delete temp_file;
+}
+
+void TestMboxParser::readRejectsChangedSeparator() {
+    auto* temp_file = createSampleMboxFile();
+    QVERIFY(temp_file);
+
+    MboxParser parser;
+    parser.open(temp_file->fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+    QCOMPARE(parser.messageCount(), 2);
+
+    QFile mutator(temp_file->fileName());
+    QVERIFY(mutator.open(QIODevice::ReadWrite));
+    QCOMPARE(mutator.write("X", 1), Q_INT64_C(1));
+    mutator.close();
+
+    const auto detail = parser.readMessageDetail(0);
+    QVERIFY(!detail.has_value());
+    QCOMPARE(detail.error(), sak::error_code::read_error);
+
+    const auto messages = parser.readMessages(0, 1);
+    QVERIFY(!messages.has_value());
+    QCOMPARE(messages.error(), sak::error_code::read_error);
+
+    parser.close();
+    delete temp_file;
+}
+
+void TestMboxParser::readRejectsShortPayload() {
+    auto* temp_file = createSampleMboxFile();
+    QVERIFY(temp_file);
+
+    MboxParser parser;
+    parser.open(temp_file->fileName());
+    QVERIFY(parser.isOpen());
+    parser.indexMessages();
+    QCOMPARE(parser.messageCount(), 2);
+
+    QFile mutator(temp_file->fileName());
+    QVERIFY(mutator.open(QIODevice::ReadWrite));
+    QVERIFY(mutator.resize(100));
+    mutator.close();
+
+    const auto detail = parser.readMessageDetail(0);
+    QVERIFY(!detail.has_value());
+    QCOMPARE(detail.error(), sak::error_code::read_error);
+
     parser.close();
     delete temp_file;
 }
@@ -1024,6 +1118,26 @@ void TestMboxParser::malformedBase64AttachmentFailsClosed() {
         QVERIFY(!all.has_value());
         QCOMPARE(all.error(), sak::error_code::mbox_message_parse_error);
     }
+    parser.close();
+}
+
+void TestMboxParser::unknownCharsetFailsClosed() {
+    QByteArray content;
+    content += "From a@e.com Mon Jan  1 00:00:00 2024\r\n";
+    content += "Subject: unknown charset\r\n";
+    content += "Content-Type: text/plain; charset=x-sak-unknown\r\n\r\n";
+    content += "plain bytes\r\n";
+    QTemporaryFile file;
+    QVERIFY(file.open());
+    QCOMPARE(file.write(content), content.size());
+    file.close();
+
+    MboxParser parser;
+    parser.open(file.fileName());
+    QVERIFY(parser.isOpen());
+    const auto detail = parser.readMessageDetail(0);
+    QVERIFY(!detail.has_value());
+    QCOMPARE(detail.error(), sak::error_code::mbox_message_parse_error);
     parser.close();
 }
 

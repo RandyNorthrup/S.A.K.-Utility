@@ -23,10 +23,58 @@
     {
       "id": "raw-message-end-offset-drops-next-index",
       "file": "src/core/mbox_parser.cpp",
-      "find": "        end_offset = m_message_offsets[message_index + 1];",
-      "replace": "        end_offset = m_message_offsets[message_index];",
+      "find": "        end_offset = offsets[message_index + 1];",
+      "replace": "        end_offset = offsets[message_index];",
       "expect": "killed",
-      "why": "A message's raw slice runs from its own offset to the NEXT message's offset. Dropping the +1 makes end==start for every non-last message, so message_size<=0 -> read_error and message 0 is skipped, leaving only the last message. readMessagesSync asserts QCOMPARE(result->size(), 2) and result->at(0).subject == \"Hello World\"."
+      "why": "A message's raw slice runs from its own offset to the NEXT message's offset. Dropping the +1 makes end==start for every non-last message, so message_size<=0 -> read_error and readMessagesSync loses its required two-message success result."
+    },
+    {
+      "id": "complete-from-line-drops-terminator-requirement",
+      "file": "src/core/mbox_parser.cpp",
+      "find": "    return line.endsWith('\\n') && isFromLine(line);",
+      "replace": "    return isFromLine(line);",
+      "expect": "killed",
+      "why": "An MBOX separator must be a complete line. Dropping the newline requirement accepts a separator-shaped prefix cut off at EOF; openRejectsUnterminatedSeparator writes exactly that truncated input and requires open() to fail closed."
+    },
+    {
+      "id": "indexed-separator-revalidation-disabled",
+      "file": "src/core/mbox_parser.cpp",
+      "find": "    if (m_file.error() != QFileDevice::NoError || !isCompleteFromLine(from_line)) {",
+      "replace": "    if (m_file.error() != QFileDevice::NoError && !isCompleteFromLine(from_line)) {",
+      "expect": "killed",
+      "why": "An indexed byte offset is stale after the file changes. Weakening OR to AND accepts a now-invalid separator whenever the underlying read itself succeeds; readRejectsChangedSeparator mutates the first separator after indexing and requires read_error."
+    },
+    {
+      "id": "raw-message-short-read-accepted",
+      "file": "src/core/mbox_parser.cpp",
+      "find": "    if (file->error() != QFileDevice::NoError || static_cast<qint64>(data.size()) != remaining) {",
+      "replace": "    if (file->error() != QFileDevice::NoError || data.isEmpty()) {",
+      "expect": "killed",
+      "why": "A non-empty read can still be shorter than the indexed message extent after truncation. readRejectsShortPayload truncates the backing file after indexing and requires read_error instead of parsing partial bytes."
+    },
+    {
+      "id": "unreadable-summary-message-skipped",
+      "file": "src/core/mbox_parser.cpp",
+      "find": "            return std::unexpected(raw.error());",
+      "replace": "            continue;",
+      "expect": "killed",
+      "why": "Skipping one unreadable indexed message returns a partial list while messageCount() still advertises it. readRejectsChangedSeparator requests that entry through readMessages and requires the read_error to propagate."
+    },
+    {
+      "id": "index-allows-first-separator-to-move",
+      "file": "src/core/mbox_parser.cpp",
+      "find": "    if (offsets.isEmpty() || offsets.first() != 0) {",
+      "replace": "    if (offsets.isEmpty()) {",
+      "expect": "killed",
+      "why": "open() validates a separator at byte zero. If that separator changes before indexing, accepting a later separator silently turns message two into message one. indexRejectsBackingFileChange mutates byte zero before the first read and requires read_error."
+    },
+    {
+      "id": "unknown-charset-failure-flag-disabled",
+      "file": "src/core/mbox_parser.cpp",
+      "find": "    m_mime_decode_failed = !decoder.isValid();",
+      "replace": "    m_mime_decode_failed = decoder.isValid();",
+      "expect": "killed",
+      "why": "An unknown declared charset must fail the message parse instead of coercing arbitrary bytes through UTF-8. unknownCharsetFailsClosed supplies an unregistered charset and requires mbox_message_parse_error."
     },
     {
       "id": "toplevel-multipart-branch-inverted",

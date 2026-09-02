@@ -145,7 +145,7 @@ private:
     [[nodiscard]] std::optional<sak::error_code> mimeParseFailure() const;
 
     /// Scan file for all "From " line boundaries
-    void buildMessageIndex();
+    [[nodiscard]] std::expected<void, sak::error_code> buildMessageIndex();
 
     /// Read raw message bytes for a given index
     [[nodiscard]] std::expected<QByteArray, sak::error_code> readRawMessage(int message_index);
@@ -204,4 +204,7 @@ private:
 
     /// Check if a line is an MBOX "From " separator
     [[nodiscard]] static bool isFromLine(const QByteArray& line);
+
+    /// Check that a separator has both a valid shape and a complete line terminator.
+    [[nodiscard]] static bool isCompleteFromLine(const QByteArray& line);
 };

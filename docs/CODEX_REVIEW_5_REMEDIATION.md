@@ -1169,13 +1169,37 @@ a parked design, per the bucket convention. Open work is what remains after thos
   WAVE 11 FINAL GATE: changed-file hooks and full coverage build passed; 17 affected instrumented
   tests passed, followed by the corrected provider target in both coverage and normal trees.
   Release build exit 0; full CTest 267/267, zero failures, 719.17 seconds.
+  WINDOWS PRODUCT BOUNDARY CORRECTION, 2026-09-01: the application contract is Windows 10/11
+  x64. The macOS rig validates APFS/HFS output; it is not an application-support target. The
+  earlier classification of six `Q_UNUSED` families as cross-platform implementation gaps was
+  wrong. Portable APFS crypto, POSIX cleanup deletion, POSIX raw-device identity, and POSIX
+  process-tree termination are unsupported-OS branches to REMOVE as dead/legacy code, not
+  features to implement. An uncommitted portability attempt was discarded in full before this
+  batch proceeded. Strict MBOX separator/read validation and Windows indexed-icon extraction are
+  the two real supported-path gaps from that list.
+  MBOX GAP CLOSED: open() now requires a complete newline-terminated separator; each indexed
+  read revalidates that separator, rejects short payload reads, and propagates the exact read
+  failure instead of returning a partial summary list. The ignored separator `Q_UNUSED` is gone.
+  Five new regression cases each failed against the old code, and the expanded MBOX catalog
+  killed 17/17 mutants, including separator completion/revalidation, short-read, partial-list,
+  changed-before-index, and unknown-charset regressions. Index construction now also propagates
+  seek/read/cancel failure without publishing partial offsets or marking the partial result
+  indexed. Unknown charsets no longer fall back to UTF-8, and an impossible attachment-name/data
+  count divergence now fails the parse instead of manufacturing empty attachment bytes. The
+  complexity gate exposed three functions over its limit; index reading/ranges/progress, exact
+  reads, and attachment alignment are now small fail-closed seams, with zero suppression added.
+  MBOX/WINDOWS-BOUNDARY WAVE 12 FINAL GATE: all changed-file hooks passed, including cppcheck,
+  dead-code, mutation-catalog integrity, staged gitleaks, documentation/certification checks, and
+  ASCII. Release build exit 0; full CTest 267/267, zero failures, 829.24 seconds.
+  Windows indexed-icon extraction remains INCOMPLETE. Unsupported-platform branch removal also
+  remains INCOMPLETE and must reduce code, not add portability implementations.
   OWNER RULE NOW RECORDED IN `AGENTS.md`: fix code, test, tool, or gate first; suppression is the
   last resort only after no direct fix is possible and the exact reason is proven. Existing
   suppressions are re-audited, not inherited as permanent policy. Current batch: all pre-commit
   hooks passed; Release build exit 0; full CTest 265/265, zero failures, 804.48 seconds.
   STILL OPEN: core's 5,271 naming findings; the 294-item `useStlAlgorithm` program;
-  the two remaining coverage compiler suppressions; six implementation gaps currently masked by
-  `Q_UNUSED`; directly
+  the two remaining coverage compiler suppressions; Windows indexed-icon extraction; removal of
+  unsupported-platform dead branches currently carrying `Q_UNUSED`; directly
   closable fixture/resource skips; and the historical VM credential rotation/history-rewrite
   decision.
   DIRECT-FIX WAVE 1 FINAL GATE: all changed-file pre-commit hooks passed; Release build exit 0;
