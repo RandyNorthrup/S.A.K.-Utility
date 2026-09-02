@@ -1,0 +1,48 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_ai_tool_loop_detector",
+  "ctest_regex": "^test_ai_tool_loop_detector$",
+  "mutants": [
+    {
+      "id": "overlong-tool-name-admitted",
+      "file": "src/ai/ai_tool_loop_detector.cpp",
+      "find": "    if (name.isEmpty() || name.size() > kMaxToolNameChars) {",
+      "replace": "    if (name.isEmpty() || (name.size() > kMaxToolNameChars && tool_name.isEmpty())) {",
+      "expect": "killed",
+      "why": "overlongToolNameRejected requires a 257-character model-supplied tool name to consume no signature or worst-summary state."
+    },
+    {
+      "id": "oversize-digest-downgraded-to-md5",
+      "file": "src/ai/ai_tool_loop_detector.cpp",
+      "find": "QCryptographicHash::hash(args.toUtf8(), QCryptographicHash::Sha256).toHex();",
+      "replace": "QCryptographicHash::hash(args.toUtf8(), QCryptographicHash::Md5).toHex();",
+      "expect": "killed",
+      "why": "oversizedSignatureUsesSha256Digest independently computes and requires the full SHA-256 hex digest."
+    },
+    {
+      "id": "signature-length-prefix-removed",
+      "file": "src/ai/ai_tool_loop_detector.cpp",
+      "find": "    return QStringLiteral(\"%1:%2%3\").arg(name.size()).arg(name, args);",
+      "replace": "    return name + QChar(0x1F) + args;",
+      "expect": "killed",
+      "why": "separatorCannotAliasDistinctCalls supplies the two different name/argument pairs that the old unit-separator concatenation encoded identically."
+    },
+    {
+      "id": "saturated-map-clears-repeat-progress",
+      "file": "src/ai/ai_tool_loop_detector.cpp",
+      "find": "        evictOneSignature();",
+      "replace": "        m_counts.clear();",
+      "expect": "killed",
+      "why": "saturationPreservesRepeatProgress drives one signature to 3/4, fills the 10000-key ceiling, adds one overflow key, then requires the repeat to trip on call four."
+    },
+    {
+      "id": "worst-arguments-retain-full-input",
+      "file": "src/ai/ai_tool_loop_detector.cpp",
+      "find": "        m_worst_args = arguments_json.trimmed().left(kArgsPreviewChars + 1);",
+      "replace": "        m_worst_args = arguments_json.trimmed();",
+      "expect": "killed",
+      "why": "oversizedArgumentsRetainBoundedPreview inspects the friend-visible retained field and requires exactly the bounded preview length."
+    }
+  ]
+}

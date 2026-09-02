@@ -1249,6 +1249,14 @@ a parked design, per the bucket convention. Open work is what remains after thos
   AI TOOL HEALTH LEDGER WAVE 16 FINAL GATE: all changed-file hooks passed; the review ledger is
   repinned to the hardened source blob. Release build exit 0; full CTest 267/267, zero failures,
   825.67 seconds.
+  AI TOOL LOOP DETECTOR BRIEF CLOSED: tool names are bounded; signatures use an unambiguous
+  length-prefix and SHA-256 for oversized arguments; retained worst-argument state is preview-
+  bounded; counters saturate; and saturation evicts a singleton instead of clearing repeat
+  progress. Three regression tests failed against the old implementation. The suite also pins
+  SHA-256 content and the retained-memory bound, and the new mutation catalog kills 5/5 mutants.
+  AI TOOL LOOP DETECTOR WAVE 17 FINAL GATE: all changed-file hooks passed; the review ledger is
+  repinned to the hardened source blob. Release build exit 0; full CTest 267/267, zero failures,
+  722.32 seconds.
   Unsupported-platform branch removal remains INCOMPLETE and must reduce code, not add portability
   implementations.
   OWNER RULE NOW RECORDED IN `AGENTS.md`: fix code, test, tool, or gate first; suppression is the

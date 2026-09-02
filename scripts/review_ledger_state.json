@@ -2384,8 +2384,11 @@
       "status": "reviewed"
     },
     "src/ai/ai_tool_loop_detector.cpp": {
+      "brief": "docs/review_briefs/src_ai_ai_tool_loop_detector.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "59c71da09af96796c1d68190db1c0d8bdcfd5ea4",
+      "status": "reviewed"
     },
     "src/ai/ai_tool_policy.cpp": {
       "evidence": "cited",
