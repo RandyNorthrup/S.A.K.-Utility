@@ -838,9 +838,10 @@ void OpenAIResponsesClientTests::realModelSmokeTest_optIn() {
     if (api_key.isEmpty()) {
         QString credential_error;
         api_key = sak::ai::CredentialStore().loadApiKey(&credential_error).trimmed();
-        if (api_key.isEmpty()) {
-            QSKIP("No OpenAI API key found in environment or encrypted app storage.");
-        }
+        QVERIFY2(!api_key.isEmpty(),
+                 qPrintable(QStringLiteral("Live OpenAI test was explicitly requested, but no API "
+                                           "key was found: %1")
+                                .arg(credential_error)));
     }
     QVERIFY2(sak::ai::OpenAIResponsesClient::hasUsableApiKey(api_key),
              "OpenAI API key is present but not usable.");
@@ -875,9 +876,10 @@ void OpenAIResponsesClientTests::realInputTokenCountSmokeTest_optIn() {
     if (api_key.isEmpty()) {
         QString credential_error;
         api_key = sak::ai::CredentialStore().loadApiKey(&credential_error).trimmed();
-        if (api_key.isEmpty()) {
-            QSKIP("No OpenAI API key found in environment or encrypted app storage.");
-        }
+        QVERIFY2(!api_key.isEmpty(),
+                 qPrintable(QStringLiteral("Live OpenAI test was explicitly requested, but no API "
+                                           "key was found: %1")
+                                .arg(credential_error)));
     }
     QVERIFY2(sak::ai::OpenAIResponsesClient::hasUsableApiKey(api_key),
              "OpenAI API key is present but not usable.");
@@ -910,9 +912,10 @@ void OpenAIResponsesClientTests::realModelToolLoopSmokeTest_optIn() {
     if (api_key.isEmpty()) {
         QString credential_error;
         api_key = sak::ai::CredentialStore().loadApiKey(&credential_error).trimmed();
-        if (api_key.isEmpty()) {
-            QSKIP("No OpenAI API key found in environment or encrypted app storage.");
-        }
+        QVERIFY2(!api_key.isEmpty(),
+                 qPrintable(QStringLiteral("Live OpenAI test was explicitly requested, but no API "
+                                           "key was found: %1")
+                                .arg(credential_error)));
     }
     QVERIFY2(sak::ai::OpenAIResponsesClient::hasUsableApiKey(api_key),
              "OpenAI API key is present but not usable.");

@@ -44,8 +44,8 @@ struct SearchMatch {
     QString line_content;        ///< Content of the matching line
     int match_start = 0;         ///< Character offset of match start within line
     int match_end = 0;           ///< Character offset of match end within line
-    QStringList context_before;  ///< Lines before the match (0-10)
-    QStringList context_after;   ///< Lines after the match (0-10)
+    QStringList context_before;  ///< Lines before the match, bounded by the clamped configuration
+    QStringList context_after;   ///< Lines after the match, bounded by the clamped configuration
 };
 
 // -- SearchConfig ------------------------------------------------------------
@@ -66,11 +66,12 @@ struct SearchConfig {
     bool search_in_archives = false;     ///< Search inside ZIP/EPUB
     bool hex_search = false;             ///< Binary/hex search mode
     /// Skip reparse-point (symlink/junction) entries during the local directory walk. Defaults to
-    /// false (GUI behavior). A headless/injectable caller sets this true: it adds QDir::NoSymLinks
-    /// to the QDirIterator filter, which excludes an entry via a non-following isSymLink() check
-    /// BEFORE isFile()/open() resolve the target -- so a planted symlink to a UNC share is never
-    /// opened (its first following stat would leak the credential hash via SMB/NTLM).
-    bool skip_symlinks = false;
+    /// true by default for every caller: it adds QDir::NoSymLinks to the QDirIterator filter,
+    /// which excludes an entry via a non-following isSymLink() check BEFORE isFile()/open()
+    /// resolve the target -- so a planted symlink to a UNC share is never opened (its first
+    /// following stat would leak the credential hash via SMB/NTLM). A caller with a verified
+    /// requirement to follow file links must opt out explicitly.
+    bool skip_symlinks = true;
 
     // Filtering
     QStringList file_extensions;      ///< Empty = all files

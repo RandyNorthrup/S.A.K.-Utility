@@ -391,7 +391,8 @@ a parked design, per the bucket convention. Open work is what remains after thos
   already name one owner: PARTITION_MANAGER_CERTIFICATION.md:589 and CHANGELOG.md:18 both say
   their in-development "remains blocked" text was accurate when written and both name
   `docs/archive/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md` as the single capability-matrix owner.
-  What was NOT annotated, and what this pass fixes, is `docs/PRODUCTION_GRADE_AUDIT.md`. Its
+  What was NOT annotated, and what this pass fixes, is
+  `docs/archive/PRODUCTION_GRADE_AUDIT.md`. Its
   row 57 asserted that "B-tree split/rebalance ... compressed-file writes, and recursive
   extents-overflow-file overflow remain blocked" -- flatly contradicting the H1-H8 record --
   and its row 58 asserted APFS resize and non-generated writes were blocked, which predates
@@ -1376,6 +1377,12 @@ a parked design, per the bucket convention. Open work is what remains after thos
   current-user, AppData and Windows shortcut fixtures replace host-dependent skips. The static
   inventory is now 62 sites across 18 files. The fresh complete-suite runtime audit measures 5,085
   passed functions and 30 reviewed skips (0.59 percent), with zero stale or unreviewed entries.
+  LIVE-EXECUTION FALSE-GREEN WAVE 24: 15 post-start QSKIP sites are removed. Live Chocolatey and
+  Linux ISO checks now fail on service/network failure after their explicit opt-ins. All four live
+  families retain safe initial opt-outs, then fail on timeout, API error, empty result, or missing
+  credential. Static inventory falls to 49 sites across 18 files; no live dependency failure can
+  become a pass and default CTest stays independent of third-party services. The observed runtime
+  audit records 5,084 passed functions and 32 reviewed skips (0.63 percent), with no stale entries.
   Three permanent catalogs add 15 compile-valid, test-killed mutants over package-install busy
   state, user-profile restore selection and elevated-task dispatch. The ratchet now holds 49
   catalogs / 390 mutants (384 killed, six proven equivalent), with zero survivors. A second safe
@@ -1389,6 +1396,23 @@ a parked design, per the bucket convention. Open work is what remains after thos
   reviews. All changed-file hooks passed; the naming gate passed 151/151 non-core TUs clean and
   156/156 core TUs healthy; full clang-cl coverage build exit 0; Release build exit 0; full CTest
   268/268, zero failures, 724.64 seconds.
+  FAIL-CLOSED COVERAGE/LIVE/SEARCH/ARCHIVE WAVE 24: line and branch coverage runners now remove
+  stale evidence first, propagate child/test/tool failures, reject empty or missing XML/HTML/report
+  output, publish only after every stage succeeds, and confine cleanup to a strict non-reparse
+  BuildDir descendant. One hermetic harness is registered under PS7 and PS5.1; 18 independent
+  old-guard mutants went red. Fifteen post-start live-test skips now hard-fail after explicit
+  opt-in, while four safe initial interlocks keep default CTest independent of paid/third-party
+  services. Static QSKIP inventory is 49 sites across 18 files; the fresh runtime audit records
+  5,084 passed functions and 32 reviewed skips (0.63 percent), with no stale/unreviewed entry.
+  Advanced Search now refuses file links by default before a planted UNC target can resolve; the
+  exact default and production QDir filter path both have regression coverage. Two write-only
+  uninstall members are removed. Four headers and three coverage scripts gained blob-bound review
+  briefs. The superseded June production audit moved to docs/archive/ with every current gate
+  repointed to current certification/changelog owners. The live ledger now holds 1,062 units, 644
+  pending and 28 self-verifying driver reviews. All changed-file hooks passed; naming passed
+  151/151 non-core TUs clean and 156/156 core TUs healthy with 5,266 findings and 16 clean TUs;
+  full clang-cl coverage build exit 0; Release build exit 0; full CTest 270/270, zero failures,
+  742.15 seconds.
   SUPPRESSION RE-AUDIT REFRESH, 2026-09-01 through 2026-09-02: core naming remains broadly excluded
   while 5,266 findings are tracked as open and 16 clean TUs are ratcheted. The coverage compiler
   warning silences and unsupported-platform
@@ -1396,9 +1420,9 @@ a parked design, per the bucket convention. Open work is what remains after thos
   the first-party shim. The cppcheck test-scope and unreadable-
   diagnostic false greens are closed in Wave 19. Another 26
   `Q_UNUSED` and 22 `(void)` warning silences formerly in unsupported-OS branches are removed.
-  This refresh found 157 QSKIP call sites; Waves 21 and 23 reduced the live static inventory to 62
-  across 18 files while the observed baseline covers 30 reviewed functions. The latest audit
-  classifies 39 remaining sites as direct-fix candidates and 23 as genuinely external, privileged,
+  This refresh found 157 QSKIP call sites; Waves 21, 23 and 24 reduced the live static inventory to
+  49 across 18 files while the observed baseline covers 32 reviewed functions. The latest audit
+  classifies 24 remaining sites as direct-fix candidates and 25 as genuinely external, privileged,
   destructive, paid or live-service cases. Wave 22 reduced Partition Manager run/launch
   `SilentlyContinue` paths to zero and ratchets that state.
   The APFS follow-on document's stale cppcheck-suppression count is corrected. None of the
@@ -1530,6 +1554,10 @@ a parked design, per the bucket convention. Open work is what remains after thos
   `resources/ai/skills/*.md` and `resources/ai/instructions/reporting_standard.md`, loaded at
   runtime by `src/ai/ai_skill_store.cpp`, which are program data rather than documentation.
   Two references cited as gate-enforced turned out to be comments naming the file, not reads.
+  PROGRESS 2026-09-02: the superseded chronological `PRODUCTION_GRADE_AUDIT.md` moved from the
+  live docs bucket to `docs/archive/`. Current release/certification gates no longer consume it;
+  the commercial matrix now proves the same shipped claims against current certification and
+  changelog owners, and the Apple capability matrix keeps only its three current claim documents.
 
 ## CAMPAIGN STATUS (live -- updated 2026-08-17)
 
@@ -6688,6 +6716,11 @@ the elevation boundary, or the AI tool policy those tests actually execute.
     The tool measures LINE coverage only; branch coverage (needed for the 100% target) is a
     separate tool decision, noted in docs/COVERAGE_BASELINE.md. Widening the measured set from
     the core subsystems to the full 235-test suite is the remaining work under this item.
+  - HARDENED 2026-09-02: line and branch runners now delete stale outputs before execution,
+    propagate OpenCppCoverage, child CTest, llvm-profdata, and both llvm-cov failures, reject empty
+    reports, and remove partial evidence after any failure. Output must be a strict non-reparse
+    descendant of the selected build tree. Registered PS7/PS5.1 fake-tool tests prove every guard
+    and preserve the first-party coverage filters.
 - [x] R5-G14-16 Publish the coverage number per subsystem as the baseline
   - RESOLVED 2026-08-12 [DONE]: docs/COVERAGE_BASELINE.md records the first real numbers
     (measured 2026-08-12 over the parser + security core). Per subsystem: src\ai 88.89%,
@@ -9599,6 +9632,7 @@ So the suite itself must be audited for tests that pass regardless of the code.
     standing G18-4 evidence and advances, but does not complete, the all-first-party G10-12 goal.
 - [x] R5-G18-5 Ban environment-dependent assertions that can pass or fail by accident;
   - PROGRESS 2026-08-12: the three live-UUP-dump-API tests (testFetchBuilds / testGetFilesReturnsResults / testFileUrlsAreValid) that ran-or-skipped depending on live network reachability are now opt-in behind SAK_RUN_LIVE_UUP_TESTS (commit 3d9c88a), so the automated suite is network-deterministic and the skip baseline is stable. The skip-audit gate (G18-6) now enforces that no NEW environment-conditional skip can silently appear.
+  - HARDENED 2026-09-02: an explicit opt-in is now authoritative. UUP, paid OpenAI, Chocolatey bundle, and Linux ISO live tests keep one safe initial opt-out per family, but missing credentials, timeouts, API errors, empty results, and service failures after opt-in hard-fail instead of converting dependency failure into a passing QSKIP.
   - RESOLVED 2026-08-16 [DONE]: fixed the one named residual and swept the tree for the rest.
     test_active_connections_monitor::startStop_lifecycle asserted !connections.isEmpty()
     with the message "Running system should have active TCP/UDP connections" -- an assertion

@@ -219,7 +219,6 @@ private:
     // -- Leftover Section --
     QWidget* m_leftover_section{nullptr};
     QTableWidget* m_leftover_table{nullptr};
-    QLabel* m_leftover_header_label{nullptr};
     QLabel* m_leftover_count_label{nullptr};
     QPushButton* m_select_all_button{nullptr};
     QPushButton* m_select_safe_button{nullptr};

@@ -84,7 +84,6 @@ $uiPath = "src\gui\partition_manager_panel.cpp"
 $scriptBuilderPath = "src\core\partition_script_builder.cpp"
 $planPath = "docs\archive\PARTITION_MANAGER_PANEL_PLAN.md"
 $certificationPath = "docs\PARTITION_MANAGER_CERTIFICATION.md"
-$auditPath = "docs\PRODUCTION_GRADE_AUDIT.md"
 $readmePath = "README.md"
 $changelogPath = "CHANGELOG.md"
 $panelTestPath = "tests\unit\test_partition_manager_panel.cpp"
@@ -238,8 +237,10 @@ $gates = @(
         ids = @("external.hardware-wipe")
         evidence = @(
             @{ path = $scriptBuilderPath; patterns = @("Clear-Disk -Number %1 -RemoveData -RemoveOEM") },
-            @{ path = $auditPath; patterns = @("physical wipe proof is imported in the 18/18 external VM/hardware/lab evidence set") },
-            @{ path = $certificationPath; patterns = @("Non-system hardware wipe on disposable physical disk") }
+            @{ path = $certificationPath; patterns = @(
+                "Non-system hardware wipe on disposable physical disk",
+                "full 18/18 external evidence set now upgrades the strict handoff"
+            ) }
         )
     },
     @{
@@ -247,8 +248,13 @@ $gates = @(
         ids = @("external.allocate-free-space", "external.partition-move", "external.volume-serial-number", "external.dynamic-to-basic")
         evidence = @(
             @{ path = $readmePath; patterns = @("Move partition start", "volume serial-number") },
-            @{ path = $changelogPath; patterns = @("MovePartition", "direct queued UI paths") },
-            @{ path = $auditPath; patterns = @("MovePartition", "primary/logical conversion", "volume serial-number regeneration", "dynamic-to-basic conversion") }
+            @{ path = $changelogPath; patterns = @(
+                "MovePartition",
+                "primary/logical conversion",
+                "volume serial-number regeneration",
+                "dynamic-to-basic conversion",
+                "direct queued UI paths"
+            ) }
         )
     }
 )

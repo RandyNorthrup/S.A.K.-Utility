@@ -43,20 +43,6 @@ const QVector<QPair<QString, QString>> kOfficePcPackages = {
     {"everything", ""},
 };
 
-bool isTransientPackageServiceError(const QString& error) {
-    return error.contains(QStringLiteral("Nupkg download failed"), Qt::CaseInsensitive) &&
-           (error.contains(QStringLiteral("Error transferring"), Qt::CaseInsensitive) ||
-            error.contains(QStringLiteral("server replied"), Qt::CaseInsensitive) ||
-            error.contains(QStringLiteral("HTTP 503"), Qt::CaseInsensitive) ||
-            error.contains(QStringLiteral("HTTP 504"), Qt::CaseInsensitive));
-}
-
-bool allPackageFailuresAreTransient(const QHash<QString, QString>& package_errors) {
-    const QStringList errors = package_errors.values();
-    return !errors.isEmpty() &&
-           std::all_of(errors.cbegin(), errors.cend(), isTransientPackageServiceError);
-}
-
 }  // namespace
 
 // ============================================================================
@@ -69,6 +55,7 @@ class TestOfflinePackageBuilder : public QObject {
 private Q_SLOTS:
     void initTestCase();
     void cleanupTestCase();
+    void init();
 
     void testBuildOfficePcBundle();
 
@@ -101,6 +88,12 @@ void TestOfflinePackageBuilder::initTestCase() {
 
 void TestOfflinePackageBuilder::cleanupTestCase() {
     qInfo() << "=== Offline package builder test completed ===";
+}
+
+void TestOfflinePackageBuilder::init() {
+    if (qEnvironmentVariable("SAK_RUN_LIVE_PACKAGE_TESTS").trimmed() != QLatin1String("1")) {
+        QSKIP("Set SAK_RUN_LIVE_PACKAGE_TESTS=1 to run the live Chocolatey bundle test");
+    }
 }
 
 void TestOfflinePackageBuilder::connectWorkerDiagnostics(sak::OfflineDeploymentWorker* worker,
@@ -231,10 +224,8 @@ void TestOfflinePackageBuilder::testBuildOfficePcBundle() {
              qPrintable(QString("Closure total %1 is smaller than the %2 requested packages")
                             .arg(final_stats.total)
                             .arg(kOfficePcPackages.size())));
-    if (final_stats.completed == 0 && allPackageFailuresAreTransient(package_errors)) {
-        QSKIP("Chocolatey package service/CDN returned only transient transfer errors.");
-    }
-    QVERIFY2(final_stats.completed > 0, "No packages completed successfully");
+    QVERIFY2(final_stats.completed > 0,
+             "Live Chocolatey package service/CDN run completed no packages");
 
     verifyManifest(final_stats);
     verifyPackageFiles(final_stats);

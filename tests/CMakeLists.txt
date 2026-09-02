@@ -7719,6 +7719,18 @@ if(PLATFORM_WINDOWS)
                      -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1")
     set_tests_properties(test_process_capture_windows_powershell PROPERTIES TIMEOUT 60)
 
+    # Coverage reports are evidence only when every child/tool succeeds and every output is fresh.
+    # Fake native tools make each refusal deterministic without needing an instrumented build.
+    add_test(NAME test_coverage_runners
+             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_coverage_runners.ps1")
+    set_tests_properties(test_coverage_runners PROPERTIES TIMEOUT 300)
+
+    add_test(NAME test_coverage_runners_windows_powershell
+             COMMAND "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_coverage_runners.ps1")
+    set_tests_properties(test_coverage_runners_windows_powershell PROPERTIES TIMEOUT 300)
+
     add_test(NAME test_startup_budget
              COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
                      -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_startup_budget.ps1")

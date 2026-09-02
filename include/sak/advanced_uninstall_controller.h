@@ -337,8 +337,6 @@ private:
     int m_batchIndex = -1;
     bool m_batchRestorePointCreated = false;
 
-    // Last uninstall report for auto-clean-safe
-    UninstallReport m_lastReport;
     bool m_autoCleanSafe = true;
 
     // SAFE leftovers accumulated across a batch (only from items whose autoCleanSafeLeftovers is

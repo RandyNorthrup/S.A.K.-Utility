@@ -542,7 +542,7 @@ Existing files to update:
 - `include/sak/elevation_tier.h` - add Partition Manager feature IDs.
 - `src/elevated/elevated_helper_main.cpp` - register partition task allowlist.
 - `resources/icons.qrc` and `resources/icons/` - add panel and operation icons if existing icons are insufficient.
-- `README.md`, `CHANGELOG.md`, `docs/PRODUCTION_GRADE_AUDIT.md` - update after implementation, not during plan-only work.
+- `README.md`, `CHANGELOG.md`, `docs/archive/PRODUCTION_GRADE_AUDIT.md` - update after implementation, not during plan-only work.
 
 ### Controller State Machine
 

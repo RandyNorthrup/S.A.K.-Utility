@@ -58,16 +58,26 @@ param(
     [string]$BuildDir = 'build-cov',
     [string]$OutDir = 'build-cov/coverage',
     [string]$QtBin = 'C:\Qt\6.10.3\msvc2022_64\bin',
-    [string]$LlvmBin = 'C:\Program Files\LLVM\bin'
+    [string]$LlvmBin = 'C:\Program Files\LLVM\bin',
+    [string]$CtestPath = '',
+    [string]$LlvmProfdataPath = '',
+    [string]$LlvmCovPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'process_capture.ps1')
 
 function Resolve-LlvmTool {
-    param([string]$Name)
+    param([string]$Name, [string]$ExplicitPath)
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitPath)) {
+        if (-not (Test-Path -LiteralPath $ExplicitPath -PathType Leaf)) {
+            throw "$Name executable not found: $ExplicitPath"
+        }
+        return (Resolve-Path -LiteralPath $ExplicitPath).Path
+    }
     $onPath = Get-Command $Name -ErrorAction SilentlyContinue
     if ($onPath) { return $onPath.Source }
     $fixed = Join-Path $LlvmBin "$Name.exe"
@@ -75,10 +85,70 @@ function Resolve-LlvmTool {
     throw "$Name not found. Install LLVM (winget install LLVM.LLVM) or pass -LlvmBin."
 }
 
-$profdata = Resolve-LlvmTool -Name 'llvm-profdata'
-$cov = Resolve-LlvmTool -Name 'llvm-cov'
+function Resolve-ProjectPath([string]$Path) {
+    if ([System.IO.Path]::IsPathRooted($Path)) {
+        return [System.IO.Path]::GetFullPath($Path)
+    }
+    return [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $Path))
+}
 
-$buildPath = Join-Path $RepoRoot $BuildDir
+function Assert-SafeCoverageOutputDirectory([string]$Path, [string]$RootPath) {
+    $root = [System.IO.Path]::GetFullPath($RootPath).TrimEnd('\', '/')
+    $candidate = [System.IO.Path]::GetFullPath($Path).TrimEnd('\', '/')
+    $rootItem = Get-Item -LiteralPath $root -Force -ErrorAction Stop
+    if (-not $rootItem.PSIsContainer -or
+        ($rootItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint)) {
+        throw "Coverage build directory is not a direct, non-reparse directory: $root"
+    }
+    $prefix = $root + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $candidate.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Coverage output must be a strict descendant of the build directory: $candidate"
+    }
+
+    $current = $candidate
+    while ($current.Length -gt $root.Length) {
+        if (Test-Path -LiteralPath $current) {
+            $item = Get-Item -LiteralPath $current -Force -ErrorAction Stop
+            if ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+                throw "Coverage output path crosses a reparse point: $current"
+            }
+            if (-not $item.PSIsContainer) {
+                throw "Coverage output path component is not a directory: $current"
+            }
+        }
+        $parent = [System.IO.Directory]::GetParent($current)
+        if ($null -eq $parent) {
+            throw "Coverage output parent walk escaped the build directory: $candidate"
+        }
+        $current = $parent.FullName.TrimEnd('\', '/')
+    }
+}
+
+function Resolve-Ctest([string]$ExplicitPath) {
+    if (-not [string]::IsNullOrWhiteSpace($ExplicitPath)) {
+        if (-not (Test-Path -LiteralPath $ExplicitPath -PathType Leaf)) {
+            throw "CTest executable not found: $ExplicitPath"
+        }
+        return (Resolve-Path -LiteralPath $ExplicitPath).Path
+    }
+    $resolved = Get-Command ctest.exe -CommandType Application -ErrorAction Stop
+    return $resolved.Source
+}
+
+function Remove-BranchCoverageFile([string]$Path) {
+    if (Test-Path -LiteralPath $Path) {
+        Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+    }
+    if (Test-Path -LiteralPath $Path) {
+        throw "Coverage output cleanup did not remove: $Path"
+    }
+}
+
+$profdata = Resolve-LlvmTool -Name 'llvm-profdata' -ExplicitPath $LlvmProfdataPath
+$cov = Resolve-LlvmTool -Name 'llvm-cov' -ExplicitPath $LlvmCovPath
+$ctest = Resolve-Ctest -ExplicitPath $CtestPath
+
+$buildPath = Resolve-ProjectPath -Path $BuildDir
 if (-not (Test-Path -LiteralPath $buildPath)) {
     throw "Coverage build tree '$buildPath' does not exist. Configure it first (see the header)."
 }
@@ -91,92 +161,147 @@ if (-not (Select-String -LiteralPath $cache -Pattern '^ENABLE_COVERAGE:BOOL=ON' 
           "coverage mapping, so the report would be empty and read as full coverage."
 }
 
-$outPath = Join-Path $RepoRoot $OutDir
+$outPath = Resolve-ProjectPath -Path $OutDir
+Assert-SafeCoverageOutputDirectory -Path $outPath -RootPath $buildPath
 New-Item -ItemType Directory -Force -Path $outPath | Out-Null
-Get-ChildItem -LiteralPath $outPath -Filter '*.profraw' -ErrorAction SilentlyContinue |
-    Remove-Item -Force
-
-$env:PATH = "$QtBin;$env:PATH"
-# %p keeps each test process in its own file: a single fixed path would have every executable
-# overwrite the previous one and the merge would cover only the last test that ran.
-$env:LLVM_PROFILE_FILE = (Join-Path $outPath 'sak-%p.profraw')
-
-Write-Host "Running instrumented tests (regex: $TestRegex) ..."
-Push-Location $buildPath
-try {
-    & ctest -R $TestRegex --output-on-failure 2>&1 | Select-Object -Last 12
-    $ctestExit = $LASTEXITCODE
-} finally {
-    Pop-Location
-}
-Write-Host "ctest exit: $ctestExit"
-
-$raws = Get-ChildItem -LiteralPath $outPath -Filter '*.profraw'
-if ($raws.Count -eq 0) {
-    throw "No .profraw files were produced. The binaries are not instrumented, or " +
-          "LLVM_PROFILE_FILE did not reach the test processes."
-}
-Write-Host "Merging $($raws.Count) profile(s) ..."
+Assert-SafeCoverageOutputDirectory -Path $outPath -RootPath $buildPath
 $merged = Join-Path $outPath 'merged.profdata'
-& $profdata merge -sparse @($raws.FullName) -o $merged
-if ($LASTEXITCODE -ne 0) { throw "llvm-profdata merge failed." }
-
-# Every instrumented test executable contributes its own coverage mapping, so they all have to be
-# named -- llvm-cov reads the mapping out of the binaries, not the profile.
-$exes = Get-ChildItem -LiteralPath (Join-Path $buildPath 'tests') -Filter 'test_*.exe' -Recurse
-if ($exes.Count -eq 0) { throw "No test executables found under $buildPath/tests." }
-$objArgs = @()
-foreach ($exe in ($exes | Select-Object -Skip 1)) { $objArgs += @('-object', $exe.FullName) }
-
 $summary = Join-Path $outPath 'BRANCH-SUMMARY.txt'
-& $cov report $exes[0].FullName @objArgs '--instr-profile' $merged '--show-branch-summary' `
-    '--ignore-filename-regex' '(Qt[\\/]|vcpkg[\\/]|tests[\\/]|third_party[\\/])' |
-    Out-File -FilePath $summary -Encoding ascii
-Write-Host "Wrote $summary"
-
-# The actionable artifact: every branch in first-party code that was never taken in one
-# direction. `--show-branches count` prints "Branch (LINE:COL): [True: N, False: M]" under its
-# source line, so a zero on either side is an arm no test reached.
-Write-Host "Extracting missed branches ..."
-$showRaw = & $cov show $exes[0].FullName @objArgs '--instr-profile' $merged `
-    '--show-branches' 'count' `
-    '--ignore-filename-regex' '(Qt[\\/]|vcpkg[\\/]|tests[\\/]|third_party[\\/])' 2>&1
-
 $report = Join-Path $outPath 'MISSED-BRANCH-REPORT.txt'
-$lines = $showRaw -split "`r?`n"
-$currentFile = ''
-$missed = 0
-$out = New-Object System.Collections.Generic.List[string]
-$out.Add("Branches never taken in one direction, over tests matching: $TestRegex")
-$out.Add("A 'True: 0' arm is a condition no test ever satisfied; 'False: 0' is one no test ever")
-$out.Add("falsified. Both are guards the suite cannot distinguish from their own absence.")
-$out.Add('')
-for ($i = 0; $i -lt $lines.Count; $i++) {
-    $line = $lines[$i]
-    # llvm-cov prints each file as a bare path followed by ':'
-    if ($line -match '^([A-Za-z]:[\\/].+?):$') { $currentFile = $Matches[1]; continue }
-    if ($line -match 'Branch\s+\((\d+):(\d+)\):\s+\[True:\s*(\S+?),\s*False:\s*(\S+?)\]') {
-        $srcLine = $Matches[1]; $srcCol = $Matches[2]
-        $trueCount = $Matches[3]; $falseCount = $Matches[4]
-        if ($trueCount -eq '0' -or $falseCount -eq '0') {
-            $missed++
-            $arm = if ($trueCount -eq '0') { 'never TRUE ' } else { 'never FALSE' }
-            # Walk back to the nearest numbered source line for context.
-            $context = ''
-            for ($j = $i - 1; $j -ge 0 -and $j -gt $i - 12; $j--) {
-                if ($lines[$j] -match '^\s*\d+\|\s*[\d\.kMG]*\|(.*)$') {
-                    $context = $Matches[1].Trim(); break
+$summaryTemp = "$summary.tmp-$PID"
+$reportTemp = "$report.tmp-$PID"
+$previousPath = $env:PATH
+$previousProfile = $env:LLVM_PROFILE_FILE
+
+try {
+    Assert-SafeCoverageOutputDirectory -Path $outPath -RootPath $buildPath
+    foreach ($path in @($merged, $summary, $report, $summaryTemp, $reportTemp)) {
+        Remove-BranchCoverageFile -Path $path
+    }
+    Get-ChildItem -LiteralPath $outPath -Filter '*.profraw' -File -ErrorAction Stop |
+        Remove-Item -Force -ErrorAction Stop
+
+    if (Test-Path -LiteralPath $QtBin -PathType Container) {
+        $env:PATH = "$QtBin;$env:PATH"
+    }
+    # %p keeps each test process in its own file: a single fixed path would have every executable
+    # overwrite the previous one and the merge would cover only the last test that ran.
+    $env:LLVM_PROFILE_FILE = (Join-Path $outPath 'sak-%p.profraw')
+
+    Write-Host "Running instrumented tests (regex: $TestRegex) ..."
+    $ctestResult = Invoke-CapturedProcess -FilePath $ctest -WorkingDirectory $buildPath `
+        -Arguments @('-R', $TestRegex, '--output-on-failure')
+    @($ctestResult.stdout, $ctestResult.stderr) | Where-Object {
+        -not [string]::IsNullOrWhiteSpace($_)
+    } | ForEach-Object { $_ -split "`r?`n" } | Select-Object -Last 12 | Write-Host
+    Write-Host "ctest exit: $($ctestResult.exit_code)"
+    if ($ctestResult.exit_code -ne 0) {
+        throw "Instrumented CTest run failed with exit code $($ctestResult.exit_code)."
+    }
+
+    $raws = @(Get-ChildItem -LiteralPath $outPath -Filter '*.profraw' -File -ErrorAction Stop)
+    if ($raws.Count -eq 0) {
+        throw "No .profraw files were produced. The binaries are not instrumented, or " +
+              "LLVM_PROFILE_FILE did not reach the test processes."
+    }
+    Write-Host "Merging $($raws.Count) profile(s) ..."
+    $profdataArgs = @('merge', '-sparse') + @($raws.FullName) + @('-o', $merged)
+    $profdataResult = Invoke-CapturedProcess -FilePath $profdata -Arguments $profdataArgs
+    if ($profdataResult.exit_code -ne 0 -or
+        -not (Test-Path -LiteralPath $merged -PathType Leaf)) {
+        throw "llvm-profdata merge failed with exit code $($profdataResult.exit_code)."
+    }
+
+    # Every instrumented test executable contributes its own coverage mapping, so they all have
+    # to be named -- llvm-cov reads mappings from binaries, not the profile.
+    $exes = @(Get-ChildItem -LiteralPath (Join-Path $buildPath 'tests') `
+        -Filter 'test_*.exe' -File -Recurse -ErrorAction Stop)
+    if ($exes.Count -eq 0) { throw "No test executables found under $buildPath/tests." }
+    $objArgs = @()
+    foreach ($exe in ($exes | Select-Object -Skip 1)) {
+        $objArgs += @('-object', $exe.FullName)
+    }
+    $filterArgs = @('--ignore-filename-regex',
+        '(Qt[\\/]|vcpkg[\\/]|tests[\\/]|third_party[\\/])')
+
+    $reportArgs = @('report', $exes[0].FullName) + $objArgs +
+        @('--instr-profile', $merged, '--show-branch-summary') + $filterArgs
+    $summaryResult = Invoke-CapturedProcess -FilePath $cov -Arguments $reportArgs
+    if ($summaryResult.exit_code -ne 0) {
+        throw "llvm-cov report failed with exit code $($summaryResult.exit_code)."
+    }
+    if ([string]::IsNullOrWhiteSpace($summaryResult.stdout)) {
+        throw 'llvm-cov report returned no summary output.'
+    }
+
+    # The actionable artifact: every branch in first-party code that was never taken in one
+    # direction. `--show-branches count` prints each untaken arm under its source line.
+    Write-Host "Extracting missed branches ..."
+    $showArgs = @('show', $exes[0].FullName) + $objArgs +
+        @('--instr-profile', $merged, '--show-branches', 'count') + $filterArgs
+    $showResult = Invoke-CapturedProcess -FilePath $cov -Arguments $showArgs
+    if ($showResult.exit_code -ne 0) {
+        throw "llvm-cov show failed with exit code $($showResult.exit_code)."
+    }
+    if ([string]::IsNullOrWhiteSpace($showResult.stdout)) {
+        throw 'llvm-cov show returned no annotated source output.'
+    }
+
+    $lines = $showResult.stdout -split "`r?`n"
+    $currentFile = ''
+    $missed = 0
+    $out = New-Object System.Collections.Generic.List[string]
+    $out.Add("Branches never taken in one direction, over tests matching: $TestRegex")
+    $out.Add("A 'True: 0' arm is a condition no test ever satisfied; 'False: 0' is one no test ever")
+    $out.Add("falsified. Both are guards the suite cannot distinguish from their own absence.")
+    $out.Add('')
+    for ($i = 0; $i -lt $lines.Count; $i++) {
+        $line = $lines[$i]
+        if ($line -match '^([A-Za-z]:[\\/].+?):$') {
+            $currentFile = $Matches[1]
+            continue
+        }
+        if ($line -match 'Branch\s+\((\d+):(\d+)\):\s+\[True:\s*(\S+?),\s*False:\s*(\S+?)\]') {
+            $srcLine = $Matches[1]
+            $srcCol = $Matches[2]
+            $trueCount = $Matches[3]
+            $falseCount = $Matches[4]
+            if ($trueCount -eq '0' -or $falseCount -eq '0') {
+                $missed++
+                $arm = if ($trueCount -eq '0') { 'never TRUE ' } else { 'never FALSE' }
+                $context = ''
+                for ($j = $i - 1; $j -ge 0 -and $j -gt $i - 12; $j--) {
+                    if ($lines[$j] -match '^\s*\d+\|\s*[\d\.kMG]*\|(.*)$') {
+                        $context = $Matches[1].Trim()
+                        break
+                    }
                 }
+                $out.Add(("{0}:{1}:{2}  {3}  {4}" -f
+                    $currentFile, $srcLine, $srcCol, $arm, $context))
             }
-            $out.Add(("{0}:{1}:{2}  {3}  {4}" -f $currentFile, $srcLine, $srcCol, $arm, $context))
         }
     }
+    $out.Insert(3, "TOTAL MISSED BRANCHES: $missed")
+    [System.IO.File]::WriteAllText($summaryTemp, $summaryResult.stdout + "`r`n",
+        [System.Text.Encoding]::ASCII)
+    $out | Out-File -LiteralPath $reportTemp -Encoding ascii
+    Move-Item -LiteralPath $summaryTemp -Destination $summary -Force -ErrorAction Stop
+    Move-Item -LiteralPath $reportTemp -Destination $report -Force -ErrorAction Stop
+    Write-Host "Wrote $summary"
+    Write-Host ""
+    Write-Host "TOTAL MISSED BRANCHES: $missed"
+    Write-Host "Wrote $report"
 }
-$out.Insert(3, "TOTAL MISSED BRANCHES: $missed")
-$out | Out-File -FilePath $report -Encoding ascii
-Write-Host ""
-Write-Host "TOTAL MISSED BRANCHES: $missed"
-Write-Host "Wrote $report"
-if ($ctestExit -ne 0) {
-    Write-Host "NOTE: ctest exited $ctestExit; the coverage above is over a run with failures."
+catch {
+    $failure = $_
+    foreach ($path in @($merged, $summary, $report, $summaryTemp, $reportTemp)) {
+        Remove-BranchCoverageFile -Path $path
+    }
+    Get-ChildItem -LiteralPath $outPath -Filter '*.profraw' -File -ErrorAction Stop |
+        Remove-Item -Force -ErrorAction Stop
+    throw $failure
+}
+finally {
+    $env:PATH = $previousPath
+    $env:LLVM_PROFILE_FILE = $previousProfile
 }

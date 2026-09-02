@@ -58,6 +58,7 @@ private Q_SLOTS:
     void textSearch_noMatchReturnsEmpty();
     void textSearch_binaryFileSkipped();
     void textSearch_maxResults();
+    void directorySearch_defaultUsesNoSymlinksFilter();
 
     // -- File Extension Filter --
     void extensionFilter_matchesIncluded();
@@ -752,6 +753,20 @@ void AdvancedSearchWorkerTests::textSearch_maxResults() {
     // The cap is EXACT, not merely respected: the fixture has more than five matches, so a
     // "<= 5 and > 0" pair also passed when the cap cut the run short at one match.
     QCOMPARE(matches.size(), 5);
+}
+
+void AdvancedSearchWorkerTests::directorySearch_defaultUsesNoSymlinksFilter() {
+    const SearchConfig safe_config;
+    const QDir::Filters safe_filters =
+        AdvancedSearchWorker::directory_search_filters(safe_config.skip_symlinks);
+    QVERIFY(safe_filters.testFlag(QDir::Files));
+    QVERIFY(safe_filters.testFlag(QDir::NoDotAndDotDot));
+    QVERIFY(safe_filters.testFlag(QDir::NoSymLinks));
+
+    const QDir::Filters opt_out_filters = AdvancedSearchWorker::directory_search_filters(false);
+    QVERIFY(opt_out_filters.testFlag(QDir::Files));
+    QVERIFY(opt_out_filters.testFlag(QDir::NoDotAndDotDot));
+    QVERIFY(!opt_out_filters.testFlag(QDir::NoSymLinks));
 }
 
 // ============================================================================

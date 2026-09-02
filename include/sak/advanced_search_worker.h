@@ -13,6 +13,7 @@
 #include "sak/worker_base.h"
 
 #include <QByteArray>
+#include <QDir>
 #include <QMap>
 #include <QRegularExpression>
 #include <QSet>
@@ -120,6 +121,12 @@ public:
     /// the documented default and the result is clamped so the seconds-to-
     /// milliseconds conversion cannot overflow int -- there is no "no timeout".
     [[nodiscard]] static int networkReadTimeoutMs(int network_timeout_sec);
+
+    /// @brief Directory-walk filters for the configured file-link policy.
+    ///
+    /// Production uses this exact helper to construct QDirIterator, so tests can prove the safe
+    /// default reaches QDir::NoSymLinks without requiring symlink privileges or a live UNC share.
+    [[nodiscard]] static QDir::Filters directory_search_filters(bool skip_symlinks);
 
 Q_SIGNALS:
     /// @brief Emitted with accumulated results (batch updates for performance)

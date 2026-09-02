@@ -1,5 +1,5 @@
 {
-  "head_commit": "7728f4902fda58502da46ccf404913599dc0d14d",
+  "head_commit": "0885b9895576f187d1a23f6c88666bcf448a9db5",
   "unit_rule": "include/**.h|.hpp, src/**.cpp|.h|.hpp, tests/**.cpp|.h|.mjs, scripts/**.py|.ps1|.sh, browser/**.js",
   "units": {
     "browser/extension/background.js": {
@@ -83,12 +83,18 @@
       "status": "reviewed"
     },
     "include/sak/advanced_search_panel.h": {
+      "brief": "docs/review_briefs/include_sak_advanced_search_panel.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": "411cdda70144e880ea114e4ab87c08731937d487",
+      "status": "reviewed"
     },
     "include/sak/advanced_search_types.h": {
+      "brief": "docs/review_briefs/include_sak_advanced_search_types.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": "ef8bef5775e819005bcc4d6cc00ac0537d8419fc",
+      "status": "reviewed"
     },
     "include/sak/advanced_search_worker.h": {
       "evidence": "cited",
@@ -97,12 +103,18 @@
       "status": "reviewed"
     },
     "include/sak/advanced_uninstall_controller.h": {
+      "brief": "docs/review_briefs/include_sak_advanced_uninstall_controller.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": "ddba2b7fab0e0da4118598e042d010894bd0d4e0",
+      "status": "reviewed"
     },
     "include/sak/advanced_uninstall_panel.h": {
+      "brief": "docs/review_briefs/include_sak_advanced_uninstall_panel.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": "1412badc9a2ffcbf59a34ff44906a68ea0b4de6b",
+      "status": "reviewed"
     },
     "include/sak/advanced_uninstall_types.h": {
       "evidence": "cited",
@@ -1973,9 +1985,10 @@
       "status": "reviewed"
     },
     "scripts/run_branch_coverage.ps1": {
-      "evidence": "cited",
+      "brief": "docs/review_briefs/scripts_run_branch_coverage.md",
+      "evidence": "driver",
       "group": "scripts",
-      "reviewed_blob": null,
+      "reviewed_blob": "284c4c19c3b98b11321d394c9b3d0bbda923c2b4",
       "status": "reviewed"
     },
     "scripts/run_clang_format.ps1": {
@@ -1991,9 +2004,10 @@
       "status": "reviewed"
     },
     "scripts/run_coverage.ps1": {
-      "evidence": "cited",
+      "brief": "docs/review_briefs/scripts_run_coverage.md",
+      "evidence": "driver",
       "group": "scripts",
-      "reviewed_blob": null,
+      "reviewed_blob": "60df89f08d7d9297527e0680d08e2c2dc0ade3e6",
       "status": "reviewed"
     },
     "scripts/run_cppcheck.ps1": {
@@ -2173,6 +2187,13 @@
     "scripts/test-iso-downloader.ps1": {
       "group": "scripts",
       "status": "pending"
+    },
+    "scripts/test_coverage_runners.ps1": {
+      "brief": "docs/review_briefs/scripts_test_coverage_runners.md",
+      "evidence": "driver",
+      "group": "scripts",
+      "reviewed_blob": "b598122fb7421618c21d8e48bc4ffd3149c2d1ff",
+      "status": "reviewed"
     },
     "scripts/test_file_management_live_certifier_gate.ps1": {
       "group": "scripts",

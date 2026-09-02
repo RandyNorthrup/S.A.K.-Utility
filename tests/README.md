@@ -2,7 +2,7 @@
 
 ## Overview
 
-Comprehensive test suite for SAK Utility using the **Qt Test** framework with **268 registered CTest tests** across **248 C++ test source files** plus script-backed helper tests. Tests cover AI assistant clients, chat-title generation, workflow orchestration, tool execution, cancellation, run state, trace storage, core utilities, security, elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX, hardening), diagnostics, partition management, ISO pipelines, deployment, email inspection, splash sizing, partition filesystem probe certification, and quick action validation.
+Comprehensive test suite for SAK Utility using the **Qt Test** framework with **270 registered CTest tests** across **248 C++ test source files** plus script-backed helper tests. Tests cover AI assistant clients, chat-title generation, workflow orchestration, tool execution, cancellation, run state, trace storage, core utilities, security, elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX, hardening), diagnostics, partition management, ISO pipelines, deployment, email inspection, splash sizing, partition filesystem probe certification, and quick action validation.
 
 ## Structure
 
@@ -156,6 +156,10 @@ cmake --build build --target run_integration_tests
 .\build\Release\test_path_utils.exe -v2   # verbose
 ```
 
+Live-test policy: paid OpenAI, UUP dump, Linux ISO network, and Chocolatey bundle tests keep
+explicit environment-variable opt-outs. Once requested, missing credentials, timeouts, API errors,
+empty results, and service failures fail; dependency failure never becomes a passing skip.
+
 ## Test Categories
 
 ### Core Utilities
@@ -243,8 +247,8 @@ cmake --build build --target run_integration_tests
 ### ISO & Image Handling
 | Test | Module Under Test | Coverage |
 |---|---|---|
-| test_windows_iso_downloader | `windows_iso_downloader` | UUP API, download URL validation, HTTP-allow for Microsoft CDN |
-| test_linux_iso_downloader | `linux_iso_downloader` | Distro catalog, GitHub URL resolution, aria2c integration |
+| test_windows_iso_downloader | `windows_iso_downloader` | Opt-in UUP API, download URL validation, HTTP-allow for Microsoft CDN; post-opt-in failures are hard failures |
+| test_linux_iso_downloader | `linux_iso_downloader` | Distro catalog, GitHub URL resolution, aria2c integration, and opt-in live GitHub/Ubuntu reachability that hard-fails after opt-in |
 | test_linux_distro_catalog | `linux_distro_catalog` | Required distro metadata, URL patterns, version detection |
 | test_uup_dump_api | `uup_dump_api` | UUP Dump API parsing, edition/language selection |
 | test_uup_iso_builder | `uup_iso_builder` | UUP-to-ISO conversion, converter process management |
@@ -264,7 +268,7 @@ cmake --build build --target run_integration_tests
 |---|---|---|
 | test_advanced_search_types | `advanced_search_types` | Search result structures, match types |
 | test_advanced_search_controller | `advanced_search_controller` | Search orchestration, result aggregation |
-| test_advanced_search_worker | `advanced_search_worker` | Content search, regex, binary/hex, synthetic EXIF metadata matrix, archive |
+| test_advanced_search_worker | `advanced_search_worker` | Content search, regex, binary/hex, safe default file-link filtering, synthetic EXIF metadata matrix, archive |
 | test_regex_pattern_library | `regex_pattern_library` | Built-in patterns, custom pattern persistence |
 
 ### Advanced Uninstall
@@ -382,6 +386,7 @@ stay read-only with exact blockers.
 |---|---|---|
 | test_ost_integration | Email Inspector | Generated OST/PST fixture opening, folder tree, item loading, item detail, and export |
 | test_uup_conversion_pipeline | UUP-to-ISO | UUPMediaConverter exe existence, process attachment (no fork), help output, missing UUP dir, empty UUP dir |
+| test_offline_package_builder | Offline deployment | Opt-in Chocolatey dependency closure and package bundle; service/CDN failure hard-fails after opt-in |
 
 ## Writing New Tests
 
@@ -457,6 +462,6 @@ per-test logs from complete CTest.
 ---
 
 **Test Framework:** Qt Test
-**Registered Tests:** 268 (CTest)
+**Registered Tests:** 270 (CTest)
 **Test Files:** 248 C++ test source files plus script-backed helper tests
 **Platform:** Windows 10/11

@@ -1,5 +1,8 @@
 # S.A.K. Utility Production Grade Audit
 
+Archived 2026-09-02. This chronological audit records the completed June 2026 pass; current
+release and certification status lives in the versioned status owners cited below.
+
 Generated: 2026-05-27  
 Last updated: 2026-06-08 UTC / 2026-06-07 PDT
 

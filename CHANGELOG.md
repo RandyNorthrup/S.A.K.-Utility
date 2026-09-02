@@ -8,6 +8,40 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **Coverage evidence now fails closed** - Line and branch coverage runners delete stale outputs
+  before execution, accept output only after successful CTest and coverage-tool exits, reject empty
+  reports, require both fresh Cobertura XML and HTML, publish branch reports only after both
+  llvm-cov passes succeed, and restore process environment changes. Output is restricted to
+  non-reparse descendants of the selected build tree, so cleanup cannot recurse through an
+  arbitrary, outside, build-root, or redirected directory. One hermetic fake-tool harness runs
+  under PowerShell 7 and Windows PowerShell 5.1 and proves stale output, OpenCppCoverage, child
+  CTest, llvm-profdata, llvm-cov report/show, empty/missing output, unsafe-path, and preserved-filter
+  behavior.
+
+- **Post-opt-in live-test false greens removed** - Removed 15 QSKIP paths that converted an
+  already-requested or already-running external operation into a passing test. Chocolatey bundle,
+  Linux ISO network, opted-in UUP dump, and opted-in OpenAI tests now fail on service timeouts,
+  API errors, empty results, or missing credentials. Initial paid/live opt-outs remain for all four
+  families so default CTest never depends on third-party services. Static QSKIP inventory falls
+  from 62 sites across 18 files to 49 across 18; the observed audit records 5,084 passed functions
+  and 32 reviewed initial/live interlock skips (0.63 percent).
+
+- **Superseded production audit archived** - Moved the completed June production-grade audit out
+  of the live docs bucket after its v0.9.1.9 publication handoff and 263-test status were
+  superseded by VERSION 0.9.2.0 and the 270-test suite. Removed it from current Partition Manager
+  and Apple filesystem claim-document sets instead of making historical prose a live gate
+  dependency. Commercial feature checks now require the same hardware-wipe and queued-operation
+  evidence from current certification and changelog owners. A registered structural regression
+  rejects restoration of the old live path or either script dependency.
+
+- **Advanced Search default and R5 review fail closed** - SearchConfig now skips file links by
+  default, so GUI and other ordinary callers apply QDir::NoSymLinks before a planted UNC target can
+  resolve; an exact default test and the production filter-helper test pin both the policy and its
+  QDirIterator input. Removed write-only uninstall report/header-label state. Seven header/script
+  units gained stored blob-bound review briefs; the live ledger is now 1,062 units / 644 pending /
+  28 self-verifying reviews. Combined Wave 24 gates passed: changed-file hooks, healthy naming,
+  full clang-cl coverage build, Release build, and full CTest 270/270 in 742.15 seconds.
+
 - **R5 deterministic-fixture, mutation, naming, and action-contract wave** - Removed 20
   deterministic QSKIP sites with generated PST/OST/NST stores, synthetic EXIF/ISO matrices,
   isolated profile/AppData/shortcut fixtures, and hard requirements for bundled UUP and catalog

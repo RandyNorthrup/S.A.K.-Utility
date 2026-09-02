@@ -603,7 +603,6 @@ void AdvancedUninstallPanel::createLeftoverSection(QVBoxLayout* layout) {
         const LeftoverSectionUi ui = buildLeftoverSectionUi(this, cols);
         m_leftover_section = ui.section;
         m_leftover_table = ui.table;
-        m_leftover_header_label = ui.header_label;
         m_leftover_count_label = ui.count_label;
         m_select_all_button = ui.select_all_button;
         m_select_safe_button = ui.select_safe_button;

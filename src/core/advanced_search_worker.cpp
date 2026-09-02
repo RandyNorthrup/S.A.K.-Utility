@@ -657,11 +657,9 @@ void AdvancedSearchWorker::runDirectorySearch(const QRegularExpression& regex,
     // would resolve the target). A planted symlink to a UNC share is thus never yielded, never
     // opened, and never leaks the credential hash. Symlinked DIRECTORIES are already not descended
     // (the iterator has no FollowSymlinks flag); this additionally drops symlinked FILE entries.
-    QDir::Filters filters = QDir::Files | QDir::NoDotAndDotDot;
-    if (m_config.skip_symlinks) {
-        filters |= QDir::NoSymLinks;
-    }
-    QDirIterator it(m_config.root_path, filters, QDirIterator::Subdirectories);
+    QDirIterator it(m_config.root_path,
+                    directory_search_filters(m_config.skip_symlinks),
+                    QDirIterator::Subdirectories);
 
     int file_count = 0;
     QVector<SearchMatch> batch_matches;
@@ -707,6 +705,14 @@ void AdvancedSearchWorker::runDirectorySearch(const QRegularExpression& regex,
     }
 
     reportScanOutcome(total_matches, total_files, file_count);
+}
+
+QDir::Filters AdvancedSearchWorker::directory_search_filters(bool skip_symlinks) {
+    QDir::Filters filters = QDir::Files | QDir::NoDotAndDotDot;
+    if (skip_symlinks) {
+        filters |= QDir::NoSymLinks;
+    }
+    return filters;
 }
 
 void AdvancedSearchWorker::reportScanOutcome(int total_matches,

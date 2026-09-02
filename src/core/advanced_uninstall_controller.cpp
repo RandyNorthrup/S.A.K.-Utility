@@ -785,8 +785,6 @@ void AdvancedUninstallController::onEnumerationFailed(int generation, const QStr
 }
 
 void AdvancedUninstallController::onUninstallComplete(UninstallReport report) {
-    m_lastReport = report;
-
     // If in batch mode, process next
     if (m_batchIndex >= 0 && m_batchIndex < m_queue.size()) {
         auto& qi = m_queue[m_batchIndex];

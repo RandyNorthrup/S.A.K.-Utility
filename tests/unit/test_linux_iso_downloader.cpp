@@ -13,7 +13,7 @@
  *   - aria2c argument generation (standard vs SourceForge)
  *   - Checksum verification pipeline
  *   - Error handling and edge cases
- *   - Network-based version checking (skippable)
+ *   - Network-based version checking (live failures are test failures)
  */
 
 #include "sak/linux_distro_catalog.h"
@@ -24,6 +24,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSet>
 #include <QTemporaryDir>
 #include <QtTest/QSignalSpy>
 #include <QtTest/QtTest>
@@ -34,6 +35,7 @@ class LinuxISODownloaderTests : public QObject {
 private Q_SLOTS:
     void initTestCase();
     void cleanupTestCase();
+    void init();
 
     // ========================================================================
     // Catalog Tests
@@ -115,7 +117,7 @@ private Q_SLOTS:
     void testShouldApplyVerifyResult_gating();
 
     // ========================================================================
-    // Network Tests (require internet -- auto-skip if unreachable)
+    // Network Tests (explicit opt-in; failures after opt-in are authoritative)
     // ========================================================================
     void testGitHubVersionCheck_Network();
     void testDirectUrlReachable_Ubuntu();
@@ -142,6 +144,16 @@ void LinuxISODownloaderTests::cleanupTestCase() {
     delete m_catalog;
     m_catalog = nullptr;
     qInfo() << "=== All tests completed ===";
+}
+
+void LinuxISODownloaderTests::init() {
+    static const QSet<QString> live_network_tests = {
+        QStringLiteral("testGitHubVersionCheck_Network"),
+        QStringLiteral("testDirectUrlReachable_Ubuntu")};
+    if (live_network_tests.contains(QString::fromLatin1(QTest::currentTestFunction())) &&
+        qEnvironmentVariable("SAK_RUN_LIVE_LINUX_ISO_TESTS").trimmed() != QLatin1String("1")) {
+        QSKIP("Set SAK_RUN_LIVE_LINUX_ISO_TESTS=1 to run live Linux ISO network tests");
+    }
 }
 
 // ============================================================================
@@ -795,14 +807,10 @@ void LinuxISODownloaderTests::testGitHubVersionCheck_Network() {
         }
     }
 
-    if (!gotResponse) {
-        QSKIP("GitHub API unreachable -- skipping network test");
-    }
-
-    if (failedSpy.count() > 0) {
-        qWarning() << "GitHub API error:" << failedSpy.at(0).at(1).toString();
-        QSKIP("GitHub API returned error -- skipping");
-    }
+    QVERIFY2(gotResponse, "GitHub API did not respond within 15 seconds");
+    const QString github_error = failedSpy.isEmpty() ? QString() : failedSpy.at(0).at(1).toString();
+    QVERIFY2(failedSpy.isEmpty(),
+             qPrintable(QStringLiteral("GitHub API returned error: %1").arg(github_error)));
 
     QCOMPARE(completedSpy.count(), 1);
     QString distroId = completedSpy.at(0).at(0).toString();
@@ -830,12 +838,12 @@ void LinuxISODownloaderTests::testDirectUrlReachable_Ubuntu() {
     QSignalSpy finishedSpy(reply, &QNetworkReply::finished);
 
     // qWaitFor re-checks the spy instead of waiting for a further emission, so a reply that
-    // finished before the wait begins is not misread as a timeout. A genuine timeout still
-    // skips: this test is only meaningful with network access.
+    // finished before the wait begins is not misread as a timeout.
     bool ok = QTest::qWaitFor([&finishedSpy]() { return finishedSpy.count() > 0; }, 15'000);
     if (!ok) {
+        reply->abort();
         reply->deleteLater();
-        QSKIP("Network timeout -- skipping URL reachability test");
+        QFAIL("Ubuntu URL reachability request timed out after 15 seconds");
     }
 
     int statusCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();

@@ -123,12 +123,12 @@ void AdvancedSearchTypesTests::searchConfig_defaultValues() {
     // Routing/safety defaults. A fresh config must (a) walk the LOCAL tree: use_file_system_target
     // false keeps execute() off the raw/image bridge branch (advanced_search_worker.cpp:939-945),
     // whose can_advanced_search guard would NOT catch a blank target because that field defaults
-    // true (file_management_file_system.h:75); and (b) NOT drop symlinked files: skip_symlinks
-    // false is the GUI behavior, headless callers opt IN (app_readonly_actions.cpp:1343), so a
-    // flipped default would silently OR QDir::NoSymLinks into the user's search filter
-    // (advanced_search_worker.cpp:674-677). The nested target must start blank.
+    // true (file_management_file_system.h:75); and (b) drop symlinked file entries before isFile()
+    // can resolve a planted UNC target. Every caller, including the GUI, gets that safe default;
+    // one that has a verified reason to follow links must opt out explicitly. The nested target
+    // must start blank.
     QCOMPARE(config.use_file_system_target, false);
-    QCOMPARE(config.skip_symlinks, false);
+    QCOMPARE(config.skip_symlinks, true);
     QVERIFY(config.file_system_target.id.isEmpty());
     QVERIFY(config.file_system_target.root_path.isEmpty());
 }
@@ -166,7 +166,7 @@ sak::SearchConfig fullyPopulatedSearchConfig() {
     config.search_file_metadata = true;
     config.search_in_archives = true;
     config.hex_search = true;
-    config.skip_symlinks = true;
+    config.skip_symlinks = false;
     config.file_extensions = QStringList{"cpp", "h"};
     // Deliberately NOT the compile-time default list (pinned by searchConfig_defaultExcludes),
     // so a copy that silently re-runs the default member initializer is caught here.

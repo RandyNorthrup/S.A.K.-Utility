@@ -18,7 +18,6 @@ param(
     [string[]]$ClaimFiles = @(
         "README.md",
         "CHANGELOG.md",
-        "docs\PRODUCTION_GRADE_AUDIT.md",
         "docs\archive\PARTITION_MANAGER_PANEL_PLAN.md",
         "docs\PARTITION_MANAGER_CERTIFICATION.md",
         "docs\RELEASE_READINESS.md"

@@ -17,6 +17,14 @@ NOT a pre-commit hook: an instrumented run is far too slow for every commit. The
 workflow carries an opt-in "coverage" job (workflow_dispatch) that installs the tool,
 builds the core tests, runs this script, and uploads the HTML report.
 
+Both coverage runners fail closed on stale or partial evidence. They remove their known outputs
+before each run, require successful CTest and coverage-tool exits, reject empty reports, and delete
+all final report paths again on failure. `OutDir` must be a strict, non-reparse descendant of the
+selected `BuildDir`; repository roots, build roots, outside paths, files, and redirected parents are
+refused before cleanup. `scripts/test_coverage_runners.ps1` proves these contracts with fake native
+tools under PowerShell 7 and Windows PowerShell 5.1, including propagation of a real fake-child
+CTest exit through the fake OpenCppCoverage parent.
+
 ## Scope of this baseline
 
 Measured over a CURATED CORE SET of tests, not the full 235-test suite: the parsers and
@@ -143,6 +151,9 @@ these lines are out of the testable-headless universe on purpose, not skipped.
 Branch coverage is now measurable: `scripts/run_branch_coverage.ps1` over a clang-cl tree
 configured with `-DENABLE_COVERAGE=ON` (the CMake option refuses to configure under MSVC
 rather than emit uninstrumented binaries whose empty report would read as full coverage).
+The runner publishes `BRANCH-SUMMARY.txt` and `MISSED-BRANCH-REPORT.txt` only after CTest,
+llvm-profdata, `llvm-cov report`, and `llvm-cov show` all succeed; a failure removes profiles,
+merged data, temporary output, and both final reports.
 
 As of 2026-09-02, this tree keeps clang-cl's missing-designated-field diagnostic fatal.
 Optional aggregate members declare their value-initialized defaults directly, while MSVC-only

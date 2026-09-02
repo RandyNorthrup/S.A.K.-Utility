@@ -127,8 +127,8 @@ void WindowsISODownloaderTests::testFetchBuilds() {
     QTRY_VERIFY_WITH_TIMEOUT(buildsSpy.count() > 0 || errorSpy.count() > 0, 15'000);
 
     if (errorSpy.count() > 0) {
-        qWarning() << "API error:" << errorSpy.at(0).at(0).toString();
-        QSKIP("UUP dump API unreachable - skipping network test");
+        const QString error = errorSpy.at(0).at(0).toString();
+        QFAIL(qPrintable(QStringLiteral("Opted-in UUP build fetch failed: %1").arg(error)));
     }
 
     QCOMPARE(buildsSpy.count(), 1);
@@ -197,19 +197,17 @@ void WindowsISODownloaderTests::testGetFilesReturnsResults() {
 
     api->fetchAvailableBuilds("amd64", UupDumpApi::ReleaseChannel::Retail);
 
-    // Poll the absolute counts for the same reason as testFetchBuilds. This site skips
-    // rather than fails when nothing arrives, so it needs qWaitFor's return value; a
-    // QTRY macro would turn an unreachable API into a hard failure.
+    // Poll absolute counts for the same reason as testFetchBuilds.
     const bool ok = QTest::qWaitFor(
         [&]() { return buildsSpy.count() > 0 || buildErrorSpy.count() > 0; }, 15'000);
-    if (buildErrorSpy.count() > 0 || !ok) {
-        QSKIP("UUP dump API unreachable - skipping network test");
-    }
+    QVERIFY2(ok, "Opted-in UUP build fetch timed out after 15 seconds");
+    const QString build_error = buildErrorSpy.isEmpty() ? QString()
+                                                        : buildErrorSpy.at(0).at(0).toString();
+    QVERIFY2(buildErrorSpy.isEmpty(),
+             qPrintable(QStringLiteral("Opted-in UUP build fetch failed: %1").arg(build_error)));
 
     auto builds = buildsSpy.at(0).at(0).value<QList<UupDumpApi::BuildInfo>>();
-    if (builds.isEmpty()) {
-        QSKIP("No builds returned - skipping");
-    }
+    QVERIFY2(!builds.isEmpty(), "Opted-in UUP build fetch returned no builds");
 
     // Now fetch files for the first build
     QString uuid = builds.first().uuid;
@@ -220,8 +218,8 @@ void WindowsISODownloaderTests::testGetFilesReturnsResults() {
 
     QTRY_VERIFY_WITH_TIMEOUT(filesSpy.count() > 0 || fileErrorSpy.count() > 0, 15'000);
     if (fileErrorSpy.count() > 0) {
-        qWarning() << "API error:" << fileErrorSpy.at(0).at(0).toString();
-        QSKIP("getFiles API call failed - skipping");
+        const QString error = fileErrorSpy.at(0).at(0).toString();
+        QFAIL(qPrintable(QStringLiteral("Opted-in UUP file fetch failed: %1").arg(error)));
     }
 
     QCOMPARE(filesSpy.count(), 1);
@@ -247,14 +245,14 @@ void WindowsISODownloaderTests::testFileUrlsAreValid() {
 
     const bool ok = QTest::qWaitFor(
         [&]() { return buildsSpy.count() > 0 || buildErrorSpy.count() > 0; }, 15'000);
-    if (buildErrorSpy.count() > 0 || !ok) {
-        QSKIP("UUP dump API unreachable - skipping network test");
-    }
+    QVERIFY2(ok, "Opted-in UUP build fetch timed out after 15 seconds");
+    const QString build_error = buildErrorSpy.isEmpty() ? QString()
+                                                        : buildErrorSpy.at(0).at(0).toString();
+    QVERIFY2(buildErrorSpy.isEmpty(),
+             qPrintable(QStringLiteral("Opted-in UUP build fetch failed: %1").arg(build_error)));
 
     auto builds = buildsSpy.at(0).at(0).value<QList<UupDumpApi::BuildInfo>>();
-    if (builds.isEmpty()) {
-        QSKIP("No builds returned - skipping");
-    }
+    QVERIFY2(!builds.isEmpty(), "Opted-in UUP build fetch returned no builds");
 
     QString uuid = builds.first().uuid;
     QSignalSpy filesSpy(api, &UupDumpApi::filesFetched);
@@ -264,14 +262,14 @@ void WindowsISODownloaderTests::testFileUrlsAreValid() {
 
     const bool filesOk =
         QTest::qWaitFor([&]() { return filesSpy.count() > 0 || fileErrorSpy.count() > 0; }, 15'000);
-    if (fileErrorSpy.count() > 0 || !filesOk) {
-        QSKIP("getFiles API call failed - skipping");
-    }
+    QVERIFY2(filesOk, "Opted-in UUP file fetch timed out after 15 seconds");
+    const QString file_error = fileErrorSpy.isEmpty() ? QString()
+                                                      : fileErrorSpy.at(0).at(0).toString();
+    QVERIFY2(fileErrorSpy.isEmpty(),
+             qPrintable(QStringLiteral("Opted-in UUP file fetch failed: %1").arg(file_error)));
 
     auto files = filesSpy.at(0).at(1).value<QList<UupDumpApi::FileInfo>>();
-    if (files.isEmpty()) {
-        QSKIP("No files returned - skipping");
-    }
+    QVERIFY2(!files.isEmpty(), "Opted-in UUP file fetch returned no files");
 
     for (const auto& file_entry : files) {
         validateFileEntry(file_entry);
