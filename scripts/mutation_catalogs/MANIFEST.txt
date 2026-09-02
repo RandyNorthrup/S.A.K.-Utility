@@ -6,6 +6,7 @@
 # without listing it fails closed, and deleting a listed catalog fails closed.
 # Blank lines and '#' comments are ignored.
 
+ai_conversation_store.json
 ai_offline_downloader_runner.json
 ai_openai_model_client.json
 ai_package_selection.json
@@ -17,6 +18,7 @@ ai_subagent_tool_executor.json
 ai_tool_dispatcher.json
 ai_tool_health_ledger.json
 ai_tool_loop_detector.json
+ai_tool_result_recorder.json
 apfs_compression.json
 apfs_crypto_keybag.json
 apfs_foreign_cow.json

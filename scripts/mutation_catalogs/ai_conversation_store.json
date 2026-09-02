@@ -1,0 +1,32 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_ai_conversation_store",
+  "ctest_regex": "^test_ai_conversation_store$",
+  "mutants": [
+    {
+      "id": "transcript-role-redaction-removed",
+      "file": "src/ai/ai_conversation_store.cpp",
+      "find": "    const QString redacted_role = redactSecrets(role);",
+      "replace": "    const QString redacted_role = role;",
+      "expect": "killed",
+      "why": "appendTranscript_redactsTextAndMetadataAtPersistenceBoundary requires the persisted role and search index to contain no recognized credential."
+    },
+    {
+      "id": "transcript-text-redaction-removed",
+      "file": "src/ai/ai_conversation_store.cpp",
+      "find": "    const QString redacted_text = redactSecrets(text);",
+      "replace": "    const QString redacted_text = text;",
+      "expect": "killed",
+      "why": "appendTranscript_redactsTextAndMetadataAtPersistenceBoundary requires the transcript body and search index to contain only the exact redacted form."
+    },
+    {
+      "id": "transcript-metadata-redaction-removed",
+      "file": "src/ai/ai_conversation_store.cpp",
+      "find": "    const QJsonObject redacted_metadata = redactSecretsInJson(metadata);",
+      "replace": "    const QJsonObject redacted_metadata = metadata;",
+      "expect": "killed",
+      "why": "appendTranscript_redactsTextAndMetadataAtPersistenceBoundary requires secret-valued metadata keys to persist as redacted."
+    }
+  ]
+}

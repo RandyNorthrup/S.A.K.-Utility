@@ -1257,6 +1257,34 @@ a parked design, per the bucket convention. Open work is what remains after thos
   AI TOOL LOOP DETECTOR WAVE 17 FINAL GATE: all changed-file hooks passed; the review ledger is
   repinned to the hardened source blob. Release build exit 0; full CTest 267/267, zero failures,
   722.32 seconds.
+  AI TOOL RESULT RECORDER WAVE 18: recognized credential redaction is now unconditional even when
+  callers omit the optional redactor; tiny positive output caps are hard ceilings; and wrong-
+  typed, fractional or out-of-range status fields render invalid instead of plausible success.
+  ConversationStore now redacts transcript role, text and nested metadata at the persistence
+  boundary before either the transcript or search index is written. Four focused regressions
+  failed against the old boundaries. The new recorder and conversation mutation catalogs kill
+  9/9 mutants. All changed-file hooks passed; the review ledger is repinned to the hardened
+  recorder blob. Release build exit 0; full CTest 267/267, zero failures, 735.66 seconds.
+  NEXT SOURCE AUDIT OPEN FINDINGS, 2026-09-01: `app_action_service.cpp` registers Reset Network
+  Settings and BitLocker Key Backup, while the elevation helper allowlist and BitLocker payload
+  builder expect different task names. Standard-user execution therefore refuses both actions,
+  and the BitLocker request also loses its payload. The assistant panel constructs the service
+  before an AI session exists, ignores the empty artifact-root error, and falls back to an
+  AppData `app_actions` directory that is never retargeted after session creation. Resulting
+  reports, screenshots and BitLocker keys sit outside session artifact provenance. The unused
+  `m_backup_dir` member and uncalled `controller()` accessor are dead/legacy candidates. These
+  findings remain INCOMPLETE until direct fixes, old-code-red tests and the full gate land.
+  SUPPRESSION RE-AUDIT REFRESH, 2026-09-01: core naming remains broadly excluded while 5,271
+  findings are tracked as open; two coverage compiler warning silences remain; the vendored LZFSE
+  target also disables warnings for the first-party shim. Whole-project cppcheck omits general
+  test findings and can false-green when its captured diagnostic file is unreadable. Another 26
+  Q_UNUSED and 22 `(void)` warning silences sit in unsupported-OS branches that must be removed,
+  not retained. The live suite contains 157 QSKIP call sites, while the observed-skip baseline
+  currently covers 35 functions; fixture-backed skips and ignored test results remain direct-fix
+  candidates. Certification PowerShell `SilentlyContinue` paths require fail-closed re-audit.
+  `APFS_LIVE_RECERT_FOLLOWONS.md` also has a stale cppcheck-suppression count. None of these
+  exceptions is grandfathered; all remain INCOMPLETE until directly fixed or individually proven
+  unavoidable.
   Unsupported-platform branch removal remains INCOMPLETE and must reduce code, not add portability
   implementations.
   OWNER RULE NOW RECORDED IN `AGENTS.md`: fix code, test, tool, or gate first; suppression is the

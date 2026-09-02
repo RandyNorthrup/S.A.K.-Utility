@@ -43,6 +43,9 @@ class AiToolResultRecorderTests : public QObject {
 
 private Q_SLOTS:
     void summaryRedactsAndIncludesStatus();
+    void summaryUsesCredentialRedactionByDefault();
+    void clippedTextHonorsTinyPositiveLimit();
+    void summaryDoesNotCoerceInvalidStatusValues();
     void recordWritesCommandAndTranscript();
     void recordFailsLoudWithoutActiveSession();
 };
@@ -54,6 +57,39 @@ void AiToolResultRecorderTests::summaryRedactsAndIncludesStatus() {
     QCOMPARE(summary,
              QStringLiteral(
                  "Command: Get-Thing [REDACTED]\nExit code: 0\nOutput: done [REDACTED]"));
+}
+
+void AiToolResultRecorderTests::summaryUsesCredentialRedactionByDefault() {
+    const QString secret = QStringLiteral("ctx7") + QStringLiteral("sk-") +
+                           QStringLiteral("fc513191-580d-40c0-b244-17ea71f182b9");
+    QJsonObject result;
+    result[QStringLiteral("preview")] = QStringLiteral("Get-Thing -ApiKey ") + secret;
+    result[QStringLiteral("stdout")] = QStringLiteral("configured ") + secret;
+
+    const QString summary = sak::ai::toolResultChatSummary(result);
+    QVERIFY(!summary.contains(secret));
+    QCOMPARE(summary.count(QStringLiteral("[redacted-context7-key]")), 2);
+}
+
+void AiToolResultRecorderTests::clippedTextHonorsTinyPositiveLimit() {
+    constexpr int kTinyLimit = 8;
+    const QString clipped =
+        sak::ai::clippedToolResultText(QStringLiteral("abcdefghijklmnopqrstuvwxyz"), kTinyLimit);
+    QCOMPARE(clipped.size(), static_cast<qsizetype>(kTinyLimit));
+}
+
+void AiToolResultRecorderTests::summaryDoesNotCoerceInvalidStatusValues() {
+    QJsonObject invalid_exit;
+    invalid_exit[QStringLiteral("exit_code")] = QStringLiteral("not-an-exit-code");
+    QCOMPARE(sak::ai::toolResultChatSummary(invalid_exit), QStringLiteral("Exit code: invalid"));
+    invalid_exit[QStringLiteral("exit_code")] = 1.5;
+    QCOMPARE(sak::ai::toolResultChatSummary(invalid_exit), QStringLiteral("Exit code: invalid"));
+    invalid_exit[QStringLiteral("exit_code")] = 2147483648.0;
+    QCOMPARE(sak::ai::toolResultChatSummary(invalid_exit), QStringLiteral("Exit code: invalid"));
+
+    QJsonObject invalid_success;
+    invalid_success[QStringLiteral("success")] = QStringLiteral("yes");
+    QCOMPARE(sak::ai::toolResultChatSummary(invalid_success), QStringLiteral("Success: invalid"));
 }
 
 void AiToolResultRecorderTests::recordWritesCommandAndTranscript() {

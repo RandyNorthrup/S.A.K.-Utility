@@ -1037,17 +1037,20 @@ bool ConversationStore::appendTranscript(const QString& role,
                                          const QJsonObject& metadata,
                                          QString* error_message) {
     const QWriteLocker locker(&m_lock);
+    const QString redacted_role = redactSecrets(role);
+    const QString redacted_text = redactSecrets(text);
+    const QJsonObject redacted_metadata = redactSecretsInJson(metadata);
     QJsonObject obj;
-    obj[QStringLiteral("role")] = role;
-    obj[QStringLiteral("text")] = text;
-    obj[QStringLiteral("metadata")] = metadata;
+    obj[QStringLiteral("role")] = redacted_role;
+    obj[QStringLiteral("text")] = redacted_text;
+    obj[QStringLiteral("metadata")] = redacted_metadata;
     if (!appendJsonLine(QString::fromLatin1(kTranscriptFile), obj, error_message)) {
         return false;
     }
     QJsonObject index;
     index[QStringLiteral("source")] = QStringLiteral("transcript");
-    index[QStringLiteral("role")] = role;
-    index[QStringLiteral("text")] = QStringLiteral("%1 %2").arg(role, text);
+    index[QStringLiteral("role")] = redacted_role;
+    index[QStringLiteral("text")] = QStringLiteral("%1 %2").arg(redacted_role, redacted_text);
     (void)appendSearchIndexRecord(index, nullptr);
     m_current_session.updated_at = QDateTime::currentDateTimeUtc();
     return writeManifest(error_message);

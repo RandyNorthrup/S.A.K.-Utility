@@ -41,6 +41,7 @@ private Q_SLOTS:
     void searchSessions_findsTranscriptAndCommandIndex();
     void appendCommand_redactsSecretsInPersistedRecord();
     void appendCommand_redactsSecretsInTheResultToo();
+    void appendTranscript_redactsTextAndMetadataAtPersistenceBoundary();
     void artifactSubdir_confinesSubdirToTheArtifactRoot();
     void artifactPath_rejectsAFilenameThatNamesTheDirectory();
     void safeArtifactDirectoryName_rejectsReservedAndTrailingDotNames();
@@ -1110,6 +1111,40 @@ void AiConversationStoreTests::appendCommand_redactsSecretsInTheResultToo() {
     QCOMPARE(
         stored_result.value(QStringLiteral("detail")).toObject().value(QStringLiteral("exit_code")),
         QJsonValue(0));
+}
+
+void AiConversationStoreTests::appendTranscript_redactsTextAndMetadataAtPersistenceBoundary() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Transcript Secrets"), &error));
+
+    const QString secret = QStringLiteral("ctx7") + QStringLiteral("sk-") +
+                           QStringLiteral("fc513191-580d-40c0-b244-17ea71f182b9");
+    QVERIFY(store.appendTranscript(QStringLiteral("Tool Result ") + secret,
+                                   QStringLiteral("configured ") + secret,
+                                   QJsonObject{{QStringLiteral("api_key"), secret}},
+                                   &error));
+
+    QFile transcript(store.currentSessionInfo().path + QStringLiteral("/transcript.jsonl"));
+    QVERIFY(transcript.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QJsonObject record = QJsonDocument::fromJson(transcript.readLine().trimmed()).object();
+    QCOMPARE(record.value(QStringLiteral("role")).toString(),
+             QStringLiteral("Tool Result [redacted-context7-key]"));
+    QCOMPARE(record.value(QStringLiteral("text")).toString(),
+             QStringLiteral("configured [redacted-context7-key]"));
+    QCOMPARE(record.value(QStringLiteral("metadata"))
+                 .toObject()
+                 .value(QStringLiteral("api_key"))
+                 .toString(),
+             QStringLiteral("[redacted]"));
+
+    QFile index(store.currentSessionInfo().path + QStringLiteral("/search_index.jsonl"));
+    QVERIFY(index.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QString index_text = QString::fromUtf8(index.readAll());
+    QVERIFY(!index_text.contains(secret));
+    QVERIFY(index_text.contains(QStringLiteral("[redacted-context7-key]")));
 }
 
 void AiConversationStoreTests::memoryFile_trimActuallyGetsUnderTheCapForNonAsciiMemory() {

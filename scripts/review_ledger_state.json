@@ -2397,8 +2397,11 @@
       "status": "reviewed"
     },
     "src/ai/ai_tool_result_recorder.cpp": {
+      "brief": "docs/review_briefs/src_ai_ai_tool_result_recorder.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "af41bfa35dae4a03f2627c9dde5a66de51bf2c72",
+      "status": "reviewed"
     },
     "src/ai/ai_tool_turn.cpp": {
       "evidence": "cited",
