@@ -183,11 +183,11 @@ QVector<ThermalReading> ThermalMonitor::pollOnce() {
     return pollOnce(ignored);
 }
 
-QVector<ThermalReading> ThermalMonitor::pollOnce(bool& queryOk) {
-    queryOk = false;
+QVector<ThermalReading> ThermalMonitor::pollOnce(bool& query_ok) {
+    query_ok = false;
     // System32-qualified interpreter, never a bare "powershell.exe": the poll can run
     // from an elevated session, so a PATH/CWD-planted powershell must not satisfy it.
-    // Unresolvable -> FAILED query (queryOk stays false).
+    // Unresolvable -> FAILED query (query_ok stays false).
     const QString powershell = sak::systemPowerShellPath();
     if (powershell.isEmpty()) {
         return {};
@@ -204,13 +204,13 @@ QVector<ThermalReading> ThermalMonitor::pollOnce(bool& queryOk) {
                 ? QStringLiteral("exit=%1 timeout=%2").arg(result.exit_code).arg(result.timed_out)
                 : result.std_err.trimmed();
         logWarning("Thermal sensor query failed: {}", detail.toStdString());
-        return {};  // query FAILED (non-zero exit / timeout) -> queryOk stays false
+        return {};  // query FAILED (non-zero exit / timeout) -> query_ok stays false
     }
 
     logSensorStatuses(result.std_out);
     // The script runs to completion and emits key=value lines only for available sensors; an
     // empty parse is a genuine "no readable sensors", not a failure.
-    queryOk = true;
+    query_ok = true;
     return parseThermalOutput(result.std_out);
 }
 

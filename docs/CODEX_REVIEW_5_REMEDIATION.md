@@ -1369,16 +1369,38 @@ a parked design, per the bucket convention. Open work is what remains after thos
   ATOMIC-ARTIFACT/EMAIL/NAMING/SILENCE WAVE 22 FINAL GATE: all changed-file hooks passed; the
   naming gate passed 151/151 non-core TUs clean and 156/156 core TUs healthy; full clang-cl coverage
   build exit 0; Release build exit 0; full CTest 268/268, zero failures, 698.06 seconds.
-  SUPPRESSION RE-AUDIT REFRESH, 2026-09-01: core naming remains broadly excluded while 5,274
-  findings are tracked as open. The coverage compiler warning silences and unsupported-platform
+  DETERMINISTIC-FIXTURE/NAMING/MUTATION/LEDGER WAVE 23: 20 deterministic QSKIP sites are removed
+  without adding a silence. Generated PST/OST/NST stores now drive the parser and integration
+  paths; synthetic EXIF and Windows/Linux ISO matrices replace optional host directories; a
+  missing bundled UUP converter or required distro catalog entry is a hard failure; and isolated
+  current-user, AppData and Windows shortcut fixtures replace host-dependent skips. The static
+  inventory is now 62 sites across 18 files. The fresh complete-suite runtime audit measures 5,085
+  passed functions and 30 reviewed skips (0.59 percent), with zero stale or unreviewed entries.
+  Three permanent catalogs add 15 compile-valid, test-killed mutants over package-install busy
+  state, user-profile restore selection and elevated-task dispatch. The ratchet now holds 49
+  catalogs / 390 mutants (384 killed, six proven equivalent), with zero survivors. A second safe
+  core naming slice clears eight more one-finding TUs; the healthy gate measures 5,266 findings
+  across 81 files and enforces 16 clean TUs while retaining the wider backlog as open work.
+  Ten self-verifying R5 review units are closed with stored blob-bound briefs: eight action headers
+  plus the two exact metadata suites. That review removed six dead constants, six dead state
+  members and one dead enum; corrected CHKDSK, system-report, Settings-capture and BitLocker
+  contracts to the shipped behavior; and renamed the disk-scan worker to the Repair-Volume seam it
+  actually invokes. The live ledger now holds 1,061 units, 648 pending and 21 self-verifying driver
+  reviews. All changed-file hooks passed; the naming gate passed 151/151 non-core TUs clean and
+  156/156 core TUs healthy; full clang-cl coverage build exit 0; Release build exit 0; full CTest
+  268/268, zero failures, 724.64 seconds.
+  SUPPRESSION RE-AUDIT REFRESH, 2026-09-01 through 2026-09-02: core naming remains broadly excluded
+  while 5,266 findings are tracked as open and 16 clean TUs are ratcheted. The coverage compiler
+  warning silences and unsupported-platform
   runtime branches are closed in Wave 20. The vendored LZFSE target still disables warnings for
   the first-party shim. The cppcheck test-scope and unreadable-
   diagnostic false greens are closed in Wave 19. Another 26
   `Q_UNUSED` and 22 `(void)` warning silences formerly in unsupported-OS branches are removed.
-  This refresh found 157 QSKIP call sites; Wave 21 reduced the live static inventory to 82 while the
-  observed-skip baseline still covers 35 reviewed functions. Remaining fixture/resource skips stay
-  direct-fix candidates. Wave 22 reduced Partition Manager run/launch `SilentlyContinue` paths to
-  zero and ratchets that state.
+  This refresh found 157 QSKIP call sites; Waves 21 and 23 reduced the live static inventory to 62
+  across 18 files while the observed baseline covers 30 reviewed functions. The latest audit
+  classifies 39 remaining sites as direct-fix candidates and 23 as genuinely external, privileged,
+  destructive, paid or live-service cases. Wave 22 reduced Partition Manager run/launch
+  `SilentlyContinue` paths to zero and ratchets that state.
   The APFS follow-on document's stale cppcheck-suppression count is corrected. None of the
   exceptions is grandfathered; all remain INCOMPLETE until directly fixed or individually proven
   unavoidable.
@@ -1387,7 +1409,7 @@ a parked design, per the bucket convention. Open work is what remains after thos
   last resort only after no direct fix is possible and the exact reason is proven. Existing
   suppressions are re-audited, not inherited as permanent policy. Current batch: all pre-commit
   hooks passed; Release build exit 0; full CTest 265/265, zero failures, 804.48 seconds.
-  STILL OPEN: core's 5,274 naming findings; the 294-item `useStlAlgorithm` program; remaining
+  STILL OPEN: core's 5,266 naming findings; the 294-item `useStlAlgorithm` program; remaining
   directly closable fixture/resource skips; broad magic-number exemptions; the wider mutation/
   fresh-host test-infra program; and the historical VM credential rotation/history-rewrite
   decision.

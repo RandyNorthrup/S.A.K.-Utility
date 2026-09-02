@@ -11,6 +11,8 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#include <algorithm>
+
 using namespace sak;
 
 class TestWindowsUserScanner : public QObject {
@@ -23,7 +25,7 @@ private Q_SLOTS:
     void getProfilePath_nonExistentUser();
     void getProfilePath_emptyUsernameFailsClosed();  // R5-G23-4 fail-closed guard
     void estimateProfileSize_invalidPath();
-    void getDefaultFolderSelections_currentUser();
+    void getDefaultFolderSelections_fixtureProfile();
     void getDefaultFolderSelections_invalidPath();
     void sumFolderFileSizes_sumsRealFiles();  // B10-31 per-folder sizing
 };
@@ -95,16 +97,23 @@ void TestWindowsUserScanner::estimateProfileSize_invalidPath() {
     QCOMPARE(size, static_cast<qint64>(0));
 }
 
-void TestWindowsUserScanner::getDefaultFolderSelections_currentUser() {
-    const QString username = WindowsUserScanner::getCurrentUsername();
-    const QString profile_path = WindowsUserScanner::getProfilePath(username);
-    if (profile_path.isEmpty()) {
-        QSKIP("Could not resolve current user profile path");
-    }
-    const auto selections = WindowsUserScanner::getDefaultFolderSelections(profile_path);
-    // getDefaultFolderSelections appends 9 catalog folders unconditionally (existence only gates
-    // the size/count fields, not the append).
+void TestWindowsUserScanner::getDefaultFolderSelections_fixtureProfile() {
+    QTemporaryDir profile;
+    QVERIFY(profile.isValid());
+    QVERIFY(QDir(profile.path()).mkpath(QStringLiteral("Documents/sub")));
+    QFile document(profile.filePath(QStringLiteral("Documents/sub/note.txt")));
+    QVERIFY(document.open(QIODevice::WriteOnly));
+    QCOMPARE(document.write("fixture"), static_cast<qint64>(7));
+    document.close();
+
+    const auto selections = WindowsUserScanner::getDefaultFolderSelections(profile.path());
     QCOMPARE(selections.size(), 9);
+    const auto documents = std::ranges::find_if(selections, [](const FolderSelection& selection) {
+        return selection.type == FolderType::Documents;
+    });
+    QVERIFY(documents != selections.end());
+    QCOMPARE(documents->size_bytes, static_cast<qint64>(7));
+    QCOMPARE(documents->file_count, 1);
 }
 
 void TestWindowsUserScanner::getDefaultFolderSelections_invalidPath() {

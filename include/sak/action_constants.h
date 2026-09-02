@@ -28,12 +28,9 @@ constexpr char kBackupBitLockerKeysTaskId[] = "Backup BitLocker Keys";
 // Retry / backoff policy
 // ============================================================================
 
-constexpr int kRetryCountDefault = 3;         ///< Default retry attempts
-constexpr int kRetryCountHigh = 5;            ///< Higher retry attempts
-constexpr int kRetryBackoffBaseMs = 2000;     ///< Retry backoff base
-constexpr int kRetryBackoffBaseFastMs = 500;  ///< Fast retry backoff
-constexpr int kRetryBackoffMaxMs = 60'000;    ///< Retry backoff ceiling
-constexpr int kRetryBackoffSlowMs = 5000;     ///< Slow retry backoff
+constexpr int kRetryCountDefault = 3;      ///< Default retry attempts
+constexpr int kRetryCountHigh = 5;         ///< Higher retry attempts
+constexpr int kRetryBackoffSlowMs = 5000;  ///< Slow retry backoff
 
 // ============================================================================
 // Process exit codes
@@ -41,7 +38,6 @@ constexpr int kRetryBackoffSlowMs = 5000;     ///< Slow retry backoff
 
 constexpr int kExitSuccess = 0;
 constexpr int kExitRebootRequired = 3010;  ///< Windows restart needed
-constexpr int kExitNoUpdate = 2;           ///< Chocolatey "already installed"
 
 // ============================================================================
 // Chocolatey / package manager
@@ -49,7 +45,6 @@ constexpr int kExitNoUpdate = 2;           ///< Chocolatey "already installed"
 
 constexpr int kChocoTimeoutDefaultSec = 300;   ///< Default choco --execution-timeout
 constexpr int kChocoTimeoutExtendedSec = 900;  ///< Extended choco timeout
-constexpr int kChocoMaxPackageBatch = 10;      ///< Max packages in batch install
 
 // ============================================================================
 // Progress step helpers
@@ -64,7 +59,6 @@ constexpr int kStep3 = 3;
 constexpr int kStep5 = 5;
 constexpr int kStep10 = 10;
 constexpr int kStep15 = 15;
-constexpr int kStep20 = 20;
 constexpr int kStep25 = 25;
 constexpr int kStep30 = 30;
 constexpr int kStep35 = 35;

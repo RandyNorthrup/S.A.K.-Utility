@@ -814,7 +814,7 @@ bool UserDataManager::compressSourcePaths(const QStringList& source_paths,
         return false;
     }
 
-    const QString compressionLevel = mapCompressionLevel(compression_level);
+    const QString compression_level_name = mapCompressionLevel(compression_level);
 
     // Use PowerShell's Compress-Archive for Windows.
     QStringList args;
@@ -830,7 +830,7 @@ bool UserDataManager::compressSourcePaths(const QStringList& source_paths,
     const QString command = QString(
                                 "Compress-Archive -Path '%1' -DestinationPath '%2' "
                                 "-CompressionLevel %3 -Force")
-                                .arg(sources, safe_archive, compressionLevel);
+                                .arg(sources, safe_archive, compression_level_name);
     args << command;
 
     const auto result = sak::runProcess(powershell,

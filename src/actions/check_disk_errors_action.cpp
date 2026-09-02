@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file check_disk_errors_action.cpp
-/// @brief Implements disk error checking using the Windows chkdsk utility
+/// @brief Implements read-only online disk error checks using Repair-Volume -Scan
 
 #include "sak/actions/check_disk_errors_action.h"
 
@@ -106,7 +106,7 @@ void CheckDiskErrorsAction::execute() {
 
     DiskCheckTotals totals;
     totals.total_drives = static_cast<int>(drives.count());
-    executeRunChkdsk(
+    executeRunVolumeScan(
         drives, report, totals.drives_scanned, totals.errors_found, totals.repairs_recommended);
 
     executeBuildReport(start_time, report, totals);
@@ -274,11 +274,11 @@ void CheckDiskErrorsAction::appendDriveScanEntry(const ParsedDriveState& state,
     report += "\n";
 }
 
-void CheckDiskErrorsAction::executeRunChkdsk(const QVector<QChar>& drives,
-                                             QString& report,
-                                             int& drives_scanned,
-                                             int& errors_found,
-                                             int& repairs_recommended) {
+void CheckDiskErrorsAction::executeRunVolumeScan(const QVector<QChar>& drives,
+                                                 QString& report,
+                                                 int& drives_scanned,
+                                                 int& errors_found,
+                                                 int& repairs_recommended) {
     for (int i = 0; i < drives.count(); ++i) {
         const QChar& drive = drives[i];
 

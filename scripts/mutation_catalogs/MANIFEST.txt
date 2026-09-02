@@ -28,8 +28,10 @@ apfs_crypto_keybag.json
 apfs_foreign_cow.json
 apfs_reader.json
 apfs_resize_cli.json
+app_installation_busy.json
 backup_file_codec.json
 decompressor_factory.json
+elevated_task_dispatcher.json
 email_html_sanitizer.json
 ext_reader.json
 fs_detector.json
@@ -50,5 +52,6 @@ pst_field_decoders.json
 quick_action_elevation.json
 smart_disk_analyzer.json
 streaming_decompressor.json
+user_profile_restore_selection.json
 uup_aria2_guard.json
 vulnerability_scanner_version.json

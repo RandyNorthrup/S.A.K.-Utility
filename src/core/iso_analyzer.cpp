@@ -385,8 +385,8 @@ void applyGenericLinuxMetadata(sak::IsoInfo& info, const QString& label) {
 /// Try to extract a version number (e.g. "24.04", "41", "12.8") from text
 QString extractVersionFromText(const QString& text) {
     // Match patterns like 24.04.1, 24.04, 41, 12
-    static const QRegularExpression version_rx(QString::fromLatin1(kVersionPattern));
-    auto match = version_rx.match(text);
+    static const QRegularExpression kVersionRx(QString::fromLatin1(kVersionPattern));
+    auto match = kVersionRx.match(text);
     if (match.hasMatch()) {
         return match.captured(1);
     }

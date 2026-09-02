@@ -70,7 +70,7 @@ void GenerateSystemReportAction::scan() {
 
     ScanResult result;
     result.applicable = true;
-    result.summary = "System report will gather OS, hardware, storage, and drivers";
+    result.summary = "System report will gather OS, hardware, storage, network, and volume data";
     result.details = "Output saved to reports folder";
 
     setScanResult(result);

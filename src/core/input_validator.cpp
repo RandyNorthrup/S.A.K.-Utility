@@ -579,9 +579,9 @@ bool input_validator::containsSuspiciousPatterns(const std::filesystem::path& pa
     const auto path_str = path.string();
 
     // Windows device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9)
-    static const std::regex device_pattern(kWindowsDeviceNamePattern, std::regex::icase);
+    static const std::regex kDevicePattern(kWindowsDeviceNamePattern, std::regex::icase);
 
-    if (std::regex_search(path_str, device_pattern)) {
+    if (std::regex_search(path_str, kDevicePattern)) {
         return true;
     }
 

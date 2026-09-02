@@ -51,15 +51,6 @@ public:
     static QString makeUniqueSfcOutputName(qint64 entropy, qint64 msecs, unsigned counter);
 
 private:
-    enum class ScanPhase {
-        CheckHealth,
-        RestoreHealth,
-        SFC
-    };
-
-    ScanPhase m_current_phase{ScanPhase::CheckHealth};
-    bool m_corruption_detected{false};
-    QString m_log_path;
     bool m_sfc_found_issues{false};
     bool m_sfc_repaired{false};
     bool m_sfc_ran{false};

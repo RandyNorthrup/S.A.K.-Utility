@@ -17,7 +17,7 @@ namespace sak {
 /**
  * @brief Screenshot Settings Action
  *
- * Captures screenshots of all Windows Settings pages for documentation.
+ * Captures screenshots of configured key Windows Settings pages for documentation.
  */
 class ScreenshotSettingsAction : public QuickAction {
     Q_OBJECT
@@ -39,7 +39,6 @@ public:
 
 private:
     QString m_output_location;
-    int m_screenshots_taken{0};
 
     /// @brief Result of capturing all settings pages
     struct CaptureResult {

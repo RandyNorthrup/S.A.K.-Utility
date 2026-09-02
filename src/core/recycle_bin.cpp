@@ -166,12 +166,12 @@ bool sendPathToRecycleBin(const QString& path, QString* error) {
     }
 
     // SHFileOperationW requires a native, double-null terminated path.
-    std::wstring widePath = QDir::toNativeSeparators(absolute).toStdWString();
-    widePath.push_back(L'\0');  // Extra null terminator
+    std::wstring wide_path = QDir::toNativeSeparators(absolute).toStdWString();
+    wide_path.push_back(L'\0');  // Extra null terminator
 
     SHFILEOPSTRUCTW op{};
     op.wFunc = FO_DELETE;
-    op.pFrom = widePath.c_str();
+    op.pFrom = wide_path.c_str();
     op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_NOERRORUI | FOF_SILENT;
 
     const int shell_result = SHFileOperationW(&op);

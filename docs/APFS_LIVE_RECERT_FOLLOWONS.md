@@ -217,8 +217,13 @@ the rest is a debt-reduction + test-infra program (multi-session, much of it cos
       across 89 files. Eight one-finding TUs are now clean and permanently ratcheted:
       `bzip2_decompressor.cpp`, `gzip_decompressor.cpp`, `xz_decompressor.cpp`,
       `deleted_item_scanner.cpp`, `email_export_worker.cpp`, `network_transfer_runner.cpp`,
-      `package_internalization_engine.cpp`, and `pdf_email_writer.cpp`. The wider core naming and
-      style backlog remains open.
+      `package_internalization_engine.cpp`, and `pdf_email_writer.cpp`. The second safe slice cleared
+      eight more one-finding TUs: `conversion_report_generator.cpp`,
+      `email_report_generator.cpp`, `input_validator.cpp`, `iso_analyzer.cpp`, `recycle_bin.cpp`,
+      `thermal_monitor.cpp`, `user_data_manager.cpp`, and `vulnerability_scanner.cpp`. A healthy
+      156/156-TU proof pass established zero findings in those files before the manifest expanded;
+      the final healthy pass now measures 5,266 findings across 81 files and enforces 16 clean TUs.
+      The wider core naming and style backlog remains open.
 - [x] cppcheck-suppression audit -- DONE, corrected 2026-08-31. All 26 inline suppressions were
       re-checked with inline suppressions disabled. Three genuinely suppressed nothing and remain
       removed. A real template-instantiating include-path run later proved two `strong_index.h`
@@ -240,9 +245,16 @@ the rest is a debt-reduction + test-infra program (multi-session, much of it cos
       machine-owned, four claim docs are citation-gated, route parity is 44/8/44, and the final
       Release gate passed 263/263 in 652.72 seconds.
       Latest R5 review batch: 46 mutation catalogs / 375 mutants (369 killed, six equivalent).
-      All changed-file hooks passed; naming passed 151/151 non-core TUs clean and 156/156 core TUs
-      healthy; full clang-cl coverage build exit 0; Release build exit 0; full CTest 268/268, zero
-      failures, 698.06 seconds.
+      PROGRESS 2026-09-02: three existing core seams now have permanent catalogs:
+      `app_installation_busy` (four mutants), `user_profile_restore_selection` (five), and
+      `elevated_task_dispatcher` (six). All 15 compile and are killed by their existing focused
+      tests, with zero survivors or new test holes. The ratchet now validates 49 catalogs / 390
+      mutants (384 killed, six proven equivalent), and all three production sources restored
+      byte-for-byte after the drills.
+      WAVE 23 FINAL GATE: all changed-file hooks passed; naming passed 151/151 non-core TUs clean
+      and 156/156 core TUs healthy with 5,266 findings across 81 files and 16 clean TUs enforced;
+      full clang-cl coverage build exit 0; Release build exit 0; full CTest 268/268, zero failures,
+      724.64 seconds.
       Current plan-archive/doc-gate/clang slice: all pre-commit hooks passed; Release build exit
       0; full CTest 265/265, zero failures, 804.48 seconds.
       Suppression direct-fix wave 1: all changed-file hooks passed; Release build exit 0; full

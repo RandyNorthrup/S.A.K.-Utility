@@ -20,11 +20,11 @@ namespace sak {
  *
  * Enterprise-grade backup of BitLocker recovery keys for all encrypted
  * volumes on the system. Captures recovery passwords, key protector IDs,
- * encryption method, volume status, and key package data.
- *
- * Saves a comprehensive recovery document with all keys, plus individual
- * per-volume key files in a structured backup directory. Requires
- * administrator privileges to access BitLocker WMI providers.
+ * encryption method,
+ * volume status, and external-key filenames when reported.
+ * Saves a comprehensive recovery
+ * document with all keys, plus individual per-volume key files in a structured backup directory.
+ * Requires administrator privileges to access BitLocker WMI providers.
  *
  * Security: Recovery keys are sensitive. The backup is written to the
  * user-specified backup location with restricted file permissions.

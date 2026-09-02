@@ -84,12 +84,12 @@ public:
     [[nodiscard]] static QVector<ThermalReading> pollOnce();
 
     /// @brief Single synchronous poll, reporting whether the query SUCCEEDED.
-    /// @param queryOk set true when the sensor-query process ran to completion (an empty result
+    /// @param query_ok set true when the sensor-query process ran to completion (an empty result
     /// then means "no readable sensors", a legitimate common state), false when the query itself
     /// FAILED (non-zero exit / timeout). Lets a caller distinguish "no sensors" from "could not
     /// query sensors" instead of reporting a failed query as "no thermal data". The no-argument
     /// overload discards this signal (existing callers, e.g. the poll timer / StressTestWorker).
-    [[nodiscard]] static QVector<ThermalReading> pollOnce(bool& queryOk);
+    [[nodiscard]] static QVector<ThermalReading> pollOnce(bool& query_ok);
 
     /// @brief Query CPU thermal zone temperature from WMI
     /// @return Temperature in Celsius, or -1.0 if unavailable

@@ -89,8 +89,7 @@ private Q_SLOTS:
     void imageMetadataSearch_jpegExifExtraction();
     void imageMetadataSearch_directorySearch();
 
-    // -- Diagnostic: Real directory --
-    void imageMetadataSearch_realDirectory();
+    void imageMetadataSearch_syntheticFixtureMatrix();
 
     // -- File Metadata Search --
     void fileMetadataSearch_findsFileInfo();
@@ -1147,30 +1146,30 @@ void AdvancedSearchWorkerTests::imageMetadataSearch_directorySearch() {
     QVERIFY2(from_jpeg, "Directory search should find metadata in JPEG files");
 }
 
-void AdvancedSearchWorkerTests::imageMetadataSearch_realDirectory() {
-    // Diagnostic test: verify EXIF metadata search works on real JPEGs.
-    // Requires SAK_EXIF_SAMPLE_DIR to point to an EXIF sample directory.
-    const QString real_dir = qEnvironmentVariable("SAK_EXIF_SAMPLE_DIR").trimmed();
-    if (real_dir.isEmpty()) {
-        QSKIP("Set SAK_EXIF_SAMPLE_DIR to run this diagnostic test");
+void AdvancedSearchWorkerTests::imageMetadataSearch_syntheticFixtureMatrix() {
+    struct MetadataCase {
+        QString pattern;
+        QString expected;
+    };
+    const std::array<MetadataCase, 2> cases = {
+        MetadataCase{QStringLiteral("TestCamera"),
+                     QStringLiteral("[Metadata] Software: TestCamera")},
+        MetadataCase{QStringLiteral("2025:01:15"),
+                     QStringLiteral("[Metadata] DateTime: 2025:01:15 10:30:00")},
+    };
+
+    for (const auto& metadata_case : cases) {
+        SearchConfig config;
+        config.root_path = m_temp_dir.path() + QStringLiteral("/exif_test.jpg");
+        config.pattern = metadata_case.pattern;
+        config.search_image_metadata = true;
+        config.exclude_patterns.clear();
+        config.max_results = 0;
+
+        const auto matches = runWorker(config);
+        QCOMPARE(matches.size(), 1);
+        QCOMPARE(matches.first().line_content, metadata_case.expected);
     }
-    if (!QDir(real_dir).exists()) {
-        QSKIP("exif-samples-master test directory not available");
-    }
-
-    SearchConfig config;
-    config.root_path = real_dir;
-    config.pattern = "Canon";
-    config.search_image_metadata = true;
-    config.exclude_patterns.clear();
-    config.max_results = 0;
-
-    auto matches = runWorker(config);
-
-    const auto metadata_count = std::ranges::count_if(matches, [](const SearchMatch& match) {
-        return match.line_content.startsWith("[Metadata]");
-    });
-    QVERIFY2(metadata_count >= 1, "Should find [Metadata] EXIF matches in Canon JPEG files");
 }
 
 // ============================================================================

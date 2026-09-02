@@ -6997,7 +6997,7 @@ add_test(NAME test_pst_parser COMMAND test_pst_parser
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_pst_parser")
 
-# test_ost_integration - opens real OST/PST files and exercises full parse pipeline
+# test_ost_integration - opens generated OST/PST fixtures through full parse/export pipeline
 add_executable(test_ost_integration
     integration/test_ost_integration.cpp
     ../src/core/email_export_worker.cpp

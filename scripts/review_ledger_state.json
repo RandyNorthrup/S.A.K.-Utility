@@ -1,5 +1,5 @@
 {
-  "head_commit": "acf67f4869fcb96766488cb665b263c19da9107e",
+  "head_commit": "7728f4902fda58502da46ccf404913599dc0d14d",
   "unit_rule": "include/**.h|.hpp, src/**.cpp|.h|.hpp, tests/**.cpp|.h|.mjs, scripts/**.py|.ps1|.sh, browser/**.js",
   "units": {
     "browser/extension/background.js": {
@@ -9,36 +9,66 @@
       "status": "reviewed"
     },
     "include/sak/action_constants.h": {
+      "brief": "docs/review_briefs/include_sak_action_constants.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "previous_evidence": "driver",
+      "previous_review_blob": "a74b92278cd4cc02d60558c08f7c33c000f91845",
+      "reviewed_blob": "7aaec803f7e47c6ab43eccfeb0ffeef0c71907a1",
+      "status": "reviewed"
     },
     "include/sak/actions/backup_bitlocker_keys_action.h": {
+      "brief": "docs/review_briefs/include_sak_actions_backup_bitlocker_keys_action.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "previous_evidence": "driver",
+      "previous_review_blob": "ff81d53667ff01afd3e4c8e2fbe3b4ed267eed38",
+      "reviewed_blob": "6e8f32657d78b4c57e0a74dd9fca386aaa303e6a",
+      "status": "reviewed"
     },
     "include/sak/actions/check_disk_errors_action.h": {
+      "brief": "docs/review_briefs/include_sak_actions_check_disk_errors_action.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "previous_evidence": "driver",
+      "previous_review_blob": "bc4e573126d98ed916747356220401861acc7014",
+      "reviewed_blob": "c049e8a4f38ad64a73a689c880b4109b8e142e07",
+      "status": "reviewed"
     },
     "include/sak/actions/generate_system_report_action.h": {
+      "brief": "docs/review_briefs/include_sak_actions_generate_system_report_action.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": "c4dd491de79a83c499367f018366d257731dd2aa",
+      "status": "reviewed"
     },
     "include/sak/actions/optimize_power_settings_action.h": {
+      "brief": "docs/review_briefs/include_sak_actions_optimize_power_settings_action.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": "536eedc84c268b1f4f06ce88475bd0438c357b7c",
+      "status": "reviewed"
     },
     "include/sak/actions/reset_network_action.h": {
+      "brief": "docs/review_briefs/include_sak_actions_reset_network_action.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": "4ca2c7a5de51763e55fdffc4a3c76f8728cea11c",
+      "status": "reviewed"
     },
     "include/sak/actions/screenshot_settings_action.h": {
+      "brief": "docs/review_briefs/include_sak_actions_screenshot_settings_action.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": "46342bc0713230e490c7337f0fe1760245ec218e",
+      "status": "reviewed"
     },
     "include/sak/actions/verify_system_files_action.h": {
+      "brief": "docs/review_briefs/include_sak_actions_verify_system_files_action.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": "f27a84be0e65fabaab8ca885f4f8ee2dadb479b1",
+      "status": "reviewed"
     },
     "include/sak/active_connections_monitor.h": {
       "evidence": "cited",
@@ -1907,6 +1937,10 @@
       "status": "pending"
     },
     "scripts/new_partition_manager_external_evidence_manifest.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/partition_manager_storage.ps1": {
       "group": "scripts",
       "status": "pending"
     },
@@ -3970,12 +4004,18 @@
       "status": "reviewed"
     },
     "tests/unit/actions/test_action_factory.cpp": {
+      "brief": "docs/review_briefs/tests_unit_actions_test_action_factory.md",
+      "evidence": "driver",
       "group": "tests",
-      "status": "pending"
+      "reviewed_blob": "f121244e0c3c77e629a5f700adbecfc6c0be8121",
+      "status": "reviewed"
     },
     "tests/unit/actions/test_all_actions_metadata.cpp": {
+      "brief": "docs/review_briefs/tests_unit_actions_test_all_actions_metadata.md",
+      "evidence": "driver",
       "group": "tests",
-      "status": "pending"
+      "reviewed_blob": "f8b0cbc8787a2688158f0f743b673434ee4e044b",
+      "status": "reviewed"
     },
     "tests/unit/actions/test_backup_bitlocker_keys_action.cpp": {
       "group": "tests",
@@ -4422,6 +4462,10 @@
       "status": "reviewed"
     },
     "tests/unit/test_email_attachment_saver.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_email_attachments_browser_dialog.cpp": {
       "group": "tests",
       "status": "pending"
     },

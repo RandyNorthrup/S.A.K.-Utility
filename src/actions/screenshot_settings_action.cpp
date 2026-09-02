@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file screenshot_settings_action.cpp
-/// @brief Implements screenshot capture and display settings backup
+/// @brief Implements configured Windows Settings page screenshot capture
 
 #include "sak/actions/screenshot_settings_action.h"
 

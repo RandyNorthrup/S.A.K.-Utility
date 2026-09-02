@@ -115,7 +115,8 @@ void TestActionFactory::testAllDescriptionsNonEmpty() {
     const QHash<QString, QString> expected = {
         {QStringLiteral("BitLocker Key Backup"),
          QStringLiteral("Backup BitLocker recovery keys for all encrypted volumes")},
-        {QStringLiteral("Check Disk Errors"), QStringLiteral("Run CHKDSK scan on all drives")},
+        {QStringLiteral("Check Disk Errors"),
+         QStringLiteral("Run read-only online scans on all drives")},
         {QStringLiteral("Generate System Report"),
          QStringLiteral("Create comprehensive system report")},
         {QStringLiteral("Optimize Power Settings"),

@@ -11,8 +11,8 @@
 #include "../support/pst_fixture.h"
 
 #include <QByteArray>
-#include <QDir>
-#include <QFileInfo>
+#include <QFile>
+#include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QtTest/QtTest>
 
@@ -264,8 +264,8 @@ private Q_SLOTS:
     void detectsCompressibleEncryption();
     void ansiHeaderReadsEncryptionFromOffset461();
 
-    // -- Real-file smoke (env-gated) -------------------------------------
-    void realEmailFilesParseSafely();
+    // -- Generated file smoke --------------------------------------------
+    void generatedEmailFilesParseSafely();
 
     // -- Open / Close Lifecycle ------------------------------------------
     void openNonExistentFile();
@@ -1555,23 +1555,21 @@ void TestPstParser::ansiHeaderReadsEncryptionFromOffset461() {
     QCOMPARE(error, QStringLiteral("Invalid PST header: Unsupported encryption"));
 }
 
-// Env-gated real-file smoke: point SAK_TEST_PST_DIR at a folder of .pst/.ost/.nst
-// files. Exercises the full parse path (data-tree expansion, P05-47) and negative
-// pagination offsets (P05-49) on real data. Skipped in CI. Reads structure/counts
-// only -- never surfaces any message body, address, or subject.
-void TestPstParser::realEmailFilesParseSafely() {
-    const QByteArray env = qgetenv("SAK_TEST_PST_DIR");
-    if (env.isEmpty()) {
-        QSKIP("SAK_TEST_PST_DIR not set; skipping real-file parse smoke");
-    }
-    const QFileInfoList files = QDir(QString::fromLocal8Bit(env))
-                                    .entryInfoList({QStringLiteral("*.pst"),
-                                                    QStringLiteral("*.ost"),
-                                                    QStringLiteral("*.nst")},
-                                                   QDir::Files);
-    if (files.isEmpty()) {
-        QSKIP("no .pst/.ost/.nst files in SAK_TEST_PST_DIR");
-    }
+// Generated stores exercise full parse, data-tree expansion (P05-47), and hostile
+// pagination offsets (P05-49) for every supported store suffix on every test host.
+void TestPstParser::generatedEmailFilesParseSafely() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+
+    struct StoreCase {
+        QString name;
+        QByteArray bytes;
+    };
+    const std::array<StoreCase, 3> stores = {
+        StoreCase{QStringLiteral("messages.pst"), sak::pst_fixture::buildMessagingUnicodeStore()},
+        StoreCase{QStringLiteral("xblock.ost"), sak::pst_fixture::buildXblockMessageStore()},
+        StoreCase{QStringLiteral("xxblock.nst"), sak::pst_fixture::buildXxblockMessageStore()},
+    };
 
     // Recursively collect folder node ids from the tree.
     std::function<void(const QVector<sak::PstFolder>&, QVector<uint64_t>&)> collect =
@@ -1582,18 +1580,22 @@ void TestPstParser::realEmailFilesParseSafely() {
             }
         };
 
-    for (const QFileInfo& file : files) {
+    for (const auto& store : stores) {
+        const QString path = directory.filePath(store.name);
+        QFile file(path);
+        QVERIFY2(file.open(QIODevice::WriteOnly), qPrintable(path));
+        QCOMPARE(file.write(store.bytes), static_cast<qint64>(store.bytes.size()));
+        file.close();
+
         PstParser parser;
-        parser.open(file.absoluteFilePath());
-        if (!parser.isOpen()) {
-            qInfo().noquote() << file.fileName() << "did not open (graceful, no crash)";
-            continue;
-        }
+        parser.open(path);
+        QVERIFY2(parser.isOpen(),
+                 qPrintable(QStringLiteral("Generated store did not open: %1").arg(path)));
         const sak::PstFileInfo info = parser.fileInfo();
         QVector<uint64_t> folder_ids;
         collect(parser.folderTree(), folder_ids);
-        qInfo().noquote() << file.fileName() << "unicode=" << info.is_unicode
-                          << "ost=" << info.is_ost << "folders=" << folder_ids.size();
+        qInfo().noquote() << store.name << "unicode=" << info.is_unicode << "ost=" << info.is_ost
+                          << "folders=" << folder_ids.size();
         QVERIFY(!folder_ids.isEmpty());
 
         // For a bounded sample of folders, prove normal + hostile pagination

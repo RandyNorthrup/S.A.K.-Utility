@@ -191,9 +191,7 @@ void TestLinuxDistroCatalog::testDistroByIdNotFound() {
 
 void TestLinuxDistroCatalog::testResolveDownloadUrl() {
     auto ubuntu = m_catalog->distroById("ubuntu-desktop");
-    if (ubuntu.id.isEmpty()) {
-        QSKIP("ubuntu-desktop not in catalog");
-    }
+    QVERIFY2(!ubuntu.id.isEmpty(), "required ubuntu-desktop entry missing from catalog");
 
     const QString url = m_catalog->resolveDownloadUrl(ubuntu);
     QVERIFY(!url.isEmpty());
@@ -206,9 +204,7 @@ void TestLinuxDistroCatalog::testResolveDownloadUrl() {
 void TestLinuxDistroCatalog::testResolveChecksumUrl() {
     Q_ASSERT(m_catalog);
     auto ubuntu = m_catalog->distroById("ubuntu-desktop");
-    if (ubuntu.id.isEmpty()) {
-        QSKIP("ubuntu-desktop not in catalog");
-    }
+    QVERIFY2(!ubuntu.id.isEmpty(), "required ubuntu-desktop entry missing from catalog");
 
     const QString url = m_catalog->resolveChecksumUrl(ubuntu);
     // ubuntu-desktop publishes a checksum endpoint, so the resolver must return it.
@@ -227,9 +223,7 @@ void TestLinuxDistroCatalog::testResolveChecksumUrl() {
 
 void TestLinuxDistroCatalog::testResolveFileName() {
     auto ubuntu = m_catalog->distroById("ubuntu-desktop");
-    if (ubuntu.id.isEmpty()) {
-        QSKIP("ubuntu-desktop not in catalog");
-    }
+    QVERIFY2(!ubuntu.id.isEmpty(), "required ubuntu-desktop entry missing from catalog");
 
     const QString name = m_catalog->resolveFileName(ubuntu);
     QVERIFY(!name.isEmpty());

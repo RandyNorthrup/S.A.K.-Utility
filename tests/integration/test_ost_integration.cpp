@@ -2,31 +2,37 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file test_ost_integration.cpp
-/// @brief Integration test: opens real OST/PST files and reports parse results
+/// @brief Integration test: opens generated OST/PST fixtures and verifies parse/export results
 
 #include "sak/email_export_worker.h"
 #include "sak/error_codes.h"
 #include "sak/pst_parser.h"
 
+#include "../support/pst_fixture.h"
+
 #include <QCoreApplication>
 #include <QDebug>
 #include <QDir>
 #include <QDirIterator>
+#include <QFile>
 #include <QFileInfo>
-#include <QProcessEnvironment>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
-static QString configuredOstPath() {
-    return QProcessEnvironment::systemEnvironment()
-        .value(QStringLiteral("SAK_TEST_OST_PATH"))
-        .trimmed();
-}
-
-static QString configuredPstPath() {
-    return QProcessEnvironment::systemEnvironment()
-        .value(QStringLiteral("SAK_TEST_PST_PATH"))
-        .trimmed();
+static QString writeStoreFixture(QTemporaryDir& directory, const QString& suffix, bool is_ost) {
+    const QString path = directory.filePath(QStringLiteral("mailbox.") + suffix);
+    QFile file(path);
+    QByteArray bytes = sak::pst_fixture::buildMessagingUnicodeStore();
+    if (is_ost) {
+        sak::pst_fixture::writeLe16(bytes,
+                                    sak::pst_fixture::kContentTypeOffset,
+                                    sak::email::kOstContentType);
+        sak::pst_fixture::restampHeaderCrc(bytes);
+    }
+    if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size()) {
+        return {};
+    }
+    return path;
 }
 
 // ================================================================
@@ -49,21 +55,6 @@ static void printFolderTree(const sak::PstFolderTree& tree) {
     for (const auto& root : tree) {
         printFolder(root, 0);
     }
-}
-
-static const sak::PstFolder* findNonEmptyFolder(const sak::PstFolderTree& tree) {
-    for (const auto& folder : tree) {
-        uint8_t nid_type = static_cast<uint8_t>(folder.node_id & 0x1F);
-        bool is_normal = nid_type == sak::email::kNidTypeNormalFolder;
-        if (folder.content_count > 0 && is_normal) {
-            return &folder;
-        }
-        const auto* child = findNonEmptyFolder(folder.children);
-        if (child) {
-            return child;
-        }
-    }
-    return nullptr;
 }
 
 static bool hasExportedFile(const QString& dir_path, const QString& suffix) {
@@ -121,17 +112,14 @@ static void verifySingleItemExports(PstParser& parser, uint64_t item_id) {
 static void verifyFolderItems(PstParser& parser, const sak::PstFolderTree& tree) {
     qDebug() << "\n=== LOADING FOLDER ITEMS ===";
 
-    const auto* target = findNonEmptyFolder(tree);
-    if (!target) {
-        qDebug() << "No non-empty folders found!";
-        QFAIL("No non-empty folder found in fixture");
-    }
+    QVERIFY2(!tree.isEmpty(), "Generated fixture must contain a root folder");
+    const sak::PstFolder& target = tree.first();
 
-    qDebug() << "Loading items from folder:" << target->display_name << "NID:" << Qt::hex
-             << target->node_id;
+    qDebug() << "Loading items from folder:" << target.display_name << "NID:" << Qt::hex
+             << target.node_id;
 
     constexpr int kMaxItems = 10;
-    auto items_result = parser.readFolderItems(target->node_id, 0, kMaxItems);
+    auto items_result = parser.readFolderItems(target.node_id, 0, kMaxItems);
     if (!items_result) {
         qDebug() << "FAILED to load folder items:"
                  << QString::fromUtf8(sak::to_string(items_result.error()));
@@ -176,17 +164,10 @@ static void verifyFolderItems(PstParser& parser, const sak::PstFolderTree& tree)
     verifySingleItemExports(parser, first_nid);
 }
 
-static void openConfiguredStoreFile(const QString& store_path,
-                                    bool expected_is_ost,
-                                    const char* missing_env_message,
-                                    const char* missing_file_message) {
-    if (store_path.isEmpty()) {
-        QSKIP(missing_env_message);
-    }
-    QFileInfo fi(store_path);
-    if (!fi.exists()) {
-        QSKIP(missing_file_message);
-    }
+static void openFixtureStoreFile(const QString& store_path, bool expected_is_ost) {
+    const QFileInfo fi(store_path);
+    QVERIFY2(fi.isFile(),
+             qPrintable(QStringLiteral("Missing generated store: %1").arg(store_path)));
     qDebug() << (expected_is_ost ? "OST file:" : "PST file:") << store_path;
     qDebug() << "Size:" << fi.size() << "bytes";
 
@@ -244,18 +225,20 @@ class TestOstIntegration : public QObject {
 
 private Q_SLOTS:
 
-    void openRealOstFile() const {
-        openConfiguredStoreFile(configuredOstPath(),
-                                true,
-                                "Set SAK_TEST_OST_PATH to run this integration test",
-                                "OST file not found - skipping integration test");
+    void openFixtureOstFile() const {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString path = writeStoreFixture(directory, QStringLiteral("ost"), true);
+        QVERIFY2(!path.isEmpty(), "Could not write generated OST fixture");
+        openFixtureStoreFile(path, true);
     }
 
-    void openRealPstFile() const {
-        openConfiguredStoreFile(configuredPstPath(),
-                                false,
-                                "Set SAK_TEST_PST_PATH to run this integration test",
-                                "PST file not found - skipping integration test");
+    void openFixturePstFile() const {
+        QTemporaryDir directory;
+        QVERIFY(directory.isValid());
+        const QString path = writeStoreFixture(directory, QStringLiteral("pst"), false);
+        QVERIFY2(!path.isEmpty(), "Could not write generated PST fixture");
+        openFixtureStoreFile(path, false);
     }
 };
 

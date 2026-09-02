@@ -15,7 +15,7 @@ namespace sak {
 /**
  * @brief Generate System Report Action
  *
- * Generates comprehensive HTML system report using msinfo32 and PowerShell.
+ * Generates a comprehensive UTF-8 text report from PowerShell and Qt system collectors.
  */
 class GenerateSystemReportAction : public QuickAction {
     // Test seam, matching this tree's convention (DriveScannerTests, FileScannerTests,
@@ -55,7 +55,6 @@ public:
 
 private:
     QString m_output_location;
-    QString m_report_path;
     /// @brief Names of collectors that failed to run during the current execute().
     QStringList m_collector_errors;
 

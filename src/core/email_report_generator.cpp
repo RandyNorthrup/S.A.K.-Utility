@@ -327,7 +327,7 @@ void EmailReportGenerator::renderStatisticsSection(QTextStream& stream, const Re
         "<h2>Item Statistics</h2>\n"
         "<div class=\"stats-grid\">\n");
 
-    auto statCard = [&stream](const QString& value, const QString& label) {
+    auto stat_card = [&stream](const QString& value, const QString& label) {
         stream << QStringLiteral(
                       "<div class=\"stat-card\">"
                       "<div class=\"stat-value\">%1</div>"
@@ -336,12 +336,12 @@ void EmailReportGenerator::renderStatisticsSection(QTextStream& stream, const Re
                       .arg(value, label);
     };
 
-    statCard(QString::number(data.total_emails), QStringLiteral("Emails"));
-    statCard(QString::number(data.total_contacts), QStringLiteral("Contacts"));
-    statCard(QString::number(data.total_calendar_items), QStringLiteral("Calendar Items"));
-    statCard(QString::number(data.total_tasks), QStringLiteral("Tasks"));
-    statCard(QString::number(data.total_notes), QStringLiteral("Notes"));
-    statCard(QString::number(data.total_attachments), QStringLiteral("Attachments"));
+    stat_card(QString::number(data.total_emails), QStringLiteral("Emails"));
+    stat_card(QString::number(data.total_contacts), QStringLiteral("Contacts"));
+    stat_card(QString::number(data.total_calendar_items), QStringLiteral("Calendar Items"));
+    stat_card(QString::number(data.total_tasks), QStringLiteral("Tasks"));
+    stat_card(QString::number(data.total_notes), QStringLiteral("Notes"));
+    stat_card(QString::number(data.total_attachments), QStringLiteral("Attachments"));
 
     stream << QStringLiteral("</div>\n");
 }

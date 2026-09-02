@@ -6,38 +6,26 @@
 
 #include "sak/iso_analyzer.h"
 
-#include <QDir>
 #include <QFile>
-#include <QFileInfo>
 #include <QStringList>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
-#include <algorithm>
+#include <array>
 
 using namespace sak;
 
 namespace {
-bool nameContainsAny(const QString& name, const QStringList& tokens) {
-    return std::any_of(tokens.cbegin(), tokens.cend(), [&name](const QString& token) {
-        return name.contains(token);
-    });
-}
-
 // ============================================================================
 // Synthetic ISO 9660 images
 //
-// Every other test in this file hands IsoAnalyzer a pre-filled IsoInfo, so until
-// now the ISO 9660 READER -- analyze(), which is what actually looks at an
-// untrusted image on disk -- ran only under the env-gated corpus test below, i.e.
-// never in CI. That reader decides isWindowsInstallISO(), which routes the Image
-// Flasher between two different destructive writers, so it is exercised here
-// against real bytes.
+// IsoAnalyzer::analyze() reads an untrusted image from disk and decides
+// isWindowsInstallISO(), which routes Image Flasher between two destructive
+// writers. These generated ISO 9660 fixtures exercise that reader on every host.
 //
 // The images are built rather than committed: a few dozen kilobytes of structure
 // with nothing in it, so a binary fixture would add opaque blobs to the repo for
-// bytes that are clearer as code. The env-gated corpus test stays -- it covers
-// real-world images, which these cannot.
+// bytes that are clearer and deterministic as code.
 // ============================================================================
 
 constexpr int kSectorSize = 2048;
@@ -154,7 +142,7 @@ private Q_SLOTS:
     void analyzeStopsScanAtFirstNonDescriptorSector();
     void analyzeIgnoresShortReadOfLaterDescriptor();
 
-    void realIsosClassifyByContent();
+    void syntheticIsosClassifyByContentMatrix();
 
 private:
     /// @brief Write @p image to a file under m_dir and return its path.
@@ -529,33 +517,35 @@ void IsoAnalyzerTests::analyzeIgnoresShortReadOfLaterDescriptor() {
     QVERIFY(!IsoAnalyzer::isWindowsInstallMedia(info));
 }
 
-// Live end-to-end check against real images: set SAK_TEST_ISO_DIR to a folder of
-// .iso files. Skipped in CI (env unset). Each Linux image must classify as
-// not-Windows and each Windows image as Windows -- from content, not filename.
-void IsoAnalyzerTests::realIsosClassifyByContent() {
-    const QByteArray env = qgetenv("SAK_TEST_ISO_DIR");
-    if (env.isEmpty()) {
-        QSKIP("SAK_TEST_ISO_DIR not set; skipping real-ISO classification");
-    }
-    const QFileInfoList isos =
-        QDir(QString::fromLocal8Bit(env)).entryInfoList({QStringLiteral("*.iso")}, QDir::Files);
-    if (isos.isEmpty()) {
-        QSKIP("no .iso files in SAK_TEST_ISO_DIR");
-    }
-    for (const QFileInfo& file : isos) {
-        const IsoInfo info = IsoAnalyzer::analyze(file.absoluteFilePath());
-        const bool is_windows = IsoAnalyzer::isWindowsInstallMedia(info);
-        qInfo().noquote() << file.fileName() << "os_family=" << info.os_family
-                          << "editions=" << info.windows_editions.size()
-                          << "-> windows=" << is_windows;
-        const QString lname = file.fileName().toLower();
-        if (nameContainsAny(lname, {"arch", "ubuntu", "debian", "fedora", "mint", "linux"})) {
-            QVERIFY2(!is_windows,
-                     qPrintable("Linux ISO misclassified as Windows: " + file.fileName()));
-        }
-        if (nameContainsAny(lname, {"win11", "win10", "windows"})) {
-            QVERIFY2(is_windows, qPrintable("Windows ISO not detected: " + file.fileName()));
-        }
+void IsoAnalyzerTests::syntheticIsosClassifyByContentMatrix() {
+    struct ClassificationCase {
+        QString file_name;
+        SyntheticIsoSpec spec;
+        QString expected_family;
+        bool expected_windows;
+    };
+    const std::array<ClassificationCase, 2> cases = {
+        ClassificationCase{QStringLiteral("neutral-a.iso"),
+                           {.volume_label = "CCCOMA_X64FRE_EN-US_DV9",
+                            .publisher = "MICROSOFT CORPORATION",
+                            .application = "CDIMAGE 2.56"},
+                           QStringLiteral("Windows"),
+                           true},
+        ClassificationCase{QStringLiteral("neutral-b.iso"),
+                           {.volume_label = "Ubuntu-Server 24.04.1 LTS amd64",
+                            .publisher = "CANONICAL LTD.",
+                            .application = "XORRISO"},
+                           QStringLiteral("Linux"),
+                           false},
+    };
+
+    for (const auto& classification_case : cases) {
+        const QString path = writeImage(classification_case.file_name,
+                                        buildSyntheticIso(classification_case.spec));
+        QVERIFY2(!path.isEmpty(), qPrintable(classification_case.file_name));
+        const IsoInfo info = IsoAnalyzer::analyze(path);
+        QCOMPARE(info.os_family, classification_case.expected_family);
+        QCOMPARE(IsoAnalyzer::isWindowsInstallMedia(info), classification_case.expected_windows);
     }
 }
 

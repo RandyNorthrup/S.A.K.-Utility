@@ -12,3 +12,11 @@ src/core/network_transfer_runner.cpp
 src/core/package_internalization_engine.cpp
 src/core/pdf_email_writer.cpp
 src/core/xz_decompressor.cpp
+src/core/conversion_report_generator.cpp
+src/core/email_report_generator.cpp
+src/core/input_validator.cpp
+src/core/iso_analyzer.cpp
+src/core/recycle_bin.cpp
+src/core/thermal_monitor.cpp
+src/core/user_data_manager.cpp
+src/core/vulnerability_scanner.cpp

@@ -204,7 +204,7 @@ void TestAllActionsMetadata::testVerifySystemFiles() {
 
 void TestAllActionsMetadata::testCheckDiskErrors() {
     verifyAction("Check Disk Errors",
-                 "Run CHKDSK scan on all drives",
+                 "Run read-only online scans on all drives",
                  QuickAction::ActionCategory::Maintenance,
                  true);
 }

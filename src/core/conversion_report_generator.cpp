@@ -240,25 +240,25 @@ QString ConversionReportGenerator::generateCsvManifest(
 QString ConversionReportGenerator::buildSummaryStatsHtml(const OstConversionBatchResult& batch,
                                                          qint64 duration_ms) {
     QString html;
-    auto addStat = [&](const QString& value, const QString& label) {
+    auto add_stat = [&](const QString& value, const QString& label) {
         html += QStringLiteral(
                     "<div class='stat'><div class='stat-value'>%1</div>"
                     "<div class='stat-label'>%2</div></div>")
                     .arg(value, label);
     };
 
-    addStat(QString::number(batch.files_total), QStringLiteral("Files"));
-    addStat(QString::number(batch.files_succeeded), QStringLiteral("Succeeded"));
+    add_stat(QString::number(batch.files_total), QStringLiteral("Files"));
+    add_stat(QString::number(batch.files_succeeded), QStringLiteral("Succeeded"));
     if (batch.files_failed > 0) {
-        addStat(QStringLiteral("<span class='error'>%1</span>").arg(batch.files_failed),
-                QStringLiteral("Failed"));
+        add_stat(QStringLiteral("<span class='error'>%1</span>").arg(batch.files_failed),
+                 QStringLiteral("Failed"));
     }
-    addStat(QString::number(batch.total_items_converted), QStringLiteral("Items Converted"));
+    add_stat(QString::number(batch.total_items_converted), QStringLiteral("Items Converted"));
     if (batch.total_items_recovered > 0) {
-        addStat(QString::number(batch.total_items_recovered), QStringLiteral("Items Recovered"));
+        add_stat(QString::number(batch.total_items_recovered), QStringLiteral("Items Recovered"));
     }
-    addStat(formatBytes(batch.total_bytes_written), QStringLiteral("Total Output"));
-    addStat(formatDuration(duration_ms), QStringLiteral("Duration"));
+    add_stat(formatBytes(batch.total_bytes_written), QStringLiteral("Total Output"));
+    add_stat(formatDuration(duration_ms), QStringLiteral("Duration"));
     return html;
 }
 

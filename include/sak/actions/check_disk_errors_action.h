@@ -15,7 +15,9 @@ namespace sak {
 /**
  * @brief Check Disk Errors Action
  *
- * Runs CHKDSK /scan on all drives to detect file system errors.
+ * Runs Repair-Volume -Scan on writable drive-letter volumes to detect file system errors without
+ *
+ * scheduling or applying a repair.
  */
 class CheckDiskErrorsAction : public QuickAction {
     Q_OBJECT
@@ -26,7 +28,7 @@ public:
     QString name() const override {
         return QString::fromLatin1(quick_action_elevation::kCheckDiskErrorsName);
     }
-    QString description() const override { return "Run CHKDSK scan on all drives"; }
+    QString description() const override { return "Run read-only online scans on all drives"; }
     QIcon icon() const override { return QIcon(); }
     ActionCategory category() const override { return ActionCategory::Maintenance; }
     bool requiresAdmin() const override { return true; }
@@ -81,11 +83,11 @@ private:
     bool executeEnumerateVolumes(const QDateTime& start_time,
                                  QVector<QChar>& drives,
                                  QString& report);
-    void executeRunChkdsk(const QVector<QChar>& drives,
-                          QString& report,
-                          int& drives_scanned,
-                          int& errors_found,
-                          int& repairs_recommended);
+    void executeRunVolumeScan(const QVector<QChar>& drives,
+                              QString& report,
+                              int& drives_scanned,
+                              int& errors_found,
+                              int& repairs_recommended);
     void executeBuildReport(const QDateTime& start_time,
                             const QString& report,
                             const DiskCheckTotals& totals);

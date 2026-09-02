@@ -776,9 +776,8 @@ private Q_SLOTS:
         const QString real = dir.filePath(QStringLiteral("real.mbox"));
         writeSampleMbox(real);
         const QString link = dir.filePath(QStringLiteral("link.mbox.lnk"));
-        if (!QFile::link(real, link) || !QFileInfo(link).isSymLink()) {
-            QSKIP("Could not create a symlink/shortcut on this filesystem");
-        }
+        QVERIFY2(QFile::link(real, link), "Could not create Windows shortcut fixture");
+        QVERIFY2(QFileInfo(link).isSymLink(), "Generated .lnk must be reported as a shortcut");
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QString args =
@@ -800,9 +799,8 @@ private Q_SLOTS:
         const QString real = dir.filePath(QStringLiteral("real.txt"));
         writeTextFile(real, QByteArrayLiteral("x"));
         const QString link = dir.filePath(QStringLiteral("link.txt.lnk"));
-        if (!QFile::link(real, link) || !QFileInfo(link).isSymLink()) {
-            QSKIP("Could not create a symlink/shortcut on this filesystem");
-        }
+        QVERIFY2(QFile::link(real, link), "Could not create Windows shortcut fixture");
+        QVERIFY2(QFileInfo(link).isSymLink(), "Generated .lnk must be reported as a shortcut");
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         setUnattended(panel);
@@ -4368,22 +4366,16 @@ private Q_SLOTS:
         QVERIFY(data.value(QStringLiteral("scan_complete")).toBool());
     }
 
-    // backup.preview_app_data discovers a real directory under a standard data location (Documents)
-    // and sizes it via the hardened file_scanner. Creates a uniquely-named subdir so scanForAppData
-    // finds it by name, writes a known payload, and asserts the reported total matches. Cleaned up
-    // regardless of assertion outcome; QSKIP where Documents is not writable.
+    // backup.preview_app_data discovers a fixture under Qt's isolated test-mode AppData root and
+    // sizes it via the hardened file_scanner. No real Documents content is touched.
     void previewAppDataSizesDiscoveredDir() {
-        const QString documents =
-            QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
-        if (documents.isEmpty()) {
-            QSKIP("no writable Documents location on this host");
-        }
+        const QString appData = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
+        QVERIFY2(!appData.isEmpty(), "Qt test-mode AppData location must resolve");
         const QString token = QStringLiteral("SakPreviewCanary") +
                               QUuid::createUuid().toString(QUuid::Id128).left(12);
-        const QString appDir = QDir(documents).filePath(token);
-        if (!QDir().mkpath(appDir + QStringLiteral("/sub"))) {
-            QSKIP("could not create a probe directory under Documents");
-        }
+        const QString appDir = QDir(appData).filePath(QStringLiteral("../") + token);
+        QVERIFY2(QDir().mkpath(appDir + QStringLiteral("/sub")),
+                 "Could not create isolated app-data fixture");
         const auto cleanup = qScopeGuard([&] { QDir(appDir).removeRecursively(); });
 
         const QByteArray payload(4096, 'z');

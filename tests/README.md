@@ -197,7 +197,7 @@ cmake --build build --target run_integration_tests
 | test_user_profile_types | `user_profile_types` | Profile data structures, serialization, and the fields deliberately kept OUT of it (a WiFi profile's plaintext key must never reach a manifest) |
 | test_user_profile_backup_worker | `user_profile_backup_worker` | Backup workflow, compression, encryption |
 | test_user_profile_restore_worker | `user_profile_restore_worker` | Restore workflow, permission handling, merge |
-| test_windows_user_scanner | `windows_user_scanner` | Windows user profile enumeration |
+| test_windows_user_scanner | `windows_user_scanner` | Windows user profile enumeration and deterministic standard-folder fixture sizing |
 | test_cleanup_worker | `cleanup_worker` | Temp file cleanup, cache clearing |
 | test_restore_point_manager | `restore_point_manager` | System restore point creation |
 | test_package_list_manager | `package_list_manager` | Curated package list management, list generation |
@@ -245,7 +245,7 @@ cmake --build build --target run_integration_tests
 |---|---|---|
 | test_windows_iso_downloader | `windows_iso_downloader` | UUP API, download URL validation, HTTP-allow for Microsoft CDN |
 | test_linux_iso_downloader | `linux_iso_downloader` | Distro catalog, GitHub URL resolution, aria2c integration |
-| test_linux_distro_catalog | `linux_distro_catalog` | Distro metadata, URL patterns, version detection |
+| test_linux_distro_catalog | `linux_distro_catalog` | Required distro metadata, URL patterns, version detection |
 | test_uup_dump_api | `uup_dump_api` | UUP Dump API parsing, edition/language selection |
 | test_uup_iso_builder | `uup_iso_builder` | UUP-to-ISO conversion, converter process management |
 | test_drive_scanner | `drive_scanner` | Physical drive enumeration, USB detection, formatting info |
@@ -264,7 +264,7 @@ cmake --build build --target run_integration_tests
 |---|---|---|
 | test_advanced_search_types | `advanced_search_types` | Search result structures, match types |
 | test_advanced_search_controller | `advanced_search_controller` | Search orchestration, result aggregation |
-| test_advanced_search_worker | `advanced_search_worker` | Content search, regex, binary/hex, metadata, archive |
+| test_advanced_search_worker | `advanced_search_worker` | Content search, regex, binary/hex, synthetic EXIF metadata matrix, archive |
 | test_regex_pattern_library | `regex_pattern_library` | Built-in patterns, custom pattern persistence |
 
 ### Advanced Uninstall
@@ -360,7 +360,7 @@ stay read-only with exact blockers.
 | Test | Module Under Test | Coverage |
 |---|---|---|
 | test_email_types | `email_types` | Email data structures, item types, MAPI properties |
-| test_pst_parser | `pst_parser` | PST/OST header parsing, legacy Unicode page sizing, compressible PST decode, folder tree, item detail, attachments |
+| test_pst_parser | `pst_parser` | PST/OST header parsing, generated PST/OST/NST store matrix, legacy Unicode page sizing, compressible PST decode, folder tree, item detail, attachments |
 | test_mbox_parser | `mbox_parser` | MBOX parsing, message extraction, header parsing |
 | test_email_search_worker | `email_search_worker` | Full-text search, field filtering |
 | test_email_export_worker | `email_export_worker` | EML/CSV/VCF/ICS export, attachment extraction |
@@ -380,7 +380,7 @@ stay read-only with exact blockers.
 ### Integration Tests
 | Test | Workflow | Coverage |
 |---|---|---|
-| test_ost_integration | Email Inspector | Real OST/PST file opening, folder tree, item loading, item detail |
+| test_ost_integration | Email Inspector | Generated OST/PST fixture opening, folder tree, item loading, item detail, and export |
 | test_uup_conversion_pipeline | UUP-to-ISO | UUPMediaConverter exe existence, process attachment (no fork), help output, missing UUP dir, empty UUP dir |
 
 ## Writing New Tests
