@@ -12,6 +12,7 @@ ai_package_selection.json
 ai_prompt_assembler.json
 ai_provider_authorization.json
 ai_run_state_store.json
+ai_skill_store.json
 ai_subagent_tool_executor.json
 ai_tool_dispatcher.json
 apfs_compression.json

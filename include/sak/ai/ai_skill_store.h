@@ -10,13 +10,19 @@
 #include <QStringList>
 #include <QVector>
 
+#include <functional>
+
 namespace sak::ai {
+
+class AiSkillStoreTest;
 
 /// @brief Registry of executable skills loaded from bundled resources and an
 /// optional user directory. Mirrors WorkflowStore: built-ins are layered first,
 /// then user skills override by id. Used to advertise a cheap skill catalog and
 /// to serve full skill bodies on demand through the sak_skill tool.
 class SkillStore {
+    friend class AiSkillStoreTest;
+
 public:
     SkillStore() = default;
 
@@ -33,7 +39,8 @@ public:
     [[nodiscard]] static QString defaultUserSkillDirectory();
 
 private:
-    void rebuildIndex();
+    static void setBeforeFileOpenHookForTesting(std::function<void(const QString&)> hook);
+    static void setBeforeFileReadHookForTesting(std::function<void(const QString&)> hook);
 
     QVector<Skill> m_skills;
     QHash<QString, int> m_index_by_id;

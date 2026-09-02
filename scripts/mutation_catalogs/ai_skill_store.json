@@ -1,0 +1,40 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_ai_skill_store",
+  "ctest_regex": "^test_ai_skill_store$",
+  "mutants": [
+    {
+      "id": "stable-read-size-check-inverted",
+      "file": "src/ai/ai_skill_store.cpp",
+      "find": "    if (*size_before != *size_after || *size_after != bytes.size()) {",
+      "replace": "    if (*size_before == *size_after && *size_after != bytes.size()) {",
+      "expect": "killed",
+      "why": "store_rejectsFileTruncatedAfterOpen truncates a valid skill after the handle size snapshot and requires the exact changed-during-read refusal."
+    },
+    {
+      "id": "directory-reparse-refusal-disabled",
+      "file": "src/ai/ai_skill_store.cpp",
+      "find": "    if (handleIsReparsePoint(directory_handle.get())) {",
+      "replace": "    if (directory.isEmpty() && handleIsReparsePoint(directory_handle.get())) {",
+      "expect": "killed",
+      "why": "store_refusesReparseSkillDirectory loads an empty junction target, isolating the opened-root reparse guard from every per-file guard."
+    },
+    {
+      "id": "file-parent-identity-refusal-weakened",
+      "file": "src/ai/ai_skill_store.cpp",
+      "find": "    if (handleIsReparsePoint(file.get()) ||",
+      "replace": "    if (handleIsReparsePoint(file.get()) &&",
+      "expect": "killed",
+      "why": "store_refusesDirectorySwapBeforeFileOpen replaces the enumerated directory with a junction immediately before CreateFileW; only the opened file parent identity check keeps the replacement outside the pinned root."
+    },
+    {
+      "id": "directory-file-cap-ignored",
+      "file": "src/ai/ai_skill_store.cpp",
+      "find": "    if (enumeration->capped) {",
+      "replace": "    if (enumeration->capped && directory.isEmpty()) {",
+      "expect": "killed",
+      "why": "store_boundsDirectoryEnumerationBeforeSort creates 513 skills and requires a total refusal with zero partially loaded records."
+    }
+  ]
+}

@@ -2341,7 +2341,7 @@
       "brief": "docs/review_briefs/src_ai_ai_skill_store.md",
       "evidence": "driver",
       "group": "src",
-      "reviewed_blob": "158be129f3e2d3c9a4d3a63ddf53f24958c6e851",
+      "reviewed_blob": "6b377c275b2a70ff6f2abeda64931ff9ef3619d1",
       "status": "reviewed"
     },
     "src/ai/ai_subagent_runner.cpp": {

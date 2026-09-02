@@ -1224,6 +1224,19 @@ a parked design, per the bucket convention. Open work is what remains after thos
   WINDOWS-ONLY BOUNDARY WAVE 14 FINAL GATE: all changed-file hooks passed, including the new
   boundary lint, PowerShell syntax, cppcheck, dead-code and staged gitleaks checks. Release build
   exit 0; full CTest 267/267, zero failures, 760.47 seconds.
+  AI SKILL STORE BRIEF CLOSED: native user-skill directories are opened and verified by handle;
+  bounded enumeration stops on entry 513 and refuses the whole over-cap directory before sorting
+  or parsing. Each file is opened without following a leaf reparse point, its parent object must
+  equal the pinned directory handle, and its before-size, capped handle read, bytes-read and
+  after-size must agree. Directory open/enumeration errors are distinct from a valid empty
+  directory. Qt resources retain a separate immutable loader. Parsing and validation now happen
+  once, addSkill maintains the index incrementally, and the redundant rebuild is deleted. The
+  padded-ID finding was already closed by the preceding strict parser wave and is now recorded as
+  stale in the brief. Two race tests failed on the old loader; six new boundary tests pass, and the
+  new ai_skill_store mutation catalog kills 4/4 mutants.
+  AI SKILL STORE WAVE 15 FINAL GATE: all changed-file hooks passed; the review ledger is repinned
+  to the hardened source blob. Release build exit 0; full CTest 267/267, zero failures, 790.82
+  seconds.
   Unsupported-platform branch removal remains INCOMPLETE and must reduce code, not add portability
   implementations.
   OWNER RULE NOW RECORDED IN `AGENTS.md`: fix code, test, tool, or gate first; suppression is the

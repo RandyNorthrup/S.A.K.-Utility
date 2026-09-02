@@ -10,7 +10,10 @@
 #include "sak/ai/ai_skill_store.h"
 
 #include <QDir>
+#include <QFileInfo>
 #include <QJsonArray>
+#include <QProcess>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -403,11 +406,163 @@ private Q_SLOTS:
                  qPrintable(missing_when_to_use.join(QStringLiteral(", "))));
     }
 
+    void store_rejectsFileTruncatedAfterOpen() {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        writeSkill(temp.path(),
+                   QStringLiteral("shrinks.md"),
+                   "---\nid: shrinks\ndescription: d.\n---\n# T\nbody\n");
+        const QString path = QDir(temp.path()).filePath(QStringLiteral("shrinks.md"));
+        SkillStore::setBeforeFileReadHookForTesting([path](const QString&) {
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::ReadWrite));
+            QVERIFY(file.resize(8));
+        });
+        const auto reset = qScopeGuard([] {
+            SkillStore::setBeforeFileReadHookForTesting(std::function<void(const QString&)>());
+        });
+
+        SkillStore store;
+        QStringList errors;
+        QVERIFY(!store.loadDirectory(temp.path(), &errors));
+        QCOMPARE(store.size(), 0);
+        QVERIFY2(errors.join(' ').contains(QStringLiteral("changed during read")),
+                 qPrintable(errors.join(QStringLiteral("; "))));
+    }
+
+    void store_rejectsFileGrownAfterOpen() {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        writeSkill(temp.path(),
+                   QStringLiteral("grows.md"),
+                   "---\nid: grows\ndescription: d.\n---\n# T\nbody\n");
+        const QString path = QDir(temp.path()).filePath(QStringLiteral("grows.md"));
+        SkillStore::setBeforeFileReadHookForTesting([path](const QString&) {
+            QFile file(path);
+            QVERIFY(file.open(QIODevice::Append));
+            QCOMPARE(file.write(QByteArray((1024 * 1024) + 1, 'x')), Q_INT64_C(1'048'577));
+        });
+        const auto reset = qScopeGuard([] {
+            SkillStore::setBeforeFileReadHookForTesting(std::function<void(const QString&)>());
+        });
+
+        SkillStore store;
+        QStringList errors;
+        QVERIFY(!store.loadDirectory(temp.path(), &errors));
+        QCOMPARE(store.size(), 0);
+        QVERIFY2(errors.join(' ').contains(QStringLiteral("changed during read")) ||
+                     errors.join(' ').contains(QStringLiteral("too large")),
+                 qPrintable(errors.join(QStringLiteral("; "))));
+    }
+
+    void store_refusesReparseSkillDirectory() {
+        QTemporaryDir parent;
+        QTemporaryDir outside;
+        QVERIFY(parent.isValid());
+        QVERIFY(outside.isValid());
+        const QString junction = QDir(parent.path()).filePath(QStringLiteral("skills-junction"));
+        createJunction(junction, outside.path());
+
+        SkillStore store;
+        QStringList errors;
+        QVERIFY(!store.loadDirectory(junction, &errors));
+        QCOMPARE(store.size(), 0);
+        QVERIFY2(errors.join(' ').contains(QStringLiteral("directory reparse point")),
+                 qPrintable(errors.join(QStringLiteral("; "))));
+    }
+
+    void store_refusesDirectorySwapBeforeFileOpen() {
+        QTemporaryDir parent;
+        QTemporaryDir outside;
+        QVERIFY(parent.isValid());
+        QVERIFY(outside.isValid());
+        const QString skills = QDir(parent.path()).filePath(QStringLiteral("skills"));
+        const QString moved = QDir(parent.path()).filePath(QStringLiteral("skills-moved"));
+        QVERIFY(QDir().mkpath(skills));
+        writeSkill(skills,
+                   QStringLiteral("same.md"),
+                   "---\nid: original\ndescription: d.\n---\n# T\noriginal body\n");
+        writeSkill(outside.path(),
+                   QStringLiteral("same.md"),
+                   "---\nid: outside\ndescription: d.\n---\n# T\noutside body\n");
+
+        bool hook_ran = false;
+        SkillStore::setBeforeFileOpenHookForTesting([&](const QString&) {
+            QVERIFY(QDir().rename(skills, moved));
+            createJunction(skills, outside.path());
+            hook_ran = true;
+        });
+        const auto reset = qScopeGuard([&] {
+            SkillStore::setBeforeFileOpenHookForTesting(std::function<void(const QString&)>());
+            if (QFileInfo(skills).isJunction()) {
+                QVERIFY(QDir().rmdir(skills));
+            }
+        });
+
+        SkillStore store;
+        QStringList errors;
+        QVERIFY(!store.loadDirectory(skills, &errors));
+        QVERIFY(hook_ran);
+        QCOMPARE(store.size(), 0);
+        QVERIFY2(errors.join(' ').contains(QStringLiteral("redirected skill file")),
+                 qPrintable(errors.join(QStringLiteral("; "))));
+    }
+
+    void store_boundsDirectoryEnumerationBeforeSort() {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        for (int index = 0; index <= 512; ++index) {
+            const QString id = QStringLiteral("skill-%1").arg(index, 3, 10, QLatin1Char('0'));
+            writeSkill(
+                temp.path(),
+                id + QStringLiteral(".md"),
+                QStringLiteral("---\nid: %1\ndescription: d.\n---\n# T\nbody\n").arg(id).toUtf8());
+        }
+
+        SkillStore store;
+        QStringList errors;
+        QVERIFY(!store.loadDirectory(temp.path(), &errors));
+        QCOMPARE(store.size(), 0);
+        QVERIFY2(errors.join(' ').contains(QStringLiteral("more than 512")),
+                 qPrintable(errors.join(QStringLiteral("; "))));
+    }
+
+    void store_reportsDirectoryOpenFailure() {
+        QTemporaryDir temp;
+        QVERIFY(temp.isValid());
+        const QString ordinary_file = QDir(temp.path()).filePath(QStringLiteral("not-a-dir.txt"));
+        QFile file(ordinary_file);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QCOMPARE(file.write("x", 1), Q_INT64_C(1));
+        file.close();
+
+        SkillStore store;
+        QStringList errors;
+        QVERIFY(!store.loadDirectory(ordinary_file, &errors));
+        QCOMPARE(store.size(), 0);
+        QVERIFY2(errors.join(' ').contains(QStringLiteral("Cannot enumerate skill directory")),
+                 qPrintable(errors.join(QStringLiteral("; "))));
+    }
+
 private:
+    static void createJunction(const QString& junction, const QString& target) {
+        const QString command =
+            QDir(qEnvironmentVariable("SystemRoot")).filePath(QStringLiteral("System32/cmd.exe"));
+        QCOMPARE(QProcess::execute(command,
+                                   {QStringLiteral("/d"),
+                                    QStringLiteral("/c"),
+                                    QStringLiteral("mklink"),
+                                    QStringLiteral("/J"),
+                                    QDir::toNativeSeparators(junction),
+                                    QDir::toNativeSeparators(target)}),
+                 0);
+    }
+
     static void writeSkill(const QString& dir, const QString& name, const QByteArray& contents) {
         QFile file(QDir(dir).filePath(name));
         QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
-        file.write(contents);
+        QCOMPARE(file.write(contents), static_cast<qint64>(contents.size()));
+        file.close();
     }
 };
 
