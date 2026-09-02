@@ -1,5 +1,5 @@
 {
-  "head_commit": "0885b9895576f187d1a23f6c88666bcf448a9db5",
+  "head_commit": "705d4db2ed4152ff64b194a87a3276f96e1cf05c",
   "unit_rule": "include/**.h|.hpp, src/**.cpp|.h|.hpp, tests/**.cpp|.h|.mjs, scripts/**.py|.ps1|.sh, browser/**.js",
   "units": {
     "browser/extension/background.js": {
@@ -123,20 +123,32 @@
       "status": "reviewed"
     },
     "include/sak/ai/ai_app_action_planner.h": {
+      "brief": "docs/review_briefs/include_sak_ai_ai_app_action_planner.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": "6b558205c81dc971b3ecb93af2398db76e58f8aa",
+      "status": "reviewed"
     },
     "include/sak/ai/ai_async_tool_runner.h": {
+      "brief": "docs/review_briefs/include_sak_ai_ai_async_tool_runner.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": "483a442a05c5f123d4fbf216b09e0c746926270e",
+      "status": "reviewed"
     },
     "include/sak/ai/ai_cancellation_token.h": {
+      "brief": "docs/review_briefs/include_sak_ai_ai_cancellation_token.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": "05434aa904ee28399ccff4190dfa12eb352f9b80",
+      "status": "reviewed"
     },
     "include/sak/ai/ai_chat_title.h": {
+      "brief": "docs/review_briefs/include_sak_ai_ai_chat_title.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": "241b67d31b2864b5dd8ba1a517ac47becbe42099",
+      "status": "reviewed"
     },
     "include/sak/ai/ai_command_guard.h": {
       "group": "include",
@@ -1937,8 +1949,11 @@
       "status": "pending"
     },
     "scripts/new_partition_manager_automation_vm.ps1": {
+      "brief": "docs/review_briefs/scripts_new_partition_manager_automation_vm.md",
+      "evidence": "driver",
       "group": "scripts",
-      "status": "pending"
+      "reviewed_blob": "94322b0f5d2cf422ac4a60d1154d9d0d8ec42ca5",
+      "status": "reviewed"
     },
     "scripts/new_partition_manager_certification_bundle.ps1": {
       "group": "scripts",
@@ -1951,6 +1966,13 @@
     "scripts/new_partition_manager_external_evidence_manifest.ps1": {
       "group": "scripts",
       "status": "pending"
+    },
+    "scripts/owner_only_staging_file.ps1": {
+      "brief": "docs/review_briefs/scripts_owner_only_staging_file.md",
+      "evidence": "driver",
+      "group": "scripts",
+      "reviewed_blob": "a5e4a0022f74fb2d528f091c2ec1b96ed6c9f6c4",
+      "status": "reviewed"
     },
     "scripts/partition_manager_storage.ps1": {
       "group": "scripts",
@@ -2198,6 +2220,13 @@
     "scripts/test_file_management_live_certifier_gate.ps1": {
       "group": "scripts",
       "status": "pending"
+    },
+    "scripts/test_new_partition_manager_automation_vm_security.ps1": {
+      "brief": "docs/review_briefs/scripts_test_new_partition_manager_automation_vm_security.md",
+      "evidence": "driver",
+      "group": "scripts",
+      "reviewed_blob": "375cb2481e1030c52c4041aa6d37e8b75cfcf8ef",
+      "status": "reviewed"
     },
     "scripts/test_partition_filesystem_probe_certifier.ps1": {
       "group": "scripts",

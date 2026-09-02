@@ -48,9 +48,9 @@ public:
     /// can stop it early: detach() and destruction raise it. To use it, obtain the
     /// token BEFORE building the Work, capture it, and return promptly once it
     /// reads true. Work that ignores it still runs to completion (the destructor
-    /// then blocks on the join, by design). The token is per-job: start() lowers it
-    /// for the new job, so a token captured for one job is not disturbed by later
-    /// ones (a new job cannot start until the previous one has drained).
+    /// then blocks on the join, by design). The runner owns one reusable token:
+    /// detach/destruction raise it and the next accepted start() lowers it only
+    /// after the previous job has drained. Rejected starts do not change it.
     using CancelToken = std::shared_ptr<const std::atomic_bool>;
     [[nodiscard]] CancelToken cancelToken() const { return m_cancel; }
 

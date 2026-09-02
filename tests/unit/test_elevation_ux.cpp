@@ -9,7 +9,6 @@
 ///  - Banner conditional visibility (admin vs. standard)
 
 #include "sak/elevation_banner.h"
-#include "sak/elevation_manager.h"
 #include "sak/shield_icon.h"
 #include "sak/style_constants.h"
 
@@ -79,9 +78,7 @@ private Q_SLOTS:
 
     void testGetShieldIconHasPixmap() {
         QIcon icon = sak::getShieldIcon();
-        if (icon.isNull()) {
-            QSKIP("Shield icon extraction not available on this system");
-        }
+        QVERIFY2(!icon.isNull(), "Windows stock shield icon must be available");
         // Should produce a pixmap at small icon size (typically 16x16)
         QPixmap pm = icon.pixmap(16, 16);
         QVERIFY(!pm.isNull());
@@ -96,9 +93,7 @@ private Q_SLOTS:
 
     void testGetShieldIconMultipleSizesValid() {
         QIcon icon = sak::getShieldIcon();
-        if (icon.isNull()) {
-            QSKIP("Shield icon extraction not available");
-        }
+        QVERIFY2(!icon.isNull(), "Windows stock shield icon must be available");
         // Icon should scale to various requested sizes
         QPixmap small_pm = icon.pixmap(16, 16);
         QPixmap large_pm = icon.pixmap(32, 32);
@@ -126,12 +121,8 @@ private Q_SLOTS:
     // ======================================================================
 
     void testCreateElevationBannerWhenNotAdmin() {
-        if (sak::ElevationManager::isElevated()) {
-            QSKIP("Test only meaningful when not running as admin");
-        }
-
         QWidget parent;
-        QFrame* banner = sak::createElevationBanner(&parent);
+        QFrame* banner = sak::createElevationBanner(&parent, false);
         QVERIFY(banner != nullptr);
         QCOMPARE(banner->objectName(), QStringLiteral("elevationBanner"));
         // The objectName is only load-bearing BECAUSE the stylesheet selector keys on it. Pinning
@@ -147,12 +138,8 @@ private Q_SLOTS:
     }
 
     void testCreateElevationBannerHasLayout() {
-        if (sak::ElevationManager::isElevated()) {
-            QSKIP("Test only meaningful when not running as admin");
-        }
-
         QWidget parent;
-        QFrame* banner = sak::createElevationBanner(&parent);
+        QFrame* banner = sak::createElevationBanner(&parent, false);
         QVERIFY(banner != nullptr);
 
         auto* layout = banner->layout();
@@ -191,12 +178,8 @@ private Q_SLOTS:
     }
 
     void testCreateElevationBannerTextContent() {
-        if (sak::ElevationManager::isElevated()) {
-            QSKIP("Test only meaningful when not running as admin");
-        }
-
         QWidget parent;
-        QFrame* banner = sak::createElevationBanner(&parent);
+        QFrame* banner = sak::createElevationBanner(&parent, false);
         QVERIFY(banner != nullptr);
 
         // Find the text label (second widget in layout)
@@ -224,23 +207,16 @@ private Q_SLOTS:
     }
 
     void testCreateElevationBannerParentship() {
-        if (sak::ElevationManager::isElevated()) {
-            QSKIP("Test only meaningful when not running as admin");
-        }
-
         QWidget parent;
-        QFrame* banner = sak::createElevationBanner(&parent);
+        QFrame* banner = sak::createElevationBanner(&parent, false);
         QVERIFY(banner != nullptr);
         QCOMPARE(banner->parent(), &parent);
     }
 
     void testCreateElevationBannerReturnsNullWhenAdmin() {
-        if (!sak::ElevationManager::isElevated()) {
-            QSKIP("Test only meaningful when running as admin");
-        }
-
         QWidget parent;
-        const QFrame* banner = sak::createElevationBanner(&parent);
+        const auto factory = static_cast<QFrame* (*)(QWidget*, bool)>(&sak::createElevationBanner);
+        const QFrame* banner = factory(&parent, true);
         QVERIFY(banner == nullptr);
     }
 

@@ -77,20 +77,10 @@ private Q_SLOTS:
     // ======================================================================
 
     void testTryTakeOwnershipNotAdmin() {
-        // If not running as admin, should return elevation_required
-        if (sak::PermissionManager::isRunningAsAdmin()) {
-            QSKIP("Test only meaningful when not running as admin");
-        }
-
-        QTemporaryFile tmp;
-        QVERIFY(tmp.open());
-        tmp.write("test");
-        tmp.flush();
-
-        sak::PermissionManager pm;
-        auto result = pm.tryTakeOwnership(tmp.fileName(), QStringLiteral("S-1-5-32-544"));
-        QVERIFY(!result.has_value());
-        QCOMPARE(result.error(), sak::error_code::elevation_required);
+        const auto standard = sak::PermissionManager::takeOwnershipElevationRefusal(false);
+        QVERIFY(standard.has_value());
+        QCOMPARE(*standard, sak::error_code::elevation_required);
+        QVERIFY(!sak::PermissionManager::takeOwnershipElevationRefusal(true).has_value());
     }
 
     void testTryTakeOwnershipInvalidSid() {

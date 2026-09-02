@@ -31,11 +31,13 @@ param(
     [int]$ImageIndex = 6,
     [int]$InstallTimeoutMinutes = 90,
     [switch]$ForceRecreate,
-    [switch]$StartInstall
+    [switch]$StartInstall,
+    [switch]$TestNativeCaptureOnly
 )
 
 $ErrorActionPreference = "Stop"
 $script:SecretRedactions = New-Object System.Collections.Generic.List[string]
+. (Join-Path $PSScriptRoot 'owner_only_staging_file.ps1')
 
 function Hide-Secrets {
     param([object[]]$Lines)
@@ -59,21 +61,21 @@ function Invoke-VBox {
         [switch]$AllowFailure
     )
 
-    $oldErrorActionPreference = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    try {
-        $output = & $VBoxManage @Arguments 2>&1
-        $exitCode = $LASTEXITCODE
+    $captured = Invoke-CapturedProcess -FilePath $VBoxManage -Arguments $Arguments
+    $output = [System.Collections.Generic.List[string]]::new()
+    foreach ($text in @($captured.stdout, $captured.stderr)) {
+        if (-not [string]::IsNullOrWhiteSpace($text)) {
+            foreach ($line in ($text -split "`r?`n")) {
+                $output.Add($line)
+            }
+        }
     }
-    finally {
-        $ErrorActionPreference = $oldErrorActionPreference
-    }
-    if ($exitCode -ne 0 -and -not $AllowFailure) {
+    if ($captured.exit_code -ne 0 -and -not $AllowFailure) {
         $safeOutput = Hide-Secrets -Lines $output
-        throw "VBoxManage failed with exit code ${exitCode}: $($safeOutput -join "`n")"
+        throw "VBoxManage failed with exit code $($captured.exit_code): $($safeOutput -join "`n")"
     }
     return [pscustomobject]@{
-        exit_code = $exitCode
+        exit_code = $captured.exit_code
         output = (Hide-Secrets -Lines $output)
     }
 }
@@ -131,15 +133,7 @@ function New-PasswordFile {
         $alphabet[$bytes[$i] % $alphabet.Length]
     }
     $password = -join $chars
-    New-Item -ItemType Directory -Path (Split-Path -Parent $Path) -Force | Out-Null
-    Set-Content -LiteralPath $Path -Value $password -NoNewline -Encoding ascii
-    try {
-        & icacls.exe $Path /inheritance:r /grant:r "$env:USERNAME`:F" /grant:r "SYSTEM:F" | Out-Null
-    }
-    catch {
-        Write-Warning "Unable to tighten ACLs on password file ${Path}: $($_.Exception.Message)"
-    }
-    return (Resolve-Path -LiteralPath $Path).Path
+    return New-OwnerOnlyAsciiStagingFile -Path $Path -Content $password
 }
 
 function Resolve-PasswordFile {
@@ -153,7 +147,7 @@ function Resolve-PasswordFile {
         if (-not (Test-Path -LiteralPath $ExplicitPasswordFile -PathType Leaf)) {
             return New-PasswordFile -Path $ExplicitPasswordFile
         }
-        return (Resolve-Path -LiteralPath $ExplicitPasswordFile).Path
+        return Assert-ReusableOwnerOnlyTextFile -Path $ExplicitPasswordFile
     }
 
     $authDir = Join-Path (Get-Location) "temp\vm-auth"
@@ -161,7 +155,7 @@ function Resolve-PasswordFile {
     $safeUser = ConvertTo-SafeFilePart -Value $UserName
     $defaultPath = Join-Path $authDir "${safeVm}-${safeUser}.password"
     if (Test-Path -LiteralPath $defaultPath -PathType Leaf) {
-        return (Resolve-Path -LiteralPath $defaultPath).Path
+        return Assert-ReusableOwnerOnlyTextFile -Path $defaultPath
     }
     return New-PasswordFile -Path $defaultPath
 }
@@ -278,6 +272,15 @@ if (`$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
     }
 
     throw "VM $MachineName did not reach direct-admin guestcontrol state within $TimeoutMinutes minutes. Last error: $lastError"
+}
+
+if ($TestNativeCaptureOnly) {
+    if (-not (Test-Path -LiteralPath $VBoxManage -PathType Leaf)) {
+        throw "VBoxManage test executable not found: $VBoxManage"
+    }
+    Invoke-VBox -Arguments @('test-native-capture') | Out-Null
+    Write-Host 'Automation VM native capture self-test passed.'
+    return
 }
 
 if (-not (Test-Path -LiteralPath $VBoxManage -PathType Leaf)) {

@@ -459,6 +459,13 @@ and cleanup back to RAW. This
 raw-media lane is supplemental and is not counted in the imported 18/18
 external matrix unless the matrix is expanded with a Linux swap gate.
 
+The current automation-VM creator stages a generated guest password only after an empty,
+no-share file receives and passes an exact current-owner ACL check. It refuses existing insecure,
+oversized, empty, redirected, or race-planted password files. System32 `icacls.exe` and
+VBoxManage exits are captured and enforced; ACL or write failure removes only a file created by
+that invocation and reports cleanup failure. Registered PS7 and PS5.1 tests own this host-side
+credential-staging contract; this hardening does not change the dated VM certification result.
+
 Filesystem probe helper offset proof was added on 2026-06-05 PDT. The helper
 `partition_filesystem_probe_certifier.exe` accepts `--input-offset-bytes`, reads
 regular files and Windows raw device paths from that offset, and reports the
@@ -657,6 +664,11 @@ production exposure is generated-layout-only).
 ## Certification Harness
 
 Use `scripts/run_partition_manager_destructive_certification.ps1` from an elevated PowerShell session. The script creates temporary VHDX files under `artifacts/partition-manager-certification`, attaches them, mutates only those VHD-backed disks, verifies results, and writes a JSON report. Non-admin runs are accepted for plan-only reporting, but VHD mutation scenarios are skipped with an Administrator-shell blocker.
+
+Native command output used by File Management, Allocate Free Space, and BitLocker mutation evidence
+is captured through `scripts/process_capture.ps1`. That shared ProcessStartInfo seam drains both
+pipes asynchronously and returns a concrete exit code under PowerShell 7 and Windows PowerShell
+5.1; a child-start failure terminates the gate rather than becoming a successful report.
 
 Before requesting UAC or starting the destructive VHD run, use the read-only
 preflight:

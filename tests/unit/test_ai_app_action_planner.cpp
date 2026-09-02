@@ -38,6 +38,12 @@ private Q_SLOTS:
     void mistypedSafetyFlagStaysRisky();
     void flagsCatastrophicManifestCommand();
     void blocksWin32GuiNonBoolOptionalStep();
+    void planOkRejectsShellStepsAsBody();
+    void planOkRejectsGuiCommandAsBody();
+    void blocksNonPositiveOutputOptions();
+    void blocksInvertedOutputOptions();
+    void blocksOutputOptionsAboveBrokerCeiling();
+    void blocksDefaultOutsideOutputOptions();
 };
 
 void AiAppActionPlannerTests::buildsSupportedPowerShellActionPlan() {
@@ -304,6 +310,92 @@ void AiAppActionPlannerTests::blocksWin32GuiNonBoolOptionalStep() {
 
     QVERIFY(!plan.ok());
     QCOMPARE(plan.error_message, QStringLiteral("win32_gui step 0 'optional' must be a boolean"));
+}
+
+void AiAppActionPlannerTests::planOkRejectsShellStepsAsBody() {
+    sak::ai::AiAppActionPlan plan;
+    plan.app_id = QStringLiteral("sample_app");
+    plan.action = QStringLiteral("quick_scan");
+    plan.method = QStringLiteral("powershell");
+    plan.steps = QJsonArray{QJsonObject{{QStringLiteral("tool"), QStringLiteral("click_text")}}};
+    QVERIFY(!plan.ok());
+
+    plan.request.command = QStringLiteral("Get-Date");
+    QVERIFY(plan.ok());
+}
+
+void AiAppActionPlannerTests::planOkRejectsGuiCommandAsBody() {
+    sak::ai::AiAppActionPlan plan;
+    plan.app_id = QStringLiteral("sample_app");
+    plan.action = QStringLiteral("quick_scan");
+    plan.method = QStringLiteral("win32_gui");
+    plan.request.command = QStringLiteral("Get-Date");
+    QVERIFY(!plan.ok());
+
+    plan.steps = QJsonArray{QJsonObject{{QStringLiteral("tool"), QStringLiteral("click_text")}}};
+    QVERIFY(plan.ok());
+}
+
+void AiAppActionPlannerTests::blocksNonPositiveOutputOptions() {
+    const QJsonObject manifest =
+        actionManifest(QJsonObject{{QStringLiteral("method"), QStringLiteral("powershell")},
+                                   {QStringLiteral("command"), QStringLiteral("Get-Date")}});
+    const auto plan = sak::ai::AiAppActionPlanner::buildPlan(
+        QStringLiteral("sample_app"),
+        QStringLiteral("quick_scan"),
+        manifest,
+        QJsonObject{},
+        {.default_output_bytes = -2, .min_output_bytes = -4, .max_output_bytes = -1});
+    QVERIFY(!plan.ok());
+    QCOMPARE(plan.error_message,
+             QStringLiteral("App action output budget configuration is invalid"));
+}
+
+void AiAppActionPlannerTests::blocksInvertedOutputOptions() {
+    const QJsonObject manifest =
+        actionManifest(QJsonObject{{QStringLiteral("method"), QStringLiteral("powershell")},
+                                   {QStringLiteral("command"), QStringLiteral("Get-Date")}});
+    const auto plan = sak::ai::AiAppActionPlanner::buildPlan(
+        QStringLiteral("sample_app"),
+        QStringLiteral("quick_scan"),
+        manifest,
+        QJsonObject{},
+        {.default_output_bytes = 2048, .min_output_bytes = 4096, .max_output_bytes = 1024});
+    QVERIFY(!plan.ok());
+    QCOMPARE(plan.error_message,
+             QStringLiteral("App action output budget configuration is invalid"));
+}
+
+void AiAppActionPlannerTests::blocksOutputOptionsAboveBrokerCeiling() {
+    const QJsonObject manifest =
+        actionManifest(QJsonObject{{QStringLiteral("method"), QStringLiteral("powershell")},
+                                   {QStringLiteral("command"), QStringLiteral("Get-Date")}});
+    const auto plan = sak::ai::AiAppActionPlanner::buildPlan(
+        QStringLiteral("sample_app"),
+        QStringLiteral("quick_scan"),
+        manifest,
+        QJsonObject{},
+        {.default_output_bytes = 2048,
+         .min_output_bytes = 1024,
+         .max_output_bytes = sak::ai::kAiCommandOutputBytesCeiling + 1});
+    QVERIFY(!plan.ok());
+    QCOMPARE(plan.error_message,
+             QStringLiteral("App action output budget configuration is invalid"));
+}
+
+void AiAppActionPlannerTests::blocksDefaultOutsideOutputOptions() {
+    const QJsonObject manifest =
+        actionManifest(QJsonObject{{QStringLiteral("method"), QStringLiteral("powershell")},
+                                   {QStringLiteral("command"), QStringLiteral("Get-Date")}});
+    const auto plan = sak::ai::AiAppActionPlanner::buildPlan(
+        QStringLiteral("sample_app"),
+        QStringLiteral("quick_scan"),
+        manifest,
+        QJsonObject{},
+        {.default_output_bytes = 8192, .min_output_bytes = 1024, .max_output_bytes = 4096});
+    QVERIFY(!plan.ok());
+    QCOMPARE(plan.error_message,
+             QStringLiteral("App action output budget configuration is invalid"));
 }
 
 QTEST_GUILESS_MAIN(AiAppActionPlannerTests)

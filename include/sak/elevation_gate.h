@@ -18,6 +18,8 @@
 #include <QString>
 #include <QWidget>
 
+#include <optional>
+
 namespace sak {
 
 /// @brief Result of an elevation gate check
@@ -26,6 +28,18 @@ enum class ElevationGateResult : uint8_t {
     RestartRequested,  ///< User accepted restart as admin -- caller should return
     Declined           ///< User declined elevation -- caller should abort or degrade
 };
+
+/// @brief Return the dialog-free gate result when elevation already satisfies the request.
+///
+/// A non-elevated state returns std::nullopt, meaning the interactive question must run. Keeping
+/// this decision pure lets both process-token arms be verified without launching an elevated test.
+[[nodiscard]] inline std::optional<ElevationGateResult> elevationGatePreflight(
+    bool is_elevated) noexcept {
+    if (is_elevated) {
+        return ElevationGateResult::AlreadyElevated;
+    }
+    return std::nullopt;
+}
 
 /// @brief Check elevation and show a restart-as-admin dialog if needed
 ///
@@ -41,8 +55,8 @@ enum class ElevationGateResult : uint8_t {
 [[nodiscard]] inline ElevationGateResult showElevationGate(QWidget* parent,
                                                            const QString& feature,
                                                            const QString& reason) {
-    if (ElevationManager::isElevated()) {
-        return ElevationGateResult::AlreadyElevated;
+    if (const auto preflight = elevationGatePreflight(ElevationManager::isElevated())) {
+        return *preflight;
     }
 
     sak::logInfo("Elevation gate triggered for: {}", feature.toStdString());

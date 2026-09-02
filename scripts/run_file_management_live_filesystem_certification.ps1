@@ -40,6 +40,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "process_capture.ps1")
+
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 $AppleHfsGptType = "{48465300-0000-11aa-aa11-00306543ecac}"
 $AppleApfsGptType = "{7c3457ef-0000-11aa-aa11-00306543ecac}"
@@ -147,17 +149,23 @@ function Select-TargetDisk {
     }
 
     $candidates = @($allDisks | Where-Object {
-            $partErrors = $null
-            $parts = @(Get-Partition -DiskNumber $_.Number -ErrorAction SilentlyContinue -ErrorVariable partErrors)
-            $realPartErrors = @($partErrors | Where-Object { $_.CategoryInfo.Category -ne 'ObjectNotFound' })
-            if ($realPartErrors.Count -gt 0) {
-                throw "Partition enumeration failed for disk $($_.Number): $($realPartErrors[0].Exception.Message). Pass -DiskNumber to target explicitly."
+            $candidateDisk = $_
+            try {
+                $parts = @(Get-Partition -DiskNumber $candidateDisk.Number -ErrorAction Stop)
+            }
+            catch {
+                if ($_.CategoryInfo.Category -eq 'ObjectNotFound') {
+                    $parts = @()
+                }
+                else {
+                    throw "Partition enumeration failed for disk $($candidateDisk.Number): $($_.Exception.Message). Pass -DiskNumber to target explicitly."
+                }
             }
             $hasApfs = @($parts | Where-Object { "$($_.GptType)".ToLowerInvariant() -eq $AppleApfsGptType }).Count -gt 0
             $hasHfs = @($parts | Where-Object { "$($_.GptType)".ToLowerInvariant() -eq $AppleHfsGptType }).Count -gt 0
-            -not $_.IsBoot -and
-            -not $_.IsSystem -and
-            $_.PartitionStyle -eq "GPT" -and
+            -not $candidateDisk.IsBoot -and
+            -not $candidateDisk.IsSystem -and
+            $candidateDisk.PartitionStyle -eq "GPT" -and
             ($SkipApfs -or $hasApfs) -and
             ($SkipHfs -or $hasHfs)
         })
@@ -363,21 +371,14 @@ if ($hfs) {
     )
 }
 
-$previousErrorActionPreference = $ErrorActionPreference
-$exitCode = $null
-try {
-    $ErrorActionPreference = "Continue"
-    $certifierOutput = & $certifier @certifierArgs 2>&1
-    $exitCode = $LASTEXITCODE
-}
-finally {
-    $ErrorActionPreference = $previousErrorActionPreference
-}
-if ($null -eq $exitCode) {
-    $exitCode = 1
-}
-foreach ($line in $certifierOutput) {
-    Write-Host "$line"
+$certifierProcess = Invoke-CapturedProcess -FilePath $certifier -Arguments $certifierArgs
+$exitCode = [int]$certifierProcess.exit_code
+foreach ($stream in @($certifierProcess.stdout, $certifierProcess.stderr)) {
+    if (-not [string]::IsNullOrWhiteSpace($stream)) {
+        foreach ($line in ($stream -split "`r?`n")) {
+            Write-Host $line
+        }
+    }
 }
 $status = if (Test-Path -LiteralPath $reportPath -PathType Leaf) {
     (Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json).status

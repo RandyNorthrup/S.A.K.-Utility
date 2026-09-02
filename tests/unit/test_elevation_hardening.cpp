@@ -131,7 +131,7 @@ private Q_SLOTS:
     // Tier 2 -- Gate function classification
     // ====================================================================
     void gate_enumContainsAllThreeResults();
-    void gate_alreadyElevatedSkipsDialog();
+    void gate_preflightCoversBothElevationStates();
 
     // ====================================================================
     // Tier 3 -- Mixed features need elevation for some sub-tasks
@@ -416,12 +416,11 @@ void TestElevationHardening::gate_enumContainsAllThreeResults() {
     QCOMPARE(static_cast<uint8_t>(sak::ElevationGateResult::Declined), uint8_t{2});
 }
 
-void TestElevationHardening::gate_alreadyElevatedSkipsDialog() {
-    if (!sak::ElevationManager::isElevated()) {
-        QSKIP("Test requires elevated process to verify bypass path");
-    }
-    auto result = sak::showElevationGate(nullptr, "Test Feature", "Test reason");
-    QCOMPARE(result, sak::ElevationGateResult::AlreadyElevated);
+void TestElevationHardening::gate_preflightCoversBothElevationStates() {
+    const auto elevated = sak::elevationGatePreflight(true);
+    QVERIFY(elevated.has_value());
+    QCOMPARE(*elevated, sak::ElevationGateResult::AlreadyElevated);
+    QVERIFY(!sak::elevationGatePreflight(false).has_value());
 }
 
 // ============================================================================

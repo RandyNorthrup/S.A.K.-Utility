@@ -8,6 +8,43 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **Automation VM plaintext credentials hardened** - Password staging now creates an empty
+  no-share file, applies and verifies an exact current-owner ACL, and only then writes and flushes
+  the password. Existing password files must already have the same owner-only DACL and bounded
+  non-empty size. Reparse paths and overwrites are refused; failed creation removes only files this
+  invocation created, preserves race-planted files, and surfaces cleanup failure. VBoxManage and
+  System32 icacls now use reliable cross-PowerShell native exit capture. Registered PS7/PS5.1 tests
+  cover positive, ACL/native failure, cleanup, reuse, size, lossless-ASCII refusal,
+  overwrite/race, and reparse paths.
+
+- **Native certification capture unified across PowerShell hosts** - File Management live
+  certification, Allocate Free Space external proof, and both raw/sanitized BitLocker mutation
+  command paths now use the shared ProcessStartInfo capture seam. Standard output, standard error,
+  integer exit codes, indefinite-wait behavior, redaction, and caller-specific allowed-exit logic
+  remain explicit; process-start failure terminates the gate instead of becoming plausible output.
+  The local BitLocker launcher now stages both required helpers with the runner. Registered PS7 and
+  Windows PowerShell 5.1 tests pin all three migrations, and each old scoped capture block was
+  independently drilled red before replacement. File Management disk auto-discovery also replaces
+  its last `SilentlyContinue` with explicit ObjectNotFound classification; every other partition
+  enumeration failure terminates with the disk identity and real error.
+
+- **Elevation host-state test skips removed** - Removed nine QSKIP false greens across elevation UX,
+  elevation hardening, and mixed-tier operations. Banner creation accepts an authoritative injected
+  elevation state, elevation-gate dialog bypass uses a pure preflight, and ownership elevation uses
+  a pure refusal seam, so standard and administrator decisions execute on every host. Windows stock
+  shield availability is now a hard product requirement instead of a passing skip. Static QSKIP
+  inventory falls from 49 sites across 18 files to 40 across 15; the observed audit records 5,092
+  passed functions and 30 reviewed skips (0.59 percent).
+
+- **R5 AI plan contracts and review ledger advanced** - AiAppActionPlan validity now requires the
+  body that matches its exact powershell/cli/win32_gui method; custom output budgets with
+  nonpositive, inverted, over-broker or out-of-range defaults fail closed instead of being silently
+  repaired. Six isolated old-code tests went red. Corrected the async runner's reusable-token
+  contract and completed stored blob-bound reviews for four AI headers plus three VM-security
+  scripts. The live ledger is 1,064 units / 639 pending / 35 self-verifying reviews. Combined Wave
+  25 gates passed: changed-file hooks, healthy naming, full clang-cl coverage build, Release build,
+  and full CTest 272/272 in 641.28 seconds.
+
 - **Coverage evidence now fails closed** - Line and branch coverage runners delete stale outputs
   before execution, accept output only after successful CTest and coverage-tool exits, reject empty
   reports, require both fresh Cobertura XML and HTML, publish branch reports only after both
@@ -28,7 +65,7 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 - **Superseded production audit archived** - Moved the completed June production-grade audit out
   of the live docs bucket after its v0.9.1.9 publication handoff and 263-test status were
-  superseded by VERSION 0.9.2.0 and the 270-test suite. Removed it from current Partition Manager
+  superseded by VERSION 0.9.2.0 and the 272-test suite. Removed it from current Partition Manager
   and Apple filesystem claim-document sets instead of making historical prose a live gate
   dependency. Commercial feature checks now require the same hardware-wipe and queued-operation
   evidence from current certification and changelog owners. A registered structural regression

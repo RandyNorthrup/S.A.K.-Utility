@@ -2,7 +2,7 @@
 
 ## Overview
 
-Comprehensive test suite for SAK Utility using the **Qt Test** framework with **270 registered CTest tests** across **248 C++ test source files** plus script-backed helper tests. Tests cover AI assistant clients, chat-title generation, workflow orchestration, tool execution, cancellation, run state, trace storage, core utilities, security, elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX, hardening), diagnostics, partition management, ISO pipelines, deployment, email inspection, splash sizing, partition filesystem probe certification, and quick action validation.
+Comprehensive test suite for SAK Utility using the **Qt Test** framework with **272 registered CTest tests** across **248 C++ test source files** plus script-backed helper tests. Tests cover AI assistant clients, chat-title generation, workflow orchestration, tool execution, cancellation, run state, trace storage, core utilities, security, elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX, hardening), diagnostics, partition management, ISO pipelines, deployment, email inspection, splash sizing, partition filesystem probe certification, and quick action validation.
 
 ## Structure
 
@@ -185,6 +185,13 @@ empty results, and service failures fail; dependency failure never becomes a pas
 |---|---|---|
 | test_encryption | `encryption` | AES-256-CBC encrypt/decrypt, wrong password, Unicode, file encryption, IV randomness |
 | test_secure_memory | `secure_memory` | SecureString/SecureBuffer zeroing, VirtualLock, random generation |
+
+### Elevation & Privilege
+| Test | Module Under Test | Coverage |
+|---|---|---|
+| test_elevation_ux | `elevation_banner`, `shield_icon` | Injected elevated/standard banner decisions, deterministic layout/content, and required Windows shield rendering |
+| test_elevation_hardening | `elevation_gate`, `elevation_tier` | Pure elevated/standard gate preflight, feature-tier completeness, IPC, and dispatcher hardening |
+| test_mixed_tier_operations | `permission_manager`, `user_profile_backup_worker` | Pure ownership-elevation refusal, ACL operations, path accessibility, and elevated task dispatch |
 
 ### Deployment & Migration
 | Test | Module Under Test | Coverage |
@@ -462,6 +469,6 @@ per-test logs from complete CTest.
 ---
 
 **Test Framework:** Qt Test
-**Registered Tests:** 270 (CTest)
+**Registered Tests:** 272 (CTest)
 **Test Files:** 248 C++ test source files plus script-backed helper tests
 **Platform:** Windows 10/11

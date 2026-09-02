@@ -1383,6 +1383,11 @@ a parked design, per the bucket convention. Open work is what remains after thos
   credential. Static inventory falls to 49 sites across 18 files; no live dependency failure can
   become a pass and default CTest stays independent of third-party services. The observed runtime
   audit records 5,084 passed functions and 32 reviewed skips (0.63 percent), with no stale entries.
+  ELEVATION HOST-STATE FALSE-GREEN WAVE 25: nine QSKIP sites are removed from elevation UX,
+  elevation hardening and mixed-tier operations. Injected banner state plus pure gate/ownership
+  preflights execute elevated and standard decisions on every runner; the Windows stock shield is
+  required rather than skipped. Static inventory falls to 40 sites across 15 files; the observed
+  runtime audit records 5,092 passed functions and 30 reviewed skips (0.59 percent).
   Three permanent catalogs add 15 compile-valid, test-killed mutants over package-install busy
   state, user-profile restore selection and elevated-task dispatch. The ratchet now holds 49
   catalogs / 390 mutants (384 killed, six proven equivalent), with zero survivors. A second safe
@@ -1413,6 +1418,22 @@ a parked design, per the bucket convention. Open work is what remains after thos
   151/151 non-core TUs clean and 156/156 core TUs healthy with 5,266 findings and 16 clean TUs;
   full clang-cl coverage build exit 0; Release build exit 0; full CTest 270/270, zero failures,
   742.15 seconds.
+  OWNER-ONLY VM/ELEVATION/NATIVE-CAPTURE/AI-PLAN WAVE 25: VM password files are created no-share,
+  receive and verify one owner-only ACL before any content, flush, verify again, and refuse
+  reparse, overwrite, create-race, insecure reuse, size and lossy non-ASCII paths. VBoxManage and
+  System32 icacls use reliable captured exits; one registered security harness passes under PS7
+  and PS5.1, with 14 independent old-guard mutants red. File Management, Allocate Free Space and
+  both raw/sanitized BitLocker mutation command paths now use the shared process-capture seam; the
+  local BitLocker launcher stages both required helpers with its runner. Nine elevation host-state
+  QSKIPs are removed through injected/pure decision seams. Static QSKIP inventory is 40 sites
+  across 15 files; the fresh runtime audit records 5,092 passed functions and 30 reviewed skips
+  (0.59 percent), with no stale/unreviewed entry. App-action plan validity now binds its body to the
+  exact shell/GUI method and refuses invalid output-budget configuration instead of silently
+  repairing it; six isolated old-code drills went red. Four AI headers and three VM-security
+  scripts gained blob-bound review briefs. The live ledger now holds 1,064 units, 639 pending and
+  35 self-verifying driver reviews. All changed-file hooks passed; naming passed 151/151 non-core
+  TUs clean and 156/156 core TUs healthy with 5,266 findings and 16 clean TUs; full clang-cl
+  coverage build exit 0; Release build exit 0; full CTest 272/272, zero failures, 641.28 seconds.
   SUPPRESSION RE-AUDIT REFRESH, 2026-09-01 through 2026-09-02: core naming remains broadly excluded
   while 5,266 findings are tracked as open and 16 clean TUs are ratcheted. The coverage compiler
   warning silences and unsupported-platform
@@ -1420,10 +1441,10 @@ a parked design, per the bucket convention. Open work is what remains after thos
   the first-party shim. The cppcheck test-scope and unreadable-
   diagnostic false greens are closed in Wave 19. Another 26
   `Q_UNUSED` and 22 `(void)` warning silences formerly in unsupported-OS branches are removed.
-  This refresh found 157 QSKIP call sites; Waves 21, 23 and 24 reduced the live static inventory to
-  49 across 18 files while the observed baseline covers 32 reviewed functions. The latest audit
-  classifies 24 remaining sites as direct-fix candidates and 25 as genuinely external, privileged,
-  destructive, paid or live-service cases. Wave 22 reduced Partition Manager run/launch
+  This refresh found 157 QSKIP call sites; Waves 21, 23, 24 and 25 reduced the live static
+  inventory to 40 across 15 files while the observed baseline covers 30 reviewed functions. The
+  latest audit classifies 15 remaining sites as direct-fix candidates and 25 as genuinely external,
+  privileged, destructive, paid or live-service cases. Wave 22 reduced Partition Manager run/launch
   `SilentlyContinue` paths to zero and ratchets that state.
   The APFS follow-on document's stale cppcheck-suppression count is corrected. None of the
   exceptions is grandfathered; all remain INCOMPLETE until directly fixed or individually proven
@@ -5557,6 +5578,12 @@ justification that a reviewer can check.
     tool limitation (verified by the G3-6 unmatchedSuppression re-run: 0 stale). The one gap found
     was the shield_icon.h NOLINT being BARE (no reason); fixed by adding the Win32-idiom
     justification above the GetDIBits call rather than deleting the suppression.
+  - HARDENED 2026-09-02: `new_partition_manager_automation_vm.ps1` no longer writes a plaintext
+    password before best-effort ACL repair or ignores icacls/VBoxManage exits. A shared staging
+    helper creates an empty no-share file, applies and verifies an exact current-owner ACL before
+    content, rejects reparse/overwrite races, and removes only files it created on failure.
+    Registered PS7/PS5.1 tests and 13 separate red drills pin native exits, ACL order/verification,
+    cleanup, reuse bounds, overwrite ownership, post-write drift, and reparse refusal.
 - [x] R5-G5-3 Keep only suppressions with a proven tool-limitation justification
   - RESOLVED 2026-08-16 [fixed]: the surviving 26 are exactly the proven-tool-limitation set, each
     justified. This is the audit G5-1/2/3 asked for, done against the real tree, not deferred.
@@ -10075,6 +10102,15 @@ gate teaches people to disable both.
     audit header then exited 7; the gate rejected it with the exact exit code, so output cannot
     launder failure. Release build exit 0; full Release CTest 256/256, zero failures (761.11
     seconds).
+  - FOLLOW-ON 2026-09-02: the same shared seam now replaces scoped `$ErrorActionPreference` plus
+    `$LASTEXITCODE` capture in File Management live certification, Allocate Free Space external
+    proof, and both BitLocker mutation native-command paths. Each keeps its existing report,
+    redaction and allowed-exit decisions while process-start failure terminates. The staged
+    BitLocker launcher now carries both helpers required by its runner. Three independent
+    Windows PowerShell 5.1 old-code drills went red; the registered contract passes under both
+    PowerShell hosts. File Management disk auto-discovery also removes its last
+    `SilentlyContinue`: ObjectNotFound remains the explicit no-partition case and every other
+    enumeration failure terminates with the disk identity and real error.
       whole toolchain is present before anything runs
 - [~] R5-G21-5 Every fixed defect has a regression test, so the specific bug cannot
   - IN PROGRESS: a regression test for every fixed defect. Fixes landed this campaign carry per-item non-vacuous notes; the full per-defect regression audit is still open.

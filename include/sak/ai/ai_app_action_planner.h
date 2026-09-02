@@ -37,9 +37,13 @@ struct AiAppActionPlan {
         // or partially built plan as runnable. A plan is executable only when no error and no
         // guard block are recorded AND the structural fields an executor needs are populated
         // (app/action/method, plus an actual body -- win32_gui steps or a shell command).
+        const bool body_matches_method =
+            method == QLatin1String("win32_gui")
+                ? !steps.isEmpty()
+                : ((method == QLatin1String("powershell") || method == QLatin1String("cli")) &&
+                   !request.command.isEmpty());
         return error_message.isEmpty() && guard_block_error.isEmpty() && !app_id.isEmpty() &&
-               !action.isEmpty() && !method.isEmpty() &&
-               (!steps.isEmpty() || !request.command.isEmpty());
+               !action.isEmpty() && body_matches_method;
     }
 };
 
@@ -49,6 +53,9 @@ public:
         static constexpr int kDefaultOutputKilobytes = 256;
         static constexpr int kMaximumOutputMegabytes = 4;
 
+        /// All three values are a fail-closed configuration contract: positive, ordered, within
+        /// the broker ceiling, and with the default inside the interval. buildPlan refuses an
+        /// invalid custom Options object instead of silently reordering or repairing it.
         int default_output_bytes{kDefaultOutputKilobytes * static_cast<int>(sak::kBytesPerKB)};
         int min_output_bytes{static_cast<int>(sak::kBytesPerKB)};
         /// Deliberately STRICTER than kAiCommandOutputBytesCeiling: a stricter local budget is a

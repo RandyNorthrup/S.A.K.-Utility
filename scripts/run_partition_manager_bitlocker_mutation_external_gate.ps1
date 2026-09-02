@@ -23,6 +23,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "process_capture.ps1")
 . (Join-Path $PSScriptRoot "partition_manager_storage.ps1")
 
 if ($TargetDiskNumber -lt 1) {
@@ -90,31 +91,8 @@ function Invoke-NativeCommand {
         [string[]]$Arguments = @()
     )
 
-    $oldPreference = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    $exitCode = $null
-    try {
-        $output = & $FilePath @Arguments 2>&1
-        $exitCode = $LASTEXITCODE
-    }
-    catch {
-        $output = $_.Exception.Message
-        $exitCode = 1
-    }
-    finally {
-        $ErrorActionPreference = $oldPreference
-    }
-    if ($null -eq $exitCode) {
-        $exitCode = 1
-    }
-
-    [pscustomobject]@{
-        name = $Name
-        file_path = $FilePath
-        arguments = @($Arguments | ForEach-Object { Redact-RecoveryPassword -Text $_ })
-        exit_code = $exitCode
-        output = Redact-RecoveryPassword -Text (ConvertTo-PlainText -Value $output)
-    }
+    $raw = Invoke-NativeCommandRaw -Name $Name -FilePath $FilePath -Arguments $Arguments
+    return ConvertTo-SanitizedCommandLog -Command $raw
 }
 
 function Invoke-NativeCommandRaw {
@@ -126,30 +104,14 @@ function Invoke-NativeCommandRaw {
         [string[]]$Arguments = @()
     )
 
-    $oldPreference = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    $exitCode = $null
-    try {
-        $output = & $FilePath @Arguments 2>&1
-        $exitCode = $LASTEXITCODE
-    }
-    catch {
-        $output = $_.Exception.Message
-        $exitCode = 1
-    }
-    finally {
-        $ErrorActionPreference = $oldPreference
-    }
-    if ($null -eq $exitCode) {
-        $exitCode = 1
-    }
-
+    $captured = Invoke-CapturedProcess -FilePath $FilePath -Arguments $Arguments
+    $capturedOutput = @($captured.stdout, $captured.stderr)
     [pscustomobject]@{
         name = $Name
         file_path = $FilePath
         arguments = $Arguments
-        exit_code = $exitCode
-        output = ConvertTo-PlainText -Value $output
+        exit_code = [int]$captured.exit_code
+        output = ConvertTo-PlainText -Value $capturedOutput
     }
 }
 

@@ -3,6 +3,11 @@
     Self-tests scripts/process_capture.ps1 under the current PowerShell host.
 #>
 
+param(
+    [ValidateSet("all", "file-management", "allocate-free-space", "bitlocker")]
+    [string]$MigrationCase = "all"
+)
+
 $ErrorActionPreference = "Stop"
 
 . (Join-Path $PSScriptRoot "process_capture.ps1")
@@ -16,6 +21,24 @@ function Assert-Equal($Actual, $Expected, [string]$Message) {
 function Assert-True([bool]$Condition, [string]$Message) {
     if (-not $Condition) {
         throw $Message
+    }
+}
+
+function Assert-CaptureMigration {
+    param(
+        [string]$Name,
+        [string]$RelativePath,
+        [string[]]$RequiredPatterns,
+        [string[]]$LegacyPatterns
+    )
+
+    $path = Join-Path (Split-Path -Parent $PSScriptRoot) $RelativePath
+    $text = Get-Content -LiteralPath $path -Raw -ErrorAction Stop
+    foreach ($pattern in $RequiredPatterns) {
+        Assert-True $text.Contains($pattern) "$Name does not use shared capture contract: $pattern"
+    }
+    foreach ($pattern in $LegacyPatterns) {
+        Assert-True (-not $text.Contains($pattern)) "$Name retained legacy capture: $pattern"
     }
 }
 
@@ -58,4 +81,70 @@ $timed = Invoke-CapturedProcess -FilePath $shell -Arguments @(
 ) -TimeoutSeconds 1
 Assert-True $timed.timed_out "Timeout did not terminate and flag the child"
 
-Write-Host "Process capture tests passed under $($PSVersionTable.PSVersion)."
+$migrationCases = @(
+    @{
+        name = "file-management"
+        path = "scripts/run_file_management_live_filesystem_certification.ps1"
+        required = @(
+            '. (Join-Path $PSScriptRoot "process_capture.ps1")',
+            'Invoke-CapturedProcess -FilePath $certifier -Arguments $certifierArgs',
+            '$certifierProcess.exit_code',
+            '$certifierProcess.stdout',
+            '$certifierProcess.stderr'
+        )
+        legacy = @(
+            '$certifierOutput = & $certifier @certifierArgs 2>&1',
+            '$ErrorActionPreference = "Continue"',
+            'SilentlyContinue'
+        )
+    },
+    @{
+        name = "allocate-free-space"
+        path = "scripts/run_partition_manager_allocate_free_space_external_gate.ps1"
+        required = @(
+            '. (Join-Path $PSScriptRoot "process_capture.ps1")',
+            'Invoke-CapturedProcess -FilePath $FilePath -Arguments $Arguments',
+            '$captured.exit_code',
+            '$captured.stdout',
+            '$captured.stderr'
+        )
+        legacy = @(
+            '$output = & $FilePath @Arguments 2>&1',
+            '$global:LASTEXITCODE = $null',
+            '$ErrorActionPreference = "Continue"',
+            'SilentlyContinue'
+        )
+    },
+    @{
+        name = "bitlocker"
+        path = "scripts/run_partition_manager_bitlocker_mutation_external_gate.ps1"
+        required = @(
+            '. (Join-Path $PSScriptRoot "process_capture.ps1")',
+            '$captured = Invoke-CapturedProcess -FilePath $FilePath -Arguments $Arguments',
+            '$raw = Invoke-NativeCommandRaw',
+            'ConvertTo-SanitizedCommandLog -Command $raw'
+        )
+        legacy = @(
+            '$output = & $FilePath @Arguments 2>&1',
+            '$ErrorActionPreference = "Continue"',
+            'SilentlyContinue'
+        )
+    }
+)
+foreach ($case in $migrationCases) {
+    if ($MigrationCase -eq "all" -or $MigrationCase -eq $case.name) {
+        Assert-CaptureMigration -Name $case.name -RelativePath $case.path `
+            -RequiredPatterns $case.required -LegacyPatterns $case.legacy
+    }
+}
+if ($MigrationCase -eq "all" -or $MigrationCase -eq "bitlocker") {
+    Assert-CaptureMigration -Name "bitlocker-launcher" `
+        -RelativePath "scripts/launch_partition_manager_bitlocker_mutation_external_gate_local.ps1" `
+        -RequiredPatterns @(
+            'run_partition_manager_bitlocker_mutation_external_gate.ps1',
+            'partition_manager_storage.ps1',
+            'process_capture.ps1'
+        ) -LegacyPatterns @()
+}
+
+Write-Host "Process capture tests passed under $($PSVersionTable.PSVersion); migration=$MigrationCase."

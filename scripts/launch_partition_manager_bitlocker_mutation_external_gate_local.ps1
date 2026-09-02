@@ -100,6 +100,8 @@ $sharedReport = Join-Path $sharedEvidence "report.json"
 $localEvidence = Join-Path $StageRoot "evidence"
 $localGuestReport = Join-Path $StageRoot "external-bitlocker-mutation-guest-report.json"
 $localRunner = Join-Path $StageRoot "run_partition_manager_bitlocker_mutation_external_gate.ps1"
+$localStorageHelper = Join-Path $StageRoot "partition_manager_storage.ps1"
+$localCaptureHelper = Join-Path $StageRoot "process_capture.ps1"
 
 function Copy-StageEvidenceBack {
     $haveEvidence = Test-Path -LiteralPath $localEvidence -PathType Container
@@ -151,12 +153,33 @@ New-Item -ItemType Directory -Path $sharedEvidence -Force | Out-Null
 
 Assert-NoReparsePoint -Path $localEvidence -Name "Staged evidence directory"
 Assert-NoReparsePoint -Path $localRunner -Name "Staged runner"
+Assert-NoReparsePoint -Path $localStorageHelper -Name "Staged storage helper"
+Assert-NoReparsePoint -Path $localCaptureHelper -Name "Staged process-capture helper"
 
-Copy-Item -LiteralPath (Join-Path $SharedRoot "scripts\run_partition_manager_bitlocker_mutation_external_gate.ps1") -Destination $localRunner -Force
-if (-not (Test-Path -LiteralPath $localRunner -PathType Leaf)) {
-    throw "Runner was not staged: $localRunner"
+$stageFiles = @(
+    @{
+        source = Join-Path $SharedRoot "scripts\run_partition_manager_bitlocker_mutation_external_gate.ps1"
+        destination = $localRunner
+        name = "Runner"
+    },
+    @{
+        source = Join-Path $SharedRoot "scripts\partition_manager_storage.ps1"
+        destination = $localStorageHelper
+        name = "Storage helper"
+    },
+    @{
+        source = Join-Path $SharedRoot "scripts\process_capture.ps1"
+        destination = $localCaptureHelper
+        name = "Process-capture helper"
+    }
+)
+foreach ($stageFile in $stageFiles) {
+    Copy-Item -LiteralPath $stageFile.source -Destination $stageFile.destination -Force
+    if (-not (Test-Path -LiteralPath $stageFile.destination -PathType Leaf)) {
+        throw "$($stageFile.name) was not staged: $($stageFile.destination)"
+    }
+    Assert-NoReparsePoint -Path $stageFile.destination -Name "Staged $($stageFile.name)"
 }
-Assert-NoReparsePoint -Path $localRunner -Name "Staged runner"
 
 $trustedPowerShell = Get-TrustedPowerShellPath
 

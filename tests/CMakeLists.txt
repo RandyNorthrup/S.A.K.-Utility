@@ -7700,8 +7700,9 @@ if(PLATFORM_WINDOWS)
     # Start-Process with redirected output can leave ExitCode null under Windows PowerShell
     # 5.1, and sequential pipe reads can deadlock when both streams fill. This hermetic test
     # drives the shared ProcessStartInfo seam through exit 0/7, large dual-stream output,
-    # argument quoting, and a bounded timeout. The two registrations below run the same
-    # contract under pwsh and Windows PowerShell 5.1.
+    # argument quoting, and a bounded timeout. It also pins the three certification runners to
+    # that seam and rejects their old scoped capture blocks. The two registrations below run the
+    # same contract under pwsh and Windows PowerShell 5.1.
     add_test(NAME test_process_capture
              COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
                      -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1")
@@ -7730,6 +7731,17 @@ if(PLATFORM_WINDOWS)
              COMMAND "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
                      -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_coverage_runners.ps1")
     set_tests_properties(test_coverage_runners_windows_powershell PROPERTIES TIMEOUT 300)
+
+    add_test(NAME test_new_partition_manager_automation_vm_security
+             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_new_partition_manager_automation_vm_security.ps1")
+    set_tests_properties(test_new_partition_manager_automation_vm_security PROPERTIES TIMEOUT 120)
+
+    add_test(NAME test_new_partition_manager_automation_vm_security_windows_powershell
+             COMMAND "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_new_partition_manager_automation_vm_security.ps1")
+    set_tests_properties(
+        test_new_partition_manager_automation_vm_security_windows_powershell PROPERTIES TIMEOUT 120)
 
     add_test(NAME test_startup_budget
              COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive

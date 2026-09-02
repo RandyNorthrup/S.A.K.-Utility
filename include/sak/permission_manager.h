@@ -10,6 +10,7 @@
 #include <QString>
 
 #include <expected>
+#include <optional>
 
 #ifdef Q_OS_WIN
 #include <windows.h>
@@ -86,6 +87,11 @@ public:
     /// @brief Take ownership, returning error_code::elevation_required on access denied
     [[nodiscard]] auto tryTakeOwnership(const QString& path, const QString& userSID)
         -> std::expected<void, sak::error_code>;
+
+    /// @brief Pure preflight for the administrator-only ownership path.
+    /// @return elevation_required when not elevated; no refusal when elevated.
+    [[nodiscard]] static std::optional<sak::error_code> takeOwnershipElevationRefusal(
+        bool is_admin) noexcept;
 
     /// @brief Set standard user permissions, returning error_code on failure
     [[nodiscard]] auto trySetStandardUserPermissions(const QString& path, const QString& userSID)

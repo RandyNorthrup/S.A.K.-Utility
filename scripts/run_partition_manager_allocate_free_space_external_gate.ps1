@@ -26,6 +26,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "process_capture.ps1")
+
 $MinimumVhdSizeMB = 640
 $SizeToleranceBytes = 2MB
 $Script:RunRoot = $null
@@ -258,25 +260,14 @@ function Invoke-NativeCommand {
         throw "Refusing to run '$Name' from an unresolved command name: $FilePath"
     }
 
-    $oldPreference = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    $global:LASTEXITCODE = $null
-    try {
-        $output = & $FilePath @Arguments 2>&1
-        $exitCode = $LASTEXITCODE
-    }
-    finally {
-        $ErrorActionPreference = $oldPreference
-    }
-    if ($null -eq $exitCode) {
-        throw "Native command '$Name' did not report an exit code: $FilePath`n$(ConvertTo-PlainText -Value $output)"
-    }
+    $captured = Invoke-CapturedProcess -FilePath $FilePath -Arguments $Arguments
+    $capturedOutput = @($captured.stdout, $captured.stderr)
     [pscustomobject]@{
         name = $Name
         file_path = $FilePath
         arguments = $Arguments
-        exit_code = [int]$exitCode
-        output = ConvertTo-PlainText -Value $output
+        exit_code = [int]$captured.exit_code
+        output = ConvertTo-PlainText -Value $capturedOutput
     }
 }
 

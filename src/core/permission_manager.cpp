@@ -560,12 +560,20 @@ auto PermissionManager::tryStripPermissions(const QString& path)
 #endif
 }
 
+std::optional<sak::error_code> PermissionManager::takeOwnershipElevationRefusal(
+    bool is_admin) noexcept {
+    if (!is_admin) {
+        return sak::error_code::elevation_required;
+    }
+    return std::nullopt;
+}
+
 auto PermissionManager::tryTakeOwnership(const QString& path, const QString& userSID)
     -> std::expected<void, sak::error_code> {
 #ifdef Q_OS_WIN
-    if (!isRunningAsAdmin()) {
+    if (const auto refusal = takeOwnershipElevationRefusal(isRunningAsAdmin())) {
         m_lastError = "Administrator privileges required to take ownership";
-        return std::unexpected(sak::error_code::elevation_required);
+        return std::unexpected(*refusal);
     }
 
     if (hasEmbeddedNul(userSID)) {
