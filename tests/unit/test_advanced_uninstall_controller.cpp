@@ -765,9 +765,6 @@ void AdvancedUninstallControllerTests::uninstallProgramPathTrusted_acceptsQualif
 // its absolute System32 path -- emitting a bare "msiexec.exe" would both re-open the
 // search-order hijack and be refused by the trust screen above, breaking MSI uninstalls.
 void AdvancedUninstallControllerTests::silentMsiCommand_namesMsiexecByAbsoluteSystem32Path() {
-#ifndef Q_OS_WIN
-    QSKIP("System32 resolution is Windows-specific");
-#else
     sak::ProgramInfo msi;
     msi.uninstallString = QStringLiteral("MsiExec.exe /X{12345678-90AB-CDEF-1234-567890ABCDEF}");
 
@@ -792,7 +789,6 @@ void AdvancedUninstallControllerTests::silentMsiCommand_namesMsiexecByAbsoluteSy
     QCOMPARE(cmd.mid(end_quote + 1),
              QStringLiteral(" /x {12345678-90AB-CDEF-1234-567890ABCDEF} /qn /norestart"));
     QVERIFY(sak::UninstallWorker::uninstallProgramPathTrusted(cmd.mid(1, end_quote - 1)));
-#endif
 }
 
 QTEST_GUILESS_MAIN(AdvancedUninstallControllerTests)

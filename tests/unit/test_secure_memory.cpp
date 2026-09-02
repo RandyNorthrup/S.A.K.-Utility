@@ -84,20 +84,14 @@ void SecureMemoryTests::wipe_spanOverload() {
     // dropped an 8-int region keeps six of its eight secrets.
     std::array<int, 8> guarded_span{};
     std::fill(guarded_span.begin(), guarded_span.end(), 0x5A'5A'5A'5A);
-    {
-        auto span_guard = sak::makeSecureGuard(std::span<int>(guarded_span));
-        Q_UNUSED(span_guard);
-    }
+    { auto span_guard = sak::makeSecureGuard(std::span<int>(guarded_span)); }
     for (auto val : guarded_span) {
         QCOMPARE(val, 0);
     }
 
     std::array<int, 8> guarded_ptr{};
     std::fill(guarded_ptr.begin(), guarded_ptr.end(), 0x5A'5A'5A'5A);
-    {
-        auto ptr_guard = sak::makeSecureGuard(guarded_ptr.data(), guarded_ptr.size());
-        Q_UNUSED(ptr_guard);
-    }
+    { auto ptr_guard = sak::makeSecureGuard(guarded_ptr.data(), guarded_ptr.size()); }
     for (auto val : guarded_ptr) {
         QCOMPARE(val, 0);
     }
@@ -471,12 +465,6 @@ void SecureMemoryTests::secureCompare_stringView() {
 void SecureMemoryTests::lockedMemory_lockUnlock() {
     std::array<unsigned char, 4096> buffer{};
     sak::locked_memory lock(buffer.data(), buffer.size());
-
-    // Whether the real 4096-byte region locks depends on the OS working-set quota, so that one
-    // value stays unpinned -- but it was the slot's ONLY value, leaving this a pure no-crash
-    // test. The rejections below do not depend on the machine.
-    bool locked = lock.isLocked();
-    Q_UNUSED(locked);  // State depends on OS quota
 
     // A null pointer or a zero-length region is refused before any OS call. Each rejection is
     // probed on its own arm -- the null cases pass a real length, the zero-length cases pass a

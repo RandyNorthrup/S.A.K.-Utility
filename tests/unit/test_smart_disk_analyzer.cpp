@@ -22,7 +22,7 @@ private Q_SLOTS:
     void constructor_defaults();
 
     // smartctl availability
-    void isSmartctlAvailable_returnsBoolean();
+    void isSmartctlAvailable_isStableAndSideEffectFree();
 
     // Parse output tests (using known JSON structures)
     void parseOutput_validSataJson();
@@ -92,10 +92,10 @@ void SmartDiskAnalyzerTests::constructor_defaults() {
 // than returning false. The reports() check records the pure-query contract, but note it
 // cannot fail on its own: isSmartctlAvailable() is const and m_reports is not mutable. The
 // claim this test really carries is the absence of a crash or a hang.
-void SmartDiskAnalyzerTests::isSmartctlAvailable_returnsBoolean() {
+void SmartDiskAnalyzerTests::isSmartctlAvailable_isStableAndSideEffectFree() {
     sak::SmartDiskAnalyzer analyzer;
     const bool available = analyzer.isSmartctlAvailable();
-    Q_UNUSED(available);
+    QCOMPARE(analyzer.isSmartctlAvailable(), available);
     QVERIFY(analyzer.reports().isEmpty());
 }
 

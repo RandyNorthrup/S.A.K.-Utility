@@ -230,8 +230,9 @@ the rest is a debt-reduction + test-infra program (multi-session, much of it cos
       R5-IDX-7 is also closed: 17 Apple capability rows and 2 full-driver track gates are now
       machine-owned, four claim docs are citation-gated, route parity is 44/8/44, and the final
       Release gate passed 263/263 in 652.72 seconds.
-      Latest R5 review batch: 46 mutation catalogs / 364 mutants; full clang-cl coverage build
-      exit 0; Release build exit 0; full CTest 267/267, zero failures, 703.58 seconds.
+      Latest R5 review batch: 46 mutation catalogs / 371 mutants (365 killed, six equivalent);
+      all changed-file hooks passed; full clang-cl coverage build exit 0; Release build exit 0;
+      full CTest 267/267, zero failures, 669.26 seconds.
       Current plan-archive/doc-gate/clang slice: all pre-commit hooks passed; Release build exit
       0; full CTest 265/265, zero failures, 804.48 seconds.
       Suppression direct-fix wave 1: all changed-file hooks passed; Release build exit 0; full

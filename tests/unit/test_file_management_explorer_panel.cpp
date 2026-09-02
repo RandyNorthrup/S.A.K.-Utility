@@ -70,6 +70,7 @@
 #include <atomic>
 #include <memory>
 #include <tuple>
+#include <utility>
 
 #include <private/qzipwriter_p.h>
 
@@ -370,11 +371,46 @@ void paintIconSheetColumn(QImage* sheet,
     }
 }
 
-// Probe each selectable sidebar row until the omnibar shows a path on the wanted drive
-// (e.g. "C:"); returns the matching row or -1 when no mounted local target covers it.
-int selectLocalTargetRowForDrive(QListWidget* targetList,
-                                 QLineEdit* pathEdit,
-                                 const QString& drive_prefix) {
+sak::FileManagementTarget localTarget(const QString& root_path, const QString& label) {
+    sak::FileManagementTarget target = sak::FileManagementFileSystemBridge::localTarget(root_path);
+    target.label = label;
+    return target;
+}
+
+QVector<sak::FileManagementTarget> localTargets(const QString& root_path) {
+    return {localTarget(root_path, QStringLiteral("Test local target"))};
+}
+
+QTemporaryDir& deterministicLocalRoot() {
+    static QTemporaryDir root(QStringLiteral("sak-file-explorer-panel-XXXXXX"));
+    return root;
+}
+
+QTemporaryDir& deterministicSecondLocalRoot() {
+    static QTemporaryDir root(QStringLiteral("sak-file-explorer-panel-second-XXXXXX"));
+    return root;
+}
+
+class DeterministicExplorerPanel final : public sak::FileManagementExplorerPanel {
+public:
+    DeterministicExplorerPanel()
+        : sak::FileManagementExplorerPanel(localTargets(deterministicLocalRoot().path())) {}
+
+    explicit DeterministicExplorerPanel(QVector<sak::FileManagementTarget> targets)
+        : sak::FileManagementExplorerPanel(std::move(targets)) {}
+};
+
+QString comparablePath(const QString& path) {
+    return QDir::cleanPath(QDir::fromNativeSeparators(path));
+}
+
+// Select the injected local target by its exact temporary root. A drive-prefix match
+// could accidentally select an unrelated host volume on the same drive and recreate
+// the environmental dependency this seam removes.
+int selectLocalTargetRow(QListWidget* targetList,
+                         QLineEdit* pathEdit,
+                         const QString& expected_root) {
+    const QString clean_root = comparablePath(expected_root);
     for (int row = 0; row < targetList->count(); ++row) {
         const auto* item = targetList->item(row);
         if (!item || !item->flags().testFlag(Qt::ItemIsSelectable)) {
@@ -383,7 +419,7 @@ int selectLocalTargetRowForDrive(QListWidget* targetList,
         targetList->setCurrentRow(row);
         std::ignore =
             QTest::qWaitFor([pathEdit]() { return !pathEdit->text().trimmed().isEmpty(); }, 2000);
-        if (pathEdit->text().left(2).toUpper() == drive_prefix) {
+        if (comparablePath(pathEdit->text()) == clean_root) {
             return row;
         }
     }
@@ -704,7 +740,7 @@ void verifyPersistedAdaptiveViewMode() {
 }
 
 void verifyRestoredPaneMatchesPersistedSettings() {
-    sak::FileManagementExplorerPanel restored;
+    DeterministicExplorerPanel restored;
     restored.resize(900, 600);
     restored.show();
     QVERIFY(QTest::qWaitForWindowExposed(&restored));
@@ -835,6 +871,8 @@ private Q_SLOTS:
     void initTestCase() {
         QCoreApplication::setOrganizationName(QStringLiteral("SAKUtilityTests"));
         QCoreApplication::setApplicationName(QStringLiteral("FileExplorerPanelTests"));
+        QVERIFY(deterministicLocalRoot().isValid());
+        QVERIFY(deterministicSecondLocalRoot().isValid());
         // The info pane persists its selected tab; a stale Preview choice from
         // an earlier run would hide the details scroller mid-suite.
         QSettings settings;
@@ -842,6 +880,34 @@ private Q_SLOTS:
     }
 
     void init() { resetExplorerPanelSettings(); }
+
+    void injectedTemporaryTargetReplacesHostDiscovery() {
+        DeterministicExplorerPanel panel;
+        panel.show();
+        QVERIFY(QTest::qWaitForWindowExposed(&panel));
+        auto* target_list = child<QListWidget>(&panel, "fileExplorerTargetList");
+        auto* path_edit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
+        QVERIFY(target_list);
+        QVERIFY(path_edit);
+
+        int selectable_targets = 0;
+        const QString expected_root = comparablePath(deterministicLocalRoot().path());
+        for (int row = 0; row < target_list->count(); ++row) {
+            const auto* item = target_list->item(row);
+            if (item && item->flags().testFlag(Qt::ItemIsSelectable) &&
+                item->text().contains(QStringLiteral("  ["))) {
+                target_list->setCurrentRow(row);
+                QVERIFY(QTest::qWaitFor([path_edit, &expected_root]() {
+                    return comparablePath(path_edit->text()) == expected_root;
+                }));
+                selectable_targets += 1;
+            }
+        }
+        // Home and the Local section both route to the sole injected target.
+        QCOMPARE(selectable_targets, 2);
+        QVERIFY2(selectLocalTargetRow(target_list, path_edit, deterministicLocalRoot().path()) >= 0,
+                 "Explicit temporary target was replaced by mounted host discovery.");
+    }
 
     void detailsPanePreviewSwitchesBetweenTextAndImage() {
         sak::FileExplorerDetailsPane pane;
@@ -1036,7 +1102,7 @@ private Q_SLOTS:
             QVERIFY(file.write("inline search payload") > 0);
         }
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1280, 760);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -1049,9 +1115,8 @@ private Q_SLOTS:
         QVERIFY(pathEdit);
         QVERIFY(table);
         QVERIFY(searchBox);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("sak-inline")) >= 0);
 
         // Enter in the quick-search box submits the full search; the results
@@ -1185,7 +1250,7 @@ private Q_SLOTS:
         // elide -- it clips -- so a status label narrower than its own text loses
         // characters silently. The desktop capture showed exactly that at 1280 with
         // the info pane open: "29 item(s" and "85 item(s) - Local - local fil".
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1280, 800);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -1196,9 +1261,7 @@ private Q_SLOTS:
         QVERIFY(pathEdit);
         QVERIFY(table);
         const int row = firstTargetRow(targetList);
-        if (row < 0) {
-            QSKIP("No mounted File Explorer targets on this test host.");
-        }
+        QVERIFY2(row >= 0, "Injected temporary local target row is missing.");
         targetList->setCurrentRow(row);
         QVERIFY(waitForListingQuiescence(table));
         QApplication::processEvents();
@@ -1359,7 +1422,7 @@ private Q_SLOTS:
     }
 
     void viewModesSwitchAndPersistExplorerSettings() {
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1280, 760);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -1383,9 +1446,8 @@ private Q_SLOTS:
         QVERIFY(columnsPreview);
 
         auto* listAction = actionStartingWith(view->menu(), QStringLiteral("List"));
-        if (!listAction || !listAction->isEnabled()) {
-            QSKIP("No mounted File Explorer target available for view mode switching.");
-        }
+        QVERIFY2(listAction && listAction->isEnabled(),
+                 "Injected temporary local target did not enable List view.");
 
         QVERIFY(waitForListingQuiescence(table));
 
@@ -1426,7 +1488,7 @@ private Q_SLOTS:
     }
 
     void zoomStepsSizeKindsAndCyclesLayoutRing() {
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1280, 760);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -1437,9 +1499,8 @@ private Q_SLOTS:
         QVERIFY(pane);
         QVERIFY(table);
         QVERIFY(targetList);
-        if (firstTargetRow(targetList) < 0) {
-            QSKIP("No mounted File Explorer targets on this test host.");
-        }
+        QVERIFY2(firstTargetRow(targetList) >= 0,
+                 "Injected temporary local target row is missing.");
         panel.activateWindow();
         table->setFocus();
         QApplication::processEvents();
@@ -1499,7 +1560,7 @@ private Q_SLOTS:
         QVERIFY(writeBytes(dir.filePath(QStringLiteral("beta.bin")), 42));
         QVERIFY(QDir(dir.path()).mkdir(QStringLiteral("stuff")));
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1280, 760);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -1512,9 +1573,8 @@ private Q_SLOTS:
         QVERIFY(table);
         QVERIFY(pathEdit);
         QVERIFY(targetList);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No local File Explorer target for the temp drive on this host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("alpha")) >= 0);
 
         // Group by Size from the sort flyout (the Files toolbar grouping
@@ -1602,7 +1662,7 @@ private Q_SLOTS:
         }
         QVERIFY(root.mkdir(QStringLiteral("pocket")));
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -1612,9 +1672,8 @@ private Q_SLOTS:
         QVERIFY(targetList);
         QVERIFY(pathEdit);
         QVERIFY(table);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("undo_src")) >= 0);
 
         // Rename through the inline editor, then Ctrl+Z / Ctrl+Y walk the
@@ -1678,7 +1737,7 @@ private Q_SLOTS:
             QVERIFY(file.write("copy payload") > 0);
         }
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -1688,9 +1747,8 @@ private Q_SLOTS:
         QVERIFY(targetList);
         QVERIFY(pathEdit);
         QVERIFY(table);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("seed")) >= 0);
         panel.activateWindow();
         table->setFocus();
@@ -1791,7 +1849,7 @@ private Q_SLOTS:
             settings.endGroup();
         }
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -1803,9 +1861,8 @@ private Q_SLOTS:
         QVERIFY(targetList);
         QVERIFY(pathEdit);
         QVERIFY(table);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("flatten_me")) >= 0);
 
         // Checkboxes default ON (Files ShowCheckboxesWhenSelectingItems):
@@ -1861,7 +1918,7 @@ private Q_SLOTS:
             QVERIFY(file.write("card payload") > 0);
         }
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -1897,9 +1954,8 @@ private Q_SLOTS:
         QVERIFY(!grid_delegate->folderChevronEnabled());
         QVERIFY(!qobject_cast<sak::FileExplorerCardDelegate*>(grid->itemDelegate()));
 
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("card_row")) >= 0);
 
         // Paint smoke offscreen: both custom paints execute over real rows.
@@ -1969,12 +2025,11 @@ private Q_SLOTS:
     void sidebarAcceptsTagDropAndFavoriteReorder() {
         // Seed a known tag and two favorites BEFORE the panel builds its
         // sidebar, so the Tags section and Favorites section render rows.
-        const auto mounted = sak::FileManagementFileSystemBridge::mountedTargets();
-        if (mounted.size() < 2) {
-            QSKIP("Need two mounted targets for the favorites reorder leg.");
-        }
-        QTemporaryDir dir;
-        QVERIFY(dir.isValid());
+        const QVector<sak::FileManagementTarget> mounted{
+            localTarget(deterministicLocalRoot().path(), QStringLiteral("Primary test target")),
+            localTarget(deterministicSecondLocalRoot().path(),
+                        QStringLiteral("Secondary test target"))};
+        const QDir dir(deterministicLocalRoot().path());
         {
             QFile file(QDir(dir.path()).filePath(QStringLiteral("tagme.txt")));
             QVERIFY(file.open(QIODevice::WriteOnly));
@@ -1993,7 +2048,7 @@ private Q_SLOTS:
                                                {QStringLiteral("crimson")});
         }
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel(mounted);
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -2003,9 +2058,8 @@ private Q_SLOTS:
         QVERIFY(targetList);
         QVERIFY(pathEdit);
         QVERIFY(table);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("tagme")) >= 0);
 
         verifySidebarTagDrop(panel, targetList, table, dir.path());
@@ -2016,7 +2070,8 @@ private Q_SLOTS:
                               QListWidget* targetList,
                               QTableView* table,
                               const QString& dir_path) {
-        Q_UNUSED(panel);
+        QVERIFY(panel.isAncestorOf(targetList));
+        QVERIFY(panel.isAncestorOf(table));
         // Copy the file to build the internal drag payload, then drop it on
         // the "crimson" tag row (Files HandleTagItemDroppedAsync).
         QVERIFY(selectRowStable(table, QStringLiteral("tagme")));
@@ -2156,16 +2211,14 @@ private Q_SLOTS:
         // never renders it, so it silently became an ellipsis and made every row read
         // as a truncated badge. The detail belongs in the tooltip, where it is
         // actually reachable.
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1280, 760);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
         auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
         QVERIFY(targetList);
         const int row = firstTargetRow(targetList);
-        if (row < 0) {
-            QSKIP("No mounted File Explorer targets on this test host.");
-        }
+        QVERIFY2(row >= 0, "Injected temporary local target row is missing.");
 
         int checked = 0;
         for (int index = 0; index < targetList->count(); ++index) {
@@ -2225,7 +2278,7 @@ private Q_SLOTS:
     }
 
     void targetSelectionFeedsOmnibarAndSafetyPane() {
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -2237,9 +2290,7 @@ private Q_SLOTS:
         QVERIFY(pathEdit);
         QVERIFY(safety);
         const int targetRow = firstTargetRow(targetList);
-        if (targetRow < 0) {
-            QSKIP("No mounted File Explorer targets on this test host.");
-        }
+        QVERIFY2(targetRow >= 0, "Injected temporary local target row is missing.");
 
         targetList->setCurrentRow(targetRow);
         QApplication::processEvents();
@@ -2281,7 +2332,7 @@ private Q_SLOTS:
             QVERIFY(file.open(QIODevice::WriteOnly));
             QCOMPARE(file.write(payload), payload.size());
         }
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1200, 760);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -2293,9 +2344,8 @@ private Q_SLOTS:
         QVERIFY(pathEdit);
         QVERIFY(table);
         QVERIFY(preview);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("preview")) >= 0);
         QVERIFY(waitForListingQuiescence(table));
         QVERIFY(selectRowStable(table, QStringLiteral("preview")));
@@ -2451,7 +2501,7 @@ private Q_SLOTS:
     void contextMenusExposeRegistryActionsAndTargetActions() {
         QTemporaryDir empty_dir;
         QVERIFY(empty_dir.isValid());
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -2462,10 +2512,8 @@ private Q_SLOTS:
         QVERIFY(table);
         QVERIFY(targetList);
         QVERIFY(pathEdit);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, empty_dir.path().left(2).toUpper()) <
-            0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         // An empty folder guarantees the click hits background, not a row.
         pathEdit->setText(empty_dir.path());
         QTest::keyClick(pathEdit, Qt::Key_Return);
@@ -2517,7 +2565,7 @@ private Q_SLOTS:
             QVERIFY(file.open(QIODevice::WriteOnly));
             QCOMPARE(file.write(payload), payload.size());
         }
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -2527,9 +2575,8 @@ private Q_SLOTS:
         QVERIFY(targetList);
         QVERIFY(pathEdit);
         QVERIFY(table);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("props")) >= 0);
         QVERIFY(waitForListingQuiescence(table));
         panel.activateWindow();
@@ -3134,7 +3181,7 @@ private Q_SLOTS:
                     .ok);
         QVERIFY(QDir(root.filePath(QStringLiteral("payload"))).removeRecursively());
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -3144,9 +3191,8 @@ private Q_SLOTS:
         QVERIFY(targetList);
         QVERIFY(pathEdit);
         QVERIFY(table);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("wrapped")) >= 0);
         QVERIFY(waitForListingQuiescence(table));
         panel.activateWindow();
@@ -3185,7 +3231,7 @@ private Q_SLOTS:
             QVERIFY(file.write("compress worker payload") > 0);
         }
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -3195,9 +3241,8 @@ private Q_SLOTS:
         QVERIFY(targetList);
         QVERIFY(pathEdit);
         QVERIFY(table);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("alpha")) >= 0);
         QVERIFY(waitForListingQuiescence(table));
 
@@ -3326,7 +3371,7 @@ private Q_SLOTS:
         QVERIFY(writeText(QStringLiteral("b_sel.txt")));
         QVERIFY(writeText(QStringLiteral(".dot_hidden.txt")));
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -3336,9 +3381,8 @@ private Q_SLOTS:
         QVERIFY(targetList);
         QVERIFY(pathEdit);
         QVERIFY(table);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("a_sel")) >= 0);
         QVERIFY(waitForListingQuiescence(table));
 
@@ -3413,7 +3457,7 @@ private Q_SLOTS:
             QVERIFY(file.write("must survive") > 0);
         }
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -3423,9 +3467,8 @@ private Q_SLOTS:
         QVERIFY(targetList);
         QVERIFY(pathEdit);
         QVERIFY(table);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("New Folder")) >= 0);
         QVERIFY(waitForListingQuiescence(table));
 
@@ -3464,7 +3507,7 @@ private Q_SLOTS:
             QVERIFY(file.write("swallow payload") > 0);
         }
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -3474,9 +3517,8 @@ private Q_SLOTS:
         QVERIFY(targetList);
         QVERIFY(pathEdit);
         QVERIFY(table);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("move_me")) >= 0);
         QVERIFY(waitForListingQuiescence(table));
 
@@ -3542,7 +3584,7 @@ private Q_SLOTS:
         QVERIFY(writeText(QStringLiteral("zzz.txt")));
         QVERIFY(writeText(QStringLiteral("aaa.txt")));
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -3552,9 +3594,8 @@ private Q_SLOTS:
         QVERIFY(targetList);
         QVERIFY(pathEdit);
         QVERIFY(table);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("aaa")) >= 0);
         const auto rowText = [table](const int row) {
             return table->model()->index(row, 0).data(Qt::DisplayRole).toString();
@@ -3579,7 +3620,7 @@ private Q_SLOTS:
         QVERIFY(writeText(QStringLiteral("aaa.txt")));
         QVERIFY(writeText(QStringLiteral("zzz.txt")));
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -3589,9 +3630,8 @@ private Q_SLOTS:
         QVERIFY(targetList);
         QVERIFY(pathEdit);
         QVERIFY(table);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("aaa")) >= 0);
         QVERIFY(waitForListingQuiescence(table));
 
@@ -3624,7 +3664,7 @@ private Q_SLOTS:
             QVERIFY(file.open(QIODevice::WriteOnly));
             QVERIFY(file.write("menu probe") > 0);
         }
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -3634,9 +3674,8 @@ private Q_SLOTS:
         QVERIFY(targetList);
         QVERIFY(pathEdit);
         QVERIFY(table);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("menu_probe")) >= 0);
         QVERIFY(waitForListingQuiescence(table));
         QVERIFY(selectRowStable(table, QStringLiteral("menu_probe")));
@@ -3791,7 +3830,9 @@ private Q_SLOTS:
     }
 
     void doubleClickDirectoryOpensFolderWhenAvailable() {
-        sak::FileManagementExplorerPanel panel;
+        const QDir root(deterministicLocalRoot().path());
+        QVERIFY(root.mkpath(QStringLiteral("double-click-target")));
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -3802,9 +3843,8 @@ private Q_SLOTS:
         QVERIFY(table);
         QVERIFY(pathEdit);
         QVERIFY(targetList);
-        if (firstTargetRow(targetList) < 0) {
-            QSKIP("No mounted File Explorer targets on this test host.");
-        }
+        QVERIFY2(firstTargetRow(targetList) >= 0,
+                 "Injected temporary local target row is missing.");
 
         QTRY_VERIFY(table->model() && table->model()->rowCount() > 0);
         int directoryRow = -1;
@@ -3816,9 +3856,8 @@ private Q_SLOTS:
                 break;
             }
         }
-        if (directoryRow < 0) {
-            QSKIP("No directory row available on this host target.");
-        }
+        QVERIFY2(directoryRow >= 0,
+                 "Injected temporary local target did not expose its directory fixture.");
 
         const QString beforePath = pathEdit->text();
         const QModelIndex index = table->model()->index(directoryRow,
@@ -3830,7 +3869,7 @@ private Q_SLOTS:
     }
 
     void shortcutsRefreshAndToggleDetailsWithoutLosingPath() {
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -3841,9 +3880,8 @@ private Q_SLOTS:
         QVERIFY(targetList);
         QVERIFY(pathEdit);
         QVERIFY(details);
-        if (firstTargetRow(targetList) < 0) {
-            QSKIP("No mounted File Explorer targets on this test host.");
-        }
+        QVERIFY2(firstTargetRow(targetList) >= 0,
+                 "Injected temporary local target row is missing.");
 
         const QString beforePath = pathEdit->text();
         panel.setFocus();
@@ -3905,7 +3943,7 @@ private Q_SLOTS:
             QVERIFY(file.write("inline rename payload") > 0);
         }
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -3915,9 +3953,8 @@ private Q_SLOTS:
         QVERIFY(targetList);
         QVERIFY(pathEdit);
         QVERIFY(table);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         const int row = navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("alpha"));
         QVERIFY2(row >= 0, "source file not listed after navigation");
         table->selectRow(row);
@@ -3972,7 +4009,7 @@ private Q_SLOTS:
             QVERIFY(file.write("move payload") > 0);
         }
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -3982,9 +4019,8 @@ private Q_SLOTS:
         QVERIFY(targetList);
         QVERIFY(pathEdit);
         QVERIFY(table);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("mover")) >= 0);
 
         // Files CutItemAction: Ctrl+X publishes a move operation and dims
@@ -4021,7 +4057,7 @@ private Q_SLOTS:
             QVERIFY(file.write("duplicate payload") > 0);
         }
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -4031,9 +4067,8 @@ private Q_SLOTS:
         QVERIFY(targetList);
         QVERIFY(pathEdit);
         QVERIFY(table);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("dup")) >= 0);
 
         // Files same-folder paste: no dialog, the copy lands as
@@ -4066,7 +4101,7 @@ private Q_SLOTS:
         writeFile(root.filePath(QStringLiteral("bundle/deep/leaf.txt")),
                   QByteArrayLiteral("leaf payload"));
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -4076,9 +4111,8 @@ private Q_SLOTS:
         QVERIFY(targetList);
         QVERIFY(pathEdit);
         QVERIFY(table);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("bundle")) >= 0);
         // A late listing reset would wipe the selection and reroute the paste
         // to the current folder; settle before selecting. The panel shortcuts
@@ -4197,7 +4231,7 @@ private Q_SLOTS:
             QVERIFY(file.write("external payload") > 0);
         }
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -4207,9 +4241,8 @@ private Q_SLOTS:
         QVERIFY(targetList);
         QVERIFY(pathEdit);
         QVERIFY(table);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         const int zone_row =
             navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("drop_zone"));
         QVERIFY(zone_row >= 0);
@@ -4314,7 +4347,7 @@ private Q_SLOTS:
         makeFile(QStringLiteral("bin_me.txt"));
         makeFile(QStringLiteral("perma.txt"));
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -4324,9 +4357,8 @@ private Q_SLOTS:
         QVERIFY(targetList);
         QVERIFY(pathEdit);
         QVERIFY(table);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("bin_me")) >= 0);
         QVERIFY(waitForListingQuiescence(table));
         panel.activateWindow();
@@ -4374,7 +4406,7 @@ private Q_SLOTS:
         QVERIFY(dir.isValid());
         QVERIFY(QDir(dir.path()).mkdir(QStringLiteral("subdir")));
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -4386,9 +4418,8 @@ private Q_SLOTS:
         QVERIFY(pathEdit);
         QVERIFY(table);
         QVERIFY(tabBar);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("subdir")) >= 0);
 
         // Ctrl+Enter opens the selected folder in a new tab (Files
@@ -4651,8 +4682,8 @@ private Q_SLOTS:
     }
 
     // Shared M8 dual-pane fixture: a parent folder holding "sub/inner.txt" and
-    // "top.txt", navigated to in pane A with "sub" selected. Returns false (after
-    // QSKIP/QVERIFY inside) when this host has no local target for the temp drive.
+    // "top.txt", navigated to in pane A with "sub" selected. The panel already
+    // owns an injected temporary local target, so target selection is deterministic.
     bool openDualPaneFixture(sak::FileManagementExplorerPanel& panel,
                              const QString& parent_path,
                              sak::FileExplorerPane** pane_a) {
@@ -4662,7 +4693,7 @@ private Q_SLOTS:
         if (targetList == nullptr || pathEdit == nullptr || table == nullptr) {
             return false;
         }
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, parent_path.left(2).toUpper()) < 0) {
+        if (selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) < 0) {
             return false;
         }
         if (navigateAndFindRow(pathEdit, table, parent_path, QStringLiteral("sub")) < 0) {
@@ -4723,14 +4754,13 @@ private Q_SLOTS:
         write(QStringLiteral("top.txt"));
         write(QStringLiteral("sub/inner.txt"));
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1280, 800);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
         sak::FileExplorerPane* pane_a = nullptr;
-        if (!openDualPaneFixture(panel, dir.path(), &pane_a)) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(openDualPaneFixture(panel, dir.path(), &pane_a),
+                 "Injected local target could not open the dual-pane fixture.");
 
         QTRY_COMPARE(panel.findChildren<sak::FileExplorerPane*>().size(), 2);
         auto* pane_b = otherPane(panel, pane_a);
@@ -4769,14 +4799,13 @@ private Q_SLOTS:
             QVERIFY(file.write("dual-pane fixture") > 0);
         }
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1280, 800);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
         sak::FileExplorerPane* pane_a = nullptr;
-        if (!openDualPaneFixture(panel, dir.path(), &pane_a)) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(openDualPaneFixture(panel, dir.path(), &pane_a),
+                 "Injected local target could not open the dual-pane fixture.");
         QTRY_COMPARE(panel.findChildren<sak::FileExplorerPane*>().size(), 2);
         auto* pane_b = otherPane(panel, pane_a);
         QVERIFY(pane_b);
@@ -4974,7 +5003,7 @@ private Q_SLOTS:
         QVERIFY(dir.isValid());
         QVERIFY(QDir(dir.path()).mkdir(QStringLiteral("inner")));
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -4983,9 +5012,8 @@ private Q_SLOTS:
         auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
         QVERIFY(targetList);
         QVERIFY(pathEdit);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         const QString inner = QDir(dir.path()).filePath(QStringLiteral("inner"));
         pathEdit->setText(inner);
         QTest::keyClick(pathEdit, Qt::Key_Return);
@@ -5044,7 +5072,7 @@ private Q_SLOTS:
         QTemporaryDir dir;
         QVERIFY(dir.isValid());
         {
-            sak::FileManagementExplorerPanel panel;
+            DeterministicExplorerPanel panel;
             panel.enableTabSessionPersistence();
             panel.resize(1200, 760);
             panel.show();
@@ -5053,10 +5081,9 @@ private Q_SLOTS:
             auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
             QVERIFY(targetList);
             QVERIFY(pathEdit);
-            if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) <
-                0) {
-                QSKIP("No mounted local target for the temp drive on this test host.");
-            }
+            QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >=
+                         0,
+                     "Injected temporary local target was not selectable.");
             auto* view = child<QToolButton>(&panel, "fileExplorerViewButton");
             QVERIFY(view && view->menu());
             actionStartingWith(view->menu(), QStringLiteral("Dual Pane"))->trigger();
@@ -5064,7 +5091,7 @@ private Q_SLOTS:
         }
 
         {
-            sak::FileManagementExplorerPanel panel;
+            DeterministicExplorerPanel panel;
             panel.enableTabSessionPersistence();
             panel.resize(1200, 760);
             panel.show();
@@ -5206,7 +5233,7 @@ private Q_SLOTS:
             QCOMPARE(file.write(payload), payload.size());
         }
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -5218,10 +5245,8 @@ private Q_SLOTS:
         QVERIFY(pathEdit);
         QVERIFY(table);
 
-        if (selectLocalTargetRowForDrive(
-                targetList, pathEdit, source_dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
 
         const int file_row =
             navigateAndFindRow(pathEdit, table, source_dir.path(), QStringLiteral("note"));
@@ -5274,7 +5299,7 @@ private Q_SLOTS:
             QVERIFY(file.write("suggestion payload") > 0);
         }
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -5287,9 +5312,8 @@ private Q_SLOTS:
         QVERIFY(pathEdit);
         QVERIFY(table);
         QVERIFY(searchButton);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("sak-suggest")) >=
                 0);
 
@@ -5384,16 +5408,15 @@ private Q_SLOTS:
     }
 
     void commandPaletteFilterNarrowsAndExecutesInline() {
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
 
         auto* targetList = child<QListWidget>(&panel, "fileExplorerTargetList");
         QVERIFY(targetList);
-        if (firstTargetRow(targetList) < 0) {
-            QSKIP("No mounted File Explorer targets on this test host.");
-        }
+        QVERIFY2(firstTargetRow(targetList) >= 0,
+                 "Injected temporary local target row is missing.");
         auto* pathEdit = child<QLineEdit>(&panel, "fileExplorerPathEdit");
         QVERIFY(pathEdit);
         panel.setFocus();
@@ -5741,7 +5764,7 @@ private Q_SLOTS:
             QVERIFY(file.write("worker paste payload") > 0);
         }
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -5751,9 +5774,8 @@ private Q_SLOTS:
         QVERIFY(targetList);
         QVERIFY(pathEdit);
         QVERIFY(table);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("payload")) >= 0);
 
         // Copy + paste into the selected folder runs on the transfer worker:
@@ -5935,7 +5957,7 @@ private Q_SLOTS:
             QVERIFY(file.write("delete me") > 0);
         }
 
-        sak::FileManagementExplorerPanel panel;
+        DeterministicExplorerPanel panel;
         panel.resize(1100, 700);
         panel.show();
         QVERIFY(QTest::qWaitForWindowExposed(&panel));
@@ -5945,9 +5967,8 @@ private Q_SLOTS:
         QVERIFY(targetList);
         QVERIFY(pathEdit);
         QVERIFY(table);
-        if (selectLocalTargetRowForDrive(targetList, pathEdit, dir.path().left(2).toUpper()) < 0) {
-            QSKIP("No mounted local target for the temp drive on this test host.");
-        }
+        QVERIFY2(selectLocalTargetRow(targetList, pathEdit, deterministicLocalRoot().path()) >= 0,
+                 "Injected temporary local target was not selectable.");
         QVERIFY(navigateAndFindRow(pathEdit, table, dir.path(), QStringLiteral("doomed")) >= 0);
 
         // Shift+Delete: permanent delete runs on the worker and posts the

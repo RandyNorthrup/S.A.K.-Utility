@@ -115,9 +115,6 @@ void ProcessRunnerTests::runProcess_timeout() {
 }
 
 void ProcessRunnerTests::runProcess_timeoutKillsChildTree() {
-#ifndef Q_OS_WIN
-    QSKIP("Process tree termination is Windows-specific");
-#else
     const QString script =
         "Set-StrictMode -Version Latest; "
         "$child = Start-Process powershell.exe "
@@ -143,7 +140,6 @@ void ProcessRunnerTests::runProcess_timeoutKillsChildTree() {
         !tasklist.std_out.contains(childPid),
         qPrintable(
             QStringLiteral("Timed-out child process still running: %1").arg(tasklist.std_out)));
-#endif
 }
 
 void ProcessRunnerTests::runProcess_cancellation() {
@@ -194,9 +190,6 @@ void ProcessRunnerTests::runProcess_cancellation() {
 // child sleeps far longer than the wait below, so a returned+gone process
 // proves the teardown really killed it instead of just detaching.
 void ProcessRunnerTests::runProcess_cancellationKillsChild() {
-#ifndef Q_OS_WIN
-    QSKIP("Process teardown assertion is Windows-specific");
-#else
     QElapsedTimer timer;
     timer.start();
 
@@ -227,7 +220,6 @@ void ProcessRunnerTests::runProcess_cancellationKillsChild() {
         "cmd.exe", {"/C", QStringLiteral("tasklist /FI \"PID eq %1\"").arg(childPid)}, 5000);
     QVERIFY2(!tasklist.std_out.contains(QString::number(childPid)),
              qPrintable(QStringLiteral("Cancelled child still running: %1").arg(tasklist.std_out)));
-#endif
 }
 
 // ============================================================================
@@ -415,9 +407,6 @@ void ProcessRunnerTests::completedSuccessfully_strictOutcome() {
 // System32-qualified absolute path, never a bare name a PATH/CWD-planted binary
 // could satisfy. system32Path resolves under the real system directory.
 void ProcessRunnerTests::system32Path_qualifiesUnderSystem32() {
-#ifndef Q_OS_WIN
-    QSKIP("System32 resolution is Windows-specific");
-#else
     const QString netsh = sak::system32Path(QStringLiteral("netsh.exe"));
     QVERIFY(!netsh.isEmpty());
     QVERIFY(QDir::isAbsolutePath(netsh));
@@ -452,7 +441,6 @@ void ProcessRunnerTests::system32Path_qualifiesUnderSystem32() {
     QVERIFY(sak::windowsDirPath(QString()).isEmpty());
     QVERIFY(sak::windowsDirPath(QStringLiteral("../../Temp/explorer.exe")).isEmpty());
     QVERIFY(sak::windowsDirPath(QStringLiteral("C:/Temp/explorer.exe")).isEmpty());
-#endif
 }
 
 // R5-P7-22: restore points, program enumeration, archiving and thermal polling all used
@@ -462,9 +450,6 @@ void ProcessRunnerTests::system32Path_qualifiesUnderSystem32() {
 // so it must hand back an ABSOLUTE path under the real system directory (never the bare
 // name, and never a relative form a caller could pass straight to CreateProcess).
 void ProcessRunnerTests::systemPowerShellPath_resolvesAbsoluteInterpreter() {
-#ifndef Q_OS_WIN
-    QSKIP("System32 resolution is Windows-specific");
-#else
     const QString ps = sak::systemPowerShellPath();
     QVERIFY2(!ps.isEmpty(), "the system PowerShell must resolve on a healthy Windows install");
     QVERIFY2(ps != QStringLiteral("powershell.exe"), qPrintable(ps));
@@ -477,7 +462,6 @@ void ProcessRunnerTests::systemPowerShellPath_resolvesAbsoluteInterpreter() {
     QVERIFY2(QFileInfo(ps).isFile(), qPrintable(ps));
     // It agrees with the generic System32 resolver used for netsh/reg/cmd/msiexec.
     QCOMPARE(ps, sak::system32Path(QStringLiteral("WindowsPowerShell/v1.0/powershell.exe")));
-#endif
 }
 
 // ============================================================================

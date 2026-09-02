@@ -6503,17 +6503,15 @@ bool AiAssistantPanel::handleRestorePointOfferChoice(int choice,
     if (!createRestorePoint()) {
         // The flag is NOT set here: a failed creation must not suppress the offer for
         // the next risky command of this session.
-        return handleRestorePointFailure(gate_id, metadata, previous_status, preview);
+        return handleRestorePointFailure(metadata, previous_status, preview);
     }
     m_restorePointOfferedThisSession = true;
     return true;
 }
 
-bool AiAssistantPanel::handleRestorePointFailure(const QString& gate_id,
-                                                 QJsonObject metadata,
+bool AiAssistantPanel::handleRestorePointFailure(QJsonObject metadata,
                                                  ai::AiRunStatus previous_status,
                                                  const QString& preview) {
-    Q_UNUSED(gate_id);
     metadata[QStringLiteral("summary")] = tr("Waiting after restore-point creation failed");
     metadata[QStringLiteral("question_for_human")] =
         tr("Restore point failed. Continue with this command?");
@@ -6743,7 +6741,7 @@ QJsonObject AiAssistantPanel::runScreenshotTool(const QString& reason) {
     result[QStringLiteral("width")] = pixmap.width();
     result[QStringLiteral("height")] = pixmap.height();
     result[QStringLiteral("reason")] = reason;
-    appendArtifactRow(path, QStringLiteral("screenshot"));
+    refreshArtifactsAfterWrite(path);
     return result;
 }
 
@@ -6819,7 +6817,7 @@ QJsonObject AiAssistantPanel::runDownloadTool(const QString& url_string, const Q
     result[QStringLiteral("size_bytes")] = static_cast<double>(bytes.size());
     result[QStringLiteral("sha256")] = sha256;
     result[QStringLiteral("source_url")] = url_string;
-    appendArtifactRow(destination, QStringLiteral("download"));
+    refreshArtifactsAfterWrite(destination);
     return result;
 }
 
@@ -7866,12 +7864,11 @@ QJsonObject AiAssistantPanel::offlineRunOperation(const QJsonObject& args,
     const OfflineToolRunResult run_result =
         executeOfflineOperation(operation, packages, output_dir, args);
     QJsonObject result = offlineOperationResultJson(operation, output_dir, run_result);
-    appendOfflineArtifacts(operation, output_dir, run_result.manifest_written, &result);
+    appendOfflineArtifacts(output_dir, run_result.manifest_written, &result);
     return result;
 }
 
-void AiAssistantPanel::appendOfflineArtifacts(const QString& operation,
-                                              const QString& output_dir,
+void AiAssistantPanel::appendOfflineArtifacts(const QString& output_dir,
                                               const QString& manifest_path,
                                               QJsonObject* result) {
     if (!output_dir.isEmpty() && QDir(output_dir).exists()) {
@@ -7887,11 +7884,11 @@ void AiAssistantPanel::appendOfflineArtifacts(const QString& operation,
             }
         }
         for (const auto& file : files.mid(0, kPackageArtifactDisplayLimit)) {
-            appendArtifactRow(file, operation);
+            refreshArtifactsAfterWrite(file);
         }
     }
     if (!manifest_path.isEmpty()) {
-        appendArtifactRow(manifest_path, QStringLiteral("offline-bundle"));
+        refreshArtifactsAfterWrite(manifest_path);
     }
 }
 
@@ -8227,14 +8224,13 @@ QJsonObject AiAssistantPanel::offlineOperationResultJson(const QString& operatio
     result[QStringLiteral("stats")] = stats;
     return result;
 }
-void AiAssistantPanel::appendArtifactRow(const QString& path, const QString& kind) {
+void AiAssistantPanel::refreshArtifactsAfterWrite(const QString& path) {
     // Refreshes widgets; marshal when an async tool handler reports an artifact
     // from a worker thread.
     if (!isOnGuiThread()) {
-        runOnGuiThread([this, path, kind]() { appendArtifactRow(path, kind); });
+        runOnGuiThread([this, path]() { refreshArtifactsAfterWrite(path); });
         return;
     }
-    Q_UNUSED(kind);
     if (path.isEmpty()) {
         return;
     }
@@ -8405,7 +8401,7 @@ void AiAssistantPanel::onGenerateReportClicked() {
         return;
     }
     refreshArtifactList();
-    appendArtifactRow(path, QStringLiteral("report"));
+    refreshArtifactsAfterWrite(path);
     appendLocalEvent(tr("Report written: %1").arg(path));
     Q_EMIT statusMessage(tr("Report written"), sak::kTimerStatusDefaultMs);
     QDesktopServices::openUrl(QUrl::fromLocalFile(path));
@@ -8872,7 +8868,11 @@ void AiAssistantPanel::reloadSessionPicker() {
     const QString current_id = m_conversationStore->currentSessionId();
     m_loadingSessionPicker = true;
     m_sessionCombo->clear();
-    const auto sessions = m_conversationStore->listPromptedSessions();
+    QString session_list_error;
+    const auto sessions = m_conversationStore->listPromptedSessions(&session_list_error);
+    if (!session_list_error.isEmpty()) {
+        appendLocalEvent(tr("AI session list unavailable: %1").arg(session_list_error));
+    }
     int selected_index = -1;
     if (current_id.isEmpty()) {
         const QString draft_title =
@@ -9664,14 +9664,12 @@ bool AiAssistantPanel::ensureWorkflowInputs(const ai::WorkflowTemplate& workflow
     if (!preserve_run_id) {
         m_pendingWorkflowRunId.clear();
     }
-    return collectRequiredWorkflowInputs(workflow, user_message, input_values) &&
+    return collectRequiredWorkflowInputs(workflow, input_values) &&
            collectClarifyingWorkflowInputs(workflow, user_message, input_values);
 }
 
 bool AiAssistantPanel::collectRequiredWorkflowInputs(const ai::WorkflowTemplate& workflow,
-                                                     const QString& user_message,
                                                      QJsonObject* input_values) {
-    Q_UNUSED(user_message);
     for (const auto& input : workflow.required_inputs) {
         const QString id = input.id.trimmed();
         if (!input.required || id.isEmpty() || workflowInputHasValue(input_values->value(id))) {
@@ -12268,7 +12266,7 @@ void AiAssistantPanel::onBrokerFinished(const QString& command_id,
     m_currentStderrBuffer.clear();
     recordCommandHealth(result);
     m_currentCommandHealthKey.clear();
-    recordBrokerResult(command_id, result, result_json);
+    recordBrokerResult(command_id, result_json);
     appendBrokerResultToTranscript(result_json, trace_metadata);
     appendSessionMemory(QStringLiteral("Tool"),
                         QStringLiteral("Command finished"),
@@ -12312,7 +12310,6 @@ QJsonObject AiAssistantPanel::brokerResultJson(const QString& command_id,
 }
 
 void AiAssistantPanel::recordBrokerResult(const QString& command_id,
-                                          const ai::AiCommandResult& result,
                                           const QJsonObject& result_json) {
     ai::AiToolResultRecordRequest request;
     request.command_id = command_id;
@@ -12326,7 +12323,6 @@ void AiAssistantPanel::recordBrokerResult(const QString& command_id,
     if (record.wroteStore() && m_conversationStore) {
         reloadSessionPicker();
     }
-    Q_UNUSED(result);
 }
 
 void AiAssistantPanel::appendBrokerResultToTranscript(const QJsonObject& result_json,

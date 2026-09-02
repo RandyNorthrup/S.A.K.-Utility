@@ -1129,12 +1129,10 @@ void MainWindow::createAboutPanel() {
                        QStringLiteral("Credits"));
 
     about_layout->addWidget(about_tabs);
-    const int about_idx =
-        m_tab_widget->addTab(about_panel,
-                             QIcon(QStringLiteral(":/icons/icons/panel_about.svg")),
-                             QStringLiteral("About"));
+    m_tab_widget->addTab(about_panel,
+                         QIcon(QStringLiteral(":/icons/icons/panel_about.svg")),
+                         QStringLiteral("About"));
     m_tab_widget->setIconSize(QSize(kTabIconSize, kTabIconSize));
-    Q_UNUSED(about_idx);
 }
 
 void MainWindow::createHelpPanel() {
@@ -1165,11 +1163,10 @@ void MainWindow::createHelpPanel() {
 
     help_layout->addStretch();
 
-    const int help_idx = m_tab_widget->addTab(help_panel,
-                                              QIcon(QStringLiteral(":/icons/icons/panel_help.svg")),
-                                              QStringLiteral("Help and Support"));
+    m_tab_widget->addTab(help_panel,
+                         QIcon(QStringLiteral(":/icons/icons/panel_help.svg")),
+                         QStringLiteral("Help and Support"));
     m_tab_widget->setIconSize(QSize(kTabIconSize, kTabIconSize));
-    Q_UNUSED(help_idx);
 }
 
 // ============================================================================

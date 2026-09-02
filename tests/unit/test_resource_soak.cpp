@@ -89,9 +89,6 @@ private Q_SLOTS:
 };
 
 void ResourceSoakTests::processLaunchers_noResourceGrowthOverLongSession() {
-#ifndef Q_OS_WIN
-    QSKIP("Resource-soak counters are Windows-only (GetProcessHandleCount/GetGuiResources).");
-#else
     constexpr int kWarmup = 16;
     constexpr int kSoak = 128;
 
@@ -129,7 +126,6 @@ void ResourceSoakTests::processLaunchers_noResourceGrowthOverLongSession() {
     constexpr qint64 kWorkingSetCeiling = 16LL * 1024 * 1024;
     QVERIFY2(workingSetDelta <= kWorkingSetCeiling,
              qPrintable(QStringLiteral("working-set growth %1 bytes").arg(workingSetDelta)));
-#endif
 }
 
 QTEST_GUILESS_MAIN(ResourceSoakTests)

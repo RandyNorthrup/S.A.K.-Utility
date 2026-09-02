@@ -436,8 +436,7 @@ void AppInstallationPanel::setupWorkerJobConnections() {
     connect(m_worker.get(),
             &AppInstallationWorker::jobProgress,
             this,
-            [this](int entry_index, const QString& message) {
-                Q_UNUSED(entry_index);
+            [this](int, const QString& message) {
                 Q_EMIT logOutput(message);
                 Q_EMIT statusMessage(message, 0);
             });
@@ -446,8 +445,7 @@ void AppInstallationPanel::setupWorkerJobConnections() {
         m_worker.get(),
         &AppInstallationWorker::jobStatusChanged,
         this,
-        [this](int entry_index, const MigrationJob& job) {
-            Q_UNUSED(entry_index);
+        [this](int, const MigrationJob& job) {
             switch (job.status) {
             case MigrationStatus::Installing:
                 Q_EMIT statusMessage(tr("Installing %1...").arg(job.packageId), 0);

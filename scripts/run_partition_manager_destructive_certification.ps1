@@ -264,6 +264,29 @@ function Get-AttachedVhdDisk {
     throw "Attached VHD disk not found for $Path"
 }
 
+function Dismount-DisposableVhd {
+    param([Parameter(Mandatory = $true)] [string]$Path)
+
+    $image = Get-DiskImage -ImagePath $Path -ErrorAction Stop
+    if ($image.Attached) {
+        Dismount-DiskImage -ImagePath $Path -ErrorAction Stop | Out-Null
+    }
+}
+
+function Get-CertificationPartitions {
+    param([Parameter(Mandatory = $true)] [int]$DiskNumber)
+
+    try {
+        return @(Get-Partition -DiskNumber $DiskNumber -ErrorAction Stop)
+    }
+    catch {
+        if ($_.CategoryInfo.Category -eq [System.Management.Automation.ErrorCategory]::ObjectNotFound) {
+            return @()
+        }
+        throw
+    }
+}
+
 function New-DisposableVhdDisk {
     param(
         [Parameter(Mandatory = $true)]
@@ -284,8 +307,12 @@ function New-DisposableVhdDisk {
 
     try {
         $disk = Get-AttachedVhdDisk -Path $path
-        Set-Disk -Number $disk.Number -IsOffline $false -ErrorAction SilentlyContinue
-        Set-Disk -Number $disk.Number -IsReadOnly $false -ErrorAction Stop
+        if ($disk.IsOffline) {
+            Set-Disk -Number $disk.Number -IsOffline $false -ErrorAction Stop
+        }
+        if ($disk.IsReadOnly) {
+            Set-Disk -Number $disk.Number -IsReadOnly $false -ErrorAction Stop
+        }
 
         [pscustomobject]@{
             path = $path
@@ -298,8 +325,14 @@ function New-DisposableVhdDisk {
         # Creation is not transactional: the vdisk is already attached by the diskpart
         # script above, so any failure while resolving it or bringing it online/read-write
         # must dismount it rather than leak an attached disk. Then re-throw the real error.
-        Dismount-DiskImage -ImagePath $path -ErrorAction SilentlyContinue | Out-Null
-        throw
+        $preparationError = $_
+        try {
+            Dismount-DisposableVhd -Path $path
+        }
+        catch {
+            throw "VHD preparation failed: $($preparationError.Exception.Message) Cleanup dismount also failed: $($_.Exception.Message)"
+        }
+        throw $preparationError
     }
 }
 
@@ -310,7 +343,7 @@ function Remove-DisposableVhdDisk {
     )
 
     try {
-        Dismount-DiskImage -ImagePath $Vhd.path -ErrorAction SilentlyContinue | Out-Null
+        Dismount-DisposableVhd -Path $Vhd.path
     }
     finally {
         if (-not $KeepVhd -and (Test-Path -LiteralPath $Vhd.path)) {
@@ -320,7 +353,7 @@ function Remove-DisposableVhdDisk {
 }
 
 function Get-FreeCertificationDriveLetter {
-    $used = @(Get-Volume -ErrorAction SilentlyContinue |
+    $used = @(Get-Volume -ErrorAction Stop |
         Where-Object { -not [string]::IsNullOrWhiteSpace($_.DriveLetter) } |
         ForEach-Object { $_.DriveLetter.ToString().ToUpperInvariant() })
 
@@ -341,7 +374,15 @@ function Get-CertificationDriveLetter {
     )
 
     $partition = Get-Partition -DiskNumber $DiskNumber -PartitionNumber $PartitionNumber -ErrorAction Stop
-    $volume = $partition | Get-Volume -ErrorAction SilentlyContinue
+    try {
+        $volume = $partition | Get-Volume -ErrorAction Stop
+    }
+    catch {
+        if ($_.CategoryInfo.Category -ne [System.Management.Automation.ErrorCategory]::ObjectNotFound) {
+            throw
+        }
+        $volume = $null
+    }
     if ($null -ne $volume -and -not [string]::IsNullOrWhiteSpace($volume.DriveLetter)) {
         return $volume.DriveLetter.ToString().ToUpperInvariant()
     }
@@ -400,8 +441,13 @@ function Set-CertificationDiskOnline {
         [int]$DiskNumber
     )
 
-    Set-Disk -Number $DiskNumber -IsOffline $false -ErrorAction SilentlyContinue
-    Set-Disk -Number $DiskNumber -IsReadOnly $false -ErrorAction SilentlyContinue
+    $disk = Get-Disk -Number $DiskNumber -ErrorAction Stop
+    if ($disk.IsOffline) {
+        Set-Disk -Number $DiskNumber -IsOffline $false -ErrorAction Stop
+    }
+    if ($disk.IsReadOnly) {
+        Set-Disk -Number $DiskNumber -IsReadOnly $false -ErrorAction Stop
+    }
 }
 
 function Open-RawCertificationDisk {
@@ -680,7 +726,7 @@ function Invoke-CreateFormatResizeDeleteScenario {
         $resized = Get-Partition -DiskNumber $vhd.disk_number -PartitionNumber $partition.PartitionNumber -ErrorAction Stop
         Assert-CertificationCondition -Condition ([Math]::Abs([int64]$resized.Size - [int64]$ResizePartitionBytes) -le $SizeToleranceBytes) -Message "Resize verification failed"
         Remove-Partition -DiskNumber $vhd.disk_number -PartitionNumber $partition.PartitionNumber -Confirm:$false -ErrorAction Stop
-        $remaining = @(Get-Partition -DiskNumber $vhd.disk_number -ErrorAction SilentlyContinue |
+        $remaining = @(Get-CertificationPartitions -DiskNumber $vhd.disk_number |
             Where-Object { $_.Type -ne "Reserved" })
         Assert-CertificationCondition -Condition ($remaining.Count -eq 0) -Message "Delete verification failed: data partition remained"
         return @{
@@ -949,7 +995,7 @@ function Invoke-ClearDiskWipeScenario {
         New-Partition -DiskNumber $vhd.disk_number -Size $CreatePartitionBytes -ErrorAction Stop | Out-Null
         Clear-Disk -Number $vhd.disk_number -RemoveData -Confirm:$false -ErrorAction Stop
         $disk = Get-Disk -Number $vhd.disk_number -ErrorAction Stop
-        $partitions = @(Get-Partition -DiskNumber $vhd.disk_number -ErrorAction SilentlyContinue)
+        $partitions = @(Get-CertificationPartitions -DiskNumber $vhd.disk_number)
         Assert-CertificationCondition -Condition ($disk.PartitionStyle -eq "RAW") -Message "Clear-Disk did not leave RAW disk"
         Assert-CertificationCondition -Condition ($partitions.Count -eq 0) -Message "Clear-Disk left partitions behind"
         return @{

@@ -54,7 +54,9 @@ bool WorkflowStore::loadBuiltIn(QStringList* errors) {
 }
 
 bool WorkflowStore::loadDirectory(const QString& directory, QStringList* errors) {
-    const detail::StoreFileLoadHooks hooks{g_before_file_open_hook, g_before_file_read_hook};
+    const detail::StoreFileLoadHooks hooks{.before_file_open = g_before_file_open_hook,
+                                           .before_file_read = g_before_file_read_hook,
+                                           .before_child_open = {}};
     const detail::StoreFileConsumer consume = [this, errors](const QString& path,
                                                              const QByteArray& bytes) {
         QStringList parse_errors;

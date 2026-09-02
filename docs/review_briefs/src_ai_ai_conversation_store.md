@@ -16,10 +16,22 @@
   failed moves are refused before copying anything.
 - [x] [MEDIUM] writeUsage silently created a new session when none was active.
   RESOLVED 2026-09-02: it returns the exact No active AI session refusal.
-- [ ] [HIGH] Manifest reads and session-root enumeration remain name-based and need bounded,
-  handle-pinned identity/reparse protection before this source can be marked reviewed.
-- [ ] [HIGH] Artifact-root/subdirectory creation remains name-based and needs pinned parent
-  identity enforcement against junction swaps.
+- [x] [HIGH] Manifest reads and session-root enumeration were name-based and unbounded.
+  RESOLVED 2026-09-02: the shared AI store loader now bounds direct session children and manifest
+  bytes, opens root/session/manifest without following reparses, verifies parent identity, requires
+  stable exact reads, binds manifest id to directory name, and returns zero partial sessions with
+  surfaced errors.
+- [x] [HIGH] Artifact-root/subdirectory creation was name-based and junction-racy.
+  RESOLVED 2026-09-02: the shared loader walks one safe child component at a time, verifies reparse
+  and parent identity, and ConversationStore retains no-share-delete directory pins for the active
+  session. commandLogPath and artifactSubdir use that single path.
+- [ ] [HIGH] Artifact leaf files are still returned as QString paths to external writers
+  (screenshots, downloads, reports, offline/app-action output). Directory pins prevent ancestor
+  junction swaps, but cannot prevent an attacker replacing the final filename with a file reparse
+  point after artifactPath returns. Closing this requires a handle/callback artifact-write API and
+  migration of those external writer contracts; no ConversationStore-owned artifact write exists
+  to migrate locally.
 
-Re-review remains INCOMPLETE. Seven conversation-store mutants are killed and focused tests pass,
-but the two handle-pinning findings above remain open; this source is not ledger-credited.
+Re-review remains INCOMPLETE because the artifact-leaf API campaign above is open. The two original
+handle-pinning findings are closed; fourteen conversation-store mutants are killed and focused
+tests pass. This source is not ledger-credited.

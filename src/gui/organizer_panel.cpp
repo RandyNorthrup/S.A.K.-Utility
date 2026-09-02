@@ -816,13 +816,11 @@ void OrganizerPanel::setupDefaultCategories() {
     }
 }
 
-void OrganizerPanel::onTargetPathChanged(const QString& path) {
-    Q_UNUSED(path)
+void OrganizerPanel::onTargetPathChanged(const QString&) {
     updateDirectorySummary();
 }
 
-void OrganizerPanel::onOrganizerTargetChanged(int index) {
-    Q_UNUSED(index)
+void OrganizerPanel::onOrganizerTargetChanged(int) {
     const auto target = currentOrganizerTarget();
     if ((m_target_path == nullptr) || target.root_path.isEmpty()) {
         return;
@@ -1520,8 +1518,7 @@ void OrganizerPanel::onDedupSettingsClicked() {
     }
 }
 
-void OrganizerPanel::onDedupTargetChanged(int index) {
-    Q_UNUSED(index)
+void OrganizerPanel::onDedupTargetChanged(int) {
     if (m_dedup_directory_list != nullptr) {
         m_dedup_directory_list->clear();
     }

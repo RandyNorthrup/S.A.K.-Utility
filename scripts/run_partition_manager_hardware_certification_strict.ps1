@@ -16,8 +16,7 @@ param(
     [string]$ExternalEvidenceManifest = "",
     [string]$ExternalEvidenceChecklist = "",
     [string]$ExternalEvidenceRoot = "",
-    [string]$OutputRoot = "",
-    [switch]$SkipExternalLabPackageCheck
+    [string]$OutputRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -153,17 +152,10 @@ try {
             -ManifestPath $externalManifestCheckPath
     }
 
-    if (-not $SkipExternalLabPackageCheck) {
-        Invoke-CheckedStep -Name "external lab package" -Body {
-            & scripts\check_partition_manager_external_lab_package.ps1 `
-                -EvidenceRoot $ExternalEvidenceRoot `
-                -ManifestPath $externalManifestCheckPath
-        }
-    }
-    else {
-        Write-Warning ("External lab package check SKIPPED (-SkipExternalLabPackageCheck). " +
-            "A mandatory strict gate did not run, so this run does NOT establish a complete " +
-            "HardwareCertified claim.")
+    Invoke-CheckedStep -Name "external lab package" -Body {
+        & scripts\check_partition_manager_external_lab_package.ps1 `
+            -EvidenceRoot $ExternalEvidenceRoot `
+            -ManifestPath $externalManifestCheckPath
     }
 
     Invoke-CheckedStep -Name "strict hardware evidence verification" -Body {
@@ -245,9 +237,6 @@ try {
     }
 
     Write-Host "Partition Manager strict hardware certification passed: HardwareCertified"
-    if ($SkipExternalLabPackageCheck) {
-        Write-Warning "Claim is INCOMPLETE: the external lab package check was skipped for this run."
-    }
     Write-Host "Report: $resolvedReportPath"
     Write-Host "Status: $statusPath"
     Write-Host "Bundle: $bundlePath"

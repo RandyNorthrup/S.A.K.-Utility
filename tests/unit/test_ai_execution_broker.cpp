@@ -498,9 +498,6 @@ void AiExecutionBrokerTests::startProcess_refusesWorkingDirectoryRelativeProgram
 }
 
 void AiExecutionBrokerTests::startProcess_refusesAProgramThatIsNotTheApprovedFile() {
-#ifndef Q_OS_WIN
-    QSKIP("file-identity revalidation is exercised on Windows");
-#else
     // The plan resolves the program to a path so the approval preview can name the binary that
     // will run -- but a path is a NAME. The gap between naming it and running it spans an
     // approval dialog, a UAC prompt and restore-point creation: minutes, during which the same
@@ -543,7 +540,6 @@ void AiExecutionBrokerTests::startProcess_refusesAProgramThatIsNotTheApprovedFil
     const auto ok_result = resultFromSpy(ok_spy);
     QVERIFY2(ok_result.started, qPrintable(ok_result.error_message));
     QCOMPARE(ok_result.stdout_text.trimmed(), QStringLiteral("identity-ok"));
-#endif
 }
 
 void AiExecutionBrokerTests::refusesEmbeddedNulThatTheLaunchWouldTruncate() {

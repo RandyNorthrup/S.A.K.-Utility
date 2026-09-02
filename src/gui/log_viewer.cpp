@@ -64,7 +64,7 @@ QHBoxLayout* LogViewer::createToolbar() {
     m_search_edit->setAccessibleName("Log search");
     m_search_edit->setPlaceholderText("Search logs...");
     m_search_edit->setClearButtonEnabled(true);
-    connect(m_search_edit, &QLineEdit::textChanged, this, &LogViewer::onSearchTextChanged);
+    connect(m_search_edit, &QLineEdit::textChanged, this, &LogViewer::applyFilters);
     toolbar_layout->addWidget(m_search_edit);
 
     // Auto-scroll checkbox
@@ -258,11 +258,6 @@ void LogViewer::onSaveClicked() {
 
 void LogViewer::onFilterChanged(int index) {
     m_current_filter = static_cast<LogLevel>(index);
-    applyFilters();
-}
-
-void LogViewer::onSearchTextChanged(const QString& text) {
-    Q_UNUSED(text);
     applyFilters();
 }
 

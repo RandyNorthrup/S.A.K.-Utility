@@ -231,6 +231,28 @@ function Assert-Condition {
     }
 }
 
+function Assert-NoCertificationFailureSilences {
+    $certificationScripts = @(
+        "scripts\run_partition_manager_destructive_certification.ps1",
+        "scripts\run_partition_manager_cluster_size_external_gate.ps1",
+        "scripts\run_partition_manager_ext_filesystem_vm_gate.ps1",
+        "scripts\run_partition_manager_physical_cross_filesystem_destructive_validation.ps1"
+    )
+    foreach ($relativePath in $certificationScripts) {
+        $path = Join-Path $ProjectRoot $relativePath
+        $text = Get-Content -LiteralPath $path -Raw -ErrorAction Stop
+        Assert-Condition `
+            -Condition (-not $text.Contains("-ErrorAction SilentlyContinue")) `
+            -Message "Certification script hides a failure with SilentlyContinue: $relativePath"
+    }
+
+    $strictHardwarePath = Join-Path $ProjectRoot "scripts\run_partition_manager_hardware_certification_strict.ps1"
+    $strictHardwareText = Get-Content -LiteralPath $strictHardwarePath -Raw -ErrorAction Stop
+    Assert-Condition `
+        -Condition (-not $strictHardwareText.Contains("SkipExternalLabPackageCheck")) `
+        -Message "Strict hardware certification still exposes a mandatory lab-package bypass"
+}
+
 function Assert-ClaimLevel {
     param(
         [Parameter(Mandatory = $true)]
@@ -374,6 +396,7 @@ function Write-ExternalEvidenceReports {
 
 Push-Location $ProjectRoot
 try {
+    Assert-NoCertificationFailureSilences
     $resolvedOutputRoot = if ([System.IO.Path]::IsPathRooted($OutputRoot)) {
         $OutputRoot
     }

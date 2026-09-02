@@ -758,7 +758,6 @@ private Q_SLOTS:
     }
 
     void listLocalDirectoryUnreadableDirectoryFailsClosed() {
-#ifdef Q_OS_WIN
         // QDirIterator surfaces no error, so a directory that EXISTS but cannot be opened used
         // to produce ok=true with zero entries: the caller was told the folder is empty. An
         // enumeration that FAILED must never be reported as one that found nothing.
@@ -805,9 +804,6 @@ private Q_SLOTS:
         QVERIFY2(blocked.blockers.first().startsWith(
                      QStringLiteral("Could not read directory %1: ").arg(lockedPath)),
                  qPrintable(blocked.blockers.first()));
-#else
-        QSKIP("Exclusive directory handles are a Windows-only concept");
-#endif
     }
 
     void listLocalDirectoryEmptyDirectoryIsAnHonestSuccess() {
@@ -824,7 +820,6 @@ private Q_SLOTS:
     }
 
     void importFailsClosedWhenASourceLevelCannotBeRead() {
-#ifdef Q_OS_WIN
         // QDir::entryInfoList on an unreadable directory returns an EMPTY list with no error, so
         // the import walked right past the level, copied nothing out of it, and still reported
         // ok/complete -- a partial copy presented as a whole one (and the move path deletes the
@@ -879,9 +874,6 @@ private Q_SLOTS:
         QCOMPARE(imported.bytes_written, static_cast<uint64_t>(7));
         QCOMPARE(imported.symlinks_skipped, 0);
         QCOMPARE(imported.entries_skipped, 0);
-#else
-        QSKIP("Exclusive directory handles are a Windows-only concept");
-#endif
     }
 
     void listLocalDirectoryEnumeratesHiddenEntries() {

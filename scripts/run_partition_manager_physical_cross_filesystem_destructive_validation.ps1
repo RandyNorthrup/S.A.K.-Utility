@@ -173,13 +173,41 @@ function Resolve-ApprovedTool {
     }
 }
 
+function Get-CertificationPartitions {
+    param([Parameter(Mandatory = $true)] [int]$DiskNumber)
+
+    try {
+        return @(Get-Partition -DiskNumber $DiskNumber -ErrorAction Stop)
+    }
+    catch {
+        if ($_.CategoryInfo.Category -eq [System.Management.Automation.ErrorCategory]::ObjectNotFound) {
+            return @()
+        }
+        throw
+    }
+}
+
+function Get-CertificationVolume {
+    param([Parameter(Mandatory = $true)] [object]$Partition)
+
+    try {
+        return $Partition | Get-Volume -ErrorAction Stop
+    }
+    catch {
+        if ($_.CategoryInfo.Category -eq [System.Management.Automation.ErrorCategory]::ObjectNotFound) {
+            return $null
+        }
+        throw
+    }
+}
+
 function Get-DiskSnapshot {
     param([Parameter(Mandatory = $true)] [int]$Number)
 
     $disk = Get-Disk -Number $Number -ErrorAction Stop
     $partitions = @()
-    foreach ($partition in @(Get-Partition -DiskNumber $Number -ErrorAction SilentlyContinue | Sort-Object Offset)) {
-        $volume = $partition | Get-Volume -ErrorAction SilentlyContinue
+    foreach ($partition in @(Get-CertificationPartitions -DiskNumber $Number | Sort-Object Offset)) {
+        $volume = Get-CertificationVolume -Partition $partition
         $partitions += [pscustomobject]@{
             partition_number = [int]$partition.PartitionNumber
             drive_letter = if ($partition.DriveLetter) { [string]$partition.DriveLetter } else { "" }
@@ -250,7 +278,7 @@ function Clear-TargetDisk {
 
     Assert-DisposablePhysicalDisk -Number $Number
     $disk = Get-Disk -Number $Number -ErrorAction Stop
-    $partitions = @(Get-Partition -DiskNumber $Number -ErrorAction SilentlyContinue)
+    $partitions = @(Get-CertificationPartitions -DiskNumber $Number)
     if ($disk.PartitionStyle -eq "RAW" -and $partitions.Count -eq 0) {
         return "Disk $Number already RAW."
     }
@@ -311,7 +339,7 @@ function Invoke-ExtScenario {
 
     $grownSize = [uint64]$partition.Size + [uint64]$GrowByBytes
     Resize-Partition -DiskNumber $DiskNumber -PartitionNumber $partition.PartitionNumber -Size $grownSize -ErrorAction Stop
-    Update-HostStorageCache -ErrorAction SilentlyContinue
+    Update-HostStorageCache -ErrorAction Stop
     Invoke-NativeCommand -Name "resize2fs-grow-$FileSystem" -FilePath $Tools.resize2fs.path -Arguments @($rawTarget) | Out-Null
     Invoke-NativeCommand -Name "e2fsck-readonly-after-grow-$FileSystem" -FilePath $Tools.e2fsck.path -Arguments @("-n", "-f", $rawTarget) | Out-Null
     $growProbePath = Join-Path $RunRoot "$FileSystem-after-grow-probe.json"
@@ -328,7 +356,7 @@ function Invoke-ExtScenario {
     Invoke-NativeCommand -Name "e2fsck-repair-before-shrink-$FileSystem" -FilePath $Tools.e2fsck.path -Arguments @("-p", "-f", $rawTarget) -AcceptedExitCodes @(0, 1) | Out-Null
     Invoke-NativeCommand -Name "resize2fs-shrink-$FileSystem" -FilePath $Tools.resize2fs.path -Arguments @("-p", $rawTarget, "$($shrunkKilobytes)K") | Out-Null
     Resize-Partition -DiskNumber $DiskNumber -PartitionNumber $partition.PartitionNumber -Size $shrunkSize -ErrorAction Stop
-    Update-HostStorageCache -ErrorAction SilentlyContinue
+    Update-HostStorageCache -ErrorAction Stop
     Invoke-NativeCommand -Name "e2fsck-readonly-after-shrink-$FileSystem" -FilePath $Tools.e2fsck.path -Arguments @("-n", "-f", $rawTarget) | Out-Null
     $shrinkProbePath = Join-Path $RunRoot "$FileSystem-after-shrink-probe.json"
     $shrinkProbe = Invoke-CertifierProbe -Certifier $Certifier -TargetPath $rawTarget -ExpectedFileSystem $FileSystem -ReportPath $shrinkProbePath -InputSizeBytes $shrunkSize

@@ -483,8 +483,7 @@ private:
                                                      QJsonObject metadata,
                                                      ai::AiRunStatus previous_status,
                                                      const QString& preview);
-    [[nodiscard]] bool handleRestorePointFailure(const QString& gate_id,
-                                                 QJsonObject metadata,
+    [[nodiscard]] bool handleRestorePointFailure(QJsonObject metadata,
                                                  ai::AiRunStatus previous_status,
                                                  const QString& preview);
     void restoreRunStatusAfterHumanDecision(ai::AiRunStatus previous_status,
@@ -609,11 +608,10 @@ private:
     [[nodiscard]] QJsonObject offlineOperationResultJson(const QString& operation,
                                                          const QString& output_dir,
                                                          const OfflineToolRunResult& run_result);
-    void appendOfflineArtifacts(const QString& operation,
-                                const QString& output_dir,
+    void appendOfflineArtifacts(const QString& output_dir,
                                 const QString& manifest_path,
                                 QJsonObject* result);
-    void appendArtifactRow(const QString& path, const QString& kind);
+    void refreshArtifactsAfterWrite(const QString& path);
     void refreshArtifactList();
     void onArtifactsClicked();
     void onGenerateReportClicked();
@@ -736,7 +734,6 @@ private:
                                             const QJsonObject& initial_values = {},
                                             bool preserve_run_id = false);
     [[nodiscard]] bool collectRequiredWorkflowInputs(const ai::WorkflowTemplate& workflow,
-                                                     const QString& user_message,
                                                      QJsonObject* input_values);
     [[nodiscard]] bool collectClarifyingWorkflowInputs(const ai::WorkflowTemplate& workflow,
                                                        const QString& user_message,
@@ -901,9 +898,7 @@ private:
     void releaseCurrentCommandLease();
     [[nodiscard]] QJsonObject brokerResultJson(const QString& command_id,
                                                const ai::AiCommandResult& result) const;
-    void recordBrokerResult(const QString& command_id,
-                            const ai::AiCommandResult& result,
-                            const QJsonObject& result_json);
+    void recordBrokerResult(const QString& command_id, const QJsonObject& result_json);
     void appendBrokerResultToTranscript(const QJsonObject& result_json,
                                         const QJsonObject& trace_metadata);
     void completeBrokerToolTurn(const QJsonObject& result_json);

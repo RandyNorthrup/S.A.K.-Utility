@@ -8,8 +8,6 @@
 
 #include <QtTest/QtTest>
 
-#ifdef _WIN32
-
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -124,19 +122,6 @@ void ElevationManagerTests::errorMessage_operationCancelled() {
 // errorMessage_accessDenied was removed here: it called getElevationErrorMessage(5) exactly
 // like errorMessage_knownCode above and asserted only length() > 5, a strictly weaker claim
 // about the same input. The surviving test now pins the message contents instead.
-
-#else
-// Empty test class for non-Windows platforms
-class ElevationManagerTests : public QObject {
-    Q_OBJECT
-private Q_SLOTS:
-    void isElevated_returnsConsistently() { QSKIP("ElevationManager is Windows-only"); }
-    void canElevate_reportsUacAvailable() { QSKIP("ElevationManager is Windows-only"); }
-    void errorMessage_knownCode() { QSKIP("ElevationManager is Windows-only"); }
-    void errorMessage_unknownCode() { QSKIP("ElevationManager is Windows-only"); }
-    void errorMessage_operationCancelled() { QSKIP("ElevationManager is Windows-only"); }
-};
-#endif
 
 QTEST_GUILESS_MAIN(ElevationManagerTests)
 #include "test_elevation_manager.moc"

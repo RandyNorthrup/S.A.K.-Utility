@@ -408,8 +408,7 @@ QModelIndex FileExplorerGroupProxyModel::index(const int row,
     return createIndex(row, column);
 }
 
-QModelIndex FileExplorerGroupProxyModel::parent(const QModelIndex& index) const {
-    Q_UNUSED(index);
+QModelIndex FileExplorerGroupProxyModel::parent(const QModelIndex&) const {
     return {};
 }
 

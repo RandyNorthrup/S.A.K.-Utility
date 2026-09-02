@@ -59,6 +59,62 @@
       "replace": "        if (!object.has_value() && raw_line.isEmpty()) {",
       "expect": "killed",
       "why": "malformed transcript load, latest-response, and search tests require invalid JSON to return no partial data with an exact error."
+    },
+    {
+      "id": "session-directory-cap-off-by-one",
+      "file": "src/ai/ai_store_file_loader.cpp",
+      "find": "    if (result->names.size() >= policy.max_child_directories) {",
+      "replace": "    if (result->names.size() > policy.max_child_directories) {",
+      "expect": "killed",
+      "why": "listSessions_capsDirectChildEnumerationWithoutPartialResults creates exactly one legitimate session plus 512 filler directories and requires the 513th direct child to refuse the entire listing."
+    },
+    {
+      "id": "session-manifest-byte-cap-doubled",
+      "file": "src/ai/ai_conversation_store.cpp",
+      "find": "            .max_file_bytes = kMaxManifestBytes,",
+      "replace": "            .max_file_bytes = kMaxManifestBytes * 2,",
+      "expect": "killed",
+      "why": "listSessions_rejectsOversizedManifestWithoutPartialResults pads valid JSON to 64 KiB plus one byte and requires zero partial sessions."
+    },
+    {
+      "id": "session-child-reparse-needs-parent-mismatch-too",
+      "file": "src/ai/ai_store_file_loader.cpp",
+      "find": "    if (handleIsReparsePoint(child.get()) ||\n        !fileParentMatchesDirectory(child.get(), request.parent_handle)) {",
+      "replace": "    if (handleIsReparsePoint(child.get()) &&\n        !fileParentMatchesDirectory(child.get(), request.parent_handle)) {",
+      "expect": "killed",
+      "why": "openSession_refusesSessionDirectoryJunction points a session-name junction at a sibling directory whose realized parent still matches, isolating the direct reparse check."
+    },
+    {
+      "id": "manifest-file-parent-mismatch-needs-reparse-too",
+      "file": "src/ai/ai_store_file_loader.cpp",
+      "find": "    if (handleIsReparsePoint(file.get()) ||\n        !fileParentMatchesDirectory(file.get(), directory_handle)) {",
+      "replace": "    if (handleIsReparsePoint(file.get()) &&\n        !fileParentMatchesDirectory(file.get(), directory_handle)) {",
+      "expect": "killed",
+      "why": "openSession_refusesManifestParentSwap replaces the pinned session name with a junction immediately before file open; the opened manifest is regular but its parent identity differs."
+    },
+    {
+      "id": "manifest-stable-read-requires-both-mismatches",
+      "file": "src/ai/ai_store_file_loader.cpp",
+      "find": "    if (*size_before != *size_after || *size_after != bytes.size()) {",
+      "replace": "    if (*size_before != *size_after && *size_after != bytes.size()) {",
+      "expect": "killed",
+      "why": "openSession_refusesManifestGrowthDuringRead appends one byte after the before-size sample; ReadFile sees the new byte, so only the before/after mismatch distinguishes the unstable read."
+    },
+    {
+      "id": "manifest-id-directory-binding-inverted",
+      "file": "src/ai/ai_conversation_store.cpp",
+      "find": "    if (!id_value.isString() || id != directory_name) {",
+      "replace": "    if (!id_value.isString() || id == directory_name) {",
+      "expect": "killed",
+      "why": "openSession_rejectsManifestIdThatDiffersFromDirectory requires the manifest identity to equal the pinned direct-child directory name and leaves no current session on mismatch."
+    },
+    {
+      "id": "artifact-directory-pin-allows-rename",
+      "file": "src/ai/ai_store_file_loader.cpp",
+      "find": "    const DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE |\n                        (request.prevent_rename ? 0U : FILE_SHARE_DELETE);",
+      "replace": "    const DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE |\n                        (request.prevent_rename ? FILE_SHARE_DELETE : 0U);",
+      "expect": "killed",
+      "why": "artifactSubdirPinsBlockRenameUntilSessionClears requires retained artifact handles to deny rename while the session is active and proves the pin is released after clearCurrentSession."
     }
   ]
 }

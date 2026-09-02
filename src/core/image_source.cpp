@@ -320,9 +320,7 @@ bool CompressedImageSource::open() {
     connect(m_decompressor.get(),
             &sak::StreamingDecompressor::progressUpdated,
             this,
-            [this](qint64 compressedBytes, qint64 decompressedBytes) {
-                Q_UNUSED(decompressedBytes);
-
+            [this](qint64 compressedBytes, qint64) {
                 // Calculate percentage based on compressed file size
                 if (m_metadata.size > 0) {
                     const int percentage =
@@ -397,10 +395,9 @@ qint64 CompressedImageSource::position() const {
     return m_totalDecompressed;
 }
 
-bool CompressedImageSource::seek(qint64 pos) {
+bool CompressedImageSource::seek(qint64) {
     // Seeking in compressed streams is not supported
     // Would require decompressing from beginning to reach position
-    Q_UNUSED(pos);
     sak::logWarning("Seek not supported for compressed streams");
     return false;
 }

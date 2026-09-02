@@ -779,9 +779,7 @@ bool FlashCoordinator::ejectOnCompletion() const {
     return m_ejectOnCompletion;
 }
 
-void FlashCoordinator::onWorkerProgress(double percentage, qint64 bytesWritten) {
-    Q_UNUSED(percentage);
-    Q_UNUSED(bytesWritten);
+void FlashCoordinator::onWorkerProgress(double, qint64) {
     updateProgress();
 }
 

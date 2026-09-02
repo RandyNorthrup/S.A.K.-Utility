@@ -2144,7 +2144,6 @@ QStringList appendApfsFormatBuildValidation(QJsonObject* report,
                                   .compareExpected = true},
                                  &blockers);
     }
-    Q_UNUSED(config);
     return blockers;
 }
 

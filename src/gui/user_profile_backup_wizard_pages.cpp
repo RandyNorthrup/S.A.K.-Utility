@@ -1142,10 +1142,7 @@ static const std::array<AppCategoryRule, 10> kAppCategoryRules = {{
      .keywords = {"nvidia", "amd", "realtek", "intel", "driver", "logitech", "corsair", "razer"}},
 }};
 
-QString UserProfileBackupInstalledAppsPage::categorizeApp(const QString& name,
-                                                          const QString& publisher) {
-    Q_UNUSED(publisher)
-
+QString UserProfileBackupInstalledAppsPage::categorizeApp(const QString& name) {
     const QString app_name_lower = name.toLower();
     for (const auto& rule : kAppCategoryRules) {
         for (const char* keyword : rule.keywords) {
@@ -1217,7 +1214,7 @@ void UserProfileBackupInstalledAppsPage::onScanApps() {
             info.version = app.version;
             info.publisher = app.publisher;
             info.selected = true;
-            info.category = categorizeApp(app.name, app.publisher);
+            info.category = categorizeApp(app.name);
             app_infos.append(info);
         }
 
@@ -2162,13 +2159,12 @@ void UserProfileBackupKnownNetworksPage::updateNextButtonText() {
     wiz->setButtonText(QWizard::NextButton, has_selection ? tr("Next >") : tr("Skip >"));
 }
 
-void UserProfileBackupKnownNetworksPage::onItemChanged(QTreeWidgetItem* item, int column) {
+void UserProfileBackupKnownNetworksPage::onItemChanged(QTreeWidgetItem*, int column) {
     Q_ASSERT(m_summaryLabel);
     Q_ASSERT(m_networkTree);
     if (column != 0) {
         return;
     }
-    Q_UNUSED(item)
     commitWifiSelection();
     updateNextButtonText();
 }

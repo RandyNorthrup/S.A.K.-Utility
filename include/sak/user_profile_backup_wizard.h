@@ -529,7 +529,7 @@ private:
     void commitAppSelection();
 
     /// @brief Categorize an application by name/publisher into a UI group
-    static QString categorizeApp(const QString& name, const QString& publisher);
+    static QString categorizeApp(const QString& name);
 
     QTreeWidget* m_appTree{nullptr};
     QPushButton* m_scanButton{nullptr};

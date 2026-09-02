@@ -102,9 +102,7 @@ void SplashScreen::finish() {
     close();
 }
 
-void SplashScreen::paintEvent(QPaintEvent* event) {
-    Q_UNUSED(event)
-
+void SplashScreen::paintEvent(QPaintEvent*) {
     QPainter painter(this);
     painter.setRenderHint(QPainter::Antialiasing, true);
 

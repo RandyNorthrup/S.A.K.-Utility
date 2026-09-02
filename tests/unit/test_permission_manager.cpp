@@ -141,7 +141,6 @@ void PermissionManagerTests::getSecurityDescriptorSddl_nonExistentFile() {
 // access). A user owns their temp file, so the DACL edit succeeds without
 // elevation, and the resulting SDDL must not be a null DACL.
 void PermissionManagerTests::stripPermissions_doesNotProduceNullDacl() {
-#ifdef Q_OS_WIN
     sak::PermissionManager mgr;
     const QString f = m_tempDir.filePath("strip_nulldacl.txt");
     QFile file(f);
@@ -176,18 +175,11 @@ void PermissionManagerTests::stripPermissions_doesNotProduceNullDacl() {
              qPrintable(QStringLiteral("strip left a protected DACL: %1").arg(sddl)));
     // ...and that it actually rewrote the DACL rather than leaving the seeded one in place.
     QVERIFY2(sddl != seeded, qPrintable(sddl));
-#else
-    // Windows-only: these exercise Win32 ACL APIs. QVERIFY(true) here reported a PASS on
-    // every other platform, so the suite counted ten tests as covering behaviour they had
-    // not executed a line of. A skip says what actually happened (R5-G18-4).
-    QSKIP("PermissionManager ACL behaviour is Windows-only");
-#endif
 }
 
 // B5-02: a "standard user" ACL must keep SYSTEM and Administrators, or the OS
 // and admins lose all access to the file.
 void PermissionManagerTests::setStandardUser_keepsSystemAndAdmins() {
-#ifdef Q_OS_WIN
     sak::PermissionManager mgr;
     const QString f = m_tempDir.filePath("standarduser.txt");
     QFile file(f);
@@ -223,17 +215,10 @@ void PermissionManagerTests::setStandardUser_keepsSystemAndAdmins() {
     QVERIFY2(groupPos > 2, qPrintable(sddl));
     QVERIFY2(sddl.contains(QStringLiteral(";%1)").arg(sddl.mid(2, groupPos - 2))),
              qPrintable(QStringLiteral("destination user missing from ACL: %1").arg(sddl)));
-#else
-    // Windows-only: these exercise Win32 ACL APIs. QVERIFY(true) here reported a PASS on
-    // every other platform, so the suite counted ten tests as covering behaviour they had
-    // not executed a line of. A skip says what actually happened (R5-G18-4).
-    QSKIP("PermissionManager ACL behaviour is Windows-only");
-#endif
 }
 
 // B5-03: applying an SDDL that specifies ONLY a DACL must not null the owner.
 void PermissionManagerTests::setSddl_ownerlessDoesNotNullOwner() {
-#ifdef Q_OS_WIN
     sak::PermissionManager mgr;
     const QString f = m_tempDir.filePath("sddl_ownerless.txt");
     QFile file(f);
@@ -250,19 +235,12 @@ void PermissionManagerTests::setSddl_ownerlessDoesNotNullOwner() {
 
     const QString ownerAfter = mgr.getOwner(f);
     QCOMPARE(ownerAfter, ownerBefore);
-#else
-    // Windows-only: these exercise Win32 ACL APIs. QVERIFY(true) here reported a PASS on
-    // every other platform, so the suite counted ten tests as covering behaviour they had
-    // not executed a line of. A skip says what actually happened (R5-G18-4).
-    QSKIP("PermissionManager ACL behaviour is Windows-only");
-#endif
 }
 
 // A junction/symlink target must be REFUSED, never followed, so an attacker who
 // swaps a benign path for a reparse point cannot redirect an elevated ACL change
 // onto another object. The no-follow handle detects the reparse and fails closed.
 void PermissionManagerTests::stripPermissions_refusesReparsePoint() {
-#ifdef Q_OS_WIN
     sak::PermissionManager mgr;
     const QString target = m_tempDir.filePath("reparse_target");
     QVERIFY(QDir().mkpath(target));
@@ -288,12 +266,6 @@ void PermissionManagerTests::stripPermissions_refusesReparsePoint() {
              QStringLiteral("Refused: target is a reparse point (junction/symlink)"));
     QVERIFY2(mgr.getLastError().contains("reparse", Qt::CaseInsensitive),
              qPrintable(mgr.getLastError()));
-#else
-    // Windows-only: these exercise Win32 ACL APIs. QVERIFY(true) here reported a PASS on
-    // every other platform, so the suite counted ten tests as covering behaviour they had
-    // not executed a line of. A skip says what actually happened (R5-G18-4).
-    QSKIP("PermissionManager ACL behaviour is Windows-only");
-#endif
 }
 
 // An ANCESTOR-directory junction/symlink must also be refused: FILE_FLAG_OPEN_
@@ -301,7 +273,6 @@ void PermissionManagerTests::stripPermissions_refusesReparsePoint() {
 // intermediate junction. Opening base\file.txt THROUGH a junction that replaces an
 // ancestor dir must be caught by verifying the handle's resolved path.
 void PermissionManagerTests::stripPermissions_refusesHardLink() {
-#ifdef Q_OS_WIN
     // A file with more than one hard link name is the SAME underlying object under two names. An
     // elevated ACL/owner change on one name would silently re-permission the shared object the
     // other name also points at, so the no-follow open refuses a target whose nNumberOfLinks > 1 --
@@ -340,16 +311,9 @@ void PermissionManagerTests::stripPermissions_refusesHardLink() {
     if (!soloResult.has_value()) {
         QVERIFY(!mgr.getLastError().contains("hard link", Qt::CaseInsensitive));
     }
-#else
-    // Windows-only: these exercise Win32 ACL APIs. QVERIFY(true) here reported a PASS on
-    // every other platform, so the suite counted ten tests as covering behaviour they had
-    // not executed a line of. A skip says what actually happened (R5-G18-4).
-    QSKIP("PermissionManager ACL behaviour is Windows-only");
-#endif
 }
 
 void PermissionManagerTests::stripPermissions_refusesAncestorJunction() {
-#ifdef Q_OS_WIN
     sak::PermissionManager mgr;
     const QString base = m_tempDir.filePath("anc_base");
     QVERIFY(QDir().mkpath(base));
@@ -380,19 +344,12 @@ void PermissionManagerTests::stripPermissions_refusesAncestorJunction() {
     QCOMPARE(err,
              QStringLiteral(
                  "Refused: path resolves through a redirected junction/symlink ancestor"));
-#else
-    // Windows-only: these exercise Win32 ACL APIs. QVERIFY(true) here reported a PASS on
-    // every other platform, so the suite counted ten tests as covering behaviour they had
-    // not executed a line of. A skip says what actually happened (R5-G18-4).
-    QSKIP("PermissionManager ACL behaviour is Windows-only");
-#endif
 }
 
 // B-fix: applyParsedSecurityDescriptor previously applied only OWNER and DACL, so a
 // save-then-restore round-trip silently DROPPED the primary group. Setting an SDDL
 // that specifies a group must actually apply it.
 void PermissionManagerTests::setSddl_appliesGroup() {
-#ifdef Q_OS_WIN
     sak::PermissionManager mgr;
     const QString f = m_tempDir.filePath("sddl_group.txt");
     QFile file(f);
@@ -413,16 +370,9 @@ void PermissionManagerTests::setSddl_appliesGroup() {
     QVERIFY(!out.isEmpty());
     QVERIFY2(out.contains(QStringLiteral("G:%1").arg(ownerSid)),
              qPrintable(QStringLiteral("primary group was not applied on restore: %1").arg(out)));
-#else
-    // Windows-only: these exercise Win32 ACL APIs. QVERIFY(true) here reported a PASS on
-    // every other platform, so the suite counted ten tests as covering behaviour they had
-    // not executed a line of. A skip says what actually happened (R5-G18-4).
-    QSKIP("PermissionManager ACL behaviour is Windows-only");
-#endif
 }
 
 namespace {
-#ifdef Q_OS_WIN
 // Create a fresh, test-owned file and return its path (own file per test, so an SDDL apply in one
 // test cannot perturb another -- see G18-8).
 QString makeOwnedSddlFile(const QTemporaryDir& dir, const QString& name) {
@@ -435,7 +385,6 @@ QString makeOwnedSddlFile(const QTemporaryDir& dir, const QString& name) {
     file.close();
     return f;
 }
-#endif
 }  // namespace
 
 // R5-G10-9: a present-but-NULL DACL in an SDDL grants Everyone full control.
@@ -443,7 +392,6 @@ QString makeOwnedSddlFile(const QTemporaryDir& dir, const QString& name) {
 // than apply it. The refusal is a parse-time check that runs before any file write, so no elevation
 // is required.
 void PermissionManagerTests::setSddl_refusesPresentNullDacl() {
-#ifdef Q_OS_WIN
     sak::PermissionManager mgr;
     const QString f = makeOwnedSddlFile(m_tempDir, QStringLiteral("sddl_nulldacl.txt"));
 
@@ -469,19 +417,12 @@ void PermissionManagerTests::setSddl_refusesPresentNullDacl() {
     // rejection is specific to the NULL DACL, not a blanket refusal of every SDDL.
     QVERIFY2(mgr.setSecurityDescriptorSddl(f, QStringLiteral("D:(A;;FA;;;%1)").arg(ownerSid)),
              qPrintable(mgr.getLastError()));
-#else
-    // Windows-only: these exercise Win32 ACL APIs. QVERIFY(true) here reported a PASS on
-    // every other platform, so the suite counted ten tests as covering behaviour they had
-    // not executed a line of. A skip says what actually happened (R5-G18-4).
-    QSKIP("PermissionManager ACL behaviour is Windows-only");
-#endif
 }
 
 // R5-G10-9: this apply path handles only owner/group/DACL, so an SDDL carrying a SACL (an audit or
 // mandatory-integrity label) must be refused rather than silently dropped while the rest is
 // applied.
 void PermissionManagerTests::setSddl_refusesSacl() {
-#ifdef Q_OS_WIN
     sak::PermissionManager mgr;
     const QString f = makeOwnedSddlFile(m_tempDir, QStringLiteral("sddl_sacl.txt"));
     const QString ownerSid = mgr.getOwner(f);
@@ -505,19 +446,12 @@ void PermissionManagerTests::setSddl_refusesSacl() {
     // not the DACL alongside it.
     QVERIFY2(mgr.setSecurityDescriptorSddl(f, QStringLiteral("D:(A;;FA;;;%1)").arg(ownerSid)),
              qPrintable(mgr.getLastError()));
-#else
-    // Windows-only: these exercise Win32 ACL APIs. QVERIFY(true) here reported a PASS on
-    // every other platform, so the suite counted ten tests as covering behaviour they had
-    // not executed a line of. A skip says what actually happened (R5-G18-4).
-    QSKIP("PermissionManager ACL behaviour is Windows-only");
-#endif
 }
 
 // R5-G10-9: Win32 truncates a string at the first NUL, so an embedded NUL in the path or the SDDL
 // would apply a security change to a DIFFERENT (prefix) target than the validated/displayed string.
 // It must be refused before the parse.
 void PermissionManagerTests::setSddl_refusesEmbeddedNul() {
-#ifdef Q_OS_WIN
     sak::PermissionManager mgr;
     const QString f = makeOwnedSddlFile(m_tempDir, QStringLiteral("sddl_nul.txt"));
     const QString ownerSid = mgr.getOwner(f);
@@ -536,12 +470,6 @@ void PermissionManagerTests::setSddl_refusesEmbeddedNul() {
 
     // Non-vacuity: the clean path + clean SDDL applies.
     QVERIFY2(mgr.setSecurityDescriptorSddl(f, validSddl), qPrintable(mgr.getLastError()));
-#else
-    // Windows-only: these exercise Win32 ACL APIs. QVERIFY(true) here reported a PASS on
-    // every other platform, so the suite counted ten tests as covering behaviour they had
-    // not executed a line of. A skip says what actually happened (R5-G18-4).
-    QSKIP("PermissionManager ACL behaviour is Windows-only");
-#endif
 }
 
 // applyPermissionStrategy and its applyStrategy_stripAll test were removed together. The
@@ -561,11 +489,7 @@ void PermissionManagerTests::isRunningAsAdmin_returnsBoolean() {
     // (tryTakeOwnership) branches on it. The old body discarded the result and asserted
     // QVERIFY(true), which a hardcoded "return false" would have passed -- silently turning
     // every elevated operation into elevation_required.
-#ifdef Q_OS_WIN
     QCOMPARE(sak::PermissionManager::isRunningAsAdmin(), sak::ElevationManager::isElevated());
-#else
-    QSKIP("Elevation state is a Windows token property");
-#endif
 }
 
 // ============================================================================

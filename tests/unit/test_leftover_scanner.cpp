@@ -1428,9 +1428,6 @@ void LeftoverScannerTests::installLocationOwnership_provesOnlyRealProductDirecto
 }
 
 void LeftoverScannerTests::criticalInstallRoots_coverSystemAndProfileRoots() {
-#ifndef Q_OS_WIN
-    QSKIP("The critical-root set is derived from the Windows environment");
-#else
     const QStringList roots = LeftoverScanner::criticalInstallRoots();
     QVERIFY(!roots.isEmpty());
     const auto covers = [&roots](const QString& expected) {
@@ -1452,13 +1449,9 @@ void LeftoverScannerTests::criticalInstallRoots_coverSystemAndProfileRoots() {
              qPrintable(roots.join(QLatin1Char(';'))));
 
     verifyEveryEnvDerivedCriticalRootIsPinned();
-#endif
 }
 
 void LeftoverScannerTests::criticalInstallRoots_derivesNonCSystemDrive() {
-#ifndef Q_OS_WIN
-    QSKIP("The critical-root set is derived from the Windows environment");
-#else
     // R5-G23-4 (non-C: system drive): criticalInstallRoots derives every OS/shared root from the
     // environment, so a machine whose system drive is Z: (not C:) is protected exactly like a C:
     // machine. The live-env test above only proves derivation on THIS host, whose drive IS C:, so
@@ -1490,7 +1483,6 @@ void LeftoverScannerTests::criticalInstallRoots_derivesNonCSystemDrive() {
     // turning the assertion red.
     QVERIFY2(covers(QStringLiteral("Z:\\Windows")), qPrintable(roots.join(QLatin1Char(';'))));
     QVERIFY2(covers(QStringLiteral("Z:\\ProgramData")), qPrintable(roots.join(QLatin1Char(';'))));
-#endif
 }
 
 namespace {

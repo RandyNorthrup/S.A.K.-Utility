@@ -44,12 +44,20 @@ constexpr qint64 kMaxCommandsJsonlBytes = 32LL * 1024LL * 1024LL;
 constexpr qint64 kMaxContextJsonlBytes = 8LL * 1024LL * 1024LL;
 constexpr qint64 kMaxSearchAggregateBytes = 128LL * 1024LL * 1024LL;
 constexpr int kMaxSearchSessionsScanned = 250;
+constexpr int kMaxSessionSearchResults = 100;
+constexpr qint64 kMaxManifestBytes = 64LL * 1024LL;
+constexpr int kMaxSessionDirectories = 512;
 constexpr qsizetype kFallbackTitleMaxChars = 80;
 constexpr qsizetype kOneLineMaxChars = 160;
 constexpr qsizetype kDefaultSearchSnippetMaxChars = 220;
 constexpr qsizetype kSessionUuidSuffixChars = 8;
 constexpr qsizetype kMemoryAppendMaxChars = 4000;
 constexpr qsizetype kSafeFilenameMaxChars = 80;
+
+std::function<void(const QString&)> g_before_manifest_child_open_hook;
+std::function<void(const QString&)> g_before_manifest_file_open_hook;
+std::function<void(const QString&)> g_before_manifest_file_read_hook;
+std::function<void(const QString&)> g_before_artifact_child_open_hook;
 
 QString nowIso() {
     return QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
@@ -245,6 +253,86 @@ void setError(QString* error_message, const QString& message) {
     if (error_message != nullptr) {
         *error_message = message;
     }
+}
+
+int boundedSearchResultCount(int requested) {
+    return requested > 0 ? std::clamp(requested, 1, kMaxSessionSearchResults)
+                         : kMaxSessionSearchResults;
+}
+
+std::optional<QStringList> artifactSubdirComponents(const QString& subdir, QString* error_message) {
+    const QString normalized = QDir::fromNativeSeparators(subdir.trimmed());
+    const QString clean = QDir::cleanPath(normalized);
+    const QString refusal =
+        QStringLiteral("Artifact subdir escapes the artifact directory: %1").arg(subdir);
+    if (QDir::isAbsolutePath(normalized) || clean == QLatin1String("..") ||
+        clean.startsWith(QStringLiteral("../"))) {
+        setError(error_message, refusal);
+        return std::nullopt;
+    }
+    const QStringList nested = clean.split(QLatin1Char('/'), Qt::SkipEmptyParts);
+    if (nested.isEmpty() || std::ranges::any_of(nested, [](const QString& component) {
+            return component == QLatin1String(".") || component == QLatin1String("..") ||
+                   component.contains(QLatin1Char(':'));
+        })) {
+        setError(error_message, refusal);
+        return std::nullopt;
+    }
+    return nested;
+}
+
+detail::StoreChildFileLoadPolicy manifestLoadPolicy() {
+    return {.store_name = QStringLiteral("AI session"),
+            .child_type_name = QStringLiteral("session"),
+            .file_name = QString::fromLatin1(kManifestFile),
+            .max_file_bytes = kMaxManifestBytes,
+            .max_child_directories = kMaxSessionDirectories};
+}
+
+detail::StoreFileLoadHooks manifestLoadHooks() {
+    return {.before_file_open = g_before_manifest_file_open_hook,
+            .before_file_read = g_before_manifest_file_read_hook,
+            .before_child_open = g_before_manifest_child_open_hook};
+}
+
+std::optional<AiSessionInfo> parseManifestBytes(const QString& directory_name,
+                                                const QString& session_path,
+                                                const QByteArray& bytes,
+                                                QStringList* errors) {
+    QJsonParseError parse_error{};
+    const QJsonDocument document = QJsonDocument::fromJson(bytes, &parse_error);
+    if (parse_error.error != QJsonParseError::NoError || !document.isObject()) {
+        errors->append(
+            QStringLiteral("AI session manifest is not a valid JSON object: %1").arg(session_path));
+        return std::nullopt;
+    }
+    const QJsonObject object = document.object();
+    const QJsonValue id_value = object.value(QStringLiteral("id"));
+    const QJsonValue title_value = object.value(QStringLiteral("title"));
+    const QString id = id_value.toString();
+    const QString title = title_value.toString().trimmed();
+    if (!id_value.isString() || id != directory_name) {
+        errors->append(QStringLiteral("AI session manifest id does not match directory '%1'")
+                           .arg(directory_name));
+        return std::nullopt;
+    }
+    if (!title_value.isString() || title.isEmpty()) {
+        errors->append(
+            QStringLiteral("AI session manifest title is missing: %1").arg(session_path));
+        return std::nullopt;
+    }
+    const QDateTime created = parseDate(object, QStringLiteral("created_at"));
+    const QDateTime updated = parseDate(object, QStringLiteral("updated_at"));
+    if (!created.isValid() || !updated.isValid()) {
+        errors->append(
+            QStringLiteral("AI session manifest timestamps are invalid: %1").arg(session_path));
+        return std::nullopt;
+    }
+    return AiSessionInfo{.id = id,
+                         .title = title,
+                         .path = session_path,
+                         .created_at = created,
+                         .updated_at = updated};
 }
 
 bool ensureDirectory(const QString& path, QString* error_message, const QString& failure_prefix) {
@@ -728,6 +816,26 @@ bool searchSessionFiles(const AiSessionInfo& session,
 ConversationStore::ConversationStore(QString root_dir)
     : m_root_dir(root_dir.trimmed().isEmpty() ? defaultRootDirectory() : std::move(root_dir)) {}
 
+void ConversationStore::setBeforeManifestChildOpenHookForTesting(
+    std::function<void(const QString&)> hook) {
+    g_before_manifest_child_open_hook = std::move(hook);
+}
+
+void ConversationStore::setBeforeManifestFileOpenHookForTesting(
+    std::function<void(const QString&)> hook) {
+    g_before_manifest_file_open_hook = std::move(hook);
+}
+
+void ConversationStore::setBeforeManifestFileReadHookForTesting(
+    std::function<void(const QString&)> hook) {
+    g_before_manifest_file_read_hook = std::move(hook);
+}
+
+void ConversationStore::setBeforeArtifactChildOpenHookForTesting(
+    std::function<void(const QString&)> hook) {
+    g_before_artifact_child_open_hook = std::move(hook);
+}
+
 QString ConversationStore::rootDirectory() const {
     return m_root_dir;
 }
@@ -760,27 +868,43 @@ bool ConversationStore::ensureRoot(QString* error_message) const {
     return false;
 }
 
-QVector<AiSessionInfo> ConversationStore::listSessions() const {
+QVector<AiSessionInfo> ConversationStore::listSessions(QString* error_message) const {
     QVector<AiSessionInfo> sessions;
-    const QDir root(m_root_dir);
-    const auto entries = root.entryInfoList(QDir::Dirs | QDir::NoDotAndDotDot,
-                                            QDir::Time | QDir::Reversed);
-    sessions.reserve(entries.size());
-    for (const auto& entry : entries) {
-        auto info = readManifest(entry.absoluteFilePath());
-        if (!info.id.isEmpty()) {
-            sessions.append(info);
+    QStringList errors;
+    const auto consume = [&sessions, &errors](const QString& directory_name,
+                                              const QString& session_path,
+                                              const QByteArray& bytes) {
+        const auto info = parseManifestBytes(directory_name, session_path, bytes, &errors);
+        if (!info) {
+            return false;
         }
+        sessions.append(*info);
+        return true;
+    };
+    const detail::StoreChildFileLoadOptions options{.policy = manifestLoadPolicy(),
+                                                    .hooks = manifestLoadHooks(),
+                                                    .consume = consume};
+    if (!detail::loadStoreChildDirectoryFiles(m_root_dir, options, &errors)) {
+        sessions.clear();
+        setError(error_message, errors.join(QStringLiteral("; ")));
+        return sessions;
     }
     std::ranges::sort(sessions, [](const auto& lhs, const auto& rhs) {
         return lhs.updated_at > rhs.updated_at;
     });
+    if (error_message != nullptr) {
+        error_message->clear();
+    }
     return sessions;
 }
 
-QVector<AiSessionInfo> ConversationStore::listPromptedSessions() const {
+QVector<AiSessionInfo> ConversationStore::listPromptedSessions(QString* error_message) const {
     QVector<AiSessionInfo> sessions;
-    for (const auto& session : listSessions()) {
+    const QVector<AiSessionInfo> listed = listSessions(error_message);
+    if (error_message != nullptr && !error_message->isEmpty()) {
+        return sessions;
+    }
+    for (const auto& session : listed) {
         if (sessionHasUserPrompt(session.path)) {
             sessions.append(session);
         }
@@ -862,10 +986,13 @@ QVector<AiSessionSearchResult> ConversationStore::searchSessions(const QString& 
         }
         return results;
     }
-    const QVector<AiSessionInfo> sessions = listSessions();
+    const QVector<AiSessionInfo> sessions = listSessions(error_message);
+    if (error_message != nullptr && !error_message->isEmpty()) {
+        return results;
+    }
     const int session_count = std::min(static_cast<int>(sessions.size()),
                                        kMaxSearchSessionsScanned);
-    const int bounded_max_results = max_results > 0 ? std::clamp(max_results, 1, 100) : 100;
+    const int bounded_max_results = boundedSearchResultCount(max_results);
     qint64 aggregate_bytes = 0;
     for (int i = 0; i < session_count; ++i) {
         const auto& session = sessions.at(i);
@@ -928,6 +1055,7 @@ bool ConversationStore::startSession(const QString& title, QString* error_messag
         m_current_session = previous;  // never present a session that is not on disk
         return false;
     }
+    clearArtifactDirectoryPins();
     return true;
 }
 
@@ -940,26 +1068,38 @@ bool ConversationStore::openSession(const QString& session_id, QString* error_me
         }
         return false;
     }
-    if (!QFileInfo::exists(QDir(path).filePath(QString::fromLatin1(kManifestFile)))) {
-        if (error_message != nullptr) {
-            *error_message = QStringLiteral("AI session not found: %1").arg(session_id);
-        }
+    QStringList errors;
+    std::optional<AiSessionInfo> info;
+    const auto consume = [&info, &errors](const QString& directory_name,
+                                          const QString& session_path,
+                                          const QByteArray& bytes) {
+        info = parseManifestBytes(directory_name, session_path, bytes, &errors);
+        return info.has_value();
+    };
+    const detail::StoreChildFileLoadOptions options{.policy = manifestLoadPolicy(),
+                                                    .hooks = manifestLoadHooks(),
+                                                    .consume = consume};
+    const detail::StoreChildFileLoadResult loaded =
+        detail::loadStoreChildDirectoryFile(m_root_dir, session_id, options, &errors);
+    if (loaded == detail::StoreChildFileLoadResult::Missing) {
+        setError(error_message, QStringLiteral("AI session not found: %1").arg(session_id));
         return false;
     }
-
-    auto info = readManifest(path);
-    if (info.id.isEmpty()) {
-        if (error_message != nullptr) {
-            *error_message = QStringLiteral("AI session manifest invalid: %1").arg(session_id);
-        }
+    if (loaded != detail::StoreChildFileLoadResult::Loaded || !info) {
+        setError(error_message,
+                 errors.isEmpty()
+                     ? QStringLiteral("AI session manifest invalid: %1").arg(session_id)
+                     : errors.join(QStringLiteral("; ")));
         return false;
     }
-    m_current_session = info;
+    clearArtifactDirectoryPins();
+    m_current_session = *info;
     return true;
 }
 
 void ConversationStore::clearCurrentSession() {
     const QWriteLocker locker(&m_lock);
+    clearArtifactDirectoryPins();
     m_current_session = {};
 }
 
@@ -976,6 +1116,9 @@ bool ConversationStore::renameCurrentSession(const QString& title, QString* erro
                                                                 m_current_session.id);
     const QString new_artifact_name = safeArtifactDirectoryName(trimmed, m_current_session.id);
     const QString artifacts_root = QDir(currentSessionPath()).filePath(QStringLiteral("artifacts"));
+    // Retained directory handles deliberately deny rename/delete. Release this session's pins
+    // before the explicit artifact rename; later path requests repin the resulting directory.
+    clearArtifactDirectoryPins();
     const ArtifactRenameOutcome outcome = renameArtifactDirectory(
         old_artifact_name, new_artifact_name, artifacts_root, error_message);
     if (outcome == ArtifactRenameOutcome::Failed) {
@@ -1113,20 +1256,11 @@ QString ConversationStore::commandLogPath(const QString& command_id,
     }
     const QString safe_id = sanitizeLogToken(command_id, QStringLiteral("cmd"));
     const QString safe_suffix = sanitizeLogToken(suffix, QStringLiteral("output"));
-    const QString artifact_root = artifactRootDirectory(error_message);
-    if (artifact_root.isEmpty()) {
+    const QString logs_dir = pinnedArtifactDirectory(QStringLiteral("logs"), error_message);
+    if (logs_dir.isEmpty()) {
         return {};
     }
-    const QString logs_dir = QDir(artifact_root).filePath(QStringLiteral("logs"));
-    const QDir dir(logs_dir);
-    if (!dir.exists() && !QDir().mkpath(logs_dir)) {
-        if (error_message != nullptr) {
-            *error_message =
-                QStringLiteral("Could not create artifacts directory: %1").arg(logs_dir);
-        }
-        return {};
-    }
-    return dir.filePath(QStringLiteral("%1_%2.txt").arg(safe_id, safe_suffix));
+    return QDir(logs_dir).filePath(QStringLiteral("%1_%2.txt").arg(safe_id, safe_suffix));
 }
 
 QString ConversationStore::artifactSubdir(const QString& subdir, QString* error_message) const {
@@ -1138,33 +1272,7 @@ QString ConversationStore::artifactSubdir(const QString& subdir, QString* error_
         }
         return {};
     }
-    const QString artifact_root = artifactRootDirectory(error_message);
-    if (artifact_root.isEmpty()) {
-        return {};
-    }
-    // Confine the subdir to the artifact root, exactly as artifactPath() confines the filename.
-    // QDir::filePath returns an ABSOLUTE argument verbatim and does not resolve "..", so without
-    // this an "absolute" or traversing subdir creates a directory anywhere the process can write.
-    // It also silently DEFEATS artifactPath's filename guard, which anchors its containment check
-    // to the directory this function returns: once the base has escaped, a filename inside that
-    // escaped base passes the check. This is the foundation that guard stands on, so it fails
-    // closed here rather than trusting the caller.
-    const QString base = QDir::cleanPath(artifact_root);
-    const QString path = QDir::cleanPath(QDir(artifact_root).filePath(trimmed_subdir));
-    if (path != base && !path.startsWith(base + QLatin1Char('/'))) {
-        if (error_message != nullptr) {
-            *error_message = QStringLiteral("Artifact subdir escapes the artifact directory: %1")
-                                 .arg(trimmed_subdir);
-        }
-        return {};
-    }
-    if (!QDir().mkpath(path)) {
-        if (error_message != nullptr) {
-            *error_message = QStringLiteral("Could not create artifact directory: %1").arg(path);
-        }
-        return {};
-    }
-    return path;
+    return pinnedArtifactDirectory(trimmed_subdir, error_message);
 }
 
 QString ConversationStore::artifactRootDirectory(QString* error_message) const {
@@ -1175,16 +1283,46 @@ QString ConversationStore::artifactRootDirectory(QString* error_message) const {
         }
         return {};
     }
-    const QString name = safeArtifactDirectoryName(m_current_session.title, m_current_session.id);
-    const QString artifacts_root = QDir(currentSessionPath()).filePath(QStringLiteral("artifacts"));
-    const QString path = QDir(artifacts_root).filePath(name);
-    if (!QDir().mkpath(path)) {
-        if (error_message != nullptr) {
-            *error_message = QStringLiteral("Could not create artifact directory: %1").arg(path);
+    return pinnedArtifactDirectory({}, error_message);
+}
+
+QString ConversationStore::pinnedArtifactDirectory(const QString& subdir,
+                                                   QString* error_message) const {
+    QStringList components{m_current_session.id,
+                           QStringLiteral("artifacts"),
+                           safeArtifactDirectoryName(m_current_session.title,
+                                                     m_current_session.id)};
+    if (!subdir.isEmpty()) {
+        const auto nested = artifactSubdirComponents(subdir, error_message);
+        if (!nested) {
+            return {};
         }
+        components.append(*nested);
+    }
+    const QString key = components.join(QLatin1Char('/'));
+    const QMutexLocker pin_locker(&m_artifact_pin_mutex);
+    const auto existing = m_artifact_directory_pins.constFind(key);
+    if (existing != m_artifact_directory_pins.constEnd() && existing->valid()) {
+        if (error_message != nullptr) {
+            error_message->clear();
+        }
+        return existing->path();
+    }
+    detail::StoreFileLoadHooks hooks;
+    hooks.before_child_open = g_before_artifact_child_open_hook;
+    detail::StoreDirectoryPin pin =
+        detail::pinOrCreateStoreDirectory(m_root_dir, components, 1, hooks, error_message);
+    if (!pin.valid()) {
         return {};
     }
+    const QString path = pin.path();
+    m_artifact_directory_pins.insert(key, std::move(pin));
     return path;
+}
+
+void ConversationStore::clearArtifactDirectoryPins() const {
+    const QMutexLocker pin_locker(&m_artifact_pin_mutex);
+    m_artifact_directory_pins.clear();
 }
 
 QString ConversationStore::artifactPath(const QString& subdir,
@@ -1476,28 +1614,6 @@ bool ConversationStore::appendJsonLine(const QString& filename,
     object[QStringLiteral("schema_version")] = kSessionArtifactSchemaVersion;
     const auto plan = planJsonlAppend(currentSessionPath(), filename, object, error_message);
     return plan.has_value() && executeJsonlAppend(*plan, filename, error_message);
-}
-
-AiSessionInfo ConversationStore::readManifest(const QString& session_path) {
-    AiSessionInfo info;
-    QFile file(QDir(session_path).filePath(QString::fromLatin1(kManifestFile)));
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        return info;
-    }
-
-    QJsonParseError parse_error;
-    const auto doc = QJsonDocument::fromJson(file.readAll(), &parse_error);
-    if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
-        return info;
-    }
-
-    const auto obj = doc.object();
-    info.id = obj.value(QStringLiteral("id")).toString();
-    info.title = obj.value(QStringLiteral("title")).toString();
-    info.path = session_path;
-    info.created_at = parseDate(obj, QStringLiteral("created_at"));
-    info.updated_at = parseDate(obj, QStringLiteral("updated_at"));
-    return info;
 }
 
 QJsonObject ConversationStore::usageToJson(const TokenUsage& usage) {

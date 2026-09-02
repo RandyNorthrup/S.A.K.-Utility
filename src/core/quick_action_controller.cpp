@@ -574,11 +574,9 @@ void QuickActionController::startScanWorker(QuickAction* action) {
     // Connect completion (drop any prior connection so re-running an action fires onScanComplete
     // exactly once; UniqueConnection is ignored for lambda connections).
     disconnect(action, &QuickAction::scanComplete, this, nullptr);
-    connect(
-        action, &QuickAction::scanComplete, this, [this](const QuickAction::ScanResult& result) {
-            Q_UNUSED(result);
-            onScanComplete();
-        });
+    connect(action, &QuickAction::scanComplete, this, [this](const QuickAction::ScanResult&) {
+        onScanComplete();
+    });
     connect(m_scan_thread, &QThread::finished, action, [action]() {
         auto* app_thread = QCoreApplication::instance()->thread();
         if (action->thread() != app_thread) {
@@ -607,10 +605,7 @@ void QuickActionController::startExecutionWorker(QuickAction* action) {
     connect(action,
             &QuickAction::executionComplete,
             this,
-            [this](const QuickAction::ExecutionResult& result) {
-                Q_UNUSED(result);
-                onExecutionComplete();
-            });
+            [this](const QuickAction::ExecutionResult&) { onExecutionComplete(); });
     connect(m_execution_thread, &QThread::finished, action, [action]() {
         auto* app_thread = QCoreApplication::instance()->thread();
         if (action->thread() != app_thread) {

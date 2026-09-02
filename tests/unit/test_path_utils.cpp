@@ -128,7 +128,6 @@ void PathUtilsTests::isSafePath_embeddedTraversal() {
 }
 
 void PathUtilsTests::isSafePath_caseInsensitiveOnWindows() {
-#ifdef _WIN32
     // On Windows, paths should be case-insensitive
     auto upperBase = std::filesystem::path(m_tempDir.path().toUpper().toStdWString());
     auto lowerSub = m_basePath / "subdir" / "file2.log";
@@ -136,9 +135,6 @@ void PathUtilsTests::isSafePath_caseInsensitiveOnWindows() {
     // Should still consider it safe on Windows (case-insensitive comparison)
     QVERIFY(result.has_value());
     QVERIFY(result.value());
-#else
-    QSKIP("Case-insensitive path test is Windows-only");
-#endif
 }
 
 void PathUtilsTests::isSafePath_outsideBase() {
@@ -150,7 +146,6 @@ void PathUtilsTests::isSafePath_outsideBase() {
 }
 
 void PathUtilsTests::isSafePath_absolutePathDifferentDrive() {
-#ifdef _WIN32
     // A path on D: should not be safe under a C: base
     auto baseDriveC = std::filesystem::path("C:\\TestBase");
     auto pathDriveD = std::filesystem::path("D:\\SomeFile.txt");
@@ -165,9 +160,6 @@ void PathUtilsTests::isSafePath_absolutePathDifferentDrive() {
     } else {
         QCOMPARE(result.error(), sak::error_code::invalid_path);
     }
-#else
-    QSKIP("Drive letter test is Windows-only");
-#endif
 }
 
 // R5-G10-9: containment has no meaning without both operands, and this answer gates

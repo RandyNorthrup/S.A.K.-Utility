@@ -460,7 +460,6 @@ void FileScannerTests::symlink_notFollowedWhenDisabled() {
 }
 
 void FileScannerTests::junction_notFollowedByDefault() {
-#ifdef _WIN32
     // B8-16: a Windows JUNCTION is a reparse point that directory_entry maps to
     // file_type::junction, so is_symlink() misses it. The default scan (follow off)
     // must still refuse to descend into it -- otherwise a junction pointing at an
@@ -506,13 +505,9 @@ void FileScannerTests::junction_notFollowedByDefault() {
     QCOMPARE(result.value().directories_found, std::size_t{2});
     QCOMPARE(result.value().errors_encountered, std::size_t{0});
     QVERIFY(result.value().is_complete());
-#else
-    QSKIP("Junctions are a Windows-only concept");
-#endif
 }
 
 void FileScannerTests::canDescendInto_refusesWhenCanonicalUnresolved() {
-#ifdef Q_OS_WIN
     // A follow_symlinks scan breaks cycles by CANONICAL identity. When canonical() fails there
     // is no identity to register, so descending anyway traverses the subtree with the cycle and
     // confinement guard switched off -- exactly what a planted, unreadable junction wants. The
@@ -552,8 +547,7 @@ void FileScannerTests::canDescendInto_refusesWhenCanonicalUnresolved() {
 
     std::error_code canonical_ec;
     const std::filesystem::path canonical_probe = std::filesystem::canonical(child, canonical_ec);
-    Q_UNUSED(canonical_probe);
-    if (!canonical_ec) {
+    if (!canonical_ec && !canonical_probe.empty()) {
         QSKIP("Platform resolves canonical() on an exclusively opened directory");
     }
 
@@ -564,9 +558,6 @@ void FileScannerTests::canDescendInto_refusesWhenCanonicalUnresolved() {
     sak::scan_statistics blocked_stats;
     QVERIFY(!blocked_scanner.canDescendInto(entry, opts, blocked_stats, 0));
     QCOMPARE(blocked_stats.errors_encountered, std::size_t{1});
-#else
-    QSKIP("Exclusive directory handles are a Windows-only concept");
-#endif
 }
 
 QTEST_GUILESS_MAIN(FileScannerTests)

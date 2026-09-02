@@ -113,6 +113,11 @@ class FileManagementExplorerPanel : public QWidget {
 
 public:
     explicit FileManagementExplorerPanel(QWidget* parent = nullptr);
+    /// Construct with an explicit target set instead of probing mounted host volumes.
+    /// Tests use this dependency seam with temporary local roots; production uses
+    /// the default constructor above.
+    explicit FileManagementExplorerPanel(QVector<FileManagementTarget> initial_targets,
+                                         QWidget* parent = nullptr);
     ~FileManagementExplorerPanel() override;
 
     /// Turn on cross-restart tab persistence and immediately restore any saved

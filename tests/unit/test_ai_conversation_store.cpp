@@ -22,7 +22,14 @@ class AiConversationStoreTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void cleanup();
     void startSession_writesManifestAndListsSession();
+    void openSession_refusesSessionDirectoryJunction();
+    void listSessions_capsDirectChildEnumerationWithoutPartialResults();
+    void listSessions_rejectsOversizedManifestWithoutPartialResults();
+    void openSession_rejectsManifestIdThatDiffersFromDirectory();
+    void openSession_refusesManifestParentSwap();
+    void openSession_refusesManifestGrowthDuringRead();
     void appendTranscript_loadsDisplayLines();
     void loadTranscriptLines_rejectsMalformedJsonWithoutPartialData();
     void latestAssistantResponseId_returnsLastAssistantMetadata();
@@ -35,6 +42,9 @@ private Q_SLOTS:
     void commandLogPath_confinesTraversalTokens();
     void safeArtifactDirectoryName_rejectsDotSegments();
     void artifactPath_createsSubdirectoryAndReturnsPath();
+    void artifactRoot_refusesArtifactsJunction();
+    void artifactSubdir_refusesJunctionLeaf();
+    void artifactSubdirPinsBlockRenameUntilSessionClears();
     void renameSession_updatesTitleAndArtifactRoot();
     void renameSession_rollsBackTheArtifactMoveWhenTheManifestFails();
     void renameSession_refusesExistingArtifactDestination();
@@ -60,6 +70,36 @@ private Q_SLOTS:
 };
 
 namespace {
+
+constexpr int kSessionDirectoryCap = 512;
+constexpr qint64 kManifestByteCap = 64 * 1024;
+
+int createJunction(const QString& junction, const QString& target) {
+    const QString command =
+        QDir(qEnvironmentVariable("SystemRoot")).filePath(QStringLiteral("System32/cmd.exe"));
+    return QProcess::execute(command,
+                             {QStringLiteral("/d"),
+                              QStringLiteral("/c"),
+                              QStringLiteral("mklink"),
+                              QStringLiteral("/J"),
+                              QDir::toNativeSeparators(junction),
+                              QDir::toNativeSeparators(target)});
+}
+
+QByteArray manifestBytes(const QString& id, const QString& title) {
+    const QString timestamp = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+    return QJsonDocument(QJsonObject{{QStringLiteral("id"), id},
+                                     {QStringLiteral("title"), title},
+                                     {QStringLiteral("created_at"), timestamp},
+                                     {QStringLiteral("updated_at"), timestamp}})
+        .toJson(QJsonDocument::Compact);
+}
+
+bool writeBytes(const QString& path, const QByteArray& bytes) {
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+           file.write(bytes) == bytes.size() && file.flush();
+}
 
 // The writer half of the concurrency fixture discards all of its return values and nothing
 // downstream could see a failed append -- the test never reads the transcript back -- so if
@@ -125,6 +165,13 @@ auto makeContentionReader(const ContentionReaderContext& ctx) {
 
 }  // namespace
 
+void AiConversationStoreTests::cleanup() {
+    sak::ai::ConversationStore::setBeforeManifestChildOpenHookForTesting({});
+    sak::ai::ConversationStore::setBeforeManifestFileOpenHookForTesting({});
+    sak::ai::ConversationStore::setBeforeManifestFileReadHookForTesting({});
+    sak::ai::ConversationStore::setBeforeArtifactChildOpenHookForTesting({});
+}
+
 void AiConversationStoreTests::startSession_writesManifestAndListsSession() {
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
@@ -150,6 +197,136 @@ void AiConversationStoreTests::startSession_writesManifestAndListsSession() {
     QVERIFY(sessions.first().created_at.isValid());
     QVERIFY(sessions.first().updated_at.isValid());
     QCOMPARE(sessions.first().created_at, store.currentSessionInfo().created_at);
+}
+
+void AiConversationStoreTests::openSession_refusesSessionDirectoryJunction() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QString id = QStringLiteral("ai_redirected");
+    const QString target = QDir(root.path()).filePath(QStringLiteral("redirect_target"));
+    QVERIFY(QDir().mkpath(target));
+    QVERIFY(writeBytes(QDir(target).filePath(QStringLiteral("manifest.json")),
+                       manifestBytes(id, QStringLiteral("Outside"))));
+    const QString junction = QDir(root.path()).filePath(id);
+    QCOMPARE(createJunction(junction, target), 0);
+
+    sak::ai::ConversationStore store(root.path());
+    QString error;
+
+    QVERIFY(!store.openSession(id, &error));
+    QCOMPARE(error,
+             QStringLiteral("Refusing redirected AI session child directory: %1").arg(junction));
+    QVERIFY(store.currentSessionId().isEmpty());
+}
+
+void AiConversationStoreTests::listSessions_capsDirectChildEnumerationWithoutPartialResults() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    sak::ai::ConversationStore store(root.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Legitimate"), &error));
+    for (int index = 0; index < kSessionDirectoryCap; ++index) {
+        const QString filler = QDir(root.path()).filePath(QStringLiteral("filler_%1").arg(index));
+        QVERIFY2(QDir().mkpath(filler), qPrintable(filler));
+    }
+
+    const auto sessions = store.listSessions(&error);
+
+    QVERIFY(sessions.isEmpty());
+    QCOMPARE(error,
+             QStringLiteral("AI session root has more than %1 session directories: %2")
+                 .arg(kSessionDirectoryCap)
+                 .arg(root.path()));
+}
+
+void AiConversationStoreTests::listSessions_rejectsOversizedManifestWithoutPartialResults() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    sak::ai::ConversationStore store(root.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("First"), &error));
+    QVERIFY(store.startSession(QStringLiteral("Oversized"), &error));
+    const QString path =
+        QDir(store.currentSessionInfo().path).filePath(QStringLiteral("manifest.json"));
+    QByteArray oversized = manifestBytes(store.currentSessionId(), QStringLiteral("Oversized"));
+    oversized.append(QByteArray(kManifestByteCap + 1 - oversized.size(), ' '));
+    QCOMPARE(oversized.size(), kManifestByteCap + 1);
+    QVERIFY(writeBytes(path, oversized));
+
+    const auto sessions = store.listSessions(&error);
+
+    QVERIFY(sessions.isEmpty());
+    QCOMPARE(error,
+             QStringLiteral("AI session file too large or unreadable (max %1): %2")
+                 .arg(kManifestByteCap)
+                 .arg(path));
+}
+
+void AiConversationStoreTests::openSession_rejectsManifestIdThatDiffersFromDirectory() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    sak::ai::ConversationStore store(root.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Original"), &error));
+    const QString id = store.currentSessionId();
+    const QString manifest =
+        QDir(store.currentSessionInfo().path).filePath(QStringLiteral("manifest.json"));
+    QVERIFY(
+        writeBytes(manifest, manifestBytes(QStringLiteral("ai_other"), QStringLiteral("Other"))));
+    store.clearCurrentSession();
+
+    QVERIFY(!store.openSession(id, &error));
+    QCOMPARE(error, QStringLiteral("AI session manifest id does not match directory '%1'").arg(id));
+    QVERIFY(store.currentSessionId().isEmpty());
+}
+
+void AiConversationStoreTests::openSession_refusesManifestParentSwap() {
+    QTemporaryDir root;
+    QTemporaryDir outside;
+    QVERIFY(root.isValid());
+    QVERIFY(outside.isValid());
+    sak::ai::ConversationStore store(root.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Original"), &error));
+    const QString id = store.currentSessionId();
+    QVERIFY(writeBytes(QDir(outside.path()).filePath(QStringLiteral("manifest.json")),
+                       manifestBytes(id, QStringLiteral("Forged"))));
+    store.clearCurrentSession();
+
+    bool swapped = false;
+    sak::ai::ConversationStore::setBeforeManifestFileOpenHookForTesting([&](const QString&) {
+        const QString backup = id + QStringLiteral("_original");
+        swapped = QDir(root.path()).rename(id, backup);
+        if (swapped) {
+            swapped = createJunction(QDir(root.path()).filePath(id), outside.path()) == 0;
+        }
+    });
+
+    QVERIFY(!store.openSession(id, &error));
+    QVERIFY(swapped);
+    QVERIFY2(error.contains(QStringLiteral("Refusing redirected ai session file")),
+             qPrintable(error));
+    QVERIFY(store.currentSessionId().isEmpty());
+}
+
+void AiConversationStoreTests::openSession_refusesManifestGrowthDuringRead() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    sak::ai::ConversationStore store(root.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Stable"), &error));
+    const QString id = store.currentSessionId();
+    store.clearCurrentSession();
+    bool grew = false;
+    sak::ai::ConversationStore::setBeforeManifestFileReadHookForTesting([&](const QString& path) {
+        QFile file(path);
+        grew = file.open(QIODevice::Append) && file.write(" ") == 1 && file.flush();
+    });
+
+    QVERIFY(!store.openSession(id, &error));
+    QVERIFY(grew);
+    QVERIFY2(error.contains(QStringLiteral("file changed during read")), qPrintable(error));
+    QVERIFY(store.currentSessionId().isEmpty());
 }
 
 void AiConversationStoreTests::appendTranscript_loadsDisplayLines() {
@@ -590,6 +767,62 @@ void AiConversationStoreTests::artifactPath_createsSubdirectoryAndReturnsPath() 
         store.artifactPath(QStringLiteral("downloads"), QStringLiteral("nested/../ok.txt"), &error),
         downloads_dir + QStringLiteral("/ok.txt"));
     QVERIFY2(error.isEmpty(), qPrintable(error));
+}
+
+void AiConversationStoreTests::artifactRoot_refusesArtifactsJunction() {
+    QTemporaryDir root;
+    QTemporaryDir outside;
+    QVERIFY(root.isValid());
+    QVERIFY(outside.isValid());
+    sak::ai::ConversationStore store(root.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Artifacts"), &error));
+    const QString junction =
+        QDir(store.currentSessionInfo().path).filePath(QStringLiteral("artifacts"));
+    QCOMPARE(createJunction(junction, outside.path()), 0);
+
+    QVERIFY(store.artifactRootDirectory(&error).isEmpty());
+    QVERIFY2(error.contains(QStringLiteral("Refusing redirected AI store directory")),
+             qPrintable(error));
+    QVERIFY(!QDir(QDir(outside.path()).filePath(QStringLiteral("Artifacts"))).exists());
+}
+
+void AiConversationStoreTests::artifactSubdir_refusesJunctionLeaf() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Artifacts"), &error));
+    const QString artifact_root = store.artifactRootDirectory(&error);
+    QVERIFY2(!artifact_root.isEmpty(), qPrintable(error));
+    const QString target = QDir(artifact_root).filePath(QStringLiteral("redirect_target"));
+    QVERIFY(QDir().mkpath(target));
+    const QString junction = QDir(artifact_root).filePath(QStringLiteral("downloads"));
+    QCOMPARE(createJunction(junction, target), 0);
+
+    QVERIFY(store.artifactSubdir(QStringLiteral("downloads"), &error).isEmpty());
+    QVERIFY2(error.contains(QStringLiteral("Refusing redirected AI store directory")),
+             qPrintable(error));
+}
+
+void AiConversationStoreTests::artifactSubdirPinsBlockRenameUntilSessionClears() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Artifacts"), &error));
+    const QString downloads = store.artifactSubdir(QStringLiteral("downloads"), &error);
+    QVERIFY2(!downloads.isEmpty(), qPrintable(error));
+    const QString artifact_root = QFileInfo(downloads).absolutePath();
+
+    QVERIFY(!QDir(artifact_root)
+                 .rename(QStringLiteral("downloads"), QStringLiteral("downloads_moved")));
+    QVERIFY(QDir(downloads).exists());
+
+    store.clearCurrentSession();
+    QVERIFY(
+        QDir(artifact_root).rename(QStringLiteral("downloads"), QStringLiteral("downloads_moved")));
+    QVERIFY(QDir(QDir(artifact_root).filePath(QStringLiteral("downloads_moved"))).exists());
 }
 
 void AiConversationStoreTests::renameSession_updatesTitleAndArtifactRoot() {

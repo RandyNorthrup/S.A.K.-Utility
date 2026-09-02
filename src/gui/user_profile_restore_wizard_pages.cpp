@@ -506,9 +506,7 @@ void UserProfileRestoreMergeConfigPage::loadMergeTable() {
     }
 }
 
-void UserProfileRestoreMergeConfigPage::onMergeSettingsChanged(int row, int column) {
-    Q_UNUSED(row);
-    Q_UNUSED(column);
+void UserProfileRestoreMergeConfigPage::onMergeSettingsChanged(int, int) {
     updateSummary();
 }
 
@@ -701,9 +699,7 @@ void UserProfileRestoreFolderSelectionPage::onSelectNone() {
     updateSummary();
 }
 
-void UserProfileRestoreFolderSelectionPage::onFolderSelectionChanged(int row, int column) {
-    Q_UNUSED(row);
-    Q_UNUSED(column);
+void UserProfileRestoreFolderSelectionPage::onFolderSelectionChanged(int, int) {
     updateSummary();
 }
 
@@ -1262,10 +1258,9 @@ void UserProfileRestoreNetworksPage::populateTree(const QVector<WifiProfileInfo>
                                 .arg(profiles.size()));
 }
 
-void UserProfileRestoreNetworksPage::onItemChanged(QTreeWidgetItem* item, int column) {
+void UserProfileRestoreNetworksPage::onItemChanged(QTreeWidgetItem*, int column) {
     Q_ASSERT(m_summaryLabel);
     Q_ASSERT(m_networkTree);
-    Q_UNUSED(item)
     if (column != 0) {
         return;
     }

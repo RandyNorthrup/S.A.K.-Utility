@@ -3,6 +3,11 @@
     Makes skipped tests visible and holds them to a reviewed baseline.
 
 .DESCRIPTION
+    First scans every C++ test source and compares QSKIP site counts with
+    tests/skip_site_inventory.txt. This catches dormant branches that did not
+    execute in the latest run, and rejects QSKIP inside unsupported-platform
+    preprocessor arms.
+
     ctest reports a test executable as Passed when every one of its test
     functions called QSKIP. The suite line still reads "222/222 tests passed"
     and nothing anywhere says how much was actually exercised. That is how a
@@ -43,14 +48,20 @@
     entries are written with a NEEDS-REASON marker that the check itself
     rejects, so the file cannot be regenerated into a rubber stamp.
 
+.PARAMETER StaticOnly
+    Run only the source inventory and dead-platform-arm checks. Does not require
+    CTest result logs.
+
 .EXAMPLE
     pwsh scripts/check_test_skips.ps1
+    pwsh scripts/check_test_skips.ps1 -StaticOnly
     pwsh scripts/check_test_skips.ps1 -UpdateBaseline
 #>
 [CmdletBinding()]
 param(
     [string]$ResultsDir,
-    [switch]$UpdateBaseline
+    [switch]$UpdateBaseline,
+    [switch]$StaticOnly
 )
 
 Set-StrictMode -Version Latest
@@ -58,6 +69,7 @@ $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $baselinePath = Join-Path $repoRoot 'tests/skip_baseline.txt'
+$staticInventoryPath = Join-Path $repoRoot 'tests/skip_site_inventory.txt'
 $needsReasonMarker = 'NEEDS-REASON'
 if (-not $ResultsDir) { $ResultsDir = Join-Path $repoRoot 'build/test_results' }
 
@@ -66,6 +78,149 @@ function Write-Section($text) {
     Write-Host $text -ForegroundColor Cyan
     Write-Host ('-' * $text.Length) -ForegroundColor Cyan
 }
+
+function Read-StaticSkipInventory {
+    $inventory = @{}
+    if (-not (Test-Path -LiteralPath $staticInventoryPath -PathType Leaf)) {
+        Write-Host "FAIL: no static QSKIP inventory at $staticInventoryPath." -ForegroundColor Red
+        exit 1
+    }
+    foreach ($line in [System.IO.File]::ReadLines($staticInventoryPath)) {
+        $trimmed = $line.Trim()
+        if ($trimmed -eq '' -or $trimmed.StartsWith('#')) { continue }
+        $equals = $trimmed.IndexOf('=')
+        $separator = $trimmed.IndexOf('|')
+        if ($equals -lt 1 -or $separator -lt ($equals + 2)) {
+            Write-Host "FAIL: malformed static QSKIP inventory line: $trimmed" -ForegroundColor Red
+            exit 1
+        }
+        $path = $trimmed.Substring(0, $equals).Trim().Replace('\', '/')
+        $countText = $trimmed.Substring($equals + 1, $separator - $equals - 1).Trim()
+        $reason = $trimmed.Substring($separator + 1).Trim()
+        $count = 0
+        if (-not [int]::TryParse($countText, [ref]$count) -or $count -le 0 -or
+            [string]::IsNullOrWhiteSpace($reason)) {
+            Write-Host "FAIL: invalid count/reason in static QSKIP inventory: $trimmed" -ForegroundColor Red
+            exit 1
+        }
+        if ($inventory.ContainsKey($path)) {
+            Write-Host "FAIL: duplicate static QSKIP inventory path: $path" -ForegroundColor Red
+            exit 1
+        }
+        $inventory[$path] = [pscustomobject]@{ Count = $count; Reason = $reason }
+    }
+    return $inventory
+}
+
+function Test-PlatformCondition([string]$condition) {
+    return $condition -match '(?:^|[^A-Za-z0-9])_WIN32\b|\bQ_OS_WIN\b|\bSAK_PLATFORM_WINDOWS\b'
+}
+
+function Test-PlatformStack([System.Collections.Generic.List[bool]]$stack) {
+    foreach ($entry in $stack) {
+        if ($entry) { return $true }
+    }
+    return $false
+}
+
+function Get-StaticSkipState {
+    $current = @{}
+    $deadPlatformArms = [System.Collections.Generic.List[string]]::new()
+    $testsRoot = Join-Path $repoRoot 'tests'
+    $sourceFiles = @(Get-ChildItem -LiteralPath $testsRoot -Recurse -File |
+        Where-Object {
+            $_.Extension -in @('.cpp', '.h') -and
+            $_.FullName -notmatch '[\\/]third_party[\\/]'
+        })
+    foreach ($file in $sourceFiles) {
+        $relative = $file.FullName.Substring($repoRoot.Length).TrimStart('\', '/').Replace('\', '/')
+        $source = [System.IO.File]::ReadAllText($file.FullName)
+        $siteCount = [regex]::Matches($source, '\bQSKIP\s*\(').Count
+        if ($siteCount -gt 0) { $current[$relative] = $siteCount }
+
+        $platformStack = [System.Collections.Generic.List[bool]]::new()
+        $lineNo = 0
+        foreach ($line in [System.IO.File]::ReadLines($file.FullName)) {
+            $lineNo++
+            if ($line -match '^\s*#\s*(?:if|ifdef|ifndef)\b(?<condition>.*)$') {
+                $inherited = Test-PlatformStack $platformStack
+                $platformStack.Add($inherited -or (Test-PlatformCondition $Matches.condition))
+                continue
+            }
+            if ($line -match '^\s*#\s*elif\b(?<condition>.*)$') {
+                if ($platformStack.Count -gt 0) {
+                    $outer = $false
+                    for ($index = 0; $index -lt $platformStack.Count - 1; $index++) {
+                        if ($platformStack[$index]) { $outer = $true; break }
+                    }
+                    $platformStack[$platformStack.Count - 1] =
+                        $platformStack[$platformStack.Count - 1] -or $outer -or
+                        (Test-PlatformCondition $Matches.condition)
+                }
+                continue
+            }
+            if ($line -match '^\s*#\s*endif\b') {
+                if ($platformStack.Count -gt 0) {
+                    $platformStack.RemoveAt($platformStack.Count - 1)
+                }
+                continue
+            }
+            if ($line -match '\bQSKIP\s*\(' -and (Test-PlatformStack $platformStack)) {
+                $deadPlatformArms.Add("${relative}:${lineNo}")
+            }
+        }
+    }
+    return [pscustomobject]@{ Current = $current; DeadPlatformArms = $deadPlatformArms }
+}
+
+Write-Section 'Checking static QSKIP inventory'
+$staticInventory = Read-StaticSkipInventory
+$staticState = Get-StaticSkipState
+$staticFailures = 0
+
+$unreviewedStatic = @($staticState.Current.Keys |
+    Where-Object { -not $staticInventory.ContainsKey($_) } | Sort-Object)
+$staleStatic = @($staticInventory.Keys |
+    Where-Object { -not $staticState.Current.ContainsKey($_) } | Sort-Object)
+$changedStatic = @($staticState.Current.Keys | Where-Object {
+        $staticInventory.ContainsKey($_) -and
+        $staticInventory[$_].Count -ne $staticState.Current[$_]
+    } | Sort-Object)
+
+if ($unreviewedStatic.Count -gt 0) {
+    $staticFailures += $unreviewedStatic.Count
+    Write-Host 'UNINVENTORIED STATIC QSKIP FILES:' -ForegroundColor Red
+    foreach ($path in $unreviewedStatic) {
+        Write-Host "  $path ($($staticState.Current[$path]) site(s))" -ForegroundColor Red
+    }
+}
+if ($staleStatic.Count -gt 0) {
+    $staticFailures += $staleStatic.Count
+    Write-Host 'STALE STATIC QSKIP INVENTORY FILES:' -ForegroundColor Red
+    foreach ($path in $staleStatic) { Write-Host "  $path" -ForegroundColor Red }
+}
+if ($changedStatic.Count -gt 0) {
+    $staticFailures += $changedStatic.Count
+    Write-Host 'STATIC QSKIP SITE-COUNT DRIFT:' -ForegroundColor Red
+    foreach ($path in $changedStatic) {
+        Write-Host ("  {0}: inventoried {1}, source {2}" -f $path,
+                    $staticInventory[$path].Count,
+                    $staticState.Current[$path]) -ForegroundColor Red
+    }
+}
+if ($staticState.DeadPlatformArms.Count -gt 0) {
+    $staticFailures += $staticState.DeadPlatformArms.Count
+    Write-Host 'QSKIP SITES IN DEAD APPLICATION-PLATFORM ARMS:' -ForegroundColor Red
+    foreach ($site in $staticState.DeadPlatformArms) { Write-Host "  $site" -ForegroundColor Red }
+}
+if ($staticFailures -gt 0) {
+    Write-Host "STATIC SKIP AUDIT FAILED: $staticFailures discrepancy/discrepancies." -ForegroundColor Red
+    exit 1
+}
+Write-Host ("Static QSKIP inventory passed: {0} file(s), {1} site(s), no dead platform arms." -f
+            $staticState.Current.Count,
+            (($staticState.Current.Values | Measure-Object -Sum).Sum))
+if ($StaticOnly) { exit 0 }
 
 if (-not (Test-Path -LiteralPath $ResultsDir)) {
     Write-Host "FAIL: results directory not found: $ResultsDir" -ForegroundColor Red

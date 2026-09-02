@@ -18,9 +18,8 @@ using namespace sak;
 /**
  * @brief Unit tests for UserProfileBackupWorker.
  *
- * Tests construction, initial state, and cancel behavior.
- * Actual backup operations require real file system access
- * and are not tested here.
+ * Tests construction, state, cancellation, validation, and real backup operations against
+ * isolated temporary source/destination trees, including encrypted and compressed containers.
  */
 class TestUserProfileBackupWorker : public QObject {
     Q_OBJECT

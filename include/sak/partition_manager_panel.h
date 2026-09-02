@@ -252,7 +252,7 @@ private:
     [[nodiscard]] bool showApplyReviewDialog();
     void showSelectedTargetContextMenuAt(const QPoint& global_position);
     void addDiskContextMenuActions(QMenu& menu);
-    void addPartitionContextMenuActions(QMenu& menu, bool has_drive_letter);
+    void addPartitionContextMenuActions(QMenu& menu);
     void addPartitionLayoutContextMenuActions(QMenu& menu, const PartitionInfoEx* partition);
     void addPartitionFilesystemContextMenuActions(QMenu& menu, const PartitionInfoEx* partition);
     void addPartitionMaintenanceContextMenuActions(QMenu& menu, const PartitionInfoEx* partition);

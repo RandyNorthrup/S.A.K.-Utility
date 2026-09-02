@@ -144,6 +144,60 @@ foreach ($relativePath in $windowsOnlyProductFiles) {
         }
     }
 }
+
+# Test registration is part of the Windows-only product contract. A tracked test source or a
+# required PowerShell-driven CTest must fail configure when unavailable, never disappear behind an
+# EXISTS/TARGET/WIN32 guard or a warning that says it was skipped.
+$testsCmakePath = Join-Path $root "tests/CMakeLists.txt"
+$testsCmakeLines = @(Get-Content -LiteralPath $testsCmakePath)
+$testsCmakeText = $testsCmakeLines -join "`n"
+for ($index = 0; $index -lt $testsCmakeLines.Count; $index++) {
+    $line = $testsCmakeLines[$index]
+    if ($line.TrimStart().StartsWith("#")) { continue }
+    if ($line -match '^\s*message\s*\(\s*WARNING.*\bskipp') {
+        $violations += (("tests/CMakeLists.txt:{0}: test omission is a warning; fail configure " +
+                         "instead of skipping the test") -f ($index + 1))
+    }
+    if ($line -match '^\s*if\s*\(\s*WIN32\s+AND\s+EXISTS.*[\\/]test_[^\"]+') {
+        $violations += (("tests/CMakeLists.txt:{0}: tracked Windows test source is conditional; " +
+                         "add it directly so a missing file fails configure") -f ($index + 1))
+    }
+    if ($line -match '^\s*if\s*\(\s*TARGET\s+\S+\s+AND\s+WIN32\s*\)') {
+        $violations += (("tests/CMakeLists.txt:{0}: required CTest is conditional on a target; " +
+                         "the target and test are mandatory on this Windows-only build") -f
+                        ($index + 1))
+    }
+}
+
+$requiredTrackedTestSources = @(
+    "unit/test_win32_mcp_key_chord.cpp",
+    "unit/test_win32_mcp_input_plan.cpp",
+    "unit/test_backup_destination_guard.cpp",
+    "unit/test_win32_mcp_server.cpp",
+    "unit/test_browser_bridge_security.cpp",
+    "unit/test_browser_bridge_pipe.cpp",
+    "unit/test_browser_bridge_relay.cpp"
+)
+foreach ($relativePath in $requiredTrackedTestSources) {
+    $trackedSourcePath = Join-Path (Join-Path $root "tests") $relativePath
+    if (-not (Test-Path -LiteralPath $trackedSourcePath -PathType Leaf)) {
+        $violations += "tests/${relativePath}: required tracked test source is missing"
+    }
+}
+
+if ($testsCmakeText -notmatch
+    '(?ms)find_program\s*\(\s*SAK_TEST_POWERSHELL_PATH\b.*?if\s*\(\s*NOT\s+SAK_TEST_POWERSHELL_PATH\b.*?\).*?message\s*\(\s*FATAL_ERROR') {
+    $violations += ("tests/CMakeLists.txt: required PowerShell CTests lack a fail-closed " +
+                    "find_program/FATAL_ERROR preflight")
+}
+foreach ($target in @("test_ai_assistant_panel_tool_dispatch", "test_browser_extension_installer")) {
+    $definitionPattern = ('(?ms)target_compile_definitions\s*\(\s*' + [regex]::Escape($target) +
+                          '\s+PRIVATE(?:(?!\)\s*$).)*\bSAK_WIN_REGISTRY_TESTS\b')
+    if ($testsCmakeText -notmatch $definitionPattern) {
+        $violations += ("tests/CMakeLists.txt: $target must define SAK_WIN_REGISTRY_TESTS " +
+                        "unconditionally so AUTOMOC registers its Windows slots")
+    }
+}
 $firstTargetLine = 0
 for ($index = 0; $index -lt $rootLines.Count; $index++) {
     if ($rootLines[$index] -match '^\s*add_(?:library|executable)\s*\(') {

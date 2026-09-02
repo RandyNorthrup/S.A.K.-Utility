@@ -888,9 +888,7 @@ ApfsRootFileMutationState apfsMutationTargetState(const PartitionInfoEx* partiti
 // in-place COW engine on generated AND real Apple containers - each is host apfsck clean and
 // macOS-kernel certified (mount + listSnapshots + fsck on newfs_apfs containers) - so the APFS
 // Container action uses the common gate: any writable APFS volume.
-ApfsRootFileMutationState apfsRootFileMutationState(const std::optional<PartitionTarget>& target,
-                                                    const PartitionInfoEx* partition) {
-    Q_UNUSED(target);
+ApfsRootFileMutationState apfsRootFileMutationState(const PartitionInfoEx* partition) {
     ApfsRootFileMutationState state = apfsMutationTargetState(partition);
     if (state.enabled) {
         state.reason = QObject::tr("Queue an APFS container action.");
@@ -1037,9 +1035,8 @@ void updateInspectNonNativeFilesystemButton(QAbstractButton* button,
 
 void updateApfsRootFileMutationButton(QAbstractButton* button,
                                       bool operation_running,
-                                      const std::optional<PartitionTarget>& target,
                                       const PartitionInfoEx* partition) {
-    const auto state = apfsRootFileMutationState(target, partition);
+    const auto state = apfsRootFileMutationState(partition);
     const bool enabled = state.enabled && !operation_running;
     button->setEnabled(enabled);
     const QString reason =
@@ -1075,7 +1072,7 @@ bool updateSpecialTargetButtonState(QAbstractButton* button,
         return true;
     }
     if (isApfsRootFileMutationAction(button)) {
-        updateApfsRootFileMutationButton(button, operation_running, target, partition);
+        updateApfsRootFileMutationButton(button, operation_running, partition);
         return true;
     }
     if (isBrowseNonNativeFilesystemAction(button)) {
@@ -9620,10 +9617,7 @@ void PartitionManagerPanel::showSelectedTargetContextMenuAt(const QPoint& global
             break;
         case PartitionTargetKind::Partition:
         case PartitionTargetKind::Volume: {
-            const auto* partition = selectedPartition();
-            const bool has_drive_letter = (partition != nullptr) && partition->volume &&
-                                          !partition->volume->drive_letter.isEmpty();
-            addPartitionContextMenuActions(menu, has_drive_letter);
+            addPartitionContextMenuActions(menu);
             break;
         }
         case PartitionTargetKind::Unallocated:
@@ -9674,8 +9668,7 @@ void PartitionManagerPanel::addUnallocatedContextMenuActions(QMenu& menu) {
     menu.addSeparator();
 }
 
-void PartitionManagerPanel::addPartitionContextMenuActions(QMenu& menu, bool has_drive_letter) {
-    Q_UNUSED(has_drive_letter);
+void PartitionManagerPanel::addPartitionContextMenuActions(QMenu& menu) {
     const auto* partition = selectedPartition();
     addPartitionLayoutContextMenuActions(menu, partition);
     addPartitionFilesystemContextMenuActions(menu, partition);
@@ -9804,7 +9797,7 @@ void PartitionManagerPanel::addPartitionFilesystemContextMenuActions(
                           .enabled = non_native_check.enabled,
                           .disabled_reason = non_native_check.reason},
                          [this]() { onCheckNonNativeFileSystem(); });
-    const auto apfs_mutation = apfsRootFileMutationState(selectedTarget(), selectedPartition());
+    const auto apfs_mutation = apfsRootFileMutationState(selectedPartition());
     addContextMenuAction(menu,
                          this,
                          {.text = tr("APFS Container"),
@@ -10426,7 +10419,7 @@ void PartitionManagerPanel::onCheckNonNativeFileSystem() {
 
 void PartitionManagerPanel::onApfsRootFileMutation() {
     const auto* partition = selectedPartition();
-    const auto state = apfsRootFileMutationState(selectedTarget(), partition);
+    const auto state = apfsRootFileMutationState(partition);
     if (!state.enabled) {
         showWarningLogged(this, tr("APFS Container"), state.reason);
         return;

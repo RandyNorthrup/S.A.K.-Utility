@@ -11,6 +11,7 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <utility>
 
 #include <windows.h>
 
@@ -25,6 +26,12 @@ constexpr qsizetype kExtendedPathPrefixChars = 4;
 void appendError(QStringList* errors, const QString& message) {
     if (errors != nullptr) {
         errors->append(message);
+    }
+}
+
+void setError(QString* error_message, const QString& message) {
+    if (error_message != nullptr) {
+        *error_message = message;
     }
 }
 
@@ -57,8 +64,17 @@ public:
     }
     ScopedHandle(const ScopedHandle&) = delete;
     ScopedHandle& operator=(const ScopedHandle&) = delete;
-    ScopedHandle(ScopedHandle&&) = delete;
-    ScopedHandle& operator=(ScopedHandle&&) = delete;
+    ScopedHandle(ScopedHandle&& other) noexcept
+        : m_handle(std::exchange(other.m_handle, INVALID_HANDLE_VALUE)) {}
+    ScopedHandle& operator=(ScopedHandle&& other) noexcept {
+        if (this != &other) {
+            if (valid()) {
+                CloseHandle(m_handle);
+            }
+            m_handle = std::exchange(other.m_handle, INVALID_HANDLE_VALUE);
+        }
+        return *this;
+    }
     [[nodiscard]] HANDLE get() const { return m_handle; }
     [[nodiscard]] bool valid() const { return m_handle != INVALID_HANDLE_VALUE; }
 
@@ -450,6 +466,420 @@ bool loadNativeDirectory(const QString& directory,
     return ok;
 }
 
+bool validChildPolicy(const StoreChildFileLoadPolicy& policy, QStringList* errors) {
+    constexpr qint64 kMaxReadFileBytes = static_cast<qint64>(std::numeric_limits<DWORD>::max()) - 1;
+    const QString file_leaf = QFileInfo(policy.file_name).fileName();
+    if (!policy.store_name.isEmpty() && !policy.child_type_name.isEmpty() &&
+        !policy.file_name.isEmpty() && file_leaf == policy.file_name && policy.max_file_bytes > 0 &&
+        policy.max_file_bytes <= kMaxReadFileBytes && policy.max_child_directories > 0) {
+        return true;
+    }
+    appendError(errors, QStringLiteral("Invalid AI child-store file-load policy"));
+    return false;
+}
+
+bool validDirectChildName(const QString& name) {
+    return !name.isEmpty() && name != QLatin1String(".") && name != QLatin1String("..") &&
+           QFileInfo(name).fileName() == name && !name.contains(QLatin1Char('/')) &&
+           !name.contains(QLatin1Char('\\'));
+}
+
+std::optional<ScopedHandle> openPinnedRootDirectory(const QString& directory,
+                                                    const QString& store_name,
+                                                    bool prevent_rename,
+                                                    QStringList* errors) {
+    if (!QDir::isAbsolutePath(directory)) {
+        appendError(errors,
+                    QStringLiteral("%1 root must be an absolute local path: %2")
+                        .arg(store_name, directory));
+        return std::nullopt;
+    }
+    const QString clean_directory = QDir::cleanPath(QFileInfo(directory).absoluteFilePath());
+    const QString native_directory = QDir::toNativeSeparators(clean_directory);
+    const DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE |
+                        (prevent_rename ? 0U : FILE_SHARE_DELETE);
+    ScopedHandle handle(CreateFileW(reinterpret_cast<LPCWSTR>(native_directory.utf16()),
+                                    FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES,
+                                    share,
+                                    nullptr,
+                                    OPEN_EXISTING,
+                                    FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                                    nullptr));
+    if (!handle.valid()) {
+        appendError(errors,
+                    win32Error(QStringLiteral("Cannot open %1 root").arg(store_name),
+                               directory,
+                               GetLastError()));
+        return std::nullopt;
+    }
+    const QString opened_path = normalizedFinalPath(handle.get());
+    if (handleIsReparsePoint(handle.get()) || opened_path.isEmpty() ||
+        opened_path.compare(clean_directory, Qt::CaseInsensitive) != 0) {
+        appendError(errors,
+                    QStringLiteral("Refusing redirected %1 root: %2").arg(store_name, directory));
+        return std::nullopt;
+    }
+    return handle;
+}
+
+struct OpenedChildDirectory {
+    StoreChildFileLoadResult result{StoreChildFileLoadResult::Refused};
+    std::optional<ScopedHandle> handle;
+    QString path;
+};
+
+struct ChildDirectoryOpenRequest {
+    HANDLE parent_handle;
+    QString child_name;
+    QString store_name;
+    bool prevent_rename;
+    const StoreFileLoadHooks& hooks;
+    QStringList* errors;
+};
+
+OpenedChildDirectory childDirectoryOpenFailure(const ChildDirectoryOpenRequest& request,
+                                               const QString& path,
+                                               DWORD error) {
+    if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) {
+        return {StoreChildFileLoadResult::Missing, std::nullopt, path};
+    }
+    appendError(request.errors,
+                win32Error(QStringLiteral("Cannot open %1 child directory").arg(request.store_name),
+                           path,
+                           error));
+    return {};
+}
+
+OpenedChildDirectory openPinnedChildDirectory(const ChildDirectoryOpenRequest& request) {
+    if (!validDirectChildName(request.child_name)) {
+        appendError(request.errors,
+                    QStringLiteral("Invalid %1 child directory name: %2")
+                        .arg(request.store_name, request.child_name));
+        return {};
+    }
+    const QString parent_path = normalizedFinalPath(request.parent_handle);
+    if (parent_path.isEmpty()) {
+        appendError(
+            request.errors,
+            QStringLiteral("Cannot resolve opened %1 parent directory").arg(request.store_name));
+        return {};
+    }
+    const QString path = QDir::cleanPath(QDir(parent_path).filePath(request.child_name));
+    if (request.hooks.before_child_open) {
+        request.hooks.before_child_open(path);
+    }
+    const DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE |
+                        (request.prevent_rename ? 0U : FILE_SHARE_DELETE);
+    ScopedHandle child(
+        CreateFileW(reinterpret_cast<LPCWSTR>(QDir::toNativeSeparators(path).utf16()),
+                    FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES,
+                    share,
+                    nullptr,
+                    OPEN_EXISTING,
+                    FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                    nullptr));
+    if (!child.valid()) {
+        return childDirectoryOpenFailure(request, path, GetLastError());
+    }
+    if (handleIsReparsePoint(child.get()) ||
+        !fileParentMatchesDirectory(child.get(), request.parent_handle)) {
+        appendError(request.errors,
+                    QStringLiteral("Refusing redirected %1 child directory: %2")
+                        .arg(request.store_name, path));
+        return {};
+    }
+    const QString opened_path = normalizedFinalPath(child.get());
+    if (opened_path.isEmpty()) {
+        appendError(request.errors,
+                    QStringLiteral("Cannot resolve opened %1 child directory: %2")
+                        .arg(request.store_name, path));
+        return {};
+    }
+    return {StoreChildFileLoadResult::Loaded, std::move(child), opened_path};
+}
+
+struct NativeChildDirectories {
+    QStringList names;
+    bool capped{false};
+};
+
+bool collectChildDirectoryName(const WIN32_FIND_DATAW& data,
+                               const StoreChildFileLoadPolicy& policy,
+                               NativeChildDirectories* result) {
+    const QString name = QString::fromWCharArray(data.cFileName);
+    if ((data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) == 0 || name == QLatin1String(".") ||
+        name == QLatin1String("..")) {
+        return true;
+    }
+    if (result->names.size() >= policy.max_child_directories) {
+        result->capped = true;
+        return false;
+    }
+    result->names.append(name);
+    return true;
+}
+
+struct ChildEnumerationContext {
+    QString root_path;
+    const StoreChildFileLoadPolicy& policy;
+    QStringList* errors;
+};
+
+bool childEnumerationAdvanced(HANDLE find_handle,
+                              WIN32_FIND_DATAW* data,
+                              const ChildEnumerationContext& context,
+                              bool* finished) {
+    if (FindNextFileW(find_handle, data) != 0) {
+        return true;
+    }
+    const DWORD error = GetLastError();
+    *finished = error == ERROR_NO_MORE_FILES;
+    if (*finished) {
+        return true;
+    }
+    appendError(
+        context.errors,
+        win32Error(QStringLiteral("%1 root enumeration failed").arg(context.policy.store_name),
+                   context.root_path,
+                   error));
+    return false;
+}
+
+std::optional<NativeChildDirectories> enumerateNativeChildDirectories(
+    HANDLE root_handle, const StoreChildFileLoadPolicy& policy, QStringList* errors) {
+    const QString root_path = normalizedFinalPath(root_handle);
+    if (root_path.isEmpty()) {
+        appendError(errors, QStringLiteral("Cannot resolve opened %1 root").arg(policy.store_name));
+        return std::nullopt;
+    }
+    const QString pattern = QDir::toNativeSeparators(QDir(root_path).filePath(QStringLiteral("*")));
+    WIN32_FIND_DATAW data{};
+    const HANDLE raw_find = FindFirstFileExW(reinterpret_cast<LPCWSTR>(pattern.utf16()),
+                                             FindExInfoBasic,
+                                             &data,
+                                             FindExSearchNameMatch,
+                                             nullptr,
+                                             FIND_FIRST_EX_LARGE_FETCH);
+    if (raw_find == INVALID_HANDLE_VALUE) {
+        const DWORD error = GetLastError();
+        if (error == ERROR_FILE_NOT_FOUND) {
+            return NativeChildDirectories{};
+        }
+        appendError(errors,
+                    win32Error(QStringLiteral("Cannot enumerate %1 root").arg(policy.store_name),
+                               root_path,
+                               error));
+        return std::nullopt;
+    }
+    const ScopedFindHandle find_handle(raw_find);
+    NativeChildDirectories result;
+    bool finished = false;
+    const ChildEnumerationContext context{root_path, policy, errors};
+    while (!finished) {
+        if (!collectChildDirectoryName(data, policy, &result)) {
+            break;
+        }
+        if (!childEnumerationAdvanced(raw_find, &data, context, &finished)) {
+            return std::nullopt;
+        }
+    }
+    std::sort(result.names.begin(), result.names.end());
+    return result;
+}
+
+StoreFileLoadPolicy childFileReadPolicy(const StoreChildFileLoadPolicy& policy) {
+    StoreFileLoadPolicy read_policy;
+    read_policy.store_name = policy.store_name;
+    read_policy.file_extension = QStringLiteral(".json");
+    read_policy.file_type_name = policy.file_name;
+    read_policy.max_file_bytes = policy.max_file_bytes;
+    read_policy.max_files = 1;
+    return read_policy;
+}
+
+struct PinnedChildFileRequest {
+    HANDLE child_handle;
+    QString display_child_path;
+    QString child_name;
+    const StoreChildFileLoadOptions& options;
+    QStringList* errors;
+};
+
+StoreChildFileLoadResult loadPinnedChildFile(const PinnedChildFileRequest& request) {
+    const auto& policy = request.options.policy;
+    const QString opened_child = normalizedFinalPath(request.child_handle);
+    const QString opened_file =
+        QDir::toNativeSeparators(QDir(opened_child).filePath(policy.file_name));
+    const DWORD attributes = GetFileAttributesW(reinterpret_cast<LPCWSTR>(opened_file.utf16()));
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+        const DWORD error = GetLastError();
+        if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) {
+            return StoreChildFileLoadResult::Missing;
+        }
+        appendError(request.errors,
+                    win32Error(QStringLiteral("Cannot inspect %1 file").arg(policy.store_name),
+                               opened_file,
+                               error));
+        return StoreChildFileLoadResult::Refused;
+    }
+    const StoreFileLoadPolicy read_policy = childFileReadPolicy(policy);
+    const StoreFileConsumer wrapped_consumer = [&](const QString&, const QByteArray& bytes) {
+        return request.options.consume(request.child_name, request.display_child_path, bytes);
+    };
+    const StoreLoadContext context{
+        read_policy, request.options.hooks, wrapped_consumer, request.errors};
+    return loadNativeFile(
+               request.child_handle, request.display_child_path, policy.file_name, context)
+               ? StoreChildFileLoadResult::Loaded
+               : StoreChildFileLoadResult::Refused;
+}
+
+bool validChildOptions(const StoreChildFileLoadOptions& options, QStringList* errors) {
+    if (validChildPolicy(options.policy, errors) && options.consume) {
+        return true;
+    }
+    if (!options.consume) {
+        appendError(errors, QStringLiteral("AI child-store file consumer is not configured"));
+    }
+    return false;
+}
+
+struct OpenedChildStoreRoot {
+    StoreChildFileLoadResult result{StoreChildFileLoadResult::Refused};
+    std::optional<ScopedHandle> handle;
+};
+
+OpenedChildStoreRoot openChildStoreRoot(const QString& root_directory,
+                                        const StoreChildFileLoadOptions& options,
+                                        QStringList* errors) {
+    const QString native_root = QDir::toNativeSeparators(QDir::cleanPath(root_directory));
+    const DWORD attributes = GetFileAttributesW(reinterpret_cast<LPCWSTR>(native_root.utf16()));
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+        const DWORD error = GetLastError();
+        if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) {
+            return {StoreChildFileLoadResult::Missing, std::nullopt};
+        }
+    }
+    auto root = openPinnedRootDirectory(root_directory, options.policy.store_name, false, errors);
+    if (!root) {
+        return {};
+    }
+    return {StoreChildFileLoadResult::Loaded, std::move(root)};
+}
+
+struct ChildFileLoadContext {
+    HANDLE root_handle;
+    QString root_directory;
+    const StoreChildFileLoadOptions& options;
+    QStringList* errors;
+};
+
+StoreChildFileLoadResult loadNamedChildFile(const ChildFileLoadContext& context,
+                                            const QString& child_name) {
+    const auto& policy = context.options.policy;
+    auto child = openPinnedChildDirectory({.parent_handle = context.root_handle,
+                                           .child_name = child_name,
+                                           .store_name = policy.store_name,
+                                           .prevent_rename = false,
+                                           .hooks = context.options.hooks,
+                                           .errors = context.errors});
+    if (child.result != StoreChildFileLoadResult::Loaded || !child.handle) {
+        return child.result;
+    }
+    const QString display_child =
+        QDir::cleanPath(QDir(context.root_directory).filePath(child_name));
+    const int prior_error_count = context.errors == nullptr ? 0 : context.errors->size();
+    const StoreChildFileLoadResult loaded =
+        loadPinnedChildFile({.child_handle = child.handle->get(),
+                             .display_child_path = display_child,
+                             .child_name = child_name,
+                             .options = context.options,
+                             .errors = context.errors});
+    if (loaded == StoreChildFileLoadResult::Refused && context.errors != nullptr &&
+        context.errors->size() == prior_error_count) {
+        appendError(
+            context.errors,
+            QStringLiteral("%1 consumer refused child: %2").arg(policy.store_name, child_name));
+    }
+    return loaded;
+}
+
+void appendChildDirectoryCapError(const QString& root_directory,
+                                  const StoreChildFileLoadPolicy& policy,
+                                  QStringList* errors) {
+    appendError(errors,
+                QStringLiteral("%1 root has more than %2 %3 directories: %4")
+                    .arg(policy.store_name)
+                    .arg(policy.max_child_directories)
+                    .arg(policy.child_type_name)
+                    .arg(root_directory));
+}
+
+struct NativeDirectoryPinState {
+    std::vector<ScopedHandle> handles;
+};
+
+bool validPinRequest(const QStringList& components, int required_component_count) {
+    return !components.isEmpty() && required_component_count >= 0 &&
+           required_component_count <= components.size() &&
+           std::ranges::none_of(components, [](const QString& component) {
+               return !validDirectChildName(component);
+           });
+}
+
+bool createOptionalPinnedChild(const QString& path, bool required, QStringList* errors) {
+    if (required) {
+        return true;
+    }
+    if (CreateDirectoryW(reinterpret_cast<LPCWSTR>(QDir::toNativeSeparators(path).utf16()),
+                         nullptr) != 0) {
+        return true;
+    }
+    const DWORD error = GetLastError();
+    if (error == ERROR_ALREADY_EXISTS) {
+        return true;
+    }
+    appendError(
+        errors,
+        win32Error(QStringLiteral("Could not create pinned AI store directory"), path, error));
+    return false;
+}
+
+struct PinWalkContext {
+    const QStringList& components;
+    int required_component_count;
+    const StoreFileLoadHooks& hooks;
+    QStringList* errors;
+    NativeDirectoryPinState* state;
+    QString* final_path;
+};
+
+bool pinDirectoryComponent(PinWalkContext& context, int index) {
+    const QString child_path =
+        QDir::cleanPath(QDir(*context.final_path).filePath(context.components.at(index)));
+    if (!createOptionalPinnedChild(
+            child_path, index < context.required_component_count, context.errors)) {
+        return false;
+    }
+    auto child = openPinnedChildDirectory({.parent_handle = context.state->handles.back().get(),
+                                           .child_name = context.components.at(index),
+                                           .store_name = QStringLiteral("AI store directory"),
+                                           .prevent_rename = true,
+                                           .hooks = context.hooks,
+                                           .errors = context.errors});
+    if (child.result == StoreChildFileLoadResult::Missing) {
+        appendError(context.errors,
+                    QStringLiteral("Required AI store directory is missing: %1").arg(child_path));
+        return false;
+    }
+    if (child.result != StoreChildFileLoadResult::Loaded || !child.handle) {
+        return false;
+    }
+    *context.final_path = child.path;
+    context.state->handles.emplace_back(std::move(*child.handle));
+    return true;
+}
+
 }  // namespace
 
 bool loadStoreDirectoryFiles(const QString& directory,
@@ -467,6 +897,99 @@ bool loadStoreDirectoryFiles(const QString& directory,
         return loadResourceDirectory(directory, policy, consume, errors);
     }
     return loadNativeDirectory(directory, policy, hooks, consume, errors);
+}
+
+bool loadStoreChildDirectoryFiles(const QString& root_directory,
+                                  const StoreChildFileLoadOptions& options,
+                                  QStringList* errors) {
+    if (!validChildOptions(options, errors)) {
+        return false;
+    }
+    auto root = openChildStoreRoot(root_directory, options, errors);
+    if (root.result == StoreChildFileLoadResult::Missing) {
+        return true;
+    }
+    if (root.result != StoreChildFileLoadResult::Loaded || !root.handle) {
+        return false;
+    }
+    const auto children =
+        enumerateNativeChildDirectories(root.handle->get(), options.policy, errors);
+    if (!children) {
+        return false;
+    }
+    if (children->capped) {
+        appendChildDirectoryCapError(root_directory, options.policy, errors);
+        return false;
+    }
+    const ChildFileLoadContext context{root.handle->get(), root_directory, options, errors};
+    for (const QString& child_name : children->names) {
+        const StoreChildFileLoadResult loaded = loadNamedChildFile(context, child_name);
+        if (loaded == StoreChildFileLoadResult::Missing) {
+            continue;
+        }
+        if (loaded != StoreChildFileLoadResult::Loaded) {
+            return false;
+        }
+    }
+    return true;
+}
+
+StoreChildFileLoadResult loadStoreChildDirectoryFile(const QString& root_directory,
+                                                     const QString& child_name,
+                                                     const StoreChildFileLoadOptions& options,
+                                                     QStringList* errors) {
+    if (!validChildOptions(options, errors)) {
+        return StoreChildFileLoadResult::Refused;
+    }
+    if (!validDirectChildName(child_name)) {
+        appendError(errors,
+                    QStringLiteral("Invalid %1 child directory name: %2")
+                        .arg(options.policy.store_name, child_name));
+        return StoreChildFileLoadResult::Refused;
+    }
+    auto root = openChildStoreRoot(root_directory, options, errors);
+    if (root.result != StoreChildFileLoadResult::Loaded || !root.handle) {
+        return root.result;
+    }
+    const ChildFileLoadContext context{root.handle->get(), root_directory, options, errors};
+    return loadNamedChildFile(context, child_name);
+}
+
+StoreDirectoryPin::StoreDirectoryPin(QString path, std::shared_ptr<void> state)
+    : m_path(std::move(path)), m_state(std::move(state)) {}
+
+StoreDirectoryPin pinOrCreateStoreDirectory(const QString& root_directory,
+                                            const QStringList& components,
+                                            int required_component_count,
+                                            const StoreFileLoadHooks& hooks,
+                                            QString* error_message) {
+    QStringList errors;
+    if (!validPinRequest(components, required_component_count)) {
+        setError(error_message, QStringLiteral("Invalid pinned store directory component list"));
+        return {};
+    }
+    auto root = openPinnedRootDirectory(
+        root_directory, QStringLiteral("AI store directory"), true, &errors);
+    if (!root) {
+        setError(error_message, errors.join(QStringLiteral("; ")));
+        return {};
+    }
+    auto state = std::make_shared<NativeDirectoryPinState>();
+    state->handles.emplace_back(std::move(*root));
+    QString final_path = normalizedFinalPath(state->handles.back().get());
+    PinWalkContext context{
+        components, required_component_count, hooks, &errors, state.get(), &final_path};
+    for (int index = 0; index < components.size(); ++index) {
+        if (!pinDirectoryComponent(context, index)) {
+            break;
+        }
+    }
+    if (!errors.isEmpty() || state->handles.size() != static_cast<size_t>(components.size() + 1)) {
+        setError(error_message, errors.join(QStringLiteral("; ")));
+        return {};
+    }
+    setError(error_message, {});
+    return StoreDirectoryPin(final_path, std::move(state));
 }
 
 }  // namespace sak::ai::detail

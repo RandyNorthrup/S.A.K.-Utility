@@ -15,9 +15,10 @@ using namespace sak;
  * @brief Unit tests for MigrationReport.
  *
  * Covers entry management, selection logic, counting,
- * match-rate calculation, and distribution histograms.
- * Tests file export/import are skipped (require I/O);
- * the pure data logic is fully exercised here.
+
+ * * match-rate calculation, distribution histograms, and file export/import through
+ * temporary
+ * directories, including HTML/CSV safety and invalid-import preservation.
  */
 class TestMigrationReport : public QObject {
     Q_OBJECT

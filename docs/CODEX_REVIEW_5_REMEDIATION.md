@@ -1308,6 +1308,38 @@ a parked design, per the bucket convention. Open work is what remains after thos
   657 pending, and 10 self-verifying driver reviews. All changed-file quality checks passed before
   the final gate; full clang-cl coverage build exit 0; Release build exit 0; full CTest 267/267,
   zero failures, 703.58 seconds.
+  SKIP/SILENCE/HANDLE-PINNING WAVE 21: 32 dead non-Windows test branches and 43 host-mounted File
+  Explorer fixture skips are removed. File Explorer now injects an exact temporary local target;
+  its complete panel suite passes 100 tests with zero skipped. A static skip inventory now pins all
+  82 remaining QSKIP sites across 25 files and rejects new, drifted or dead-platform sites even when
+  a branch does not execute. The observed runtime baseline still holds 35 reviewed functions with
+  zero stale entries. Required PowerShell CTests, seven tracked Windows test sources and registry
+  slots now fail configure instead of disappearing conditionally; six independent red drills and
+  an actual missing-PowerShell configure prove those gates.
+  ConversationStore manifest/session enumeration is bounded and handle-pinned through the shared
+  AI store loader. Manifests are opened no-follow, parent-bound, stably read under a 64 KiB cap,
+  schema-checked and bound to their directory ID; list errors return zero partial sessions.
+  Artifact directories are walked one safe component at a time and retained without delete sharing
+  for the active session. Fourteen ConversationStore mutants are permanently killed. One HIGH
+  boundary remains: external screenshot/download/report/app-action writers still consume QString
+  leaf paths, so the retained directory pins cannot prevent final-filename replacement. That needs
+  a handle/callback artifact-write API and caller migration; ConversationStore is not ledger-closed.
+  Four destructive certification runners now contain zero `SilentlyContinue`; expected missing
+  partitions/volumes are classified explicitly, mutations/cache refreshes fail closed, and cleanup
+  reports both the primary and dismount failure. The strict hardware orchestrator no longer exposes
+  a switch that bypasses its mandatory lab-package check. Both regression guards failed against the
+  old behavior and the certification-tool self-test passes. Stale result/signature silences and one
+  dead no-op controller connection are removed across production/tests. Production `Q_UNUSED` is
+  down to one real open bug: the attachment dialog advances scan state on an uncorrelated generic
+  mailbox error while discarding its message; it needs identity-bearing failure signals and a new
+  focused dialog test, not another silence.
+  The mutation ratchet now holds 46 catalogs / 371 mutants (365 killed, six equivalent). The review
+  inventory remains 1,059 units, 657 pending, and 10 self-verifying driver reviews. The complete
+  clang-cl coverage tree builds under `/WX`; its first passes exposed and directly fixed two shared-
+  loader aggregate initializers and one missing test-target dependency. Focused Release build exit
+  0 and focused CTest pass 9/9 in 169.73 seconds.
+  SKIP/SILENCE/HANDLE-PINNING WAVE 21 FINAL GATE: all changed-file hooks passed; full clang-cl
+  coverage build exit 0; Release build exit 0; full CTest 267/267, zero failures, 669.26 seconds.
   SUPPRESSION RE-AUDIT REFRESH, 2026-09-01: core naming remains broadly excluded while 5,271
   findings are tracked as open. The coverage compiler warning silences and unsupported-platform
   runtime branches are closed in Wave 20. The vendored LZFSE target still disables warnings for
@@ -1326,9 +1358,10 @@ a parked design, per the bucket convention. Open work is what remains after thos
   suppressions are re-audited, not inherited as permanent policy. Current batch: all pre-commit
   hooks passed; Release build exit 0; full CTest 265/265, zero failures, 804.48 seconds.
   STILL OPEN: core's 5,271 naming findings; the 294-item `useStlAlgorithm` program;
-  directly closable fixture/resource skips; the two ConversationStore handle-pinning items;
-  certification-script failure silences; broad magic-number exemptions; and the historical VM
-  credential rotation/history-rewrite decision.
+  the artifact-leaf handle/callback writer migration; the attachment-dialog correlated-error test;
+  remaining directly closable fixture/resource skips; broader certification-script cleanup/query
+  silences; broad magic-number exemptions; and the historical VM credential rotation/history-
+  rewrite decision.
   DIRECT-FIX WAVE 1 FINAL GATE: all changed-file pre-commit hooks passed; Release build exit 0;
   full CTest 266/266, zero failures, 820.46 seconds.
   NON-CORE CLANG HEALTH FINAL GATE: all changed-file pre-commit hooks passed; real naming gate

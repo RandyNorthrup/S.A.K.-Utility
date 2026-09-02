@@ -176,7 +176,6 @@ private Q_SLOTS:
     void onLanTransferComplete(sak::LanTransferResult result);
 
     // Controller
-    void onStateChanged(int new_state);
     void onOperationFinished(int finished_state);
     void onError(QString error);
 

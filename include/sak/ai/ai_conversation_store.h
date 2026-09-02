@@ -3,14 +3,19 @@
 
 #pragma once
 
+#include "sak/ai/ai_store_file_loader.h"
 #include "sak/ai/ai_token_usage_tracker.h"
 
 #include <QDateTime>
+#include <QHash>
 #include <QJsonObject>
+#include <QMutex>
 #include <QReadWriteLock>
 #include <QString>
 #include <QStringList>
 #include <QVector>
+
+#include <functional>
 
 // Global-namespace unit-test class, befriended below so it can exercise the pure static
 // path-safety seams (safeArtifactDirectoryName / commandLogPath) directly.
@@ -49,8 +54,9 @@ public:
     [[nodiscard]] static QString defaultRootDirectory();
 
     [[nodiscard]] bool ensureRoot(QString* error_message = nullptr) const;
-    [[nodiscard]] QVector<AiSessionInfo> listSessions() const;
-    [[nodiscard]] QVector<AiSessionInfo> listPromptedSessions() const;
+    [[nodiscard]] QVector<AiSessionInfo> listSessions(QString* error_message = nullptr) const;
+    [[nodiscard]] QVector<AiSessionInfo> listPromptedSessions(
+        QString* error_message = nullptr) const;
     [[nodiscard]] QStringList loadTranscriptLines(const QString& session_id,
                                                   QString* error_message = nullptr) const;
     [[nodiscard]] QString latestAssistantResponseId(const QString& session_id,
@@ -105,6 +111,11 @@ public:
                                   const TokenUsage& session_total,
                                   QString* error_message = nullptr);
 
+    static void setBeforeManifestChildOpenHookForTesting(std::function<void(const QString&)> hook);
+    static void setBeforeManifestFileOpenHookForTesting(std::function<void(const QString&)> hook);
+    static void setBeforeManifestFileReadHookForTesting(std::function<void(const QString&)> hook);
+    static void setBeforeArtifactChildOpenHookForTesting(std::function<void(const QString&)> hook);
+
 private:
     [[nodiscard]] QString sessionPath(const QString& session_id) const;
     [[nodiscard]] QString currentSessionPath() const;
@@ -112,7 +123,9 @@ private:
     [[nodiscard]] bool appendJsonLine(const QString& filename,
                                       QJsonObject object,
                                       QString* error_message = nullptr) const;
-    [[nodiscard]] static AiSessionInfo readManifest(const QString& session_path);
+    [[nodiscard]] QString pinnedArtifactDirectory(const QString& subdir,
+                                                  QString* error_message) const;
+    void clearArtifactDirectoryPins() const;
     [[nodiscard]] static QJsonObject usageToJson(const TokenUsage& usage);
     [[nodiscard]] static QString safeArtifactDirectoryName(const QString& title,
                                                            const QString& fallback_id);
@@ -140,6 +153,8 @@ private:
     // startSession) do not self-deadlock. Readers share; writers are exclusive.
     // m_root_dir is set once in the constructor and never reassigned, so it is read lock-free.
     mutable QReadWriteLock m_lock{QReadWriteLock::Recursive};
+    mutable QMutex m_artifact_pin_mutex;
+    mutable QHash<QString, detail::StoreDirectoryPin> m_artifact_directory_pins;
 };
 
 }  // namespace sak::ai

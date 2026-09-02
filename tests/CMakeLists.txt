@@ -407,26 +407,25 @@ target_link_libraries(partition_filesystem_probe_certifier PRIVATE
 target_include_directories(partition_filesystem_probe_certifier PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
-if(WIN32)
-    find_program(SAK_TEST_POWERSHELL_PATH
-        NAMES pwsh.exe pwsh powershell.exe powershell
-        HINTS
-            "$ENV{ProgramFiles}/PowerShell/7"
-            "$ENV{SystemRoot}/System32/WindowsPowerShell/v1.0")
-    if(SAK_TEST_POWERSHELL_PATH)
-        add_test(NAME test_partition_filesystem_probe_certifier
-                 COMMAND "${SAK_TEST_POWERSHELL_PATH}"
-                         -NoProfile
-                         -ExecutionPolicy Bypass
-                         -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_filesystem_probe_certifier.ps1"
-                         -CertifierPath "$<TARGET_FILE:partition_filesystem_probe_certifier>"
-                         -OutputRoot "${TEST_OUTPUT_DIR}/partition_filesystem_probe_certifier"
-                 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/..")
-        message(STATUS "Added certification helper test: test_partition_filesystem_probe_certifier")
-    else()
-        message(WARNING "PowerShell not found; skipping partition_filesystem_probe_certifier CTest hook")
-    endif()
+find_program(SAK_TEST_POWERSHELL_PATH
+    NAMES pwsh.exe pwsh powershell.exe powershell
+    HINTS
+        "$ENV{ProgramFiles}/PowerShell/7"
+        "$ENV{SystemRoot}/System32/WindowsPowerShell/v1.0")
+if(NOT SAK_TEST_POWERSHELL_PATH OR NOT EXISTS "${SAK_TEST_POWERSHELL_PATH}")
+    message(FATAL_ERROR
+            "PowerShell is required for registered filesystem certification and writer tests; "
+            "refusing to configure a suite that silently omits them.")
 endif()
+add_test(NAME test_partition_filesystem_probe_certifier
+         COMMAND "${SAK_TEST_POWERSHELL_PATH}"
+                 -NoProfile
+                 -ExecutionPolicy Bypass
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_filesystem_probe_certifier.ps1"
+                 -CertifierPath "$<TARGET_FILE:partition_filesystem_probe_certifier>"
+                 -OutputRoot "${TEST_OUTPUT_DIR}/partition_filesystem_probe_certifier"
+         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/..")
+message(STATUS "Added certification helper test: test_partition_filesystem_probe_certifier")
 message(STATUS "Added certification helper: partition_filesystem_probe_certifier")
 
 # file_management_live_certifier - live APFS/HFS File Management bridge proof
@@ -514,69 +513,36 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/certification/flash_live_certif
     message(STATUS "Added certification helper: flash_live_certifier")
 endif()
 
-if(TARGET file_management_live_certifier AND WIN32)
-    find_program(SAK_LIVE_CERT_TEST_POWERSHELL_PATH
-        NAMES pwsh.exe pwsh powershell.exe powershell
-        HINTS
-            "$ENV{ProgramFiles}/PowerShell/7"
-            "$ENV{SystemRoot}/System32/WindowsPowerShell/v1.0")
-    if(SAK_LIVE_CERT_TEST_POWERSHELL_PATH)
-        add_test(NAME test_file_management_live_certifier_gate
-                 COMMAND "${SAK_LIVE_CERT_TEST_POWERSHELL_PATH}"
-                         -NoProfile
-                         -ExecutionPolicy Bypass
-                         -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_file_management_live_certifier_gate.ps1"
-                         -CertifierPath "$<TARGET_FILE:file_management_live_certifier>"
-                         -OutputRoot "${TEST_OUTPUT_DIR}/file_management_live_certifier_gate"
-                 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/..")
-        message(STATUS "Added live-certifier gate self-test: test_file_management_live_certifier_gate")
-    else()
-        message(WARNING "PowerShell not found; skipping live-certifier gate self-test")
-    endif()
-endif()
+add_test(NAME test_file_management_live_certifier_gate
+         COMMAND "${SAK_TEST_POWERSHELL_PATH}"
+                 -NoProfile
+                 -ExecutionPolicy Bypass
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_file_management_live_certifier_gate.ps1"
+                 -CertifierPath "$<TARGET_FILE:file_management_live_certifier>"
+                 -OutputRoot "${TEST_OUTPUT_DIR}/file_management_live_certifier_gate"
+         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/..")
+message(STATUS "Added live-certifier gate self-test: test_file_management_live_certifier_gate")
 
-if(TARGET sak_apfs_writer_cli AND WIN32)
-    find_program(SAK_APFS_CLI_TEST_POWERSHELL_PATH
-        NAMES pwsh.exe pwsh powershell.exe powershell
-        HINTS
-            "$ENV{ProgramFiles}/PowerShell/7"
-            "$ENV{SystemRoot}/System32/WindowsPowerShell/v1.0")
-    if(SAK_APFS_CLI_TEST_POWERSHELL_PATH)
-        add_test(NAME test_sak_apfs_writer_cli
-                 COMMAND "${SAK_APFS_CLI_TEST_POWERSHELL_PATH}"
-                         -NoProfile
-                         -ExecutionPolicy Bypass
-                         -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_sak_apfs_writer_cli.ps1"
-                         -CliPath "$<TARGET_FILE:sak_apfs_writer_cli>"
-                         -OutputRoot "${TEST_OUTPUT_DIR}/sak_apfs_writer_cli"
-                 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/..")
-        message(STATUS "Added APFS writer CLI self-test: test_sak_apfs_writer_cli")
-    else()
-        message(WARNING "PowerShell not found; skipping sak_apfs_writer_cli self-test")
-    endif()
-endif()
+add_test(NAME test_sak_apfs_writer_cli
+         COMMAND "${SAK_TEST_POWERSHELL_PATH}"
+                 -NoProfile
+                 -ExecutionPolicy Bypass
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_sak_apfs_writer_cli.ps1"
+                 -CliPath "$<TARGET_FILE:sak_apfs_writer_cli>"
+                 -OutputRoot "${TEST_OUTPUT_DIR}/sak_apfs_writer_cli"
+         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/..")
+message(STATUS "Added APFS writer CLI self-test: test_sak_apfs_writer_cli")
 
-if(TARGET sak_hfs_writer_cli AND WIN32)
-    find_program(SAK_HFS_CLI_TEST_POWERSHELL_PATH
-        NAMES pwsh.exe pwsh powershell.exe powershell
-        HINTS
-            "$ENV{ProgramFiles}/PowerShell/7"
-            "$ENV{SystemRoot}/System32/WindowsPowerShell/v1.0")
-    if(SAK_HFS_CLI_TEST_POWERSHELL_PATH)
-        add_test(NAME test_sak_hfs_writer_cli
-                 COMMAND "${SAK_HFS_CLI_TEST_POWERSHELL_PATH}"
-                         -NoProfile
-                         -ExecutionPolicy Bypass
-                         -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_sak_hfs_writer_cli.ps1"
-                         -CliPath "$<TARGET_FILE:sak_hfs_writer_cli>"
-                         -CertifierPath "$<TARGET_FILE:partition_filesystem_probe_certifier>"
-                         -OutputRoot "${TEST_OUTPUT_DIR}/sak_hfs_writer_cli"
-                 WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/..")
-        message(STATUS "Added HFS writer CLI self-test: test_sak_hfs_writer_cli")
-    else()
-        message(WARNING "PowerShell not found; skipping sak_hfs_writer_cli self-test")
-    endif()
-endif()
+add_test(NAME test_sak_hfs_writer_cli
+         COMMAND "${SAK_TEST_POWERSHELL_PATH}"
+                 -NoProfile
+                 -ExecutionPolicy Bypass
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_sak_hfs_writer_cli.ps1"
+                 -CliPath "$<TARGET_FILE:sak_hfs_writer_cli>"
+                 -CertifierPath "$<TARGET_FILE:partition_filesystem_probe_certifier>"
+                 -OutputRoot "${TEST_OUTPUT_DIR}/sak_hfs_writer_cli"
+         WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/..")
+message(STATUS "Added HFS writer CLI self-test: test_sak_hfs_writer_cli")
 
 # test_partition_manager_panel - GUI chrome guard for AOMEI-style layout
 add_executable(test_partition_manager_panel
@@ -2036,12 +2002,10 @@ if(SAK_ENABLE_AI_ASSISTANT)
     target_compile_definitions(test_ai_assistant_panel_tool_dispatch PRIVATE
         SAK_ENABLE_AI_ASSISTANT=$<BOOL:${SAK_ENABLE_AI_ASSISTANT}>
     )
-    # AUTOMOC forwards target compile definitions to moc (not the builtin _WIN32), so the
-    # Windows-only browser-extension button test slot registers with QtTest on Windows.
-    if(WIN32)
-        target_compile_definitions(test_ai_assistant_panel_tool_dispatch PRIVATE
-            SAK_WIN_REGISTRY_TESTS)
-    endif()
+    # AUTOMOC forwards target compile definitions to moc (not the builtin _WIN32). The product
+    # configures only on Windows, so register the browser-extension button slot unconditionally.
+    target_compile_definitions(test_ai_assistant_panel_tool_dispatch PRIVATE
+        SAK_WIN_REGISTRY_TESTS)
     target_link_libraries(test_ai_assistant_panel_tool_dispatch PRIVATE
         Qt6::Core Qt6::CorePrivate Qt6::Widgets Qt6::Concurrent Qt6::Network Qt6::Xml
         Qt6::Test Threads::Threads ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA sak_lzfse
@@ -2907,7 +2871,9 @@ message(STATUS "Added unit test: test_win32_mcp_text_match")
 # test_win32_mcp_key_chord --- deterministic coverage of the send_keys chord parser: correct VK
 # mapping, multiple modifiers, named/single keys, and refusal of an unknown modifier or main key so
 # the assistant never injects an unintended keystroke. Windows-only (the parser maps to Win32 VKs).
-if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_key_chord.cpp")
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_key_chord.cpp")
+    message(FATAL_ERROR "Missing tracked test source: unit/test_win32_mcp_key_chord.cpp")
+endif()
     add_executable(test_win32_mcp_key_chord
         unit/test_win32_mcp_key_chord.cpp
         ../src/win32mcp/win32_mcp_key_chord.cpp
@@ -2927,13 +2893,14 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_key_chord.c
              -o "${TEST_OUTPUT_DIR}/test_win32_mcp_key_chord.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_win32_mcp_key_chord")
-endif()
 
 # test_win32_mcp_input_plan --- deterministic coverage of the SendInput decision logic: absolute-
 # coordinate mapping, virtual-screen bounds check (reject a click the OS would clamp to a desktop
 # edge), mouse-button mapping, and the type_text keystroke plan (CRLF collapse, surrogate pairs).
 # Windows-only (maps to Win32 MOUSEEVENTF_*/VK_* constants).
-if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_input_plan.cpp")
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_input_plan.cpp")
+    message(FATAL_ERROR "Missing tracked test source: unit/test_win32_mcp_input_plan.cpp")
+endif()
     add_executable(test_win32_mcp_input_plan
         unit/test_win32_mcp_input_plan.cpp
         ../src/win32mcp/win32_mcp_input_plan.cpp
@@ -2953,7 +2920,6 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_input_plan.
              -o "${TEST_OUTPUT_DIR}/test_win32_mcp_input_plan.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_win32_mcp_input_plan")
-endif()
 
 # test_win32_mcp_uia_ref --- deterministic coverage of the UIA ref-drift guard that protects
 # uia_click_control / uia_get_control_value / dismiss_dialog from acting on a stale ref: identity is
@@ -3294,9 +3260,11 @@ add_executable(test_ai_conversation_store
     ../src/ai/ai_conversation_store.cpp
     ../src/ai/ai_credential_store.cpp
     ../src/ai/ai_secret_redaction.cpp
+    ../src/ai/ai_store_file_loader.cpp
     ../src/ai/ai_paths.cpp
     ../src/ai/ai_token_usage_tracker.cpp
     ../include/sak/ai/ai_conversation_store.h
+    ../include/sak/ai/ai_store_file_loader.h
     ../include/sak/app_paths.h
     ../include/sak/ai/ai_paths.h
     ../include/sak/ai/ai_token_usage_tracker.h
@@ -3771,12 +3739,14 @@ add_executable(test_ai_tool_result_recorder
     ../src/ai/ai_conversation_store.cpp
     ../src/ai/ai_credential_store.cpp
     ../src/ai/ai_secret_redaction.cpp
+    ../src/ai/ai_store_file_loader.cpp
     ../src/ai/ai_paths.cpp
     ../src/ai/ai_tool_result_recorder.cpp
     ../src/core/app_paths.cpp
     ../include/sak/ai/ai_conversation_store.h
     ../include/sak/ai/ai_credential_store.h
     ../include/sak/ai/ai_paths.h
+    ../include/sak/ai/ai_store_file_loader.h
     ../include/sak/ai/ai_tool_result_recorder.h
     ../include/sak/app_paths.h
 )
@@ -5926,7 +5896,9 @@ message(STATUS "Added unit test: test_apfs_free_queue_guard")
 # whitespace-only text, relative paths, and folders that overlap a selected source profile are
 # refused outright (header-only guard; pure string/path logic, no filesystem access). Windows-only
 # because absoluteness and case-insensitive path comparison are platform behavior.
-if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_backup_destination_guard.cpp")
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_backup_destination_guard.cpp")
+    message(FATAL_ERROR "Missing tracked test source: unit/test_backup_destination_guard.cpp")
+endif()
     add_executable(test_backup_destination_guard
         unit/test_backup_destination_guard.cpp
     )
@@ -5944,7 +5916,6 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_backup_destination_gu
              -o "${TEST_OUTPUT_DIR}/test_backup_destination_guard.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_backup_destination_guard")
-endif()
 
 # test_leftover_cleanup_guard --- fail-closed target screens behind software.clean_leftovers
 # (header-only guard; pure, no filesystem/registry mutation).
@@ -5968,7 +5939,9 @@ message(STATUS "Added unit test: test_leftover_cleanup_guard")
 
 # test_win32_mcp_server --- native win32 MCP server: JSON-RPC dispatch + tool catalog/invocation
 # (Windows only; shcore for GetDpiForMonitor in list_monitors).
-if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_server.cpp")
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_server.cpp")
+    message(FATAL_ERROR "Missing tracked test source: unit/test_win32_mcp_server.cpp")
+endif()
     # The dispatch now references BrowserControl (browser_* tools merged into
     # tools/list and routed on tools/call), so the server test links the browser
     # facade and its transitive transport/session/contract deps.
@@ -6014,7 +5987,6 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_win32_mcp_server.cpp"
              -o "${TEST_OUTPUT_DIR}/test_win32_mcp_server.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_win32_mcp_server")
-endif()
 
 # test_browser_contract --- pure DOM-snapshot renderer + browser tool catalog + tool->extension
 # command translation. OS-agnostic (Qt Core only, no windows.h), so it builds and runs on any host.
@@ -6109,11 +6081,9 @@ target_include_directories(test_browser_extension_installer PRIVATE
 target_compile_definitions(test_browser_extension_installer PRIVATE
     SAK_REPO_ROOT="${CMAKE_SOURCE_DIR}"
 )
-# AUTOMOC forwards target compile definitions to moc (unlike the builtin _WIN32),
-# so the Windows-only registry test slots register with QtTest on Windows.
-if(WIN32)
-    target_compile_definitions(test_browser_extension_installer PRIVATE SAK_WIN_REGISTRY_TESTS)
-endif()
+# AUTOMOC forwards target compile definitions to moc (unlike the builtin _WIN32). The product
+# configures only on Windows, so register the registry slots unconditionally.
+target_compile_definitions(test_browser_extension_installer PRIVATE SAK_WIN_REGISTRY_TESTS)
 add_test(NAME test_browser_extension_installer COMMAND test_browser_extension_installer
          -o "${TEST_OUTPUT_DIR}/test_browser_extension_installer.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
@@ -6122,7 +6092,9 @@ message(STATUS "Added unit test: test_browser_extension_installer")
 # test_browser_bridge_security --- the load-bearing pipe security + discovery primitives
 # (current-user-SID DACL + Medium NO_WRITE_UP label, per-user/session nonce pipe name,
 # rendezvous record). Windows only (Win32 SID/SDDL APIs); links advapi32 via PLATFORM_LIBS.
-if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_bridge_security.cpp")
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_bridge_security.cpp")
+    message(FATAL_ERROR "Missing tracked test source: unit/test_browser_bridge_security.cpp")
+endif()
     add_executable(test_browser_bridge_security
         unit/test_browser_bridge_security.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_bridge_security.cpp
@@ -6142,12 +6114,13 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_bridge_securi
              -o "${TEST_OUTPUT_DIR}/test_browser_bridge_security.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_browser_bridge_security")
-endif()
 
 # test_browser_bridge_pipe --- the bridge pipe SERVER (hardened create, accept thread,
 # overlapped IO + deadline, hello/welcome handshake, peer verify) exercised end-to-end
 # by an in-process client. Windows only; links the security + native-messaging codecs.
-if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_bridge_pipe.cpp")
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_bridge_pipe.cpp")
+    message(FATAL_ERROR "Missing tracked test source: unit/test_browser_bridge_pipe.cpp")
+endif()
     add_executable(test_browser_bridge_pipe
         unit/test_browser_bridge_pipe.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_bridge_pipe.cpp
@@ -6169,14 +6142,15 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_bridge_pipe.c
              -o "${TEST_OUTPUT_DIR}/test_browser_bridge_pipe.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_browser_bridge_pipe")
-endif()
 
 # test_browser_bridge_relay --- the Chrome-side RELAY (rendezvous discovery + server
 # code-identity verify + hello/welcome handshake + id-transparent frame pump) and the
 # MCP-side BrowserControl facade, exercised end-to-end against a real in-process pipe
 # server with a fake extension. Windows only; links relay + control + transport +
 # session + contract.
-if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_bridge_relay.cpp")
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_bridge_relay.cpp")
+    message(FATAL_ERROR "Missing tracked test source: unit/test_browser_bridge_relay.cpp")
+endif()
     add_executable(test_browser_bridge_relay
         unit/test_browser_bridge_relay.cpp
         ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_bridge_relay.cpp
@@ -6203,7 +6177,6 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_bridge_relay.
              -o "${TEST_OUTPUT_DIR}/test_browser_bridge_relay.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_browser_bridge_relay")
-endif()
 
 # test_advanced_uninstall_types - struct defaults, enums, value semantics
 add_executable(test_advanced_uninstall_types

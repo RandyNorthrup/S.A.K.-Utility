@@ -1253,8 +1253,7 @@ private:
         pump();
     }
 
-    void onSocketError(QAbstractSocket::SocketError error) {
-        Q_UNUSED(error)
+    void onSocketError(QAbstractSocket::SocketError) {
         // Every pre-finish socket error (including RemoteHostClosedError -- a peer that closed
         // early) is a real failure: the transfer never reached its measured duration. Once
         // finish() has run, m_finished short-circuits the errors our own disconnect emits.

@@ -37,6 +37,12 @@ constexpr uint32_t kRootPcHidRootForTest = 0x20;
 constexpr uint64_t kRootPcDataBidForTest = 0x1000;
 constexpr int kOffByFive = 5;  // a small nonzero delta to mis-declare a 4k block's inflated size
 
+bool itemDetailReadOutcomeIsValid(PstParser& parser, const uint64_t node_id) {
+    const auto detail = parser.readItemDetail(node_id);
+    return detail.has_value() ? detail->node_id == node_id
+                              : detail.error() != sak::error_code::success;
+}
+
 struct PermuteBytePair {
     uint8_t plain;
     uint8_t encoded;
@@ -1612,7 +1618,8 @@ void TestPstParser::realEmailFilesParseSafely() {
             // compare -- what would fail is a crash, an out-of-bounds read under
             // ASAN, or a hang inside the data-tree walk.
             if (!normal->isEmpty()) {
-                [[maybe_unused]] const auto detail = parser.readItemDetail(normal->first().node_id);
+                const uint64_t node_id = normal->first().node_id;
+                QVERIFY(itemDetailReadOutcomeIsValid(parser, node_id));
             }
         }
         parser.close();

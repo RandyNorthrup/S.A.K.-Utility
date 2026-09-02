@@ -252,6 +252,15 @@ function Assert-DisposableDisk {
     }
 }
 
+function Dismount-DisposableVhd {
+    param([Parameter(Mandatory = $true)] [string]$Path)
+
+    $image = Get-DiskImage -ImagePath $Path -ErrorAction Stop
+    if ($image.Attached) {
+        Dismount-DiskImage -ImagePath $Path -ErrorAction Stop | Out-Null
+    }
+}
+
 function New-DisposableVhdDisk {
     $path = Join-Path $Script:RunRoot "cluster-size.vhdx"
     Assert-PathUnderRoot -Path $path -Root $Script:RunRoot
@@ -281,8 +290,14 @@ function New-DisposableVhdDisk {
     }
     catch {
         # Never leave a partially prepared VHD attached when validation fails.
-        Dismount-DiskImage -ImagePath $path -ErrorAction SilentlyContinue | Out-Null
-        throw
+        $preparationError = $_
+        try {
+            Dismount-DisposableVhd -Path $path
+        }
+        catch {
+            throw "VHD preparation failed: $($preparationError.Exception.Message) Cleanup dismount also failed: $($_.Exception.Message)"
+        }
+        throw $preparationError
     }
 
     [pscustomobject]@{
@@ -296,7 +311,7 @@ function Remove-DisposableVhdDisk {
     param([Parameter(Mandatory = $true)] [object]$Vhd)
 
     try {
-        Dismount-DiskImage -ImagePath $Vhd.path -ErrorAction Stop | Out-Null
+        Dismount-DisposableVhd -Path $Vhd.path
     }
     finally {
         if (-not $KeepVhd -and (Test-Path -LiteralPath $Vhd.path)) {
@@ -308,7 +323,7 @@ function Remove-DisposableVhdDisk {
 }
 
 function Get-FreeCertificationDriveLetter {
-    $used = @(Get-Volume -ErrorAction SilentlyContinue |
+    $used = @(Get-Volume -ErrorAction Stop |
         Where-Object { -not [string]::IsNullOrWhiteSpace($_.DriveLetter) } |
         ForEach-Object { $_.DriveLetter.ToString().ToUpperInvariant() })
     foreach ($letter in @("T", "U", "V", "W", "X", "Y", "Z")) {

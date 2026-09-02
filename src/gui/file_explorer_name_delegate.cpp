@@ -205,10 +205,8 @@ void FileExplorerCardDelegate::paint(QPainter* painter,
 }
 
 QWidget* FileExplorerNameDelegate::createEditor(QWidget* parent,
-                                                const QStyleOptionViewItem& option,
-                                                const QModelIndex& index) const {
-    Q_UNUSED(option);
-    Q_UNUSED(index);
+                                                const QStyleOptionViewItem&,
+                                                const QModelIndex&) const {
     return new FileExplorerRenameLineEdit(parent);
 }
 

@@ -539,7 +539,12 @@ void resetPaneNavigationPreservingView(FileExplorerPaneState* state) {
 
 }  // namespace
 
-FileManagementExplorerPanel::FileManagementExplorerPanel(QWidget* parent) : QWidget(parent) {
+FileManagementExplorerPanel::FileManagementExplorerPanel(QWidget* parent)
+    : FileManagementExplorerPanel(FileManagementFileSystemBridge::mountedTargets(), parent) {}
+
+FileManagementExplorerPanel::FileManagementExplorerPanel(
+    QVector<FileManagementTarget> initial_targets, QWidget* parent)
+    : QWidget(parent) {
     m_status_center = new FileExplorerStatusCenterModel(this);
     setupUi();
     loadSidebarState();
@@ -547,7 +552,7 @@ FileManagementExplorerPanel::FileManagementExplorerPanel(QWidget* parent) : QWid
     // ascending); without this the listing shows raw enumeration order until
     // the user first touches a header or the sort flyout.
     applySortOrder(FileExplorerItemModel::NameColumn, Qt::AscendingOrder);
-    setTargets(FileManagementFileSystemBridge::mountedTargets());
+    setTargets(std::move(initial_targets));
 }
 
 FileManagementExplorerPanel::~FileManagementExplorerPanel() {

@@ -1,5 +1,5 @@
 {
-  "head_commit": "ba7c02a0a3bb88f00d84cf065565517d608262b2",
+  "head_commit": "3defcf5bde8ed8c0d4a375542f10cfda7dcdd702",
   "unit_rule": "include/**.h|.hpp, src/**.cpp|.h|.hpp, tests/**.cpp|.h|.mjs, scripts/**.py|.ps1|.sh, browser/**.js",
   "units": {
     "browser/extension/background.js": {

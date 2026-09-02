@@ -157,12 +157,26 @@ function Resolve-ApprovedTool {
     }
 }
 
+function Get-CertificationPartitions {
+    param([Parameter(Mandatory = $true)] [int]$DiskNumber)
+
+    try {
+        return @(Get-Partition -DiskNumber $DiskNumber -ErrorAction Stop)
+    }
+    catch {
+        if ($_.CategoryInfo.Category -eq [System.Management.Automation.ErrorCategory]::ObjectNotFound) {
+            return @()
+        }
+        throw
+    }
+}
+
 function Get-DiskSnapshot {
     param([Parameter(Mandatory = $true)] [int]$Number)
 
     $disk = Get-Disk -Number $Number -ErrorAction Stop
     $partitions = @()
-    foreach ($partition in @(Get-Partition -DiskNumber $Number -ErrorAction SilentlyContinue | Sort-Object Offset)) {
+    foreach ($partition in @(Get-CertificationPartitions -DiskNumber $Number | Sort-Object Offset)) {
         $partitions += [pscustomobject]@{
             partition_number = [int]$partition.PartitionNumber
             drive_letter = if ($partition.DriveLetter) { [string]$partition.DriveLetter } else { "" }
@@ -213,7 +227,7 @@ function Clear-DisposableDisk {
 
     Assert-DisposableDisk -Number $Number
     $disk = Get-Disk -Number $Number -ErrorAction Stop
-    $partitions = @(Get-Partition -DiskNumber $Number -ErrorAction SilentlyContinue)
+    $partitions = @(Get-CertificationPartitions -DiskNumber $Number)
     if ($disk.PartitionStyle -eq "RAW" -and $partitions.Count -eq 0) {
         return "Disk $Number already RAW."
     }
@@ -312,7 +326,7 @@ try {
 
     $grownSize = [uint64]$partition.Size + [uint64]$GrowByBytes
     Resize-Partition -DiskNumber $DiskNumber -PartitionNumber $partition.PartitionNumber -Size $grownSize
-    Update-HostStorageCache -ErrorAction SilentlyContinue
+    Update-HostStorageCache -ErrorAction Stop
     Invoke-NativeCommand -Name "resize2fs-grow-$FileSystem" -FilePath $resize2fs.path -Arguments @($rawTarget) | Out-Null
     Invoke-NativeCommand -Name "e2fsck-readonly-after-grow-$FileSystem" -FilePath $e2fsck.path -Arguments @("-n", "-f", $rawTarget) | Out-Null
 
@@ -327,7 +341,7 @@ try {
     Invoke-NativeCommand -Name "e2fsck-repair-before-shrink-$FileSystem" -FilePath $e2fsck.path -Arguments @("-p", "-f", $rawTarget) -AcceptedExitCodes @(0, 1) | Out-Null
     Invoke-NativeCommand -Name "resize2fs-shrink-$FileSystem" -FilePath $resize2fs.path -Arguments @("-p", $rawTarget, "$($shrunkKilobytes)K") | Out-Null
     Resize-Partition -DiskNumber $DiskNumber -PartitionNumber $partition.PartitionNumber -Size $shrunkSize
-    Update-HostStorageCache -ErrorAction SilentlyContinue
+    Update-HostStorageCache -ErrorAction Stop
     Invoke-NativeCommand -Name "e2fsck-readonly-after-shrink-$FileSystem" -FilePath $e2fsck.path -Arguments @("-n", "-f", $rawTarget) | Out-Null
 
     $after = Get-DiskSnapshot -Number $DiskNumber

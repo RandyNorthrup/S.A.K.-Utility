@@ -76,7 +76,6 @@ public Q_SLOTS:
     void onClearClicked();
     void onSaveClicked();
     void onFilterChanged(int index);
-    void onSearchTextChanged(const QString& text);
     void onAutoScrollToggled(bool checked);
 
 private:

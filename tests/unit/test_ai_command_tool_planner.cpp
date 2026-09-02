@@ -64,9 +64,6 @@ void AiCommandToolPlannerTests::buildsProcessPlanWithProgramPreview() {
 
     QCOMPARE(plan.shell_label, QStringLiteral("Process"));
     QCOMPARE(plan.request.arguments, QStringList{QStringLiteral("a.txt")});
-#ifndef Q_OS_WIN
-    QSKIP("bare-name resolution to an absolute path is Windows-specific");
-#else
     // F43: the bare program name is resolved to an absolute, verified path AT PLAN TIME, and
     // both the stored request AND the preview (the text the human approves) name that resolved
     // binary -- not the bare string the broker would otherwise resolve against the process
@@ -86,7 +83,6 @@ void AiCommandToolPlannerTests::buildsProcessPlanWithProgramPreview() {
                             "commands (ping, ipconfig, systeminfo, tasklist, netstat, whoami, "
                             "Get-*/Test-* reads, ...); this command is not on the read-only "
                             "allowlist"));
-#endif
 }
 
 void AiCommandToolPlannerTests::rejectsRelativeProcessProgram() {

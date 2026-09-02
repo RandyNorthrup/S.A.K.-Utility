@@ -1866,10 +1866,6 @@ void NetworkDiagnosticPanel::connectConnectionsContextSignals() {
 void NetworkDiagnosticPanel::connectControllerCoreSignals() {
     Q_ASSERT(m_controller);
     connect(m_controller.get(),
-            &NetworkDiagnosticController::stateChanged,
-            this,
-            &NetworkDiagnosticPanel::onStateChanged);
-    connect(m_controller.get(),
             &NetworkDiagnosticController::operationFinished,
             this,
             &NetworkDiagnosticPanel::onOperationFinished);
@@ -4569,16 +4565,6 @@ void NetworkDiagnosticPanel::onLanTransferComplete(LanTransferResult result) {
             .arg(result.avgSpeedMbps, 0, 'f', 1)
             .arg(result.avgSpeedMbps / kBitsPerByteF, 0, 'f', kDecimalPrecisionOne)
             .arg(result.peakSpeedMbps, 0, 'f', 1));
-}
-
-// -- Controller State --
-
-void NetworkDiagnosticPanel::onStateChanged(int new_state) {
-    Q_UNUSED(new_state);
-    // With concurrent operations, per-operation button management is handled
-    // by operationFinished and the individual completion signal handlers.
-    // This slot is kept for backward compatibility but does not re-enable
-    // all buttons globally -- that would interfere with other running ops.
 }
 
 void NetworkDiagnosticPanel::resetDiagnosticButtons(int finished_state) {

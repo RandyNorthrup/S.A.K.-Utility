@@ -1143,13 +1143,12 @@ void DiagnosticBenchmarkPanel::onQuickActionClicked(QuickAction* action) {
     m_qa_controller->executeAction(action->name(), false);
 }
 
-void DiagnosticBenchmarkPanel::onQuickActionProgress(QuickAction* action,
+void DiagnosticBenchmarkPanel::onQuickActionProgress(QuickAction*,
                                                      const QString& message,
                                                      int progress) {
     // `action` is part of QuickActionController::actionExecutionProgress's signature
     // and is not needed here; this slot reports the message and the bar only. It is
     // never dereferenced, so there is nothing to guard.
-    Q_UNUSED(action);
     Q_EMIT statusMessage(message, sak::kTimerStatusMessageMs);
     m_qa_progress_bar->setValue(progress);
 }

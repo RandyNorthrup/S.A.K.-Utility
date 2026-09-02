@@ -74,8 +74,7 @@ constexpr std::array<FileExplorerViewMode, 5> kLayoutRing{FileExplorerViewMode::
 
 }  // namespace
 
-int fileExplorerSizeKindMin(const FileExplorerViewMode mode) {
-    Q_UNUSED(mode);
+int fileExplorerSizeKindMin(const FileExplorerViewMode) {
     return 1;
 }
 
