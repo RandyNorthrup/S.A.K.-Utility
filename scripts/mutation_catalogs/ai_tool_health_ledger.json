@@ -1,0 +1,64 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_ai_tool_health_ledger",
+  "ctest_regex": "^test_ai_tool_health_ledger$",
+  "mutants": [
+    {
+      "id": "stable-read-size-check-inverted",
+      "file": "src/ai/ai_tool_health_ledger.cpp",
+      "find": "*size_before != *size_after ||",
+      "replace": "*size_before == *size_after &&",
+      "expect": "killed",
+      "why": "loadRejectsFileTruncatedDuringRead changes the pinned file after its size snapshot and requires the exact changed-during-read refusal."
+    },
+    {
+      "id": "read-parent-identity-refusal-weakened",
+      "file": "src/ai/ai_tool_health_ledger.cpp",
+      "find": "    const bool file_parent_matches = ledgerFileParentMatches(file.get(), directory_handle);",
+      "replace": "    const bool file_parent_matches = true;",
+      "expect": "killed",
+      "why": "loadRejectsDirectorySwapBeforeFileOpen replaces the validated directory with a junction before CreateFileW; the opened file parent must still be the pinned root."
+    },
+    {
+      "id": "write-directory-allows-delete-sharing",
+      "file": "src/ai/ai_tool_health_ledger.cpp",
+      "find": "                        (prevent_rename ? 0U : FILE_SHARE_DELETE);",
+      "replace": "                        (FILE_SHARE_DELETE | (prevent_rename ? FILE_SHARE_READ : 0U));",
+      "expect": "killed",
+      "why": "savePinsDirectoryAgainstSwap requires the open destination directory to block a rename/junction replacement for the whole write and commit."
+    },
+    {
+      "id": "oversize-save-payload-admitted",
+      "file": "src/ai/ai_tool_health_ledger.cpp",
+      "find": "    if (payload.size() > kAiToolHealthMaxLedgerBytes) {",
+      "replace": "    if (payload.size() > kAiToolHealthMaxLedgerBytes && path.isEmpty()) {",
+      "expect": "killed",
+      "why": "saveRejectsPayloadBeyondLoadCeiling fills all bounded records and requires save to refuse a payload its own loader cannot admit."
+    },
+    {
+      "id": "valid-nonobject-root-misdiagnosed",
+      "file": "src/ai/ai_tool_health_ledger.cpp",
+      "find": "    if (!document->isObject()) {",
+      "replace": "    if (document->isNull()) {",
+      "expect": "killed",
+      "why": "loadRejectsNonObjectRootExplicitly requires valid array JSON to report the root-shape error, never QJsonParseError::NoError or a later envelope error."
+    },
+    {
+      "id": "disable-causality-check-skipped",
+      "file": "src/ai/ai_tool_health_ledger.cpp",
+      "find": "    if (record.disabled_until_utc.isValid()) {",
+      "replace": "    if (record.disabled_until_utc.isValid() && record.last_failure_utc.isValid()) {",
+      "expect": "killed",
+      "why": "loadRejectsForgedDisableWithoutFailure supplies a future disable with no failure timestamp or threshold count and requires whole-ledger refusal."
+    },
+    {
+      "id": "snapshot-record-order-descending",
+      "file": "src/ai/ai_tool_health_ledger.cpp",
+      "find": "    keys.sort(Qt::CaseSensitive);",
+      "replace": "    std::ranges::sort(keys, std::greater{});",
+      "expect": "killed",
+      "why": "snapshotOrdersRecordsByKey requires alpha then zeta regardless of QHash iteration order."
+    }
+  ]
+}

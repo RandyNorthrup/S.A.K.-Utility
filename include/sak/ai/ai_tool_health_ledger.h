@@ -9,6 +9,10 @@
 #include <QMutex>
 #include <QString>
 
+#include <functional>
+
+class AiToolHealthLedgerTests;
+
 namespace sak::ai {
 
 inline constexpr int kAiToolHealthDefaultSuppressAfterFailures = 3;
@@ -62,6 +66,8 @@ struct AiToolAvailability {
 };
 
 class AiToolHealthLedger {
+    friend class ::AiToolHealthLedgerTests;
+
 public:
     explicit AiToolHealthLedger(
         int suppress_after_failures = kAiToolHealthDefaultSuppressAfterFailures,
@@ -88,6 +94,9 @@ public:
     [[nodiscard]] static QString classifyResult(const QJsonObject& result);
 
 private:
+    static void setBeforeFileOpenHookForTesting(std::function<void(const QString&)> hook);
+    static void setBeforeFileReadHookForTesting(std::function<void(const QString&)> hook);
+    static void setBeforeTempOpenHookForTesting(std::function<void(const QString&)> hook);
     [[nodiscard]] static QDateTime normalizedNow(QDateTime now_utc);
     [[nodiscard]] int backoffMs(int consecutive_failures) const;
     [[nodiscard]] bool recordIsFresh(const AiToolHealthRecord& record, QDateTime now_utc) const;

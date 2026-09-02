@@ -1237,6 +1237,18 @@ a parked design, per the bucket convention. Open work is what remains after thos
   AI SKILL STORE WAVE 15 FINAL GATE: all changed-file hooks passed; the review ledger is repinned
   to the hardened source blob. Release build exit 0; full CTest 267/267, zero failures, 790.82
   seconds.
+  AI TOOL HEALTH LEDGER BRIEF CLOSED: persistence reads use pinned no-follow file/directory
+  handles, an exact 8 MiB + 1 capped read and matching before/read/after sizes. Only actual
+  file/path-not-found is a clean first run. Saves reject payloads above the load ceiling, pin the
+  destination directory without delete sharing so a rename/junction swap is blocked, write and
+  flush a verified temp handle, then commit by handle to the pinned directory's absolute final
+  path. Valid non-object JSON has an exact root diagnostic; persisted disables require causal
+  threshold-reaching failure history and a bounded window; snapshots sort records by key. Eight
+  focused boundary tests pass. The ai_tool_health_ledger mutation catalog kills 7/7 behavioral
+  mutants; an initial noncompiling share-mode mutant was corrected and rerun rather than counted.
+  AI TOOL HEALTH LEDGER WAVE 16 FINAL GATE: all changed-file hooks passed; the review ledger is
+  repinned to the hardened source blob. Release build exit 0; full CTest 267/267, zero failures,
+  825.67 seconds.
   Unsupported-platform branch removal remains INCOMPLETE and must reduce code, not add portability
   implementations.
   OWNER RULE NOW RECORDED IN `AGENTS.md`: fix code, test, tool, or gate first; suppression is the

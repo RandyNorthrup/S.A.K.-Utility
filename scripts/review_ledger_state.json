@@ -2377,8 +2377,11 @@
       "status": "reviewed"
     },
     "src/ai/ai_tool_health_ledger.cpp": {
+      "brief": "docs/review_briefs/src_ai_ai_tool_health_ledger.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "5e5c399722d98e170cfe1f311201b39e9b5079b0",
+      "status": "reviewed"
     },
     "src/ai/ai_tool_loop_detector.cpp": {
       "group": "src",

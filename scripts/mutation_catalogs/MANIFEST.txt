@@ -15,6 +15,7 @@ ai_run_state_store.json
 ai_skill_store.json
 ai_subagent_tool_executor.json
 ai_tool_dispatcher.json
+ai_tool_health_ledger.json
 apfs_compression.json
 apfs_crypto_keybag.json
 apfs_foreign_cow.json

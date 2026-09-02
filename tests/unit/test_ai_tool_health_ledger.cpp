@@ -1,8 +1,13 @@
 #include "sak/ai/ai_tool_health_ledger.h"
 
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QFuture>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QProcess>
+#include <QScopeGuard>
 #include <QtConcurrent>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
@@ -16,7 +21,43 @@ private Q_SLOTS:
     void persistsFreshRecordsAndPrunesExpired();
     void classifyResultUsesSpecificFailureFields();
     void concurrentRecordAndReadIsThreadSafe();
+    void loadRejectsFileTruncatedDuringRead();
+    void loadRejectsFileGrownDuringRead();
+    void loadRejectsNonObjectRootExplicitly();
+    void loadRejectsForgedDisableWithoutFailure();
+    void loadRejectsDirectorySwapBeforeFileOpen();
+    void savePinsDirectoryAgainstSwap();
+    void saveRejectsPayloadBeyondLoadCeiling();
+    void snapshotOrdersRecordsByKey();
 };
+
+namespace {
+
+QByteArray emptyLedgerJson() {
+    return QJsonDocument(QJsonObject{{QStringLiteral("schema_version"), 1},
+                                     {QStringLiteral("record_count"), 0},
+                                     {QStringLiteral("records"), QJsonArray{}}})
+        .toJson(QJsonDocument::Compact);
+}
+
+bool writeBytes(const QString& path, const QByteArray& bytes) {
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly) && file.write(bytes) == bytes.size() && file.flush();
+}
+
+int createJunction(const QString& junction, const QString& target) {
+    const QString command =
+        QDir(qEnvironmentVariable("SystemRoot")).filePath(QStringLiteral("System32/cmd.exe"));
+    return QProcess::execute(command,
+                             {QStringLiteral("/d"),
+                              QStringLiteral("/c"),
+                              QStringLiteral("mklink"),
+                              QStringLiteral("/J"),
+                              QDir::toNativeSeparators(junction),
+                              QDir::toNativeSeparators(target)});
+}
+
+}  // namespace
 
 void AiToolHealthLedgerTests::recordSuccessClearsBackoff() {
     sak::ai::AiToolHealthLedger ledger(2, 1000, 10'000);
@@ -148,6 +189,179 @@ void AiToolHealthLedgerTests::concurrentRecordAndReadIsThreadSafe() {
         QCOMPARE(record.success_count, kIterations / 2);
         QCOMPARE(record.failure_count, kIterations / 2);
     }
+}
+
+void AiToolHealthLedgerTests::loadRejectsFileTruncatedDuringRead() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString path = QDir(temp.path()).filePath(QStringLiteral("health.json"));
+    QVERIFY(writeBytes(path, emptyLedgerJson()));
+    sak::ai::AiToolHealthLedger::setBeforeFileReadHookForTesting([path](const QString&) {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::ReadWrite));
+        QVERIFY(file.resize(2));
+    });
+    const auto reset = qScopeGuard([] {
+        sak::ai::AiToolHealthLedger::setBeforeFileReadHookForTesting(
+            std::function<void(const QString&)>());
+    });
+
+    sak::ai::AiToolHealthLedger ledger;
+    ledger.setPersistencePath(path);
+    QString error;
+    QVERIFY(!ledger.load(&error));
+    QVERIFY2(error.contains(QStringLiteral("changed during read")), qPrintable(error));
+}
+
+void AiToolHealthLedgerTests::loadRejectsFileGrownDuringRead() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString path = QDir(temp.path()).filePath(QStringLiteral("health.json"));
+    QVERIFY(writeBytes(path, emptyLedgerJson()));
+    sak::ai::AiToolHealthLedger::setBeforeFileReadHookForTesting([path](const QString&) {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::Append));
+        QCOMPARE(file.write(QByteArray((8 * 1024 * 1024) + 1, 'x')), Q_INT64_C(8'388'609));
+    });
+    const auto reset = qScopeGuard([] {
+        sak::ai::AiToolHealthLedger::setBeforeFileReadHookForTesting(
+            std::function<void(const QString&)>());
+    });
+
+    sak::ai::AiToolHealthLedger ledger;
+    ledger.setPersistencePath(path);
+    QString error;
+    QVERIFY(!ledger.load(&error));
+    QVERIFY2(error.contains(QStringLiteral("changed during read")), qPrintable(error));
+}
+
+void AiToolHealthLedgerTests::loadRejectsNonObjectRootExplicitly() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString path = QDir(temp.path()).filePath(QStringLiteral("health.json"));
+    QVERIFY(writeBytes(path, QByteArrayLiteral("[]")));
+
+    sak::ai::AiToolHealthLedger ledger;
+    ledger.setPersistencePath(path);
+    QString error;
+    QVERIFY(!ledger.load(&error));
+    QCOMPARE(error, QStringLiteral("Invalid AI tool health ledger JSON root: expected object"));
+}
+
+void AiToolHealthLedgerTests::loadRejectsForgedDisableWithoutFailure() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString path = QDir(temp.path()).filePath(QStringLiteral("health.json"));
+    const QJsonObject forged{
+        {QStringLiteral("key"), QStringLiteral("tool")},
+        {QStringLiteral("disabled_until_utc"),
+         QDateTime::currentDateTimeUtc().addSecs(1).toString(Qt::ISODateWithMs)},
+        {QStringLiteral("failure_count"), 0},
+        {QStringLiteral("consecutive_failures"), 0}};
+    const QJsonObject root{{QStringLiteral("schema_version"), 1},
+                           {QStringLiteral("record_count"), 1},
+                           {QStringLiteral("records"), QJsonArray{forged}}};
+    QVERIFY(writeBytes(path, QJsonDocument(root).toJson(QJsonDocument::Compact)));
+
+    sak::ai::AiToolHealthLedger ledger;
+    ledger.setPersistencePath(path);
+    QString error;
+    QVERIFY(!ledger.load(&error));
+    QCOMPARE(error,
+             QStringLiteral(
+                 "Refusing AI tool health ledger: a record is malformed or inconsistent"));
+    QCOMPARE(ledger.size(), 0);
+}
+
+void AiToolHealthLedgerTests::loadRejectsDirectorySwapBeforeFileOpen() {
+    QTemporaryDir parent;
+    QTemporaryDir outside;
+    QVERIFY(parent.isValid());
+    QVERIFY(outside.isValid());
+    const QString directory = QDir(parent.path()).filePath(QStringLiteral("ledger"));
+    const QString moved = QDir(parent.path()).filePath(QStringLiteral("ledger-moved"));
+    QVERIFY(QDir().mkpath(directory));
+    const QString path = QDir(directory).filePath(QStringLiteral("health.json"));
+    QVERIFY(writeBytes(path, emptyLedgerJson()));
+    QVERIFY(writeBytes(QDir(outside.path()).filePath(QStringLiteral("health.json")),
+                       emptyLedgerJson()));
+    sak::ai::AiToolHealthLedger::setBeforeFileOpenHookForTesting([&](const QString&) {
+        QVERIFY(QDir().rename(directory, moved));
+        QCOMPARE(createJunction(directory, outside.path()), 0);
+    });
+    const auto reset = qScopeGuard([&] {
+        sak::ai::AiToolHealthLedger::setBeforeFileOpenHookForTesting(
+            std::function<void(const QString&)>());
+        if (QFileInfo(directory).isJunction()) {
+            QVERIFY(QDir().rmdir(directory));
+        }
+    });
+
+    sak::ai::AiToolHealthLedger ledger;
+    ledger.setPersistencePath(path);
+    QString error;
+    QVERIFY(!ledger.load(&error));
+    QVERIFY2(error.contains(QStringLiteral("redirected")), qPrintable(error));
+}
+
+void AiToolHealthLedgerTests::savePinsDirectoryAgainstSwap() {
+    QTemporaryDir parent;
+    QTemporaryDir outside;
+    QVERIFY(parent.isValid());
+    QVERIFY(outside.isValid());
+    const QString directory = QDir(parent.path()).filePath(QStringLiteral("ledger"));
+    const QString moved = QDir(parent.path()).filePath(QStringLiteral("ledger-moved"));
+    QVERIFY(QDir().mkpath(directory));
+    const QString path = QDir(directory).filePath(QStringLiteral("health.json"));
+    bool swap_blocked = false;
+    sak::ai::AiToolHealthLedger::setBeforeTempOpenHookForTesting([&](const QString&) {
+        swap_blocked = !QDir().rename(directory, moved);
+        if (!swap_blocked) {
+            QCOMPARE(createJunction(directory, outside.path()), 0);
+        }
+    });
+    const auto reset = qScopeGuard([&] {
+        sak::ai::AiToolHealthLedger::setBeforeTempOpenHookForTesting(
+            std::function<void(const QString&)>());
+        if (QFileInfo(directory).isJunction()) {
+            QVERIFY(QDir().rmdir(directory));
+        }
+    });
+
+    sak::ai::AiToolHealthLedger ledger;
+    ledger.setPersistencePath(path);
+    QString error;
+    QVERIFY2(ledger.save(&error), qPrintable(error));
+    QVERIFY(swap_blocked);
+    QVERIFY(QFileInfo::exists(path));
+    QVERIFY(!QFileInfo::exists(QDir(outside.path()).filePath(QStringLiteral("health.json"))));
+}
+
+void AiToolHealthLedgerTests::saveRejectsPayloadBeyondLoadCeiling() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::AiToolHealthLedger ledger;
+    const QString long_text(1000, QLatin1Char('x'));
+    for (int index = 0; index < sak::ai::kAiToolHealthMaxRecords; ++index) {
+        ledger.recordFailure(QStringLiteral("tool-%1").arg(index), long_text, long_text, 1);
+    }
+    QCOMPARE(ledger.size(), sak::ai::kAiToolHealthMaxRecords);
+    ledger.setPersistencePath(QDir(temp.path()).filePath(QStringLiteral("health.json")));
+    QString error;
+    QVERIFY(!ledger.save(&error));
+    QVERIFY2(error.contains(QStringLiteral("payload exceeds")), qPrintable(error));
+}
+
+void AiToolHealthLedgerTests::snapshotOrdersRecordsByKey() {
+    sak::ai::AiToolHealthLedger ledger;
+    ledger.recordSuccess(QStringLiteral("zeta"), 1);
+    ledger.recordSuccess(QStringLiteral("alpha"), 1);
+    const QJsonArray records = ledger.snapshot().value(QStringLiteral("records")).toArray();
+    QCOMPARE(records.size(), 2);
+    QCOMPARE(records.at(0).toObject().value(QStringLiteral("key")).toString(),
+             QStringLiteral("alpha"));
+    QCOMPARE(records.at(1).toObject().value(QStringLiteral("key")).toString(),
+             QStringLiteral("zeta"));
 }
 
 QTEST_GUILESS_MAIN(AiToolHealthLedgerTests)

@@ -6,18 +6,26 @@
 #include "sak/app_action_guards.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/windows_path_policy.h"
 
 #include <QDir>
-#include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonParseError>
-#include <QSaveFile>
+#include <QScopeGuard>
+#include <QUuid>
 
 #include <algorithm>
 #include <cmath>
+#include <cstddef>
+#include <cstring>
+#include <functional>
+#include <optional>
+#include <string>
 #include <utility>
+
+#include <windows.h>
 
 namespace sak::ai {
 
@@ -26,6 +34,96 @@ constexpr qsizetype kHealthErrorPreviewChars = 1000;
 constexpr int kBackoffFactorMax = 1024;
 constexpr int kBackoffFactorMultiplier = 2;
 constexpr int kSecondsPerHour = kSecondsPerMinute * kSecondsPerMinute;
+constexpr DWORD kFinalPathInitialChars = 1024;
+constexpr qsizetype kExtendedUncPrefixChars = 8;
+constexpr qsizetype kExtendedPathPrefixChars = 4;
+
+std::function<void(const QString&)> g_before_file_open_hook;
+std::function<void(const QString&)> g_before_file_read_hook;
+std::function<void(const QString&)> g_before_temp_open_hook;
+
+class LedgerHandle {
+public:
+    explicit LedgerHandle(HANDLE handle = INVALID_HANDLE_VALUE) : m_handle(handle) {}
+    ~LedgerHandle() {
+        if (valid()) {
+            CloseHandle(m_handle);
+        }
+    }
+    LedgerHandle(const LedgerHandle&) = delete;
+    LedgerHandle& operator=(const LedgerHandle&) = delete;
+    LedgerHandle(LedgerHandle&& other) noexcept : m_handle(other.m_handle) {
+        other.m_handle = INVALID_HANDLE_VALUE;
+    }
+    LedgerHandle& operator=(LedgerHandle&& other) noexcept {
+        if (this != &other) {
+            if (valid()) {
+                CloseHandle(m_handle);
+            }
+            m_handle = other.m_handle;
+            other.m_handle = INVALID_HANDLE_VALUE;
+        }
+        return *this;
+    }
+    [[nodiscard]] bool valid() const { return m_handle != INVALID_HANDLE_VALUE; }
+    [[nodiscard]] HANDLE get() const { return m_handle; }
+
+private:
+    HANDLE m_handle;
+};
+
+QString ledgerFinalPath(HANDLE handle) {
+    std::wstring buffer(static_cast<size_t>(kFinalPathInitialChars), L'\0');
+    const DWORD flags = FILE_NAME_NORMALIZED | VOLUME_NAME_DOS;
+    DWORD length =
+        GetFinalPathNameByHandleW(handle, buffer.data(), static_cast<DWORD>(buffer.size()), flags);
+    if (length == 0) {
+        return {};
+    }
+    if (length >= buffer.size()) {
+        buffer.resize(static_cast<size_t>(length) + 1U);
+        length = GetFinalPathNameByHandleW(
+            handle, buffer.data(), static_cast<DWORD>(buffer.size()), flags);
+        if (length == 0 || length >= buffer.size()) {
+            return {};
+        }
+    }
+    QString path = QString::fromWCharArray(buffer.data(), static_cast<qsizetype>(length));
+    if (path.startsWith(QStringLiteral("\\\\?\\UNC\\"), Qt::CaseInsensitive)) {
+        path = QStringLiteral("\\\\") + path.mid(kExtendedUncPrefixChars);
+    } else if (path.startsWith(QStringLiteral("\\\\?\\"), Qt::CaseInsensitive)) {
+        path = path.mid(kExtendedPathPrefixChars);
+    }
+    return QDir::cleanPath(QDir::fromNativeSeparators(path));
+}
+
+bool ledgerHandleIsReparse(HANDLE handle) {
+    FILE_ATTRIBUTE_TAG_INFO info{};
+    return GetFileInformationByHandleEx(handle, FileAttributeTagInfo, &info, sizeof(info)) == 0 ||
+           (info.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+}
+
+bool ledgerHandlesSameObject(HANDLE left, HANDLE right) {
+    BY_HANDLE_FILE_INFORMATION left_info{};
+    BY_HANDLE_FILE_INFORMATION right_info{};
+    if (GetFileInformationByHandle(left, &left_info) == 0 ||
+        GetFileInformationByHandle(right, &right_info) == 0) {
+        return false;
+    }
+    return left_info.dwVolumeSerialNumber == right_info.dwVolumeSerialNumber &&
+           left_info.nFileIndexHigh == right_info.nFileIndexHigh &&
+           left_info.nFileIndexLow == right_info.nFileIndexLow;
+}
+
+QString ledgerWin32Error(const QString& action, const QString& path, DWORD error) {
+    return QStringLiteral("%1: %2 (Win32 error %3)").arg(action, path).arg(error);
+}
+
+void setLedgerError(QString* error_message, const QString& message) {
+    if (error_message != nullptr) {
+        *error_message = message;
+    }
+}
 
 QString iso(const QDateTime& value) {
     return value.isValid() ? value.toUTC().toString(Qt::ISODateWithMs) : QString();
@@ -75,6 +173,200 @@ bool ledgerPathUnsafe(const QString& path, QString* error_message) {
         return true;
     }
     return false;
+}
+
+std::optional<LedgerHandle> openLedgerDirectory(const QString& ledger_path,
+                                                bool create,
+                                                bool prevent_rename,
+                                                QString* error_message) {
+    const QString directory = QFileInfo(ledger_path).absolutePath();
+    if (create && !QDir().mkpath(directory)) {
+        setLedgerError(
+            error_message,
+            QStringLiteral("Could not create AI tool health ledger directory: %1").arg(directory));
+        return std::nullopt;
+    }
+    const QString native_directory = QDir::toNativeSeparators(directory);
+    const DWORD share = FILE_SHARE_READ | FILE_SHARE_WRITE |
+                        (prevent_rename ? 0U : FILE_SHARE_DELETE);
+    LedgerHandle handle(CreateFileW(reinterpret_cast<LPCWSTR>(native_directory.utf16()),
+                                    FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUTES,
+                                    share,
+                                    nullptr,
+                                    OPEN_EXISTING,
+                                    FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                                    nullptr));
+    if (!handle.valid()) {
+        setLedgerError(error_message,
+                       ledgerWin32Error(QStringLiteral("Cannot open ledger directory"),
+                                        directory,
+                                        GetLastError()));
+        return std::nullopt;
+    }
+    const QString final_path = ledgerFinalPath(handle.get());
+    const QString expected_path = QDir::cleanPath(QFileInfo(directory).absoluteFilePath());
+    if (ledgerHandleIsReparse(handle.get()) || final_path.isEmpty() ||
+        final_path.compare(expected_path, Qt::CaseInsensitive) != 0) {
+        setLedgerError(error_message,
+                       QStringLiteral("Refusing redirected AI tool health ledger directory: %1")
+                           .arg(directory));
+        return std::nullopt;
+    }
+    return handle;
+}
+
+bool ledgerFileParentMatches(HANDLE file_handle, HANDLE directory_handle) {
+    const QString file_path = ledgerFinalPath(file_handle);
+    if (file_path.isEmpty()) {
+        return false;
+    }
+    const QString parent_path = QDir::toNativeSeparators(QFileInfo(file_path).absolutePath());
+    const LedgerHandle parent(CreateFileW(reinterpret_cast<LPCWSTR>(parent_path.utf16()),
+                                          FILE_READ_ATTRIBUTES,
+                                          FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                          nullptr,
+                                          OPEN_EXISTING,
+                                          FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
+                                          nullptr));
+    return parent.valid() && !ledgerHandleIsReparse(parent.get()) &&
+           ledgerHandlesSameObject(parent.get(), directory_handle);
+}
+
+std::optional<qint64> ledgerHandleSize(HANDLE handle) {
+    LARGE_INTEGER size{};
+    if (GetFileSizeEx(handle, &size) == 0 || size.QuadPart < 0) {
+        return std::nullopt;
+    }
+    return size.QuadPart;
+}
+
+enum class LedgerReadResult {
+    Loaded,
+    Missing,
+    Error
+};
+
+LedgerReadResult inspectLedgerPath(const QString& path, QString* error_message) {
+    const DWORD attributes = GetFileAttributesW(reinterpret_cast<LPCWSTR>(path.utf16()));
+    if (attributes == INVALID_FILE_ATTRIBUTES) {
+        const DWORD error = GetLastError();
+        if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) {
+            return LedgerReadResult::Missing;
+        }
+        if (error_message != nullptr) {
+            *error_message = ledgerWin32Error(
+                QStringLiteral("Cannot inspect AI tool health ledger"), path, error);
+        }
+        return LedgerReadResult::Error;
+    }
+    if ((attributes & FILE_ATTRIBUTE_DIRECTORY) != 0) {
+        if (error_message != nullptr) {
+            *error_message =
+                QStringLiteral("AI tool health ledger path is a directory: %1").arg(path);
+        }
+        return LedgerReadResult::Error;
+    }
+    return LedgerReadResult::Loaded;
+}
+
+struct OpenedLedgerFile {
+    LedgerReadResult result = LedgerReadResult::Error;
+    std::optional<LedgerHandle> handle;
+};
+
+OpenedLedgerFile openLedgerFileForRead(const QString& path,
+                                       HANDLE directory_handle,
+                                       QString* error_message) {
+    const QString leaf = QFileInfo(path).fileName();
+    const QString opened_path =
+        QDir::toNativeSeparators(QDir(ledgerFinalPath(directory_handle)).filePath(leaf));
+    if (g_before_file_open_hook) {
+        g_before_file_open_hook(path);
+    }
+    LedgerHandle file(CreateFileW(reinterpret_cast<LPCWSTR>(opened_path.utf16()),
+                                  GENERIC_READ | FILE_READ_ATTRIBUTES,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                  nullptr,
+                                  OPEN_EXISTING,
+                                  FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OPEN_REPARSE_POINT |
+                                      FILE_FLAG_SEQUENTIAL_SCAN,
+                                  nullptr));
+    if (!file.valid()) {
+        const DWORD error = GetLastError();
+        if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) {
+            return {LedgerReadResult::Missing, std::nullopt};
+        }
+        if (error_message != nullptr) {
+            *error_message = ledgerWin32Error(
+                QStringLiteral("Could not read AI tool health ledger"), path, error);
+        }
+        return {};
+    }
+    const bool file_parent_matches = ledgerFileParentMatches(file.get(), directory_handle);
+    if (ledgerHandleIsReparse(file.get()) || !file_parent_matches) {
+        if (error_message != nullptr) {
+            *error_message =
+                QStringLiteral("Refusing redirected AI tool health ledger file: %1").arg(path);
+        }
+        return {};
+    }
+    OpenedLedgerFile result;
+    result.result = LedgerReadResult::Loaded;
+    result.handle.emplace(std::move(file));
+    return result;
+}
+
+LedgerReadResult readStableLedgerFile(HANDLE file_handle,
+                                      const QString& path,
+                                      QByteArray* bytes,
+                                      QString* error_message) {
+    const auto size_before = ledgerHandleSize(file_handle);
+    if (!size_before || *size_before > kAiToolHealthMaxLedgerBytes) {
+        setLedgerError(
+            error_message,
+            QStringLiteral("AI tool health ledger is not a readable size: %1").arg(path));
+        return LedgerReadResult::Error;
+    }
+    if (g_before_file_read_hook) {
+        g_before_file_read_hook(path);
+    }
+    QByteArray buffer(static_cast<qsizetype>(kAiToolHealthMaxLedgerBytes + 1), Qt::Uninitialized);
+    DWORD bytes_read = 0;
+    if (ReadFile(
+            file_handle, buffer.data(), static_cast<DWORD>(buffer.size()), &bytes_read, nullptr) ==
+        0) {
+        setLedgerError(error_message,
+                       ledgerWin32Error(QStringLiteral("Could not read AI tool health ledger"),
+                                        path,
+                                        GetLastError()));
+        return LedgerReadResult::Error;
+    }
+    buffer.resize(static_cast<qsizetype>(bytes_read));
+    const auto size_after = ledgerHandleSize(file_handle);
+    if (!size_after || *size_after > kAiToolHealthMaxLedgerBytes || *size_before != *size_after ||
+        *size_after != buffer.size()) {
+        setLedgerError(error_message,
+                       QStringLiteral("AI tool health ledger changed during read: %1").arg(path));
+        return LedgerReadResult::Error;
+    }
+    *bytes = std::move(buffer);
+    return LedgerReadResult::Loaded;
+}
+
+LedgerReadResult readLedgerBytes(const QString& path, QByteArray* bytes, QString* error_message) {
+    const LedgerReadResult inspection = inspectLedgerPath(path, error_message);
+    if (inspection != LedgerReadResult::Loaded) {
+        return inspection;
+    }
+    auto directory = openLedgerDirectory(path, false, false, error_message);
+    if (!directory) {
+        return LedgerReadResult::Error;
+    }
+    OpenedLedgerFile file = openLedgerFileForRead(path, directory->get(), error_message);
+    if (file.result != LedgerReadResult::Loaded) {
+        return file.result;
+    }
+    return readStableLedgerFile(file.handle->get(), path, bytes, error_message);
 }
 
 /// True when @p key is absent (the record default applies) or actually holds a string.
@@ -190,38 +482,31 @@ QString explicitFailureClass(const QJsonObject& result) {
     return {};
 }
 
-bool parseHealthLedgerDocument(const QString& path,
-                               QJsonDocument* document,
-                               QString* error_message) {
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        if (error_message != nullptr) {
-            *error_message =
-                QStringLiteral("Could not read AI tool health ledger: %1").arg(file.errorString());
-        }
-        return false;
+LedgerReadResult parseHealthLedgerDocument(const QString& path,
+                                           QJsonDocument* document,
+                                           QString* error_message) {
+    QByteArray bytes;
+    const LedgerReadResult read_result = readLedgerBytes(path, &bytes, error_message);
+    if (read_result != LedgerReadResult::Loaded) {
+        return read_result;
     }
-    // Bound the read before readAll(): the ledger lives in a locally writable directory,
-    // and a DOM parse of an arbitrarily large file is an out-of-memory abort, not an error.
-    const qint64 size = file.size();
-    if (size < 0 || size > kAiToolHealthMaxLedgerBytes) {
-        if (error_message != nullptr) {
-            *error_message =
-                QStringLiteral("AI tool health ledger is not a readable size (%1 bytes)").arg(size);
-        }
-        return false;
-    }
-
     QJsonParseError parse_error;
-    *document = QJsonDocument::fromJson(file.readAll(), &parse_error);
-    if (parse_error.error == QJsonParseError::NoError && document->isObject()) {
-        return true;
+    *document = QJsonDocument::fromJson(bytes, &parse_error);
+    if (parse_error.error != QJsonParseError::NoError) {
+        if (error_message != nullptr) {
+            *error_message = QStringLiteral("Invalid AI tool health ledger JSON: %1")
+                                 .arg(parse_error.errorString());
+        }
+        return LedgerReadResult::Error;
     }
-    if (error_message != nullptr) {
-        *error_message =
-            QStringLiteral("Invalid AI tool health ledger JSON: %1").arg(parse_error.errorString());
+    if (!document->isObject()) {
+        if (error_message != nullptr) {
+            *error_message =
+                QStringLiteral("Invalid AI tool health ledger JSON root: expected object");
+        }
+        return LedgerReadResult::Error;
     }
-    return false;
+    return LedgerReadResult::Loaded;
 }
 
 /// The reason a parsed ledger document's envelope cannot be trusted, or empty when every
@@ -255,6 +540,137 @@ bool ledgerWriteFailed(QString* error_message, const QString& reason) {
         *error_message = reason;
     }
     return false;
+}
+
+std::optional<LedgerHandle> createLedgerTempFile(HANDLE directory_handle,
+                                                 const QString& path,
+                                                 const QString& target_leaf,
+                                                 QString* temp_path,
+                                                 QString* error_message) {
+    const QString temp_leaf = QStringLiteral(".%1.%2.tmp")
+                                  .arg(target_leaf,
+                                       QUuid::createUuid().toString(QUuid::WithoutBraces));
+    *temp_path =
+        QDir::toNativeSeparators(QDir(ledgerFinalPath(directory_handle)).filePath(temp_leaf));
+    if (g_before_temp_open_hook) {
+        g_before_temp_open_hook(path);
+    }
+    LedgerHandle file(CreateFileW(reinterpret_cast<LPCWSTR>(temp_path->utf16()),
+                                  GENERIC_WRITE | DELETE | FILE_READ_ATTRIBUTES,
+                                  FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                  nullptr,
+                                  CREATE_NEW,
+                                  FILE_ATTRIBUTE_TEMPORARY | FILE_FLAG_WRITE_THROUGH |
+                                      FILE_FLAG_OPEN_REPARSE_POINT,
+                                  nullptr));
+    if (!file.valid()) {
+        ledgerWriteFailed(error_message,
+                          ledgerWin32Error(QStringLiteral("Could not create ledger temporary file"),
+                                           *temp_path,
+                                           GetLastError()));
+        return std::nullopt;
+    }
+    const bool temp_parent_matches = ledgerFileParentMatches(file.get(), directory_handle);
+    if (ledgerHandleIsReparse(file.get()) || !temp_parent_matches) {
+        ledgerWriteFailed(
+            error_message,
+            QStringLiteral("Refusing redirected ledger temporary file: %1").arg(*temp_path));
+        return std::nullopt;
+    }
+    return file;
+}
+
+bool writeAndFlushLedgerFile(HANDLE file_handle,
+                             const QString& path,
+                             const QByteArray& payload,
+                             QString* error_message) {
+    DWORD written = 0;
+    if (WriteFile(file_handle,
+                  payload.constData(),
+                  static_cast<DWORD>(payload.size()),
+                  &written,
+                  nullptr) == 0) {
+        return ledgerWriteFailed(
+            error_message,
+            ledgerWin32Error(
+                QStringLiteral("Could not write AI tool health ledger"), path, GetLastError()));
+    }
+    if (written != static_cast<DWORD>(payload.size())) {
+        return ledgerWriteFailed(error_message,
+                                 QStringLiteral(
+                                     "Short write to AI tool health ledger (%1 of %2 bytes): %3")
+                                     .arg(written)
+                                     .arg(payload.size())
+                                     .arg(path));
+    }
+    if (FlushFileBuffers(file_handle) == 0) {
+        return ledgerWriteFailed(
+            error_message,
+            ledgerWin32Error(
+                QStringLiteral("Could not flush AI tool health ledger"), path, GetLastError()));
+    }
+    return true;
+}
+
+bool commitLedgerFile(HANDLE file_handle,
+                      HANDLE directory_handle,
+                      const QString& path,
+                      const QString& target_leaf,
+                      QString* error_message) {
+    const std::wstring target_name =
+        QDir::toNativeSeparators(QDir(ledgerFinalPath(directory_handle)).filePath(target_leaf))
+            .toStdWString();
+    const DWORD target_name_bytes =
+        static_cast<DWORD>(target_name.size() * sizeof(std::wstring::value_type));
+    QByteArray rename_storage(static_cast<qsizetype>(sizeof(FILE_RENAME_INFO) + target_name_bytes),
+                              0);
+    auto* rename_info = reinterpret_cast<FILE_RENAME_INFO*>(rename_storage.data());
+    rename_info->ReplaceIfExists = TRUE;
+    rename_info->RootDirectory = nullptr;
+    rename_info->FileNameLength = target_name_bytes;
+    std::memcpy(rename_info->FileName, target_name.data(), target_name_bytes);
+    if (SetFileInformationByHandle(
+            file_handle, FileRenameInfo, rename_info, static_cast<DWORD>(rename_storage.size())) ==
+        0) {
+        return ledgerWriteFailed(
+            error_message,
+            ledgerWin32Error(
+                QStringLiteral("Could not commit AI tool health ledger"), path, GetLastError()));
+    }
+    return true;
+}
+
+bool writeLedgerPayload(const QString& path, const QByteArray& payload, QString* error_message) {
+    if (payload.size() > kAiToolHealthMaxLedgerBytes) {
+        return ledgerWriteFailed(error_message,
+                                 QStringLiteral(
+                                     "AI tool health ledger payload exceeds %1 bytes (%2)")
+                                     .arg(kAiToolHealthMaxLedgerBytes)
+                                     .arg(payload.size()));
+    }
+    auto directory = openLedgerDirectory(path, true, true, error_message);
+    if (!directory) {
+        return false;
+    }
+    const QString target_leaf = QFileInfo(path).fileName();
+    if (!sak::isSafeChildName(target_leaf)) {
+        return ledgerWriteFailed(
+            error_message,
+            QStringLiteral("AI tool health ledger filename is unsafe: %1").arg(target_leaf));
+    }
+    QString temp_path;
+    auto file =
+        createLedgerTempFile(directory->get(), path, target_leaf, &temp_path, error_message);
+    if (!file) {
+        return false;
+    }
+    auto cleanup = qScopeGuard([&] { DeleteFileW(reinterpret_cast<LPCWSTR>(temp_path.utf16())); });
+    if (!writeAndFlushLedgerFile(file->get(), path, payload, error_message) ||
+        !commitLedgerFile(file->get(), directory->get(), path, target_leaf, error_message)) {
+        return false;
+    }
+    cleanup.dismiss();
+    return true;
 }
 
 bool messageContainsAny(const QString& message, const QStringList& markers) {
@@ -317,6 +733,18 @@ QJsonObject AiToolAvailability::toJson() const {
     object[QStringLiteral("reason")] = reason;
     object[QStringLiteral("disabled_until_utc")] = iso(disabled_until_utc);
     return object;
+}
+
+void AiToolHealthLedger::setBeforeFileOpenHookForTesting(std::function<void(const QString&)> hook) {
+    g_before_file_open_hook = std::move(hook);
+}
+
+void AiToolHealthLedger::setBeforeFileReadHookForTesting(std::function<void(const QString&)> hook) {
+    g_before_file_read_hook = std::move(hook);
+}
+
+void AiToolHealthLedger::setBeforeTempOpenHookForTesting(std::function<void(const QString&)> hook) {
+    g_before_temp_open_hook = std::move(hook);
 }
 
 AiToolHealthLedger::AiToolHealthLedger(int suppress_after_failures,
@@ -446,12 +874,13 @@ bool AiToolHealthLedger::load(QString* error_message) {
     if (ledgerPathUnsafe(m_persistence_path, error_message)) {
         return false;
     }
-    if (!QFileInfo::exists(m_persistence_path)) {
+    QJsonDocument doc;
+    const LedgerReadResult read_result =
+        parseHealthLedgerDocument(m_persistence_path, &doc, error_message);
+    if (read_result == LedgerReadResult::Missing) {
         return true;  // First run: no ledger has been written yet.
     }
-
-    QJsonDocument doc;
-    if (!parseHealthLedgerDocument(m_persistence_path, &doc, error_message)) {
+    if (read_result == LedgerReadResult::Error) {
         return false;
     }
     return loadRecordsUnlocked(doc.object(), error_message);
@@ -506,33 +935,8 @@ bool AiToolHealthLedger::saveUnlocked(QString* error_message) const {
         return false;
     }
 
-    const QString directory = QFileInfo(m_persistence_path).absolutePath();
-    if (!QDir().mkpath(directory)) {
-        return ledgerWriteFailed(
-            error_message,
-            QStringLiteral("Could not create AI tool health ledger directory: %1").arg(directory));
-    }
-
-    QSaveFile file(m_persistence_path);
-    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        return ledgerWriteFailed(
-            error_message,
-            QStringLiteral("Could not write AI tool health ledger: %1").arg(file.errorString()));
-    }
     const QByteArray payload = QJsonDocument(snapshotUnlocked()).toJson(QJsonDocument::Indented);
-    if (file.write(payload) != payload.size()) {
-        // A short write would otherwise be committed as a truncated (and therefore
-        // unloadable) ledger. Returning without commit() discards the partial file.
-        return ledgerWriteFailed(
-            error_message,
-            QStringLiteral("Short write to AI tool health ledger: %1").arg(file.errorString()));
-    }
-    if (!file.commit()) {
-        return ledgerWriteFailed(
-            error_message,
-            QStringLiteral("Could not commit AI tool health ledger: %1").arg(file.errorString()));
-    }
-    return true;
+    return writeLedgerPayload(m_persistence_path, payload, error_message);
 }
 
 void AiToolHealthLedger::pruneExpired(QDateTime now_utc) {
@@ -560,8 +964,10 @@ QJsonObject AiToolHealthLedger::snapshot() const {
 
 QJsonObject AiToolHealthLedger::snapshotUnlocked() const {
     QJsonArray records;
-    for (const auto& rec : m_records) {
-        records.append(rec.toJson());
+    QStringList keys = m_records.keys();
+    keys.sort(Qt::CaseSensitive);
+    for (const QString& key : keys) {
+        records.append(m_records.value(key).toJson());
     }
     QJsonObject object;
     object[QStringLiteral("schema_version")] = 1;
@@ -633,12 +1039,15 @@ bool AiToolHealthLedger::persistedRecordIsSane(const AiToolHealthRecord& record,
     if (record.last_failure_utc.isValid() && record.last_failure_utc > skew_limit) {
         return false;
     }
-    // This ledger only ever writes disabled_until = failure time + backoffMs(), which is
-    // capped at m_max_backoff_ms. A file claiming more would suppress the tool past its
-    // own ceiling AND stay permanently fresh (recordIsFresh honours a live disable).
-    if (record.disabled_until_utc.isValid() &&
-        record.disabled_until_utc > now.addMSecs(m_max_backoff_ms + kClockSkewToleranceMs)) {
-        return false;
+    // A disable must be caused by a threshold-reaching failure and stay inside the exact window
+    // this ledger can write. A standalone future disabled_until stamp is a forged suppression.
+    if (record.disabled_until_utc.isValid()) {
+        if (!record.last_failure_utc.isValid() ||
+            record.consecutive_failures < m_suppress_after_failures ||
+            record.disabled_until_utc < record.last_failure_utc ||
+            record.disabled_until_utc > record.last_failure_utc.addMSecs(m_max_backoff_ms)) {
+            return false;
+        }
     }
     return record.consecutive_failures <= record.failure_count;
 }
