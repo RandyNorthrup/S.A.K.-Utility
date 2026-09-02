@@ -20,6 +20,8 @@
 #include <windows.h>
 #endif
 
+class TestProgramEnumerator;
+
 namespace sak {
 
 /// @brief Enumerates installed programs from registry (HKLM/HKCU/WOW64) and UWP
@@ -29,6 +31,8 @@ namespace sak {
 /// classification (system component, orphaned, bloatware).
 class ProgramEnumerator : public QObject {
     Q_OBJECT
+
+    friend class ::TestProgramEnumerator;
 
 public:
     explicit ProgramEnumerator(QObject* parent = nullptr);
@@ -72,7 +76,7 @@ public:
     void detectOrphaned(QVector<ProgramInfo>& programs);
 
     /// @brief Mark known bloatware using pattern database
-    void markBloatware(QVector<ProgramInfo>& programs);
+    void markBloatware(QVector<ProgramInfo>& programs) const;
 
     /// @brief Calculate actual disk usage for a program's install directory
     // Non-static: the directory walk honors m_cancelRequested so a hostile/deep install
@@ -100,7 +104,7 @@ private:
     void parseRegistryEntry(HKEY app_key,
                             ProgramInfo::Source source,
                             const QString& reg_path,
-                            QVector<ProgramInfo>& results);
+                            QVector<ProgramInfo>& results) const;
 
     /// @brief Read a single registry string value
     [[nodiscard]] static QString readRegString(HKEY key, const wchar_t* valueName);
@@ -131,7 +135,7 @@ private:
     [[nodiscard]] static QImage extractIcon(const QString& path);
 
     /// @brief Deduplicate programs from multiple sources
-    void deduplicatePrograms(QVector<ProgramInfo>& programs);
+    void deduplicatePrograms(QVector<ProgramInfo>& programs) const;
 
     /// @brief Resolve one program's icon in place: prefer its declared displayIcon, else the
     ///        first .exe in a LOCAL install location. @p locationIsLocal is false for remote/device

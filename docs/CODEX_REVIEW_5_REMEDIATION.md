@@ -1191,15 +1191,27 @@ a parked design, per the bucket convention. Open work is what remains after thos
   MBOX/WINDOWS-BOUNDARY WAVE 12 FINAL GATE: all changed-file hooks passed, including cppcheck,
   dead-code, mutation-catalog integrity, staged gitleaks, documentation/certification checks, and
   ASCII. Release build exit 0; full CTest 267/267, zero failures, 829.24 seconds.
-  Windows indexed-icon extraction remains INCOMPLETE. Unsupported-platform branch removal also
-  remains INCOMPLETE and must reduce code, not add portability implementations.
+  WINDOWS INDEXED-ICON GAP CLOSED: ProgramEnumerator now distinguishes a plain local icon path
+  from an explicit `path,index` registry value. Explicit indices route through ExtractIconExW and
+  return empty when that exact resource does not exist; they never fall back to the file's
+  generic/default icon. Plain paths retain their existing SHGetFileInfoW behavior, and the
+  UNC/device refusal still runs before either API. The ignored `icon_index` Q_UNUSED is gone.
+  A Windows system shell32.dll fixture proved index 0 succeeds, an impossible index fails, and a
+  UNC input stays refused; that test failed against the old index-ignoring implementation.
+  Changed-file cppcheck also exposed three pre-existing functionConst findings in the enumerator;
+  markBloatware, parseRegistryEntry, and deduplicatePrograms now state their no-mutation contract,
+  and the header-expanded cppcheck rerun passes with no suppression or cascade finding.
+  WINDOWS INDEXED-ICON WAVE 13 FINAL GATE: all changed-file hooks passed. Release build exit 0;
+  full CTest 267/267, zero failures, 732.34 seconds.
+  Unsupported-platform branch removal remains INCOMPLETE and must reduce code, not add portability
+  implementations.
   OWNER RULE NOW RECORDED IN `AGENTS.md`: fix code, test, tool, or gate first; suppression is the
   last resort only after no direct fix is possible and the exact reason is proven. Existing
   suppressions are re-audited, not inherited as permanent policy. Current batch: all pre-commit
   hooks passed; Release build exit 0; full CTest 265/265, zero failures, 804.48 seconds.
   STILL OPEN: core's 5,271 naming findings; the 294-item `useStlAlgorithm` program;
-  the two remaining coverage compiler suppressions; Windows indexed-icon extraction; removal of
-  unsupported-platform dead branches currently carrying `Q_UNUSED`; directly
+  the two remaining coverage compiler suppressions; removal of unsupported-platform dead branches
+  currently carrying `Q_UNUSED`; directly
   closable fixture/resource skips; and the historical VM credential rotation/history-rewrite
   decision.
   DIRECT-FIX WAVE 1 FINAL GATE: all changed-file pre-commit hooks passed; Release build exit 0;

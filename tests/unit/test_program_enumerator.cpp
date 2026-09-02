@@ -9,6 +9,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
@@ -38,6 +39,9 @@ private Q_SLOTS:
     void programInfo_defaults();
     void cancelAndReset();
     void enumerateAll_cancelledBeforeStart();
+#ifdef Q_OS_WIN
+    void extractIcon_honorsExplicitIndex();
+#endif
 };
 
 void TestProgramEnumerator::construction_default() {
@@ -414,6 +418,29 @@ void TestProgramEnumerator::programInfo_defaults() {
     QVERIFY(!info.isBloatware);
     QCOMPARE(info.source, ProgramInfo::Source::RegistryHKLM);
 }
+
+#ifdef Q_OS_WIN
+void TestProgramEnumerator::extractIcon_honorsExplicitIndex() {
+    const QString system_root = qEnvironmentVariable("SystemRoot");
+    QVERIFY(!system_root.isEmpty());
+    const QString shell_library =
+        QDir(system_root).filePath(QStringLiteral("System32/shell32.dll"));
+    QVERIFY(QFileInfo::exists(shell_library));
+
+    const QImage first_icon =
+        ProgramEnumerator::extractIcon(QStringLiteral("\"%1\",0").arg(shell_library));
+    QVERIFY(!first_icon.isNull());
+
+    // SHGetFileInfo ignores the parsed index and returns the file's generic/default icon for both
+    // inputs. A real indexed extraction must refuse an index that the resource does not contain.
+    const QImage missing_index =
+        ProgramEnumerator::extractIcon(QStringLiteral("\"%1\",2147483647").arg(shell_library));
+    QVERIFY(missing_index.isNull());
+
+    QVERIFY(
+        ProgramEnumerator::extractIcon(QStringLiteral("\\\\server\\share\\app.exe,0")).isNull());
+}
+#endif
 
 void TestProgramEnumerator::cancelAndReset() {
     // programs() returns the cache, which is written only at the very END of a successful

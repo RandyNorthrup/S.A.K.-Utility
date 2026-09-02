@@ -64,6 +64,44 @@ constexpr int kPackageScanTimeoutMs = 30'000;
     return path.startsWith(QLatin1String("\\\\")) || path.startsWith(QLatin1String("//"));
 }
 
+#ifdef Q_OS_WIN
+struct IconLocation {
+    QString path;
+    int index = 0;
+    bool has_explicit_index = false;
+};
+
+[[nodiscard]] IconLocation parseIconLocation(const QString& value) {
+    IconLocation location{.path = value};
+    const int comma = static_cast<int>(value.lastIndexOf(','));
+    if (comma > 0) {
+        bool ok = false;
+        const int parsed_index = value.mid(comma + 1).trimmed().toInt(&ok);
+        if (ok) {
+            location.path = value.left(comma).trimmed();
+            location.index = parsed_index;
+            location.has_explicit_index = true;
+        }
+    }
+    if (location.path.startsWith('"') && location.path.endsWith('"')) {
+        location.path = location.path.mid(1, location.path.length() - kQuotedPathTrimChars);
+    }
+    return location;
+}
+
+[[nodiscard]] QImage extractIndexedIcon(const QString& path, int icon_index) {
+    HICON small_icon = nullptr;
+    const UINT extracted = ExtractIconExW(
+        reinterpret_cast<LPCWSTR>(path.utf16()), icon_index, nullptr, &small_icon, 1);
+    if (extracted == 0 || small_icon == nullptr) {
+        return {};
+    }
+    QImage image = QImage::fromHICON(small_icon);
+    DestroyIcon(small_icon);
+    return image;
+}
+#endif
+
 [[nodiscard]] QJsonArray jsonDocToArray(const QJsonDocument& doc) {
     if (doc.isArray()) {
         return doc.array();
@@ -296,7 +334,7 @@ void ProgramEnumerator::detectOrphaned(QVector<ProgramInfo>& programs) {
     }
 }
 
-void ProgramEnumerator::markBloatware(QVector<ProgramInfo>& programs) {
+void ProgramEnumerator::markBloatware(QVector<ProgramInfo>& programs) const {
     // Empty is valid (see enrichWithIconsAndSizes) -- no non-empty assert.
     // Bloatware patterns from CheckBloatwareAction database
     static const QStringList kBloatwarePatterns = {"CandyCrush",
@@ -515,7 +553,7 @@ QVector<ProgramInfo> ProgramEnumerator::scanRegistryHive(HKEY hive,
 void ProgramEnumerator::parseRegistryEntry(HKEY app_key,
                                            ProgramInfo::Source source,
                                            const QString& reg_path,
-                                           QVector<ProgramInfo>& results) {
+                                           QVector<ProgramInfo>& results) const {
     if (isSystemComponent(app_key)) {
         ProgramInfo prog;
         prog.isSystemComponent = true;
@@ -736,34 +774,21 @@ QImage ProgramEnumerator::extractIcon(const QString& path) {
     }
 
 #ifdef Q_OS_WIN
-    // Extract path and optional icon index
-    QString icon_path = path;
-    int icon_index = 0;
+    const IconLocation location = parseIconLocation(path);
 
-    // Handle "path,index" format
-    const int comma = static_cast<int>(path.lastIndexOf(','));
-    if (comma > 0) {
-        bool ok = false;
-        const int idx = path.mid(comma + 1).trimmed().toInt(&ok);
-        if (ok) {
-            icon_path = path.left(comma).trimmed();
-            icon_index = idx;
-        }
-    }
-
-    // Strip quotes
-    if (icon_path.startsWith('"') && icon_path.endsWith('"')) {
-        icon_path = icon_path.mid(1, icon_path.length() - kQuotedPathTrimChars);
-    }
-
-    if (isRemoteOrDevicePath(icon_path)) {
+    if (isRemoteOrDevicePath(location.path)) {
         // Never resolve an icon from a UNC/device path (SMB auth / remote I/O from an
         // attacker-writable DisplayIcon value).
         return {};
     }
 
+
+    if (location.has_explicit_index) {
+        return extractIndexedIcon(location.path, location.index);
+    }
+
     SHFILEINFOW sfi{};
-    DWORD_PTR const result = SHGetFileInfoW(reinterpret_cast<LPCWSTR>(icon_path.utf16()),
+    DWORD_PTR const result = SHGetFileInfoW(reinterpret_cast<LPCWSTR>(location.path.utf16()),
                                             0,
                                             &sfi,
                                             sizeof(sfi),
@@ -775,7 +800,6 @@ QImage ProgramEnumerator::extractIcon(const QString& path) {
         return image;
     }
 
-    Q_UNUSED(icon_index)
 #else
     Q_UNUSED(path)
 #endif
@@ -783,7 +807,7 @@ QImage ProgramEnumerator::extractIcon(const QString& path) {
     return {};
 }
 
-void ProgramEnumerator::deduplicatePrograms(QVector<ProgramInfo>& programs) {
+void ProgramEnumerator::deduplicatePrograms(QVector<ProgramInfo>& programs) const {
     // Empty is valid (see enrichWithIconsAndSizes) -- no non-empty assert.
     QSet<QString> seen;
     QVector<ProgramInfo> unique;
