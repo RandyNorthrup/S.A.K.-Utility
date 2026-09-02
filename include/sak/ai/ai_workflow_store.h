@@ -10,9 +10,15 @@
 #include <QStringList>
 #include <QVector>
 
+#include <functional>
+
+class AiWorkflowStoreTests;
+
 namespace sak::ai {
 
 class WorkflowStore {
+    friend class ::AiWorkflowStoreTests;
+
 public:
     WorkflowStore() = default;
 
@@ -30,7 +36,8 @@ public:
     [[nodiscard]] static QString defaultUserWorkflowDirectory();
 
 private:
-    void rebuildIndex();
+    static void setBeforeFileOpenHookForTesting(std::function<void(const QString&)> hook);
+    static void setBeforeFileReadHookForTesting(std::function<void(const QString&)> hook);
 
     QVector<WorkflowTemplate> m_workflows;
     QHash<QString, int> m_index_by_id;

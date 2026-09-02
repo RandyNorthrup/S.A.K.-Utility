@@ -8,20 +8,19 @@
     shape for the claim "cppcheck clean project-wide": a finding in a file nobody has touched
     is invisible until somebody touches it, and then it blocks THEIR commit. Measured on
     2026-08-30, 84 such findings sat in the tree while every commit passed. The CI workflow
-    does carry a whole-tree cppcheck step, but it is scoped to src/**/*.cpp (no headers, no
-    tests) and CI has not executed for 776 commits (R5-G21-7 is an owner cost decision), so
-    nothing that actually RUNS was enforcing the claim.
+    does carry a whole-tree cppcheck step, but before this local twin existed it was scoped to
+    src/**/*.cpp (no headers, no tests), and CI had not executed for 776 commits (R5-G21-7 is an
+    owner cost decision), so nothing that actually RAN was enforcing the claim.
 
-    PASS 1 -- whole project. Runs run_cppcheck.ps1 with no -Files, so cppcheck walks src/
-    and include/ as directories (src/third_party excluded) and analyzes headers as well as
-    sources. Any finding fails the gate.
+    PASS 1 -- whole project. Runs run_cppcheck.ps1 with no -Files, so cppcheck walks src/,
+    include/, and tests/ as directories (src/third_party excluded). Any finding fails the gate.
 
     PASS 2 -- stale-inline-suppression reveal. cppcheck's own unmatchedSuppression is the
     only check that reports a suppression matching nothing, and it is suppressed globally in
     cppcheck_suppressions.txt as "meta-noise from the suppression file itself". That is true
-    of the FILE-level entries -- a tests-scoped entry legitimately matches nothing in a run
-    that analyzes no test -- and false of the INLINE ones, where matching nothing means the
-    suppression is dead code hiding the fact that a check no longer fires. So this pass runs
+    of the FILE-level entries -- one may legitimately match no active finding in a clean or
+    configuration-specific run -- and false of the INLINE ones, where matching nothing means
+    the suppression is dead code hiding the fact that a check no longer fires. So this pass runs
     against a stripped copy of the suppressions list with two entries removed:
 
       unmatchedSuppression -- the signal itself; leaving it in reports nothing, by definition.
@@ -121,9 +120,9 @@ function Get-FirstPartySources {
 }
 
 # ---------------------------------------------------------------------------
-# Pass 1 -- whole project (src/ and include/ as directories)
+# Pass 1 -- whole project (src/, include/, and tests/ as directories)
 # ---------------------------------------------------------------------------
-Write-Host "PASS 1/2: cppcheck over the whole project (src/ + include/)..." -ForegroundColor Cyan
+Write-Host "PASS 1/2: cppcheck whole project (src/ + include/ + tests/)..." -ForegroundColor Cyan
 
 $pass1Errors = Join-Path $ProjectRoot "build\cppcheck_whole_project.txt"
 & $RunCppcheck -ErrorsFile $pass1Errors | Out-Null

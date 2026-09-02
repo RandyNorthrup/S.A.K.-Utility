@@ -18,7 +18,7 @@
         .\scripts\run_cppcheck.ps1 -Files (git diff ...)  # Changed files only
 
 .PARAMETER Files
-    Optional list of specific files to check. If omitted, scans src/ and include/.
+    Optional list of specific files to check. If omitted, scans src/, include/, and tests/.
 
 .PARAMETER SuppressionsFile
     Optional override for the suppressions list. Defaults to the repository's
@@ -219,7 +219,7 @@ $CppcheckArgs += @(
 # Determine files to check
 # ---------------------------------------------------------------------------
 $FileListPath = ""
-$InputScopeKind = "whole-project"
+$InputScopeKind = "whole-project-with-tests"
 $InputScopePaths = @()
 if ($Files -and $Files.Count -gt 0) {
     # Filter to real C++ source files only. Each value is passed straight to cppcheck, so
@@ -320,7 +320,10 @@ if ($Files -and $Files.Count -gt 0) {
         }
     }
 } else {
-    # Full project scan -- exclude third-party code
+    # Full first-party scan -- production sources, public headers, and test translation units.
+    # Tests are executable C++ and can carry the same safety/style findings as production code;
+    # omitting them made the whole-project claim false while the suppression reveal happened to
+    # analyze them in a separate pass.
     $CppcheckArgs += "-i"
     # Nested, not Join-Path $ProjectRoot "src" "third_party": the three-argument form needs the
     # -AdditionalChildPath parameter added in PowerShell 7, and the pre-commit hook (and the
@@ -328,7 +331,16 @@ if ($Files -and $Files.Count -gt 0) {
     # positional argument is an error -- so the whole-project branch died with a PowerShell
     # argument exception before cppcheck was ever launched.
     $CppcheckArgs += (Join-Path (Join-Path $ProjectRoot "src") "third_party")
-    $InputScopePaths = @((Join-Path $ProjectRoot "src"), (Join-Path $ProjectRoot "include"))
+    $InputScopePaths = @(
+        (Join-Path $ProjectRoot "src"),
+        (Join-Path $ProjectRoot "include"),
+        (Join-Path $ProjectRoot "tests")
+    )
+    foreach ($scopePath in $InputScopePaths) {
+        if (-not (Test-Path -LiteralPath $scopePath -PathType Container)) {
+            throw "Required cppcheck whole-project scope is missing: $scopePath"
+        }
+    }
     $CppcheckArgs += $InputScopePaths
 }
 
@@ -424,17 +436,31 @@ try {
         Copy-Item -LiteralPath $rawErrorsFile -Destination $ErrorsFile -Force
     }
 
-    $errors = @()
-    if (Test-Path -LiteralPath $ErrorsFile -PathType Leaf) {
-        $errors = @(Get-Content -LiteralPath $ErrorsFile -ErrorAction SilentlyContinue)
+    if (-not (Test-Path -LiteralPath $ErrorsFile -PathType Leaf)) {
+        throw "Cppcheck diagnostic classification wrote no output file: $ErrorsFile"
+    }
+    try {
+        $errors = @(Get-Content -LiteralPath $ErrorsFile -ErrorAction Stop)
+    } catch {
+        throw "Failed to read classified cppcheck diagnostics '$ErrorsFile': $($_.Exception.Message)"
     }
     $remainingSignals = @($errors | Where-Object {
         (-not [string]::IsNullOrWhiteSpace($_)) -and ($_ -notmatch '\[checkersReport\]$')
     })
+    $rawSignals = @($rawLines | Where-Object {
+        (-not [string]::IsNullOrWhiteSpace($_)) -and ($_ -notmatch '\[checkersReport\]$')
+    })
+    $hasCheckersReport = @($rawLines | Where-Object {
+        $_ -match '\[checkersReport\]$'
+    }).Count -gt 0
 
     $exitCode = $captured.exit_code
+    # --error-exitcode=1 reserves exactly 1 for findings. Normalize only that code, only after
+    # a readable classified stream proves every raw signal was one exact Qt slot finding, and
+    # only when cppcheck emitted its completion report. Tool/startup/crash exits remain red.
     if (-not $classificationFailed -and $classifiedQtSlots -gt 0 -and
-        $exitCode -ne 0 -and $remainingSignals.Count -eq 0) {
+        $hasCheckersReport -and $rawSignals.Count -eq $classifiedQtSlots -and
+        $exitCode -eq 1 -and $remainingSignals.Count -eq 0) {
         $exitCode = 0
     }
     if ($classifiedQtSlots -gt 0) {

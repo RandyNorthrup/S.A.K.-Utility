@@ -35,6 +35,7 @@ public:
 
     void scan() override;
     void execute() override;
+    void setOutputLocation(const QString& output_location) { m_output_location = output_location; }
 
 private:
     QString m_output_location;

@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "sak/action_constants.h"
 #include "sak/quick_action.h"
 
 #include <QString>
@@ -20,7 +21,9 @@ class VerifySystemFilesAction : public QuickAction {
 public:
     explicit VerifySystemFilesAction(QObject* parent = nullptr);
 
-    QString name() const override { return "Verify System Files"; }
+    QString name() const override {
+        return QString::fromLatin1(quick_action_elevation::kVerifySystemFilesName);
+    }
     QString description() const override { return "Run SFC and DISM to repair system files"; }
     QIcon icon() const override { return QIcon(); }
     ActionCategory category() const override { return ActionCategory::Maintenance; }

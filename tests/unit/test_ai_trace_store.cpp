@@ -4,10 +4,78 @@
 #include "sak/ai/ai_trace_store.h"
 
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
+
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+
+#include <io.h>
+
+namespace {
+
+constexpr qint64 kJsonlLineCapBytes = 4LL * 1024LL * 1024LL;
+constexpr qint64 kJsonlLoadCapBytes = 128LL * 1024LL * 1024LL;
+constexpr qsizetype kRotationPaddingChars = 900;
+constexpr qint64 kCapSlackDivisor = 2;
+
+QByteArray traceLine(const QString& run_id) {
+    return QJsonDocument(QJsonObject{{QStringLiteral("schema_version"), 1},
+                                     {QStringLiteral("run_id"), run_id},
+                                     {QStringLiteral("kind"), QStringLiteral("phase")},
+                                     {QStringLiteral("name"), QStringLiteral("diagnose")},
+                                     {QStringLiteral("status"), QStringLiteral("started")}})
+               .toJson(QJsonDocument::Compact) +
+           '\n';
+}
+
+QByteArray activityLine(const QString& run_id) {
+    return QJsonDocument(QJsonObject{{QStringLiteral("schema_version"), 1},
+                                     {QStringLiteral("session_id"), QStringLiteral("session_2")},
+                                     {QStringLiteral("run_id"), run_id},
+                                     {QStringLiteral("kind"), QStringLiteral("phase")},
+                                     {QStringLiteral("state"), QStringLiteral("running")},
+                                     {QStringLiteral("summary"), QStringLiteral("diagnose")}})
+               .toJson(QJsonDocument::Compact) +
+           '\n';
+}
+
+sak::ai::AiTraceEvent paddedTraceEvent(int index) {
+    auto event = sak::ai::TraceStore::event({QStringLiteral("run_%1").arg(index),
+                                             QStringLiteral("phase"),
+                                             QStringLiteral("diagnose"),
+                                             QStringLiteral("started"),
+                                             {},
+                                             {}});
+    event.timestamp_utc = QDateTime::fromString(QStringLiteral("2026-09-01T12:00:00.000Z"),
+                                                Qt::ISODateWithMs);
+    event.span_id = QStringLiteral("span_fixed");
+    event.metadata.insert(QStringLiteral("padding"),
+                          QString(kRotationPaddingChars, QLatin1Char('x')));
+    return event;
+}
+
+qint64 serializedLineSize(const sak::ai::AiTraceEvent& event) {
+    return QJsonDocument(event.toJson()).toJson(QJsonDocument::Compact).size() + 1;
+}
+
+QString firstRunId(const QString& path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return {};
+    }
+    return QJsonDocument::fromJson(file.readLine().trimmed())
+        .object()
+        .value(QStringLiteral("run_id"))
+        .toString();
+}
+
+}  // namespace
 
 class AiTraceStoreTests : public QObject {
     Q_OBJECT
@@ -15,13 +83,25 @@ class AiTraceStoreTests : public QObject {
 private Q_SLOTS:
     void appendEvent_writesTraceJsonl();
     void appendActivityEvent_writesActivityJsonl();
-    void loadEvents_skipsInvalidLines();
-    void loadActivityEvents_skipsInvalidLines();
+    void loadEvents_rejectsMalformedLine();
+    void loadActivityEvents_rejectsMalformedLine();
+    void loadEvents_rejectsUnsupportedSchema();
+    void loadActivityEvents_rejectsUnsupportedSchema();
+    void loadEvents_rejectsTruncatedLine();
+    void loadActivityEvents_rejectsTruncatedLine();
+    void loadEvents_rejectsOversizedLine();
+    void loadActivityEvents_rejectsOversizedLine();
+    void loadEvents_rejectsAggregateCapWithoutPartialData();
+    void loadActivityEvents_rejectsAggregateCapWithoutPartialData();
+    void loadEvents_reportsReadFailureWithoutPartialData();
+    void loadActivityEvents_reportsReadFailureWithoutPartialData();
     void traceEvent_roundTripsTokenUsageAndMetadata();
     void activityEvent_roundTripsContractFields();
     void appendReplayEvent_writesCompactReplayJsonl();
     void traceAndActivityMetadata_isRedacted();
-    void appendEvent_rotatesInsteadOfDroppingAtCap();
+    void appendEvent_rotatesBeforeWriteWouldExceedCap();
+    void appendEvent_rejectsRecordLargerThanFileCap();
+    void appendActivityEvent_rejectsRecordLargerThanLineCap();
     void rotation_keepsBoundedRingAndNewestLive();
 };
 
@@ -100,60 +180,224 @@ void AiTraceStoreTests::appendActivityEvent_writesActivityJsonl() {
     QCOMPARE(activity_id.size(), static_cast<qsizetype>(16));
 }
 
-void AiTraceStoreTests::loadEvents_skipsInvalidLines() {
+void AiTraceStoreTests::loadEvents_rejectsMalformedLine() {
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
 
     sak::ai::TraceStore store(temp.path());
     QFile file(store.tracePath());
     QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
-    // A valid line BEFORE the garbage: with the malformed line first, a loader that ABORTED on
-    // the first parse failure and returned what it had would be indistinguishable from one that
-    // skipped and continued -- both yield the single trailing event. Bracketing the garbage
-    // proves the skip resumes, and pins the surviving ORDER.
-    file.write(R"({"run_id":"run_1","kind":"phase","name":"diagnose","status":"started"})");
-    file.write("\n");
+    file.write(traceLine(QStringLiteral("run_1")));
     file.write("not json\n");
-    file.write(R"({"run_id":"run_2","kind":"tool","name":"powershell","status":"completed"})");
-    file.write("\n");
+    file.write(traceLine(QStringLiteral("run_2")));
     file.close();
 
     QString error;
     const auto events = store.loadEvents(&error);
-    QVERIFY2(error.isEmpty(), qPrintable(error));
-    QCOMPARE(events.size(), 2);
-    QCOMPARE(events.first().run_id, QStringLiteral("run_1"));
-    QCOMPARE(events.first().name, QStringLiteral("diagnose"));
-    QCOMPARE(events.last().run_id, QStringLiteral("run_2"));
-    QCOMPARE(events.last().name, QStringLiteral("powershell"));
+    QVERIFY(events.isEmpty());
+    QCOMPARE(error, QStringLiteral("Trace audit line 2 does not contain a valid JSON object"));
 }
 
-void AiTraceStoreTests::loadActivityEvents_skipsInvalidLines() {
+void AiTraceStoreTests::loadActivityEvents_rejectsMalformedLine() {
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
 
     sak::ai::TraceStore store(temp.path());
     QFile file(store.activityPath());
     QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
-    // Same bracketing as the trace sibling: a valid line BEFORE the garbage distinguishes
-    // "skipped and resumed" from "aborted on first parse failure".
-    file.write(
-        R"({"session_id":"session_2","run_id":"run_1","kind":"phase","state":"running","summary":"first"})");
-    file.write("\n");
+    file.write(activityLine(QStringLiteral("run_1")));
     file.write("not json\n");
-    file.write(
-        R"({"session_id":"session_2","run_id":"run_2","kind":"tool","state":"complete","summary":"done"})");
-    file.write("\n");
+    file.write(activityLine(QStringLiteral("run_2")));
     file.close();
 
     QString error;
     const auto events = store.loadActivityEvents(&error);
-    QVERIFY2(error.isEmpty(), qPrintable(error));
-    QCOMPARE(events.size(), 2);
-    QCOMPARE(events.first().run_id, QStringLiteral("run_1"));
-    QCOMPARE(events.first().state, QStringLiteral("running"));
-    QCOMPARE(events.last().session_id, QStringLiteral("session_2"));
-    QCOMPARE(events.last().state, QStringLiteral("complete"));
+    QVERIFY(events.isEmpty());
+    QCOMPARE(error, QStringLiteral("Activity audit line 2 does not contain a valid JSON object"));
+}
+
+void AiTraceStoreTests::loadEvents_rejectsUnsupportedSchema() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::TraceStore store(temp.path());
+    QFile file(store.tracePath());
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("{\"schema_version\":99}\n");
+    file.close();
+
+    QString error;
+    const auto events = store.loadEvents(&error);
+    QVERIFY(events.isEmpty());
+    QCOMPARE(error, QStringLiteral("Trace audit line 1 has unsupported schema_version"));
+}
+
+void AiTraceStoreTests::loadActivityEvents_rejectsUnsupportedSchema() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::TraceStore store(temp.path());
+    QFile file(store.activityPath());
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write("{\"schema_version\":99}\n");
+    file.close();
+
+    QString error;
+    const auto events = store.loadActivityEvents(&error);
+    QVERIFY(events.isEmpty());
+    QCOMPARE(error, QStringLiteral("Activity audit line 1 has unsupported schema_version"));
+}
+
+void AiTraceStoreTests::loadEvents_rejectsTruncatedLine() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::TraceStore store(temp.path());
+    QFile file(store.tracePath());
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(traceLine(QStringLiteral("run_1")));
+    QByteArray truncated = traceLine(QStringLiteral("run_2"));
+    truncated.chop(1);
+    file.write(truncated);
+    file.close();
+
+    QString error;
+    const auto events = store.loadEvents(&error);
+    QVERIFY(events.isEmpty());
+    QCOMPARE(error, QStringLiteral("Trace audit line 2 is truncated (missing newline)"));
+}
+
+void AiTraceStoreTests::loadActivityEvents_rejectsTruncatedLine() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::TraceStore store(temp.path());
+    QFile file(store.activityPath());
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(activityLine(QStringLiteral("run_1")));
+    QByteArray truncated = activityLine(QStringLiteral("run_2"));
+    truncated.chop(1);
+    file.write(truncated);
+    file.close();
+
+    QString error;
+    const auto events = store.loadActivityEvents(&error);
+    QVERIFY(events.isEmpty());
+    QCOMPARE(error, QStringLiteral("Activity audit line 2 is truncated (missing newline)"));
+}
+
+void AiTraceStoreTests::loadEvents_rejectsOversizedLine() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::TraceStore store(temp.path());
+    QFile file(store.tracePath());
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(traceLine(QStringLiteral("run_1")));
+    file.write("{");
+    QVERIFY(file.resize(file.pos() + kJsonlLineCapBytes));
+    file.close();
+
+    QString error;
+    const auto events = store.loadEvents(&error);
+    QVERIFY(events.isEmpty());
+    QCOMPARE(error, QStringLiteral("Trace audit line 2 exceeds the 4194304-byte line cap"));
+}
+
+void AiTraceStoreTests::loadActivityEvents_rejectsOversizedLine() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::TraceStore store(temp.path());
+    QFile file(store.activityPath());
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(activityLine(QStringLiteral("run_1")));
+    file.write("{");
+    QVERIFY(file.resize(file.pos() + kJsonlLineCapBytes));
+    file.close();
+
+    QString error;
+    const auto events = store.loadActivityEvents(&error);
+    QVERIFY(events.isEmpty());
+    QCOMPARE(error, QStringLiteral("Activity audit line 2 exceeds the 4194304-byte line cap"));
+}
+
+void AiTraceStoreTests::loadEvents_rejectsAggregateCapWithoutPartialData() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::TraceStore store(temp.path());
+    QFile file(store.tracePath());
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(traceLine(QStringLiteral("run_1")));
+    QVERIFY(file.resize(kJsonlLoadCapBytes + 1));
+    file.close();
+
+    QString error;
+    const auto events = store.loadEvents(&error);
+    QVERIFY(events.isEmpty());
+    QCOMPARE(error, QStringLiteral("Trace audit file exceeds the 134217728-byte load cap"));
+}
+
+void AiTraceStoreTests::loadActivityEvents_rejectsAggregateCapWithoutPartialData() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::TraceStore store(temp.path());
+    QFile file(store.activityPath());
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(activityLine(QStringLiteral("run_1")));
+    QVERIFY(file.resize(kJsonlLoadCapBytes + 1));
+    file.close();
+
+    QString error;
+    const auto events = store.loadActivityEvents(&error);
+    QVERIFY(events.isEmpty());
+    QCOMPARE(error, QStringLiteral("Activity audit file exceeds the 134217728-byte load cap"));
+}
+
+void AiTraceStoreTests::loadEvents_reportsReadFailureWithoutPartialData() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::TraceStore store(temp.path());
+    QFile file(store.tracePath());
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(traceLine(QStringLiteral("run_1")));
+    file.close();
+
+    QFile locked_file(store.tracePath());
+    QVERIFY(locked_file.open(QIODevice::ReadWrite));
+    OVERLAPPED overlap{};
+    QVERIFY(LockFileEx(reinterpret_cast<HANDLE>(_get_osfhandle(locked_file.handle())),
+                       LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+                       0,
+                       MAXDWORD,
+                       MAXDWORD,
+                       &overlap));
+
+    QString error;
+    const auto events = store.loadEvents(&error);
+    QVERIFY(events.isEmpty());
+    QVERIFY2(error.startsWith(QStringLiteral("Could not read trace audit line 1: ")),
+             qPrintable(error));
+}
+
+void AiTraceStoreTests::loadActivityEvents_reportsReadFailureWithoutPartialData() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::TraceStore store(temp.path());
+    QFile file(store.activityPath());
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(activityLine(QStringLiteral("run_1")));
+    file.close();
+
+    QFile locked_file(store.activityPath());
+    QVERIFY(locked_file.open(QIODevice::ReadWrite));
+    OVERLAPPED overlap{};
+    QVERIFY(LockFileEx(reinterpret_cast<HANDLE>(_get_osfhandle(locked_file.handle())),
+                       LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+                       0,
+                       MAXDWORD,
+                       MAXDWORD,
+                       &overlap));
+
+    QString error;
+    const auto events = store.loadActivityEvents(&error);
+    QVERIFY(events.isEmpty());
+    QVERIFY2(error.startsWith(QStringLiteral("Could not read activity audit line 1: ")),
+             qPrintable(error));
 }
 
 void AiTraceStoreTests::traceEvent_roundTripsTokenUsageAndMetadata() {
@@ -385,42 +629,67 @@ void AiTraceStoreTests::traceAndActivityMetadata_isRedacted() {
     QVERIFY(!QString::fromUtf8(activity_file.readAll()).contains(secret));
 }
 
-void AiTraceStoreTests::appendEvent_rotatesInsteadOfDroppingAtCap() {
-    // At the size cap the trail must roll, not stop: every append still succeeds
-    // and a rolled file appears alongside the (fresh) live file.
+void AiTraceStoreTests::appendEvent_rotatesBeforeWriteWouldExceedCap() {
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
 
     sak::ai::TraceStore store(temp.path());
-    store.setMaxJsonlBytes(200);  // each event line exceeds this, so appends roll
-    QCOMPARE(store.maxJsonlBytes(), static_cast<qint64>(200));
+    const qint64 line_size = serializedLineSize(paddedTraceEvent(0));
+    const qint64 cap = line_size + (line_size / kCapSlackDivisor);
+    store.setMaxJsonlBytes(cap);
+    QCOMPARE(store.maxJsonlBytes(), cap);
 
     QString error;
     for (int i = 0; i < 4; ++i) {
-        auto event = sak::ai::TraceStore::event({QStringLiteral("run_%1").arg(i),
-                                                 QStringLiteral("phase"),
-                                                 QStringLiteral("diagnose"),
-                                                 QStringLiteral("started"),
-                                                 {},
-                                                 {}});
-        QVERIFY2(store.appendEvent(event, &error), qPrintable(error));
+        QVERIFY2(store.appendEvent(paddedTraceEvent(i), &error), qPrintable(error));
     }
 
-    // Rolling preserves the events: live=run_3, .1=run_2, .2=run_1, .3=run_0.
-    const auto firstRunId = [](const QString& path) {
-        QFile rolled(path);
-        if (!rolled.open(QIODevice::ReadOnly | QIODevice::Text)) {
-            return QString();
-        }
-        return QJsonDocument::fromJson(rolled.readLine().trimmed())
-            .object()
-            .value(QStringLiteral("run_id"))
-            .toString();
-    };
     QCOMPARE(firstRunId(store.tracePath()), QStringLiteral("run_3"));
     QCOMPARE(firstRunId(store.tracePath() + QStringLiteral(".1")), QStringLiteral("run_2"));
     QCOMPARE(firstRunId(store.tracePath() + QStringLiteral(".2")), QStringLiteral("run_1"));
     QCOMPARE(firstRunId(store.tracePath() + QStringLiteral(".3")), QStringLiteral("run_0"));
+    for (int i = 0; i <= 3; ++i) {
+        const QString path = i == 0 ? store.tracePath()
+                                    : store.tracePath() + QStringLiteral(".%1").arg(i);
+        QVERIFY(QFileInfo(path).size() <= cap);
+    }
+}
+
+void AiTraceStoreTests::appendEvent_rejectsRecordLargerThanFileCap() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::TraceStore store(temp.path());
+    const auto event = paddedTraceEvent(0);
+    const qint64 cap = serializedLineSize(event) - 1;
+    store.setMaxJsonlBytes(cap);
+
+    QString error;
+    QVERIFY(!store.appendEvent(event, &error));
+    QCOMPARE(error,
+             QStringLiteral("Could not append trace: audit record exceeds the %1-byte file cap")
+                 .arg(cap));
+    QVERIFY(!QFile::exists(store.tracePath()));
+    QVERIFY(!QFile::exists(store.tracePath() + QStringLiteral(".1")));
+}
+
+void AiTraceStoreTests::appendActivityEvent_rejectsRecordLargerThanLineCap() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::TraceStore store(temp.path());
+    auto event = sak::ai::TraceStore::activityEvent({QStringLiteral("session_1"),
+                                                     QStringLiteral("run_1"),
+                                                     QStringLiteral("tool_call"),
+                                                     QStringLiteral("running"),
+                                                     QStringLiteral("diagnose"),
+                                                     {}});
+    event.artifact_refs.append(QString(kJsonlLineCapBytes, QLatin1Char('x')));
+
+    QString error;
+    QVERIFY(!store.appendActivityEvent(event, &error));
+    QCOMPARE(error,
+             QStringLiteral(
+                 "Could not append activity: audit record exceeds the 4194304-byte line cap"));
+    QVERIFY(!QFile::exists(store.activityPath()));
 }
 
 void AiTraceStoreTests::rotation_keepsBoundedRingAndNewestLive() {
@@ -430,32 +699,18 @@ void AiTraceStoreTests::rotation_keepsBoundedRingAndNewestLive() {
     QVERIFY(temp.isValid());
 
     sak::ai::TraceStore store(temp.path());
-    store.setMaxJsonlBytes(200);
+    const qint64 line_size = serializedLineSize(paddedTraceEvent(0));
+    const qint64 cap = line_size + (line_size / kCapSlackDivisor);
+    store.setMaxJsonlBytes(cap);
 
     QString error;
     constexpr int kEvents = 8;
     for (int i = 0; i < kEvents; ++i) {
-        auto event = sak::ai::TraceStore::event({QStringLiteral("run_%1").arg(i),
-                                                 QStringLiteral("phase"),
-                                                 QStringLiteral("diagnose"),
-                                                 QStringLiteral("started"),
-                                                 {},
-                                                 {}});
-        QVERIFY2(store.appendEvent(event, &error), qPrintable(error));
+        QVERIFY2(store.appendEvent(paddedTraceEvent(i), &error), qPrintable(error));
     }
 
     // Ring is bounded AND it actually rolls: the three rolled files hold the three
     // generations immediately before the live one, and .4 never exists.
-    const auto firstRunId = [](const QString& path) {
-        QFile rolled(path);
-        if (!rolled.open(QIODevice::ReadOnly | QIODevice::Text)) {
-            return QString();
-        }
-        return QJsonDocument::fromJson(rolled.readLine().trimmed())
-            .object()
-            .value(QStringLiteral("run_id"))
-            .toString();
-    };
     QCOMPARE(firstRunId(store.tracePath() + QStringLiteral(".1")), QStringLiteral("run_6"));
     QCOMPARE(firstRunId(store.tracePath() + QStringLiteral(".2")), QStringLiteral("run_5"));
     QCOMPARE(firstRunId(store.tracePath() + QStringLiteral(".3")), QStringLiteral("run_4"));

@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "sak/action_constants.h"
 #include "sak/quick_action.h"
 
 #include <QDateTime>
@@ -22,7 +23,9 @@ class ResetNetworkAction : public QuickAction {
 public:
     explicit ResetNetworkAction(QObject* parent = nullptr);
 
-    QString name() const override { return "Reset Network Settings"; }
+    QString name() const override {
+        return QString::fromLatin1(quick_action_elevation::kResetNetworkName);
+    }
     QString description() const override {
         return "Reset TCP/IP, DNS, Winsock and Windows Firewall rules, and restart network "
                "adapters";

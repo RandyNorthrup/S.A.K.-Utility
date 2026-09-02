@@ -90,10 +90,14 @@ public:
     [[nodiscard]] QString activityPath() const;
     [[nodiscard]] QString replayPath() const;
 
+    /// Rolls before the serialized record would cross either the stream or line-size cap.
     [[nodiscard]] bool appendEvent(AiTraceEvent event, QString* error_message = nullptr) const;
+    /// Returns no events and sets error_message when any record is incomplete or invalid.
     [[nodiscard]] QVector<AiTraceEvent> loadEvents(QString* error_message = nullptr) const;
+    /// Rolls before the serialized record would cross either the stream or line-size cap.
     [[nodiscard]] bool appendActivityEvent(AiActivityEvent event,
                                            QString* error_message = nullptr) const;
+    /// Returns no events and sets error_message when any record is incomplete or invalid.
     [[nodiscard]] QVector<AiActivityEvent> loadActivityEvents(
         QString* error_message = nullptr) const;
     [[nodiscard]] bool appendReplayEvent(const QString& run_id,

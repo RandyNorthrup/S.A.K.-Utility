@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "sak/action_constants.h"
 #include "sak/quick_action.h"
 
 #include <QDateTime>
@@ -22,7 +23,9 @@ class CheckDiskErrorsAction : public QuickAction {
 public:
     explicit CheckDiskErrorsAction(QObject* parent = nullptr);
 
-    QString name() const override { return "Check Disk Errors"; }
+    QString name() const override {
+        return QString::fromLatin1(quick_action_elevation::kCheckDiskErrorsName);
+    }
     QString description() const override { return "Run CHKDSK scan on all drives"; }
     QIcon icon() const override { return QIcon(); }
     ActionCategory category() const override { return ActionCategory::Maintenance; }

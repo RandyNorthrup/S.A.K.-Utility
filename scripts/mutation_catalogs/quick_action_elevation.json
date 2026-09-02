@@ -1,0 +1,40 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_quick_action_controller",
+  "ctest_regex": "^test_quick_action_controller$",
+  "mutants": [
+    {
+      "id": "reset-network-routing-reverts-to-display-name",
+      "file": "src/core/quick_action_controller.cpp",
+      "find": "        std::pair{kResetNetworkName, kResetNetworkTaskId},",
+      "replace": "        std::pair{kResetNetworkName, kResetNetworkName},",
+      "expect": "killed",
+      "why": "testElevatedTaskIdsAndPayloadUseHelperContract requires Reset Network Settings to route to the helper's Reset Network task id."
+    },
+    {
+      "id": "bitlocker-routing-reverts-to-display-name",
+      "file": "src/core/quick_action_controller.cpp",
+      "find": "        std::pair{kBackupBitLockerKeysName, kBackupBitLockerKeysTaskId},",
+      "replace": "        std::pair{kBackupBitLockerKeysName, kBackupBitLockerKeysName},",
+      "expect": "killed",
+      "why": "testElevatedTaskIdsAndPayloadUseHelperContract requires BitLocker Key Backup to route to the helper's Backup BitLocker Keys task id and carry its destination payload."
+    },
+    {
+      "id": "unknown-admin-action-falls-back-to-display-name",
+      "file": "src/core/quick_action_controller.cpp",
+      "find": "    return match == mappings.end() ? QString() : QString::fromLatin1(match->second);",
+      "replace": "    return match == mappings.end() ? action_name : QString::fromLatin1(match->second);",
+      "expect": "killed",
+      "why": "testElevatedTaskIdsAndPayloadUseHelperContract requires an unregistered elevated action to return no helper task id."
+    },
+    {
+      "id": "bitlocker-empty-destination-uses-legacy-default",
+      "file": "src/core/quick_action_controller.cpp",
+      "find": "    const QString backup_location = configured_backup_location.trimmed();",
+      "replace": "    const QString backup_location = configured_backup_location.trimmed().isEmpty() ? QStringLiteral(\"C:/SAK_Backups\") : configured_backup_location.trimmed();",
+      "expect": "killed",
+      "why": "testBitLockerPayloadHasNoDefaultDestination requires missing session provenance to remain an empty payload that the elevated helper refuses."
+    }
+  ]
+}

@@ -5,6 +5,7 @@
 
 #include "sak/quick_action.h"
 
+#include <QJsonObject>
 #include <QObject>
 #include <QQueue>
 #include <QString>
@@ -16,6 +17,10 @@
 namespace sak {
 
 class ElevationBroker;
+
+[[nodiscard]] QString elevatedTaskIdForQuickAction(const QString& action_name);
+[[nodiscard]] QJsonObject buildElevatedActionPayload(const QString& task_id,
+                                                     const QString& configured_backup_location);
 
 /**
  * @brief Controls quick action execution and threading
@@ -190,6 +195,7 @@ private:
      * @param action_name Action identifier (for queueing)
      */
     void executeElevatedAction(QuickAction* action, const QString& action_name);
+    [[nodiscard]] QString prepareElevatedAction(QuickAction* action, const QString& action_name);
 
     /**
      * @brief Start scan in worker thread

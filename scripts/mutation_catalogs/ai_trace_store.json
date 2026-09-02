@@ -1,0 +1,64 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_ai_trace_store",
+  "ctest_regex": "^test_ai_trace_store$",
+  "mutants": [
+    {
+      "id": "oversized-audit-line-admitted",
+      "file": "src/ai/ai_trace_store.cpp",
+      "find": "    if (payload.size() > kMaxJsonlLineBytes) {",
+      "replace": "    if (payload.size() < 0) {",
+      "expect": "killed",
+      "why": "appendActivityEvent_rejectsRecordLargerThanLineCap requires a serialized record over 4 MiB to be refused before writing."
+    },
+    {
+      "id": "record-larger-than-file-cap-admitted",
+      "file": "src/ai/ai_trace_store.cpp",
+      "find": "    if (payload.size() > cap) {",
+      "replace": "    if (payload.size() < 0 && cap < 0) {",
+      "expect": "killed",
+      "why": "appendEvent_rejectsRecordLargerThanFileCap requires an individual record larger than the configured stream cap to be refused."
+    },
+    {
+      "id": "rotation-waits-until-already-full",
+      "file": "src/ai/ai_trace_store.cpp",
+      "find": "    const bool would_exceed_cap = current_size > cap - payload.size();",
+      "replace": "    const bool would_exceed_cap = current_size >= cap;",
+      "expect": "killed",
+      "why": "appendEvent_rotatesBeforeWriteWouldExceedCap requires rotation before the projected append crosses the cap."
+    },
+    {
+      "id": "truncated-final-line-accepted",
+      "file": "src/ai/ai_trace_store.cpp",
+      "find": "    if (!raw_line.endsWith('\\n')) {",
+      "replace": "    if (raw_line.isEmpty()) {",
+      "expect": "killed",
+      "why": "trace and activity truncated-line tests require a missing final newline to invalidate the whole load."
+    },
+    {
+      "id": "line-error-returns-partial-events",
+      "file": "src/ai/ai_trace_store.cpp",
+      "find": "            return loadJsonlError<Event>(error_message, line_error);",
+      "replace": "            continue;",
+      "expect": "killed",
+      "why": "malformed, truncated, oversized and read-error tests require zero partial events and an exact diagnostic."
+    },
+    {
+      "id": "invalid-json-bypasses-parse-refusal",
+      "file": "src/ai/ai_trace_store.cpp",
+      "find": "        if (parse_error.error != QJsonParseError::NoError || !document.isObject()) {",
+      "replace": "        if (parse_error.error == QJsonParseError::NoError && !document.isObject()) {",
+      "expect": "killed",
+      "why": "trace and activity malformed-line tests require invalid JSON to fail the whole audit load."
+    },
+    {
+      "id": "unsupported-schema-is-accepted",
+      "file": "src/ai/ai_trace_store.cpp",
+      "find": "        if (!schema_error.isEmpty()) {",
+      "replace": "        if (schema_error.isEmpty() && schema_error.size() < 0) {",
+      "expect": "killed",
+      "why": "trace and activity schema tests require every loaded record to carry the exact supported schema version."
+    }
+  ]
+}

@@ -6,7 +6,7 @@
   "mutants": [
     {
       "id": "stable-read-size-check-inverted",
-      "file": "src/ai/ai_skill_store.cpp",
+      "file": "src/ai/ai_store_file_loader.cpp",
       "find": "    if (*size_before != *size_after || *size_after != bytes.size()) {",
       "replace": "    if (*size_before == *size_after && *size_after != bytes.size()) {",
       "expect": "killed",
@@ -14,7 +14,7 @@
     },
     {
       "id": "directory-reparse-refusal-disabled",
-      "file": "src/ai/ai_skill_store.cpp",
+      "file": "src/ai/ai_store_file_loader.cpp",
       "find": "    if (handleIsReparsePoint(directory_handle.get())) {",
       "replace": "    if (directory.isEmpty() && handleIsReparsePoint(directory_handle.get())) {",
       "expect": "killed",
@@ -22,7 +22,7 @@
     },
     {
       "id": "file-parent-identity-refusal-weakened",
-      "file": "src/ai/ai_skill_store.cpp",
+      "file": "src/ai/ai_store_file_loader.cpp",
       "find": "    if (handleIsReparsePoint(file.get()) ||",
       "replace": "    if (handleIsReparsePoint(file.get()) &&",
       "expect": "killed",
@@ -30,7 +30,7 @@
     },
     {
       "id": "directory-file-cap-ignored",
-      "file": "src/ai/ai_skill_store.cpp",
+      "file": "src/ai/ai_store_file_loader.cpp",
       "find": "    if (enumeration->capped) {",
       "replace": "    if (enumeration->capped && directory.isEmpty()) {",
       "expect": "killed",

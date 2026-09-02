@@ -1265,24 +1265,37 @@ a parked design, per the bucket convention. Open work is what remains after thos
   failed against the old boundaries. The new recorder and conversation mutation catalogs kill
   9/9 mutants. All changed-file hooks passed; the review ledger is repinned to the hardened
   recorder blob. Release build exit 0; full CTest 267/267, zero failures, 735.66 seconds.
-  NEXT SOURCE AUDIT OPEN FINDINGS, 2026-09-01: `app_action_service.cpp` registers Reset Network
-  Settings and BitLocker Key Backup, while the elevation helper allowlist and BitLocker payload
-  builder expect different task names. Standard-user execution therefore refuses both actions,
-  and the BitLocker request also loses its payload. The assistant panel constructs the service
-  before an AI session exists, ignores the empty artifact-root error, and falls back to an
-  AppData `app_actions` directory that is never retargeted after session creation. Resulting
-  reports, screenshots and BitLocker keys sit outside session artifact provenance. The unused
-  `m_backup_dir` member and uncalled `controller()` accessor are dead/legacy candidates. These
-  findings remain INCOMPLETE until direct fixes, old-code-red tests and the full gate land.
+  AI STORE/TRACE/APP-ACTION WAVE 19: WorkflowStore now shares SkillStore's Windows handle-pinned
+  directory/file loader instead of growing a third security copy. Native enumeration stops on
+  file 513; files are capped at 1 MiB, opened no-follow, bound to the pinned parent object and
+  read with exact before/read/after sizes. Redundant workflow index rebuild code is deleted.
+  Trace/activity JSONL now serializes before mutation, rejects over-cap records, rotates before
+  projected overflow, uses byte-exact binary I/O, returns no partial data on any malformed,
+  truncated, oversized, changed or unreadable input, requires schema version 1, and locks public
+  path getters. Reset Network and BitLocker elevation now use shared exact display/task IDs;
+  missing BitLocker provenance no longer falls back to C:/SAK_Backups. App-action output has no
+  AppData fallback and follows the active session artifact root across create/open/rename/new
+  transitions. The dead controller accessor is removed and the former write-only directory
+  member owns live retarget state. Twenty-three focused guards failed against the old boundaries;
+  new/retargeted mutation catalogs kill 19/19 mutants.
+  CPPCHECK FALSE-GREEN CLOSED: classified diagnostics are read with ErrorAction Stop; only exit 1
+  with a complete checker report and an exact all-Qt-slot signal set can normalize to success.
+  Whole-project pass 1 now scans src, include and tests. Its live run found zero findings with
+  183/186 checkers active; pass 2 found zero stale inline suppressions. Two regression tests failed
+  against the old gate and the focused registered suite passes 13/13.
+  AI STORE/TRACE/APP-ACTION WAVE 19 FINAL GATE: all changed-file hooks passed. The review ledger is
+  repinned for the shared loader, skill store, workflow store, trace store and app-action service.
+  The mutation ratchet now holds 45 catalogs / 354 mutants. Release build exit 0; full CTest
+  267/267, zero failures, 690.31 seconds.
   SUPPRESSION RE-AUDIT REFRESH, 2026-09-01: core naming remains broadly excluded while 5,271
   findings are tracked as open; two coverage compiler warning silences remain; the vendored LZFSE
-  target also disables warnings for the first-party shim. Whole-project cppcheck omits general
-  test findings and can false-green when its captured diagnostic file is unreadable. Another 26
+  target also disables warnings for the first-party shim. The cppcheck test-scope and unreadable-
+  diagnostic false greens are closed in Wave 19. Another 26
   Q_UNUSED and 22 `(void)` warning silences sit in unsupported-OS branches that must be removed,
   not retained. The live suite contains 157 QSKIP call sites, while the observed-skip baseline
   currently covers 35 functions; fixture-backed skips and ignored test results remain direct-fix
   candidates. Certification PowerShell `SilentlyContinue` paths require fail-closed re-audit.
-  `APFS_LIVE_RECERT_FOLLOWONS.md` also has a stale cppcheck-suppression count. None of these
+  The APFS follow-on document's stale cppcheck-suppression count is corrected. None of the
   exceptions is grandfathered; all remain INCOMPLETE until directly fixed or individually proven
   unavoidable.
   Unsupported-platform branch removal remains INCOMPLETE and must reduce code, not add portability
@@ -3397,7 +3410,7 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
     own bookkeeping.
     GROUNDED REPLACEMENT: scripts/review_ledger.py enumerates units from HEAD by an explicit,
     reproducible rule and stores scripts/review_ledger_state.json. Measured at d4519cb0:
-      1029 units total (NOT 1098 -- the tree has gained and lost files since that count).
+      1059 units total (NOT 1098 -- the tree has gained and lost files since that count).
       675 pending. 354 carry citation evidence (the remediation doc names the file, so the
       earlier campaign demonstrably looked at it) -- recorded as evidence=cited.
       0 units are SELF-VERIFYING: no brief survives in the tree for any unit.
@@ -3411,7 +3424,7 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
     STILL OPEN: 675 pending units to run (Codex authorized by the owner 2026-08-25), and the
     354 cited units have no stored brief, so their findings cannot be re-audited without a re-run.
   - CURRENT REPRODUCIBLE STATE 2026-08-31 after the user explicitly re-authorized continuation
-    and multitasking: `review_ledger.py status` reports 1029 units, 658 pending and 17
+    and multitasking: `review_ledger.py status` reports 1059 units, 658 pending and 9
     self-verifying `evidence=driver` units with stored blob-bound briefs. The budget/VM blocker is
     gone. Five new src/ai units ran read-only at xhigh and were recorded: offline downloader tool
     runner, OpenAI model client, package selection, prompt assembler, and provider-gateway
@@ -4256,7 +4269,7 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
     session title. Asserting a rollback there would have pinned behaviour the code must not have.
   - SUPERSEDED BLOCKER RECORD: the old 764/1098 and August-11 account-cap text below was not
     reproducible and is no longer current. The live blob-bound ledger and 2026-08-31 resumption
-    above are authoritative: 1029 total, 658 pending, 17 stored driver briefs. User explicitly
+    above are authoritative: 1059 total, 658 pending, 9 stored driver briefs. User explicitly
     authorized multitasking and continued Codex budget use; this is active work, not blocked.
 
       The drivers were NOT quietly waiting it out. Checked 2026-08-05: each was retrying
@@ -10482,7 +10495,7 @@ Running tally of gates that reported healthy while analyzing nothing:
 The campaign is complete only when ALL of the following are simultaneously true:
 
 - [~] R5-G10-1 All reproducibly enumerated per-file review units executed and every finding
-  dispositioned -- ACTIVE: live ledger 1029 total / 658 pending / 17 stored driver briefs.
+  dispositioned -- ACTIVE: live ledger 1059 total / 658 pending / 9 stored driver briefs.
   - OPEN: continue LEDGER-1/2/3; Codex budget is available and user authorized multitasking.
 - [~] R5-G10-2 Zero open findings in this document -- ACTIVE: ledger and local programs remain;
   no Codex-budget or VM blocker applies.

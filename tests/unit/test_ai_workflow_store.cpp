@@ -5,9 +5,12 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QProcess>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -26,6 +29,12 @@ private Q_SLOTS:
     void rejectDuplicatePhaseIds();
     void rejectDuplicateRequiredInputIds();
     void rejectCmdPhaseCommandWithPlaceholder();
+    void rejectOversizedNativeWorkflowFile();
+    void rejectNativeFileTruncatedAfterOpen();
+    void rejectNativeFileGrownAfterOpen();
+    void refuseReparseWorkflowDirectory();
+    void refuseDirectorySwapBeforeFileOpen();
+    void boundDirectoryEnumerationBeforeSort();
 };
 
 namespace {
@@ -67,6 +76,23 @@ bool writeJsonFile(const QString& path, const QJsonObject& object) {
     }
     file.write(QJsonDocument(object).toJson(QJsonDocument::Indented));
     return true;
+}
+
+void createJunction(const QString& junction, const QString& target) {
+    const QString command =
+        QDir(qEnvironmentVariable("SystemRoot")).filePath(QStringLiteral("System32/cmd.exe"));
+    QCOMPARE(QProcess::execute(command,
+                               {QStringLiteral("/d"),
+                                QStringLiteral("/c"),
+                                QStringLiteral("mklink"),
+                                QStringLiteral("/J"),
+                                QDir::toNativeSeparators(junction),
+                                QDir::toNativeSeparators(target)}),
+             0);
+}
+
+QByteArray validWorkflowBytes(const QString& id) {
+    return QJsonDocument(validWorkflowObject(id)).toJson(QJsonDocument::Compact);
 }
 
 }  // namespace
@@ -142,9 +168,9 @@ void AiWorkflowStoreTests::loadBuiltInWorkflows() {
     QVERIFY(store.workflowById(QStringLiteral("malware_virus_removal")) != nullptr);
     QVERIFY(store.workflowById(QStringLiteral("pc_cleanup_bloatware_adware")) != nullptr);
     QVERIFY(store.workflowById(QStringLiteral("approved_bloatware_adware_removal")) != nullptr);
-    // roles() de-duplicates and sorts case-insensitively (ai_workflow_store.cpp:106-118); the
-    // 25 built-ins carry only 15 distinct roles ("Windows Repair Technician" alone appears six
-    // times), so pinning the exact ordered list covers both the dedup guard and the sort.
+    // WorkflowStore::roles de-duplicates and sorts case-insensitively; the 25 built-ins carry only
+    // 15 distinct roles ("Windows Repair Technician" alone appears six times), so pinning the
+    // exact ordered list covers both the dedup guard and the sort.
     const QStringList expected_roles{QStringLiteral("Audio Device Technician"),
                                      QStringLiteral("Battery Health Technician"),
                                      QStringLiteral("Browser Support Technician"),
@@ -164,9 +190,9 @@ void AiWorkflowStoreTests::loadBuiltInWorkflows() {
 
     // Exactly six built-in workflows carry the "Windows Repair Technician" role -- and these are
     // the six. The second probe is load-bearing: "Windows Repair Technician" sorts LAST of the 15
-    // bundled roles, so a comparator-polarity slip at ai_workflow_store.cpp:99 (== 0 -> >= 0)
-    // returns those same six and is invisible here. "Audio Device Technician" sorts FIRST and owns
-    // exactly one workflow, so an ordering match instead of an equality match hands back all 25.
+    // bundled roles, so a comparator-polarity slip in workflowsForRole returns those same six and
+    // is invisible here. "Audio Device Technician" sorts FIRST and owns exactly one workflow, so
+    // an ordering match instead of an equality match hands back all 25.
     const auto repair = store.workflowsForRole(QStringLiteral("Windows Repair Technician"));
     QStringList repair_ids;
     repair_ids.reserve(repair.size());
@@ -208,10 +234,10 @@ void AiWorkflowStoreTests::userDirectoryOverridesBuiltInWorkflow() {
     QVERIFY(workflow != nullptr);
     QCOMPARE(workflow->title, QStringLiteral("Custom Offline Installer"));
 
-    // The user template must REPLACE the built-in in place (ai_workflow_store.cpp:80-87), not be
-    // appended beside it. workflowById alone cannot see a duplicate: rebuildIndex (:140-145) maps
-    // an id to the LAST entry carrying it, so a shadowed built-in would still answer with the
-    // override's title. Pin the catalog and the role listing, which do see it.
+    // The user template must REPLACE the built-in in place, not be appended beside it.
+    // workflowById alone cannot see a duplicate because the id index exposes
+    // only one entry, so a shadowed built-in could still answer with the override's title. Pin the
+    // catalog and role listing, which do see it.
     const auto all_workflows = store.workflows();
     QCOMPARE(all_workflows.size(), 25);  // 25 built-ins; the override replaces one, adds no 26th
     const auto copies_of_overridden_id =
@@ -368,6 +394,146 @@ void AiWorkflowStoreTests::rejectCmdPhaseCommandWithPlaceholder() {
     const auto clean =
         sak::ai::WorkflowTemplate::fromJson(object, QStringLiteral("cmd_ok"), &clean_errors);
     QVERIFY2(clean.isValid(), qPrintable(clean_errors.join(QStringLiteral("; "))));
+}
+
+void AiWorkflowStoreTests::rejectOversizedNativeWorkflowFile() {
+    constexpr qsizetype kMaxWorkflowFileBytes = 1 * 1024 * 1024;
+    QTemporaryDir temp_dir;
+    QVERIFY(temp_dir.isValid());
+    QByteArray bytes = validWorkflowBytes(QStringLiteral("oversized"));
+    bytes.append(kMaxWorkflowFileBytes + 1 - bytes.size(), ' ');
+    QFile file(QDir(temp_dir.path()).filePath(QStringLiteral("oversized.json")));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(bytes), static_cast<qint64>(bytes.size()));
+    file.close();
+
+    sak::ai::WorkflowStore store;
+    QStringList errors;
+    QVERIFY(!store.loadDirectory(temp_dir.path(), &errors));
+    QVERIFY(store.workflows().isEmpty());
+    QVERIFY2(errors.join(' ').contains(QStringLiteral("too large")),
+             qPrintable(errors.join(QStringLiteral("; "))));
+}
+
+void AiWorkflowStoreTests::rejectNativeFileTruncatedAfterOpen() {
+    QTemporaryDir temp_dir;
+    QVERIFY(temp_dir.isValid());
+    const QString path = QDir(temp_dir.path()).filePath(QStringLiteral("shrinks.json"));
+    QVERIFY(writeJsonFile(path, validWorkflowObject(QStringLiteral("shrinks"))));
+    sak::ai::WorkflowStore::setBeforeFileReadHookForTesting([path](const QString&) {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::ReadWrite));
+        QVERIFY(file.resize(8));
+    });
+    const auto reset = qScopeGuard([] {
+        sak::ai::WorkflowStore::setBeforeFileReadHookForTesting(
+            std::function<void(const QString&)>());
+    });
+
+    sak::ai::WorkflowStore store;
+    QStringList errors;
+    QVERIFY(!store.loadDirectory(temp_dir.path(), &errors));
+    QVERIFY(store.workflows().isEmpty());
+    QVERIFY2(errors.join(' ').contains(QStringLiteral("changed during read")),
+             qPrintable(errors.join(QStringLiteral("; "))));
+}
+
+void AiWorkflowStoreTests::rejectNativeFileGrownAfterOpen() {
+    constexpr qsizetype kOversizedAppendBytes = (1 * 1024 * 1024) + 1;
+    QTemporaryDir temp_dir;
+    QVERIFY(temp_dir.isValid());
+    const QString path = QDir(temp_dir.path()).filePath(QStringLiteral("grows.json"));
+    QVERIFY(writeJsonFile(path, validWorkflowObject(QStringLiteral("grows"))));
+    sak::ai::WorkflowStore::setBeforeFileReadHookForTesting([path](const QString&) {
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::Append));
+        const QByteArray padding(kOversizedAppendBytes, ' ');
+        QCOMPARE(file.write(padding), static_cast<qint64>(padding.size()));
+    });
+    const auto reset = qScopeGuard([] {
+        sak::ai::WorkflowStore::setBeforeFileReadHookForTesting(
+            std::function<void(const QString&)>());
+    });
+
+    sak::ai::WorkflowStore store;
+    QStringList errors;
+    QVERIFY(!store.loadDirectory(temp_dir.path(), &errors));
+    QVERIFY(store.workflows().isEmpty());
+    QVERIFY2(errors.join(' ').contains(QStringLiteral("changed during read")) ||
+                 errors.join(' ').contains(QStringLiteral("too large")),
+             qPrintable(errors.join(QStringLiteral("; "))));
+}
+
+void AiWorkflowStoreTests::refuseReparseWorkflowDirectory() {
+    QTemporaryDir parent;
+    QTemporaryDir outside;
+    QVERIFY(parent.isValid());
+    QVERIFY(outside.isValid());
+    QVERIFY(writeJsonFile(QDir(outside.path()).filePath(QStringLiteral("outside.json")),
+                          validWorkflowObject(QStringLiteral("outside"))));
+    const QString junction = QDir(parent.path()).filePath(QStringLiteral("workflow-junction"));
+    createJunction(junction, outside.path());
+
+    sak::ai::WorkflowStore store;
+    QStringList errors;
+    QVERIFY(!store.loadDirectory(junction, &errors));
+    QVERIFY(store.workflows().isEmpty());
+    QVERIFY2(errors.join(' ').contains(QStringLiteral("directory reparse point")),
+             qPrintable(errors.join(QStringLiteral("; "))));
+}
+
+void AiWorkflowStoreTests::refuseDirectorySwapBeforeFileOpen() {
+    QTemporaryDir parent;
+    QTemporaryDir outside;
+    QVERIFY(parent.isValid());
+    QVERIFY(outside.isValid());
+    const QString workflows = QDir(parent.path()).filePath(QStringLiteral("workflows"));
+    const QString moved = QDir(parent.path()).filePath(QStringLiteral("workflows-moved"));
+    QVERIFY(QDir().mkpath(workflows));
+    QVERIFY(writeJsonFile(QDir(workflows).filePath(QStringLiteral("same.json")),
+                          validWorkflowObject(QStringLiteral("original"))));
+    QVERIFY(writeJsonFile(QDir(outside.path()).filePath(QStringLiteral("same.json")),
+                          validWorkflowObject(QStringLiteral("outside"))));
+
+    bool hook_ran = false;
+    sak::ai::WorkflowStore::setBeforeFileOpenHookForTesting([&](const QString&) {
+        QVERIFY(QDir().rename(workflows, moved));
+        createJunction(workflows, outside.path());
+        hook_ran = true;
+    });
+    const auto reset = qScopeGuard([&] {
+        sak::ai::WorkflowStore::setBeforeFileOpenHookForTesting(
+            std::function<void(const QString&)>());
+        if (QFileInfo(workflows).isJunction()) {
+            QVERIFY(QDir().rmdir(workflows));
+        }
+    });
+
+    sak::ai::WorkflowStore store;
+    QStringList errors;
+    QVERIFY(!store.loadDirectory(workflows, &errors));
+    QVERIFY(hook_ran);
+    QVERIFY(store.workflows().isEmpty());
+    QVERIFY2(errors.join(' ').contains(QStringLiteral("redirected workflow file")),
+             qPrintable(errors.join(QStringLiteral("; "))));
+}
+
+void AiWorkflowStoreTests::boundDirectoryEnumerationBeforeSort() {
+    constexpr int kMaxWorkflowFiles = 512;
+    QTemporaryDir temp_dir;
+    QVERIFY(temp_dir.isValid());
+    for (int index = 0; index <= kMaxWorkflowFiles; ++index) {
+        const QString id = QStringLiteral("workflow-%1").arg(index, 3, 10, QLatin1Char('0'));
+        QVERIFY(writeJsonFile(QDir(temp_dir.path()).filePath(id + QStringLiteral(".json")),
+                              validWorkflowObject(id)));
+    }
+
+    sak::ai::WorkflowStore store;
+    QStringList errors;
+    QVERIFY(!store.loadDirectory(temp_dir.path(), &errors));
+    QVERIFY(store.workflows().isEmpty());
+    QVERIFY2(errors.join(' ').contains(QStringLiteral("more than 512")),
+             qPrintable(errors.join(QStringLiteral("; "))));
 }
 
 QTEST_MAIN(AiWorkflowStoreTests)

@@ -1,5 +1,5 @@
 {
-  "head_commit": "d4519cb006d0ca73809cebc9c4388f319c92c4f9",
+  "head_commit": "c73487b8504ffde04badcc29151e51bf1e3012c0",
   "unit_rule": "include/**.h|.hpp, src/**.cpp|.h|.hpp, tests/**.cpp|.h|.mjs, scripts/**.py|.ps1|.sh, browser/**.js",
   "units": {
     "browser/extension/background.js": {
@@ -115,8 +115,10 @@
       "status": "reviewed"
     },
     "include/sak/ai/ai_execution_broker.h": {
+      "evidence": "cited",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": null,
+      "status": "reviewed"
     },
     "include/sak/ai/ai_human_gate.h": {
       "group": "include",
@@ -212,11 +214,19 @@
       "group": "include",
       "status": "pending"
     },
+    "include/sak/ai/ai_secret_redaction.h": {
+      "group": "include",
+      "status": "pending"
+    },
     "include/sak/ai/ai_skill.h": {
       "group": "include",
       "status": "pending"
     },
     "include/sak/ai/ai_skill_store.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_store_file_loader.h": {
       "group": "include",
       "status": "pending"
     },
@@ -355,8 +365,10 @@
       "status": "pending"
     },
     "include/sak/app_action_registry.h": {
+      "evidence": "cited",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": null,
+      "status": "reviewed"
     },
     "include/sak/app_action_service.h": {
       "evidence": "cited",
@@ -455,6 +467,12 @@
       "status": "pending"
     },
     "include/sak/crash_reporter.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/csv_escape.h": {
       "evidence": "cited",
       "group": "include",
       "reviewed_blob": null,
@@ -819,8 +837,10 @@
       "status": "pending"
     },
     "include/sak/format_utils.h": {
+      "evidence": "cited",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": null,
+      "status": "reviewed"
     },
     "include/sak/gzip_decompressor.h": {
       "group": "include",
@@ -961,6 +981,10 @@
       "group": "include",
       "reviewed_blob": null,
       "status": "reviewed"
+    },
+    "include/sak/network_adapter_admin.h": {
+      "group": "include",
+      "status": "pending"
     },
     "include/sak/network_adapter_inspector.h": {
       "group": "include",
@@ -1111,8 +1135,10 @@
       "status": "pending"
     },
     "include/sak/partition_hfs_core.h": {
+      "evidence": "cited",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": null,
+      "status": "reviewed"
     },
     "include/sak/partition_hfs_file_system_reader.h": {
       "group": "include",
@@ -1193,8 +1219,10 @@
       "status": "pending"
     },
     "include/sak/pst_parser.h": {
+      "evidence": "cited",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": null,
+      "status": "reviewed"
     },
     "include/sak/quick_action.h": {
       "evidence": "cited",
@@ -1507,8 +1535,16 @@
       "status": "pending"
     },
     "include/sak/windows_path_policy.h": {
+      "evidence": "cited",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "include/sak/windows_reserved_names.h": {
+      "evidence": "cited",
+      "group": "include",
+      "reviewed_blob": null,
+      "status": "reviewed"
     },
     "include/sak/windows_usb_creator.h": {
       "group": "include",
@@ -1556,6 +1592,18 @@
       "reviewed_blob": null,
       "status": "reviewed"
     },
+    "scripts/check_active_doc_references.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/check_apple_filesystem_capability_matrix.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
     "scripts/check_ascii_only.ps1": {
       "evidence": "cited",
       "group": "scripts",
@@ -1574,6 +1622,12 @@
       "reviewed_blob": null,
       "status": "reviewed"
     },
+    "scripts/check_dead_code.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
     "scripts/check_doc_accuracy.ps1": {
       "evidence": "cited",
       "group": "scripts",
@@ -1581,6 +1635,18 @@
       "status": "reviewed"
     },
     "scripts/check_error_message_uniqueness.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/check_files_icon_parity.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/check_gate_parity.ps1": {
       "evidence": "cited",
       "group": "scripts",
       "reviewed_blob": null,
@@ -1684,6 +1750,12 @@
       "reviewed_blob": null,
       "status": "reviewed"
     },
+    "scripts/check_repository_hygiene.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
     "scripts/check_startup_budget.ps1": {
       "evidence": "cited",
       "group": "scripts",
@@ -1713,6 +1785,16 @@
       "status": "reviewed"
     },
     "scripts/clang_tidy_naming_gate.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/classify_cppcheck_qt_slots.py": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/cppcheck_whole_project_gate.ps1": {
       "evidence": "cited",
       "group": "scripts",
       "reviewed_blob": null,
@@ -1828,7 +1910,19 @@
       "group": "scripts",
       "status": "pending"
     },
+    "scripts/process_capture.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
     "scripts/rehearse_ci_locally.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "scripts/review_ledger.py": {
       "evidence": "cited",
       "group": "scripts",
       "reviewed_blob": null,
@@ -1845,8 +1939,10 @@
       "status": "reviewed"
     },
     "scripts/run_branch_coverage.ps1": {
+      "evidence": "cited",
       "group": "scripts",
-      "status": "pending"
+      "reviewed_blob": null,
+      "status": "reviewed"
     },
     "scripts/run_clang_format.ps1": {
       "evidence": "cited",
@@ -1935,8 +2031,10 @@
       "status": "pending"
     },
     "scripts/run_partition_manager_hfsprogs_image_validation.ps1": {
+      "evidence": "cited",
       "group": "scripts",
-      "status": "pending"
+      "reviewed_blob": null,
+      "status": "reviewed"
     },
     "scripts/run_partition_manager_linux_metadata_validation.ps1": {
       "group": "scripts",
@@ -2006,6 +2104,12 @@
       "group": "scripts",
       "status": "pending"
     },
+    "scripts/run_review_units.ps1": {
+      "evidence": "cited",
+      "group": "scripts",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
     "scripts/run_tsan_wsl.ps1": {
       "evidence": "cited",
       "group": "scripts",
@@ -2027,8 +2131,10 @@
       "status": "pending"
     },
     "scripts/stage_portable_release.ps1": {
+      "evidence": "cited",
       "group": "scripts",
-      "status": "pending"
+      "reviewed_blob": null,
+      "status": "reviewed"
     },
     "scripts/test-iso-downloader.ps1": {
       "group": "scripts",
@@ -2054,11 +2160,31 @@
       "reviewed_blob": null,
       "status": "reviewed"
     },
+    "scripts/test_process_capture.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/test_rehearse_ci_paths.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
     "scripts/test_sak_apfs_writer_cli.ps1": {
       "group": "scripts",
       "status": "pending"
     },
     "scripts/test_sak_hfs_writer_cli.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/test_stage_portable_release.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/test_startup_budget.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/test_windows_runtime_dependencies.ps1": {
       "group": "scripts",
       "status": "pending"
     },
@@ -2086,6 +2212,10 @@
       "group": "scripts",
       "status": "pending"
     },
+    "scripts/verify_signed_release.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
     "scripts/verify_windows_runtime_dependencies.ps1": {
       "group": "scripts",
       "status": "pending"
@@ -2103,17 +2233,19 @@
       "status": "reviewed"
     },
     "src/actions/generate_system_report_action.cpp": {
-      "brief": "docs/review_briefs/src_actions_generate_system_report_action.md",
-      "evidence": "driver",
+      "evidence": "cited",
       "group": "src",
-      "reviewed_blob": "1d961ed234f54c7564a5f916b7f3a59246c4bfe8",
+      "previous_evidence": "driver",
+      "previous_review_blob": "1d961ed234f54c7564a5f916b7f3a59246c4bfe8",
+      "reviewed_blob": null,
       "status": "reviewed"
     },
     "src/actions/optimize_power_settings_action.cpp": {
-      "brief": "docs/review_briefs/src_actions_optimize_power_settings_action.md",
-      "evidence": "driver",
+      "evidence": "cited",
       "group": "src",
-      "reviewed_blob": "efd60c8f7f5d2705d7a1dec7dfb43d00e1cfdaf6",
+      "previous_evidence": "driver",
+      "previous_review_blob": "efd60c8f7f5d2705d7a1dec7dfb43d00e1cfdaf6",
+      "reviewed_blob": null,
       "status": "reviewed"
     },
     "src/actions/reset_network_action.cpp": {
@@ -2135,10 +2267,11 @@
       "status": "reviewed"
     },
     "src/ai/ai_app_action_planner.cpp": {
-      "brief": "docs/review_briefs/src_ai_ai_app_action_planner.md",
-      "evidence": "driver",
+      "evidence": "cited",
       "group": "src",
-      "reviewed_blob": "c1e22ad7e07e417ffadb5bbae6d0571fbfbe7305",
+      "previous_evidence": "driver",
+      "previous_review_blob": "c1e22ad7e07e417ffadb5bbae6d0571fbfbe7305",
+      "reviewed_blob": null,
       "status": "reviewed"
     },
     "src/ai/ai_async_tool_runner.cpp": {
@@ -2148,45 +2281,47 @@
       "status": "reviewed"
     },
     "src/ai/ai_cancellation_token.cpp": {
-      "brief": "docs/review_briefs/ai_cancellation_token.md",
-      "evidence": "driver",
+      "evidence": "cited",
       "group": "src",
-      "reviewed_blob": "81d098ac1e9ea5cf376a3cb6ce25357974f84916",
+      "previous_evidence": "driver",
+      "previous_review_blob": "81d098ac1e9ea5cf376a3cb6ce25357974f84916",
+      "reviewed_blob": null,
       "status": "reviewed"
     },
     "src/ai/ai_chat_title.cpp": {
-      "brief": "docs/review_briefs/src_ai_ai_chat_title.md",
-      "evidence": "driver",
+      "evidence": "cited",
       "group": "src",
-      "reviewed_blob": "7597187760ad5a4ef165c6c8dff5bb3301b8fd79",
+      "previous_evidence": "driver",
+      "previous_review_blob": "7597187760ad5a4ef165c6c8dff5bb3301b8fd79",
+      "reviewed_blob": null,
       "status": "reviewed"
     },
     "src/ai/ai_command_guard.cpp": {
-      "brief": "docs/review_briefs/src_ai_ai_command_guard.md",
-      "evidence": "driver",
+      "evidence": "cited",
       "group": "src",
-      "reviewed_blob": "eb4ae7cb877e9961f2262e48a3f244028c8c133c",
+      "previous_evidence": "driver",
+      "previous_review_blob": "eb4ae7cb877e9961f2262e48a3f244028c8c133c",
+      "reviewed_blob": null,
       "status": "reviewed"
     },
     "src/ai/ai_command_tool_planner.cpp": {
-      "brief": "docs/review_briefs/src_ai_ai_command_tool_planner.md",
-      "evidence": "driver",
       "group": "src",
-      "reviewed_blob": "ea82ba7966ef6e1941b368d116f71d2fc664f7c5",
-      "status": "reviewed"
+      "previous_evidence": "driver",
+      "previous_review_blob": "ea82ba7966ef6e1941b368d116f71d2fc664f7c5",
+      "status": "pending"
     },
     "src/ai/ai_conversation_store.cpp": {
-      "brief": "docs/review_briefs/src_ai_ai_conversation_store.md",
-      "evidence": "driver",
       "group": "src",
-      "reviewed_blob": "7f287808d5bd17dd82338503fbb7d3636d89aa9e",
-      "status": "reviewed"
+      "previous_evidence": "driver",
+      "previous_review_blob": "7f287808d5bd17dd82338503fbb7d3636d89aa9e",
+      "status": "pending"
     },
     "src/ai/ai_credential_store.cpp": {
-      "brief": "docs/review_briefs/src_ai_ai_credential_store.md",
-      "evidence": "driver",
+      "evidence": "cited",
       "group": "src",
-      "reviewed_blob": "131e9575145184a7c45118c4501ab682d10be696",
+      "previous_evidence": "driver",
+      "previous_review_blob": "131e9575145184a7c45118c4501ab682d10be696",
+      "reviewed_blob": null,
       "status": "reviewed"
     },
     "src/ai/ai_execution_broker.cpp": {
@@ -2209,11 +2344,10 @@
       "status": "reviewed"
     },
     "src/ai/ai_lease_manager.cpp": {
-      "brief": "docs/review_briefs/src_ai_ai_lease_manager.md",
-      "evidence": "driver",
       "group": "src",
-      "reviewed_blob": "b956f54d5cba2e909cc1c66589aae2535588565d",
-      "status": "reviewed"
+      "previous_evidence": "driver",
+      "previous_review_blob": "b956f54d5cba2e909cc1c66589aae2535588565d",
+      "status": "pending"
     },
     "src/ai/ai_mcp_http_client.cpp": {
       "evidence": "cited",
@@ -2222,11 +2356,10 @@
       "status": "reviewed"
     },
     "src/ai/ai_mcp_session_pool.cpp": {
-      "brief": "docs/review_briefs/src_ai_ai_mcp_session_pool.md",
-      "evidence": "driver",
       "group": "src",
-      "reviewed_blob": "281275ca5fe8157c596aae0e8ef92f2a0d1c359b",
-      "status": "reviewed"
+      "previous_evidence": "driver",
+      "previous_review_blob": "281275ca5fe8157c596aae0e8ef92f2a0d1c359b",
+      "status": "pending"
     },
     "src/ai/ai_mcp_stdio_client.cpp": {
       "evidence": "cited",
@@ -2241,18 +2374,16 @@
       "status": "reviewed"
     },
     "src/ai/ai_offline_downloader_tool_runner.cpp": {
-      "brief": "docs/review_briefs/src_ai_ai_offline_downloader_tool_runner.md",
-      "evidence": "driver",
       "group": "src",
-      "reviewed_blob": "de35bc9a26fb5f2f4a08d3d25fb90b4a93b5dc5e",
-      "status": "reviewed"
+      "previous_evidence": "driver",
+      "previous_review_blob": "de35bc9a26fb5f2f4a08d3d25fb90b4a93b5dc5e",
+      "status": "pending"
     },
     "src/ai/ai_openai_model_client.cpp": {
-      "brief": "docs/review_briefs/src_ai_ai_openai_model_client.md",
-      "evidence": "driver",
       "group": "src",
-      "reviewed_blob": "5e819cd6c0d68218d8c89d8840c2c04ccc7526af",
-      "status": "reviewed"
+      "previous_evidence": "driver",
+      "previous_review_blob": "5e819cd6c0d68218d8c89d8840c2c04ccc7526af",
+      "status": "pending"
     },
     "src/ai/ai_orchestrator.cpp": {
       "evidence": "cited",
@@ -2261,11 +2392,10 @@
       "status": "reviewed"
     },
     "src/ai/ai_package_selection.cpp": {
-      "brief": "docs/review_briefs/src_ai_ai_package_selection.md",
-      "evidence": "driver",
       "group": "src",
-      "reviewed_blob": "fc9d720569ee496275b25d30ebfc5f3c94020523",
-      "status": "reviewed"
+      "previous_evidence": "driver",
+      "previous_review_blob": "fc9d720569ee496275b25d30ebfc5f3c94020523",
+      "status": "pending"
     },
     "src/ai/ai_package_tool_planner.cpp": {
       "evidence": "cited",
@@ -2280,11 +2410,10 @@
       "status": "reviewed"
     },
     "src/ai/ai_prompt_assembler.cpp": {
-      "brief": "docs/review_briefs/src_ai_ai_prompt_assembler.md",
-      "evidence": "driver",
       "group": "src",
-      "reviewed_blob": "3aaeac3603d472f25539886fb1eea9e6e98996a0",
-      "status": "reviewed"
+      "previous_evidence": "driver",
+      "previous_review_blob": "3aaeac3603d472f25539886fb1eea9e6e98996a0",
+      "status": "pending"
     },
     "src/ai/ai_provider_gateway.cpp": {
       "evidence": "cited",
@@ -2293,11 +2422,10 @@
       "status": "reviewed"
     },
     "src/ai/ai_provider_gateway_authorization.cpp": {
-      "brief": "docs/review_briefs/src_ai_ai_provider_gateway_authorization.md",
-      "evidence": "driver",
       "group": "src",
-      "reviewed_blob": "b28b48522a5bde799345977a4a270fb5bb94e6f2",
-      "status": "reviewed"
+      "previous_evidence": "driver",
+      "previous_review_blob": "b28b48522a5bde799345977a4a270fb5bb94e6f2",
+      "status": "pending"
     },
     "src/ai/ai_provider_gateway_tool_runner.cpp": {
       "evidence": "cited",
@@ -2324,24 +2452,37 @@
       "status": "reviewed"
     },
     "src/ai/ai_run_state_store.cpp": {
-      "brief": "docs/review_briefs/src_ai_ai_run_state_store.md",
-      "evidence": "driver",
       "group": "src",
-      "reviewed_blob": "cd6f7cefb9a270a5cdec408f7ae9166d9b17cf34",
+      "previous_evidence": "driver",
+      "previous_review_blob": "cd6f7cefb9a270a5cdec408f7ae9166d9b17cf34",
+      "status": "pending"
+    },
+    "src/ai/ai_secret_redaction.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
       "status": "reviewed"
     },
     "src/ai/ai_skill.cpp": {
-      "brief": "docs/review_briefs/src_ai_ai_skill.md",
-      "evidence": "driver",
       "group": "src",
-      "reviewed_blob": "a65e626fabfa3a4c9cb3c97aab9061283ce88e4e",
-      "status": "reviewed"
+      "previous_evidence": "driver",
+      "previous_review_blob": "a65e626fabfa3a4c9cb3c97aab9061283ce88e4e",
+      "status": "pending"
     },
     "src/ai/ai_skill_store.cpp": {
       "brief": "docs/review_briefs/src_ai_ai_skill_store.md",
       "evidence": "driver",
       "group": "src",
-      "reviewed_blob": "6b377c275b2a70ff6f2abeda64931ff9ef3619d1",
+      "previous_evidence": "driver",
+      "previous_review_blob": "6b377c275b2a70ff6f2abeda64931ff9ef3619d1",
+      "reviewed_blob": "89596efb173162638e5887e637ae5db661f3ac1e",
+      "status": "reviewed"
+    },
+    "src/ai/ai_store_file_loader.cpp": {
+      "brief": "docs/review_briefs/src_ai_ai_store_file_loader.md",
+      "evidence": "driver",
+      "group": "src",
+      "reviewed_blob": "13a20f58488a3bcebf64e2b2862f791edee39cbf",
       "status": "reviewed"
     },
     "src/ai/ai_subagent_runner.cpp": {
@@ -2351,11 +2492,10 @@
       "status": "reviewed"
     },
     "src/ai/ai_subagent_tool_executor.cpp": {
-      "brief": "docs/review_briefs/src_ai_ai_subagent_tool_executor.md",
-      "evidence": "driver",
       "group": "src",
-      "reviewed_blob": "ecabc11dfa02dd94615f3a9f148f73efb8f978e3",
-      "status": "reviewed"
+      "previous_evidence": "driver",
+      "previous_review_blob": "ecabc11dfa02dd94615f3a9f148f73efb8f978e3",
+      "status": "pending"
     },
     "src/ai/ai_token_usage_tracker.cpp": {
       "evidence": "cited",
@@ -2370,10 +2510,11 @@
       "status": "reviewed"
     },
     "src/ai/ai_tool_dispatcher.cpp": {
-      "brief": "docs/review_briefs/src_ai_ai_tool_dispatcher.md",
-      "evidence": "driver",
+      "evidence": "cited",
       "group": "src",
-      "reviewed_blob": "5d5e413d0849bd3f7c8e7255b6c470d1fcf7b603",
+      "previous_evidence": "driver",
+      "previous_review_blob": "5d5e413d0849bd3f7c8e7255b6c470d1fcf7b603",
+      "reviewed_blob": null,
       "status": "reviewed"
     },
     "src/ai/ai_tool_health_ledger.cpp": {
@@ -2410,8 +2551,11 @@
       "status": "reviewed"
     },
     "src/ai/ai_trace_store.cpp": {
+      "brief": "docs/review_briefs/src_ai_ai_trace_store.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "a1fbf9335bfd96e6b99cacf33a24387c6e9086e3",
+      "status": "reviewed"
     },
     "src/ai/ai_win32_gui_runner.cpp": {
       "evidence": "cited",
@@ -2438,8 +2582,11 @@
       "status": "reviewed"
     },
     "src/ai/ai_workflow_store.cpp": {
+      "brief": "docs/review_briefs/src_ai_ai_workflow_store.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "1f98ef216e36a94cea9f2d3d61014f6663a4752b",
+      "status": "reviewed"
     },
     "src/ai/ai_workflow_template.cpp": {
       "evidence": "cited",
@@ -2502,8 +2649,11 @@
       "status": "reviewed"
     },
     "src/core/app_action_service.cpp": {
+      "brief": "docs/review_briefs/src_core_app_action_service.md",
+      "evidence": "driver",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": "1e9531f1e45e6a7058c0fd84db52600c07c2ec1f",
+      "status": "reviewed"
     },
     "src/core/app_installation_busy.cpp": {
       "group": "src",
@@ -2726,8 +2876,10 @@
       "status": "reviewed"
     },
     "src/core/file_explorer_archive_worker.cpp": {
+      "evidence": "cited",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": null,
+      "status": "reviewed"
     },
     "src/core/file_explorer_command_registry.cpp": {
       "group": "src",
@@ -2912,6 +3064,12 @@
       "status": "reviewed"
     },
     "src/core/migration_report.cpp": {
+      "evidence": "cited",
+      "group": "src",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
+    "src/core/network_adapter_admin.cpp": {
       "evidence": "cited",
       "group": "src",
       "reviewed_blob": null,
@@ -3480,8 +3638,10 @@
       "status": "reviewed"
     },
     "src/gui/network_diagnostic_panel.cpp": {
+      "evidence": "cited",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": null,
+      "status": "reviewed"
     },
     "src/gui/organizer_panel.cpp": {
       "group": "src",
@@ -3566,12 +3726,16 @@
       "status": "reviewed"
     },
     "src/gui/vulnerability_panel.cpp": {
+      "evidence": "cited",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": null,
+      "status": "reviewed"
     },
     "src/gui/wifi_manager_panel.cpp": {
+      "evidence": "cited",
       "group": "src",
-      "status": "pending"
+      "reviewed_blob": null,
+      "status": "reviewed"
     },
     "src/gui/windows11_theme.cpp": {
       "group": "src",
@@ -3929,6 +4093,12 @@
       "group": "tests",
       "status": "pending"
     },
+    "tests/unit/test_ai_credential_store.cpp": {
+      "evidence": "cited",
+      "group": "tests",
+      "reviewed_blob": null,
+      "status": "reviewed"
+    },
     "tests/unit/test_ai_execution_broker.cpp": {
       "group": "tests",
       "status": "pending"
@@ -3962,6 +4132,10 @@
       "status": "pending"
     },
     "tests/unit/test_ai_offline_downloader_tool_runner.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_ai_openai_model_client.cpp": {
       "group": "tests",
       "status": "pending"
     },
@@ -4201,6 +4375,10 @@
       "group": "tests",
       "status": "pending"
     },
+    "tests/unit/test_csv_escape.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
     "tests/unit/test_deadline_canceller.cpp": {
       "group": "tests",
       "status": "pending"
@@ -4390,8 +4568,10 @@
       "status": "pending"
     },
     "tests/unit/test_flash_worker.cpp": {
+      "evidence": "cited",
       "group": "tests",
-      "status": "pending"
+      "reviewed_blob": null,
+      "status": "reviewed"
     },
     "tests/unit/test_flasher_policy.cpp": {
       "group": "tests",
@@ -4587,6 +4767,10 @@
       "group": "tests",
       "status": "pending"
     },
+    "tests/unit/test_network_adapter_admin.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
     "tests/unit/test_network_adapter_inspector.cpp": {
       "evidence": "cited",
       "group": "tests",
@@ -4754,8 +4938,10 @@
       "status": "pending"
     },
     "tests/unit/test_secure_memory.cpp": {
+      "evidence": "cited",
       "group": "tests",
-      "status": "pending"
+      "reviewed_blob": null,
+      "status": "reviewed"
     },
     "tests/unit/test_smart_disk_analyzer.cpp": {
       "group": "tests",
@@ -4886,6 +5072,10 @@
       "status": "pending"
     },
     "tests/unit/test_windows_iso_downloader.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_windows_path_policy.cpp": {
       "group": "tests",
       "status": "pending"
     },

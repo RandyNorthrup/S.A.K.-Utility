@@ -944,7 +944,8 @@ sak::TaskHandlerResult runPartitionProbeReadTask(const QJsonObject& payload,
 }
 
 void registerQuickActionTasks(sak::ElevatedTaskDispatcher& dispatcher) {
-    dispatcher.registerHandler(QStringLiteral("Verify System Files"),
+    dispatcher.registerHandler(QString::fromLatin1(
+                                   sak::quick_action_elevation::kVerifySystemFilesTaskId),
                                [](const QJsonObject& payload,
                                   sak::ProgressCallback progress,
                                   sak::CancelCheck is_cancelled) {
@@ -952,7 +953,8 @@ void registerQuickActionTasks(sak::ElevatedTaskDispatcher& dispatcher) {
                                        payload, std::move(progress), std::move(is_cancelled));
                                });
 
-    dispatcher.registerHandler(QStringLiteral("Check Disk Errors"),
+    dispatcher.registerHandler(QString::fromLatin1(
+                                   sak::quick_action_elevation::kCheckDiskErrorsTaskId),
                                [](const QJsonObject& payload,
                                   sak::ProgressCallback progress,
                                   sak::CancelCheck is_cancelled) {
@@ -960,7 +962,8 @@ void registerQuickActionTasks(sak::ElevatedTaskDispatcher& dispatcher) {
                                        payload, std::move(progress), std::move(is_cancelled));
                                });
 
-    dispatcher.registerHandler(QStringLiteral("Reset Network"),
+    dispatcher.registerHandler(QString::fromLatin1(
+                                   sak::quick_action_elevation::kResetNetworkTaskId),
                                [](const QJsonObject& payload,
                                   sak::ProgressCallback progress,
                                   sak::CancelCheck is_cancelled) {
@@ -969,7 +972,7 @@ void registerQuickActionTasks(sak::ElevatedTaskDispatcher& dispatcher) {
                                });
 
     dispatcher.registerHandler(
-        QStringLiteral("Backup BitLocker Keys"),
+        QString::fromLatin1(sak::quick_action_elevation::kBackupBitLockerKeysTaskId),
         [](const QJsonObject& payload,
            sak::ProgressCallback progress,
            sak::CancelCheck is_cancelled) -> sak::TaskHandlerResult {

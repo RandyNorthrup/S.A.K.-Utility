@@ -215,7 +215,7 @@ the rest is a debt-reduction + test-infra program (multi-session, much of it cos
       removed. A real template-instantiating include-path run later proved two `strong_index.h`
       function suppressions live (four inconclusive by-value parameter findings), so those two are
       restored with the single-integer calling-convention reason. `cppcheck_suppressions.txt` holds
-      10 file entries, not the 26 recorded here. See R5-IDX-3 in
+      six file entries, not the 26 recorded here. See R5-IDX-3 in
       docs/CODEX_REVIEW_5_REMEDIATION.md for the method, the measurement holes, and the whole-project
       gate gap it exposed.
 - [ ] Test-infra program (each a dedicated effort): G14 coverage ledger, G18 mutation
@@ -230,8 +230,8 @@ the rest is a debt-reduction + test-infra program (multi-session, much of it cos
       R5-IDX-7 is also closed: 17 Apple capability rows and 2 full-driver track gates are now
       machine-owned, four claim docs are citation-gated, route parity is 44/8/44, and the final
       Release gate passed 263/263 in 652.72 seconds.
-      Latest R5 AI review batch: 33 mutation catalogs / 289 mutants; Release build exit 0; full
-      CTest 264/264, zero failures, 738.44 seconds.
+      Latest R5 review batch: 45 mutation catalogs / 354 mutants; Release build exit 0; full
+      CTest 267/267, zero failures, 690.31 seconds.
       Current plan-archive/doc-gate/clang slice: all pre-commit hooks passed; Release build exit
       0; full CTest 265/265, zero failures, 804.48 seconds.
       Suppression direct-fix wave 1: all changed-file hooks passed; Release build exit 0; full

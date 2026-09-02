@@ -377,9 +377,8 @@ private Q_SLOTS:
         QVERIFY(store.skillById(QStringLiteral("malware-removal-triage")) != nullptr);
         // Catalog order is the order the skills are emitted to the model
         // (ai_assistant_panel.cpp:1215) and decides which entries survive the
-        // 128-entry truncation, so pin it exactly: SkillStore::loadDirectory
-        // enumerates with QDir::Name (ai_skill_store.cpp:81) and addSkill appends
-        // in load order, so the built-in order is the qrc file names sorted.
+        // 128-entry truncation, so pin it exactly: the shared store loader name-sorts entries and
+        // SkillStore::addSkill appends in load order, so built-in order is sorted qrc file names.
         QStringList ids;
         QStringList missing_when_to_use;
         for (const auto& skill : store.skills()) {

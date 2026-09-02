@@ -8897,6 +8897,7 @@ void AiAssistantPanel::startNewPersistentSession(const QString& title) {
         appendLocalEvent(tr("AI session store failed: %1").arg(error));
         return;
     }
+    ensureAppActionService();
     m_toolCallsThisSession = 0;
     m_citations.clear();
     m_nextCommandSequence = 1;
@@ -9410,19 +9411,17 @@ void AiAssistantPanel::registerToolDispatcherHandlers() {
 }
 
 void AiAssistantPanel::ensureAppActionService() {
-    if (m_appActionService) {
-        return;
-    }
-    // Backup/output location for the file-writing actions (report/screenshots/keys):
-    // prefer the AI session artifact root, fall back to a writable app-data subdir.
     QString backup_dir;
-    if (m_conversationStore) {
+    if (m_conversationStore && !m_conversationStore->currentSessionId().isEmpty()) {
         QString error;
         backup_dir = m_conversationStore->artifactRootDirectory(&error).trimmed();
+        if (backup_dir.isEmpty()) {
+            appendLocalEvent(tr("App action output disabled: %1").arg(error));
+        }
     }
-    if (backup_dir.isEmpty()) {
-        backup_dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) +
-                     QStringLiteral("/app_actions");
+    if (m_appActionService) {
+        m_appActionService->setOutputDirectory(backup_dir);
+        return;
     }
     m_appActionService = std::make_unique<AppActionService>(backup_dir);
     const int seeded = m_appActionService->registerInto(m_appActionRegistry);
@@ -11743,6 +11742,7 @@ void AiAssistantPanel::onSessionSelected(int index) {
         appendLocalEvent(tr("Could not open AI session: %1").arg(error));
         return;
     }
+    ensureAppActionService();
 
     // Reset per-session safety state so it cannot leak across a switch (e.g. a restore
     // point already offered in the previous session must not suppress the offer here).
@@ -11794,6 +11794,7 @@ void AiAssistantPanel::onRenameSessionClicked() {
         Q_EMIT statusMessage(tr("AI chat rename failed"), sak::kTimerStatusDefaultMs);
         return;
     }
+    ensureAppActionService();
     appendSessionMemory(QStringLiteral("Session"),
                         QStringLiteral("Renamed"),
                         tr("Chat renamed to %1").arg(title));
@@ -11860,6 +11861,7 @@ void AiAssistantPanel::onNewSessionClicked() {
     if (m_conversationStore) {
         m_conversationStore->clearCurrentSession();
     }
+    ensureAppActionService();
     refreshTraceStoreForSession();
     saveRunStateSnapshot();
     updateWorkflowProgressUi();

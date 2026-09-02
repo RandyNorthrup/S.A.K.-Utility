@@ -3,6 +3,7 @@
 
 #include "sak/quick_action_controller.h"
 
+#include "sak/action_constants.h"
 #include "sak/app_action_guards.h"
 #include "sak/app_paths.h"
 #include "sak/elevation_broker.h"
@@ -19,6 +20,9 @@
 #include <QJsonObject>
 #include <QTextStream>
 
+#include <array>
+#include <ranges>
+
 namespace sak {
 
 namespace {
@@ -27,26 +31,43 @@ constexpr int kThreadShutdownWaitMs = 10'000;
 
 namespace {
 constexpr int kElevationRequestProgress = 5;
-constexpr auto kBackupBitLockerKeysAction = "Backup BitLocker Keys";
-constexpr auto kDefaultBackupLocation = "C:/SAK_Backups";
 constexpr auto kBackupLocationPayloadKey = "backup_location";
 constexpr auto kMessageResultKey = "message";
 constexpr auto kLogResultKey = "log";
 constexpr auto kStatusResultKey = "status";
 
-QJsonObject buildElevatedActionPayload(const QString& action_name,
-                                       const QString& configuredBackupLocation) {
+}  // namespace
+
+QString elevatedTaskIdForQuickAction(const QString& action_name) {
+    using namespace quick_action_elevation;
+    constexpr std::array mappings{
+        std::pair{kVerifySystemFilesName, kVerifySystemFilesTaskId},
+        std::pair{kCheckDiskErrorsName, kCheckDiskErrorsTaskId},
+        std::pair{kResetNetworkName, kResetNetworkTaskId},
+        std::pair{kBackupBitLockerKeysName, kBackupBitLockerKeysTaskId},
+    };
+    const auto match = std::ranges::find_if(mappings, [&action_name](const auto& mapping) {
+        return action_name == QString::fromLatin1(mapping.first);
+    });
+    return match == mappings.end() ? QString() : QString::fromLatin1(match->second);
+}
+
+QJsonObject buildElevatedActionPayload(const QString& task_id,
+                                       const QString& configured_backup_location) {
     QJsonObject payload;
-    if (action_name != QString::fromLatin1(kBackupBitLockerKeysAction)) {
+    if (task_id != QString::fromLatin1(quick_action_elevation::kBackupBitLockerKeysTaskId)) {
         return payload;
     }
 
-    const QString backup_location = configuredBackupLocation.isEmpty()
-                                        ? QString::fromLatin1(kDefaultBackupLocation)
-                                        : configuredBackupLocation;
+    const QString backup_location = configured_backup_location.trimmed();
+    if (backup_location.isEmpty()) {
+        return payload;
+    }
     payload[QString::fromLatin1(kBackupLocationPayloadKey)] = backup_location;
     return payload;
 }
+
+namespace {
 
 QuickAction::ExecutionResult makeElevationFailureResult(sak::error_code error) {
     QuickAction::ExecutionResult result;
@@ -356,15 +377,11 @@ void QuickActionController::executeElevatedAction(QuickAction* action, const QSt
         return;
     }
 
-    m_current_execution_action = action;
-    Q_EMIT actionExecutionStarted(action);
-    action->updateStatus(QuickAction::ActionStatus::Running);
-    Q_EMIT actionExecutionProgress(action,
-                                   QStringLiteral("Requesting administrator approval..."),
-                                   kElevationRequestProgress);
-    logOperation(action, QStringLiteral("Requesting administrator elevation via helper"));
-
-    const QJsonObject payload = buildElevatedActionPayload(action_name, m_backup_location);
+    const QString task_id = prepareElevatedAction(action, action_name);
+    if (task_id.isEmpty()) {
+        return;
+    }
+    const QJsonObject payload = buildElevatedActionPayload(task_id, m_backup_location);
 
     // Own the broker on the controller thread (via the m_broker member that existed for
     // exactly this) so cancelCurrentAction()/the destructor can reach an in-flight task.
@@ -390,11 +407,11 @@ void QuickActionController::executeElevatedAction(QuickAction* action, const QSt
     connect(thread,
             &QThread::started,
             context,
-            [this, thread, context, action, action_name, payload]() {
+            [this, thread, context, action, action_name, task_id, payload]() {
                 QuickAction::ExecutionResult result;
                 QuickAction::ActionStatus status = QuickAction::ActionStatus::Failed;
                 result = makeElevatedActionResult(
-                    m_broker->executeTask(action_name, action_name, payload), status);
+                    m_broker->executeTask(task_id, action_name, payload), status);
 
                 QMetaObject::invokeMethod(
                     this,
@@ -407,6 +424,29 @@ void QuickActionController::executeElevatedAction(QuickAction* action, const QSt
                 thread->quit();
             });
     thread->start();
+}
+
+QString QuickActionController::prepareElevatedAction(QuickAction* action,
+                                                     const QString& action_name) {
+    m_current_execution_action = action;
+    action->clearCancellation();
+    Q_EMIT actionExecutionStarted(action);
+    action->updateStatus(QuickAction::ActionStatus::Running);
+    const QString task_id = elevatedTaskIdForQuickAction(action_name);
+    if (task_id.isEmpty()) {
+        QuickAction::ExecutionResult result;
+        result.success = false;
+        result.message = QStringLiteral("No elevated helper task is registered for this action");
+        result.log = QStringLiteral("Refused unmapped elevated quick action: %1").arg(action_name);
+        action->applyExecutionResult(result, QuickAction::ActionStatus::Failed);
+        onExecutionComplete();
+        return {};
+    }
+    Q_EMIT actionExecutionProgress(action,
+                                   QStringLiteral("Requesting administrator approval..."),
+                                   kElevationRequestProgress);
+    logOperation(action, QStringLiteral("Requesting administrator elevation via helper"));
+    return task_id;
 }
 
 void QuickActionController::scanAllActions() {

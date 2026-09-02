@@ -12,6 +12,7 @@
 #include "sak/ai/ai_async_tool_runner.h"
 #include "sak/ai/ai_cancellation_token.h"
 #include "sak/ai/ai_command_tool_planner.h"
+#include "sak/ai/ai_conversation_store.h"
 #include "sak/ai/ai_execution_broker.h"
 #include "sak/ai/ai_orchestrator.h"
 #include "sak/ai/ai_skill.h"
@@ -22,6 +23,7 @@
 #include "sak/ai/ai_tool_policy.h"
 #include "sak/ai/openai_response_types.h"
 #include "sak/ai_assistant_panel.h"
+#include "sak/app_action_service.h"
 #include "sak/app_mutating_actions.h"
 #include "sak/deleted_item_scanner.h"
 #include "sak/flash_coordinator.h"
@@ -368,6 +370,31 @@ private Q_SLOTS:
             }
         }
         QVERIFY(found_verify);
+    }
+
+    void appActionServiceTracksSessionArtifactRootWithoutFallback() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QVERIFY(panel.m_appActionService != nullptr);
+        QCOMPARE(panel.m_appActionService->outputDirectory(), QString());
+
+        panel.startNewPersistentSession(QStringLiteral("App Action Artifacts"));
+        QVERIFY(panel.m_conversationStore != nullptr);
+        QString error;
+        const QString expected = panel.m_conversationStore->artifactRootDirectory(&error);
+        QVERIFY2(!expected.isEmpty(), qPrintable(error));
+        QCOMPARE(panel.m_appActionService->outputDirectory(), expected);
+
+        QVERIFY(panel.m_conversationStore->renameCurrentSession(
+            QStringLiteral("Renamed App Action Artifacts"), &error));
+        const QString renamed = panel.m_conversationStore->artifactRootDirectory(&error);
+        QVERIFY2(!renamed.isEmpty(), qPrintable(error));
+        QVERIFY(renamed != expected);
+        panel.ensureAppActionService();
+        QCOMPARE(panel.m_appActionService->outputDirectory(), renamed);
+
+        panel.onNewSessionClicked();
+        QCOMPARE(panel.m_appActionService->outputDirectory(), QString());
     }
 
     // Running a mutating app action in a chat/research (no-execution) session is

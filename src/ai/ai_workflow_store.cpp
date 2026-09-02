@@ -4,36 +4,41 @@
 #include "sak/ai/ai_workflow_store.h"
 
 #include "sak/ai/ai_paths.h"
+#include "sak/ai/ai_store_file_loader.h"
 
 #include <QDir>
-#include <QFile>
 #include <QSet>
+
+#include <functional>
+#include <utility>
 
 namespace sak::ai {
 
 namespace {
 
-bool loadWorkflowFile(const QString& path, WorkflowTemplate* workflow, QStringList* errors) {
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        if (errors != nullptr) {
-            errors->append(QStringLiteral("%1: %2").arg(path, file.errorString()));
-        }
-        return false;
-    }
+constexpr qint64 kMaxWorkflowFileBytes = 1LL * 1024 * 1024;
+constexpr int kMaxWorkflowFiles = 512;
+std::function<void(const QString&)> g_before_file_open_hook;
+std::function<void(const QString&)> g_before_file_read_hook;
 
-    QStringList parse_errors;
-    *workflow = WorkflowTemplate::fromJsonBytes(file.readAll(), path, &parse_errors);
-    if (!parse_errors.isEmpty()) {
-        if (errors != nullptr) {
-            errors->append(parse_errors);
-        }
-        return false;
-    }
-    return workflow->isValid(errors);
+const detail::StoreFileLoadPolicy& workflowFileLoadPolicy() {
+    static const detail::StoreFileLoadPolicy policy{QStringLiteral("Workflow"),
+                                                    QStringLiteral(".json"),
+                                                    QStringLiteral("JSON"),
+                                                    kMaxWorkflowFileBytes,
+                                                    kMaxWorkflowFiles};
+    return policy;
 }
 
 }  // namespace
+
+void WorkflowStore::setBeforeFileOpenHookForTesting(std::function<void(const QString&)> hook) {
+    g_before_file_open_hook = std::move(hook);
+}
+
+void WorkflowStore::setBeforeFileReadHookForTesting(std::function<void(const QString&)> hook) {
+    g_before_file_read_hook = std::move(hook);
+}
 
 bool WorkflowStore::loadDefaults(QStringList* errors) {
     bool ok = loadBuiltIn(errors);
@@ -49,27 +54,22 @@ bool WorkflowStore::loadBuiltIn(QStringList* errors) {
 }
 
 bool WorkflowStore::loadDirectory(const QString& directory, QStringList* errors) {
-    const QDir dir(directory);
-    if (!dir.exists()) {
-        if (errors != nullptr) {
-            errors->append(QStringLiteral("Workflow directory not found: %1").arg(directory));
+    const detail::StoreFileLoadHooks hooks{g_before_file_open_hook, g_before_file_read_hook};
+    const detail::StoreFileConsumer consume = [this, errors](const QString& path,
+                                                             const QByteArray& bytes) {
+        QStringList parse_errors;
+        const WorkflowTemplate workflow =
+            WorkflowTemplate::fromJsonBytes(bytes, path, &parse_errors);
+        if (!parse_errors.isEmpty()) {
+            if (errors != nullptr) {
+                errors->append(parse_errors);
+            }
+            return false;
         }
-        return false;
-    }
-
-    const QStringList files = dir.entryList({QStringLiteral("*.json")}, QDir::Files, QDir::Name);
-    bool ok = true;
-    for (const auto& file_name : files) {
-        WorkflowTemplate workflow;
-        const QString path = dir.filePath(file_name);
-        if (!loadWorkflowFile(path, &workflow, errors)) {
-            ok = false;
-            continue;
-        }
-        ok = addWorkflow(workflow, errors) && ok;
-    }
-    rebuildIndex();
-    return ok;
+        return addWorkflow(workflow, errors);
+    };
+    return detail::loadStoreDirectoryFiles(
+        directory, workflowFileLoadPolicy(), hooks, consume, errors);
 }
 
 bool WorkflowStore::addWorkflow(const WorkflowTemplate& workflow, QStringList* errors) {
@@ -135,13 +135,6 @@ QString WorkflowStore::builtInResourceRoot() {
 
 QString WorkflowStore::defaultUserWorkflowDirectory() {
     return workflowLibraryDirectory();
-}
-
-void WorkflowStore::rebuildIndex() {
-    m_index_by_id.clear();
-    for (int i = 0; i < m_workflows.size(); ++i) {
-        m_index_by_id.insert(m_workflows.at(i).id, i);
-    }
 }
 
 }  // namespace sak::ai

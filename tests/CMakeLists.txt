@@ -3549,10 +3549,12 @@ add_executable(test_ai_skill_store
     unit/test_ai_skill_store.cpp
     ../src/ai/ai_skill.cpp
     ../src/ai/ai_skill_store.cpp
+    ../src/ai/ai_store_file_loader.cpp
     ../src/ai/ai_paths.cpp
     ../src/core/app_paths.cpp
     ../include/sak/ai/ai_skill.h
     ../include/sak/ai/ai_skill_store.h
+    ../include/sak/ai/ai_store_file_loader.h
     ${CMAKE_SOURCE_DIR}/resources/ai.qrc
 )
 set_target_properties(test_ai_skill_store PROPERTIES
@@ -3921,10 +3923,12 @@ add_executable(test_ai_workflow_store
     unit/test_ai_workflow_store.cpp
     ../src/core/app_paths.cpp
     ../src/ai/ai_paths.cpp
+    ../src/ai/ai_store_file_loader.cpp
     ../src/ai/ai_workflow_store.cpp
     ../src/ai/ai_workflow_template.cpp
     ../src/ai/ai_workflow_placeholders.cpp
     ../include/sak/ai/ai_paths.h
+    ../include/sak/ai/ai_store_file_loader.h
     ../include/sak/app_paths.h
     ../include/sak/ai/ai_workflow_store.h
     ../include/sak/ai/ai_workflow_template.h

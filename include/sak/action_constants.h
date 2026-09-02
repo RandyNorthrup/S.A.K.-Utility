@@ -13,6 +13,17 @@
 
 namespace sak {
 
+namespace quick_action_elevation {
+constexpr char kVerifySystemFilesName[] = "Verify System Files";
+constexpr char kVerifySystemFilesTaskId[] = "Verify System Files";
+constexpr char kCheckDiskErrorsName[] = "Check Disk Errors";
+constexpr char kCheckDiskErrorsTaskId[] = "Check Disk Errors";
+constexpr char kResetNetworkName[] = "Reset Network Settings";
+constexpr char kResetNetworkTaskId[] = "Reset Network";
+constexpr char kBackupBitLockerKeysName[] = "BitLocker Key Backup";
+constexpr char kBackupBitLockerKeysTaskId[] = "Backup BitLocker Keys";
+}  // namespace quick_action_elevation
+
 // ============================================================================
 // Retry / backoff policy
 // ============================================================================

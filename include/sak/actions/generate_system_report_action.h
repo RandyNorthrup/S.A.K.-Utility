@@ -38,6 +38,7 @@ public:
 
     void scan() override;
     void execute() override;
+    void setOutputLocation(const QString& output_location) { m_output_location = output_location; }
 
     // ------------------------------------------------------------------
     // Pure decision seams (public for unit testing; no I/O, no state)

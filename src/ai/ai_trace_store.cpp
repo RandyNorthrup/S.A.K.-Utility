@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 #include <utility>
 
 namespace sak::ai {
@@ -47,6 +48,12 @@ constexpr qint64 kMaxJsonlLoadBytes = 128LL * 1024LL * 1024LL;
 
 QString nowIso() {
     return QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+}
+
+QString jsonlPath(const QString& session_directory, const char* file_name) {
+    return session_directory.isEmpty()
+               ? QString()
+               : QDir(session_directory).filePath(QString::fromLatin1(file_name));
 }
 
 QDateTime parseDate(const QJsonObject& obj, const QString& key) {
@@ -196,19 +203,44 @@ qint64 jsonlSizeCapForLabel(const QString& label) {
     return kMaxTraceJsonlBytes;
 }
 
+bool failWithError(QString* error_message, const QString& message) {
+    if (error_message != nullptr) {
+        *error_message = message;
+    }
+    return false;
+}
+
+QString appendPayloadError(const QByteArray& payload, const QString& label, qint64 cap) {
+    if (payload.size() > kMaxJsonlLineBytes) {
+        return QStringLiteral("Could not append %1: audit record exceeds the %2-byte line cap")
+            .arg(label)
+            .arg(kMaxJsonlLineBytes);
+    }
+    if (payload.size() > cap) {
+        return QStringLiteral("Could not append %1: audit record exceeds the %2-byte file cap")
+            .arg(label)
+            .arg(cap);
+    }
+    return {};
+}
+
 bool writeAppendPayload(QFile& file,
-                        const QJsonObject& object,
+                        const QByteArray& payload,
                         const QString& label,
                         QString* error_message) {
     const qint64 start_size = file.size();
-    const QByteArray payload = QJsonDocument(object).toJson(QJsonDocument::Compact) + '\n';
     if (file.write(payload) == payload.size() && file.flush()) {
         return true;
     }
     // Roll the partial line back so the JSONL stays parseable and report failure.
-    file.resize(start_size);
+    const QString write_error = file.errorString();
+    const bool restored = file.resize(start_size);
     if (error_message != nullptr) {
-        *error_message = QStringLiteral("Could not append %1: %2").arg(label, file.errorString());
+        *error_message = QStringLiteral("Could not append %1: %2").arg(label, write_error);
+        if (!restored) {
+            error_message->append(QStringLiteral("; partial audit record could not be removed: %1")
+                                      .arg(file.errorString()));
+        }
     }
     return false;
 }
@@ -250,28 +282,190 @@ bool appendJsonLine(const QString& path,
                     const QString& label,
                     qint64 cap_override,
                     QString* error_message) {
+    if (error_message != nullptr) {
+        error_message->clear();
+    }
     const QFileInfo info(path);
     if (!QDir().mkpath(info.absolutePath())) {
-        if (error_message != nullptr) {
-            *error_message =
-                QStringLiteral("Could not create %1 directory: %2").arg(label, info.absolutePath());
-        }
-        return false;
+        return failWithError(
+            error_message,
+            QStringLiteral("Could not create %1 directory: %2").arg(label, info.absolutePath()));
     }
     const qint64 cap = cap_override > 0 ? cap_override : jsonlSizeCapForLabel(label);
-    if (info.exists() && info.size() >= cap && !rotateJsonl(path, label, error_message)) {
+    const QByteArray payload = QJsonDocument(object).toJson(QJsonDocument::Compact) + '\n';
+    const QString payload_error = appendPayloadError(payload, label, cap);
+    if (!payload_error.isEmpty()) {
+        return failWithError(error_message, payload_error);
+    }
+    const qint64 current_size = info.exists() ? info.size() : 0;
+    const bool would_exceed_cap = current_size > cap - payload.size();
+    if (current_size > 0 && would_exceed_cap && !rotateJsonl(path, label, error_message)) {
         // Rotation failed: fail safe rather than risk clobbering the audit trail.
         return false;
     }
     QFile file(path);
-    if (!file.open(QIODevice::Append | QIODevice::Text)) {
-        if (error_message != nullptr) {
-            *error_message =
-                QStringLiteral("Could not append %1: %2").arg(label, file.errorString());
-        }
-        return false;
+    // Binary mode keeps on-disk bytes equal to the projected payload size. Text mode expands
+    // LF to CRLF on Windows after the cap check and can push a file past its declared bound.
+    if (!file.open(QIODevice::Append)) {
+        return failWithError(
+            error_message,
+            QStringLiteral("Could not append %1: %2").arg(label, file.errorString()));
     }
-    return writeAppendPayload(file, object, label, error_message);
+    return writeAppendPayload(file, payload, label, error_message);
+}
+
+template <typename Event>
+QVector<Event> loadJsonlError(QString* error_message, const QString& message) {
+    failWithError(error_message, message);
+    return {};
+}
+
+enum class JsonlOpenResult {
+    Missing,
+    Ready,
+    Failed
+};
+
+JsonlOpenResult openJsonlForLoad(QFile* file,
+                                 const QString& label,
+                                 qint64* initial_size,
+                                 QString* error_message) {
+    if (!file->exists()) {
+        return JsonlOpenResult::Missing;
+    }
+    if (!file->open(QIODevice::ReadOnly)) {
+        failWithError(
+            error_message,
+            QStringLiteral("Could not read %1: %2").arg(label.toLower(), file->errorString()));
+        return JsonlOpenResult::Failed;
+    }
+    *initial_size = file->size();
+    if (*initial_size < 0) {
+        failWithError(error_message,
+                      QStringLiteral("Could not read %1 audit file size").arg(label.toLower()));
+        return JsonlOpenResult::Failed;
+    }
+    if (*initial_size > kMaxJsonlLoadBytes) {
+        failWithError(error_message,
+                      QStringLiteral("%1 audit file exceeds the %2-byte load cap")
+                          .arg(label)
+                          .arg(kMaxJsonlLoadBytes));
+        return JsonlOpenResult::Failed;
+    }
+    return JsonlOpenResult::Ready;
+}
+
+QString validateJsonlLine(QFile* file,
+                          const QByteArray& raw_line,
+                          const QString& label,
+                          qint64 line_number,
+                          qint64* loaded_bytes) {
+    if (file->error() != QFileDevice::NoError) {
+        return QStringLiteral("Could not read %1 audit line %2: %3")
+            .arg(label.toLower())
+            .arg(line_number)
+            .arg(file->errorString());
+    }
+    *loaded_bytes += raw_line.size();
+    if (*loaded_bytes > kMaxJsonlLoadBytes) {
+        return QStringLiteral("%1 audit file exceeds the %2-byte load cap")
+            .arg(label)
+            .arg(kMaxJsonlLoadBytes);
+    }
+    if (raw_line.size() > kMaxJsonlLineBytes || (!raw_line.endsWith('\n') && !file->atEnd())) {
+        return QStringLiteral("%1 audit line %2 exceeds the %3-byte line cap")
+            .arg(label)
+            .arg(line_number)
+            .arg(kMaxJsonlLineBytes);
+    }
+    if (!raw_line.endsWith('\n')) {
+        return QStringLiteral("%1 audit line %2 is truncated (missing newline)")
+            .arg(label)
+            .arg(line_number);
+    }
+    return {};
+}
+
+QString validateJsonlCompletion(QFile* file,
+                                const QString& label,
+                                qint64 line_number,
+                                qint64 loaded_bytes,
+                                qint64 initial_size) {
+    if (file->error() != QFileDevice::NoError) {
+        return QStringLiteral("Could not read %1 audit line %2: %3")
+            .arg(label.toLower())
+            .arg(line_number + 1)
+            .arg(file->errorString());
+    }
+    if (file->size() != initial_size || loaded_bytes != initial_size) {
+        return QStringLiteral("%1 audit file changed while it was being read").arg(label);
+    }
+    return {};
+}
+
+QString validateAuditSchema(const QJsonObject& object, const QString& label, qint64 line_number) {
+    const QJsonValue schema_value = object.value(QStringLiteral("schema_version"));
+    const double schema = schema_value.toDouble(std::numeric_limits<double>::quiet_NaN());
+    if (!schema_value.isDouble() || !std::isfinite(schema) ||
+        schema != static_cast<double>(kTraceSchemaVersion)) {
+        return QStringLiteral("%1 audit line %2 has unsupported schema_version")
+            .arg(label)
+            .arg(line_number);
+    }
+    return {};
+}
+
+template <typename Event, typename Parser>
+QVector<Event> loadJsonLines(const QString& path,
+                             const QString& label,
+                             Parser parse_event,
+                             QString* error_message) {
+    if (error_message != nullptr) {
+        error_message->clear();
+    }
+    QVector<Event> events;
+    QFile file(path);
+    qint64 initial_size = 0;
+    const JsonlOpenResult open_result =
+        openJsonlForLoad(&file, label, &initial_size, error_message);
+    if (open_result == JsonlOpenResult::Missing) {
+        return events;
+    }
+    if (open_result == JsonlOpenResult::Failed) {
+        return {};
+    }
+
+    qint64 line_number = 0;
+    qint64 loaded_bytes = 0;
+    while (!file.atEnd()) {
+        ++line_number;
+        const QByteArray raw_line = file.readLine(kMaxJsonlLineBytes + 1);
+        const QString line_error =
+            validateJsonlLine(&file, raw_line, label, line_number, &loaded_bytes);
+        if (!line_error.isEmpty()) {
+            return loadJsonlError<Event>(error_message, line_error);
+        }
+        QJsonParseError parse_error;
+        const auto document = QJsonDocument::fromJson(raw_line.trimmed(), &parse_error);
+        if (parse_error.error != QJsonParseError::NoError || !document.isObject()) {
+            return loadJsonlError<Event>(
+                error_message,
+                QStringLiteral("%1 audit line %2 does not contain a valid JSON object")
+                    .arg(label)
+                    .arg(line_number));
+        }
+        const QString schema_error = validateAuditSchema(document.object(), label, line_number);
+        if (!schema_error.isEmpty()) {
+            return loadJsonlError<Event>(error_message, schema_error);
+        }
+        events.append(parse_event(document.object()));
+    }
+    const QString completion_error =
+        validateJsonlCompletion(&file, label, line_number, loaded_bytes, initial_size);
+    if (!completion_error.isEmpty()) {
+        return loadJsonlError<Event>(error_message, completion_error);
+    }
+    return events;
 }
 
 }  // namespace
@@ -394,19 +588,18 @@ QString TraceStore::sessionDirectory() const {
 }
 
 QString TraceStore::tracePath() const {
-    return m_session_dir.isEmpty() ? QString()
-                                   : QDir(m_session_dir).filePath(QString::fromLatin1(kTraceFile));
+    const QMutexLocker locker(&m_io_mutex);
+    return jsonlPath(m_session_dir, kTraceFile);
 }
 
 QString TraceStore::activityPath() const {
-    return m_session_dir.isEmpty()
-               ? QString()
-               : QDir(m_session_dir).filePath(QString::fromLatin1(kActivityFile));
+    const QMutexLocker locker(&m_io_mutex);
+    return jsonlPath(m_session_dir, kActivityFile);
 }
 
 QString TraceStore::replayPath() const {
-    return m_session_dir.isEmpty() ? QString()
-                                   : QDir(m_session_dir).filePath(QString::fromLatin1(kReplayFile));
+    const QMutexLocker locker(&m_io_mutex);
+    return jsonlPath(m_session_dir, kReplayFile);
 }
 
 bool TraceStore::appendEvent(AiTraceEvent event, QString* error_message) const {
@@ -432,43 +625,20 @@ bool TraceStore::appendEvent(AiTraceEvent event, QString* error_message) const {
             QUuid::createUuid().toString(QUuid::WithoutBraces).left(kTraceIdSuffixChars));
     }
 
-    return appendJsonLine(
-        tracePath(), event.toJson(), QStringLiteral("trace"), m_max_jsonl_bytes, error_message);
+    return appendJsonLine(jsonlPath(m_session_dir, kTraceFile),
+                          event.toJson(),
+                          QStringLiteral("trace"),
+                          m_max_jsonl_bytes,
+                          error_message);
 }
 
 QVector<AiTraceEvent> TraceStore::loadEvents(QString* error_message) const {
     const QMutexLocker locker(&m_io_mutex);
-    QVector<AiTraceEvent> events;
-    QFile file(tracePath());
-    if (!file.exists()) {
-        return events;
-    }
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        if (error_message != nullptr) {
-            *error_message = QStringLiteral("Could not read trace: %1").arg(file.errorString());
-        }
-        return events;
-    }
-
-    qint64 loaded_bytes = 0;
-    while (!file.atEnd()) {
-        const QByteArray raw_line = file.readLine(kMaxJsonlLineBytes);
-        loaded_bytes += raw_line.size();
-        if (loaded_bytes > kMaxJsonlLoadBytes) {
-            if (error_message != nullptr) {
-                *error_message = QStringLiteral("Trace file exceeds the %1-byte load cap")
-                                     .arg(kMaxJsonlLoadBytes);
-            }
-            break;
-        }
-        QJsonParseError parse_error;
-        const auto doc = QJsonDocument::fromJson(raw_line.trimmed(), &parse_error);
-        if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
-            continue;
-        }
-        events.append(AiTraceEvent::fromJson(doc.object()));
-    }
-    return events;
+    return loadJsonLines<AiTraceEvent>(
+        jsonlPath(m_session_dir, kTraceFile),
+        QStringLiteral("Trace"),
+        [](const QJsonObject& object) { return AiTraceEvent::fromJson(object); },
+        error_message);
 }
 
 bool TraceStore::appendActivityEvent(AiActivityEvent event, QString* error_message) const {
@@ -486,7 +656,7 @@ bool TraceStore::appendActivityEvent(AiActivityEvent event, QString* error_messa
         event.activity_id = QStringLiteral("act_%1").arg(
             QUuid::createUuid().toString(QUuid::WithoutBraces).left(kTraceIdSuffixChars));
     }
-    return appendJsonLine(activityPath(),
+    return appendJsonLine(jsonlPath(m_session_dir, kActivityFile),
                           event.toJson(),
                           QStringLiteral("activity"),
                           m_max_jsonl_bytes,
@@ -495,37 +665,11 @@ bool TraceStore::appendActivityEvent(AiActivityEvent event, QString* error_messa
 
 QVector<AiActivityEvent> TraceStore::loadActivityEvents(QString* error_message) const {
     const QMutexLocker locker(&m_io_mutex);
-    QVector<AiActivityEvent> events;
-    QFile file(activityPath());
-    if (!file.exists()) {
-        return events;
-    }
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        if (error_message != nullptr) {
-            *error_message = QStringLiteral("Could not read activity: %1").arg(file.errorString());
-        }
-        return events;
-    }
-
-    qint64 loaded_bytes = 0;
-    while (!file.atEnd()) {
-        const QByteArray raw_line = file.readLine(kMaxJsonlLineBytes);
-        loaded_bytes += raw_line.size();
-        if (loaded_bytes > kMaxJsonlLoadBytes) {
-            if (error_message != nullptr) {
-                *error_message = QStringLiteral("Activity file exceeds the %1-byte load cap")
-                                     .arg(kMaxJsonlLoadBytes);
-            }
-            break;
-        }
-        QJsonParseError parse_error;
-        const auto doc = QJsonDocument::fromJson(raw_line.trimmed(), &parse_error);
-        if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
-            continue;
-        }
-        events.append(AiActivityEvent::fromJson(doc.object()));
-    }
-    return events;
+    return loadJsonLines<AiActivityEvent>(
+        jsonlPath(m_session_dir, kActivityFile),
+        QStringLiteral("Activity"),
+        [](const QJsonObject& object) { return AiActivityEvent::fromJson(object); },
+        error_message);
 }
 
 bool TraceStore::appendReplayEvent(const QString& run_id,
@@ -560,8 +704,11 @@ bool TraceStore::appendReplayEvent(const QString& run_id,
         object[QStringLiteral("tool_name")] = tool_name;
     }
     object[QStringLiteral("metadata")] = redactedReplayMetadata(metadata);
-    return appendJsonLine(
-        replayPath(), object, QStringLiteral("turn replay"), m_max_jsonl_bytes, error_message);
+    return appendJsonLine(jsonlPath(m_session_dir, kReplayFile),
+                          object,
+                          QStringLiteral("turn replay"),
+                          m_max_jsonl_bytes,
+                          error_message);
 }
 
 AiTraceEvent TraceStore::event(const AiTraceEventSeed& seed) {

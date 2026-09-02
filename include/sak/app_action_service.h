@@ -29,6 +29,9 @@
 namespace sak {
 
 class QuickActionController;
+class BackupBitlockerKeysAction;
+class GenerateSystemReportAction;
+class ScreenshotSettingsAction;
 
 /// Generous default: some actions (SFC/DISM, CHKDSK) legitimately run for many
 /// minutes. The assistant tool layer applies its own outer timeout too.
@@ -71,12 +74,15 @@ public:
     /// registered. Ids are stable ("action.<slug>").
     [[nodiscard]] int registerInto(AppActionRegistry& registry);
 
-    /// The underlying controller (for the GUI panels to share, and for tests).
-    [[nodiscard]] QuickActionController* controller() const;
+    void setOutputDirectory(const QString& output_directory);
+    [[nodiscard]] QString outputDirectory() const { return m_backup_dir; }
 
 private:
     std::unique_ptr<QuickActionController> m_controller;
     QString m_backup_dir;
+    GenerateSystemReportAction* m_report_action{nullptr};
+    ScreenshotSettingsAction* m_screenshot_action{nullptr};
+    BackupBitlockerKeysAction* m_bitlocker_action{nullptr};
 };
 
 /// Generous default for a signal-driven read-only op (some file searches / scans

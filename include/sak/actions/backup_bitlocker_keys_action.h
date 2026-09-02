@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "sak/action_constants.h"
 #include "sak/quick_action.h"
 
 #include <QDateTime>
@@ -38,7 +39,9 @@ class BackupBitlockerKeysAction : public QuickAction {
 public:
     explicit BackupBitlockerKeysAction(const QString& backup_location, QObject* parent = nullptr);
 
-    QString name() const override { return "BitLocker Key Backup"; }
+    QString name() const override {
+        return QString::fromLatin1(quick_action_elevation::kBackupBitLockerKeysName);
+    }
     QString description() const override {
         return "Backup BitLocker recovery keys for all "
                "encrypted volumes";
@@ -49,6 +52,7 @@ public:
 
     void scan() override;
     void execute() override;
+    void setBackupLocation(const QString& backup_location) { m_backup_location = backup_location; }
 
 private:
     /**

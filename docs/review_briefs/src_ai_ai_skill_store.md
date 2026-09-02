@@ -23,3 +23,5 @@
 Re-review result: zero open findings. The registered suite covers truncation, growth, root
 reparse, pre-open directory replacement, the 513-file cap, enumeration error, overrides, padded
 IDs and built-in resources. The ai_skill_store mutation catalog kills 4/4 boundary mutants.
+The native/resource loader now lives in ai_store_file_loader and is shared with WorkflowStore;
+SkillStore retains only its Markdown policy, parser and index ownership.

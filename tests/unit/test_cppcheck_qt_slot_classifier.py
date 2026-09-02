@@ -204,6 +204,34 @@ void Product::callback() {}
         self.assertIn("Invoke-CapturedProcess", runner)
         self.assertNotIn("Start-Process -FilePath $CppcheckExe", runner)
 
+    def test_classified_diagnostics_fail_closed_on_read_or_tool_failure(self) -> None:
+        runner = RUNNER_PATH.read_text(encoding="ascii")
+        self.assertIn(
+            "$errors = @(Get-Content -LiteralPath $ErrorsFile -ErrorAction Stop)",
+            runner,
+        )
+        self.assertNotIn(
+            "Get-Content -LiteralPath $ErrorsFile -ErrorAction SilentlyContinue",
+            runner,
+        )
+        self.assertIn(
+            "$hasCheckersReport -and $rawSignals.Count -eq $classifiedQtSlots",
+            runner,
+        )
+        self.assertIn("$exitCode -eq 1 -and $remainingSignals.Count -eq 0", runner)
+
+    def test_default_whole_project_scope_includes_test_translation_units(self) -> None:
+        scope, paths = self.cppcheck_input_scope()
+        self.assertEqual(scope, "whole-project-with-tests")
+        self.assertEqual(
+            {Path(path).resolve() for path in paths},
+            {
+                (PROJECT_ROOT / "src").resolve(),
+                (PROJECT_ROOT / "include").resolve(),
+                (PROJECT_ROOT / "tests").resolve(),
+            },
+        )
+
     def test_changed_source_keeps_fast_exact_file_scope(self) -> None:
         source = PROJECT_ROOT / "src" / "core" / "mbox_writer.cpp"
         scope, paths = self.cppcheck_input_scope(source)

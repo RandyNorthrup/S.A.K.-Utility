@@ -64,7 +64,7 @@ any tool, so they hold only if a human notices.
 | Magic numbers | Named `constexpr` constants | `magic-numbers` -- BLOCKING (`scripts/check_magic_numbers.py`); `0`, `1`, `-1` stay bare |
 | Line length | <=100 columns | `clang-format` -- BLOCKING |
 | Single-letter variables | Avoid, except tiny lambda predicates | `readability-identifier-naming`, run in CI on every build |
-| cppcheck findings | Zero across `src/` and `include/` | `cppcheck` -- BLOCKING on the files YOUR commit changed; `cppcheck-whole-project` (manual stage + CI) -- BLOCKING whole-tree |
+| cppcheck findings | Zero across `src/`, `include/`, and `tests/` | `cppcheck` -- BLOCKING on the files YOUR commit changed; `cppcheck-whole-project` (manual stage + CI) -- BLOCKING whole-tree |
 | Dead source functions | Zero high-confidence unreferenced definitions in `src/*.cpp` | `dead-code` -- BLOCKING on changed source files; `scripts/check_dead_code.ps1` in CI -- BLOCKING whole-tree |
 | Dead analysis suppressions | A `// cppcheck-suppress` must actually suppress something | `cppcheck-whole-project` reveal pass -- BLOCKING (`scripts/cppcheck_whole_project_gate.ps1`) |
 | Local/CI gate parity | Every custom/generic local gate has a CI route; every CI grading script has a local/manual route | `gate-parity` -- BLOCKING (`scripts/check_gate_parity.ps1`) |

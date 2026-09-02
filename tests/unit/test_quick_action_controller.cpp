@@ -1,6 +1,7 @@
 // Copyright (c) 2025-2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+#include "sak/action_constants.h"
 #include "sak/quick_action.h"
 #include "sak/quick_action_controller.h"
 
@@ -71,6 +72,8 @@ private Q_SLOTS:
     // -- Configuration setters -------------------------------
     void testSetBackupLocation();
     void testSetLoggingEnabled();
+    void testElevatedTaskIdsAndPayloadUseHelperContract();
+    void testBitLockerPayloadHasNoDefaultDestination();
 
 private:
     std::unique_ptr<QuickActionController> m_ctrl;
@@ -163,6 +166,31 @@ void TestQuickActionController::testSetLoggingEnabled() {
     // Should not crash
     m_ctrl->setLoggingEnabled(true);
     m_ctrl->setLoggingEnabled(false);
+}
+
+void TestQuickActionController::testElevatedTaskIdsAndPayloadUseHelperContract() {
+    using namespace quick_action_elevation;
+    QCOMPARE(elevatedTaskIdForQuickAction(QString::fromLatin1(kResetNetworkName)),
+             QString::fromLatin1(kResetNetworkTaskId));
+    QCOMPARE(elevatedTaskIdForQuickAction(QString::fromLatin1(kBackupBitLockerKeysName)),
+             QString::fromLatin1(kBackupBitLockerKeysTaskId));
+    QCOMPARE(elevatedTaskIdForQuickAction(QString::fromLatin1(kVerifySystemFilesName)),
+             QString::fromLatin1(kVerifySystemFilesTaskId));
+    QCOMPARE(elevatedTaskIdForQuickAction(QString::fromLatin1(kCheckDiskErrorsName)),
+             QString::fromLatin1(kCheckDiskErrorsTaskId));
+    QCOMPARE(elevatedTaskIdForQuickAction(QStringLiteral("Unknown Admin Action")), QString());
+
+    const QJsonObject payload = buildElevatedActionPayload(
+        elevatedTaskIdForQuickAction(QString::fromLatin1(kBackupBitLockerKeysName)),
+        QStringLiteral("C:/session/artifacts"));
+    QCOMPARE(payload.value(QStringLiteral("backup_location")).toString(),
+             QStringLiteral("C:/session/artifacts"));
+}
+
+void TestQuickActionController::testBitLockerPayloadHasNoDefaultDestination() {
+    const QJsonObject payload = buildElevatedActionPayload(
+        QString::fromLatin1(quick_action_elevation::kBackupBitLockerKeysTaskId), QString());
+    QVERIFY(payload.isEmpty());
 }
 
 QTEST_MAIN(TestQuickActionController)

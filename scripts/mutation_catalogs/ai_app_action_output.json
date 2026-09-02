@@ -1,0 +1,24 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_ai_assistant_panel_tool_dispatch",
+  "ctest_regex": "^test_ai_assistant_panel_tool_dispatch$",
+  "mutants": [
+    {
+      "id": "app-action-output-restores-appdata-fallback",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "    QString backup_dir;",
+      "replace": "    QString backup_dir = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral(\"/app_actions\");",
+      "expect": "killed",
+      "why": "appActionServiceTracksSessionArtifactRootWithoutFallback requires no-session output to stay empty instead of escaping to an AppData fallback."
+    },
+    {
+      "id": "existing-service-is-not-retargeted",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "        m_appActionService->setOutputDirectory(backup_dir);",
+      "replace": "        m_appActionService->setOutputDirectory(QString());",
+      "expect": "killed",
+      "why": "appActionServiceTracksSessionArtifactRootWithoutFallback requires a new session and a renamed session to update the existing service's output root."
+    }
+  ]
+}

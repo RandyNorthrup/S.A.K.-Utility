@@ -16,6 +16,8 @@
 #include "sak/actions/verify_system_files_action.h"
 #include "sak/quick_action_controller.h"
 
+#include <utility>
+
 namespace sak {
 
 AppActionService::AppActionService(const QString& backup_dir, QObject* parent)
@@ -27,15 +29,25 @@ AppActionService::AppActionService(const QString& backup_dir, QObject* parent)
     m_controller->registerAction(std::make_unique<VerifySystemFilesAction>());
     m_controller->registerAction(std::make_unique<CheckDiskErrorsAction>());
     m_controller->registerAction(std::make_unique<ResetNetworkAction>());
-    m_controller->registerAction(std::make_unique<GenerateSystemReportAction>(backup_dir));
-    m_controller->registerAction(std::make_unique<ScreenshotSettingsAction>(backup_dir));
-    m_controller->registerAction(std::make_unique<BackupBitlockerKeysAction>(backup_dir));
+    auto report_action = std::make_unique<GenerateSystemReportAction>(backup_dir);
+    m_report_action = report_action.get();
+    m_controller->registerAction(std::move(report_action));
+    auto screenshot_action = std::make_unique<ScreenshotSettingsAction>(backup_dir);
+    m_screenshot_action = screenshot_action.get();
+    m_controller->registerAction(std::move(screenshot_action));
+    auto bitlocker_action = std::make_unique<BackupBitlockerKeysAction>(backup_dir);
+    m_bitlocker_action = bitlocker_action.get();
+    m_controller->registerAction(std::move(bitlocker_action));
 }
 
 AppActionService::~AppActionService() = default;
 
-QuickActionController* AppActionService::controller() const {
-    return m_controller.get();
+void AppActionService::setOutputDirectory(const QString& output_directory) {
+    m_backup_dir = output_directory.trimmed();
+    m_controller->setBackupLocation(m_backup_dir);
+    m_report_action->setOutputLocation(m_backup_dir);
+    m_screenshot_action->setOutputLocation(m_backup_dir);
+    m_bitlocker_action->setBackupLocation(m_backup_dir);
 }
 
 int AppActionService::registerInto(AppActionRegistry& registry) {
