@@ -54,6 +54,32 @@ foreach ($f in ($cmakeFiles | Sort-Object FullName -Unique)) {
 # the first target in the root build file.
 $rootCmake = Join-Path $root "CMakeLists.txt"
 $rootLines = @(Get-Content -LiteralPath $rootCmake)
+$rootText = $rootLines -join "`n"
+if ($rootText -notmatch '(?ms)^if\s*\(\s*NOT\s+WIN32\s*\).*?message\s*\(\s*FATAL_ERROR.*?^endif\s*\(\s*\)') {
+    $violations += ("CMakeLists.txt: missing fail-closed Windows-only configure boundary; " +
+                    "the shipped application supports Windows 10/11 x64 only")
+}
+$unsupportedPlatformTokens = @(
+    "PLATFORM_MACOS",
+    "PLATFORM_LINUX",
+    "SAK_PLATFORM_MACOS",
+    "SAK_PLATFORM_LINUX",
+    "MACOSX_BUNDLE",
+    "macdeployqt"
+)
+for ($index = 0; $index -lt $rootLines.Count; $index++) {
+    $trimmed = $rootLines[$index].TrimStart()
+    if ($trimmed.StartsWith("#")) {
+        continue
+    }
+    foreach ($token in $unsupportedPlatformTokens) {
+        if ($rootLines[$index].Contains($token)) {
+            $violations += (("CMakeLists.txt:{0}: unsupported application-platform token '{1}'; " +
+                             "remove the dead branch instead of advertising non-Windows support") -f
+                            ($index + 1), $token)
+        }
+    }
+}
 $firstTargetLine = 0
 for ($index = 0; $index -lt $rootLines.Count; $index++) {
     if ($rootLines[$index] -match '^\s*add_(?:library|executable)\s*\(') {
@@ -87,7 +113,7 @@ if ($violations.Count -gt 0) {
     exit 1
 }
 
-Write-Host ("Build-system lint passed: no dead CMAKE_BUILD_TYPE guards, no forbidden coverage " +
-           "warning silences, and analyzer setup precedes target creation " +
+Write-Host ("Build-system lint passed: Windows-only boundary enforced, no dead CMAKE_BUILD_TYPE " +
+           "guards or forbidden coverage warning silences, and analyzer setup precedes target creation " +
            "($($cmakeFiles.Count) CMake files).")
 exit 0

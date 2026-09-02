@@ -12,18 +12,16 @@
 #include <algorithm>
 #include <cstring>
 
-#ifdef _WIN32
 #include <windows.h>
 
 #include <bcrypt.h>
+#ifdef _MSC_VER
 #pragma comment(lib, "bcrypt.lib")
 #endif
 
 namespace sak::apfs_crypto {
 
 namespace {
-
-#ifdef _WIN32
 
 /// @brief RAII wrapper for a BCrypt algorithm provider handle.
 class AlgProvider {
@@ -217,12 +215,9 @@ void xorCounter(unsigned char* a, uint64_t t) {
     }
 }
 
-#endif  // _WIN32
-
 }  // namespace
 
 QByteArray randomBytes(int count) {
-#ifdef _WIN32
     if (count <= 0) {
         return {};
     }
@@ -234,10 +229,6 @@ QByteArray randomBytes(int count) {
         return {};
     }
     return out;
-#else
-    Q_UNUSED(count);
-    return {};
-#endif
 }
 
 QByteArray sha256(const QByteArray& data) {
@@ -252,7 +243,6 @@ QByteArray pbkdf2Sha256(const QByteArray& password,
                         const QByteArray& salt,
                         uint64_t iterations,
                         int keyLength) {
-#ifdef _WIN32
     // A hostile keybag can claim an arbitrary iteration count; PBKDF2 would then spin for that
     // many HMAC rounds -- an unlock-time denial of service. Real APFS FileVault keybags use a
     // low-hundreds-of-thousands count, so refuse anything past a generous ceiling and fail the
@@ -280,27 +270,13 @@ QByteArray pbkdf2Sha256(const QByteArray& password,
         return {};
     }
     return out;
-#else
-    Q_UNUSED(password);
-    Q_UNUSED(salt);
-    Q_UNUSED(iterations);
-    Q_UNUSED(keyLength);
-    return {};
-#endif
 }
 
 QByteArray aesEcbEncryptBlock(const QByteArray& key, const QByteArray& block16) {
-#ifdef _WIN32
     return aesEcbBlock(key, block16, true);
-#else
-    Q_UNUSED(key);
-    Q_UNUSED(block16);
-    return {};
-#endif
 }
 
 QByteArray aesKeyWrap(const QByteArray& kek, const QByteArray& plaintextKey) {
-#ifdef _WIN32
     if (kek.size() != kApfsKekBytes || plaintextKey.isEmpty() || (plaintextKey.size() % 8) != 0) {
         return {};
     }
@@ -326,15 +302,9 @@ QByteArray aesKeyWrap(const QByteArray& kek, const QByteArray& plaintextKey) {
     out.append(a);
     out.append(r);
     return out;
-#else
-    Q_UNUSED(kek);
-    Q_UNUSED(plaintextKey);
-    return {};
-#endif
 }
 
 std::optional<QByteArray> aesKeyUnwrap(const QByteArray& kek, const QByteArray& wrappedKey) {
-#ifdef _WIN32
     if (kek.size() != kApfsKekBytes || wrappedKey.size() < 16 || (wrappedKey.size() % 8) != 0) {
         return std::nullopt;
     }
@@ -363,41 +333,20 @@ std::optional<QByteArray> aesKeyUnwrap(const QByteArray& kek, const QByteArray& 
         return std::nullopt;  // integrity check failed (wrong key)
     }
     return r;
-#else
-    Q_UNUSED(kek);
-    Q_UNUSED(wrappedKey);
-    return std::nullopt;
-#endif
 }
 
 QByteArray xtsEncrypt(const QByteArray& xtsKey,
                       uint64_t firstDataUnit,
                       const QByteArray& data,
                       int unitBytes) {
-#ifdef _WIN32
     return xtsTransform(xtsKey, firstDataUnit, data, unitBytes, true);
-#else
-    Q_UNUSED(xtsKey);
-    Q_UNUSED(firstDataUnit);
-    Q_UNUSED(data);
-    Q_UNUSED(unitBytes);
-    return {};
-#endif
 }
 
 QByteArray xtsDecrypt(const QByteArray& xtsKey,
                       uint64_t firstDataUnit,
                       const QByteArray& data,
                       int unitBytes) {
-#ifdef _WIN32
     return xtsTransform(xtsKey, firstDataUnit, data, unitBytes, false);
-#else
-    Q_UNUSED(xtsKey);
-    Q_UNUSED(firstDataUnit);
-    Q_UNUSED(data);
-    Q_UNUSED(unitBytes);
-    return {};
-#endif
 }
 
 QByteArray xtsEncryptBlock(const QByteArray& vek,

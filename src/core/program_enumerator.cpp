@@ -20,11 +20,9 @@
 
 #include <limits>
 
-#ifdef Q_OS_WIN
 #include <shellapi.h>
 #pragma comment(lib, "Shell32.lib")
 #pragma comment(lib, "Advapi32.lib")
-#endif
 
 namespace sak {
 
@@ -64,7 +62,6 @@ constexpr int kPackageScanTimeoutMs = 30'000;
     return path.startsWith(QLatin1String("\\\\")) || path.startsWith(QLatin1String("//"));
 }
 
-#ifdef Q_OS_WIN
 struct IconLocation {
     QString path;
     int index = 0;
@@ -100,7 +97,6 @@ struct IconLocation {
     DestroyIcon(small_icon);
     return image;
 }
-#endif
 
 [[nodiscard]] QJsonArray jsonDocToArray(const QJsonDocument& doc) {
     if (doc.isArray()) {
@@ -773,7 +769,6 @@ QImage ProgramEnumerator::extractIcon(const QString& path) {
         return {};
     }
 
-#ifdef Q_OS_WIN
     const IconLocation location = parseIconLocation(path);
 
     if (isRemoteOrDevicePath(location.path)) {
@@ -799,10 +794,6 @@ QImage ProgramEnumerator::extractIcon(const QString& path) {
         DestroyIcon(sfi.hIcon);
         return image;
     }
-
-#else
-    Q_UNUSED(path)
-#endif
 
     return {};
 }

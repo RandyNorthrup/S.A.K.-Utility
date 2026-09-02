@@ -226,18 +226,12 @@ QString restoredFilePath(const QString& destinationDirectory,
 }
 
 bool isWindowsRawDevicePath(const QString& path) {
-#ifdef Q_OS_WIN
     const QString sourcePath = QDir::toNativeSeparators(path);
     return sourcePath.startsWith(QStringLiteral("\\\\.\\")) ||
            sourcePath.startsWith(QStringLiteral("\\\\?\\"));
-#else
-    Q_UNUSED(path);
-    return false;
-#endif
 }
 
 QString windowsRawDeviceDriveRoot(const QString& path) {
-#ifdef Q_OS_WIN
     QString sourcePath = QDir::toNativeSeparators(path);
     const bool devicePath = sourcePath.startsWith(QStringLiteral("\\\\.\\")) ||
                             sourcePath.startsWith(QStringLiteral("\\\\?\\"));
@@ -255,9 +249,6 @@ QString windowsRawDeviceDriveRoot(const QString& path) {
         return QDir::toNativeSeparators(
             QStringLiteral("%1/").arg(sourcePath.left(kDriveLetterPathLength)));
     }
-#else
-    Q_UNUSED(path);
-#endif
     return {};
 }
 

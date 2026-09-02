@@ -36,6 +36,13 @@ removed once that was established.
 A removal still needs the owner's authorization -- not because removal is wrong, but because
 which way that decision goes is his call, not an agent's.
 
+**The application is Windows-only.** S.A.K. Utility ships for Windows 10/11 x64. macOS machines
+are external APFS/HFS validation rigs; they are not application build targets. Linux ISO support,
+MBOX interoperability, macOS profile export and Apple filesystem output are cross-FORMAT features,
+not cross-platform application support. Do not implement POSIX application branches or describe
+them as product gaps. Remove unsupported-OS stubs and fallbacks as dead/legacy code. Owner ruling,
+2026-09-01.
+
 **Scan first. Always.** Before writing a file, class, function, gate, test or document, search
 for it. Not to be tidy -- to avoid building a second copy of something that already works,
 because a parallel implementation is worse than either version alone: two things now drift, and

@@ -91,9 +91,8 @@ public:
     ///        a separate manager (e.g. UserDataManager::deleteBackup) can REUSE this exact
     ///        security-critical walk instead of QDir::removeRecursively's string re-resolution. On
     ///        Windows it drives the same per-node open+GetFinalPathNameByHandleW walk cleanup uses,
-    ///        so an ancestor-junction swapped in mid-delete is caught at every node (fail closed);
-    ///        off Windows there is no reparse-ancestor TOCTOU to close, so it delegates to
-    ///        QDir::removeRecursively. This is the delete PRIMITIVE, not the policy gate: a caller
+    ///        so an ancestor-junction swapped in mid-delete is caught at every node (fail closed).
+    ///        This is the delete PRIMITIVE, not the policy gate: a caller
     ///        MUST still run the path-deletion screens (filePathDeletionRefusal, reparse re-screen)
     ///        first. Returns true only when the whole tree was removed.
     [[nodiscard]] static bool deleteFolderTreeVerified(const QString& path);
@@ -185,7 +184,6 @@ private:
     ///        then reboot scheduling for a locked file. Split out to keep deleteFile within budget.
     [[nodiscard]] bool removeFilePermanentWithRetry(const QString& path, bool recycleFallback);
 
-#ifdef Q_OS_WIN
     /// Outcome of a by-handle permanent delete attempt.
     enum class HandleDeleteOutcome {
         Deleted,
@@ -195,7 +193,6 @@ private:
     /// @brief Open @p path (no leaf-reparse follow), verify it is still the validated target, and
     ///        delete it via the handle. Redirected => refused, never fall back to a string delete.
     [[nodiscard]] HandleDeleteOutcome deleteFileByVerifiedHandle(const QString& path);
-#endif
 
     /// @brief Dispatch cleanup for a single leftover item by type. Re-screens the item against the
     ///        leftover_cleanup_guard denylist FIRST (defense-in-depth) and refuses fail-closed, so
@@ -222,17 +219,14 @@ private:
     /// @brief Recycle-or-permanent tail of deleteFolder (after the reparse/redirect screens): try
     ///        the Recycle Bin, else permanently remove. Split out to keep deleteFolder within the
     ///        complexity budget.
-    [[nodiscard]] bool finishFolderDelete(QDir& dir, const QString& path);
+    [[nodiscard]] bool finishFolderDelete(const QString& path);
 
-    /// @brief Permanently remove a (non-reparse, redirect-verified) folder. On Windows this is a
+    /// @brief Permanently remove a (non-reparse, redirect-verified) folder through a
     ///        HANDLE-VERIFIED recursive delete (each file deleted by verified handle, each subdir
     ///        re-verified, the emptied dir removed by handle) so an ancestor-junction swap
-    ///        mid-delete cannot redirect the recursion into a real target. Elsewhere:
-    ///        removeRecursively + a forced per-entry sweep + rmdir, scheduling locked leftovers for
-    ///        reboot removal.
-    [[nodiscard]] bool removeFolderPermanent(QDir& dir, const QString& path);
+    ///        mid-delete cannot redirect the recursion into a real target.
+    [[nodiscard]] bool removeFolderPermanent(const QString& path);
 
-#ifdef Q_OS_WIN
     /// @brief Handle-verified recursive delete of @p path's tree (Windows). Every destructive
     ///        syscall is preceded by an immediate open+GetFinalPathNameByHandleW verification of
     ///        the exact target, so a swapped ancestor is caught at every node (fail-closed).
@@ -244,22 +238,14 @@ private:
     /// @brief Remove an (expected-empty) directory by a redirect-verified handle (POSIX unlink),
     ///        falling back to RemoveDirectoryW / reboot scheduling only when it cannot be opened.
     [[nodiscard]] bool removeEmptyDirByVerifiedHandle(const QString& path);
-#endif
 
     /// @brief Unlink a reparse point (junction / symlink) WITHOUT touching its target
     [[nodiscard]] bool unlinkReparsePoint(const QString& path);
 
-    /// @brief Attempt to remove each file in dir, scheduling locked ones
-    [[nodiscard]] bool removeFolderContentsForced(const QDir& dir);
-
-    /// @brief Remove one directory entry during a forced folder cleanup (never follows reparse pts)
-    [[nodiscard]] bool removeForcedEntry(const QFileInfo& entry);
-
-    /// @brief Record a reboot-removal schedule for @p path, then return NOT-handled (false). A
+    /// @brief Record a reboot-removal schedule for @p path. A
     ///        reboot-scheduled delete has not happened yet and cannot be pinned to the verified
-    ///        target, so it is surfaced via rebootPendingItems but never counted as an immediate
-    ///        success (fail closed).
-    [[nodiscard]] bool tryScheduleReboot(const QString& path);
+    ///        target, so callers still return false after this side effect (fail closed).
+    void noteRebootRemoval(const QString& path);
 
     /// @brief Schedule a locked file for removal on next Windows reboot. Re-verifies the target by
     ///        handle first and REFUSES to schedule a redirected / reparse-ancestor path; the

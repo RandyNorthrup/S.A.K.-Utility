@@ -1203,6 +1203,27 @@ a parked design, per the bucket convention. Open work is what remains after thos
   and the header-expanded cppcheck rerun passes with no suppression or cascade finding.
   WINDOWS INDEXED-ICON WAVE 13 FINAL GATE: all changed-file hooks passed. Release build exit 0;
   full CTest 267/267, zero failures, 732.34 seconds.
+  WINDOWS-ONLY BOUNDARY WAVE 14: CMake now refuses every non-Windows target at configure time and
+  no longer contains macOS/Linux application defines, libraries, bundle/icon bootstrap, deploy or
+  install branches. AGENTS.md records the same owner ruling so a format/interoperability VM cannot
+  be mistaken for an app-support target again. The build-system gate requires that fail-closed
+  boundary and rejects return of the removed platform tokens. It failed against the stale CMake
+  before the fix; that red drill also exposed and fixed a formatting bug in the gate's own
+  diagnostic, then the gate passed with exact file/line/token output.
+  The first unsupported-source slice removes 29 more Q_UNUSED sites: all non-Windows APFS crypto
+  stubs, cleanup path/registry/reboot/folder fallbacks, raw-recovery identity stubs, process-tree
+  termination stub, and ProgramEnumerator's remaining non-Windows icon stub. Two cleanup helpers
+  reachable only from the deleted POSIX folder fallback are removed as dead code, and the Windows
+  folder-delete seam no longer carries an ignored QDir parameter. The five corrected source
+  families now contain zero Q_UNUSED. Focused Release targets build and their four tests pass,
+  including the long Partition Manager and process-runner suites.
+  Changed-file cppcheck then exposed two always-false `tryScheduleReboot` expressions. The helper
+  existed for its scheduling side effect but returned false by design, making boolean call sites
+  misleading. It is now the void `noteRebootRemoval`; all callers perform the side effect and
+  explicitly return false because a reboot-pending object is still present now.
+  WINDOWS-ONLY BOUNDARY WAVE 14 FINAL GATE: all changed-file hooks passed, including the new
+  boundary lint, PowerShell syntax, cppcheck, dead-code and staged gitleaks checks. Release build
+  exit 0; full CTest 267/267, zero failures, 760.47 seconds.
   Unsupported-platform branch removal remains INCOMPLETE and must reduce code, not add portability
   implementations.
   OWNER RULE NOW RECORDED IN `AGENTS.md`: fix code, test, tool, or gate first; suppression is the

@@ -39,9 +39,7 @@ private Q_SLOTS:
     void programInfo_defaults();
     void cancelAndReset();
     void enumerateAll_cancelledBeforeStart();
-#ifdef Q_OS_WIN
     void extractIcon_honorsExplicitIndex();
-#endif
 };
 
 void TestProgramEnumerator::construction_default() {
@@ -419,7 +417,6 @@ void TestProgramEnumerator::programInfo_defaults() {
     QCOMPARE(info.source, ProgramInfo::Source::RegistryHKLM);
 }
 
-#ifdef Q_OS_WIN
 void TestProgramEnumerator::extractIcon_honorsExplicitIndex() {
     const QString system_root = qEnvironmentVariable("SystemRoot");
     QVERIFY(!system_root.isEmpty());
@@ -440,7 +437,6 @@ void TestProgramEnumerator::extractIcon_honorsExplicitIndex() {
     QVERIFY(
         ProgramEnumerator::extractIcon(QStringLiteral("\\\\server\\share\\app.exe,0")).isNull());
 }
-#endif
 
 void TestProgramEnumerator::cancelAndReset() {
     // programs() returns the cache, which is written only at the very END of a successful

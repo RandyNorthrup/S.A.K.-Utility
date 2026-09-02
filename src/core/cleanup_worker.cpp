@@ -17,13 +17,11 @@
 #include <QFile>
 #include <QFileInfo>
 
-#ifdef Q_OS_WIN
 #include <string>
 
 #include <windows.h>
 
 #include <shellapi.h>
-#endif
 
 namespace sak {
 
@@ -52,7 +50,6 @@ void appendFirewallDeleteFilters(QStringList& args, const LeftoverItem& item) {
     }
 }
 
-#ifdef Q_OS_WIN
 // Initial character capacity for the GetFinalPathNameByHandleW output buffer; grown on demand when
 // the resolved path is longer.
 constexpr int kFinalPathBufferChars = 1024;
@@ -169,8 +166,6 @@ bool registryKeyIsSymbolicLink(HKEY hive, const QString& subkey) {
     }
     return false;
 }
-#endif  // Q_OS_WIN
-
 // Above this the item is deemed too large to GUARANTEE it fits the Recycle Bin (the shell silently
 // PERMANENTLY deletes an item exceeding the bin's configured max). Conservative: a default bin
 // holds GBs, so 4 GiB leaves the common small app leftover recyclable while a huge one is left for
@@ -401,7 +396,6 @@ bool CleanupWorker::cleanStartupEntry(const LeftoverItem& item) {
 }
 
 bool CleanupWorker::deleteTimeRedirectSafe(const QString& path) {
-#ifdef Q_OS_WIN
     HANDLE handle = openForVerifiedDelete(path);
     if (handle == INVALID_HANDLE_VALUE) {
         // Cannot open to verify (locked/denied, or raced-away). Re-screen ancestors LEXICALLY now
@@ -423,13 +417,8 @@ bool CleanupWorker::deleteTimeRedirectSafe(const QString& path) {
         return false;
     }
     return true;
-#else
-    Q_UNUSED(path)
-    return true;
-#endif
 }
 
-#ifdef Q_OS_WIN
 CleanupWorker::HandleDeleteOutcome CleanupWorker::deleteFileByVerifiedHandle(const QString& path) {
     HANDLE handle = openForVerifiedDelete(path);
     if (handle == INVALID_HANDLE_VALUE) {
@@ -457,10 +446,8 @@ CleanupWorker::HandleDeleteOutcome CleanupWorker::deleteFileByVerifiedHandle(con
                     " failed (GetLastError=" + std::to_string(err) + "); using fallback removal");
     return HandleDeleteOutcome::NotOpenable;
 }
-#endif
 
 bool CleanupWorker::removeFilePermanent(const QString& path) {
-#ifdef Q_OS_WIN
     // Delete BY HANDLE: open the exact object, re-verify it is still the validated target (no
     // ancestor junction/symlink swap), then unlink through the handle -- no path is re-resolved
     // after the check, closing the TOCTOU window a string-based QFile::remove would leave open.
@@ -481,9 +468,6 @@ bool CleanupWorker::removeFilePermanent(const QString& path) {
         return false;
     }
     return QFile::remove(path);
-#else
-    return QFile::remove(path);
-#endif
 }
 
 CleanupWorker::RecycleOutcome CleanupWorker::decideRecycle(const QString& path,
@@ -637,8 +621,7 @@ bool CleanupWorker::removeFilePermanentWithRetry(const QString& path, bool recyc
 
 bool CleanupWorker::deleteFolder(const QString& path) {
     // Same guarantor as deleteFile: filePathDeletionRefusal rejects an empty path in
-    // cleanItemIfAllowed. The recursive caller (removeForcedEntry) passes an entryInfoList
-    // absoluteFilePath, which is never empty either.
+    // cleanItemIfAllowed.
     Q_ASSERT(!path.isEmpty());
     // The assert is not enough on its own for a function that recursively removes a tree.
     // QDir("") resolves to the process working directory and reports exists() == true, so
@@ -684,10 +667,10 @@ bool CleanupWorker::deleteFolder(const QString& path) {
     if (!deleteTimeRedirectSafe(path)) {
         return false;
     }
-    return finishFolderDelete(dir, path);
+    return finishFolderDelete(path);
 }
 
-bool CleanupWorker::finishFolderDelete(QDir& dir, const QString& path) {
+bool CleanupWorker::finishFolderDelete(const QString& path) {
     bool recycleFallback = false;
     switch (attemptRecycle(path, recycleFallback)) {
     case RecycleOutcome::Recycled:
@@ -699,34 +682,21 @@ bool CleanupWorker::finishFolderDelete(QDir& dir, const QString& path) {
         break;
     }
 
-    if (removeFolderPermanent(dir, path)) {
+    if (removeFolderPermanent(path)) {
         noteRecycleFallback(recycleFallback, path);
         return true;
     }
     return false;
 }
 
-bool CleanupWorker::removeFolderPermanent(QDir& dir, const QString& path) {
-#ifdef Q_OS_WIN
+bool CleanupWorker::removeFolderPermanent(const QString& path) {
     // Handle-verified recursive delete: QDir::removeRecursively re-resolves the path STRING for the
     // whole subtree, so a swapped ancestor junction would redirect the recursion into a real
     // target. The verified walk instead opens+verifies the exact object before every destructive
     // syscall.
-    Q_UNUSED(dir)
     return removeFolderTreeVerified(path);
-#else
-    if (dir.removeRecursively()) {
-        return true;
-    }
-    bool all_handled = removeFolderContentsForced(dir);
-    if (!dir.rmdir(path)) {
-        all_handled = tryScheduleReboot(path) && all_handled;
-    }
-    return all_handled;
-#endif
 }
 
-#ifdef Q_OS_WIN
 bool CleanupWorker::removeVerifiedFolderEntry(const QFileInfo& entry, int depth) {
     const QString child = entry.absoluteFilePath();
     // Guard the string-based paths below against an ANCESTOR swapped into a junction after the
@@ -753,7 +723,11 @@ bool CleanupWorker::removeVerifiedFolderEntry(const QFileInfo& entry, int depth)
     if (outcome == HandleDeleteOutcome::Redirected) {
         return false;
     }
-    return QFile::remove(child) || tryScheduleReboot(child);
+    if (QFile::remove(child)) {
+        return true;
+    }
+    noteRebootRemoval(child);
+    return false;
 }
 
 bool CleanupWorker::removeEmptyDirByVerifiedHandle(const QString& path) {
@@ -764,8 +738,11 @@ bool CleanupWorker::removeEmptyDirByVerifiedHandle(const QString& path) {
         if (sak::pathReparseUnsafe(path)) {
             return false;
         }
-        return RemoveDirectoryW(reinterpret_cast<LPCWSTR>(path.utf16())) != 0 ||
-               tryScheduleReboot(path);
+        if (RemoveDirectoryW(reinterpret_cast<LPCWSTR>(path.utf16())) != 0) {
+            return true;
+        }
+        noteRebootRemoval(path);
+        return false;
     }
     const QString final_path = finalPathOfHandle(handle);
     const QString refusal = sak::cleanupHandleRedirectRefusal(path, final_path);
@@ -786,7 +763,8 @@ bool CleanupWorker::removeEmptyDirByVerifiedHandle(const QString& path) {
     if (sak::pathHasReparsePointAncestor(path)) {
         return false;
     }
-    return tryScheduleReboot(path);
+    noteRebootRemoval(path);
+    return false;
 }
 
 bool CleanupWorker::removeFolderTreeVerified(const QString& path, int depth) {
@@ -819,21 +797,15 @@ bool CleanupWorker::removeFolderTreeVerified(const QString& path, int depth) {
     }
     return all_handled;
 }
-#endif  // Q_OS_WIN
 
 bool CleanupWorker::deleteFolderTreeVerified(const QString& path) {
-#ifdef Q_OS_WIN
     // Reuse the exact per-node handle-verified walk WITHOUT forking it. The tree walk reads no item
-    // list and no recycle config -- only the reboot-schedule bookkeeping tryScheduleReboot touches
+    // list and no recycle config -- only the reboot-schedule bookkeeping noteRebootRemoval touches
     // -- so a throwaway, empty-item worker drives it correctly. Its rebootPendingItems signal is
     // unconnected here; MoveFileEx scheduling of a genuinely locked leftover still happens.
     const QVector<LeftoverItem> noItems;
     CleanupWorker worker(noItems);
     return worker.removeFolderTreeVerified(path);
-#else
-    // No reparse-ancestor-swap TOCTOU exists off Windows; keep the recursive delete behavior.
-    return QDir(path).removeRecursively();
-#endif
 }
 
 bool CleanupWorker::unlinkReparsePoint(const QString& path) {
@@ -842,52 +814,20 @@ bool CleanupWorker::unlinkReparsePoint(const QString& path) {
     if (QDir().rmdir(path) || QFile::remove(path)) {
         return true;
     }
-    return tryScheduleReboot(path);
-}
-
-bool CleanupWorker::removeForcedEntry(const QFileInfo& entry) {
-    const QString entry_path = entry.absoluteFilePath();
-    // Never recurse THROUGH a reparse point (junction / directory symlink): entry.isDir() FOLLOWS
-    // it, so recursing would delete the target's contents, not the leftover (a nested junction to
-    // System32 must not wipe System32). Remove the link itself instead.
-    const bool is_reparse = entry.isSymLink() || entry.isJunction();
-    if (entry.isDir() && !is_reparse) {
-        return deleteFolder(entry_path);
-    }
-    if (is_reparse) {
-        return unlinkReparsePoint(entry_path);
-    }
-    // Plain file: QFile::remove unlinks it; a locked file is scheduled for reboot removal.
-    return QFile::remove(entry_path) || tryScheduleReboot(entry_path);
-}
-
-bool CleanupWorker::removeFolderContentsForced(const QDir& dir) {
-    bool all_handled = true;
-    const auto entries = dir.entryInfoList(
-        QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System, QDir::DirsLast);
-
-    for (const auto& entry : entries) {
-        if (!removeForcedEntry(entry)) {
-            all_handled = false;
-        }
-    }
-    return all_handled;
-}
-
-bool CleanupWorker::tryScheduleReboot(const QString& path) {
-    // Record the reboot schedule so rebootPendingItems surfaces it, but return NOT-handled: a
-    // reboot-scheduled delete has not happened yet and its reboot-time resolution cannot be pinned
-    // to the verified object, so it must not read as an immediate success in the folder-tree
-    // accounting (fail closed). A partly-deleted tree with a locked child is thus honestly reported
-    // incomplete.
-    if (scheduleRebootRemoval(path)) {
-        m_rebootPendingPaths.append(path);
-    }
+    noteRebootRemoval(path);
     return false;
 }
 
+void CleanupWorker::noteRebootRemoval(const QString& path) {
+    // Record the reboot schedule so rebootPendingItems surfaces it. Callers still report failure:
+    // the object remains present now and its reboot-time resolution cannot be pinned to the
+    // verified object.
+    if (scheduleRebootRemoval(path)) {
+        m_rebootPendingPaths.append(path);
+    }
+}
+
 bool CleanupWorker::scheduleRebootRemoval(const QString& path) {
-#ifdef Q_OS_WIN
     // A reboot-delete is INHERENTLY unpinnable: MoveFileExW(MOVEFILE_DELAY_UNTIL_REBOOT) stores the
     // pathname and the OS re-resolves it at reboot, so no Win32 API can bind it to today's verified
     // object -- a documented residual. The actionable mitigation is to require the target to be the
@@ -900,15 +840,10 @@ bool CleanupWorker::scheduleRebootRemoval(const QString& path) {
     return MoveFileExW(reinterpret_cast<LPCWSTR>(path.utf16()),
                        nullptr,
                        MOVEFILE_DELAY_UNTIL_REBOOT) != 0;
-#else
-    Q_UNUSED(path)
-    return false;
-#endif
 }
 
 bool CleanupWorker::deleteRegistryKey(const QString& fullKeyPath) {
     // An empty path matches no hive prefix and is rejected by the else branch below.
-#ifdef Q_OS_WIN
     QString path = fullKeyPath;
     HKEY hive = nullptr;
 
@@ -949,10 +884,6 @@ bool CleanupWorker::deleteRegistryKey(const QString& fullKeyPath) {
     LONG const rc = RegDeleteTreeW(hive, reinterpret_cast<LPCWSTR>(path.utf16()));
 
     return rc == ERROR_SUCCESS || rc == ERROR_FILE_NOT_FOUND;
-#else
-    Q_UNUSED(fullKeyPath)
-    return false;
-#endif
 }
 
 bool CleanupWorker::deleteRegistryValue(const QString& keyPath, const QString& valueName) {
@@ -960,7 +891,6 @@ bool CleanupWorker::deleteRegistryValue(const QString& keyPath, const QString& v
     // valueName (which would delete the key's DEFAULT value) is rejected earlier, by
     // registryValueDeletionRefusal in cleanItemIfAllowed/startupEntryCleanupRefusal.
     Q_ASSERT(!valueName.isEmpty());
-#ifdef Q_OS_WIN
     QString path = keyPath;
     HKEY hive = nullptr;
 
@@ -1004,11 +934,6 @@ bool CleanupWorker::deleteRegistryValue(const QString& keyPath, const QString& v
     RegCloseKey(key);
 
     return rc == ERROR_SUCCESS || rc == ERROR_FILE_NOT_FOUND;
-#else
-    Q_UNUSED(keyPath)
-    Q_UNUSED(valueName)
-    return false;
-#endif
 }
 
 bool CleanupWorker::removeService(const QString& serviceName) {

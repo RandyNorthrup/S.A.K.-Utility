@@ -16,9 +16,7 @@
 #include <optional>
 #include <utility>
 
-#ifdef Q_OS_WIN
 #include <windows.h>
-#endif
 
 namespace sak {
 
@@ -84,7 +82,6 @@ void drainProcessOutput(QProcess* proc,
 // "terminated" -- the caller falls back to QProcess::kill so the direct child
 // is always signalled rather than the cancel silently no-opping.
 bool dispatchDetachedTreeKill(qint64 pid) {
-#ifdef Q_OS_WIN
     if (pid <= 0) {
         return false;
     }
@@ -100,10 +97,6 @@ bool dispatchDetachedTreeKill(qint64 pid) {
     return QProcess::startDetached(
         taskkill,
         {QStringLiteral("/PID"), QString::number(pid), QStringLiteral("/T"), QStringLiteral("/F")});
-#else
-    Q_UNUSED(pid);
-    return false;
-#endif
 }
 
 void terminateProcess(QProcess* proc, const ProcessTerminationCallback& on_terminate) {

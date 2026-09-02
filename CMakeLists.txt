@@ -19,6 +19,13 @@ project(SAK_Utility
     DESCRIPTION "Swiss Army Knife Utility - PC technician's toolkit for Windows migration and maintenance"
     LANGUAGES C CXX
 )# C++23 Standard - Strict compliance required
+
+if(NOT WIN32)
+    message(FATAL_ERROR
+        "S.A.K. Utility is a Windows 10/11 x64 application. macOS hosts are external "
+        "APFS/HFS validation rigs, not application build targets.")
+endif()
+
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -46,17 +53,9 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 # Suppress optional Vulkan header discovery (not required for this app)
 set(CMAKE_DISABLE_FIND_PACKAGE_WrapVulkanHeaders TRUE)
 
-# Platform detection
-if(WIN32)
-    set(PLATFORM_WINDOWS TRUE)
-    add_definitions(-DSAK_PLATFORM_WINDOWS)
-elseif(APPLE)
-    set(PLATFORM_MACOS TRUE)
-    add_definitions(-DSAK_PLATFORM_MACOS)
-elseif(UNIX)
-    set(PLATFORM_LINUX TRUE)
-    add_definitions(-DSAK_PLATFORM_LINUX)
-endif()
+# Product platform -- configure already refused every non-Windows target above.
+set(PLATFORM_WINDOWS TRUE)
+add_definitions(-DSAK_PLATFORM_WINDOWS)
 
 # ============================================================================
 # Compiler Configuration - STRICT STANDARDS
@@ -156,12 +155,6 @@ elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     # only to the configurations where it has an effect.
     add_compile_options(-fstack-protector-strong)
     add_compile_options($<$<NOT:$<CONFIG:Debug>>:-D_FORTIFY_SOURCE=2>)
-    # -z relro / -z now are ELF-only. Apple's linker rejects -z outright and the
-    # MinGW/PE linkers ignore it, so emit them only where they mean something
-    # rather than shipping flags whose fate depends on the linker in use.
-    if(PLATFORM_LINUX)
-        add_link_options(-Wl,-z,relro -Wl,-z,now)
-    endif()
 endif()
 
 # ============================================================================
@@ -481,18 +474,10 @@ if(MSVC)
     message(STATUS "CRT: ${_sak_app_crt} (app), ${_sak_vcpkg_crt} (vcpkg ${VCPKG_TARGET_TRIPLET})")
 endif()
 
-# Platform-specific libraries
-if(PLATFORM_WINDOWS)
-    # Windows-specific: Registry access, WMI, DXGI, performance counters,
-    # networking (IP Helper, Winsock, DNS, WLAN, NetBIOS), COM (Firewall)
-    set(PLATFORM_LIBS advapi32 crypt32 shell32 user32 dxgi pdh
-        iphlpapi ws2_32 dnsapi wlanapi netapi32 ole32 oleaut32 dbghelp)
-elseif(PLATFORM_MACOS)
-    # macOS-specific: CoreFoundation, IOKit
-    find_library(COREFOUNDATION_LIBRARY CoreFoundation REQUIRED)
-    find_library(IOKIT_LIBRARY IOKit REQUIRED)
-    set(PLATFORM_LIBS ${COREFOUNDATION_LIBRARY} ${IOKIT_LIBRARY})
-endif()
+# Windows libraries: Registry access, WMI, DXGI, performance counters,
+# networking (IP Helper, Winsock, DNS, WLAN, NetBIOS), COM (Firewall).
+set(PLATFORM_LIBS advapi32 crypt32 shell32 user32 dxgi pdh
+    iphlpapi ws2_32 dnsapi wlanapi netapi32 ole32 oleaut32 dbghelp)
 
 # ============================================================================
 # Project Configuration
@@ -1244,7 +1229,6 @@ endif()
 add_executable(sak_utility ${ALL_SOURCES})
 
 # Browser-extension installer: drives the panel's Install/Uninstall button in-process.
-# Has a non-Windows stub, so it compiles on every platform the panel does.
 target_sources(sak_utility PRIVATE
     src/win32mcp/browser_extension_installer.cpp
     include/sak/win32mcp/browser_extension_installer.h
@@ -1708,34 +1692,6 @@ if(PLATFORM_WINDOWS)
     endif()
 endif()
 
-# macOS-specific settings
-if(PLATFORM_MACOS)
-    set_target_properties(sak_utility PROPERTIES
-        MACOSX_BUNDLE TRUE
-        MACOSX_BUNDLE_BUNDLE_NAME "SAK Utility"
-        MACOSX_BUNDLE_GUI_IDENTIFIER "com.sak.utility"
-        MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
-        MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
-    )
-
-    # Icon bootstrap - same rule as the Windows .ico above: an untracked file
-    # outside the checkout does not silently replace a committed resource.
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../icon.icns"
-       AND (SAK_IMPORT_PARENT_ICON OR NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.icns"))
-        configure_file(
-            "${CMAKE_CURRENT_SOURCE_DIR}/../icon.icns"
-            "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.icns"
-            COPYONLY
-        )
-        message(STATUS "Icon:               imported from ../icon.icns into resources/")
-    endif()
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.icns")
-        set_target_properties(sak_utility PROPERTIES
-            MACOSX_BUNDLE_ICON_FILE icon.icns
-        )
-    endif()
-endif()
-
 # ============================================================================
 # Testing
 # ============================================================================
@@ -1758,18 +1714,15 @@ endif()
 # the GUI exe is a package that fails on the customer's PC, not a smaller one.
 install(TARGETS sak_utility
     RUNTIME DESTINATION bin
-    BUNDLE DESTINATION .
 )
 
 install(TARGETS sak_apfs_writer_cli sak_hfs_writer_cli
     RUNTIME DESTINATION bin
 )
 
-if(PLATFORM_WINDOWS)
-    install(TARGETS sak_elevated_helper
-        RUNTIME DESTINATION bin
-    )
-endif()
+install(TARGETS sak_elevated_helper
+    RUNTIME DESTINATION bin
+)
 
 # Bundled technician tools (smartctl, aria2c, UUP media converter, iperf3,
 # portable chocolatey, filesystem tool manifest). Their presence is already a
@@ -1959,15 +1912,6 @@ if(PLATFORM_WINDOWS)
             )
         endforeach()
         install(FILES ${MSVC_DLLS} DESTINATION bin)
-    endif()
-elseif(PLATFORM_MACOS)
-    # Use macdeployqt
-    find_program(MACDEPLOYQT macdeployqt HINTS "${Qt6_DIR}/../../../bin")
-    if(MACDEPLOYQT)
-        add_custom_command(TARGET sak_utility POST_BUILD
-            COMMAND ${MACDEPLOYQT} $<TARGET_BUNDLE_DIR:sak_utility>
-            COMMENT "Running macdeployqt..."
-        )
     endif()
 endif()
 
