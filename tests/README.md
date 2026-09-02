@@ -168,7 +168,7 @@ empty results, and service failures fail; dependency failure never becomes a pas
 | test_path_utils | `path_utils` | Path validation, normalization, sanitization, env-var expansion, safe-delete checks |
 | test_logger | `logger` | Log levels, formatting, file rotation, thread safety |
 | test_config_manager | `config_manager` | Get/set values, persistence, portable mode, type conversions |
-| test_file_scanner | `file_scanner` | Recursive scan, extension/size/date filters, cancellation |
+| test_file_scanner | `file_scanner` | Recursive scan, extension/size/date filters, cancellation, controlled junction-cycle fixtures, and injected canonical-resolution failure |
 | test_file_hash | `file_hash` | MD5/SHA-256 hashing, large-file streaming, hash comparison |
 | test_process_runner | `process_runner` | Process execution, stdout/stderr capture, timeout, exit codes |
 | test_resource_soak | `process_runner` | Long-session handle/GDI/USER/memory-growth soak over the real launchers |
@@ -201,7 +201,7 @@ empty results, and service failures fail; dependency failure never becomes a pas
 | test_chocolatey_manager | `chocolatey_manager` | Package install, update, version queries |
 | test_app_scanner | `app_scanner` | Installed app enumeration from registry |
 | test_app_installation_worker | `app_installation_worker` | Package installation workflow, retry, error handling |
-| test_permission_manager | `permission_manager` | NTFS ACL read/write, permission preservation |
+| test_permission_manager | `permission_manager` | NTFS ACL read/write, controlled junction/hard-link refusal, and pure primary-group apply planning |
 | test_smart_file_filter | `smart_file_filter` | Category-based filtering, exclusion patterns, size thresholds |
 | test_elevation_manager | `elevation_manager` | Admin privilege detection, UAC status |
 | test_user_data_manager | `user_data_manager` | User data discovery and categorization |
@@ -242,7 +242,7 @@ empty results, and service failures fail; dependency failure never becomes a pas
 | test_network_adapter_admin | `network_adapter_admin` | New-name validation, exact-match resolution against the system's adapter list, the IPv4/DNS/DHCP netsh argument vectors, and the strict dotted-IPv4 check |
 | test_csv_escape | `csv_escape` | The single CSV cell writer: RFC 4180 quoting plus the CWE-1236 formula guard, across delimiters |
 | test_windows_path_policy | `windows_path_policy` | The shared untrusted-path screening dialect: safe single-child names (no `..`, `.`, separators or `:`), literal path segments, drive-qualified roots |
-| test_ethernet_config_manager | `ethernet_config_manager` | Ethernet backup/restore, JSON persistence |
+| test_ethernet_config_manager | `ethernet_config_manager` | Ethernet backup/restore, JSON persistence, and injected friendly/system-name MAC lookup |
 | test_dns_diagnostic_tool | `dns_diagnostic_tool` | DNS queries, record type parsing |
 | test_port_scanner | `port_scanner` | TCP port scanning, banner grabbing |
 | test_bandwidth_tester | `bandwidth_tester` | iPerf3/HTTP speed testing |
@@ -376,7 +376,7 @@ stay read-only with exact blockers.
 | test_email_search_worker | `email_search_worker` | Full-text search, field filtering |
 | test_email_export_worker | `email_export_worker` | EML/CSV/VCF/ICS export, attachment extraction |
 | test_email_attachments_browser_dialog | `EmailInspectorController`, `EmailAttachmentsBrowserDialog` | Exact folder-page and item-detail failure identities, wrong-ID refusal, matching failure advancement, plain-text accessible generic error reporting without scan-state mutation, and attachment-specific plus generic double-signal save accounting |
-| test_email_profile_manager | `email_profile_manager` | Email client profile discovery, backup/restore |
+| test_email_profile_manager | `email_profile_manager` | Email client profile discovery, backup/restore, and controlled junction destination confinement |
 | test_email_report_generator | `email_report_generator` | Email analysis report generation |
 
 ### Quick Actions
@@ -462,7 +462,9 @@ QCOMPARE(spy.count(), 1);
 `QSKIP` is reserved for real environment or certification interlocks, never an unsupported
 application-platform branch. `tests/skip_site_inventory.txt` holds every static site by file and
 exact count, while `tests/skip_baseline.txt` holds the functions that skipped in the latest full
-run. Check dormant/static coverage with
+run. Wave 26 leaves 25 static sites across 10 files after replacing assistant inventory, drive,
+junction, and ConversationStore manifest-failure skips with deterministic fixtures. Check
+dormant/static coverage with
 `powershell scripts/check_test_skips.ps1 -StaticOnly`; the full skip audit also requires fresh
 per-test logs from complete CTest.
 

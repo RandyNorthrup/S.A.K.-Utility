@@ -22,6 +22,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "process_capture.ps1")
 $WslExe = Join-Path $env:SystemRoot "System32\wsl.exe"
 $FsutilExe = Join-Path $env:SystemRoot "System32\fsutil.exe"
 
@@ -44,19 +45,9 @@ function Invoke-RecordedCommand {
         throw "$Name could not resolve executable '$FilePath'."
     }
     $started = Get-Date
-    $oldPreference = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    $exitCode = $null
-    try {
-        $output = & $FilePath @Arguments 2>&1
-        $exitCode = $LASTEXITCODE
-    }
-    finally {
-        $ErrorActionPreference = $oldPreference
-    }
-    if ($null -eq $exitCode) {
-        throw "$Name did not produce an exit code (launch failed)."
-    }
+    $captured = Invoke-CapturedProcess -FilePath $FilePath -Arguments $Arguments
+    $capturedOutput = @($captured.stdout, $captured.stderr)
+    $exitCode = [int]$captured.exit_code
 
     $record = [pscustomobject]@{
         name = $Name
@@ -64,7 +55,7 @@ function Invoke-RecordedCommand {
         arguments = $Arguments
         exit_code = [int]$exitCode
         duration_seconds = [Math]::Round(((Get-Date) - $started).TotalSeconds, 3)
-        output = ConvertTo-PlainText -Value $output
+        output = ConvertTo-PlainText -Value $capturedOutput
     }
     $Script:Commands.Add($record) | Out-Null
     if ($AcceptedExitCodes -notcontains [int]$exitCode) {

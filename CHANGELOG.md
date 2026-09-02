@@ -8,6 +8,37 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **R5 direct skip tail closed and review ledger advanced** - All 15 remaining directly fixable
+  QSKIP sites are replaced by deterministic seams/fixtures. The 25 surviving sites are the proven
+  external, privileged, destructive, paid, or live-service interlocks; static inventory is 25
+  sites across 10 files and the runtime audit is 5,094 passed functions / 28 reviewed skips (0.55
+  percent). Four AI headers gained stored blob-bound briefs and ConversationStore was re-reviewed;
+  the live ledger is 1,064 units / 635 pending / 39 self-verifying reviews. Combined Wave 26 gates
+  passed: changed-file hooks, healthy naming, full clang-cl coverage build, Release build, and full
+  CTest 272/272 in 655.99 seconds.
+
+- **Filesystem and adapter host-state skips removed** - Removed eight QSKIP false greens from
+  permission, file-scanner, email-profile, and Ethernet suites. Controlled unprivileged NTFS
+  junction/hard-link fixtures now hard-fail when unavailable; file traversal accepts an injected
+  canonical resolver; SDDL primary-group coverage uses the real parse/apply-plan collector without
+  requiring WRITE_OWNER; and MAC lookup accepts injected adapter identities. Static QSKIP inventory
+  falls from 33 sites across 14 files to 25 across 10; the observed audit records 5,094 passed
+  functions and 28 reviewed skips (0.55 percent).
+
+- **Next native certification capture batch unified** - OS-migration VBox command and screenshot
+  capture, Linux XFS/Btrfs metadata validation, and VM data-media external gates now use the shared
+  ProcessStartInfo seam. Existing allowed-failure and accepted-exit-code rules, command records,
+  durations, boot polling, screenshot status, output content, and indefinite native waits remain
+  explicit; child-start failure terminates. The VM-data launcher stages `process_capture.ps1`
+  beside its runner. Four independently selectable old-block drills went red under Windows
+  PowerShell 5.1, and the complete registered contract passes under both PowerShell hosts.
+
+- **AI host-state skips replaced with deterministic fixtures** - Read-only installed-program and
+  drive actions accept scoped test inventories, ConversationStore exposes an exact manifest-write
+  failure hook, and both junction tests now require their unprivileged Windows fixture. Seven
+  QSKIP sites are removed while the file-symlink privilege and three live/destructive interlocks
+  remain. Static QSKIP inventory falls from 40 sites across 15 files to 33 across 14 files.
+
 - **Automation VM plaintext credentials hardened** - Password staging now creates an empty
   no-share file, applies and verifies an exact current-owner ACL, and only then writes and flushes
   the password. Existing password files must already have the same owner-only DACL and bounded

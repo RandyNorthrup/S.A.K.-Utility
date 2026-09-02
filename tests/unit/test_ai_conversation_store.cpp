@@ -174,6 +174,7 @@ void AiConversationStoreTests::cleanup() {
     sak::ai::ConversationStore::setBeforeManifestChildOpenHookForTesting({});
     sak::ai::ConversationStore::setBeforeManifestFileOpenHookForTesting({});
     sak::ai::ConversationStore::setBeforeManifestFileReadHookForTesting({});
+    sak::ai::ConversationStore::setBeforeManifestWriteHookForTesting({});
     sak::ai::ConversationStore::setBeforeArtifactChildOpenHookForTesting({});
     sak::ai::ConversationStore::setBeforeArtifactLeafTempOpenHookForTesting({});
     sak::ai::ConversationStore::setBeforeArtifactLeafPublishHookForTesting({});
@@ -1126,29 +1127,16 @@ void AiConversationStoreTests::startSession_doesNotPresentASessionThatFailedToPe
     const QString first_id = store.currentSessionInfo().id;
     QVERIFY(!first_id.isEmpty());
 
-    // Deny ADD_FILE on the root while leaving ADD_SUBDIRECTORY allowed, so the new session's
-    // mkpath still succeeds and only the manifest FILE write fails -- which is exactly the
-    // branch under test. (icacls (WD) is add-file; (AD) is add-subdirectory.)
-    const QString me = qEnvironmentVariable("USERNAME");
-    QVERIFY(!me.isEmpty());
-    QProcess deny;
-    deny.start(QStringLiteral("icacls"),
-               {QDir::toNativeSeparators(temp.path()),
-                QStringLiteral("/deny"),
-                me + QStringLiteral(":(OI)(CI)(WD)")});
-    QVERIFY(deny.waitForFinished(30'000));
+    bool manifest_blocked = false;
+    sak::ai::ConversationStore::setBeforeManifestWriteHookForTesting(
+        [&](const QString& path) { manifest_blocked = QDir().mkpath(path); });
 
     error.clear();
     const bool started = store.startSession(QStringLiteral("Second"), &error);
 
-    QProcess allow;  // restore before asserting, so a failed assertion cannot leave the dir locked
-    allow.start(QStringLiteral("icacls"),
-                {QDir::toNativeSeparators(temp.path()), QStringLiteral("/remove:d"), me});
-    QVERIFY(allow.waitForFinished(30'000));
-
-    if (started) {
-        QSKIP("the ACL did not block manifest creation on this filesystem; branch not exercised");
-    }
+    sak::ai::ConversationStore::setBeforeManifestWriteHookForTesting({});
+    QVERIFY(manifest_blocked);
+    QVERIFY(!started);
     // The failed session is NOT presented: the previous session is still the current one.
     QCOMPARE(store.currentSessionInfo().id, first_id);
     QCOMPARE(store.currentSessionInfo().title, QStringLiteral("First"));

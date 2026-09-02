@@ -3,6 +3,12 @@
 
 #pragma once
 
+#include "sak/advanced_uninstall_types.h"
+#include "sak/drive_scanner.h"
+
+#include <QList>
+#include <QVector>
+
 /// @file app_readonly_actions.h
 /// @brief Registers the app's read-only technician operations into an
 /// AppActionRegistry so the AI assistant can run them headless.
@@ -36,5 +42,8 @@ class AppActionRegistry;
 ///   security.scan_vulnerabilities    -- CVE/advisory scan of installed programs
 ///   imaging.identify_image           -- detect a disk-image file's format
 [[nodiscard]] int registerReadOnlyAppActionsInto(AppActionRegistry& registry);
+void setReadOnlyActionProgramsForTesting(QVector<ProgramInfo> programs, bool inventory_complete);
+void setReadOnlyActionDrivesForTesting(QList<DriveInfo> drives, bool enumeration_complete);
+void clearReadOnlyActionFixturesForTesting();
 
 }  // namespace sak

@@ -76,6 +76,10 @@ public:
      */
     [[nodiscard]] bool setSecurityDescriptorSddl(const QString& path, const QString& sddl);
 
+    /// @brief True when the real parsed-SDDL apply path would include the primary-group field.
+    /// Pure seam: parses only; does not touch a filesystem object or require WRITE_OWNER.
+    [[nodiscard]] static bool sddlAppliesPrimaryGroupForTesting(const QString& sddl);
+
     // ======================================================================
     // Elevation-Aware Overloads (std::expected)
     // ======================================================================

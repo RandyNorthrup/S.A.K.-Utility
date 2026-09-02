@@ -1,5 +1,5 @@
 {
-  "head_commit": "705d4db2ed4152ff64b194a87a3276f96e1cf05c",
+  "head_commit": "bb9c376fdfcc6b4ce9a63f47ae6bd848aae61e2c",
   "unit_rule": "include/**.h|.hpp, src/**.cpp|.h|.hpp, tests/**.cpp|.h|.mjs, scripts/**.py|.ps1|.sh, browser/**.js",
   "units": {
     "browser/extension/background.js": {
@@ -151,16 +151,27 @@
       "status": "reviewed"
     },
     "include/sak/ai/ai_command_guard.h": {
+      "brief": "docs/review_briefs/include_sak_ai_ai_command_guard.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": "38163cd496618e981f093dcd9299f500182a45d7",
+      "status": "reviewed"
     },
     "include/sak/ai/ai_command_tool_planner.h": {
+      "brief": "docs/review_briefs/include_sak_ai_ai_command_tool_planner.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": "532829904729d90cfb37e59072c47088deb93786",
+      "status": "reviewed"
     },
     "include/sak/ai/ai_conversation_store.h": {
+      "brief": "docs/review_briefs/include_sak_ai_ai_conversation_store.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "previous_evidence": "driver",
+      "previous_review_blob": "2b4b26b9da1258f4a478bd9198b7d63f3c0ffd5c",
+      "reviewed_blob": "eed2f8770f2b3f8affa60a4e5dc257dec11dd429",
+      "status": "reviewed"
     },
     "include/sak/ai/ai_credential_store.h": {
       "evidence": "cited",
@@ -175,8 +186,11 @@
       "status": "reviewed"
     },
     "include/sak/ai/ai_human_gate.h": {
+      "brief": "docs/review_briefs/include_sak_ai_ai_human_gate.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": "e4465f7e128558549120e1a406d601e89c058c13",
+      "status": "reviewed"
     },
     "include/sak/ai/ai_human_gate_store.h": {
       "group": "include",
@@ -2389,7 +2403,9 @@
       "brief": "docs/review_briefs/src_ai_ai_conversation_store.md",
       "evidence": "driver",
       "group": "src",
-      "reviewed_blob": "a4caf858c911fa69089ba00b798db0321b75d5d5",
+      "previous_evidence": "driver",
+      "previous_review_blob": "a4caf858c911fa69089ba00b798db0321b75d5d5",
+      "reviewed_blob": "30dcefb30071c80cc72a41fb32a751b4b2e1dbe3",
       "status": "reviewed"
     },
     "src/ai/ai_credential_store.cpp": {

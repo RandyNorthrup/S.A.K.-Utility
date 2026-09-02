@@ -4,7 +4,8 @@
 #>
 
 param(
-    [ValidateSet("all", "file-management", "allocate-free-space", "bitlocker")]
+    [ValidateSet("all", "file-management", "allocate-free-space", "bitlocker",
+        "os-migration-vbox", "os-migration-screenshot", "linux-metadata", "vm-data")]
     [string]$MigrationCase = "all"
 )
 
@@ -129,6 +130,71 @@ $migrationCases = @(
             '$ErrorActionPreference = "Continue"',
             'SilentlyContinue'
         )
+    },
+    @{
+        name = "os-migration-vbox"
+        path = "scripts/run_partition_manager_os_migration_external_gate.ps1"
+        required = @(
+            '. (Join-Path $PSScriptRoot "process_capture.ps1")',
+            '$captured = Invoke-CapturedProcess -FilePath $VBoxManage -Arguments $Arguments',
+            '$captured.exit_code',
+            '$captured.stdout',
+            '$captured.stderr'
+        )
+        legacy = @(
+            '$output = & $VBoxManage @Arguments 2>&1',
+            '$ErrorActionPreference = "Continue"',
+            'SilentlyContinue'
+        )
+    },
+    @{
+        name = "os-migration-screenshot"
+        path = "scripts/run_partition_manager_os_migration_external_gate.ps1"
+        required = @(
+            '$screenshotProcess = Invoke-CapturedProcess -FilePath $VBoxManage -Arguments @(',
+            '$screenshotProcess.exit_code',
+            '$screenshotProcess.stdout',
+            '$screenshotProcess.stderr'
+        )
+        legacy = @(
+            '$screenshotOutput = & $VBoxManage controlvm',
+            '$ErrorActionPreference = "Continue"',
+            'SilentlyContinue'
+        )
+    },
+    @{
+        name = "linux-metadata"
+        path = "scripts/run_partition_manager_linux_metadata_validation.ps1"
+        required = @(
+            '. (Join-Path $PSScriptRoot "process_capture.ps1")',
+            '$captured = Invoke-CapturedProcess -FilePath $FilePath -Arguments $Arguments',
+            '$captured.exit_code',
+            '$captured.stdout',
+            '$captured.stderr'
+        )
+        legacy = @(
+            '$output = & $FilePath @Arguments 2>&1',
+            '$ErrorActionPreference = "Continue"',
+            '$LASTEXITCODE',
+            'SilentlyContinue'
+        )
+    },
+    @{
+        name = "vm-data"
+        path = "scripts/run_partition_manager_vm_data_external_gates.ps1"
+        required = @(
+            '. (Join-Path $PSScriptRoot "process_capture.ps1")',
+            '$captured = Invoke-CapturedProcess -FilePath $FilePath -Arguments $Arguments',
+            '$captured.exit_code',
+            '$captured.stdout',
+            '$captured.stderr'
+        )
+        legacy = @(
+            '$output = & $FilePath @Arguments 2>&1',
+            '$ErrorActionPreference = "Continue"',
+            '$LASTEXITCODE',
+            'SilentlyContinue'
+        )
     }
 )
 foreach ($case in $migrationCases) {
@@ -143,6 +209,14 @@ if ($MigrationCase -eq "all" -or $MigrationCase -eq "bitlocker") {
         -RequiredPatterns @(
             'run_partition_manager_bitlocker_mutation_external_gate.ps1',
             'partition_manager_storage.ps1',
+            'process_capture.ps1'
+        ) -LegacyPatterns @()
+}
+if ($MigrationCase -eq "all" -or $MigrationCase -eq "vm-data") {
+    Assert-CaptureMigration -Name "vm-data-launcher" `
+        -RelativePath "scripts/launch_partition_manager_vm_data_external_gates_local.ps1" `
+        -RequiredPatterns @(
+            'run_partition_manager_vm_data_external_gates.ps1',
             'process_capture.ps1'
         ) -LegacyPatterns @()
 }

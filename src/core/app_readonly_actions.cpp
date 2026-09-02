@@ -93,6 +93,19 @@ namespace sak {
 
 namespace {
 
+std::optional<QVector<ProgramInfo>> g_programs_for_testing;
+bool g_program_inventory_complete_for_testing = true;
+std::optional<QList<DriveInfo>> g_drives_for_testing;
+bool g_drive_enumeration_complete_for_testing = true;
+
+QList<DriveInfo> readOnlyActionDrives(bool& enumeration_ok) {
+    if (g_drives_for_testing) {
+        enumeration_ok = g_drive_enumeration_complete_for_testing;
+        return *g_drives_for_testing;
+    }
+    return DriveScanner::enumerateDrivesOnce(enumeration_ok);
+}
+
 // Bound model-facing list payloads so a machine with hundreds of programs or a
 // large scan does not blow the tool-result size. Truncation is reported, never
 // silent.
@@ -558,7 +571,12 @@ QJsonObject serializeProgram(const ProgramInfo& program) {
 AppActionResult listInstalledPrograms(const QJsonObject&) {
     bool inventory_complete = true;
     const QVector<ProgramInfo> programs =
-        VulnerabilityScanner::enumerateInstalledProgramsFast(&inventory_complete);
+        g_programs_for_testing
+            ? *g_programs_for_testing
+            : VulnerabilityScanner::enumerateInstalledProgramsFast(&inventory_complete);
+    if (g_programs_for_testing) {
+        inventory_complete = g_program_inventory_complete_for_testing;
+    }
     QJsonArray listed;
     for (const ProgramInfo& program : programs) {
         if (listed.size() >= kMaxListedPrograms) {
@@ -602,7 +620,9 @@ QString clampLine(const QString& line);
 std::optional<AppActionResult> resolveProgramForLeftoverScan(const QString& name,
                                                              ProgramInfo& out) {
     ProgramEnumerator enumerator;
-    const QVector<ProgramInfo> programs = enumerator.enumerateRegistryProgramsSync();
+    const QVector<ProgramInfo> programs = g_programs_for_testing
+                                              ? *g_programs_for_testing
+                                              : enumerator.enumerateRegistryProgramsSync();
     if (programs.isEmpty()) {
         // A running Windows box always has registered uninstall entries, so an empty list is a
         // failed enumeration, not an honest zero (fail-open close).
@@ -1223,7 +1243,7 @@ AppActionResult listDrives(const QJsonObject& args) {
     const bool removable_only = args.value(QStringLiteral("removable_only")).toBool(false);
 
     bool enumeration_ok = false;
-    const QList<sak::DriveInfo> drives = DriveScanner::enumerateDrivesOnce(enumeration_ok);
+    const QList<sak::DriveInfo> drives = readOnlyActionDrives(enumeration_ok);
 
     // Every real machine has at least PhysicalDrive0; an empty result means the OS device query
     // failed or no drive could even be opened for metadata. Report that honestly as a failure
@@ -5421,6 +5441,21 @@ int registerReadOnlyAppActionsInto(AppActionRegistry& registry) {
     registerEmailReadOnlyOps(add);
 
     return registered;
+}
+
+void setReadOnlyActionProgramsForTesting(QVector<ProgramInfo> programs, bool inventory_complete) {
+    g_programs_for_testing = std::move(programs);
+    g_program_inventory_complete_for_testing = inventory_complete;
+}
+
+void setReadOnlyActionDrivesForTesting(QList<DriveInfo> drives, bool enumeration_complete) {
+    g_drives_for_testing = std::move(drives);
+    g_drive_enumeration_complete_for_testing = enumeration_complete;
+}
+
+void clearReadOnlyActionFixturesForTesting() {
+    g_programs_for_testing.reset();
+    g_drives_for_testing.reset();
 }
 
 }  // namespace sak

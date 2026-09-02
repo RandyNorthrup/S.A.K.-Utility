@@ -57,6 +57,7 @@ constexpr qsizetype kSafeFilenameMaxChars = 80;
 std::function<void(const QString&)> g_before_manifest_child_open_hook;
 std::function<void(const QString&)> g_before_manifest_file_open_hook;
 std::function<void(const QString&)> g_before_manifest_file_read_hook;
+std::function<void(const QString&)> g_before_manifest_write_hook;
 std::function<void(const QString&)> g_before_artifact_child_open_hook;
 std::function<void(const QString&)> g_before_artifact_leaf_temp_open_hook;
 std::function<void(const QString&)> g_before_artifact_leaf_publish_hook;
@@ -835,6 +836,11 @@ void ConversationStore::setBeforeManifestFileReadHookForTesting(
     g_before_manifest_file_read_hook = std::move(hook);
 }
 
+void ConversationStore::setBeforeManifestWriteHookForTesting(
+    std::function<void(const QString&)> hook) {
+    g_before_manifest_write_hook = std::move(hook);
+}
+
 void ConversationStore::setBeforeArtifactChildOpenHookForTesting(
     std::function<void(const QString&)> hook) {
     g_before_artifact_child_open_hook = std::move(hook);
@@ -1570,7 +1576,12 @@ bool ConversationStore::writeManifest(QString* error_message) const {
     root[QStringLiteral("created_at")] = m_current_session.created_at.toString(Qt::ISODateWithMs);
     root[QStringLiteral("updated_at")] = m_current_session.updated_at.toString(Qt::ISODateWithMs);
 
-    QSaveFile file(QDir(currentSessionPath()).filePath(QString::fromLatin1(kManifestFile)));
+    const QString manifest_path =
+        QDir(currentSessionPath()).filePath(QString::fromLatin1(kManifestFile));
+    if (g_before_manifest_write_hook) {
+        g_before_manifest_write_hook(manifest_path);
+    }
+    QSaveFile file(manifest_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         if (error_message != nullptr) {
             *error_message = QStringLiteral("Could not write manifest: %1").arg(file.errorString());

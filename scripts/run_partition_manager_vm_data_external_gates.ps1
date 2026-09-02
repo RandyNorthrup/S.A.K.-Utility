@@ -38,6 +38,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "process_capture.ps1")
+
 $rawGateIds = @()
 if (-not [string]::IsNullOrWhiteSpace($GateIdsCsv)) {
     $rawGateIds = @($GateIdsCsv)
@@ -142,23 +144,17 @@ function Invoke-NativeCommand {
         [switch]$AllowFailure
     )
 
-    $oldPreference = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
     $started = Get-Date
-    try {
-        $output = & $FilePath @Arguments 2>&1
-        $exitCode = $LASTEXITCODE
-    }
-    finally {
-        $ErrorActionPreference = $oldPreference
-    }
+    $captured = Invoke-CapturedProcess -FilePath $FilePath -Arguments $Arguments
+    $capturedOutput = @($captured.stdout, $captured.stderr)
+    $exitCode = [int]$captured.exit_code
     $command = [pscustomobject]@{
         name = $Name
         file_path = $FilePath
         arguments = $Arguments
         exit_code = $exitCode
         duration_seconds = [Math]::Round(((Get-Date) - $started).TotalSeconds, 3)
-        output = ConvertTo-PlainText -Value $output
+        output = ConvertTo-PlainText -Value $capturedOutput
     }
     $Script:Commands.Add($command) | Out-Null
     if ($exitCode -ne 0 -and -not $AllowFailure) {

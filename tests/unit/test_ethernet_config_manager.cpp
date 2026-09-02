@@ -10,12 +10,9 @@
 #include <QFileInfo>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QNetworkInterface>
 #include <QRegularExpression>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
-
-#include <algorithm>
 
 using namespace sak;
 
@@ -48,7 +45,7 @@ private Q_SLOTS:
 
     // -- MAC lookup (B9-19) ----------------------------------------
     void lookupAdapterMac_unknownAdapterEmpty();
-    void lookupAdapterMac_realAdapterHasMacFormat();
+    void lookupAdapterMac_fixtureAdapterHasMacFormat();
 };
 
 // ===================================================================
@@ -476,20 +473,14 @@ void TestEthernetConfigManager::lookupAdapterMac_unknownAdapterEmpty() {
         EthernetConfigManager::lookupAdapterMac(QStringLiteral("__no_such_adapter__")).isEmpty());
 }
 
-void TestEthernetConfigManager::lookupAdapterMac_realAdapterHasMacFormat() {
-    // If the host exposes any interface with a hardware address, the lookup must return
-    // it in canonical MAC form. Skips cleanly on a host with no such interface.
-    const QList<QNetworkInterface> interfaces = QNetworkInterface::allInterfaces();
-    const auto match = std::ranges::find_if(interfaces, [](const QNetworkInterface& iface) {
-        return !iface.hardwareAddress().isEmpty() && !iface.humanReadableName().isEmpty();
-    });
-    if (match == interfaces.cend()) {
-        QSKIP("No interface with a hardware address on this host");
-    }
-    const QString anyName = match->humanReadableName();
-    const QString anySystemName = match->name();
-    const QString expectedMac = match->hardwareAddress();
-    const QString mac = EthernetConfigManager::lookupAdapterMac(anyName);
+void TestEthernetConfigManager::lookupAdapterMac_fixtureAdapterHasMacFormat() {
+    const QList<EthernetAdapterIdentity> interfaces = {
+        {.humanReadableName = QStringLiteral("Lab Ethernet"),
+         .systemName = QStringLiteral("{01234567-89AB-CDEF-0123-456789ABCDEF}"),
+         .hardwareAddress = QStringLiteral("02:11:22:33:44:55")}};
+    const QString expectedMac = interfaces.first().hardwareAddress;
+    const QString mac =
+        EthernetConfigManager::lookupAdapterMac(interfaces.first().humanReadableName, interfaces);
     QCOMPARE(mac, expectedMac);
     // Canonical form: six colon-separated hex octets.
     const QRegularExpression macRe(QStringLiteral("^[0-9A-Fa-f]{2}(:[0-9A-Fa-f]{2}){5}$"));
@@ -498,8 +489,9 @@ void TestEthernetConfigManager::lookupAdapterMac_realAdapterHasMacFormat() {
     // (ethernet_config_manager.cpp:134; contract at ethernet_config_manager.h:67-68).
     // On Windows the system name is the adapter GUID -- the form a win32/netsh caller
     // supplies -- so pin the second disjunct: dropping it makes this lookup return empty.
-    QVERIFY(!anySystemName.isEmpty());
-    QCOMPARE(EthernetConfigManager::lookupAdapterMac(anySystemName), expectedMac);
+    QVERIFY(!interfaces.first().systemName.isEmpty());
+    QCOMPARE(EthernetConfigManager::lookupAdapterMac(interfaces.first().systemName, interfaces),
+             expectedMac);
 }
 
 QTEST_MAIN(TestEthernetConfigManager)

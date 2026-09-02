@@ -346,7 +346,8 @@ auto file_scanner::recurseIntoDirectory(const std::filesystem::path& dir_path,
 bool file_scanner::canDescendInto(const std::filesystem::directory_entry& entry,
                                   const scan_options& options,
                                   scan_statistics& stats,
-                                  std::size_t current_depth) {
+                                  std::size_t current_depth,
+                                  const canonical_path_resolver& canonical_resolver) {
     const auto& path = entry.path();
     if (!passesDepthAndVisibility(path, options, current_depth)) {
         return false;
@@ -373,7 +374,8 @@ bool file_scanner::canDescendInto(const std::filesystem::directory_entry& entry,
     // traversing blind (a skip that is never reported would read as "nothing was there").
     if (options.follow_symlinks) {
         std::error_code ec;
-        const auto canonical = std::filesystem::canonical(path, ec);
+        const auto canonical = canonical_resolver ? canonical_resolver(path, ec)
+                                                  : std::filesystem::canonical(path, ec);
         if (ec) {
             logWarning("Refusing to follow {}: canonical path unresolved ({})",
                        path.string(),

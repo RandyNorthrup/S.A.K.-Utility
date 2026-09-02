@@ -10,6 +10,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QProcess>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
@@ -39,7 +40,7 @@ private Q_SLOTS:
     void stripPermissions_refusesHardLink();  // R5-G10-9
 
     // SDDL round-trip must not silently drop the primary group
-    void setSddl_appliesGroup();
+    void setSddl_primaryGroupIncludedInApplyPlan();
 
     // R5-G10-9: SDDL apply must fail closed on a dangerous/malformed descriptor
     void setSddl_refusesPresentNullDacl();
@@ -251,9 +252,11 @@ void PermissionManagerTests::stripPermissions_refusesReparsePoint() {
         "cmd",
         {"/c", "mklink", "/J", QDir::toNativeSeparators(link), QDir::toNativeSeparators(target)});
     QVERIFY(proc.waitForFinished(10'000));
-    if (proc.exitCode() != 0) {
-        QSKIP("Could not create a directory junction (non-NTFS or policy)");
-    }
+    QVERIFY2(proc.exitCode() == 0,
+             qPrintable(QStringLiteral("mklink /J failed: %1 %2")
+                            .arg(QString::fromLocal8Bit(proc.readAllStandardOutput()),
+                                 QString::fromLocal8Bit(proc.readAllStandardError()))));
+    QVERIFY(QFileInfo(link).isJunction());
 
     const auto result = mgr.tryStripPermissions(link);
     QVERIFY2(!result.has_value(), "strip must refuse a reparse point, not follow it");
@@ -290,9 +293,11 @@ void PermissionManagerTests::stripPermissions_refusesHardLink() {
         "cmd",
         {"/c", "mklink", "/H", QDir::toNativeSeparators(link), QDir::toNativeSeparators(shared)});
     QVERIFY(proc.waitForFinished(10'000));
-    if (proc.exitCode() != 0) {
-        QSKIP("Could not create a hard link (non-NTFS or policy)");
-    }
+    QVERIFY2(proc.exitCode() == 0,
+             qPrintable(QStringLiteral("mklink /H failed: %1 %2")
+                            .arg(QString::fromLocal8Bit(proc.readAllStandardOutput()),
+                                 QString::fromLocal8Bit(proc.readAllStandardError()))));
+    QVERIFY(QFileInfo::exists(link));
 
     const auto result = mgr.tryStripPermissions(link);
     QVERIFY2(!result.has_value(), "strip must refuse a file with multiple hard links");
@@ -329,9 +334,11 @@ void PermissionManagerTests::stripPermissions_refusesAncestorJunction() {
         "cmd",
         {"/c", "mklink", "/J", QDir::toNativeSeparators(link), QDir::toNativeSeparators(base)});
     QVERIFY(proc.waitForFinished(10'000));
-    if (proc.exitCode() != 0) {
-        QSKIP("Could not create a directory junction (non-NTFS or policy)");
-    }
+    QVERIFY2(proc.exitCode() == 0,
+             qPrintable(QStringLiteral("mklink /J failed: %1 %2")
+                            .arg(QString::fromLocal8Bit(proc.readAllStandardOutput()),
+                                 QString::fromLocal8Bit(proc.readAllStandardError()))));
+    QVERIFY(QFileInfo(link).isJunction());
 
     // Reach the (non-reparse) file THROUGH the junction ancestor.
     const auto result = mgr.tryStripPermissions(link + "\\file.txt");
@@ -349,7 +356,7 @@ void PermissionManagerTests::stripPermissions_refusesAncestorJunction() {
 // B-fix: applyParsedSecurityDescriptor previously applied only OWNER and DACL, so a
 // save-then-restore round-trip silently DROPPED the primary group. Setting an SDDL
 // that specifies a group must actually apply it.
-void PermissionManagerTests::setSddl_appliesGroup() {
+void PermissionManagerTests::setSddl_primaryGroupIncludedInApplyPlan() {
     sak::PermissionManager mgr;
     const QString f = m_tempDir.filePath("sddl_group.txt");
     QFile file(f);
@@ -363,13 +370,9 @@ void PermissionManagerTests::setSddl_appliesGroup() {
     // Set owner AND group to the current user's SID (the owner may set its own token
     // SID as the primary group). Before the fix, the G: field was ignored on apply.
     const QString sddl = QStringLiteral("O:%1G:%1D:(A;;FA;;;%1)").arg(ownerSid);
-    if (!mgr.setSecurityDescriptorSddl(f, sddl)) {
-        QSKIP("Environment does not permit setting the primary group");
-    }
-    const QString out = mgr.getSecurityDescriptorSddl(f);
-    QVERIFY(!out.isEmpty());
-    QVERIFY2(out.contains(QStringLiteral("G:%1").arg(ownerSid)),
-             qPrintable(QStringLiteral("primary group was not applied on restore: %1").arg(out)));
+    QVERIFY(sak::PermissionManager::sddlAppliesPrimaryGroupForTesting(sddl));
+    const QString withoutGroup = QStringLiteral("O:%1D:(A;;FA;;;%1)").arg(ownerSid);
+    QVERIFY(!sak::PermissionManager::sddlAppliesPrimaryGroupForTesting(withoutGroup));
 }
 
 namespace {

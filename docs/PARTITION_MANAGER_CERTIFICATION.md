@@ -665,10 +665,11 @@ production exposure is generated-layout-only).
 
 Use `scripts/run_partition_manager_destructive_certification.ps1` from an elevated PowerShell session. The script creates temporary VHDX files under `artifacts/partition-manager-certification`, attaches them, mutates only those VHD-backed disks, verifies results, and writes a JSON report. Non-admin runs are accepted for plan-only reporting, but VHD mutation scenarios are skipped with an Administrator-shell blocker.
 
-Native command output used by File Management, Allocate Free Space, and BitLocker mutation evidence
-is captured through `scripts/process_capture.ps1`. That shared ProcessStartInfo seam drains both
-pipes asynchronously and returns a concrete exit code under PowerShell 7 and Windows PowerShell
-5.1; a child-start failure terminates the gate rather than becoming a successful report.
+Native command output used by File Management, Allocate Free Space, BitLocker mutation,
+OS-migration, Linux metadata, and VM data-media evidence is captured through
+`scripts/process_capture.ps1`. That shared ProcessStartInfo seam drains both pipes asynchronously
+and returns a concrete exit code under PowerShell 7 and Windows PowerShell 5.1; a child-start
+failure terminates the gate rather than becoming a successful report.
 
 Before requesting UAC or starting the destructive VHD run, use the read-only
 preflight:

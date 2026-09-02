@@ -10,16 +10,11 @@
 #include <QDir>
 #include <QFile>
 #include <QProcess>
-#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
 #include <filesystem>
 #include <stop_token>
-
-#ifdef Q_OS_WIN
-#include <windows.h>
-#endif
 
 class FileScannerTests : public QObject {
     Q_OBJECT
@@ -54,7 +49,7 @@ private Q_SLOTS:
     void findFiles_byPattern();
 
     // Symlink policy
-    void symlink_notFollowedWhenDisabled();
+    void reparseLoop_notFollowedWhenDisabled();
     void junction_notFollowedByDefault();
     void canDescendInto_refusesWhenCanonicalUnresolved();
 
@@ -409,7 +404,7 @@ void FileScannerTests::progress_callbackInvoked() {
     QCOMPARE(progressCalls, 6);
 }
 
-void FileScannerTests::symlink_notFollowedWhenDisabled() {
+void FileScannerTests::reparseLoop_notFollowedWhenDisabled() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const std::filesystem::path root = dir.path().toStdWString();
@@ -424,11 +419,17 @@ void FileScannerTests::symlink_notFollowedWhenDisabled() {
         f.write("data");
         f.close();
     }
-    std::error_code link_ec;
-    std::filesystem::create_directory_symlink(root, root / "loop", link_ec);
-    if (link_ec) {
-        QSKIP("Platform cannot create directory symlinks without privilege");
-    }
+    const QString link =
+        QDir::toNativeSeparators(QString::fromStdWString((root / "loop").wstring()));
+    const QString target = QDir::toNativeSeparators(QString::fromStdWString(root.wstring()));
+    QProcess mklink;
+    mklink.start(
+        QStringLiteral("cmd"),
+        {QStringLiteral("/c"), QStringLiteral("mklink"), QStringLiteral("/J"), link, target});
+    QVERIFY(mklink.waitForFinished(10'000));
+    QVERIFY2(mklink.exitCode() == 0,
+             qPrintable(QStringLiteral("mklink /J failed: %1")
+                            .arg(QString::fromLocal8Bit(mklink.readAllStandardError()))));
 
     // Default (follow_symlinks=false): the symlinked directory is not traversed,
     // so p.txt is found exactly once and the scan terminates.
@@ -513,9 +514,8 @@ void FileScannerTests::canDescendInto_refusesWhenCanonicalUnresolved() {
     // confinement guard switched off -- exactly what a planted, unreadable junction wants. The
     // gate must fail closed (refuse) and report the error instead of walking blind.
     //
-    // The failure is reproduced without any privilege: hold the directory open with dwShareMode
-    // 0, so every later open (canonical() opens the file to resolve its final path) fails with
-    // ERROR_SHARING_VIOLATION, while the cached directory attributes still report a directory.
+    // Inject canonical outcomes into the real traversal gate. This proves both arms without
+    // relying on Windows sharing behavior, which can still resolve an exclusively opened dir.
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const std::filesystem::path root = dir.path().toStdWString();
@@ -532,31 +532,22 @@ void FileScannerTests::canDescendInto_refusesWhenCanonicalUnresolved() {
     // error. This pins that the refusal below comes from the canonicalization failure alone.
     sak::file_scanner open_scanner;
     sak::scan_statistics open_stats;
-    QVERIFY(open_scanner.canDescendInto(entry, opts, open_stats, 0));
+    const sak::canonical_path_resolver resolves = [](const std::filesystem::path& path,
+                                                     std::error_code& error) {
+        error.clear();
+        return path;
+    };
+    QVERIFY(open_scanner.canDescendInto(entry, opts, open_stats, 0, resolves));
     QCOMPARE(open_stats.errors_encountered, std::size_t{0});
 
-    const HANDLE locked = CreateFileW(child.wstring().c_str(),
-                                      GENERIC_READ,
-                                      0,  // no sharing: every subsequent open is refused
-                                      nullptr,
-                                      OPEN_EXISTING,
-                                      FILE_FLAG_BACKUP_SEMANTICS,
-                                      nullptr);
-    QVERIFY(locked != INVALID_HANDLE_VALUE);
-    const auto release = qScopeGuard([locked]() { CloseHandle(locked); });
-
-    std::error_code canonical_ec;
-    const std::filesystem::path canonical_probe = std::filesystem::canonical(child, canonical_ec);
-    if (!canonical_ec && !canonical_probe.empty()) {
-        QSKIP("Platform resolves canonical() on an exclusively opened directory");
-    }
-
-    // Reuse the entry captured before the lock: the gate only reads entry.path() and the
-    // directory attributes, so this is the same shape a live walk hands it (the directory
-    // became unreadable after enumeration, exactly the TOCTOU a planted link exploits).
+    const sak::canonical_path_resolver fails = [](const std::filesystem::path&,
+                                                  std::error_code& error) {
+        error = std::make_error_code(std::errc::permission_denied);
+        return std::filesystem::path{};
+    };
     sak::file_scanner blocked_scanner;
     sak::scan_statistics blocked_stats;
-    QVERIFY(!blocked_scanner.canDescendInto(entry, opts, blocked_stats, 0));
+    QVERIFY(!blocked_scanner.canDescendInto(entry, opts, blocked_stats, 0, fails));
     QCOMPARE(blocked_stats.errors_encountered, std::size_t{1});
 }
 

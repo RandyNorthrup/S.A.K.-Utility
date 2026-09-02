@@ -26,6 +26,7 @@
 #include "sak/ai_assistant_panel.h"
 #include "sak/app_action_service.h"
 #include "sak/app_mutating_actions.h"
+#include "sak/app_readonly_actions.h"
 #include "sak/deleted_item_scanner.h"
 #include "sak/flash_coordinator.h"
 #include "sak/leftover_scan_provenance.h"
@@ -1180,15 +1181,18 @@ private Q_SLOTS:
     // correctness rests on code review + the engine's per-phase ok flags; the coverage gap is
     // tracked in memory/assistant-dominion-deferred.md. QSKIP where nothing enumerable/unique.
     void scanLeftoversAdvancedRunsAtAdvancedLevel() {
+        ProgramInfo fixture;
+        fixture.displayName = QStringLiteral("SAK Deterministic Fixture");
+        fixture.registryKeyPath = QStringLiteral("HKCU/SAK/DeterministicFixture");
+        fixture.installLocation = QDir::tempPath();
+        setReadOnlyActionProgramsForTesting({fixture}, true);
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject listed = panel.runAppActionTool(QJsonObject{
             {QStringLiteral("operation"), QStringLiteral("run")},
             {QStringLiteral("action_id"), QStringLiteral("security.list_installed_programs")},
             {QStringLiteral("arguments"), QStringLiteral("{}")}});
-        if (!listed.value(QStringLiteral("success")).toBool()) {
-            QSKIP("could not enumerate installed programs on this host");
-        }
+        QVERIFY(listed.value(QStringLiteral("success")).toBool());
         const QJsonArray programs = listed.value(QStringLiteral("data"))
                                         .toObject()
                                         .value(QStringLiteral("programs"))
@@ -1205,9 +1209,7 @@ private Q_SLOTS:
                 break;
             }
         }
-        if (unique.isEmpty()) {
-            QSKIP("no uniquely-named installed program to scan");
-        }
+        QCOMPARE(unique, fixture.displayName);
 
         const QString args =
             QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("program_name"), unique},
@@ -1321,6 +1323,17 @@ private Q_SLOTS:
     // locked-down sandbox that cannot open a physical drive even for metadata reports an HONEST
     // failure (never a misleading "0 drives" success), which this test accepts via QSKIP.
     void listDrivesReportsPhysicalDrives() {
+        DriveInfo fixed;
+        fixed.devicePath = QStringLiteral("\\\\.\\PhysicalDrive40");
+        fixed.name = QStringLiteral("Fixed fixture");
+        fixed.size = 1024;
+        fixed.blockSize = 512;
+        fixed.busType = QStringLiteral("SATA");
+        DriveInfo removable_drive = fixed;
+        removable_drive.devicePath = QStringLiteral("\\\\.\\PhysicalDrive41");
+        removable_drive.name = QStringLiteral("Removable fixture");
+        removable_drive.isRemovable = true;
+        setReadOnlyActionDrivesForTesting({fixed, removable_drive}, true);
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         QVERIFY(panel.m_accessModeCombo != nullptr);
@@ -1330,15 +1343,9 @@ private Q_SLOTS:
                         {QStringLiteral("action_id"), QStringLiteral("imaging.list_drives")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
 
-        if (!result.value(QStringLiteral("success")).toBool()) {
-            // Honest empty-read failure: message names the enumeration failure, not a silent empty.
-            QVERIFY(result.value(QStringLiteral("message"))
-                        .toString()
-                        .contains(QStringLiteral("enumerate")));
-            QSKIP("host does not permit physical-drive metadata enumeration");
-        }
+        QVERIFY(result.value(QStringLiteral("success")).toBool());
         const QJsonObject data = result.value(QStringLiteral("data")).toObject();
-        QVERIFY(data.value(QStringLiteral("drive_count")).toInt() >= 1);
+        QCOMPARE(data.value(QStringLiteral("drive_count")).toInt(), 2);
         QVERIFY(data.value(QStringLiteral("reported_count")).toInt() >= 1);
         QVERIFY(data.value(QStringLiteral("enumeration_complete")).isBool());
         QCOMPARE(data.value(QStringLiteral("filtered_removable_only")).toBool(), false);
@@ -1360,9 +1367,7 @@ private Q_SLOTS:
         }
         QCOMPARE(removable_in_list, removable);
         const QJsonObject first = drives.at(0).toObject();
-        QVERIFY(first.value(QStringLiteral("device_path"))
-                    .toString()
-                    .contains(QStringLiteral("PhysicalDrive")));
+        QCOMPARE(first.value(QStringLiteral("device_path")).toString(), fixed.devicePath);
         QVERIFY(first.contains(QStringLiteral("size_bytes")));
         QVERIFY(first.contains(QStringLiteral("is_removable")));
         QVERIFY(first.contains(QStringLiteral("is_read_only")));
@@ -1378,6 +1383,16 @@ private Q_SLOTS:
     // (non-removable) system disk exists -- true on every normal host. Totals stay accurate under
     // the filter, and every listed drive is removable.
     void listDrivesRemovableOnlyReallyFilters() {
+        DriveInfo fixed;
+        fixed.devicePath = QStringLiteral("\\\\.\\PhysicalDrive40");
+        fixed.name = QStringLiteral("Fixed fixture");
+        fixed.size = 1024;
+        fixed.blockSize = 512;
+        DriveInfo removable_drive = fixed;
+        removable_drive.devicePath = QStringLiteral("\\\\.\\PhysicalDrive41");
+        removable_drive.name = QStringLiteral("Removable fixture");
+        removable_drive.isRemovable = true;
+        setReadOnlyActionDrivesForTesting({fixed, removable_drive}, true);
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         QVERIFY(panel.m_accessModeCombo != nullptr);
@@ -1394,12 +1409,12 @@ private Q_SLOTS:
         };
 
         const QJsonObject all = runList(false);
-        if (!all.value(QStringLiteral("success")).toBool()) {
-            QSKIP("host does not permit physical-drive metadata enumeration");
-        }
+        QVERIFY(all.value(QStringLiteral("success")).toBool());
         const QJsonObject allData = all.value(QStringLiteral("data")).toObject();
         const int drive_count = allData.value(QStringLiteral("drive_count")).toInt();
         const int removable_count = allData.value(QStringLiteral("removable_count")).toInt();
+        QCOMPARE(drive_count, 2);
+        QCOMPARE(removable_count, 1);
         // Unfiltered listing reports the full set (drives are always well under the cap).
         QCOMPARE(allData.value(QStringLiteral("reported_count")).toInt(), drive_count);
 
@@ -1590,10 +1605,9 @@ private Q_SLOTS:
                       QStringLiteral("/J"),
                       QDir::toNativeSeparators(junction),
                       QDir::toNativeSeparators(realTarget)});
-        if (!mklink.waitForFinished(10'000) || mklink.exitCode() != 0 ||
-            !QFileInfo(junction).isJunction()) {
-            QSKIP("could not create a directory junction on this host");
-        }
+        QVERIFY(mklink.waitForFinished(10'000));
+        QCOMPARE(mklink.exitCode(), 0);
+        QVERIFY(QFileInfo(junction).isJunction());
 
         const QJsonObject viaJunction = runScan(junction + QStringLiteral("/disk.img"));
         QVERIFY(!viaJunction.value(QStringLiteral("success")).toBool());
@@ -1736,10 +1750,9 @@ private Q_SLOTS:
                       QStringLiteral("/J"),
                       QDir::toNativeSeparators(junction),
                       QDir::toNativeSeparators(target.path())});
-        if (!mklink.waitForFinished(10'000) || mklink.exitCode() != 0 ||
-            !QFileInfo(junction).isJunction()) {
-            QSKIP("could not create a directory junction on this host");
-        }
+        QVERIFY(mklink.waitForFinished(10'000));
+        QCOMPARE(mklink.exitCode(), 0);
+        QVERIFY(QFileInfo(junction).isJunction());
 
         AiAssistantPanel panel;
         panel.ensureAppActionService();
@@ -7108,6 +7121,7 @@ private Q_SLOTS:
     }
 
     void cleanup() {
+        clearReadOnlyActionFixturesForTesting();
         // Never leave the approval seam installed for the next case or production.
         aiApprovalPromptTestHook() = nullptr;
     }

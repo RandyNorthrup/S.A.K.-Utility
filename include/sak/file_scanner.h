@@ -57,6 +57,10 @@ using scan_callback = std::function<bool(const std::filesystem::path& path, bool
 using scan_progress_callback =
     std::function<void(std::size_t files_processed, std::uintmax_t total_size_processed)>;
 
+/// @brief Injectable canonical-path resolver for deterministic traversal-gate tests.
+using canonical_path_resolver =
+    std::function<std::filesystem::path(const std::filesystem::path& path, std::error_code& error)>;
+
 /// @brief Scan options for file scanner
 struct scan_options {
     bool recursive = true;         ///< Recurse into subdirectories
@@ -209,7 +213,8 @@ private:
     [[nodiscard]] bool canDescendInto(const std::filesystem::directory_entry& entry,
                                       const scan_options& options,
                                       scan_statistics& stats,
-                                      std::size_t current_depth);
+                                      std::size_t current_depth,
+                                      const canonical_path_resolver& canonical_resolver = {});
 
     /// @brief Process a single entry with exception handling (nesting reduction)
     auto processEntryWithErrorHandling(const std::filesystem::directory_entry& entry,

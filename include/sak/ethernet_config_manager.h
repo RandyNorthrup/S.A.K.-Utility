@@ -10,6 +10,7 @@
 #include "sak/user_profile_types.h"
 
 #include <QJsonObject>
+#include <QList>
 #include <QObject>
 #include <QString>
 #include <QStringList>
@@ -43,6 +44,13 @@ struct EthernetConfigSnapshot {
 
     /// @brief Validate that all required fields are present
     [[nodiscard]] bool isValid() const;
+};
+
+/// @brief Adapter identity fields needed for deterministic MAC lookup.
+struct EthernetAdapterIdentity {
+    QString humanReadableName;
+    QString systemName;
+    QString hardwareAddress;
 };
 
 /// @brief Scan every adapter's IPv4 configuration, language-neutrally.
@@ -79,6 +87,10 @@ public:
     ///        matched by human-readable or system name. Empty if the adapter is not found.
     ///        Static and side-effect-free so it can be unit-tested.
     [[nodiscard]] static QString lookupAdapterMac(const QString& adapterName);
+
+    /// @brief Resolve a MAC from injected adapter identities.
+    [[nodiscard]] static QString lookupAdapterMac(const QString& adapterName,
+                                                  const QList<EthernetAdapterIdentity>& interfaces);
 
     /// @brief Save a snapshot to a JSON file
     /// @param snapshot  The configuration to save

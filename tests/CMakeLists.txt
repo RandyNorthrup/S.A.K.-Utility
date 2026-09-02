@@ -7700,7 +7700,7 @@ if(PLATFORM_WINDOWS)
     # Start-Process with redirected output can leave ExitCode null under Windows PowerShell
     # 5.1, and sequential pipe reads can deadlock when both streams fill. This hermetic test
     # drives the shared ProcessStartInfo seam through exit 0/7, large dual-stream output,
-    # argument quoting, and a bounded timeout. It also pins the three certification runners to
+    # argument quoting, and a bounded timeout. It also pins the named certification runners to
     # that seam and rejects their old scoped capture blocks. The two registrations below run the
     # same contract under pwsh and Windows PowerShell 5.1.
     add_test(NAME test_process_capture

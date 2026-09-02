@@ -9,17 +9,12 @@
 # latest complete suite. This file inventories dormant branches that runtime logs cannot see.
 
 tests/integration/test_offline_package_builder.cpp = 1 | initial opt-out for live Chocolatey service/CDN integration
-tests/unit/test_ai_assistant_panel_tool_dispatch.cpp = 10 | host privilege, inventory, and destructive certification
-tests/unit/test_ai_conversation_store.cpp = 1 | host ACL branch precondition
+tests/unit/test_ai_assistant_panel_tool_dispatch.cpp = 4 | file-symlink privilege and destructive certification
 tests/unit/test_ai_mcp_session_pool.cpp = 1 | opt-in live Win32 MCP session
 tests/unit/test_ai_mcp_stdio_client.cpp = 1 | opt-in live Win32 MCP client
 tests/unit/test_ai_mcp_stdio_session.cpp = 1 | opt-in live Win32 MCP session
-tests/unit/test_email_profile_manager.cpp = 1 | junction creation precondition
-tests/unit/test_ethernet_config_manager.cpp = 1 | host adapter enumeration
 tests/unit/test_file_management_file_system.cpp = 2 | external raw APFS/HFS certification images
-tests/unit/test_file_scanner.cpp = 2 | symlink privilege and canonical-failure preconditions
 tests/unit/test_linux_iso_downloader.cpp = 1 | initial opt-out for live Linux ISO network tests
 tests/unit/test_openai_responses_client.cpp = 3 | initial opt-out for paid live OpenAI requests
 tests/unit/test_partition_manager_core.cpp = 10 | external Apple certification inputs, disk, and time budget
-tests/unit/test_permission_manager.cpp = 4 | filesystem and token privilege preconditions
 tests/unit/test_windows_iso_downloader.cpp = 1 | initial opt-out for live UUP dump API

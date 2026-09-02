@@ -27,6 +27,7 @@
 #include <QTextStream>
 
 #include <algorithm>
+#include <iterator>
 
 namespace sak {
 
@@ -128,18 +129,30 @@ bool EthernetConfigSnapshot::isValid() const {
 EthernetConfigManager::EthernetConfigManager(QObject* parent) : QObject(parent) {}
 
 QString EthernetConfigManager::lookupAdapterMac(const QString& adapterName) {
+    QList<EthernetAdapterIdentity> identities;
+    const QList<QNetworkInterface> interfaces = QNetworkInterface::allInterfaces();
+    identities.reserve(interfaces.size());
+    std::ranges::transform(interfaces, std::back_inserter(identities), [](const auto& iface) {
+        return EthernetAdapterIdentity{.humanReadableName = iface.humanReadableName(),
+                                       .systemName = iface.name(),
+                                       .hardwareAddress = iface.hardwareAddress()};
+    });
+    return lookupAdapterMac(adapterName, identities);
+}
+
+QString EthernetConfigManager::lookupAdapterMac(const QString& adapterName,
+                                                const QList<EthernetAdapterIdentity>& interfaces) {
     if (adapterName.isEmpty()) {
         return {};
     }
-    const QList<QNetworkInterface> interfaces = QNetworkInterface::allInterfaces();
     const auto match =
-        std::ranges::find_if(interfaces, [&adapterName](const QNetworkInterface& iface) {
-            return iface.humanReadableName() == adapterName || iface.name() == adapterName;
+        std::ranges::find_if(interfaces, [&adapterName](const EthernetAdapterIdentity& iface) {
+            return iface.humanReadableName == adapterName || iface.systemName == adapterName;
         });
     if (match == interfaces.cend()) {
         return {};
     }
-    return match->hardwareAddress();  // "AA:BB:CC:DD:EE:FF", or empty for virtual adapters
+    return match->hardwareAddress;  // "AA:BB:CC:DD:EE:FF", or empty for virtual adapters
 }
 
 EthernetConfigSnapshot EthernetConfigManager::captureSettings(const QString& adapterName) {

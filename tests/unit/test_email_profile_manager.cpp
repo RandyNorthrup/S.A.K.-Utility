@@ -9,6 +9,7 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -433,11 +434,12 @@ void TestEmailProfileManager::destinationWithinRoot_rejectsJunctionEscape() {
                   QStringLiteral("/J"),
                   QDir::toNativeSeparators(junction),
                   QDir::toNativeSeparators(outsideDir.path())});
-    mklink.waitForFinished(5000);
-
-    if (!QFileInfo::exists(junction)) {
-        QSKIP("mklink /J unavailable on this host; cannot exercise the junction-escape path");
-    }
+    QVERIFY(mklink.waitForFinished(5000));
+    QVERIFY2(mklink.exitCode() == 0,
+             qPrintable(QStringLiteral("mklink /J failed: %1 %2")
+                            .arg(QString::fromLocal8Bit(mklink.readAllStandardOutput()),
+                                 QString::fromLocal8Bit(mklink.readAllStandardError()))));
+    QVERIFY(QFileInfo(junction).isJunction());
 
     // A path THROUGH the junction lexically begins with home but really lands outside it.
     QVERIFY2(!EmailProfileManager::destinationWithinRoot(home, junction + "/evil.txt"),

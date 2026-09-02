@@ -127,6 +127,7 @@ public:
     static void setBeforeManifestChildOpenHookForTesting(std::function<void(const QString&)> hook);
     static void setBeforeManifestFileOpenHookForTesting(std::function<void(const QString&)> hook);
     static void setBeforeManifestFileReadHookForTesting(std::function<void(const QString&)> hook);
+    static void setBeforeManifestWriteHookForTesting(std::function<void(const QString&)> hook);
     static void setBeforeArtifactChildOpenHookForTesting(std::function<void(const QString&)> hook);
     static void setBeforeArtifactLeafTempOpenHookForTesting(
         std::function<void(const QString&)> hook);

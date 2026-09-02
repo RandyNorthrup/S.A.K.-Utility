@@ -23,6 +23,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "process_capture.ps1")
+
 if (-not (Test-Path -LiteralPath $VBoxManage -PathType Leaf)) {
     throw "VBoxManage not found: $VBoxManage"
 }
@@ -34,24 +36,16 @@ function Invoke-VBox {
         [switch]$AllowFailure
     )
 
-    $oldPreference = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    $output = @()
-    $exitCode = $null
-    try {
-        $output = & $VBoxManage @Arguments 2>&1
-        $exitCode = $LASTEXITCODE
-    }
-    finally {
-        $ErrorActionPreference = $oldPreference
-    }
-    if ($null -eq $exitCode) {
-        throw "VBoxManage did not return an exit code (invocation did not complete): VBoxManage $($Arguments -join ' ')"
-    }
+    $captured = Invoke-CapturedProcess -FilePath $VBoxManage -Arguments $Arguments
+    $capturedOutput = @($captured.stdout, $captured.stderr)
+    $output = (($capturedOutput | Where-Object {
+                -not [string]::IsNullOrWhiteSpace($_)
+            }) -join "`n").Trim()
+    $exitCode = [int]$captured.exit_code
     $record = [pscustomobject]@{
         command = "VBoxManage " + ($Arguments -join " ")
         exit_code = $exitCode
-        output = (($output | ForEach-Object { $_.ToString() }) -join "`n")
+        output = $output
     }
     $record | ConvertTo-Json -Depth 8 | Add-Content -LiteralPath $LogPath -Encoding UTF8
     if ($exitCode -ne 0 -and -not $AllowFailure) {
@@ -179,16 +173,12 @@ while ((Get-Date) -lt $deadline) {
     $product = Get-MachineValue -Info $targetInfo -Key "GuestInfo/OS/Product"
     $screenshot = Join-Path $runPath ("target-boot-{0}.png" -f $shotIndex)
     $screenshotStatus = "Captured"
-    $oldPreference = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    try {
-        $screenshotOutput = & $VBoxManage controlvm $TargetVmName screenshotpng $screenshot 2>&1
-        if ($LASTEXITCODE -ne 0) {
-            $screenshotStatus = (($screenshotOutput | ForEach-Object { $_.ToString() }) -join "`n")
-        }
-    }
-    finally {
-        $ErrorActionPreference = $oldPreference
+    $screenshotProcess = Invoke-CapturedProcess -FilePath $VBoxManage -Arguments @(
+        "controlvm", $TargetVmName, "screenshotpng", $screenshot
+    )
+    if ($screenshotProcess.exit_code -ne 0) {
+        $screenshotStatus = (@($screenshotProcess.stdout, $screenshotProcess.stderr) |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }) -join "`n"
     }
     $pollRows += [pscustomobject]@{
         timestamp = (Get-Date).ToString("o")

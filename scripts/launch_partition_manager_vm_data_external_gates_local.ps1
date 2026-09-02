@@ -79,6 +79,7 @@ $sharedStageDebug = Join-Path $SharedRoot "artifacts\partition-manager-certifica
 $localEvidenceRoot = Join-Path $StageRoot "external-evidence"
 $localGuestReport = Join-Path $StageRoot "external-vm-data-gates-guest-report.json"
 $localRunner = Join-Path $StageRoot "run_partition_manager_vm_data_external_gates.ps1"
+$localCaptureHelper = Join-Path $StageRoot "process_capture.ps1"
 
 function Copy-StageEvidenceBack {
     New-Item -ItemType Directory -Path $sharedEvidenceRoot -Force | Out-Null
@@ -130,7 +131,24 @@ foreach ($gateId in $GateIds) {
     }
 }
 
-Copy-Item -LiteralPath (Join-Path $SharedRoot "scripts\run_partition_manager_vm_data_external_gates.ps1") -Destination $localRunner -Force
+$stageFiles = @(
+    @{
+        source = Join-Path $SharedRoot "scripts\run_partition_manager_vm_data_external_gates.ps1"
+        destination = $localRunner
+        name = "Runner"
+    },
+    @{
+        source = Join-Path $SharedRoot "scripts\process_capture.ps1"
+        destination = $localCaptureHelper
+        name = "Process-capture helper"
+    }
+)
+foreach ($stageFile in $stageFiles) {
+    Copy-Item -LiteralPath $stageFile.source -Destination $stageFile.destination -Force
+    if (-not (Test-Path -LiteralPath $stageFile.destination -PathType Leaf)) {
+        throw "$($stageFile.name) was not staged: $($stageFile.destination)"
+    }
+}
 
 $argumentList = @(
     "-NoProfile",

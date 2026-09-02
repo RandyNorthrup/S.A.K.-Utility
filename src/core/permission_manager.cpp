@@ -280,16 +280,12 @@ bool collectParsedDacl(PSECURITY_DESCRIPTOR pSD, SECURITY_INFORMATION& si, Secur
     return true;
 }
 
-// Applies ONLY the fields the parsed security descriptor actually specifies
-// (owner, GROUP, and/or DACL, protected vs unprotected from the control flag).
-// The group was previously dropped, silently losing the primary group on any
-// save-then-restore round-trip. Returns the applySecurityNoFollow result,
-// kReparseRefused/kPathRedirected for a redirected target, or
-// ERROR_INVALID_SECURITY_DESCR when none of owner/group/DACL is specified.
-DWORD applyParsedSecurityDescriptor(const QString& path, PSECURITY_DESCRIPTOR pSD) {
-    SECURITY_INFORMATION si = 0;
-    SecurityChange change{};
-
+// Collect ONLY fields a parsed descriptor explicitly carries. Production apply and the pure group
+// seam share this function, so dropping GROUP_SECURITY_INFORMATION is observable without requiring
+// WRITE_OWNER on the test host.
+DWORD collectParsedSecurityChange(PSECURITY_DESCRIPTOR pSD,
+                                  SECURITY_INFORMATION& si,
+                                  SecurityChange& change) {
     // Refuse a descriptor that carries a SACL (audit / mandatory-integrity label):
     // this path applies only owner/group/DACL, so a SACL must be rejected rather than
     // silently dropped while the rest of the descriptor is applied. A FALSE control
@@ -327,6 +323,22 @@ DWORD applyParsedSecurityDescriptor(const QString& path, PSECURITY_DESCRIPTOR pS
         return ERROR_INVALID_SECURITY_DESCR;
     }
     change.si = si;
+    return ERROR_SUCCESS;
+}
+
+// Applies ONLY the fields the parsed security descriptor actually specifies
+// (owner, GROUP, and/or DACL, protected vs unprotected from the control flag).
+// The group was previously dropped, silently losing the primary group on any
+// save-then-restore round-trip. Returns the applySecurityNoFollow result,
+// kReparseRefused/kPathRedirected for a redirected target, or
+// ERROR_INVALID_SECURITY_DESCR when none of owner/group/DACL is specified.
+DWORD applyParsedSecurityDescriptor(const QString& path, PSECURITY_DESCRIPTOR pSD) {
+    SECURITY_INFORMATION si = 0;
+    SecurityChange change{};
+    const DWORD collection_result = collectParsedSecurityChange(pSD, si, change);
+    if (collection_result != ERROR_SUCCESS) {
+        return collection_result;
+    }
     return applySecurityNoFollow(path, accessForSecurityInfo(si), change);
 }
 
@@ -520,6 +532,31 @@ bool PermissionManager::setSecurityDescriptorSddl(const QString& path, const QSt
     return true;
 #else
     m_lastError = "Permission management only supported on Windows";
+    return false;
+#endif
+}
+
+bool PermissionManager::sddlAppliesPrimaryGroupForTesting(const QString& sddl) {
+#ifdef Q_OS_WIN
+    if (sddl.isEmpty() || hasEmbeddedNul(sddl)) {
+        return false;
+    }
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    if (ConvertStringSecurityDescriptorToSecurityDescriptorW(const_cast<LPWSTR>(
+                                                                 sddl.toStdWString().c_str()),
+                                                             SDDL_REVISION_1,
+                                                             &descriptor,
+                                                             nullptr) == 0) {
+        return false;
+    }
+    SECURITY_INFORMATION security_information = 0;
+    SecurityChange change{};
+    const DWORD result = collectParsedSecurityChange(descriptor, security_information, change);
+    const bool includes_group = result == ERROR_SUCCESS && change.group != nullptr &&
+                                (security_information & GROUP_SECURITY_INFORMATION) != 0u;
+    LocalFree(descriptor);
+    return includes_group;
+#else
     return false;
 #endif
 }

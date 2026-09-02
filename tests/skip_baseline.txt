@@ -11,8 +11,10 @@
 # A skip is only acceptable when the thing it needs genuinely cannot exist on
 # a build machine. "Hard to set up" is not a reason - it is a fixture to write.
 #
-# Re-measured after elevation host-state closure: 5092 test functions passed and 30 skipped, so
-# 0.59 percent of what the suite could execute did not execute.
+# Re-measured after filesystem/adapter host-state closure: 5094 test functions passed and 28
+# skipped, so 0.55 percent of what the suite could execute did not execute.
+# Wave 26 removed seven dormant host-conditional sites. None was an observed row in this
+# latest-run baseline, so its 28 runtime rows stay unchanged until the next complete suite audit.
 # That number is the point of this file. ctest reports a binary as Passed when
 # every one of its functions skipped, so without this the suite can report
 # 222/222 while a subsystem quietly stops being exercised.
@@ -39,8 +41,6 @@ test_ai_assistant_panel_tool_dispatch::sak::AiAssistantPanelToolDispatchTest::li
 # to create for itself.
 # ---------------------------------------------------------------------------
 test_ai_assistant_panel_tool_dispatch::sak::AiAssistantPanelToolDispatchTest::symlinkFileEntriesSkippedAcrossWalkOps = Creating an NTFS file symlink needs SeCreateSymbolicLinkPrivilege or Developer Mode; neither is guaranteed on a build agent.
-test_file_scanner::FileScannerTests::symlink_notFollowedWhenDisabled = Same privilege requirement for a directory symlink.
-test_file_scanner::FileScannerTests::canDescendInto_refusesWhenCanonicalUnresolved = Needs a directory whose canonical path cannot be resolved. This host resolves canonical() even on an exclusively opened directory, so the precondition cannot be staged here.
 
 # ---------------------------------------------------------------------------
 # C. LIVE THIRD-PARTY NETWORK - costs money or depends on someone else's uptime.

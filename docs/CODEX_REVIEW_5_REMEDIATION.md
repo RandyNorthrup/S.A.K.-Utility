@@ -1388,6 +1388,12 @@ a parked design, per the bucket convention. Open work is what remains after thos
   preflights execute elevated and standard decisions on every runner; the Windows stock shield is
   required rather than skipped. Static inventory falls to 40 sites across 15 files; the observed
   runtime audit records 5,092 passed functions and 30 reviewed skips (0.59 percent).
+  FILESYSTEM/ADAPTER HOST-STATE FALSE-GREEN WAVE 26: eight QSKIP sites are removed from
+  PermissionManager, file-scanner, email-profile and Ethernet suites. Controlled NTFS junction/
+  hard-link fixtures, injected canonical-resolution failure, the real SDDL primary-group apply-plan
+  collector, and injected adapter identities execute every guard on every supported runner. After
+  the parallel AI host-state closure, static inventory falls from 33 sites across 14 files to 25
+  across 10; the observed audit records 5,094 passed functions and 28 reviewed skips (0.55 percent).
   Three permanent catalogs add 15 compile-valid, test-killed mutants over package-install busy
   state, user-profile restore selection and elevated-task dispatch. The ratchet now holds 49
   catalogs / 390 mutants (384 killed, six proven equivalent), with zero survivors. A second safe
@@ -1427,13 +1433,31 @@ a parked design, per the bucket convention. Open work is what remains after thos
   local BitLocker launcher stages both required helpers with its runner. Nine elevation host-state
   QSKIPs are removed through injected/pure decision seams. Static QSKIP inventory is 40 sites
   across 15 files; the fresh runtime audit records 5,092 passed functions and 30 reviewed skips
-  (0.59 percent), with no stale/unreviewed entry. App-action plan validity now binds its body to the
+  (0.59 percent), with no stale/unreviewed entry.
+  AI HOST-STATE FIXTURE WAVE 26: six assistant panel QSKIPs and one ConversationStore ACL QSKIP
+  are removed through scoped installed-program/drive inventories, required junction fixtures, and
+  a deterministic manifest-write failure hook. Static inventory is 33 sites across 14 files; the
+  file-symlink privilege and three live/destructive assistant interlocks remain explicit.
+  App-action plan validity now binds its body to the
   exact shell/GUI method and refuses invalid output-budget configuration instead of silently
   repairing it; six isolated old-code drills went red. Four AI headers and three VM-security
   scripts gained blob-bound review briefs. The live ledger now holds 1,064 units, 639 pending and
   35 self-verifying driver reviews. All changed-file hooks passed; naming passed 151/151 non-core
   TUs clean and 156/156 core TUs healthy with 5,266 findings and 16 clean TUs; full clang-cl
   coverage build exit 0; Release build exit 0; full CTest 272/272, zero failures, 641.28 seconds.
+  DIRECT-SKIP-TAIL/NATIVE-CAPTURE/AI-LEDGER WAVE 26: all 15 remaining directly fixable QSKIP
+  sites are removed through scoped program/drive inventories, exact manifest failure injection,
+  required junction/hard-link fixtures, canonical-resolution injection, shared SDDL apply-plan
+  collection and adapter identity injection. The static inventory is now 25 sites across 10 files;
+  all are proven external, privileged, destructive, paid or live-service interlocks. The fresh
+  runtime audit records 5,094 passed functions and 28 reviewed skips (0.55 percent), with no stale
+  or unreviewed entry. OS-migration VBox/screenshot, Linux metadata and VM data-media command paths
+  now use the shared capture seam; the VM-data launcher stages its helper. Four more AI headers
+  gained blob-bound briefs and the modified ConversationStore source was re-reviewed. The live
+  ledger now holds 1,064 units, 635 pending and 39 self-verifying driver reviews. All changed-file
+  hooks passed; naming passed 151/151 non-core TUs clean and 156/156 core TUs healthy with 5,266
+  findings and 16 clean TUs; full clang-cl coverage build exit 0; Release build exit 0; full CTest
+  272/272, zero failures, 655.99 seconds.
   SUPPRESSION RE-AUDIT REFRESH, 2026-09-01 through 2026-09-02: core naming remains broadly excluded
   while 5,266 findings are tracked as open and 16 clean TUs are ratcheted. The coverage compiler
   warning silences and unsupported-platform
@@ -1441,11 +1465,11 @@ a parked design, per the bucket convention. Open work is what remains after thos
   the first-party shim. The cppcheck test-scope and unreadable-
   diagnostic false greens are closed in Wave 19. Another 26
   `Q_UNUSED` and 22 `(void)` warning silences formerly in unsupported-OS branches are removed.
-  This refresh found 157 QSKIP call sites; Waves 21, 23, 24 and 25 reduced the live static
-  inventory to 40 across 15 files while the observed baseline covers 30 reviewed functions. The
-  latest audit classifies 15 remaining sites as direct-fix candidates and 25 as genuinely external,
-  privileged, destructive, paid or live-service cases. Wave 22 reduced Partition Manager run/launch
-  `SilentlyContinue` paths to zero and ratchets that state.
+  This refresh found 157 QSKIP call sites; Waves 21, 23, 24, 25 and 26 reduced the live static
+  inventory to 25 across 10 files while the observed baseline covers 28 reviewed functions. The
+  latest audit classifies zero remaining sites as direct-fix candidates and all 25 as genuinely
+  external, privileged, destructive, paid or live-service cases. Wave 22 reduced Partition Manager
+  run/launch `SilentlyContinue` paths to zero and ratchets that state.
   The APFS follow-on document's stale cppcheck-suppression count is corrected. None of the
   exceptions is grandfathered; all remain INCOMPLETE until directly fixed or individually proven
   unavoidable.
@@ -10111,6 +10135,12 @@ gate teaches people to disable both.
     PowerShell hosts. File Management disk auto-discovery also removes its last
     `SilentlyContinue`: ObjectNotFound remains the explicit no-partition case and every other
     enumeration failure terminates with the disk identity and real error.
+  - FOLLOW-ON WAVE 26: OS-migration VBox command/screenshot capture, Linux metadata validation,
+    and the VM data-media external gate now route through the same seam. Allowed-failure and
+    accepted-exit-code rules, command records, durations, boot polling, screenshot status and
+    indefinite waits remain unchanged; process-start failure terminates. The VM-data launcher
+    stages the helper beside its runner. Four independent Windows PowerShell 5.1 old-block drills
+    went red, and the registered contract passes under both PowerShell hosts.
       whole toolchain is present before anything runs
 - [~] R5-G21-5 Every fixed defect has a regression test, so the specific bug cannot
   - IN PROGRESS: a regression test for every fixed defect. Fixes landed this campaign carry per-item non-vacuous notes; the full per-defect regression audit is still open.
