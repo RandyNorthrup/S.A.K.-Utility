@@ -2248,6 +2248,7 @@ struct PanelReportData {
     QVector<PanelReportFinding> findings;
     QString memory_warning;
     QString activity_warning;
+    QString gate_warning;
     int tool_calls{0};
     ai::TokenUsage tokens;
 };
@@ -2783,6 +2784,10 @@ void appendReportTranscriptMarkdown(QStringList* lines, const PanelReportData& d
         *lines << QStringLiteral("- Activity warning: %1")
                       .arg(cleanReportText(data.activity_warning, kReportWarningMaxChars));
     }
+    if (!data.gate_warning.isEmpty()) {
+        *lines << QStringLiteral("- Human-gate warning: %1")
+                      .arg(cleanReportText(data.gate_warning, kReportWarningMaxChars));
+    }
     if (!data.memory_warning.isEmpty()) {
         *lines << QStringLiteral("- Memory warning: %1")
                       .arg(cleanReportText(data.memory_warning, kReportWarningMaxChars));
@@ -3059,9 +3064,11 @@ void appendReportHtmlAppendix(QStringList* html,
 }
 
 void appendReportHtmlWarnings(QStringList* html, const PanelReportData& data) {
-    if (!data.activity_warning.isEmpty() || !data.memory_warning.isEmpty()) {
+    if (!data.activity_warning.isEmpty() || !data.gate_warning.isEmpty() ||
+        !data.memory_warning.isEmpty()) {
         QStringList warnings;
         appendUniqueReportLine(&warnings, data.activity_warning, kReportHtmlWarningItemLimit);
+        appendUniqueReportLine(&warnings, data.gate_warning, kReportHtmlWarningItemLimit);
         appendUniqueReportLine(&warnings, data.memory_warning, kReportHtmlWarningItemLimit);
         *html << QStringLiteral("<section><h2>Report Generation Warnings</h2>%1</section>")
                      .arg(htmlList(warnings,
@@ -3404,7 +3411,7 @@ void appendTraceAndGateData(const PanelReportInputs& inputs, PanelReportData* da
         data->activities = inputs.trace->loadActivityEvents(&data->activity_warning);
     }
     if ((inputs.gates != nullptr) && !inputs.gates->sessionDirectory().isEmpty()) {
-        data->gates = inputs.gates->loadGates();
+        data->gates = inputs.gates->loadGates(data->gate_warning);
     }
 }
 
@@ -3860,10 +3867,7 @@ AiAssistantPanel::~AiAssistantPanel() {
     cancelRunningWorkOnDestroy();
     drainAndStopAsyncTool();
     drainWorkflowRun();
-    if (!m_currentCommandLeaseId.isEmpty() && m_leaseManager) {
-        m_leaseManager->release(m_currentCommandLeaseId);
-        m_currentCommandLeaseId.clear();
-    }
+    releaseCurrentCommandLease();
 }
 
 QString AiAssistantPanel::statusDetails() const {
@@ -6157,23 +6161,7 @@ bool AiAssistantPanel::acquireCommandToolLease(const PendingToolCallContext& con
         appendToolOutputAndContinue(std::move(*output));
         return false;
     }
-    const auto acquire = m_leaseManager->acquire(QStringLiteral("overseer"),
-                                                 QStringList{context.call->name},
-                                                 QStringLiteral("system_change"),
-                                                 true);
-    if (!acquire.reclaimed_expired.isEmpty()) {
-        // An earlier mutating handler never released its lease (crash/hang/lost
-        // completion); it was reclaimed after the TTL so mutations can resume.
-        QJsonObject reclaim_metadata = context.metadata;
-        reclaim_metadata[QStringLiteral("reclaimed_leases")] =
-            acquire.reclaimed_expired.join(QLatin1Char(','));
-        traceAiEvent(QStringLiteral("tool_call"),
-                     context.call->name,
-                     QStringLiteral("lease_reclaimed"),
-                     reclaim_metadata);
-        appendLocalEvent(tr("Reclaimed %1 abandoned mutating lease(s) past TTL")
-                             .arg(acquire.reclaimed_expired.size()));
-    }
+    const auto acquire = m_leaseManager->acquire(QStringLiteral("overseer"));
     if (acquire.granted) {
         m_currentCommandLeaseId = acquire.lease.lease_id;
         return true;
@@ -9484,7 +9472,7 @@ void AiAssistantPanel::mergePendingHumanGate(ai::AiRunState* loaded) {
         return;
     }
     QString error;
-    const auto pending = m_humanGateStore->latestPendingGate(&error);
+    const auto pending = m_humanGateStore->latestPendingGate(error);
     if (!error.isEmpty()) {
         Q_EMIT logOutput(
             ai::CredentialStore::redactSecrets(tr("AI human-gate read failed: %1").arg(error)));
@@ -9571,7 +9559,7 @@ QString AiAssistantPanel::beginHumanGate(const QString& kind,
             refreshTraceStoreForSession();
         }
         QString error;
-        if (!m_humanGateStore->appendGate(gate, &error) && !error.isEmpty()) {
+        if (!m_humanGateStore->appendGate(gate, error) && !error.isEmpty()) {
             Q_EMIT logOutput(ai::CredentialStore::redactSecrets(
                 tr("AI human-gate write failed: %1").arg(error)));
         }
@@ -9630,13 +9618,13 @@ ai::AiHumanGate AiAssistantPanel::resolvedGateFromState(const QString& gate_id,
     return gate;
 }
 
-void AiAssistantPanel::appendHumanGateRecord(const ai::AiHumanGate& gate) {
+void AiAssistantPanel::appendHumanGateRecord(ai::AiHumanGate gate) {
     if (m_humanGateStore) {
         if (m_humanGateStore->sessionDirectory().isEmpty()) {
             refreshTraceStoreForSession();
         }
         QString error;
-        if (!m_humanGateStore->appendGate(gate, &error) && !error.isEmpty()) {
+        if (!m_humanGateStore->appendGate(gate, error) && !error.isEmpty()) {
             Q_EMIT logOutput(ai::CredentialStore::redactSecrets(
                 tr("AI human-gate write failed: %1").arg(error)));
         }
@@ -12551,7 +12539,14 @@ void AiAssistantPanel::onBrokerFinished(const QString& command_id,
 
 void AiAssistantPanel::releaseCurrentCommandLease() {
     if (!m_currentCommandLeaseId.isEmpty() && m_leaseManager) {
-        m_leaseManager->release(m_currentCommandLeaseId);
+        const QString lease_label = ai::AiLeaseManager::publicLabel(m_currentCommandLeaseId);
+        if (!m_leaseManager->release(m_currentCommandLeaseId)) {
+            const QString warning =
+                tr("AI command lease %1 was no longer active when release was requested.")
+                    .arg(lease_label);
+            logWarning("AI command lease release failed: {}", warning.toStdString());
+            Q_EMIT logOutput(warning);
+        }
         m_currentCommandLeaseId.clear();
     }
 }

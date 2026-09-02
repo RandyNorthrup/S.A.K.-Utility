@@ -10,6 +10,7 @@
 #include "sak/detachable_log_window.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/message_box_helpers.h"
 #include "sak/process_runner.h"
 #include "sak/regex_pattern_library.h"
 #include "sak/storage_inventory_worker.h"
@@ -1553,12 +1554,18 @@ void AdvancedSearchPanel::onResultContextMenu(const QPoint& pos) {
 
     auto* open_dir_action = menu.addAction(tr("Open Directory"));
     open_dir_action->setEnabled(currentSearchTarget().local_file_system);
-    connect(open_dir_action, &QAction::triggered, this, [file_path]() {
+    connect(open_dir_action, &QAction::triggered, this, [this, file_path]() {
         const QString native = QDir::toNativeSeparators(file_path);
         // explorer.exe by absolute Windows-directory path (it is NOT in System32): a bare
         // name is resolved through the CreateProcess search order like any other launch.
-        (void)sak::startDetachedWindowsTool(QStringLiteral("explorer.exe"),
-                                            {QStringLiteral("/select,") + native});
+        if (!sak::startDetachedWindowsTool(QStringLiteral("explorer.exe"),
+                                           {QStringLiteral("/select,") + native})) {
+            const QString failure =
+                tr("Could not open the selected file's directory in File Explorer.");
+            logMessage(failure);
+            Q_EMIT statusMessage(failure, sak::kTimerStatusDefaultMs);
+            sak::showWarningLogged(this, tr("Open Directory"), failure);
+        }
     });
 
     menu.addSeparator();

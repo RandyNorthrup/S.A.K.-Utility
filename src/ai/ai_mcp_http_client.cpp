@@ -456,18 +456,17 @@ QJsonObject AiMcpHttpClient::callTool(const QUrl& endpoint,
                                       const QString& tool_name,
                                       const QJsonObject& arguments,
                                       int timeout_ms,
-                                      QString* error_message) {
-    if (!validateHttpToolCall(endpoint, tool_name, error_message)) {
+                                      QString& error_message) {
+    error_message.clear();
+    if (!validateHttpToolCall(endpoint, tool_name, &error_message)) {
         return {};
     }
 
     const QByteArray body =
         QJsonDocument(toolCallPayload(tool_name, arguments)).toJson(QJsonDocument::Compact);
     if (body.size() > kMaxRequestBytes) {
-        if (error_message != nullptr) {
-            *error_message =
-                QStringLiteral("MCP request body exceeds the %1-byte cap").arg(kMaxRequestBytes);
-        }
+        error_message =
+            QStringLiteral("MCP request body exceeds the %1-byte cap").arg(kMaxRequestBytes);
         return {};
     }
     // Clamp the caller-supplied timeout: a negative/zero wait would block the semaphore forever
@@ -475,11 +474,11 @@ QJsonObject AiMcpHttpClient::callTool(const QUrl& endpoint,
     const int effective_timeout_ms =
         qBound(kMinimumRequestTimeoutMs, timeout_ms, kMaxRequestTimeoutMs);
     const HttpCallState state = performHttpToolCall(endpoint, body, effective_timeout_ms);
-    if (explainHttpFailure(state, error_message)) {
+    if (explainHttpFailure(state, &error_message)) {
         return {};
     }
 
-    QJsonObject message = extractJsonRpcMessage(state.m_response_body, error_message);
+    QJsonObject message = extractJsonRpcMessage(state.m_response_body, &error_message);
     if (message.isEmpty()) {
         return {};
     }
@@ -488,17 +487,13 @@ QJsonObject AiMcpHttpClient::callTool(const QUrl& endpoint,
     // closed rather than accept an out-of-band message (or a stray one crafted by the transport)
     // as the tool result. Error responses also echo the request id, so correlate before that.
     if (!responseIdMatchesRequest(message)) {
-        if (error_message != nullptr) {
-            *error_message = QStringLiteral("MCP response id did not match the request");
-        }
+        error_message = QStringLiteral("MCP response id did not match the request");
         return {};
     }
-    if (explainJsonRpcError(message, error_message)) {
+    if (explainJsonRpcError(message, &error_message)) {
         return {};
     }
-    if (error_message != nullptr) {
-        error_message->clear();
-    }
+    error_message.clear();
     return message;
 }
 

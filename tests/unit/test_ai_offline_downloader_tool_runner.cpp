@@ -8,6 +8,9 @@
 
 #include <atomic>
 #include <thread>
+#include <type_traits>
+
+static_assert(!std::is_default_constructible_v<sak::ai::AiOfflineDownloaderToolRunner>);
 
 class AiOfflineDownloaderToolRunnerTests : public QObject {
     Q_OBJECT

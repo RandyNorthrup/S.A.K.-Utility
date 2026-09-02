@@ -5,7 +5,6 @@
 
 #include "sak/ai/ai_mcp_http_client.h"
 #include "sak/ai/ai_mcp_session_pool.h"
-#include "sak/ai/ai_mcp_stdio_client.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -794,12 +793,16 @@ QJsonObject runDocsToolCall(const QJsonObject& provider,
                             const QString& query,
                             QString* error_message) {
     const QUrl endpoint(provider.value(QStringLiteral("endpoint")).toString());
+    QString transport_error;
     const QJsonObject message = AiMcpHttpClient::callTool(endpoint,
                                                           plan.m_provider_tool,
                                                           plan.m_tool_arguments,
                                                           kDefaultProviderGatewayTimeoutMs,
-                                                          error_message);
+                                                          transport_error);
     if (message.isEmpty()) {
+        if (error_message != nullptr) {
+            *error_message = transport_error;
+        }
         return {};
     }
     const QString envelope_error = mcpEnvelopeError(message.value(QStringLiteral("result")));
@@ -1010,13 +1013,17 @@ QJsonObject AiProviderGateway::callWin32Mcp(const Win32McpCallPlan& plan,
         .arguments = plan.tool_arguments,
         .environment = environment,
         .timeout_ms = plan.timeout_ms};
-    // With a pool, the server process is reused across calls (keyed on command +
-    // the full launch environment, so security profiles never share a process);
-    // without one, fall back to a fresh process per call.
-    const QJsonObject message = (m_mcp_pool != nullptr)
-                                    ? m_mcp_pool->callTool(request, error_message)
-                                    : AiMcpStdioClient::callTool(request, error_message);
+    // A persistent pool is required: silently switching transports changes lifecycle,
+    // process-reuse and failure semantics. Missing wiring fails closed.
+    if (m_mcp_pool == nullptr) {
+        return jsonFailure(error_message, QStringLiteral("Win32 MCP session pool is unavailable"));
+    }
+    QString transport_error;
+    QJsonObject message = m_mcp_pool->callTool(request, transport_error);
     if (message.isEmpty()) {
+        if (error_message != nullptr) {
+            *error_message = transport_error;
+        }
         return {};
     }
     const QString result_error = mcpEnvelopeError(message.value(QStringLiteral("result")));

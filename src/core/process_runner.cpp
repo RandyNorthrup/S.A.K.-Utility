@@ -27,6 +27,17 @@ namespace {
 // ScopedProcessFaultInjector to substitute a chosen ProcessResult for a real launch.
 ProcessFaultInjector g_process_fault_injector;
 
+std::optional<bool> injectedDetachedLaunchResult(const QString& program, const QStringList& args) {
+    if (!g_process_fault_injector) {
+        return std::nullopt;
+    }
+    const auto injected = g_process_fault_injector(program, args);
+    if (!injected.has_value()) {
+        return std::nullopt;
+    }
+    return injected->completedSuccessfully();
+}
+
 // Hard per-stream ceiling on retained output. A runaway child (e.g. a script
 // that prints gigabytes) previously grew std_out/std_err without bound until the
 // process exhausted memory; caller-side caps were applied only AFTER the full
@@ -426,6 +437,9 @@ bool startDetachedSystem32Tool(const QString& relativeExe, const QStringList& ar
     if (program.isEmpty()) {
         return false;  // fail closed: never retry with the bare, search-order-resolved name
     }
+    if (const auto injected = injectedDetachedLaunchResult(program, args)) {
+        return *injected;
+    }
     return QProcess::startDetached(program, args);
 }
 
@@ -433,6 +447,9 @@ bool startDetachedWindowsTool(const QString& relativeExe, const QStringList& arg
     const QString program = windowsDirPath(relativeExe);
     if (program.isEmpty()) {
         return false;  // fail closed: never retry with the bare, search-order-resolved name
+    }
+    if (const auto injected = injectedDetachedLaunchResult(program, args)) {
+        return *injected;
     }
     return QProcess::startDetached(program, args);
 }

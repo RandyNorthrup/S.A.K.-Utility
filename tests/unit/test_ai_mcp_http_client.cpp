@@ -8,10 +8,28 @@
 #include <QJsonObject>
 #include <QtTest/QtTest>
 
+#include <type_traits>
+
+namespace {
+
+template <typename Client>
+concept CanCallWithoutErrorSink = requires(const QUrl& endpoint, const QJsonObject& arguments) {
+    Client::callTool(endpoint, QStringLiteral("tool"), arguments, 1000);
+};
+
+template <typename Client>
+concept CanUseNullErrorSink = requires(const QUrl& endpoint, const QJsonObject& arguments) {
+    Client::callTool(endpoint, QStringLiteral("tool"), arguments, 1000, nullptr);
+};
+
+}  // namespace
+
 class AiMcpHttpClientTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void staticUtilityCannotBeInstantiated();
+    void errorSinkIsMandatoryAndNonNull();
     void buildsMcpToolCallPayload();
     void parsesSseJsonRpcMessage();
     void parsesPlainJsonRpcMessage();
@@ -23,6 +41,16 @@ private Q_SLOTS:
     void rejectsInsecureRemoteEndpoint();
     void acceptsLoopbackAndHttpsEndpoints();
 };
+
+void AiMcpHttpClientTests::staticUtilityCannotBeInstantiated() {
+    QVERIFY(!std::is_default_constructible_v<sak::ai::AiMcpHttpClient>);
+}
+
+void AiMcpHttpClientTests::errorSinkIsMandatoryAndNonNull() {
+    using Client = sak::ai::AiMcpHttpClient;
+    QVERIFY(!CanCallWithoutErrorSink<Client>);
+    QVERIFY(!CanUseNullErrorSink<Client>);
+}
 
 void AiMcpHttpClientTests::buildsMcpToolCallPayload() {
     const QJsonObject payload = sak::ai::AiMcpHttpClient::toolCallPayloadForTesting(
@@ -270,7 +298,7 @@ void AiMcpHttpClientTests::rejectsInsecureRemoteEndpoint() {
                                            QStringLiteral("query-docs"),
                                            QJsonObject{},
                                            1000,
-                                           &error);
+                                           error);
 
     QVERIFY(message.isEmpty());
     QCOMPARE(error,
@@ -297,7 +325,7 @@ void AiMcpHttpClientTests::acceptsLoopbackAndHttpsEndpoints() {
     const auto callToolError = [&oversize](const QUrl& endpoint, const QString& tool_name) {
         QString call_error;
         const QJsonObject reply =
-            sak::ai::AiMcpHttpClient::callTool(endpoint, tool_name, oversize, 1000, &call_error);
+            sak::ai::AiMcpHttpClient::callTool(endpoint, tool_name, oversize, 1000, call_error);
         return reply.isEmpty() ? call_error : QStringLiteral("<unexpected tool result>");
     };
 

@@ -2,13 +2,13 @@
 
 ## Overview
 
-Comprehensive test suite for SAK Utility using the **Qt Test** framework with **272 registered CTest tests** across **248 C++ test source files** plus script-backed helper tests. Tests cover AI assistant clients, chat-title generation, workflow orchestration, tool execution, cancellation, run state, trace storage, core utilities, security, elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX, hardening), diagnostics, partition management, ISO pipelines, deployment, email inspection, splash sizing, partition filesystem probe certification, and quick action validation.
+Comprehensive test suite for SAK Utility using the **Qt Test** framework with **273 registered CTest tests** across **247 C++ test source files** plus script-backed helper tests. Tests cover AI assistant clients, chat-title generation, workflow orchestration, tool execution, cancellation, run state, trace storage, core utilities, security, elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX, hardening), diagnostics, partition management, ISO pipelines, deployment, email inspection, splash sizing, partition filesystem probe certification, and quick action validation.
 
 ## Structure
 
 ```
 tests/
-+-- unit/                                  # Unit tests (245 C++ files, including actions/)
++-- unit/                                  # Unit tests (244 C++ files, including actions/)
 |   +-- actions/                           # Quick action validation tests
 |   |   +-- test_action_factory.cpp
 |   |   +-- test_all_actions_metadata.cpp
@@ -170,7 +170,7 @@ empty results, and service failures fail; dependency failure never becomes a pas
 | test_config_manager | `config_manager` | Get/set values, persistence, portable mode, type conversions |
 | test_file_scanner | `file_scanner` | Recursive scan, extension/size/date filters, cancellation, controlled junction-cycle fixtures, and injected canonical-resolution failure |
 | test_file_hash | `file_hash` | MD5/SHA-256 hashing, large-file streaming, hash comparison |
-| test_process_runner | `process_runner` | Process execution, stdout/stderr capture, timeout, exit codes |
+| test_process_runner | `process_runner` | Process execution, stdout/stderr capture, timeout, exit codes, detached-tool fault injection, and five GUI detached-launch failure guards |
 | test_resource_soak | `process_runner` | Long-session handle/GDI/USER/memory-growth soak over the real launchers |
 | test_error_codes | `error_codes` | Error code enum values, category strings, display messages |
 | test_input_validator | `input_validator` | Path, IP, port, Chocolatey name, and URL validation |
@@ -466,11 +466,20 @@ run. Wave 26 leaves 25 static sites across 10 files after replacing assistant in
 junction, and ConversationStore manifest-failure skips with deterministic fixtures. Check
 dormant/static coverage with
 `powershell scripts/check_test_skips.ps1 -StaticOnly`; the full skip audit also requires fresh
-per-test logs from complete CTest.
+per-test logs from complete CTest. It reads CTest's JSON registration to require every current Qt
+log and exclude stale logs from removed tests, so a stale success cannot inflate coverage and a
+missing current log cannot disappear from the audit.
+
+PowerShell gate regressions run under both PowerShell 7 and Windows PowerShell 5.1. The
+false-green command harness covers analyzer and ledger exit propagation plus working-tree review
+hashes, live ledger refresh, exact-blob mark binding, same-status-row target mutation, missing
+targets, clean-index/dirty-only hash batching, PowerShell launcher resolution, standard-input
+delivery, and bounded review timeouts. Process capture tests independently pin output, error,
+exit-code, standard-input, simultaneous large input/output pipes, and timeout behavior.
 
 ---
 
 **Test Framework:** Qt Test
-**Registered Tests:** 272 (CTest)
-**Test Files:** 248 C++ test source files plus script-backed helper tests
+**Registered Tests:** 273 (CTest)
+**Test Files:** 247 C++ test source files plus script-backed helper tests
 **Platform:** Windows 10/11

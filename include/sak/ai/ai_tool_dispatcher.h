@@ -42,7 +42,7 @@ public:
         // WHILE the handler was still running -- proof the exclusive-mutation guarantee was
         // broken mid-op (another agent could have acquired a fresh lease and mutated at the same
         // time), so the result is forced to a failure rather than reported as a clean success.
-        bool lease_reclaimed_midop{false};
+        bool lease_release_failed{false};
         QString lease_id;
         QString health_key;
         qint64 latency_ms{0};

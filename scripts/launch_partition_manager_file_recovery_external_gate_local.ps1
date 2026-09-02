@@ -25,6 +25,8 @@ $sharedStageDebug = Join-Path $SharedRoot "artifacts\partition-manager-certifica
 $localEvidence = Join-Path $StageRoot "evidence"
 $localGuestReport = Join-Path $StageRoot "external-file-recovery-guest-report.json"
 $localRunner = Join-Path $StageRoot "run_partition_manager_file_recovery_external_gate.ps1"
+$localStorageHelper = Join-Path $StageRoot "partition_manager_storage.ps1"
+$localCaptureHelper = Join-Path $StageRoot "process_capture.ps1"
 $localCertifier = Join-Path $StageRoot "partition_file_recovery_certifier.exe"
 
 function Assert-LocalStagePath {
@@ -192,6 +194,12 @@ New-Item -ItemType Directory -Path $sharedEvidence -Force | Out-Null
 $stagedRunnerHash = Copy-VerifiedStagedFile `
     -SourcePath (Join-Path $SharedRoot "scripts\run_partition_manager_file_recovery_external_gate.ps1") `
     -DestinationPath $localRunner
+$stagedStorageHash = Copy-VerifiedStagedFile `
+    -SourcePath (Join-Path $SharedRoot "scripts\partition_manager_storage.ps1") `
+    -DestinationPath $localStorageHelper
+$stagedCaptureHash = Copy-VerifiedStagedFile `
+    -SourcePath (Join-Path $SharedRoot "scripts\process_capture.ps1") `
+    -DestinationPath $localCaptureHelper
 
 $runtimeFiles = @(
     "partition_file_recovery_certifier.exe",
@@ -215,6 +223,8 @@ foreach ($runtimeFile in $runtimeFiles) {
 
 # Re-verify immediately before the UAC prompt: nothing staged may change in between.
 Assert-StagedFileUnchanged -Path $localRunner -ExpectedHash $stagedRunnerHash
+Assert-StagedFileUnchanged -Path $localStorageHelper -ExpectedHash $stagedStorageHash
+Assert-StagedFileUnchanged -Path $localCaptureHelper -ExpectedHash $stagedCaptureHash
 foreach ($runtimeFile in $runtimeFiles) {
     Assert-StagedFileUnchanged -Path (Join-Path $StageRoot $runtimeFile) -ExpectedHash $stagedRuntimeHashes[$runtimeFile]
 }

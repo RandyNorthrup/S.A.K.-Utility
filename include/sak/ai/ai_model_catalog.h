@@ -24,11 +24,6 @@ inline QStringList supportedOpenAiModels() {
             QStringLiteral("gpt-5.6-luna")};
 }
 
-/// @brief The default model (flagship of the supported line).
-inline QString defaultOpenAiModel() {
-    return QStringLiteral("gpt-5.6-sol");
-}
-
 /// @brief True when @p model is one of the supported GPT-5.6 IDs.
 /// @note Trims surrounding whitespace; comparison is exact (case-sensitive,
 ///       matching the OpenAI model IDs).

@@ -11,13 +11,13 @@ reviewed, so the headline "764 of 1098 units run" could not be verified from the
 be resumed from, and could not be audited. A number nobody can reproduce is not progress.
 
 WHAT A UNIT IS
-One reviewable file, enumerated from HEAD by an explicit rule (see UNIT_RULES). The rule lives
+One reviewable tracked file, enumerated by an explicit rule (see UNIT_RULES). The rule lives
 here rather than in someone's memory so the denominator is reproducible: run `inventory` and you
 get today's number, not a number from a tree that has since gained and lost files.
 
 WHAT MAKES RESUMPTION REAL
-Every unit is keyed by path AND by its git BLOB SHA. A unit counts as reviewed only if its blob
-is the exact one that was reviewed; edit the file and it returns to pending automatically. That
+Every unit is keyed by path AND by filtered working-tree Git blob SHA. A unit counts as reviewed
+only if its blob is the exact one that was reviewed; edit the file and it returns to pending. That
 is the property the old claim asserted without implementing -- and it is what stops a review from
 being credited to a file that has since been rewritten.
 
@@ -31,11 +31,12 @@ Each reviewed unit records HOW that is known:
                  mistake this ledger exists to stop repeating.
 
 Usage:
-  python scripts/review_ledger.py inventory            # rebuild unit list from HEAD
+  python scripts/review_ledger.py inventory            # reconcile tracked working-tree units
   python scripts/review_ledger.py seed-from-citations  # mark cited units, with evidence=cited
   python scripts/review_ledger.py status               # counts by state and evidence
   python scripts/review_ledger.py next --count 20      # the next pending units to review
-  python scripts/review_ledger.py mark <path> --brief <file>   # record a completed review
+  python scripts/review_ledger.py mark <path> --brief <file> --expected-blob <sha>
+                                                        # record exact reviewed bytes
 """
 
 from __future__ import annotations
@@ -82,21 +83,35 @@ def classify(path: str) -> str | None:
     return None
 
 
+def working_tree_blob(path: str) -> str:
+    blob = git("hash-object", f"--path={path}", "--", path).strip()
+    if not re.fullmatch(r"[0-9a-f]{40,64}", blob):
+        fail(f"could not hash tracked review unit: {path}")
+    return blob
+
+
 def current_units() -> dict[str, dict]:
-    """path -> {group, blob} for every unit at HEAD, straight from the index."""
+    """Tracked unit paths with hashes of filtered working-tree bytes."""
     units: dict[str, dict] = {}
-    # ls-files -s gives "<mode> <blob sha> <stage>\t<path>", so the blob comes from git rather
-    # than from hashing the working tree -- a dirty file cannot be credited as reviewed.
-    for line in git("ls-files", "-s").splitlines():
-        if not line.strip():
+    dirty_paths = set(git("diff-files", "--name-only", "-z", "--").split("\0"))
+    for record in git("ls-files", "-s", "-z").split("\0"):
+        if not record:
             continue
-        meta, _, path = line.partition("\t")
-        parts = meta.split()
-        if len(parts) < 2:
-            continue
+        metadata, separator, path = record.partition("\t")
+        fields = metadata.split()
+        if not separator or len(fields) != 3 or fields[2] != "0":
+            fail(f"could not parse stage-zero tracked review unit: {record!r}")
         group = classify(path)
         if group:
-            units[path] = {"group": group, "blob": parts[1]}
+            target = REPO_ROOT / path
+            if not target.is_file():
+                fail(f"tracked review unit is missing or unreadable: {path}")
+            index_blob = fields[1]
+            if not re.fullmatch(r"[0-9a-f]{40,64}", index_blob):
+                fail(f"invalid index blob for tracked review unit: {path}")
+            blob = (working_tree_blob(path)
+                    if path in dirty_paths or set(index_blob) == {"0"} else index_blob)
+            units[path] = {"group": group, "blob": blob}
     if not units:
         fail("no units enumerated from git ls-files; refusing to write an empty ledger.")
     return units
@@ -112,7 +127,7 @@ def save_state(state: dict) -> None:
     STATE_PATH.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 
 
-def cmd_inventory() -> int:
+def cmd_inventory(quiet: bool = False) -> int:
     units = current_units()
     state = load_state()
     existing = state.get("units", {})
@@ -122,12 +137,18 @@ def cmd_inventory() -> int:
         prior = existing.get(path)
         if prior and prior.get("reviewed_blob") == meta["blob"]:
             merged[path] = prior          # unchanged since its review: stays reviewed
+        elif (prior and prior.get("status") == "reviewed" and
+              prior.get("evidence") == "cited" and not prior.get("reviewed_blob")):
+            merged[path] = prior          # citation evidence has no surviving blob to invalidate
         elif prior and prior.get("reviewed_blob"):
             # Reviewed, then EDITED. Back to pending -- the review no longer describes the file.
             merged[path] = {"group": meta["group"], "status": "pending",
                             "previous_review_blob": prior.get("reviewed_blob"),
                             "previous_evidence": prior.get("evidence")}
             revived += 1
+        elif prior:
+            # Repeated status/next refreshes must not discard why a pending unit was revived.
+            merged[path] = {**prior, "group": meta["group"], "status": "pending"}
         else:
             merged[path] = {"group": meta["group"], "status": "pending"}
     dropped = sorted(set(existing) - set(units))
@@ -136,11 +157,12 @@ def cmd_inventory() -> int:
     state["unit_rule"] = ("include/**.h|.hpp, src/**.cpp|.h|.hpp, tests/**.cpp|.h|.mjs, "
                           "scripts/**.py|.ps1|.sh, browser/**.js")
     save_state(state)
-    print(f"inventory: {len(merged)} units at {state['head_commit'][:12]}")
-    if revived:
-        print(f"  {revived} previously-reviewed unit(s) CHANGED and returned to pending")
-    if dropped:
-        print(f"  {len(dropped)} unit(s) no longer exist and were removed from the ledger")
+    if not quiet:
+        print(f"inventory: {len(merged)} units at {state['head_commit'][:12]}")
+        if revived:
+            print(f"  {revived} previously-reviewed unit(s) CHANGED and returned to pending")
+        if dropped:
+            print(f"  {len(dropped)} unit(s) no longer exist and were removed from the ledger")
     return 0
 
 
@@ -175,6 +197,7 @@ def cmd_seed_from_citations() -> int:
 
 
 def cmd_status() -> int:
+    cmd_inventory(quiet=True)
     state = load_state()
     units = state.get("units", {})
     if not units:
@@ -199,6 +222,7 @@ def cmd_status() -> int:
 
 
 def cmd_next(count: int, group: str) -> int:
+    cmd_inventory(quiet=True)
     state = load_state()
     units = state.get("units", {})
     pending = [p for p, m in sorted(units.items())
@@ -270,8 +294,12 @@ def normalize_to_ascii(text: str) -> tuple[str, int]:
     return text, replaced
 
 
-def cmd_mark(path: str, brief: str) -> int:
+def cmd_mark(path: str, brief: str, expected_blob: str) -> int:
+    if not re.fullmatch(r"[0-9a-f]{40,64}", expected_blob):
+        fail("--expected-blob must be a Git object hash")
     brief_path = REPO_ROOT / brief
+    if not brief_path.is_file():
+        fail(f"review brief is missing or unreadable: {brief}")
     if brief_path.exists():
         original = brief_path.read_text(encoding="utf-8", errors="replace")
         cleaned, forced = normalize_to_ascii(
@@ -285,11 +313,17 @@ def cmd_mark(path: str, brief: str) -> int:
     if path not in units:
         fail(f"{path} is not a unit in the ledger (run `inventory` if it is new)")
     blobs = current_units()
+    if path not in blobs:
+        fail(f"tracked review target is missing or unreadable: {path}")
+    actual_blob = working_tree_blob(path)
+    if actual_blob != expected_blob:
+        fail(f"{path} changed after review: expected {expected_blob}, "
+             f"found {actual_blob}")
     units[path].update({"status": "reviewed", "evidence": "driver",
-                        "reviewed_blob": blobs[path]["blob"], "brief": brief})
+                        "reviewed_blob": expected_blob, "brief": brief})
     state["units"] = units
     save_state(state)
-    print(f"marked {path} reviewed (blob {blobs[path]['blob'][:12]}, brief {brief})")
+    print(f"marked {path} reviewed (blob {actual_blob[:12]}, brief {brief})")
     return 0
 
 
@@ -306,6 +340,7 @@ def main() -> int:
     mark = sub.add_parser("mark")
     mark.add_argument("path")
     mark.add_argument("--brief", required=True)
+    mark.add_argument("--expected-blob", required=True)
 
     args = parser.parse_args()
     if args.cmd == "inventory":
@@ -316,7 +351,7 @@ def main() -> int:
         return cmd_status()
     if args.cmd == "next":
         return cmd_next(args.count, args.group)
-    return cmd_mark(args.path, args.brief)
+    return cmd_mark(args.path, args.brief, args.expected_blob)
 
 
 if __name__ == "__main__":

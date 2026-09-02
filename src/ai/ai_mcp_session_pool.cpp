@@ -46,13 +46,21 @@ QString sessionKey(const AiMcpStdioCallRequest& request) {
     }
     return request.command.trimmed() + QLatin1Char('\x1f') +
            QString::fromLatin1(hash.result().toHex()) + QLatin1Char('\x1f') +
-           QString::number(request.timeout_ms);
+           QString::number(AiMcpStdioSession::effectiveRequestTimeoutMs(request.timeout_ms));
 }
 
 AiMcpSessionConfig configFor(const AiMcpStdioCallRequest& request) {
     return {.command = request.command,
             .environment = request.environment,
-            .request_timeout_ms = request.timeout_ms};
+            .request_timeout_ms = AiMcpStdioSession::effectiveRequestTimeoutMs(request.timeout_ms)};
+}
+
+bool environmentCanBePooled(const AiMcpStdioCallRequest& request, QString& error_message) {
+    if (!request.environment.inheritsFromParent()) {
+        return true;
+    }
+    error_message = QStringLiteral("MCP session pool requires an explicit process environment");
+    return false;
 }
 
 }  // namespace
@@ -98,13 +106,11 @@ std::shared_ptr<AiMcpSessionPool::Entry> AiMcpSessionPool::entryFor(
 
 bool AiMcpSessionPool::ensureSessionOpen(Entry& entry,
                                          const AiMcpStdioCallRequest& request,
-                                         QString* error) {
+                                         QString& error) {
     if (entry.detached) {
         // closeAll() tore this Entry down and dropped it from the map. Refuse to reopen so a call
         // that grabbed the handle mid-teardown cannot spawn a process after shutdown.
-        if (error != nullptr) {
-            *error = QStringLiteral("MCP session pool is closing");
-        }
+        error = QStringLiteral("MCP session pool is closing");
         return false;
     }
     if (entry.session && entry.session->isOpen()) {
@@ -119,44 +125,42 @@ bool AiMcpSessionPool::ensureSessionOpen(Entry& entry,
 }
 
 QJsonObject AiMcpSessionPool::callTool(const AiMcpStdioCallRequest& request,
-                                       QString* error_message) {
+                                       QString& error_message) {
+    error_message.clear();
     if (request.command.trimmed().isEmpty()) {
-        if (error_message != nullptr) {
-            *error_message = QStringLiteral("MCP stdio command is empty");
-        }
+        error_message = QStringLiteral("MCP stdio command is empty");
+        return {};
+    }
+    if (request.tool_name.trimmed().isEmpty()) {
+        error_message = QStringLiteral("MCP tool name is empty");
+        return {};
+    }
+    if (!environmentCanBePooled(request, error_message)) {
         return {};
     }
     const std::shared_ptr<Entry> entry = entryFor(request);
     if (!entry) {
-        if (error_message != nullptr) {
-            *error_message = QStringLiteral("MCP session pool is at capacity");
-        }
+        error_message = QStringLiteral("MCP session pool is at capacity");
         return {};
     }
     const QMutexLocker call_lock(&entry->mutex);
 
     QString error;
-    if (!ensureSessionOpen(*entry, request, &error)) {
-        if (error_message != nullptr) {
-            *error_message = error;
-        }
+    if (!ensureSessionOpen(*entry, request, error)) {
+        error_message = error;
         return {};
     }
 
     const QJsonObject result =
-        entry->session->callTool(request.tool_name, request.arguments, &error);
+        entry->session->callTool(request.tool_name, request.arguments, error);
     if (!error.isEmpty()) {
         // The call failed -- the process may have died. Drop the session so the next
         // call reopens a fresh one rather than writing into a corpse.
         entry->session.reset();
-        if (error_message != nullptr) {
-            *error_message = error;
-        }
+        error_message = error;
         return {};
     }
-    if (error_message != nullptr) {
-        error_message->clear();
-    }
+    error_message.clear();
     // Wrap the tool result so callers that read message["result"] -- the shape the one-shot
     // client returns -- work unchanged against this transport. This is NOT a complete JSON-RPC
     // message: the "jsonrpc" and "id" members belong to the session's own request/response
@@ -166,41 +170,35 @@ QJsonObject AiMcpSessionPool::callTool(const AiMcpStdioCallRequest& request,
 }
 
 QVector<AiMcpToolDescriptor> AiMcpSessionPool::listTools(const AiMcpStdioCallRequest& request,
-                                                         QString* error_message) {
+                                                         QString& error_message) {
+    error_message.clear();
     if (request.command.trimmed().isEmpty()) {
-        if (error_message != nullptr) {
-            *error_message = QStringLiteral("MCP stdio command is empty");
-        }
+        error_message = QStringLiteral("MCP stdio command is empty");
+        return {};
+    }
+    if (!environmentCanBePooled(request, error_message)) {
         return {};
     }
     const std::shared_ptr<Entry> entry = entryFor(request);
     if (!entry) {
-        if (error_message != nullptr) {
-            *error_message = QStringLiteral("MCP session pool is at capacity");
-        }
+        error_message = QStringLiteral("MCP session pool is at capacity");
         return {};
     }
     const QMutexLocker call_lock(&entry->mutex);
 
     QString error;
-    if (!ensureSessionOpen(*entry, request, &error)) {
-        if (error_message != nullptr) {
-            *error_message = error;
-        }
+    if (!ensureSessionOpen(*entry, request, error)) {
+        error_message = error;
         return {};
     }
 
-    const QVector<AiMcpToolDescriptor> tools = entry->session->listTools(&error);
+    const QVector<AiMcpToolDescriptor> tools = entry->session->listTools(error);
     if (!error.isEmpty()) {
         entry->session.reset();
-        if (error_message != nullptr) {
-            *error_message = error;
-        }
+        error_message = error;
         return {};
     }
-    if (error_message != nullptr) {
-        error_message->clear();
-    }
+    error_message.clear();
     return tools;
 }
 

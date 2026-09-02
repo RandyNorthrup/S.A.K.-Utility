@@ -11,6 +11,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "process_capture.ps1")
 . (Join-Path $PSScriptRoot "partition_manager_storage.ps1")
 $script:TranscriptStarted = $false
 $script:RunRoot = ""
@@ -67,20 +68,13 @@ function Invoke-NativeCommand {
     if (-not (Test-Path -LiteralPath $FilePath -PathType Leaf)) {
         throw "$Name could not resolve executable '$FilePath'."
     }
-    $oldPreference = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    $exitCode = $null
-    try {
-        $output = & $FilePath @Arguments 2>&1
-        $exitCode = $LASTEXITCODE
-    }
-    finally {
-        $ErrorActionPreference = $oldPreference
-    }
-    Add-Action -Name $Name -Detail ((($output | ForEach-Object { $_.ToString() }) -join "`n").Trim())
-    if ($null -eq $exitCode) {
-        throw "$Name did not produce an exit code (launch failed)."
-    }
+    $captured = Invoke-CapturedProcess -FilePath $FilePath -Arguments $Arguments
+    $capturedOutput = @($captured.stdout, $captured.stderr)
+    $output = (($capturedOutput | Where-Object {
+                -not [string]::IsNullOrWhiteSpace($_)
+            }) -join "`n").Trim()
+    $exitCode = [int]$captured.exit_code
+    Add-Action -Name $Name -Detail $output
     if ($exitCode -ne 0) {
         throw "$Name failed with exit code $exitCode."
     }

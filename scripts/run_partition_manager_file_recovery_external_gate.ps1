@@ -23,7 +23,12 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "process_capture.ps1")
 . (Join-Path $PSScriptRoot "partition_manager_storage.ps1")
+$FsutilExe = Join-Path ([System.Environment]::SystemDirectory) "fsutil.exe"
+if (-not (Test-Path -LiteralPath $FsutilExe -PathType Leaf)) {
+    throw "Required system fsutil.exe was not found: $FsutilExe"
+}
 
 if ($TargetDiskNumber -lt 1) {
     throw "TargetDiskNumber is required and must be >= 1. This gate destroys every partition on that physical disk; run Get-Disk and pass the disposable disk's number explicitly rather than relying on a default."
@@ -68,31 +73,13 @@ function Invoke-NativeCommand {
         [string[]]$Arguments = @()
     )
 
-    $oldPreference = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    $exitCode = $null
-    $output = $null
-    try {
-        $output = & $FilePath @Arguments 2>&1
-        $exitCode = $LASTEXITCODE
-    }
-    catch {
-        # A launch failure (missing/invalid executable) leaves $LASTEXITCODE holding a
-        # prior command's value; report it as a failure so a stale 0 cannot look like success.
-        $output = $_.Exception.Message
-        $exitCode = -1
-    }
-    finally {
-        $ErrorActionPreference = $oldPreference
-    }
-    if ($null -eq $exitCode) {
-        $exitCode = -1
-    }
+    $captured = Invoke-CapturedProcess -FilePath $FilePath -Arguments $Arguments
+    $capturedOutput = @($captured.stdout, $captured.stderr)
     [pscustomobject]@{
         file_path = $FilePath
         arguments = $Arguments
-        exit_code = $exitCode
-        output = ConvertTo-PlainText -Value $output
+        exit_code = [int]$captured.exit_code
+        output = ConvertTo-PlainText -Value $capturedOutput
     }
 }
 
@@ -213,7 +200,7 @@ try {
     $before = Get-DiskSnapshot -DiskNumber $TargetDiskNumber
     $volume = New-RecoveryVolume -DiskNumber $TargetDiskNumber
 
-    $deleteNotifyBefore = Invoke-NativeCommand -FilePath "fsutil.exe" -Arguments @("behavior", "query", "DisableDeleteNotify")
+    $deleteNotifyBefore = Invoke-NativeCommand -FilePath $FsutilExe -Arguments @("behavior", "query", "DisableDeleteNotify")
     $commands.Add($deleteNotifyBefore)
     if ($deleteNotifyBefore.exit_code -ne 0) {
         # Prior state is unknown; restore to the Windows default (delete-notify enabled)
@@ -224,15 +211,15 @@ try {
         $deleteNotifyBefore.output -match "DisableDeleteNotify\s*=\s*0") {
         $restoreNtfsDeleteNotify = $true
     }
-    $disableDeleteNotify = Invoke-NativeCommand -FilePath "fsutil.exe" -Arguments @("behavior", "set", "DisableDeleteNotify", "NTFS", "1")
+    $disableDeleteNotify = Invoke-NativeCommand -FilePath $FsutilExe -Arguments @("behavior", "set", "DisableDeleteNotify", "NTFS", "1")
     $commands.Add($disableDeleteNotify)
     if ($disableDeleteNotify.exit_code -ne 0) {
-        $disableDeleteNotifyLegacy = Invoke-NativeCommand -FilePath "fsutil.exe" -Arguments @("behavior", "set", "DisableDeleteNotify", "1")
-        $commands.Add($disableDeleteNotifyLegacy)
+        throw ("Failed to disable NTFS DisableDeleteNotify with modern fsutil syntax " +
+            "(exit $($disableDeleteNotify.exit_code)). $($disableDeleteNotify.output)")
     }
-    # Do not trust either set's exit code: re-query and fail closed unless delete-notify
+    # Re-query and fail closed unless delete-notify
     # is actually disabled, so the gate can never certify recovery under live TRIM.
-    $deleteNotifyVerify = Invoke-NativeCommand -FilePath "fsutil.exe" -Arguments @("behavior", "query", "DisableDeleteNotify")
+    $deleteNotifyVerify = Invoke-NativeCommand -FilePath $FsutilExe -Arguments @("behavior", "query", "DisableDeleteNotify")
     $commands.Add($deleteNotifyVerify)
     if ($deleteNotifyVerify.exit_code -ne 0 -or
         $deleteNotifyVerify.output -notmatch "DisableDeleteNotify\s*=\s*1") {
@@ -286,14 +273,12 @@ finally {
     }
     if ($restoreNtfsDeleteNotify) {
         try {
-            $restoreDeleteNotify = Invoke-NativeCommand -FilePath "fsutil.exe" -Arguments @("behavior", "set", "DisableDeleteNotify", "NTFS", "0")
+            $restoreDeleteNotify = Invoke-NativeCommand -FilePath $FsutilExe -Arguments @("behavior", "set", "DisableDeleteNotify", "NTFS", "0")
             $commands.Add($restoreDeleteNotify)
             if ($restoreDeleteNotify.exit_code -ne 0) {
-                $restoreDeleteNotifyLegacy = Invoke-NativeCommand -FilePath "fsutil.exe" -Arguments @("behavior", "set", "DisableDeleteNotify", "0")
-                $commands.Add($restoreDeleteNotifyLegacy)
-                if ($restoreDeleteNotifyLegacy.exit_code -ne 0) {
-                    $cleanupErrors.Add("Failed to restore NTFS DisableDeleteNotify (exit $($restoreDeleteNotifyLegacy.exit_code)).")
-                }
+                $cleanupErrors.Add(
+                    "Failed to restore NTFS DisableDeleteNotify with modern fsutil syntax " +
+                    "(exit $($restoreDeleteNotify.exit_code)). $($restoreDeleteNotify.output)")
             }
         }
         catch {

@@ -6865,6 +6865,45 @@ QVector<PropertyRow> bitLockerRows(const PartitionDiskInfo* disk,
     return rows;
 }
 
+void launchSystem32ToolOrWarn(QWidget* parent,
+                              const QString& executable,
+                              const QStringList& arguments,
+                              const QString& title,
+                              const QString& failure_message) {
+    if (!sak::startDetachedSystem32Tool(executable, arguments)) {
+        sak::showWarningLogged(parent, title, failure_message);
+    }
+}
+
+void launchWindowsToolOrWarn(QWidget* parent,
+                             const QString& executable,
+                             const QStringList& arguments,
+                             const QString& title,
+                             const QString& failure_message) {
+    if (!sak::startDetachedWindowsTool(executable, arguments)) {
+        sak::showWarningLogged(parent, title, failure_message);
+    }
+}
+
+void connectBitLockerUtilityButtons(QDialog* dialog,
+                                    QPushButton* copy_button,
+                                    QPushButton* open_button,
+                                    const QStringList& command_lines) {
+    QObject::connect(copy_button, &QPushButton::clicked, [command_lines]() {
+        QApplication::clipboard()->setText(command_lines.join('\n'));
+    });
+    QObject::connect(open_button, &QPushButton::clicked, [dialog]() {
+        // Absolute System32 control.exe; unresolvable -> visible/logged failure, no bare-name
+        // retry.
+        launchSystem32ToolOrWarn(dialog,
+                                 QStringLiteral("control.exe"),
+                                 {QStringLiteral("/name"),
+                                  QStringLiteral("Microsoft.BitLockerDriveEncryption")},
+                                 QObject::tr("Open Windows BitLocker"),
+                                 QObject::tr("Windows BitLocker management could not be opened."));
+    });
+}
+
 BitLockerDialogAction showBitLockerDialog(QWidget* parent,
                                           const QVector<PropertyRow>& rows,
                                           const QStringList& command_lines,
@@ -6921,15 +6960,7 @@ BitLockerDialogAction showBitLockerDialog(QWidget* parent,
     auto* open_button = buttons->addButton(QObject::tr("Open Windows BitLocker"),
                                            QDialogButtonBox::ActionRole);
     open_button->setAccessibleName(QObject::tr("Open Windows BitLocker management"));
-    QObject::connect(copy_button, &QPushButton::clicked, [command_lines]() {
-        QApplication::clipboard()->setText(command_lines.join('\n'));
-    });
-    QObject::connect(open_button, &QPushButton::clicked, []() {
-        // Absolute System32 control.exe; unresolvable -> launch nothing (no bare-name retry).
-        (void)sak::startDetachedSystem32Tool(
-            QStringLiteral("control.exe"),
-            {QStringLiteral("/name"), QStringLiteral("Microsoft.BitLockerDriveEncryption")});
-    });
+    connectBitLockerUtilityButtons(&dialog, copy_button, open_button, command_lines);
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     layout->addWidget(buttons);
     dialog.exec();
@@ -7070,9 +7101,13 @@ OptimizeDialogAction showOptimizeDrivesDialog(QWidget* parent, const OptimizeDia
     QObject::connect(copy_button, &QPushButton::clicked, [commands = spec.command_lines]() {
         QApplication::clipboard()->setText(commands.join('\n'));
     });
-    QObject::connect(open_button, &QPushButton::clicked, []() {
+    QObject::connect(open_button, &QPushButton::clicked, [&dialog]() {
         // Absolute System32 dfrgui.exe; unresolvable -> launch nothing (no bare-name retry).
-        (void)sak::startDetachedSystem32Tool(QStringLiteral("dfrgui.exe"));
+        launchSystem32ToolOrWarn(&dialog,
+                                 QStringLiteral("dfrgui.exe"),
+                                 {},
+                                 QObject::tr("Open Windows Optimize Drives"),
+                                 QObject::tr("Windows Optimize Drives could not be opened."));
     });
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     layout->addWidget(buttons);
@@ -7227,7 +7262,7 @@ QTableWidget* createSpaceAnalyzerTable(QWidget* parent,
                 QObject::connect(open, &QAction::triggered, table, [path]() {
                     QDesktopServices::openUrl(QUrl::fromLocalFile(path));
                 });
-                QObject::connect(explore, &QAction::triggered, table, [path]() {
+                QObject::connect(explore, &QAction::triggered, table, [table, path]() {
                     const QFileInfo info(path);
                     if (info.isDir()) {
                         QDesktopServices::openUrl(QUrl::fromLocalFile(path));
@@ -7235,9 +7270,12 @@ QTableWidget* createSpaceAnalyzerTable(QWidget* parent,
                     }
                     // explorer.exe lives in the Windows directory, not System32; name it
                     // absolutely so a planted explorer.exe cannot satisfy the launch.
-                    (void)sak::startDetachedWindowsTool(QStringLiteral("explorer.exe"),
-                                                        {QStringLiteral("/select,"),
-                                                         QDir::toNativeSeparators(path)});
+                    launchWindowsToolOrWarn(
+                        table,
+                        QStringLiteral("explorer.exe"),
+                        {QStringLiteral("/select,"), QDir::toNativeSeparators(path)},
+                        QObject::tr("Open File Location"),
+                        QObject::tr("The selected file's location could not be opened."));
                 });
                 QObject::connect(copy, &QAction::triggered, table, [path]() {
                     QApplication::clipboard()->setText(QDir::toNativeSeparators(path));

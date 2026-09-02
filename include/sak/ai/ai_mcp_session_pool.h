@@ -3,7 +3,6 @@
 
 #pragma once
 
-#include "sak/ai/ai_mcp_stdio_client.h"
 #include "sak/ai/ai_mcp_stdio_session.h"
 
 #include <QJsonObject>
@@ -18,7 +17,9 @@
 /// @brief A thread-safe cache of persistent MCP stdio sessions, keyed so that a
 /// server process is reused across tool calls instead of respawned every time --
 /// while never sharing one process across two different launch environments (a
-/// read-only session is never reused for a full-access call).
+/// read-only session is never reused for a full-access call). InheritFromParent environments are
+/// rejected because their effective variables can change without changing a cache key; callers
+/// must provide an explicit environment snapshot.
 namespace sak::ai {
 
 class AiMcpSessionPool {
@@ -29,20 +30,20 @@ public:
     AiMcpSessionPool(const AiMcpSessionPool&) = delete;
     AiMcpSessionPool& operator=(const AiMcpSessionPool&) = delete;
 
-    /// Runs one tool call on the pooled session for (request.command, request
-    /// environment), opening the session on first use and reusing it afterwards.
-    /// Returns the FULL JSON-RPC message ({"result": ...}), byte-shaped exactly
-    /// like AiMcpStdioClient::callTool so it is a drop-in transport. On error
-    /// returns {} + sets @p error_message and drops the (possibly dead) session so
-    /// the next call reopens it.
+    /// Runs one tool call on the pooled session for (request.command, request environment,
+    /// effective timeout), opening the session on first use and reusing it afterwards. Returns a
+    /// transport wrapper shaped as {"result": ...}; JSON-RPC correlation members are consumed by
+    /// the persistent session and are not re-synthesized. On error returns {} and sets
+    /// @p error_message. A transport/session error drops that session so the next call reopens it;
+    /// pre-session validation and capacity refusals leave existing sessions intact.
     [[nodiscard]] QJsonObject callTool(const AiMcpStdioCallRequest& request,
-                                       QString* error_message = nullptr);
+                                       QString& error_message);
 
-    /// Discovers the tools advertised by the server for (request.command, request
-    /// environment) via tools/list, reusing the pooled session. request.tool_name
-    /// and request.arguments are ignored.
+    /// Discovers the tools advertised by the server for (request.command, request environment,
+    /// effective timeout) via tools/list, reusing the pooled session. request.tool_name and
+    /// request.arguments are ignored.
     [[nodiscard]] QVector<AiMcpToolDescriptor> listTools(const AiMcpStdioCallRequest& request,
-                                                         QString* error_message = nullptr);
+                                                         QString& error_message);
 
     /// Closes every pooled session (joins their worker threads). Idempotent; also
     /// run by the destructor.
@@ -55,8 +56,8 @@ public:
     /// diagnostics.
     [[nodiscard]] int pooledSlotCount() const;
 
-    /// The cache key derived for a request (command + a hash of its full launch
-    /// environment). Exposed for tests.
+    /// The cache key derived for a request: command + full launch-environment hash + effective
+    /// timeout. Exposed for tests.
     [[nodiscard]] static QString sessionKeyForTesting(const AiMcpStdioCallRequest& request);
 
 private:
@@ -80,7 +81,7 @@ private:
     // held. Returns false (and sets *error) on open failure, dropping the session.
     [[nodiscard]] static bool ensureSessionOpen(Entry& entry,
                                                 const AiMcpStdioCallRequest& request,
-                                                QString* error);
+                                                QString& error);
 
     mutable QMutex m_mutex;  // guards m_sessions (the map), not the sessions
     std::map<QString, std::shared_ptr<Entry>> m_sessions;

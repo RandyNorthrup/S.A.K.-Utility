@@ -57,6 +57,7 @@ private Q_SLOTS:
     void win32McpEnvironment_refusesProtectedAndNonStringVars();  // R5-G10-9
     void docsQuery_refusesNonHttpsEndpoint();                     // R5-G10-9
     void planWin32McpCall_refusesMalformedEnvelope();             // R5-G10-9
+    void callWin32McpWithoutPoolFailsClosed();
 };
 
 // The registry loads the embedded resource by default and honors an on-disk providers.json only
@@ -976,6 +977,20 @@ void AiProviderGatewayTests::planWin32McpCall_refusesMalformedEnvelope() {
     QVERIFY2(!okPlan.provider.isEmpty(), qPrintable(okError));
     QCOMPARE(okPlan.tool_name, QStringLiteral("browser_snapshot"));
     QVERIFY(okError.isEmpty());
+}
+
+void AiProviderGatewayTests::callWin32McpWithoutPoolFailsClosed() {
+    sak::ai::AiProviderGateway gateway;
+    sak::ai::AiProviderGateway::Win32McpCallPlan plan;
+    plan.provider = QJsonObject{{QStringLiteral("id"), QStringLiteral("win32_mcp")},
+                                {QStringLiteral("resolved_command"),
+                                 QStringLiteral("removed-one-shot-transport.exe")}};
+    plan.tool_name = QStringLiteral("list_windows");
+    plan.security_profile = QStringLiteral("read_only");
+
+    QString error;
+    QVERIFY(gateway.callWin32Mcp(plan, &error).isEmpty());
+    QCOMPARE(error, QStringLiteral("Win32 MCP session pool is unavailable"));
 }
 
 QTEST_GUILESS_MAIN(AiProviderGatewayTests)

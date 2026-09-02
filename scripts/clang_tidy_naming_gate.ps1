@@ -54,6 +54,7 @@ function Invoke-NamingAnalysis {
         Checks = 'readability-identifier-naming'
         FirstPartyDir = $AnalysisDir
         LogPath = $AnalysisLog
+        AllowAnalyzerFindings = $true
     }
     if ($IncludeFilter) { $arguments.IncludeFilter = $IncludeFilter }
     if ($ExcludeFilter) { $arguments.ExcludeFilter = $ExcludeFilter }

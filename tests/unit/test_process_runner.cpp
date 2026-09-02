@@ -6,8 +6,10 @@
 
 #include "sak/process_runner.h"
 
+#include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
 #include <QtTest/QtTest>
@@ -48,7 +50,21 @@ private Q_SLOTS:
     // R5-G14-17: shared process fault-injection seam
     void processFaultInjector_substitutesResultForEveryLauncher();
     void processFaultInjector_scopeRestoresRealLaunch();
+    void detachedToolLaunchersConsultFaultInjector();
+    void guiDetachedLaunchFailuresAreGuarded();
 };
+
+namespace {
+QString readRepoSource(const QString& relative_path) {
+    const QDir repo_root(
+        QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("../..")));
+    QFile file(repo_root.filePath(relative_path));
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    return QString::fromUtf8(file.readAll());
+}
+}  // namespace
 
 // ============================================================================
 // runProcess Tests
@@ -515,6 +531,50 @@ void ProcessRunnerTests::processFaultInjector_substitutesResultForEveryLauncher(
     QVERIFY2(lastProgram.endsWith(QStringLiteral("powershell.exe"), Qt::CaseInsensitive),
              qPrintable(lastProgram));
 #endif
+}
+
+void ProcessRunnerTests::detachedToolLaunchersConsultFaultInjector() {
+    QStringList programs;
+    sak::ScopedProcessFaultInjector failure_guard(
+        [&](const QString& program, const QStringList&) -> std::optional<sak::ProcessResult> {
+            programs.append(program);
+            sak::ProcessResult failure;
+            failure.exit_code = 7;
+            return failure;
+        });
+
+    QVERIFY(!sak::startDetachedSystem32Tool(QStringLiteral("notepad.exe")));
+    QVERIFY(!sak::startDetachedWindowsTool(QStringLiteral("explorer.exe")));
+    QCOMPARE(programs.size(), 2);
+    QVERIFY(QDir::isAbsolutePath(programs.at(0)));
+    QVERIFY(QDir::isAbsolutePath(programs.at(1)));
+}
+
+void ProcessRunnerTests::guiDetachedLaunchFailuresAreGuarded() {
+    const QString advanced = readRepoSource(QStringLiteral("src/gui/advanced_search_panel.cpp"));
+    const QString files =
+        readRepoSource(QStringLiteral("src/gui/file_management_explorer_panel.cpp"));
+    const QString partitions =
+        readRepoSource(QStringLiteral("src/gui/partition_manager_panel.cpp"));
+    QVERIFY2(!advanced.isEmpty(), "advanced_search_panel.cpp could not be read");
+    QVERIFY2(!files.isEmpty(), "file_management_explorer_panel.cpp could not be read");
+    QVERIFY2(!partitions.isEmpty(), "partition_manager_panel.cpp could not be read");
+
+    QCOMPARE(advanced.count(QStringLiteral("if (!sak::startDetachedWindowsTool")), 1);
+    QVERIFY(advanced.contains(
+        QStringLiteral("sak::showWarningLogged(this, tr(\"Open Directory\"), failure);")));
+
+    QCOMPARE(files.count(QStringLiteral("if (!sak::startDetachedSystem32Tool")), 1);
+    QVERIFY(files.contains(
+        QStringLiteral("sak::showWarningLogged(this, tr(\"Edit in Notepad\"), failure);")));
+
+    QCOMPARE(partitions.count(QStringLiteral("if (!sak::startDetachedSystem32Tool")), 1);
+    QCOMPARE(partitions.count(QStringLiteral("if (!sak::startDetachedWindowsTool")), 1);
+    QCOMPARE(partitions.count(QStringLiteral("launchSystem32ToolOrWarn(")), 3);
+    QCOMPARE(partitions.count(QStringLiteral("launchWindowsToolOrWarn(")), 2);
+    QVERIFY(partitions.contains(QStringLiteral("Open Windows BitLocker")));
+    QVERIFY(partitions.contains(QStringLiteral("Open Windows Optimize Drives")));
+    QVERIFY(partitions.contains(QStringLiteral("Open File Location")));
 }
 
 // The injector must not leak and must be a controllable OVERLAY, not a permanent break of

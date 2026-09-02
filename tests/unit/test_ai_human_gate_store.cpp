@@ -15,6 +15,8 @@ class AiHumanGateStoreTests : public QObject {
 
 private Q_SLOTS:
     void appendAndLoadRoundTrips();
+    void appendGateReturnsGeneratedFieldsToCaller();
+    void persistenceErrorSinkIsMandatory();
     void persistedRecordCarriesTheDocumentedKeys();
     void appendGatePreservesCallerSuppliedTimestamps();
     void latestPendingGateIgnoresResolvedGates();
@@ -38,6 +40,24 @@ sak::ai::AiHumanGate makeGate(const QString& gate_id, const QString& run_id) {
     return gate;
 }
 
+template <typename Store>
+concept CanAppendWithoutErrorSink =
+    requires(const Store& store, sak::ai::AiHumanGate& gate) { store.appendGate(gate); };
+
+template <typename Store>
+concept CanLoadWithoutErrorSink = requires(const Store& store) { store.loadGates(); };
+
+template <typename Store>
+concept CanFindPendingWithoutErrorSink =
+    requires(const Store& store) { store.latestPendingGate(); };
+
+template <typename Store>
+concept CanUseNullErrorSink = requires(const Store& store, sak::ai::AiHumanGate& gate) {
+    store.appendGate(gate, nullptr);
+    store.loadGates(nullptr);
+    store.latestPendingGate(nullptr);
+};
+
 }  // namespace
 
 void AiHumanGateStoreTests::appendAndLoadRoundTrips() {
@@ -57,9 +77,12 @@ void AiHumanGateStoreTests::appendAndLoadRoundTrips() {
     gate.metadata[QStringLiteral("preview")] = QStringLiteral("choco install test");
 
     QString error;
-    QVERIFY2(store.appendGate(gate, &error), qPrintable(error));
+    QVERIFY2(store.appendGate(gate, error), qPrintable(error));
+    QVERIFY(!gate.gate_id.isEmpty());
+    QVERIFY(gate.created_utc.isValid());
+    QVERIFY(!gate.resolved_utc.isValid());
 
-    const auto gates = store.loadGates(&error);
+    const auto gates = store.loadGates(error);
     // The out-param is not cosmetic and was never asserted empty after a SUCCESSFUL load. The
     // panel treats any non-empty error as fatal and returns WITHOUT restoring the pending gate,
     // so a load that reported a phantom "unreadable record(s)" would lose every pending gate at
@@ -94,6 +117,40 @@ void AiHumanGateStoreTests::appendAndLoadRoundTrips() {
     QVERIFY(QFile::exists(temp_dir.path() + QStringLiteral("/human_gates.jsonl")));
 }
 
+void AiHumanGateStoreTests::appendGateReturnsGeneratedFieldsToCaller() {
+    QTemporaryDir temp_dir;
+    QVERIFY(temp_dir.isValid());
+    sak::ai::AiHumanGateStore store(temp_dir.path());
+
+    sak::ai::AiHumanGate gate;
+    gate.run_id = QStringLiteral("run_generated");
+    gate.kind = QStringLiteral("approval");
+    gate.name = QStringLiteral("generated_identity");
+    gate.status = sak::ai::humanGateWaitingStatus();
+    gate.question = QStringLiteral("Proceed?");
+
+    QString error;
+    QVERIFY2(store.appendGate(gate, error), qPrintable(error));
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QVERIFY(gate.gate_id.startsWith(QStringLiteral("gate_")));
+    QVERIFY(gate.created_utc.isValid());
+    QVERIFY(!gate.resolved_utc.isValid());
+
+    const auto loaded = store.loadGates(error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(loaded.size(), 1);
+    QCOMPARE(loaded.first().gate_id, gate.gate_id);
+    QCOMPARE(loaded.first().created_utc, gate.created_utc);
+}
+
+void AiHumanGateStoreTests::persistenceErrorSinkIsMandatory() {
+    using Store = sak::ai::AiHumanGateStore;
+    QVERIFY(!CanAppendWithoutErrorSink<Store>);
+    QVERIFY(!CanLoadWithoutErrorSink<Store>);
+    QVERIFY(!CanFindPendingWithoutErrorSink<Store>);
+    QVERIFY(!CanUseNullErrorSink<Store>);
+}
+
 void AiHumanGateStoreTests::persistedRecordCarriesTheDocumentedKeys() {
     // The log was proved to EXIST at the right path, and nothing ever looked inside it. Every
     // field assertion above travels appendGate -> toJson -> fromJson -> accessor, i.e. the SAME
@@ -110,7 +167,7 @@ void AiHumanGateStoreTests::persistedRecordCarriesTheDocumentedKeys() {
     gate.metadata[QStringLiteral("preview")] = QStringLiteral("choco install test");
 
     QString error;
-    QVERIFY2(store.appendGate(gate, &error), qPrintable(error));
+    QVERIFY2(store.appendGate(gate, error), qPrintable(error));
 
     QFile log(store.gateLogPath());
     QVERIFY(log.open(QIODevice::ReadOnly | QIODevice::Text));
@@ -178,8 +235,8 @@ void AiHumanGateStoreTests::appendGatePreservesCallerSuppliedTimestamps() {
     gate.resolved_utc = resolved;
 
     QString error;
-    QVERIFY2(store.appendGate(gate, &error), qPrintable(error));
-    const auto gates = store.loadGates(&error);
+    QVERIFY2(store.appendGate(gate, error), qPrintable(error));
+    const auto gates = store.loadGates(error);
     QVERIFY2(error.isEmpty(), qPrintable(error));
     QCOMPARE(gates.size(), 1);
     // Exact values, to the millisecond: the serializer is ISODateWithMs, so a precision loss
@@ -223,11 +280,11 @@ void AiHumanGateStoreTests::latestPendingGateIgnoresResolvedGates() {
     // to be ignored. Writing gate_2 FIRST puts gate_1's stale pending record LATER in the log,
     // where that naive implementation returns gate_1 and the real one still returns gate_2.
     QString error;
-    QVERIFY2(store.appendGate(second, &error), qPrintable(error));
-    QVERIFY2(store.appendGate(first, &error), qPrintable(error));
-    QVERIFY2(store.appendGate(first_resolved, &error), qPrintable(error));
+    QVERIFY2(store.appendGate(second, error), qPrintable(error));
+    QVERIFY2(store.appendGate(first, error), qPrintable(error));
+    QVERIFY2(store.appendGate(first_resolved, error), qPrintable(error));
 
-    const auto pending = store.latestPendingGate(&error);
+    const auto pending = store.latestPendingGate(error);
     QVERIFY2(error.isEmpty(), qPrintable(error));
     QCOMPARE(pending.gate_id, QStringLiteral("gate_2"));
     QCOMPARE(pending.run_id, QStringLiteral("run_2"));
@@ -243,7 +300,7 @@ void AiHumanGateStoreTests::latestPendingGateIgnoresResolvedGates() {
     // All three records stay in the append-only log, in order. loadGates must not drop the
     // resolved one, or gate_1's stale pending record becomes its latest state and an
     // already-approved gate is re-raised on the next start.
-    const auto all_records = store.loadGates(&error);
+    const auto all_records = store.loadGates(error);
     QVERIFY2(error.isEmpty(), qPrintable(error));
     QCOMPARE(all_records.size(), 3);
     QCOMPARE(all_records.at(0).gate_id, QStringLiteral("gate_2"));
@@ -272,14 +329,14 @@ void AiHumanGateStoreTests::latestPendingGateKeysOnGateIdAndPrefersTheNewest() {
     gate_b.question = QStringLiteral("Second question?");
 
     QString error;
-    QVERIFY2(store.appendGate(gate_a, &error), qPrintable(error));
-    QVERIFY2(store.appendGate(gate_b, &error), qPrintable(error));
+    QVERIFY2(store.appendGate(gate_a, error), qPrintable(error));
+    QVERIFY2(store.appendGate(gate_b, error), qPrintable(error));
 
     // TWO gates pending at once -- the only arrangement in which the scan's DIRECTION is
     // observable. latestPendingGate scans backwards precisely so the NEWEST unanswered gate wins;
     // with a single pending gate the forward and reverse scans return the same record, so
     // "latest" -- the entire meaning of the function's name -- was unpinned.
-    const auto newest = store.latestPendingGate(&error);
+    const auto newest = store.latestPendingGate(error);
     QVERIFY2(error.isEmpty(), qPrintable(error));
     QCOMPARE(newest.gate_id, QStringLiteral("gate_b"));
     QCOMPARE(newest.question, QStringLiteral("Second question?"));
@@ -290,9 +347,9 @@ void AiHumanGateStoreTests::latestPendingGateKeysOnGateIdAndPrefersTheNewest() {
     sak::ai::AiHumanGate gate_a_done = gate_a;
     gate_a_done.status = sak::ai::humanGateApprovedStatus();
     gate_a_done.decision = QStringLiteral("approved");
-    QVERIFY2(store.appendGate(gate_a_done, &error), qPrintable(error));
+    QVERIFY2(store.appendGate(gate_a_done, error), qPrintable(error));
 
-    const auto still_pending = store.latestPendingGate(&error);
+    const auto still_pending = store.latestPendingGate(error);
     QVERIFY2(error.isEmpty(), qPrintable(error));
     QCOMPARE(still_pending.gate_id, QStringLiteral("gate_b"));
     QVERIFY(still_pending.isPending());
@@ -318,18 +375,17 @@ void AiHumanGateStoreTests::everyResolvingStatusRetiresAPendingGate() {
         QVERIFY(temp_dir.isValid());
         sak::ai::AiHumanGateStore store(temp_dir.path());
 
-        const sak::ai::AiHumanGate pending = makeGate(QStringLiteral("gate_x"),
-                                                      QStringLiteral("run_x"));
+        sak::ai::AiHumanGate pending = makeGate(QStringLiteral("gate_x"), QStringLiteral("run_x"));
         sak::ai::AiHumanGate resolved = pending;
         resolved.status = status;
 
         QString error;
-        QVERIFY2(store.appendGate(pending, &error), qPrintable(error));
+        QVERIFY2(store.appendGate(pending, error), qPrintable(error));
         // Control: it really is pending until the resolving record lands.
-        QCOMPARE(store.latestPendingGate(&error).gate_id, QStringLiteral("gate_x"));
-        QVERIFY2(store.appendGate(resolved, &error), qPrintable(error));
+        QCOMPARE(store.latestPendingGate(error).gate_id, QStringLiteral("gate_x"));
+        QVERIFY2(store.appendGate(resolved, error), qPrintable(error));
 
-        const auto latest = store.latestPendingGate(&error);
+        const auto latest = store.latestPendingGate(error);
         QVERIFY2(error.isEmpty(), qPrintable(error));
         QVERIFY2(latest.gate_id.isEmpty(),
                  qPrintable(
@@ -357,10 +413,10 @@ void AiHumanGateStoreTests::latestPendingGateIgnoresStatuslessForgedRecord() {
     forged.status = QStringLiteral("bogus_state");  // not a known lifecycle status
 
     QString error;
-    QVERIFY2(store.appendGate(pending, &error), qPrintable(error));
-    QVERIFY2(store.appendGate(forged, &error), qPrintable(error));
+    QVERIFY2(store.appendGate(pending, error), qPrintable(error));
+    QVERIFY2(store.appendGate(forged, error), qPrintable(error));
 
-    const auto latest = store.latestPendingGate(&error);
+    const auto latest = store.latestPendingGate(error);
     QCOMPARE(latest.gate_id, QStringLiteral("gate_forge"));
     QVERIFY(latest.isPending());
     QCOMPARE(latest.status, sak::ai::humanGateWaitingStatus());
@@ -373,7 +429,7 @@ void AiHumanGateStoreTests::latestPendingGateIgnoresStatuslessForgedRecord() {
     // in the log verbatim, so the test cannot pass merely because appendGate refused to write
     // it or the parser dropped it on load -- both of which would silently truncate the audit
     // history instead.
-    const auto records = store.loadGates(&error);
+    const auto records = store.loadGates(error);
     QCOMPARE(records.size(), 2);
     QCOMPARE(records.at(0).gate_id, QStringLiteral("gate_forge"));
     QCOMPARE(records.at(0).status, sak::ai::humanGateWaitingStatus());
@@ -405,16 +461,16 @@ void AiHumanGateStoreTests::forgedStatusNearMissesDoNotResolveAGate() {
         QVERIFY(temp_dir.isValid());
         sak::ai::AiHumanGateStore store(temp_dir.path());
 
-        const sak::ai::AiHumanGate pending = makeGate(QStringLiteral("gate_forge"),
-                                                      QStringLiteral("run_1"));
+        sak::ai::AiHumanGate pending = makeGate(QStringLiteral("gate_forge"),
+                                                QStringLiteral("run_1"));
         sak::ai::AiHumanGate forged_record = pending;
         forged_record.status = status;
 
         QString error;
-        QVERIFY2(store.appendGate(pending, &error), qPrintable(error));
-        QVERIFY2(store.appendGate(forged_record, &error), qPrintable(error));
+        QVERIFY2(store.appendGate(pending, error), qPrintable(error));
+        QVERIFY2(store.appendGate(forged_record, error), qPrintable(error));
 
-        const auto latest = store.latestPendingGate(&error);
+        const auto latest = store.latestPendingGate(error);
         QVERIFY2(error.isEmpty(), qPrintable(error));
         QVERIFY2(latest.gate_id == QStringLiteral("gate_forge") && latest.isPending(),
                  qPrintable(QStringLiteral("a record with status '%1' resolved a genuine "

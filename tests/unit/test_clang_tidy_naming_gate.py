@@ -155,6 +155,9 @@ class ClangTidyNamingGateTests(unittest.TestCase):
                 core_dir.mkdir(parents=True)
                 gui_dir.mkdir(parents=True)
                 include_dir.mkdir()
+                (core_dir / "core_sample.cpp").write_text("int core_sample = 0;\n", encoding="ascii")
+                (gui_dir / "gui_sample.cpp").write_text("int gui_sample = 0;\n", encoding="ascii")
+                (include_dir / "sample.h").write_text("#pragma once\n", encoding="ascii")
                 (root / "build-tidy").mkdir()
                 entries = [
                     {
@@ -225,6 +228,38 @@ class ClangTidyNamingGateTests(unittest.TestCase):
                     core_entries = [core_entries]
                 self.assertEqual(len(core_entries), 1)
                 self.assertIn("/src/core/", core_entries[0]["file"].replace("\\", "/"))
+
+    def test_analysis_database_prunes_deleted_source_entries(self) -> None:
+        for shell in powershells():
+            with self.subTest(shell=Path(shell).name), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source_dir = root / "src" / "gui"
+                source_dir.mkdir(parents=True)
+                live = source_dir / "live.cpp"
+                missing = source_dir / "removed.cpp"
+                live.write_text("int live = 0;\n", encoding="ascii")
+                (root / "build-tidy").mkdir()
+                entries = [
+                    {"directory": str(root), "command": "cl /c live.cpp", "file": str(live)},
+                    {
+                        "directory": str(root),
+                        "command": "cl /c removed.cpp",
+                        "file": str(missing),
+                    },
+                ]
+                (root / "build-tidy" / "compile_commands.json").write_text(
+                    json.dumps(entries), encoding="utf-8"
+                )
+
+                result = run_script(shell, RUN_CLANG_TIDY, "-Root", str(root), "-PrepareOnly")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn("stale missing-source entries pruned: 1", result.stdout)
+                prepared = json.loads(
+                    (root / "build-tidy-fp" / "compile_commands.json").read_text(encoding="utf-8")
+                )
+                if isinstance(prepared, dict):
+                    prepared = [prepared]
+                self.assertEqual([entry["file"] for entry in prepared], [str(live)])
 
     def test_healthy_expected_translation_unit_count_passes(self) -> None:
         for shell in powershells():

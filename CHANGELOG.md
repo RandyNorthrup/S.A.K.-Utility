@@ -8,6 +8,54 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **AI persistence and MCP contracts hardened** - Human-gate persistence now requires an error
+  sink, returns generated ids/timestamps to its caller, and carries read warnings into generated
+  reports. Mutation leases are process-wide across every manager instance and never time-expire;
+  only the exact bearer release or process restart can unblock another mutation. MCP HTTP is
+  non-instantiable and self-contained; redundant test-only payload wrappers and the unused model
+  default helper are removed. Persistent stdio discovery now validates every tool descriptor,
+  follows bounded cursor pagination, reports live server state, keys sub-minimum timeouts by their
+  effective value, rejects inherited mutable environments, and refuses empty tool names before
+  allocating a pool slot. The legacy one-shot stdio fallback, transport, test, and unsupported-
+  platform branches are removed; missing pool wiring fails closed. Separate old-code drills cover
+  generated gate state, mandatory non-null error sinks, time-based lease APIs, multi-manager
+  overlap, pool validation/keying, malformed discovery, first-page-only discovery, resource/cursor
+  limits, null cursors, and stale process liveness.
+
+- **Detached GUI launch failures surfaced** - Advanced Search Explorer-open, File Explorer
+  Notepad-edit, Partition Manager BitLocker/Optimize, and Space Analyzer location launches now
+  check the existing trusted detached-tool seam. Immediate launch failure produces a plain-text,
+  accessible warning and a logged failure; Advanced Search and File Explorer also publish status
+  feedback. The process fault injector now covers detached tools, and one structural test pins all
+  five GUI guards. Five separate old-code drills turn that test red.
+
+- **Staged VM certification capture batch unified** - File Recovery, destructive ext filesystem
+  VM proof, and offline BIOS BCD-break native commands now use the shared ProcessStartInfo seam.
+  Existing command records, accepted exit codes, cleanup decisions, destructive identity guards,
+  and indefinite waits remain unchanged; process-start failure terminates. Their local launchers
+  stage `process_capture.ps1` beside each runner, and File Recovery now hash-verifies both required
+  helpers before UAC while pinning `fsutil.exe` to System32. File Recovery no longer retries the
+  obsolete fsutil form without the NTFS argument: setup failure terminates, and restore failure is
+  recorded as an explicit cleanup error. Three separate capture drills plus the fallback drill
+  went red under Windows PowerShell 5.1; the complete contract passes under both PowerShell hosts.
+
+- **Analyzer and review-ledger failures now propagate** - Standalone clang-tidy runs return real
+  analyzer/tool failures; the naming health gate opts into a narrowly bounded findings-measurement
+  mode while still rejecting non-finding tool exits. Review units now hash filtered local
+  working-tree bytes, refresh dirty targets during `next` and `status`, preserve invalidated review
+  evidence, reject missing targets, and bind each mark to the exact post-review blob. Clean units
+  reuse one batch index inventory while only dirty units are rehashed. Batch reviews also hash the
+  exact target before and after Codex, permit unrelated concurrent edits, stop on target mutation
+  or any ledger failure, resolve npm PowerShell launchers through the current host, reject
+  unsupported command types, and use bounded shared duplex process capture with standard input.
+  Clang-tidy analysis now prunes deleted-source entries from a stale compilation database instead
+  of failing on a file no longer in the product. Runtime skip audit derives its expected Qt logs
+  from CTest JSON registration, ignores stale removed-test logs, and fails if any current log is
+  missing.
+  Registered PS7/PS5.1 tests pin clean, findings-only, analyzer-failure, ledger-success/failure,
+  dirty-target invalidation, same-status-row mutation, missing-target, exact-blob, batch hashing,
+  launcher resolution, large duplex pipes, stdin, success, and timeout paths.
+
 - **R5 direct skip tail closed and review ledger advanced** - All 15 remaining directly fixable
   QSKIP sites are replaced by deterministic seams/fixtures. The 25 surviving sites are the proven
   external, privileged, destructive, paid, or live-service interlocks; static inventory is 25

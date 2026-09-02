@@ -1,5 +1,5 @@
 {
-  "head_commit": "bb9c376fdfcc6b4ce9a63f47ae6bd848aae61e2c",
+  "head_commit": "1d007ff54b3eec5a2bcb6d92d5865e488030538f",
   "unit_rule": "include/**.h|.hpp, src/**.cpp|.h|.hpp, tests/**.cpp|.h|.mjs, scripts/**.py|.ps1|.sh, browser/**.js",
   "units": {
     "browser/extension/background.js": {
@@ -193,16 +193,31 @@
       "status": "reviewed"
     },
     "include/sak/ai/ai_human_gate_store.h": {
+      "brief": "docs/review_briefs/include_sak_ai_ai_human_gate_store.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "previous_evidence": "driver",
+      "previous_review_blob": "6640a3c994e18d70f23f19368db903e496260b6b",
+      "reviewed_blob": "73f4290bd6be74aa3b185563b12c27b6ca1ba5ad",
+      "status": "reviewed"
     },
     "include/sak/ai/ai_lease_manager.h": {
+      "brief": "docs/review_briefs/include_sak_ai_ai_lease_manager.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "previous_evidence": "driver",
+      "previous_review_blob": "b41c377e69104099382d90112632e16a0a2858e4",
+      "reviewed_blob": "fed3fe91ce406ac7de5181e66f27b34139bae958",
+      "status": "reviewed"
     },
     "include/sak/ai/ai_mcp_http_client.h": {
+      "brief": "docs/review_briefs/include_sak_ai_ai_mcp_http_client.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "previous_evidence": "driver",
+      "previous_review_blob": "ac4f4d33c7e19fa02d211aeb66553ff0a3ef3ff0",
+      "reviewed_blob": "a7c68384af928023c6f88c2df30420650cee3ed7",
+      "status": "reviewed"
     },
     "include/sak/ai/ai_mcp_jsonrpc.h": {
       "evidence": "cited",
@@ -211,28 +226,47 @@
       "status": "reviewed"
     },
     "include/sak/ai/ai_mcp_session_pool.h": {
+      "brief": "docs/review_briefs/include_sak_ai_ai_mcp_session_pool.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
-    },
-    "include/sak/ai/ai_mcp_stdio_client.h": {
-      "group": "include",
-      "status": "pending"
+      "previous_evidence": "driver",
+      "previous_review_blob": "168d6d30e97bf75e13448ff85d33a554a1152c7e",
+      "reviewed_blob": "6754754d400b838b46b3acd0d3686ba4e756e400",
+      "status": "reviewed"
     },
     "include/sak/ai/ai_mcp_stdio_session.h": {
+      "brief": "docs/review_briefs/include_sak_ai_ai_mcp_stdio_session.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "previous_evidence": "driver",
+      "previous_review_blob": "0811c5f0c91e144143e5408dd05f898ee349ca6f",
+      "reviewed_blob": "72a5639ee7759ee375d178c03d807782c22d03de",
+      "status": "reviewed"
     },
     "include/sak/ai/ai_model_catalog.h": {
+      "brief": "docs/review_briefs/include_sak_ai_ai_model_catalog.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "previous_evidence": "driver",
+      "previous_review_blob": "d779300484b019dc70865d782924516bc3b5c09a",
+      "reviewed_blob": "5ee88c2808ca200ecc1013678fbf9f03b2a92639",
+      "status": "reviewed"
     },
     "include/sak/ai/ai_offline_downloader_tool_runner.h": {
+      "brief": "docs/review_briefs/include_sak_ai_ai_offline_downloader_tool_runner.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "previous_evidence": "driver",
+      "previous_review_blob": "98401fba78b5ec3257a604fcc28c56f83a252d5c",
+      "reviewed_blob": "84a1da3da40b9f7e0272e0e58250d310bf4bbd31",
+      "status": "reviewed"
     },
     "include/sak/ai/ai_openai_model_client.h": {
+      "brief": "docs/review_briefs/include_sak_ai_ai_openai_model_client.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": "c8d9dfa25728f673cbffc070d33134ee196786a4",
+      "status": "reviewed"
     },
     "include/sak/ai/ai_orchestrator.h": {
       "group": "include",
@@ -2231,6 +2265,10 @@
       "reviewed_blob": "b598122fb7421618c21d8e48bc4ffd3149c2d1ff",
       "status": "reviewed"
     },
+    "scripts/test_false_green_command_propagation.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
     "scripts/test_file_management_live_certifier_gate.ps1": {
       "group": "scripts",
       "status": "pending"
@@ -2263,6 +2301,10 @@
       "status": "pending"
     },
     "scripts/test_rehearse_ci_paths.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/test_review_ledger_batch_hashing.py": {
       "group": "scripts",
       "status": "pending"
     },
@@ -2446,12 +2488,6 @@
     "src/ai/ai_mcp_session_pool.cpp": {
       "group": "src",
       "status": "pending"
-    },
-    "src/ai/ai_mcp_stdio_client.cpp": {
-      "evidence": "cited",
-      "group": "src",
-      "reviewed_blob": null,
-      "status": "reviewed"
     },
     "src/ai/ai_mcp_stdio_session.cpp": {
       "evidence": "cited",
@@ -4194,10 +4230,6 @@
       "status": "pending"
     },
     "tests/unit/test_ai_mcp_session_pool.cpp": {
-      "group": "tests",
-      "status": "pending"
-    },
-    "tests/unit/test_ai_mcp_stdio_client.cpp": {
       "group": "tests",
       "status": "pending"
     },

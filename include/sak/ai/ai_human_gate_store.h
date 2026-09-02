@@ -19,9 +19,12 @@ public:
     [[nodiscard]] QString sessionDirectory() const;
     [[nodiscard]] QString gateLogPath() const;
 
-    [[nodiscard]] bool appendGate(AiHumanGate gate, QString* error_message = nullptr) const;
-    [[nodiscard]] QVector<AiHumanGate> loadGates(QString* error_message = nullptr) const;
-    [[nodiscard]] AiHumanGate latestPendingGate(QString* error_message = nullptr) const;
+    /// Appends @p gate after filling any missing generated id/timestamps in the caller's object.
+    /// The error sink is mandatory: persistence failure or an incomplete read must never be
+    /// indistinguishable from a valid empty gate history.
+    [[nodiscard]] bool appendGate(AiHumanGate& gate, QString& error_message) const;
+    [[nodiscard]] QVector<AiHumanGate> loadGates(QString& error_message) const;
+    [[nodiscard]] AiHumanGate latestPendingGate(QString& error_message) const;
 
 private:
     QString m_session_dir;

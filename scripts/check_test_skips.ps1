@@ -60,6 +60,7 @@
 [CmdletBinding()]
 param(
     [string]$ResultsDir,
+    [string]$RegistrationJsonPath,
     [switch]$UpdateBaseline,
     [switch]$StaticOnly
 )
@@ -239,12 +240,60 @@ if (-not (Test-Path -LiteralPath $ResultsDir)) {
 
 Write-Section 'Parsing per-test logs'
 
-$logs = @(Get-ChildItem -LiteralPath $ResultsDir -Filter '*.txt' -File)
-if ($logs.Count -eq 0) {
-    Write-Host "FAIL: no per-test logs in $ResultsDir." -ForegroundColor Red
-    Write-Host 'Every add_test must pass -o "<dir>/<name>.txt,txt"; see tests/CMakeLists.txt.' -ForegroundColor Red
-    exit 1
+function Read-RegisteredQtLogNames {
+    if ($RegistrationJsonPath) {
+        if (-not (Test-Path -LiteralPath $RegistrationJsonPath -PathType Leaf)) {
+            throw "CTest registration JSON not found: $RegistrationJsonPath"
+        }
+        $registrationText = Get-Content -Raw -LiteralPath $RegistrationJsonPath
+    } else {
+        $ctest = Get-Command ctest -ErrorAction Stop
+        $buildDir = Split-Path -Parent $ResultsDir
+        $registrationText = (& $ctest.Source --test-dir $buildDir -C Release `
+            --show-only=json-v1) -join "`n"
+        if ($LASTEXITCODE -ne 0) {
+            throw "ctest registration query failed with exit code $LASTEXITCODE"
+        }
+    }
+    $registration = $registrationText | ConvertFrom-Json
+    $names = [System.Collections.Generic.HashSet[string]]::new(
+        [StringComparer]::OrdinalIgnoreCase)
+    $resultsFull = [IO.Path]::GetFullPath($ResultsDir).TrimEnd('\', '/')
+    foreach ($test in @($registration.tests)) {
+        $command = @($test.command)
+        for ($index = 0; $index -lt $command.Count - 1; $index++) {
+            if ($command[$index] -ne '-o') { continue }
+            $outputSpec = [string]$command[$index + 1]
+            if (-not $outputSpec.EndsWith(',txt', [StringComparison]::OrdinalIgnoreCase)) {
+                continue
+            }
+            $outputPath = $outputSpec.Substring(0, $outputSpec.Length - 4)
+            if ($outputPath -eq '-') { continue }
+            $outputFull = [IO.Path]::GetFullPath($outputPath)
+            if ([IO.Path]::GetDirectoryName($outputFull).TrimEnd('\', '/') -ne $resultsFull) {
+                continue
+            }
+            if ([IO.Path]::GetFileNameWithoutExtension($outputFull) -ne [string]$test.name) {
+                throw "CTest log name does not match registered test '$($test.name)': $outputFull"
+            }
+            $null = $names.Add([string]$test.name)
+        }
+    }
+    if ($names.Count -eq 0) {
+        throw 'CTest registration exposes no Qt per-test logs; refusing an empty skip audit'
+    }
+    return $names
 }
+
+$registeredQtLogs = Read-RegisteredQtLogNames
+$allLogs = @(Get-ChildItem -LiteralPath $ResultsDir -Filter '*.txt' -File)
+$logs = @($allLogs | Where-Object {
+        $registeredQtLogs.Contains([IO.Path]::GetFileNameWithoutExtension($_.Name))
+    })
+$staleLogCount = $allLogs.Count - $logs.Count
+$missingLogs = @($registeredQtLogs | Where-Object {
+        -not (Test-Path -LiteralPath (Join-Path $ResultsDir "$_.txt") -PathType Leaf)
+    } | Sort-Object)
 
 $skipRe = '^SKIP\s+:\s*(?<func>\S+)\s*(?<reason>.*)$'
 $totalsRe = '^Totals:\s*(?<passed>\d+)\s+passed,\s*(?<failed>\d+)\s+failed,\s*(?<skipped>\d+)\s+skipped'
@@ -291,6 +340,7 @@ foreach ($name in $totals.Keys) {
 Write-Host ''
 Write-Host 'SUITE SKIP SUMMARY' -ForegroundColor Yellow
 Write-Host "  per-test logs found         : $($logs.Count)"
+Write-Host "  stale removed-test logs ignored: $staleLogCount"
 Write-Host "  test functions passed       : $totalPassed"
 Write-Host "  test functions skipped      : $totalSkipped"
 Write-Host "  distinct skipping functions : $($observed.Count)"
@@ -368,6 +418,13 @@ if (-not (Test-Path -LiteralPath $baselinePath)) {
 }
 
 $failures = 0
+
+if ($missingLogs.Count -gt 0) {
+    $failures += $missingLogs.Count
+    Write-Host ''
+    Write-Host "REGISTERED QT TESTS WITH NO LOG ($($missingLogs.Count)):" -ForegroundColor Red
+    foreach ($name in $missingLogs) { Write-Host "  $name" -ForegroundColor Red }
+}
 
 if ($noTotals.Count -gt 0) {
     $failures += $noTotals.Count

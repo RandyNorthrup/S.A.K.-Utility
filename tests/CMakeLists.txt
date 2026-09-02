@@ -2736,14 +2736,12 @@ add_executable(test_ai_provider_gateway
     ../src/ai/ai_provider_registry.cpp
     ../src/ai/ai_mcp_http_client.cpp
     ../src/ai/ai_mcp_session_pool.cpp
-    ../src/ai/ai_mcp_stdio_client.cpp
     ../src/ai/ai_mcp_stdio_session.cpp
     ../include/sak/ai/ai_provider_gateway.h
     ../include/sak/ai/ai_provider_gateway_authorization.h
     ../include/sak/ai/ai_provider_registry.h
     ../include/sak/ai/ai_mcp_http_client.h
     ../include/sak/ai/ai_mcp_session_pool.h
-    ../include/sak/ai/ai_mcp_stdio_client.h
     ../include/sak/ai/ai_mcp_stdio_session.h
 )
 set_target_properties(test_ai_provider_gateway PROPERTIES
@@ -3138,26 +3136,6 @@ add_test(NAME test_ai_mcp_http_client COMMAND test_ai_mcp_http_client
          -o "${TEST_OUTPUT_DIR}/test_ai_mcp_http_client.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_ai_mcp_http_client")
-
-add_executable(test_ai_mcp_stdio_client
-    unit/test_ai_mcp_stdio_client.cpp
-    ../src/ai/ai_mcp_stdio_client.cpp
-    ../include/sak/ai/ai_mcp_stdio_client.h
-)
-set_target_properties(test_ai_mcp_stdio_client PROPERTIES
-    AUTOMOC ON
-    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-)
-target_link_libraries(test_ai_mcp_stdio_client PRIVATE
-    Qt6::Core Qt6::Test
-)
-target_include_directories(test_ai_mcp_stdio_client PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include
-)
-add_test(NAME test_ai_mcp_stdio_client COMMAND test_ai_mcp_stdio_client
-         -o "${TEST_OUTPUT_DIR}/test_ai_mcp_stdio_client.txt,txt" -o -,txt
-         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-message(STATUS "Added unit test: test_ai_mcp_stdio_client")
 
 add_executable(test_ai_mcp_stdio_session
     unit/test_ai_mcp_stdio_session.cpp
@@ -7742,6 +7720,17 @@ if(PLATFORM_WINDOWS)
                      -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_new_partition_manager_automation_vm_security.ps1")
     set_tests_properties(
         test_new_partition_manager_automation_vm_security_windows_powershell PROPERTIES TIMEOUT 120)
+
+    add_test(NAME test_false_green_command_propagation
+             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_false_green_command_propagation.ps1")
+    set_tests_properties(test_false_green_command_propagation PROPERTIES TIMEOUT 60)
+
+    add_test(NAME test_false_green_command_propagation_windows_powershell
+             COMMAND "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_false_green_command_propagation.ps1")
+    set_tests_properties(
+        test_false_green_command_propagation_windows_powershell PROPERTIES TIMEOUT 60)
 
     add_test(NAME test_startup_budget
              COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive

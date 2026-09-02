@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/ai/ai_mcp_session_pool.h"
+#include "sak/layout_constants.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -10,13 +11,31 @@
 #include <QProcessEnvironment>
 #include <QtTest/QtTest>
 
+namespace {
+
+template <typename Pool>
+concept CanCallWithoutErrorSink =
+    requires(Pool& pool, const sak::ai::AiMcpStdioCallRequest& request) { pool.callTool(request); };
+
+template <typename Pool>
+concept CanUseNullErrorSink = requires(Pool& pool, const sak::ai::AiMcpStdioCallRequest& request) {
+    pool.callTool(request, nullptr);
+    pool.listTools(request, nullptr);
+};
+
+}  // namespace
+
 class AiMcpSessionPoolTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
     void keyIsolatesCommandAndEnvironment();
     void keyIsolatesTimeout();
+    void keyNormalizesSubminimumTimeout();
+    void errorSinkIsMandatoryAndNonNull();
     void emptyCommandRejected();
+    void emptyToolRejectedBeforePoolUse();
+    void inheritedEnvironmentRejectedBeforePoolUse();
     void missingCommandFailsCleanlyAndCloses();
     void liveWin32McpReuseAndIsolation_optIn();
 
@@ -32,6 +51,12 @@ private:
                 .timeout_ms = 4000};
     }
 };
+
+void AiMcpSessionPoolTests::errorSinkIsMandatoryAndNonNull() {
+    using Pool = sak::ai::AiMcpSessionPool;
+    QVERIFY(!CanCallWithoutErrorSink<Pool>);
+    QVERIFY(!CanUseNullErrorSink<Pool>);
+}
 
 void AiMcpSessionPoolTests::keyIsolatesCommandAndEnvironment() {
     using Pool = sak::ai::AiMcpSessionPool;
@@ -85,15 +110,55 @@ void AiMcpSessionPoolTests::keyIsolatesTimeout() {
     QCOMPARE(Pool::sessionKeyForTesting(base), Pool::sessionKeyForTesting(same));
 }
 
+void AiMcpSessionPoolTests::keyNormalizesSubminimumTimeout() {
+    using Pool = sak::ai::AiMcpSessionPool;
+    auto zero = requestWith(QStringLiteral("srv.exe"), QStringLiteral("read_only"));
+    zero.timeout_ms = 0;
+    auto below_minimum = zero;
+    below_minimum.timeout_ms = sak::kMillisecondsPerSecond - 1;
+    auto at_minimum = zero;
+    at_minimum.timeout_ms = sak::kMillisecondsPerSecond;
+    auto above_minimum = zero;
+    above_minimum.timeout_ms = sak::kMillisecondsPerSecond + 1;
+
+    QCOMPARE(sak::ai::AiMcpStdioSession::effectiveRequestTimeoutMs(zero.timeout_ms),
+             sak::kMillisecondsPerSecond);
+    QCOMPARE(Pool::sessionKeyForTesting(zero), Pool::sessionKeyForTesting(below_minimum));
+    QCOMPARE(Pool::sessionKeyForTesting(zero), Pool::sessionKeyForTesting(at_minimum));
+    QVERIFY(Pool::sessionKeyForTesting(zero) != Pool::sessionKeyForTesting(above_minimum));
+}
+
 void AiMcpSessionPoolTests::emptyCommandRejected() {
     sak::ai::AiMcpSessionPool pool;
     sak::ai::AiMcpStdioCallRequest request;
     request.tool_name = QStringLiteral("list_windows");
     QString error;
-    QVERIFY(pool.callTool(request, &error).isEmpty());
+    QVERIFY(pool.callTool(request, error).isEmpty());
     // Fail closed with the exact empty-command message.
     QCOMPARE(error, QStringLiteral("MCP stdio command is empty"));
     QCOMPARE(pool.pooledSlotCount(), 0);  // nothing was cached
+}
+
+void AiMcpSessionPoolTests::emptyToolRejectedBeforePoolUse() {
+    sak::ai::AiMcpSessionPool pool;
+    auto request = requestWith(QStringLiteral("missing-server.exe"), QStringLiteral("read_only"));
+    request.tool_name = QStringLiteral("   ");
+
+    QString error;
+    QVERIFY(pool.callTool(request, error).isEmpty());
+    QCOMPARE(error, QStringLiteral("MCP tool name is empty"));
+    QCOMPARE(pool.pooledSlotCount(), 0);
+}
+
+void AiMcpSessionPoolTests::inheritedEnvironmentRejectedBeforePoolUse() {
+    sak::ai::AiMcpSessionPool pool;
+    auto request = requestWith(QStringLiteral("missing-server.exe"), QStringLiteral("read_only"));
+    request.environment = QProcessEnvironment(QProcessEnvironment::InheritFromParent);
+
+    QString error;
+    QVERIFY(pool.callTool(request, error).isEmpty());
+    QCOMPARE(error, QStringLiteral("MCP session pool requires an explicit process environment"));
+    QCOMPARE(pool.pooledSlotCount(), 0);
 }
 
 void AiMcpSessionPoolTests::missingCommandFailsCleanlyAndCloses() {
@@ -106,11 +171,11 @@ void AiMcpSessionPoolTests::missingCommandFailsCleanlyAndCloses() {
                                      QStringLiteral("read_only"));
 
     QString error;
-    QVERIFY(pool.callTool(request, &error).isEmpty());
+    QVERIFY(pool.callTool(request, error).isEmpty());
     QVERIFY(!error.isEmpty());
 
     error.clear();
-    QVERIFY(pool.listTools(request, &error).isEmpty());
+    QVERIFY(pool.listTools(request, error).isEmpty());
     QVERIFY(!error.isEmpty());
 
     pool.closeAll();
@@ -143,7 +208,7 @@ void AiMcpSessionPoolTests::liveWin32McpReuseAndIsolation_optIn() {
 
     // Two calls with the same command+env must REUSE one pooled session.
     for (int i = 0; i < 2; ++i) {
-        const QJsonObject message = pool.callTool(request, &error);
+        const QJsonObject message = pool.callTool(request, error);
         QVERIFY2(error.isEmpty(), qPrintable(error));
         QVERIFY(!message.value(QStringLiteral("result")).toObject().isEmpty());
     }
@@ -151,7 +216,7 @@ void AiMcpSessionPoolTests::liveWin32McpReuseAndIsolation_optIn() {
 
     // Discovery over the same pooled session must advertise the win32 catalog's own tools, not just
     // "some non-empty list" -- pin a known base tool.
-    const auto tools = pool.listTools(request, &error);
+    const auto tools = pool.listTools(request, error);
     const bool has_list_windows =
         std::any_of(tools.cbegin(), tools.cend(), [](const sak::ai::AiMcpToolDescriptor& t) {
             return t.name == QLatin1String("list_windows");
@@ -164,7 +229,7 @@ void AiMcpSessionPoolTests::liveWin32McpReuseAndIsolation_optIn() {
     full.insert(QStringLiteral("WIN32_MCP_SECURITY_PROFILE"), QStringLiteral("full"));
     sak::ai::AiMcpStdioCallRequest full_request = request;
     full_request.environment = full;
-    QVERIFY2(!pool.callTool(full_request, &error).isEmpty(), qPrintable(error));
+    QVERIFY2(!pool.callTool(full_request, error).isEmpty(), qPrintable(error));
     QCOMPARE(pool.pooledSlotCount(), 2);
 
     pool.closeAll();

@@ -51,6 +51,8 @@ param(
     # which disables naming while debt remains; the core clean-file ratchet explicitly uses the
     # root config so readability-identifier-naming is observable there.
     [string]$ConfigFile = ""
+    ,[switch]$AllowAnalyzerFindings
+    ,[ValidateRange(-1, 255)] [int]$AnalyzerExitCodeForTesting = -1
 )
 
 $ErrorActionPreference = "Stop"
@@ -102,11 +104,20 @@ try {
     $seen = [System.Collections.Generic.HashSet[string]]::new()
     $kept = [System.Collections.Generic.List[object]]::new()
     $removedDriverFlags = 0
+    $prunedMissingSources = 0
     foreach ($e in $entries) {
         $f = ($e.file -replace '\\', '/')
         if ($f -notmatch $want -or $f -match $skip) { continue }
         if ($IncludeFilter -and $f -notmatch $IncludeFilter) { continue }
         if ($ExcludeFilter -and $f -match $ExcludeFilter) { continue }
+        $sourcePath = [string]$e.file
+        if (-not [IO.Path]::IsPathRooted($sourcePath)) {
+            $sourcePath = Join-Path ([string]$e.directory) $sourcePath
+        }
+        if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
+            $prunedMissingSources++
+            continue
+        }
         $key = $f.ToLowerInvariant()
         if ($seen.Add($key)) {
             $removedDriverFlags += Remove-AnalysisIncompatibleDriverFlags -Entry $e
@@ -123,9 +134,21 @@ try {
         [System.Text.UTF8Encoding]::new($false))
     Write-Host "first-party translation units: $($kept.Count)"
     Write-Host "analysis-only driver flags removed: $removedDriverFlags"
+    Write-Host "stale missing-source entries pruned: $prunedMissingSources"
 
     if ($PrepareOnly) {
         Write-Host "analysis compilation database prepared: $fpDir"
+        return
+    }
+
+    if ($AnalyzerExitCodeForTesting -ge 0) {
+        if (-not $LogPath) { $LogPath = Join-Path $Root "$FirstPartyDir/clang-tidy.log" }
+        Set-Content -LiteralPath $LogPath -Value 'injected analyzer result' -Encoding ascii
+        $code = $AnalyzerExitCodeForTesting
+        Write-Host "run-clang-tidy injected exit $code"
+        if ($code -ne 0 -and (-not $AllowAnalyzerFindings -or $code -ne 1)) {
+            exit $code
+        }
         return
     }
 
@@ -165,7 +188,10 @@ try {
     Write-Host "running clang-tidy (checks='$Checks' fix=$Fix) -> $LogPath"
     & cmd.exe /c $cmd *> $LogPath
     $code = $LASTEXITCODE
-    Write-Host "run-clang-tidy exit $code (non-zero simply means findings remain; see $LogPath)"
+    Write-Host "run-clang-tidy exit $code (see $LogPath)"
+    if ($code -ne 0 -and (-not $AllowAnalyzerFindings -or $code -ne 1)) {
+        exit $code
+    }
 }
 finally {
     Pop-Location

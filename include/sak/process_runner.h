@@ -91,12 +91,11 @@ struct ProcessStreamingRequest {
 
 /// @brief Test-only fault-injection seam for the process launchers (R5-G14-17).
 ///
-/// When an injector is installed, EVERY process launch -- runProcess,
-/// runProcessWithEnvironment, runPowerShell and runProcessStreaming all funnel through one
-/// internal runner -- consults it FIRST. If the injector returns a ProcessResult, that result
-/// is returned WITHOUT launching any process: the exact mid-operation failure (a non-zero
-/// exit, a timeout, a crash-exit, truncated output) a test needs a caller's failure path to
-/// actually execute. Returning nullopt lets the real launch proceed (pass-through). The
+/// When an injector is installed, EVERY process launch -- runProcess, runProcessWithEnvironment,
+/// runPowerShell, runProcessStreaming, and the two trusted detached-tool launchers -- consults it
+/// first. If the injector returns a ProcessResult, that result is returned WITHOUT launching any
+/// process; detached launchers map completedSuccessfully() to their bool result. Returning nullopt
+/// lets the real launch proceed (pass-through). The
 /// default is no injector, so production pays a single null check and behaves identically;
 /// production code never installs one. Install through ScopedProcessFaultInjector so an armed
 /// injector can never leak out of a test into the next.

@@ -1458,16 +1458,42 @@ a parked design, per the bucket convention. Open work is what remains after thos
   hooks passed; naming passed 151/151 non-core TUs clean and 156/156 core TUs healthy with 5,266
   findings and 16 clean TUs; full clang-cl coverage build exit 0; Release build exit 0; full CTest
   272/272, zero failures, 655.99 seconds.
+  FALSE-GREEN/DETACHED-LAUNCH/VM-CAPTURE/AI-LEASE-MCP WAVE 27: standalone clang-tidy and every
+  review-ledger subprocess now propagate failures. The ledger hashes filtered working-tree bytes,
+  refreshes changed units during `next`/`status`, binds marks to the exact reviewed blob, preserves
+  invalidated evidence and hashes only dirty units after one batch index inventory. The driver
+  compares the exact target before/after each bounded Codex call, resolves the npm PowerShell
+  launcher through the current host, and shared capture drains both pipes before stdin and kills a
+  timed-out descendant tree through pinned System32 taskkill. Four dual-shell registered tests and
+  14 isolated old-code drills cover these paths; a real 10-second Codex timeout returned in 12.126
+  seconds with zero orphan processes, no brief and no false mark. Five ignored GUI detached-launch
+  results now surface accessible logged warnings. File Recovery, destructive ext-filesystem and
+  offline BIOS BCD-break certification commands use shared capture, stage required helpers, and no
+  longer retry legacy fsutil syntax. Human-gate persistence returns generated identity/timestamps,
+  requires non-null error sinks and carries incomplete-read warnings into reports. Mutation leases
+  are one process-wide optional active lease across every manager instance and never time-expire;
+  only exact bearer release or process restart unblocks another mutation. MCP HTTP/session/pool
+  failure sinks are non-null references; persistent discovery validates descriptors, follows
+  bounded pagination, rejects cursor cycles/null cursors/tool/page overrun and mutable inherited
+  environments, and reports server exit. The legacy one-shot stdio fallback/transport/test and
+  unsupported-platform branches are removed; missing pool wiring fails closed. The static QSKIP
+  inventory is 24 sites across 9 files, all external/privileged/destructive/paid/live interlocks.
+  The exact ledger now holds 1,063 units, 627 pending and 47 self-verifying driver reviews; current
+  registered suite size is 273. Runtime skip audit reads 247 currently registered Qt logs, ignores
+  19 stale removed-test logs, and records 4,936 passed functions / 27 reviewed skips (0.54 percent)
+  with none stale or unreviewed. The naming gate passes 150/150 non-core TUs clean and 156/156 core
+  TUs healthy with 5,268 measured findings and 16 ratcheted-clean TUs. All whole-tree pre-commit
+  hooks pass; Release build exit 0; full CTest 273/273, zero failures, 648.16 seconds.
   SUPPRESSION RE-AUDIT REFRESH, 2026-09-01 through 2026-09-02: core naming remains broadly excluded
-  while 5,266 findings are tracked as open and 16 clean TUs are ratcheted. The coverage compiler
+  while 5,268 findings are tracked as open and 16 clean TUs are ratcheted. The coverage compiler
   warning silences and unsupported-platform
   runtime branches are closed in Wave 20. The vendored LZFSE target still disables warnings for
   the first-party shim. The cppcheck test-scope and unreadable-
   diagnostic false greens are closed in Wave 19. Another 26
   `Q_UNUSED` and 22 `(void)` warning silences formerly in unsupported-OS branches are removed.
-  This refresh found 157 QSKIP call sites; Waves 21, 23, 24, 25 and 26 reduced the live static
-  inventory to 25 across 10 files while the observed baseline covers 28 reviewed functions. The
-  latest audit classifies zero remaining sites as direct-fix candidates and all 25 as genuinely
+  This refresh found 157 QSKIP call sites; Waves 21, 23, 24, 25, 26 and 27 reduced the live static
+  inventory to 24 across 9 files while the observed baseline covers 27 reviewed functions. The
+  latest audit classifies zero remaining sites as direct-fix candidates and all 24 as genuinely
   external, privileged, destructive, paid or live-service cases. Wave 22 reduced Partition Manager
   run/launch `SilentlyContinue` paths to zero and ratchets that state.
   The APFS follow-on document's stale cppcheck-suppression count is corrected. None of the
@@ -1478,8 +1504,8 @@ a parked design, per the bucket convention. Open work is what remains after thos
   last resort only after no direct fix is possible and the exact reason is proven. Existing
   suppressions are re-audited, not inherited as permanent policy. Current batch: all pre-commit
   hooks passed; Release build exit 0; full CTest 265/265, zero failures, 804.48 seconds.
-  STILL OPEN: core's 5,266 naming findings; the 294-item `useStlAlgorithm` program; remaining
-  directly closable fixture/resource skips; broad magic-number exemptions; the wider mutation/
+  STILL OPEN: core's 5,268 naming findings; the 294-item `useStlAlgorithm` program; broad
+  magic-number exemptions; the wider mutation/
   fresh-host test-infra program; and the historical VM credential rotation/history-rewrite
   decision.
   DIRECT-FIX WAVE 1 FINAL GATE: all changed-file pre-commit hooks passed; Release build exit 0;
@@ -1876,7 +1902,8 @@ in progress (started slice by slice); NOTHING is deferred.
   - Fix: Make the scanner a minimal PS lexer that skips double-quoted strings, comments (#, <#..#>) and here-strings, or wrap+escape the value at substitution instead of trusting placement.
 - [x] **R5-P1-5** [LOW] [PARTIAL] Descendant containment best-effort; persistent MCP session uses no Job Object
   - RESOLVED 2026-08-11 [already-correct]: persistent MCP session already uses a KILL_ON_JOB_CLOSE Job Object (assignProcessToJob); stale checkbox.
-  - Files: src/ai/ai_mcp_stdio_session.cpp:255, src/ai/ai_execution_broker.cpp:118, src/ai/ai_mcp_stdio_client.cpp:177
+  - FOLLOW-UP 2026-09-02: the legacy one-shot stdio transport is removed. Persistent session open now refuses before protocol traffic when kill-on-close Job Object containment cannot be established; no best-effort execution fallback remains.
+  - Files: src/ai/ai_mcp_stdio_session.cpp, src/ai/ai_execution_broker.cpp:118
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: Broker (118-165) and one-shot stdio client (177) use a KILL_ON_JOB_CLOSE Job Object with a documented snapshot-walk fallback when it cannot be established. Real residual: AiMcpStdioSession::stopProcess (255) uses only terminateProcessTree and early-returns on NotRunning, with NO Job Object -- a server that shells out then self-exits before close leaves orphaned grandchildren the parent-PID walk cannot find.
   - Fix: Give the persistent session the same KILL_ON_JOB_CLOSE Job Object the one-shot client uses.
@@ -1948,7 +1975,8 @@ in progress (started slice by slice); NOTHING is deferred.
   - Fix: Require exit_status == NormalExit(0) in the success expression.
 - [x] **R5-P1-23** [LOW] [ALREADY_GUARDED] MCP semaphore timeout + grace can overflow signed int
   - RESOLVED 2026-08-11 [fixed]: stdio performStdioToolCall now qBound(min,timeout,INT_MAX-grace)+grace (overflow-safe); HTTP path already clamped.
-  - Files: src/ai/ai_mcp_http_client.cpp:271, src/ai/ai_mcp_stdio_client.cpp:381
+  - FOLLOW-UP 2026-09-02: the one-shot stdio transport carrying this second path is removed; the HTTP path remains bounded.
+  - Files: src/ai/ai_mcp_http_client.cpp
   - Boundary: n/a (not-attacker-reachable)
   - Evidence: tryAcquire(1, timeout_ms + kSemaphoreWaitGraceMs=30000) (271/381) is a raw int add, but upstream MCP timeouts are clamped far below INT_MAX -- kWin32McpMaximumTimeoutMs=7,200,000ms (provider_gateway.cpp:32); overflow needs ~2.1e9ms (~24 days). Not reachable in practice.
   - Fix: Clamp/qMin the timeout before adding the grace to make the bound explicit.
@@ -7998,7 +8026,7 @@ So the suite itself must be audited for tests that pass regardless of the code.
     identical; and call_id was asserted on the happy path only, though the runner turns a
     mismatched id into a hard broken-execution.
     ai_lease_manager: release() returns bool and every test in the tree DISCARDED it -- yet the
-    dispatcher's lease_reclaimed_midop breach detection, which stamps a mutation as failed because
+    dispatcher's lease-release breach detection, which stamps a mutation as failed because
     its exclusivity was violated mid-flight, fires only when that answer is false. The steady-clock
     reclaim arm (the backstop for a wall clock moved BACKWARD, which would otherwise wedge every
     mutating action behind an abandoned lease until restart) was never the sole reason a lease was
@@ -8987,7 +9015,7 @@ So the suite itself must be audited for tests that pass regardless of the code.
     -Dslots= shredding production code. Proving the wrong fix wrong is what found both.
   - PROGRESS 2026-08-24 FIRST-pass sweep b80 (gated 249/249): 13 weak assertions pinned across the
     last six never-swept files (follow_scroll_controller 4, ai_model_catalog 2, deadline_canceller
-    2, email_view_ids 2, ai_mcp_stdio_client 2, splash_screen 1). THIS CLOSES THE NEVER-SWEPT
+    2, email_view_ids 2, former ai_mcp_stdio_client 2, splash_screen 1). THIS CLOSED THE THEN-LIVE NEVER-SWEPT
     SURFACE: of the 41 unit-test files no G18-4 commit had ever touched, 40 are now swept and one
     (fuzz_command_classifier) was verified CLEAN by the b75 adversarial pass.
     CORRECTION 2026-08-24: that closure claim covers tests/unit/*.cpp only. The enumeration behind
@@ -9010,7 +9038,7 @@ So the suite itself must be audited for tests that pass regardless of the code.
     0, so every bottom assertion in the file passed if the 80 appended lines happened not to
     overflow the viewport -- and nothing asserted that they did. The tests now pin the scrollbar
     value against its maximum and require the maximum to be positive.
-    ai_mcp_stdio_client: the initialize handshake was checked on four fields, leaving
+    former ai_mcp_stdio_client (removed in Wave 27): the initialize handshake was checked on four fields, leaving
     protocolVersion, capabilities and clientInfo.version unasserted -- blanking them sends a
     handshake with no protocol revision, which this codebase's own session transport treats as
     fatal on the response side. And the tool-call arguments object is a VERBATIM pass-through

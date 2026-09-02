@@ -697,7 +697,7 @@ private:
                                                         const QString& decision,
                                                         const QString& response_summary,
                                                         const QJsonObject& metadata) const;
-    void appendHumanGateRecord(const ai::AiHumanGate& gate);
+    void appendHumanGateRecord(ai::AiHumanGate gate);
     void clearPendingGateIfResolved(const ai::AiHumanGate& gate);
     void registerToolDispatcherHandlers();
     [[nodiscard]] bool ensureToolDispatcherReady();

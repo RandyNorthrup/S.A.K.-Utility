@@ -5,7 +5,8 @@
 
 param(
     [ValidateSet("all", "file-management", "allocate-free-space", "bitlocker",
-        "os-migration-vbox", "os-migration-screenshot", "linux-metadata", "vm-data")]
+        "os-migration-vbox", "os-migration-screenshot", "linux-metadata", "vm-data",
+        "file-recovery", "ext-filesystem-vm", "offline-bios-bcd")]
     [string]$MigrationCase = "all"
 )
 
@@ -57,6 +58,24 @@ Assert-Equal $captured.stdout "stdout marker" "Standard output was not captured"
 Assert-Equal $captured.stderr "stderr marker" "Standard error was not captured"
 Assert-True (-not $captured.timed_out) "Completed child was reported as timed out"
 
+$stdinCaptured = Invoke-CapturedProcess -FilePath $shell -Arguments @(
+    "-NoProfile", "-NonInteractive", "-Command", "[Console]::In.ReadToEnd()"
+) -InputText "stdin marker" -AllowedExitCodes @(0)
+Assert-Equal $stdinCaptured.stdout "stdin marker" "Standard input was not delivered"
+
+$pipePayloadSize = 131072
+$pipeInput = 'i' * $pipePayloadSize
+$duplexCaptured = Invoke-CapturedProcess -FilePath $shell -Arguments @(
+    "-NoProfile", "-NonInteractive", "-Command",
+    "[Console]::Out.Write(('o' * $pipePayloadSize)); " +
+        "[Console]::Out.Flush(); " +
+        "[Console]::Out.Write([Console]::In.ReadToEnd())"
+) -InputText $pipeInput -TimeoutSeconds 10 -AllowedExitCodes @(0)
+Assert-True (-not $duplexCaptured.timed_out) "Duplex output/stdin child deadlocked"
+Assert-Equal $duplexCaptured.stdout.Length ($pipePayloadSize * 2) (
+    "Duplex output/stdin payload was truncated"
+)
+
 $allowedRejected = $false
 try {
     Invoke-CapturedProcess -FilePath $shell -Arguments @(
@@ -81,6 +100,28 @@ $timed = Invoke-CapturedProcess -FilePath $shell -Arguments @(
     "-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Seconds 5"
 ) -TimeoutSeconds 1
 Assert-True $timed.timed_out "Timeout did not terminate and flag the child"
+
+$escapedShell = $shell.Replace("'", "''")
+$treeCommand = @"
+`$child = Start-Process -FilePath '$escapedShell' -ArgumentList @(
+    '-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 30'
+) -PassThru -WindowStyle Hidden
+Write-Output `$child.Id
+Start-Sleep -Seconds 30
+"@
+$treeTimed = Invoke-CapturedProcess -FilePath $shell -Arguments @(
+    "-NoProfile", "-NonInteractive", "-Command", $treeCommand
+) -TimeoutSeconds 1
+Assert-True $treeTimed.timed_out "Process-tree timeout was not reported"
+$descendantPid = [int]$treeTimed.stdout
+$descendantAlive = $true
+try {
+    [void][System.Diagnostics.Process]::GetProcessById($descendantPid)
+}
+catch [System.ArgumentException] {
+    $descendantAlive = $false
+}
+Assert-True (-not $descendantAlive) "Timed-out descendant process remained alive"
 
 $migrationCases = @(
     @{
@@ -195,6 +236,66 @@ $migrationCases = @(
             '$LASTEXITCODE',
             'SilentlyContinue'
         )
+    },
+    @{
+        name = "file-recovery"
+        path = "scripts/run_partition_manager_file_recovery_external_gate.ps1"
+        required = @(
+            '. (Join-Path $PSScriptRoot "process_capture.ps1")',
+            '$captured = Invoke-CapturedProcess -FilePath $FilePath -Arguments $Arguments',
+            '$captured.exit_code',
+            '$captured.stdout',
+            '$captured.stderr',
+            '$FsutilExe = Join-Path ([System.Environment]::SystemDirectory) "fsutil.exe"',
+            '-FilePath $FsutilExe',
+            'Failed to disable NTFS DisableDeleteNotify with modern fsutil syntax',
+            'Failed to restore NTFS DisableDeleteNotify with modern fsutil syntax'
+        )
+        legacy = @(
+            '$output = & $FilePath @Arguments 2>&1',
+            '$ErrorActionPreference = "Continue"',
+            '$LASTEXITCODE',
+            'SilentlyContinue',
+            '$disableDeleteNotifyLegacy',
+            '$restoreDeleteNotifyLegacy',
+            '@("behavior", "set", "DisableDeleteNotify", "1")',
+            '@("behavior", "set", "DisableDeleteNotify", "0")',
+            "Do not trust either set's exit code"
+        )
+    },
+    @{
+        name = "ext-filesystem-vm"
+        path = "scripts/run_partition_manager_ext_filesystem_vm_gate.ps1"
+        required = @(
+            '. (Join-Path $PSScriptRoot "process_capture.ps1")',
+            '$captured = Invoke-CapturedProcess -FilePath $FilePath -Arguments $Arguments',
+            '$captured.exit_code',
+            '$captured.stdout',
+            '$captured.stderr'
+        )
+        legacy = @(
+            '$output = & $FilePath @Arguments 2>&1',
+            '$ErrorActionPreference = "Continue"',
+            '$LASTEXITCODE',
+            'SilentlyContinue'
+        )
+    },
+    @{
+        name = "offline-bios-bcd"
+        path = "scripts/run_partition_manager_offline_bios_bcd_break.ps1"
+        required = @(
+            '. (Join-Path $PSScriptRoot "process_capture.ps1")',
+            '$captured = Invoke-CapturedProcess -FilePath $FilePath -Arguments $Arguments',
+            '$captured.exit_code',
+            '$captured.stdout',
+            '$captured.stderr'
+        )
+        legacy = @(
+            '$output = & $FilePath @Arguments 2>&1',
+            '$ErrorActionPreference = "Continue"',
+            '$LASTEXITCODE',
+            'SilentlyContinue'
+        )
     }
 )
 foreach ($case in $migrationCases) {
@@ -217,6 +318,35 @@ if ($MigrationCase -eq "all" -or $MigrationCase -eq "vm-data") {
         -RelativePath "scripts/launch_partition_manager_vm_data_external_gates_local.ps1" `
         -RequiredPatterns @(
             'run_partition_manager_vm_data_external_gates.ps1',
+            'process_capture.ps1'
+        ) -LegacyPatterns @()
+}
+if ($MigrationCase -eq "all" -or $MigrationCase -eq "file-recovery") {
+    Assert-CaptureMigration -Name "file-recovery-launcher" `
+        -RelativePath "scripts/launch_partition_manager_file_recovery_external_gate_local.ps1" `
+        -RequiredPatterns @(
+            'run_partition_manager_file_recovery_external_gate.ps1',
+            'partition_manager_storage.ps1',
+            'process_capture.ps1',
+            '$stagedStorageHash = Copy-VerifiedStagedFile',
+            '$stagedCaptureHash = Copy-VerifiedStagedFile'
+        ) -LegacyPatterns @()
+}
+if ($MigrationCase -eq "all" -or $MigrationCase -eq "ext-filesystem-vm") {
+    Assert-CaptureMigration -Name "ext-filesystem-vm-launcher" `
+        -RelativePath "scripts/launch_partition_manager_ext_filesystem_vm_gate_local.ps1" `
+        -RequiredPatterns @(
+            'run_partition_manager_ext_filesystem_vm_gate.ps1',
+            'partition_manager_storage.ps1',
+            'process_capture.ps1'
+        ) -LegacyPatterns @()
+}
+if ($MigrationCase -eq "all" -or $MigrationCase -eq "offline-bios-bcd") {
+    Assert-CaptureMigration -Name "offline-bios-bcd-launcher" `
+        -RelativePath "scripts/launch_partition_manager_offline_bios_bcd_break_local.ps1" `
+        -RequiredPatterns @(
+            'run_partition_manager_offline_bios_bcd_break.ps1',
+            'partition_manager_storage.ps1',
             'process_capture.ps1'
         ) -LegacyPatterns @()
 }

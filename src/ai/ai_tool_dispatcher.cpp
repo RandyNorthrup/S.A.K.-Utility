@@ -421,11 +421,7 @@ bool AiToolDispatcher::acquireLeaseForDispatch(DispatchOutcome* outcome,
             request, QStringLiteral("Mutating lease required but no lease manager is configured"));
         return false;
     }
-    const auto acquire =
-        m_lease_manager->acquire(agent_id,
-                                 QStringList{request.tool_name},
-                                 QStringLiteral("system_change"),
-                                 outcome->policy_decision.requires_exclusive_lease);
+    const auto acquire = m_lease_manager->acquire(agent_id);
     if (acquire.granted) {
         *lease_id = acquire.lease.lease_id;
         outcome->lease_id = *lease_id;
@@ -447,18 +443,12 @@ void AiToolDispatcher::releaseLeaseForDispatch(DispatchOutcome* outcome,
         return;
     }
     // release() reports false only when the id is no longer held. A lease id minted for this
-    // dispatch carries an unguessable token no other agent can present, so the only way it can
-    // vanish while THIS handler was running is the manager's TTL sweep reclaiming it as
-    // "abandoned" -- the exact hazard behind this finding: a still-executing handler is not
-    // proof the holder stopped, yet the TTL treated it as such and freed the lease. A second
-    // agent may have acquired a fresh lease and mutated concurrently, so the exclusive-mutation
-    // guarantee was broken for THIS call. Fail closed: never report a mutation whose exclusivity
-    // was violated mid-flight as a clean success. Preserve any handler diagnostics but stamp the
-    // breach over the top so triage and the health circuit breaker both see the real failure.
-    outcome->lease_reclaimed_midop = true;
+    // dispatch carries an unguessable token no other agent can present. A missing lease therefore
+    // means internal ownership was violated; fail closed and never report the mutation as clean.
+    outcome->lease_release_failed = true;
     outcome->result[QStringLiteral("success")] = false;
-    outcome->result[QStringLiteral("lease_reclaimed_midop")] = true;
-    outcome->result[QStringLiteral("failure_class")] = QStringLiteral("lease_reclaimed_midop");
+    outcome->result[QStringLiteral("lease_release_failed")] = true;
+    outcome->result[QStringLiteral("failure_class")] = QStringLiteral("lease_release_failed");
     outcome->result[QStringLiteral("tool_name")] = request.tool_name;
     outcome->result[QStringLiteral("operation")] = request.operation;
     outcome->result[QStringLiteral("error_message")] =

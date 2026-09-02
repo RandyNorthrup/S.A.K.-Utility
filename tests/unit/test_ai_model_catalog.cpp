@@ -28,11 +28,12 @@ void TestAiModelCatalog::catalogIsExactlyTheThreeGpt56Models() {
 }
 
 void TestAiModelCatalog::defaultIsSol() {
-    QCOMPARE(sak::defaultOpenAiModel(), QStringLiteral("gpt-5.6-sol"));
+    const QStringList models = sak::supportedOpenAiModels();
+    QVERIFY(!models.isEmpty());
+    const QString& default_model = models.first();
+    QCOMPARE(default_model, QStringLiteral("gpt-5.6-sol"));
     // The default must be a member of the catalog.
-    QVERIFY(sak::isSupportedOpenAiModel(sak::defaultOpenAiModel()));
-    // The default is the first offered item (drives the picker's initial value).
-    QCOMPARE(sak::supportedOpenAiModels().first(), sak::defaultOpenAiModel());
+    QVERIFY(sak::isSupportedOpenAiModel(default_model));
 }
 
 void TestAiModelCatalog::membershipAcceptsSupported() {

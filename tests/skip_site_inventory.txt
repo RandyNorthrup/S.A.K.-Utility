@@ -11,7 +11,6 @@
 tests/integration/test_offline_package_builder.cpp = 1 | initial opt-out for live Chocolatey service/CDN integration
 tests/unit/test_ai_assistant_panel_tool_dispatch.cpp = 4 | file-symlink privilege and destructive certification
 tests/unit/test_ai_mcp_session_pool.cpp = 1 | opt-in live Win32 MCP session
-tests/unit/test_ai_mcp_stdio_client.cpp = 1 | opt-in live Win32 MCP client
 tests/unit/test_ai_mcp_stdio_session.cpp = 1 | opt-in live Win32 MCP session
 tests/unit/test_file_management_file_system.cpp = 2 | external raw APFS/HFS certification images
 tests/unit/test_linux_iso_downloader.cpp = 1 | initial opt-out for live Linux ISO network tests

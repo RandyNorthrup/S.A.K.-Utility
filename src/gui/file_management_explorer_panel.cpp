@@ -5818,13 +5818,22 @@ void FileManagementExplorerPanel::editSelectionInNotepad() {
         return;
     }
     const FileExplorerSelection selection = currentSelection();
+    bool launch_failed = false;
     for (const FileManagementEntry& entry : selection.entries) {
         if (entry.regular_file) {
             // Absolute System32 notepad.exe; unresolvable -> open nothing rather than let
             // CreateProcess find a notepad.exe on the search path.
-            (void)sak::startDetachedSystem32Tool(QStringLiteral("notepad.exe"),
-                                                 {QDir::toNativeSeparators(entry.path)});
+            if (!sak::startDetachedSystem32Tool(QStringLiteral("notepad.exe"),
+                                                {QDir::toNativeSeparators(entry.path)})) {
+                launch_failed = true;
+                logMessage(tr("Notepad launch failed: %1").arg(entry.path));
+            }
         }
+    }
+    if (launch_failed) {
+        const QString failure = tr("Could not open one or more selected files in Notepad.");
+        Q_EMIT statusMessage(failure, sak::kTimerStatusDefaultMs);
+        sak::showWarningLogged(this, tr("Edit in Notepad"), failure);
     }
 }
 

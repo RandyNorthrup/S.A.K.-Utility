@@ -255,7 +255,7 @@ private Q_SLOTS:
     // R5-G18-4: jsonRpcLineResultIsUnambiguous only proves SOME reason was set -- the corpus
     // carries one seed per refusal branch (jsonRpcCorpus, lines 63-66) but the invariant cannot
     // tell which branch fired. The ceiling branch is pinned byte-exact above; pin the other two
-    // the same way, because the reason is what callers surface (ai_mcp_stdio_client.cpp:244
+    // the same way, because the reason is what callers surface (the persistent stdio session
     // hands it straight to fail()).
     void jsonRpcLineRefusalReasonNamesTheBranch() {
         // Valid JSON, but an ARRAY: refused by the !doc.isObject() arm of the two-arm guard

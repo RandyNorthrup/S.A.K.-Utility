@@ -50,6 +50,23 @@ function Join-ProcessArguments([string[]]$Arguments) {
         }) -join ' '
 }
 
+function Stop-CapturedProcessTree([System.Diagnostics.Process]$Process) {
+    if ($Process.HasExited) {
+        return
+    }
+    $taskkillPath = Join-Path ([System.Environment]::SystemDirectory) 'taskkill.exe'
+    if (-not (Test-Path -LiteralPath $taskkillPath -PathType Leaf)) {
+        throw "Cannot terminate timed-out process tree; taskkill.exe is missing: $taskkillPath"
+    }
+    $terminationOutput = @(& $taskkillPath /PID ([string]$Process.Id) /T /F 2>&1)
+    $terminationExitCode = $LASTEXITCODE
+    $Process.Refresh()
+    if ($terminationExitCode -ne 0 -and -not $Process.HasExited) {
+        throw "Failed to terminate timed-out process tree $($Process.Id) " +
+            "(taskkill exit $terminationExitCode): $($terminationOutput -join ' ')"
+    }
+}
+
 function Invoke-CapturedProcess {
     [CmdletBinding()]
     param(
@@ -59,7 +76,8 @@ function Invoke-CapturedProcess {
         [string]$WorkingDirectory = "",
         [ValidateRange(0, 2147483)]
         [int]$TimeoutSeconds = 0,
-        [int[]]$AllowedExitCodes = @()
+        [int[]]$AllowedExitCodes = @(),
+        [AllowNull()][string]$InputText = $null
     )
 
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
@@ -69,6 +87,8 @@ function Invoke-CapturedProcess {
     $startInfo.CreateNoWindow = $true
     $startInfo.RedirectStandardOutput = $true
     $startInfo.RedirectStandardError = $true
+    $hasInput = $null -ne $InputText
+    $startInfo.RedirectStandardInput = $hasInput
     if (-not [string]::IsNullOrWhiteSpace($WorkingDirectory)) {
         $startInfo.WorkingDirectory = $WorkingDirectory
     }
@@ -82,6 +102,10 @@ function Invoke-CapturedProcess {
     try {
         $stdoutTask = $process.StandardOutput.ReadToEndAsync()
         $stderrTask = $process.StandardError.ReadToEndAsync()
+        if ($hasInput) {
+            $process.StandardInput.Write($InputText)
+            $process.StandardInput.Close()
+        }
         $timedOut = $false
         if ($TimeoutSeconds -gt 0) {
             $timedOut = -not $process.WaitForExit($TimeoutSeconds * 1000)
@@ -90,7 +114,7 @@ function Invoke-CapturedProcess {
         }
 
         if ($timedOut) {
-            try { $process.Kill() } catch { }
+            Stop-CapturedProcessTree -Process $process
             if (-not $process.WaitForExit(5000)) {
                 throw "Timed-out process did not terminate: $FilePath (pid $($process.Id))"
             }

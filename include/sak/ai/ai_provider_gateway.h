@@ -34,10 +34,8 @@ public:
 
     explicit AiProviderGateway(AiProviderRegistry registry = AiProviderRegistry{});
 
-    /// Inject a persistent MCP session pool (owned by the caller). When set,
-    /// callWin32Mcp routes through it so the server process is reused across calls;
-    /// when null, callWin32Mcp falls back to the one-shot AiMcpStdioClient (a fresh
-    /// process per call). Not owned; must outlive this gateway.
+    /// Inject the required persistent MCP session pool. Missing wiring makes Win32 MCP calls fail
+    /// closed. Not owned; must outlive this gateway.
     void setMcpSessionPool(AiMcpSessionPool* pool) { m_mcp_pool = pool; }
 
     [[nodiscard]] QJsonObject providers(QString* error_message = nullptr) const;

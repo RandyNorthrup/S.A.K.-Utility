@@ -6,6 +6,7 @@
 #include "sak/ai/ai_tool_policy.h"
 
 #include <QJsonDocument>
+#include <QRegularExpression>
 #include <QtTest/QtTest>
 
 class AiToolDispatcherTests : public QObject {
@@ -190,10 +191,7 @@ void AiToolDispatcherTests::exclusiveLeaseBlocksConcurrentMutating() {
                                    return ok;
                                });
 
-    const auto acquire = leases.acquire(QStringLiteral("other_agent"),
-                                        QStringList{QStringLiteral("run_powershell")},
-                                        QStringLiteral("system_change"),
-                                        true);
+    const auto acquire = leases.acquire(QStringLiteral("other_agent"));
     QVERIFY(acquire.granted);
 
     sak::ai::AiToolCallRequest request;
@@ -233,7 +231,7 @@ void AiToolDispatcherTests::exclusiveLeaseBlocksConcurrentMutating() {
         QString::fromUtf8(QJsonDocument(outcome.result).toJson(QJsonDocument::Compact));
     QVERIFY2(!serialized_result.contains(acquire.lease.lease_id), qPrintable(serialized_result));
 
-    leases.release(acquire.lease.lease_id);
+    QVERIFY(leases.release(acquire.lease.lease_id));
 }
 
 void AiToolDispatcherTests::leaseReleasedAfterDispatch() {
@@ -255,18 +253,20 @@ void AiToolDispatcherTests::leaseReleasedAfterDispatch() {
     const auto outcome = dispatcher.dispatch(
         sak::ai::AiToolPolicy::PackageToolsOnly, request, {}, QStringLiteral("package_agent"));
     QVERIFY(outcome.dispatched);
-    // A clean release leaves the handler's result untouched; the reclaimed-midop path would have
-    // stamped success:false + lease_reclaimed_midop over the top, so pinning the whole payload
+    // A clean release leaves the handler's result untouched; the failed-release path would have
+    // stamped success:false + lease_release_failed over the top, so pinning the whole payload
     // proves this dispatch took the normal branch.
-    QVERIFY(!outcome.lease_reclaimed_midop);
+    QVERIFY(!outcome.lease_release_failed);
     const QJsonObject expected_result{{QStringLiteral("success"), true}};
     QCOMPARE(outcome.result, expected_result);
-    // The id is minted "lease_<4-digit counter>_<16 hex random>": the counter half is
-    // deterministic for the first lease of a fresh manager, the token half only in width.
-    QVERIFY2(outcome.lease_id.startsWith(QStringLiteral("lease_0001_")),
-             qPrintable(outcome.lease_id));
+    // The id is minted "lease_<4-digit process counter>_<16 hex random>". A process-global
+    // counter deliberately does not reset for each manager wiring handle.
+    const QRegularExpression lease_shape(QStringLiteral("^lease_[0-9]{4}_[0-9a-f]{16}$"));
+    QVERIFY2(lease_shape.match(outcome.lease_id).hasMatch(), qPrintable(outcome.lease_id));
     QCOMPARE(outcome.lease_id.size(), 27);
-    QCOMPARE(leases.activeLeaseCount(), 0);
+    const auto after_release = leases.acquire(QStringLiteral("after_release"));
+    QVERIFY(after_release.granted);
+    QVERIFY(leases.release(after_release.lease.lease_id));
 }
 
 void AiToolDispatcherTests::availabilityCheckerBlocksBeforeHandler() {

@@ -64,17 +64,24 @@ New-Item -ItemType Directory -Path $StageRoot -Force | Out-Null
 $localScript = Join-Path $StageRoot "run_partition_manager_offline_bios_bcd_break.ps1"
 $sharedStorageHelper = Join-Path $SharedRoot "scripts\partition_manager_storage.ps1"
 $localStorageHelper = Join-Path $StageRoot "partition_manager_storage.ps1"
+$sharedCaptureHelper = Join-Path $SharedRoot "scripts\process_capture.ps1"
+$localCaptureHelper = Join-Path $StageRoot "process_capture.ps1"
 Assert-NoReparsePoint -Path $localScript -Name "Staged runner"
 Copy-Item -LiteralPath (Join-Path $SharedRoot "scripts\run_partition_manager_offline_bios_bcd_break.ps1") -Destination $localScript -Force
 Copy-Item -LiteralPath $sharedStorageHelper -Destination $localStorageHelper -Force
+Copy-Item -LiteralPath $sharedCaptureHelper -Destination $localCaptureHelper -Force
 if (-not (Test-Path -LiteralPath $localScript -PathType Leaf)) {
     throw "Runner was not staged: $localScript"
 }
 if (-not (Test-Path -LiteralPath $localStorageHelper -PathType Leaf)) {
     throw "Storage helper was not staged: $localStorageHelper"
 }
+if (-not (Test-Path -LiteralPath $localCaptureHelper -PathType Leaf)) {
+    throw "Process-capture helper was not staged: $localCaptureHelper"
+}
 Assert-NoReparsePoint -Path $localScript -Name "Staged runner"
 Assert-NoReparsePoint -Path $localStorageHelper -Name "Staged storage helper"
+Assert-NoReparsePoint -Path $localCaptureHelper -Name "Staged process-capture helper"
 
 $argumentList = @(
     "-NoProfile",

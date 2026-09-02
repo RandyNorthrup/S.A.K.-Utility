@@ -27,6 +27,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "process_capture.ps1")
 . (Join-Path $PSScriptRoot "partition_manager_storage.ps1")
 
 function Test-IsAdmin {
@@ -75,29 +76,19 @@ function Invoke-NativeCommand {
     )
 
     $started = Get-Date
-    $oldPreference = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
-    $exitCode = $null
-    try {
-        $output = & $FilePath @Arguments 2>&1
-        $exitCode = $LASTEXITCODE
-    }
-    finally {
-        $ErrorActionPreference = $oldPreference
-    }
+    $captured = Invoke-CapturedProcess -FilePath $FilePath -Arguments $Arguments
+    $capturedOutput = @($captured.stdout, $captured.stderr)
+    $exitCode = [int]$captured.exit_code
     $record = [pscustomobject]@{
         name = $Name
         file_path = $FilePath
         arguments = $Arguments
-        exit_code = if ($null -eq $exitCode) { -1 } else { [int]$exitCode }
+        exit_code = $exitCode
         duration_seconds = [Math]::Round(((Get-Date) - $started).TotalSeconds, 3)
-        output = ConvertTo-PlainText -Value $output
+        output = ConvertTo-PlainText -Value $capturedOutput
     }
     $Script:Commands.Add($record) | Out-Null
-    if ($null -eq $exitCode) {
-        throw "$Name did not report an exit code (process launch failure): $FilePath. $($record.output)"
-    }
-    if ($AcceptedExitCodes -notcontains [int]$exitCode) {
+    if ($AcceptedExitCodes -notcontains $exitCode) {
         throw "$Name failed with exit code $exitCode. $($record.output)"
     }
     return $record

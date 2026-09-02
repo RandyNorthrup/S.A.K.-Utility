@@ -48,11 +48,15 @@ inline constexpr int kMaxJsonRpcMessageBytes = 16 * 1024 * 1024;
                        {QStringLiteral("params"), QJsonObject{}}};
 }
 
-[[nodiscard]] inline QJsonObject toolsListPayload(int id) {
+[[nodiscard]] inline QJsonObject toolsListPayload(int id, const QString& cursor = {}) {
+    QJsonObject params;
+    if (!cursor.isEmpty()) {
+        params[QStringLiteral("cursor")] = cursor;
+    }
     return QJsonObject{{QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
                        {QStringLiteral("id"), id},
                        {QStringLiteral("method"), QStringLiteral("tools/list")},
-                       {QStringLiteral("params"), QJsonObject{}}};
+                       {QStringLiteral("params"), params}};
 }
 
 [[nodiscard]] inline QJsonObject toolCallPayload(int id,
@@ -66,6 +70,28 @@ inline constexpr int kMaxJsonRpcMessageBytes = 16 * 1024 * 1024;
          QJsonObject{{QStringLiteral("name"), tool_name},
                      {QStringLiteral("arguments"), arguments}}},
     };
+}
+
+/// Returns an initialize-response contract error, or an empty string for a usable result.
+[[nodiscard]] inline QString initializeResponseError(const QJsonObject& message) {
+    const QJsonValue result = message.value(QStringLiteral("result"));
+    if (!result.isObject()) {
+        return QStringLiteral("MCP initialize response is missing a result object");
+    }
+    if (result.toObject().value(QStringLiteral("protocolVersion")).toString().trimmed().isEmpty()) {
+        return QStringLiteral("MCP initialize result missing protocolVersion");
+    }
+    return {};
+}
+
+/// Returns a non-empty surfaced error for a JSON-RPC error response.
+[[nodiscard]] inline QString jsonRpcErrorMessage(const QJsonObject& message) {
+    const QString detail = message.value(QStringLiteral("error"))
+                               .toObject()
+                               .value(QStringLiteral("message"))
+                               .toString()
+                               .trimmed();
+    return detail.isEmpty() ? QStringLiteral("MCP JSON-RPC error") : detail;
 }
 
 /// Serialize one JSON-RPC object as a single newline-delimited line (the stdio
