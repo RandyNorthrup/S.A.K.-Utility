@@ -2072,13 +2072,13 @@ sak::PartitionApfsFileReadResult appendApfsListingValidation(
 
 struct ApfsReadValidation {
     QJsonObject* report{nullptr};
-    QString imagePath;
-    QString path;
+    QString imagePath{};
+    QString path{};
     uint64_t maxBytes{0};
-    QString reportKey;
-    QString failureLabel;
-    QByteArray expectedData;
-    QString mismatchMessage;
+    QString reportKey{};
+    QString failureLabel{};
+    QByteArray expectedData{};
+    QString mismatchMessage{};
     bool compareExpected{false};
 };
 

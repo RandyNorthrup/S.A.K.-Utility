@@ -128,13 +128,13 @@ struct FileManagementReadResult {
 
 struct FileManagementMutationResult {
     bool ok{false};
-    QString file_system;
-    QString path;
+    QString file_system{};
+    QString path{};
     uint64_t bytes_written{0};
-    QString before_sha256;
-    QString after_sha256;
-    QStringList blockers;
-    QStringList warnings;
+    QString before_sha256{};
+    QString after_sha256{};
+    QStringList blockers{};
+    QStringList warnings{};
 };
 
 /// @brief A rendered, display-ready preview of a file's leading bytes.

@@ -11,17 +11,13 @@
 #include <QHash>
 #include <QMutex>
 
-#ifdef Q_OS_WIN
 #include <windows.h>
 
 #include <shellapi.h>
-#endif
 
 namespace sak {
 
 namespace {
-#ifdef Q_OS_WIN
-
 // True only when the shell reports a USABLE Recycle Bin for @p volume_root. DRIVE_FIXED is
 // necessary but NOT sufficient: a fixed volume whose bin is disabled by policy still looks
 // fixed, yet FOF_ALLOWUNDO would then silently and PERMANENTLY delete. SHQueryRecycleBinW is
@@ -44,11 +40,9 @@ bool volumeRecycleBinIsUsable(LPCWSTR volume_root) {
     return usable;
 }
 
-#endif  // Q_OS_WIN
 }  // namespace
 
 bool pathVolumeHasRecycleBin(const QString& path) {
-#ifdef Q_OS_WIN
     if (path.isEmpty()) {
         return false;
     }
@@ -79,10 +73,6 @@ bool pathVolumeHasRecycleBin(const QString& path) {
     // policy, where FOF_ALLOWUNDO silently becomes a permanent delete; ask the shell for
     // the volume's actual bin and fail closed when it has none.
     return volumeRecycleBinIsUsable(volume_root);
-#else
-    Q_UNUSED(path)
-    return false;
-#endif
 }
 
 namespace {
@@ -93,8 +83,6 @@ void setRecycleError(QString* error, const QString& reason) {
         *error = reason;
     }
 }
-
-#ifdef Q_OS_WIN
 
 // Decide whether the RAW path may reach the shell at all; empty means it may.
 QString recycleInputRefusal(const QString& path) {
@@ -157,13 +145,10 @@ QString recycleOutcomeError(const SHFILEOPSTRUCTW& op, int shell_result, const Q
     return {};
 }
 
-#endif  // Q_OS_WIN
-
 }  // namespace
 
 bool sendPathToRecycleBin(const QString& path, QString* error) {
     setRecycleError(error, QString());
-#ifdef Q_OS_WIN
     // Guard the shell call before it runs.
     const QString input_refusal = recycleInputRefusal(path);
     if (!input_refusal.isEmpty()) {
@@ -196,11 +181,6 @@ bool sendPathToRecycleBin(const QString& path, QString* error) {
         return false;
     }
     return true;
-#else
-    Q_UNUSED(path)
-    setRecycleError(error, QStringLiteral("The Recycle Bin is only available on Windows."));
-    return false;
-#endif
 }
 
 }  // namespace sak

@@ -19,7 +19,6 @@
 #include <string>
 #include <vector>
 
-#ifdef _WIN32
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -33,7 +32,6 @@
 // clang-format on
 #pragma comment(lib, "wintrust.lib")
 #pragma comment(lib, "crypt32.lib")
-#endif
 
 namespace sak {
 
@@ -52,8 +50,6 @@ constexpr int kMaxVersionLength = 50;
 // official (allow_unofficial=false) install so a rogue source entry in the
 // bundled choco config cannot silently redirect the download to an attacker feed.
 constexpr char kApprovedChocoSource[] = "https://community.chocolatey.org/api/v2/";
-
-#ifdef _WIN32
 
 // True iff @p path carries a valid Authenticode signature chaining to a trusted
 // root. WinVerifyTrust is the OS's own signature/chain validation; a swapped or
@@ -150,8 +146,6 @@ QString signerSubjectName(const std::wstring& path) {
     return subject;
 }
 
-#endif  // _WIN32
-
 }  // namespace
 
 ChocolateyManager::ChocolateyManager(QObject* parent)
@@ -230,7 +224,6 @@ bool ChocolateyManager::verifyIntegrity() {
 }
 
 bool ChocolateyManager::isAuthenticChocoBinary(const QString& choco_path) {
-#ifdef _WIN32
     if (choco_path.isEmpty()) {
         return false;
     }
@@ -247,11 +240,6 @@ bool ChocolateyManager::isAuthenticChocoBinary(const QString& choco_path) {
         return false;
     }
     return true;
-#else
-    // No Authenticode facility off Windows: refuse rather than run unverified.
-    Q_UNUSED(choco_path);
-    return false;
-#endif
 }
 
 bool ChocolateyManager::verifyChocoAuthenticity() const {

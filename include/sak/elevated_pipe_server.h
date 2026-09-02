@@ -14,9 +14,7 @@
 
 #include <expected>
 
-#ifdef _WIN32
 #include <windows.h>
-#endif
 
 namespace sak {
 
@@ -164,17 +162,13 @@ private:
     /// @brief Validate the connecting client's parent PID
     [[nodiscard]] bool validateClient() const;
 
-#ifdef _WIN32
     /// @brief Verify the client PID's image path is the authorized app executable
     [[nodiscard]] bool validateClientImage(unsigned long client_pid) const;
-#endif
 
     QString m_pipe_name;
     qint64 m_parent_pid{0};
 
-#ifdef _WIN32
     HANDLE m_pipe_handle{INVALID_HANDLE_VALUE};
-#endif
 };
 
 }  // namespace sak

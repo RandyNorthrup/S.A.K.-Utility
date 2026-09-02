@@ -10,11 +10,9 @@
 
 #include <QRegularExpression>
 
-#ifdef Q_OS_WIN
 #include <windows.h>
 // wlanapi.h must follow windows.h.
 #include <wlanapi.h>
-#endif
 
 namespace sak {
 
@@ -97,8 +95,6 @@ QString wifiSecurityTypeFromProfileXml(const QString& xml) {
     // closed, and non-blank".
     return friendlyWifiAuthName(firstElementText(xml, QStringLiteral("authentication")));
 }
-
-#ifdef Q_OS_WIN
 
 namespace {
 
@@ -276,24 +272,5 @@ QVector<WifiProfileInfo> scanAllWifiProfiles(const WifiScanLogger& logger,
     reportScanOutcome(logger, scan_ok, enumeration_complete, detail_failures, profiles);
     return profiles;
 }
-
-#else   // !Q_OS_WIN
-
-QVector<WifiProfileInfo> scanAllWifiProfiles(const WifiScanLogger& logger,
-                                             bool* scan_ok,
-                                             bool include_xml,
-                                             WifiKeyMaterial key_material) {
-    Q_UNUSED(include_xml);
-    Q_UNUSED(key_material);
-    if (logger) {
-        logger(QStringLiteral("WiFi scanning is Windows-only"));
-    }
-    if (scan_ok != nullptr) {
-        *scan_ok = false;  // no WLAN API off Windows -> a failed read, never a dishonest empty
-    }
-    return {};
-}
-
-#endif  // Q_OS_WIN
 
 }  // namespace sak

@@ -1287,28 +1287,48 @@ a parked design, per the bucket convention. Open work is what remains after thos
   repinned for the shared loader, skill store, workflow store, trace store and app-action service.
   The mutation ratchet now holds 45 catalogs / 354 mutants. Release build exit 0; full CTest
   267/267, zero failures, 690.31 seconds.
+  WINDOWS-ONLY/WARNING-SILENCE/AI STORE WAVE 20: the two remaining clang-cl coverage warning
+  silences are removed. Every target in the complete coverage tree builds under `/WX`; optional
+  aggregate fields are value-initialized, and MSVC-only switches are compiler-ID gated instead of
+  hidden from clang-cl. Dead non-Windows runtime branches are removed from 20 audited modules and
+  `secure_memory`; the retained Apple code is file-format interoperability code, not a macOS app
+  path. The build-system lint rejects reintroduced platform branches and both removed warning
+  flags. The command planner now bounds aggregate Windows argv, rejects fractional timeouts and
+  hazardous Unicode in approval text, propagates policy risk, and shows the exact accessible
+  command being approved. Eight independent old-code-red drills and 6/6 catalog mutants prove the
+  planner fixes.
+  ConversationStore no longer creates a derived search index or raw-data fallback; bounded binary
+  JSONL and memory reads fail closed on malformed, truncated, oversized, changed or wrong-schema
+  input; writes enforce projected caps and rollback partial appends; usage requires a real session;
+  and artifact rename refuses merge/copy fallbacks. Its catalog now kills 7/7 mutants. Two
+  ConversationStore items remain open: bounded handle-pinned manifest/session enumeration and
+  retained artifact-directory pins against junction swaps. The source therefore remains pending
+  in the review ledger.
+  The mutation ratchet now holds 46 catalogs / 364 mutants. The review inventory holds 1,059 units,
+  657 pending, and 10 self-verifying driver reviews. All changed-file quality checks passed before
+  the final gate; full clang-cl coverage build exit 0; Release build exit 0; full CTest 267/267,
+  zero failures, 703.58 seconds.
   SUPPRESSION RE-AUDIT REFRESH, 2026-09-01: core naming remains broadly excluded while 5,271
-  findings are tracked as open; two coverage compiler warning silences remain; the vendored LZFSE
-  target also disables warnings for the first-party shim. The cppcheck test-scope and unreadable-
+  findings are tracked as open. The coverage compiler warning silences and unsupported-platform
+  runtime branches are closed in Wave 20. The vendored LZFSE target still disables warnings for
+  the first-party shim. The cppcheck test-scope and unreadable-
   diagnostic false greens are closed in Wave 19. Another 26
-  Q_UNUSED and 22 `(void)` warning silences sit in unsupported-OS branches that must be removed,
-  not retained. The live suite contains 157 QSKIP call sites, while the observed-skip baseline
+  `Q_UNUSED` and 22 `(void)` warning silences formerly in unsupported-OS branches are removed.
+  The live suite contains 157 QSKIP call sites, while the observed-skip baseline
   currently covers 35 functions; fixture-backed skips and ignored test results remain direct-fix
   candidates. Certification PowerShell `SilentlyContinue` paths require fail-closed re-audit.
   The APFS follow-on document's stale cppcheck-suppression count is corrected. None of the
   exceptions is grandfathered; all remain INCOMPLETE until directly fixed or individually proven
   unavoidable.
-  Unsupported-platform branch removal remains INCOMPLETE and must reduce code, not add portability
-  implementations.
+  Unsupported-platform branch removal reduced code rather than adding portability implementations.
   OWNER RULE NOW RECORDED IN `AGENTS.md`: fix code, test, tool, or gate first; suppression is the
   last resort only after no direct fix is possible and the exact reason is proven. Existing
   suppressions are re-audited, not inherited as permanent policy. Current batch: all pre-commit
   hooks passed; Release build exit 0; full CTest 265/265, zero failures, 804.48 seconds.
   STILL OPEN: core's 5,271 naming findings; the 294-item `useStlAlgorithm` program;
-  the two remaining coverage compiler suppressions; removal of unsupported-platform dead branches
-  currently carrying `Q_UNUSED`; directly
-  closable fixture/resource skips; and the historical VM credential rotation/history-rewrite
-  decision.
+  directly closable fixture/resource skips; the two ConversationStore handle-pinning items;
+  certification-script failure silences; broad magic-number exemptions; and the historical VM
+  credential rotation/history-rewrite decision.
   DIRECT-FIX WAVE 1 FINAL GATE: all changed-file pre-commit hooks passed; Release build exit 0;
   full CTest 266/266, zero failures, 820.46 seconds.
   NON-CORE CLANG HEALTH FINAL GATE: all changed-file pre-commit hooks passed; real naming gate

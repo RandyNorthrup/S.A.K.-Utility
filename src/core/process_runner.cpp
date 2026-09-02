@@ -229,7 +229,10 @@ ProcessResult runProcess(const QString& program,
     return runProcessInternal({.program = program,
                                .args = args,
                                .timeout_ms = timeout_ms,
-                               .should_cancel = should_cancel});
+                               .should_cancel = should_cancel,
+                               .on_output = {},
+                               .on_started = {},
+                               .on_terminate = {}});
 }
 
 ProcessResult runProcessWithEnvironment(const QString& program,
@@ -241,7 +244,10 @@ ProcessResult runProcessWithEnvironment(const QString& program,
                                .args = args,
                                .timeout_ms = timeout_ms,
                                .environment = &environment,
-                               .should_cancel = should_cancel});
+                               .should_cancel = should_cancel,
+                               .on_output = {},
+                               .on_started = {},
+                               .on_terminate = {}});
 }
 
 ProcessResult runPowerShell(const QString& script,

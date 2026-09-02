@@ -152,26 +152,26 @@ struct PartitionApfsRawRepairResult {
 };
 
 struct PartitionApfsImageFormatRequest {
-    QString image_path;
+    QString image_path{};
     uint64_t target_container_bytes{0};
     uint32_t block_size_bytes{0};
-    QString volume_name;
+    QString volume_name{};
     // Extra APFS volumes beyond the first (A4 multi-volume containers). One name
     // per additional volume; each gets its own omap, root/extent-ref/snap-meta
     // trees, superblock, fs_index, and UUID, all sharing the container spaceman.
-    QStringList additional_volume_names;
-    QString seed_file_name;
-    QByteArray seed_file_data;
+    QStringList additional_volume_names{};
+    QString seed_file_name{};
+    QByteArray seed_file_data{};
     // A6 (A-f): when non-empty, format a software-encrypted (FileVault) volume
     // unlockable by this password. The writer generates the VEK/KEK, builds the
     // container + volume keybags, sets nx_keylocker / APFS_FS_ONEKEY, and
     // AES-XTS-encrypts the volume's file-system tree. Credential-in, never stored.
-    QString volume_password;
+    QString volume_password{};
     // A6 follow-on: optional personal-recovery-key credential. When set alongside
     // volume_password, the volume keybag gets a second unlock record (the same KEK
     // wrapped by this recovery key, keyed by Apple's fixed PRK UUID), so the volume
     // is unlockable by EITHER the password or the recovery key. Never stored.
-    QString recovery_key;
+    QString recovery_key{};
     // A6 follow-on per-file-key encryption (APFS data-protection model): when true
     // (and volume_password is set) the volume is per-file encrypted rather than
     // whole-volume ONEKEY. The metadata stays plaintext but the fs-tree object and
@@ -188,7 +188,7 @@ struct PartitionApfsImageFormatRequest {
     bool per_file_kernel_variant{false};
     bool target_wipe_confirmed{false};
     bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
+    PartitionApfsWriteOptions options{};
 };
 
 struct PartitionApfsImageRepairRequest {
@@ -215,13 +215,13 @@ struct PartitionApfsImageRootDirectoryFileDeleteRequest {
 };
 
 struct PartitionApfsImageRootDirectoryMutationRequest {
-    QString source_image_path;
-    QString written_image_path;
-    QString directory_name;
+    QString source_image_path{};
+    QString written_image_path{};
+    QString directory_name{};
     // Parent directory the new directory is created under; empty = container root,
     // "/docs" or "/docs/sub" nests it. Used by directory-create; ignored by delete.
-    QString parent_directory_path;
-    PartitionApfsWriteOptions options;
+    QString parent_directory_path{};
+    PartitionApfsWriteOptions options{};
 };
 
 struct PartitionApfsImageVolumeLabelRequest {
@@ -320,14 +320,14 @@ struct PartitionApfsLiveLayoutProbe {
 /// @brief Request to insert one empty file into a generated APFS container with
 ///        a true in-place copy-on-write checkpoint commit (A2 increment 2).
 struct PartitionApfsImageFileInsertCommitRequest {
-    QString source_image_path;
-    QString written_image_path;
-    QString file_name;
-    QByteArray file_data;
+    QString source_image_path{};
+    QString written_image_path{};
+    QString file_name{};
+    QByteArray file_data{};
     // Nested insert: when non-empty, insert under this existing directory path (e.g.
     // "/docs/sub"), resolved component-by-component against the live tree. Empty = the
     // container root, byte-identical to the flat-root insert. Arbitrary depth.
-    QString parent_directory_path;
+    QString parent_directory_path{};
     // A5: insert the file transparently compressed (inline zlib decmpfs). file_data
     // is the uncompressed content; the writer stores it in a com.apple.decmpfs
     // xattr and flags the inode UF_COMPRESSED. Requires the compressed value to fit
@@ -347,7 +347,7 @@ struct PartitionApfsImageFileInsertCommitRequest {
     // (ACL in com.apple.system.Security, com.apple.FinderInfo, user xattrs). Each is
     // stored embedded; the matching inode flag (HAS_SECURITY_EA / HAS_FINDER_INFO)
     // is set automatically.
-    QVector<QPair<QByteArray, QByteArray>> xattrs;
+    QVector<QPair<QByteArray, QByteArray>> xattrs{};
     // A7 (A-h): when greater than file_data.size(), insert the file sparse with a
     // trailing hole -- its extents cover file_data and the gap up to this logical
     // size reads as zeros (INODE_IS_SPARSE).
@@ -365,7 +365,7 @@ struct PartitionApfsImageFileInsertCommitRequest {
     uint64_t inode_mod_time{0};
     uint64_t inode_change_time{0};
     uint64_t inode_access_time{0};
-    PartitionApfsWriteOptions options;
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Request to clone one root file in a generated APFS container with a true
@@ -453,13 +453,13 @@ struct PartitionApfsImageFileMoveCommitRequest {
 ///        true in-place copy-on-write commit (preserves the file's object id; crash-safe).
 ///        An empty directory name means the container root.
 struct PartitionApfsImageFilePatchCommitRequest {
-    QString source_image_path;
-    QString written_image_path;
-    QString directory_name;  // empty = root
-    QString file_name;
+    QString source_image_path{};
+    QString written_image_path{};
+    QString directory_name{};  // empty = root
+    QString file_name{};
     uint64_t patch_offset_bytes{0};
-    QByteArray patch_data;
-    PartitionApfsWriteOptions options;
+    QByteArray patch_data{};
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Request to insert one file into a generated APFS container on a raw
@@ -467,20 +467,20 @@ struct PartitionApfsImageFilePatchCommitRequest {
 ///        commit is applied to the device in place (no scratch clone), so it is
 ///        gated by explicit destructive-target confirmation and raw opt-in.
 struct PartitionApfsRawFileInsertCommitRequest {
-    QString target_path;
+    QString target_path{};
     uint64_t target_container_bytes{0};
-    QString file_name;
-    QByteArray file_data;
+    QString file_name{};
+    QByteArray file_data{};
     // Streaming write: when file_data_path is non-empty the payload is streamed from
     // that host file (file_data_stream_size bytes) block-by-block instead of
     // file_data, so a multi-GB write never holds the whole payload in RAM. file_data
     // is ignored/empty in that case. Empty path keeps the in-memory path unchanged.
-    QString file_data_path;
+    QString file_data_path{};
     uint64_t file_data_stream_size{0};
     // Nested insert: when non-empty, insert the file under this existing directory path
     // (e.g. "/docs/sub"), resolved component-by-component against the live tree. Empty =
     // the container root, byte-identical to the flat-root insert. Arbitrary depth.
-    QString parent_directory_path;
+    QString parent_directory_path{};
     // A5: insert the file transparently compressed (inline zlib decmpfs). See
     // PartitionApfsImageFileInsertCommitRequest::compress_zlib.
     bool compress_zlib{false};
@@ -492,66 +492,66 @@ struct PartitionApfsRawFileInsertCommitRequest {
     bool compress_lzbitmap{false};
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Request to delete one root file from a generated APFS container on a
 ///        raw device with a true in-place copy-on-write checkpoint commit (A2).
 struct PartitionApfsRawFileDeleteCommitRequest {
-    QString target_path;
+    QString target_path{};
     uint64_t target_container_bytes{0};
-    QString file_name;
+    QString file_name{};
     // Nested delete: the existing directory path the file lives under (e.g. "/docs/sub").
     // Empty = the container root. Resolved component-by-component against the live tree.
-    QString parent_directory_path;
+    QString parent_directory_path{};
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Request to rename one root file in a generated APFS container on a raw
 ///        device with a true in-place copy-on-write checkpoint commit (A2).
 struct PartitionApfsRawFileRenameCommitRequest {
-    QString target_path;
+    QString target_path{};
     uint64_t target_container_bytes{0};
-    QString file_name;
-    QString new_file_name;
+    QString file_name{};
+    QString new_file_name{};
     // Nested rename: the existing directory path the file lives under (e.g. "/docs/sub");
     // the file is renamed in place within it. Empty = the container root. A cross-directory
     // move is a separate op (commit-*-file-move).
-    QString parent_directory_path;
+    QString parent_directory_path{};
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Request to create or delete one empty root directory in a generated APFS
 ///        container on a raw device with an in-place copy-on-write commit (A2-3.2).
 struct PartitionApfsRawDirectoryMutationCommitRequest {
-    QString target_path;
+    QString target_path{};
     uint64_t target_container_bytes{0};
-    QString directory_name;
+    QString directory_name{};
     // Parent directory the new directory is created under; empty = container root,
     // "/docs" or "/docs/sub" nests it. Used by directory-create; ignored by delete.
-    QString parent_directory_path;
+    QString parent_directory_path{};
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Request to create-or-replace one file inside a root directory in a generated
 ///        APFS container on a raw device with an in-place copy-on-write commit (A2-3.2).
 struct PartitionApfsRawDirectoryChildWriteCommitRequest {
-    QString target_path;
+    QString target_path{};
     uint64_t target_container_bytes{0};
-    QString directory_name;
-    QString file_name;
-    QByteArray file_data;
+    QString directory_name{};
+    QString file_name{};
+    QByteArray file_data{};
     // Streaming write: when file_data_path is non-empty the payload is streamed from
     // that host file (file_data_stream_size bytes) block-by-block instead of file_data,
     // so a multi-GB child write never holds the whole payload in RAM. Empty path keeps
     // the in-memory path unchanged. Mirrors PartitionApfsRawFileInsertCommitRequest.
-    QString file_data_path;
+    QString file_data_path{};
     uint64_t file_data_stream_size{0};
     // A5: store the child transparently compressed. Same flags and precedence as
     // PartitionApfsRawFileInsertCommitRequest; incompatible with a streamed
@@ -562,7 +562,7 @@ struct PartitionApfsRawDirectoryChildWriteCommitRequest {
     bool compress_lzbitmap{false};
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Request to delete one file inside a root directory in a generated APFS
@@ -609,15 +609,15 @@ struct PartitionApfsRawFileMoveCommitRequest {
 ///        device with a true in-place copy-on-write commit (A2). An empty directory name
 ///        means the container root.
 struct PartitionApfsRawFilePatchCommitRequest {
-    QString target_path;
+    QString target_path{};
     uint64_t target_container_bytes{0};
-    QString directory_name;  // empty = root
-    QString file_name;
+    QString directory_name{};  // empty = root
+    QString file_name{};
     uint64_t patch_offset_bytes{0};
-    QByteArray patch_data;
+    QByteArray patch_data{};
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Request to clone one root file in a generated APFS container on a raw device
@@ -665,50 +665,50 @@ struct PartitionApfsRawResizeCommitRequest {
 ///        tree state into a snapshot the kernel and fsck_apfs can enumerate; the live
 ///        volume keeps writing. Fails closed if the volume already carries a snapshot.
 struct PartitionApfsImageSnapshotCreateCommitRequest {
-    QString source_image_path;
-    QString written_image_path;
-    QString snapshot_name;
+    QString source_image_path{};
+    QString written_image_path{};
+    QString snapshot_name{};
     uint64_t create_time_ns{0};  // 0 = stamp with the current wall-clock time
-    PartitionApfsWriteOptions options;
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Request to create one snapshot of a generated APFS container on a raw device
 ///        with a true in-place copy-on-write checkpoint commit (A3). Applied to the
 ///        device in place, so gated by destructive-target confirmation and raw opt-in.
 struct PartitionApfsRawSnapshotCreateCommitRequest {
-    QString target_path;
+    QString target_path{};
     uint64_t target_container_bytes{0};
-    QString snapshot_name;
+    QString snapshot_name{};
     uint64_t create_time_ns{0};  // 0 = stamp with the current wall-clock time
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Request to delete the (single) snapshot of a generated APFS container with a
 ///        true in-place copy-on-write checkpoint commit (A3). Restores the volume to its
 ///        snapshot-free state. Fails closed unless the volume carries exactly one snapshot.
 struct PartitionApfsImageSnapshotDeleteCommitRequest {
-    QString source_image_path;
-    QString written_image_path;
+    QString source_image_path{};
+    QString written_image_path{};
     // Name of the snapshot to delete. Empty deletes the sole snapshot; required when the
     // volume carries more than one.
-    QString snapshot_name;
-    PartitionApfsWriteOptions options;
+    QString snapshot_name{};
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Request to delete the (single) snapshot of a generated APFS container on a raw
 ///        device with a true in-place copy-on-write checkpoint commit (A3). Applied to the
 ///        device in place, so gated by destructive-target confirmation and raw opt-in.
 struct PartitionApfsRawSnapshotDeleteCommitRequest {
-    QString target_path;
+    QString target_path{};
     uint64_t target_container_bytes{0};
     // Name of the snapshot to delete. Empty deletes the sole snapshot; required when the
     // volume carries more than one.
-    QString snapshot_name;
+    QString snapshot_name{};
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Request to revert a generated APFS container's volume to its (single) snapshot
@@ -716,26 +716,26 @@ struct PartitionApfsRawSnapshotDeleteCommitRequest {
 ///        (A3). Writes Apple's deferred-revert tag (revert_to_xid + revert_to_sblock_oid);
 ///        a kernel mount completes the revert, discarding the post-snapshot divergence.
 struct PartitionApfsImageSnapshotRevertCommitRequest {
-    QString source_image_path;
-    QString written_image_path;
+    QString source_image_path{};
+    QString written_image_path{};
     // Name of the snapshot to revert to. Empty reverts to the sole snapshot; required when
     // the volume carries more than one.
-    QString snapshot_name;
-    PartitionApfsWriteOptions options;
+    QString snapshot_name{};
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Request to revert a generated APFS container's volume to its (single) snapshot on
 ///        a raw device with a true in-place copy-on-write checkpoint commit (A3). Applied to
 ///        the device in place, so gated by destructive-target confirmation and raw opt-in.
 struct PartitionApfsRawSnapshotRevertCommitRequest {
-    QString target_path;
+    QString target_path{};
     uint64_t target_container_bytes{0};
     // Name of the snapshot to revert to. Empty reverts to the sole snapshot; required when
     // the volume carries more than one.
-    QString snapshot_name;
+    QString snapshot_name{};
     bool target_mutation_confirmed{false};
     bool allow_raw_device_target{false};
-    PartitionApfsWriteOptions options;
+    PartitionApfsWriteOptions options{};
 };
 
 /// @brief Derived geometry of an APFS container's space-manager device:

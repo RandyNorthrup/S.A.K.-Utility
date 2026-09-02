@@ -112,25 +112,15 @@ private:
     [[nodiscard]] bool appendJsonLine(const QString& filename,
                                       QJsonObject object,
                                       QString* error_message = nullptr) const;
-    [[nodiscard]] bool appendSearchIndexRecord(QJsonObject object,
-                                               QString* error_message = nullptr) const;
-    /// Mark this session's search index as missing at least one record, so search stops treating
-    /// it as authoritative and falls back to scanning the raw logs (which still hold that record).
-    /// Index appends are best-effort -- losing one must never fail a transcript or command write
-    /// that already succeeded -- but that cannot mean the record silently stops existing.
-    void markSearchIndexIncomplete() const;
     [[nodiscard]] static AiSessionInfo readManifest(const QString& session_path);
     [[nodiscard]] static QJsonObject usageToJson(const TokenUsage& usage);
     [[nodiscard]] static QString safeArtifactDirectoryName(const QString& title,
                                                            const QString& fallback_id);
-    /// What renameArtifactDirectory actually did, so a caller can tell a REVERSIBLE move from an
-    /// irreversible one. A plain directory rename can be undone; a merge copied entries into an
-    /// existing directory and cannot be, so a caller that needs to roll back must know which
-    /// happened rather than blindly renaming back and silently destroying the merge.
+    /// What renameArtifactDirectory actually did, so a caller rolls back only a completed move.
+    /// A pre-existing destination is refused; artifacts are never merged or copied as fallback.
     enum class ArtifactRenameOutcome {
         NoChange,
         Renamed,
-        Merged,
         Failed
     };
 
@@ -148,8 +138,7 @@ private:
     // and mutates the current-session record. Recursive so public methods that
     // call other public methods (artifactPath -> artifactSubdir; writeUsage ->
     // startSession) do not self-deadlock. Readers share; writers are exclusive.
-    // m_root_dir is set once in the constructor and never reassigned, so it is
-    // read lock-free.
+    // m_root_dir is set once in the constructor and never reassigned, so it is read lock-free.
     mutable QReadWriteLock m_lock{QReadWriteLock::Recursive};
 };
 

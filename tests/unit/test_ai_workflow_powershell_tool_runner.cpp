@@ -7,6 +7,29 @@
 
 #include <QtTest/QtTest>
 
+namespace {
+
+sak::ai::AiCommandResult successfulCommandResult() {
+    sak::ai::AiCommandResult result;
+    result.started = true;
+    result.exit_code = 0;
+    return result;
+}
+
+sak::ai::AiCommandResult crashedCommandResult() {
+    sak::ai::AiCommandResult result = successfulCommandResult();
+    result.exit_status = 1;
+    return result;
+}
+
+sak::ai::AiCommandResult timedOutCommandResult() {
+    sak::ai::AiCommandResult result = successfulCommandResult();
+    result.timed_out = true;
+    return result;
+}
+
+}  // namespace
+
 class AiWorkflowPowerShellToolRunnerTests : public QObject {
     Q_OBJECT
 
@@ -50,7 +73,7 @@ void AiWorkflowPowerShellToolRunnerTests::requiresExecutor() {
     // while a caller without an allocator would invoke an empty std::function.
     sak::ai::AiWorkflowPowerShellToolCallbacks no_allocator;
     no_allocator.execute_powershell = [](const sak::ai::AiCommandRequest&, const QString&) {
-        return sak::ai::AiCommandResult{.started = true, .exit_code = 0};
+        return successfulCommandResult();
     };
     const QJsonObject allocator_result = sak::ai::AiWorkflowPowerShellToolRunner::run(
         QJsonObject{{QStringLiteral("command"), QStringLiteral("Write-Output ok")}},
@@ -69,7 +92,7 @@ void AiWorkflowPowerShellToolRunnerTests::guardBlocksBadPowerShell() {
     bool executed = false;
     callbacks.execute_powershell = [&executed](const sak::ai::AiCommandRequest&, const QString&) {
         executed = true;
-        return sak::ai::AiCommandResult{.started = true, .exit_code = 0};
+        return successfulCommandResult();
     };
 
     const QJsonObject result = sak::ai::AiWorkflowPowerShellToolRunner::run(
@@ -92,7 +115,7 @@ void AiWorkflowPowerShellToolRunnerTests::sensitiveCommandRequiresConfirmation()
         return QStringLiteral("cmd_sensitive");
     };
     callbacks.execute_powershell = [](const sak::ai::AiCommandRequest&, const QString&) {
-        return sak::ai::AiCommandResult{.started = true, .exit_code = 0};
+        return successfulCommandResult();
     };
 
     const QJsonObject result = sak::ai::AiWorkflowPowerShellToolRunner::run(
@@ -117,7 +140,7 @@ void AiWorkflowPowerShellToolRunnerTests::sensitiveCommandRequiresConfirmation()
     bool seen_risky = false;
     callbacks.execute_powershell = [&executed](const sak::ai::AiCommandRequest&, const QString&) {
         executed = true;
-        return sak::ai::AiCommandResult{.started = true, .exit_code = 0};
+        return successfulCommandResult();
     };
     callbacks.confirm = [&seen_title, &seen_preview, &seen_risky](const QString& title,
                                                                   const QString& preview,
@@ -192,7 +215,7 @@ void AiWorkflowPowerShellToolRunnerTests::successfulRunRecordsRedactedCommand() 
     // "success" is an AND over five result fields, not just `started`. A process that crashed
     // with a zero exit code (exit_status != 0) and one that timed out must both report false.
     callbacks.execute_powershell = [](const sak::ai::AiCommandRequest&, const QString&) {
-        return sak::ai::AiCommandResult{.started = true, .exit_code = 0, .exit_status = 1};
+        return crashedCommandResult();
     };
     const QJsonObject crashed = sak::ai::AiWorkflowPowerShellToolRunner::run(
         QJsonObject{{QStringLiteral("command"), QStringLiteral("Write-Output ok")}},
@@ -201,7 +224,7 @@ void AiWorkflowPowerShellToolRunnerTests::successfulRunRecordsRedactedCommand() 
     QCOMPARE(crashed.value(QStringLiteral("success")).toBool(true), false);
 
     callbacks.execute_powershell = [](const sak::ai::AiCommandRequest&, const QString&) {
-        return sak::ai::AiCommandResult{.started = true, .timed_out = true, .exit_code = 0};
+        return timedOutCommandResult();
     };
     const QJsonObject timed_out = sak::ai::AiWorkflowPowerShellToolRunner::run(
         QJsonObject{{QStringLiteral("command"), QStringLiteral("Write-Output ok")}},
@@ -221,7 +244,7 @@ void AiWorkflowPowerShellToolRunnerTests::clampsCallerControlledOutputCap() {
         [&seen_cap, &seen_request](const sak::ai::AiCommandRequest& request, const QString&) {
             seen_cap = request.max_output_bytes;
             seen_request = request;
-            return sak::ai::AiCommandResult{.started = true, .exit_code = 0};
+            return successfulCommandResult();
         };
 
     const sak::ai::AiWorkflowPowerShellToolOptions options;

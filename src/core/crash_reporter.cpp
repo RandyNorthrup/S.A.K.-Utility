@@ -8,18 +8,15 @@
 #include <cstdio>
 #include <format>
 
-#if defined(_WIN32)
 // clang-format off
 #include <windows.h>
 #include <dbghelp.h>
 // clang-format on
-#endif
 
 namespace sak {
 
 namespace {
 
-#if defined(_WIN32)
 // Set once by install() before any crash can occur, then only read by the filter.
 std::wstring g_crash_dir;
 std::atomic<bool> g_installed{false};
@@ -90,12 +87,10 @@ LONG WINAPI sakUnhandledExceptionFilter(EXCEPTION_POINTERS* info) {
     // Let the process terminate; a technician now has an artifact to send.
     return EXCEPTION_EXECUTE_HANDLER;
 }
-#endif  // _WIN32
 
 }  // namespace
 
 bool CrashReporter::install(const std::filesystem::path& crash_dir) {
-#if defined(_WIN32)
     if (g_installed.exchange(true)) {
         return false;  // already installed; do not re-register the filter
     }
@@ -108,18 +103,10 @@ bool CrashReporter::install(const std::filesystem::path& crash_dir) {
     g_crash_dir = crash_dir.wstring();
     SetUnhandledExceptionFilter(&sakUnhandledExceptionFilter);
     return true;
-#else
-    (void)crash_dir;
-    return false;
-#endif
 }
 
 bool CrashReporter::isInstalled() {
-#if defined(_WIN32)
     return g_installed.load();
-#else
-    return false;
-#endif
 }
 
 std::wstring CrashReporter::crashFileStem(std::uint32_t pid, const Clock& at) {

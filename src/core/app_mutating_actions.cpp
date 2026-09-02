@@ -64,12 +64,9 @@
 #include <expected>
 #include <functional>
 #include <optional>
-
-#ifdef Q_OS_WIN
 #include <string>
 
 #include <windows.h>
-#endif
 
 namespace sak {
 
@@ -4029,7 +4026,6 @@ QJsonObject deleteToRecycleBinParamsSchema() {
 //     canonicalizes it to the volume root.
 // @param canonical_out On success, the OS-canonical path to hand to sendPathToRecycleBin, so the op
 //        validates and deletes the SAME string.
-#ifdef Q_OS_WIN
 // Real on-disk path of @p path with every ancestor junction/symlink resolved, WITHOUT following a
 // leaf reparse point, read through an open handle -- mirrors cleanup_worker's delete-time check.
 // Empty when the object cannot be opened (locked/raced/denied) or the name cannot be read, which
@@ -4070,7 +4066,6 @@ QString recycleFinalPathByHandle(const QString& path) {
     }
     return resolved;
 }
-#endif  // Q_OS_WIN
 
 // Delete-TIME by-handle re-verification for the recycle op. filePathDeletionRefusal screened the
 // path STRING at validate time, but SHFileOperationW acts on the path by NAME later, re-resolving
@@ -4078,10 +4073,8 @@ QString recycleFinalPathByHandle(const QString& path) {
 // shell call makes the same string resolve to a DIFFERENT real target. Immediately before the shell
 // op, open a handle to the canonical path and read its REAL resolved name, then refuse when it
 // cannot be resolved, lands in a protected/critical/root/UNC location, or no longer matches the
-// validated path. Mirrors cleanupHandleRedirectRefusal used by the permanent-delete worker. No-op
-// on non-Windows.
+// validated path. Mirrors cleanupHandleRedirectRefusal used by the permanent-delete worker.
 std::optional<AppActionResult> recycleHandleRedirectRefusal(const QString& canonical) {
-#ifdef Q_OS_WIN
     const QString final_path = recycleFinalPathByHandle(canonical);
     const QString refusal = cleanupHandleRedirectRefusal(canonical, final_path);
     if (!refusal.isEmpty()) {
@@ -4089,9 +4082,6 @@ std::optional<AppActionResult> recycleHandleRedirectRefusal(const QString& canon
                                QStringLiteral("Refusing to recycle %1: %2").arg(canonical, refusal),
                                {}};
     }
-#else
-    Q_UNUSED(canonical)
-#endif
     return std::nullopt;
 }
 

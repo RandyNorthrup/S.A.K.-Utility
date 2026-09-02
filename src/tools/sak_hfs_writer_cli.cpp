@@ -23,16 +23,12 @@
 #include <optional>
 #include <vector>
 
-#ifdef Q_OS_WIN
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
 
 #include <winioctl.h>
-#else
-#include <sys/stat.h>
-#endif
 
 namespace {
 
@@ -123,7 +119,6 @@ bool writeReport(const QJsonObject& report, const QString& output_path, QString*
 // a raw device that requires elevation), so the caller falls back to the
 // string/canonical comparison rather than treating "unknown" as "distinct".
 std::optional<QString> fileIdentityToken(const QString& path) {
-#ifdef Q_OS_WIN
     const std::wstring wide = path.toStdWString();
     HANDLE handle = ::CreateFileW(wide.c_str(),
                                   0,
@@ -145,15 +140,6 @@ std::optional<QString> fileIdentityToken(const QString& path) {
         .arg(info.dwVolumeSerialNumber)
         .arg(info.nFileIndexHigh)
         .arg(info.nFileIndexLow);
-#else
-    struct stat st{};
-    if (::stat(path.toLocal8Bit().constData(), &st) != 0) {
-        return std::nullopt;
-    }
-    return QStringLiteral("posix:%1:%2")
-        .arg(static_cast<qulonglong>(st.st_dev))
-        .arg(static_cast<qulonglong>(st.st_ino));
-#endif
 }
 
 // True when the --output-json path would truncate-write onto the operation's
@@ -832,7 +818,6 @@ void registerPositionalCommand(QCommandLineParser& parser) {
             "grow-fork-attribute-image."));
 }
 
-#ifdef Q_OS_WIN
 // Physical drive numbers backing the OS system volume, or empty if they cannot be
 // determined. Native (no elevation needed). A spanned/striped/mirrored system volume
 // can be backed by more than one physical disk, so every reported extent's disk is
@@ -905,7 +890,6 @@ std::vector<int> volumeBackingPhysicalDrives(const QString& path) {
     }
     return drives;
 }
-#endif
 
 // A \\.\X: or \\?\X: whole-volume handle addressed by drive letter.
 bool isDriveLetterVolumePath(const QString& path) {
@@ -948,7 +932,6 @@ QString physicalDriveTargetRefusal(const QString& path, const QString& prefix) {
     if (drive == 0) {
         return QStringLiteral("Refusing raw HFS write to PhysicalDrive0 (the first physical disk)");
     }
-#ifdef Q_OS_WIN
     const std::vector<int> os_drives = osSystemPhysicalDrives();
     if (os_drives.empty()) {
         return QStringLiteral(
@@ -958,7 +941,6 @@ QString physicalDriveTargetRefusal(const QString& path, const QString& prefix) {
         return QStringLiteral(
             "Refusing raw HFS write: target PhysicalDrive backs the OS system volume");
     }
-#endif
     return QString();
 }
 
@@ -966,7 +948,6 @@ QString physicalDriveTargetRefusal(const QString& path, const QString& prefix) {
 // disk is PhysicalDrive0 or the OS system disk. Fails closed when the OS identity
 // or the alias's backing drive cannot be resolved.
 QString volumeAliasTargetRefusal(const QString& path) {
-#ifdef Q_OS_WIN
     const std::vector<int> os_drives = osSystemPhysicalDrives();
     if (os_drives.empty()) {
         return QStringLiteral(
@@ -985,9 +966,6 @@ QString volumeAliasTargetRefusal(const QString& path) {
             "Refusing raw HFS write: volume/device target resolves to the OS system disk "
             "or PhysicalDrive0");
     }
-#else
-    Q_UNUSED(path);
-#endif
     return QString();
 }
 

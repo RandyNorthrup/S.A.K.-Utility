@@ -13,6 +13,7 @@
 #include "sak/ai/ai_cancellation_token.h"
 #include "sak/ai/ai_command_tool_planner.h"
 #include "sak/ai/ai_conversation_store.h"
+#include "sak/ai/ai_credential_store.h"
 #include "sak/ai/ai_execution_broker.h"
 #include "sak/ai/ai_orchestrator.h"
 #include "sak/ai/ai_skill.h"
@@ -34,12 +35,15 @@
 #include "sak/storage_inventory_worker.h"
 #include "sak/uninstall_worker.h"
 
+#include <QApplication>
 #include <QComboBox>
+#include <QDialog>
 #include <QDir>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
+#include <QPlainTextEdit>
 #include <QProcess>
 #include <QPushButton>
 #include <QScopeGuard>
@@ -50,6 +54,7 @@
 #include <QStringList>
 #include <QTemporaryDir>
 #include <QThread>
+#include <QTimer>
 #include <QtTest/QtTest>
 #include <QUuid>
 
@@ -7240,6 +7245,41 @@ private Q_SLOTS:
             QStringLiteral("PowerShell"), QStringLiteral("format c: /y"), true, true));
         QVERIFY(!panel.offerRestorePointIfNeeded(QStringLiteral("format c: /y"), true, true));
         QCOMPARE(titles.size(), 0);
+    }
+
+    // Approval is the one place where redaction is unsafe: a quoted secret assignment can carry
+    // executable PowerShell $(...) syntax, so replacing its value hides a mutation that still
+    // runs. Drive the REAL modal (not the hook, which bypasses widget construction) and inspect
+    // what the operator sees before rejecting it.
+    void commandApprovalDialogShowsExactDisplaySafeCommand() {
+        AiAssistantPanel panel;
+        aiApprovalPromptTestHook() = nullptr;
+        const QString command = QStringLiteral("Write-Output password=\"$(") +
+                                QStringLiteral("Remove-Item C:/temp/review-target -Recurse)\"");
+        QVERIFY(ai::CredentialStore::redactSecrets(command) != command);
+
+        bool dialog_seen = false;
+        QString rendered;
+        QString accessible_name;
+        QTimer::singleShot(0, [&]() {
+            auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+            if (dialog == nullptr) {
+                QApplication::closeAllWindows();
+                return;
+            }
+            dialog_seen = true;
+            if (auto* box =
+                    dialog->findChild<QPlainTextEdit*>(QStringLiteral("approvalCommandBox"))) {
+                rendered = box->toPlainText();
+                accessible_name = box->accessibleName();
+            }
+            dialog->reject();
+        });
+
+        QVERIFY(!panel.requestCommandApprovalFromUser(QStringLiteral("PowerShell"), command));
+        QVERIFY(dialog_seen);
+        QCOMPARE(rendered, command);
+        QVERIFY(!accessible_name.trimmed().isEmpty());
     }
 
     // Wave 2: repeated executor faults (hangs) trip the health circuit breaker for

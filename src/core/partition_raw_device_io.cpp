@@ -15,7 +15,6 @@
 #include <utility>
 #include <vector>
 
-#ifdef Q_OS_WIN
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -23,13 +22,6 @@
 
 #include <io.h>
 #include <winioctl.h>
-#else
-#include <cerrno>
-
-#include <fcntl.h>
-#include <sys/stat.h>
-#include <unistd.h>
-#endif
 
 namespace sak {
 
@@ -41,7 +33,6 @@ void setError(QString* errorMessage, const QString& value) {
     }
 }
 
-#ifdef Q_OS_WIN
 QString win32ErrorMessage(DWORD errorCode) {
     LPWSTR buffer = nullptr;
     const DWORD flags = FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM |
@@ -357,11 +348,9 @@ private:
     HANDLE handle_{INVALID_HANDLE_VALUE};
     qint64 position_{0};
 };
-#endif
 
 }  // namespace
 
-#ifdef Q_OS_WIN
 namespace {
 
 // Copy a byte range from src to dst in chunks; the destination is sparse, so ranges we
@@ -487,115 +476,12 @@ bool copyFileSparseWindows(const QString& source,
 }
 
 }  // namespace
-#elif defined(SEEK_DATA) && defined(SEEK_HOLE)
-namespace {
-
-// Copy one source data region [offset, offset+length) to the destination at the same
-// offset (the rest of the destination stays a hole).
-bool copyDataRegionPosix(int in, int out, off_t offset, off_t length) {
-    constexpr size_t kSparseCopyChunkBytes = 4u * 1024u * 1024u;
-    std::vector<char> buffer(kSparseCopyChunkBytes);
-    off_t done = 0;
-    while (done < length) {
-        const size_t want =
-            static_cast<size_t>(std::min<off_t>(length - done, static_cast<off_t>(buffer.size())));
-        const ssize_t got = ::pread(in, buffer.data(), want, offset + done);
-        if (got <= 0 ||
-            ::pwrite(out, buffer.data(), static_cast<size_t>(got), offset + done) != got) {
-            return false;
-        }
-        done += got;
-    }
-    return true;
-}
-
-// Outcome of locating the next data region at or after `position` in a sparse source.
-enum class SparseSeekResult {
-    Found,
-    EndOfData,
-    Error
-};
-
-// Locate the next [dataStart, dataEnd) data region at or after `position`. Distinguishes a
-// legitimate end-of-data (SEEK_DATA fails with ENXIO: only a trailing hole remains) from a
-// real seek failure (any other errno), so the caller never silently finishes with a
-// hole-filled, truncated destination reported as success.
-SparseSeekResult nextSparseDataRegion(
-    int in, off_t position, off_t fileSize, off_t* dataStart, off_t* dataEnd) {
-    errno = 0;
-    const off_t start = ::lseek(in, position, SEEK_DATA);
-    if (start < 0) {
-        return errno == ENXIO ? SparseSeekResult::EndOfData : SparseSeekResult::Error;
-    }
-    off_t end = ::lseek(in, start, SEEK_HOLE);
-    if (end < 0) {
-        end = fileSize;  // no trailing hole: the data region runs to EOF
-    }
-    *dataStart = start;
-    *dataEnd = end;
-    return SparseSeekResult::Found;
-}
-
-bool copyFileSparsePosix(const QString& source, const QString& destination, QString* errorMessage) {
-    const QByteArray sourceName = QFile::encodeName(source);
-    const QByteArray destName = QFile::encodeName(destination);
-    const int in = ::open(sourceName.constData(), O_RDONLY);
-    struct stat info{};
-    if (in < 0 || ::fstat(in, &info) != 0) {
-        setError(errorMessage, QStringLiteral("Unable to read %1").arg(source));
-        if (in >= 0) {
-            ::close(in);
-        }
-        return false;
-    }
-    const int out = ::open(destName.constData(), O_WRONLY | O_CREAT | O_EXCL, 0644);
-    if (out < 0) {
-        ::close(in);
-        setError(errorMessage, QStringLiteral("Unable to create %1").arg(destination));
-        return false;
-    }
-    bool ok = ::ftruncate(out, info.st_size) == 0;
-    off_t position = 0;
-    while (ok && position < info.st_size) {
-        off_t dataStart = 0;
-        off_t dataEnd = 0;
-        const SparseSeekResult seek =
-            nextSparseDataRegion(in, position, info.st_size, &dataStart, &dataEnd);
-        if (seek != SparseSeekResult::Found) {
-            ok = (seek == SparseSeekResult::EndOfData);  // Error -> fail closed
-            break;
-        }
-        ok = copyDataRegionPosix(in, out, dataStart, dataEnd - dataStart);
-        position = dataEnd;
-    }
-    ::close(in);
-    ::close(out);
-    if (!ok) {
-        ::unlink(destName.constData());
-        setError(errorMessage, QStringLiteral("Unable to copy %1 to %2").arg(source, destination));
-    }
-    return ok;
-}
-
-}  // namespace
-#endif
 
 bool copyFileSparse(const QString& source, const QString& destination, QString* errorMessage) {
-#ifdef Q_OS_WIN
     return copyFileSparseWindows(source, destination, errorMessage);
-#elif defined(SEEK_DATA) && defined(SEEK_HOLE)
-    return copyFileSparsePosix(source, destination, errorMessage);
-#else
-    if (QFile::copy(source, destination)) {
-        return true;
-    }
-    setError(errorMessage, QStringLiteral("Unable to copy %1 to %2").arg(source, destination));
-    return false;
-#endif
 }
 
 void markFileSparse(int fileDescriptor) {
-#ifdef Q_OS_WIN
     if (fileDescriptor < 0) {
         return;
     }
@@ -605,9 +491,6 @@ void markFileSparse(int fileDescriptor) {
     }
     DWORD returned = 0;
     DeviceIoControl(handle, FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, &returned, nullptr);
-#else
-    Q_UNUSED(fileDescriptor);
-#endif
 }
 
 namespace {
@@ -681,7 +564,6 @@ bool flushDeviceBuffers(QIODevice* device, QString* errorMessage) {
         setError(errorMessage, QStringLiteral("No open device to flush"));
         return false;
     }
-#ifdef Q_OS_WIN
     if (auto* raw = dynamic_cast<WindowsRawDevice*>(device)) {
         if (!raw->syncToDevice()) {
             setError(errorMessage, raw->errorString());
@@ -689,7 +571,6 @@ bool flushDeviceBuffers(QIODevice* device, QString* errorMessage) {
         }
         return true;
     }
-#endif
     if (auto* file = qobject_cast<QFileDevice*>(device)) {
         if (!file->flush()) {
             setError(errorMessage, file->errorString());
@@ -710,7 +591,6 @@ std::unique_ptr<QIODevice> openFileOrRawDeviceReadOnly(const QString& path, QStr
         return {};
     }
 
-#ifdef Q_OS_WIN
     if (isWindowsRawDevicePath(path)) {
         auto device = std::make_unique<WindowsRawDevice>(path, false);
         if (!device->open(QIODevice::ReadOnly)) {
@@ -719,7 +599,6 @@ std::unique_ptr<QIODevice> openFileOrRawDeviceReadOnly(const QString& path, QStr
         }
         return device;
     }
-#endif
 
     auto file = std::make_unique<QFile>(path);
     if (!file->open(QIODevice::ReadOnly)) {
@@ -736,7 +615,6 @@ std::unique_ptr<QIODevice> openFileOrRawDeviceReadWrite(const QString& path,
         return {};
     }
 
-#ifdef Q_OS_WIN
     if (isWindowsRawDevicePath(path)) {
         auto device = std::make_unique<WindowsRawDevice>(path, true);
         if (!device->open(QIODevice::ReadWrite)) {
@@ -745,7 +623,6 @@ std::unique_ptr<QIODevice> openFileOrRawDeviceReadWrite(const QString& path,
         }
         return device;
     }
-#endif
 
     auto file = std::make_unique<QFile>(path);
     if (!file->open(QIODevice::ReadWrite)) {

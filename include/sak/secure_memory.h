@@ -19,6 +19,8 @@
 #include <string>
 #include <type_traits>
 
+#include <intrin.h>
+
 namespace sak {
 
 /// @brief Secure memory wiper - ensures memory is zeroed before deallocation
@@ -42,11 +44,7 @@ public:
         }
 
         // Memory barrier to ensure writes complete
-#ifdef _MSC_VER
         _ReadWriteBarrier();
-#else
-        __asm__ __volatile__("" : : "r"(ptr) : "memory");
-#endif
     }
 
     /// @brief Securely wipe std::span

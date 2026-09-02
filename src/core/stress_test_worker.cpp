@@ -24,7 +24,6 @@
 #include <thread>
 #include <vector>
 
-#ifdef SAK_PLATFORM_WINDOWS
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -32,7 +31,6 @@
 
 #include <d3d11.h>
 #include <d3dcompiler.h>
-#endif
 
 namespace sak {
 
@@ -116,7 +114,6 @@ void matrixSelfMultiply4x4(double mat[kMatrixElementCount]) {
     std::memcpy(mat, result, sizeof(double) * kMatrixElementCount);
 }
 
-#ifdef SAK_PLATFORM_WINDOWS
 /// @brief Atomically create and pin a unique disk-stress test file for the whole run.
 /// @return An open, exclusive handle to the file, or INVALID_HANDLE_VALUE on failure.
 /// @note One handle for the entire run closes the claim->close->reopen and the
@@ -163,7 +160,6 @@ void fillDiskStressBuffer(uint8_t* buf, size_t size) {
         data32[i] = rng();
     }
 }
-#endif
 
 // At least one stress component must be enabled. A run with everything disabled launches
 // nothing yet computeStressPassed() would otherwise report PASSED -- fail closed.
@@ -604,7 +600,6 @@ size_t StressTestWorker::determineTargetMemoryBytes() const {
     // A query failure returns 0 so the caller fails the memory component closed instead of
     // allocating a fabricated size. memory_usage_percent is validated in (0, 100] by
     // validateStressConfig(), so the cast below is well-defined.
-#ifdef SAK_PLATFORM_WINDOWS
     MEMORYSTATUSEX mem_status{};
     mem_status.dwLength = sizeof(mem_status);
     if (GlobalMemoryStatusEx(&mem_status) != 0) {
@@ -614,39 +609,15 @@ size_t StressTestWorker::determineTargetMemoryBytes() const {
     logError("GlobalMemoryStatusEx failed (error {}) -- failing memory stress closed",
              GetLastError());
     return 0;
-#else
-#if defined(_SC_AVPHYS_PAGES) && defined(_SC_PAGESIZE)
-    {
-        const long pages = sysconf(_SC_AVPHYS_PAGES);
-        const long page_size = sysconf(_SC_PAGESIZE);
-        if (pages > 0 && page_size > 0) {
-            return static_cast<size_t>(static_cast<double>(pages) * static_cast<double>(page_size) *
-                                       (m_config.memory_usage_percent / sak::kPercentMaxF));
-        }
-        logError("sysconf memory query failed -- failing memory stress closed");
-    }
-#else
-    logError("Platform memory detection unavailable -- failing memory stress closed");
-#endif
-    return 0;
-#endif
 }
 
 volatile uint64_t* StressTestWorker::allocateStressMemory(size_t alloc_size) {
-#ifdef SAK_PLATFORM_WINDOWS
     return static_cast<volatile uint64_t*>(
         VirtualAlloc(nullptr, alloc_size, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE));
-#else
-    return static_cast<volatile uint64_t*>(std::malloc(alloc_size));
-#endif
 }
 
 void StressTestWorker::freeStressMemory(volatile uint64_t* data) {
-#ifdef SAK_PLATFORM_WINDOWS
     VirtualFree(const_cast<uint64_t*>(data), 0, MEM_RELEASE);
-#else
-    std::free(const_cast<uint64_t*>(data));
-#endif
 }
 
 // ============================================================================
@@ -654,7 +625,6 @@ void StressTestWorker::freeStressMemory(volatile uint64_t* data) {
 // ============================================================================
 
 void StressTestWorker::runDiskStress() {
-#ifdef SAK_PLATFORM_WINDOWS
     // One exclusive, delete-on-close handle for the whole run (see openExclusiveStressFile):
     // there is no claim->reopen or delete-by-name window for an attacker to race.
     HANDLE h = openExclusiveStressFile(m_config.disk_test_drive);
@@ -709,10 +679,8 @@ void StressTestWorker::runDiskStress() {
     logInfo("Disk stress: wrote {} GB, {} errors",
             total_bytes_written / static_cast<uint64_t>(sak::kBytesPerGB),
             disk_errors);
-#endif
 }
 
-#ifdef SAK_PLATFORM_WINDOWS
 int StressTestWorker::writeDiskStressFile(void* file_handle,
                                           const uint8_t* buf,
                                           size_t blockSize,
@@ -737,13 +705,10 @@ int StressTestWorker::writeDiskStressFile(void* file_handle,
     }
     return 0;
 }
-#endif
 
 // ============================================================================
 // GPU Stress -- RAII context and phase helpers
 // ============================================================================
-
-#ifdef SAK_PLATFORM_WINDOWS
 
 // Compute shader HLSL: heavy ALU loop per thread
 static const char* kGpuShaderSource =
@@ -784,14 +749,11 @@ using PFN_D3DCompile = HRESULT(WINAPI*)(LPCVOID,
                                         ID3DBlob**,
                                         ID3DBlob**);
 
-#endif  // SAK_PLATFORM_WINDOWS
-
 }  // namespace sak
 
 /// RAII context holding all GPU stress resources -- defined outside
 /// namespace sak so the forward declaration in the header resolves.
 struct sak::GpuStressContext {
-#ifdef SAK_PLATFORM_WINDOWS
     HMODULE d3d11{nullptr};
     HMODULE d3dCompiler{nullptr};
     ID3D11Device* device{nullptr};
@@ -823,13 +785,11 @@ struct sak::GpuStressContext {
             FreeLibrary(d3d11);
         }
     }
-#endif
 };
 
 namespace sak {
 
 bool StressTestWorker::initGpuDevice(GpuStressContext& ctx) {
-#ifdef SAK_PLATFORM_WINDOWS
     // d3d11.dll is a KnownDLL (always resolved from System32), but pin the search path
     // explicitly for defense in depth and consistency with the d3dcompiler load.
     ctx.d3d11 = LoadLibraryExW(L"d3d11.dll", nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -865,14 +825,9 @@ bool StressTestWorker::initGpuDevice(GpuStressContext& ctx) {
         return false;
     }
     return true;
-#else
-    Q_UNUSED(ctx)
-    return false;
-#endif
 }
 
 bool StressTestWorker::compileGpuShader(GpuStressContext& ctx) {
-#ifdef SAK_PLATFORM_WINDOWS
     // Load from System32 ONLY. d3dcompiler_47.dll is not a KnownDLL and is not always
     // present in System32, so a plain basename LoadLibrary can fall through the default
     // search order to the app dir / CWD and load a planted copy -- dangerous when the
@@ -928,14 +883,9 @@ bool StressTestWorker::compileGpuShader(GpuStressContext& ctx) {
         return false;
     }
     return true;
-#else
-    Q_UNUSED(ctx)
-    return false;
-#endif
 }
 
 bool StressTestWorker::createGpuUavBuffer(GpuStressContext& ctx) {
-#ifdef SAK_PLATFORM_WINDOWS
     D3D11_BUFFER_DESC buf_desc{};
     buf_desc.ByteWidth = kGpuNumElements * sizeof(float);
     buf_desc.Usage = D3D11_USAGE_DEFAULT;
@@ -960,14 +910,9 @@ bool StressTestWorker::createGpuUavBuffer(GpuStressContext& ctx) {
         return false;
     }
     return true;
-#else
-    Q_UNUSED(ctx)
-    return false;
-#endif
 }
 
 void StressTestWorker::runGpuDispatchLoop(GpuStressContext& ctx) {
-#ifdef SAK_PLATFORM_WINDOWS
     uint64_t operations = 0;
     int gpu_errors = 0;
 
@@ -1003,13 +948,9 @@ void StressTestWorker::runGpuDispatchLoop(GpuStressContext& ctx) {
     m_result.gpu_errors = gpu_errors;
 
     logInfo("GPU stress: {} dispatches completed, {} errors", operations, gpu_errors);
-#else
-    Q_UNUSED(ctx)
-#endif
 }
 
 void StressTestWorker::runGpuStress() {
-#ifdef SAK_PLATFORM_WINDOWS
     GpuStressContext ctx;
 
     // A requested GPU stress that cannot initialize (no D3D11 device, shader
@@ -1026,12 +967,6 @@ void StressTestWorker::runGpuStress() {
 
     runGpuDispatchLoop(ctx);
     // ~GpuStressContext releases all D3D11 resources
-#else
-    // Requested but unsupported here -> not a pass.
-    logWarning("GPU stress: not supported on this platform -- marking GPU stress failed");
-    m_result.gpu_errors = 1;
-    m_error_count.fetch_add(1, std::memory_order_relaxed);
-#endif
 }
 
 }  // namespace sak

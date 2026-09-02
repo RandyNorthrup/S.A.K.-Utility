@@ -981,7 +981,7 @@ private:
                 QStringLiteral("APFS file read truncated at %1 bytes").arg(bytesToRead));
             result->truncated = true;
         }
-        return FileReadTarget{.inode = *inode, .bytes_to_read = bytesToRead};
+        return FileReadTarget{.inode = *inode, .bytes_to_read = bytesToRead, .decmpfs_xattr = {}};
     }
 
     // Decode a transparently-compressed file's content from its inline decmpfs

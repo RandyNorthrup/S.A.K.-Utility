@@ -196,7 +196,7 @@ struct PartitionVolumeInfo {
 struct PartitionInfoEx {
     DiskNumber disk_number{};
     PartitionNumber partition_number{};
-    QString partition_guid;
+    QString partition_guid{};
     QString type_name;
     QString gpt_type;
     uint64_t offset_bytes{0};
@@ -281,9 +281,9 @@ struct PartitionTarget {
     PartitionTargetKind kind{PartitionTargetKind::Disk};
     DiskNumber disk_number{};
     PartitionNumber partition_number{};
-    QString partition_guid;
-    QString volume_guid;
-    QString drive_letter;
+    QString partition_guid{};
+    QString volume_guid{};
+    QString drive_letter{};
     uint64_t offset_bytes{0};
     uint64_t size_bytes{0};
 };

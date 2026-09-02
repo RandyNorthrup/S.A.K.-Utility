@@ -25,11 +25,11 @@ struct PartitionScriptCredential {
 };
 
 struct PartitionScript {
-    QString script;
-    QString dry_run_script;
-    QString preview;
-    QStringList blockers;
-    QList<PartitionScriptCredential> credential_files;
+    QString script{};
+    QString dry_run_script{};
+    QString preview{};
+    QStringList blockers{};
+    QList<PartitionScriptCredential> credential_files{};
     int timeout_seconds{kPartitionDefaultTaskTimeoutSeconds};
 
     [[nodiscard]] bool valid() const noexcept { return blockers.isEmpty() && !script.isEmpty(); }

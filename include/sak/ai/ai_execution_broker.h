@@ -117,8 +117,9 @@ enum class AiCommandTarget {
 /// Returns the exact refusal message ExecutionBroker would produce, or an empty string when
 /// the request would be accepted. Split out of the start* entry points so a PLANNER can apply
 /// the identical rule BEFORE a human is asked to approve: an empty shell command, an elevated
-/// cmd.exe or direct-process launch, and an out-of-domain output budget were each previewed,
-/// risk-classified, confirmed and leased, and only then refused at the broker's door.
+/// cmd.exe or direct-process launch, an out-of-domain output budget, and an oversized direct-
+/// process command line were each previewed, risk-classified, confirmed and leased, and only
+/// then refused at the broker's door.
 /// Authorising a command that cannot run is worse than refusing it early -- it spends the
 /// approver's attention on a decision that had no effect, and teaches them that the
 /// confirmation dialog does not mean what it says.

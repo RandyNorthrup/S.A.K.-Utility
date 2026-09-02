@@ -25,7 +25,7 @@ struct PartitionExtFileEntry {
     QString type;
     uint32_t inode{0};
     uint64_t size_bytes{0};
-    QString symlink_target;
+    QString symlink_target{};
     bool directory{false};
     bool regular_file{false};
     bool symlink{false};

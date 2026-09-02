@@ -3,15 +3,14 @@
 
 #include "sak/windows_user_scanner.h"
 
+#include "sak/logger.h"
+
 #include <QDir>
 #include <QDirIterator>
 #include <QProcess>
 #include <QStandardPaths>
 
 #include <limits>
-
-#ifdef Q_OS_WIN
-#include "sak/logger.h"
 
 #include <windows.h>
 
@@ -20,17 +19,14 @@
 #include <userenv.h>
 #pragma comment(lib, "netapi32.lib")
 #pragma comment(lib, "userenv.lib")
-#endif
 
 namespace sak {
 
 namespace {
-#ifdef Q_OS_WIN
 constexpr DWORD kNetUserInfoDetailedLevel = 3;
 constexpr int kWindowsAccountBufferChars = 256;
 constexpr int kProfileSizeEstimateFileLimit = 1000;
 constexpr int kFolderSelectionFileLimit = 10'000;
-#endif
 }  // namespace
 
 WindowsUserScanner::WindowsUserScanner(QObject* parent) : QObject(parent) {}
@@ -42,32 +38,25 @@ QVector<UserProfile> WindowsUserScanner::scanUsers() {
     // instead of silently returning an ambiguous empty vector.
     bool queryOk = false;
     QVector<UserProfile> profiles = scanUsers(queryOk);
-#ifdef Q_OS_WIN
     if (!queryOk) {
         sak::logError(
             "WindowsUserScanner::scanUsers(): enumeration failed; the empty result "
             "must not be read as 'no users found'");
     }
-#endif
     return profiles;
 }
 
 QVector<UserProfile> WindowsUserScanner::scanUsers(bool& queryOk) {
     QVector<UserProfile> profiles;
 
-#ifdef Q_OS_WIN
     // enumerateWindowsUsers returns false only on a hard NetUserEnum failure (e.g. ERROR_ACCESS_
     // DENIED without elevation -- the detailed USER_INFO_3 level needs admin). A drained-but-empty
     // enumeration returns true: that is a genuine "no matching accounts", not a failed read.
     queryOk = enumerateWindowsUsers(profiles);
-#else
-    queryOk = true;  // no Windows accounts to enumerate on this platform: genuine empty
-#endif
 
     return profiles;
 }
 
-#ifdef Q_OS_WIN
 bool WindowsUserScanner::enumerateWindowsUsers(QVector<UserProfile>& profiles) {
     // scanUsers(bool&) is the only caller and declares profiles as a fresh local.
     Q_ASSERT(profiles.isEmpty());
@@ -125,16 +114,13 @@ bool WindowsUserScanner::enumerateWindowsUsers(QVector<UserProfile>& profiles) {
     } while (status == ERROR_MORE_DATA);
     return true;
 }
-#endif
 
 QString WindowsUserScanner::getCurrentUsername() {
-#ifdef Q_OS_WIN
     wchar_t username[kWindowsAccountBufferChars];
     DWORD size = kWindowsAccountBufferChars;
     if (GetUserNameW(username, &size) != 0) {
         return QString::fromWCharArray(username);
     }
-#endif
     return QString();
 }
 
@@ -145,7 +131,6 @@ QString WindowsUserScanner::getUserSID(const QString& username) {
         // ownership and set permissions, so a non-user SID must never leave here.
         return {};
     }
-#ifdef Q_OS_WIN
     // Try to lookup SID using LookupAccountName
     const auto* usernameW = reinterpret_cast<const wchar_t*>(username.utf16());
     PSID sid = nullptr;
@@ -182,10 +167,6 @@ QString WindowsUserScanner::getUserSID(const QString& username) {
     LocalFree(sidString);
     LocalFree(sid);
     return result;
-#else
-    (void)username;
-    return QString();
-#endif
 }
 
 namespace {
@@ -270,7 +251,6 @@ QString WindowsUserScanner::getProfilePath(const QString& username) {
         return {};
     }
 
-#ifdef Q_OS_WIN
     // AUTHORITATIVE source first: the SID -> ProfileImagePath registry mapping is where a
     // profile actually lives. A relocated profile is correct ONLY there, so it must win over
     // the guessed <SystemDrive>\Users\<name> location (no guessed-default preferred over the
@@ -283,10 +263,9 @@ QString WindowsUserScanner::getProfilePath(const QString& username) {
             return registryPath;
         }
     }
-#endif
 
     // Standard location only as a SECONDARY, when the authoritative lookup yielded nothing
-    // (or off Windows). Still gated by existence so a nonexistent guess is reported as
+    // Still gated by existence so a nonexistent guess is reported as
     // "not found" rather than returned.
     // No 'C:' fallback: an unset SystemDrive means the standard location cannot be resolved,
     // so report "not found" rather than guess a drive letter. The guess is not merely

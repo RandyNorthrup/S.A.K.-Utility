@@ -33,8 +33,8 @@ struct PartitionFileSystemToolSpec {
 
 struct PartitionFileSystemToolManifestResult {
     bool ok{false};
-    QVector<PartitionFileSystemToolSpec> tools;
-    QStringList errors;
+    QVector<PartitionFileSystemToolSpec> tools{};
+    QStringList errors{};
 };
 
 class PartitionFileSystemToolManifest {

@@ -9,7 +9,6 @@
 #include "sak/windows_reserved_names.h"
 
 #include <QDir>
-#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -33,22 +32,20 @@ constexpr auto kManifestFile = "manifest.json";
 constexpr auto kTranscriptFile = "transcript.jsonl";
 constexpr auto kCommandsFile = "commands.jsonl";
 constexpr auto kContextFile = "context.jsonl";
-constexpr auto kSearchIndexFile = "search_index.jsonl";
-// Dropped beside the index when an append to it fails. While it exists the index is
-// known to be missing at least one record, so searchIndexFile() refuses to answer from
-// it and the raw-log scan -- which still holds that record -- runs instead.
-constexpr auto kSearchIndexStaleFile = "search_index.incomplete";
 constexpr auto kUsageFile = "usage.json";
 constexpr auto kMemoryFile = "memory.md";
 constexpr int kSessionArtifactSchemaVersion = 1;
 constexpr qint64 kMaxMemoryBytes = 256LL * 1024LL;
+constexpr qint64 kMaxMemoryRecoveryReadBytes = 4LL * 1024LL * 1024LL;
 constexpr qint64 kTrimmedMemoryBytes = 192LL * 1024LL;
-constexpr qint64 kMaxSearchIndexBytes = 10LL * 1024LL * 1024LL;
-constexpr qint64 kMaxSearchRawFileBytes = 2LL * 1024LL * 1024LL;
+constexpr qint64 kMaxSessionJsonlLineBytes = 4LL * 1024LL * 1024LL;
+constexpr qint64 kMaxTranscriptJsonlBytes = 32LL * 1024LL * 1024LL;
+constexpr qint64 kMaxCommandsJsonlBytes = 32LL * 1024LL * 1024LL;
+constexpr qint64 kMaxContextJsonlBytes = 8LL * 1024LL * 1024LL;
+constexpr qint64 kMaxSearchAggregateBytes = 128LL * 1024LL * 1024LL;
 constexpr int kMaxSearchSessionsScanned = 250;
 constexpr qsizetype kFallbackTitleMaxChars = 80;
 constexpr qsizetype kOneLineMaxChars = 160;
-constexpr int kUniquePathMaxAttempts = 10'000;
 constexpr qsizetype kDefaultSearchSnippetMaxChars = 220;
 constexpr qsizetype kSessionUuidSuffixChars = 8;
 constexpr qsizetype kMemoryAppendMaxChars = 4000;
@@ -194,23 +191,28 @@ QString boundedMemorySection(const QString& body, qint64 max_bytes) {
 // failure cannot leave a half-written heading with no body under it.
 bool appendMemoryRecord(const QString& path, const QByteArray& record, QString* error_message) {
     QFile file(path);
-    if (!file.open(QIODevice::Append | QIODevice::Text)) {
+    if (!file.open(QIODevice::Append)) {
         if (error_message != nullptr) {
             *error_message = QStringLiteral("Could not append memory: %1").arg(file.errorString());
         }
         return false;
     }
+    const qint64 start_size = file.size();
     const qint64 written = file.write(record);
     const bool flushed = file.flush();
-    file.close();
     if (written == record.size() && flushed && file.error() == QFileDevice::NoError) {
         return true;
     }
+    const QString write_error = file.errorString();
+    const bool restored = start_size >= 0 && file.resize(start_size);
     if (error_message != nullptr) {
         *error_message = QStringLiteral("Could not append memory: wrote %1 of %2 bytes (%3)")
                              .arg(written)
                              .arg(record.size())
-                             .arg(file.errorString());
+                             .arg(write_error);
+        if (!restored) {
+            error_message->append(QStringLiteral("; partial memory record could not be removed"));
+        }
     }
     return false;
 }
@@ -239,28 +241,6 @@ QString compactedMemoryText(const QString& existing) {
     return out;
 }
 
-QString uniqueDestinationPath(const QString& path) {
-    const QFileInfo info(path);
-    if (!info.exists()) {
-        return path;
-    }
-
-    const QString base = info.completeBaseName().isEmpty() ? info.fileName()
-                                                           : info.completeBaseName();
-    const QString suffix = info.suffix();
-    const QString dir = info.absolutePath();
-    for (int i = 1; i < kUniquePathMaxAttempts; ++i) {
-        const QString name = suffix.isEmpty()
-                                 ? QStringLiteral("%1_%2").arg(base).arg(i)
-                                 : QStringLiteral("%1_%2.%3").arg(base).arg(i).arg(suffix);
-        const QString candidate = QDir(dir).filePath(name);
-        if (!QFileInfo::exists(candidate)) {
-            return candidate;
-        }
-    }
-    return path;
-}
-
 void setError(QString* error_message, const QString& message) {
     if (error_message != nullptr) {
         *error_message = message;
@@ -275,78 +255,23 @@ bool ensureDirectory(const QString& path, QString* error_message, const QString&
     return false;
 }
 
-bool moveFileWithCopyFallback(const QString& source,
-                              const QString& destination,
-                              QString* error_message) {
-    const QString final_destination = uniqueDestinationPath(destination);
-    if (QFile::rename(source, final_destination)) {
-        return true;
-    }
-    if (QFile::copy(source, final_destination) && QFile::remove(source)) {
-        return true;
-    }
-    setError(error_message,
-             QStringLiteral("Could not move artifact '%1' to '%2'").arg(source, final_destination));
-    return false;
-}
-
-bool mergeDirectoryEntry(const QDir& source,
-                         const QString& current,
-                         const QString& destination_path,
-                         QString* error_message) {
-    const QFileInfo info(current);
-    const QString relative = source.relativeFilePath(current);
-    const QString destination = QDir(destination_path).filePath(relative);
-    if (info.isDir()) {
-        return ensureDirectory(destination,
-                               error_message,
-                               QStringLiteral("Could not create artifact subdirectory"));
-    }
-    const QString parent = QFileInfo(destination).absolutePath();
-    if (!ensureDirectory(
-            parent, error_message, QStringLiteral("Could not create artifact subdirectory"))) {
-        return false;
-    }
-    return moveFileWithCopyFallback(current, destination, error_message);
-}
-
-bool mergeDirectoryContents(const QString& source_path,
-                            const QString& destination_path,
-                            QString* error_message) {
-    const QDir source(source_path);
-    if (!source.exists()) {
-        return true;
-    }
-    if (!ensureDirectory(destination_path,
-                         error_message,
-                         QStringLiteral("Could not create artifact destination"))) {
-        return false;
-    }
-
-    QDirIterator iter(source_path,
-                      QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot,
-                      QDirIterator::Subdirectories);
-    while (iter.hasNext()) {
-        if (!mergeDirectoryEntry(source, iter.next(), destination_path, error_message)) {
-            return false;
-        }
-    }
-
-    QDir(source_path).removeRecursively();
-    return true;
-}
-
 bool writeMemoryFile(const QString& path,
                      const QByteArray& content,
                      const QString& action,
                      QString* error_message) {
     QSaveFile out(path);
-    if (!out.open(QIODevice::WriteOnly | QIODevice::Text)) {
+    if (!out.open(QIODevice::WriteOnly)) {
         setError(error_message,
                  QStringLiteral("Could not %1 memory: %2").arg(action, out.errorString()));
         return false;
     }
-    out.write(content);
+    if (out.write(content) != content.size()) {
+        setError(
+            error_message,
+            QStringLiteral("Could not %1 memory: short write (%2)").arg(action, out.errorString()));
+        out.cancelWriting();
+        return false;
+    }
     if (!out.commit()) {
         setError(error_message,
                  QStringLiteral("Could not commit %1 memory: %2").arg(action, out.errorString()));
@@ -366,13 +291,30 @@ bool createInitialMemoryFile(const QString& path, const QString& header, QString
 }
 
 std::optional<QString> readMemoryFile(const QString& path, QString* error_message) {
+    const QFileInfo info(path);
+    const qint64 size_before = info.size();
+    if (size_before < 0 || size_before > kMaxMemoryRecoveryReadBytes) {
+        setError(error_message,
+                 QStringLiteral("Memory file exceeds the %1-byte recovery read cap: %2")
+                     .arg(kMaxMemoryRecoveryReadBytes)
+                     .arg(path));
+        return std::nullopt;
+    }
     QFile file(path);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    if (!file.open(QIODevice::ReadOnly)) {
         setError(error_message,
                  QStringLiteral("Could not read memory: %1").arg(file.errorString()));
         return std::nullopt;
     }
-    return QString::fromUtf8(file.readAll());
+    const QByteArray bytes = file.read(kMaxMemoryRecoveryReadBytes + 1);
+    const qint64 size_after = file.size();
+    if (file.error() != QFileDevice::NoError || size_before != size_after ||
+        bytes.size() != size_after) {
+        setError(error_message,
+                 QStringLiteral("Memory file changed or was incompletely read: %1").arg(path));
+        return std::nullopt;
+    }
+    return QString::fromUtf8(bytes);
 }
 
 bool memoryHasRequiredSections(const QString& existing) {
@@ -424,19 +366,14 @@ bool trimMemoryFile(const QString& path, QString* error_message) {
         return true;
     }
 
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        if (error_message != nullptr) {
-            *error_message = QStringLiteral("Could not trim memory: %1").arg(file.errorString());
-        }
+    const auto existing = readMemoryFile(path, error_message);
+    if (!existing.has_value()) {
         return false;
     }
-    const QString existing = QString::fromUtf8(file.readAll());
-    file.close();
-    const QString compacted = compactedMemoryText(existing);
+    const QString compacted = compactedMemoryText(*existing);
 
     QSaveFile out(path);
-    if (!out.open(QIODevice::WriteOnly | QIODevice::Text)) {
+    if (!out.open(QIODevice::WriteOnly)) {
         if (error_message != nullptr) {
             *error_message = QStringLiteral("Could not trim memory: %1").arg(out.errorString());
         }
@@ -494,13 +431,7 @@ QString transcriptSourcesText(const QJsonArray& citations) {
     return source_lines.size() > 1 ? source_lines.join(QLatin1Char('\n')) : QString{};
 }
 
-std::optional<QString> transcriptDisplayLine(const QByteArray& raw_line) {
-    QJsonParseError parse_error;
-    const auto doc = QJsonDocument::fromJson(raw_line.trimmed(), &parse_error);
-    if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
-        return std::nullopt;
-    }
-    const auto obj = doc.object();
+std::optional<QString> transcriptDisplayLine(const QJsonObject& obj) {
     const QString role = obj.value(QStringLiteral("role")).toString();
     QString text = obj.value(QStringLiteral("text")).toString().trimmed();
     const QString sources = transcriptSourcesText(obj.value(QStringLiteral("metadata"))
@@ -516,34 +447,177 @@ std::optional<QString> transcriptDisplayLine(const QByteArray& raw_line) {
     return QStringLiteral("\n[%1]\n%2").arg(transcriptHeading(role), text);
 }
 
-bool transcriptLineIsUserPrompt(const QByteArray& raw_line) {
-    QJsonParseError parse_error;
-    const auto doc = QJsonDocument::fromJson(raw_line.trimmed(), &parse_error);
-    if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
-        return false;
-    }
-    const QJsonObject obj = doc.object();
+bool transcriptLineIsUserPrompt(const QJsonObject& obj) {
     const QString role = obj.value(QStringLiteral("role")).toString().trimmed().toLower();
     const QString text = obj.value(QStringLiteral("text")).toString().trimmed();
     return !text.isEmpty() && (role == QLatin1String("you") || role == QLatin1String("user"));
 }
 
-bool sessionHasUserPrompt(const QString& session_path) {
-    QFile file(QDir(session_path).filePath(QString::fromLatin1(kTranscriptFile)));
-    if (!file.exists() || !file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        return false;
-    }
-    while (!file.atEnd()) {
-        if (transcriptLineIsUserPrompt(file.readLine())) {
-            return true;
-        }
-    }
-    return false;
-}
-
 QDateTime objectTimestamp(const QJsonObject& object) {
     return QDateTime::fromString(object.value(QStringLiteral("timestamp")).toString(),
                                  Qt::ISODateWithMs);
+}
+
+struct JsonlVisitRequest {
+    QString path;
+    QString label;
+    qint64 file_cap{0};
+    QString* error_message{nullptr};
+    qint64* aggregate_bytes{nullptr};
+};
+
+enum class JsonlVisitOpenResult {
+    Missing,
+    Ready,
+    Failed
+};
+
+JsonlVisitOpenResult openJsonlForVisit(const JsonlVisitRequest& request,
+                                       QFile* file,
+                                       qint64* initial_size) {
+    const QFileInfo info(request.path);
+    if (!info.exists()) {
+        if (request.error_message != nullptr) {
+            request.error_message->clear();
+        }
+        return JsonlVisitOpenResult::Missing;
+    }
+    *initial_size = info.size();
+    if (*initial_size < 0 || *initial_size > request.file_cap) {
+        setError(request.error_message,
+                 QStringLiteral("%1 exceeds the %2-byte file cap")
+                     .arg(request.label)
+                     .arg(request.file_cap));
+        return JsonlVisitOpenResult::Failed;
+    }
+    if (request.aggregate_bytes != nullptr &&
+        *request.aggregate_bytes > kMaxSearchAggregateBytes - *initial_size) {
+        setError(request.error_message,
+                 QStringLiteral("Session search input exceeds the %1-byte aggregate cap")
+                     .arg(kMaxSearchAggregateBytes));
+        return JsonlVisitOpenResult::Failed;
+    }
+    file->setFileName(request.path);
+    if (!file->open(QIODevice::ReadOnly)) {
+        setError(request.error_message,
+                 QStringLiteral("Could not read %1: %2")
+                     .arg(request.label.toLower(), file->errorString()));
+        return JsonlVisitOpenResult::Failed;
+    }
+    return JsonlVisitOpenResult::Ready;
+}
+
+QString validateJsonlLine(const QByteArray& raw_line,
+                          QFile* file,
+                          const QString& label,
+                          qint64 line_number) {
+    if (file->error() != QFileDevice::NoError) {
+        return QStringLiteral("Could not read %1 line %2: %3")
+            .arg(label.toLower())
+            .arg(line_number)
+            .arg(file->errorString());
+    }
+    if (raw_line.size() > kMaxSessionJsonlLineBytes ||
+        (!raw_line.endsWith('\n') && !file->atEnd())) {
+        return QStringLiteral("%1 line %2 exceeds the %3-byte line cap")
+            .arg(label)
+            .arg(line_number)
+            .arg(kMaxSessionJsonlLineBytes);
+    }
+    if (!raw_line.endsWith('\n')) {
+        return QStringLiteral("%1 line %2 is truncated (missing newline)")
+            .arg(label)
+            .arg(line_number);
+    }
+    return {};
+}
+
+std::optional<QJsonObject> parseJsonlObject(const QByteArray& raw_line,
+                                            const QString& label,
+                                            qint64 line_number,
+                                            QString* error_message) {
+    QJsonParseError parse_error;
+    const QJsonDocument document = QJsonDocument::fromJson(raw_line.trimmed(), &parse_error);
+    if (parse_error.error != QJsonParseError::NoError || !document.isObject()) {
+        setError(
+            error_message,
+            QStringLiteral("%1 line %2 is not a valid JSON object").arg(label).arg(line_number));
+        return std::nullopt;
+    }
+    const QJsonObject object = document.object();
+    const QJsonValue schema = object.value(QStringLiteral("schema_version"));
+    if (!schema.isDouble() ||
+        schema.toDouble() != static_cast<double>(kSessionArtifactSchemaVersion)) {
+        setError(error_message,
+                 QStringLiteral("%1 line %2 has unsupported schema_version")
+                     .arg(label)
+                     .arg(line_number));
+        return std::nullopt;
+    }
+    return object;
+}
+
+bool finishJsonlVisit(QFile* file,
+                      const JsonlVisitRequest& request,
+                      qint64 initial_size,
+                      qint64 loaded_bytes) {
+    if (file->size() != initial_size || loaded_bytes != initial_size) {
+        setError(request.error_message,
+                 QStringLiteral("%1 changed while it was being read").arg(request.label));
+        return false;
+    }
+    if (request.aggregate_bytes != nullptr) {
+        *request.aggregate_bytes += initial_size;
+    }
+    if (request.error_message != nullptr) {
+        request.error_message->clear();
+    }
+    return true;
+}
+
+template <typename Consumer>
+bool visitJsonLineObjects(const JsonlVisitRequest& request, Consumer&& consume) {
+    QFile file;
+    qint64 initial_size = 0;
+    const JsonlVisitOpenResult opened = openJsonlForVisit(request, &file, &initial_size);
+    if (opened != JsonlVisitOpenResult::Ready) {
+        return opened == JsonlVisitOpenResult::Missing;
+    }
+    qint64 loaded_bytes = 0;
+    qint64 line_number = 0;
+    while (!file.atEnd()) {
+        ++line_number;
+        const QByteArray raw_line = file.readLine(kMaxSessionJsonlLineBytes + 1);
+        loaded_bytes += raw_line.size();
+        const QString line_error = validateJsonlLine(raw_line, &file, request.label, line_number);
+        if (!line_error.isEmpty()) {
+            setError(request.error_message, line_error);
+            return false;
+        }
+        const auto object =
+            parseJsonlObject(raw_line, request.label, line_number, request.error_message);
+        if (!object.has_value()) {
+            return false;
+        }
+        consume(*object);
+    }
+    return finishJsonlVisit(&file, request, initial_size, loaded_bytes);
+}
+
+bool sessionHasUserPrompt(const QString& session_path) {
+    bool found = false;
+    QString error;
+    const QString path = QDir(session_path).filePath(QString::fromLatin1(kTranscriptFile));
+    const bool loaded = visitJsonLineObjects({.path = path,
+                                              .label = QStringLiteral("Transcript"),
+                                              .file_cap = kMaxTranscriptJsonlBytes,
+                                              .error_message = &error,
+                                              .aggregate_bytes = nullptr},
+                                             [&found](const QJsonObject& object) {
+                                                 found = found ||
+                                                         transcriptLineIsUserPrompt(object);
+                                             });
+    return loaded && found;
 }
 
 QString snippetAround(const QString& text,
@@ -578,31 +652,6 @@ int matchScore(const QString& haystack, const QString& query) {
     return score;
 }
 
-std::optional<QJsonObject> parseJsonLineObject(const QByteArray& raw_line) {
-    QJsonParseError parse_error;
-    const auto doc = QJsonDocument::fromJson(raw_line.trimmed(), &parse_error);
-    if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
-        return std::nullopt;
-    }
-    return doc.object();
-}
-
-bool openOptionalTranscriptFile(QFile* file, QString* error_message) {
-    if (!file->exists()) {
-        if (error_message != nullptr) {
-            error_message->clear();
-        }
-        return false;
-    }
-    if (file->open(QIODevice::ReadOnly | QIODevice::Text)) {
-        return true;
-    }
-    if (error_message != nullptr) {
-        *error_message = QStringLiteral("Could not read transcript: %1").arg(file->errorString());
-    }
-    return false;
-}
-
 struct SearchHitCandidate {
     QString m_source;
     QString m_text;
@@ -626,93 +675,52 @@ void appendSearchHit(QVector<AiSessionSearchResult>* results,
     results->append(hit);
 }
 
-bool searchIndexFile(const AiSessionInfo& session,
-                     const QString& query,
-                     QVector<AiSessionSearchResult>* results) {
-    const QString path = QDir(session.path).filePath(QString::fromLatin1(kSearchIndexFile));
-    // AN INDEX KNOWN TO BE INCOMPLETE IS NOT AUTHORITATIVE. Returning true here is what makes the
-    // caller SKIP the raw-log scan, so an index that merely opens was treated as the whole truth.
-    // Index appends are best-effort by design -- a failed one must not lose a transcript or
-    // command record that was already persisted -- but the consequence was that the record became
-    // permanently invisible to search, silently. The writer now drops a marker when an append
-    // fails; while it exists, search falls back to scanning the raw logs, which DO contain the
-    // record.
-    if (QFileInfo::exists(
-            QDir(session.path).filePath(QString::fromLatin1(kSearchIndexStaleFile)))) {
-        return false;
-    }
-    const QFileInfo info(path);
-    if (!info.exists() || info.size() > kMaxSearchIndexBytes) {
-        return false;
-    }
-    QFile file(path);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        return false;
-    }
-    while (!file.atEnd()) {
-        const auto obj = parseJsonLineObject(file.readLine());
-        if (!obj.has_value()) {
-            continue;
-        }
-        const QString text = obj->value(QStringLiteral("text")).toString();
-        const QString source = obj->value(QStringLiteral("source")).toString();
-        appendSearchHit(results,
-                        session,
-                        {.m_source = source,
-                         .m_text = text,
-                         .m_query = query,
-                         .m_timestamp = objectTimestamp(*obj)});
-    }
-    return true;
-}
-
-void searchRawSessionFiles(const AiSessionInfo& session,
-                           const QString& query,
-                           QVector<AiSessionSearchResult>* results) {
+bool searchSessionFiles(const AiSessionInfo& session,
+                        const QString& query,
+                        QVector<AiSessionSearchResult>* results,
+                        qint64* aggregate_bytes,
+                        QString* error_message) {
     const QString transcript_path =
         QDir(session.path).filePath(QString::fromLatin1(kTranscriptFile));
-    QFile transcript(transcript_path);
-    if (QFileInfo(transcript_path).size() <= kMaxSearchRawFileBytes &&
-        transcript.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        while (!transcript.atEnd()) {
-            const auto obj = parseJsonLineObject(transcript.readLine());
-            if (!obj.has_value()) {
-                continue;
-            }
-            const QString text =
-                QStringLiteral("%1 %2").arg(obj->value(QStringLiteral("role")).toString(),
-                                            obj->value(QStringLiteral("text")).toString());
-            appendSearchHit(results,
-                            session,
-                            {.m_source = QStringLiteral("transcript"),
-                             .m_text = text,
-                             .m_query = query,
-                             .m_timestamp = objectTimestamp(*obj)});
-        }
+    if (!visitJsonLineObjects({.path = transcript_path,
+                               .label = QStringLiteral("Transcript"),
+                               .file_cap = kMaxTranscriptJsonlBytes,
+                               .error_message = error_message,
+                               .aggregate_bytes = aggregate_bytes},
+                              [&](const QJsonObject& object) {
+                                  const QString text = QStringLiteral("%1 %2").arg(
+                                      object.value(QStringLiteral("role")).toString(),
+                                      object.value(QStringLiteral("text")).toString());
+                                  appendSearchHit(results,
+                                                  session,
+                                                  {.m_source = QStringLiteral("transcript"),
+                                                   .m_text = text,
+                                                   .m_query = query,
+                                                   .m_timestamp = objectTimestamp(object)});
+                              })) {
+        return false;
     }
 
     const QString commands_path = QDir(session.path).filePath(QString::fromLatin1(kCommandsFile));
-    QFile commands(commands_path);
-    if (QFileInfo(commands_path).size() <= kMaxSearchRawFileBytes &&
-        commands.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        while (!commands.atEnd()) {
-            const auto obj = parseJsonLineObject(commands.readLine());
-            if (!obj.has_value()) {
-                continue;
-            }
+    return visitJsonLineObjects(
+        {.path = commands_path,
+         .label = QStringLiteral("Command log"),
+         .file_cap = kMaxCommandsJsonlBytes,
+         .error_message = error_message,
+         .aggregate_bytes = aggregate_bytes},
+        [&](const QJsonObject& object) {
             const QString result_text =
-                QString::fromUtf8(QJsonDocument(obj->value(QStringLiteral("result")).toObject())
+                QString::fromUtf8(QJsonDocument(object.value(QStringLiteral("result")).toObject())
                                       .toJson(QJsonDocument::Compact));
             const QString text = QStringLiteral("%1 %2").arg(
-                obj->value(QStringLiteral("command")).toString(), result_text);
+                object.value(QStringLiteral("command")).toString(), result_text);
             appendSearchHit(results,
                             session,
                             {.m_source = QStringLiteral("command"),
                              .m_text = text,
                              .m_query = query,
-                             .m_timestamp = objectTimestamp(*obj)});
-        }
-    }
+                             .m_timestamp = objectTimestamp(object)});
+        });
 }
 
 }  // namespace
@@ -783,55 +791,62 @@ QVector<AiSessionInfo> ConversationStore::listPromptedSessions() const {
 QStringList ConversationStore::loadTranscriptLines(const QString& session_id,
                                                    QString* error_message) const {
     QStringList lines;
-    QFile file(QDir(sessionPath(session_id)).filePath(QString::fromLatin1(kTranscriptFile)));
-    if (!file.exists()) {
+    const QString session_path = sessionPath(session_id);
+    if (session_path.isEmpty()) {
+        setError(error_message,
+                 QStringLiteral("Invalid AI session id for transcript load: %1").arg(session_id));
         return lines;
     }
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        if (error_message != nullptr) {
-            *error_message =
-                QStringLiteral("Could not read transcript: %1").arg(file.errorString());
-        }
-        return lines;
-    }
-
-    while (!file.atEnd()) {
-        const auto line = transcriptDisplayLine(file.readLine());
-        if (line.has_value()) {
-            lines.append(*line);
-        }
+    const QString path = QDir(session_path).filePath(QString::fromLatin1(kTranscriptFile));
+    if (!visitJsonLineObjects({.path = path,
+                               .label = QStringLiteral("Transcript"),
+                               .file_cap = kMaxTranscriptJsonlBytes,
+                               .error_message = error_message,
+                               .aggregate_bytes = nullptr},
+                              [&lines](const QJsonObject& object) {
+                                  const auto line = transcriptDisplayLine(object);
+                                  if (line.has_value()) {
+                                      lines.append(*line);
+                                  }
+                              })) {
+        lines.clear();
     }
     return lines;
 }
 
 QString ConversationStore::latestAssistantResponseId(const QString& session_id,
                                                      QString* error_message) const {
-    QFile file(QDir(sessionPath(session_id)).filePath(QString::fromLatin1(kTranscriptFile)));
-    if (!openOptionalTranscriptFile(&file, error_message)) {
+    QString latest;
+    const QString session_path = sessionPath(session_id);
+    if (session_path.isEmpty()) {
+        setError(
+            error_message,
+            QStringLiteral("Invalid AI session id for response-id lookup: %1").arg(session_id));
         return {};
     }
-
-    QString latest;
-    while (!file.atEnd()) {
-        const auto obj = parseJsonLineObject(file.readLine());
-        if (!obj.has_value()) {
-            continue;
-        }
-        const QString role = obj->value(QStringLiteral("role")).toString().trimmed().toLower();
-        if (role != QLatin1String("assistant")) {
-            continue;
-        }
-        const QString response_id = obj->value(QStringLiteral("metadata"))
-                                        .toObject()
-                                        .value(QStringLiteral("response_id"))
-                                        .toString()
-                                        .trimmed();
-        if (!response_id.isEmpty()) {
-            latest = response_id;
-        }
-    }
-    if (error_message != nullptr) {
-        error_message->clear();
+    const QString path = QDir(session_path).filePath(QString::fromLatin1(kTranscriptFile));
+    if (!visitJsonLineObjects(
+            {.path = path,
+             .label = QStringLiteral("Transcript"),
+             .file_cap = kMaxTranscriptJsonlBytes,
+             .error_message = error_message,
+             .aggregate_bytes = nullptr},
+            [&latest](const QJsonObject& object) {
+                const QString role =
+                    object.value(QStringLiteral("role")).toString().trimmed().toLower();
+                if (role != QLatin1String("assistant")) {
+                    return;
+                }
+                const QString response_id = object.value(QStringLiteral("metadata"))
+                                                .toObject()
+                                                .value(QStringLiteral("response_id"))
+                                                .toString()
+                                                .trimmed();
+                if (!response_id.isEmpty()) {
+                    latest = response_id;
+                }
+            })) {
+        return {};
     }
     return latest;
 }
@@ -851,6 +866,7 @@ QVector<AiSessionSearchResult> ConversationStore::searchSessions(const QString& 
     const int session_count = std::min(static_cast<int>(sessions.size()),
                                        kMaxSearchSessionsScanned);
     const int bounded_max_results = max_results > 0 ? std::clamp(max_results, 1, 100) : 100;
+    qint64 aggregate_bytes = 0;
     for (int i = 0; i < session_count; ++i) {
         const auto& session = sessions.at(i);
         appendSearchHit(&results,
@@ -859,8 +875,9 @@ QVector<AiSessionSearchResult> ConversationStore::searchSessions(const QString& 
                          .m_text = session.title,
                          .m_query = term,
                          .m_timestamp = session.updated_at});
-        if (!searchIndexFile(session, term, &results)) {
-            searchRawSessionFiles(session, term, &results);
+        if (!searchSessionFiles(session, term, &results, &aggregate_bytes, error_message)) {
+            results.clear();
+            return results;
         }
     }
     std::ranges::sort(results, [](const auto& lhs, const auto& rhs) {
@@ -917,6 +934,12 @@ bool ConversationStore::startSession(const QString& title, QString* error_messag
 bool ConversationStore::openSession(const QString& session_id, QString* error_message) {
     const QWriteLocker locker(&m_lock);
     const QString path = sessionPath(session_id);
+    if (path.isEmpty()) {
+        if (error_message != nullptr) {
+            *error_message = QStringLiteral("Invalid AI session id: %1").arg(session_id);
+        }
+        return false;
+    }
     if (!QFileInfo::exists(QDir(path).filePath(QString::fromLatin1(kManifestFile)))) {
         if (error_message != nullptr) {
             *error_message = QStringLiteral("AI session not found: %1").arg(session_id);
@@ -986,13 +1009,6 @@ bool ConversationStore::renameCurrentSession(const QString& title, QString* erro
                                   "and now sits under '%2': %3")
                                   .arg(old_artifact_name, new_artifact_name, rollback_error);
         }
-    } else if (outcome == ArtifactRenameOutcome::Merged && error_message != nullptr) {
-        // A merge cannot be undone -- renaming back would not separate the entries again, and
-        // deleting anything here would destroy artifacts. Report the exact residual state.
-        *error_message += QStringLiteral(
-                              "; artifacts were merged into '%1' and cannot be "
-                              "un-merged, while the session is still named '%2'")
-                              .arg(new_artifact_name, previous_title);
     }
     return false;
 }
@@ -1022,14 +1038,22 @@ ConversationStore::ArtifactRenameOutcome ConversationStore::renameArtifactDirect
     if (!QDir(old_path).exists() || same_physical_dir) {
         return ArtifactRenameOutcome::NoChange;
     }
-    if (!QDir(new_path).exists() && root_dir.rename(old_name, new_name)) {
+    if (QDir(new_path).exists()) {
+        if (error_message != nullptr) {
+            *error_message =
+                QStringLiteral("Artifact destination already exists; refusing merge: %1")
+                    .arg(new_path);
+        }
+        return ArtifactRenameOutcome::Failed;
+    }
+    if (root_dir.rename(old_name, new_name)) {
         return ArtifactRenameOutcome::Renamed;  // reversible: the caller can rename back
     }
-    // A merge copies entries into a directory that already existed. It cannot be undone by
-    // renaming back, so it is reported distinctly rather than lumped in with the rename above.
-    return mergeDirectoryContents(old_path, new_path, error_message)
-               ? ArtifactRenameOutcome::Merged
-               : ArtifactRenameOutcome::Failed;
+    if (error_message != nullptr) {
+        *error_message = QStringLiteral("Could not rename artifact directory '%1' to '%2'")
+                             .arg(old_path, new_path);
+    }
+    return ArtifactRenameOutcome::Failed;
 }
 
 bool ConversationStore::appendTranscript(const QString& role,
@@ -1047,11 +1071,6 @@ bool ConversationStore::appendTranscript(const QString& role,
     if (!appendJsonLine(QString::fromLatin1(kTranscriptFile), obj, error_message)) {
         return false;
     }
-    QJsonObject index;
-    index[QStringLiteral("source")] = QStringLiteral("transcript");
-    index[QStringLiteral("role")] = redacted_role;
-    index[QStringLiteral("text")] = QStringLiteral("%1 %2").arg(redacted_role, redacted_text);
-    (void)appendSearchIndexRecord(index, nullptr);
     m_current_session.updated_at = QDateTime::currentDateTimeUtc();
     return writeManifest(error_message);
 }
@@ -1063,14 +1082,13 @@ bool ConversationStore::appendCommand(const QString& command,
     // Redact at the persistence boundary: some callers (tool-result recorder,
     // workflow PowerShell runner) pass the raw command/preview, which can contain
     // passwords or API keys. This is the single point every command record and its
-    // search-index entry pass through.
+    // durable command record passes through.
     //
     // THE RESULT IS REDACTED TOO, and that is not belt-and-braces. Only the command string used
     // to be cleaned, while `result` -- the tool result, i.e. the CAPTURED STDOUT/STDERR of the
     // command (ai_tool_result_recorder passes request.result_json; the panel passes the workflow
-    // result) -- was written verbatim into both the command log and the search index. A token
-    // echoed by a command, or a config dump, landed unredacted in the very files this comment
-    // claimed everything passes through.
+    // result) -- used to be written verbatim into the command log. A token echoed by a command,
+    // or a config dump, landed unredacted in durable session data.
     const QString redacted_command = redactSecrets(command);
     const QJsonObject redacted_result = redactSecretsInJson(result);
     QJsonObject obj;
@@ -1079,12 +1097,6 @@ bool ConversationStore::appendCommand(const QString& command,
     if (!appendJsonLine(QString::fromLatin1(kCommandsFile), obj, error_message)) {
         return false;
     }
-    QJsonObject index;
-    index[QStringLiteral("source")] = QStringLiteral("command");
-    index[QStringLiteral("text")] = QStringLiteral("%1 %2").arg(
-        redacted_command,
-        QString::fromUtf8(QJsonDocument(redacted_result).toJson(QJsonDocument::Compact)));
-    (void)appendSearchIndexRecord(index, nullptr);
     m_current_session.updated_at = QDateTime::currentDateTimeUtc();
     return writeManifest(error_message);
 }
@@ -1235,17 +1247,16 @@ QString ConversationStore::memoryText(int max_chars, QString* error_message) con
         }
         return {};
     }
-    QFile file(QDir(currentSessionPath()).filePath(QString::fromLatin1(kMemoryFile)));
-    if (!file.exists()) {
+    const QString memory_path =
+        QDir(currentSessionPath()).filePath(QString::fromLatin1(kMemoryFile));
+    if (!QFileInfo::exists(memory_path)) {
         return {};
     }
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        if (error_message != nullptr) {
-            *error_message = QStringLiteral("Could not read memory: %1").arg(file.errorString());
-        }
+    const auto memory = readMemoryFile(memory_path, error_message);
+    if (!memory.has_value()) {
         return {};
     }
-    QString text = QString::fromUtf8(file.readAll());
+    QString text = *memory;
     if (max_chars > 0 && text.size() > max_chars) {
         text = text.right(max_chars);
         text.prepend(QStringLiteral("[older working memory omitted]\n\n"));
@@ -1292,7 +1303,10 @@ bool ConversationStore::writeUsage(const TokenUsage& turn,
                                    const TokenUsage& session_total,
                                    QString* error_message) {
     const QWriteLocker locker(&m_lock);
-    if (m_current_session.id.isEmpty() && !startSession({}, error_message)) {
+    if (m_current_session.id.isEmpty()) {
+        if (error_message != nullptr) {
+            *error_message = QStringLiteral("No active AI session");
+        }
         return false;
     }
 
@@ -1368,6 +1382,86 @@ bool ConversationStore::writeManifest(QString* error_message) const {
     return true;
 }
 
+namespace {
+
+qint64 sessionJsonlFileCap(const QString& filename) {
+    if (filename == QLatin1String(kTranscriptFile)) {
+        return kMaxTranscriptJsonlBytes;
+    }
+    if (filename == QLatin1String(kCommandsFile)) {
+        return kMaxCommandsJsonlBytes;
+    }
+    if (filename == QLatin1String(kContextFile)) {
+        return kMaxContextJsonlBytes;
+    }
+    return 0;
+}
+
+struct JsonlAppendPlan {
+    QString path;
+    QByteArray payload;
+    qint64 current_size{0};
+};
+
+std::optional<JsonlAppendPlan> planJsonlAppend(const QString& session_path,
+                                               const QString& filename,
+                                               const QJsonObject& object,
+                                               QString* error_message) {
+    JsonlAppendPlan plan;
+    plan.path = QDir(session_path).filePath(filename);
+    plan.payload = QJsonDocument(object).toJson(QJsonDocument::Compact) + '\n';
+    if (plan.payload.size() > kMaxSessionJsonlLineBytes) {
+        setError(error_message,
+                 QStringLiteral("%1 exceeds the %2-byte line cap")
+                     .arg(filename)
+                     .arg(kMaxSessionJsonlLineBytes));
+        return std::nullopt;
+    }
+    const qint64 file_cap = sessionJsonlFileCap(filename);
+    if (file_cap == 0) {
+        setError(error_message,
+                 QStringLiteral("Unsupported AI session JSONL file: %1").arg(filename));
+        return std::nullopt;
+    }
+    const QFileInfo info(plan.path);
+    plan.current_size = info.exists() ? info.size() : 0;
+    if (plan.current_size < 0 || plan.current_size > file_cap - plan.payload.size()) {
+        setError(error_message,
+                 QStringLiteral("%1 exceeds the %2-byte file cap").arg(filename).arg(file_cap));
+        return std::nullopt;
+    }
+    return plan;
+}
+
+bool executeJsonlAppend(const JsonlAppendPlan& plan,
+                        const QString& filename,
+                        QString* error_message) {
+    QFile file(plan.path);
+    if (!file.open(QIODevice::Append)) {
+        setError(error_message,
+                 QStringLiteral("Could not append %1: %2").arg(filename, file.errorString()));
+        return false;
+    }
+    const qint64 start_size = file.size();
+    if (start_size != plan.current_size) {
+        setError(error_message, QStringLiteral("%1 changed before append").arg(filename));
+        return false;
+    }
+    if (file.write(plan.payload) == plan.payload.size() && file.flush()) {
+        return true;
+    }
+    const QString write_error = file.errorString();
+    const bool restored = file.resize(start_size);
+    setError(error_message,
+             QStringLiteral("Short write appending %1: %2").arg(filename, write_error));
+    if (!restored && error_message != nullptr) {
+        error_message->append(QStringLiteral("; partial JSONL record could not be removed"));
+    }
+    return false;
+}
+
+}  // namespace
+
 bool ConversationStore::appendJsonLine(const QString& filename,
                                        QJsonObject object,
                                        QString* error_message) const {
@@ -1380,67 +1474,8 @@ bool ConversationStore::appendJsonLine(const QString& filename,
 
     object[QStringLiteral("timestamp")] = nowIso();
     object[QStringLiteral("schema_version")] = kSessionArtifactSchemaVersion;
-    QFile file(QDir(currentSessionPath()).filePath(filename));
-    if (!file.open(QIODevice::Append | QIODevice::Text)) {
-        if (error_message != nullptr) {
-            *error_message =
-                QStringLiteral("Could not append %1: %2").arg(filename, file.errorString());
-        }
-        return false;
-    }
-    const qint64 start_size = file.size();
-    const QByteArray payload = QJsonDocument(object).toJson(QJsonDocument::Compact) + '\n';
-    if (file.write(payload) != payload.size() || !file.flush()) {
-        // Roll back the partial line so the JSONL file stays parseable, and report
-        // failure instead of claiming a truncated record was persisted.
-        file.resize(start_size);
-        if (error_message != nullptr) {
-            *error_message =
-                QStringLiteral("Short write appending %1: %2").arg(filename, file.errorString());
-        }
-        return false;
-    }
-    return true;
-}
-
-bool ConversationStore::appendSearchIndexRecord(QJsonObject object, QString* error_message) const {
-    const QString path = QDir(currentSessionPath()).filePath(QString::fromLatin1(kSearchIndexFile));
-    const QFileInfo info(path);
-    if (info.exists() && info.size() >= kMaxSearchIndexBytes) {
-        if (error_message != nullptr) {
-            *error_message =
-                QStringLiteral("AI session search index exceeded max size cap (%1 bytes): %2")
-                    .arg(kMaxSearchIndexBytes)
-                    .arg(path);
-        }
-        return false;
-    }
-    object[QStringLiteral("schema_version")] = kSessionArtifactSchemaVersion;
-    object[QStringLiteral("indexed_at")] = nowIso();
-    if (!appendJsonLine(QString::fromLatin1(kSearchIndexFile), std::move(object), error_message)) {
-        markSearchIndexIncomplete();
-        return false;
-    }
-    return true;
-}
-
-// Record that the search index is missing at least one record. Callers treat an index append as
-// best-effort -- losing it must never fail a transcript or command write that already succeeded --
-// but "best effort" cannot mean the record silently stops existing for search. The marker demotes
-// the index from authoritative to advisory until the session is re-indexed, and searchIndexFile()
-// then answers from the raw logs, which still contain everything.
-//
-// The marker write is itself best-effort: if it cannot be created there is nothing further this
-// layer can do, and failing the caller's transcript write over it would trade a search gap for
-// actual data loss.
-void ConversationStore::markSearchIndexIncomplete() const {
-    const QString marker =
-        QDir(currentSessionPath()).filePath(QString::fromLatin1(kSearchIndexStaleFile));
-    QFile file(marker);
-    if (file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
-        file.write(QStringLiteral("search index incomplete since %1\n").arg(nowIso()).toUtf8());
-        file.close();
-    }
+    const auto plan = planJsonlAppend(currentSessionPath(), filename, object, error_message);
+    return plan.has_value() && executeJsonlAppend(*plan, filename, error_message);
 }
 
 AiSessionInfo ConversationStore::readManifest(const QString& session_path) {

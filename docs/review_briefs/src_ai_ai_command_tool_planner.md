@@ -1,8 +1,23 @@
-- **HIGH** -- `src/ai/ai_command_tool_planner.cpp:32`, `:56`, `:199`, `:203`: Confirmation previews permit visual spoofing; Unicode line/bidi controls remain raw, shell previews bypass sanitization, and escaped controls can collide with literal escape text.
-- **HIGH** -- `src/ai/ai_command_tool_planner.cpp:97`, `:117`, `:152`: Resolved path does not pin or revalidate executable identity. File or reparse target can change after approval, violating stated "SAME binary" contract.
-- **HIGH** -- `src/ai/ai_command_tool_planner.cpp:226`, `:247`: `plan.risky_change` ignores `policy_decision.risky_change`; unproven shell mutations can skip risky-command presentation and restore-point handling.
-- **MEDIUM** -- `src/ai/ai_command_tool_planner.cpp:99`, `:117`: System32-first lookup checks only exact filename. Extensionless Windows names can fall through to suffix-aware PATH resolution and select an earlier PATH executable.
-- **MEDIUM** -- `src/ai/ai_command_tool_planner.cpp:226`, `:232`: Shell argument-validation failures can return `risky_change == false`, violating `buildPlan()` contract requiring every validation failure to be risky.
-- **MEDIUM** -- `src/ai/ai_command_tool_planner.cpp:196`, `:201`, `:204`, `:221`: Planner omits broker preconditions for empty shell commands, unsupported elevated CMD/process launches, and invalid output limits; unblocked plans can fail only after authorization.
-- **MEDIUM** -- `src/ai/ai_command_tool_planner.cpp:60`, `:160`, `:209`: Embedded NUL is displayed as `\x00` but retained in program/arguments; native process argv cannot preserve it, causing preview/execution mismatch or late launch failure.
-- **LOW** -- `src/ai/ai_command_tool_planner.cpp:97`: Security-critical executable resolution duplicates broker logic, creating drift-prone parallel implementations.
+- [x] [HIGH] Policy-only risky classification was dropped from the plan's human-gate risk bit.
+  RESOLVED 2026-09-02: planner risk is the OR of command guard and policy classification.
+- [x] [HIGH] Approval previews missed Unicode format classes and could collide with literal escape
+  tokens or combining/private-use characters.
+  RESOLVED 2026-09-02: category-based escaping covers controls, format/bidi, separators,
+  combining marks, private/unassigned code points and surrogates; generated-token text is
+  injectively disambiguated.
+- [x] [HIGH] Direct-process command lines were bounded per field but not after Windows argv
+  quoting and aggregation.
+  RESOLVED 2026-09-02: the shared broker refuses a quoted aggregate over 30,000 characters before
+  policy, lease or approval.
+- [x] [HIGH] Fractional timeout_seconds values were truncated despite the integer schema.
+  RESOLVED 2026-09-02: non-finite or fractional values are refused before conversion.
+- [x] [MEDIUM] Process previews were sanitized twice and visible shell quotes were escaped.
+  RESOLVED 2026-09-02: process argv is rendered once; whole shell commands preserve visible
+  quotes while display-affecting characters remain explicit.
+- [x] [HIGH] Approval-dialog credential redaction could hide executable shell substitution inside
+  a quoted assignment.
+  RESOLVED 2026-09-02: the accessible, left-to-right approval box shows the exact display-safe
+  command; persisted/log sinks retain independent credential redaction.
+
+Re-review result: zero open findings. Eight independent old-code-red drills passed after restore.
+The command-planner mutation catalog kills 6/6 mutants; focused planner and real-modal tests pass.

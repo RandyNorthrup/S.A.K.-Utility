@@ -144,6 +144,11 @@ Branch coverage is now measurable: `scripts/run_branch_coverage.ps1` over a clan
 configured with `-DENABLE_COVERAGE=ON` (the CMake option refuses to configure under MSVC
 rather than emit uninstrumented binaries whose empty report would read as full coverage).
 
+As of 2026-09-02, this tree keeps clang-cl's missing-designated-field diagnostic fatal.
+Optional aggregate members declare their value-initialized defaults directly, while MSVC-only
+driver options are emitted only for the Microsoft compiler. `check_build_system_lint.ps1`
+rejects either removed coverage warning silence if it returns.
+
 WHY IT WAS NEEDED, measured rather than argued. A line is "covered" the moment any part of
 it executes, so an untaken arm sharing a line with a taken one is invisible.
 `include/sak/mbox_transfer_decoder.h` sits at 100.0% in the per-file table above. Measured

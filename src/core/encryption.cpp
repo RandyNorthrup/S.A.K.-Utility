@@ -14,18 +14,15 @@
 
 #include <optional>
 
-#ifdef _WIN32
 #include <windows.h>
 
 #include <bcrypt.h>
 #pragma comment(lib, "bcrypt.lib")
-#endif
 
 namespace sak {
 
 namespace {
 
-#ifdef _WIN32
 // The 32-bit ULONG ceiling BCrypt one-shot length parameters cannot exceed. 0xFFFFFFFF ==
 // ULONG_MAX.
 constexpr quint64 kBcryptMaxLengthBytes = 0xFF'FF'FF'FFULL;
@@ -511,13 +508,10 @@ std::optional<QByteArray> aes_decrypt(const QByteArray& ciphertext,
 
     return plaintext;
 }
-#endif
-
 }  // anonymous namespace
 
 auto encryptData(const QByteArray& data, const QString& password, const EncryptionParams& params)
     -> std::expected<QByteArray, error_code> {
-#ifdef _WIN32
     if (password.isEmpty() || !valid_encryption_params(params)) {
         return std::unexpected(error_code::invalid_argument);
     }
@@ -565,15 +559,11 @@ auto encryptData(const QByteArray& data, const QString& password, const Encrypti
              std::format("Encrypted {} bytes to {} bytes", data.size(), result.size()));
 
     return result;
-#else
-    return std::unexpected(error_code::not_implemented);
-#endif
 }
 
 auto decryptData(const QByteArray& encrypted_data,
                  const QString& password,
                  const EncryptionParams& params) -> std::expected<QByteArray, error_code> {
-#ifdef _WIN32
     if (password.isEmpty() || !valid_encryption_params(params)) {
         return std::unexpected(error_code::invalid_argument);
     }
@@ -627,9 +617,6 @@ auto decryptData(const QByteArray& encrypted_data,
         std::format("Decrypted {} bytes to {} bytes", encrypted_data.size(), plaintext->size()));
 
     return *plaintext;
-#else
-    return std::unexpected(error_code::not_implemented);
-#endif
 }
 
 // ============================================================================
@@ -637,11 +624,9 @@ auto decryptData(const QByteArray& encrypted_data,
 // ============================================================================
 
 struct StreamEncryptor::Impl {
-#ifdef _WIN32
     BCRYPT_ALG_HANDLE alg{nullptr};
     BCRYPT_KEY_HANDLE key{nullptr};
     HmacStream mac;
-#endif
     QByteArray salt;
     QByteArray iv;       // running CBC state, updated in place by each block call
     QByteArray pending;  // sub-block remainder awaiting more input or the final flush
@@ -651,16 +636,13 @@ struct StreamEncryptor::Impl {
 StreamEncryptor::StreamEncryptor() : m_impl(std::make_unique<Impl>()) {}
 
 StreamEncryptor::~StreamEncryptor() {
-#ifdef _WIN32
     destroy_aes_key(m_impl->alg, m_impl->key);
-#endif
     secure_wiper::wipe(m_impl->iv.data(), m_impl->iv.size());
     secure_wiper::wipe(m_impl->pending.data(), m_impl->pending.size());
 }
 
 auto StreamEncryptor::create(const QString& password, const EncryptionParams& params)
     -> std::expected<std::unique_ptr<StreamEncryptor>, error_code> {
-#ifdef _WIN32
     if (password.isEmpty() || !valid_encryption_params(params)) {
         return std::unexpected(error_code::invalid_argument);
     }
@@ -694,11 +676,6 @@ auto StreamEncryptor::create(const QString& password, const EncryptionParams& pa
         return std::unexpected(error_code::crypto_error);
     }
     return self;
-#else
-    Q_UNUSED(password)
-    Q_UNUSED(params)
-    return std::unexpected(error_code::not_implemented);
-#endif
 }
 
 QByteArray StreamEncryptor::header() const {
@@ -706,7 +683,6 @@ QByteArray StreamEncryptor::header() const {
 }
 
 auto StreamEncryptor::update(const QByteArray& plaintext) -> std::expected<QByteArray, error_code> {
-#ifdef _WIN32
     if (m_impl->finished) {
         return std::unexpected(error_code::invalid_argument);
     }
@@ -724,14 +700,9 @@ auto StreamEncryptor::update(const QByteArray& plaintext) -> std::expected<QByte
     }
     m_impl->pending.remove(0, whole);
     return out;
-#else
-    Q_UNUSED(plaintext)
-    return std::unexpected(error_code::not_implemented);
-#endif
 }
 
 auto StreamEncryptor::finish() -> std::expected<QByteArray, error_code> {
-#ifdef _WIN32
     if (m_impl->finished) {
         return std::unexpected(error_code::invalid_argument);
     }
@@ -766,17 +737,12 @@ auto StreamEncryptor::finish() -> std::expected<QByteArray, error_code> {
         return std::unexpected(error_code::crypto_error);
     }
     return out + tag;
-#else
-    return std::unexpected(error_code::not_implemented);
-#endif
 }
 
 struct StreamDecryptor::Impl {
-#ifdef _WIN32
     BCRYPT_ALG_HANDLE alg{nullptr};
     BCRYPT_KEY_HANDLE key{nullptr};
     HmacStream mac;
-#endif
     QByteArray iv;
     QByteArray pending;  // always retains the final block for the padded flush
     bool finished{false};
@@ -785,9 +751,7 @@ struct StreamDecryptor::Impl {
 StreamDecryptor::StreamDecryptor() : m_impl(std::make_unique<Impl>()) {}
 
 StreamDecryptor::~StreamDecryptor() {
-#ifdef _WIN32
     destroy_aes_key(m_impl->alg, m_impl->key);
-#endif
     secure_wiper::wipe(m_impl->iv.data(), m_impl->iv.size());
     secure_wiper::wipe(m_impl->pending.data(), m_impl->pending.size());
 }
@@ -800,7 +764,6 @@ auto StreamDecryptor::create(const QString& password,
                              const QByteArray& header,
                              const EncryptionParams& params)
     -> std::expected<std::unique_ptr<StreamDecryptor>, error_code> {
-#ifdef _WIN32
     if (password.isEmpty() || !valid_encryption_params(params)) {
         return std::unexpected(error_code::invalid_argument);
     }
@@ -833,17 +796,10 @@ auto StreamDecryptor::create(const QString& password,
         return std::unexpected(error_code::crypto_error);
     }
     return self;
-#else
-    Q_UNUSED(password)
-    Q_UNUSED(header)
-    Q_UNUSED(params)
-    return std::unexpected(error_code::not_implemented);
-#endif
 }
 
 auto StreamDecryptor::update(const QByteArray& ciphertext)
     -> std::expected<QByteArray, error_code> {
-#ifdef _WIN32
     if (m_impl->finished) {
         return std::unexpected(error_code::invalid_argument);
     }
@@ -868,14 +824,9 @@ auto StreamDecryptor::update(const QByteArray& ciphertext)
     }
     m_impl->pending.remove(0, whole);
     return out;
-#else
-    Q_UNUSED(ciphertext)
-    return std::unexpected(error_code::not_implemented);
-#endif
 }
 
 auto StreamDecryptor::finish(const QByteArray& tag) -> std::expected<QByteArray, error_code> {
-#ifdef _WIN32
     if (m_impl->finished) {
         return std::unexpected(error_code::invalid_argument);
     }
@@ -913,10 +864,6 @@ auto StreamDecryptor::finish(const QByteArray& tag) -> std::expected<QByteArray,
     out.resize(static_cast<qsizetype>(written));
     m_impl->pending.clear();
     return out;
-#else
-    Q_UNUSED(tag)
-    return std::unexpected(error_code::not_implemented);
-#endif
 }
 
 }  // namespace sak

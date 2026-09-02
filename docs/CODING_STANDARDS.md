@@ -68,6 +68,7 @@ any tool, so they hold only if a human notices.
 | Dead source functions | Zero high-confidence unreferenced definitions in `src/*.cpp` | `dead-code` -- BLOCKING on changed source files; `scripts/check_dead_code.ps1` in CI -- BLOCKING whole-tree |
 | Dead analysis suppressions | A `// cppcheck-suppress` must actually suppress something | `cppcheck-whole-project` reveal pass -- BLOCKING (`scripts/cppcheck_whole_project_gate.ps1`) |
 | Local/CI gate parity | Every custom/generic local gate has a CI route; every CI grading script has a local/manual route | `gate-parity` -- BLOCKING (`scripts/check_gate_parity.ps1`) |
+| Dead application-platform branches | Zero in audited Windows-only product modules | `build-system-lint` -- BLOCKING (`scripts/check_build_system_lint.ps1`) |
 | Cold startup performance | <=15 seconds through real `--smoke-test` initialization | `startup-budget` -- MANUAL after Release build; CI -- BLOCKING |
 | Nesting depth | <=3 levels | Review -- lizard measures complexity, not nesting depth |
 | Assertions | Meaningful preconditions/postconditions | Review -- every assertion should catch a real bug |
@@ -139,6 +140,14 @@ QString local_variable;              // Local variables are snake_case
 - Sources: `src/core/`, `src/gui/`, `src/actions/`, `src/threading/`
 - Tests: `tests/test_*.cpp` -- one test file per unit
 - Project headers before Qt headers before STL headers
+
+### Product Platform
+
+S.A.K. Utility targets Windows 10/11 x64 only, and root CMake configuration rejects every other
+application target. Product source must therefore use its Windows implementation directly. Do not
+add `_WIN32`, `Q_OS_WIN`, or `SAK_PLATFORM_WINDOWS` fallback branches, POSIX host-I/O shims, or
+unused-parameter placeholders to shipped modules. APFS, HFS+, Linux filesystem, MBOX, and macOS
+profile support are portable file-format features that still run inside the Windows application.
 
 ### Qt-Specific Rules
 

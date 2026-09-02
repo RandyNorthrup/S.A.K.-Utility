@@ -77,7 +77,7 @@ public:
         // filename by matching this anchored regex, then rebuilds the download
         // URL in the same directory. Fails closed (no download) on any fetch or
         // match failure, so it can never ship an unverified ISO (R5-G22-10).
-        QString rollingFilenamePattern;
+        QString rollingFilenamePattern{};
     };
 
     explicit LinuxDistroCatalog(QObject* parent = nullptr);

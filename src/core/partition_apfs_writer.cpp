@@ -1404,11 +1404,11 @@ struct ApfsDataExtent {
 // limit): a j_xattr_dstream naming a fresh object id whose file-extent records hold the value's
 // blocks. Recovered from a real Apple file so an in-place mutation preserves it byte-for-byte.
 struct ApfsDataStreamXattr {
-    QByteArray name;
+    QByteArray name{};
     uint64_t objId{0};
     uint64_t size{0};         // the attribute value's byte length (dstream size)
     uint64_t allocedSize{0};  // block-aligned allocated bytes (dstream alloced_size)
-    QVector<ApfsDataExtent> extents;
+    QVector<ApfsDataExtent> extents{};
 };
 
 // A7 (A-h) hard link: one additional name (beyond a file's primary name) resolving to
@@ -1439,22 +1439,22 @@ struct ApfsRecoveredInodeMetadata {
 };
 
 struct ApfsRootFilePayload {
-    QString fileName;
-    QString parentDirectoryName;
-    QByteArray data;
+    QString fileName{};
+    QString parentDirectoryName{};
+    QByteArray data{};
     uint64_t parentDirectoryId{kApfsRootDirectoryId};
     uint64_t fileId{0};
     uint64_t privateId{0};
     uint64_t dataStartBlock{0};
     // Empty: the data is the single contiguous run at dataStartBlock (the original
     // path, byte-identical). Non-empty: an explicit multi-run extent list.
-    QVector<ApfsDataExtent> dataExtents;
+    QVector<ApfsDataExtent> dataExtents{};
     // Transparent compression (A5): when set, the file carries no data stream;
     // its logical content lives in an embedded com.apple.decmpfs xattr
     // (decmpfsXattr) and its inode is UF_COMPRESSED with uncompressedSize bytes.
     // `data` is empty for a compressed file (no extents are allocated).
     bool compressed{false};
-    QByteArray decmpfsXattr;
+    QByteArray decmpfsXattr{};
     uint64_t uncompressedSize{0};
     // A5 follow-on resource-fork compression: when set, this compressed file keeps its
     // (still compressed) content in a com.apple.ResourceFork data stream rather than the
@@ -1468,12 +1468,12 @@ struct ApfsRootFilePayload {
     // A7 (A-h): arbitrary named extended attributes (user xattrs, ACL blobs in
     // com.apple.system.Security, Finder info, ...). Each becomes a j_xattr record
     // with an embedded value. Empty keeps the certified layout byte-identical.
-    QVector<QPair<QByteArray, QByteArray>> xattrs;
+    QVector<QPair<QByteArray, QByteArray>> xattrs{};
     // A large (> ~3804 byte) extended attribute macOS stores as a DATA-STREAM xattr: its value
     // lives in a stream owned by a fresh object id (not the inode). Preserved in place across a
     // mutation (its extents are kept, its j_xattr_dstream + file-extent records re-emitted). Empty
     // keeps every file byte-identical. Only populated by recoverInodeState for a real Apple file.
-    QVector<ApfsDataStreamXattr> streamXattrs;
+    QVector<ApfsDataStreamXattr> streamXattrs{};
     // A7 (A-h): when set, the inode is sparse -- the dstream logical size exceeds
     // the bytes its extents cover, and the uncovered logical ranges read as zeros
     // (a hole). The reader already zero-fills gaps between extents.
@@ -1488,7 +1488,7 @@ struct ApfsRootFilePayload {
     // gets a sibling-link + sibling-map record, and primarySiblingId is the lowest of
     // the sibling ids (Apple stores the primary name as the lowest-id sibling). Empty
     // keeps a single-link file byte-identical.
-    QVector<ApfsHardLinkName> additionalLinks;
+    QVector<ApfsHardLinkName> additionalLinks{};
     uint64_t primarySiblingId{0};
     // Streaming write: the file's logical size when `data` carries no bytes (the
     // payload is streamed block-by-block from a host file, not held in RAM). 0 =
@@ -1506,8 +1506,8 @@ struct ApfsRootFilePayload {
     // file-extent record carry default_crypto_id = crypto_id = cryptoId. 0 keeps every
     // plaintext file byte-identical.
     uint64_t cryptoId{0};
-    QByteArray perFileKey;      // 32 raw bytes; encrypts the data blocks (never on disk)
-    QByteArray wrappedFileKey;  // 40 bytes = RFC3394(VEK, perFileKey); the on-disk key
+    QByteArray perFileKey{};      // 32 raw bytes; encrypts the data blocks (never on disk)
+    QByteArray wrappedFileKey{};  // 40 bytes = RFC3394(VEK, perFileKey); the on-disk key
     uint32_t protectionClass{0};
     // Preservation: the original inode's resource-fork internal_flags bits (NO_RSRC_FORK /
     // HAS_RSRC_FORK) are carried VERBATIM in extraInodeFlags -- including the kernel-written
@@ -1525,12 +1525,12 @@ struct ApfsRootFilePayload {
     // FILE_SYSTEM_OWNED bit on com.apple.fs.symlink -- apfsck rejects a symlink target
     // xattr without it). `xattrs` (above) stays the generated-attribute path with plain
     // DATA_EMBEDDED flags.
-    QVector<ApfsRecoveredXattr> preservedXattrs;
+    QVector<ApfsRecoveredXattr> preservedXattrs{};
     // Preservation: the source inode's real owner/group/mode/timestamps/bsd_flags, populated by
     // applyPreservedInodeState for a real Apple file so the rebuilt inode is not republished as
     // root:wheel/0644 with fabricated times. `.valid` stays false on every generated/inserted
     // file, keeping that inode byte-identical.
-    ApfsRecoveredInodeMetadata recoveredMeta;
+    ApfsRecoveredInodeMetadata recoveredMeta{};
 };
 
 // Group ascending block addresses into contiguous runs, assigning each run its
@@ -1726,7 +1726,7 @@ struct ApfsInodeParams {
     // Preservation: a real Apple inode's owner/group/mode/timestamps/bsd_flags. `.valid` false
     // (the default on every generated inode) keeps inodeValue's byte-identical generated path;
     // only a genuinely preserved inode overwrites the generated identity fields with these.
-    ApfsRecoveredInodeMetadata recovered;
+    ApfsRecoveredInodeMetadata recovered{};
 };
 
 // internal_flags base is APFS_INODE_NO_RSRC_FORK (0x8000) for a file with no resource
@@ -2354,7 +2354,8 @@ void appendRootDirectoryRecords(QVector<ApfsBtreeKeyValue>* records,
                                  .privateId = directory.privateId,
                                  .mode = kApfsModeDirectory,
                                  .name = directory.directoryName,
-                                 .childOrLinkCount = childCount})});
+                                 .childOrLinkCount = childCount,
+                                 .recovered = {}})});
     records->append({directoryEntryKey(directory.parentDirectoryId, directory.directoryName),
                      directoryEntryValue(directory.directoryId, kApfsDirTypeDirectory)});
 }
@@ -2476,18 +2477,19 @@ QVector<ApfsBtreeKeyValue> buildFsTreeRecords(const QVector<ApfsRootFilePayload>
         {directoryEntryKey(kApfsTreeRootEntityId, QStringLiteral("private-dir")),
          directoryEntryValue(kApfsPrivateDirectoryId, kApfsDirTypeDirectory)},
         {fsKey(kApfsRootDirectoryId, kApfsRecordInode),
-         inodeValue(
-             {.parentId = kApfsTreeRootEntityId,
-              .privateId = kApfsRootDirectoryId,
-              .mode = kApfsModeDirectory,
-              .name = QStringLiteral("root"),
-              .childOrLinkCount = directChildCount(kApfsRootDirectoryId, files, directories)})},
+         inodeValue({.parentId = kApfsTreeRootEntityId,
+                     .privateId = kApfsRootDirectoryId,
+                     .mode = kApfsModeDirectory,
+                     .name = QStringLiteral("root"),
+                     .childOrLinkCount = directChildCount(kApfsRootDirectoryId, files, directories),
+                     .recovered = {}})},
         {fsKey(kApfsPrivateDirectoryId, kApfsRecordInode),
          inodeValue({.parentId = kApfsTreeRootEntityId,
                      .privateId = kApfsPrivateDirectoryId,
                      .mode = static_cast<uint16_t>(kApfsModeDirectory | 0644),
                      .name = QStringLiteral("private-dir"),
-                     .childOrLinkCount = 0})}};
+                     .childOrLinkCount = 0,
+                     .recovered = {}})}};
     for (const auto& file : files) {
         appendRootFileRecords(&records, file);
     }
@@ -2844,7 +2846,7 @@ struct ApfsCheckpointPosition {
     // Multi-volume (A4): every volume superblock OID, written across the nx_fs_oid
     // array (slot i = volume i). Empty keeps the single-volume layout byte-identical
     // (only nx_fs_oid[0] = fsOid is written).
-    QVector<uint64_t> fsOids;
+    QVector<uint64_t> fsOids{};
     uint64_t nextOid{kApfsNxMinimumNextOid};
     // nx_keylocker (A6): physical range of the container keybag. 0 = unencrypted
     // container (the field stays zero, byte-identical to the prior layout).
@@ -4265,12 +4267,12 @@ struct ApfsSpacemanParams {
     // cib-address array (offset 2568). Single-CIB containers pass one address;
     // multi-CIB (>126 chunks, cab_count 0) pass cib_count addresses. cibAddrs.size()
     // is always the device cib_count (used for ip sizing) even in the CAB tier.
-    QVector<uint64_t> cibAddrs;
+    QVector<uint64_t> cibAddrs{};
     // CAB tier (cib_count > 507): the device address array holds cab_count CAB block
     // numbers instead of the inline cib addresses; the cib addresses live inside the
     // CABs. cabAddrs is empty and cabCount 0 for every certified (cab_count 0) tier.
     uint64_t cabCount{0};
-    QVector<uint64_t> cabAddrs;
+    QVector<uint64_t> cabAddrs{};
     // Contiguous ghost IP blocks the live checkpoint holds in sm_fq[IP] (the genesis
     // rotation group: cib 0 + chunk-0 bitmap, plus the ghost cab 0 / ghost boundary
     // bitmap). 2 for the certified single-/multi-CIB tiers.
@@ -4598,7 +4600,7 @@ struct ApfsChunkInfoParams {
     // bitmapBlock). For the common case M == 1 (metadata fits chunk 0) these are
     // {1, empty} and the entry below reduces to the certified single-chunk-0 form.
     uint64_t metadataChunks{1};
-    QVector<uint64_t> extraChunkBitmaps;
+    QVector<uint64_t> extraChunkBitmaps{};
     // Multi-chunk overflow tier (CAB included): the boundary chunk (M-1) takes this
     // rotating bitmap (ghost for the genesis cib, live for the live cib) instead of an
     // immutable extraChunkBitmaps entry. 0 below that tier.
@@ -6006,9 +6008,9 @@ struct ApfsInPlaceCheckpointResult {
 
 struct ApfsCheckpointAdvanceRequest {
     QIODevice* image{nullptr};
-    ApfsRepairGeometry geometry;
-    QByteArray nxsb;
-    ApfsLiveCheckpoint live;
+    ApfsRepairGeometry geometry{};
+    QByteArray nxsb{};
+    ApfsLiveCheckpoint live{};
     uint64_t newContainerOmap{0};  // 0 = carry the existing container object map forward
     int64_t spacemanFreeDelta{0};  // net free-block change (negative when blocks are consumed)
     uint64_t nextOidAdvance{0};    // nx_next_oid increment (fs-tree leaf oids consumed)
@@ -6018,8 +6020,8 @@ struct ApfsCheckpointAdvanceRequest {
     uint64_t ipBitmapUsage{0};     // sm_ip_bitmap ring advance usage count (0 = leave)
     uint64_t freedCibSlot{0};      // cib slot freed this commit -> IP free-queue (0 = no update)
     uint64_t prevFreedCibSlot{0};  // cib slot freed the previous commit (the window's older entry)
-    QVector<uint64_t> extraFreedIpBlocks;  // overflow: old boundary-chunk bitmap freed this commit
-    QVector<ApfsFreeQueueEntry> mainFqEntries;  // rebuilt main free-queue (empty = leave it)
+    QVector<uint64_t> extraFreedIpBlocks{};       // old boundary-chunk bitmap freed this commit
+    QVector<ApfsFreeQueueEntry> mainFqEntries{};  // rebuilt main free-queue (empty = leave it)
     // The live spaceman's actual free-queue tree oids (sfq[ip]/sfq[main].sfq_tree_oid), adopted by
     // advanceCheckpoint so the re-emit classifies/rebuilds/maps each free-queue under the volume's
     // own oid. Default to the S.A.K. format constants (byte-identical on generated volumes).
@@ -6033,12 +6035,12 @@ struct ApfsCheckpointAdvanceRequest {
     uint32_t dataIndexStart{0};
     // Exact IP-relative used-set for the sm_ip_bitmap ring advance (keystone S1); must be
     // set whenever ipBitmapUsage != 0. Today the prefix {0..ipBitmapUsage-1}; S3 sparse.
-    QVector<uint64_t> ipUsedSet;
+    QVector<uint64_t> ipUsedSet{};
     // Keystone S4b: spaceman cib-array entries to re-point (k -> new addr). Entry 0 is
     // re-pointed via newCibAddr; entries here are cibs k>0 this commit copied-on-wrote into
     // a free-pool slot. The whole spaceman is re-emitted each checkpoint, so writing entry k
     // is crash-safe. Empty on every non-S4b commit (single-CIB byte-identical).
-    QVector<QPair<uint64_t, uint64_t>> cibArrayRepoints;
+    QVector<QPair<uint64_t, uint64_t>> cibArrayRepoints{};
     // A7 (A-g) chunk-adding grow: the re-emitted spaceman's new main-device chunk count,
     // internal-pool block count, and relocated internal-pool base (0 = leave unchanged).
     uint64_t newChunkCount{0};
@@ -6061,7 +6063,7 @@ struct ApfsCheckpointAdvanceRequest {
     // {oldXid, newIpBase, ipSlotStride}. When non-empty it REPLACES buildIpFreeQueueWindow
     // (the grow does not rotate a slot; it re-homes the whole pool, so the two-deep rolling
     // window does not apply). Empty on every rotation commit (byte-identical).
-    QVector<ApfsFreeQueueEntry> explicitIpFqEntries;
+    QVector<ApfsFreeQueueEntry> explicitIpFqEntries{};
 };
 
 // Shared checkpoint-advance engine: read the live checkpoint-map, re-emit the
@@ -8198,7 +8200,8 @@ ApfsDataStreamXattr recoveredStreamXattr(const ApfsRecoveredXattr& x) {
     return {.name = x.name,
             .objId = le64(x.xdata, 0),
             .size = le64(x.xdata, kApfsXattrDstreamSizeOffset),
-            .allocedSize = le64(x.xdata, kApfsXattrDstreamAllocedOffset)};
+            .allocedSize = le64(x.xdata, kApfsXattrDstreamAllocedOffset),
+            .extents = {}};
 }
 
 // Carry a preserved com.apple.decmpfs attribute: an EMBEDDED value holds the 16-byte header
@@ -9186,11 +9189,11 @@ bool writeApfsFileDataBlocks(QIODevice* image,
 
 struct ApfsFileInsertAllocation {
     QIODevice* image{nullptr};
-    ApfsRepairGeometry geometry;
-    ApfsGeneratedLayout layout;
-    ApfsIpRotation rotation;        // crash-safe cib/bitmap slot rotation
-    QVector<uint64_t> freed;        // old COW-chain blocks (+ freed data on delete)
-    QVector<uint64_t> allocated;    // newly written COW blocks
+    ApfsRepairGeometry geometry{};
+    ApfsGeneratedLayout layout{};
+    ApfsIpRotation rotation{};      // crash-safe cib/bitmap slot rotation
+    QVector<uint64_t> freed{};      // old COW-chain blocks (+ freed data on delete)
+    QVector<uint64_t> allocated{};  // newly written COW blocks
     int64_t cibFreeDelta{0};        // chunk-0 free-block delta if all allocation hit chunk 0
     uint64_t newXid{0};
     uint64_t chunk1BitmapBlock{0};  // 0 = single-chunk; else the chunk-1 bitmap's chunk-0 block
@@ -9203,14 +9206,14 @@ struct ApfsFileInsertAllocation {
     // single-commit spill, so byte-identity holds); a repeated spill into an already-spilled
     // chunk gets a DIFFERENT free-pool slot (COW, not in place), and its old slot is pushed
     // onto sm_fq[IP]. Empty when this commit does not spill (writeRotatedCib/materialize skip).
-    QVector<QPair<uint64_t, uint64_t>> spilledSlots;
+    QVector<QPair<uint64_t, uint64_t>> spilledSlots{};
     // S4b: cib k>0 this commit copied-on-wrote -> its new free-pool address. The COW'd cib is
     // written by writeCowedCibKBlocks; a spilled chunk cib k owns has its entry updated there,
     // not in the rotated cib 0. Empty when no spill reaches a cib k>0.
-    QVector<QPair<uint64_t, uint64_t>> cibRepoints;
+    QVector<QPair<uint64_t, uint64_t>> cibRepoints{};
     // S4b: the live spaceman cib-address array (entry 0 == rotation.liveCib) so the write side
     // can resolve the owning cib of a spilled chunk to read its current bitmap.
-    QVector<uint64_t> liveCibAddrs;
+    QVector<uint64_t> liveCibAddrs{};
 };
 
 // The internal-pool block this commit's copy-on-written bitmap for spilled data chunk `c`
@@ -9966,19 +9969,19 @@ ApfsMainFqAdvance advanceMainFreeQueue(const QVector<ApfsFreeQueueEntry>& live,
 }
 
 struct ApfsFileInsertRequest {
-    QVector<ApfsRootFilePayload> existingFiles;  // {fileName, fileId, parentDirectoryId, size}
-    QString fileName;
-    QByteArray fileData;
+    QVector<ApfsRootFilePayload> existingFiles{};  // {fileName, fileId, parentDirectoryId, size}
+    QString fileName{};
+    QByteArray fileData{};
     // Existing directories (with their children carried in existingFiles via
     // parentDirectoryId) preserved across the commit. Empty on a flat-root container,
     // keeping the certified single-level layout byte-identical.
-    QVector<ApfsRootDirectoryPayload> directories;
+    QVector<ApfsRootDirectoryPayload> directories{};
     // The new file's parent directory (the root directory for a root file, or a
     // directory's object id for a directory child).
     uint64_t newFileParentId{kApfsRootDirectoryId};
     // Import fidelity: adopted inode identity metadata carried into the built payload. Applied
     // only when recoveredMeta.valid; default (a generated insert) keeps the inode byte-identical.
-    ApfsRecoveredInodeMetadata recoveredMeta;
+    ApfsRecoveredInodeMetadata recoveredMeta{};
     // Object id for the written file. 0 = take the volume's next object id (a fresh
     // insert); non-zero reuses an existing id (an in-place patch that keeps the file's
     // identity while replacing its data extents).
@@ -9987,7 +9990,7 @@ struct ApfsFileInsertRequest {
     // blocks are allocated); the content rides in decmpfsXattr (an embedded
     // com.apple.decmpfs value) and the inode is UF_COMPRESSED / uncompressedSize.
     bool compressed{false};
-    QByteArray decmpfsXattr;
+    QByteArray decmpfsXattr{};
     uint64_t uncompressedSize{0};
     // A5 follow-on resource-fork compression: when set, fileData holds the compressed
     // "cmpf" blob (allocated + written as data, its extents owned by a fresh xattr object
@@ -9996,7 +9999,7 @@ struct ApfsFileInsertRequest {
     bool resourceFork{false};
     // A7 (A-h): arbitrary named xattrs attached to the inserted file (ACL, Finder
     // info, user attributes). Each becomes a j_xattr record; no data is allocated.
-    QVector<QPair<QByteArray, QByteArray>> xattrs;
+    QVector<QPair<QByteArray, QByteArray>> xattrs{};
     // A7 (A-h): insert the file sparse with a trailing hole -- its extents cover
     // fileData, but the inode's logical size is sparseLogicalSize and the gap reads
     // as zeros (INODE_IS_SPARSE). 0 = dense.
@@ -10019,19 +10022,19 @@ struct ApfsFileInsertRequest {
     // write never holds the whole payload in RAM. fileData stays empty in that case.
     // Every in-memory caller leaves streamPath empty, keeping the certified path
     // byte-identical. Placed last so the positional aggregate init stays valid.
-    QString streamPath;
+    QString streamPath{};
     uint64_t streamSize{0};
     // In-place patch (explicitFileId != 0): the target's preserved special-inode state so
     // the patched file is not rebuilt as a plain inode. Embedded xattrs ride in `xattrs`;
     // these carry its other hard-link names (same sibling ids), its untouched data-stream
     // xattrs (extents already recovered), and its verbatim rsrc-fork flag bits. All empty
     // on every insert path, keeping it byte-identical.
-    QVector<ApfsHardLinkName> preservedLinks;
+    QVector<ApfsHardLinkName> preservedLinks{};
     uint64_t preservedPrimarySiblingId{0};
-    QVector<ApfsDataStreamXattr> preservedStreamXattrs;
+    QVector<ApfsDataStreamXattr> preservedStreamXattrs{};
     uint64_t preservedExtraInodeFlags{0};
     bool preservedRsrcBits{false};
-    QVector<ApfsRecoveredXattr> preservedXattrs;  // embedded, flags verbatim
+    QVector<ApfsRecoveredXattr> preservedXattrs{};  // embedded, flags verbatim
 
     // The payload's effective logical size (streamed size when streaming, else the
     // in-memory buffer size).
@@ -10193,6 +10196,7 @@ void appendInsertedFile(const ApfsChainedListInput& in,
                         QVector<ApfsRootFilePayload>* files) {
     const bool streamed = !in.request.streamPath.isEmpty();
     files->append({.fileName = in.request.fileName.trimmed(),
+                   .parentDirectoryName = {},
                    .data = streamed ? QByteArray() : in.request.fileData,
                    .parentDirectoryId = in.request.newFileParentId,
                    .fileId = newFileId,
@@ -10219,6 +10223,30 @@ void appendInsertedFile(const ApfsChainedListInput& in,
                    .recoveredMeta = in.request.recoveredMeta});
 }
 
+bool appendRequestedHardlink(const ApfsChainedListInput& in,
+                             uint64_t newFileId,
+                             QVector<ApfsRootFilePayload>* files,
+                             QStringList* blockers,
+                             bool* handled) {
+    *handled = in.request.hardlinkTargetId != 0;
+    if (!*handled) {
+        return true;
+    }
+    for (ApfsRootFilePayload& file : *files) {
+        if (file.fileId != in.request.hardlinkTargetId) {
+            continue;
+        }
+        file.primarySiblingId = newFileId;
+        file.additionalLinks.append({.name = in.request.fileName.trimmed(),
+                                     .parentId = in.request.newFileParentId,
+                                     .siblingId = newFileId + 1});
+        return true;
+    }
+    blockers->append(
+        QStringLiteral("APFS file-hardlink-commit: target inode not found in the live tree"));
+    return false;
+}
+
 bool buildChainedFileList(const ApfsChainedListInput& in,
                           QVector<ApfsRootFilePayload>* files,
                           QStringList* blockers) {
@@ -10233,23 +10261,14 @@ bool buildChainedFileList(const ApfsChainedListInput& in,
             {in.image, in.geometry, in.chain}, in.request.existingFiles, files, blockers)) {
         return false;
     }
-    if (in.request.hardlinkTargetId != 0) {
-        // A hard link: add a new name for an existing inode instead of a new file. Two
-        // sibling ids are taken from the id pool -- the primary name's (newFileId, the
-        // lower) and the new name's (newFileId + 1).
-        for (ApfsRootFilePayload& file : *files) {
-            if (file.fileId != in.request.hardlinkTargetId) {
-                continue;
-            }
-            file.primarySiblingId = newFileId;
-            file.additionalLinks.append({.name = in.request.fileName.trimmed(),
-                                         .parentId = in.request.newFileParentId,
-                                         .siblingId = newFileId + 1});
-            return true;
-        }
-        blockers->append(
-            QStringLiteral("APFS file-hardlink-commit: target inode not found in the live tree"));
+    // A hard link adds a new name for an existing inode. Two sibling ids come from the id pool:
+    // the primary name's lower id and the new name's newFileId + 1.
+    bool hardlinkHandled = false;
+    if (!appendRequestedHardlink(in, newFileId, files, blockers, &hardlinkHandled)) {
         return false;
+    }
+    if (hardlinkHandled) {
+        return true;
     }
     if (in.request.cloneSourcePrivateId != 0) {
         // A clone is its OWN inode + data stream referencing the SOURCE's physical
@@ -10276,6 +10295,7 @@ bool buildChainedFileList(const ApfsChainedListInput& in,
             // corruption-controlled) size in RAM only risked a larger-than-RAM allocation that
             // aborts the commit.
             {.fileName = in.request.fileName.trimmed(),
+             .parentDirectoryName = {},
              .data = QByteArray(),
              .parentDirectoryId = in.request.newFileParentId,
              .fileId = newFileId,
@@ -10293,13 +10313,13 @@ bool buildChainedFileList(const ApfsChainedListInput& in,
 // The inputs an in-place file-insert commit needs: the preserved tree, the new
 // file, and whether to store it transparently compressed (inline zlib decmpfs).
 struct ApfsFileInsertBuildInputs {
-    QVector<ApfsRootFilePayload> existingFiles;
-    QString fileName;
-    QByteArray fileData;
-    QVector<ApfsRootDirectoryPayload> directories;
+    QVector<ApfsRootFilePayload> existingFiles{};
+    QString fileName{};
+    QByteArray fileData{};
+    QVector<ApfsRootDirectoryPayload> directories{};
     bool compress{false};
     // A7 (A-h): arbitrary named xattrs + a trailing-hole sparse size (0 = dense).
-    QVector<QPair<QByteArray, QByteArray>> xattrs;
+    QVector<QPair<QByteArray, QByteArray>> xattrs{};
     uint64_t sparseLogicalSize{0};
     // A7 (A-h) file clone: when non-zero, the inserted file clones the data stream
     // owned by this dstream id (cloneLogicalSize = the shared stream's size).
@@ -10323,7 +10343,7 @@ struct ApfsFileInsertBuildInputs {
     bool compressLzbitmap{false};
     // Import fidelity: adopted inode identity metadata (owner/group/mode/flags/times). Applied
     // only when recoveredMeta.valid; a generated insert leaves it default -> byte-identical.
-    ApfsRecoveredInodeMetadata recoveredMeta;
+    ApfsRecoveredInodeMetadata recoveredMeta{};
 };
 
 // Build the embedded com.apple.decmpfs value for an inline LZFSE-compressed file: the 16-byte
@@ -11599,23 +11619,23 @@ struct ApfsDivergeState {
 };
 
 struct ApfsFsCommitFinalize {
-    ApfsFsCommitContext ctx;
+    ApfsFsCommitContext ctx{};
     uint64_t newXid{0};
-    QVector<ApfsFsTreeNode> fsNodes;     // root first; paddrs are newBlocks[0..K-1]
-    QVector<uint64_t> newBlocks;         // [K nodes, 5-chain, extentRef?, data?]
-    QVector<ApfsRootFilePayload> files;  // the committed root-file set
-    uint64_t extentRefNew{0};            // new extent-ref tree root block (0 = keep)
-    QVector<uint64_t> extentRefBlocks;   // full reserved extent-ref run (root at [0])
-    QVector<uint64_t> freedDataBlocks;   // data blocks the commit releases
-    int64_t dataBlocksNew{0};            // data blocks the commit allocates
+    QVector<ApfsFsTreeNode> fsNodes{};     // root first; paddrs are newBlocks[0..K-1]
+    QVector<uint64_t> newBlocks{};         // [K nodes, 5-chain, extentRef?, data?]
+    QVector<ApfsRootFilePayload> files{};  // the committed root-file set
+    uint64_t extentRefNew{0};              // new extent-ref tree root block (0 = keep)
+    QVector<uint64_t> extentRefBlocks{};   // full reserved extent-ref run (root at [0])
+    QVector<uint64_t> freedDataBlocks{};   // data blocks the commit releases
+    int64_t dataBlocksNew{0};              // data blocks the commit allocates
     int64_t fileCountDelta{0};
     int64_t directoryCountDelta{0};
     int64_t symlinkCountDelta{0};
     int64_t otherObjectCountDelta{0};
     uint64_t nextObjIdDelta{0};
     uint64_t chunk1BitmapBlock{0};  // chunk-1 bitmap's chunk-0 block (0 = single-chunk)
-    ApfsDivergeState diverge;       // snapshot-aware versioning (inactive on the plain path)
-    QString newVolumeName;          // new apfs_volname (empty = keep the existing label)
+    ApfsDivergeState diverge{};     // snapshot-aware versioning (inactive on the plain path)
+    QString newVolumeName{};        // new apfs_volname (empty = keep the existing label)
 };
 
 // Whether the live volume carries a snapshot (om_snap_count > 0). In-place
@@ -13487,7 +13507,8 @@ bool commitInPlaceFileInsert(QIODevice* image,
                              .fileCountDelta = request.hardlinkTargetId != 0 ? 0 : 1,
                              .nextObjIdDelta = insertNextObjIdDelta(request),
                              .chunk1BitmapBlock = layout.chunk1BitmapBlock,
-                             .diverge = diverge},
+                             .diverge = diverge,
+                             .newVolumeName = {}},
                             result,
                             blockers);
 }
@@ -13635,7 +13656,9 @@ QVector<uint64_t> planPatchOldExtents(const ApfsFsCommitContext& ctx,
                                       const QVector<ApfsDataExtent>& oldExtents,
                                       ApfsDivergeState* diverge) {
     if (!diverge->active) {
-        return fileFreedDataBlocks({.dataExtents = oldExtents}, ctx.geometry.blockSize);
+        return fileFreedDataBlocks(
+            {.fileName = {}, .parentDirectoryName = {}, .data = {}, .dataExtents = oldExtents},
+            ctx.geometry.blockSize);
     }
     const ApfsDivergeDeleteExtentPlan plan = planDivergeDeleteExtents(diverge->liveExtentRefRecords,
                                                                       oldExtents);
@@ -13661,6 +13684,7 @@ ApfsFileInsertRequest makePatchInsertRequest(const ApfsFilePatchRequest& request
             .fileData = request.patchedData,
             .directories = request.directories,
             .newFileParentId = request.parentDirectoryId,
+            .recoveredMeta = {},
             .explicitFileId = request.targetFileId,
             .preservedLinks = preserved.links,
             .preservedPrimarySiblingId = preserved.primarySiblingId,
@@ -13733,7 +13757,8 @@ bool commitInPlaceFilePatch(QIODevice* image,
                              .fileCountDelta = 0,
                              .nextObjIdDelta = 0,
                              .chunk1BitmapBlock = layout.chunk1BitmapBlock,
-                             .diverge = diverge},
+                             .diverge = diverge,
+                             .newVolumeName = {}},
                             result,
                             blockers);
 }
@@ -13783,13 +13808,13 @@ uint64_t resolveParentId(const QVector<ApfsRootDirectoryPayload>& directories,
                          const QString& directoryName);
 
 struct ApfsPatchPrep {
-    QString sourcePath;     // image or raw-device path to read the current data from
-    QString directoryName;  // empty = root
-    QString fileName;
+    QString sourcePath{};     // image or raw-device path to read the current data from
+    QString directoryName{};  // empty = root
+    QString fileName{};
     uint64_t offset{0};
-    QByteArray patchBytes;
-    QVector<ApfsRootFilePayload> allFiles;
-    QVector<ApfsRootDirectoryPayload> directories;
+    QByteArray patchBytes{};
+    QVector<ApfsRootFilePayload> allFiles{};
+    QVector<ApfsRootDirectoryPayload> directories{};
 };
 
 // Read the target file's current data, apply the byte-range patch, and split the tree
@@ -14421,6 +14446,29 @@ uint64_t snapshotGeneratedIpBitmapUsage(const ApfsFsCommitContext& ctx,
            (ctx.layout.allocChunk == 0 && chunk1BitmapBlock != 0 ? 1 : 0);
 }
 
+bool writeSnapshotRotatedCab(const ApfsFsCommitContext& ctx,
+                             const ApfsIpRotation& rotation,
+                             uint64_t newXid,
+                             uint64_t* newAddr0,
+                             QStringList* blockers) {
+    *newAddr0 = rotation.newCib;
+    if (ctx.layout.cabCount == 0) {
+        return true;
+    }
+    const uint64_t newCab0 = rotation.newCib + 2;
+    if (!writeRotatedCab0({.image = ctx.image,
+                           .geometry = ctx.geometry,
+                           .liveCab0 = ctx.liveCab0,
+                           .newCab0 = newCab0,
+                           .newCib0 = rotation.newCib,
+                           .newXid = newXid},
+                          blockers)) {
+        return false;
+    }
+    *newAddr0 = newCab0;
+    return true;
+}
+
 // Shared snapshot commit tail (create + delete + revert): thread the freed/allocated block
 // sets through the main free-queue, the allocation bitmap, the CIB/spaceman free counts, and
 // the checkpoint - the same crash-safe machinery the file-mutating commits use. The COW chain
@@ -14465,23 +14513,16 @@ bool commitSnapshotCheckpointTail(const ApfsSnapshotCheckpointTail& t,
                                     .allocated = t.allocated,
                                     .cibFreeDelta = freeDelta,
                                     .newXid = t.newXid,
-                                    .chunk1BitmapBlock = t.chunk1BitmapBlock},
+                                    .chunk1BitmapBlock = t.chunk1BitmapBlock,
+                                    .spilledSlots = {},
+                                    .cibRepoints = {},
+                                    .liveCibAddrs = {}},
                                    blockers)) {
         return false;
     }
-    uint64_t newAddr0 = rotation.newCib;
-    if (ctx.layout.cabCount > 0) {
-        const uint64_t newCab0 = rotation.newCib + 2;
-        if (!writeRotatedCab0({.image = ctx.image,
-                               .geometry = ctx.geometry,
-                               .liveCab0 = ctx.liveCab0,
-                               .newCab0 = newCab0,
-                               .newCib0 = rotation.newCib,
-                               .newXid = t.newXid},
-                              blockers)) {
-            return false;
-        }
-        newAddr0 = newCab0;
+    uint64_t newAddr0 = 0;
+    if (!writeSnapshotRotatedCab(ctx, rotation, t.newXid, &newAddr0, blockers)) {
+        return false;
     }
     return advanceCheckpoint({.image = ctx.image,
                               .geometry = ctx.geometry,
@@ -14496,8 +14537,11 @@ bool commitSnapshotCheckpointTail(const ApfsSnapshotCheckpointTail& t,
                               .ipBitmapUsage = ipBitmapUsage,
                               .freedCibSlot = std::min(rotation.liveCib, rotation.liveBitmap),
                               .prevFreedCibSlot = rotation.freeCib,
+                              .extraFreedIpBlocks = {},
                               .mainFqEntries = mainFq.entries,
-                              .ipUsedSet = ipBitmapPrefixSet(ipBitmapUsage)},
+                              .ipUsedSet = ipBitmapPrefixSet(ipBitmapUsage),
+                              .cibArrayRepoints = {},
+                              .explicitIpFqEntries = {}},
                              result,
                              blockers);
 }
@@ -14623,7 +14667,10 @@ bool commitInChunkResizeGrow(ApfsFsCommitContext* ctx,
                                     .cibFreeDelta = growDelta,
                                     .newXid = newXid,
                                     .chunk1BitmapBlock = 0,
-                                    .chunk0BlockCountDelta = growDelta},
+                                    .chunk0BlockCountDelta = growDelta,
+                                    .spilledSlots = {},
+                                    .cibRepoints = {},
+                                    .liveCibAddrs = {}},
                                    blockers)) {
         return false;
     }
@@ -14640,8 +14687,12 @@ bool commitInChunkResizeGrow(ApfsFsCommitContext* ctx,
                               .ipBitmapUsage = ipBitmapUsage,
                               .freedCibSlot = std::min(rotation.liveCib, rotation.liveBitmap),
                               .prevFreedCibSlot = rotation.freeCib,
+                              .extraFreedIpBlocks = {},
+                              .mainFqEntries = {},
                               .blockCountDelta = growDelta,
-                              .ipUsedSet = ipBitmapPrefixSet(ipBitmapUsage)},
+                              .ipUsedSet = ipBitmapPrefixSet(ipBitmapUsage),
+                              .cibArrayRepoints = {},
+                              .explicitIpFqEntries = {}},
                              result,
                              blockers);
 }
@@ -15390,7 +15441,8 @@ bool buildGrownAllocatorSubtree(ApfsFsCommitContext* ctx,
                                     .bitmapBlock = bmp,
                                     .chunkStart = 0,
                                     .chunkSpan = chunks,
-                                    .cibIndex = 0},
+                                    .cibIndex = 0,
+                                    .extraChunkBitmaps = {}},
                                    blockers);
     };
     if (!writeApfsRepairBlock(
@@ -15501,6 +15553,7 @@ bool commitChunkAddingResizeGrow(ApfsFsCommitContext* ctx,
                               .cibCount = alloc.cibCount,
                               .ipSlotStride = 2,
                               .ipBitmapUsage = alloc.ipBitmapUsage,
+                              .extraFreedIpBlocks = {},
                               .mainFqEntries = mainFq.entries,
                               .blockCountDelta =
                                   static_cast<int64_t>(newBlockCount - ctx->geometry.blockCount),
@@ -15884,6 +15937,7 @@ bool commitMultiChunkSourceResizeGrow(ApfsFsCommitContext* ctx,
                               .cibCount = alloc.cibCount,
                               .ipSlotStride = 2,
                               .ipBitmapUsage = alloc.ipBitmapUsage,
+                              .extraFreedIpBlocks = {},
                               .mainFqEntries = mainFq.entries,
                               .blockCountDelta =
                                   static_cast<int64_t>(newBlockCount - oldBlockCount),
@@ -16647,7 +16701,10 @@ bool commitInChunkResizeShrink(ApfsFsCommitContext* ctx,
                                     .cibFreeDelta = delta,
                                     .newXid = newXid,
                                     .chunk1BitmapBlock = 0,
-                                    .chunk0BlockCountDelta = delta},
+                                    .chunk0BlockCountDelta = delta,
+                                    .spilledSlots = {},
+                                    .cibRepoints = {},
+                                    .liveCibAddrs = {}},
                                    blockers)) {
         return false;
     }
@@ -16664,8 +16721,12 @@ bool commitInChunkResizeShrink(ApfsFsCommitContext* ctx,
                             .ipBitmapUsage = ipBitmapUsage,
                             .freedCibSlot = std::min(rotation.liveCib, rotation.liveBitmap),
                             .prevFreedCibSlot = rotation.freeCib,
+                            .extraFreedIpBlocks = {},
+                            .mainFqEntries = {},
                             .blockCountDelta = delta,
-                            .ipUsedSet = ipBitmapPrefixSet(ipBitmapUsage)},
+                            .ipUsedSet = ipBitmapPrefixSet(ipBitmapUsage),
+                            .cibArrayRepoints = {},
+                            .explicitIpFqEntries = {}},
                            result,
                            blockers)) {
         return false;
@@ -19337,14 +19398,14 @@ bool commitInPlaceVolumeLabel(QIODevice* image,
 // two checkpoints; an interrupted replace leaves the file cleanly deleted, never
 // corrupt.
 struct ApfsRootFileWriteRequest {
-    QVector<ApfsRootFilePayload> allFiles;  // every file on the device (root + children)
-    QString fileName;
-    QByteArray fileData;
-    QVector<ApfsRootDirectoryPayload> directories;     // preserved across the commit
+    QVector<ApfsRootFilePayload> allFiles{};  // every file on the device (root + children)
+    QString fileName{};
+    QByteArray fileData{};
+    QVector<ApfsRootDirectoryPayload> directories{};   // preserved across the commit
     uint64_t parentDirectoryId{kApfsRootDirectoryId};  // root for a root file, else a directory id
     // Streaming write: when streamPath is set the payload streams from that host file
     // (streamSize bytes) instead of fileData; fileData stays empty. Empty = in-memory.
-    QString streamPath;
+    QString streamPath{};
     uint64_t streamSize{0};
     // A5: store the payload transparently compressed, mirroring
     // ApfsFileInsertBuildInputs (zlib inline; lzfse/lzvn inline; lzbitmap
@@ -19356,7 +19417,7 @@ struct ApfsRootFileWriteRequest {
     bool compressLzbitmap{false};
     // Import fidelity: adopted inode identity metadata threaded to the built payload. Applied
     // only when recoveredMeta.valid; default keeps every generated write byte-identical.
-    ApfsRecoveredInodeMetadata recoveredMeta;
+    ApfsRecoveredInodeMetadata recoveredMeta{};
 };
 
 ApfsRootFileWriteRequest makeRootFileWriteRequest(
@@ -19674,7 +19735,7 @@ bool commitInPlaceRootFileWrite(QIODevice* image,
 // directory vectors being filled and the blocker list. Bundling them keeps the recursive
 // collector within the argument-count budget.
 struct ApfsTreeCollect {
-    QString sourcePath;
+    QString sourcePath{};
     QVector<ApfsRootFilePayload>* files{nullptr};
     QVector<ApfsRootDirectoryPayload>* directories{nullptr};
     QStringList* blockers{nullptr};
@@ -21892,16 +21953,16 @@ const QByteArray kApfsKekBlobFlags = QByteArray::fromHex("000000000200bcac");
 
 struct ApfsEncryptionMaterial {
     bool ok{false};
-    QByteArray vek;                   // 32-byte AES-XTS volume key
-    QByteArray containerKeybagBlock;  // encrypted, ready to write
-    QByteArray volumeKeybagBlock;     // encrypted, ready to write
+    QByteArray vek{};                   // 32-byte AES-XTS volume key
+    QByteArray containerKeybagBlock{};  // encrypted, ready to write
+    QByteArray volumeKeybagBlock{};     // encrypted, ready to write
 };
 
 struct ApfsEncryptionInputs {
-    QString password;
-    QString recoveryKey;  // optional personal-recovery-key credential (PRK)
-    QByteArray containerUuid;
-    QByteArray volumeUuid;
+    QString password{};
+    QString recoveryKey{};  // optional personal-recovery-key credential (PRK)
+    QByteArray containerUuid{};
+    QByteArray volumeUuid{};
     uint64_t containerKbBlock{0};
     uint64_t volumeKbBlock{0};
     int blockSize{0};
@@ -22026,9 +22087,9 @@ struct ApfsFormatEncryption {
     uint32_t omapFlag{0};       // OMAP_VAL_ENCRYPTED on the fs-tree mapping
     uint64_t fsFlags{1};        // APFS_FS_UNENCRYPTED vs APFS_FS_ONEKEY
     uint64_t keylockerBlocks{0};
-    QByteArray vek;
-    QByteArray containerKeybagBlock;
-    QByteArray volumeKeybagBlock;
+    QByteArray vek{};
+    QByteArray containerKeybagBlock{};
+    QByteArray volumeKeybagBlock{};
 };
 
 /// @brief Resolve the encryption plan for a format request. The two keybags take
@@ -22857,9 +22918,9 @@ static bool appendSeedFileBlockers(const PartitionApfsImageFormatRequest& reques
 }
 
 struct ApfsRootFileInput {
-    QString fileName;
-    QString parentDirectoryName;
-    QByteArray data;
+    QString fileName{};
+    QString parentDirectoryName{};
+    QByteArray data{};
 };
 
 static uint64_t allocatedBlocksForFiles(const QVector<ApfsRootFilePayload>& files,
@@ -22945,10 +23006,10 @@ static void appendFilePayloadDataBlocks(QVector<ApfsImageBlock>* blocks,
 struct ApfsSeedRewrite {
     uint32_t blockSize{0};
     uint64_t blockCount{0};
-    QString volumeName;
-    QVector<ApfsRootFilePayload> files;
-    QVector<ApfsRootDirectoryPayload> directories;
-    QByteArray volumeUuid;
+    QString volumeName{};
+    QVector<ApfsRootFilePayload> files{};
+    QVector<ApfsRootDirectoryPayload> directories{};
+    QByteArray volumeUuid{};
 };
 
 static QVector<ApfsImageBlock> seedRewriteBlocks(const ApfsSeedRewrite& rewrite,

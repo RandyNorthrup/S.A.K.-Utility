@@ -699,14 +699,22 @@ QPlainTextEdit* addApprovalCommandBox(QVBoxLayout* layout,
     command_label->setObjectName(QStringLiteral("approvalCommandLabel"));
     layout->addWidget(command_label);
 
-    const QString redacted_command = ai::CredentialStore::redactSecrets(command_text);
     auto* command_box = new QPlainTextEdit(dialog);
     command_box->setObjectName(QStringLiteral("approvalCommandBox"));
     command_box->setReadOnly(true);
     command_box->setLineWrapMode(QPlainTextEdit::NoWrap);
-    command_box->setPlainText(redacted_command.trimmed().isEmpty()
+    command_box->setLayoutDirection(Qt::LeftToRight);
+    command_box->setAccessibleName(command_label->text());
+    command_box->setAccessibleDescription(
+        QObject::tr("Exact command text that will run if this request is approved"));
+    command_label->setBuddy(command_box);
+    // An approval is not a log. Redacting this text can hide executable shell syntax inside a
+    // quoted secret assignment -- e.g. a PowerShell $(...) subexpression -- while that hidden
+    // expression still runs. Logs and persisted records remain redacted at their own sinks; the
+    // human gate must show the exact display-safe command it is authorizing.
+    command_box->setPlainText(command_text.trimmed().isEmpty()
                                   ? QObject::tr("(No command preview available)")
-                                  : redacted_command);
+                                  : command_text);
     command_box->setMinimumHeight(kApprovalCommandMinHeight);
     command_box->setMaximumHeight(kApprovalCommandCollapsedMaxHeight);
     command_box->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);

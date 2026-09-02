@@ -30,9 +30,7 @@
 #include <array>
 #include <atomic>
 
-#ifdef Q_OS_WIN
 #include <windows.h>
-#endif
 
 namespace sak {
 
@@ -94,25 +92,18 @@ constexpr int kDriveRootLength = 3;
 /// GetDriveTypeW() value for a mapped network drive. Named so the classification
 /// exists on every platform; the value is checked against the Win32 macro below.
 constexpr unsigned int kWin32DriveRemote = 4;
-#ifdef Q_OS_WIN
 static_assert(kWin32DriveRemote == DRIVE_REMOTE, "DRIVE_REMOTE value drifted");
-#endif
 
 /// @brief Win32 drive type of @p path's "X:\" root, or 0 (DRIVE_UNKNOWN) when the path
 ///        has no drive-letter root or the platform has no such concept. GetDriveTypeW
 ///        answers from the local mount table, so it does not itself touch the share.
 [[nodiscard]] unsigned int rootDriveType(const QString& path) {
-#ifdef Q_OS_WIN
     const QString root =
         QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()).left(kDriveRootLength);
     if (root.size() < kDriveRootLength || root[1] != QLatin1Char(':')) {
         return 0;
     }
     return GetDriveTypeW(reinterpret_cast<LPCWSTR>(root.utf16()));
-#else
-    Q_UNUSED(path)
-    return 0;
-#endif
 }
 
 static constexpr auto kDetectEncryptedVolumesScript = R"PS(

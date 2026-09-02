@@ -18,7 +18,6 @@
 #include <string>
 #include <vector>
 
-#ifdef _WIN32
 #include <windows.h>
 
 #include <psapi.h>
@@ -26,11 +25,6 @@
 #undef emit
 #undef signals
 #undef slots
-#else
-#include <sys/resource.h>
-#include <sys/statvfs.h>
-#include <unistd.h>
-#endif
 
 namespace sak {
 
@@ -65,10 +59,6 @@ constexpr unsigned char kUtf8FourByteMaxLead = 0xF4;       // U+10FFFF cap
 constexpr unsigned char kUtf8FourByteLeadF4 = 0xF4;
 constexpr unsigned char kUtf8FourByteF0MinSecond = 0x90;   // reject F0 80..8F (overlong)
 constexpr unsigned char kUtf8FourByteF4MaxSecond = 0x8F;   // reject F4 90..BF (> U+10FFFF)
-#ifndef _WIN32
-constexpr std::uintmax_t kFileDescriptorWarnNumerator = 4;
-constexpr std::uintmax_t kFileDescriptorWarnDenominator = 5;
-#endif
 constexpr std::size_t kUnknownHardwareThreadLimit = 64;
 constexpr unsigned int kThreadWarningMultiplier = 2;
 constexpr unsigned int kThreadRejectMultiplier = 4;
@@ -210,7 +200,6 @@ validation_result validateStringEncodingPolicy(std::string_view str,
 
 namespace {
 
-#ifdef _WIN32
 bool componentIsReparsePoint(const std::filesystem::path& p) {
     // Catches BOTH symlinks and junctions (mount points): std::filesystem's
     // is_symlink does not report a junction, but the reparse-point attribute
@@ -227,19 +216,6 @@ bool componentIsReparsePoint(const std::filesystem::path& p) {
     const DWORD err = GetLastError();
     return err != ERROR_FILE_NOT_FOUND && err != ERROR_PATH_NOT_FOUND;
 }
-#else
-bool componentIsReparsePoint(const std::filesystem::path& p) {
-    std::error_code ec;
-    const bool is_link = std::filesystem::is_symlink(p, ec);
-    if (!ec) {
-        return is_link;
-    }
-    // A genuinely-absent component is not a link; any OTHER status error leaves its
-    // nature unknown and must fail CLOSED (treat as a blocking link) rather than be
-    // silently read as "not a link".
-    return ec != std::errc::no_such_file_or_directory;
-}
-#endif
 
 // True if ANY component along the path (any ancestor, not just the final one) is
 // a reparse point. Non-existent components simply are not reparse points, so this
@@ -314,7 +290,6 @@ validation_result input_validator::validatePathExistence(const std::filesystem::
 
 namespace {
 
-#ifdef _WIN32
 // Probe whether opening @p path for @p desired_access is denied by the file's
 // DACL. Only ERROR_ACCESS_DENIED counts as a denial; other open failures
 // (sharing violations, transient errors) are not treated as permission
@@ -367,20 +342,6 @@ validation_result checkWindowsPermissions(const std::filesystem::path& path,
 
     return input_validator::success();
 }
-#else
-validation_result checkUnixPermissions(const std::filesystem::path& path,
-                                       const path_validation_config& config) {
-    if (config.check_read_permission && access(path.c_str(), R_OK) != 0) {
-        return input_validator::failure(error_code::permission_denied, "Path is not readable");
-    }
-
-    if (config.check_write_permission && access(path.c_str(), W_OK) != 0) {
-        return input_validator::failure(error_code::permission_denied, "Path is not writable");
-    }
-
-    return input_validator::success();
-}
-#endif
 
 // Split a path into normalized, comparable components. On Windows the components
 // are lowercased so containment is case-insensitive (matching the platform
@@ -393,11 +354,9 @@ std::vector<std::string> normalizedPathComponents(const std::filesystem::path& p
         if (component.empty() || component == ".") {
             continue;
         }
-#ifdef _WIN32
         std::ranges::transform(component, component.begin(), [](unsigned char c) {
             return static_cast<char>(std::tolower(c));
         });
-#endif
         components.push_back(std::move(component));
     }
     return components;
@@ -419,11 +378,7 @@ bool baseContainsPath(const std::filesystem::path& base, const std::filesystem::
 
 validation_result input_validator::validatePathPermissions(const std::filesystem::path& path,
                                                            const path_validation_config& config) {
-#ifdef _WIN32
     return checkWindowsPermissions(path, config);
-#else
-    return checkUnixPermissions(path, config);
-#endif
 }
 
 validation_result input_validator::validatePathSyntax(const std::filesystem::path& path,
@@ -579,7 +534,6 @@ validation_result input_validator::validatePathWithinBase(const std::filesystem:
 
 namespace {
 
-#ifdef _WIN32
 // A colon in a Windows path is legitimate only as the drive-letter separator at
 // index 1 ("C:\..."). Every other colon opens an NTFS Alternate Data Stream --
 // e.g. "file.txt::$DATA" or "name:stream" -- which resolves to a different
@@ -616,7 +570,6 @@ bool hasTrailingDotOrSpace(const std::string& path_str) noexcept {
     }
     return false;
 }
-#endif  // _WIN32
 
 }  // namespace
 
@@ -636,7 +589,6 @@ bool input_validator::containsSuspiciousPatterns(const std::filesystem::path& pa
     // rejects the extended-length ("\\?\"), device ("\\.\") and "//?/" / "//./"
     // namespaces, all of which begin with two separators and can bypass the
     // normalization and length checks that operate on ordinary Win32 paths.
-#ifdef _WIN32
     if (path_str.starts_with("\\\\") || path_str.starts_with("//")) {
         return true;
     }
@@ -645,7 +597,6 @@ bool input_validator::containsSuspiciousPatterns(const std::filesystem::path& pa
     if (hasAdsColonStream(path_str) || hasTrailingDotOrSpace(path_str)) {
         return true;
     }
-#endif
 
     // Unusual characters that might indicate injection
     if (path_str.find('\0') != std::string::npos || path_str.find('\n') != std::string::npos ||
@@ -811,25 +762,8 @@ validation_result input_validator::validate_available_memory(std::size_t require
 }
 
 validation_result input_validator::validate_file_descriptor_limit() {
-#ifdef _WIN32
     // Windows has no POSIX file descriptor limit; always succeeds
     return success();
-#else
-    const auto current_count = get_file_descriptor_count_impl();
-    const auto limit = get_file_descriptor_limit_impl();
-
-    if (limit == 0) {
-        return success();  // Cannot determine, assume OK
-    }
-
-    // Warn if using more than 80% of limit
-    if (current_count > (limit * kFileDescriptorWarnNumerator / kFileDescriptorWarnDenominator)) {
-        logWarning("Approaching file descriptor limit: {}/{}", current_count, limit);
-        return failure(error_code::resource_limit_reached, "Approaching file descriptor limit");
-    }
-
-    return success();
-#endif
 }
 
 validation_result input_validator::validate_thread_count(std::size_t requested_threads) {
@@ -878,50 +812,16 @@ validation_result input_validator::failure(error_code err, std::string_view mess
 }
 
 // ============================================
-// Platform-Specific Implementations
+// Windows Resource Implementation
 // ============================================
 
 std::uintmax_t input_validator::get_available_memory_impl() {
-#ifdef _WIN32
     MEMORYSTATUSEX mem_info;
     mem_info.dwLength = sizeof(MEMORYSTATUSEX);
     if (GlobalMemoryStatusEx(&mem_info) != 0) {
         return mem_info.ullAvailPhys;
     }
     return 0;
-#else
-    long pages = sysconf(_SC_AVPHYS_PAGES);
-    long page_size = sysconf(_SC_PAGE_SIZE);
-    if (pages > 0 && page_size > 0) {
-        return static_cast<std::uintmax_t>(pages) * static_cast<std::uintmax_t>(page_size);
-    }
-    return 0;
-#endif
 }
-
-#ifndef _WIN32
-std::size_t input_validator::get_file_descriptor_count_impl() {
-    // Count open file descriptors in /proc/self/fd
-    std::size_t count = 0;
-    try {
-        for (const auto& entry : std::filesystem::directory_iterator("/proc/self/fd")) {
-            (void)entry;
-            ++count;
-        }
-    } catch (const std::exception& e) {
-        logDebug("Failed to enumerate /proc/self/fd for file descriptor count: {}", e.what());
-        return 0;  // Cannot determine
-    }
-    return count;
-}
-
-std::size_t input_validator::get_file_descriptor_limit_impl() {
-    struct rlimit limit;
-    if (getrlimit(RLIMIT_NOFILE, &limit) == 0) {
-        return limit.rlim_cur;
-    }
-    return 0;
-}
-#endif
 
 }  // namespace sak

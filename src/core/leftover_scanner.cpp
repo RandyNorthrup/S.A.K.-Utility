@@ -31,7 +31,6 @@ constexpr int kMaxSizeWalkEntries = 200'000;
 constexpr int kMinConcatNameLen = 4;
 constexpr int kRegistryHivePrefixLength = 5;
 
-#ifdef Q_OS_WIN
 constexpr DWORD kMaxRegistryValueNameLen = 256;
 constexpr DWORD kMaxRegistryValueDataLen = 1024;
 
@@ -47,7 +46,6 @@ QString system32Exe(const QString& exe) {
     return QDir::cleanPath(QString::fromWCharArray(buffer, static_cast<int>(len)) +
                            QStringLiteral("/System32/") + exe);
 }
-#endif
 
 const QSet<QString> kGenericDirNames = {
     "bin",
@@ -409,10 +407,8 @@ QVector<LeftoverItem> LeftoverScanner::scan(
 
     // Phase 3: Registry (snapshot diff + known paths)
     if (m_level == ScanLevel::Moderate || m_level == ScanLevel::Advanced) {
-#ifdef Q_OS_WIN
         runPhase([&] { return scanRegistryDiff(stopRequested, rel.registry_ok); });
         runPhase([&] { return scanKnownRegistryPaths(stopRequested); });
-#endif
     }
 
     // Phase 4: System objects (Advanced only)
@@ -625,8 +621,6 @@ QVector<LeftoverItem> LeftoverScanner::scanStandardFiles(
 // Phase 3: Registry
 // ======================================================================
 
-#ifdef Q_OS_WIN
-
 QVector<LeftoverItem> LeftoverScanner::scanRegistryDiff(const std::atomic<bool>& stopRequested,
                                                         bool& ok) {
     if (m_registryBefore.isEmpty() || stopRequested.load()) {
@@ -752,8 +746,6 @@ QVector<LeftoverItem> LeftoverScanner::scanKnownRegistryPaths(
     return items;
 }
 
-#endif  // Q_OS_WIN
-
 QVector<LeftoverItem> buildServiceLeftoverItems(const QVector<QPair<QString, QString>>& services,
                                                 const std::function<bool(const QString&)>& matches,
                                                 const std::atomic<bool>& stopRequested) {
@@ -776,7 +768,6 @@ QVector<LeftoverItem> buildServiceLeftoverItems(const QVector<QPair<QString, QSt
     return items;
 }
 
-#ifdef Q_OS_WIN
 namespace {
 // Enumerate installed Win32 services as (keyName, displayName) pairs straight from the Service
 // Control Manager (EnumServicesStatusExW). Both fields are language-neutral, so the leftover match
@@ -839,11 +830,9 @@ QVector<QPair<QString, QString>> enumerateWin32Services(const std::atomic<bool>&
     return services;
 }
 }  // namespace
-#endif  // Q_OS_WIN
 
 QVector<LeftoverItem> LeftoverScanner::scanServices(const std::atomic<bool>& stopRequested,
-                                                    bool& ok) {
-#ifdef Q_OS_WIN
+                                                    bool& ok) const {
     const QVector<QPair<QString, QString>> services = enumerateWin32Services(stopRequested, ok);
     if (!ok) {
         return {};  // enumeration failed -> empty is a FAILED read, honesty preserved by ok=false
@@ -852,11 +841,6 @@ QVector<LeftoverItem> LeftoverScanner::scanServices(const std::atomic<bool>& sto
         services,
         [this](const QString& text) { return matchesProgramStrict(text); },
         stopRequested);
-#else
-    Q_UNUSED(stopRequested);
-    ok = false;  // no SCM off Windows -> a failed read, never a dishonest empty-success
-    return {};
-#endif
 }
 
 // Extract the FIRST field of a CSV line, honoring RFC-4180 double-quoting so a task name that
@@ -885,18 +869,14 @@ QString parseFirstCsvField(const QString& line) {
 }
 
 QVector<LeftoverItem> LeftoverScanner::scanScheduledTasks(const std::atomic<bool>& stopRequested,
-                                                          bool& ok) {
+                                                          bool& ok) const {
     QVector<LeftoverItem> items;
 
-#ifdef Q_OS_WIN
     const QString schtasks = system32Exe(QStringLiteral("schtasks.exe"));
     if (schtasks.isEmpty()) {
         ok = false;  // cannot resolve a trusted System32 schtasks -> fail closed
         return items;
     }
-#else
-    const QString schtasks = QStringLiteral("schtasks.exe");
-#endif
     const auto result = sak::runProcess(schtasks,
                                         {QStringLiteral("/query"),
                                          QStringLiteral("/fo"),
@@ -1029,16 +1009,12 @@ void LeftoverScanner::scanFirewallDirection(const QStringList& netsh_args,
                                             const QString& description,
                                             const std::atomic<bool>& stopRequested,
                                             QVector<LeftoverItem>& items,
-                                            bool& ok) {
-#ifdef Q_OS_WIN
+                                            bool& ok) const {
     const QString netsh = system32Exe(QStringLiteral("netsh.exe"));
     if (netsh.isEmpty()) {
         ok = false;  // cannot resolve a trusted System32 netsh -> fail closed
         return;
     }
-#else
-    const QString netsh = QStringLiteral("netsh.exe");
-#endif
     const auto result =
         sak::runProcess(netsh, netsh_args, kPowerShellTimeoutMs, [&stopRequested]() {
             return stopRequested.load();
@@ -1096,7 +1072,6 @@ QVector<LeftoverItem> LeftoverScanner::scanFirewallRules(const std::atomic<bool>
     return items;
 }
 
-#ifdef Q_OS_WIN
 namespace {
 // Sane upper bounds for the ERROR_MORE_DATA retry loop. Genuine Run-key entries are tiny; these
 // caps exist only so a misbehaving provider cannot spin the grow loop forever. Past them we fail
@@ -1246,13 +1221,11 @@ bool LeftoverScanner::scanRunKey(HKEY hive,
     RegCloseKey(key);
     return all_reads_ok;
 }
-#endif
 
 QVector<LeftoverItem> LeftoverScanner::scanStartupEntries(const std::atomic<bool>& stopRequested,
-                                                          bool& ok) {
+                                                          bool& ok) const {
     QVector<LeftoverItem> items;
 
-#ifdef Q_OS_WIN
     // ok stays true only if EVERY Run-key read was reliable (a real failure -> phase incomplete).
     const auto readRun = [&](HKEY hive, const wchar_t* subkey, const QString& hive_name) {
         if (!scanRunKey(hive, subkey, hive_name, stopRequested, items)) {
@@ -1267,9 +1240,6 @@ QVector<LeftoverItem> LeftoverScanner::scanStartupEntries(const std::atomic<bool
                 L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce",
                 "HKLM");
     }
-#else
-    Q_UNUSED(ok);
-#endif
 
     // cppcheck-suppress duplicateCondition ; atomic stop flag checked across threads
     if (!stopRequested.load()) {

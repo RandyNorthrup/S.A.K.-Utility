@@ -8,11 +8,10 @@
 #include "sak/process_runner.h"
 
 #include <QDir>
-#include <QFileInfo>
 #include <QLatin1Char>
 #include <QLatin1String>
-#include <QStandardPaths>
 #include <QStringList>
+#include <QStringView>
 
 #include <algorithm>
 #include <array>
@@ -25,72 +24,40 @@ namespace {
 // Cap on how much of a rejected tool name is echoed back in the refusal message.
 constexpr int kToolNameErrorMaxChars = 64;
 
-// Code points below this are C0 control characters; 0x7f is the DEL control character.
-constexpr char16_t kFirstPrintableCodePoint = 0x20;
-constexpr char16_t kDeleteControlChar = 0x7f;
-// C1 controls (0x80-0x9F) include NEL (0x85), which several renderers break lines on.
-constexpr char16_t kFirstC1Control = 0x80;
-constexpr char16_t kLastC1Control = 0x9f;
 // Render an escaped code point as four hexadecimal digits (<U+XXXX>).
 constexpr int kControlEscapeHexWidth = 4;
 constexpr int kHexadecimalBase = 16;
-
-// Every code point that can change what the reader SEES without being visible itself. The old
-// set was only C0 plus DEL, which left the whole class of Unicode display attacks open against
-// the one string a human is asked to approve:
-//   U+0085 NEL, U+2028 LINE SEPARATOR, U+2029 PARAGRAPH SEPARATOR -- QTextDocument breaks lines
-//     on these, so a "single-line" command can push its dangerous tail out of a fixed-height,
-//     no-wrap preview box entirely.
-//   U+200E/U+200F and U+202A-U+202E and U+2066-U+2069 -- bidi marks, embeddings, overrides and
-//     isolates. RIGHT-TO-LEFT OVERRIDE reverses the VISUAL order of everything after it, which
-//     is the classic way to make a destructive command read as a harmless one.
-//   U+200B-U+200D, U+FEFF, U+00AD -- zero-width and soft-hyphen characters, invisible by
-//     definition, able to split a word the reader is scanning for ("rm" vs "r<ZWSP>m").
-// A table rather than a switch: eighteen equal alternatives are DATA, and written as control
-// flow they cost one cyclomatic branch each (CCN 23, over the gate's limit of 10) while telling
-// the reader nothing a list would not. Sorted so the lookup is a binary search.
-constexpr std::array<char16_t, 18> kNonC0DisplayHazards = {
-    0x00ad,  // SOFT HYPHEN
-    0x200b,  // ZERO WIDTH SPACE
-    0x200c,  // ZERO WIDTH NON-JOINER
-    0x200d,  // ZERO WIDTH JOINER
-    0x200e,  // LEFT-TO-RIGHT MARK
-    0x200f,  // RIGHT-TO-LEFT MARK
-    0x2028,  // LINE SEPARATOR
-    0x2029,  // PARAGRAPH SEPARATOR
-    0x202a,  // LEFT-TO-RIGHT EMBEDDING
-    0x202b,  // RIGHT-TO-LEFT EMBEDDING
-    0x202c,  // POP DIRECTIONAL FORMATTING
-    0x202d,  // LEFT-TO-RIGHT OVERRIDE
-    0x202e,  // RIGHT-TO-LEFT OVERRIDE
-    0x2066,  // LEFT-TO-RIGHT ISOLATE
-    0x2067,  // RIGHT-TO-LEFT ISOLATE
-    0x2068,  // FIRST STRONG ISOLATE
-    0x2069,  // POP DIRECTIONAL ISOLATE
-    0xfeff,  // ZERO WIDTH NO-BREAK SPACE / BOM
-};
+constexpr qsizetype kUnicodeEscapeTokenChars = 8;
+constexpr qsizetype kUnicodeEscapePlusIndex = 2;
+constexpr qsizetype kUnicodeEscapeHexStart = 3;
+constexpr qsizetype kUnicodeEscapeHexEnd = 7;
+constexpr qsizetype kUnicodeEscapeEndIndex = 7;
 
 bool isDisplayHazardChar(QChar ch) {
-    const char16_t code = ch.unicode();
-    if (code < kFirstPrintableCodePoint || code == kDeleteControlChar) {
-        return true;
-    }
-    if (code >= kFirstC1Control && code <= kLastC1Control) {
-        return true;
-    }
-    return std::ranges::binary_search(kNonC0DisplayHazards, code);
+    // Categories, not a hand-maintained code-point list. That covers every C0/C1 control,
+    // every line/paragraph separator, every bidi/zero-width format character (including
+    // U+061C ARABIC LETTER MARK, which the old list missed), and unpaired UTF-16 surrogates.
+    constexpr std::array hazard_categories{QChar::Mark_NonSpacing,
+                                           QChar::Mark_SpacingCombining,
+                                           QChar::Mark_Enclosing,
+                                           QChar::Separator_Space,
+                                           QChar::Separator_Line,
+                                           QChar::Separator_Paragraph,
+                                           QChar::Other_Control,
+                                           QChar::Other_Format,
+                                           QChar::Other_PrivateUse,
+                                           QChar::Other_NotAssigned,
+                                           QChar::Other_Surrogate};
+    return ch != QLatin1Char(' ') &&
+           std::ranges::find(hazard_categories, ch.category()) != hazard_categories.end();
 }
 
 // Renders a hazardous character visibly so it cannot forge the displayed confirmation command.
 //
-// THE FORM IS BRACKETED, NOT BACKSLASH-ESCAPED, and that is deliberate. A backslash escape
-// (\n, \x0a) is ambiguous the moment a value contains the LITERAL two characters '\' and 'n' --
-// the reader cannot tell a real newline from text that merely looks like one. Escaping the
-// backslash to disambiguate would be worse here than the disease: Windows commands are full of
-// paths, and doubling every separator ("C:\\Windows\\System32") makes the preview harder to read
-// in exactly the situation where careful reading matters. The bracketed form cannot be produced
-// by escaping, so no doubling is needed; a value containing the literal text "<LF>" merely makes
-// the reader suspect a newline that is not there, which errs toward caution rather than away.
+// THE FORM IS BRACKETED, NOT BACKSLASH-ESCAPED, and that is deliberate. Windows commands are
+// full of backslashes, so doubling every path separator would make the approval harder to read.
+// Literal text that already looks like one of these tokens is disambiguated below by escaping
+// its opening '<'; therefore the rendering is injective rather than merely caution-inducing.
 QString escapeDisplayHazardChar(QChar ch) {
     if (ch == QLatin1Char('\t')) {
         return QStringLiteral("<TAB>");
@@ -109,16 +76,43 @@ QString escapeDisplayHazardChar(QChar ch) {
         .toUpper();
 }
 
-// Makes control chars visible and escapes embedded double quotes (the preview's
-// own delimiter) so the rendered command is unambiguous.
+bool isUpperHexDigit(QChar ch) {
+    return (ch >= QLatin1Char('0') && ch <= QLatin1Char('9')) ||
+           (ch >= QLatin1Char('A') && ch <= QLatin1Char('F'));
+}
+
+// True when @p value contains text at @p index that could be mistaken for an escape this file
+// generates. Escaping only that opening '<' keeps ordinary shell input redirection readable.
+bool generatedEscapeTokenAt(const QString& value, qsizetype index) {
+    const QStringView suffix = QStringView(value).sliced(index);
+    if (suffix.startsWith(QLatin1String("<TAB>")) || suffix.startsWith(QLatin1String("<LF>")) ||
+        suffix.startsWith(QLatin1String("<CR>"))) {
+        return true;
+    }
+    if (suffix.size() < kUnicodeEscapeTokenChars || suffix.at(1) != QLatin1Char('U') ||
+        suffix.at(kUnicodeEscapePlusIndex) != QLatin1Char('+') ||
+        suffix.at(kUnicodeEscapeEndIndex) != QLatin1Char('>')) {
+        return false;
+    }
+    for (qsizetype i = kUnicodeEscapeHexStart; i < kUnicodeEscapeHexEnd; ++i) {
+        if (!isUpperHexDigit(suffix.at(i))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Makes display-affecting characters visible. Ordinary visible shell syntax, including quotes,
+// stays byte-for-byte readable because this is the entire command, not quoted argv content.
 QString sanitizeForPreview(const QString& value) {
     QString out;
     out.reserve(value.size());
-    for (const QChar ch : value) {
+    for (qsizetype i = 0; i < value.size(); ++i) {
+        const QChar ch = value.at(i);
         if (isDisplayHazardChar(ch)) {
             out += escapeDisplayHazardChar(ch);
-        } else if (ch == QLatin1Char('"')) {
-            out += QStringLiteral("\\\"");
+        } else if (ch == QLatin1Char('<') && generatedEscapeTokenAt(value, i)) {
+            out += escapeDisplayHazardChar(ch);
         } else {
             out += ch;
         }
@@ -139,7 +133,9 @@ bool previewNeedsQuoting(const QString& value) {
 // quoted (with contents escaped/visible) whenever it holds whitespace, a quote, or
 // a control char, so it can never silently merge into or split from a neighbor.
 QString quoteArgForPreview(const QString& value) {
-    const QString sanitized = sanitizeForPreview(value);
+    QString sanitized = sanitizeForPreview(value);
+    // Here quotes ARE delimiters around one argv element, unlike a whole shell command.
+    sanitized.replace(QLatin1Char('"'), QStringLiteral("\\\""));
     if (previewNeedsQuoting(value)) {
         return QLatin1Char('"') + sanitized + QLatin1Char('"');
     }
@@ -317,14 +313,11 @@ AiCommandToolPlan AiCommandToolPlanner::buildPlan(const QString& tool_name,
         return plan;  // policy_decision stays default-denied.
     }
     const bool direct_process = target == AiCommandTarget::Process;
-    // THE HUMAN-FACING COPY, sanitised once, here, for EVERY branch. The two shell branches
-    // assign the model's command string straight through, and that string is what the approval
-    // dialog used to render: a raw newline (or U+2028, which QTextDocument also breaks on)
-    // pushes the dangerous tail out of a fixed-height no-wrap preview box, and a bidi override
-    // reverses the visual order of what is left. The process branch was already safe because
-    // buildProcessPreview quotes each argument through sanitizeForPreview -- the defence existed
-    // and simply was not applied to the branches a model actually uses.
-    plan.display_preview = sanitizeForPreview(plan.preview);
+    // Shell previews are raw and need one display-safety pass. Process previews were already
+    // built argv-element by argv-element through quoteArgForPreview; sanitising that serialized
+    // form again would turn its quote delimiters into backslashes and its generated <TAB>/<LF>
+    // markers into text that claims they were literal input.
+    plan.display_preview = direct_process ? plan.preview : sanitizeForPreview(plan.preview);
 
     plan.request.max_output_bytes = options.max_output_bytes;
     // A direct process launch is an arbitrary executable: its effect lives in the binary,
@@ -365,6 +358,11 @@ AiCommandToolPlan AiCommandToolPlanner::buildPlan(const QString& tool_name,
     plan.policy_request.requires_admin = plan.request.requires_admin;
     plan.policy_request.host_elevated = ElevationManager::isElevated();
     plan.policy_decision = evaluateToolPolicy(policy, plan.policy_request);
+    // Policy classification is the fail-closed authority. Its read-only allowlist marks an
+    // unknown shell command risky even when the blacklist above has never heard of that mutator.
+    // Dropping this bit let such a command take a lease but skip risky presentation/restore-point
+    // handling in the caller.
+    plan.risky_change = plan.risky_change || plan.policy_decision.risky_change;
     return plan;
 }
 

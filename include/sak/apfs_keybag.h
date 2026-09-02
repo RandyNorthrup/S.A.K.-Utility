@@ -71,12 +71,12 @@ inline constexpr int kApfsKeyBlobHmacMagicLen = 6;
 /// only by buildKekBlob (the password-derived KEK); buildVekBlob ignores them.
 /// The outer HMAC is computed from @c outerSalt + the keyblob, not supplied.
 struct KeyBlobParams {
-    QByteArray uuid;         ///< 16 bytes (volume UUID)
-    QByteArray wrappedKey;   ///< 40 bytes (RFC 3394-wrapped VEK or KEK)
-    QByteArray flags8;       ///< 8-byte flags field
-    QByteArray outerSalt;    ///< outer salt (also keys the HMAC)
-    uint64_t iterations{0};  ///< PBKDF2 iterations (KEK only)
-    QByteArray salt;         ///< PBKDF2 salt, 16 bytes (KEK only)
+    QByteArray uuid{};        ///< 16 bytes (volume UUID)
+    QByteArray wrappedKey{};  ///< 40 bytes (RFC 3394-wrapped VEK or KEK)
+    QByteArray flags8{};      ///< 8-byte flags field
+    QByteArray outerSalt{};   ///< outer salt (also keys the HMAC)
+    uint64_t iterations{0};   ///< PBKDF2 iterations (KEK only)
+    QByteArray salt{};        ///< PBKDF2 salt, 16 bytes (KEK only)
 };
 
 /// @brief Build a VEK key-blob (container keybag KB_TAG_VOLUME_KEY payload).

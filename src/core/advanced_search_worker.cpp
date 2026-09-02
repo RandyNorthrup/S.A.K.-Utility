@@ -25,11 +25,9 @@
 #include <memory>
 #include <thread>
 
-#include <zlib.h>
-
-#ifdef Q_OS_WIN
 #include <windows.h>
-#endif
+
+#include <zlib.h>
 
 namespace sak {
 
@@ -49,9 +47,7 @@ constexpr qsizetype kMaxScanLineChars = 256 * 1024;
 /// classification is available on every platform; the value is checked against
 /// the Win32 macro below.
 constexpr unsigned int kWin32DriveRemote = 4;
-#ifdef Q_OS_WIN
 static_assert(kWin32DriveRemote == DRIVE_REMOTE, "DRIVE_REMOTE value drifted");
-#endif
 
 /// Bytes per bounded overlapped read window. Small enough that a stalled server
 /// is detected inside one timeout budget, large enough that a 100 MiB archive is
@@ -161,7 +157,6 @@ constexpr int kTargetSearchBrowseMaxEntries = 10'000;
 ///        GetDriveTypeW answers from the local mount table, so it does not itself
 ///        touch the (possibly unresponsive) share.
 [[nodiscard]] unsigned int rootDriveType(const QString& path) {
-#ifdef Q_OS_WIN
     constexpr int kDriveRootLength = 3;
     const QString root =
         QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()).left(kDriveRootLength);
@@ -169,13 +164,7 @@ constexpr int kTargetSearchBrowseMaxEntries = 10'000;
         return 0;
     }
     return GetDriveTypeW(reinterpret_cast<LPCWSTR>(root.utf16()));
-#else
-    Q_UNUSED(path)
-    return 0;
-#endif
 }
-
-#ifdef Q_OS_WIN
 
 /// @brief Owns a Win32 HANDLE and closes it exactly once, on every exit path.
 ///        CreateFileW and CreateEventW report failure differently
@@ -306,7 +295,6 @@ struct BoundedReadWindow {
     return data;
 }
 
-#endif  // Q_OS_WIN
 }  // namespace
 
 // -- Zlib Inflate Helper ------------------------------------------------------
@@ -490,7 +478,6 @@ std::expected<QByteArray, QString> AdvancedSearchWorker::readSearchFileBytes(
     if (max_bytes <= 0) {
         return std::unexpected(QStringLiteral("read budget is not positive"));
     }
-#ifdef Q_OS_WIN
     if (readsOverNetwork(file_path)) {
         // QFile has no read timeout, so a hostile or dead SMB server would block
         // this worker thread forever on a plain read. Network paths go through the
@@ -499,7 +486,6 @@ std::expected<QByteArray, QString> AdvancedSearchWorker::readSearchFileBytes(
                                       max_bytes,
                                       networkReadTimeoutMs(m_config.network_timeout_sec));
     }
-#endif
     QFile file(file_path);
     if (!file.open(QIODevice::ReadOnly)) {
         return std::unexpected(QStringLiteral("open failed"));

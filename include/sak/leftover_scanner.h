@@ -18,9 +18,7 @@
 #include <functional>
 #include <type_traits>
 
-#ifdef Q_OS_WIN
 #include <windows.h>
-#endif
 
 namespace sak {
 
@@ -172,31 +170,30 @@ private:
                                             const std::atomic<bool>& stopRequested) const;
 
     // Phase 3: Registry (snapshot diff + known paths)
-#ifdef Q_OS_WIN
     QVector<LeftoverItem> scanRegistryDiff(const std::atomic<bool>& stopRequested, bool& ok);
     QVector<LeftoverItem> scanKnownRegistryPaths(const std::atomic<bool>& stopRequested);
     [[nodiscard]] bool registryKeyMatchesProgram(const QString& keyPath) const;
-#endif
 
     // Phase 4: System objects (Advanced only). The shell-out phases take an out bool& set FALSE if
     // the underlying process failed (so an empty result is not misread as an honest "none found").
-    QVector<LeftoverItem> scanServices(const std::atomic<bool>& stopRequested, bool& ok);
-    QVector<LeftoverItem> scanScheduledTasks(const std::atomic<bool>& stopRequested, bool& ok);
+    QVector<LeftoverItem> scanServices(const std::atomic<bool>& stopRequested, bool& ok) const;
+    QVector<LeftoverItem> scanScheduledTasks(const std::atomic<bool>& stopRequested,
+                                             bool& ok) const;
     QVector<LeftoverItem> scanFirewallRules(const std::atomic<bool>& stopRequested, bool& ok);
-    QVector<LeftoverItem> scanStartupEntries(const std::atomic<bool>& stopRequested, bool& ok);
+    QVector<LeftoverItem> scanStartupEntries(const std::atomic<bool>& stopRequested,
+                                             bool& ok) const;
 
     void scanFirewallDirection(const QStringList& netsh_args,
                                const QString& description,
                                const std::atomic<bool>& stopRequested,
                                QVector<LeftoverItem>& items,
-                               bool& ok);
+                               bool& ok) const;
     /// Append a FirewallRule item for a matched "Rule Name:" header line. Returns the
     /// new item's index in @p items, or -1 when the rule name does not match this
     /// program (so the caller ignores that rule's subsequent field lines).
     [[nodiscard]] int appendFirewallRule(const QString& headerLine,
                                          const QString& description,
                                          QVector<LeftoverItem>& items) const;
-#ifdef Q_OS_WIN
     /// Read one Run key. Returns TRUE if the enumeration was reliable (key read OK, or the key was
     /// simply absent -- an honest "no entries"), FALSE on a real read failure (e.g.
     /// ERROR_ACCESS_DENIED) so the caller can flag the startup phase incomplete.
@@ -215,7 +212,6 @@ private:
                                          const QString& hive_name,
                                          const wchar_t* subkey,
                                          QVector<LeftoverItem>& items) const;
-#endif
     void scanStartupFolder(const std::atomic<bool>& stopRequested,
                            QVector<LeftoverItem>& items) const;
 

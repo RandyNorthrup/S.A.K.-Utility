@@ -14,19 +14,16 @@
 #include <QFileInfo>
 #include <QThread>
 
-#ifdef _WIN32
 #include <windows.h>
 
 #include <shellapi.h>
 #pragma comment(lib, "shell32.lib")
-#endif
 
 namespace sak {
 
 namespace {
 constexpr int kHelperExitWaitMs = kTimerStatusBriefMs;
 
-#ifdef _WIN32
 // Resolve the full image path of a process by PID via PROCESS_QUERY_LIMITED_INFORMATION.
 // Returns an empty string on any failure so callers fail closed.
 QString processImagePath(DWORD pid) {
@@ -45,7 +42,6 @@ QString processImagePath(DWORD pid) {
     }
     return QString::fromWCharArray(buffer, static_cast<int>(size));
 }
-#endif
 }  // namespace
 
 // ======================================================================
@@ -63,19 +59,13 @@ ElevationBroker::~ElevationBroker() {
 // ======================================================================
 
 bool ElevationBroker::isConnected() const {
-#ifdef _WIN32
     return m_pipe_handle.load(std::memory_order_acquire) != INVALID_HANDLE_VALUE;
-#else
-    return false;
-#endif
 }
 
 auto ElevationBroker::executeTask(const QString& task_id,
-                                  const QString& reason,
+                                  const QString&,
                                   const QJsonObject& payload)
     -> std::expected<ElevatedTaskResult, sak::error_code> {
-    (void)reason;  // Reserved for future UAC context display
-
     // Fail closed on a nameless task: no helper handler can ever match it, so
     // launching the helper (and its UAC prompt) would only end in a rejection.
     if (task_id.isEmpty()) {
@@ -234,7 +224,6 @@ void ElevationBroker::cancelCurrentTask() {
 }
 
 void ElevationBroker::shutdown() {
-#ifdef _WIN32
     if (isConnected()) {
         const QByteArray msg = buildShutdown();
         if (!sendRaw(msg)) {
@@ -244,7 +233,6 @@ void ElevationBroker::shutdown() {
         }
     }
     cleanup();
-#endif
 }
 
 // ======================================================================
@@ -252,7 +240,6 @@ void ElevationBroker::shutdown() {
 // ======================================================================
 
 auto ElevationBroker::launchHelper() -> std::expected<void, sak::error_code> {
-#ifdef _WIN32
     auto helper_path = findHelperPath();
     if (!helper_path) {
         return std::unexpected(helper_path.error());
@@ -298,9 +285,6 @@ auto ElevationBroker::launchHelper() -> std::expected<void, sak::error_code> {
     }
     sak::logInfo("ElevationBroker: helper launched successfully");
     return {};
-#else
-    return std::unexpected(sak::error_code::platform_not_supported);
-#endif
 }
 
 // ======================================================================
@@ -308,7 +292,6 @@ auto ElevationBroker::launchHelper() -> std::expected<void, sak::error_code> {
 // ======================================================================
 
 auto ElevationBroker::connectPipe() -> std::expected<void, sak::error_code> {
-#ifdef _WIN32
     const std::wstring wide_name = m_pipe_name.toStdWString();
 
     // Wait for the helper to create the pipe (with timeout)
@@ -371,12 +354,8 @@ auto ElevationBroker::connectPipe() -> std::expected<void, sak::error_code> {
 
     sak::logError("ElevationBroker: pipe connection timed out");
     return std::unexpected(sak::error_code::elevation_timeout);
-#else
-    return std::unexpected(sak::error_code::platform_not_supported);
-#endif
 }
 
-#ifdef _WIN32
 auto ElevationBroker::verifyPipeServer(HANDLE handle) -> std::expected<void, sak::error_code> {
     ULONG server_pid = 0;
     if (GetNamedPipeServerProcessId(handle, &server_pid) == 0) {
@@ -418,14 +397,12 @@ auto ElevationBroker::verifyServerImage(unsigned long server_pid)
     }
     return {};
 }
-#endif
 
 // ======================================================================
 // Private -- Pipe I/O
 // ======================================================================
 
 bool ElevationBroker::sendRaw(const QByteArray& data) {
-#ifdef _WIN32
     // Serialize every pipe write: the worker thread sends the task request while
     // the GUI thread may send a cancel frame; interleaved WriteFile calls on a
     // byte-mode pipe would corrupt the framing.
@@ -440,10 +417,6 @@ bool ElevationBroker::sendRaw(const QByteArray& data) {
         handle, data.constData(), static_cast<DWORD>(data.size()), &bytes_written, nullptr);
 
     return (ok != 0) && static_cast<int>(bytes_written) == data.size();
-#else
-    (void)data;
-    return false;
-#endif
 }
 
 auto ElevationBroker::readMessage() -> std::expected<PipeMessage, sak::error_code> {
@@ -484,7 +457,6 @@ auto ElevationBroker::readMessage() -> std::expected<PipeMessage, sak::error_cod
 }
 
 bool ElevationBroker::readExact(char* buffer, int size, int timeout_ms) {
-#ifdef _WIN32
     if (m_pipe_handle.load(std::memory_order_acquire) == INVALID_HANDLE_VALUE) {
         return false;
     }
@@ -524,12 +496,6 @@ bool ElevationBroker::readExact(char* buffer, int size, int timeout_ms) {
     }
 
     return total_read == size;
-#else
-    (void)buffer;
-    (void)size;
-    (void)timeout_ms;
-    return false;
-#endif
 }
 
 DWORD ElevationBroker::peekAvailable() const {
@@ -564,7 +530,6 @@ bool ElevationBroker::isHelperAlive() const {
 // ======================================================================
 
 void ElevationBroker::cleanup() {
-#ifdef _WIN32
     HANDLE proc_to_close = nullptr;
     {
         // Close the pipe handle under the SAME lock sendRaw() holds. cancelCurrentTask()
@@ -594,7 +559,6 @@ void ElevationBroker::cleanup() {
         WaitForSingleObject(proc_to_close, kHelperExitWaitMs);
         CloseHandle(proc_to_close);
     }
-#endif
     m_pipe_name.clear();
     setCurrentTaskId(QString());
     Q_EMIT helperDisconnected();

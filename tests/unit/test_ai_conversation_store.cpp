@@ -16,92 +16,50 @@
 #include <thread>
 #include <vector>
 
+#include <windows.h>
+
 class AiConversationStoreTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
     void startSession_writesManifestAndListsSession();
     void appendTranscript_loadsDisplayLines();
+    void loadTranscriptLines_rejectsMalformedJsonWithoutPartialData();
     void latestAssistantResponseId_returnsLastAssistantMetadata();
+    void latestAssistantResponseId_rejectsMalformedTranscript();
     void listPromptedSessions_filtersUnpromptedSessions();
     void clearCurrentSession_preventsAccidentalWrites();
     void writeUsage_persistsUsageJson();
+    void writeUsage_requiresActiveSession();
     void commandLogPath_createsLogsDirectoryAndReturnsPath();
     void commandLogPath_confinesTraversalTokens();
     void safeArtifactDirectoryName_rejectsDotSegments();
     void artifactPath_createsSubdirectoryAndReturnsPath();
     void renameSession_updatesTitleAndArtifactRoot();
     void renameSession_rollsBackTheArtifactMoveWhenTheManifestFails();
-    void renameSession_reportsAMergeItCannotUndoWhenTheManifestFails();
+    void renameSession_refusesExistingArtifactDestination();
+    void renameSession_doesNotCopyWhenExactMoveFails();
     void startSession_doesNotPresentASessionThatFailedToPersist();
     void caseOnlyRename_preservesArtifacts();
     void memoryFile_appendsEntries();
     void memoryFile_initializesStructuredSections();
     void memoryFile_trimPreservesStructuredSections();
-    void searchSessions_findsTranscriptAndCommandIndex();
+    void searchSessions_findsTranscriptAndCommandRawLogs();
     void appendCommand_redactsSecretsInPersistedRecord();
     void appendCommand_redactsSecretsInTheResultToo();
     void appendTranscript_redactsTextAndMetadataAtPersistenceBoundary();
+    void transcriptAndCommandPersistenceHaveNoDerivedIndexFallback();
+    void appendTranscript_rejectsProjectedFileCap();
     void artifactSubdir_confinesSubdirToTheArtifactRoot();
     void artifactPath_rejectsAFilenameThatNamesTheDirectory();
     void safeArtifactDirectoryName_rejectsReservedAndTrailingDotNames();
     void memoryFile_trimActuallyGetsUnderTheCapForNonAsciiMemory();
-    void searchFallsBackToRawLogsWhenTheIndexIsKnownIncomplete();
+    void memoryFile_refusesUnboundedExternalContent();
+    void searchRejectsMalformedRawLogWithoutPartialResults();
     void concurrentReadersAndWriterDoNotDeadlockOrCorrupt();
 };
 
 namespace {
-
-// The index is the PRIMARY source and the raw logs are only the FALLBACK, but the fixture
-// makes them produce byte-identical hits -- the index text and the raw scan build the same
-// string -- so no assertion in the caller can tell WHICH source answered, and either path
-// could be deleted with everything still green. Isolate them one at a time.
-void verifySearchAnswersFromIndexAndFromRawLogs(const sak::ai::ConversationStore& store,
-                                                QFile& index_file,
-                                                QString& error) {
-    // The index is the PRIMARY source and the raw logs are only the FALLBACK, but this fixture
-    // makes them produce byte-identical hits -- the index text and the raw scan build the same
-    // "%1 %2" string -- so no assertion above can tell WHICH source answered, and either path
-    // could be deleted with everything still green.
-    const auto snippetFor = [](const auto& hits, const QString& source) {
-        const auto it = std::find_if(hits.cbegin(), hits.cend(), [&source](const auto& hit) {
-            return hit.source == source;
-        });
-        return it == hits.cend() ? QString() : it->snippet;
-    };
-    const QString session_dir = store.currentSessionInfo().path;
-    const QString transcript_path = session_dir + QStringLiteral("/transcript.jsonl");
-    const QString commands_path = session_dir + QStringLiteral("/commands.jsonl");
-    const QString index_path = session_dir + QStringLiteral("/search_index.jsonl");
-    index_file.close();
-
-    // (a) With the raw logs moved aside, only a real index READ can still answer. An index read
-    // that bails out (missing, oversized, or open-failure) turns this into zero hits.
-    QVERIFY(QFile::rename(transcript_path, transcript_path + QStringLiteral(".off")));
-    QVERIFY(QFile::rename(commands_path, commands_path + QStringLiteral(".off")));
-    const auto index_only = store.searchSessions(QStringLiteral("SUPERAntiSpyware"), 10, &error);
-    QVERIFY2(error.isEmpty(), qPrintable(error));
-    QCOMPARE(index_only.size(), 2);
-    QCOMPARE(snippetFor(index_only, QStringLiteral("transcript")),
-             QStringLiteral("You Run SUPERAntiSpyware scan"));
-    QCOMPARE(snippetFor(index_only, QStringLiteral("command")),
-             QStringLiteral("Get-Process SUPERAntiSpyware "
-                            "{\"error_message\":\"health_suppressed\",\"success\":false}"));
-
-    // (b) And the fallback must really work for a session with NO index -- a pre-index session,
-    // or one whose index grew past the size cap: restore the raw logs, drop the index, same two.
-    QVERIFY(QFile::rename(transcript_path + QStringLiteral(".off"), transcript_path));
-    QVERIFY(QFile::rename(commands_path + QStringLiteral(".off"), commands_path));
-    QVERIFY(QFile::remove(index_path));
-    const auto raw_only = store.searchSessions(QStringLiteral("SUPERAntiSpyware"), 10, &error);
-    QVERIFY2(error.isEmpty(), qPrintable(error));
-    QCOMPARE(raw_only.size(), 2);
-    QCOMPARE(snippetFor(raw_only, QStringLiteral("transcript")),
-             QStringLiteral("You Run SUPERAntiSpyware scan"));
-    QCOMPARE(snippetFor(raw_only, QStringLiteral("command")),
-             QStringLiteral("Get-Process SUPERAntiSpyware "
-                            "{\"error_message\":\"health_suppressed\",\"success\":false}"));
-}
 
 // The writer half of the concurrency fixture discards all of its return values and nothing
 // downstream could see a failed append -- the test never reads the transcript back -- so if
@@ -212,6 +170,24 @@ void AiConversationStoreTests::appendTranscript_loadsDisplayLines() {
     QCOMPARE(lines[1], QStringLiteral("\n[ASSISTANT RESULT]\ndisk ok"));
 }
 
+void AiConversationStoreTests::loadTranscriptLines_rejectsMalformedJsonWithoutPartialData() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Malformed Transcript"), &error));
+    QVERIFY(
+        store.appendTranscript(QStringLiteral("You"), QStringLiteral("valid first"), {}, &error));
+    QFile transcript(store.currentSessionInfo().path + QStringLiteral("/transcript.jsonl"));
+    QVERIFY(transcript.open(QIODevice::Append));
+    QCOMPARE(transcript.write("not json\n"), static_cast<qint64>(9));
+    transcript.close();
+
+    const QStringList lines = store.loadTranscriptLines(store.currentSessionId(), &error);
+    QVERIFY(lines.isEmpty());
+    QCOMPARE(error, QStringLiteral("Transcript line 2 is not a valid JSON object"));
+}
+
 void AiConversationStoreTests::latestAssistantResponseId_returnsLastAssistantMetadata() {
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
@@ -272,6 +248,26 @@ void AiConversationStoreTests::latestAssistantResponseId_returnsLastAssistantMet
     QVERIFY(
         store.latestAssistantResponseId(QStringLiteral("ai_no_such_session"), &error).isEmpty());
     QVERIFY2(error.isEmpty(), qPrintable(error));
+}
+
+void AiConversationStoreTests::latestAssistantResponseId_rejectsMalformedTranscript() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Malformed Response ID"), &error));
+    QVERIFY(store.appendTranscript(QStringLiteral("Assistant"),
+                                   QStringLiteral("valid first"),
+                                   QJsonObject{{QStringLiteral("response_id"),
+                                                QStringLiteral("resp_valid")}},
+                                   &error));
+    QFile transcript(store.currentSessionInfo().path + QStringLiteral("/transcript.jsonl"));
+    QVERIFY(transcript.open(QIODevice::Append));
+    QCOMPARE(transcript.write("not json\n"), static_cast<qint64>(9));
+    transcript.close();
+
+    QCOMPARE(store.latestAssistantResponseId(store.currentSessionId(), &error), QString());
+    QCOMPARE(error, QStringLiteral("Transcript line 2 is not a valid JSON object"));
 }
 
 void AiConversationStoreTests::listPromptedSessions_filtersUnpromptedSessions() {
@@ -398,6 +394,19 @@ void AiConversationStoreTests::writeUsage_persistsUsageJson() {
     // ...and it is THIS write's stamp, not a frozen literal that merely parses.
     QVERIFY2(qAbs(usage_written_at.msecsTo(QDateTime::currentDateTimeUtc())) < 60'000,
              qPrintable(usage_stamp));
+}
+
+void AiConversationStoreTests::writeUsage_requiresActiveSession() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    const sak::ai::TokenUsage usage{};
+
+    QVERIFY(!store.writeUsage(usage, usage, &error));
+    QCOMPARE(error, QStringLiteral("No active AI session"));
+    QVERIFY(store.currentSessionId().isEmpty());
+    QCOMPARE(store.listSessions().size(), 0);
 }
 
 void AiConversationStoreTests::commandLogPath_createsLogsDirectoryAndReturnsPath() {
@@ -691,12 +700,7 @@ void AiConversationStoreTests::renameSession_rollsBackTheArtifactMoveWhenTheMani
     QVERIFY(QFile::exists(QDir(artifacts).filePath(QStringLiteral("New/logs/before.txt"))));
 }
 
-void AiConversationStoreTests::renameSession_reportsAMergeItCannotUndoWhenTheManifestFails() {
-    // The other half of the rollback contract. When the destination directory ALREADY EXISTS the
-    // rename degrades to a merge, and a merge cannot be undone: renaming back would not separate
-    // the entries again, and nothing may delete artifacts to make the failure look clean. So this
-    // path must NOT roll back -- it must say exactly where the artifacts ended up and what the
-    // session is still called, because only a human can reconcile that.
+void AiConversationStoreTests::renameSession_refusesExistingArtifactDestination() {
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
 
@@ -713,31 +717,55 @@ void AiConversationStoreTests::renameSession_reportsAMergeItCannotUndoWhenTheMan
     f.write("before");
     f.close();
 
-    // Pre-create the destination so the plain rename cannot be used and the merge arm is taken.
+    // A pre-existing destination can contain unrelated prior artifacts. Merging into it is
+    // irreversible and can partially move files before a later failure, so refuse before moving
+    // anything.
     const QString artifacts = QDir(session_path).filePath(QStringLiteral("artifacts"));
     QVERIFY(QDir().mkpath(QDir(artifacts).filePath(QStringLiteral("New/other"))));
 
-    QVERIFY(blockManifestWrites(session_path));
-
     error.clear();
-    QVERIFY2(!store.renameCurrentSession(QStringLiteral("New"), &error),
-             "a rename whose manifest cannot be written must fail");
-
-    // THE ERROR NAMES THE RESIDUAL STATE: that a merge happened, where the artifacts now are, and
-    // the title the session still carries. A bare "rename failed" would send someone looking for
-    // the artifacts under a name that no longer holds them.
-    QVERIFY2(error.contains(QStringLiteral("merged")), qPrintable(error));
-    QVERIFY2(error.contains(QStringLiteral("New")), qPrintable(error));
-    QVERIFY2(error.contains(QStringLiteral("Old")), qPrintable(error));
-
-    // The in-memory title is still restored -- that half is not conditional on the outcome.
+    QVERIFY(!store.renameCurrentSession(QStringLiteral("New"), &error));
+    QCOMPARE(error,
+             QStringLiteral("Artifact destination already exists; refusing merge: %1")
+                 .arg(QDir(artifacts).filePath(QStringLiteral("New"))));
     QCOMPARE(store.currentSessionInfo().title, QStringLiteral("Old"));
-
-    // AND NOTHING WAS DESTROYED TO TIDY UP: the merged bytes are under the new name, where the
-    // error says they are, and the pre-existing entry that forced the merge is untouched.
-    QCOMPARE(readFileContents(QDir(artifacts).filePath(QStringLiteral("New/logs/before.txt"))),
+    QCOMPARE(readFileContents(QDir(artifacts).filePath(QStringLiteral("Old/logs/before.txt"))),
              QByteArrayLiteral("before"));
+    QVERIFY(!QFileInfo::exists(QDir(artifacts).filePath(QStringLiteral("New/logs/before.txt"))));
     QVERIFY(QDir(QDir(artifacts).filePath(QStringLiteral("New/other"))).exists());
+}
+
+void AiConversationStoreTests::renameSession_doesNotCopyWhenExactMoveFails() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Move Source"), &error));
+    const QString source_root = store.artifactRootDirectory(&error);
+    QVERIFY2(!source_root.isEmpty(), qPrintable(error));
+    const QString source_file = QDir(source_root).filePath(QStringLiteral("locked.txt"));
+    QFile file(source_file);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write("do not duplicate"), static_cast<qint64>(16));
+    file.close();
+
+    const QString destination_root =
+        QDir(QFileInfo(source_root).absolutePath()).filePath(QStringLiteral("Move Destination"));
+    QVERIFY(QDir().mkpath(destination_root));
+    const HANDLE lock = CreateFileW(reinterpret_cast<LPCWSTR>(source_file.utf16()),
+                                    GENERIC_READ,
+                                    FILE_SHARE_READ,
+                                    nullptr,
+                                    OPEN_EXISTING,
+                                    FILE_ATTRIBUTE_NORMAL,
+                                    nullptr);
+    QVERIFY(lock != INVALID_HANDLE_VALUE);
+
+    QVERIFY(!store.renameCurrentSession(QStringLiteral("Move Destination"), &error));
+    CloseHandle(lock);
+    QVERIFY2(!QFileInfo::exists(QDir(destination_root).filePath(QStringLiteral("locked.txt"))),
+             qPrintable(error));
+    QVERIFY(QFileInfo::exists(source_file));
 }
 
 void AiConversationStoreTests::startSession_doesNotPresentASessionThatFailedToPersist() {
@@ -968,7 +996,7 @@ void AiConversationStoreTests::memoryFile_trimPreservesStructuredSections() {
     QVERIFY(QFileInfo(file.fileName()).size() <= 256 * 1024);
 }
 
-void AiConversationStoreTests::searchSessions_findsTranscriptAndCommandIndex() {
+void AiConversationStoreTests::searchSessions_findsTranscriptAndCommandRawLogs() {
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
 
@@ -985,20 +1013,9 @@ void AiConversationStoreTests::searchSessions_findsTranscriptAndCommandIndex() {
 
     const auto results = store.searchSessions(QStringLiteral("SUPERAntiSpyware"), 10, &error);
     QVERIFY2(error.isEmpty(), qPrintable(error));
-    // Exactly two hits: the transcript line and the command index entry. `>= 2` would miss a
-    // duplicate/spurious extra hit.
+    // Exactly two hits: one from each authoritative raw log.
     QCOMPARE(results.size(), 2);
-    QFile index_file(store.currentSessionInfo().path + QStringLiteral("/search_index.jsonl"));
-    QVERIFY(index_file.open(QIODevice::ReadOnly | QIODevice::Text));
-    const QJsonObject index_line =
-        QJsonDocument::fromJson(index_file.readLine().trimmed()).object();
-    QCOMPARE(index_line.value(QStringLiteral("schema_version")).toInt(), 1);
-    QCOMPARE(index_line.value(QStringLiteral("source")).toString(), QStringLiteral("transcript"));
-    QCOMPARE(index_line.value(QStringLiteral("role")).toString(), QStringLiteral("You"));
-    QCOMPARE(index_line.value(QStringLiteral("text")).toString(),
-             QStringLiteral("You Run SUPERAntiSpyware scan"));
-    // Both snippets are fully determined (shorter than the 220-char snippet cap, so they are the
-    // whole simplified indexed text) and each query term occurs exactly once.
+    // Both snippets are fully determined and each query term occurs exactly once.
     const auto transcript_hit = std::find_if(results.cbegin(), results.cend(), [](const auto& hit) {
         return hit.source == QStringLiteral("transcript");
     });
@@ -1023,8 +1040,6 @@ void AiConversationStoreTests::searchSessions_findsTranscriptAndCommandIndex() {
         return hit.source == QStringLiteral("command") &&
                hit.snippet.contains(QStringLiteral("SUPERAntiSpyware"));
     }));
-
-    verifySearchAnswersFromIndexAndFromRawLogs(store, index_file, error);
 }
 
 void AiConversationStoreTests::appendCommand_redactsSecretsInPersistedRecord() {
@@ -1056,21 +1071,16 @@ void AiConversationStoreTests::appendCommand_redactsSecretsInPersistedRecord() {
                 .toObject()
                 .value(QStringLiteral("success"))
                 .toBool());
-    // appendCommand persists the command at TWO sites; the search-index copy is the second, and
-    // searchSessions hands it back to the model verbatim as a snippet.
-    QFile index(store.currentSessionInfo().path + QStringLiteral("/search_index.jsonl"));
-    QVERIFY(index.open(QIODevice::ReadOnly | QIODevice::Text));
-    const QString index_text = QString::fromUtf8(index.readAll());
-    QVERIFY(!index_text.contains(secret));
-    QVERIFY(index_text.contains(QStringLiteral("[redacted-context7-key]")));
+    const auto hits = store.searchSessions(QStringLiteral("redacted-context7-key"), 10, &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(hits.size(), 1);
+    QCOMPARE(hits.first().source, QStringLiteral("command"));
 }
 
 void AiConversationStoreTests::appendCommand_redactsSecretsInTheResultToo() {
     // ONLY THE COMMAND USED TO BE REDACTED. `result` is the tool result -- the captured
-    // stdout/stderr of the command -- and it was written verbatim into both the command log and
-    // the search index, under a comment claiming this is "the single point every command record
-    // and its search-index entry pass through". A token echoed by a command landed unredacted in
-    // exactly the files that comment was about.
+    // stdout/stderr of the command -- and it was written verbatim into the command log. A token
+    // echoed by a command landed unredacted in durable session data.
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
     sak::ai::ConversationStore store(temp.path());
@@ -1089,15 +1099,11 @@ void AiConversationStoreTests::appendCommand_redactsSecretsInTheResultToo() {
     QVERIFY(store.appendCommand(QStringLiteral("run the thing"), result, &error));
 
     const QString session_path = store.currentSessionInfo().path;
-    for (const QString& file : {session_path + QStringLiteral("/commands.jsonl"),
-                                session_path + QStringLiteral("/search_index.jsonl")}) {
-        QFile persisted(file);
-        QVERIFY2(persisted.open(QIODevice::ReadOnly | QIODevice::Text), qPrintable(file));
-        const QString text = QString::fromUtf8(persisted.readAll());
-        QVERIFY2(!text.contains(echoed_token), qPrintable(file + QStringLiteral(" -> ") + text));
-        QVERIFY2(!text.contains(QStringLiteral("hunter2value")),
-                 qPrintable(file + QStringLiteral(" -> ") + text));
-    }
+    QFile persisted(session_path + QStringLiteral("/commands.jsonl"));
+    QVERIFY(persisted.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QString persisted_text = QString::fromUtf8(persisted.readAll());
+    QVERIFY(!persisted_text.contains(echoed_token));
+    QVERIFY(!persisted_text.contains(QStringLiteral("hunter2value")));
 
     // The record must remain a usable RECORD, not just a scrubbed one: the redaction is a tree
     // walk precisely so the document still parses and its non-secret fields survive.
@@ -1140,11 +1146,51 @@ void AiConversationStoreTests::appendTranscript_redactsTextAndMetadataAtPersiste
                  .toString(),
              QStringLiteral("[redacted]"));
 
-    QFile index(store.currentSessionInfo().path + QStringLiteral("/search_index.jsonl"));
-    QVERIFY(index.open(QIODevice::ReadOnly | QIODevice::Text));
-    const QString index_text = QString::fromUtf8(index.readAll());
-    QVERIFY(!index_text.contains(secret));
-    QVERIFY(index_text.contains(QStringLiteral("[redacted-context7-key]")));
+    const auto hits = store.searchSessions(QStringLiteral("redacted-context7-key"), 10, &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(hits.size(), 1);
+    QCOMPARE(hits.first().source, QStringLiteral("transcript"));
+}
+
+void AiConversationStoreTests::transcriptAndCommandPersistenceHaveNoDerivedIndexFallback() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Raw Search Authority"), &error));
+    QVERIFY(store.appendTranscript(QStringLiteral("You"), QStringLiteral("find raw"), {}, &error));
+    QVERIFY(store.appendCommand(
+        QStringLiteral("Get-Raw"), QJsonObject{{QStringLiteral("success"), true}}, &error));
+
+    const QString index_path = store.currentSessionInfo().path +
+                               QStringLiteral("/search_index.jsonl");
+    const QString marker_path = store.currentSessionInfo().path +
+                                QStringLiteral("/search_index.incomplete");
+    QVERIFY(!QFileInfo::exists(index_path));
+    QVERIFY(!QFileInfo::exists(marker_path));
+
+    const auto results = store.searchSessions(QStringLiteral("raw"), 10, &error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(results.size(), 3);
+}
+
+void AiConversationStoreTests::appendTranscript_rejectsProjectedFileCap() {
+    constexpr qint64 kTranscriptFileCapBytes = 32LL * 1024LL * 1024LL;
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Transcript Cap"), &error));
+    const QString path = store.currentSessionInfo().path + QStringLiteral("/transcript.jsonl");
+    QFile transcript(path);
+    QVERIFY(transcript.open(QIODevice::WriteOnly));
+    QVERIFY(transcript.resize(kTranscriptFileCapBytes));
+    transcript.close();
+
+    QVERIFY(!store.appendTranscript(
+        QStringLiteral("You"), QStringLiteral("must not cross cap"), {}, &error));
+    QCOMPARE(error, QStringLiteral("transcript.jsonl exceeds the 33554432-byte file cap"));
+    QCOMPARE(QFileInfo(path).size(), kTranscriptFileCapBytes);
 }
 
 void AiConversationStoreTests::memoryFile_trimActuallyGetsUnderTheCapForNonAsciiMemory() {
@@ -1215,54 +1261,53 @@ void AiConversationStoreTests::memoryFile_trimActuallyGetsUnderTheCapForNonAscii
     QCOMPARE(text.toUtf8(), raw);
 }
 
-void AiConversationStoreTests::searchFallsBackToRawLogsWhenTheIndexIsKnownIncomplete() {
-    // Index appends are best-effort BY DESIGN -- losing one must never fail a transcript or
-    // command write that already succeeded. But searchIndexFile() returned true for any index it
-    // could merely OPEN, and that return is what makes the caller skip the raw-log scan. So a
-    // record whose index append had failed became permanently invisible to search, silently,
-    // while the transcript on disk held it the whole time.
-    //
-    // The writer now drops a marker when an append fails. While it exists the index is demoted
-    // from authoritative to advisory and the raw logs answer instead.
+void AiConversationStoreTests::memoryFile_refusesUnboundedExternalContent() {
+    constexpr qint64 kRecoveryReadCapBytes = 4LL * 1024LL * 1024LL;
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
     sak::ai::ConversationStore store(temp.path());
     QString error;
-    QVERIFY(store.startSession(QStringLiteral("Index integrity"), &error));
+    QVERIFY(store.startSession(QStringLiteral("Tampered Memory"), &error));
+
+    const QString path = store.currentSessionInfo().path + QStringLiteral("/memory.md");
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QVERIFY(file.resize(kRecoveryReadCapBytes + 1));
+    file.close();
+
+    QCOMPARE(store.memoryText(16'000, &error), QString());
+    QCOMPARE(
+        error,
+        QStringLiteral("Memory file exceeds the 4194304-byte recovery read cap: %1").arg(path));
+    error.clear();
+    QVERIFY(!store.appendMemoryEntry(QStringLiteral("User"),
+                                     QStringLiteral("Request"),
+                                     QStringLiteral("must not read attacker-sized content"),
+                                     &error));
+    QCOMPARE(
+        error,
+        QStringLiteral("Memory file exceeds the 4194304-byte recovery read cap: %1").arg(path));
+    QCOMPARE(QFileInfo(path).size(), kRecoveryReadCapBytes + 1);
+}
+
+void AiConversationStoreTests::searchRejectsMalformedRawLogWithoutPartialResults() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Raw integrity"), &error));
 
     QVERIFY(store.appendTranscript(QStringLiteral("assistant"),
                                    QStringLiteral("SUPERAntiSpyware quick scan finished"),
                                    QJsonObject{},
                                    &error));
-
-    const QString session_dir = store.currentSessionInfo().path;
-    const QString index_path = session_dir + QStringLiteral("/search_index.jsonl");
-    const QString marker_path = session_dir + QStringLiteral("/search_index.incomplete");
-
-    // Baseline: the index answers, and it holds the record.
-    QVERIFY(QFileInfo::exists(index_path));
-    QVERIFY(!QFileInfo::exists(marker_path));
-    QCOMPARE(store.searchSessions(QStringLiteral("SUPERAntiSpyware"), 10, &error).size(), 1);
-
-    // Simulate the state a failed index append leaves behind: the raw transcript still has the
-    // record, the INDEX DOES NOT, and the marker says so. Without the marker this search would
-    // answer from the truncated index and report zero hits for a record that exists.
-    QFile index(index_path);
-    QVERIFY(index.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text));
-    index.close();
-    QCOMPARE(store.searchSessions(QStringLiteral("SUPERAntiSpyware"), 10, &error).size(), 0);
-
-    QFile marker(marker_path);
-    QVERIFY(marker.open(QIODevice::WriteOnly | QIODevice::Text));
-    marker.write("search index incomplete\n");
-    marker.close();
-
+    QFile transcript(store.currentSessionInfo().path + QStringLiteral("/transcript.jsonl"));
+    QVERIFY(transcript.open(QIODevice::Append));
+    QCOMPARE(transcript.write("not json\n"), static_cast<qint64>(9));
+    transcript.close();
     const auto hits = store.searchSessions(QStringLiteral("SUPERAntiSpyware"), 10, &error);
-    QVERIFY2(error.isEmpty(), qPrintable(error));
-    QCOMPARE(hits.size(), 1);
-    QCOMPARE(hits.first().source, QStringLiteral("transcript"));
-    QVERIFY2(hits.first().snippet.contains(QStringLiteral("SUPERAntiSpyware")),
-             qPrintable(hits.first().snippet));
+    QVERIFY(hits.isEmpty());
+    QCOMPARE(error, QStringLiteral("Transcript line 2 is not a valid JSON object"));
 }
 
 void AiConversationStoreTests::artifactSubdir_confinesSubdirToTheArtifactRoot() {

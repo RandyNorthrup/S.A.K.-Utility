@@ -18,14 +18,15 @@ struct AiCommandToolPlan {
     AiToolCallRequest policy_request;
     AiToolPolicyDecision policy_decision;
     QString shell_label;
-    /// The command as the guard, the risk classifier and the persisted record see it: RAW, so
-    /// classification matches the text that will actually run. Never put this in front of a
-    /// human -- use @c display_preview.
+    /// The machine-facing command representation used by the guard, policy classifier and
+    /// persisted record. Shell commands stay raw so classification matches what runs; direct
+    /// process calls are serialized argv with explicit element boundaries and visible controls.
+    /// Never put this in front of a human -- use @c display_preview.
     QString preview;
     /// The same command rendered safe to DISPLAY: control characters, bidi overrides and
-    /// zero-width marks are made visible, so what the approver reads cannot differ from what
-    /// runs. Kept separate from @c preview because sanitising the classifier's input would
-    /// change which commands are judged risky.
+    /// zero-width marks are made visible and literal escape-like text is disambiguated, so what
+    /// the approver reads cannot collide with a different command. Kept separate from @c preview
+    /// because sanitising a shell classifier's input would change which commands are judged risky.
     QString display_preview;
     QString guard_block_error;
     QString guard_approval_reason;
@@ -52,9 +53,9 @@ public:
     ///
     /// The same refusal covers a request that PARSES but that the broker would decline at
     /// launch -- an empty shell command, an elevated cmd.exe or direct-process launch, an
-    /// out-of-domain output budget. Those are decided here, through the broker's own
-    /// @c aiCommandPreconditionError, so a plan that cannot run is never previewed,
-    /// risk-classified, approved by a human and leased before anything notices.
+    /// out-of-domain output budget, or an oversized direct-process command line. Those are decided
+    /// here, through the broker's own @c aiCommandPreconditionError, so a plan that cannot run is
+    /// never approved by a human and leased before anything notices.
     [[nodiscard]] static AiCommandToolPlan buildPlan(const QString& tool_name,
                                                      const QJsonObject& args,
                                                      AiToolPolicy policy);

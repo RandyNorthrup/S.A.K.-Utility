@@ -4207,7 +4207,8 @@ private:
             blockers->append(QStringLiteral("HFS+ %1 header map record is invalid").arg(label));
             return std::nullopt;
         }
-        return HfsBTreeHeaderNodeContext{.node = node, .map_offset = mapOffset, .map_end = mapEnd};
+        return HfsBTreeHeaderNodeContext{
+            .node = node, .map_offset = mapOffset, .map_end = mapEnd, .map_nodes = {}};
     }
 
     // Follow the header node's forward-link chain of continuation map nodes (arbitrary-width
@@ -11952,7 +11953,9 @@ private:
             return HfsCatalogRecord{.parent_id = kHfsRootParentId,
                                     .name = QStringLiteral("/"),
                                     .record_type = kHfsCatalogFolderRecord,
-                                    .catalog_id = kHfsRootFolderId};
+                                    .catalog_id = kHfsRootFolderId,
+                                    .data_fork = {},
+                                    .resource_fork = {}};
         }
 
         uint32_t folderId = kHfsRootFolderId;

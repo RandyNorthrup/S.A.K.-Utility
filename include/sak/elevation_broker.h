@@ -18,9 +18,7 @@
 #include <memory>
 #include <mutex>
 
-#ifdef _WIN32
 #include <windows.h>
-#endif
 
 namespace sak {
 
@@ -115,14 +113,12 @@ private:
     /// @brief Connect to the helper's named pipe
     [[nodiscard]] auto connectPipe() -> std::expected<void, sak::error_code>;
 
-#ifdef _WIN32
     /// @brief Verify the connected pipe's server process is the launched helper
     [[nodiscard]] auto verifyPipeServer(HANDLE handle) -> std::expected<void, sak::error_code>;
 
     /// @brief Verify the pipe server's image path is the helper executable
     [[nodiscard]] auto verifyServerImage(unsigned long server_pid)
         -> std::expected<void, sak::error_code>;
-#endif
 
     /// @brief Ensure the helper is running, connected, and ready
     [[nodiscard]] auto ensureConnected() -> std::expected<void, sak::error_code>;
@@ -144,13 +140,11 @@ private:
     /// @brief Read exactly N bytes from the pipe
     [[nodiscard]] bool readExact(char* buffer, int size, int timeout_ms);
 
-#ifdef _WIN32
     /// @brief Peek at available bytes in the pipe (0 if none or broken)
     [[nodiscard]] DWORD peekAvailable() const;
 
     /// @brief Check if the helper process is still running
     [[nodiscard]] bool isHelperAlive() const;
-#endif
 
     /// @brief Close the pipe handle and helper process
     void cleanup();
@@ -173,7 +167,6 @@ private:
     // to interleave frames on the wire.
     std::atomic<bool> m_task_in_flight{false};
 
-#ifdef _WIN32
     // B5-06: the pipe handle is read on the GUI/AI thread (isConnected / cancel /
     // shutdown) while the worker thread connects, reads, and tears it down.
     // A plain HANDLE read concurrently with a write is a data race (UB); make it
@@ -185,7 +178,6 @@ private:
     // and tear the handle mid-call. The atomic does NOT replace that mutex.
     std::atomic<HANDLE> m_pipe_handle{INVALID_HANDLE_VALUE};
     HANDLE m_helper_process{nullptr};
-#endif
 };
 
 }  // namespace sak

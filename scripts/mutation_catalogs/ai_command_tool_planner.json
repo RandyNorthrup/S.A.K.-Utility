@@ -1,0 +1,56 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_ai_command_tool_planner",
+  "ctest_regex": "^test_ai_command_tool_planner$",
+  "mutants": [
+    {
+      "id": "policy-risk-is-dropped",
+      "file": "src/ai/ai_command_tool_planner.cpp",
+      "find": "    plan.risky_change = plan.risky_change || plan.policy_decision.risky_change;",
+      "replace": "    plan.risky_change = plan.risky_change;",
+      "expect": "killed",
+      "why": "policyRiskClassificationPropagatesToPlan uses a command absent from the blacklist and requires policy classification to drive risky presentation."
+    },
+    {
+      "id": "combining-display-mark-is-not-escaped",
+      "file": "src/ai/ai_command_tool_planner.cpp",
+      "find": "    constexpr std::array hazard_categories{QChar::Mark_NonSpacing,",
+      "replace": "    constexpr std::array hazard_categories{QChar::Letter_Lowercase,",
+      "expect": "killed",
+      "why": "previewEncodingDistinguishesControlsFromLiteralTokens requires a combining overlay to render as its visible Unicode token."
+    },
+    {
+      "id": "literal-escape-token-collides-with-control",
+      "file": "src/ai/ai_command_tool_planner.cpp",
+      "find": "        } else if (ch == QLatin1Char('<') && generatedEscapeTokenAt(value, i)) {",
+      "replace": "        } else if (ch == QLatin1Char('<') && value.isEmpty()) {",
+      "expect": "killed",
+      "why": "previewEncodingDistinguishesControlsFromLiteralTokens requires literal text such as <LF> to differ from an actual line feed."
+    },
+    {
+      "id": "process-preview-is-sanitized-twice",
+      "file": "src/ai/ai_command_tool_planner.cpp",
+      "find": "    plan.display_preview = direct_process ? plan.preview : sanitizeForPreview(plan.preview);",
+      "replace": "    plan.display_preview = sanitizeForPreview(plan.preview);",
+      "expect": "killed",
+      "why": "processPreviewQuotesAmbiguousArgs requires the already-safe serialized argv preview to remain byte-exact."
+    },
+    {
+      "id": "fractional-timeout-is-truncated",
+      "file": "src/ai/ai_execution_broker.cpp",
+      "find": "    if (!std::isfinite(raw) || std::trunc(raw) != raw) {",
+      "replace": "    if (!std::isfinite(raw) && std::trunc(raw) != raw) {",
+      "expect": "killed",
+      "why": "fractionalTimeoutIsRejectedInsteadOfTruncated requires JSON timeout_seconds to satisfy the integer schema."
+    },
+    {
+      "id": "aggregate-process-argv-cap-is-bypassed",
+      "file": "src/ai/ai_execution_broker.cpp",
+      "find": "    return processCommandLineLengthError(target, request);",
+      "replace": "    return {};",
+      "expect": "killed",
+      "why": "rejectsOversizedProcessCommandLine supplies individually legal fields whose quoted aggregate exceeds CreateProcessW's command-line ceiling."
+    }
+  ]
+}

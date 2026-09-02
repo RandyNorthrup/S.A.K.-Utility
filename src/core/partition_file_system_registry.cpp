@@ -212,9 +212,11 @@ PartitionFileSystemCapability unidentifiedCapability() {
     return {.id = QStringLiteral("unknown"),
             .display_name = QStringLiteral("Unknown"),
             .support_level = QStringLiteral("Unknown"),
+            .aliases = {},
             .available_actions = {},
             .blocked_actions = {QStringLiteral(
                 "Filesystem must be identified before S.A.K. can offer actions")},
+            .required_tools = {},
             .non_native = false};
 }
 
@@ -295,9 +297,11 @@ PartitionFileSystemCapability PartitionFileSystemRegistry::capabilityFor(
     return {.id = value,
             .display_name = file_system.trimmed(),
             .support_level = QStringLiteral("Unknown or Windows-protected"),
+            .aliases = {},
             .available_actions = {},
             .blocked_actions = {QStringLiteral(
                 "S.A.K. has no registered filesystem workflow for this label")},
+            .required_tools = {},
             .non_native = false};
 }
 

@@ -21,11 +21,9 @@
 #include <optional>
 #include <utility>
 
-#ifdef Q_OS_WIN
 #include <windows.h>
 
 #include <dpapi.h>
-#endif
 
 namespace sak::ai {
 
@@ -41,7 +39,6 @@ constexpr int kMaxApiKeyChars = 8192;
 constexpr char16_t kAsciiControlLimit = 0x20;
 constexpr char16_t kAsciiDelete = 0x7F;
 
-#ifdef Q_OS_WIN
 constexpr auto kCredentialProvider = "dpapi-current-user-v1";
 constexpr char kDpapiEntropy[] = "SAK Utility/OpenAI API Key/v1";
 // The credential file holds one Base64 DPAPI blob wrapping a single API key; a few KiB
@@ -51,7 +48,6 @@ constexpr qint64 kMaxCredentialFileBytes = 256LL * 1024LL;
 [[nodiscard]] QString winErrorMessage(DWORD code) {
     return QStringLiteral("Windows error %1").arg(static_cast<qulonglong>(code));
 }
-#endif
 
 void setError(QString* error_message, const QString& message) {
     if (error_message != nullptr) {
@@ -59,7 +55,6 @@ void setError(QString* error_message, const QString& message) {
     }
 }
 
-#ifdef Q_OS_WIN
 std::optional<QJsonObject> readCredentialRoot(const QString& path, QString* error_message) {
     QFile file(path);
     if (!file.exists()) {
@@ -240,28 +235,21 @@ bool writeCredentialRoot(const QString& path, const QJsonObject& root, QString* 
     }
     return true;
 }
-#endif
-
 }  // namespace
 
-bool CredentialStore::isPersistentStorageAvailable() const noexcept {
-#ifdef Q_OS_WIN
+bool CredentialStore::isPersistentStorageAvailable() noexcept {
     return true;
-#else
-    return false;
-#endif
 }
 
 QString CredentialStore::credentialFilePath() {
     return QDir(credentialDirectory()).filePath(QStringLiteral("openai_api_key.dpapi.json"));
 }
 
-QString CredentialStore::loadApiKey(QString* error_message) const {
+QString CredentialStore::loadApiKey(QString* error_message) {
     if (error_message != nullptr) {
         error_message->clear();
     }
 
-#ifdef Q_OS_WIN
     const auto root = readCredentialRoot(credentialFilePath(), error_message);
     if (!root.has_value()) {
         return {};
@@ -285,14 +273,9 @@ QString CredentialStore::loadApiKey(QString* error_message) const {
         return {};
     }
     return api_key;
-#else
-    setError(error_message,
-             QStringLiteral("Encrypted persistent credential storage is not available"));
-    return {};
-#endif
 }
 
-bool CredentialStore::saveApiKey(const QString& api_key, QString* error_message) const {
+bool CredentialStore::saveApiKey(const QString& api_key, QString* error_message) {
     if (error_message != nullptr) {
         error_message->clear();
     }
@@ -315,7 +298,6 @@ bool CredentialStore::saveApiKey(const QString& api_key, QString* error_message)
         return false;
     }
 
-#ifdef Q_OS_WIN
     const QString path = credentialFilePath();
     if (!ensureCredentialDirectory(path, error_message)) {
         return false;
@@ -325,20 +307,13 @@ bool CredentialStore::saveApiKey(const QString& api_key, QString* error_message)
         return false;
     }
     return writeCredentialRoot(path, *root, error_message);
-#else
-    Q_UNUSED(api_key);
-    setError(error_message,
-             QStringLiteral("Encrypted persistent credential storage is not available"));
-    return false;
-#endif
 }
 
-bool CredentialStore::deleteApiKey(QString* error_message) const {
+bool CredentialStore::deleteApiKey(QString* error_message) {
     if (error_message != nullptr) {
         error_message->clear();
     }
 
-#ifdef Q_OS_WIN
     const QString path = credentialFilePath();
     if (!QFileInfo::exists(path)) {
         return true;
@@ -350,12 +325,6 @@ bool CredentialStore::deleteApiKey(QString* error_message) const {
         *error_message = QStringLiteral("Could not remove encrypted API key file: %1").arg(path);
     }
     return false;
-#else
-    if (error_message) {
-        *error_message = QStringLiteral("Encrypted persistent credential storage is not available");
-    }
-    return false;
-#endif
 }
 
 QString CredentialStore::redactSecrets(const QString& text) {

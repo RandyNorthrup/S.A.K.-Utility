@@ -22,29 +22,59 @@ QJsonObject step(const QString& tool, bool optional = false) {
 }
 
 Win32StepOutcome ok(const QString& text = QStringLiteral("done")) {
-    return Win32StepOutcome{.planned = true, .result_text = text};
+    return Win32StepOutcome{.planned = true,
+                            .high_risk = false,
+                            .disallowed = false,
+                            .tool_error = false,
+                            .result_text = text,
+                            .error = {}};
 }
 
 Win32StepOutcome toolError(const QString& message) {
-    return Win32StepOutcome{.planned = true, .tool_error = true, .error = message};
+    return Win32StepOutcome{.planned = true,
+                            .high_risk = false,
+                            .disallowed = false,
+                            .tool_error = true,
+                            .result_text = {},
+                            .error = message};
 }
 
 Win32StepOutcome planFailure(const QString& message) {
-    return Win32StepOutcome{.planned = false, .error = message};
+    return Win32StepOutcome{.planned = false,
+                            .high_risk = false,
+                            .disallowed = false,
+                            .tool_error = false,
+                            .result_text = {},
+                            .error = message};
 }
 
 // An executor result that carries error text WITHOUT setting tool_error -- a contradictory
 // outcome the runner must fail closed on rather than record as ok.
 Win32StepOutcome errorTextOnly(const QString& message) {
-    return Win32StepOutcome{.planned = true, .error = message};
+    return Win32StepOutcome{.planned = true,
+                            .high_risk = false,
+                            .disallowed = false,
+                            .tool_error = false,
+                            .result_text = {},
+                            .error = message};
 }
 
 Win32StepOutcome highRisk() {
-    return Win32StepOutcome{.planned = true, .high_risk = true};
+    return Win32StepOutcome{.planned = true,
+                            .high_risk = true,
+                            .disallowed = false,
+                            .tool_error = false,
+                            .result_text = {},
+                            .error = {}};
 }
 
 Win32StepOutcome disallowed(const QString& message) {
-    return Win32StepOutcome{.planned = true, .disallowed = true, .error = message};
+    return Win32StepOutcome{.planned = true,
+                            .high_risk = false,
+                            .disallowed = true,
+                            .tool_error = false,
+                            .result_text = {},
+                            .error = message};
 }
 
 }  // namespace

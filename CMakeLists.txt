@@ -73,14 +73,22 @@ if(MSVC)
         /permissive-        # Strict C++ conformance
         /Zc:__cplusplus     # Enable correct __cplusplus macro
         /sdl                # Security Development Lifecycle checks
-        /MP                 # Multi-processor compilation
         /Zc:inline          # Remove unreferenced COMDAT
-        /Zc:preprocessor    # Conforming preprocessor
         /utf-8              # UTF-8 source and execution charset
-        /external:anglebrackets  # Treat <> includes as external
         /external:W0        # Disable warnings for external headers
         # Static runtime is set via CMAKE_MSVC_RUNTIME_LIBRARY in cmake/SAK_BuildConfig.cmake
     )
+
+    # MSVC driver options clang-cl does not implement. MSVC is true for both drivers, so the
+    # compiler-id check is required; passing these globally makes clang-cl's /WX coverage build
+    # fail with unused-command-line-argument before compiling source.
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+        add_compile_options(
+            /MP                        # Multi-processor compilation
+            /Zc:preprocessor           # Conforming preprocessor
+            /external:anglebrackets    # Treat <> includes as external
+        )
+    endif()
 
     # Config-specific flags. Use generator expressions so Visual Studio
     # multi-config builds do not leak Release optimization flags into Debug.
@@ -208,22 +216,6 @@ if(ENABLE_COVERAGE)
     endif()
     add_compile_options(-fprofile-instr-generate -fcoverage-mapping)
     add_link_options(-fprofile-instr-generate)
-    # The warning set below is tuned for MSVC and carries /WX. clang-cl accepts the flags but
-    # warns that a few are unused (/MP, /Zc:preprocessor, /external:anglebrackets), and /WX then
-    # turns those notes into hard errors before a single file compiles. Silence ONLY that
-    # diagnostic, and only in this opt-in tree: every real warning stays an error.
-    add_compile_options(-Wno-unused-command-line-argument)
-    # clang has warnings MSVC does not, and /WX makes each one fatal. These are toolchain
-    # differences rather than defects, and this tree exists to MEASURE the suite, not to re-lint
-    # it under a second compiler: a coverage run that cannot build reports nothing at all.
-    #   * missing-designated-field-initializers: a C++20 designated initializer that omits a
-    #     field, which is value-initialized by the standard (e.g. the root-folder record in
-    #     partition_hfs_internal.h omitting .data_fork).
-    # Everything else stays an error, so this does not turn the coverage build into a warning-free
-    # fiction. Linting is the MSVC build's job and is unaffected.
-    add_compile_options(-Wno-missing-designated-field-initializers)
-    # The remaining warning difference is tracked explicitly above. Every other clang-cl
-    # diagnostic stays enabled and fatal in the coverage tree.
     set(SAK_COVERAGE_STATE "ENABLED (source-based, all configurations)")
     message(STATUS "Branch coverage:    ${SAK_COVERAGE_STATE}")
 endif()

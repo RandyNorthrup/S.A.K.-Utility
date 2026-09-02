@@ -186,18 +186,18 @@ bool traversesReparsePoint(const QString& destination_dir, const QString& out_pa
 // we wrote (never a pre-existing file), and only newly-created directories are
 // recorded -- so rollback never removes pre-existing content.
 struct ExtractionRollback {
-    QStringList files;  // files this extraction created
-    QStringList dirs;   // directories this extraction created
+    QStringList files{};  // files this extraction created
+    QStringList dirs{};   // directories this extraction created
 };
 
 // Per-extraction state threaded through the entry writers: the destination root,
 // the running expanded-byte total (bomb cap), the result being built, and the
 // rollback ledger. Bundled so the entry writers stay within the parameter budget.
 struct ExtractionContext {
-    QString destination_dir;
+    QString destination_dir{};
     qint64 total_bytes{0};
     FileExplorerArchiveResult* result{nullptr};
-    ExtractionRollback rollback;
+    ExtractionRollback rollback{};
 };
 
 // Undo a partial extraction: delete every file we wrote, then remove the

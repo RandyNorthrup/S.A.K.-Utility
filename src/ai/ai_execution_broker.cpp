@@ -23,6 +23,7 @@
 #endif
 
 #include <algorithm>
+#include <cmath>
 #include <utility>
 #include <vector>
 
@@ -90,6 +91,12 @@ constexpr int kMaxArgumentCount = 256;
         return false;
     }
     const double raw = value.toDouble();
+    // The tool schema says INTEGER. Accepting 5.9 and truncating it to 5 makes the approved
+    // request differ from the execution, while converting NaN to int has undefined behaviour.
+    if (!std::isfinite(raw) || std::trunc(raw) != raw) {
+        error = QStringLiteral("timeout_seconds must be an integer");
+        return false;
+    }
     if (raw < kMinTimeoutSeconds || raw > kMaxTimeoutSeconds) {
         error = QStringLiteral("timeout_seconds must be between %1 and %2")
                     .arg(kMinTimeoutSeconds)
@@ -422,6 +429,53 @@ bool ExecutionBroker::runElevatedRequest(const AiCommandRequest& request) {
 
 namespace {
 
+constexpr qint64 kQuotedCharExpansion = 2;
+constexpr qint64 kQuoteDelimiterChars = 2;
+
+// Character count after Windows argv quoting. QProcess ultimately has to place program + argv
+// in CreateProcessW's one command-line buffer, whose hard ceiling is why kMaxCommandChars exists.
+// Counting the encoded form catches many individually legal arguments whose aggregate cannot run.
+[[nodiscard]] qint64 quotedWindowsArgumentChars(const QString& value) {
+    const bool needs_quotes = value.isEmpty() || std::ranges::any_of(value, [](QChar ch) {
+                                  return ch.isSpace() || ch == QLatin1Char('"');
+                              });
+    if (!needs_quotes) {
+        return value.size();
+    }
+    qint64 encoded = kQuoteDelimiterChars;
+    qint64 backslashes = 0;
+    for (const QChar ch : value) {
+        if (ch == QLatin1Char('\\')) {
+            ++backslashes;
+            continue;
+        }
+        if (ch == QLatin1Char('"')) {
+            encoded += backslashes * kQuotedCharExpansion + kQuotedCharExpansion;
+            backslashes = 0;
+            continue;
+        }
+        encoded += backslashes + 1;
+        backslashes = 0;
+    }
+    return encoded + backslashes * kQuotedCharExpansion;
+}
+
+[[nodiscard]] QString processCommandLineLengthError(AiCommandTarget target,
+                                                    const AiCommandRequest& request) {
+    if (target != AiCommandTarget::Process) {
+        return {};
+    }
+    qint64 encoded = quotedWindowsArgumentChars(request.program);
+    for (const QString& argument : request.arguments) {
+        encoded += 1 + quotedWindowsArgumentChars(argument);
+        if (encoded > kMaxCommandChars) {
+            return QStringLiteral("Process command line exceeds the %1 character limit")
+                .arg(kMaxCommandChars);
+        }
+    }
+    return {};
+}
+
 /// @brief "Is there anything to run at all" -- the per-target emptiness rule.
 ///
 /// Split from the target-specific messages so each entry point's refusal text stays exactly
@@ -517,7 +571,7 @@ QString aiCommandPreconditionError(AiCommandTarget target, const AiCommandReques
             .arg(request.max_output_bytes)
             .arg(kMaxOutputCap);
     }
-    return {};
+    return processCommandLineLengthError(target, request);
 }
 
 bool ExecutionBroker::startPowerShell(const AiCommandRequest& request, const QString& command_id) {

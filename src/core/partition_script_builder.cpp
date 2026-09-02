@@ -3675,8 +3675,8 @@ static std::optional<PartitionScript> maybeBuildStagedRawHfsScript(
 }
 
 struct ExternalToolPostScript {
-    QString script;
-    QStringList blockers;
+    QString script{};
+    QStringList blockers{};
 };
 
 static ExternalToolPostScript hfsPostFormatRepairScript(

@@ -611,7 +611,8 @@ std::optional<PartitionFileSystemDetection> detectExtFamily(const QByteArray& by
     const uint32_t roCompat = littleEndian32(bytes, superblock + kExtFeatureRoCompatOffset);
     PartitionFileSystemDetection detection{.file_system = extFamilyName(compat, incompat, roCompat),
                                            .source =
-                                               PartitionFileSystemDetector::rawSignatureSource()};
+                                               PartitionFileSystemDetector::rawSignatureSource(),
+                                           .details = {}};
     appendExtSuperblockDetails(&detection, bytes, compat, incompat, roCompat);
     return detection;
 }
@@ -645,8 +646,10 @@ std::optional<PartitionFileSystemDetection> detectHfsHeaderAt(
         return std::nullopt;
     }
 
-    PartitionFileSystemDetection detection{
-        .file_system = familyName, .source = PartitionFileSystemDetector::rawSignatureSource()};
+    PartitionFileSystemDetection detection{.file_system = familyName,
+                                           .source =
+                                               PartitionFileSystemDetector::rawSignatureSource(),
+                                           .details = {}};
     const uint16_t version = bigEndian16(bytes, headerOffset + kHfsVersionOffset);
     const uint32_t attributes = bigEndian32(bytes, headerOffset + kHfsAttributesOffset);
     const uint32_t fileCount = bigEndian32(bytes, headerOffset + kHfsFileCountOffset);
@@ -840,7 +843,8 @@ std::optional<PartitionFileSystemDetection> detectXfsFamily(const QByteArray& by
 
     PartitionFileSystemDetection detection{.file_system = QStringLiteral("XFS"),
                                            .source =
-                                               PartitionFileSystemDetector::rawSignatureSource()};
+                                               PartitionFileSystemDetector::rawSignatureSource(),
+                                           .details = {}};
     const uint32_t blockSize = bigEndian32(bytes, kXfsBlockSizeOffset);
     const uint64_t dataBlocks = bigEndian64(bytes, kXfsDataBlocksOffset);
     const uint64_t freeDataBlocks = bigEndian64(bytes, kXfsFreeDataBlocksOffset);
@@ -891,7 +895,8 @@ std::optional<PartitionFileSystemDetection> detectBtrfsFamily(const QByteArray& 
 
     PartitionFileSystemDetection detection{.file_system = QStringLiteral("Btrfs"),
                                            .source =
-                                               PartitionFileSystemDetector::rawSignatureSource()};
+                                               PartitionFileSystemDetector::rawSignatureSource(),
+                                           .details = {}};
     const qsizetype superblock = kBtrfsSuperblockOffset;
     const BtrfsSuperblockValues values{
         .total_bytes = littleEndian64(bytes, superblock + kBtrfsTotalBytesOffset),
@@ -1979,7 +1984,8 @@ std::optional<PartitionFileSystemDetection> detectApfsFamily(const QByteArray& b
 
     PartitionFileSystemDetection detection{.file_system = QStringLiteral("APFS"),
                                            .source =
-                                               PartitionFileSystemDetector::rawSignatureSource()};
+                                               PartitionFileSystemDetector::rawSignatureSource(),
+                                           .details = {}};
     const uint32_t blockSize = littleEndian32(bytes, kApfsBlockSizeOffset);
     const uint64_t blockCount = littleEndian64(bytes, kApfsBlockCountOffset);
     const ApfsCheckpointValues checkpoint = apfsCheckpointValues(bytes);
@@ -2027,8 +2033,9 @@ std::optional<PartitionFileSystemDetection> rawDetection(const QString& fileSyst
     if (fileSystem.isEmpty()) {
         return std::nullopt;
     }
-    return PartitionFileSystemDetection{
-        .file_system = fileSystem, .source = PartitionFileSystemDetector::rawSignatureSource()};
+    return PartitionFileSystemDetection{.file_system = fileSystem,
+                                        .source = PartitionFileSystemDetector::rawSignatureSource(),
+                                        .details = {}};
 }
 
 std::optional<PartitionFileSystemDetection> detectSwapFamily(const QByteArray& bytes,

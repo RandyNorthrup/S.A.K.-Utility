@@ -157,6 +157,43 @@ inline void writeExtDirectoryBlock(
     }
 }
 
+inline void writeExtReaderFixtureInodes(QByteArray* image,
+                                        bool extentMappedHello,
+                                        const QByteArray& hello,
+                                        const QByteArray& note,
+                                        const QByteArray& helloLink) {
+    writeExtInode(image,
+                  ExtInodeFixture{.inode_number = 2,
+                                  .mode = 0x4000 | 0755,
+                                  .size = kTestExtBlockSize,
+                                  .first_block = kTestExtRootDirectoryBlock,
+                                  .inline_data = {}});
+    writeExtInode(image,
+                  ExtInodeFixture{.inode_number = 12,
+                                  .mode = 0x8000 | 0644,
+                                  .size = static_cast<uint64_t>(hello.size()),
+                                  .first_block = kTestExtHelloFileBlock,
+                                  .extent_mapped = extentMappedHello,
+                                  .inline_data = {}});
+    writeExtInode(image,
+                  ExtInodeFixture{.inode_number = 13,
+                                  .mode = 0x4000 | 0755,
+                                  .size = kTestExtBlockSize,
+                                  .first_block = kTestExtDocsDirectoryBlock,
+                                  .inline_data = {}});
+    writeExtInode(image,
+                  ExtInodeFixture{.inode_number = 14,
+                                  .mode = 0x8000 | 0644,
+                                  .size = static_cast<uint64_t>(note.size()),
+                                  .first_block = kTestExtNoteFileBlock,
+                                  .inline_data = {}});
+    writeExtInode(image,
+                  ExtInodeFixture{.inode_number = 15,
+                                  .mode = 0xA000 | 0777,
+                                  .size = static_cast<uint64_t>(helloLink.size()),
+                                  .inline_data = helloLink});
+}
+
 // A minimal but genuinely walkable ext image: superblock + group descriptor + inode table +
 // directory blocks. @p extentMappedHello lays the "hello.txt" data out via an ext4 extent header
 // instead of a direct block pointer, so the extent-tree path is exercised too.
@@ -182,32 +219,7 @@ inline QByteArray extReaderFixture(bool extentMappedHello = false) {
     const QByteArray hello("hello from ext\n");
     const QByteArray note("nested note\n");
     const QByteArray helloLink("hello.txt");
-    writeExtInode(&image,
-                  ExtInodeFixture{.inode_number = 2,
-                                  .mode = 0x4000 | 0755,
-                                  .size = kTestExtBlockSize,
-                                  .first_block = kTestExtRootDirectoryBlock});
-    writeExtInode(&image,
-                  ExtInodeFixture{.inode_number = 12,
-                                  .mode = 0x8000 | 0644,
-                                  .size = static_cast<uint64_t>(hello.size()),
-                                  .first_block = kTestExtHelloFileBlock,
-                                  .extent_mapped = extentMappedHello});
-    writeExtInode(&image,
-                  ExtInodeFixture{.inode_number = 13,
-                                  .mode = 0x4000 | 0755,
-                                  .size = kTestExtBlockSize,
-                                  .first_block = kTestExtDocsDirectoryBlock});
-    writeExtInode(&image,
-                  ExtInodeFixture{.inode_number = 14,
-                                  .mode = 0x8000 | 0644,
-                                  .size = static_cast<uint64_t>(note.size()),
-                                  .first_block = kTestExtNoteFileBlock});
-    writeExtInode(&image,
-                  ExtInodeFixture{.inode_number = 15,
-                                  .mode = 0xA000 | 0777,
-                                  .size = static_cast<uint64_t>(helloLink.size()),
-                                  .inline_data = helloLink});
+    writeExtReaderFixtureInodes(&image, extentMappedHello, hello, note, helloLink);
     writeExtDirectoryBlock(&image,
                            kTestExtRootDirectoryBlock,
                            {{2, QByteArray("."), 2},

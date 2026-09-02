@@ -19,6 +19,8 @@ $cmakeFiles += Get-ChildItem -Path (Join-Path $root "cmake") -Filter "*.cmake" -
 # the removed anti-patterns are memorialized).
 $pattern = '^\s*if\s*\(\s*CMAKE_BUILD_TYPE\s+STREQUAL'
 $forbiddenWarningSilences = @(
+    "-Wno-unused-command-line-argument",
+    "-Wno-missing-designated-field-initializers",
     "-Wno-trigraphs",
     "-Wno-unused-lambda-capture",
     "-Wno-unused-parameter",
@@ -77,6 +79,68 @@ for ($index = 0; $index -lt $rootLines.Count; $index++) {
             $violations += (("CMakeLists.txt:{0}: unsupported application-platform token '{1}'; " +
                              "remove the dead branch instead of advertising non-Windows support") -f
                             ($index + 1), $token)
+        }
+    }
+}
+
+# Configure rejects non-Windows hosts before any target is created. These audited product modules
+# therefore must contain only the shipped Windows implementation: platform branches, POSIX host-I/O
+# shims, and Q_UNUSED placeholders are dead code that can drift away from the executable path.
+$windowsOnlyProductFiles = @(
+    "include/sak/elevated_pipe_server.h",
+    "include/sak/elevation_broker.h",
+    "include/sak/input_validator.h",
+    "include/sak/leftover_scanner.h",
+    "include/sak/secure_memory.h",
+    "src/actions/backup_bitlocker_keys_action.cpp",
+    "src/ai/ai_credential_store.cpp",
+    "src/core/advanced_search_worker.cpp",
+    "src/core/app_mutating_actions.cpp",
+    "src/core/chocolatey_manager.cpp",
+    "src/core/crash_reporter.cpp",
+    "src/core/disk_benchmark_worker.cpp",
+    "src/core/elevated_pipe_server.cpp",
+    "src/core/elevation_broker.cpp",
+    "src/core/encryption.cpp",
+    "src/core/input_validator.cpp",
+    "src/core/leftover_scanner.cpp",
+    "src/core/partition_raw_device_io.cpp",
+    "src/core/recycle_bin.cpp",
+    "src/core/secure_memory.cpp",
+    "src/core/stress_test_worker.cpp",
+    "src/core/vulnerability_scanner.cpp",
+    "src/core/wifi_profile_scanner.cpp",
+    "src/core/windows_user_scanner.cpp",
+    "src/tools/sak_apfs_writer_cli.cpp",
+    "src/tools/sak_hfs_writer_cli.cpp"
+)
+$deadPlatformGuardPattern =
+    '^\s*#\s*(?:if|ifdef|ifndef|elif)\b.*(?:_WIN32|Q_OS_WIN|SAK_PLATFORM_WINDOWS|_MSC_VER|__linux__|__APPLE__|SEEK_DATA|SEEK_HOLE)'
+$deadHostCompatibilityTokens = @(
+    "#include <sys/resource.h>",
+    "#include <sys/stat.h>",
+    "#include <sys/statvfs.h>",
+    "#include <unistd.h>",
+    "Q_UNUSED("
+)
+foreach ($relativePath in $windowsOnlyProductFiles) {
+    $sourcePath = Join-Path $root $relativePath
+    if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
+        $violations += "${relativePath}: audited Windows-only product file is missing"
+        continue
+    }
+    $lineNo = 0
+    foreach ($line in (Get-Content -LiteralPath $sourcePath)) {
+        $lineNo++
+        if ($line -match $deadPlatformGuardPattern) {
+            $violations += ("${relativePath}:${lineNo}: dead application-platform guard; " +
+                            "configure already rejects non-Windows targets")
+        }
+        foreach ($token in $deadHostCompatibilityTokens) {
+            if ($line.Contains($token)) {
+                $violations += ("${relativePath}:${lineNo}: dead host-compatibility token " +
+                                "'$token' in Windows-only product module")
+            }
         }
     }
 }

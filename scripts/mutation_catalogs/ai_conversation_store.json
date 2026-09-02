@@ -10,7 +10,7 @@
       "find": "    const QString redacted_role = redactSecrets(role);",
       "replace": "    const QString redacted_role = role;",
       "expect": "killed",
-      "why": "appendTranscript_redactsTextAndMetadataAtPersistenceBoundary requires the persisted role and search index to contain no recognized credential."
+      "why": "appendTranscript_redactsTextAndMetadataAtPersistenceBoundary requires the authoritative transcript record to contain no recognized credential."
     },
     {
       "id": "transcript-text-redaction-removed",
@@ -18,7 +18,7 @@
       "find": "    const QString redacted_text = redactSecrets(text);",
       "replace": "    const QString redacted_text = text;",
       "expect": "killed",
-      "why": "appendTranscript_redactsTextAndMetadataAtPersistenceBoundary requires the transcript body and search index to contain only the exact redacted form."
+      "why": "appendTranscript_redactsTextAndMetadataAtPersistenceBoundary requires the transcript body to contain only the exact redacted form."
     },
     {
       "id": "transcript-metadata-redaction-removed",
@@ -27,6 +27,38 @@
       "replace": "    const QJsonObject redacted_metadata = metadata;",
       "expect": "killed",
       "why": "appendTranscript_redactsTextAndMetadataAtPersistenceBoundary requires secret-valued metadata keys to persist as redacted."
+    },
+    {
+      "id": "memory-recovery-read-cap-doubled",
+      "file": "src/ai/ai_conversation_store.cpp",
+      "find": "constexpr qint64 kMaxMemoryRecoveryReadBytes = 4LL * 1024LL * 1024LL;",
+      "replace": "constexpr qint64 kMaxMemoryRecoveryReadBytes = 8LL * 1024LL * 1024LL;",
+      "expect": "killed",
+      "why": "memoryFile_refusesUnboundedExternalContent requires a tampered memory file at 4 MiB plus one byte to be refused without allocation or rewrite."
+    },
+    {
+      "id": "transcript-file-cap-doubled",
+      "file": "src/ai/ai_conversation_store.cpp",
+      "find": "constexpr qint64 kMaxTranscriptJsonlBytes = 32LL * 1024LL * 1024LL;",
+      "replace": "constexpr qint64 kMaxTranscriptJsonlBytes = 64LL * 1024LL * 1024LL;",
+      "expect": "killed",
+      "why": "appendTranscript_rejectsProjectedFileCap requires a full 32 MiB transcript to refuse the next append."
+    },
+    {
+      "id": "existing-artifact-destination-is-merged",
+      "file": "src/ai/ai_conversation_store.cpp",
+      "find": "    if (QDir(new_path).exists()) {",
+      "replace": "    if (QDir(new_path).exists() && old_path.isEmpty()) {",
+      "expect": "killed",
+      "why": "renameSession_refusesExistingArtifactDestination requires refusal before any irreversible merge or partial move."
+    },
+    {
+      "id": "invalid-json-object-is-dereferenced",
+      "file": "src/ai/ai_conversation_store.cpp",
+      "find": "        if (!object.has_value()) {",
+      "replace": "        if (!object.has_value() && raw_line.isEmpty()) {",
+      "expect": "killed",
+      "why": "malformed transcript load, latest-response, and search tests require invalid JSON to return no partial data with an exact error."
     }
   ]
 }

@@ -10,10 +10,10 @@ namespace sak::ai {
 
 class CredentialStore {
 public:
-    [[nodiscard]] bool isPersistentStorageAvailable() const noexcept;
-    [[nodiscard]] QString loadApiKey(QString* error_message = nullptr) const;
-    [[nodiscard]] bool saveApiKey(const QString& api_key, QString* error_message = nullptr) const;
-    [[nodiscard]] bool deleteApiKey(QString* error_message = nullptr) const;
+    [[nodiscard]] static bool isPersistentStorageAvailable() noexcept;
+    [[nodiscard]] static QString loadApiKey(QString* error_message = nullptr);
+    [[nodiscard]] static bool saveApiKey(const QString& api_key, QString* error_message = nullptr);
+    [[nodiscard]] static bool deleteApiKey(QString* error_message = nullptr);
     [[nodiscard]] static QString credentialFilePath();
 
     [[nodiscard]] static QString redactSecrets(const QString& text);

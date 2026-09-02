@@ -313,6 +313,7 @@ bool WindowsUSBCreator::copyISO_runExtraction(const QString& sevenZipPath,
                      "7z process started, extracting ISO (this may take several minutes)...");
                  Q_EMIT statusChanged("Extracting Windows files...");
              },
+         .on_terminate = {},
          .should_cancel = [this]() { return m_cancelled.load(); }});
 
     if (!started) {

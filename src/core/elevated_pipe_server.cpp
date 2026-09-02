@@ -12,16 +12,13 @@
 #include <QFileInfo>
 #include <QThread>
 
-#ifdef _WIN32
 #include <windows.h>
 
 #include <sddl.h>
 #pragma comment(lib, "advapi32.lib")
-#endif
 
 namespace sak {
 
-#ifdef _WIN32
 namespace {
 bool createPipeSecurityAttributes(SECURITY_ATTRIBUTES& attributes,
                                   PSECURITY_DESCRIPTOR& descriptor) {
@@ -160,7 +157,6 @@ QString expectedClientImagePath() {
     return QDir(dir).absoluteFilePath(QStringLiteral("sak_utility.exe"));
 }
 }  // namespace
-#endif
 
 // ======================================================================
 // Construction / Destruction
@@ -178,7 +174,6 @@ ElevatedPipeServer::~ElevatedPipeServer() {
 // ======================================================================
 
 bool ElevatedPipeServer::start() {
-#ifdef _WIN32
     SECURITY_ATTRIBUTES sa{};
     PSECURITY_DESCRIPTOR sd = nullptr;
     if (!createPipeSecurityAttributes(sa, sd)) {
@@ -207,9 +202,6 @@ bool ElevatedPipeServer::start() {
 
     sak::logInfo("ElevatedPipeServer: client connected and validated");
     return true;
-#else
-    return false;
-#endif
 }
 
 void ElevatedPipeServer::sendProgress(int percent, const QString& status) {
@@ -272,15 +264,10 @@ auto ElevatedPipeServer::readMessage() -> std::expected<PipeMessage, sak::error_
 }
 
 bool ElevatedPipeServer::isConnected() const {
-#ifdef _WIN32
     return m_pipe_handle != INVALID_HANDLE_VALUE;
-#else
-    return false;
-#endif
 }
 
 bool ElevatedPipeServer::hasPendingMessage() const {
-#ifdef _WIN32
     if (m_pipe_handle == INVALID_HANDLE_VALUE) {
         return false;
     }
@@ -289,32 +276,23 @@ bool ElevatedPipeServer::hasPendingMessage() const {
         return false;
     }
     return available > 0;
-#else
-    return false;
-#endif
 }
 
 ElevatedPipeServer::PipePoll ElevatedPipeServer::pollPipe() const {
-#ifdef _WIN32
     if (m_pipe_handle == INVALID_HANDLE_VALUE) {
         return PipePoll::Broken;
     }
     DWORD available = 0;
     const BOOL peek_ok = PeekNamedPipe(m_pipe_handle, nullptr, 0, nullptr, &available, nullptr);
     return classifyPeek(peek_ok != 0, available);
-#else
-    return PipePoll::Broken;
-#endif
 }
 
 void ElevatedPipeServer::stop() {
-#ifdef _WIN32
     if (m_pipe_handle != INVALID_HANDLE_VALUE) {
         DisconnectNamedPipe(m_pipe_handle);
         CloseHandle(m_pipe_handle);
         m_pipe_handle = INVALID_HANDLE_VALUE;
     }
-#endif
 }
 
 // ======================================================================
@@ -322,7 +300,6 @@ void ElevatedPipeServer::stop() {
 // ======================================================================
 
 bool ElevatedPipeServer::sendRaw(const QByteArray& data) {
-#ifdef _WIN32
     if (m_pipe_handle == INVALID_HANDLE_VALUE) {
         return false;
     }
@@ -352,14 +329,9 @@ bool ElevatedPipeServer::sendRaw(const QByteArray& data) {
         return false;
     }
     return true;
-#else
-    (void)data;
-    return false;
-#endif
 }
 
 bool ElevatedPipeServer::readExact(char* buffer, int size, int timeout_ms) {
-#ifdef _WIN32
     if (m_pipe_handle == INVALID_HANDLE_VALUE) {
         return false;
     }
@@ -391,16 +363,9 @@ bool ElevatedPipeServer::readExact(char* buffer, int size, int timeout_ms) {
     }
 
     return total_read == size;
-#else
-    (void)buffer;
-    (void)size;
-    (void)timeout_ms;
-    return false;
-#endif
 }
 
 bool ElevatedPipeServer::validateClient() const {
-#ifdef _WIN32
     if (m_parent_pid <= 0) {
         // B5-04: fail closed. Previously a missing/invalid parent PID skipped
         // validation and accepted ANY client -- combined with a pipe DACL that
@@ -428,12 +393,8 @@ bool ElevatedPipeServer::validateClient() const {
     }
 
     return validateClientImage(client_pid);
-#else
-    return false;
-#endif
 }
 
-#ifdef _WIN32
 bool ElevatedPipeServer::validateClientImage(unsigned long client_pid) const {
     // A PID match alone can be forged by an unrelated process that inherited the
     // recycled parent PID. Bind identity to the image path as well: the client MUST
@@ -449,6 +410,5 @@ bool ElevatedPipeServer::validateClientImage(unsigned long client_pid) const {
     }
     return true;
 }
-#endif
 
 }  // namespace sak

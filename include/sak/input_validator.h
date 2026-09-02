@@ -257,12 +257,8 @@ private:
     [[nodiscard]] static validation_result validatePathPermissions(
         const std::filesystem::path& path, const path_validation_config& config);
 
-    // Platform-specific helpers
+    // Windows resource helper
     static std::uintmax_t get_available_memory_impl();
-#ifndef _WIN32
-    static std::size_t get_file_descriptor_count_impl();
-    static std::size_t get_file_descriptor_limit_impl();
-#endif
 };
 
 // ============================================
