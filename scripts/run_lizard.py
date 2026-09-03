@@ -160,7 +160,7 @@ def assert_scan_is_not_empty(files: list[str], language: str, default_dirs: list
 def run_lizard(files: list[str], language: str, default_dirs: list[str]) -> list[str]:
     """Run lizard and return the lines that are hard violations."""
     extensions = JS_EXTENSIONS if language == "javascript" else {
-        ".cpp", ".h", ".hpp", ".cxx", ".cc", ".hxx"}
+        ".c", ".cpp", ".h", ".hpp", ".cxx", ".cc", ".hxx"}
     assert_scan_is_not_empty(files, language, default_dirs, extensions)
     command = build_command(files, language, default_dirs)
     try:
@@ -235,7 +235,7 @@ NOT_A_DEFINITION_RE = re.compile(
     r")"
 )
 
-CPP_EXTENSIONS = {".cpp", ".h", ".hpp", ".cxx", ".cc", ".hxx"}
+CPP_EXTENSIONS = {".c", ".cpp", ".h", ".hpp", ".cxx", ".cc", ".hxx"}
 JAVASCRIPT_DEFINITION_RE = re.compile(
     r"^(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)\s*\("
 )
@@ -537,7 +537,7 @@ def check_cpp(files: list[str]) -> int:
 def main() -> int:
     args = [arg for arg in sys.argv[1:] if arg != "--strict"]
 
-    cpp_extensions = {".cpp", ".h", ".hpp", ".cxx", ".cc", ".hxx"}
+    cpp_extensions = {".c", ".cpp", ".h", ".hpp", ".cxx", ".cc", ".hxx"}
     if args:
         cpp_files = [f for f in args if Path(f).suffix.lower() in cpp_extensions]
         js_files = [f for f in args if Path(f).suffix.lower() in JS_EXTENSIONS]

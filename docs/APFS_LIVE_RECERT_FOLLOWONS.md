@@ -251,6 +251,16 @@ the rest is a debt-reduction + test-infra program (multi-session, much of it cos
       tests, with zero survivors or new test holes. The ratchet now validates 49 catalogs / 390
       mutants (384 killed, six proven equivalent), and all three production sources restored
       byte-for-byte after the drills.
+      PROGRESS 2026-09-02: `ai_command_guard` adds one permanent 18-mutant catalog. All 18
+      compile-valid mutants are killed by the exact guard suite and production is restored
+      byte-for-byte, bringing the ratchet to 50 catalogs / 408 mutants (402 killed, six proven
+      equivalent). The S.A.K.-authored LZFSE C shim is also removed from the vendor `/w` boundary
+      and compiled under `/W4 /WX`; the C/C++ hook filters, cppcheck language selection, and
+      whole-project suppression reveal now cover it and every future first-party `.c` source. Its
+      four old snake-case ABI names were fixed directly; the healthy naming gate now covers 157/157
+      core TUs with 5,266 findings and 16 ratcheted-clean TUs, two findings below Wave 27. All
+      whole-tree pre-commit hooks pass; Release build exit 0; full CTest 273/273, zero failures,
+      887.66 seconds.
       WAVE 23 FINAL GATE: all changed-file hooks passed; naming passed 151/151 non-core TUs clean
       and 156/156 core TUs healthy with 5,266 findings across 81 files and 16 clean TUs enforced;
       full clang-cl coverage build exit 0; Release build exit 0; full CTest 268/268, zero failures,

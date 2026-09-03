@@ -30,6 +30,7 @@ private Q_SLOTS:
     void blocksUnsupportedMethod();
     void clampsOutputAndTimeout();
     void carriesGuardBlockForChecksumBypass();
+    void manifestMetadataCannotBypassCommandGuard();
     void buildsWin32GuiActionPlan();
     void blocksWin32GuiWithoutSteps();
     void blocksWin32GuiStepMissingTool();
@@ -150,6 +151,23 @@ void AiAppActionPlannerTests::carriesGuardBlockForChecksumBypass() {
                             "checksum mismatch."));
     QCOMPARE(plan.error_message, plan.guard_block_error);
     QVERIFY(plan.guard_approval_reason.isEmpty());
+}
+
+void AiAppActionPlannerTests::manifestMetadataCannotBypassCommandGuard() {
+    QJsonObject manifest = actionManifest(QJsonObject{
+        {QStringLiteral("method"), QStringLiteral("powershell")},
+        {QStringLiteral("command"), QStringLiteral("Get-ChildItem HKLM:\\Software -Recurse")}});
+    manifest[QStringLiteral("display_name")] =
+        QStringLiteral("HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall");
+
+    const auto plan = sak::ai::AiAppActionPlanner::buildPlan(
+        QStringLiteral("sample_app"), QStringLiteral("inspect"), manifest, QJsonObject{});
+
+    QVERIFY(!plan.ok());
+    QCOMPARE(plan.guard_block_error,
+             QStringLiteral("Blocked broad recursive registry scan. Query exact uninstall/vendor "
+                            "keys instead and cap output with Select-Object -First."));
+    QCOMPARE(plan.error_message, plan.guard_block_error);
 }
 
 void AiAppActionPlannerTests::flagsCatastrophicManifestCommand() {

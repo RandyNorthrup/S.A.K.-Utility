@@ -37,6 +37,7 @@ private Q_SLOTS:
     void rejectsMissingCommand();
     void requiresExecutor();
     void guardBlocksBadPowerShell();
+    void previewCannotBypassBroadRegistryGuard();
     void sensitiveCommandRequiresConfirmation();
     void successfulRunRecordsRedactedCommand();
     void clampsCallerControlledOutputCap();
@@ -109,6 +110,31 @@ void AiWorkflowPowerShellToolRunnerTests::guardBlocksBadPowerShell() {
                             "$windowProcessId."));
 }
 
+void AiWorkflowPowerShellToolRunnerTests::previewCannotBypassBroadRegistryGuard() {
+    sak::ai::AiWorkflowPowerShellToolCallbacks callbacks;
+    callbacks.allocate_command_id = [] {
+        return QStringLiteral("cmd_registry_guard");
+    };
+    bool executed = false;
+    callbacks.execute_powershell = [&executed](const sak::ai::AiCommandRequest&, const QString&) {
+        executed = true;
+        return successfulCommandResult();
+    };
+    const QString preview = QStringLiteral(
+        "Inspect HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall safely");
+    const QJsonObject result = sak::ai::AiWorkflowPowerShellToolRunner::run(
+        QJsonObject{
+            {QStringLiteral("command"), QStringLiteral("Get-ChildItem HKLM:\\Software -Recurse")}},
+        preview,
+        callbacks);
+
+    QVERIFY(!executed);
+    QCOMPARE(result.value(QStringLiteral("success")).toBool(true), false);
+    QCOMPARE(result.value(QStringLiteral("error_message")).toString(),
+             QStringLiteral("Blocked broad recursive registry scan. Query exact uninstall/vendor "
+                            "keys instead and cap output with Select-Object -First."));
+}
+
 void AiWorkflowPowerShellToolRunnerTests::sensitiveCommandRequiresConfirmation() {
     sak::ai::AiWorkflowPowerShellToolCallbacks callbacks;
     callbacks.allocate_command_id = [] {
@@ -120,8 +146,8 @@ void AiWorkflowPowerShellToolRunnerTests::sensitiveCommandRequiresConfirmation()
 
     const QJsonObject result = sak::ai::AiWorkflowPowerShellToolRunner::run(
         QJsonObject{{QStringLiteral("command"),
-                     QStringLiteral(
-                         "Start-Process 'C:\\SAK\\data\\temp\\chocolatey\\pkg\\1.0\\setup.exe'")}},
+                     QStringLiteral("Start-Process "
+                                    "'$env:ChocolateyInstall\\cache\\pkg\\1.0\\setup.exe'")}},
         {},
         callbacks);
 
@@ -133,7 +159,7 @@ void AiWorkflowPowerShellToolRunnerTests::sensitiveCommandRequiresConfirmation()
     // must be HONORED, and the prompt must carry the reason plus the real command (the preview
     // is caller-controlled and can differ from what actually runs).
     const QString sensitive_command =
-        QStringLiteral("Start-Process 'C:\\SAK\\data\\temp\\chocolatey\\pkg\\1.0\\setup.exe'");
+        QStringLiteral("Start-Process '$env:ChocolateyInstall\\cache\\pkg\\1.0\\setup.exe'");
     bool executed = false;
     QString seen_title;
     QString seen_preview;

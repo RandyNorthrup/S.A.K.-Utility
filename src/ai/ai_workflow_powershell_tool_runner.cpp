@@ -53,7 +53,8 @@ QJsonObject validateWorkflowCallbacks(const AiWorkflowPowerShellToolCallbacks& c
 QJsonObject enforceWorkflowGuard(const AiCommandRequest& request,
                                  const QString& preview,
                                  const AiWorkflowPowerShellToolCallbacks& callbacks) {
-    const QString block_error = commandGuardBlockError(request, preview);
+    const AiCommandGuardResult guard = evaluateCommandGuard(request);
+    const QString& block_error = guard.block_error;
     if (!block_error.isEmpty()) {
         if (callbacks.append_local_event) {
             callbacks.append_local_event(
@@ -62,7 +63,7 @@ QJsonObject enforceWorkflowGuard(const AiCommandRequest& request,
         return toolError(block_error);
     }
 
-    const QString approval_reason = commandGuardApprovalReason(request, preview);
+    const QString& approval_reason = guard.approval_reason;
     if (approval_reason.isEmpty()) {
         return {};
     }

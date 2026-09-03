@@ -1,0 +1,152 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_ai_command_guard",
+  "ctest_regex": "^test_ai_command_guard$",
+  "mutants": [
+    {
+      "id": "quoted-separator-splits-command",
+      "file": "src/ai/ai_command_guard.cpp",
+      "find": "        if (state.quote.isNull() && isClauseSeparator(ch)) {",
+      "replace": "        if (isClauseSeparator(ch)) {",
+      "expect": "killed",
+      "why": "binaryReadCheckIsClauseAndQuoteScoped keeps a semicolon-delimited command-shaped string inside single quotes as data, not an executable clause."
+    },
+    {
+      "id": "binary-read-crosses-clauses",
+      "file": "src/ai/ai_command_guard.cpp",
+      "find": "bool commandContainsBinaryContentRead(const QStringList& clauses) {\n    for (const QString& clause : clauses) {\n        QString command_syntax = clause;\n        command_syntax.replace(kQuotedTextRegex, QStringLiteral(\" \"));\n        const bool reads_content = kReadCommandRegex.match(command_syntax).hasMatch() ||\n                                   kQuotedCallReadRegex.match(clause).hasMatch() ||\n                                   kInterpolatedReadRegex.match(clause).hasMatch();\n        if (reads_content && kBinaryExtensionRegex.match(clause).hasMatch()) {\n            return true;\n        }\n    }\n    return false;\n}",
+      "replace": "bool commandContainsBinaryContentRead(const QStringList& clauses) {\n    const QString combined = clauses.join(QLatin1Char(' '));\n    QString command_syntax = combined;\n    command_syntax.replace(kQuotedTextRegex, QStringLiteral(\" \"));\n    return (kReadCommandRegex.match(command_syntax).hasMatch() ||\n            kQuotedCallReadRegex.match(combined).hasMatch() ||\n            kInterpolatedReadRegex.match(combined).hasMatch()) &&\n           kBinaryExtensionRegex.match(combined).hasMatch();\n}",
+      "expect": "killed",
+      "why": "binaryReadCheckIsClauseAndQuoteScoped requires a read verb and binary path in the same executable clause; a safe text read followed by a separate file-hash command must pass."
+    },
+    {
+      "id": "quoted-read-prose-is-executed",
+      "file": "src/ai/ai_command_guard.cpp",
+      "find": "        command_syntax.replace(kQuotedTextRegex, QStringLiteral(\" \"));",
+      "replace": "        command_syntax.replace(QStringLiteral(\"not-present\"), QStringLiteral(\" \"));",
+      "expect": "killed",
+      "why": "binaryReadCheckIsClauseAndQuoteScoped requires command-shaped text inside quotes to remain data while nested unquoted Get-Content still blocks."
+    },
+    {
+      "id": "quoted-call-operator-read-is-ignored",
+      "file": "src/ai/ai_command_guard.cpp",
+      "find": "                                   kQuotedCallReadRegex.match(clause).hasMatch() ||",
+      "replace": "                                   clause.isEmpty() && kQuotedCallReadRegex.match(clause).hasMatch() ||",
+      "expect": "killed",
+      "why": "binaryReadCheckIsClauseAndQuoteScoped blocks PowerShell's executable call-operator form & 'Get-Content' 'tool.exe'."
+    },
+    {
+      "id": "nested-call-operator-is-split-away",
+      "file": "src/ai/ai_command_guard.cpp",
+      "find": "            if (ch == QLatin1Char('&') && beginsCallOperatorClause(current)) {",
+      "replace": "            if (ch == QLatin1Char('&') && current.trimmed().isEmpty()) {",
+      "expect": "killed",
+      "why": "binaryReadCheckIsClauseAndQuoteScoped blocks a quoted Get-Content invoked after an if-block opening, where ampersand is a call operator rather than a statement separator."
+    },
+    {
+      "id": "interpolated-subexpression-read-is-ignored",
+      "file": "src/ai/ai_command_guard.cpp",
+      "find": "                                   kInterpolatedReadRegex.match(clause).hasMatch();",
+      "replace": "                                   clause.isEmpty() && kInterpolatedReadRegex.match(clause).hasMatch();",
+      "expect": "killed",
+      "why": "binaryReadCheckIsClauseAndQuoteScoped blocks executable Get-Content inside a double-quoted $() subexpression while single-quoted and escaped forms stay data."
+    },
+    {
+      "id": "registry-recursion-crosses-clauses",
+      "file": "src/ai/ai_command_guard.cpp",
+      "find": "bool commandContainsBroadRegistryRecursion(const QStringList& clauses) {\n    for (const QString& clause : clauses) {\n        if (kRegistryRootRegex.match(clause).hasMatch() &&\n            kActiveRecurseRegex.match(clause).hasMatch()) {\n            return true;\n        }\n    }\n    return false;\n}",
+      "replace": "bool commandContainsBroadRegistryRecursion(const QStringList& clauses) {\n    const QString combined = clauses.join(QLatin1Char(' '));\n    return kRegistryRootRegex.match(combined).hasMatch() &&\n           kActiveRecurseRegex.match(combined).hasMatch();\n}",
+      "expect": "killed",
+      "why": "registryRecursionCheckIsClauseScoped keeps an exact SOFTWARE read separate from unrelated filesystem recursion."
+    },
+    {
+      "id": "provider-qualified-registry-root-is-ignored",
+      "file": "src/ai/ai_command_guard.cpp",
+      "find": "    QStringLiteral(R\"((?:(?:hklm|hkcu):\\\\|registry::hkey_(?:local_machine|)\"\n                   R\"(current_user)\\\\)software(?:\\\\)?(?:['\"`\\s,;)]|$))\"),",
+      "replace": "    QStringLiteral(R\"((?:hklm|hkcu):\\\\software(?:\\\\)?(?:['\"`\\s,;)]|$))\"),",
+      "expect": "killed",
+      "why": "registryRecursionCheckIsClauseScoped blocks broad recursion through Registry::HKEY_LOCAL_MACHINE and Registry::HKEY_CURRENT_USER provider-qualified roots."
+    },
+    {
+      "id": "narrow-registry-path-counts-as-root",
+      "file": "src/ai/ai_command_guard.cpp",
+      "find": "kRegistryRootRegex.match(clause).hasMatch()",
+      "replace": "(clause.contains(QStringLiteral(\"hklm:\\\\software\")) || clause.contains(QStringLiteral(\"hkcu:\\\\software\")))",
+      "expect": "killed",
+      "why": "registryRecursionCheckIsClauseScoped permits recursion only when the actual target is a narrow descendant, never when an exact SOFTWARE root is targeted."
+    },
+    {
+      "id": "recurse-false-counts-as-active",
+      "file": "src/ai/ai_command_guard.cpp",
+      "find": "kActiveRecurseRegex.match(clause).hasMatch()",
+      "replace": "(kActiveRecurseRegex.match(clause).hasMatch() || clause.contains(QStringLiteral(\"-recurse:$false\")))",
+      "expect": "killed",
+      "why": "registryRecursionCheckIsClauseScoped requires -Recurse:$false to remain non-recursive while plain -Recurse and -Recurse:$true block."
+    },
+    {
+      "id": "recurse-abbreviations-are-ignored",
+      "file": "src/ai/ai_command_guard.cpp",
+      "find": "-rec(?:u(?:r(?:s(?:e)?)?)?)?",
+      "replace": "-recurse",
+      "expect": "killed",
+      "why": "registryRecursionCheckIsClauseScoped blocks PowerShell's accepted -Rec through -Recurse abbreviations while leaving explicit false forms safe."
+    },
+    {
+      "id": "temp-environment-cache-is-ignored",
+      "file": "src/ai/ai_command_guard.cpp",
+      "find": "    return kChocolateyTempEnvironmentRegex.match(clause).hasMatch() ||",
+      "replace": "    return clause.isEmpty() && kChocolateyTempEnvironmentRegex.match(clause).hasMatch() ||",
+      "expect": "killed",
+      "why": "asksApprovalForEveryChocolateyCacheInstaller covers $env:TEMP, ${env:TEMP}, and %TEMP% Chocolatey installer paths."
+    },
+    {
+      "id": "chocolatey-install-cache-is-ignored",
+      "file": "src/ai/ai_command_guard.cpp",
+      "find": "           kChocolateyInstallCacheRegex.match(clause).hasMatch() ||",
+      "replace": "           clause.isEmpty() && kChocolateyInstallCacheRegex.match(clause).hasMatch() ||",
+      "expect": "killed",
+      "why": "asksApprovalForEveryChocolateyCacheInstaller covers ChocolateyInstall lib-bad, cache, and temp paths in PowerShell and cmd environment syntax."
+    },
+    {
+      "id": "expanded-temp-cache-is-ignored",
+      "file": "src/ai/ai_command_guard.cpp",
+      "find": "           kChocolateyTempPathRegex.match(clause).hasMatch() ||",
+      "replace": "           clause.isEmpty() && kChocolateyTempPathRegex.match(clause).hasMatch() ||",
+      "expect": "killed",
+      "why": "asksApprovalForEveryChocolateyCacheInstaller covers SAK data/temp and already-expanded Windows Temp Chocolatey paths."
+    },
+    {
+      "id": "chocolatey-root-cache-is-ignored",
+      "file": "src/ai/ai_command_guard.cpp",
+      "find": "           kChocolateyRootCacheRegex.match(clause).hasMatch();",
+      "replace": "           clause.isEmpty() && kChocolateyRootCacheRegex.match(clause).hasMatch();",
+      "expect": "killed",
+      "why": "asksApprovalForEveryChocolateyCacheInstaller covers absolute Chocolatey lib-bad, cache, and temp trees with both separators."
+    },
+    {
+      "id": "cache-path-without-installer-is-approved",
+      "file": "src/ai/ai_command_guard.cpp",
+      "find": "        if (clauseContainsChocolateyCachePath(clause) &&\n            kInstallerExtensionRegex.match(clause).hasMatch()) {",
+      "replace": "        if (clauseContainsChocolateyCachePath(clause)) {",
+      "expect": "killed",
+      "why": "cacheApprovalIsClauseScopedAndRequiresInstaller keeps ordinary text files in a Chocolatey cache readable without a sensitive-execution prompt."
+    },
+    {
+      "id": "cache-path-and-installer-cross-clauses",
+      "file": "src/ai/ai_command_guard.cpp",
+      "find": "bool commandContainsCachedPackageInstallerRun(const QStringList& clauses) {\n    // Any reference to a package-cache installer needs approval. Requiring one of a fixed\n    // set of launch verbs failed open: request.program can name the installer directly,\n    // and \"msiexec /i\", &\"path\" without a space, a tab-separated call operator or an\n    // environment-variable path all launch it without matching any of those verbs.\n    for (const QString& clause : clauses) {\n        if (clauseContainsChocolateyCachePath(clause) &&\n            kInstallerExtensionRegex.match(clause).hasMatch()) {\n            return true;\n        }\n    }\n    return false;\n}",
+      "replace": "bool commandContainsCachedPackageInstallerRun(const QStringList& clauses) {\n    const QString combined = clauses.join(QLatin1Char(' '));\n    return clauseContainsChocolateyCachePath(combined) &&\n           kInstallerExtensionRegex.match(combined).hasMatch();\n}",
+      "expect": "killed",
+      "why": "cacheApprovalIsClauseScopedAndRequiresInstaller keeps a cache text read separate from a later verified installer launch."
+    },
+    {
+      "id": "direct-process-fields-are-ignored",
+      "file": "src/ai/ai_command_guard.cpp",
+      "find": "        clauses.append(direct_process.toLower());",
+      "replace": "        clauses.append(request.command.toLower());",
+      "expect": "killed",
+      "why": "directProcessCacheInstallerRequiresApproval proves program and argv are security inputs even when shell command is empty."
+    }
+  ]
+}

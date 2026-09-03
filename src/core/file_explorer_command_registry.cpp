@@ -624,7 +624,7 @@ QVector<FileExplorerCommand> writeCommands() {
         // Files OpenTerminalAction: Ctrl+` opens a terminal in the current or
         // selected folder (mounted local volumes only).
         makeCommand(FileExplorerCommandId::OpenInTerminal,
-                    QStringLiteral("Open in Windows Terminal"),
+                    QStringLiteral("Open in Terminal"),
                     QStringLiteral("Open a terminal in the current or selected folder."),
                     QStringLiteral("Ctrl+`")),
         // Files EditInNotepadAction: script files (.bat/.cmd/.ahk) only.

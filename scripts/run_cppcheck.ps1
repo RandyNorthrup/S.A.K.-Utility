@@ -7,14 +7,14 @@
       - All checks enabled (style, performance, portability, warning, information)
       - Exhaustive check level (deepest analysis)
       - Inconclusive findings reported
-      - C++23 standard
+      - C/C++ language inferred from each input (C++ translation units use C++23)
       - Error exit code on any finding
       - Inline suppressions respected
       - Exact Qt test-slot functionStatic findings source-validated, classified, and reported
 
     Usage:
         .\scripts\run_cppcheck.ps1                       # Full project scan
-        .\scripts\run_cppcheck.ps1 -Files file1.cpp      # Specific files
+        .\scripts\run_cppcheck.ps1 -Files file1.c,file2.cpp  # Specific files
         .\scripts\run_cppcheck.ps1 -Files (git diff ...)  # Changed files only
 
 .PARAMETER Files
@@ -149,10 +149,9 @@ $CppcheckArgs = @(
     "--enable=$EnabledChecks"       # All checks normally; a named focused gate may narrow this
     "--check-level=exhaustive"      # Deepest analysis (slowest, most thorough)
     "--inconclusive"                # Report uncertain findings
-    "--std=c++23"                   # C++23 standard
+    "--std=c++23"                   # C++23 for C++ TUs; cppcheck infers C from .c
     "--error-exitcode=1"            # Exit 1 on any error/warning
     "--inline-suppr"                # Respect // cppcheck-suppress comments
-    "--language=c++"                # Force C++ language
     "--max-configs=12"              # Check up to 12 configurations
     "--quiet"                       # Suppress progress messages
     "--template={file}:{line}:{column}: {severity}: {message} [{id}]"
@@ -222,20 +221,20 @@ $FileListPath = ""
 $InputScopeKind = "whole-project-with-tests"
 $InputScopePaths = @()
 if ($Files -and $Files.Count -gt 0) {
-    # Filter to real C++ source files only. Each value is passed straight to cppcheck, so
+    # Filter to real C/C++ source files only. Each value is passed straight to cppcheck, so
     # reject anything option-shaped (leading '-') or that does not exist as a real file on
     # disk. Without this, a value such as "--suppress=*:*.cpp" or "--addon=evil.cpp" ends in
-    # a C++ extension and would be handed to cppcheck as an option, not a file.
-    $CppFiles = $Files | Where-Object {
+    # a C/C++ extension and would be handed to cppcheck as an option, not a file.
+    $SourceFiles = $Files | Where-Object {
         $candidate = $_
         if ([string]::IsNullOrWhiteSpace($candidate)) { return $false }
         if ($candidate.StartsWith("-")) { return $false }
         $ext = [System.IO.Path]::GetExtension($candidate).ToLower()
-        ($ext -in @(".cpp", ".h", ".hpp", ".cxx", ".cc", ".hxx")) -and
+        ($ext -in @(".c", ".cpp", ".h", ".hpp", ".cxx", ".cc", ".hxx")) -and
             (Test-Path -LiteralPath $candidate -PathType Leaf)
     }
-    if ($CppFiles.Count -eq 0) {
-        Write-Host "No C++ files to check."
+    if ($SourceFiles.Count -eq 0) {
+        Write-Host "No C/C++ files to check."
         exit 0
     }
 
@@ -245,7 +244,7 @@ if ($Files -and $Files.Count -gt 0) {
     # tests because support/test headers can be consumed only there. This is intentionally the
     # safe, expensive direction: a header edit must never regain a broad dead-member silence.
     $headerExtensions = @(".h", ".hpp", ".hxx")
-    $containsHeader = @($CppFiles | Where-Object {
+    $containsHeader = @($SourceFiles | Where-Object {
         [System.IO.Path]::GetExtension($_).ToLower() -in $headerExtensions
     }).Count -gt 0
 
@@ -265,7 +264,7 @@ if ($Files -and $Files.Count -gt 0) {
             [System.IO.Path]::GetFullPath($_).TrimEnd('\', '/') +
                 [System.IO.Path]::DirectorySeparatorChar
         })
-        foreach ($header in @($CppFiles | Where-Object {
+        foreach ($header in @($SourceFiles | Where-Object {
             [System.IO.Path]::GetExtension($_).ToLower() -in $headerExtensions
         })) {
             $headerPath = [System.IO.Path]::GetFullPath($header)
@@ -281,7 +280,7 @@ if ($Files -and $Files.Count -gt 0) {
         $CppcheckArgs += $InputScopePaths
     } else {
         $InputScopeKind = "file-list"
-        $InputScopePaths = @($CppFiles)
+        $InputScopePaths = @($SourceFiles)
 
         # Hand the paths to cppcheck through --file-list, NOT as positional arguments.
     #
@@ -303,7 +302,7 @@ if ($Files -and $Files.Count -gt 0) {
     # fewer file analyzed, no error. Refuse instead. (The gate's own run is PID-suffixed so two
     # concurrent invocations, e.g. the pre-commit hook and the manual gate, cannot clobber each
     # other's list and analyze the wrong set.)
-        $nonAscii = $CppFiles | Where-Object { $_ -match '[^\x00-\x7F]' }
+        $nonAscii = $SourceFiles | Where-Object { $_ -match '[^\x00-\x7F]' }
         if ($nonAscii) {
             throw ("Refusing to build a cppcheck file list: these paths contain non-ASCII bytes " +
                    "and would be corrupted by the ASCII-encoded list: " + ($nonAscii -join ', '))
@@ -315,13 +314,13 @@ if ($Files -and $Files.Count -gt 0) {
             # commit. PID-suffixed so concurrent hook/manual runs cannot overwrite each other.
             $FileListPath = Join-Path ([System.IO.Path]::GetTempPath()) `
                 ("sak_cppcheck_files_{0}.txt" -f $PID)
-            Set-Content -LiteralPath $FileListPath -Value $CppFiles -Encoding ascii
+            Set-Content -LiteralPath $FileListPath -Value $SourceFiles -Encoding ascii
             $CppcheckArgs += "--file-list=$FileListPath"
         }
     }
 } else {
     # Full first-party scan -- production sources, public headers, and test translation units.
-    # Tests are executable C++ and can carry the same safety/style findings as production code;
+    # Tests are executable C/C++ and can carry the same safety/style findings as production code;
     # omitting them made the whole-project claim false while the suppression reveal happened to
     # analyze them in a separate pass.
     $CppcheckArgs += "-i"

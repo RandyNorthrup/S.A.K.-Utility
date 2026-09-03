@@ -432,13 +432,18 @@ QString windowsDirPath(const QString& relativeExe) {
 #endif
 }
 
-bool startDetachedSystem32Tool(const QString& relativeExe, const QStringList& args) {
+bool startDetachedSystem32Tool(const QString& relativeExe,
+                               const QStringList& args,
+                               const QString& working_directory) {
     const QString program = system32Path(relativeExe);
     if (program.isEmpty()) {
         return false;  // fail closed: never retry with the bare, search-order-resolved name
     }
     if (const auto injected = injectedDetachedLaunchResult(program, args)) {
         return *injected;
+    }
+    if (!working_directory.isEmpty()) {
+        return QProcess::startDetached(program, args, working_directory);
     }
     return QProcess::startDetached(program, args);
 }

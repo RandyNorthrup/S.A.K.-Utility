@@ -31,7 +31,7 @@
 
 // Vendored Apple lzvn reference decoder (third_party/lzfse) via the C shim; lzfse.h
 // exposes only the lzfse container, so the type-7 (LZVN) decoder is reached directly.
-extern "C" size_t sak_lzvn_decode(void* dst, size_t dst_size, const void* src, size_t src_size);
+extern "C" size_t sakLzvnDecode(void* dst, size_t dst_size, const void* src, size_t src_size);
 
 namespace sak {
 
@@ -50,10 +50,10 @@ namespace {
                                                              : std::nullopt;
     }
     QByteArray out(static_cast<qsizetype>(expected), '\0');
-    const size_t decoded = sak_lzvn_decode(reinterpret_cast<uint8_t*>(out.data()),
-                                           static_cast<size_t>(out.size()),
-                                           reinterpret_cast<const uint8_t*>(chunk.constData()),
-                                           static_cast<size_t>(chunk.size()));
+    const size_t decoded = sakLzvnDecode(reinterpret_cast<uint8_t*>(out.data()),
+                                         static_cast<size_t>(out.size()),
+                                         reinterpret_cast<const uint8_t*>(chunk.constData()),
+                                         static_cast<size_t>(chunk.size()));
     return decoded == expected ? std::optional<QByteArray>(out) : std::nullopt;
 }
 
@@ -512,10 +512,10 @@ struct FsTreeScanState {
         return true;
     }
     out->resize(static_cast<qsizetype>(uncompressedSize));
-    const size_t decoded = sak_lzvn_decode(reinterpret_cast<uint8_t*>(out->data()),
-                                           static_cast<size_t>(out->size()),
-                                           reinterpret_cast<const uint8_t*>(payload.constData()),
-                                           static_cast<size_t>(payload.size()));
+    const size_t decoded = sakLzvnDecode(reinterpret_cast<uint8_t*>(out->data()),
+                                         static_cast<size_t>(out->size()),
+                                         reinterpret_cast<const uint8_t*>(payload.constData()),
+                                         static_cast<size_t>(payload.size()));
     if (decoded != uncompressedSize) {
         blockers->append(QStringLiteral("APFS inline LZVN decode failed"));
         return false;

@@ -38,7 +38,7 @@
 
 // Vendored Apple lzvn reference encoder (third_party/lzfse) via the C shim; lzfse.h
 // exposes only the lzfse container, so the type-7 (LZVN) encoder is reached directly.
-extern "C" size_t sak_lzvn_encode(void* dst, size_t dst_size, const void* src, size_t src_size);
+extern "C" size_t sakLzvnEncode(void* dst, size_t dst_size, const void* src, size_t src_size);
 
 namespace sak {
 
@@ -10384,10 +10384,10 @@ QByteArray apfsBuildInlineLzvnDecmpfs(const QByteArray& data, bool* fits) {
     QByteArray value = apfsBuildDecmpfsHeader(kApfsCompressLzvnAttr,
                                               static_cast<uint64_t>(data.size()));
     QByteArray block(data.size(), '\0');  // lzvn never expands past src; 0 return => store raw
-    const size_t encoded = sak_lzvn_encode(reinterpret_cast<uint8_t*>(block.data()),
-                                           static_cast<size_t>(block.size()),
-                                           reinterpret_cast<const uint8_t*>(data.constData()),
-                                           static_cast<size_t>(data.size()));
+    const size_t encoded = sakLzvnEncode(reinterpret_cast<uint8_t*>(block.data()),
+                                         static_cast<size_t>(block.size()),
+                                         reinterpret_cast<const uint8_t*>(data.constData()),
+                                         static_cast<size_t>(data.size()));
     if (encoded == 0) {
         value.append(static_cast<char>(kApfsDecmpfsLzvnRawMarker));
         value.append(data);
@@ -10401,15 +10401,15 @@ QByteArray apfsBuildInlineLzvnDecmpfs(const QByteArray& data, bool* fits) {
 }
 
 // Encode one <= 64 KiB chunk for an LZVN resource fork (decmpfs algo 8). A compressible chunk is
-// a bare lzvn stream; an incompressible one (sak_lzvn_encode returns 0) is stored behind a single
+// a bare lzvn stream; an incompressible one (sakLzvnEncode returns 0) is stored behind a single
 // 0x06 marker byte. The macOS kernel's LZVN_RSRC path (cdata[0]==0x06 -> raw, else lzvn_decode)
 // reconstructs both forms.
 QByteArray apfsEncodeLzvnResourceChunk(const QByteArray& chunk) {
     QByteArray block(chunk.size(), '\0');
-    const size_t encoded = sak_lzvn_encode(reinterpret_cast<uint8_t*>(block.data()),
-                                           static_cast<size_t>(block.size()),
-                                           reinterpret_cast<const uint8_t*>(chunk.constData()),
-                                           static_cast<size_t>(chunk.size()));
+    const size_t encoded = sakLzvnEncode(reinterpret_cast<uint8_t*>(block.data()),
+                                         static_cast<size_t>(block.size()),
+                                         reinterpret_cast<const uint8_t*>(chunk.constData()),
+                                         static_cast<size_t>(chunk.size()));
     if (encoded == 0) {
         QByteArray raw;
         raw.reserve(chunk.size() + 1);

@@ -29,7 +29,7 @@
                               global one already silenced the check) and read as stale when
                               they are live. Verified: removed, all three fire.
 
-    Pass 2 is deliberately given an explicit .cpp FILE LIST, not directories. A header
+    Pass 2 is deliberately given an explicit .c/.cpp FILE LIST, not directories. A header
     analyzed on its own instantiates nothing, so every check inside it comes back silent and
     every live suppression in it reads as dead -- a header suppression can only be judged
     through a .cpp that includes it. Findings other than unmatchedSuppression are ignored in
@@ -44,7 +44,7 @@
 
     COST. Two exhaustive cppcheck passes over the tree, on the order of twenty minutes total.
     That is why this is manual-stage rather than per-commit -- the per-commit `cppcheck` hook
-    stays scoped to changed files and stays fast. Pass 2 is given every first-party .cpp rather
+    stays scoped to changed files and stays fast. Pass 2 is given every first-party C/C++ source
     than only the ~21 files that currently contain a suppression: a suppression inside a HEADER
     can only be judged through a .cpp that includes it, and working out which .cpp exercises a
     given header means walking transitive includes. Getting that wrong reports a live
@@ -106,18 +106,53 @@ function Assert-CppcheckActuallyRan {
 }
 
 function Get-FirstPartySources {
-    # src/**/*.cpp plus tests/**/*.cpp. Vendored code is out of scope and is never edited
+    # src/**/*.{c,cpp} plus tests/**/*.{c,cpp}. Vendored code is out of scope and is never edited
     # here, so a finding in it is not actionable.
     $roots = @((Join-Path $ProjectRoot "src"), (Join-Path $ProjectRoot "tests"))
     $found = @()
     foreach ($root in $roots) {
         if (-not (Test-Path -LiteralPath $root -PathType Container)) { continue }
-        $found += Get-ChildItem -LiteralPath $root -Recurse -Filter *.cpp -File |
-            Where-Object { $_.FullName -notmatch '\\(third_party|3rdparty|external|_archived)\\' } |
+        $found += Get-ChildItem -LiteralPath $root -Recurse -File |
+            Where-Object {
+                $_.Extension -in @('.c', '.cpp') -and
+                $_.FullName -notmatch '\\(third_party|3rdparty|external|_archived)\\'
+            } |
             ForEach-Object { $_.FullName }
     }
     return $found
 }
+
+# This fixture carries a cast that is ordinary C and a cstyleCast finding under C++. It prevents
+# both ways this gate could silently lose C analysis: filtering .c from explicit input, or restoring
+# --language=c++ and analyzing every C translation unit under the wrong rules. The result file
+# matters because run_cppcheck exits 0 without creating it when an explicit list filters empty.
+$cLanguageFixture = Join-Path $ProjectRoot "tests\fixtures\cppcheck_c_language_probe.c"
+if (-not (Test-Path -LiteralPath $cLanguageFixture -PathType Leaf)) {
+    Write-Host "GATE FAILED: the direct C-language cppcheck fixture is missing." -ForegroundColor Red
+    exit 1
+}
+$cFixtureErrors = Join-Path ([System.IO.Path]::GetTempPath()) `
+    ("sak_cppcheck_c_language_{0}.txt" -f $PID)
+try {
+    & $RunCppcheck -Files $cLanguageFixture -ErrorsFile $cFixtureErrors | Out-Null
+    $cFixtureExitCode = $LASTEXITCODE
+    $cFixtureLines = if (Test-Path -LiteralPath $cFixtureErrors -PathType Leaf) {
+        @(Get-Content -LiteralPath $cFixtureErrors)
+    } else {
+        @()
+    }
+    $cFixtureRan = @($cFixtureLines | Where-Object {
+        $_ -match 'Active checkers:\s*\d+/\d+'
+    }).Count -gt 0
+    if ($cFixtureExitCode -ne 0 -or -not $cFixtureRan) {
+        Write-Host "GATE FAILED: direct C-language cppcheck fixture did not pass as C." -ForegroundColor Red
+        $cFixtureLines | ForEach-Object { Write-Host "  $_" }
+        exit 1
+    }
+} finally {
+    Remove-Item -LiteralPath $cFixtureErrors -Force -ErrorAction SilentlyContinue
+}
+Write-Host "C-language inference fixture passed." -ForegroundColor Green
 
 # ---------------------------------------------------------------------------
 # Pass 1 -- whole project (src/, include/, and tests/ as directories)
@@ -187,7 +222,7 @@ Set-Content -LiteralPath $revealSuppressions -Value $stripped -Encoding ascii
 $sources = Get-FirstPartySources
 if ($sources.Count -eq 0) {
     # The exact false-green shape called out for the CI clang-format step: a file list that
-    # resolves to nothing makes run_cppcheck.ps1 exit 0 with "No C++ files to check."
+    # resolves to nothing makes run_cppcheck.ps1 exit 0 with "No C/C++ files to check."
     Write-Host "GATE FAILED: the reveal pass resolved to ZERO source files." -ForegroundColor Red
     Write-Host "  An empty file list is a green run that checked nothing, not a clean tree."
     exit 1

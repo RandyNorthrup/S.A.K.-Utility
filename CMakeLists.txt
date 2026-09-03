@@ -1195,6 +1195,16 @@ endif()
 # Vendored lzfse/lzvn reference library (Apple, BSD-3) for HFS+ decmpfs codecs
 # ============================================================================
 
+# S.A.K.-authored adapter code is compiled separately under the project's normal /W4 /WX policy.
+# Its quoted includes are vendored headers, so only those include paths are SYSTEM. The resulting
+# object is archived into sak_lzfse below without inheriting that target's upstream-only /w.
+add_library(sak_lzfse_shim OBJECT
+    src/core/sak_lzvn_shim.c
+)
+target_include_directories(sak_lzfse_shim SYSTEM PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lzfse/src
+)
+
 add_library(sak_lzfse STATIC
     third_party/lzfse/src/lzfse_decode.c
     third_party/lzfse/src/lzfse_decode_base.c
@@ -1203,9 +1213,9 @@ add_library(sak_lzfse STATIC
     third_party/lzfse/src/lzfse_fse.c
     third_party/lzfse/src/lzvn_decode_base.c
     third_party/lzfse/src/lzvn_encode_base.c
-    third_party/lzfse/sak_lzvn_shim.c
+    $<TARGET_OBJECTS:sak_lzfse_shim>
 )
-target_include_directories(sak_lzfse PUBLIC
+target_include_directories(sak_lzfse SYSTEM PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lzfse/src
 )
 if(MSVC)

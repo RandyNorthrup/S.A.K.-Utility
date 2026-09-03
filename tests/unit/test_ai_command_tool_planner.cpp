@@ -22,6 +22,7 @@ private Q_SLOTS:
     void policyRiskClassificationPropagatesToPlan();
     void carriesPidMutationGuardBlock();
     void carriesChecksumBypassBlock();
+    void carriesCachedInstallerApproval();
     void rejectsNonCanonicalToolName();  // R5-G10-9
     void shellPreviewIsSanitizedBeforeItIsShownToAHuman();
     void previewEncodingDistinguishesControlsFromLiteralTokens();
@@ -241,6 +242,21 @@ void AiCommandToolPlannerTests::carriesChecksumBypassBlock() {
     QCOMPARE(plan.policy_decision.reason,
              QStringLiteral("Known local tool allowed with exclusive mutation policy"));
     QVERIFY(plan.policy_decision.requires_exclusive_lease);
+}
+
+void AiCommandToolPlannerTests::carriesCachedInstallerApproval() {
+    const QJsonObject args{
+        {QStringLiteral("command"),
+         QStringLiteral("choco install pkg -y; & '$env:TEMP\\chocolatey\\pkg\\setup.exe'")}};
+
+    const auto plan = sak::ai::AiCommandToolPlanner::buildPlan(
+        QStringLiteral("run_powershell"), args, sak::ai::AiToolPolicy::ExclusiveMutatingExecutor);
+
+    QVERIFY(plan.guard_block_error.isEmpty());
+    QCOMPARE(plan.guard_approval_reason,
+             QStringLiteral("Cached package installer execution requested after package-manager "
+                            "handling. Continue only with explicit user approval and verification "
+                            "evidence."));
 }
 
 void AiCommandToolPlannerTests::rejectsNonCanonicalToolName() {

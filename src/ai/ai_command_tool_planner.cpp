@@ -349,7 +349,7 @@ AiCommandToolPlan AiCommandToolPlanner::buildPlan(const QString& tool_name,
         return plan;  // policy_decision stays default-denied.
     }
 
-    const AiCommandGuardResult guard = evaluateCommandGuard(plan.request, plan.preview);
+    const AiCommandGuardResult guard = evaluateCommandGuard(plan.request);
     plan.guard_block_error = guard.block_error;
     plan.guard_approval_reason = guard.approval_reason;
 

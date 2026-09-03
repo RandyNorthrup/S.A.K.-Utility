@@ -52,6 +52,8 @@ private Q_SLOTS:
     void processFaultInjector_scopeRestoresRealLaunch();
     void detachedToolLaunchersConsultFaultInjector();
     void guiDetachedLaunchFailuresAreGuarded();
+    void guiTerminalLaunch_hasNoUserWritableFallback();
+    void guiTerminalLaunch_failureIsSurfaced();
 };
 
 namespace {
@@ -535,9 +537,11 @@ void ProcessRunnerTests::processFaultInjector_substitutesResultForEveryLauncher(
 
 void ProcessRunnerTests::detachedToolLaunchersConsultFaultInjector() {
     QStringList programs;
+    QList<QStringList> argument_sets;
     sak::ScopedProcessFaultInjector failure_guard(
-        [&](const QString& program, const QStringList&) -> std::optional<sak::ProcessResult> {
+        [&](const QString& program, const QStringList& args) -> std::optional<sak::ProcessResult> {
             programs.append(program);
+            argument_sets.append(args);
             sak::ProcessResult failure;
             failure.exit_code = 7;
             return failure;
@@ -545,9 +549,18 @@ void ProcessRunnerTests::detachedToolLaunchersConsultFaultInjector() {
 
     QVERIFY(!sak::startDetachedSystem32Tool(QStringLiteral("notepad.exe")));
     QVERIFY(!sak::startDetachedWindowsTool(QStringLiteral("explorer.exe")));
-    QCOMPARE(programs.size(), 2);
+    QVERIFY(!sak::startDetachedSystem32Tool(
+        QStringLiteral("cmd.exe"), {QStringLiteral("/D")}, QDir::tempPath()));
+    QCOMPARE(programs.size(), 3);
+    QCOMPARE(argument_sets.at(2), (QStringList{QStringLiteral("/D")}));
     QVERIFY(QDir::isAbsolutePath(programs.at(0)));
     QVERIFY(QDir::isAbsolutePath(programs.at(1)));
+    QVERIFY(QDir::isAbsolutePath(programs.at(2)));
+
+    const QString runner = readRepoSource(QStringLiteral("src/core/process_runner.cpp"));
+    QVERIFY2(!runner.isEmpty(), "process_runner.cpp could not be read");
+    QVERIFY(runner.contains(
+        QStringLiteral("QProcess::startDetached(program, args, working_directory)")));
 }
 
 void ProcessRunnerTests::guiDetachedLaunchFailuresAreGuarded() {
@@ -564,7 +577,7 @@ void ProcessRunnerTests::guiDetachedLaunchFailuresAreGuarded() {
     QVERIFY(advanced.contains(
         QStringLiteral("sak::showWarningLogged(this, tr(\"Open Directory\"), failure);")));
 
-    QCOMPARE(files.count(QStringLiteral("if (!sak::startDetachedSystem32Tool")), 1);
+    QCOMPARE(files.count(QStringLiteral("if (!sak::startDetachedSystem32Tool")), 2);
     QVERIFY(files.contains(
         QStringLiteral("sak::showWarningLogged(this, tr(\"Edit in Notepad\"), failure);")));
 
@@ -575,6 +588,32 @@ void ProcessRunnerTests::guiDetachedLaunchFailuresAreGuarded() {
     QVERIFY(partitions.contains(QStringLiteral("Open Windows BitLocker")));
     QVERIFY(partitions.contains(QStringLiteral("Open Windows Optimize Drives")));
     QVERIFY(partitions.contains(QStringLiteral("Open File Location")));
+}
+
+void ProcessRunnerTests::guiTerminalLaunch_hasNoUserWritableFallback() {
+    const QString files =
+        readRepoSource(QStringLiteral("src/gui/file_management_explorer_panel.cpp"));
+    QVERIFY2(!files.isEmpty(), "file_management_explorer_panel.cpp could not be read");
+    QVERIFY2(!files.contains(QStringLiteral("Microsoft/WindowsApps/wt.exe")),
+             "Terminal launch still trusts a user-writable app-execution alias");
+    QVERIFY2(!files.contains(QStringLiteral("QProcess::startDetached")),
+             "Terminal launch still carries a panel-local process/fallback path");
+    const QRegularExpression trusted_launcher(
+        QStringLiteral(R"(startDetachedSystem32Tool\(\s*QStringLiteral\("cmd\.exe"\))"));
+    QVERIFY(trusted_launcher.match(files).hasMatch());
+}
+
+void ProcessRunnerTests::guiTerminalLaunch_failureIsSurfaced() {
+    const QString files =
+        readRepoSource(QStringLiteral("src/gui/file_management_explorer_panel.cpp"));
+    QVERIFY2(!files.isEmpty(), "file_management_explorer_panel.cpp could not be read");
+    const QRegularExpression checked_launcher(QStringLiteral(
+        R"(if\s*\(\s*!sak::startDetachedSystem32Tool\(\s*QStringLiteral\("cmd\.exe"\))"));
+    QVERIFY(checked_launcher.match(files).hasMatch());
+    QVERIFY(files.contains(QStringLiteral("Terminal launch failed: %1")));
+    QVERIFY(files.contains(QStringLiteral("Q_EMIT statusMessage(failure")));
+    QVERIFY(files.contains(
+        QStringLiteral("sak::showWarningLogged(this, tr(\"Open in Terminal\"), failure);")));
 }
 
 // The injector must not leak and must be a controllable OVERLAY, not a permanent break of

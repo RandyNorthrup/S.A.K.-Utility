@@ -57,6 +57,54 @@ foreach ($f in ($cmakeFiles | Sort-Object FullName -Unique)) {
 $rootCmake = Join-Path $root "CMakeLists.txt"
 $rootLines = @(Get-Content -LiteralPath $rootCmake)
 $rootText = $rootLines -join "`n"
+
+# A warning-disabled target may contain only literal vendored sources. TARGET_OBJECTS are allowed:
+# they were already compiled under their own target's flags, so the surrounding archive's /w or
+# -w cannot silence them. Variables and first-party paths are rejected because the gate cannot
+# prove their contents are external. This specifically prevents S.A.K. adapter/shim code from
+# drifting back into the upstream-only warning boundary.
+$warningDisableRegex = '(?i)(?<![A-Za-z0-9])(?:/w|-w)(?![A-Za-z0-9])'
+$targetOptionsRegex = '(?ms)target_compile_options\s*\(\s*(?<target>[A-Za-z0-9_.+-]+)(?<options>.*?)\)'
+$warningDisabledTargets = @([regex]::Matches($rootText, $targetOptionsRegex) |
+    Where-Object { $_.Groups['options'].Value -match $warningDisableRegex } |
+    ForEach-Object { $_.Groups['target'].Value } |
+    Sort-Object -Unique)
+foreach ($targetName in $warningDisabledTargets) {
+    $targetDeclarationRegex = ('(?ms)add_(?:library|executable)\s*\(\s*' +
+        [regex]::Escape($targetName) + '\b(?<sources>.*?)\)')
+    $targetDeclaration = [regex]::Match($rootText, $targetDeclarationRegex)
+    if (-not $targetDeclaration.Success) {
+        $violations += "CMakeLists.txt: warning-disabled target '$targetName' has no declaration"
+        continue
+    }
+    $sourceTokens = @()
+    foreach ($sourceLine in ($targetDeclaration.Groups['sources'].Value -split '\r?\n')) {
+        $codeOnly = ($sourceLine -split '#', 2)[0]
+        $sourceTokens += @($codeOnly -split '\s+' |
+            ForEach-Object { $_.Trim().Trim('"') } |
+            Where-Object {
+                $_ -ne '' -and
+                $_ -notin @('STATIC', 'SHARED', 'MODULE', 'OBJECT', 'EXCLUDE_FROM_ALL')
+            })
+    }
+    foreach ($sourceToken in $sourceTokens) {
+        if ($sourceToken -match '^\$<TARGET_OBJECTS:[A-Za-z0-9_.+-]+>$') {
+            continue
+        }
+        if ($sourceToken.Replace('\', '/').StartsWith('third_party/')) {
+            continue
+        }
+        $violations += ("CMakeLists.txt: warning-disabled target '$targetName' contains " +
+                        "non-vendored or unresolved source '$sourceToken'")
+    }
+}
+
+$excludedShimPath = Join-Path $root "third_party\lzfse\sak_lzvn_shim.c"
+if (Test-Path -LiteralPath $excludedShimPath -PathType Leaf) {
+    $violations += ("third_party/lzfse/sak_lzvn_shim.c: S.A.K.-authored shim is hidden under " +
+                    "the analyzer-excluded vendor tree; keep it under src/core")
+}
+
 if ($rootText -notmatch '(?ms)^if\s*\(\s*NOT\s+WIN32\s*\).*?message\s*\(\s*FATAL_ERROR.*?^endif\s*\(\s*\)') {
     $violations += ("CMakeLists.txt: missing fail-closed Windows-only configure boundary; " +
                     "the shipped application supports Windows 10/11 x64 only")

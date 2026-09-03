@@ -1,5 +1,5 @@
 {
-  "head_commit": "1d007ff54b3eec5a2bcb6d92d5865e488030538f",
+  "head_commit": "383386497e546caf6c8e5bd3a9dca38941240a9e",
   "unit_rule": "include/**.h|.hpp, src/**.cpp|.h|.hpp, tests/**.cpp|.h|.mjs, scripts/**.py|.ps1|.sh, browser/**.js",
   "units": {
     "browser/extension/background.js": {
@@ -151,11 +151,10 @@
       "status": "reviewed"
     },
     "include/sak/ai/ai_command_guard.h": {
-      "brief": "docs/review_briefs/include_sak_ai_ai_command_guard.md",
-      "evidence": "driver",
       "group": "include",
-      "reviewed_blob": "38163cd496618e981f093dcd9299f500182a45d7",
-      "status": "reviewed"
+      "previous_evidence": "driver",
+      "previous_review_blob": "38163cd496618e981f093dcd9299f500182a45d7",
+      "status": "pending"
     },
     "include/sak/ai/ai_command_tool_planner.h": {
       "brief": "docs/review_briefs/include_sak_ai_ai_command_tool_planner.md",
@@ -2433,13 +2432,10 @@
       "status": "reviewed"
     },
     "src/ai/ai_command_tool_planner.cpp": {
-      "brief": "docs/review_briefs/src_ai_ai_command_tool_planner.md",
-      "evidence": "driver",
       "group": "src",
       "previous_evidence": "driver",
-      "previous_review_blob": "2dfc28836664906f57bdc7072876fa01e527b310",
-      "reviewed_blob": "aeb661b960f4384041dc6845d5b79b826792796a",
-      "status": "reviewed"
+      "previous_review_blob": "aeb661b960f4384041dc6845d5b79b826792796a",
+      "status": "pending"
     },
     "src/ai/ai_conversation_store.cpp": {
       "brief": "docs/review_briefs/src_ai_ai_conversation_store.md",

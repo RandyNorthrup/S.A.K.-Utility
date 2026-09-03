@@ -921,10 +921,10 @@ QByteArray encodeDecmpfsChunk(const QByteArray& chunk) {
 
 // Vendored Apple lzfse/lzvn reference codecs (third_party/lzfse) via C shim.
 extern "C" {
-size_t sak_lzvn_encode(void* dst, size_t dst_size, const void* src, size_t src_size);
-size_t sak_lzvn_decode(void* dst, size_t dst_size, const void* src, size_t src_size);
-size_t sak_lzfse_encode(void* dst, size_t dst_size, const void* src, size_t src_size);
-size_t sak_lzfse_decode(void* dst, size_t dst_size, const void* src, size_t src_size);
+size_t sakLzvnEncode(void* dst, size_t dst_size, const void* src, size_t src_size);
+size_t sakLzvnDecode(void* dst, size_t dst_size, const void* src, size_t src_size);
+size_t sakLzfseEncode(void* dst, size_t dst_size, const void* src, size_t src_size);
+size_t sakLzfseDecode(void* dst, size_t dst_size, const void* src, size_t src_size);
 }
 
 [[nodiscard]] bool decmpfsTypeUsesLzvn(uint32_t compressionType) {
@@ -978,10 +978,10 @@ std::optional<QByteArray> decodeLzvnChunk(const QByteArray& chunk, uint32_t expe
         return raw;
     }
     QByteArray output(static_cast<qsizetype>(expectedBytes), '\0');
-    const size_t decoded = sak_lzvn_decode(output.data(),
-                                           static_cast<size_t>(output.size()),
-                                           chunk.constData(),
-                                           static_cast<size_t>(chunk.size()));
+    const size_t decoded = sakLzvnDecode(output.data(),
+                                         static_cast<size_t>(output.size()),
+                                         chunk.constData(),
+                                         static_cast<size_t>(chunk.size()));
     if (decoded != expectedBytes) {
         return std::nullopt;
     }
@@ -990,10 +990,10 @@ std::optional<QByteArray> decodeLzvnChunk(const QByteArray& chunk, uint32_t expe
 
 QByteArray encodeLzvnChunk(const QByteArray& chunk) {
     QByteArray compressed(chunk.size() + 1, '\0');
-    const size_t encoded = sak_lzvn_encode(compressed.data(),
-                                           static_cast<size_t>(chunk.size()),
-                                           chunk.constData(),
-                                           static_cast<size_t>(chunk.size()));
+    const size_t encoded = sakLzvnEncode(compressed.data(),
+                                         static_cast<size_t>(chunk.size()),
+                                         chunk.constData(),
+                                         static_cast<size_t>(chunk.size()));
     if (encoded == 0) {
         QByteArray raw;
         raw.reserve(chunk.size() + 1);
@@ -1010,10 +1010,10 @@ std::optional<QByteArray> decodeLzfseChunk(const QByteArray& chunk, uint32_t exp
         return std::nullopt;
     }
     QByteArray output(static_cast<qsizetype>(expectedBytes), '\0');
-    const size_t decoded = sak_lzfse_decode(output.data(),
-                                            static_cast<size_t>(output.size()),
-                                            chunk.constData(),
-                                            static_cast<size_t>(chunk.size()));
+    const size_t decoded = sakLzfseDecode(output.data(),
+                                          static_cast<size_t>(output.size()),
+                                          chunk.constData(),
+                                          static_cast<size_t>(chunk.size()));
     if (decoded != expectedBytes) {
         return std::nullopt;
     }
@@ -1024,10 +1024,10 @@ QByteArray encodeLzfseChunk(const QByteArray& chunk) {
     // The lzfse container has its own uncompressed-block form, so the encoder
     // output is always a valid stream; size it generously for tiny inputs.
     QByteArray compressed(chunk.size() + kHfsDecmpfsLzfseEncodeSlackBytes, '\0');
-    const size_t encoded = sak_lzfse_encode(compressed.data(),
-                                            static_cast<size_t>(compressed.size()),
-                                            chunk.constData(),
-                                            static_cast<size_t>(chunk.size()));
+    const size_t encoded = sakLzfseEncode(compressed.data(),
+                                          static_cast<size_t>(compressed.size()),
+                                          chunk.constData(),
+                                          static_cast<size_t>(chunk.size()));
     compressed.truncate(static_cast<qsizetype>(encoded));
     return compressed;
 }

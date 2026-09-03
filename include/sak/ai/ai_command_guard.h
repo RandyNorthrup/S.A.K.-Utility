@@ -13,6 +13,8 @@ namespace sak::ai {
 ///
 /// These checks fail fast for command shapes that caused bad agent behavior in
 /// manual QA, and request explicit approval for package-manager trust bypasses.
+/// Decisions use only executable request fields. Display previews and manifest
+/// labels are untrusted presentation metadata and cannot weaken or trigger a guard.
 struct AiCommandGuardResult {
     QString block_error;
     QString approval_reason;
@@ -29,11 +31,6 @@ struct AiCommandGuardResult {
     }
 };
 
-[[nodiscard]] QString commandGuardBlockError(const AiCommandRequest& request,
-                                             const QString& preview);
-[[nodiscard]] QString commandGuardApprovalReason(const AiCommandRequest& request,
-                                                 const QString& preview);
-[[nodiscard]] AiCommandGuardResult evaluateCommandGuard(const AiCommandRequest& request,
-                                                        const QString& preview);
+[[nodiscard]] AiCommandGuardResult evaluateCommandGuard(const AiCommandRequest& request);
 
 }  // namespace sak::ai

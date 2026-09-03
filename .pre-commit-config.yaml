@@ -176,7 +176,7 @@ repos:
       # -------------------------------------------------------------------
       - id: clang-format
         name: "clang-format (strict)"
-        description: "Enforce .clang-format style on all C++ files"
+        description: "Enforce .clang-format style on all C/C++ files"
         # NO trailing -Files: pre-commit appends the staged paths, and naming the parameter
         # binds ONLY the value immediately after it, stranding the rest. The script collects
         # them via ValueFromRemainingArguments instead. See scripts/run_cppcheck.ps1's
@@ -185,7 +185,7 @@ repos:
           -File scripts/run_clang_format.ps1 -Check
         language: system
         types_or: [c, c++]
-        files: \.(cpp|h|hpp|cxx|cc|hxx)$
+        files: \.(c|cpp|h|hpp|cxx|cc|hxx)$
         exclude: (third_party|3rdparty|external|_archived)/
 
       # -------------------------------------------------------------------
@@ -198,7 +198,7 @@ repos:
         entry: python scripts/run_lizard.py
         language: system
         types_or: [c, c++, javascript]
-        files: \.(cpp|h|hpp|cxx|cc|hxx|js)$
+        files: \.(c|cpp|h|hpp|cxx|cc|hxx|js)$
         exclude: (third_party|3rdparty|external|_archived)/
 
       # -------------------------------------------------------------------
@@ -219,7 +219,7 @@ repos:
           -File scripts/run_cppcheck.ps1
         language: system
         types_or: [c, c++]
-        files: \.(cpp|h|hpp|cxx|cc|hxx)$
+        files: \.(c|cpp|h|hpp|cxx|cc|hxx)$
         exclude: (third_party|3rdparty|external|_archived)/
         require_serial: true
 

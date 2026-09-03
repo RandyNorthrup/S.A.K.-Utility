@@ -8,6 +8,30 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **AI command guard closed over executable inputs** - Preview and manifest prose can no longer
+  alter command authorization. The guard now evaluates the command/program/argument request once,
+  scopes registry recursion, binary-content reads, and cached-installer checks to the executable
+  clause, and distinguishes quoted data from PowerShell call-operator and interpolated execution.
+  Broad HKLM/HKCU recursion is blocked through drive and Registry-provider syntax, including
+  accepted `-Rec` through `-Recurse` abbreviations while explicit false remains non-recursive.
+  Chocolatey cache approval covers environment, expanded temp, quarantine, cache, and temp paths.
+  Four caller-level suites pass, and the new permanent catalog kills all 18 guard mutants.
+
+- **First-party LZFSE shim removed from the vendor warning silence** - The S.A.K.-authored C shim
+  now lives under `src/core` and builds as its own object target with `/W4 /WX`; only byte-identical
+  upstream LZFSE sources retain `/w`. Build-system lint rejects first-party or unresolved sources
+  inside a warning-disabled target. Clang-format, lizard, cppcheck, the pre-commit filters, and the
+  whole-project suppression reveal now include first-party `.c` files. A real C fixture prevents
+  cppcheck from silently forcing C through C++ mode. Separate drills prove the lint boundary, the
+  warnings-as-errors boundary, and real HFS decompression behavior.
+
+- **File Explorer terminal launch fails closed** - Open in Terminal now launches only qualified
+  System32 `cmd.exe /D` with the browsed folder as its working directory. The user-writable
+  WindowsApps `wt.exe` route and its fallback chain are removed. Every launch result is checked;
+  failure is logged and surfaced through accessible status and warning feedback. Fault-injection,
+  structural, menu-order, focused GUI, and process-runner tests cover the path. Wave 28 closes with
+  all whole-tree hooks green, a clean Release build, and all 273 CTests passing.
+
 - **AI persistence and MCP contracts hardened** - Human-gate persistence now requires an error
   sink, returns generated ids/timestamps to its caller, and carries read warnings into generated
   reports. Mutation leases are process-wide across every manager instance and never time-expire;

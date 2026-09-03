@@ -204,9 +204,12 @@ struct ExecutableIdentity {
 /// same CreateProcess search order as any other launch -- current directory and PATH ahead
 /// of the system directories -- so a bare name is a hijack vector whether or not the target
 /// is an interpreter. Returns false WITHOUT launching anything when the path cannot be
-/// resolved; there is deliberately no fall back to the bare name.
+/// resolved; there is deliberately no fall back to the bare name. A non-empty
+/// @p working_directory is forwarded as the child's initial directory without changing how the
+/// executable itself is resolved.
 [[nodiscard]] bool startDetachedSystem32Tool(const QString& relativeExe,
-                                             const QStringList& args = {});
+                                             const QStringList& args = {},
+                                             const QString& working_directory = {});
 
 /// @brief startDetachedSystem32Tool for a tool that lives directly in the Windows
 ///        directory (explorer.exe) instead of System32.

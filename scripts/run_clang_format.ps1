@@ -63,7 +63,7 @@ function Find-ClangFormat {
     throw "clang-format.exe was not found. Install LLVM or Visual Studio Build Tools."
 }
 
-$cppExtensions = @(".cpp", ".h", ".hpp", ".cxx", ".cc", ".hxx")
+$cppExtensions = @(".c", ".cpp", ".h", ".hpp", ".cxx", ".cc", ".hxx")
 $cppFiles = @()
 foreach ($file in $Files) {
     $extension = [System.IO.Path]::GetExtension($file).ToLowerInvariant()
@@ -75,11 +75,11 @@ foreach ($file in $Files) {
 
 if ($cppFiles.Count -eq 0) {
     if ($RequireFiles) {
-        Write-Error ("No C++ files resolved, but -RequireFiles was specified. A whole-tree run " +
+        Write-Error ("No C/C++ files resolved, but -RequireFiles was specified. A whole-tree run " +
                      "that finds nothing is a BROKEN gate, not a passing one.")
         exit 1
     }
-    Write-Host "No C++ files to format."
+    Write-Host "No C/C++ files to format."
     exit 0
 }
 

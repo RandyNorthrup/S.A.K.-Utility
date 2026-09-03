@@ -2536,7 +2536,7 @@ private Q_SLOTS:
                                         QStringLiteral("Paste"),
                                         QStringLiteral("Select All"),
                                         QStringLiteral("Invert Selection"),
-                                        QStringLiteral("Open in Windows Terminal")};
+                                        QStringLiteral("Open in Terminal")};
         QCOMPARE(tableActions.size(), expected_rows.size());
         for (int i = 0; i < expected_rows.size(); ++i) {
             QVERIFY2(tableActions.at(i).startsWith(expected_rows.at(i)),
@@ -3691,7 +3691,7 @@ private Q_SLOTS:
                                      QStringLiteral("Properties"),
                                      QStringLiteral("Tags"),
                                      QStringLiteral("Edit in Notepad"),
-                                     QStringLiteral("Open in Windows Terminal"),
+                                     QStringLiteral("Open in Terminal"),
                                      QStringLiteral("Preview")};
         int cursor = -1;
         for (const QString& anchor : anchors) {

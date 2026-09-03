@@ -1484,11 +1484,38 @@ a parked design, per the bucket convention. Open work is what remains after thos
   with none stale or unreviewed. The naming gate passes 150/150 non-core TUs clean and 156/156 core
   TUs healthy with 5,268 measured findings and 16 ratcheted-clean TUs. All whole-tree pre-commit
   hooks pass; Release build exit 0; full CTest 273/273, zero failures, 648.16 seconds.
+  COMMAND-GUARD/WARNING-BOUNDARY/TERMINAL WAVE 28: all seven findings in the stored
+  `ai_command_guard` brief are closed. Preview/manifest prose is removed from the security API;
+  command, program and argument fields are normalized once. Quote-aware clause analysis blocks
+  executable binary reads, broad HKLM/HKCU recursion through drive or Registry-provider syntax,
+  active `-Rec` through `-Recurse`, and checksum bypasses without combining unrelated clauses or
+  treating quoted prose and `-Recurse:$false` as execution. Cached Chocolatey installers require
+  approval across environment, expanded-temp, quarantine, cache and temp path forms. The four
+  caller/guard targets pass, and a permanent 18-mutant catalog kills every guard regression.
+  The S.A.K.-authored LZFSE shim is moved out of `third_party` and compiled under `/W4 /WX`; only
+  exact upstream sources retain `/w`. Build lint forbids first-party/unresolved sources in a
+  warning-disabled target, and every C/C++ hook plus the whole-project cppcheck reveal now includes
+  first-party `.c`; a real C probe turns red if cppcheck is forced through C++ mode. Independent
+  drills make the folded-back warning boundary, planted compiler warning and broken HFS decode red.
+  File Explorer's terminal action now uses only qualified System32 `cmd.exe /D` with an explicit
+  working directory; the user-writable WindowsApps launcher and fallback chain are removed, and
+  failures produce logged accessible status/warning feedback. Its two old-behavior drills are red,
+  focused tests pass, the full GUI builds, and the accessibility audit reports 640 explicit
+  accessors. The mutation ratchet now holds 50 catalogs / 408 mutants (402 killed, six proven
+  equivalent). Current ledger state is 1,063 units / 629 pending / 45 blob-bound driver briefs;
+  changed reviewed blobs correctly returned to pending. The naming gate passes 150/150 non-core
+  TUs clean and 157/157 core TUs healthy with 5,266 findings and 16 ratcheted-clean TUs. The moved
+  C shim initially added four old snake-case ABI names; all four were renamed directly, and this
+  wave ends two findings below Wave 27 instead of increasing the backlog. All whole-tree
+  pre-commit hooks pass; Release build exit 0; full CTest 273/273, zero failures, 887.66 seconds.
+  The fresh runtime skip audit reads 247 current Qt logs, ignores 21 stale removed-test logs, and
+  records 4,947 passed functions / 27 reviewed skips (0.54 percent), with none stale or unreviewed.
   SUPPRESSION RE-AUDIT REFRESH, 2026-09-01 through 2026-09-02: core naming remains broadly excluded
-  while 5,268 findings are tracked as open and 16 clean TUs are ratcheted. The coverage compiler
+  while 5,266 findings are tracked as open and 16 clean TUs are ratcheted. The coverage compiler
   warning silences and unsupported-platform
-  runtime branches are closed in Wave 20. The vendored LZFSE target still disables warnings for
-  the first-party shim. The cppcheck test-scope and unreadable-
+  runtime branches are closed in Wave 20. Wave 28 removes the first-party LZFSE shim from the
+  vendor warning boundary; `/w` remains only on exact byte-identical upstream sources. The
+  cppcheck test-scope and unreadable-
   diagnostic false greens are closed in Wave 19. Another 26
   `Q_UNUSED` and 22 `(void)` warning silences formerly in unsupported-OS branches are removed.
   This refresh found 157 QSKIP call sites; Waves 21, 23, 24, 25, 26 and 27 reduced the live static
@@ -1504,7 +1531,7 @@ a parked design, per the bucket convention. Open work is what remains after thos
   last resort only after no direct fix is possible and the exact reason is proven. Existing
   suppressions are re-audited, not inherited as permanent policy. Current batch: all pre-commit
   hooks passed; Release build exit 0; full CTest 265/265, zero failures, 804.48 seconds.
-  STILL OPEN: core's 5,268 naming findings; the 294-item `useStlAlgorithm` program; broad
+  STILL OPEN: core's 5,266 naming findings; the 294-item `useStlAlgorithm` program; broad
   magic-number exemptions; the wider mutation/
   fresh-host test-infra program; and the historical VM credential rotation/history-rewrite
   decision.
@@ -10727,7 +10754,7 @@ Running tally of gates that reported healthy while analyzing nothing:
 The campaign is complete only when ALL of the following are simultaneously true:
 
 - [~] R5-G10-1 All reproducibly enumerated per-file review units executed and every finding
-  dispositioned -- ACTIVE: live ledger 1059 total / 658 pending / 9 stored driver briefs.
+  dispositioned -- ACTIVE: live ledger 1063 total / 629 pending / 45 stored driver briefs.
   - OPEN: continue LEDGER-1/2/3; Codex budget is available and user authorized multitasking.
 - [~] R5-G10-2 Zero open findings in this document -- ACTIVE: ledger and local programs remain;
   no Codex-budget or VM blocker applies.
@@ -10876,8 +10903,8 @@ The campaign is complete only when ALL of the following are simultaneously true:
       exclusion named in an inventory alongside the live-cert evidence covering it
 - [~] R5-G10-12 Mutation testing green: no surviving mutant anywhere in first-party code
   - PARTIAL: mutation testing is green over the value/boundary decoder/parser/comparator corpus,
-    WS3c, and the new AI package/prompt/provider/offline/OpenAI guards (33 catalogs / 289 mutants;
-    282 killed and 7 proven equivalent). No-surviving-mutant across ALL first-party code is not
+    WS3c, and the AI package/prompt/provider/offline/OpenAI/command guards (50 catalogs / 408
+    mutants; 402 killed and 6 proven equivalent). No-surviving-mutant across ALL first-party code is not
     yet reached.
 - [x] R5-G10-13 Zero TODO, FIXME, stub, or declared-but-unwired feature in first-party
   - DONE via G19-1..4: no unimplemented TODO/FIXME/stub or declared-but-unwired feature remains, and every AI tool and app action dispatches to a real implementation end to end.

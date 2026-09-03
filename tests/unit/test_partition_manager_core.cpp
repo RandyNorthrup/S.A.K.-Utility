@@ -15572,7 +15572,7 @@ void PartitionManagerCoreTests::apfsWriter_lzfseCompressedFileRoundTrips() {
 
 void PartitionManagerCoreTests::apfsWriter_lzvnCompressedFileRoundTrips() {
     // A5 follow-on: insert a file inline LZVN-compressed (decmpfs algo 7, highest precedence).
-    // The S.A.K. reader decodes it byte-exact via sak_lzvn_decode -- and because the zlib/plain
+    // The S.A.K. reader decodes it byte-exact via sakLzvnDecode -- and because the zlib/plain
     // inline decoder returns nullopt for algo 7, a correct readback proves the LZVN path ran.
     // The macOS kernel decodes algo 7 identically (kernel md5 is batched). apfsck validates the
     // decmpfs xattr structure + UF_COMPRESSED inode (SAK_LZVN_CERT_DIR persists the image).

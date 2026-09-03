@@ -72,7 +72,6 @@
 #include <QPixmap>
 #include <QPlainTextEdit>
 #include <QPointer>
-#include <QProcess>
 #include <QProgressDialog>
 #include <QRegularExpression>
 #include <QSet>
@@ -80,7 +79,6 @@
 #include <QShortcut>
 #include <QSlider>
 #include <QSplitter>
-#include <QStandardPaths>
 #include <QStyle>
 #include <QTabBar>
 #include <QTableView>
@@ -5765,8 +5763,7 @@ void FileManagementExplorerPanel::createFolderWithSelection() {
 }
 
 void FileManagementExplorerPanel::openTerminalHere() {
-    // Files OpenTerminalAction: Windows Terminal when available, cmd.exe
-    // fallback; one window per selected folder, else the current folder.
+    // Files OpenTerminalAction: one window per selected folder, else the current folder.
     // Local volumes only (registry-gated) - raw paths have no host cwd.
     const FileManagementTarget target = currentTarget();
     if (!target.local_file_system) {
@@ -5782,32 +5779,30 @@ void FileManagementExplorerPanel::openTerminalHere() {
     if (directories.isEmpty()) {
         directories.append(m_current_path);
     }
-    // The cmd.exe leg is launched with the browsed directory as its working directory, so a
+    // cmd.exe is launched with the browsed directory as its working directory, so a
     // bare "cmd.exe" would be resolved by the CreateProcess search order against exactly that
-    // (possibly attacker-writable) directory. Use the System32-qualified shell, and skip the
-    // leg entirely when it cannot be resolved rather than fall back to the bare name.
+    // (possibly attacker-writable) directory. The shared helper uses the System32-qualified
+    // shell and fails closed when it cannot be resolved. Never launch a user-writable WindowsApps
+    // alias from this process and never retry through another executable.
     //
     // /D suppresses the Command Processor AutoRun registry command, which is writable by
     // the user (HKCU) and would otherwise run inside this elevated process.
     //
-    // Windows Terminal is a Store app reached through an app-execution alias under
-    // %LOCALAPPDATA%\Microsoft\WindowsApps; that alias path IS pinned here, because an
-    // unqualified "wt.exe" is resolved by the CreateProcess search order, which prefers the
-    // application directory and the process working directory over the system ones. A
-    // missing alias skips the leg and falls through to the qualified cmd.exe one.
-    const QString shell = sak::system32Path(QStringLiteral("cmd.exe"));
-    const QString terminal =
-        QDir(QStandardPaths::writableLocation(QStandardPaths::GenericConfigLocation))
-            .filePath(QStringLiteral("Microsoft/WindowsApps/wt.exe"));
-    const bool terminal_available = QFileInfo::exists(terminal);
+    bool launch_failed = false;
     for (const QString& directory : directories) {
         const QString native = QDir::toNativeSeparators(directory);
-        if ((!terminal_available ||
-             !QProcess::startDetached(terminal, {QStringLiteral("-d"), native})) &&
-            !shell.isEmpty()) {
-            QProcess::startDetached(shell, {QStringLiteral("/D")}, native);
+        if (!sak::startDetachedSystem32Tool(
+                QStringLiteral("cmd.exe"), {QStringLiteral("/D")}, native)) {
+            launch_failed = true;
+            logMessage(tr("Terminal launch failed: %1").arg(native));
+            continue;
         }
-        logMessage(tr("Open in Terminal: %1").arg(native));
+        logMessage(tr("Opened Terminal: %1").arg(native));
+    }
+    if (launch_failed) {
+        const QString failure = tr("Could not open one or more folders in Terminal.");
+        Q_EMIT statusMessage(failure, sak::kTimerStatusDefaultMs);
+        sak::showWarningLogged(this, tr("Open in Terminal"), failure);
     }
 }
 

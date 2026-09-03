@@ -4,15 +4,15 @@
  * without including the library's internal headers.
  */
 
-#include <stdlib.h>
-#include <string.h>
-
 #include "lzfse.h"
 #include "lzfse_internal.h"
 #include "lzvn_decode_base.h"
 #include "lzvn_encode_base.h"
 
-size_t sak_lzvn_encode(void* dst, size_t dst_size, const void* src, size_t src_size) {
+#include <stdlib.h>
+#include <string.h>
+
+size_t sakLzvnEncode(void* dst, size_t dst_size, const void* src, size_t src_size) {
     void* work = malloc(LZVN_ENCODE_WORK_SIZE);
     if (work == NULL) {
         return 0;
@@ -22,20 +22,22 @@ size_t sak_lzvn_encode(void* dst, size_t dst_size, const void* src, size_t src_s
     return written;
 }
 
-size_t sak_lzvn_decode(void* dst, size_t dst_size, const void* src, size_t src_size) {
+size_t sakLzvnDecode(void* dst, size_t dst_size, const void* src, size_t src_size) {
     lzvn_decoder_state state;
+    const unsigned char* src_bytes = src;
+    unsigned char* dst_bytes = dst;
     memset(&state, 0, sizeof state);
-    state.src = (const unsigned char*)src;
-    state.src_end = (const unsigned char*)src + src_size;
-    state.dst = (unsigned char*)dst;
-    state.dst_begin = (unsigned char*)dst;
-    state.dst_end = (unsigned char*)dst + dst_size;
-    state.dst_current = (unsigned char*)dst;
+    state.src = src_bytes;
+    state.src_end = src_bytes + src_size;
+    state.dst = dst_bytes;
+    state.dst_begin = dst_bytes;
+    state.dst_end = dst_bytes + dst_size;
+    state.dst_current = dst_bytes;
     lzvn_decode(&state);
-    return (size_t)(state.dst - (unsigned char*)dst);
+    return state.dst - dst_bytes;
 }
 
-size_t sak_lzfse_encode(void* dst, size_t dst_size, const void* src, size_t src_size) {
+size_t sakLzfseEncode(void* dst, size_t dst_size, const void* src, size_t src_size) {
     void* scratch = malloc(lzfse_encode_scratch_size());
     if (scratch == NULL) {
         return 0;
@@ -45,7 +47,7 @@ size_t sak_lzfse_encode(void* dst, size_t dst_size, const void* src, size_t src_
     return written;
 }
 
-size_t sak_lzfse_decode(void* dst, size_t dst_size, const void* src, size_t src_size) {
+size_t sakLzfseDecode(void* dst, size_t dst_size, const void* src, size_t src_size) {
     void* scratch = malloc(lzfse_decode_scratch_size());
     if (scratch == NULL) {
         return 0;
