@@ -189,6 +189,8 @@ struct UninstallQueueItem {
     };
     Status status = Status::Queued;
     UninstallReport report;
+    int errorCode = 0;     ///< Exact worker error code when status is Failed
+    QString errorMessage;  ///< Exact worker error message when status is Failed
 };
 
 // -- ViewFilter --------------------------------------------------------------

@@ -281,6 +281,9 @@ QJsonObject textContentItem(const QString& text) {
 }
 
 QString untrustedInputMessageError(const OpenAIResponseRequest& request) {
+    if (!request.validation_error.trimmed().isEmpty()) {
+        return request.validation_error.trimmed();
+    }
     for (qsizetype index = 0; index < request.untrusted_input_messages.size(); ++index) {
         const OpenAIInputMessage& message = request.untrusted_input_messages.at(index);
         if (message.role != OpenAIInputMessageRole::User) {

@@ -1059,6 +1059,7 @@ if(SAK_ENABLE_AI_ASSISTANT)
         include/sak/ai/ai_token_usage_tracker.h
         include/sak/ai/ai_tool_call_router.h
         include/sak/ai/ai_tool_dispatcher.h
+        include/sak/ai/ai_tool_error.h
         include/sak/ai/ai_tool_health_ledger.h
         include/sak/ai/ai_tool_policy.h
         include/sak/ai/ai_tool_result_recorder.h

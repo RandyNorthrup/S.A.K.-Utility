@@ -222,7 +222,7 @@ the rest is a debt-reduction + test-infra program (multi-session, much of it cos
       `email_report_generator.cpp`, `input_validator.cpp`, `iso_analyzer.cpp`, `recycle_bin.cpp`,
       `thermal_monitor.cpp`, `user_data_manager.cpp`, and `vulnerability_scanner.cpp`. A healthy
       156/156-TU proof pass established zero findings in those files before the manifest expanded;
-      the final healthy pass now measures 5,264 findings across 81 files and enforces 16 clean TUs.
+      the final healthy pass now measures 5,244 findings across 80 files and enforces 16 clean TUs.
       The wider core naming and style backlog remains open.
 - [x] cppcheck-suppression audit -- DONE, corrected 2026-08-31. All 26 inline suppressions were
       re-checked with inline suppressions disabled. Three genuinely suppressed nothing and remain
@@ -268,6 +268,12 @@ the rest is a debt-reduction + test-infra program (multi-session, much of it cos
       157/157 core TUs with 5,264 findings and 16 ratcheted-clean TUs, two below Wave 28. All
       whole-tree pre-commit hooks pass; Release build exit 0; full CTest 273/273, zero failures,
       771.90 seconds.
+      PROGRESS 2026-09-02, WAVE 30: ten typed-access-mode mutants and two shared tool-error mutants
+      are all killed and restored, bringing the ratchet to 53 catalogs / 434 mutants (428 killed,
+      six proven equivalent). All 27 controller parameter findings were fixed; the full healthy
+      naming gate now covers 157/157 core TUs with 5,244 findings across 80 files and 16
+      ratcheted-clean TUs. All whole-tree pre-commit hooks pass; Release build exit 0; full CTest
+      273/273, zero failures, 738.00 seconds.
       WAVE 23 FINAL GATE: all changed-file hooks passed; naming passed 151/151 non-core TUs clean
       and 156/156 core TUs healthy with 5,266 findings across 81 files and 16 clean TUs enforced;
       full clang-cl coverage build exit 0; Release build exit 0; full CTest 268/268, zero failures,

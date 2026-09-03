@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/ai/ai_offline_downloader_tool_runner.h"
+#include "sak/ai/ai_tool_error.h"
 
 #include <QSemaphore>
 #include <QtTest/QtTest>
@@ -16,6 +17,7 @@ class AiOfflineDownloaderToolRunnerTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void canonicalToolErrorIsStrictTypedAndNonEmpty();
     void rejectsMissingOperation();
     void failsFastWhenCallbackMissing();
     void routesSearch();
@@ -24,10 +26,31 @@ private Q_SLOTS:
     void serializesConcurrentRunOperationsProcessWide();
 };
 
+void AiOfflineDownloaderToolRunnerTests::canonicalToolErrorIsStrictTypedAndNonEmpty() {
+    const QJsonObject exact = sak::ai::toolError(QStringLiteral("  exact failure  "));
+    QCOMPARE(exact.size(), 2);
+    QVERIFY(exact.value(QStringLiteral("success")).isBool());
+    QCOMPARE(exact.value(QStringLiteral("success")).toBool(true), false);
+    QVERIFY(exact.value(QStringLiteral("error_message")).isString());
+    QCOMPARE(exact.value(QStringLiteral("error_message")).toString(),
+             QStringLiteral("  exact failure  "));
+
+    const QJsonObject empty = sak::ai::toolError(QStringLiteral(" \t\r\n "));
+    QCOMPARE(empty.size(), 2);
+    QVERIFY(empty.value(QStringLiteral("success")).isBool());
+    QCOMPARE(empty.value(QStringLiteral("success")).toBool(true), false);
+    QVERIFY(empty.value(QStringLiteral("error_message")).isString());
+    QCOMPARE(empty.value(QStringLiteral("error_message")).toString(),
+             QStringLiteral("AI tool failed without an error message"));
+}
+
 void AiOfflineDownloaderToolRunnerTests::rejectsMissingOperation() {
     const QJsonObject result = sak::ai::AiOfflineDownloaderToolRunner::run(QJsonObject{}, {});
 
+    QCOMPARE(result.size(), 2);
+    QVERIFY(result.value(QStringLiteral("success")).isBool());
     QVERIFY(!result.value(QStringLiteral("success")).toBool(true));
+    QVERIFY(result.value(QStringLiteral("error_message")).isString());
     QCOMPARE(result.value(QStringLiteral("error_message")).toString(),
              QStringLiteral("Offline downloader requires operation"));
 }

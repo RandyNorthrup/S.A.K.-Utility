@@ -9,7 +9,6 @@
 #include "sak/advanced_uninstall_types.h"
 
 #include <QObject>
-#include <QSet>
 #include <QString>
 #include <QThread>
 #include <QVector>
@@ -28,9 +27,11 @@ class RestorePointManager;
 
 /// @brief Orchestrates the uninstall pipeline and manages application state
 ///
-/// State machine: Idle -> Enumerating -> Uninstalling -> LeftoverScanning ->
-/// Cleaning -> Idle. Owns all worker threads and coordinates the full
-/// uninstall -> scan -> cleanup pipeline.
+/// Activity state, not one linear pipeline: enumeration runs Idle -> Enumerating -> Idle and stays
+/// Enumerating while a cancelled worker completes its cooperative stop;
+/// uninstall runs Idle -> Uninstalling, may enter LeftoverScanning, and returns to Idle or enters
+/// optional Cleaning before Idle. Manual cleanup runs Idle -> Cleaning -> Idle. Batch uninstall
+/// alternates Uninstalling/LeftoverScanning per item and may finish through Cleaning.
 class AdvancedUninstallController : public QObject {
     Q_OBJECT
 
@@ -69,21 +70,20 @@ public:
 
     /// @brief Uninstall a single program
     void uninstallProgram(const ProgramInfo& program,
-                          ScanLevel scanLevel,
-                          bool createRestorePoint,
-                          bool autoCleanSafe);
+                          ScanLevel scan_level,
+                          bool create_restore_point,
+                          bool auto_clean_safe);
 
     /// @brief Force uninstall a program (skip native uninstaller)
-    void forceUninstall(const ProgramInfo& program, ScanLevel scanLevel, bool createRestorePoint);
-
-    /// @brief Remove a UWP package
-    void removeUwpPackage(const ProgramInfo& program);
+    void forceUninstall(const ProgramInfo& program,
+                        ScanLevel scan_level,
+                        bool create_restore_point);
 
     /// @brief Remove only the registry entry (orphaned program)
     void removeRegistryEntry(const ProgramInfo& program);
 
     /// @brief Clean selected leftover items
-    void cleanLeftovers(const QVector<LeftoverItem>& selectedItems);
+    void cleanLeftovers(const QVector<LeftoverItem>& selected_items);
 
     /// @brief True if @p item's type can go to the Recycle Bin (File/Folder or a file-shortcut
     ///        StartupEntry). Registry keys/values, services, tasks, firewall rules, shell
@@ -94,15 +94,19 @@ public:
     /// @brief Items eligible for AUTOMATIC (no human review) cleanup: Safe AND recoverable-type,
     ///        each marked selected. Safe-but-irreversible items are deliberately excluded so an
     ///        automatic delete can never be unrecoverable.
-    static QVector<LeftoverItem> autoCleanableLeftovers(const QVector<LeftoverItem>& items);
+    [[nodiscard]] static QVector<LeftoverItem> autoCleanableLeftovers(
+        const QVector<LeftoverItem>& items);
 
     /// @brief Cancel the current operation
     void cancelOperation();
 
     // -- Batch Uninstall --
 
-    /// @brief Add a program to the batch queue
-    void addToQueue(const ProgramInfo& program, ScanLevel scanLevel, bool autoCleanSafe);
+    /// @brief Add one unique program to the bounded batch queue.
+    /// @return true when added; false with statusMessage when refused.
+    [[nodiscard]] bool addToQueue(const ProgramInfo& program,
+                                  ScanLevel scan_level,
+                                  bool auto_clean_safe);
 
     /// @brief Remove an item from the batch queue.
     /// @return true when @p index named and removed an item; false with statusMessage otherwise.
@@ -111,11 +115,14 @@ public:
     /// @brief Get the current queue
     [[nodiscard]] QVector<UninstallQueueItem> queue() const;
 
-    /// @brief Clear the batch queue
-    void clearQueue();
+    /// @brief Clear the batch queue.
+    /// @return true when cleared; false with statusMessage when a batch owns the queue.
+    [[nodiscard]] bool clearQueue();
 
-    /// @brief Start processing the batch queue
-    void startBatchUninstall(bool createRestorePoint);
+    /// @brief Start processing the batch queue.
+    /// @return true once the first queued worker is started; false when validation or required
+    ///         restore-point creation refuses the batch. Restore failure also emits batchFailed.
+    [[nodiscard]] bool startBatchUninstall(bool create_restore_point);
 
     // -- Settings --
 
@@ -151,14 +158,9 @@ public:
     [[nodiscard]] bool selectAllByDefault() const;
     void setSelectAllByDefault(bool enabled);
 
-    // -- Restore Point Manager --
-
-    /// @brief Access the restore point manager
-    [[nodiscard]] RestorePointManager* restorePointManager() const;
-
 Q_SIGNALS:
     /// @brief State changed
-    void stateChanged(sak::AdvancedUninstallController::State newState);
+    void stateChanged(sak::AdvancedUninstallController::State new_state);
 
     /// @brief Programs enumeration started
     void enumerationStarted();
@@ -172,20 +174,20 @@ Q_SIGNALS:
     /// @brief Programs enumeration failed
     void enumerationFailed(const QString& error);
 
-    /// @brief Programs enumeration was cancelled and reached its public terminal state.
+    /// @brief Enumeration cancellation reached terminal Idle after cooperative worker stop.
     void enumerationCancelled();
 
     /// @brief Uninstall pipeline started
-    void uninstallStarted(const QString& programName);
+    void uninstallStarted(const QString& program_name);
 
     /// @brief Uninstall pipeline progress
     void uninstallProgress(int percent, const QString& phase);
 
     /// @brief Native uninstaller launched
-    void nativeUninstallerStarted(const QString& programName);
+    void nativeUninstallerStarted(const QString& program_name);
 
     /// @brief Native uninstaller finished
-    void nativeUninstallerFinished(int exitCode);
+    void nativeUninstallerFinished(int exit_code);
 
     /// @brief Restore point created
     void restorePointCreated(const QString& name);
@@ -194,56 +196,66 @@ Q_SIGNALS:
     void leftoverScanStarted(sak::ScanLevel level);
 
     /// @brief Leftover scan progress
-    void leftoverScanProgress(const QString& currentPath, int found);
+    void leftoverScanProgress(const QString& current_path, int found);
 
     /// @brief Leftover scan finished with results
     void leftoverScanFinished(QVector<sak::LeftoverItem> leftovers);
+
+    /// @brief Remaining leftovers changed after cleanup; this is not another scan terminal.
+    void leftoversUpdated(QVector<sak::LeftoverItem> leftovers);
 
     /// @brief Uninstall pipeline finished
     void uninstallFinished(sak::UninstallReport report);
 
     /// @brief Uninstall operation failed
-    void uninstallFailed(const QString& error);
+    void uninstallFailed(int error_code, const QString& error);
 
     /// @brief Uninstall operation cancelled
     void uninstallCancelled();
 
     /// @brief Cleanup started
-    void cleanupStarted(int totalItems);
+    void cleanupStarted(int total_items);
 
     /// @brief Emitted when auto-clean-safe kicks off an automatic cleanup of the SAFE-classified
     ///        leftovers after an uninstall (Review/Risky items are never auto-cleaned). @p
-    ///        itemCount is the number of safe items being auto-removed.
-    void autoCleanSafeStarted(int itemCount);
+    ///        item_count is the number of safe items being auto-removed.
+    void autoCleanSafeStarted(int item_count);
 
     /// @brief Individual item cleaned
-    void itemCleaned(const QString& path, bool success);
+    void itemCleaned(sak::LeftoverItem item, bool success);
 
     /// @brief Actionable reason an individual cleanup item was left in place.
-    void itemCleanupError(const QString& path, const QString& reason);
+    void itemCleanupError(sak::LeftoverItem item, const QString& reason);
 
-    /// @brief Cleanup completed
-    void cleanupFinished(int succeeded, int failed, qint64 bytesRecovered);
+    /// @brief Cleanup completed, including successful automatic cleanup.
+    void cleanupFinished(int succeeded, int failed, qint64 bytes_recovered);
 
     /// @brief Cleanup was cancelled partway (distinct from cleanupFinished, which
     ///        must NOT be emitted on cancel or a cancelled cleanup reads as success)
     void cleanupCancelled();
 
     /// @brief Cleanup worker failed before it could produce cleanupFinished.
-    void cleanupFailed(const QString& error);
+    void cleanupFailed(int error_code, const QString& error);
 
     /// @brief Advanced Uninstall preferences could not be loaded or durably saved.
     void settingsError(const QString& error);
 
-    /// @brief Items that could NOT be sent to the Recycle Bin and were permanently deleted despite
-    ///        recycle mode (so the UI can warn the user the recoverable-default was not honored).
-    void recycleFallbackItems(QStringList paths);
-
     /// @brief Batch queue item status changed
     void queueItemStatusChanged(int index, sak::UninstallQueueItem::Status status);
 
-    /// @brief Batch processing complete
-    void batchFinished(int succeeded, int failed);
+    /// @brief One batch item failed; exact worker code/message are also retained in queue().
+    void batchItemFailed(int index, int error_code, const QString& message);
+
+    /// @brief Entire batch pipeline completed, including optional automatic cleanup.
+    void batchFinished(int succeeded,
+                       int failed,
+                       int cleanup_succeeded,
+                       int cleanup_failed,
+                       qint64 cleanup_bytes_recovered);
+
+    /// @brief Batch could not start, was cancelled during uninstall, or its automatic-cleanup
+    ///        terminal failed/cancelled.
+    void batchFailed(const QString& error);
 
     /// @brief Status message for status bar
     void statusMessage(const QString& message, int timeout);
@@ -261,35 +273,63 @@ private Q_SLOTS:
 
     // Uninstall worker slots
     void onUninstallComplete(sak::UninstallReport report);
-    void onUninstallWorkerFailed(int errorCode, const QString& message);
+    void onUninstallWorkerFailed(int error_code, const QString& message);
     void onUninstallWorkerCancelled();
 
     // Cleanup worker slots
-    void onCleanupComplete(int succeeded, int failed, qint64 bytesRecovered);
-    void onCleanupWorkerFailed(int errorCode, const QString& message);
+    void onCleanupComplete(int succeeded, int failed, qint64 bytes_recovered);
+    void onCleanupWorkerFailed(int error_code, const QString& message);
     void onCleanupWorkerCancelled();
 
 private:
-    /// @brief Apply the fail-closed clean-leftovers screens to the selected items,
-    /// returning only the allowed ones and reporting/counting the refused. Keeps
-    /// OS-critical / unrecoverable / injection targets from reaching CleanupWorker.
-    QVector<LeftoverItem> screenCleanupItems(const QVector<LeftoverItem>& selectedItems,
-                                             int* refusedCount);
+    struct CleanupRefusal {
+        LeftoverItem item;
+        QString reason;
+    };
 
-    /// @brief If @p autoClean and @p report has SAFE leftovers, start an automatic RECOVERABLE
+    struct CleanupScreenResult {
+        QVector<LeftoverItem> allowed;
+        QVector<CleanupRefusal> refused;
+    };
+
+    struct CleanupOutcomeState {
+        QVector<LeftoverItem> items;
+        qsizetype index = 0;
+        bool identityFailed = false;
+    };
+
+    /// @brief Apply fail-closed target validation to selected items, returning allowed items and
+    ///        reporting/counting protected, malformed, report-only, or injection-shaped refusals.
+    ///        Irreversible registry/service/task/firewall targets remain allowed after explicit
+    ///        manual authorization; recoverability is a separate automatic-cleanup policy.
+    CleanupScreenResult screenCleanupItems(const QVector<LeftoverItem>& selected_items);
+
+    /// @brief If @p auto_clean and @p report has SAFE leftovers, start an automatic RECOVERABLE
     ///        (Recycle Bin, always) cleanup of just those, screened. Returns true iff a cleanup was
     ///        started; when it does, the caller must NOT emit uninstallFinished -- it is deferred
     ///        to onCleanupComplete so the panel does not flip the controller to Enumerating and
     ///        refuse the cleanup.
-    bool maybeAutoCleanSafeLeftovers(const UninstallReport& report, bool autoClean);
+    [[nodiscard]] bool maybeAutoCleanSafeLeftovers(UninstallReport& report, bool auto_clean);
 
     /// @brief Start a CleanupWorker on already-screened items. Shared by the manual clean path and
-    ///        auto-clean. @p useRecycleBin forces the Recycle Bin; @p requireRecoverable
+    ///        auto-clean. @p use_recycle_bin forces the Recycle Bin; @p require_recoverable
     ///        (auto-clean) makes a recycle failure leave the item in place rather than permanently
     ///        delete it.
-    void startCleanupWorker(const QVector<LeftoverItem>& screenedItems,
-                            bool useRecycleBin,
-                            bool requireRecoverable);
+    void startCleanupWorker(const QVector<LeftoverItem>& screened_items,
+                            const QVector<CleanupRefusal>& refused_items,
+                            bool use_recycle_bin,
+                            bool require_recoverable);
+
+    /// @brief Emit typed refusal outcomes for items rejected before worker construction.
+    void reportCleanupRefusals(const QVector<CleanupRefusal>& refused_items);
+
+    /// @brief Exact typed cleanup target identity. Preserves case and type-specific qualifiers.
+    [[nodiscard]] static bool sameCleanupItemIdentity(const LeftoverItem& lhs,
+                                                      const LeftoverItem& rhs);
+    void appendUniqueBatchAutoCleanItems(const QVector<LeftoverItem>& items);
+
+    /// @brief Refuse destructive-operation admission while cancelled enumeration is still active.
+    [[nodiscard]] bool refuseWhileEnumerationStopping(const QString& operation);
 
     /// @brief Complete a deferred single-uninstall auto-clean: clear the in-progress flag, re-show
     ///        the leftovers STILL PRESENT (not just risk-based -- anything not confirmed removed),
@@ -297,18 +337,45 @@ private:
     ///        failure, AND cancel paths (a no-op unless an auto-clean was in progress).
     void finalizeDeferredAutoClean();
 
-    /// @brief The subset of @p all whose item was NOT confirmed removed by the auto-clean (path not
-    ///        in m_autoCleanedPaths) -- so a screened-out or failed Safe item, and every
+    /// @brief Merge automatic-cleanup counts into the deferred uninstall report before emission.
+    void mergeDeferredAutoCleanResult(int succeeded, int failed, qint64 bytes_recovered);
+
+    /// @brief Mark every pending automatic-cleanup item failed and retain @p error in the report.
+    void failDeferredAutoClean(const QString& error);
+
+    /// @brief Emit settingsError on the next event-loop turn so construction-time failures remain
+    ///        observable after the owner connects signals.
+    void deferSettingsError(const QString& error);
+
+    /// @brief Complete or clear the pending batch summary after automatic cleanup.
+    void finishDeferredBatchCleanup(int cleanup_succeeded,
+                                    int cleanup_failed,
+                                    qint64 cleanup_bytes_recovered);
+    void failDeferredBatchCleanup(const QString& error);
+
+    /// @brief The subset of @p all whose exact typed item identity was NOT confirmed removed by the
+    ///        auto-clean -- so a screened-out or failed Safe item, and every
     ///        Review/Risky item, stays visible for review instead of silently vanishing.
     [[nodiscard]] QVector<LeftoverItem> leftoversStillPresent(
         const QVector<LeftoverItem>& all) const;
 
-    /// @brief Wire a freshly created CleanupWorker's signals to this controller (incl. the
-    ///        recycle-fallback re-emit so the UI can warn about permanent deletions).
-    void connectCleanupWorkerSignals(CleanupWorker* worker);
+    /// @brief Wire a freshly created CleanupWorker's terminal, item, and progress signals.
+    void connectCleanupWorkerSignals(CleanupWorker* worker,
+                                     const QVector<LeftoverItem>& items,
+                                     int generation);
+    void connectCleanupItemSignals(CleanupWorker* worker,
+                                   const QVector<LeftoverItem>& items,
+                                   int generation);
+    void connectCleanupErrorSignal(CleanupWorker* worker,
+                                   const std::shared_ptr<CleanupOutcomeState>& outcome_state,
+                                   int generation);
+    void connectCleanupOutcomeSignal(CleanupWorker* worker,
+                                     const std::shared_ptr<CleanupOutcomeState>& outcome_state,
+                                     int generation);
+    void connectCleanupTerminalSignals(CleanupWorker* worker, int generation);
 
     /// @brief Transition to a new state
-    void setState(State newState);
+    void setState(State new_state);
 
     /// @brief Clean up all workers
     void cleanupWorkers();
@@ -317,8 +384,10 @@ private:
     /// thread and enumerator together so controller teardown cannot destroy either live object.
     void stopEnumThread();
 
-    void connectUninstallWorkerSignals(bool includeNativeSignals);
-    void connectBatchUninstallWorkerSignals();
+    void connectUninstallWorkerSignals(bool include_native_signals, int generation);
+    void connectUninstallNativeSignals(int generation);
+    void connectUninstallScanSignals(int generation);
+    void connectUninstallTerminalSignals(int generation);
     void finishBatchUninstall();
 
     /// @brief Process next item in batch queue
@@ -330,6 +399,8 @@ private:
     // from a superseded (cancelled-then-restarted) run can be told apart from the current run's.
     int m_enumGeneration = 0;
     bool m_enumerationStopping = false;
+    int m_uninstallGeneration = 0;
+    int m_cleanupGeneration = 0;
 
     // Workers
     std::unique_ptr<ProgramEnumerator> m_enumerator;
@@ -341,6 +412,7 @@ private:
     // Data
     QVector<ProgramInfo> m_programs;
     QVector<UninstallQueueItem> m_queue;
+    static constexpr int kMaxBatchQueueItems = 100;
     int m_batchIndex = -1;
     bool m_currentAutoCleanSafe = false;
 
@@ -354,9 +426,14 @@ private:
     // refreshPrograms() cannot flip the controller to Enumerating and refuse the cleanup.
     bool m_autoCleanInProgress = false;
     UninstallReport m_pendingAutoCleanReport;
-    // Lower-cased paths/names the in-progress auto-clean CONFIRMED removed (from itemCleaned
-    // success), so finalizeDeferredAutoClean can re-show exactly the items still on disk.
-    QSet<QString> m_autoCleanedPaths;
+    int m_pendingAutoCleanItemCount = 0;
+    // Exact typed items the in-progress auto-clean confirmed removed.
+    QVector<LeftoverItem> m_autoCleanedItems;
+    int m_pendingCleanupRefused = 0;
+
+    bool m_batchCompletionPending = false;
+    int m_pendingBatchSucceeded = 0;
+    int m_pendingBatchFailed = 0;
 
     // Preferences
     ScanLevel m_defaultScanLevel = ScanLevel::Moderate;

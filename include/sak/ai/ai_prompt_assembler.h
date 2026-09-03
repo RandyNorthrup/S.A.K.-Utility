@@ -8,16 +8,23 @@
 
 namespace sak::ai {
 
+enum class AiAccessMode {
+    Invalid,
+    ChatAndResearch,
+    AssistedFullAccess,
+    UnattendedFullAccess,
+};
+
+[[nodiscard]] bool aiAccessModeIsValid(AiAccessMode mode) noexcept;
+[[nodiscard]] bool aiAccessModeAllowsLocalExecution(AiAccessMode mode) noexcept;
+
 struct AiPromptAssemblyInput {
-    QString access_mode_label;
+    AiAccessMode access_mode{AiAccessMode::Invalid};
     QString workflow_catalog;
     QString skill_catalog;
     QString context_notes;
     QString session_memory;
     QStringList pending_steering_messages;
-    bool local_execution_enabled{false};
-    bool assisted_full_access{false};
-    bool unattended_full_access{false};
 };
 
 /// Trusted policy text and untrusted reference text are separate values so a caller cannot
@@ -25,6 +32,9 @@ struct AiPromptAssemblyInput {
 struct AiPromptAssembly {
     QString trusted_instructions;
     QString untrusted_user_context;
+    QString error_message;
+
+    [[nodiscard]] bool ok() const noexcept { return error_message.isEmpty(); }
 };
 
 class AiPromptAssembler {

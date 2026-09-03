@@ -9,3 +9,7 @@
 5. **MEDIUM** -- `src/ai/ai_prompt_assembler.cpp:323-347,354`: Access-mode label and authorization flags are independent and unvalidated. Mismatched input can declare "Unattended" while emitting disabled or confirm-first guidance, creating contradictory security instructions.
 
 6. **LOW** -- `src/ai/ai_prompt_assembler.cpp:75-76,84-88`: App-action guidance conflicts: one rule requires `operation=list` first, while another requires enumeration only when unsure.
+
+Wave 30 resolution: finding 5 is closed by the single typed `AiAccessMode` input and invalid-mode
+refusal. The earlier prompt/role waves closed findings 1-4 and 6; current catalogs and caller tests
+cover the resulting contracts.

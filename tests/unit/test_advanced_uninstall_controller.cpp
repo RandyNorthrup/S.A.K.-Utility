@@ -36,19 +36,19 @@ private Q_SLOTS:
     void autoCleanSafe_setAndGet();
     void autoCleanPreference_isSeparateFromOperationState();
     void autoCleanableLeftovers_excludesIrreversibleSafeTypes();
+    void autoCleanableLeftovers_excludesProtectedTargets();
+    void cleanupIdentity_isTypedExactAndCasePreserving();
     void defaultScanLevel_setAndGet();
     void defaultScanLevel_rejectsInvalid();
     void showSystemComponents_setAndGet();
     void defaultScanLevel_allValues();
-
-    // -- Restore Point Manager --
-    void restorePointManager_notNull();
 
     // -- Queue Management --
     void addToQueue_appendsItem();
     void addToQueue_multipleItems();
     void addToQueue_emptyNameRejected();
     void addToQueue_invalidScanLevelRejected();
+    void addToQueue_rejectsDuplicateAndBound();
     void removeFromQueue_valid();
     void removeFromQueue_invalidNegative();
     void removeFromQueue_invalidTooLarge();
@@ -62,6 +62,7 @@ private Q_SLOTS:
     void removeRegistryEntry_rejectsWhenBusy();
     void startBatch_rejectsEmptyQueue();
     void startBatch_setsUninstallingState();
+    void startBatch_exposesFailureTerminalAndCheckedCaller();
 
     // -- Input Validation --
     void uninstallProgram_rejectsEmptyName();
@@ -73,16 +74,30 @@ private Q_SLOTS:
     // -- Settings Persistence --
     void saveAndLoadSettings_roundTrip();
     void settingsPersistence_checksHealthAndSync();
+    void settingsError_isDeferredForObservers();
 
     // -- State Machine --
     void stateChanged_emitsSignal();
     void refreshPrograms_changesState();
     void enumerationCancel_emitsTerminalAndBlocksOverlap();
+    void enumerationStopping_blocksDestructiveAdmission();
     void leftoverScan_entersState();
     void cleanupFailure_emitsTerminal();
+    void cleanupRefusals_areTypedAndCounted();
+    void workerCallbacks_requireCurrentGeneration();
+    void failureSignals_preserveErrorCodes();
+    void batchItemFailure_preservesDetailsThroughTerminal();
+    void automaticCleanupTerminal_precedesBatchFailure();
+    void deferredAutoClean_mergesSuccessfulAndFailedItems();
+    void deferredAutoClean_terminalFailureMergesPartialProgress();
+    void batchCompletion_waitsForCleanupAndCarriesResult();
+    void batchWorker_usesCompleteSignalSet();
+    void batchCancel_emitsCancelledQueueStatus();
     void registryOnly_connectsCancellation();
     void enumThreadFailedJoin_detachesSafely();
     void obsoleteHelpersAndMembers_areAbsent();
+    void obsoleteControllerApis_areAbsent();
+    void stateMachineDocs_describeActivityBranches();
 
     // -- Cancel When Idle --
     void cancelOperation_whenIdle_noOp();
@@ -162,11 +177,16 @@ void AdvancedUninstallControllerTests::autoCleanPreference_isSeparateFromOperati
              true);
     const QString source =
         readRepoSource(QStringLiteral("src/core/advanced_uninstall_controller.cpp"));
-    QVERIFY(source.contains(QStringLiteral("m_currentAutoCleanSafe = autoCleanSafe")));
+    const QString dialog =
+        readRepoSource(QStringLiteral("src/gui/advanced_uninstall_panel_dialogs.cpp"));
+    QVERIFY(source.contains(QStringLiteral("m_currentAutoCleanSafe = auto_clean_safe")));
     QVERIFY(source.contains(QStringLiteral("m_currentAutoCleanSafe = false")));
     QVERIFY(
         source.contains(QStringLiteral("cfg.setValue(\"advuninstall/auto_clean_safe\", "
                                        "m_autoCleanSafePreference)")));
+    QVERIFY(dialog.contains(QStringLiteral("addSettingsAutoCleanupGroup(")));
+    QVERIFY(dialog.contains(
+        QStringLiteral("m_controller->setAutoCleanSafe(auto_clean_check->isChecked())")));
 }
 
 void AdvancedUninstallControllerTests::autoCleanableLeftovers_excludesIrreversibleSafeTypes() {
@@ -220,6 +240,76 @@ void AdvancedUninstallControllerTests::autoCleanableLeftovers_excludesIrreversib
     QVERIFY(cleanable.first().selected);
 }
 
+void AdvancedUninstallControllerTests::autoCleanableLeftovers_excludesProtectedTargets() {
+    sak::LeftoverItem protected_file;
+    protected_file.type = sak::LeftoverItem::Type::File;
+    protected_file.risk = sak::LeftoverItem::RiskLevel::Safe;
+    protected_file.deletable = true;
+    protected_file.path = QStringLiteral("C:\\Windows\\System32\\not-a-leftover.tmp");
+
+    QVERIFY(AdvancedUninstallController::autoCleanableLeftovers({protected_file}).isEmpty());
+    const QString source =
+        readRepoSource(QStringLiteral("src/core/advanced_uninstall_controller.cpp"));
+    const QString header =
+        readRepoSource(QStringLiteral("include/sak/advanced_uninstall_controller.h"));
+    QVERIFY(source.contains(QStringLiteral("cleanupItemRefusal(item).isEmpty()")));
+    QVERIFY(header.contains(
+        QStringLiteral("[[nodiscard]] static QVector<LeftoverItem> autoCleanableLeftovers(")));
+}
+
+void AdvancedUninstallControllerTests::cleanupIdentity_isTypedExactAndCasePreserving() {
+    sak::LeftoverItem value_a;
+    value_a.type = sak::LeftoverItem::Type::RegistryValue;
+    value_a.path = QStringLiteral("HKCU\\Software\\Acme");
+    value_a.registryValueName = QStringLiteral("RunA");
+    sak::LeftoverItem value_b = value_a;
+    QVERIFY(AdvancedUninstallController::sameCleanupItemIdentity(value_a, value_b));
+
+    value_b.registryValueName = QStringLiteral("RunB");
+    QVERIFY(!AdvancedUninstallController::sameCleanupItemIdentity(value_a, value_b));
+    value_b = value_a;
+    value_b.registryValueName = QStringLiteral("runa");
+    QVERIFY(!AdvancedUninstallController::sameCleanupItemIdentity(value_a, value_b));
+    value_b = value_a;
+    value_b.type = sak::LeftoverItem::Type::StartupEntry;
+    QVERIFY(!AdvancedUninstallController::sameCleanupItemIdentity(value_a, value_b));
+
+    sak::LeftoverItem firewall_a;
+    firewall_a.type = sak::LeftoverItem::Type::FirewallRule;
+    firewall_a.path = QStringLiteral("Acme Rule");
+    firewall_a.firewallDirection = QStringLiteral("in");
+    sak::LeftoverItem firewall_b = firewall_a;
+    firewall_b.firewallDirection = QStringLiteral("out");
+    QVERIFY(!AdvancedUninstallController::sameCleanupItemIdentity(firewall_a, firewall_b));
+
+    const QString source =
+        readRepoSource(QStringLiteral("src/core/advanced_uninstall_controller.cpp"));
+    const QString header =
+        readRepoSource(QStringLiteral("include/sak/advanced_uninstall_controller.h"));
+    QVERIFY2(!source.isEmpty() && !header.isEmpty(), "controller sources could not be read");
+    for (const QString& field : {QStringLiteral("lhs.type == rhs.type"),
+                                 QStringLiteral("lhs.path == rhs.path"),
+                                 QStringLiteral("lhs.registryValueName == rhs.registryValueName"),
+                                 QStringLiteral("lhs.firewallDirection == rhs.firewallDirection"),
+                                 QStringLiteral("lhs.firewallProfile == rhs.firewallProfile"),
+                                 QStringLiteral("lhs.firewallProgram == rhs.firewallProgram")}) {
+        QVERIFY2(source.contains(field),
+                 qPrintable(QStringLiteral("typed cleanup identity omitted: %1").arg(field)));
+    }
+    QVERIFY(header.contains(QStringLiteral("void itemCleaned(sak::LeftoverItem item")));
+    QVERIFY(header.contains(QStringLiteral("void itemCleanupError(sak::LeftoverItem item")));
+
+    AdvancedUninstallController ctrl;
+    ctrl.appendUniqueBatchAutoCleanItems({value_a, value_a});
+    QCOMPARE(ctrl.m_batchAutoCleanItems.size(), 1);
+    value_b = value_a;
+    value_b.registryValueName = QStringLiteral("RunB");
+    ctrl.appendUniqueBatchAutoCleanItems({value_b});
+    QCOMPARE(ctrl.m_batchAutoCleanItems.size(), 2);
+    QVERIFY(
+        source.contains(QStringLiteral("appendUniqueBatchAutoCleanItems(autoCleanableLeftovers(")));
+}
+
 void AdvancedUninstallControllerTests::defaultScanLevel_setAndGet() {
     AdvancedUninstallController ctrl;
 
@@ -267,13 +357,6 @@ void AdvancedUninstallControllerTests::defaultScanLevel_allValues() {
     }
 }
 
-// -- Restore Point Manager ---------------------------------------------------
-
-void AdvancedUninstallControllerTests::restorePointManager_notNull() {
-    AdvancedUninstallController ctrl;
-    QVERIFY(ctrl.restorePointManager() != nullptr);
-}
-
 // -- Queue Management --------------------------------------------------------
 
 void AdvancedUninstallControllerTests::addToQueue_appendsItem() {
@@ -281,7 +364,7 @@ void AdvancedUninstallControllerTests::addToQueue_appendsItem() {
 
     ProgramInfo prog;
     prog.displayName = "Test App";
-    ctrl.addToQueue(prog, ScanLevel::Moderate, true);
+    QVERIFY(ctrl.addToQueue(prog, ScanLevel::Moderate, true));
 
     QCOMPARE(ctrl.queue().size(), 1);
     QCOMPARE(ctrl.queue()[0].program.displayName, "Test App");
@@ -295,15 +378,15 @@ void AdvancedUninstallControllerTests::addToQueue_multipleItems() {
 
     ProgramInfo prog1;
     prog1.displayName = "App A";
-    ctrl.addToQueue(prog1, ScanLevel::Safe, false);
+    QVERIFY(ctrl.addToQueue(prog1, ScanLevel::Safe, false));
 
     ProgramInfo prog2;
     prog2.displayName = "App B";
-    ctrl.addToQueue(prog2, ScanLevel::Advanced, true);
+    QVERIFY(ctrl.addToQueue(prog2, ScanLevel::Advanced, true));
 
     ProgramInfo prog3;
     prog3.displayName = "App C";
-    ctrl.addToQueue(prog3, ScanLevel::Moderate, true);
+    QVERIFY(ctrl.addToQueue(prog3, ScanLevel::Moderate, true));
 
     QCOMPARE(ctrl.queue().size(), 3);
     QCOMPARE(ctrl.queue()[0].program.displayName, "App A");
@@ -321,7 +404,7 @@ void AdvancedUninstallControllerTests::addToQueue_emptyNameRejected() {
 
     ProgramInfo prog;
     // displayName left empty
-    ctrl.addToQueue(prog, ScanLevel::Moderate, true);
+    QVERIFY(!ctrl.addToQueue(prog, ScanLevel::Moderate, true));
 
     // Queue should remain empty
     QVERIFY(ctrl.queue().isEmpty());
@@ -338,7 +421,7 @@ void AdvancedUninstallControllerTests::addToQueue_invalidScanLevelRejected() {
     ProgramInfo prog;
     prog.displayName = QStringLiteral("Invalid Scan App");
 
-    ctrl.addToQueue(prog, static_cast<ScanLevel>(99), true);
+    QVERIFY(!ctrl.addToQueue(prog, static_cast<ScanLevel>(99), true));
 
     QVERIFY(ctrl.queue().isEmpty());
     QCOMPARE(statusSpy.count(), 1);
@@ -346,20 +429,58 @@ void AdvancedUninstallControllerTests::addToQueue_invalidScanLevelRejected() {
              QStringLiteral("Cannot add to queue: scan level is invalid."));
 }
 
+void AdvancedUninstallControllerTests::addToQueue_rejectsDuplicateAndBound() {
+    AdvancedUninstallController ctrl;
+    ProgramInfo program;
+    program.displayName = QStringLiteral("Acme App");
+    program.publisher = QStringLiteral("Acme");
+    program.displayVersion = QStringLiteral("1.0");
+    QVERIFY(ctrl.addToQueue(program, ScanLevel::Safe, false));
+    QVERIFY(!ctrl.addToQueue(program, ScanLevel::Advanced, true));
+    QCOMPARE(ctrl.queue().size(), 1);
+    ProgramInfo distinct_install = program;
+    distinct_install.installLocation = QStringLiteral("C:\\Apps\\Acme-Portable");
+    QVERIFY(ctrl.addToQueue(distinct_install, ScanLevel::Safe, false));
+    QCOMPARE(ctrl.queue().size(), 2);
+
+    QVERIFY(ctrl.clearQueue());
+    for (int index = 0; index < AdvancedUninstallController::kMaxBatchQueueItems; ++index) {
+        ProgramInfo unique;
+        unique.displayName = QStringLiteral("App %1").arg(index);
+        QVERIFY(ctrl.addToQueue(unique, ScanLevel::Safe, false));
+    }
+    ProgramInfo overflow;
+    overflow.displayName = QStringLiteral("Overflow App");
+    QVERIFY(!ctrl.addToQueue(overflow, ScanLevel::Safe, false));
+    QCOMPARE(ctrl.queue().size(), AdvancedUninstallController::kMaxBatchQueueItems);
+
+    const QString source =
+        readRepoSource(QStringLiteral("src/core/advanced_uninstall_controller.cpp"));
+    const QString header =
+        readRepoSource(QStringLiteral("include/sak/advanced_uninstall_controller.h"));
+    const QString panel = readRepoSource(QStringLiteral("src/gui/advanced_uninstall_panel.cpp"));
+    QVERIFY(source.contains(QStringLiteral("sameQueuedProgram(queued.program, program)")));
+    QVERIFY(source.contains(QStringLiteral("m_queue.size() >= kMaxBatchQueueItems")));
+    QVERIFY(header.contains(QStringLiteral("[[nodiscard]] bool addToQueue(")));
+    QVERIFY(header.contains(QStringLiteral("[[nodiscard]] bool clearQueue()")));
+    QVERIFY(panel.contains(QStringLiteral("if (!m_controller->addToQueue(")));
+    QVERIFY(panel.contains(QStringLiteral("if (!m_controller->clearQueue())")));
+}
+
 void AdvancedUninstallControllerTests::removeFromQueue_valid() {
     AdvancedUninstallController ctrl;
 
     ProgramInfo prog1;
     prog1.displayName = "Keep";
-    ctrl.addToQueue(prog1, ScanLevel::Safe, true);
+    QVERIFY(ctrl.addToQueue(prog1, ScanLevel::Safe, true));
 
     ProgramInfo prog2;
     prog2.displayName = "Remove";
-    ctrl.addToQueue(prog2, ScanLevel::Moderate, true);
+    QVERIFY(ctrl.addToQueue(prog2, ScanLevel::Moderate, true));
 
     ProgramInfo prog3;
     prog3.displayName = "Keep Too";
-    ctrl.addToQueue(prog3, ScanLevel::Advanced, true);
+    QVERIFY(ctrl.addToQueue(prog3, ScanLevel::Advanced, true));
 
     QVERIFY(ctrl.removeFromQueue(1));  // Remove "Remove"
 
@@ -373,7 +494,7 @@ void AdvancedUninstallControllerTests::removeFromQueue_invalidNegative() {
 
     ProgramInfo prog;
     prog.displayName = "Stay";
-    ctrl.addToQueue(prog, ScanLevel::Safe, true);
+    QVERIFY(ctrl.addToQueue(prog, ScanLevel::Safe, true));
 
     QSignalSpy statusSpy(&ctrl, &AdvancedUninstallController::statusMessage);
     QVERIFY(!ctrl.removeFromQueue(-1));
@@ -392,7 +513,7 @@ void AdvancedUninstallControllerTests::removeFromQueue_invalidTooLarge() {
 
     ProgramInfo prog;
     prog.displayName = "Stay";
-    ctrl.addToQueue(prog, ScanLevel::Safe, true);
+    QVERIFY(ctrl.addToQueue(prog, ScanLevel::Safe, true));
 
     QSignalSpy statusSpy(&ctrl, &AdvancedUninstallController::statusMessage);
     QVERIFY(!ctrl.removeFromQueue(5));
@@ -409,11 +530,11 @@ void AdvancedUninstallControllerTests::clearQueue_emptiesQueue() {
     for (int i = 0; i < 5; ++i) {
         ProgramInfo prog;
         prog.displayName = QString("App %1").arg(i);
-        ctrl.addToQueue(prog, ScanLevel::Moderate, true);
+        QVERIFY(ctrl.addToQueue(prog, ScanLevel::Moderate, true));
     }
     QCOMPARE(ctrl.queue().size(), 5);
 
-    ctrl.clearQueue();
+    QVERIFY(ctrl.clearQueue());
     QVERIFY(ctrl.queue().isEmpty());
 }
 
@@ -422,7 +543,7 @@ void AdvancedUninstallControllerTests::queueItem_defaultStatus() {
 
     ProgramInfo prog;
     prog.displayName = "Test";
-    ctrl.addToQueue(prog, ScanLevel::Safe, false);
+    QVERIFY(ctrl.addToQueue(prog, ScanLevel::Safe, false));
 
     // Queue items should default to Queued status
     QCOMPARE(ctrl.queue()[0].status, UninstallQueueItem::Status::Queued);
@@ -431,27 +552,27 @@ void AdvancedUninstallControllerTests::queueItem_defaultStatus() {
 void AdvancedUninstallControllerTests::queueMutation_refusedDuringBatch() {
     // While a batch is running the queue is indexed by m_batchIndex; mutating it mid-flight would
     // shift indices and misattribute a completion to the wrong program. add/remove/clear must all
-    // be refused until the batch ends. (createRestorePoint=false so the batch is not aborted on a
+    // be refused until the batch ends. (create_restore_point=false so batch is not aborted on a
     // platform without System Restore; the worker's completion signals are queued and not delivered
     // during this synchronous body, so m_batchIndex stays >= 0 throughout.)
     AdvancedUninstallController ctrl;
 
     ProgramInfo prog;
     prog.displayName = QStringLiteral("BatchApp");  // no uninstallString -> native step fails fast
-    ctrl.addToQueue(prog, ScanLevel::Safe, false);
+    QVERIFY(ctrl.addToQueue(prog, ScanLevel::Safe, false));
 
-    ctrl.startBatchUninstall(false);
+    QVERIFY(ctrl.startBatchUninstall(false));
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Uninstalling);
 
     ProgramInfo sneaky;
     sneaky.displayName = QStringLiteral("SneakyApp");
-    ctrl.addToQueue(sneaky, ScanLevel::Safe, false);
+    QVERIFY(!ctrl.addToQueue(sneaky, ScanLevel::Safe, false));
     QCOMPARE(ctrl.queue().size(), 1);  // add refused mid-batch
 
     QVERIFY(!ctrl.removeFromQueue(0));
     QCOMPARE(ctrl.queue().size(), 1);  // remove refused mid-batch
 
-    ctrl.clearQueue();
+    QVERIFY(!ctrl.clearQueue());
     QCOMPARE(ctrl.queue().size(), 1);  // clear refused mid-batch
 
     ctrl.cancelOperation();            // request stop; destructor joins the worker
@@ -529,33 +650,82 @@ void AdvancedUninstallControllerTests::startBatch_rejectsEmptyQueue() {
     QVERIFY(ctrl.queue().isEmpty());
 
     QSignalSpy statusSpy(&ctrl, &AdvancedUninstallController::statusMessage);
+    QSignalSpy failedSpy(&ctrl, &AdvancedUninstallController::batchFailed);
 
-    ctrl.startBatchUninstall(false);
+    QVERIFY(!ctrl.startBatchUninstall(false));
 
     // Should have emitted "Batch queue is empty" status
     QCOMPARE(statusSpy.count(), 1);
     QCOMPARE(statusSpy[0][0].toString(), QStringLiteral("Batch queue is empty."));
+    QCOMPARE(failedSpy.count(), 1);
+    QCOMPARE(failedSpy.at(0).at(0).toString(), QStringLiteral("Batch queue is empty."));
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Idle);
 }
 
 void AdvancedUninstallControllerTests::startBatch_setsUninstallingState() {
     // A batch must OWN the busy state for the whole run: the instant it starts the controller must
     // be Uninstalling (not Idle), so a concurrent refresh / manual clean / second uninstall cannot
-    // slip in between queue items. (createRestorePoint=false so the batch is not aborted on a
+    // slip in between queue items. (create_restore_point=false so batch is not aborted on a
     // platform without System Restore.)
     AdvancedUninstallController ctrl;
 
     ProgramInfo prog;
     prog.displayName = QStringLiteral("BatchApp");  // no uninstallString -> native step fails fast
-    ctrl.addToQueue(prog, ScanLevel::Safe, false);
+    QVERIFY(ctrl.addToQueue(prog, ScanLevel::Safe, false));
 
-    ctrl.startBatchUninstall(false);
+    QVERIFY(ctrl.startBatchUninstall(false));
 
     // The worker runs on its own thread and signals back via queued connections that are not
     // delivered during this synchronous body, so the state observed here is the batch start state.
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Uninstalling);
 
     ctrl.cancelOperation();  // request stop; destructor joins the worker
+}
+
+void AdvancedUninstallControllerTests::startBatch_exposesFailureTerminalAndCheckedCaller() {
+    const QString header =
+        readRepoSource(QStringLiteral("include/sak/advanced_uninstall_controller.h"));
+    const QString source =
+        readRepoSource(QStringLiteral("src/core/advanced_uninstall_controller.cpp"));
+    const QString dialog =
+        readRepoSource(QStringLiteral("src/gui/advanced_uninstall_panel_dialogs.cpp"));
+    const QString panel = readRepoSource(QStringLiteral("src/gui/advanced_uninstall_panel.cpp"));
+    QVERIFY2(!header.isEmpty() && !source.isEmpty() && !dialog.isEmpty() && !panel.isEmpty(),
+             "batch start consumer sources could not be read");
+    QVERIFY(header.contains(
+        QStringLiteral("[[nodiscard]] bool startBatchUninstall(bool create_restore_point)")));
+    QVERIFY(header.contains(QStringLiteral("void batchFailed(const QString& error)")));
+    QVERIFY(source.contains(QStringLiteral("Q_EMIT batchFailed(")));
+    QVERIFY(dialog.contains(
+        QStringLiteral("if (!m_controller->startBatchUninstall(restore_check->isChecked()))")));
+    QVERIFY2(!dialog.contains(QStringLiteral("setOperationRunning(true);\n        logMessage(")),
+             "panel still becomes busy before batch admission succeeds");
+    QVERIFY(panel.contains(QStringLiteral("&AdvancedUninstallPanel::onBatchFailed")));
+    QVERIFY(panel.contains(QStringLiteral("tr(\"Batch Uninstall Failed\")")));
+
+    AdvancedUninstallController ctrl;
+    ProgramInfo program;
+    program.displayName = QStringLiteral("Busy Batch");
+    QVERIFY(ctrl.addToQueue(program, ScanLevel::Safe, false));
+    ctrl.setState(AdvancedUninstallController::State::Enumerating);
+    QSignalSpy failedSpy(&ctrl, &AdvancedUninstallController::batchFailed);
+    QVERIFY(!ctrl.startBatchUninstall(false));
+    QCOMPARE(failedSpy.count(), 1);
+    QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Enumerating);
+    QCOMPARE(source.count(QStringLiteral("Q_EMIT batchFailed(error);")), 3);
+    QVERIFY(source.contains(
+        QStringLiteral("Cannot start batch while cancelled enumeration is still stopping.")));
+    QVERIFY(panel.contains(QStringLiteral(
+        "m_controller->currentState() == AdvancedUninstallController::State::Idle")));
+    const qsizetype batch_failed_handler =
+        panel.indexOf(QStringLiteral("void AdvancedUninstallPanel::onBatchFailed"));
+    const qsizetype idle_guard = panel.indexOf(
+        QStringLiteral("m_controller->currentState() == AdvancedUninstallController::State::Idle"),
+        batch_failed_handler);
+    const qsizetype auto_cleanup_reset =
+        panel.indexOf(QStringLiteral("m_autoCleanupInProgress = false"), idle_guard);
+    QVERIFY(batch_failed_handler >= 0 && idle_guard > batch_failed_handler &&
+            auto_cleanup_reset > idle_guard);
 }
 
 // -- Input Validation --------------------------------------------------------
@@ -643,7 +813,7 @@ void AdvancedUninstallControllerTests::operationScanLevels_rejectInvalid() {
              QStringLiteral("Cannot force uninstall: scan level is invalid."));
     const QString source =
         readRepoSource(QStringLiteral("src/core/advanced_uninstall_controller.cpp"));
-    QCOMPARE(source.count(QStringLiteral("if (!isValidScanLevel(scanLevel))")), 3);
+    QCOMPARE(source.count(QStringLiteral("if (!isValidScanLevel(scan_level))")), 3);
 }
 
 // -- Settings Persistence ----------------------------------------------------
@@ -698,6 +868,21 @@ void AdvancedUninstallControllerTests::settingsPersistence_checksHealthAndSync()
     QVERIFY(dialog.contains(QStringLiteral("tr(\"Settings Not Saved\")")));
 }
 
+void AdvancedUninstallControllerTests::settingsError_isDeferredForObservers() {
+    AdvancedUninstallController ctrl;
+    QSignalSpy errorSpy(&ctrl, &AdvancedUninstallController::settingsError);
+
+    ctrl.deferSettingsError(QStringLiteral("injected settings error"));
+
+    QCOMPARE(errorSpy.count(), 0);
+    QTRY_COMPARE_WITH_TIMEOUT(errorSpy.count(), 1, 1000);
+    QCOMPARE(errorSpy.at(0).at(0).toString(), QStringLiteral("injected settings error"));
+    const QString source =
+        readRepoSource(QStringLiteral("src/core/advanced_uninstall_controller.cpp"));
+    QVERIFY(source.contains(QStringLiteral("QTimer::singleShot(0, this")));
+    QCOMPARE(source.count(QStringLiteral("deferSettingsError(error)")), 4);
+}
+
 // -- State Machine -----------------------------------------------------------
 
 void AdvancedUninstallControllerTests::stateChanged_emitsSignal() {
@@ -729,25 +914,91 @@ void AdvancedUninstallControllerTests::enumerationCancel_emitsTerminalAndBlocksO
     AdvancedUninstallController ctrl;
     QSignalSpy cancelledSpy(&ctrl, &AdvancedUninstallController::enumerationCancelled);
     QSignalSpy statusSpy(&ctrl, &AdvancedUninstallController::statusMessage);
+    bool cancelled_at_idle = false;
+    connect(&ctrl, &AdvancedUninstallController::enumerationCancelled, &ctrl, [&]() {
+        cancelled_at_idle = ctrl.currentState() == AdvancedUninstallController::State::Idle;
+    });
     ctrl.refreshPrograms();
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Enumerating);
 
     ctrl.cancelOperation();
 
-    QCOMPARE(cancelledSpy.count(), 1);
-    QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Idle);
+    QCOMPARE(cancelledSpy.count(), 0);
+    QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Enumerating);
     ctrl.refreshPrograms();
-    QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Idle);
+    QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Enumerating);
     QCOMPARE(statusSpy.last().at(0).toString(),
              QStringLiteral("Waiting for cancelled enumeration to stop."));
+    QTRY_COMPARE_WITH_TIMEOUT(ctrl.currentState(), AdvancedUninstallController::State::Idle, 5000);
+    QCOMPARE(cancelledSpy.count(), 1);
+    QVERIFY(cancelled_at_idle);
 
     const QString source =
         readRepoSource(QStringLiteral("src/core/advanced_uninstall_controller.cpp"));
     const QString panel = readRepoSource(QStringLiteral("src/gui/advanced_uninstall_panel.cpp"));
     QVERIFY(source.contains(QStringLiteral("Q_EMIT enumerationCancelled()")));
     QVERIFY(source.contains(QStringLiteral("m_enumerationStopping = true")));
+    const qsizetype cancel_begin =
+        source.indexOf(QStringLiteral("void AdvancedUninstallController::cancelOperation"));
+    const qsizetype cancel_end = source.indexOf(QStringLiteral("// -- Batch Uninstall"),
+                                                cancel_begin);
+    QVERIFY(cancel_begin >= 0 && cancel_end > cancel_begin);
+    const QString cancel_function = source.mid(cancel_begin, cancel_end - cancel_begin);
+    QVERIFY(!cancel_function.contains(QStringLiteral("setState(State::Idle)")));
+    QVERIFY(!cancel_function.contains(QStringLiteral("Q_EMIT enumerationCancelled()")));
+    const qsizetype finished_begin =
+        source.indexOf(QStringLiteral("onEnumerationFinished(int generation"));
+    const qsizetype failed_begin =
+        source.indexOf(QStringLiteral("onEnumerationFailed(int generation"), finished_begin);
+    const qsizetype uninstall_begin =
+        source.indexOf(QStringLiteral("onUninstallComplete(UninstallReport"), failed_begin);
+    QVERIFY(finished_begin >= 0 && failed_begin > finished_begin && uninstall_begin > failed_begin);
+    const QString finished_function = source.mid(finished_begin, failed_begin - finished_begin);
+    const QString failed_function = source.mid(failed_begin, uninstall_begin - failed_begin);
+    for (const QString& function : {finished_function, failed_function}) {
+        const qsizetype stopping_cleared =
+            function.indexOf(QStringLiteral("m_enumerationStopping = false"));
+        const qsizetype branch_return = function.indexOf(QStringLiteral("return;"),
+                                                         stopping_cleared);
+        const qsizetype idle = function.indexOf(QStringLiteral("setState(State::Idle)"),
+                                                stopping_cleared);
+        const qsizetype cancelled =
+            function.indexOf(QStringLiteral("Q_EMIT enumerationCancelled()"), stopping_cleared);
+        QVERIFY(stopping_cleared >= 0 && branch_return > stopping_cleared);
+        QVERIFY(idle > stopping_cleared && cancelled > idle && branch_return > cancelled);
+    }
     QVERIFY(panel.contains(QStringLiteral("&AdvancedUninstallPanel::onEnumerationCancelled")));
     QVERIFY(panel.contains(QStringLiteral("Program enumeration cancelled.")));
+}
+
+void AdvancedUninstallControllerTests::enumerationStopping_blocksDestructiveAdmission() {
+    AdvancedUninstallController ctrl;
+    ctrl.m_enumerationStopping = true;
+    ctrl.setState(AdvancedUninstallController::State::Enumerating);
+    ProgramInfo program;
+    program.displayName = QStringLiteral("Blocked App");
+    sak::LeftoverItem item;
+    item.type = sak::LeftoverItem::Type::File;
+    item.path = QStringLiteral("C:\\Temp\\Acme\\stale.tmp");
+    item.selected = true;
+    QSignalSpy uninstallSpy(&ctrl, &AdvancedUninstallController::uninstallStarted);
+    QSignalSpy cleanupSpy(&ctrl, &AdvancedUninstallController::cleanupStarted);
+    QSignalSpy batchFailedSpy(&ctrl, &AdvancedUninstallController::batchFailed);
+
+    ctrl.uninstallProgram(program, ScanLevel::Safe, false, false);
+    ctrl.cleanLeftovers({item});
+    QVERIFY(ctrl.addToQueue(program, ScanLevel::Safe, false));
+    QVERIFY(!ctrl.startBatchUninstall(false));
+
+    QCOMPARE(uninstallSpy.count(), 0);
+    QCOMPARE(cleanupSpy.count(), 0);
+    QCOMPARE(batchFailedSpy.count(), 1);
+    QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Enumerating);
+    const QString source =
+        readRepoSource(QStringLiteral("src/core/advanced_uninstall_controller.cpp"));
+    QCOMPARE(source.count(QStringLiteral("refuseWhileEnumerationStopping(")), 6);
+    ctrl.m_enumerationStopping = false;
+    ctrl.setState(AdvancedUninstallController::State::Idle);
 }
 
 void AdvancedUninstallControllerTests::leftoverScan_entersState() {
@@ -768,8 +1019,8 @@ void AdvancedUninstallControllerTests::leftoverScan_entersState() {
 
     const QString source =
         readRepoSource(QStringLiteral("src/core/advanced_uninstall_controller.cpp"));
-    QCOMPARE(source.count(QStringLiteral("&AdvancedUninstallController::onLeftoverScanStarted")),
-             2);
+    QCOMPARE(source.count(QStringLiteral("onLeftoverScanStarted(level)")),
+             1);  // one generation-guarded shared wiring path serves single and batch workers
 }
 
 void AdvancedUninstallControllerTests::cleanupFailure_emitsTerminal() {
@@ -782,14 +1033,410 @@ void AdvancedUninstallControllerTests::cleanupFailure_emitsTerminal() {
 
     QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Idle);
     QCOMPARE(failedSpy.count(), 1);
-    QCOMPARE(failedSpy.at(0).at(0).toString(), QStringLiteral("injected cleanup failure"));
+    QCOMPARE(failedSpy.at(0).at(0).toInt(), 7);
+    QCOMPARE(failedSpy.at(0).at(1).toString(), QStringLiteral("injected cleanup failure"));
     QCOMPARE(finishedSpy.count(), 0);
     const QString source =
         readRepoSource(QStringLiteral("src/core/advanced_uninstall_controller.cpp"));
     const QString panel = readRepoSource(QStringLiteral("src/gui/advanced_uninstall_panel.cpp"));
-    QVERIFY(source.contains(QStringLiteral("Q_EMIT cleanupFailed(message)")));
+    QVERIFY(source.contains(QStringLiteral("Q_EMIT cleanupFailed(error_code, message)")));
     QVERIFY(panel.contains(QStringLiteral("&AdvancedUninstallPanel::onCleanupFailed")));
     QVERIFY(panel.contains(QStringLiteral("tr(\"Cleanup Failed\")")));
+}
+
+void AdvancedUninstallControllerTests::cleanupRefusals_areTypedAndCounted() {
+    AdvancedUninstallController ctrl;
+    sak::LeftoverItem protected_item;
+    protected_item.type = sak::LeftoverItem::Type::File;
+    protected_item.path = QStringLiteral("C:\\Windows\\System32\\protected.tmp");
+    protected_item.selected = true;
+    QSignalSpy errorSpy(&ctrl, &AdvancedUninstallController::itemCleanupError);
+    QSignalSpy itemSpy(&ctrl, &AdvancedUninstallController::itemCleaned);
+    QSignalSpy finishedSpy(&ctrl, &AdvancedUninstallController::cleanupFinished);
+
+    ctrl.cleanLeftovers({protected_item});
+
+    QCOMPARE(errorSpy.count(), 1);
+    QCOMPARE(qvariant_cast<sak::LeftoverItem>(errorSpy.at(0).at(0)).path, protected_item.path);
+    QVERIFY(!errorSpy.at(0).at(1).toString().isEmpty());
+    QCOMPARE(itemSpy.count(), 1);
+    QCOMPARE(qvariant_cast<sak::LeftoverItem>(itemSpy.at(0).at(0)).type,
+             sak::LeftoverItem::Type::File);
+    QCOMPARE(itemSpy.at(0).at(1).toBool(), false);
+    QCOMPARE(finishedSpy.count(), 1);
+    QCOMPARE(finishedSpy.at(0).at(0).toInt(), 0);
+    QCOMPARE(finishedSpy.at(0).at(1).toInt(), 1);
+
+    const QString source =
+        readRepoSource(QStringLiteral("src/core/advanced_uninstall_controller.cpp"));
+    QVERIFY(source.contains(QStringLiteral("failed += m_pendingCleanupRefused")));
+    QVERIFY(source.contains(QStringLiteral("reportCleanupRefusals(screen.refused)")));
+    QVERIFY(source.contains(QStringLiteral("automatic cleanup refused %1 protected item(s)")));
+
+    AdvancedUninstallController partial_ctrl;
+    QSignalSpy partialFinishedSpy(&partial_ctrl, &AdvancedUninstallController::cleanupFinished);
+    partial_ctrl.m_pendingCleanupRefused = 2;
+    partial_ctrl.onCleanupComplete(1, 3, 64);
+    QCOMPARE(partialFinishedSpy.count(), 1);
+    QCOMPARE(partialFinishedSpy.at(0).at(0).toInt(), 1);
+    QCOMPARE(partialFinishedSpy.at(0).at(1).toInt(), 5);
+
+    AdvancedUninstallController batch_ctrl;
+    batch_ctrl.m_batchAutoCleanItems = {protected_item};
+    QSignalSpy batchFinishedSpy(&batch_ctrl, &AdvancedUninstallController::batchFinished);
+    QSignalSpy batchStatusSpy(&batch_ctrl, &AdvancedUninstallController::statusMessage);
+    batch_ctrl.finishBatchUninstall();
+    QCOMPARE(batchFinishedSpy.count(), 1);
+    QCOMPARE(batchFinishedSpy.at(0).at(3).toInt(), 1);
+    QVERIFY(batchStatusSpy.last().at(0).toString().contains(QStringLiteral("refused 1 protected")));
+
+    sak::LeftoverItem irreversible_registry;
+    irreversible_registry.type = sak::LeftoverItem::Type::RegistryKey;
+    irreversible_registry.path = QStringLiteral("HKCU\\Software\\Acme\\Obsolete");
+    irreversible_registry.selected = true;
+    const auto manual_screen = ctrl.screenCleanupItems({irreversible_registry});
+    QCOMPARE(manual_screen.allowed.size(), 1);
+    QVERIFY(manual_screen.refused.isEmpty());
+    const qsizetype screen_begin =
+        source.indexOf(QStringLiteral("AdvancedUninstallController::screenCleanupItems"));
+    const qsizetype screen_end = source.indexOf(
+        QStringLiteral("void AdvancedUninstallController::cleanLeftovers"), screen_begin);
+    QVERIFY(screen_begin >= 0 && screen_end > screen_begin);
+    QVERIFY(!source.mid(screen_begin, screen_end - screen_begin)
+                 .contains(QStringLiteral("isRecoverableLeftoverType")));
+    const QString controller_header =
+        readRepoSource(QStringLiteral("include/sak/advanced_uninstall_controller.h"));
+    const QString guard_header =
+        readRepoSource(QStringLiteral("include/sak/leftover_cleanup_item_guard.h"));
+    QVERIFY(controller_header.contains(
+        QStringLiteral("Irreversible registry/service/task/firewall targets remain allowed")));
+    QVERIFY(guard_header.contains(QStringLiteral("separate caller policy")));
+    QVERIFY(!guard_header.contains(QStringLiteral("unrecoverable target")));
+}
+
+void AdvancedUninstallControllerTests::workerCallbacks_requireCurrentGeneration() {
+    const QString source =
+        readRepoSource(QStringLiteral("src/core/advanced_uninstall_controller.cpp"));
+    const QString header =
+        readRepoSource(QStringLiteral("include/sak/advanced_uninstall_controller.h"));
+    QVERIFY2(!source.isEmpty() && !header.isEmpty(), "controller sources could not be read");
+    QCOMPARE(source.count(QStringLiteral("generation == m_uninstallGeneration")), 10);
+    QCOMPARE(source.count(QStringLiteral("generation != m_cleanupGeneration")), 2);
+    QCOMPARE(source.count(QStringLiteral("generation == m_cleanupGeneration")), 4);
+    QCOMPARE(source.count(QStringLiteral("++m_uninstallGeneration")), 7);
+    QCOMPARE(source.count(QStringLiteral("++m_cleanupGeneration")), 4);
+    QVERIFY(header.contains(QStringLiteral("int m_uninstallGeneration")));
+    QVERIFY(header.contains(QStringLiteral("int m_cleanupGeneration")));
+}
+
+void AdvancedUninstallControllerTests::failureSignals_preserveErrorCodes() {
+    AdvancedUninstallController ctrl;
+    QSignalSpy uninstallSpy(&ctrl, &AdvancedUninstallController::uninstallFailed);
+    QSignalSpy cleanupSpy(&ctrl, &AdvancedUninstallController::cleanupFailed);
+
+    ctrl.onUninstallWorkerFailed(37, QStringLiteral("uninstall failure"));
+    ctrl.onCleanupWorkerFailed(41, QStringLiteral("cleanup failure"));
+
+    QCOMPARE(uninstallSpy.count(), 1);
+    QCOMPARE(uninstallSpy.at(0).at(0).toInt(), 37);
+    QCOMPARE(uninstallSpy.at(0).at(1).toString(), QStringLiteral("uninstall failure"));
+    QCOMPARE(cleanupSpy.count(), 1);
+    QCOMPARE(cleanupSpy.at(0).at(0).toInt(), 41);
+    QCOMPARE(cleanupSpy.at(0).at(1).toString(), QStringLiteral("cleanup failure"));
+    const QString source =
+        readRepoSource(QStringLiteral("src/core/advanced_uninstall_controller.cpp"));
+    const QString panel = readRepoSource(QStringLiteral("src/gui/advanced_uninstall_panel.cpp"));
+    QVERIFY(source.contains(QStringLiteral("Q_EMIT uninstallFailed(error_code, message)")));
+    QVERIFY(source.contains(QStringLiteral("Q_EMIT cleanupFailed(error_code, message)")));
+    QVERIFY(panel.contains(QStringLiteral("onUninstallFailed(int error_code")));
+    QVERIFY(panel.contains(QStringLiteral("onCleanupFailed(int error_code")));
+}
+
+void AdvancedUninstallControllerTests::batchItemFailure_preservesDetailsThroughTerminal() {
+    AdvancedUninstallController ctrl;
+    ProgramInfo program;
+    program.displayName = QStringLiteral("Broken Batch App");
+    QVERIFY(ctrl.addToQueue(program, ScanLevel::Safe, false));
+    ctrl.m_batchIndex = 0;
+    ctrl.m_queue[0].status = UninstallQueueItem::Status::InProgress;
+    ctrl.setState(AdvancedUninstallController::State::Uninstalling);
+    QStringList order;
+    connect(&ctrl,
+            &AdvancedUninstallController::batchItemFailed,
+            &ctrl,
+            [&order](int, int, const QString&) { order.append(QStringLiteral("item")); });
+    connect(&ctrl,
+            &AdvancedUninstallController::batchFinished,
+            &ctrl,
+            [&order](int, int, int, int, qint64) { order.append(QStringLiteral("terminal")); });
+    QSignalSpy itemFailedSpy(&ctrl, &AdvancedUninstallController::batchItemFailed);
+    QSignalSpy batchFinishedSpy(&ctrl, &AdvancedUninstallController::batchFinished);
+
+    ctrl.onUninstallWorkerFailed(73, QStringLiteral("exact worker failure"));
+
+    QCOMPARE(itemFailedSpy.count(), 1);
+    QCOMPARE(itemFailedSpy.at(0).at(0).toInt(), 0);
+    QCOMPARE(itemFailedSpy.at(0).at(1).toInt(), 73);
+    QCOMPARE(itemFailedSpy.at(0).at(2).toString(), QStringLiteral("exact worker failure"));
+    QCOMPARE(batchFinishedSpy.count(), 1);
+    QCOMPARE(order, QStringList({QStringLiteral("item"), QStringLiteral("terminal")}));
+    const UninstallQueueItem failed_item = ctrl.queue().at(0);
+    QCOMPARE(failed_item.status, UninstallQueueItem::Status::Failed);
+    QCOMPARE(failed_item.errorCode, 73);
+    QCOMPARE(failed_item.errorMessage, QStringLiteral("exact worker failure"));
+
+    const QString source =
+        readRepoSource(QStringLiteral("src/core/advanced_uninstall_controller.cpp"));
+    const QString header =
+        readRepoSource(QStringLiteral("include/sak/advanced_uninstall_controller.h"));
+    const QString panel = readRepoSource(QStringLiteral("src/gui/advanced_uninstall_panel.cpp"));
+    QVERIFY(source.contains(QStringLiteral("item.errorCode = error_code")));
+    QVERIFY(source.contains(QStringLiteral("item.errorMessage = message")));
+    QVERIFY(source.contains(
+        QStringLiteral("Q_EMIT batchItemFailed(m_batchIndex, error_code, message)")));
+    QVERIFY(header.contains(QStringLiteral("void batchItemFailed(")));
+    QVERIFY(panel.contains(QStringLiteral("&AdvancedUninstallController::batchItemFailed")));
+    QVERIFY(panel.contains(QStringLiteral("failed (error %2): %3")));
+}
+
+void AdvancedUninstallControllerTests::automaticCleanupTerminal_precedesBatchFailure() {
+    AdvancedUninstallController failed_ctrl;
+    failed_ctrl.m_batchCompletionPending = true;
+    QStringList failed_order;
+    connect(&failed_ctrl,
+            &AdvancedUninstallController::cleanupFailed,
+            &failed_ctrl,
+            [&failed_order](int, const QString&) {
+                failed_order.append(QStringLiteral("cleanup"));
+            });
+    connect(&failed_ctrl,
+            &AdvancedUninstallController::batchFailed,
+            &failed_ctrl,
+            [&failed_order](const QString&) { failed_order.append(QStringLiteral("batch")); });
+    failed_ctrl.onCleanupWorkerFailed(9, QStringLiteral("injected failure"));
+    QCOMPARE(failed_order, QStringList({QStringLiteral("cleanup"), QStringLiteral("batch")}));
+
+    AdvancedUninstallController cancelled_ctrl;
+    cancelled_ctrl.m_batchCompletionPending = true;
+    QStringList cancelled_order;
+    connect(&cancelled_ctrl,
+            &AdvancedUninstallController::cleanupCancelled,
+            &cancelled_ctrl,
+            [&cancelled_order]() { cancelled_order.append(QStringLiteral("cleanup")); });
+    connect(&cancelled_ctrl,
+            &AdvancedUninstallController::batchFailed,
+            &cancelled_ctrl,
+            [&cancelled_order](const QString&) {
+                cancelled_order.append(QStringLiteral("batch"));
+            });
+    cancelled_ctrl.onCleanupWorkerCancelled();
+    QCOMPARE(cancelled_order, QStringList({QStringLiteral("cleanup"), QStringLiteral("batch")}));
+
+    const QString source =
+        readRepoSource(QStringLiteral("src/core/advanced_uninstall_controller.cpp"));
+    const QString panel = readRepoSource(QStringLiteral("src/gui/advanced_uninstall_panel.cpp"));
+    const qsizetype failed_begin =
+        source.indexOf(QStringLiteral("onCleanupWorkerFailed(int error_code"));
+    const qsizetype cancelled_begin = source.indexOf(QStringLiteral("onCleanupWorkerCancelled()"),
+                                                     failed_begin);
+    const qsizetype terminal_end = source.indexOf(QStringLiteral("// -- Private"), cancelled_begin);
+    QVERIFY(failed_begin >= 0 && cancelled_begin > failed_begin && terminal_end > cancelled_begin);
+    const QString failed_function = source.mid(failed_begin, cancelled_begin - failed_begin);
+    const QString cancelled_function = source.mid(cancelled_begin, terminal_end - cancelled_begin);
+    const qsizetype cleanup_failed =
+        failed_function.indexOf(QStringLiteral("Q_EMIT cleanupFailed("));
+    const qsizetype batch_failed =
+        failed_function.indexOf(QStringLiteral("failDeferredBatchCleanup("));
+    const qsizetype cleanup_cancelled =
+        cancelled_function.indexOf(QStringLiteral("Q_EMIT cleanupCancelled()"));
+    const qsizetype batch_cancelled =
+        cancelled_function.indexOf(QStringLiteral("failDeferredBatchCleanup("));
+    QVERIFY(cleanup_failed >= 0 && batch_failed > cleanup_failed);
+    QVERIFY(cleanup_cancelled >= 0 && batch_cancelled > cleanup_cancelled);
+    QVERIFY(panel.contains(QStringLiteral("cleanup_failure_reported")));
+    QVERIFY(panel.contains(QStringLiteral("if (cleanup_failure_reported)")));
+}
+
+void AdvancedUninstallControllerTests::deferredAutoClean_mergesSuccessfulAndFailedItems() {
+    AdvancedUninstallController ctrl;
+    sak::UninstallReport report;
+    report.programName = QStringLiteral("Acme");
+    report.filesDeleted = 2;
+    report.failedDeletions = 3;
+    report.totalSpaceRecovered = 10;
+    sak::LeftoverItem removed;
+    removed.type = sak::LeftoverItem::Type::File;
+    removed.path = QStringLiteral("C:\\Temp\\Acme\\removed.tmp");
+    removed.sizeBytes = 40;
+    sak::LeftoverItem failed;
+    failed.type = sak::LeftoverItem::Type::Folder;
+    failed.path = QStringLiteral("C:\\Temp\\Acme\\locked");
+    failed.sizeBytes = 80;
+    report.foundLeftovers = {removed, failed};
+    ctrl.m_autoCleanInProgress = true;
+    ctrl.m_pendingAutoCleanReport = report;
+    ctrl.m_pendingAutoCleanItemCount = 2;
+    ctrl.m_autoCleanedItems.append(removed);
+    QSignalSpy finishedSpy(&ctrl, &AdvancedUninstallController::uninstallFinished);
+    QSignalSpy scanFinishedSpy(&ctrl, &AdvancedUninstallController::leftoverScanFinished);
+    QSignalSpy leftoversSpy(&ctrl, &AdvancedUninstallController::leftoversUpdated);
+    QSignalSpy cleanupSpy(&ctrl, &AdvancedUninstallController::cleanupFinished);
+
+    ctrl.onCleanupComplete(1, 1, 40);
+
+    QCOMPARE(finishedSpy.count(), 1);
+    QCOMPARE(cleanupSpy.count(), 1);
+    const auto merged = qvariant_cast<sak::UninstallReport>(finishedSpy.at(0).at(0));
+    QCOMPARE(merged.filesDeleted, 3);
+    QCOMPARE(merged.foldersDeleted, 0);
+    QCOMPARE(merged.failedDeletions, 4);
+    QCOMPARE(merged.totalSpaceRecovered, 50);
+    QCOMPARE(scanFinishedSpy.count(), 0);
+    QCOMPARE(leftoversSpy.count(), 1);
+    const auto remaining = qvariant_cast<QVector<sak::LeftoverItem>>(leftoversSpy.at(0).at(0));
+    QCOMPARE(remaining.size(), 1);
+    QCOMPARE(remaining.first().path, failed.path);
+    const QString source =
+        readRepoSource(QStringLiteral("src/core/advanced_uninstall_controller.cpp"));
+    const QString header =
+        readRepoSource(QStringLiteral("include/sak/advanced_uninstall_controller.h"));
+    const QString panel = readRepoSource(QStringLiteral("src/gui/advanced_uninstall_panel.cpp"));
+    QVERIFY(source.contains(
+        QStringLiteral("mergeDeferredAutoCleanResult(succeeded, failed, bytes_recovered)")));
+    QCOMPARE(source.count(QStringLiteral("Q_EMIT cleanupFinished(")), 2);
+    QVERIFY(source.contains(QStringLiteral("Q_EMIT leftoversUpdated(")));
+    QVERIFY(header.contains(QStringLiteral("void leftoversUpdated(")));
+    QVERIFY(header.contains(
+        QStringLiteral("[[nodiscard]] bool maybeAutoCleanSafeLeftovers(UninstallReport& report")));
+    QVERIFY(panel.contains(QStringLiteral("&AdvancedUninstallController::leftoversUpdated")));
+    QVERIFY(panel.contains(QStringLiteral("if (m_autoCleanupInProgress)")));
+    QCOMPARE(panel.count(QStringLiteral("Leftover scan complete:")), 1);
+}
+
+void AdvancedUninstallControllerTests::deferredAutoClean_terminalFailureMergesPartialProgress() {
+    AdvancedUninstallController ctrl;
+    sak::UninstallReport report;
+    sak::LeftoverItem removed;
+    removed.type = sak::LeftoverItem::Type::File;
+    removed.path = QStringLiteral("C:\\Temp\\Acme\\removed.tmp");
+    removed.sizeBytes = 40;
+    sak::LeftoverItem pending;
+    pending.type = sak::LeftoverItem::Type::Folder;
+    pending.path = QStringLiteral("C:\\Temp\\Acme\\pending");
+    pending.sizeBytes = 80;
+    report.foundLeftovers = {removed, pending};
+    ctrl.m_autoCleanInProgress = true;
+    ctrl.m_pendingAutoCleanReport = report;
+    ctrl.m_pendingAutoCleanItemCount = 2;
+    ctrl.m_autoCleanedItems.append(removed);
+    QSignalSpy finishedSpy(&ctrl, &AdvancedUninstallController::uninstallFinished);
+
+    ctrl.onCleanupWorkerFailed(7, QStringLiteral("injected failure"));
+
+    QCOMPARE(finishedSpy.count(), 1);
+    const auto merged = qvariant_cast<sak::UninstallReport>(finishedSpy.at(0).at(0));
+    QCOMPARE(merged.filesDeleted, 1);
+    QCOMPARE(merged.failedDeletions, 1);
+    QCOMPARE(merged.totalSpaceRecovered, 40);
+    QVERIFY(merged.errorLog.contains(QStringLiteral("Automatic cleanup failed: injected failure")));
+}
+
+void AdvancedUninstallControllerTests::batchCompletion_waitsForCleanupAndCarriesResult() {
+    AdvancedUninstallController ctrl;
+    ctrl.m_batchCompletionPending = true;
+    ctrl.m_pendingBatchSucceeded = 2;
+    ctrl.m_pendingBatchFailed = 1;
+    ctrl.m_batchIndex = -1;
+    ctrl.setState(AdvancedUninstallController::State::Cleaning);
+    QSignalSpy batchSpy(&ctrl, &AdvancedUninstallController::batchFinished);
+    QSignalSpy cleanupSpy(&ctrl, &AdvancedUninstallController::cleanupFinished);
+
+    QCOMPARE(batchSpy.count(), 0);
+    ctrl.onCleanupComplete(3, 2, 4096);
+
+    QCOMPARE(batchSpy.count(), 1);
+    QCOMPARE(cleanupSpy.count(), 1);
+    const auto args = batchSpy.takeFirst();
+    QCOMPARE(args.at(0).toInt(), 2);
+    QCOMPARE(args.at(1).toInt(), 1);
+    QCOMPARE(args.at(2).toInt(), 3);
+    QCOMPARE(args.at(3).toInt(), 2);
+    QCOMPARE(args.at(4).toLongLong(), 4096);
+    QVERIFY(!ctrl.m_batchCompletionPending);
+    QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Idle);
+
+    const QString source =
+        readRepoSource(QStringLiteral("src/core/advanced_uninstall_controller.cpp"));
+    const qsizetype begin =
+        source.indexOf(QStringLiteral("void AdvancedUninstallController::finishBatchUninstall"));
+    const qsizetype end = source.indexOf(
+        QStringLiteral("void AdvancedUninstallController::processNextQueueItem"), begin);
+    QVERIFY(begin >= 0 && end > begin);
+    const QString function = source.mid(begin, end - begin);
+    const qsizetype unlock = function.indexOf(QStringLiteral("m_batchIndex = -1"));
+    const qsizetype directFinish = function.indexOf(QStringLiteral("Q_EMIT batchFinished"));
+    const qsizetype pending = function.indexOf(QStringLiteral("m_batchCompletionPending = true"));
+    const qsizetype cleanup = function.indexOf(QStringLiteral("startCleanupWorker("));
+    QVERIFY(unlock >= 0 && directFinish > unlock);
+    QVERIFY(pending > directFinish && cleanup > pending);
+}
+
+void AdvancedUninstallControllerTests::batchWorker_usesCompleteSignalSet() {
+    const QString source =
+        readRepoSource(QStringLiteral("src/core/advanced_uninstall_controller.cpp"));
+    QVERIFY(!source.contains(QStringLiteral("connectBatchUninstallWorkerSignals")));
+    QVERIFY(source.contains(QStringLiteral("connectUninstallWorkerSignals(true, generation)")));
+    for (const QString& signal : {QStringLiteral("&UninstallWorker::nativeUninstallerStarted"),
+                                  QStringLiteral("&UninstallWorker::nativeUninstallerFinished"),
+                                  QStringLiteral("&UninstallWorker::restorePointCreated"),
+                                  QStringLiteral("&UninstallWorker::leftoverScanProgress")}) {
+        QVERIFY2(source.contains(signal), qPrintable(QStringLiteral("missing %1").arg(signal)));
+    }
+    QVERIFY(source.contains(QStringLiteral("Q_EMIT restorePointCreated(desc)")));
+}
+
+void AdvancedUninstallControllerTests::batchCancel_emitsCancelledQueueStatus() {
+    AdvancedUninstallController ctrl;
+    ProgramInfo program;
+    program.displayName = QStringLiteral("Queued App");
+    QVERIFY(ctrl.addToQueue(program, ScanLevel::Safe, false));
+    ctrl.m_queue[0].status = UninstallQueueItem::Status::InProgress;
+    ctrl.m_batchIndex = 0;
+    ctrl.setState(AdvancedUninstallController::State::Uninstalling);
+    int status_count = 0;
+    int status_index = -1;
+    UninstallQueueItem::Status emitted_status = UninstallQueueItem::Status::Queued;
+    connect(&ctrl,
+            &AdvancedUninstallController::queueItemStatusChanged,
+            &ctrl,
+            [&](int index, UninstallQueueItem::Status status) {
+                ++status_count;
+                status_index = index;
+                emitted_status = status;
+            });
+    QSignalSpy finishedSpy(&ctrl, &AdvancedUninstallController::batchFinished);
+    QSignalSpy failedSpy(&ctrl, &AdvancedUninstallController::batchFailed);
+    QSignalSpy cancelledSpy(&ctrl, &AdvancedUninstallController::uninstallCancelled);
+
+    ctrl.onUninstallWorkerCancelled();
+
+    QCOMPARE(status_count, 1);
+    QCOMPARE(status_index, 0);
+    QCOMPARE(emitted_status, UninstallQueueItem::Status::Cancelled);
+    QCOMPARE(finishedSpy.count(), 0);
+    QCOMPARE(failedSpy.count(), 1);
+    QCOMPARE(failedSpy.at(0).at(0).toString(), QStringLiteral("Batch uninstall was cancelled."));
+    QCOMPARE(cancelledSpy.count(), 1);
+    QCOMPARE(ctrl.m_batchIndex, -1);
+    const QString source =
+        readRepoSource(QStringLiteral("src/core/advanced_uninstall_controller.cpp"));
+    const QString header =
+        readRepoSource(QStringLiteral("include/sak/advanced_uninstall_controller.h"));
+    QVERIFY(source.contains(QStringLiteral(
+        "Q_EMIT queueItemStatusChanged(m_batchIndex, UninstallQueueItem::Status::Cancelled)")));
+    QVERIFY(source.contains(
+        QStringLiteral("Q_EMIT batchFailed(QStringLiteral(\"Batch uninstall was cancelled.\"))")));
+    QVERIFY(header.contains(QStringLiteral("was cancelled during uninstall")));
 }
 
 void AdvancedUninstallControllerTests::registryOnly_connectsCancellation() {
@@ -800,9 +1447,9 @@ void AdvancedUninstallControllerTests::registryOnly_connectsCancellation() {
     const qsizetype end = source.indexOf(QStringLiteral("QVector<LeftoverItem>"), begin);
     QVERIFY(begin >= 0 && end > begin);
     const QString function = source.mid(begin, end - begin);
-    QVERIFY(function.contains(QStringLiteral("&UninstallWorker::cancelled")));
-    QVERIFY(function.contains(
-        QStringLiteral("&AdvancedUninstallController::onUninstallWorkerCancelled")));
+    QVERIFY(function.contains(QStringLiteral("connectUninstallWorkerSignals(false, generation)")));
+    QVERIFY(source.contains(QStringLiteral("&UninstallWorker::cancelled")));
+    QVERIFY(source.contains(QStringLiteral("onUninstallWorkerCancelled()")));
     const qsizetype cancelBegin =
         source.indexOf(QStringLiteral("void AdvancedUninstallController::cancelOperation"));
     const qsizetype cancelEnd = source.indexOf(QStringLiteral("// -- Batch Uninstall"),
@@ -843,7 +1490,8 @@ void AdvancedUninstallControllerTests::obsoleteHelpersAndMembers_areAbsent() {
                                 QStringLiteral("m_enum_generation"),
                                 QStringLiteral("m_uninstall_worker"),
                                 QStringLiteral("m_cleanup_worker"),
-                                QStringLiteral("m_restore_manager")}) {
+                                QStringLiteral("m_restore_manager"),
+                                QStringLiteral("m_autoCleanedPaths")}) {
         QVERIFY2(!combined.contains(dead),
                  qPrintable(QStringLiteral("obsolete controller symbol remains: %1").arg(dead)));
     }
@@ -851,6 +1499,40 @@ void AdvancedUninstallControllerTests::obsoleteHelpersAndMembers_areAbsent() {
     QVERIFY(header.contains(QStringLiteral("m_uninstallWorker")));
     QVERIFY(header.contains(QStringLiteral("m_cleanupWorker")));
     QVERIFY(header.contains(QStringLiteral("m_restoreManager")));
+}
+
+void AdvancedUninstallControllerTests::obsoleteControllerApis_areAbsent() {
+    const QString header =
+        readRepoSource(QStringLiteral("include/sak/advanced_uninstall_controller.h"));
+    const QString source =
+        readRepoSource(QStringLiteral("src/core/advanced_uninstall_controller.cpp"));
+    const QString panelHeader =
+        readRepoSource(QStringLiteral("include/sak/advanced_uninstall_panel.h"));
+    const QString panel = readRepoSource(QStringLiteral("src/gui/advanced_uninstall_panel.cpp"));
+    QVERIFY2(!header.isEmpty() && !source.isEmpty() && !panelHeader.isEmpty() && !panel.isEmpty(),
+             "controller API sources could not be read");
+    const QString combined = header + source + panelHeader + panel;
+    for (const QString& dead : {QStringLiteral("void removeUwpPackage("),
+                                QStringLiteral("AdvancedUninstallController::removeUwpPackage"),
+                                QStringLiteral("RestorePointManager* restorePointManager("),
+                                QStringLiteral("void recycleFallbackItems("),
+                                QStringLiteral("AdvancedUninstallPanel::onRecycleFallbackItems"),
+                                QStringLiteral("connectBatchUninstallWorkerSignals")}) {
+        QVERIFY2(!combined.contains(dead),
+                 qPrintable(QStringLiteral("obsolete controller API remains: %1").arg(dead)));
+    }
+}
+
+void AdvancedUninstallControllerTests::stateMachineDocs_describeActivityBranches() {
+    const QString header =
+        readRepoSource(QStringLiteral("include/sak/advanced_uninstall_controller.h"));
+    QVERIFY2(!header.isEmpty(), "advanced_uninstall_controller.h could not be read");
+    QVERIFY(header.contains(QStringLiteral("Activity state, not one linear pipeline")));
+    QVERIFY(header.contains(QStringLiteral("enumeration runs Idle -> Enumerating -> Idle")));
+    QVERIFY(header.contains(QStringLiteral("may enter LeftoverScanning")));
+    QVERIFY(header.contains(QStringLiteral("optional Cleaning")));
+    QVERIFY(!header.contains(
+        QStringLiteral("Idle -> Enumerating -> Uninstalling -> LeftoverScanning")));
 }
 
 // -- Cancel When Idle --------------------------------------------------------

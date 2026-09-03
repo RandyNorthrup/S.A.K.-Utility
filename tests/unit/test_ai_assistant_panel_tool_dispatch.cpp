@@ -107,6 +107,21 @@ private Q_SLOTS:
         QStandardPaths::setTestModeEnabled(true);
     }
 
+    void packageErrorUsesCanonicalStrictSchema() {
+        AiAssistantPanel panel;
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research blocks local packages.
+        const QJsonObject result = panel.runPackageManagerTool(
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("search")},
+                        {QStringLiteral("query"), QStringLiteral("7zip")}});
+        QCOMPARE(result.size(), 2);
+        QVERIFY(result.value(QStringLiteral("success")).isBool());
+        QCOMPARE(result.value(QStringLiteral("success")).toBool(true), false);
+        QVERIFY(result.value(QStringLiteral("error_message")).isString());
+        QCOMPARE(result.value(QStringLiteral("error_message")).toString(),
+                 QStringLiteral("Local package management is disabled in Chat mode"));
+    }
+
     void storedMemoryAndSteeringStayInUserRole() {
         AiAssistantPanel panel;
         QVERIFY(panel.ensurePersistentSession(
@@ -168,6 +183,59 @@ private Q_SLOTS:
         QCOMPARE(continuation.untrusted_input_messages.first().role,
                  ai::OpenAIInputMessageRole::User);
         QVERIFY(continuation.untrusted_input_messages.first().text.contains(stored_tool_text));
+    }
+
+    void accessModePolicyUsesTypedValueNotDisplayText() {
+        AiAssistantPanel panel;
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+
+        panel.m_accessModeCombo->setItemText(1, QStringLiteral("Unattended Full Access"));
+        panel.m_accessModeCombo->setCurrentIndex(1);
+        const ai::OpenAIResponseRequest assisted =
+            panel.buildChatRequest(QStringLiteral("Use typed assisted policy"));
+        QVERIFY(assisted.validation_error.isEmpty());
+        QVERIFY(assisted.enable_local_tools);
+        QVERIFY(
+            assisted.instructions.split(QLatin1Char('\n'))
+                .contains(QStringLiteral("Access mode selected by user: Assisted Full Access.")));
+        QVERIFY(
+            !assisted.instructions.contains(QStringLiteral("Unattended full access is selected.")));
+        QCOMPARE(panel.currentAccessMode(), ai::AiAccessMode::AssistedFullAccess);
+        QCOMPARE(panel.currentAccessModeLabel(), QStringLiteral("Assisted Full Access"));
+
+        panel.m_accessModeCombo->setItemText(0, QStringLiteral("Assisted Full Access"));
+        panel.m_accessModeCombo->setCurrentIndex(0);
+        const ai::OpenAIResponseRequest chat =
+            panel.buildChatRequest(QStringLiteral("Use typed chat policy"));
+        QVERIFY(chat.validation_error.isEmpty());
+        QVERIFY(!chat.enable_local_tools);
+        QVERIFY(chat.instructions.split(QLatin1Char('\n'))
+                    .contains(QStringLiteral("Access mode selected by user: Chat and Research.")));
+        QVERIFY(chat.instructions.contains(QStringLiteral("Local execution is disabled")));
+        QCOMPARE(panel.currentAccessMode(), ai::AiAccessMode::ChatAndResearch);
+        QCOMPARE(panel.currentAccessModeLabel(), QStringLiteral("Chat and Research"));
+    }
+
+    void invalidAccessModeValueFailsClosed() {
+        AiAssistantPanel panel;
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setItemData(1, QStringLiteral("3"));
+        panel.m_accessModeCombo->setCurrentIndex(1);
+        QCOMPARE(panel.currentAccessMode(), ai::AiAccessMode::Invalid);
+
+        panel.m_accessModeCombo->setItemData(1, -1);
+
+        const ai::OpenAIResponseRequest request =
+            panel.buildChatRequest(QStringLiteral("Do not execute invalid policy"));
+        QCOMPARE(panel.currentAccessMode(), ai::AiAccessMode::Invalid);
+        QCOMPARE(panel.currentAccessToolPolicy(), ai::AiToolPolicy::NoLocalExecution);
+        QCOMPARE(panel.currentAccessModeLabel(),
+                 QStringLiteral("Invalid (local execution disabled)"));
+        QCOMPARE(request.validation_error, QStringLiteral("Invalid AI access mode"));
+        QVERIFY(!request.enable_local_tools);
+        QVERIFY(request.instructions.isEmpty());
+        QVERIFY(request.untrusted_input_messages.isEmpty());
+        QVERIFY(ai::OpenAIResponsesClient::buildResponsePayloadForTesting(request).isEmpty());
     }
 
 #if defined(SAK_WIN_REGISTRY_TESTS)

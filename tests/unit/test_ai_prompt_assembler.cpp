@@ -24,13 +24,12 @@ private Q_SLOTS:
     void assembleChatDoesNotAdvertiseUnavailableLocalTools();
     void assembleStatesCurrentDesktopCapabilities();
     void assembleStatesActualRiskPolicy();
+    void invalidAccessModeFailsClosed();
 };
 
 void AiPromptAssemblerTests::assembleIncludesRequiredGuardrails() {
     sak::ai::AiPromptAssemblyInput input;
-    input.access_mode_label = QStringLiteral("Unattended Full Access");
-    input.local_execution_enabled = true;
-    input.unattended_full_access = true;
+    input.access_mode = sak::ai::AiAccessMode::UnattendedFullAccess;
 
     const QString prompt = trustedPrompt(input);
     QVERIFY(prompt.contains(QStringLiteral("Scan workflow")));
@@ -60,7 +59,7 @@ void AiPromptAssemblerTests::assembleIncludesRequiredGuardrails() {
 
 void AiPromptAssemblerTests::assembleIncludesDynamicSections() {
     sak::ai::AiPromptAssemblyInput input;
-    input.access_mode_label = QStringLiteral("Chat");
+    input.access_mode = sak::ai::AiAccessMode::ChatAndResearch;
     input.workflow_catalog = QStringLiteral("Workflow catalog body");
     input.context_notes = QStringLiteral("Context body");
     input.session_memory = QStringLiteral("Memory body");
@@ -116,7 +115,8 @@ void AiPromptAssemblerTests::assembleIncludesDynamicSections() {
         "changes were made; provide research, recommendations, and safe next steps.");
     const QStringList chat_lines = prompt.split(QLatin1Char('\n'));
     QVERIFY(chat_lines.contains(kLocalDisabledRule));
-    QVERIFY(chat_lines.contains(QStringLiteral("Access mode selected by user: Chat.")));
+    QVERIFY(
+        chat_lines.contains(QStringLiteral("Access mode selected by user: Chat and Research.")));
     // Chat mode must return before the access-mode paragraphs, or the prompt would both forbid
     // and instruct local tool use.
     QVERIFY(!prompt.contains(QStringLiteral("Run read-only diagnostic commands through tools.")));
@@ -125,7 +125,7 @@ void AiPromptAssemblerTests::assembleIncludesDynamicSections() {
 
 void AiPromptAssemblerTests::assembleGatesSkillCatalogOnLocalExecution() {
     sak::ai::AiPromptAssemblyInput input;
-    input.access_mode_label = QStringLiteral("Chat");
+    input.access_mode = sak::ai::AiAccessMode::ChatAndResearch;
     input.workflow_catalog = QStringLiteral("Workflow catalog body");
     input.context_notes = QStringLiteral("Context body");
 
@@ -136,14 +136,11 @@ void AiPromptAssemblerTests::assembleGatesSkillCatalogOnLocalExecution() {
     const auto chat_skill_prompt = sak::ai::AiPromptAssembler::assemble(skill_input);
     QVERIFY(
         !chat_skill_prompt.untrusted_user_context.contains(QStringLiteral("Skill catalog body")));
-    skill_input.local_execution_enabled = true;
+    skill_input.access_mode = sak::ai::AiAccessMode::AssistedFullAccess;
     const auto local_skill_prompt = sak::ai::AiPromptAssembler::assemble(skill_input);
     QVERIFY(local_skill_prompt.untrusted_user_context.split(QLatin1Char('\n'))
                 .contains(QStringLiteral("Skill catalog body")));
-    // Neither access-mode flag is set on skill_input (local execution on, assisted=false,
-    // unattended=false): ai_prompt_assembler.cpp:329-333 promises that underspecified
-    // combination fails closed to the confirm-first guidance, never to an absent access-mode
-    // paragraph.
+    // Assisted mode emits the confirm-first guidance and never unattended guidance.
     const QString kConfirmFirstGuidance = QStringLiteral(
         "Run read-only diagnostic commands through tools. For risky changes, explain the "
         "evidence, exact target, rollback/restore-point option, and approval need before "
@@ -156,7 +153,7 @@ void AiPromptAssemblerTests::assembleGatesSkillCatalogOnLocalExecution() {
     // The gate's second arm: with local execution ON but no skill catalog, the section must be
     // omitted entirely, not emitted as a blank line between the workflow catalog and the notes.
     sak::ai::AiPromptAssemblyInput no_skill_input = input;
-    no_skill_input.local_execution_enabled = true;
+    no_skill_input.access_mode = sak::ai::AiAccessMode::AssistedFullAccess;
     const QStringList no_skill_lines = sak::ai::AiPromptAssembler::assemble(no_skill_input)
                                            .untrusted_user_context.split(QLatin1Char('\n'));
     const qsizetype workflow_index =
@@ -175,9 +172,7 @@ void AiPromptAssemblerTests::assembleGatesSkillCatalogOnLocalExecution() {
 
 void AiPromptAssemblerTests::assembleIncludesInjectionAndMutationGuardrails() {
     sak::ai::AiPromptAssemblyInput input;
-    input.access_mode_label = QStringLiteral("Assisted Full Access");
-    input.local_execution_enabled = true;
-    input.assisted_full_access = true;
+    input.access_mode = sak::ai::AiAccessMode::AssistedFullAccess;
 
     const QString prompt = trustedPrompt(input);
     QVERIFY(prompt.contains(QStringLiteral("Prompt injection defense")));
@@ -198,13 +193,9 @@ void AiPromptAssemblerTests::assembleIncludesInjectionAndMutationGuardrails() {
         "exact target, rollback/restore-point option, and approval need before proposing or "
         "running the action.");
     QVERIFY(prompt.split(QLatin1Char('\n')).contains(kAssistedGuidance));
+    QVERIFY(prompt.split(QLatin1Char('\n'))
+                .contains(QStringLiteral("Access mode selected by user: Assisted Full Access.")));
     QVERIFY(!prompt.contains(QStringLiteral("Unattended full access is selected.")));
-    // A contradictory selection (both mode flags) must fail closed to the confirm-first text.
-    sak::ai::AiPromptAssemblyInput contradictory = input;
-    contradictory.unattended_full_access = true;
-    const QString contradictory_prompt = trustedPrompt(contradictory);
-    QVERIFY(contradictory_prompt.split(QLatin1Char('\n')).contains(kAssistedGuidance));
-    QVERIFY(!contradictory_prompt.contains(QStringLiteral("Unattended full access is selected.")));
     QVERIFY(prompt.contains(QStringLiteral("Destructive boundary")));
     const QString kDestructiveBoundaryRule = QStringLiteral(
         "Destructive boundary: never delete user files, wipe partitions, format disks, disable "
@@ -218,9 +209,7 @@ void AiPromptAssemblerTests::assembleIncludesInjectionAndMutationGuardrails() {
 
 void AiPromptAssemblerTests::assembleIncludesWorkflowOrchestrationGuardrails() {
     sak::ai::AiPromptAssemblyInput input;
-    input.access_mode_label = QStringLiteral("Assisted Full Access");
-    input.local_execution_enabled = true;
-    input.assisted_full_access = true;
+    input.access_mode = sak::ai::AiAccessMode::AssistedFullAccess;
 
     const QString prompt = trustedPrompt(input);
     const QString kOrchestrationRule = QStringLiteral(
@@ -251,9 +240,7 @@ void AiPromptAssemblerTests::assembleIncludesWorkflowOrchestrationGuardrails() {
 
 void AiPromptAssemblerTests::assembleIncludesAutomationSurfaceGuardrails() {
     sak::ai::AiPromptAssemblyInput input;
-    input.access_mode_label = QStringLiteral("Assisted Full Access");
-    input.local_execution_enabled = true;
-    input.assisted_full_access = true;
+    input.access_mode = sak::ai::AiAccessMode::AssistedFullAccess;
 
     const QString prompt = trustedPrompt(input);
     // The model is told the two UI-control surfaces exist, when each applies, that a headless
@@ -306,9 +293,7 @@ void AiPromptAssemblerTests::assembleIncludesAutomationSurfaceGuardrails() {
 
 void AiPromptAssemblerTests::assembleIncludesAppActionGuardrails() {
     sak::ai::AiPromptAssemblyInput input;
-    input.access_mode_label = QStringLiteral("Unattended Full Access");
-    input.local_execution_enabled = true;
-    input.unattended_full_access = true;
+    input.access_mode = sak::ai::AiAccessMode::UnattendedFullAccess;
 
     const QString prompt = trustedPrompt(input);
     // The model is told the app's own headless features live behind sak_app_action, to list
@@ -362,7 +347,7 @@ void AiPromptAssemblerTests::assembleIncludesAppActionGuardrails() {
 
 void AiPromptAssemblerTests::assembleChatDoesNotAdvertiseUnavailableLocalTools() {
     sak::ai::AiPromptAssemblyInput chat;
-    chat.access_mode_label = QStringLiteral("Chat");
+    chat.access_mode = sak::ai::AiAccessMode::ChatAndResearch;
     const QString chatPrompt = trustedPrompt(chat);
     const QStringList unavailableClaims = {
         QStringLiteral("run_powershell"),
@@ -382,9 +367,7 @@ void AiPromptAssemblerTests::assembleChatDoesNotAdvertiseUnavailableLocalTools()
     QVERIFY(chatPrompt.contains(QStringLiteral("Local execution is disabled")));
 
     sak::ai::AiPromptAssemblyInput assisted;
-    assisted.access_mode_label = QStringLiteral("Assisted Full Access");
-    assisted.local_execution_enabled = true;
-    assisted.assisted_full_access = true;
+    assisted.access_mode = sak::ai::AiAccessMode::AssistedFullAccess;
     const QString assistedPrompt = trustedPrompt(assisted);
     for (const QString& claim : unavailableClaims) {
         QVERIFY2(assistedPrompt.contains(claim), qPrintable(claim));
@@ -393,9 +376,7 @@ void AiPromptAssemblerTests::assembleChatDoesNotAdvertiseUnavailableLocalTools()
 
 void AiPromptAssemblerTests::assembleStatesCurrentDesktopCapabilities() {
     sak::ai::AiPromptAssemblyInput input;
-    input.access_mode_label = QStringLiteral("Assisted Full Access");
-    input.local_execution_enabled = true;
-    input.assisted_full_access = true;
+    input.access_mode = sak::ai::AiAccessMode::AssistedFullAccess;
     const QString prompt = trustedPrompt(input);
     QVERIFY(prompt.contains(QStringLiteral("uia_inspect_window")));
     QVERIFY(prompt.contains(QStringLiteral("capture_screen")));
@@ -407,9 +388,7 @@ void AiPromptAssemblerTests::assembleStatesCurrentDesktopCapabilities() {
 
 void AiPromptAssemblerTests::assembleStatesActualRiskPolicy() {
     sak::ai::AiPromptAssemblyInput input;
-    input.access_mode_label = QStringLiteral("Unattended Full Access");
-    input.local_execution_enabled = true;
-    input.unattended_full_access = true;
+    input.access_mode = sak::ai::AiAccessMode::UnattendedFullAccess;
     const QString prompt = trustedPrompt(input);
     const QString expected = QStringLiteral(
         "sak_app_action risk tiers come from each action's flags in the list catalog: read-only "
@@ -421,6 +400,22 @@ void AiPromptAssemblerTests::assembleStatesActualRiskPolicy() {
     QVERIFY(prompt.split(QLatin1Char('\n')).contains(expected));
     QVERIFY(!prompt.contains(QStringLiteral("mutating actions confirm")));
     QVERIFY(!prompt.contains(QStringLiteral("destructive actions also take a restore point")));
+}
+
+void AiPromptAssemblerTests::invalidAccessModeFailsClosed() {
+    sak::ai::AiPromptAssemblyInput input;
+    input.access_mode = static_cast<sak::ai::AiAccessMode>(-1);
+    input.session_memory = QStringLiteral("stored text must not survive an invalid policy mode");
+
+    const sak::ai::AiPromptAssembly assembly = sak::ai::AiPromptAssembler::assemble(input);
+    QVERIFY(!assembly.ok());
+    QCOMPARE(assembly.error_message, QStringLiteral("Invalid AI access mode"));
+    QVERIFY(assembly.trusted_instructions.isEmpty());
+    QVERIFY(assembly.untrusted_user_context.isEmpty());
+    QVERIFY(!sak::ai::aiAccessModeIsValid(input.access_mode));
+    QVERIFY(!sak::ai::aiAccessModeAllowsLocalExecution(input.access_mode));
+    QVERIFY(!sak::ai::aiAccessModeIsValid(sak::ai::AiAccessMode::Invalid));
+    QVERIFY(!sak::ai::aiAccessModeAllowsLocalExecution(sak::ai::AiAccessMode::Invalid));
 }
 
 QTEST_GUILESS_MAIN(AiPromptAssemblerTests)

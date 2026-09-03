@@ -8,6 +8,41 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **AI access policy is one closed typed value** - A single `AiAccessMode` now flows from strict
+  combo-box item data through panel snapshots, prompt assembly, tool policy, and Responses request
+  validation. Localized/display text and contradictory booleans cannot select policy. Wrong-typed,
+  out-of-domain, missing, or invalid values fail closed to no local execution and block payload,
+  network, and token-count work. Ten new mutants close three test holes; the three affected
+  catalogs now kill all 25 relevant mutants.
+
+- **AI tool errors use one strict schema** - Five duplicate builders in offline, workflow,
+  provider, and panel paths now use one `toolError` helper. Every canonical failure has exactly
+  boolean `success:false` and a non-empty string `error_message`; nonblank source text is preserved
+  and blank text becomes a stable fail-closed diagnostic. True nonduplicates with richer or
+  caller-specific envelopes remain separate. The remaining duplicated provider access predicates
+  are also unified as enum-owned constexpr helpers. The helper catalog kills 2/2 mutants and
+  dead-code analysis confirms one production error-builder definition.
+
+- **Advanced Uninstall controller review converged to zero** - Repeated blob-bound xhigh review
+  passes fixed batch admission/cancellation terminals, cleanup lifecycle ordering, deferred report
+  totals, stale-worker generations, protected/typed cleanup identity, error-code propagation,
+  duplicate/bounded queue admission, auto-clean preference UI, truthful enumeration state, and
+  dead or misleading APIs. Distinct leftovers updates no longer masquerade as scan completion.
+  Automatic cleanup is deduplicated by full typed identity, preserves generic lifecycle terminals,
+  and cannot trigger premature panel refresh. Seven follow-up reviews converged from 10, 9, 5, 4,
+  3, 4, and 3 confirmed findings to a final zero-finding pass; one signal-tense lead was refuted by
+  live convention and the stale style prose was corrected. A post-naming exact-blob refresh then
+  closed two functional leads and five signal parameter names before returning another zero-finding
+  pass. All 66 controller cases and 58 separate functional convergence drills pass after
+  restoration. Wave 30 closes with all whole-tree hooks green, a clean Release build, and all 273
+  CTests passing.
+
+- **Local TruffleHog proof completed without an ignore** - The official v3.97.2 Windows x64 asset
+  is cached under ignored `temp/tools`, matched its published SHA-256 before execution, and was
+  placed on PATH only for the scan process. Regex/path scan, full-history gitleaks, and TruffleHog
+  all report zero findings; the wrapper exits 0, parent PATH is unchanged, and no scanner process
+  remains.
+
 - **AI memory and steering are structurally untrusted** - Prompt assembly now returns separate
   trusted instructions and untrusted user context. Workflow/skill catalogs, selected context,
   ConversationStore memory and stored tool output, and queued steering never enter top-level

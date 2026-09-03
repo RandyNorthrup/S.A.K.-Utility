@@ -30,6 +30,7 @@
 #include "sak/ai/ai_subagent_tool_executor.h"
 #include "sak/ai/ai_token_usage_tracker.h"
 #include "sak/ai/ai_tool_dispatcher.h"
+#include "sak/ai/ai_tool_error.h"
 #include "sak/ai/ai_tool_health_ledger.h"
 #include "sak/ai/ai_tool_policy.h"
 #include "sak/ai/ai_tool_result_recorder.h"
@@ -99,6 +100,7 @@
 #include <QListWidget>
 #include <QLocale>
 #include <QMessageBox>
+#include <QMetaType>
 #include <QMimeDatabase>
 #include <QMimeType>
 #include <QNetworkAccessManager>
@@ -317,7 +319,6 @@ constexpr int kPackageFileResultLimit = 200;
 constexpr int kPackageArtifactDisplayLimit = 20;
 constexpr int kPackageLogLineResultLimit = 80;
 constexpr int kToolOutputMaxBytes = 4 * static_cast<int>(sak::kBytesPerMB);
-constexpr int kAccessModeUnattendedComboIndex = 2;
 constexpr int kWorkflowPhaseStatusMessageMs = 2500;
 constexpr int kRunStateMessageMaxChars = 200;
 constexpr int kHumanApprovalInfoMaxChars = 600;
@@ -1300,12 +1301,7 @@ QSet<QString> subagentAllowedToolNames() {
 }
 
 
-QJsonObject toolError(const QString& message) {
-    QJsonObject result;
-    result[QStringLiteral("success")] = false;
-    result[QStringLiteral("error_message")] = message;
-    return result;
-}
+using ai::toolError;
 
 QJsonObject phaseExecutionToPanelJson(const ai::AiPhaseExecution& execution) {
     QJsonObject obj;
@@ -3876,15 +3872,17 @@ QString AiAssistantPanel::statusDetails() const {
                                                                              : tr("No key");
     QString access;
     switch (currentAccessMode()) {
-    case AccessMode::ChatAndResearch:
+    case ai::AiAccessMode::ChatAndResearch:
         access = tr("Research");
         break;
-    case AccessMode::UnattendedFullAccess:
+    case ai::AiAccessMode::UnattendedFullAccess:
         access = tr("Unattended");
         break;
-    case AccessMode::AssistedFullAccess:
-    default:
+    case ai::AiAccessMode::AssistedFullAccess:
         access = tr("Assisted");
+        break;
+    case ai::AiAccessMode::Invalid:
+        access = tr("Disabled");
         break;
     }
     const QString turn = m_tokenTracker
@@ -4360,8 +4358,12 @@ void AiAssistantPanel::setupContextPaneAccessSection(QVBoxLayout* layout, QWidge
     m_accessModeCombo = new QComboBox(pane);
     configureReadableCombo(m_accessModeCombo);
     requireFocusForWheel(m_accessModeCombo, this);
-    m_accessModeCombo->addItems(
-        {tr("Chat and Research"), tr("Assisted Full Access"), tr("Unattended Full Access")});
+    m_accessModeCombo->addItem(tr("Chat and Research"),
+                               static_cast<int>(ai::AiAccessMode::ChatAndResearch));
+    m_accessModeCombo->addItem(tr("Assisted Full Access"),
+                               static_cast<int>(ai::AiAccessMode::AssistedFullAccess));
+    m_accessModeCombo->addItem(tr("Unattended Full Access"),
+                               static_cast<int>(ai::AiAccessMode::UnattendedFullAccess));
     m_accessModeCombo->setCurrentIndex(1);
     m_accessModeCombo->setToolTip(
         tr("Choose whether the assistant may use local PC execution tools"));
@@ -5580,16 +5582,13 @@ QString AiAssistantPanel::messageText() const {
     return (m_messageEdit != nullptr) ? m_messageEdit->toPlainText().trimmed() : QString();
 }
 
-ai::AiPromptAssembly AiAssistantPanel::buildPromptAssembly() const {
+ai::AiPromptAssembly AiAssistantPanel::buildPromptAssembly(ai::AiAccessMode mode) const {
     ai::AiPromptAssemblyInput input;
-    input.access_mode_label = currentAccessModeLabel();
+    input.access_mode = mode;
     input.workflow_catalog = workflowCatalogInstructions(m_workflowStore.get());
     input.skill_catalog = skillCatalogInstructions(m_skillStore.get());
     input.context_notes = contextInstructions();
     input.pending_steering_messages = m_pendingSteeringMessages;
-    input.local_execution_enabled = currentAccessMode() != AccessMode::ChatAndResearch;
-    input.assisted_full_access = currentAccessMode() == AccessMode::AssistedFullAccess;
-    input.unattended_full_access = currentAccessMode() == AccessMode::UnattendedFullAccess;
     if (m_conversationStore) {
         QString error;
         input.session_memory = m_conversationStore->memoryText(kSessionMemoryMaxChars, &error);
@@ -5603,8 +5602,15 @@ ai::AiPromptAssembly AiAssistantPanel::buildPromptAssembly() const {
     return ai::AiPromptAssembler::assemble(input);
 }
 
-void AiAssistantPanel::applyPromptAssembly(ai::OpenAIResponseRequest& request) const {
-    const ai::AiPromptAssembly assembly = buildPromptAssembly();
+void AiAssistantPanel::applyPromptAssembly(ai::OpenAIResponseRequest& request,
+                                           ai::AiAccessMode mode) const {
+    const ai::AiPromptAssembly assembly = buildPromptAssembly(mode);
+    if (!assembly.ok()) {
+        request.validation_error = assembly.error_message;
+        request.instructions.clear();
+        request.untrusted_input_messages.clear();
+        return;
+    }
     request.instructions = assembly.trusted_instructions;
     if (!assembly.untrusted_user_context.trimmed().isEmpty()) {
         request.untrusted_input_messages.append(ai::OpenAIInputMessage{
@@ -6106,8 +6112,15 @@ bool AiAssistantPanel::authorizeCommandForAccessMode(const PendingToolCallContex
     // human confirmation -- even Unattended mode cannot auto-run them. Assisted mode
     // confirms every command as before.
     const bool catastrophic = plan.policy_decision.catastrophic_change;
-    const AccessMode mode = currentAccessMode();
-    if (catastrophic || mode == AccessMode::AssistedFullAccess) {
+    const ai::AiAccessMode mode = currentAccessMode();
+    if (!ai::aiAccessModeAllowsLocalExecution(mode)) {
+        return rejectCommandBeforeRun(context,
+                                      output,
+                                      QStringLiteral("{\"error\":\"Local execution disabled\"}"),
+                                      QStringLiteral("policy_denied"),
+                                      tr("Local command execution is disabled"));
+    }
+    if (catastrophic || mode == ai::AiAccessMode::AssistedFullAccess) {
         if (!confirmCommandWithUser(plan.shell_label,
                                     plan.display_preview,
                                     plan.risky_change || catastrophic,
@@ -6120,7 +6133,7 @@ bool AiAssistantPanel::authorizeCommandForAccessMode(const PendingToolCallContex
         }
         return true;
     }
-    if (mode == AccessMode::UnattendedFullAccess &&
+    if (mode == ai::AiAccessMode::UnattendedFullAccess &&
         !offerRestorePointIfNeeded(plan.display_preview, plan.risky_change, catastrophic)) {
         return rejectCommandBeforeRun(
             context,
@@ -7172,7 +7185,7 @@ void AiAssistantPanel::connectWorkflowPowerShellCancelPolling(QTimer* cancel_tim
 }
 
 QJsonObject AiAssistantPanel::runPackageManagerTool(const QJsonObject& args) {
-    if (currentAccessMode() == AccessMode::ChatAndResearch) {
+    if (!ai::aiAccessModeAllowsLocalExecution(currentAccessMode())) {
         return toolError(QStringLiteral("Local package management is disabled in Chat mode"));
     }
     if (!m_chocoManager || !m_chocoManager->isInitialized()) {
@@ -7200,11 +7213,14 @@ QJsonObject AiAssistantPanel::runProviderGatewayTool(const QJsonObject& args) {
     gateway.setMcpSessionPool(&m_mcpSessionPool);
     // One snapshot for the whole call: reading the mode twice can mix two different
     // modes into one access decision if it changes between the reads.
-    const AccessMode mode = currentAccessMode();
+    const ai::AiAccessMode mode = currentAccessMode();
+    if (!ai::aiAccessModeIsValid(mode)) {
+        return toolError(QStringLiteral("Provider gateway is disabled: invalid access mode"));
+    }
     ai::AiProviderGatewayToolAccess access = ai::AiProviderGatewayToolAccess::ChatAndResearch;
-    if (mode == AccessMode::AssistedFullAccess) {
+    if (mode == ai::AiAccessMode::AssistedFullAccess) {
         access = ai::AiProviderGatewayToolAccess::AssistedFullAccess;
-    } else if (mode == AccessMode::UnattendedFullAccess) {
+    } else if (mode == ai::AiAccessMode::UnattendedFullAccess) {
         access = ai::AiProviderGatewayToolAccess::UnattendedFullAccess;
     }
 
@@ -7424,6 +7440,12 @@ bool isUngatedReadOnlyAction(const AppActionDescriptor& descriptor) {
 
 std::optional<QJsonObject> AiAssistantPanel::appActionRunGate(const AppActionDescriptor& descriptor,
                                                               const QString& detail) {
+    const ai::AiAccessMode mode = currentAccessMode();
+    if (!ai::aiAccessModeIsValid(mode)) {
+        QJsonObject result = toolError(tr("App actions are blocked: invalid access mode"));
+        result[QStringLiteral("failure_class")] = QStringLiteral("policy_blocked");
+        return result;
+    }
     if (isUngatedReadOnlyAction(descriptor)) {
         return std::nullopt;
     }
@@ -7438,15 +7460,14 @@ std::optional<QJsonObject> AiAssistantPanel::appActionRunGate(const AppActionDes
     // image flash), which ALWAYS requires an explicit human confirm even in Unattended
     // (a restore point cannot undo a flashed/repartitioned disk).
     const bool catastrophic = descriptor.catastrophic;
-    const AccessMode mode = currentAccessMode();
-    if (mode == AccessMode::ChatAndResearch) {
+    if (!ai::aiAccessModeAllowsLocalExecution(mode)) {
         QJsonObject result = toolError(
             tr("App action '%1' changes the system and is blocked in a chat/research session")
                 .arg(descriptor.title));
         result[QStringLiteral("failure_class")] = QStringLiteral("policy_blocked");
         return result;
     }
-    if (catastrophic || mode == AccessMode::AssistedFullAccess) {
+    if (catastrophic || mode == ai::AiAccessMode::AssistedFullAccess) {
         if (!confirmCommandWithUser(tr("app action"), preview, true, catastrophic)) {
             QJsonObject result =
                 toolError(tr("App action '%1' was declined").arg(descriptor.title));
@@ -7835,11 +7856,11 @@ QJsonObject AiAssistantPanel::authorizePackageManagerChange(const QString& previ
     // ONE immutable snapshot decides the whole authorization. Re-reading the mode per
     // branch lets a switch to Chat between the two reads fall through BOTH of them and
     // authorize the install/uninstall with no confirm and no restore point.
-    const AccessMode mode = currentAccessMode();
-    if (mode == AccessMode::ChatAndResearch) {
+    const ai::AiAccessMode mode = currentAccessMode();
+    if (!ai::aiAccessModeAllowsLocalExecution(mode)) {
         return toolError(QStringLiteral("Local package management is disabled in Chat mode"));
     }
-    if (mode == AccessMode::AssistedFullAccess) {
+    if (mode == ai::AiAccessMode::AssistedFullAccess) {
         if (!confirmCommandWithUser(tr("SAK Package Manager"), preview, true)) {
             return toolError(QStringLiteral("User declined SAK package manager operation"));
         }
@@ -8010,7 +8031,7 @@ QJsonObject AiAssistantPanel::runPackageManagerChange(const QString& operation,
     return result;
 }
 QJsonObject AiAssistantPanel::runOfflineDownloaderTool(const QJsonObject& args) {
-    if (currentAccessMode() == AccessMode::ChatAndResearch) {
+    if (!ai::aiAccessModeAllowsLocalExecution(currentAccessMode())) {
         return toolError(QStringLiteral("Local offline downloader is disabled in Chat mode"));
     }
     if (!m_offlineWorker || !m_packageListManager) {
@@ -8226,13 +8247,16 @@ bool AiAssistantPanel::authorizeOfflineOperation(const QString& operation,
     // ONE immutable snapshot decides the whole authorization (mirrors
     // authorizePackageManagerChange): re-reading the mode per branch lets a switch to
     // Chat between the reads fall through every branch and authorize with no gate.
-    const AccessMode mode = currentAccessMode();
+    const ai::AiAccessMode mode = currentAccessMode();
+    if (!ai::aiAccessModeAllowsLocalExecution(mode)) {
+        return false;
+    }
     if (operation != QLatin1String("install_bundle")) {
         // A model-chosen output_dir writes downloaded installers OUTSIDE the session's
         // own artifact directory from an elevated process, so it is confirmed like any
         // other local change instead of being written wherever the model asked.
         const QString requested_dir = args.value(QStringLiteral("output_dir")).toString().trimmed();
-        if (requested_dir.isEmpty() || mode != AccessMode::AssistedFullAccess) {
+        if (requested_dir.isEmpty() || mode != ai::AiAccessMode::AssistedFullAccess) {
             return true;
         }
         return confirmCommandWithUser(
@@ -8243,13 +8267,13 @@ bool AiAssistantPanel::authorizeOfflineOperation(const QString& operation,
     const QString manifest_path = args.value(QStringLiteral("manifest_path")).toString().trimmed();
     const QString preview =
         tr("Install offline Chocolatey deployment bundle from '%1'").arg(manifest_path);
-    if (mode == AccessMode::AssistedFullAccess) {
+    if (mode == ai::AiAccessMode::AssistedFullAccess) {
         return confirmCommandWithUser(tr("SAK Offline Downloader"), preview, true);
     }
-    if (mode == AccessMode::UnattendedFullAccess) {
+    if (mode == ai::AiAccessMode::UnattendedFullAccess) {
         return offerRestorePointIfNeeded(preview, true);
     }
-    return true;
+    return false;
 }
 
 // Wait for a blocking offline worker to finish. The worker releases @p done on its
@@ -8907,10 +8931,11 @@ void AiAssistantPanel::continueAfterToolCalls(const ai::OpenAIResponseResult& re
 
 ai::OpenAIResponseRequest AiAssistantPanel::buildToolContinuationRequest(
     const ai::OpenAIResponseResult& result, QVector<ai::OpenAIFunctionOutput> outputs) const {
+    const ai::AiAccessMode mode = currentAccessMode();
     ai::OpenAIResponseRequest request;
     request.api_key = apiKey();
     request.model = m_modelCombo->currentText().trimmed();
-    applyPromptAssembly(request);
+    applyPromptAssembly(request, mode);
     request.function_outputs = std::move(outputs);
     request.reasoning_effort = m_reasoningEffortCombo->currentText().trimmed().toLower();
     request.previous_response_id = result.id;
@@ -8920,7 +8945,7 @@ ai::OpenAIResponseRequest AiAssistantPanel::buildToolContinuationRequest(
     }
     applyContextWindowPolicy(request);
     request.enable_web_search = true;
-    request.enable_local_tools = currentAccessMode() != AccessMode::ChatAndResearch;
+    request.enable_local_tools = ai::aiAccessModeAllowsLocalExecution(mode);
     return request;
 }
 
@@ -8937,32 +8962,36 @@ void AiAssistantPanel::finishToolTurnAndContinue() {
     });
 }
 
-AiAssistantPanel::AccessMode AiAssistantPanel::currentAccessMode() const {
+ai::AiAccessMode AiAssistantPanel::currentAccessMode() const {
     // Reads the access-mode combo (a widget); marshal when a tool handler calls
     // it from a worker thread. currentAccessToolPolicy() routes through here too.
     if (!isOnGuiThread()) {
         return runOnGuiThread([this]() { return currentAccessMode(); });
     }
     if (m_accessModeCombo == nullptr) {
-        return AccessMode::AssistedFullAccess;
+        return ai::AiAccessMode::Invalid;
     }
 
-    switch (m_accessModeCombo->currentIndex()) {
-    case 0:
-        return AccessMode::ChatAndResearch;
-    case kAccessModeUnattendedComboIndex:
-        return AccessMode::UnattendedFullAccess;
-    case 1:
-    default:
-        return AccessMode::AssistedFullAccess;
+    const QVariant mode_value = m_accessModeCombo->currentData();
+    if (mode_value.typeId() != QMetaType::Int) {
+        return ai::AiAccessMode::Invalid;
     }
+    const auto mode = static_cast<ai::AiAccessMode>(mode_value.toInt());
+    return ai::aiAccessModeIsValid(mode) ? mode : ai::AiAccessMode::Invalid;
 }
 
 QString AiAssistantPanel::currentAccessModeLabel() const {
-    if (m_accessModeCombo == nullptr) {
+    switch (currentAccessMode()) {
+    case ai::AiAccessMode::ChatAndResearch:
+        return tr("Chat and Research");
+    case ai::AiAccessMode::AssistedFullAccess:
         return tr("Assisted Full Access");
+    case ai::AiAccessMode::UnattendedFullAccess:
+        return tr("Unattended Full Access");
+    case ai::AiAccessMode::Invalid:
+        return tr("Invalid (local execution disabled)");
     }
-    return m_accessModeCombo->currentText();
+    return tr("Invalid (local execution disabled)");
 }
 
 QString AiAssistantPanel::contextItemKindLabel(ContextItem::Type type) {
@@ -9388,16 +9417,20 @@ void AiAssistantPanel::updateAccessStatus() {
     }
 
     switch (currentAccessMode()) {
-    case AccessMode::ChatAndResearch:
+    case ai::AiAccessMode::ChatAndResearch:
         m_accessStatusLabel->setText(tr("Local execution disabled"));
         m_accessStatusLabel->setStyleSheet(statusLabelStyle(sak::ui::kStatusColorIdle));
         break;
-    case AccessMode::AssistedFullAccess:
+    case ai::AiAccessMode::AssistedFullAccess:
         m_accessStatusLabel->setText(tr("Approval required for commands"));
         m_accessStatusLabel->setStyleSheet(statusLabelStyle(sak::ui::kStatusColorWarning));
         break;
-    case AccessMode::UnattendedFullAccess:
+    case ai::AiAccessMode::UnattendedFullAccess:
         m_accessStatusLabel->setText(tr("Unattended execution enabled"));
+        m_accessStatusLabel->setStyleSheet(statusLabelStyle(sak::ui::kStatusColorError));
+        break;
+    case ai::AiAccessMode::Invalid:
+        m_accessStatusLabel->setText(tr("Local execution disabled: invalid access mode"));
         m_accessStatusLabel->setStyleSheet(statusLabelStyle(sak::ui::kStatusColorError));
         break;
     }
@@ -9656,14 +9689,15 @@ void AiAssistantPanel::clearPendingGateIfResolved(const ai::AiHumanGate& gate) {
 
 ai::AiToolPolicy AiAssistantPanel::currentAccessToolPolicy() const {
     switch (currentAccessMode()) {
-    case AccessMode::ChatAndResearch:
+    case ai::AiAccessMode::Invalid:
+    case ai::AiAccessMode::ChatAndResearch:
         return ai::AiToolPolicy::NoLocalExecution;
-    case AccessMode::AssistedFullAccess:
+    case ai::AiAccessMode::AssistedFullAccess:
         return ai::AiToolPolicy::MutatingRequiresLease;
-    case AccessMode::UnattendedFullAccess:
-    default:
+    case ai::AiAccessMode::UnattendedFullAccess:
         return ai::AiToolPolicy::MutatingRequiresLease;
     }
+    return ai::AiToolPolicy::NoLocalExecution;
 }
 
 void AiAssistantPanel::registerToolDispatcherHandlers() {
@@ -10533,6 +10567,10 @@ bool workflowPhaseNeedsGate(const ai::AiToolPolicyDecision& decision,
 
 bool AiAssistantPanel::authorizeWorkflowToolPhase(const ai::WorkflowPhase& phase,
                                                   WorkflowToolDispatchPlan& plan) {
+    const ai::AiAccessMode mode = currentAccessMode();
+    if (!ai::aiAccessModeAllowsLocalExecution(mode)) {
+        return false;
+    }
     const auto decision = ai::evaluateToolPolicy(plan.policy, plan.request);
     // A catastrophic/irreversible workflow phase (disk format, partition wipe,
     // boot-config edit, backup/shadow-copy deletion) must gate even if it is not
@@ -10552,7 +10590,7 @@ bool AiAssistantPanel::authorizeWorkflowToolPhase(const ai::WorkflowPhase& phase
     const QString label = phase.tool == QLatin1String("run_powershell")
                               ? QStringLiteral("workflow PowerShell")
                               : QStringLiteral("workflow %1").arg(phase.tool);
-    if (catastrophic || currentAccessMode() == AccessMode::AssistedFullAccess) {
+    if (catastrophic || mode == ai::AiAccessMode::AssistedFullAccess) {
         // confirmCommandWithUser also offers the restore point (re-offered for a
         // catastrophic phase even if one was already offered this session).
         if (!confirmCommandWithUser(label, plan.request.command_preview, true, catastrophic)) {
@@ -10566,13 +10604,13 @@ bool AiAssistantPanel::authorizeWorkflowToolPhase(const ai::WorkflowPhase& phase
         }
         return true;
     }
-    if (currentAccessMode() == AccessMode::UnattendedFullAccess) {
+    if (mode == ai::AiAccessMode::UnattendedFullAccess) {
         // Reached only for a non-catastrophic risky phase (catastrophic took the confirm
         // branch above): the restore-point offer is not a human confirmation and never
         // sets human_confirmed, so a catastrophic phase can never run unconfirmed.
         return offerRestorePointIfNeeded(plan.request.command_preview, true, catastrophic);
     }
-    return true;
+    return false;
 }
 class AiAssistantPanel::PanelToolExecutor : public ai::IAiToolExecutor {
 public:
@@ -10584,17 +10622,12 @@ public:
                              const ai::CancellationToken& token) override {
         const QPointer<AiAssistantPanel> panel = m_panel;
         if (!panel) {
-            QJsonObject err;
-            err[QStringLiteral("success")] = false;
-            err[QStringLiteral("error_message")] = QStringLiteral("Panel gone");
-            return err;
+            return toolError(QStringLiteral("Panel gone"));
         }
         if (token.isValid() && token.isCancellationRequested()) {
-            QJsonObject err;
-            err[QStringLiteral("success")] = false;
-            err[QStringLiteral("cancelled")] = true;
-            err[QStringLiteral("error_message")] = token.cancelReason();
-            return err;
+            QJsonObject cancelled = toolError(token.cancelReason());
+            cancelled[QStringLiteral("cancelled")] = true;
+            return cancelled;
         }
         // Run the dispatch on the workflow worker thread so a blocking tool phase
         // (PowerShell/package/offline) does not freeze the GUI (P10-04). The
@@ -12353,10 +12386,11 @@ void AiAssistantPanel::appendUserTurn(const QString& message,
 }
 
 ai::OpenAIResponseRequest AiAssistantPanel::buildChatRequest(const QString& message) const {
+    const ai::AiAccessMode mode = currentAccessMode();
     ai::OpenAIResponseRequest request;
     request.api_key = apiKey();
     request.model = m_modelCombo->currentText().trimmed();
-    applyPromptAssembly(request);
+    applyPromptAssembly(request, mode);
     request.input = message;
     request.attachments = buildContextAttachments();
     request.reasoning_effort = m_reasoningEffortCombo->currentText().trimmed().toLower();
@@ -12367,7 +12401,7 @@ ai::OpenAIResponseRequest AiAssistantPanel::buildChatRequest(const QString& mess
     }
     applyContextWindowPolicy(request);
     request.enable_web_search = true;
-    request.enable_local_tools = currentAccessMode() != AccessMode::ChatAndResearch;
+    request.enable_local_tools = ai::aiAccessModeAllowsLocalExecution(mode);
     return request;
 }
 

@@ -20,6 +20,7 @@ ai_run_state_store.json
 ai_skill_store.json
 ai_subagent_tool_executor.json
 ai_tool_dispatcher.json
+ai_tool_error.json
 ai_tool_health_ledger.json
 ai_tool_loop_detector.json
 ai_tool_result_recorder.json

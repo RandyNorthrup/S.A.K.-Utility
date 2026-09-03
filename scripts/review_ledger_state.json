@@ -1,5 +1,5 @@
 {
-  "head_commit": "68d8b01642f2d226c85f044aa412971a0cbf693c",
+  "head_commit": "88a236b9f53b1cc0a778f687592d36acfe91ddf1",
   "unit_rule": "include/**.h|.hpp, src/**.cpp|.h|.hpp, tests/**.cpp|.h|.mjs, scripts/**.py|.ps1|.sh, browser/**.js",
   "units": {
     "browser/extension/background.js": {
@@ -103,10 +103,13 @@
       "status": "reviewed"
     },
     "include/sak/advanced_uninstall_controller.h": {
+      "brief": "docs/review_briefs/include_sak_advanced_uninstall_controller.md",
+      "evidence": "driver",
       "group": "include",
       "previous_evidence": "driver",
-      "previous_review_blob": "a3ada2e028151759e04123f8a3db2c2b9f6e181d",
-      "status": "pending"
+      "previous_review_blob": "d063dc28c40f5f5f8ea7f6abf799de8c4b851b7c",
+      "reviewed_blob": "d093197ebf7d5725663da6a6c4ff20e5f7355beb",
+      "status": "reviewed"
     },
     "include/sak/advanced_uninstall_panel.h": {
       "group": "include",
@@ -346,6 +349,10 @@
       "status": "pending"
     },
     "include/sak/ai/ai_tool_dispatcher.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/ai/ai_tool_error.h": {
       "group": "include",
       "status": "pending"
     },

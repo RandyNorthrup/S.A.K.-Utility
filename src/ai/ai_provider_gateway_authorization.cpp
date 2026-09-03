@@ -3,24 +3,11 @@
 
 #include "sak/ai/ai_provider_gateway_authorization.h"
 
+#include "sak/ai/ai_tool_error.h"
+
 namespace sak::ai {
 
 namespace {
-
-QJsonObject toolError(const QString& message) {
-    QJsonObject result;
-    result[QStringLiteral("success")] = false;
-    result[QStringLiteral("error_message")] = message;
-    return result;
-}
-
-bool assisted(AiProviderGatewayToolAccess access) {
-    return access == AiProviderGatewayToolAccess::AssistedFullAccess;
-}
-
-bool unattended(AiProviderGatewayToolAccess access) {
-    return access == AiProviderGatewayToolAccess::UnattendedFullAccess;
-}
 
 // Tools carrying requires_confirmation span browser/desktop input, clipboard writes,
 // extension changes, and unclassified operations. They demand explicit human confirmation in
@@ -46,7 +33,7 @@ QJsonObject authorizeWin32McpCall(const AiProviderGateway::Win32McpCallPlan& pla
     if (plan.requires_confirmation) {
         return requireHardConfirmation(plan, callbacks);
     }
-    if (assisted(access) && !plan.read_only) {
+    if (providerGatewayAccessIsAssisted(access) && !plan.read_only) {
         if (!callbacks.confirm) {
             return toolError(QStringLiteral("Win32 MCP confirmation callback is not configured"));
         }
@@ -55,7 +42,7 @@ QJsonObject authorizeWin32McpCall(const AiProviderGateway::Win32McpCallPlan& pla
             return toolError(QStringLiteral("User declined Win32 MCP automation"));
         }
     }
-    if (unattended(access) && plan.high_risk) {
+    if (providerGatewayAccessIsUnattended(access) && plan.high_risk) {
         if (!callbacks.offer_restore_point) {
             return toolError(QStringLiteral("Win32 MCP restore-point callback is not configured"));
         }

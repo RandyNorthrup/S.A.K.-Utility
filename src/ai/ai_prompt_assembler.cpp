@@ -7,6 +7,20 @@ namespace sak::ai {
 
 namespace {
 
+QString accessModeLabel(AiAccessMode mode) {
+    switch (mode) {
+    case AiAccessMode::ChatAndResearch:
+        return QStringLiteral("Chat and Research");
+    case AiAccessMode::AssistedFullAccess:
+        return QStringLiteral("Assisted Full Access");
+    case AiAccessMode::UnattendedFullAccess:
+        return QStringLiteral("Unattended Full Access");
+    case AiAccessMode::Invalid:
+        return {};
+    }
+    return {};
+}
+
 void appendCommonGuardrails(QStringList& lines) {
     lines << QStringLiteral("You are the S.A.K. Utility AI Assistant for Windows PC technicians.");
     lines << QStringLiteral("Be practical, concise, and verify fixes when tools are available.");
@@ -308,7 +322,8 @@ void appendUntrustedContextSections(QStringList& lines, const AiPromptAssemblyIn
     // which is only advertised when local tools are enabled. Only surface the
     // catalog when that tool will actually be available, or the prompt would tell
     // the model to call a tool that is absent (self-contradiction in chat mode).
-    if (input.local_execution_enabled && !input.skill_catalog.trimmed().isEmpty()) {
+    if (aiAccessModeAllowsLocalExecution(input.access_mode) &&
+        !input.skill_catalog.trimmed().isEmpty()) {
         lines << input.skill_catalog.trimmed();
     }
     if (!input.context_notes.trimmed().isEmpty()) {
@@ -329,18 +344,13 @@ void appendUntrustedContextSections(QStringList& lines, const AiPromptAssemblyIn
 }
 
 void appendAccessModeGuidance(QStringList& lines, const AiPromptAssemblyInput& input) {
-    if (!input.local_execution_enabled) {
+    switch (input.access_mode) {
+    case AiAccessMode::ChatAndResearch:
         lines << QStringLiteral(
             "Local execution is disabled for this session. Do not call local tools or imply that "
             "local changes were made; provide research, recommendations, and safe next steps.");
         return;
-    }
-    // Fail closed on a contradictory or underspecified access mode: only a clean
-    // unattended-only selection unlocks no-per-command-confirmation. Both flags set,
-    // neither flag set, or assisted selected all fall through to the confirm-first
-    // (assisted) guidance -- the more restrictive of the two -- so a malformed
-    // combination can never silently produce weaker or no guidance.
-    if (input.unattended_full_access && !input.assisted_full_access) {
+    case AiAccessMode::UnattendedFullAccess:
         lines << QStringLiteral(
             "Unattended full access is selected. You may run local commands through tools without "
             "per-command confirmation, but destructive or privacy-sensitive changes still need "
@@ -349,28 +359,45 @@ void appendAccessModeGuidance(QStringList& lines, const AiPromptAssemblyInput& i
             "the bootloader -- always require explicit human confirmation even in Unattended mode, "
             "whether run through an app action or a raw shell command.");
         return;
+    case AiAccessMode::AssistedFullAccess:
+        lines << QStringLiteral(
+            "Run read-only diagnostic commands through tools. For risky changes, explain the "
+            "evidence, exact target, rollback/restore-point option, and approval need before "
+            "proposing or running the action.");
+        return;
+    case AiAccessMode::Invalid:
+        return;
     }
-    lines << QStringLiteral(
-        "Run read-only diagnostic commands through tools. For risky changes, explain the "
-        "evidence, exact target, rollback/restore-point option, and approval need before "
-        "proposing or running the action.");
 }
 
 }  // namespace
 
+bool aiAccessModeIsValid(AiAccessMode mode) noexcept {
+    return mode == AiAccessMode::ChatAndResearch || mode == AiAccessMode::AssistedFullAccess ||
+           mode == AiAccessMode::UnattendedFullAccess;
+}
+
+bool aiAccessModeAllowsLocalExecution(AiAccessMode mode) noexcept {
+    return mode == AiAccessMode::AssistedFullAccess || mode == AiAccessMode::UnattendedFullAccess;
+}
+
 AiPromptAssembly AiPromptAssembler::assemble(const AiPromptAssemblyInput& input) {
+    if (!aiAccessModeIsValid(input.access_mode)) {
+        return AiPromptAssembly{{}, {}, QStringLiteral("Invalid AI access mode")};
+    }
     QStringList trusted_lines = baseGuardrails();
-    if (input.local_execution_enabled) {
+    if (aiAccessModeAllowsLocalExecution(input.access_mode)) {
         appendLocalGuardrails(trusted_lines);
     }
-    trusted_lines
-        << QStringLiteral("Access mode selected by user: %1.").arg(input.access_mode_label);
+    trusted_lines << QStringLiteral("Access mode selected by user: %1.")
+                         .arg(accessModeLabel(input.access_mode));
     appendAccessModeGuidance(trusted_lines, input);
 
     QStringList untrusted_lines;
     appendUntrustedContextSections(untrusted_lines, input);
     return AiPromptAssembly{trusted_lines.join(QLatin1Char('\n')),
-                            untrusted_lines.join(QLatin1Char('\n'))};
+                            untrusted_lines.join(QLatin1Char('\n')),
+                            {}};
 }
 
 }  // namespace sak::ai

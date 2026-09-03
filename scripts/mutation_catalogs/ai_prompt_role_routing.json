@@ -19,6 +19,46 @@
       "replace": "    if (assembly.untrusted_user_context.trimmed().isEmpty()) {",
       "expect": "killed",
       "why": "storedMemoryAndSteeringStayInUserRole requires stored memory and steering to remain present as a typed user-role message for initial and tool-continuation requests."
+    },
+    {
+      "id": "display-text-selects-access-policy",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "    const QVariant mode_value = m_accessModeCombo->currentData();",
+      "replace": "    const QVariant mode_value = m_accessModeCombo->currentText() == QStringLiteral(\"Unattended Full Access\") ? static_cast<int>(ai::AiAccessMode::UnattendedFullAccess) : static_cast<int>(ai::AiAccessMode::ChatAndResearch);",
+      "expect": "killed",
+      "why": "accessModePolicyUsesTypedValueNotDisplayText changes localized display labels and requires item data, not text, to choose the trusted policy."
+    },
+    {
+      "id": "string-item-data-is-coerced-to-access-mode",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "    if (mode_value.typeId() != QMetaType::Int) {",
+      "replace": "    if (!mode_value.canConvert<int>()) {",
+      "expect": "killed",
+      "why": "invalidAccessModeValueFailsClosed requires string or otherwise wrong-typed combo data to be refused instead of coerced into a privileged enum value."
+    },
+    {
+      "id": "out-of-domain-access-mode-is-returned",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "    return ai::aiAccessModeIsValid(mode) ? mode : ai::AiAccessMode::Invalid;",
+      "replace": "    return mode;",
+      "expect": "killed",
+      "why": "invalidAccessModeValueFailsClosed requires an out-of-domain integer cast to normalize to Invalid before any policy or prompt consumer sees it."
+    },
+    {
+      "id": "invalid-access-mode-gets-mutating-policy",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "ai::AiToolPolicy AiAssistantPanel::currentAccessToolPolicy() const {",
+      "replace": "ai::AiToolPolicy AiAssistantPanel::currentAccessToolPolicy() const {\n    if (currentAccessMode() == ai::AiAccessMode::Invalid) { return ai::AiToolPolicy::MutatingRequiresLease; }",
+      "expect": "killed",
+      "why": "invalidAccessModeValueFailsClosed requires invalid UI mode data to map to NoLocalExecution, never a mutating policy."
+    },
+    {
+      "id": "invalid-prompt-error-is-not-propagated",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "        request.validation_error = assembly.error_message;",
+      "replace": "        request.validation_error.clear();",
+      "expect": "killed",
+      "why": "invalidAccessModeValueFailsClosed requires the panel request to carry the assembler failure so the OpenAI client refuses it before serialization or network access."
     }
   ]
 }

@@ -50,10 +50,12 @@ private Q_SLOTS:
 void AiWorkflowPowerShellToolRunnerTests::rejectsMissingCommand() {
     const QJsonObject result = sak::ai::AiWorkflowPowerShellToolRunner::run(QJsonObject{}, {}, {});
 
-    QVERIFY(!result.value(QStringLiteral("success")).toBool(true));
-    QVERIFY(result.value(QStringLiteral("error_message"))
-                .toString()
-                .contains(QStringLiteral("requires explicit arguments.command")));
+    QCOMPARE(result.size(), 2);
+    QVERIFY(result.value(QStringLiteral("success")).isBool());
+    QCOMPARE(result.value(QStringLiteral("success")).toBool(true), false);
+    QVERIFY(result.value(QStringLiteral("error_message")).isString());
+    QCOMPARE(result.value(QStringLiteral("error_message")).toString(),
+             QStringLiteral("Workflow PowerShell phase requires explicit arguments.command"));
 }
 
 void AiWorkflowPowerShellToolRunnerTests::requiresExecutor() {

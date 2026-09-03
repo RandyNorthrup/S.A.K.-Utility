@@ -84,6 +84,7 @@ class AiToolHealthLedger;
 class AiLeaseManager;
 class AiAsyncToolRunner;
 struct AiPromptAssembly;
+enum class AiAccessMode;
 }  // namespace ai
 
 // Test-only seam: when installed, replaces the modal approval / restore-point
@@ -162,12 +163,6 @@ private Q_SLOTS:
     void onBrokerFinished(const QString& command_id, const sak::ai::AiCommandResult& result);
 
 private:
-    enum class AccessMode {
-        ChatAndResearch,
-        AssistedFullAccess,
-        UnattendedFullAccess,
-    };
-
     enum class BusyPromptAction {
         ApplySteering,
         QueueAfterRun,
@@ -355,8 +350,8 @@ private:
     [[nodiscard]] bool filterMessageEditKeyPress(QEvent* event);
     [[nodiscard]] bool handleComposerKeyAction(int action);
     [[nodiscard]] bool handleComposerHistoryKeyAction(int action);
-    [[nodiscard]] ai::AiPromptAssembly buildPromptAssembly() const;
-    void applyPromptAssembly(ai::OpenAIResponseRequest& request) const;
+    [[nodiscard]] ai::AiPromptAssembly buildPromptAssembly(ai::AiAccessMode mode) const;
+    void applyPromptAssembly(ai::OpenAIResponseRequest& request, ai::AiAccessMode mode) const;
     [[nodiscard]] ai::OpenAIResponseRequest buildToolContinuationRequest(
         const ai::OpenAIResponseResult& result, QVector<ai::OpenAIFunctionOutput> outputs) const;
     [[nodiscard]] QString contextInstructions() const;
@@ -643,7 +638,7 @@ private:
     void continueAfterToolCalls(const ai::OpenAIResponseResult& result,
                                 QVector<ai::OpenAIFunctionOutput> outputs);
 
-    [[nodiscard]] AccessMode currentAccessMode() const;
+    [[nodiscard]] ai::AiAccessMode currentAccessMode() const;
     [[nodiscard]] QString currentAccessModeLabel() const;
     [[nodiscard]] static QString contextItemLabel(const ContextItem& item);
     [[nodiscard]] static QString contextItemKindLabel(ContextItem::Type type);

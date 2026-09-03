@@ -35,6 +35,7 @@ private Q_SLOTS:
     void buildPayload_untrustedMessagesUseOnlyUserRole();
     void buildPayload_functionOutputsRetainUntrustedUserContext();
     void rejectsMalformedUntrustedInputMessages();
+    void rejectsUpstreamValidationError();
     void buildPayload_functionToolsUseStrictSchemas();
     void buildPayload_providerGatewayArgumentsAreStrictSchemaSafe();
     void buildPayload_packageToolWarnsAgainstScanInstalls();
@@ -815,6 +816,28 @@ void OpenAIResponsesClientTests::rejectsMalformedUntrustedInputMessages() {
         {sak::ai::OpenAIInputMessageRole::User, QStringLiteral("  \n\t ")},
     };
     QVERIFY(sak::ai::OpenAIResponsesClient::buildResponsePayloadForTesting(request).isEmpty());
+}
+
+void OpenAIResponsesClientTests::rejectsUpstreamValidationError() {
+    sak::ai::OpenAIResponseRequest request;
+    request.api_key = QStringLiteral("test-key-") + QString(32, QLatin1Char('x'));
+    request.model = QStringLiteral("gpt-5.5");
+    request.input = QStringLiteral("Current user request");
+    request.validation_error = QStringLiteral("Invalid AI access mode");
+
+    QVERIFY(sak::ai::OpenAIResponsesClient::buildResponsePayloadForTesting(request).isEmpty());
+    sak::ai::OpenAIResponsesClient client;
+    QSignalSpy failed_spy(&client, &sak::ai::OpenAIResponsesClient::requestFailed);
+    client.createResponse(request);
+    QCOMPARE(failed_spy.count(), 1);
+    QCOMPARE(failed_spy.first().at(0).toString(), request.validation_error);
+    QVERIFY(!client.isBusy());
+
+    QSignalSpy count_failed_spy(&client, &sak::ai::OpenAIResponsesClient::inputTokenCountFailed);
+    client.countInputTokens(request, QStringLiteral("invalid_access_mode"));
+    QCOMPARE(count_failed_spy.count(), 1);
+    QCOMPARE(count_failed_spy.first().at(0).toString(), QStringLiteral("invalid_access_mode"));
+    QCOMPARE(count_failed_spy.first().at(1).toString(), request.validation_error);
 }
 
 void OpenAIResponsesClientTests::buildPayload_functionToolsUseStrictSchemas() {

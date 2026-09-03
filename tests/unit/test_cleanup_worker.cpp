@@ -828,7 +828,7 @@ void TestCleanupWorker::verifiedDelete_failureIsSurfacedToCallers() {
     QVERIFY(workerSource.contains(QStringLiteral("Q_EMIT itemCleanupError(")));
     QVERIFY(controllerHeader.contains(QStringLiteral("void itemCleanupError(")));
     QVERIFY(controller.contains(QStringLiteral("&CleanupWorker::itemCleanupError")));
-    QVERIFY(controller.contains(QStringLiteral("&AdvancedUninstallController::itemCleanupError")));
+    QVERIFY(controller.contains(QStringLiteral("Q_EMIT itemCleanupError(item")));
     QVERIFY(panel.contains(QStringLiteral("&AdvancedUninstallPanel::onItemCleanupError")));
     QVERIFY(panel.contains(QStringLiteral("tr(\"Cleanup Incomplete\")")));
     QVERIFY(panel.contains(QStringLiteral("the cleanup log, and retry.")));

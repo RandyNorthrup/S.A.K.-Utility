@@ -288,6 +288,8 @@ void AdvancedUninstallTypesTests::queueItem_defaultConstruction() {
     QCOMPARE(item.scanLevel, sak::ScanLevel::Moderate);
     QVERIFY(item.autoCleanSafeLeftovers);
     QCOMPARE(item.status, sak::UninstallQueueItem::Status::Queued);
+    QCOMPARE(item.errorCode, 0);
+    QVERIFY(item.errorMessage.isEmpty());
 }
 
 void AdvancedUninstallTypesTests::queueItem_statusEnum() {
@@ -307,6 +309,8 @@ void AdvancedUninstallTypesTests::queueItem_valueSemantics() {
     original.autoCleanSafeLeftovers = false;
     original.status = sak::UninstallQueueItem::Status::InProgress;
     original.report.programName = "Queued App";
+    original.errorCode = 73;
+    original.errorMessage = QStringLiteral("exact worker failure");
 
     sak::UninstallQueueItem copy = original;
     QCOMPARE(copy.program.displayName, "Queued App");
@@ -314,6 +318,8 @@ void AdvancedUninstallTypesTests::queueItem_valueSemantics() {
     QVERIFY(!copy.autoCleanSafeLeftovers);
     QCOMPARE(copy.status, sak::UninstallQueueItem::Status::InProgress);
     QCOMPARE(copy.report.programName, "Queued App");
+    QCOMPARE(copy.errorCode, 73);
+    QCOMPARE(copy.errorMessage, QStringLiteral("exact worker failure"));
 }
 
 // -- ViewFilter --------------------------------------------------------------

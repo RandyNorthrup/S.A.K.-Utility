@@ -314,8 +314,11 @@ cmake/                -- CMake modules and build config
   Nothing in `src/` or `include/` reads, writes, or mentions `portable.ini` -- the only
   reference in the repo is `scripts/stage_portable_release.ps1`, which CREATES the file
   into the release package as a marker nothing consumes.)
-- **Signal naming** -- `Q_SIGNALS` use past tense: `scanFinished`, `errorOccurred`,
-  `progressUpdated`.
+- **Signal naming** -- Terminal outcome signals use event/past-tense names such as
+  `scanFinished` and `errorOccurred`. Streaming state and presentation signals use the
+  established noun/update convention such as `statusMessage` and `progressUpdate`. Preserve a
+  stable public signal name unless the API contract itself is changing; tense alone is not a
+  reason to rename every connection.
 - **Slot naming** -- Private slots use `on` prefix: `onScanClicked`, `onTimerExpired`.
 - **Section separators** -- Use `// ======` comment blocks to visually divide
   major sections within source files.

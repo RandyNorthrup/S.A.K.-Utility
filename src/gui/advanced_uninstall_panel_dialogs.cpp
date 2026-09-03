@@ -157,11 +157,22 @@ QCheckBox* addRestorePointOption(QDialog* dialog, QVBoxLayout* layout, bool auto
     return restore_check;
 }
 
-QCheckBox* addAutoCleanOption(QDialog* dialog, QVBoxLayout* layout, bool auto_clean_safe) {
+QCheckBox* addAutoCleanOption(QWidget* parent, QVBoxLayout* layout, bool auto_clean_safe) {
     auto* auto_clean_check = new QCheckBox(QObject::tr("Automatically clean safe leftover items"),
-                                           dialog);
+                                           parent);
     auto_clean_check->setChecked(auto_clean_safe);
     layout->addWidget(auto_clean_check);
+    return auto_clean_check;
+}
+
+QCheckBox* addSettingsAutoCleanupGroup(QDialog* dialog, QVBoxLayout* layout, bool auto_clean_safe) {
+    auto* group = new QGroupBox(QObject::tr("Automatic Cleanup"), dialog);
+    auto* group_layout = new QVBoxLayout(group);
+    QCheckBox* auto_clean_check = addAutoCleanOption(group, group_layout, auto_clean_safe);
+    auto_clean_check->setToolTip(QObject::tr(
+        "Sets the default for uninstall confirmations. Automatic cleanup only selects Safe files "
+        "and folders that can be sent to the Recycle Bin."));
+    layout->addWidget(group);
     return auto_clean_check;
 }
 
@@ -361,8 +372,9 @@ void AdvancedUninstallPanel::wireBatchUninstallQueueActions(const BatchQueueWidg
     });
 
     connect(widgets.clear_btn, &QPushButton::clicked, dialog, [this, dialog]() {
-        m_controller->clearQueue();
-        dialog->reject();
+        if (m_controller->clearQueue()) {
+            dialog->reject();
+        }
     });
 }
 
@@ -463,10 +475,11 @@ void AdvancedUninstallPanel::showBatchUninstallDialog() {
             Q_EMIT statusMessage(tr("Batch queue is empty."), kDialogStatusTimeoutMs);
             return;
         }
-        setOperationRunning(true);
         logMessage(QString("Starting batch uninstall of %1 programs...")
                        .arg(m_controller->queue().size()));
-        m_controller->startBatchUninstall(restore_check->isChecked());
+        if (!m_controller->startBatchUninstall(restore_check->isChecked())) {
+            return;
+        }
     }
 }
 
@@ -692,6 +705,8 @@ void AdvancedUninstallPanel::showSettingsDialog() {
     auto* select_all_check = addSettingsSelectionGroup(&dialog, layout);
     auto* recycle_bin_check = addSettingsDeletionGroup(&dialog, layout);
     auto* restore_point_check = addSettingsRestorePointGroup(&dialog, layout);
+    auto* auto_clean_check =
+        addSettingsAutoCleanupGroup(&dialog, layout, m_controller->autoCleanSafe());
 
     QRadioButton* safe_radio = nullptr;
     QRadioButton* moderate_radio = nullptr;
@@ -714,6 +729,7 @@ void AdvancedUninstallPanel::showSettingsDialog() {
 
     m_controller->setSelectAllByDefault(select_all_check->isChecked());
     m_controller->setUseRecycleBin(recycle_bin_check->isChecked());
+    m_controller->setAutoCleanSafe(auto_clean_check->isChecked());
     // Preserve the stored restore-point preference when unelevated: addSettingsRestorePointGroup
     // force-unchecked and disabled the box because restore points require admin, so its state does
     // NOT reflect the user's intent. Writing it would silently wipe a previously-enabled

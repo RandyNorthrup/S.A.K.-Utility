@@ -67,6 +67,14 @@
       "replace": "    if (request.model.isEmpty() && !untrustedInputMessageError(request).isEmpty()) {",
       "expect": "killed",
       "why": "rejectsMalformedUntrustedInputMessages requires the shared payload builder itself to refuse malformed roles, independent of caller validation."
+    },
+    {
+      "id": "upstream-validation-error-is-ignored",
+      "file": "src/ai/openai_responses_client.cpp",
+      "find": "    if (!request.validation_error.trimmed().isEmpty()) {",
+      "replace": "    if (!request.validation_error.trimmed().isEmpty() && request.model.isEmpty()) {",
+      "expect": "killed",
+      "why": "rejectsUpstreamValidationError requires payload building, response generation, and token counting to refuse an invalid access-mode request before serialization or network access."
     }
   ]
 }

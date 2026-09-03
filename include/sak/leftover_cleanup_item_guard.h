@@ -23,7 +23,9 @@ namespace sak {
 /// mirrors CleanupWorker::cleanSingleItem exactly so the item the guard clears is the item the
 /// worker acts on (StartupEntry with a value name routes to a registry-value delete; without, to a
 /// file delete; ShellExtension routes to a registry-key delete). Shared by BOTH callers so neither
-/// can reach CleanupWorker with an OS-critical / unrecoverable target.
+/// can reach CleanupWorker with an OS-critical, malformed, or injection-shaped target. Whether a
+/// valid target must be recoverable is a separate caller policy: manual permanent cleanup may
+/// explicitly authorize irreversible registry/service/task/firewall deletion.
 [[nodiscard]] inline QString cleanupItemRefusal(const LeftoverItem& item) {
     using Type = LeftoverItem::Type;
     const Type type = item.type;

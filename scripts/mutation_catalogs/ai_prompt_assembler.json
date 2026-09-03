@@ -7,8 +7,8 @@
     {
       "id": "chat-advertises-unavailable-local-tools",
       "file": "src/ai/ai_prompt_assembler.cpp",
-      "find": "if (input.local_execution_enabled) {",
-      "replace": "if (input.local_execution_enabled || !input.local_execution_enabled) {",
+      "find": "if (aiAccessModeAllowsLocalExecution(input.access_mode)) {",
+      "replace": "if (aiAccessModeIsValid(input.access_mode)) {",
       "expect": "killed",
       "why": "Chat requests omit every local function definition. assembleChatDoesNotAdvertiseUnavailableLocalTools requires Chat instructions to omit shell, sak_*, win32_mcp, delegation, and workflow claims while Assisted still advertises them."
     },
@@ -31,18 +31,50 @@
     {
       "id": "untrusted-context-enters-instructions",
       "file": "src/ai/ai_prompt_assembler.cpp",
-      "find": "    return AiPromptAssembly{trusted_lines.join(QLatin1Char('\\n')),\n                            untrusted_lines.join(QLatin1Char('\\n'))};",
-      "replace": "    return AiPromptAssembly{(trusted_lines + untrusted_lines).join(QLatin1Char('\\n')),\n                            untrusted_lines.join(QLatin1Char('\\n'))};",
+      "find": "    return AiPromptAssembly{trusted_lines.join(QLatin1Char('\\n')),\n                            untrusted_lines.join(QLatin1Char('\\n')),\n                            {}};",
+      "replace": "    return AiPromptAssembly{(trusted_lines + untrusted_lines).join(QLatin1Char('\\n')),\n                            untrusted_lines.join(QLatin1Char('\\n')),\n                            {}};",
       "expect": "killed",
       "why": "assembleIncludesDynamicSections requires catalogs, context, stored memory, and steering to be absent from trusted instructions while remaining byte-visible in untrusted user context."
     },
     {
       "id": "untrusted-context-is-dropped",
       "file": "src/ai/ai_prompt_assembler.cpp",
-      "find": "                            untrusted_lines.join(QLatin1Char('\\n'))};",
-      "replace": "                            QString()};",
+      "find": "                            untrusted_lines.join(QLatin1Char('\\n')),\n                            {}};",
+      "replace": "                            QString(),\n                            {}};",
       "expect": "killed",
       "why": "assembleIncludesDynamicSections requires role separation to preserve every dynamic section rather than silently deleting stored context."
+    },
+    {
+      "id": "invalid-access-mode-is-assembled",
+      "file": "src/ai/ai_prompt_assembler.cpp",
+      "find": "    if (!aiAccessModeIsValid(input.access_mode)) {",
+      "replace": "    if (aiAccessModeIsValid(input.access_mode) && !aiAccessModeIsValid(input.access_mode)) {",
+      "expect": "killed",
+      "why": "invalidAccessModeFailsClosed requires an out-of-domain enum value to return an error with no trusted or untrusted prompt text."
+    },
+    {
+      "id": "invalid-enum-value-is-declared-valid",
+      "file": "src/ai/ai_prompt_assembler.cpp",
+      "find": "    return mode == AiAccessMode::ChatAndResearch || mode == AiAccessMode::AssistedFullAccess ||\n           mode == AiAccessMode::UnattendedFullAccess;",
+      "replace": "    return mode == AiAccessMode::Invalid || mode == AiAccessMode::ChatAndResearch ||\n           mode == AiAccessMode::AssistedFullAccess ||\n           mode == AiAccessMode::UnattendedFullAccess;",
+      "expect": "killed",
+      "why": "invalidAccessModeFailsClosed pins the closed enum domain and refuses Invalid rather than treating it as an authorized prompt mode."
+    },
+    {
+      "id": "invalid-mode-allows-local-execution",
+      "file": "src/ai/ai_prompt_assembler.cpp",
+      "find": "    return mode == AiAccessMode::AssistedFullAccess || mode == AiAccessMode::UnattendedFullAccess;",
+      "replace": "    return mode == AiAccessMode::Invalid || mode == AiAccessMode::AssistedFullAccess ||\n           mode == AiAccessMode::UnattendedFullAccess;",
+      "expect": "killed",
+      "why": "invalidAccessModeFailsClosed directly requires the shared local-execution policy helper to deny invalid enum values."
+    },
+    {
+      "id": "assisted-mode-uses-unattended-label",
+      "file": "src/ai/ai_prompt_assembler.cpp",
+      "find": "    case AiAccessMode::AssistedFullAccess:\n        return QStringLiteral(\"Assisted Full Access\");",
+      "replace": "    case AiAccessMode::AssistedFullAccess:\n        return QStringLiteral(\"Unattended Full Access\");",
+      "expect": "killed",
+      "why": "Typed access-mode tests pin each enum value to one canonical trusted label so prompt policy cannot contradict its declared mode."
     }
   ]
 }

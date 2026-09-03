@@ -90,6 +90,25 @@ struct ToolbarUi {
     QPushButton* settings_button = nullptr;
 };
 
+QString cleanupItemDisplayIdentity(const LeftoverItem& item) {
+    if (!item.registryValueName.isEmpty()) {
+        return QStringLiteral("%1 [registry value: %2]").arg(item.path, item.registryValueName);
+    }
+    QStringList qualifiers;
+    if (!item.firewallDirection.isEmpty()) {
+        qualifiers.append(QStringLiteral("dir=%1").arg(item.firewallDirection));
+    }
+    if (!item.firewallProfile.isEmpty()) {
+        qualifiers.append(QStringLiteral("profile=%1").arg(item.firewallProfile));
+    }
+    if (!item.firewallProgram.isEmpty()) {
+        qualifiers.append(QStringLiteral("program=%1").arg(item.firewallProgram));
+    }
+    return qualifiers.isEmpty()
+               ? item.path
+               : QStringLiteral("%1 [%2]").arg(item.path, qualifiers.join(QStringLiteral(", ")));
+}
+
 void addToolbarFilters(AdvancedUninstallPanel* panel, QHBoxLayout* toolbar, ToolbarUi* controls) {
     controls->search_edit = new QLineEdit(panel);
     controls->search_edit->setPlaceholderText(QObject::tr("Search programs..."));
@@ -425,6 +444,10 @@ void AdvancedUninstallPanel::connectUninstallSignals() {
             this,
             &AdvancedUninstallPanel::onLeftoverScanFinished);
     connect(m_controller.get(),
+            &AdvancedUninstallController::leftoversUpdated,
+            this,
+            &AdvancedUninstallPanel::onLeftoversUpdated);
+    connect(m_controller.get(),
             &AdvancedUninstallController::uninstallFinished,
             this,
             &AdvancedUninstallPanel::onUninstallFinished);
@@ -436,9 +459,28 @@ void AdvancedUninstallPanel::connectUninstallSignals() {
             &AdvancedUninstallController::uninstallCancelled,
             this,
             &AdvancedUninstallPanel::onUninstallCancelled);
+    connect(m_controller.get(),
+            &AdvancedUninstallController::batchItemFailed,
+            this,
+            [this](int index, int error_code, const QString& message) {
+                const QVector<UninstallQueueItem> queued = m_controller->queue();
+                const QString item_name = index >= 0 && index < queued.size()
+                                              ? queued.at(index).program.displayName
+                                              : tr("item %1").arg(index + 1);
+                const QString detail = tr("Batch item %1 failed (error %2): %3")
+                                           .arg(item_name)
+                                           .arg(error_code)
+                                           .arg(message);
+                logMessage(detail);
+                Q_EMIT statusMessage(detail, sak::kTimerStatusDefaultMs);
+            });
 }
 
 void AdvancedUninstallPanel::connectCleanupSignals() {
+    connect(m_controller.get(),
+            &AdvancedUninstallController::autoCleanSafeStarted,
+            this,
+            [this](int) { m_autoCleanupInProgress = true; });
     connect(m_controller.get(),
             &AdvancedUninstallController::cleanupStarted,
             this,
@@ -464,9 +506,9 @@ void AdvancedUninstallPanel::connectCleanupSignals() {
             this,
             &AdvancedUninstallPanel::onItemCleanupError);
     connect(m_controller.get(),
-            &AdvancedUninstallController::recycleFallbackItems,
+            &AdvancedUninstallController::batchFailed,
             this,
-            &AdvancedUninstallPanel::onRecycleFallbackItems);
+            &AdvancedUninstallPanel::onBatchFailed);
 }
 
 void AdvancedUninstallPanel::connectStatusSignals() {
@@ -489,10 +531,21 @@ void AdvancedUninstallPanel::connectStatusSignals() {
     connect(m_controller.get(),
             &AdvancedUninstallController::batchFinished,
             this,
-            [this](int succeeded, int failed) {
+            [this](int succeeded,
+                   int failed,
+                   int cleanup_succeeded,
+                   int cleanup_failed,
+                   qint64 cleanup_bytes) {
+                m_autoCleanupInProgress = false;
+                m_autoCleanupFailureReported = false;
                 setOperationRunning(false);
-                logMessage(
-                    QString("Batch complete: %1 succeeded, %2 failed").arg(succeeded).arg(failed));
+                logMessage(QString("Batch complete: %1 uninstall(s) succeeded, %2 failed; cleanup "
+                                   "removed %3 item(s), %4 failed (%5 recovered)")
+                               .arg(succeeded)
+                               .arg(failed)
+                               .arg(cleanup_succeeded)
+                               .arg(cleanup_failed)
+                               .arg(formatSize(cleanup_bytes)));
             });
 }
 
@@ -744,11 +797,22 @@ void AdvancedUninstallPanel::onBatchUninstallClicked() {
     }
 
     // Add all checked to queue
-    m_controller->clearQueue();
+    if (!m_controller->clearQueue()) {
+        return;
+    }
     for (const auto& p : programs) {
-        m_controller->addToQueue(p,
-                                 m_controller->defaultScanLevel(),
-                                 m_controller->autoCleanSafe());
+        if (!m_controller->addToQueue(
+                p, m_controller->defaultScanLevel(), m_controller->autoCleanSafe())) {
+            if (!m_controller->clearQueue()) {
+                sak::logError("Failed to clear a partially admitted uninstall batch");
+            }
+            sak::showWarningLogged(
+                this,
+                tr("Batch Queue Refused"),
+                tr("The selected programs could not all be admitted to the batch. No partial "
+                   "batch was kept."));
+            return;
+        }
     }
 
     showBatchUninstallDialog();
@@ -812,6 +876,7 @@ void AdvancedUninstallPanel::onEnumerationCancelled() {
 }
 
 void AdvancedUninstallPanel::onUninstallStarted(const QString& program_name) {
+    m_autoCleanupFailureReported = false;
     setOperationRunning(true);
     // Invalidate any leftovers still shown from a PRIOR scan before this operation runs: they
     // belong to a different program, and if this uninstall later fails or is cancelled the UI
@@ -830,6 +895,16 @@ void AdvancedUninstallPanel::onUninstallProgress(int percent, const QString& pha
 }
 
 void AdvancedUninstallPanel::onLeftoverScanFinished(QVector<LeftoverItem> leftovers) {
+    displayLeftovers(leftovers);
+    logMessage(QString("Leftover scan complete: %1 items found.").arg(leftovers.size()));
+}
+
+void AdvancedUninstallPanel::onLeftoversUpdated(QVector<LeftoverItem> leftovers) {
+    displayLeftovers(leftovers);
+    logMessage(QString("Leftovers remaining after cleanup: %1.").arg(leftovers.size()));
+}
+
+void AdvancedUninstallPanel::displayLeftovers(const QVector<LeftoverItem>& leftovers) {
     m_currentLeftovers = leftovers;
     populateLeftoverTable(leftovers);
     m_leftover_section->setVisible(!leftovers.isEmpty());
@@ -842,11 +917,11 @@ void AdvancedUninstallPanel::onLeftoverScanFinished(QVector<LeftoverItem> leftov
             onSelectAllSafe();
         }
     }
-
-    logMessage(QString("Leftover scan complete: %1 items found.").arg(leftovers.size()));
 }
 
 void AdvancedUninstallPanel::onUninstallFinished(UninstallReport report) {
+    m_autoCleanupInProgress = false;
+    m_autoCleanupFailureReported = false;
     setOperationRunning(false);
     Q_EMIT progressUpdate(0, 1);
 
@@ -885,20 +960,26 @@ void AdvancedUninstallPanel::onUninstallFinished(UninstallReport report) {
     m_controller->refreshPrograms();
 }
 
-void AdvancedUninstallPanel::onUninstallFailed(const QString& error) {
+void AdvancedUninstallPanel::onUninstallFailed(int error_code, const QString& error) {
+    m_autoCleanupInProgress = false;
+    m_autoCleanupFailureReported = false;
     setOperationRunning(false);
     Q_EMIT progressUpdate(0, 1);
     Q_EMIT statusMessage(tr("Uninstall failed"), sak::kTimerStatusDefaultMs);
-    logMessage(QString("ERROR: Uninstall failed: %1").arg(error));
-    sak::logError("Uninstall failed: {}", error.toStdString());
+    logMessage(QString("ERROR: Uninstall failed (%1): %2").arg(error_code).arg(error));
+    sak::logError("Uninstall failed ({}): {}", error_code, error.toStdString());
     // error may carry registry-derived (HKCU-writable) text, and the warning box renders in
     // AutoText mode, so escape it to markup rather than let it spoof the dialog.
     sak::showWarningLogged(this,
                            tr("Uninstall Error"),
-                           tr("The uninstall operation failed:\n%1").arg(error.toHtmlEscaped()));
+                           tr("The uninstall operation failed (error %1):\n%2")
+                               .arg(error_code)
+                               .arg(error.toHtmlEscaped()));
 }
 
 void AdvancedUninstallPanel::onUninstallCancelled() {
+    m_autoCleanupInProgress = false;
+    m_autoCleanupFailureReported = false;
     setOperationRunning(false);
     Q_EMIT progressUpdate(0, 1);
     Q_EMIT statusMessage(tr("Uninstall cancelled"), sak::kTimerStatusDefaultMs);
@@ -914,24 +995,22 @@ void AdvancedUninstallPanel::onCleanupStarted(int total_items) {
     logMessage(QString("Cleanup started: %1 items to remove.").arg(total_items));
 }
 
-void AdvancedUninstallPanel::onItemCleaned(const QString& path, bool success) {
+void AdvancedUninstallPanel::onItemCleaned(LeftoverItem item, bool success) {
     ++m_cleanup_progress;
     Q_EMIT progressUpdate(m_cleanup_progress, m_cleanup_total);
+    const QString identity = cleanupItemDisplayIdentity(item);
     if (success) {
-        logMessage(QString("  Removed: %1").arg(path));
+        logMessage(QString("  Removed: %1").arg(identity));
     } else {
-        logMessage(QString("  FAILED to remove: %1").arg(path));
+        logMessage(QString("  FAILED to remove: %1").arg(identity));
     }
 }
 
-void AdvancedUninstallPanel::onItemCleanupError(const QString& path, const QString& reason) {
-    logMessage(tr("  Cleanup error for %1: %2").arg(path, reason));
+void AdvancedUninstallPanel::onItemCleanupError(LeftoverItem item, const QString& reason) {
+    logMessage(tr("  Cleanup error for %1: %2").arg(cleanupItemDisplayIdentity(item), reason));
 }
 
 void AdvancedUninstallPanel::onCleanupFinished(int succeeded, int failed, qint64 bytes_recovered) {
-    setOperationRunning(false);
-    Q_EMIT progressUpdate(0, 1);
-
     QString msg = tr("Cleanup complete: %1 removed").arg(succeeded);
     if (failed > 0) {
         msg += tr(", %1 failed").arg(failed);
@@ -939,6 +1018,14 @@ void AdvancedUninstallPanel::onCleanupFinished(int succeeded, int failed, qint64
     if (bytes_recovered > 0) {
         msg += tr(" (%1 recovered)").arg(formatSize(bytes_recovered));
     }
+    if (m_autoCleanupInProgress) {
+        m_autoCleanupInProgress = false;
+        logMessage(tr("Automatic %1").arg(msg));
+        return;
+    }
+
+    setOperationRunning(false);
+    Q_EMIT progressUpdate(0, 1);
     Q_EMIT statusMessage(msg, sak::kTimerStatusDefaultMs);
     logMessage(msg);
 
@@ -966,39 +1053,44 @@ void AdvancedUninstallPanel::onCleanupCancelled() {
     // A cancelled cleanup must un-busy the UI (otherwise the panel stays stuck "running") and leave
     // the leftover table as-is for the user to retry. The controller re-emits the leftovers still
     // present if this cancel ended a deferred auto-clean.
+    m_autoCleanupInProgress = false;
+    m_autoCleanupFailureReported = false;
     setOperationRunning(false);
     Q_EMIT progressUpdate(0, 1);
     Q_EMIT statusMessage(tr("Cleanup cancelled"), sak::kTimerStatusDefaultMs);
     logMessage("Cleanup cancelled.");
 }
 
-void AdvancedUninstallPanel::onCleanupFailed(const QString& error) {
+void AdvancedUninstallPanel::onCleanupFailed(int error_code, const QString& error) {
+    m_autoCleanupFailureReported = m_autoCleanupInProgress;
+    m_autoCleanupInProgress = false;
     setOperationRunning(false);
     Q_EMIT progressUpdate(0, 1);
     Q_EMIT statusMessage(tr("Cleanup failed"), sak::kTimerStatusDefaultMs);
-    logMessage(tr("Cleanup failed: %1").arg(error));
+    logMessage(tr("Cleanup failed (error %1): %2").arg(error_code).arg(error));
     sak::showWarningLogged(
         this,
         tr("Cleanup Failed"),
-        tr("Cleanup stopped before completion. Review the cleanup log and retry."));
+        tr("Cleanup stopped before completion (error %1). Review the cleanup log and retry.")
+            .arg(error_code));
 }
 
-void AdvancedUninstallPanel::onRecycleFallbackItems(QStringList paths) {
-    logMessage(
-        QString("Items that could NOT be sent to the Recycle Bin and were permanently deleted: %1")
-            .arg(paths.size()));
-    for (const auto& path : paths) {
-        logMessage(QString("  Permanently deleted: %1").arg(path));
+void AdvancedUninstallPanel::onBatchFailed(const QString& error) {
+    const bool cleanup_failure_reported = m_autoCleanupFailureReported;
+    if (m_controller->currentState() == AdvancedUninstallController::State::Idle) {
+        m_autoCleanupInProgress = false;
+        setOperationRunning(false);
+        Q_EMIT progressUpdate(0, 1);
     }
-
-    sak::showWarningLogged(
-        this,
-        tr("Permanently Deleted"),
-        tr("<b>%1 item(s)</b> could not be sent to the Recycle Bin and were "
-           "<b>permanently deleted</b> instead.<br><br>"
-           "These items are NOT recoverable from the Recycle Bin. See the log for the "
-           "full list.")
-            .arg(paths.size()));
+    m_autoCleanupFailureReported = false;
+    Q_EMIT statusMessage(tr("Batch uninstall failed"), sak::kTimerStatusDefaultMs);
+    logMessage(tr("Batch uninstall failed: %1").arg(error));
+    if (cleanup_failure_reported) {
+        return;
+    }
+    sak::showWarningLogged(this,
+                           tr("Batch Uninstall Failed"),
+                           tr("The batch could not complete: %1").arg(error.toHtmlEscaped()));
 }
 
 // -- Program Table Slots -----------------------------------------------------
@@ -1232,9 +1324,10 @@ void AdvancedUninstallPanel::contextForcedUninstall() {
 void AdvancedUninstallPanel::contextAddToQueue() {
     auto program = selectedProgram();
     if (!program.displayName.isEmpty()) {
-        m_controller->addToQueue(program,
-                                 m_controller->defaultScanLevel(),
-                                 m_controller->autoCleanSafe());
+        if (!m_controller->addToQueue(
+                program, m_controller->defaultScanLevel(), m_controller->autoCleanSafe())) {
+            return;
+        }
         logMessage(QString("Added to batch queue: %1").arg(program.displayName));
         Q_EMIT statusMessage(tr("Added %1 to batch queue.").arg(program.displayName),
                              sak::kTimerStatusMessageMs);

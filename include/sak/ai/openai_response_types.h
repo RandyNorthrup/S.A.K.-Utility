@@ -62,6 +62,7 @@ struct OpenAIResponseRequest {
     QVector<OpenAIInputAttachment> attachments;
     QVector<OpenAIFunctionOutput> function_outputs;
     QVector<OpenAIInputMessage> untrusted_input_messages;
+    QString validation_error;
     QString reasoning_effort;
     QString previous_response_id;
     QString safety_identifier;

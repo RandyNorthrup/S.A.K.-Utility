@@ -20,6 +20,18 @@ enum class AiProviderGatewayToolAccess {
     UnattendedFullAccess,
 };
 
+[[nodiscard]] constexpr bool providerGatewayAccessIsChatOnly(AiProviderGatewayToolAccess access) {
+    return access == AiProviderGatewayToolAccess::ChatAndResearch;
+}
+
+[[nodiscard]] constexpr bool providerGatewayAccessIsAssisted(AiProviderGatewayToolAccess access) {
+    return access == AiProviderGatewayToolAccess::AssistedFullAccess;
+}
+
+[[nodiscard]] constexpr bool providerGatewayAccessIsUnattended(AiProviderGatewayToolAccess access) {
+    return access == AiProviderGatewayToolAccess::UnattendedFullAccess;
+}
+
 struct AiProviderGatewayToolOptions {
     static constexpr int kDefaultOutputKilobytes = 512;
     static constexpr int kMaximumOutputMegabytes = 4;

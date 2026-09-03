@@ -3,6 +3,8 @@
 
 #include "sak/ai/ai_offline_downloader_tool_runner.h"
 
+#include "sak/ai/ai_tool_error.h"
+
 #include <atomic>
 
 namespace sak::ai {
@@ -33,13 +35,6 @@ public:
 private:
     bool m_acquired{false};
 };
-
-QJsonObject toolError(const QString& message) {
-    QJsonObject result;
-    result[QStringLiteral("success")] = false;
-    result[QStringLiteral("error_message")] = message;
-    return result;
-}
 
 bool runOperationSupported(const QString& operation) {
     return operation == QLatin1String("direct_download") ||

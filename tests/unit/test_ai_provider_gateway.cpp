@@ -16,6 +16,14 @@
 
 namespace {
 
+using ProviderAccess = sak::ai::AiProviderGatewayToolAccess;
+static_assert(sak::ai::providerGatewayAccessIsChatOnly(ProviderAccess::ChatAndResearch));
+static_assert(sak::ai::providerGatewayAccessIsAssisted(ProviderAccess::AssistedFullAccess));
+static_assert(sak::ai::providerGatewayAccessIsUnattended(ProviderAccess::UnattendedFullAccess));
+static_assert(!sak::ai::providerGatewayAccessIsChatOnly(ProviderAccess::AssistedFullAccess));
+static_assert(!sak::ai::providerGatewayAccessIsAssisted(ProviderAccess::UnattendedFullAccess));
+static_assert(!sak::ai::providerGatewayAccessIsUnattended(ProviderAccess::ChatAndResearch));
+
 bool writeFile(const QString& path, const QByteArray& bytes) {
     QDir().mkpath(QFileInfo(path).absolutePath());
     QFile file(path);
@@ -692,7 +700,10 @@ void AiProviderGatewayTests::authorizeWin32Mcp_browserInputRequiresConfirmEveryM
     for (const Access access : {Access::AssistedFullAccess, Access::UnattendedFullAccess}) {
         const QJsonObject result = sak::ai::authorizeWin32McpCall(plan, access, noConfirm);
         QVERIFY2(!result.isEmpty(), "browser input with no confirm callback must fail closed");
+        QCOMPARE(result.size(), 2);
+        QVERIFY(result.value(QStringLiteral("success")).isBool());
         QCOMPARE(result.value(QStringLiteral("success")).toBool(true), false);
+        QVERIFY(result.value(QStringLiteral("error_message")).isString());
         QCOMPARE(result.value(QStringLiteral("error_message")).toString(),
                  QStringLiteral("Win32 MCP confirmation callback is not configured"));
     }

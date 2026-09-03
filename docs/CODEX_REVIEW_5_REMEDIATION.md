@@ -1540,8 +1540,43 @@ a parked design, per the bucket convention. Open work is what remains after thos
   pre-commit hooks pass; Release build exit 0; full CTest 273/273, zero failures, 771.90 seconds.
   The fresh runtime skip audit reads 247 current Qt logs, ignores 49 stale removed-test logs, and
   records 4,974 passed functions / 27 reviewed skips (0.54 percent), with none stale or unreviewed.
+  TYPED-ACCESS/TOOL-ERROR/CONTROLLER-CONVERGENCE/LOCAL-SECRET-PROOF WAVE 30: one closed
+  `AiAccessMode` value now flows from strict combo item data through panel snapshots, prompt
+  assembly, tool policy and request validation. Display/localized text and contradictory booleans
+  cannot choose policy; wrong-typed, out-of-domain or invalid values fail closed to no local
+  execution and block payload, network and token-count work. Three affected catalogs kill 25/25
+  mutants, including ten new typed-mode cases. Five duplicate AI error builders are replaced by one
+  strict `toolError` helper; exact caller tests and a 2-mutant catalog require boolean false plus a
+  non-empty string error. The remaining duplicated provider access predicates are unified into
+  enum-owned constexpr helpers with compile-time truth-table checks. The mutation ratchet is now 53
+  catalogs / 434 mutants (428 killed, six proven equivalent).
+  The controller header then underwent repeated blob-bound xhigh convergence reviews. Seven
+  follow-up passes fixed 10, 9, 5, 4, 3, 4 and 3 confirmed findings before the final pass returned
+  zero. The work closes batch admission/cancellation terminals, cleanup lifecycle ordering,
+  deferred reports, stale worker generations, enumeration-stop admission, protected and fully typed
+  cleanup identity, error codes, queue dedupe/cap/status, auto-clean preference UI, truthful state,
+  duplicate leftover updates and dead APIs. Fifty-three separate convergence drills are red and
+  restored before that first dry pass. The later 27-finding controller parameter cleanup changed
+  the reviewed blob; exact refresh then found two functional leads and one five-name signal tail.
+  Batch-item errors now retain code/message, cancellation emits only after terminal Idle, and all
+  five signal parameters use snake_case. Five more functional mutants are red/restored, the final
+  controller suite reports 66/66 cases, and the final exact-blob review again returns zero findings.
+  Accessibility reports 650 explicit accessors. One signal-tense lead was refuted against the live
+  cross-app convention; the stale `CODING_STANDARDS` prose is corrected instead of renaming stable
+  public signals.
+  The official TruffleHog v3.97.2 Windows x64 archive was cached only under ignored `temp/tools` and
+  matched its published SHA-256 before execution. Regex/path scan, full-history gitleaks over 1,669
+  commits and TruffleHog all report zero findings; the full wrapper exits 0, parent PATH is unchanged
+  and no scanner process remains. The staged ledger now holds 1,065 units / 632 pending / 44
+  blob-bound driver briefs; the final controller-header brief is a zero-finding review. All 27
+  controller parameter-name findings were then fixed, leaving that TU at zero. The full naming gate
+  passes 150/150 non-core TUs clean and 157/157 core TUs healthy with 5,244 findings and 16
+  ratcheted-clean TUs, 20 findings below Wave 29. All whole-tree pre-commit hooks pass; Release
+  build exit 0; full CTest 273/273, zero failures, 738.00 seconds. The fresh runtime skip audit reads
+  247 current Qt logs, ignores 60 stale removed-test logs, and records 4,997 passed functions / 27
+  reviewed skips (0.54 percent), with none stale or unreviewed.
   SUPPRESSION RE-AUDIT REFRESH, 2026-09-01 through 2026-09-02: core naming remains broadly excluded
-  while 5,264 findings are tracked as open and 16 clean TUs are ratcheted. The coverage compiler
+  while 5,244 findings are tracked as open and 16 clean TUs are ratcheted. The coverage compiler
   warning silences and unsupported-platform
   runtime branches are closed in Wave 20. Wave 28 removes the first-party LZFSE shim from the
   vendor warning boundary; `/w` remains only on exact byte-identical upstream sources. The
@@ -1561,7 +1596,7 @@ a parked design, per the bucket convention. Open work is what remains after thos
   last resort only after no direct fix is possible and the exact reason is proven. Existing
   suppressions are re-audited, not inherited as permanent policy. Current batch: all pre-commit
   hooks passed; Release build exit 0; full CTest 265/265, zero failures, 804.48 seconds.
-  STILL OPEN: core's 5,264 naming findings; the 294-item `useStlAlgorithm` program; broad
+  STILL OPEN: core's 5,244 naming findings; the 294-item `useStlAlgorithm` program; broad
   magic-number exemptions; the wider mutation/
   fresh-host test-infra program; and the historical VM credential rotation/history-rewrite
   decision.
@@ -3693,8 +3728,8 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
     authorization. Their 18 leads were independently verified against callers/tests: 17
     confirmed or partially confirmed, 1 refuted. Fourteen are fixed in this batch with exact
     regressions and mutation drills. Wave 29 closes prompt memory/steering role separation with
-    typed user-role request messages. Remaining verified work from these briefs: typed access-mode
-    input and the shared AI tool-error helper;
+    typed user-role request messages. Wave 30 closes the remaining typed access-mode input and
+    shared AI tool-error helper leads; no verified work from this brief group remains.
     verification also found the panel's persistent offline worker is a dead shadow of the real
     per-operation worker, whose removal requires the owner's explicit removal authorization.
     FINAL LOCAL GATE: all changed-file hooks passed; Release build exit 0; full CTest 264/264,
@@ -10261,8 +10296,9 @@ gate teaches people to disable both.
     LOCAL TOOL REFRESH 2026-09-02: generated profile-analysis build directories initially made the
     developer-path scan red; the exact disposable directories were removed, not ignored. Regex/path
     scan and full-history gitleaks are clean across 1,669 commits. The manually requested full
-    external wrapper still stops because local `trufflehog` is absent from PATH; the pinned hosted
-    TruffleHog action remains the authoritative second scanner until that local tool is installed.
+    external wrapper now uses an official repo-local TruffleHog v3.97.2 binary whose Windows x64
+    archive matches the published SHA-256. Regex/path scan, gitleaks and TruffleHog all return clean;
+    the wrapper exits 0 without changing the parent PATH or installing a system tool.
     Release build exit 0; full Release CTest 262/262, zero failures (983.22 seconds).
       Measured 2026-08-04: origin/main is at 58c6726, dated 2026-06-29; local main
       is 776 commits ahead. GitHub Actions minutes cost real money, and the
@@ -10789,7 +10825,7 @@ Running tally of gates that reported healthy while analyzing nothing:
 The campaign is complete only when ALL of the following are simultaneously true:
 
 - [~] R5-G10-1 All reproducibly enumerated per-file review units executed and every finding
-  dispositioned -- ACTIVE: live ledger 1064 total / 632 pending / 43 stored driver briefs.
+  dispositioned -- ACTIVE: live ledger 1065 total / 632 pending / 44 stored driver briefs.
   - OPEN: continue LEDGER-1/2/3; Codex budget is available and user authorized multitasking.
 - [~] R5-G10-2 Zero open findings in this document -- ACTIVE: ledger and local programs remain;
   no Codex-budget or VM blocker applies.
@@ -10938,8 +10974,8 @@ The campaign is complete only when ALL of the following are simultaneously true:
       exclusion named in an inventory alongside the live-cert evidence covering it
 - [~] R5-G10-12 Mutation testing green: no surviving mutant anywhere in first-party code
   - PARTIAL: mutation testing is green over the value/boundary decoder/parser/comparator corpus,
-    WS3c, and the AI package/prompt/provider/offline/OpenAI/command guards (52 catalogs / 422
-    mutants; 416 killed and 6 proven equivalent). No-surviving-mutant across ALL first-party code is not
+    WS3c, and the AI package/prompt/provider/offline/OpenAI/command guards (53 catalogs / 434
+    mutants; 428 killed and 6 proven equivalent). No-surviving-mutant across ALL first-party code is not
     yet reached.
 - [x] R5-G10-13 Zero TODO, FIXME, stub, or declared-but-unwired feature in first-party
   - DONE via G19-1..4: no unimplemented TODO/FIXME/stub or declared-but-unwired feature remains, and every AI tool and app action dispatches to a real implementation end to end.

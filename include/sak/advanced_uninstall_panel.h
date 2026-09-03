@@ -84,17 +84,18 @@ private Q_SLOTS:
     void onUninstallStarted(const QString& program_name);
     void onUninstallProgress(int percent, const QString& phase);
     void onLeftoverScanFinished(QVector<sak::LeftoverItem> leftovers);
+    void onLeftoversUpdated(QVector<sak::LeftoverItem> leftovers);
     void onUninstallFinished(sak::UninstallReport report);
-    void onUninstallFailed(const QString& error);
+    void onUninstallFailed(int error_code, const QString& error);
     void onUninstallCancelled();
 
     void onCleanupStarted(int total_items);
-    void onItemCleaned(const QString& path, bool success);
-    void onItemCleanupError(const QString& path, const QString& reason);
+    void onItemCleaned(sak::LeftoverItem item, bool success);
+    void onItemCleanupError(sak::LeftoverItem item, const QString& reason);
     void onCleanupFinished(int succeeded, int failed, qint64 bytes_recovered);
     void onCleanupCancelled();
-    void onCleanupFailed(const QString& error);
-    void onRecycleFallbackItems(QStringList paths);
+    void onCleanupFailed(int error_code, const QString& error);
+    void onBatchFailed(const QString& error);
 
     // Program table
     void onProgramSelectionChanged();
@@ -172,6 +173,7 @@ private:
     // -- Table Population --
     void populateProgramTable(const QVector<ProgramInfo>& programs);
     void populateLeftoverTable(const QVector<LeftoverItem>& leftovers);
+    void displayLeftovers(const QVector<LeftoverItem>& leftovers);
     void populateLeftoverRow(int row, const LeftoverItem& item);
     QString leftoverTypeText(LeftoverItem::Type type) const;
     void clearLeftoverTable();
@@ -230,6 +232,8 @@ private:
     // -- Status Bar --
     int m_cleanup_progress{0};
     int m_cleanup_total{0};
+    bool m_autoCleanupInProgress{false};
+    bool m_autoCleanupFailureReported{false};
 
     // -- Log toggle --
     LogToggleSwitch* m_log_toggle{nullptr};

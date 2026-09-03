@@ -6,6 +6,7 @@
 #include "sak/ai/ai_app_action_planner.h"
 #include "sak/ai/ai_credential_store.h"
 #include "sak/ai/ai_provider_gateway_authorization.h"
+#include "sak/ai/ai_tool_error.h"
 #include "sak/ai/ai_win32_gui_runner.h"
 
 #include <QJsonDocument>
@@ -16,25 +17,6 @@ namespace sak::ai {
 namespace {
 
 constexpr qsizetype kSessionMemoryPreviewChars = 500;
-
-QJsonObject toolError(const QString& message) {
-    QJsonObject result;
-    result[QStringLiteral("success")] = false;
-    result[QStringLiteral("error_message")] = message;
-    return result;
-}
-
-bool assisted(AiProviderGatewayToolAccess access) {
-    return access == AiProviderGatewayToolAccess::AssistedFullAccess;
-}
-
-bool unattended(AiProviderGatewayToolAccess access) {
-    return access == AiProviderGatewayToolAccess::UnattendedFullAccess;
-}
-
-bool chatOnly(AiProviderGatewayToolAccess access) {
-    return access == AiProviderGatewayToolAccess::ChatAndResearch;
-}
 
 QJsonObject finalizeResult(QJsonObject result, const QString& operation) {
     if (result.isEmpty()) {
@@ -115,7 +97,7 @@ QJsonObject runWin32McpCall(const QJsonObject& args,
                             const AiProviderGateway* gateway,
                             AiProviderGatewayToolAccess access,
                             const AiProviderGatewayToolCallbacks& callbacks) {
-    if (chatOnly(access)) {
+    if (providerGatewayAccessIsChatOnly(access)) {
         return toolError(QStringLiteral("Win32 MCP local automation is disabled in Chat mode"));
     }
 
@@ -166,7 +148,7 @@ QJsonObject authorizeSensitiveAppAction(const AiAppActionPlan& plan,
 QJsonObject authorizeAssistedAppAction(const AiAppActionPlan& plan,
                                        AiProviderGatewayToolAccess access,
                                        const AiProviderGatewayToolCallbacks& callbacks) {
-    if (!assisted(access) || !plan.guard_approval_reason.isEmpty()) {
+    if (!providerGatewayAccessIsAssisted(access) || !plan.guard_approval_reason.isEmpty()) {
         return {};
     }
     if (!callbacks.confirm) {
@@ -180,7 +162,8 @@ QJsonObject authorizeAssistedAppAction(const AiAppActionPlan& plan,
 QJsonObject authorizeUnattendedRiskyAppAction(const AiAppActionPlan& plan,
                                               AiProviderGatewayToolAccess access,
                                               const AiProviderGatewayToolCallbacks& callbacks) {
-    if (!unattended(access) || !plan.risky || !plan.guard_approval_reason.isEmpty()) {
+    if (!providerGatewayAccessIsUnattended(access) || !plan.risky ||
+        !plan.guard_approval_reason.isEmpty()) {
         return {};
     }
     if (!callbacks.offer_restore_point) {
@@ -464,7 +447,7 @@ QJsonObject runAppAction(const QJsonObject& args,
                          AiProviderGatewayToolAccess access,
                          const AiProviderGatewayToolCallbacks& callbacks,
                          AiProviderGatewayToolOptions options) {
-    if (chatOnly(access)) {
+    if (providerGatewayAccessIsChatOnly(access)) {
         return toolError(QStringLiteral("App action execution is disabled in Chat mode"));
     }
 

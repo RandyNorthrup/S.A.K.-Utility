@@ -5,6 +5,7 @@
 
 #include "sak/ai/ai_command_guard.h"
 #include "sak/ai/ai_credential_store.h"
+#include "sak/ai/ai_tool_error.h"
 
 #include <algorithm>
 
@@ -13,13 +14,6 @@ namespace sak::ai {
 namespace {
 
 constexpr qsizetype kSessionMemoryPreviewChars = 500;
-
-QJsonObject toolError(const QString& message) {
-    QJsonObject result;
-    result[QStringLiteral("success")] = false;
-    result[QStringLiteral("error_message")] = message;
-    return result;
-}
 
 QJsonObject resultJson(const AiCommandRequest& request,
                        const QString& command_id,
