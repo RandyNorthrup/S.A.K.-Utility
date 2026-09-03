@@ -14,6 +14,7 @@ ai_offline_downloader_runner.json
 ai_openai_model_client.json
 ai_package_selection.json
 ai_prompt_assembler.json
+ai_prompt_role_routing.json
 ai_provider_authorization.json
 ai_run_state_store.json
 ai_skill_store.json
@@ -46,6 +47,7 @@ mbox_parser.json
 mbox_transfer_decoder.json
 native_messaging.json
 nuget_version_range.json
+openai_input_roles.json
 openai_tool_descriptions.json
 package_matcher.json
 pst_block_decoder.json

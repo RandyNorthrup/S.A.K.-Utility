@@ -4,6 +4,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/style_constants.h"
+#include "sak/user_profile_progress.h"
 #include "sak/user_profile_restore_wizard.h"
 #include "sak/user_profile_restore_worker.h"
 
@@ -20,10 +21,6 @@
 #include <QVBoxLayout>
 
 namespace sak {
-
-namespace {
-constexpr int kRestoreProgressDisplayPrecision = 2;
-}  // namespace
 
 // ============================================================================
 // Page 6: Execute Restore
@@ -52,6 +49,8 @@ void UserProfileRestoreExecutePage::setupUi() {
     layout->addWidget(overall_label);
     m_overallProgressBar = new QProgressBar(this);
     m_overallProgressBar->setTextVisible(true);
+    m_overallProgressBar->setAccessibleName(tr("Restore overall byte progress"));
+    overall_label->setBuddy(m_overallProgressBar);
     layout->addWidget(m_overallProgressBar);
 
     // Current operation progress
@@ -59,6 +58,8 @@ void UserProfileRestoreExecutePage::setupUi() {
     layout->addWidget(m_currentOperationLabel);
     m_currentProgressBar = new QProgressBar(this);
     m_currentProgressBar->setTextVisible(true);
+    m_currentProgressBar->setAccessibleName(tr("Restore file progress"));
+    m_currentOperationLabel->setBuddy(m_currentProgressBar);
     layout->addWidget(m_currentProgressBar);
 
     layout->addSpacing(sak::ui::kSpacingDefault);
@@ -106,7 +107,10 @@ void UserProfileRestoreExecutePage::initializePage() {
     }
     // Reset state
     m_restoreSuccess = false;
-    m_overallProgressBar->setValue(0);
+    m_lastProcessedBytes = 0;
+    m_overallProgressBar->setRange(0, 0);
+    m_overallProgressBar->setFormat(tr("Waiting for restore size..."));
+    m_overallProgressBar->setAccessibleDescription(tr("Waiting for restore size."));
     m_currentProgressBar->setValue(0);
     m_logText->clear();
     m_statusLabel->setText(tr("Preparing to restore..."));
@@ -180,7 +184,7 @@ void UserProfileRestoreExecutePage::onStartRestore() {
                          {conflict_mode, perm_mode, verify, create_backup, password},
                          {wiz->wifiProfiles(), wiz->ethernetConfigs(), wiz->appDataSources()});
 
-    m_overallProgressBar->setRange(0, static_cast<int>(mappings.size()));
+    m_overallProgressBar->setRange(0, 0);
     m_currentProgressBar->setRange(0, 0);  // Indeterminate
 }
 
@@ -188,12 +192,7 @@ void UserProfileRestoreExecutePage::connectRestoreWorkerSignals(UserProfileResto
     connect(worker,
             &UserProfileRestoreWorker::overallProgress,
             this,
-            [this](int current, int total, qint64 bytes, qint64 total_bytes) {
-                m_overallProgressBar->setMaximum(total);
-                m_overallProgressBar->setValue(current);
-                (void)bytes;
-                (void)total_bytes;  // Currently unused
-            });
+            &UserProfileRestoreExecutePage::onOverallProgress);
     connect(worker, &UserProfileRestoreWorker::fileProgress, this, [this](int current, int total) {
         m_currentProgressBar->setMaximum(total);
         m_currentProgressBar->setValue(current);
@@ -236,22 +235,17 @@ void UserProfileRestoreExecutePage::onCancelRestore() {
     }
 }
 
-void UserProfileRestoreExecutePage::onOverallProgress(int current,
-                                                      int total,
-                                                      qint64 bytes,
+void UserProfileRestoreExecutePage::onOverallProgress(int completed_users,
+                                                      int total_users,
+                                                      qint64 processed_bytes,
                                                       qint64 total_bytes) {
-    if (total > 0) {
-        const int percent = (current * kPercentMax) / total;
-        m_overallProgressBar->setValue(percent);
-
-        const double gb_copied = static_cast<double>(bytes) / sak::kBytesPerGBf;
-        const double gb_total = static_cast<double>(total_bytes) / sak::kBytesPerGBf;
-        m_overallProgressBar->setFormat(
-            QString("%1% - %2 / %3 GB")
-                .arg(percent)
-                .arg(gb_copied, 0, 'f', kRestoreProgressDisplayPrecision)
-                .arg(gb_total, 0, 'f', kRestoreProgressDisplayPrecision));
-    }
+    const UserProfileProgressState progress =
+        userProfileProgressState(completed_users, total_users, processed_bytes, total_bytes);
+    m_lastProcessedBytes = progress.processed_bytes;
+    m_overallProgressBar->setRange(progress.minimum, progress.maximum);
+    m_overallProgressBar->setValue(progress.value);
+    m_overallProgressBar->setFormat(progress.format);
+    m_overallProgressBar->setAccessibleDescription(progress.accessible_description);
 }
 
 void UserProfileRestoreExecutePage::onFileProgress(int current, int total) {
@@ -284,6 +278,11 @@ void UserProfileRestoreExecutePage::onRestoreComplete(bool success, const QStrin
 
     if (success) {
         m_statusLabel->setText(tr("[OK] Restore completed successfully!"));
+        m_overallProgressBar->setRange(0, kPercentMax);
+        m_overallProgressBar->setValue(kPercentMax);
+        m_overallProgressBar->setFormat(
+            tr("Restore complete - %1 processed").arg(formatBytes(m_lastProcessedBytes)));
+        m_overallProgressBar->setAccessibleDescription(m_overallProgressBar->format());
     } else {
         m_statusLabel->setText(tr("[X] Restore failed"));
     }

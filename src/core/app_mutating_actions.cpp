@@ -2313,29 +2313,27 @@ QString validateCleanupItem(const QJsonObject& obj, LeftoverItem& out) {
     return cleanupItemRefusal(out);
 }
 
-// Accumulated CleanupWorker signal state: filled by the per-item / summary / reboot-pending slots,
-// read once by the finished slot.
+// Accumulated CleanupWorker signal state: filled by the per-item, error, and summary slots; read
+// once by the finished slot.
 struct CleanupTally {
     int succeeded = 0;
     int failed = 0;
-    QStringList reboot_paths;
     QStringList recycle_fallback_paths;  // items PERMANENTLY deleted after the Recycle Bin failed
+    QStringList errors;
+    QMap<QString, QString> errors_by_path;
     QJsonArray per_item;
 };
 
-// Build the tool result from the accumulated tally. ok = no item outright FAILED; a
-// reboot-scheduled file still exists (reported separately, count + note) and a recycle-fallback
-// item was destroyed permanently (also reported), so neither honesty caveat is folded silently into
-// the cleaned count.
+// Build the tool result from the accumulated tally. ok = no item outright FAILED. Exact failure
+// reasons and recycle-to-permanent escalations remain explicit in structured output.
 AppActionResult buildCleanupResult(int items_total, const CleanupTally& tally) {
     const bool ok = tally.failed == 0;
     const QJsonObject data{
         {QStringLiteral("items_total"), items_total},
         {QStringLiteral("succeeded"), tally.succeeded},
         {QStringLiteral("failed"), tally.failed},
-        {QStringLiteral("reboot_pending_count"), tally.reboot_paths.size()},
-        {QStringLiteral("reboot_pending"),
-         jsonStringArrayCapped(tally.reboot_paths, kMaxReportedListEntries)},
+        {QStringLiteral("error_count"), tally.errors.size()},
+        {QStringLiteral("errors"), jsonStringArrayCapped(tally.errors, kMaxReportedListEntries)},
         {QStringLiteral("permanently_deleted_count"), tally.recycle_fallback_paths.size()},
         {QStringLiteral("permanently_deleted"),
          jsonStringArrayCapped(tally.recycle_fallback_paths, kMaxReportedListEntries)},
@@ -2343,11 +2341,6 @@ AppActionResult buildCleanupResult(int items_total, const CleanupTally& tally) {
     QString message =
         ok ? QStringLiteral("Cleaned %1 leftover item(s)").arg(tally.succeeded)
            : QStringLiteral("Cleaned %1 item(s); %2 failed").arg(tally.succeeded).arg(tally.failed);
-    if (!tally.reboot_paths.isEmpty()) {
-        message +=
-            QStringLiteral(" (%1 path(s) scheduled for removal on next reboot; not yet deleted)")
-                .arg(tally.reboot_paths.size());
-    }
     if (!tally.recycle_fallback_paths.isEmpty()) {
         // The Recycle Bin failed for these, so they were destroyed permanently despite recycle
         // mode. Surface it explicitly -- the recoverable-default contract was silently broken
@@ -2360,8 +2353,8 @@ AppActionResult buildCleanupResult(int items_total, const CleanupTally& tally) {
     return {ok, message, data};
 }
 
-// Drive a prepared CleanupWorker to completion, accumulating its per-item / summary /
-// reboot-pending signals, and map the terminal signal to a tool result. The worker continues past
+// Drive a prepared CleanupWorker to completion, accumulating its per-item/error/summary signals,
+// and map the terminal signal to a tool result. The worker continues past
 // individual failures (an un-elevated sc/schtasks/netsh call fails honestly -> counted failed,
 // ok=false), so success means EVERY item deleted. Fully joined before return (requestStop +
 // wait/terminate), like driveUninstallWorker, so a timeout cannot outlive the worker's stack.
@@ -2381,29 +2374,36 @@ AppActionResult runCleanupWorker(const QVector<LeftoverItem>& items, bool use_re
                      inv.context(),
                      [&tally](const QString& path, bool ok) {
                          if (tally.per_item.size() < kMaxCleanupItems) {
-                             tally.per_item.append(
-                                 QJsonObject{{QStringLiteral("path"), clampCleanupLine(path)},
-                                             {QStringLiteral("success"), ok}});
+                             QJsonObject item{{QStringLiteral("path"), clampCleanupLine(path)},
+                                              {QStringLiteral("success"), ok}};
+                             const QString error = tally.errors_by_path.value(path);
+                             if (!error.isEmpty()) {
+                                 item.insert(QStringLiteral("error"), clampCleanupLine(error));
+                             }
+                             tally.per_item.append(item);
                          }
+                     });
+    QObject::connect(&worker,
+                     &CleanupWorker::itemCleanupError,
+                     inv.context(),
+                     [&tally](const QString& path, const QString& reason) {
+                         tally.errors_by_path.insert(path, reason);
+                         tally.errors.append(QStringLiteral("%1: %2").arg(path, reason));
                      });
     QObject::connect(
         &worker, &CleanupWorker::cleanupComplete, inv.context(), [&tally](int s, int f, qint64) {
             tally.succeeded = s;
             tally.failed = f;
         });
-    QObject::connect(&worker,
-                     &CleanupWorker::rebootPendingItems,
-                     inv.context(),
-                     [&tally](const QStringList& paths) { tally.reboot_paths = paths; });
-    // recycleFallbackItems is emitted right after rebootPendingItems and before finished, into this
-    // same queued caller-thread context, so it is populated before buildCleanupResult reads it.
+    // recycleFallbackItems is emitted before finished, into this same queued caller-thread context,
+    // so it is populated before buildCleanupResult reads it.
     QObject::connect(&worker,
                      &CleanupWorker::recycleFallbackItems,
                      inv.context(),
                      [&tally](const QStringList& paths) { tally.recycle_fallback_paths = paths; });
     // Finish on WorkerBase::finished (fires after execute() returns, i.e. AFTER cleanupComplete and
-    // rebootPendingItems, which are queued to this same caller-thread context in emission order),
-    // so every accumulator is populated by the time this runs.
+    // itemCleanupError, queued to this caller-thread context in emission order), so every
+    // accumulator is populated by the time this runs.
     QObject::connect(&worker, &WorkerBase::finished, inv.context(), [&inv, &items, &tally]() {
         inv.finish(buildCleanupResult(static_cast<int>(items.size()), tally));
     });

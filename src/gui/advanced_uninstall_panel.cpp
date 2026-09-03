@@ -405,6 +405,10 @@ void AdvancedUninstallPanel::connectEnumerationSignals() {
             &AdvancedUninstallController::enumerationFailed,
             this,
             &AdvancedUninstallPanel::onEnumerationFailed);
+    connect(m_controller.get(),
+            &AdvancedUninstallController::enumerationCancelled,
+            this,
+            &AdvancedUninstallPanel::onEnumerationCancelled);
 }
 
 void AdvancedUninstallPanel::connectUninstallSignals() {
@@ -452,9 +456,13 @@ void AdvancedUninstallPanel::connectCleanupSignals() {
             this,
             &AdvancedUninstallPanel::onCleanupCancelled);
     connect(m_controller.get(),
-            &AdvancedUninstallController::rebootPendingItems,
+            &AdvancedUninstallController::cleanupFailed,
             this,
-            &AdvancedUninstallPanel::onRebootPendingItems);
+            &AdvancedUninstallPanel::onCleanupFailed);
+    connect(m_controller.get(),
+            &AdvancedUninstallController::itemCleanupError,
+            this,
+            &AdvancedUninstallPanel::onItemCleanupError);
     connect(m_controller.get(),
             &AdvancedUninstallController::recycleFallbackItems,
             this,
@@ -470,6 +478,14 @@ void AdvancedUninstallPanel::connectStatusSignals() {
             &AdvancedUninstallController::progressUpdate,
             this,
             &AdvancedUninstallPanel::progressUpdate);
+    connect(m_controller.get(),
+            &AdvancedUninstallController::settingsError,
+            this,
+            [this](const QString& error) {
+                logMessage(tr("Settings error: %1").arg(error));
+                Q_EMIT statusMessage(tr("Advanced Uninstall settings error"),
+                                     sak::kTimerStatusDefaultMs);
+            });
     connect(m_controller.get(),
             &AdvancedUninstallController::batchFinished,
             this,
@@ -787,6 +803,14 @@ void AdvancedUninstallPanel::onEnumerationFailed(const QString& error) {
         tr("Failed to enumerate installed programs:\n%1").arg(error.toHtmlEscaped()));
 }
 
+void AdvancedUninstallPanel::onEnumerationCancelled() {
+    m_program_empty_state->clearLoading();
+    setOperationRunning(false);
+    Q_EMIT progressUpdate(0, 1);
+    Q_EMIT statusMessage(tr("Enumeration cancelled"), sak::kTimerStatusDefaultMs);
+    logMessage("Program enumeration cancelled.");
+}
+
 void AdvancedUninstallPanel::onUninstallStarted(const QString& program_name) {
     setOperationRunning(true);
     // Invalidate any leftovers still shown from a PRIOR scan before this operation runs: they
@@ -900,6 +924,10 @@ void AdvancedUninstallPanel::onItemCleaned(const QString& path, bool success) {
     }
 }
 
+void AdvancedUninstallPanel::onItemCleanupError(const QString& path, const QString& reason) {
+    logMessage(tr("  Cleanup error for %1: %2").arg(path, reason));
+}
+
 void AdvancedUninstallPanel::onCleanupFinished(int succeeded, int failed, qint64 bytes_recovered) {
     setOperationRunning(false);
     Q_EMIT progressUpdate(0, 1);
@@ -913,6 +941,14 @@ void AdvancedUninstallPanel::onCleanupFinished(int succeeded, int failed, qint64
     }
     Q_EMIT statusMessage(msg, sak::kTimerStatusDefaultMs);
     logMessage(msg);
+
+    if (failed > 0) {
+        sak::showWarningLogged(
+            this,
+            tr("Cleanup Incomplete"),
+            tr("One or more items could not be removed. Close applications using them, review "
+               "the cleanup log, and retry."));
+    }
 
     // Only tear down the leftover view when everything actually cleaned. If any item failed, keep
     // the table and section visible so the failures stay on screen and remain retryable instead
@@ -936,20 +972,15 @@ void AdvancedUninstallPanel::onCleanupCancelled() {
     logMessage("Cleanup cancelled.");
 }
 
-void AdvancedUninstallPanel::onRebootPendingItems(QStringList paths) {
-    logMessage(QString("Locked files scheduled for removal on reboot: %1").arg(paths.size()));
-    for (const auto& path : paths) {
-        logMessage(QString("  Reboot removal: %1").arg(path));
-    }
-
-    sak::showInformationLogged(
+void AdvancedUninstallPanel::onCleanupFailed(const QString& error) {
+    setOperationRunning(false);
+    Q_EMIT progressUpdate(0, 1);
+    Q_EMIT statusMessage(tr("Cleanup failed"), sak::kTimerStatusDefaultMs);
+    logMessage(tr("Cleanup failed: %1").arg(error));
+    sak::showWarningLogged(
         this,
-        tr("Reboot Required"),
-        tr("<b>%1 locked item(s)</b> could not be removed immediately.<br><br>"
-           "They have been scheduled for automatic removal on the next "
-           "Windows restart. This is independent of this application -- "
-           "Windows will handle the deletion at boot time.")
-            .arg(paths.size()));
+        tr("Cleanup Failed"),
+        tr("Cleanup stopped before completion. Review the cleanup log and retry."));
 }
 
 void AdvancedUninstallPanel::onRecycleFallbackItems(QStringList paths) {

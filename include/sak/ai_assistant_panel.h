@@ -83,6 +83,7 @@ class AiToolDispatcher;
 class AiToolHealthLedger;
 class AiLeaseManager;
 class AiAsyncToolRunner;
+struct AiPromptAssembly;
 }  // namespace ai
 
 // Test-only seam: when installed, replaces the modal approval / restore-point
@@ -354,7 +355,10 @@ private:
     [[nodiscard]] bool filterMessageEditKeyPress(QEvent* event);
     [[nodiscard]] bool handleComposerKeyAction(int action);
     [[nodiscard]] bool handleComposerHistoryKeyAction(int action);
-    [[nodiscard]] QString buildInstructions() const;
+    [[nodiscard]] ai::AiPromptAssembly buildPromptAssembly() const;
+    void applyPromptAssembly(ai::OpenAIResponseRequest& request) const;
+    [[nodiscard]] ai::OpenAIResponseRequest buildToolContinuationRequest(
+        const ai::OpenAIResponseResult& result, QVector<ai::OpenAIFunctionOutput> outputs) const;
     [[nodiscard]] QString contextInstructions() const;
     [[nodiscard]] QVector<ai::OpenAIInputAttachment> buildContextAttachments() const;
     void beginToolTurn(const ai::OpenAIResponseResult& response);

@@ -438,7 +438,10 @@ public:
 
 private Q_SLOTS:
     void onStartBackup();
-    void onBackupProgress(int current, int total, qint64 bytes, qint64 total_bytes);
+    void onBackupProgress(int completed_users,
+                          int total_users,
+                          qint64 processed_bytes,
+                          qint64 total_bytes);
     void onBackupComplete(bool success, const QString& message);
     void onLogMessage(const QString& message);
 
@@ -492,6 +495,7 @@ private:
 
     bool m_started{false};
     bool m_completed{false};
+    qint64 m_lastProcessedBytes{0};
 };
 
 /**

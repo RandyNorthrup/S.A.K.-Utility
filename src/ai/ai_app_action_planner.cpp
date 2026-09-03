@@ -121,12 +121,12 @@ void applyCommandMethod(AiAppActionPlan& plan) {
     plan.preview = QStringLiteral("Run %1 action '%2': %3")
                        .arg(plan.display_name, plan.action, plan.request.command);
     const AiCommandGuardResult guard = evaluateCommandGuard(plan.request);
-    plan.guard_block_error = guard.block_error;
+    plan.guard_block_error = guard.blockError();
     if (!plan.guard_block_error.isEmpty()) {
         plan.error_message = plan.guard_block_error;
         return;
     }
-    plan.guard_approval_reason = guard.approval_reason;
+    plan.guard_approval_reason = guard.approvalReason();
     plan.risky = safetyFlag(plan.action_profile, QStringLiteral("high_risk")) ||
                  safetyFlag(plan.action_profile, QStringLiteral("requires_restore_point")) ||
                  AiCommandToolPlanner::isPotentiallyDestructiveCommand(plan.request, plan.preview);

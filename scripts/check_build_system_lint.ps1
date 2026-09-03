@@ -197,6 +197,10 @@ foreach ($relativePath in $windowsOnlyProductFiles) {
 # unused callback parameter can be unnamed; a discarded value must be asserted, reported, or
 # removed. File-wide third-party trees stay byte-identical to upstream and are outside this gate.
 $productionSourceFiles = @()
+$profileProgressConsumerPaths = @(
+    "src\gui\user_profile_backup_wizard_execute.cpp",
+    "src\gui\user_profile_restore_wizard_execute.cpp"
+)
 foreach ($sourceRoot in @((Join-Path $root "src"), (Join-Path $root "include"))) {
     $productionSourceFiles += Get-ChildItem -LiteralPath $sourceRoot -Recurse -File |
         Where-Object {
@@ -217,6 +221,11 @@ foreach ($sourceFile in ($productionSourceFiles | Sort-Object FullName -Unique))
                 $violations += ("${relativePath}:${lineNo}: forbidden production warning " +
                                 "silence '$marker'; remove the parameter/value or use it")
             }
+        }
+        if ($relativePath -in $profileProgressConsumerPaths -and
+            $line -match '^\s*\(void\)\s*[A-Za-z_][A-Za-z0-9_]*\s*;') {
+            $violations += ("${relativePath}:${lineNo}: forbidden unused profile-progress value " +
+                            "cast; consume the signal value in the progress UI")
         }
     }
 }

@@ -374,11 +374,15 @@ private:
     UserProfileRestoreWorker* m_worker;
     bool m_restoreComplete;
     bool m_restoreSuccess;
+    qint64 m_lastProcessedBytes{0};
 
 private Q_SLOTS:
     void onStartRestore();
     void onCancelRestore();
-    void onOverallProgress(int current, int total, qint64 bytes, qint64 total_bytes);
+    void onOverallProgress(int completed_users,
+                           int total_users,
+                           qint64 processed_bytes,
+                           qint64 total_bytes);
     void onFileProgress(int current, int total);
     void onStatusUpdate(const QString& username, const QString& operation);
     void onLogMessage(const QString& message, bool is_warning);

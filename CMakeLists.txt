@@ -660,6 +660,7 @@ set(CORE_SOURCES
     include/sak/app_installation_worker.h
     include/sak/user_data_manager.h
     include/sak/user_profile_types.h
+    include/sak/user_profile_progress.h
     include/sak/smart_file_filter.h
     include/sak/windows_user_scanner.h
     include/sak/permission_manager.h

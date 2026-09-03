@@ -1222,6 +1222,9 @@ a parked design, per the bucket convention. Open work is what remains after thos
   existed for its scheduling side effect but returned false by design, making boolean call sites
   misleading. It is now the void `noteRebootRemoval`; all callers perform the side effect and
   explicitly return false because a reboot-pending object is still present now.
+  SUPERSEDED IN WAVE 29: reboot scheduling re-resolves a pathname after restart and cannot bind the
+  object identity that was reviewed. `noteRebootRemoval`, `MoveFileExW` and all reboot-result
+  plumbing are removed; locked/unverifiable targets remain failed and visible.
   WINDOWS-ONLY BOUNDARY WAVE 14 FINAL GATE: all changed-file hooks passed, including the new
   boundary lint, PowerShell syntax, cppcheck, dead-code and staged gitleaks checks. Release build
   exit 0; full CTest 267/267, zero failures, 760.47 seconds.
@@ -1510,8 +1513,35 @@ a parked design, per the bucket convention. Open work is what remains after thos
   pre-commit hooks pass; Release build exit 0; full CTest 273/273, zero failures, 887.66 seconds.
   The fresh runtime skip audit reads 247 current Qt logs, ignores 21 stale removed-test logs, and
   records 4,947 passed functions / 27 reviewed skips (0.54 percent), with none stale or unreviewed.
+  PROMPT-ROLE/PROFILE-PROGRESS/HANDLE-DELETE/CONTROLLER WAVE 29: the command-guard result is now
+  private and construction-bound; `allowed()` excludes approval-required results. Its expanded
+  catalog kills 20/20 mutants. Prompt assembly separates trusted operator policy from catalogs,
+  selected context, stored memory/tool output and steering. The latter serialize only as validated
+  Responses `user` messages on both initial and tool-continuation paths; forged roles and blank
+  structured messages fail before payload, token-count or network work. Three catalogs kill 15/15
+  role-routing mutants. Backup and restore workers now emit initial, throttled and completed-user
+  byte progress; both accessible wizard pages use one overflow-safe byte/user/indeterminate state
+  and never force completion on cancel. Four independent old-silence/behavior drills are red.
+  CleanupWorker now has one Windows 10/11 handle-bound permanent-delete seam for regular files,
+  directories and reparse links; the same handle verifies final path and type before deletion.
+  Legacy disposition, QFile/QDir/RemoveDirectory pathname operations, permission retry and reboot
+  scheduling are removed. Locked/unverifiable targets remain with actionable GUI/headless errors;
+  disposable tests preserve junction targets and hard-link peers. Ten fallback/identity/error
+  drills are red. A fresh blob-bound controller-header review produced 12 findings; all 12 are
+  confirmed and fixed with 13 separate red drills: enumeration/cleanup terminal state, early
+  cancellation, persisted-vs-operation policy, settings health/sync, scan-level validation,
+  truthful LeftoverScanning, queue errors, safe enumeration-thread retirement, dead filter/temp
+  state removal and member naming. Focused app/worker/controller/cleanup/AI targets and tests pass;
+  accessibility reports 650 explicit accessors. The mutation ratchet is 52 catalogs / 422 mutants
+  (416 killed, six proven equivalent). The staged ledger now holds 1,064 units / 632 pending / 43
+  blob-bound driver briefs; changed reviewed blobs correctly returned to pending. The naming gate
+  passes 150/150 non-core TUs clean and 157/157 core TUs healthy with 5,264 findings and 16
+  ratcheted-clean TUs, two findings below Wave 28 with no new naming debt. All whole-tree
+  pre-commit hooks pass; Release build exit 0; full CTest 273/273, zero failures, 771.90 seconds.
+  The fresh runtime skip audit reads 247 current Qt logs, ignores 49 stale removed-test logs, and
+  records 4,974 passed functions / 27 reviewed skips (0.54 percent), with none stale or unreviewed.
   SUPPRESSION RE-AUDIT REFRESH, 2026-09-01 through 2026-09-02: core naming remains broadly excluded
-  while 5,266 findings are tracked as open and 16 clean TUs are ratcheted. The coverage compiler
+  while 5,264 findings are tracked as open and 16 clean TUs are ratcheted. The coverage compiler
   warning silences and unsupported-platform
   runtime branches are closed in Wave 20. Wave 28 removes the first-party LZFSE shim from the
   vendor warning boundary; `/w` remains only on exact byte-identical upstream sources. The
@@ -1531,7 +1561,7 @@ a parked design, per the bucket convention. Open work is what remains after thos
   last resort only after no direct fix is possible and the exact reason is proven. Existing
   suppressions are re-audited, not inherited as permanent policy. Current batch: all pre-commit
   hooks passed; Release build exit 0; full CTest 265/265, zero failures, 804.48 seconds.
-  STILL OPEN: core's 5,266 naming findings; the 294-item `useStlAlgorithm` program; broad
+  STILL OPEN: core's 5,264 naming findings; the 294-item `useStlAlgorithm` program; broad
   magic-number exemptions; the wider mutation/
   fresh-host test-infra program; and the historical VM credential rotation/history-rewrite
   decision.
@@ -3662,8 +3692,9 @@ Net 1072 -> 1098 units. src/third_party is excluded as it always was.
     runner, OpenAI model client, package selection, prompt assembler, and provider-gateway
     authorization. Their 18 leads were independently verified against callers/tests: 17
     confirmed or partially confirmed, 1 refuted. Fourteen are fixed in this batch with exact
-    regressions and mutation drills. Remaining verified work from these briefs: prompt
-    memory/steering role separation, typed access-mode input, and shared AI tool-error helper;
+    regressions and mutation drills. Wave 29 closes prompt memory/steering role separation with
+    typed user-role request messages. Remaining verified work from these briefs: typed access-mode
+    input and the shared AI tool-error helper;
     verification also found the panel's persistent offline worker is a dead shadow of the real
     per-operation worker, whose removal requires the owner's explicit removal authorization.
     FINAL LOCAL GATE: all changed-file hooks passed; Release build exit 0; full CTest 264/264,
@@ -5459,11 +5490,10 @@ Two would have been actively HARMFUL to 'fix':
   m_stop_requested the same way. Single-translation-unit value-flow sees no local
   mutation and concludes the value is invariant. Deleting these lines on the tool's
   advice would have REMOVED WORKING USER CANCELLATION from long-running phases.
-- cleanup_worker.cpp:652,664,734. tryScheduleReboot deliberately returns false and is
-  called for its side effect of recording the path, which rebootPendingItems then
-  surfaces. The always-false return is documented fail-closed design: a
-  reboot-scheduled delete has NOT happened yet, so it must never read as an immediate
-  success.
+- cleanup_worker.cpp historical reboot scheduling -- SUPERSEDED IN WAVE 29. The old side effect
+  correctly returned false while an object still existed, but reboot-time pathname re-resolution
+  could never bind the reviewed target identity. The scheduling helper, signal and UI/headless
+  result plumbing are removed; a locked object remains and reports an actionable failure.
 
 The correct action is therefore NOT to edit this code. It is to delete the blanket
 knownConditionTrueFalse suppression and replace it with narrow, individually justified
@@ -10228,6 +10258,11 @@ gate teaches people to disable both.
     after failed configure. Registered fast preflight proves auto-resolution and invalid explicit
     root refusal; full scratch clone built all application and test targets. Only paid hosted
     clean-runner execution remains; no claim is made for it.
+    LOCAL TOOL REFRESH 2026-09-02: generated profile-analysis build directories initially made the
+    developer-path scan red; the exact disposable directories were removed, not ignored. Regex/path
+    scan and full-history gitleaks are clean across 1,669 commits. The manually requested full
+    external wrapper still stops because local `trufflehog` is absent from PATH; the pinned hosted
+    TruffleHog action remains the authoritative second scanner until that local tool is installed.
     Release build exit 0; full Release CTest 262/262, zero failures (983.22 seconds).
       Measured 2026-08-04: origin/main is at 58c6726, dated 2026-06-29; local main
       is 776 commits ahead. GitHub Actions minutes cost real money, and the
@@ -10754,7 +10789,7 @@ Running tally of gates that reported healthy while analyzing nothing:
 The campaign is complete only when ALL of the following are simultaneously true:
 
 - [~] R5-G10-1 All reproducibly enumerated per-file review units executed and every finding
-  dispositioned -- ACTIVE: live ledger 1063 total / 629 pending / 45 stored driver briefs.
+  dispositioned -- ACTIVE: live ledger 1064 total / 632 pending / 43 stored driver briefs.
   - OPEN: continue LEDGER-1/2/3; Codex budget is available and user authorized multitasking.
 - [~] R5-G10-2 Zero open findings in this document -- ACTIVE: ledger and local programs remain;
   no Codex-budget or VM blocker applies.
@@ -10903,8 +10938,8 @@ The campaign is complete only when ALL of the following are simultaneously true:
       exclusion named in an inventory alongside the live-cert evidence covering it
 - [~] R5-G10-12 Mutation testing green: no surviving mutant anywhere in first-party code
   - PARTIAL: mutation testing is green over the value/boundary decoder/parser/comparator corpus,
-    WS3c, and the AI package/prompt/provider/offline/OpenAI/command guards (50 catalogs / 408
-    mutants; 402 killed and 6 proven equivalent). No-surviving-mutant across ALL first-party code is not
+    WS3c, and the AI package/prompt/provider/offline/OpenAI/command guards (52 catalogs / 422
+    mutants; 416 killed and 6 proven equivalent). No-surviving-mutant across ALL first-party code is not
     yet reached.
 - [x] R5-G10-13 Zero TODO, FIXME, stub, or declared-but-unwired feature in first-party
   - DONE via G19-1..4: no unimplemented TODO/FIXME/stub or declared-but-unwired feature remains, and every AI tool and app action dispatches to a real implementation end to end.
@@ -11068,7 +11103,7 @@ false positives. They are recorded so a future review does not re-litigate them.
 - [x] R5-P7-2 [DESIGN_INTENT] Profile restore never loads on-disk manifest -- validateBackup only stats manifest.json (820) but verifies the in-memory m_manifest that the wizard loaded from that same manifest.json via BackupManifest::loadFromFile. The on-disk PAYLOAD is re-hashed and compared to the manifest digests
 - [x] R5-P7-3 [DUP_R4] Missing manifest seals fail open -- R4 M-A2-12 (doc line 255) already closed the exploitable case: verifyUserPayloadChecksum returns m_manifest.manifest_checksum.isEmpty() when a per-user digest is empty (874) -- passes ONLY for a genuinely legacy backup (both empty), fails c
 - [x] R5-P7-5 [DUP_R4] Vuln inventory marks hive complete while omitting apps -- R4 M-B2-16 (doc line 293) fixed this: scanFastRegistryHive returns completeness -- fastHiveOpenIsComplete treats ACCESS_DENIED as incomplete (1529,1596-1605), per-index enum/open failures set complete=false (1549,1556), enumerateInstalledPr
-- [x] R5-P7-7 [ALREADY_GUARDED] Cleanup is check-then-delete by pathname -- removeFilePermanent deletes BY HANDLE (deleteFileByVerifiedHandle 365-391: openForVerifiedDelete + finalPathOfHandle redirect check + unlinkByHandle, no path re-resolution). Folder trees go through removeFolderTreeVerified/removeVerifiedFol
+- [x] R5-P7-7 [FIXED] Cleanup is check-then-delete by pathname -- Wave 29 removes every weaker delete tail. `deletePathByVerifiedHandle` opens the target without following a leaf reparse point, verifies final path and object type, and calls FileDispositionInfoEx through that same handle. Files, empty directories and reparse links share the seam; locked/unverifiable targets fail visibly. Disposable junction and hard-link tests prove only the selected name is removed.
 - [x] R5-P7-8 [ALREADY_GUARDED] Registry-link protection fails open / TOCTOU -- deleteRegistryKey refuses a REG_LINK key via registryKeyIsSymbolicLink (OPEN_LINK probe for SymbolicLinkValue, 815) plus a bare-hive-root refusal (807). RegDeleteTreeW, not a handle-pinned delete, so the probe-then-delete window is inherent
 - [x] R5-P7-10 [DESIGN_INTENT] User-data restore overwrites live dest incrementally -- restore extracts/copies straight into restore_dir (restorePayload 365-388) with an optional pre-restore whole-tree safety copy (343-354, fail-closed if it can't be made). No atomic whole-tree swap of a live app-data dir, which would be a la
 - [x] R5-P7-13 [DESIGN_INTENT] Registry snapshot incomplete but accepted reliable -- The depth-3 cap (140) and HKLM/SOFTWARE/Classes skip (93) are deliberate scoping for leftover diff, not read failures. The `reliable` flag correctly reflects actual open/enum errors (openKeyForRead/readChildNames set reliable=false, 83,143)
@@ -11077,7 +11112,7 @@ false positives. They are recorded so a future review does not re-litigate them.
 - [x] R5-P7-17 [DESIGN_INTENT] Runtimes/redistributables filtered from vuln scan -- isSupportComponentName / isMicrosoftSupportComponent (1400-1435) is a deliberate noise-reduction filter for .NET/VC++/WebView2 redistributables (OS/Windows-Update-managed). isPrimaryInstalledProgram (1633) applies it intentionally. A docume
 - [x] R5-P7-18 [FALSE_POSITIVE] Configured vuln sources not implemented -- queryGithub/queryOsv ARE used (2078,2085) but correctly gated on a non-empty package_name (package-manager context), which the installed-program registry path lacks -- so those sources apply where they have a key to query. NVD priority-prod
 - [x] R5-P7-19 [DESIGN_INTENT] CISA KEV ignores installed version applicability -- cisaMatchConfidence matches on product/vendor name only because the CISA KEV catalog carries no reliable per-version range. This over-reports (a patched version still flagged) = fail-safe alerting direction, not a security fail-open.
-- [x] R5-P7-23 [ALREADY_GUARDED] Reboot deletion scheduled by pathname only -- scheduleRebootRemoval re-verifies via deleteTimeRedirectSafe (opens+verifies handle final path, or lexically rescreens ancestors) and REFUSES a redirected/reparse-ancestor path before MoveFileExW (770). The reboot-time re-resolution is inhe
+- [x] R5-P7-23 [FIXED] Reboot deletion scheduled by pathname only -- Wave 29 removes MoveFileExW reboot scheduling because restart-time pathname resolution cannot remain bound to the reviewed object. The dead helper, signal, GUI/controller and headless JSON plumbing are removed. Locked/open/identity/type failures leave the object in place and surface actionable per-item errors.
 - [x] R5-P7-26 [DESIGN_INTENT] Direct download success after one resource -- directDownload is a harvesting feature (installers for manual use); ok=(files>0) with the exact count surfaced honestly (1340-1348, comment 1338-1339). Each installer is still checksum-verified (1599). It is not the self-contained-Bundle co
 - [x] R5-P7-27 [DUP_R4] Full Bundle succeeds with partial closure -- R4 M-B2-13 (doc line 291): warn+proceed on an unmet dep is the deliberate will-fetch design (a normal Bundle fetches the dep from the feed at install; air-gap/packed_only is enforced per-entry at install). finalizeBundle now fails closed on
 - [x] R5-P7-28 [DESIGN_INTENT] Internalization relies on incomplete static heuristics -- Static parsing of chocolateyInstall.ps1 cannot resolve dynamic/encoded/indirect downloads -- an inherent limit. A package that couldn't be fully internalized is honestly marked NOT offline_ready (WILL FETCH), so it is not repackaged as fals

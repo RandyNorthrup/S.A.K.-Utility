@@ -21,10 +21,13 @@
 #include <QTemporaryDir>
 #include <QtTest>
 
+#include <algorithm>
+
 #ifdef Q_OS_WIN
 #include <windows.h>
 #endif
 
+#include "sak/user_profile_progress.h"
 #include "sak/user_profile_restore_worker.h"
 #include "sak/user_profile_types.h"
 
@@ -109,6 +112,16 @@ static bool cancellationWasAnnounced(const QSignalSpy& logSpy) {
     return false;
 }
 
+static bool progressNeverCompleted(const QSignalSpy& progressSpy) {
+    return std::ranges::all_of(progressSpy, [](const auto& event) {
+        const auto state = sak::userProfileProgressState(event.at(0).toInt(),
+                                                         event.at(1).toInt(),
+                                                         event.at(2).toLongLong(),
+                                                         event.at(3).toLongLong());
+        return state.value < sak::kPercentMax;
+    });
+}
+
 // ===========================================================================
 class UserProfileRestoreWorkerTests : public QObject {
     Q_OBJECT
@@ -158,6 +171,7 @@ private Q_SLOTS:
     void cancelBeforeRestoreEmitsCancel();
 
     // ---- Signals ----
+    void overallProgress_reportsExactMonotonicBytes();
     void restoreCompleteSignalEmitted();
     void logMessageSignalEmitted();
 
@@ -1052,8 +1066,16 @@ void UserProfileRestoreWorkerTests::cancelBeforeRestoreEmitsCancel() {
     sak::UserProfileRestoreWorker worker;
     QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
     QSignalSpy logSpy(&worker, &sak::UserProfileRestoreWorker::logMessage);
+    QSignalSpy progressSpy(&worker, &sak::UserProfileRestoreWorker::overallProgress);
     QVERIFY(completeSpy.isValid());
     QVERIFY(logSpy.isValid());
+    QVERIFY(progressSpy.isValid());
+    QObject::connect(
+        &worker,
+        &sak::UserProfileRestoreWorker::statusUpdate,
+        &worker,
+        [&worker](const QString&, const QString&) { worker.cancel(); },
+        Qt::DirectConnection);
 
     worker.startRestore(backupDir.path(),
                         manifest,
@@ -1063,9 +1085,6 @@ void UserProfileRestoreWorkerTests::cancelBeforeRestoreEmitsCancel() {
                          false,
                          false,
                          {}});
-
-    // Immediately cancel.
-    worker.cancel();
 
     QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
     QCOMPARE(completeSpy.count(), 1);
@@ -1080,19 +1099,88 @@ void UserProfileRestoreWorkerTests::cancelBeforeRestoreEmitsCancel() {
     // announced an informational status line rather than an error.
     QVERIFY2(cancellationWasAnnounced(logSpy), "cancel() did not announce the cancellation");
 
-    // Fail closed: run() computes success as (no errors AND not cancelled), so a run
-    // whose cancel flag was set before it finished can never report a clean success --
-    // whether it stopped at the top of the user loop, mid-copy, or ran the whole tree.
-    // (The flag is stored on the very next statement after start() with nothing spinning
-    // the event loop in between, so the run cannot have retired first.) The old body
-    // asserted only "count() >= 1" right after QCOMPARE(count(), 1), which is unfailable.
+    // Fail closed: the direct status callback sets cancellation before the first file copy, so
+    // this is deterministic on every host instead of racing an immediate caller-thread cancel.
     QCOMPARE(completeSpy.first().at(0).toBool(), false);
     QVERIFY(!completeSpy.first().at(1).toString().isEmpty());
+    QVERIFY(!progressSpy.isEmpty());
+    QVERIFY(progressNeverCompleted(progressSpy));
 }
 
 // ===========================================================================
 // Tests - Signals
 // ===========================================================================
+
+void UserProfileRestoreWorkerTests::overallProgress_reportsExactMonotonicBytes() {
+    constexpr int kFileCount = 101;
+    constexpr int kFileBytes = 7;
+    QTemporaryDir backupDir;
+    QTemporaryDir destDir;
+    QVERIFY(backupDir.isValid());
+    QVERIFY(destDir.isValid());
+
+    QStringList relativePaths;
+    relativePaths.reserve(kFileCount);
+    for (int index = 0; index < kFileCount; ++index) {
+        relativePaths.append(QStringLiteral("Documents/progress-%1.bin").arg(index));
+    }
+    createBackupTree(
+        backupDir, QStringLiteral("ProgressUser"), relativePaths, QByteArray(kFileBytes, 'P'));
+    qputenv("SystemDrive", destDir.path().toLocal8Bit());
+
+    const auto folder = makeFolder(sak::FolderType::Documents,
+                                   QStringLiteral("Documents"),
+                                   QStringLiteral("Documents"),
+                                   kFileCount * kFileBytes,
+                                   kFileCount);
+    const auto manifest = buildManifest(QStringLiteral("ProgressUser"), {folder});
+    const auto mapping = makeMapping(QStringLiteral("ProgressUser"));
+
+    sak::UserProfileRestoreWorker worker;
+    QSignalSpy completeSpy(&worker, &sak::UserProfileRestoreWorker::restoreComplete);
+    QSignalSpy progressSpy(&worker, &sak::UserProfileRestoreWorker::overallProgress);
+    QVERIFY(completeSpy.isValid());
+    QVERIFY(progressSpy.isValid());
+    QVERIFY(worker.startRestore(backupDir.path(),
+                                manifest,
+                                {mapping},
+                                {sak::ConflictResolution::SkipDuplicate,
+                                 sak::PermissionMode::PreserveOriginal,
+                                 false,
+                                 false,
+                                 {}}));
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
+    QVERIFY2(worker.wait(5000), "restore progress worker did not finish");
+    QVERIFY(completeSpy.first().at(0).toBool());
+
+    QVERIFY(progressSpy.count() >= 3);
+    QCOMPARE(progressSpy.first().at(0).toInt(), 0);
+    QCOMPARE(progressSpy.first().at(1).toInt(), 1);
+    QCOMPARE(progressSpy.first().at(2).toLongLong(), 0);
+    QCOMPARE(progressSpy.first().at(3).toLongLong(), qint64(kFileCount * kFileBytes));
+
+    qint64 previousBytes = -1;
+    int previousPercent = -1;
+    bool sawThrottledUpdate = false;
+    for (const auto& event : progressSpy) {
+        const qint64 bytes = event.at(2).toLongLong();
+        QVERIFY(bytes >= previousBytes);
+        const auto state = sak::userProfileProgressState(
+            event.at(0).toInt(), event.at(1).toInt(), bytes, event.at(3).toLongLong());
+        QVERIFY(state.value >= previousPercent);
+        previousBytes = bytes;
+        previousPercent = state.value;
+        if (event.at(0).toInt() == 0 && bytes == qint64(100 * kFileBytes)) {
+            sawThrottledUpdate = true;
+        }
+    }
+    QVERIFY(sawThrottledUpdate);
+    const auto final = progressSpy.last();
+    QCOMPARE(final.at(0).toInt(), 1);
+    QCOMPARE(final.at(1).toInt(), 1);
+    QCOMPARE(final.at(2).toLongLong(), qint64(kFileCount * kFileBytes));
+    QCOMPARE(final.at(3).toLongLong(), qint64(kFileCount * kFileBytes));
+}
 
 void UserProfileRestoreWorkerTests::restoreCompleteSignalEmitted() {
     QTemporaryDir backupDir;

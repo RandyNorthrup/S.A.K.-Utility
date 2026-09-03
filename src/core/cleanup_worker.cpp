@@ -14,7 +14,6 @@
 
 #include <QDir>
 #include <QDirIterator>
-#include <QFile>
 #include <QFileInfo>
 
 #include <string>
@@ -101,17 +100,61 @@ QString finalPathOfHandle(HANDLE handle) {
     return resolved;
 }
 
-// Unlink the object an open handle refers to, WITHOUT re-resolving any path. Prefers POSIX
-// semantics (name removed immediately) and falls back to legacy delete-on-close.
-bool unlinkByHandle(HANDLE handle) {
-    FILE_DISPOSITION_INFO_EX info_ex{};
-    info_ex.Flags = FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS;
-    if (SetFileInformationByHandle(handle, FileDispositionInfoEx, &info_ex, sizeof(info_ex)) != 0) {
-        return true;
+bool verifiedDeleteKindMatches(DWORD attributes,
+                               bool expectedDirectory,
+                               bool expectedReparsePoint) {
+    const bool is_directory = (attributes & FILE_ATTRIBUTE_DIRECTORY) != 0;
+    const bool is_reparse = (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
+    if (expectedReparsePoint) {
+        return is_reparse;
     }
-    FILE_DISPOSITION_INFO info{};
-    info.DeleteFile = TRUE;
-    return SetFileInformationByHandle(handle, FileDispositionInfo, &info, sizeof(info)) != 0;
+    return !is_reparse && is_directory == expectedDirectory;
+}
+
+QString verifiedDeleteHandleRefusal(const QString& path,
+                                    HANDLE handle,
+                                    bool expectedDirectory,
+                                    bool expectedReparsePoint) {
+    const QString final_path = finalPathOfHandle(handle);
+    const QString identity_refusal =
+        sak::cleanupHandleRedirectRefusal(path, final_path, expectedReparsePoint);
+    if (!identity_refusal.isEmpty()) {
+        return QStringLiteral("Refusing permanent delete of %1: %2").arg(path, identity_refusal);
+    }
+
+    BY_HANDLE_FILE_INFORMATION object_info{};
+    if (GetFileInformationByHandle(handle, &object_info) == 0) {
+        return QStringLiteral("Could not verify deletion target type for %1 (Win32 error %2).")
+            .arg(path)
+            .arg(GetLastError());
+    }
+    if (!verifiedDeleteKindMatches(
+            object_info.dwFileAttributes, expectedDirectory, expectedReparsePoint)) {
+        return QStringLiteral(
+                   "Target type changed before identity-bound deletion of %1. Refresh "
+                   "leftovers and retry.")
+            .arg(path);
+    }
+    return {};
+}
+
+QString deleteVerifiedHandleFailure(const QString& path, HANDLE handle) {
+    // Windows 10/11 FileDispositionInfoEx removes the name bound to this exact handle. This also
+    // preserves hard-link peers: only the opened link is unlinked. IGNORE_READONLY_ATTRIBUTE
+    // replaces the old chmod-and-retry chain without another pathname resolution.
+    FILE_DISPOSITION_INFO_EX disposition{};
+    disposition.Flags = FILE_DISPOSITION_FLAG_DELETE | FILE_DISPOSITION_FLAG_POSIX_SEMANTICS |
+                        FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE;
+    if (SetFileInformationByHandle(
+            handle, FileDispositionInfoEx, &disposition, sizeof(disposition)) != 0) {
+        return {};
+    }
+    return QStringLiteral(
+               "Identity-bound deletion failed for %1 (Win32 error %2). Close "
+               "applications using it and retry; no legacy, pathname, or reboot "
+               "fallback was attempted.")
+        .arg(path)
+        .arg(GetLastError());
 }
 
 // True only if the key opened WITHOUT following the link (REG_OPTION_OPEN_LINK affects the FINAL
@@ -289,6 +332,7 @@ auto CleanupWorker::execute() -> std::expected<void, sak::error_code> {
 
         reportProgress(idx, total, QString("Cleaning: %1").arg(item.path));
 
+        m_currentItemError.clear();
         // Defense-in-depth: re-screen each item against the cleanup denylist before dispatching, so
         // a caller that bypasses AdvancedUninstallController cannot reach the destructive syscalls.
         const bool ok = cleanItemIfAllowed(item);
@@ -298,6 +342,12 @@ auto CleanupWorker::execute() -> std::expected<void, sak::error_code> {
             bytes_recovered += item.sizeBytes;
         } else {
             ++failed;
+            if (m_currentItemError.isEmpty()) {
+                noteItemFailure(
+                    QStringLiteral("Cleanup operation failed; target was left in place. Review the "
+                                   "log and retry."));
+            }
+            Q_EMIT itemCleanupError(item.path, m_currentItemError);
         }
 
         Q_EMIT itemCleaned(item.path, ok);
@@ -306,15 +356,18 @@ auto CleanupWorker::execute() -> std::expected<void, sak::error_code> {
     reportProgress(total, total, "Cleanup complete");
     Q_EMIT cleanupComplete(succeeded, failed, bytes_recovered);
 
-    if (!m_rebootPendingPaths.isEmpty()) {
-        Q_EMIT rebootPendingItems(m_rebootPendingPaths);
-    }
-
     if (!m_recycleFallbackPaths.isEmpty()) {
         Q_EMIT recycleFallbackItems(m_recycleFallbackPaths);
     }
 
     return {};
+}
+
+void CleanupWorker::noteItemFailure(const QString& reason) {
+    if (m_currentItemError.isEmpty()) {
+        m_currentItemError = reason;
+    }
+    sak::logWarning("CleanupWorker: " + reason.toStdString());
 }
 
 void CleanupWorker::noteRecycleFallback(bool fallback, const QString& path) {
@@ -357,8 +410,7 @@ QString CleanupWorker::itemCleanupRefusal(const LeftoverItem& item) {
 bool CleanupWorker::cleanItemIfAllowed(const LeftoverItem& item) {
     const QString refusal = itemCleanupRefusal(item);
     if (!refusal.isEmpty()) {
-        sak::logWarning("Refusing cleanup of " + item.path.toStdString() + ": " +
-                        refusal.toStdString());
+        noteItemFailure(QStringLiteral("Refusing cleanup of %1: %2").arg(item.path, refusal));
         return false;
     }
     return cleanSingleItem(item);
@@ -398,76 +450,63 @@ bool CleanupWorker::cleanStartupEntry(const LeftoverItem& item) {
 bool CleanupWorker::deleteTimeRedirectSafe(const QString& path) {
     HANDLE handle = openForVerifiedDelete(path);
     if (handle == INVALID_HANDLE_VALUE) {
-        // Cannot open to verify (locked/denied, or raced-away). Re-screen ancestors LEXICALLY now
-        // so a fresh junction/symlink swap is still refused; a truly-gone path has nothing to
-        // delete.
-        if (sak::pathReparseUnsafe(path)) {
-            sak::logWarning("Refusing cleanup delete of " + path.toStdString() +
-                            ": path is (or is nested under) a symlink/junction");
-            return false;
+        const DWORD error = GetLastError();
+        if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) {
+            return true;
         }
-        return true;
+        noteItemFailure(
+            QStringLiteral("Could not verify target identity for %1 (Win32 error %2). Close "
+                           "applications using it and retry; no pathname fallback was attempted.")
+                .arg(path)
+                .arg(error));
+        return false;
     }
     const QString final_path = finalPathOfHandle(handle);
     CloseHandle(handle);
     const QString refusal = sak::cleanupHandleRedirectRefusal(path, final_path);
     if (!refusal.isEmpty()) {
-        sak::logWarning("Refusing cleanup delete of " + path.toStdString() + ": " +
-                        refusal.toStdString());
+        noteItemFailure(QStringLiteral("Refusing cleanup delete of %1: %2").arg(path, refusal));
         return false;
     }
     return true;
 }
 
-CleanupWorker::HandleDeleteOutcome CleanupWorker::deleteFileByVerifiedHandle(const QString& path) {
+bool CleanupWorker::deletePathByVerifiedHandle(const QString& path,
+                                               VerifiedDeleteKind expectedKind) {
     HANDLE handle = openForVerifiedDelete(path);
     if (handle == INVALID_HANDLE_VALUE) {
-        return HandleDeleteOutcome::NotOpenable;
+        const DWORD error = GetLastError();
+        if (error == ERROR_FILE_NOT_FOUND || error == ERROR_PATH_NOT_FOUND) {
+            return true;
+        }
+        noteItemFailure(
+            QStringLiteral("Could not open %1 for identity-bound deletion (Win32 error %2). Close "
+                           "applications using it and retry; no pathname or reboot fallback was "
+                           "attempted.")
+                .arg(path)
+                .arg(error));
+        return false;
     }
-    const QString final_path = finalPathOfHandle(handle);
-    const QString refusal = sak::cleanupHandleRedirectRefusal(path, final_path);
+    const bool expected_directory = expectedKind == VerifiedDeleteKind::Directory;
+    const bool expected_reparse = expectedKind == VerifiedDeleteKind::ReparsePoint;
+    const QString refusal =
+        verifiedDeleteHandleRefusal(path, handle, expected_directory, expected_reparse);
     if (!refusal.isEmpty()) {
         CloseHandle(handle);
-        sak::logWarning("Refusing permanent delete of " + path.toStdString() + ": " +
-                        refusal.toStdString());
-        return HandleDeleteOutcome::Redirected;
+        noteItemFailure(refusal);
+        return false;
     }
-    if (unlinkByHandle(handle)) {
-        CloseHandle(handle);
-        return HandleDeleteOutcome::Deleted;
-    }
-    // The object was opened and verified NOT redirected, but the unlink itself failed (typically a
-    // sharing/lock violation). Surface the Win32 error so the caller's string-unlink/reboot
-    // fallback is not silent; the earlier redirect check means the fallback cannot hit a swapped-in
-    // target.
-    const DWORD err = GetLastError();
+    const QString delete_failure = deleteVerifiedHandleFailure(path, handle);
     CloseHandle(handle);
-    sak::logWarning("By-handle delete of " + path.toStdString() +
-                    " failed (GetLastError=" + std::to_string(err) + "); using fallback removal");
-    return HandleDeleteOutcome::NotOpenable;
+    if (!delete_failure.isEmpty()) {
+        noteItemFailure(delete_failure);
+        return false;
+    }
+    return true;
 }
 
 bool CleanupWorker::removeFilePermanent(const QString& path) {
-    // Delete BY HANDLE: open the exact object, re-verify it is still the validated target (no
-    // ancestor junction/symlink swap), then unlink through the handle -- no path is re-resolved
-    // after the check, closing the TOCTOU window a string-based QFile::remove would leave open.
-    const HandleDeleteOutcome outcome = deleteFileByVerifiedHandle(path);
-    if (outcome == HandleDeleteOutcome::Deleted) {
-        return true;
-    }
-    if (outcome == HandleDeleteOutcome::Redirected) {
-        return false;  // NEVER fall back to a string delete on a redirected/protected target
-    }
-    // NotOpenable (locked/denied, or the object was opened+verified but the unlink itself failed).
-    // Do NOT bare-unlink: re-run the handle-verified redirect screen IMMEDIATELY before the string
-    // delete so an ancestor swapped into a junction since the earlier check is refused fail-closed
-    // (deleteTimeRedirectSafe re-opens+verifies, or lexically re-screens ancestors when the object
-    // still cannot be opened). Only a target that re-verifies clean falls to the last-resort
-    // unlink.
-    if (!deleteTimeRedirectSafe(path)) {
-        return false;
-    }
-    return QFile::remove(path);
+    return deletePathByVerifiedHandle(path, VerifiedDeleteKind::RegularFile);
 }
 
 CleanupWorker::RecycleOutcome CleanupWorker::decideRecycle(const QString& path,
@@ -541,15 +580,16 @@ bool CleanupWorker::deleteFile(const QString& path) {
     // == false and is currently reported as "already gone", i.e. a SUCCESSFUL deletion of
     // something that was never named. Refuse it explicitly instead.
     if (path.isEmpty()) {
-        sak::logError("CleanupWorker: refusing to delete a file with an empty path");
+        noteItemFailure(QStringLiteral("Refusing to delete a file with an empty path."));
         return false;
     }
     // Ancestor reparse guard FIRST, before any stat that FOLLOWS the path: an ancestor swapped to a
     // (UNC) symlink would otherwise make exists() trigger a remote handshake. pathHasReparsePoint
     // Ancestor reads each ancestor's own attributes WITHOUT following, so it is safe to call first.
     if (sak::pathHasReparsePointAncestor(path)) {
-        sak::logWarning("Refusing file delete of " + path.toStdString() +
-                        ": an ancestor is a symlink/junction");
+        noteItemFailure(QStringLiteral("Refusing file delete of %1: an ancestor is a "
+                                       "symlink/junction.")
+                            .arg(path));
         return false;
     }
     const QFileInfo info(path);
@@ -558,11 +598,12 @@ bool CleanupWorker::deleteFile(const QString& path) {
     // the leaf was swapped to a UNC symlink). A file symlink leftover is unlinked as the LINK only.
     if (info.isSymLink() || info.isJunction()) {
         if (m_requireRecoverable) {
-            sak::logWarning("Auto-clean leaves reparse-point leftover for review: " +
-                            path.toStdString());
+            noteItemFailure(QStringLiteral("Auto-clean left reparse-point item %1 in place for "
+                                           "manual review.")
+                                .arg(path));
             return false;
         }
-        return unlinkReparsePoint(path);
+        return deletePathByVerifiedHandle(path, VerifiedDeleteKind::ReparsePoint);
     }
     if (!info.exists()) {
         return true;  // Already gone
@@ -584,37 +625,21 @@ bool CleanupWorker::recycleOrPermanentFile(const QString& path) {
     case RecycleOutcome::Recycled:
         return true;
     case RecycleOutcome::RefusedRecoverable:
+        noteItemFailure(
+            QStringLiteral("Item could not be removed recoverably and was left in "
+                           "place for manual review."));
+        return false;
     case RecycleOutcome::RefusedRedirected:
+        noteItemFailure(
+            QStringLiteral("Target identity changed before recycle; item was left in "
+                           "place. Refresh leftovers and retry."));
         return false;
     case RecycleOutcome::FallThrough:
         break;
     }
-    return removeFilePermanentWithRetry(path, recycleFallback);
-}
-
-bool CleanupWorker::removeFilePermanentWithRetry(const QString& path, bool recycleFallback) {
     if (removeFilePermanent(path)) {
         noteRecycleFallback(recycleFallback, path);
         return true;
-    }
-
-    // Try setting writable and retry.
-    QFile file(path);
-    file.setPermissions(QFile::ReadOther | QFile::WriteOther);
-    if (removeFilePermanent(path)) {
-        noteRecycleFallback(recycleFallback, path);
-        return true;
-    }
-
-    // File is locked -- schedule removal on next reboot. A reboot-scheduled delete is NOT counted
-    // as success: the object is still present now and its reboot-time removal cannot be pinned to
-    // the verified target (MoveFileExW re-resolves the pathname at reboot -- see
-    // scheduleRebootRemoval). Record it so rebootPendingItems surfaces it to the operator, but
-    // report the item as not-yet- deleted (fail closed) rather than an unconditional success.
-    // recycleFallback is not noted here: nothing has been permanently deleted, so the
-    // recycle-escalation list would over-state it.
-    if (scheduleRebootRemoval(path)) {
-        m_rebootPendingPaths.append(path);
     }
     return false;
 }
@@ -628,15 +653,16 @@ bool CleanupWorker::deleteFolder(const QString& path) {
     // if the upstream screen were ever bypassed the forced-removal path below would target
     // that tree. Two lines to make the guarantor irrelevant.
     if (path.isEmpty()) {
-        sak::logError("CleanupWorker: refusing to delete a folder with an empty path");
+        noteItemFailure(QStringLiteral("Refusing to delete a folder with an empty path."));
         return false;
     }
     // Ancestor reparse guard FIRST, before dir.exists() (which FOLLOWS the path -- a UNC-symlink
     // ancestor would trigger a remote handshake). Also catches a leaf junction with a swapped
     // ancestor before the leaf-reparse branch below.
     if (sak::pathHasReparsePointAncestor(path)) {
-        sak::logWarning("Refusing folder delete of " + path.toStdString() +
-                        ": an ancestor is a symlink/junction");
+        noteItemFailure(QStringLiteral("Refusing folder delete of %1: an ancestor is a "
+                                       "symlink/junction.")
+                            .arg(path));
         return false;
     }
 
@@ -648,11 +674,12 @@ bool CleanupWorker::deleteFolder(const QString& path) {
         // Recycle-only (auto-clean): unlinking a reparse point is a permanent (non-recycled)
         // operation, so leave it for human review rather than auto-remove it.
         if (m_requireRecoverable) {
-            sak::logWarning("Auto-clean leaves reparse-point leftover for review: " +
-                            path.toStdString());
+            noteItemFailure(QStringLiteral("Auto-clean left reparse-point item %1 in place for "
+                                           "manual review.")
+                                .arg(path));
             return false;
         }
-        return unlinkReparsePoint(path);
+        return deletePathByVerifiedHandle(path, VerifiedDeleteKind::ReparsePoint);
     }
 
     QDir dir(path);
@@ -676,7 +703,14 @@ bool CleanupWorker::finishFolderDelete(const QString& path) {
     case RecycleOutcome::Recycled:
         return true;
     case RecycleOutcome::RefusedRecoverable:
+        noteItemFailure(
+            QStringLiteral("Folder could not be removed recoverably and was left in "
+                           "place for manual review."));
+        return false;
     case RecycleOutcome::RefusedRedirected:
+        noteItemFailure(
+            QStringLiteral("Folder identity changed before recycle; it was left in "
+                           "place. Refresh leftovers and retry."));
         return false;
     case RecycleOutcome::FallThrough:
         break;
@@ -703,68 +737,19 @@ bool CleanupWorker::removeVerifiedFolderEntry(const QFileInfo& entry, int depth)
     // parent verify: if any ancestor is now a reparse point the child string would resolve
     // elsewhere, so refuse fail-closed (the leaf being a reparse itself is fine to unlink).
     if (sak::pathHasReparsePointAncestor(child)) {
-        sak::logWarning("Refusing folder-entry delete of " + child.toStdString() +
-                        ": an ancestor is a symlink/junction");
+        noteItemFailure(QStringLiteral("Refusing folder-entry delete of %1: an ancestor is a "
+                                       "symlink/junction.")
+                            .arg(child));
         return false;
     }
     // A reparse point (junction / dir-symlink): unlink the LINK only, never recurse through it.
     if (entry.isSymLink() || entry.isJunction()) {
-        return unlinkReparsePoint(child);
+        return deletePathByVerifiedHandle(child, VerifiedDeleteKind::ReparsePoint);
     }
     if (entry.isDir()) {
         return removeFolderTreeVerified(child, depth);  // recurse; re-verifies the subdir by handle
     }
-    // Plain file: delete by verified handle (redirect -> refuse). A locked (NotOpenable) file falls
-    // back to a string unlink / reboot schedule -- safe now that the ancestor chain is verified.
-    const HandleDeleteOutcome outcome = deleteFileByVerifiedHandle(child);
-    if (outcome == HandleDeleteOutcome::Deleted) {
-        return true;
-    }
-    if (outcome == HandleDeleteOutcome::Redirected) {
-        return false;
-    }
-    if (QFile::remove(child)) {
-        return true;
-    }
-    noteRebootRemoval(child);
-    return false;
-}
-
-bool CleanupWorker::removeEmptyDirByVerifiedHandle(const QString& path) {
-    HANDLE handle = openForVerifiedDelete(path);
-    if (handle == INVALID_HANDLE_VALUE) {
-        // Cannot open to verify: refuse if an ancestor is now a reparse point; else best-effort
-        // rmdir (only succeeds on an empty dir) or schedule for reboot.
-        if (sak::pathReparseUnsafe(path)) {
-            return false;
-        }
-        if (RemoveDirectoryW(reinterpret_cast<LPCWSTR>(path.utf16())) != 0) {
-            return true;
-        }
-        noteRebootRemoval(path);
-        return false;
-    }
-    const QString final_path = finalPathOfHandle(handle);
-    const QString refusal = sak::cleanupHandleRedirectRefusal(path, final_path);
-    if (!refusal.isEmpty()) {
-        CloseHandle(handle);
-        sak::logWarning("Refusing folder removal of " + path.toStdString() + ": " +
-                        refusal.toStdString());
-        return false;
-    }
-    const bool ok = unlinkByHandle(handle);  // POSIX-deletes an EMPTY directory
-    CloseHandle(handle);
-    if (ok) {
-        return true;
-    }
-    // Verified handle but unlink failed (dir not empty / locked). Only schedule the string-based
-    // reboot removal if no ancestor is a reparse point (else the reboot path could resolve
-    // elsewhere).
-    if (sak::pathHasReparsePointAncestor(path)) {
-        return false;
-    }
-    noteRebootRemoval(path);
-    return false;
+    return deletePathByVerifiedHandle(child, VerifiedDeleteKind::RegularFile);
 }
 
 bool CleanupWorker::removeFolderTreeVerified(const QString& path, int depth) {
@@ -772,8 +757,9 @@ bool CleanupWorker::removeFolderTreeVerified(const QString& path, int depth) {
     // worker thread's stack. Past the budget, fail closed (report the tree not fully handled) so
     // the emptied-dir removal below then fails and the incompleteness propagates upward.
     if (depth > kMaxCleanupTreeDepth) {
-        sak::logWarning("Refusing folder delete of " + path.toStdString() +
-                        ": directory nesting exceeds the safe recursion depth");
+        noteItemFailure(QStringLiteral("Refusing folder delete of %1: directory nesting exceeds "
+                                       "the safe recursion depth.")
+                            .arg(path));
         return false;
     }
     // Verify THIS directory still resolves to the validated, non-protected target before touching
@@ -792,7 +778,7 @@ bool CleanupWorker::removeFolderTreeVerified(const QString& path, int depth) {
     }
     // Remove the now-empty directory by a verified handle. If some children survived (redirected /
     // locked), the dir is not empty and this fails -> the failure is surfaced via all_handled.
-    if (!removeEmptyDirByVerifiedHandle(path)) {
+    if (!deletePathByVerifiedHandle(path, VerifiedDeleteKind::Directory)) {
         all_handled = false;
     }
     return all_handled;
@@ -800,46 +786,12 @@ bool CleanupWorker::removeFolderTreeVerified(const QString& path, int depth) {
 
 bool CleanupWorker::deleteFolderTreeVerified(const QString& path) {
     // Reuse the exact per-node handle-verified walk WITHOUT forking it. The tree walk reads no item
-    // list and no recycle config -- only the reboot-schedule bookkeeping noteRebootRemoval touches
-    // -- so a throwaway, empty-item worker drives it correctly. Its rebootPendingItems signal is
-    // unconnected here; MoveFileEx scheduling of a genuinely locked leftover still happens.
+    // list and no recycle config, so a throwaway, empty-item worker drives it correctly. Locked or
+    // unverifiable entries fail and remain in place; this standalone seam never schedules delayed
+    // pathname work that its caller cannot observe.
     const QVector<LeftoverItem> noItems;
     CleanupWorker worker(noItems);
     return worker.removeFolderTreeVerified(path);
-}
-
-bool CleanupWorker::unlinkReparsePoint(const QString& path) {
-    // rmdir (RemoveDirectoryW) unlinks a directory reparse point; QFile::remove unlinks a file
-    // symlink -- both remove the LINK only, never the target's contents.
-    if (QDir().rmdir(path) || QFile::remove(path)) {
-        return true;
-    }
-    noteRebootRemoval(path);
-    return false;
-}
-
-void CleanupWorker::noteRebootRemoval(const QString& path) {
-    // Record the reboot schedule so rebootPendingItems surfaces it. Callers still report failure:
-    // the object remains present now and its reboot-time resolution cannot be pinned to the
-    // verified object.
-    if (scheduleRebootRemoval(path)) {
-        m_rebootPendingPaths.append(path);
-    }
-}
-
-bool CleanupWorker::scheduleRebootRemoval(const QString& path) {
-    // A reboot-delete is INHERENTLY unpinnable: MoveFileExW(MOVEFILE_DELAY_UNTIL_REBOOT) stores the
-    // pathname and the OS re-resolves it at reboot, so no Win32 API can bind it to today's verified
-    // object -- a documented residual. The actionable mitigation is to require the target to be the
-    // validated, non-redirected object at SCHEDULE time: re-verify by handle here and REFUSE to
-    // schedule a redirected / reparse-ancestor path (deleteTimeRedirectSafe opens+verifies, or
-    // lexically re-screens ancestors when the object cannot be opened).
-    if (!deleteTimeRedirectSafe(path)) {
-        return false;
-    }
-    return MoveFileExW(reinterpret_cast<LPCWSTR>(path.utf16()),
-                       nullptr,
-                       MOVEFILE_DELAY_UNTIL_REBOOT) != 0;
 }
 
 bool CleanupWorker::deleteRegistryKey(const QString& fullKeyPath) {

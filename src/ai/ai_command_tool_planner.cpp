@@ -350,8 +350,8 @@ AiCommandToolPlan AiCommandToolPlanner::buildPlan(const QString& tool_name,
     }
 
     const AiCommandGuardResult guard = evaluateCommandGuard(plan.request);
-    plan.guard_block_error = guard.block_error;
-    plan.guard_approval_reason = guard.approval_reason;
+    plan.guard_block_error = guard.blockError();
+    plan.guard_approval_reason = guard.approvalReason();
 
     plan.policy_request.tool_name = tool_name;
     plan.policy_request.command_preview = plan.preview;

@@ -7,6 +7,7 @@
 #include "sak/style_constants.h"
 #include "sak/user_profile_backup_wizard.h"
 #include "sak/user_profile_backup_worker.h"
+#include "sak/user_profile_progress.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -76,15 +77,20 @@ void UserProfileBackupExecutePage::setupUi() {
     layout->addWidget(m_currentUserLabel);
 
     // Overall progress
-    layout->addWidget(new QLabel(tr("Overall Progress:"), this));
+    auto* overall_label = new QLabel(tr("Overall Progress:"), this);
+    layout->addWidget(overall_label);
     m_overallProgress = new QProgressBar(this);
-    m_overallProgress->setFormat("%v / %m (%p%)");
+    m_overallProgress->setAccessibleName(tr("Backup overall byte progress"));
+    overall_label->setBuddy(m_overallProgress);
     layout->addWidget(m_overallProgress);
 
     // Current file/folder progress
-    layout->addWidget(new QLabel(tr("Current Operation:"), this));
+    auto* current_label = new QLabel(tr("Current Operation:"), this);
+    layout->addWidget(current_label);
     m_currentProgress = new QProgressBar(this);
+    m_currentProgress->setAccessibleName(tr("Backup file progress"));
     m_currentProgress->setFormat("%v / %m (%p%)");
+    current_label->setBuddy(m_currentProgress);
     layout->addWidget(m_currentProgress);
 
     // Log output
@@ -110,6 +116,10 @@ void UserProfileBackupExecutePage::setupUi() {
 void UserProfileBackupExecutePage::initializePage() {
     m_statusLabel->setText(tr("Ready to start backup. Click Start Backup to begin."));
     m_startButton->setEnabled(true);
+    m_lastProcessedBytes = 0;
+    m_overallProgress->setRange(0, 0);
+    m_overallProgress->setFormat(tr("Waiting for backup size..."));
+    m_overallProgress->setAccessibleDescription(tr("Waiting for backup size."));
 }
 
 bool UserProfileBackupExecutePage::isComplete() const {
@@ -402,23 +412,33 @@ void UserProfileBackupExecutePage::connectAndStartBackupWorker(SmartFilter smart
     }
     worker->startBackup(m_manifest, m_users, m_destinationPath, smart_filter, backup_options);
 
-    m_overallProgress->setRange(0, static_cast<int>(m_users.size()));
+    m_overallProgress->setRange(0, 0);
     m_currentProgress->setRange(0, 0);
 }
 
-void UserProfileBackupExecutePage::onBackupProgress(int current,
-                                                    int total,
-                                                    qint64 bytes,
+void UserProfileBackupExecutePage::onBackupProgress(int completed_users,
+                                                    int total_users,
+                                                    qint64 processed_bytes,
                                                     qint64 total_bytes) {
-    (void)bytes;
-    (void)total_bytes;
-    m_overallProgress->setMaximum(total);
-    m_overallProgress->setValue(current);
+    const UserProfileProgressState progress =
+        userProfileProgressState(completed_users, total_users, processed_bytes, total_bytes);
+    m_lastProcessedBytes = progress.processed_bytes;
+    m_overallProgress->setRange(progress.minimum, progress.maximum);
+    m_overallProgress->setValue(progress.value);
+    m_overallProgress->setFormat(progress.format);
+    m_overallProgress->setAccessibleDescription(progress.accessible_description);
 }
 
 void UserProfileBackupExecutePage::onBackupComplete(bool success, const QString& message) {
     m_completed = true;
     m_statusLabel->setText(success ? tr("Backup completed successfully!") : tr("Backup failed!"));
+    if (success) {
+        m_overallProgress->setRange(0, kPercentMax);
+        m_overallProgress->setValue(kPercentMax);
+        m_overallProgress->setFormat(
+            tr("Backup complete - %1 processed").arg(formatBytes(m_lastProcessedBytes)));
+        m_overallProgress->setAccessibleDescription(m_overallProgress->format());
+    }
     appendLog(success ? tr("=== Backup Complete ===") : tr("=== Backup Failed ==="));
     appendLog(message);
     Q_EMIT completeChanged();

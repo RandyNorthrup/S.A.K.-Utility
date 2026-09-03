@@ -44,6 +44,16 @@ struct OpenAIInputAttachment {
     QString detail{QStringLiteral("auto")};
 };
 
+enum class OpenAIInputMessageRole {
+    User,
+};
+
+/// Supplemental untrusted text sent as a real Responses API message, never as instructions.
+struct OpenAIInputMessage {
+    OpenAIInputMessageRole role{OpenAIInputMessageRole::User};
+    QString text;
+};
+
 struct OpenAIResponseRequest {
     QString api_key;
     QString model;
@@ -51,6 +61,7 @@ struct OpenAIResponseRequest {
     QString input;
     QVector<OpenAIInputAttachment> attachments;
     QVector<OpenAIFunctionOutput> function_outputs;
+    QVector<OpenAIInputMessage> untrusted_input_messages;
     QString reasoning_effort;
     QString previous_response_id;
     QString safety_identifier;

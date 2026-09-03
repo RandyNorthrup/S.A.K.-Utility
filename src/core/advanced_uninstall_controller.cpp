@@ -17,10 +17,10 @@
 
 #include <QMetaType>
 #include <QThread>
-#include <QTimer>
 #include <QVariant>
 
 #include <algorithm>
+#include <array>
 #include <memory>
 
 namespace sak {
@@ -69,7 +69,8 @@ void retireWorker(std::unique_ptr<WorkerT>& worker, const QObject* owner) {
 // silently become a setting the user never chose. A value that is not recognizably a boolean is
 // refused and @p malformed_safe (the conservative choice for that specific preference, not
 // necessarily the shipped default) is kept instead.
-bool loadBoolSetting(const char* key, bool absent_default, bool malformed_safe) {
+bool loadBoolSetting(const char* key, bool absent_default, bool malformed_safe, bool& valid) {
+    valid = true;
     const QVariant raw = ConfigManager::instance().getValue(key, absent_default);
     if (raw.typeId() == QMetaType::Bool) {
         return raw.toBool();
@@ -82,7 +83,13 @@ bool loadBoolSetting(const char* key, bool absent_default, bool malformed_safe) 
         return false;
     }
     sak::logError("Malformed boolean setting {}; using the fail-closed value", key);
+    valid = false;
     return malformed_safe;
+}
+
+bool isValidScanLevel(ScanLevel level) {
+    const int value = static_cast<int>(level);
+    return value >= 0 && value <= kMaxScanLevelValue;
 }
 
 // A registry key path is well-formed only when it is rooted at a recognized hive. Anything else is
@@ -113,7 +120,7 @@ UninstallWorker::Mode uninstallModeForProgram(const ProgramInfo& program) {
 AdvancedUninstallController::AdvancedUninstallController(QObject* parent)
     : QObject(parent)
     , m_enumerator(std::make_unique<ProgramEnumerator>())
-    , m_restore_manager(std::make_unique<RestorePointManager>(this)) {
+    , m_restoreManager(std::make_unique<RestorePointManager>(this)) {
     // Register custom types for cross-thread signal delivery
     qRegisterMetaType<sak::ProgramInfo>("sak::ProgramInfo");
     qRegisterMetaType<sak::LeftoverItem>("sak::LeftoverItem");
@@ -123,14 +130,19 @@ AdvancedUninstallController::AdvancedUninstallController(QObject* parent)
     qRegisterMetaType<QVector<sak::LeftoverItem>>("QVector<sak::LeftoverItem>");
 
     // Wire enumerator signals
-    connect(m_enumerator.get(),
-            &ProgramEnumerator::enumerationStarted,
-            this,
-            &AdvancedUninstallController::enumerationStarted);
+    connect(m_enumerator.get(), &ProgramEnumerator::enumerationStarted, this, [this]() {
+        if (m_state == State::Enumerating) {
+            Q_EMIT enumerationStarted();
+        }
+    });
     connect(m_enumerator.get(),
             &ProgramEnumerator::enumerationProgress,
             this,
-            &AdvancedUninstallController::enumerationProgress);
+            [this](int current, int total) {
+                if (m_state == State::Enumerating) {
+                    Q_EMIT enumerationProgress(current, total);
+                }
+            });
     connect(m_enumerator.get(),
             &ProgramEnumerator::enumerationFinished,
             this,
@@ -155,12 +167,16 @@ AdvancedUninstallController::AdvancedUninstallController(QObject* parent)
     m_enumerator->moveToThread(m_enumThread);
     m_enumThread->start();
 
-    loadSettings();
+    if (!loadSettings()) {
+        sak::logError("Advanced Uninstall settings load failed; safe values are active");
+    }
 }
 
 AdvancedUninstallController::~AdvancedUninstallController() {
     cleanupWorkers();
-    saveSettings();
+    if (!saveSettings()) {
+        sak::logError("Advanced Uninstall settings save failed during controller teardown");
+    }
 }
 
 AdvancedUninstallController::State AdvancedUninstallController::currentState() const {
@@ -170,6 +186,10 @@ AdvancedUninstallController::State AdvancedUninstallController::currentState() c
 // -- Program Enumeration -----------------------------------------------------
 
 void AdvancedUninstallController::refreshPrograms() {
+    if (m_enumerationStopping) {
+        Q_EMIT statusMessage("Waiting for cancelled enumeration to stop.", kStatusTimeoutShortMs);
+        return;
+    }
     if (m_state != State::Idle) {
         Q_EMIT statusMessage("Cannot refresh while another operation is in progress.",
                              kStatusTimeoutShortMs);
@@ -190,7 +210,7 @@ void AdvancedUninstallController::refreshPrograms() {
     m_enumerator->resetCancel();
     // Bump the generation so a still-running prior enumeration (cancelled, but whose cooperative
     // stop was cleared by resetCancel above) cannot pass its stale completion off as this run's.
-    const int generation = ++m_enum_generation;
+    const int generation = ++m_enumGeneration;
     QMetaObject::invokeMethod(
         m_enumerator.get(),
         [enumerator = m_enumerator.get(), generation]() { enumerator->enumerateAll(generation); },
@@ -217,20 +237,25 @@ void AdvancedUninstallController::uninstallProgram(const ProgramInfo& program,
         return;
     }
 
-    m_autoCleanSafe = autoCleanSafe;
+    if (!isValidScanLevel(scanLevel)) {
+        Q_EMIT statusMessage("Cannot uninstall: scan level is invalid.", kStatusTimeoutShortMs);
+        return;
+    }
+
+    m_currentAutoCleanSafe = autoCleanSafe;
     setState(State::Uninstalling);
 
     // Safely dispose of any prior worker whose thread may still be exiting before the
     // unique_ptr is overwritten (B10-09).
-    retireWorker(m_uninstall_worker, this);
-    m_uninstall_worker = std::make_unique<UninstallWorker>(
+    retireWorker(m_uninstallWorker, this);
+    m_uninstallWorker = std::make_unique<UninstallWorker>(
         program, uninstallModeForProgram(program), scanLevel, createRestorePoint, this);
     connectUninstallWorkerSignals(true);
 
     Q_EMIT uninstallStarted(program.displayName);
     Q_EMIT statusMessage(QString("Uninstalling %1...").arg(program.displayName), 0);
 
-    m_uninstall_worker->start();
+    m_uninstallWorker->start();
 }
 
 void AdvancedUninstallController::forceUninstall(const ProgramInfo& program,
@@ -246,11 +271,17 @@ void AdvancedUninstallController::forceUninstall(const ProgramInfo& program,
         return;
     }
 
-    m_autoCleanSafe = false;  // Force uninstall always shows results for review
+    if (!isValidScanLevel(scanLevel)) {
+        Q_EMIT statusMessage("Cannot force uninstall: scan level is invalid.",
+                             kStatusTimeoutShortMs);
+        return;
+    }
+
+    m_currentAutoCleanSafe = false;  // Force uninstall always shows results for review
     setState(State::Uninstalling);
 
-    retireWorker(m_uninstall_worker, this);
-    m_uninstall_worker = std::make_unique<UninstallWorker>(
+    retireWorker(m_uninstallWorker, this);
+    m_uninstallWorker = std::make_unique<UninstallWorker>(
         program, UninstallWorker::Mode::ForcedUninstall, scanLevel, createRestorePoint, this);
 
     connectUninstallWorkerSignals(false);
@@ -258,7 +289,7 @@ void AdvancedUninstallController::forceUninstall(const ProgramInfo& program,
     Q_EMIT uninstallStarted(program.displayName);
     Q_EMIT statusMessage(QString("Forced uninstall: %1...").arg(program.displayName), 0);
 
-    m_uninstall_worker->start();
+    m_uninstallWorker->start();
 }
 
 void AdvancedUninstallController::removeUwpPackage(const ProgramInfo& program) {
@@ -286,21 +317,25 @@ void AdvancedUninstallController::removeRegistryEntry(const ProgramInfo& program
 
     setState(State::Uninstalling);
 
-    retireWorker(m_uninstall_worker, this);
-    m_uninstall_worker = std::make_unique<UninstallWorker>(
+    m_currentAutoCleanSafe = false;
+    retireWorker(m_uninstallWorker, this);
+    m_uninstallWorker = std::make_unique<UninstallWorker>(
         program, UninstallWorker::Mode::RegistryOnly, ScanLevel::Safe, false, this);
 
-    connect(m_uninstall_worker.get(),
+    connect(m_uninstallWorker.get(),
             &UninstallWorker::uninstallComplete,
             this,
             &AdvancedUninstallController::onUninstallComplete);
-    connect(m_uninstall_worker.get(),
+    connect(m_uninstallWorker.get(),
             &UninstallWorker::failed,
             this,
             &AdvancedUninstallController::onUninstallWorkerFailed);
-
+    connect(m_uninstallWorker.get(),
+            &UninstallWorker::cancelled,
+            this,
+            &AdvancedUninstallController::onUninstallWorkerCancelled);
     Q_EMIT uninstallStarted(program.displayName);
-    m_uninstall_worker->start();
+    m_uninstallWorker->start();
 }
 
 QVector<LeftoverItem> AdvancedUninstallController::screenCleanupItems(
@@ -393,36 +428,11 @@ void AdvancedUninstallController::startCleanupWorker(const QVector<LeftoverItem>
     Q_EMIT cleanupStarted(total);
     Q_EMIT statusMessage(QString("Cleaning %1 leftover items...").arg(total), 0);
 
-    retireWorker(m_cleanup_worker, this);
-    m_cleanup_worker = std::make_unique<CleanupWorker>(screenedItems, useRecycleBin, this);
-    m_cleanup_worker->setRequireRecoverable(requireRecoverable);
-    connectCleanupWorkerSignals(m_cleanup_worker.get());
-    m_cleanup_worker->start();
-}
-
-QVector<LeftoverItem> AdvancedUninstallController::nonSafeLeftovers(
-    const QVector<LeftoverItem>& items) {
-    QVector<LeftoverItem> out;
-    for (const LeftoverItem& item : items) {
-        if (item.risk != LeftoverItem::RiskLevel::Safe) {
-            out.append(item);
-        }
-    }
-    return out;
-}
-
-QVector<LeftoverItem> AdvancedUninstallController::safeLeftovers(
-    const QVector<LeftoverItem>& items) {
-    QVector<LeftoverItem> safe;
-    for (const LeftoverItem& item : items) {
-        // deletable gates first: a report-only item is never offered for removal.
-        if (item.deletable && item.risk == LeftoverItem::RiskLevel::Safe) {
-            LeftoverItem copy = item;
-            copy.selected = true;
-            safe.append(copy);
-        }
-    }
-    return safe;
+    retireWorker(m_cleanupWorker, this);
+    m_cleanupWorker = std::make_unique<CleanupWorker>(screenedItems, useRecycleBin, this);
+    m_cleanupWorker->setRequireRecoverable(requireRecoverable);
+    connectCleanupWorkerSignals(m_cleanupWorker.get());
+    m_cleanupWorker->start();
 }
 
 bool AdvancedUninstallController::isRecoverableLeftoverType(const LeftoverItem& item) {
@@ -530,9 +540,9 @@ void AdvancedUninstallController::connectCleanupWorkerSignals(CleanupWorker* wor
             this,
             &AdvancedUninstallController::onCleanupComplete);
     connect(worker,
-            &CleanupWorker::rebootPendingItems,
+            &CleanupWorker::itemCleanupError,
             this,
-            &AdvancedUninstallController::rebootPendingItems);
+            &AdvancedUninstallController::itemCleanupError);
     // recycleFallbackItems: items destroyed permanently after the Recycle Bin failed -- re-emitted
     // so the panel can warn the user the recoverable-default was not honored.
     connect(worker,
@@ -555,14 +565,17 @@ void AdvancedUninstallController::cancelOperation() {
     // torn down only in cleanupWorkers().
     if (m_state == State::Enumerating && m_enumerator) {
         m_enumerator->requestCancel();
+        m_enumerationStopping = true;
         setState(State::Idle);
+        Q_EMIT enumerationCancelled();
+        Q_EMIT statusMessage("Enumeration cancelled.", kStatusTimeoutShortMs);
     }
 
-    if (m_uninstall_worker && m_uninstall_worker->isExecuting()) {
-        m_uninstall_worker->requestStop();
+    if (m_uninstallWorker && (m_uninstallWorker->isExecuting() || m_uninstallWorker->isRunning())) {
+        m_uninstallWorker->requestStop();
     }
-    if (m_cleanup_worker && m_cleanup_worker->isExecuting()) {
-        m_cleanup_worker->requestStop();
+    if (m_cleanupWorker && (m_cleanupWorker->isExecuting() || m_cleanupWorker->isRunning())) {
+        m_cleanupWorker->requestStop();
     }
 }
 
@@ -585,6 +598,11 @@ void AdvancedUninstallController::addToQueue(const ProgramInfo& program,
         return;
     }
 
+    if (!isValidScanLevel(scanLevel)) {
+        Q_EMIT statusMessage("Cannot add to queue: scan level is invalid.", kStatusTimeoutShortMs);
+        return;
+    }
+
     UninstallQueueItem item;
     item.program = program;
     item.scanLevel = scanLevel;
@@ -593,17 +611,20 @@ void AdvancedUninstallController::addToQueue(const ProgramInfo& program,
     m_queue.append(item);
 }
 
-void AdvancedUninstallController::removeFromQueue(int index) {
+bool AdvancedUninstallController::removeFromQueue(int index) {
     // Mid-batch removal would shift m_batchIndex-based indexing so a completion is applied to (or
     // an uninstall is run against) the wrong queued program -- refuse it while a batch is running.
     if (m_batchIndex >= 0) {
         Q_EMIT statusMessage("Cannot modify the queue while a batch uninstall is running.",
                              kStatusTimeoutShortMs);
-        return;
+        return false;
     }
-    if (index >= 0 && index < m_queue.size()) {
-        m_queue.removeAt(index);
+    if (index < 0 || index >= m_queue.size()) {
+        Q_EMIT statusMessage("Cannot remove queue item: index is invalid.", kStatusTimeoutShortMs);
+        return false;
     }
+    m_queue.removeAt(index);
+    return true;
 }
 
 QVector<UninstallQueueItem> AdvancedUninstallController::queue() const {
@@ -638,7 +659,6 @@ void AdvancedUninstallController::startBatchUninstall(bool createRestorePoint) {
     setState(State::Uninstalling);
 
     m_batchIndex = -1;
-    m_batchRestorePointCreated = false;
     m_batchAutoCleanItems.clear();
 
     // Create a single restore point for the entire batch. FAIL CLOSED: if the user asked for a
@@ -647,8 +667,8 @@ void AdvancedUninstallController::startBatchUninstall(bool createRestorePoint) {
     if (createRestorePoint) {
         const QString desc =
             QString("SAK: Before batch uninstall (%1 programs)").arg(m_queue.size());
-        m_batchRestorePointCreated = m_restore_manager->createRestorePoint(desc);
-        if (!m_batchRestorePointCreated) {
+        const bool restore_point_created = m_restoreManager->createRestorePoint(desc);
+        if (!restore_point_created) {
             setState(State::Idle);
             Q_EMIT statusMessage("Cannot create system restore point; batch uninstall aborted.",
                                  kStatusTimeoutLongMs);
@@ -661,13 +681,30 @@ void AdvancedUninstallController::startBatchUninstall(bool createRestorePoint) {
 
 // -- Settings ----------------------------------------------------------------
 
-void AdvancedUninstallController::loadSettings() {
+bool AdvancedUninstallController::loadSettings() {
     auto& cfg = ConfigManager::instance();
 
+    if (!cfg.isHealthy()) {
+        m_defaultScanLevel = ScanLevel::Moderate;
+        m_autoRestorePoint = true;
+        m_autoCleanSafePreference = false;
+        m_showSystemComponents = false;
+        m_useRecycleBin = true;
+        m_selectAllByDefault = false;
+        const QString error = QStringLiteral(
+            "Advanced Uninstall settings store is unhealthy; safe values are active.");
+        sak::logError(error.toStdString());
+        Q_EMIT settingsError(error);
+        return false;
+    }
+
+    bool scan_valid = false;
     int raw_scan_level =
-        cfg.getValue("advuninstall/default_scan_level", kDefaultScanLevelValue).toInt();
-    if (raw_scan_level < 0 || raw_scan_level > kMaxScanLevelValue) {
+        cfg.getValue("advuninstall/default_scan_level", kDefaultScanLevelValue).toInt(&scan_valid);
+    if (!scan_valid || raw_scan_level < 0 || raw_scan_level > kMaxScanLevelValue) {
+        scan_valid = false;
         raw_scan_level = kDefaultScanLevelValue;
+        sak::logError("Malformed Advanced Uninstall scan level; using Moderate");
     }
     m_defaultScanLevel = static_cast<ScanLevel>(raw_scan_level);
     // The boolean prefs are range-validated like the scan level above rather than coerced with
@@ -676,22 +713,56 @@ void AdvancedUninstallController::loadSettings() {
     // into "true". Each one names the value to keep when the stored text is not a boolean -- the
     // conservative choice for THAT preference (recycle rather than permanently delete, do not
     // auto-clean, do not pre-select), which is not always the shipped default.
-    m_autoRestorePoint = loadBoolSetting("advuninstall/auto_restore_point", true, true);
-    m_autoCleanSafe = loadBoolSetting("advuninstall/auto_clean_safe", true, false);
-    m_showSystemComponents = loadBoolSetting("advuninstall/show_system_components", false, false);
-    m_useRecycleBin = loadBoolSetting("advuninstall/use_recycle_bin", false, true);
-    m_selectAllByDefault = loadBoolSetting("advuninstall/select_all_by_default", false, false);
+    bool restore_valid = false;
+    bool clean_valid = false;
+    bool system_valid = false;
+    bool recycle_valid = false;
+    bool select_valid = false;
+    m_autoRestorePoint =
+        loadBoolSetting("advuninstall/auto_restore_point", true, true, restore_valid);
+    m_autoCleanSafePreference =
+        loadBoolSetting("advuninstall/auto_clean_safe", true, false, clean_valid);
+    m_showSystemComponents =
+        loadBoolSetting("advuninstall/show_system_components", false, false, system_valid);
+    m_useRecycleBin = loadBoolSetting("advuninstall/use_recycle_bin", false, true, recycle_valid);
+    m_selectAllByDefault =
+        loadBoolSetting("advuninstall/select_all_by_default", false, false, select_valid);
+    const std::array validity = {
+        scan_valid, restore_valid, clean_valid, system_valid, recycle_valid, select_valid};
+    const bool valid = std::ranges::all_of(validity, [](bool item) { return item; });
+    if (!valid) {
+        const QString error = QStringLiteral(
+            "One or more Advanced Uninstall settings were invalid; safe values replaced them.");
+        Q_EMIT settingsError(error);
+    }
+    return valid;
 }
 
-void AdvancedUninstallController::saveSettings() {
+bool AdvancedUninstallController::saveSettings() {
     auto& cfg = ConfigManager::instance();
+
+    if (!cfg.isHealthy()) {
+        const QString error =
+            QStringLiteral("Advanced Uninstall settings were not saved: store is unhealthy.");
+        sak::logError(error.toStdString());
+        Q_EMIT settingsError(error);
+        return false;
+    }
 
     cfg.setValue("advuninstall/default_scan_level", static_cast<int>(m_defaultScanLevel));
     cfg.setValue("advuninstall/auto_restore_point", m_autoRestorePoint);
-    cfg.setValue("advuninstall/auto_clean_safe", m_autoCleanSafe);
+    cfg.setValue("advuninstall/auto_clean_safe", m_autoCleanSafePreference);
     cfg.setValue("advuninstall/show_system_components", m_showSystemComponents);
     cfg.setValue("advuninstall/use_recycle_bin", m_useRecycleBin);
     cfg.setValue("advuninstall/select_all_by_default", m_selectAllByDefault);
+    if (!cfg.sync()) {
+        const QString error =
+            QStringLiteral("Advanced Uninstall settings could not be written to disk.");
+        sak::logError(error.toStdString());
+        Q_EMIT settingsError(error);
+        return false;
+    }
+    return true;
 }
 
 bool AdvancedUninstallController::autoRestorePoint() const {
@@ -703,11 +774,11 @@ void AdvancedUninstallController::setAutoRestorePoint(bool enabled) {
 }
 
 bool AdvancedUninstallController::autoCleanSafe() const {
-    return m_autoCleanSafe;
+    return m_autoCleanSafePreference;
 }
 
 void AdvancedUninstallController::setAutoCleanSafe(bool enabled) {
-    m_autoCleanSafe = enabled;
+    m_autoCleanSafePreference = enabled;
 }
 
 ScanLevel AdvancedUninstallController::defaultScanLevel() const {
@@ -750,16 +821,25 @@ void AdvancedUninstallController::setSelectAllByDefault(bool enabled) {
 }
 
 RestorePointManager* AdvancedUninstallController::restorePointManager() const {
-    return m_restore_manager.get();
+    return m_restoreManager.get();
 }
 
 // -- Private Slots -----------------------------------------------------------
 
+void AdvancedUninstallController::onLeftoverScanStarted(ScanLevel level) {
+    setState(State::LeftoverScanning);
+    Q_EMIT leftoverScanStarted(level);
+}
+
 void AdvancedUninstallController::onEnumerationFinished(int generation,
                                                         QVector<ProgramInfo> programs) {
+    if (generation == m_enumGeneration && m_enumerationStopping) {
+        m_enumerationStopping = false;
+        return;
+    }
     // Drop a stale completion: a run cancelled then restarted would otherwise apply the OLD (or an
     // un-cancelled superseded) result to the NEW run. Also guard the post-cancel Idle state.
-    if (generation != m_enum_generation || m_state != State::Enumerating) {
+    if (generation != m_enumGeneration || m_state != State::Enumerating) {
         return;
     }
 
@@ -772,9 +852,13 @@ void AdvancedUninstallController::onEnumerationFinished(int generation,
 }
 
 void AdvancedUninstallController::onEnumerationFailed(int generation, const QString& error) {
+    if (generation == m_enumGeneration && m_enumerationStopping) {
+        m_enumerationStopping = false;
+        return;
+    }
     // Drop a stale failure (a superseded run's cancel) so it cannot force the NEW run's state to
     // Idle.
-    if (generation != m_enum_generation || m_state != State::Enumerating) {
+    if (generation != m_enumGeneration || m_state != State::Enumerating) {
         return;
     }
 
@@ -813,7 +897,9 @@ void AdvancedUninstallController::onUninstallComplete(UninstallReport report) {
     // clean refuse. When an auto-clean starts, uninstallFinished + the completion status are
     // DEFERRED to onCleanupComplete (state is Uninstalling now -> Cleaning). No-op when
     // disabled/nothing safe.
-    if (maybeAutoCleanSafeLeftovers(report, m_autoCleanSafe)) {
+    const bool auto_clean_safe = m_currentAutoCleanSafe;
+    m_currentAutoCleanSafe = false;
+    if (maybeAutoCleanSafeLeftovers(report, auto_clean_safe)) {
         return;
     }
 
@@ -827,6 +913,7 @@ void AdvancedUninstallController::onUninstallComplete(UninstallReport report) {
 
 void AdvancedUninstallController::onUninstallWorkerFailed(int /*errorCode*/,
                                                           const QString& message) {
+    m_currentAutoCleanSafe = false;
     if (m_batchIndex >= 0 && m_batchIndex < m_queue.size()) {
         m_queue[m_batchIndex].status = UninstallQueueItem::Status::Failed;
         Q_EMIT queueItemStatusChanged(m_batchIndex, UninstallQueueItem::Status::Failed);
@@ -840,6 +927,7 @@ void AdvancedUninstallController::onUninstallWorkerFailed(int /*errorCode*/,
 }
 
 void AdvancedUninstallController::onUninstallWorkerCancelled() {
+    m_currentAutoCleanSafe = false;
     if (m_batchIndex >= 0 && m_batchIndex < m_queue.size()) {
         m_queue[m_batchIndex].status = UninstallQueueItem::Status::Cancelled;
         // Count batch results so far
@@ -889,6 +977,7 @@ void AdvancedUninstallController::onCleanupComplete(int succeeded,
 
 void AdvancedUninstallController::onCleanupWorkerFailed(int /*errorCode*/, const QString& message) {
     setState(State::Idle);
+    Q_EMIT cleanupFailed(message);
     Q_EMIT statusMessage(QString("Cleanup failed: %1").arg(message), kStatusTimeoutLongMs);
     // The UNINSTALL succeeded; only the deferred auto-clean failed. Still surface the uninstall
     // completion + all leftovers (nothing was reliably removed), and clear the deferred state so a
@@ -922,13 +1011,15 @@ void AdvancedUninstallController::stopEnumThread() {
     m_enumerator->requestCancel();
     m_enumThread->quit();
     if (!m_enumThread->wait(kThreadWaitMs)) {
-        m_enumThread->terminate();
-        if (!m_enumThread->wait(kThreadWaitMs)) {
-            // Cannot safely delete a still-running QThread: leave the (parented)
-            // handle rather than abort. This is the inherent unkillable-thread case.
-            sak::logError("Enumeration thread refused to stop");
-            return;
-        }
+        ProgramEnumerator* stale_enumerator = m_enumerator.release();
+        QThread* stale_thread = m_enumThread;
+        m_enumThread = nullptr;
+        stale_thread->setParent(nullptr);
+        QObject::disconnect(stale_enumerator, nullptr, this, nullptr);
+        QObject::connect(stale_thread, &QThread::finished, stale_enumerator, &QObject::deleteLater);
+        QObject::connect(stale_thread, &QThread::finished, stale_thread, &QObject::deleteLater);
+        sak::logError("Enumeration thread refused the bounded cooperative stop; detached safely");
+        return;
     }
     // Join confirmed: delete here, before ~AdvancedUninstallController destroys the
     // m_enumerator unique_ptr that a running enumerateAll() would otherwise use.
@@ -939,51 +1030,51 @@ void AdvancedUninstallController::stopEnumThread() {
 void AdvancedUninstallController::cleanupWorkers() {
     stopEnumThread();
     // Cooperative stop + detach-if-refuses, never terminate()+destroy a live QThread.
-    retireWorker(m_uninstall_worker, this);
-    retireWorker(m_cleanup_worker, this);
+    retireWorker(m_uninstallWorker, this);
+    retireWorker(m_cleanupWorker, this);
 }
 
 void AdvancedUninstallController::connectUninstallWorkerSignals(bool includeNativeSignals) {
     if (includeNativeSignals) {
-        connect(m_uninstall_worker.get(),
+        connect(m_uninstallWorker.get(),
                 &UninstallWorker::nativeUninstallerStarted,
                 this,
                 &AdvancedUninstallController::nativeUninstallerStarted);
-        connect(m_uninstall_worker.get(),
+        connect(m_uninstallWorker.get(),
                 &UninstallWorker::nativeUninstallerFinished,
                 this,
                 &AdvancedUninstallController::nativeUninstallerFinished);
     }
 
-    connect(m_uninstall_worker.get(),
+    connect(m_uninstallWorker.get(),
             &UninstallWorker::restorePointCreated,
             this,
             &AdvancedUninstallController::restorePointCreated);
-    connect(m_uninstall_worker.get(),
+    connect(m_uninstallWorker.get(),
             &UninstallWorker::leftoverScanStarted,
             this,
-            &AdvancedUninstallController::leftoverScanStarted);
-    connect(m_uninstall_worker.get(),
+            &AdvancedUninstallController::onLeftoverScanStarted);
+    connect(m_uninstallWorker.get(),
             &UninstallWorker::leftoverScanProgress,
             this,
             &AdvancedUninstallController::leftoverScanProgress);
-    connect(m_uninstall_worker.get(),
+    connect(m_uninstallWorker.get(),
             &UninstallWorker::leftoverScanFinished,
             this,
             &AdvancedUninstallController::leftoverScanFinished);
-    connect(m_uninstall_worker.get(),
+    connect(m_uninstallWorker.get(),
             &UninstallWorker::uninstallComplete,
             this,
             &AdvancedUninstallController::onUninstallComplete);
-    connect(m_uninstall_worker.get(),
+    connect(m_uninstallWorker.get(),
             &UninstallWorker::failed,
             this,
             &AdvancedUninstallController::onUninstallWorkerFailed);
-    connect(m_uninstall_worker.get(),
+    connect(m_uninstallWorker.get(),
             &UninstallWorker::cancelled,
             this,
             &AdvancedUninstallController::onUninstallWorkerCancelled);
-    connect(m_uninstall_worker.get(),
+    connect(m_uninstallWorker.get(),
             &UninstallWorker::progress,
             this,
             [this](int current, int total, const QString& msg) {
@@ -993,23 +1084,27 @@ void AdvancedUninstallController::connectUninstallWorkerSignals(bool includeNati
 }
 
 void AdvancedUninstallController::connectBatchUninstallWorkerSignals() {
-    connect(m_uninstall_worker.get(),
+    connect(m_uninstallWorker.get(),
             &UninstallWorker::uninstallComplete,
             this,
             &AdvancedUninstallController::onUninstallComplete);
-    connect(m_uninstall_worker.get(),
+    connect(m_uninstallWorker.get(),
             &UninstallWorker::failed,
             this,
             &AdvancedUninstallController::onUninstallWorkerFailed);
-    connect(m_uninstall_worker.get(),
+    connect(m_uninstallWorker.get(),
             &UninstallWorker::cancelled,
             this,
             &AdvancedUninstallController::onUninstallWorkerCancelled);
-    connect(m_uninstall_worker.get(),
+    connect(m_uninstallWorker.get(),
+            &UninstallWorker::leftoverScanStarted,
+            this,
+            &AdvancedUninstallController::onLeftoverScanStarted);
+    connect(m_uninstallWorker.get(),
             &UninstallWorker::leftoverScanFinished,
             this,
             &AdvancedUninstallController::leftoverScanFinished);
-    connect(m_uninstall_worker.get(),
+    connect(m_uninstallWorker.get(),
             &UninstallWorker::progress,
             this,
             [this](int current, int total, const QString& msg) {
@@ -1083,8 +1178,9 @@ void AdvancedUninstallController::processNextQueueItem() {
     // Don't create individual restore points in batch (already done).
     // Ensure the previous worker is safely retired (detach if it refuses to stop)
     // before its unique_ptr is overwritten, so we never destroy a live QThread.
-    retireWorker(m_uninstall_worker, this);
-    m_uninstall_worker = std::make_unique<UninstallWorker>(
+    setState(State::Uninstalling);
+    retireWorker(m_uninstallWorker, this);
+    m_uninstallWorker = std::make_unique<UninstallWorker>(
         qi.program, uninstallModeForProgram(qi.program), qi.scanLevel, false, this);
     connectBatchUninstallWorkerSignals();
 
@@ -1095,7 +1191,7 @@ void AdvancedUninstallController::processNextQueueItem() {
                              .arg(qi.program.displayName),
                          0);
 
-    m_uninstall_worker->start();
+    m_uninstallWorker->start();
 }
 
 }  // namespace sak

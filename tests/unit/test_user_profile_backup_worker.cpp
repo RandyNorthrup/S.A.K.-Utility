@@ -3,6 +3,7 @@
 
 #include "sak/backup_file_codec.h"
 #include "sak/user_profile_backup_worker.h"
+#include "sak/user_profile_progress.h"
 
 #include <QDir>
 #include <QFile>
@@ -12,6 +13,7 @@
 #include <QTest>
 
 #include <atomic>
+#include <limits>
 
 using namespace sak;
 
@@ -47,6 +49,11 @@ private Q_SLOTS:
     void encryptedBackupStoresCiphertextAndRestoresIt();
     void compressedBackupStoresContainerAndRestoresIt();
     void encryptionWithoutPasswordRefusesToStart();
+
+    // -- Aggregate byte progress --------------------------------
+    void progressState_usesBytesAndHandlesUnknownTotals();
+    void overallProgress_reportsExactMonotonicBytes();
+    void cancelledBackupNeverReportsCompletionProgress();
 
 private:
     struct BackupOutcome {
@@ -500,6 +507,134 @@ void TestUserProfileBackupWorker::isSafeRelativePath_acceptsRelativeRejectsEscap
     QVERIFY(!UserProfileBackupWorker::isSafeRelativePath(QStringLiteral("/etc/passwd")));
     QVERIFY(!UserProfileBackupWorker::isSafeRelativePath(QStringLiteral("C:/Windows")));
     QVERIFY(!UserProfileBackupWorker::isSafeRelativePath(QStringLiteral("\\\\server\\share")));
+}
+
+void TestUserProfileBackupWorker::progressState_usesBytesAndHandlesUnknownTotals() {
+    const UserProfileProgressState known = userProfileProgressState(1, 4, 60, 100);
+    QCOMPARE(known.minimum, 0);
+    QCOMPARE(known.maximum, kPercentMax);
+    QCOMPARE(known.value, 60);
+    QCOMPARE(known.format, QStringLiteral("60% - 60 bytes / 100 bytes"));
+    QVERIFY(known.accessible_description.contains(QStringLiteral("1 of 4 users complete")));
+
+    const UserProfileProgressState unknown = userProfileProgressState(1, 4, 4096, 0);
+    QCOMPARE(unknown.maximum, kPercentMax);
+    QCOMPARE(unknown.value, 25);
+    QCOMPARE(unknown.format, QStringLiteral("25% - 1 / 4 users - 4.0 KB processed"));
+
+    const UserProfileProgressState indeterminate = userProfileProgressState(0, 0, 0, 0);
+    QCOMPARE(indeterminate.minimum, 0);
+    QCOMPARE(indeterminate.maximum, 0);
+    QCOMPARE(indeterminate.value, 0);
+    QCOMPARE(indeterminate.format, QStringLiteral("0 bytes processed - total size unknown"));
+
+    const UserProfileProgressState bounded = userProfileProgressState(9, 4, 200, 100);
+    QCOMPARE(bounded.completed_users, 4);
+    QCOMPARE(bounded.value, kPercentMax);
+    constexpr qint64 kMaxBytes = std::numeric_limits<qint64>::max();
+    QCOMPARE(boundedProgressPercent(kMaxBytes - 1, kMaxBytes), kPercentMax - 1);
+    QCOMPARE(boundedProgressPercent(kMaxBytes, kMaxBytes), kPercentMax);
+    QCOMPARE(userProfileProgressState(0, 1, 50, 100).value, 50);
+    QVERIFY(userProfileProgressState(0, 1, 75, 100).value >=
+            userProfileProgressState(0, 1, 50, 100).value);
+}
+
+void TestUserProfileBackupWorker::overallProgress_reportsExactMonotonicBytes() {
+    constexpr int kFileCount = 101;
+    constexpr int kFileBytes = 7;
+    QTemporaryDir src_dir;
+    QTemporaryDir dest_parent;
+    QVERIFY(src_dir.isValid());
+    QVERIFY(dest_parent.isValid());
+    QVERIFY(QDir(src_dir.path()).mkpath(QStringLiteral("Documents")));
+    for (int index = 0; index < kFileCount; ++index) {
+        QFile file(src_dir.filePath(QStringLiteral("Documents/progress-%1.bin").arg(index)));
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QCOMPARE(file.write(QByteArray(kFileBytes, 'P')), kFileBytes);
+    }
+
+    FolderSelection folder;
+    folder.type = FolderType::Documents;
+    folder.relative_path = QStringLiteral("Documents");
+    folder.selected = true;
+    folder.size_bytes = kFileCount * kFileBytes;
+    folder.file_count = kFileCount;
+
+    UserProfileBackupWorker worker;
+    QSignalSpy progress_spy(&worker, &UserProfileBackupWorker::overallProgress);
+    QVERIFY(progress_spy.isValid());
+    const BackupRun run =
+        runBackup(worker, src_dir.path(), folder, dest_parent.filePath(QStringLiteral("dest")));
+    QVERIFY2(run.completed && run.success, qPrintable(run.message));
+
+    QVERIFY(progress_spy.count() >= 3);
+    QCOMPARE(progress_spy.first().at(0).toInt(), 0);
+    QCOMPARE(progress_spy.first().at(1).toInt(), 1);
+    QCOMPARE(progress_spy.first().at(2).toLongLong(), 0);
+    QCOMPARE(progress_spy.first().at(3).toLongLong(), qint64(kFileCount * kFileBytes));
+
+    qint64 previous_bytes = -1;
+    int previous_percent = -1;
+    bool saw_throttled_update = false;
+    for (const auto& event : progress_spy) {
+        const qint64 bytes = event.at(2).toLongLong();
+        QVERIFY(bytes >= previous_bytes);
+        const auto state = userProfileProgressState(
+            event.at(0).toInt(), event.at(1).toInt(), bytes, event.at(3).toLongLong());
+        QVERIFY(state.value >= previous_percent);
+        previous_bytes = bytes;
+        previous_percent = state.value;
+        if (event.at(0).toInt() == 0 && bytes == qint64(100 * kFileBytes)) {
+            saw_throttled_update = true;
+        }
+    }
+    QVERIFY(saw_throttled_update);
+    const auto final = progress_spy.last();
+    QCOMPARE(final.at(0).toInt(), 1);
+    QCOMPARE(final.at(1).toInt(), 1);
+    QCOMPARE(final.at(2).toLongLong(), qint64(kFileCount * kFileBytes));
+    QCOMPARE(final.at(3).toLongLong(), qint64(kFileCount * kFileBytes));
+}
+
+void TestUserProfileBackupWorker::cancelledBackupNeverReportsCompletionProgress() {
+    QTemporaryDir src_dir;
+    QTemporaryDir dest_parent;
+    QVERIFY(src_dir.isValid());
+    QVERIFY(dest_parent.isValid());
+    QVERIFY(QDir(src_dir.path()).mkpath(QStringLiteral("Documents")));
+    QFile file(src_dir.filePath(QStringLiteral("Documents/cancel.bin")));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(QByteArray(4096, 'C')), 4096);
+    file.close();
+
+    FolderSelection folder;
+    folder.type = FolderType::Documents;
+    folder.relative_path = QStringLiteral("Documents");
+    folder.selected = true;
+    folder.size_bytes = 4096;
+    folder.file_count = 1;
+
+    UserProfileBackupWorker worker;
+    QObject::connect(
+        &worker,
+        &UserProfileBackupWorker::statusUpdate,
+        &worker,
+        [&worker](const QString&, const QString&) { worker.cancel(); },
+        Qt::DirectConnection);
+    QSignalSpy progress_spy(&worker, &UserProfileBackupWorker::overallProgress);
+    QVERIFY(progress_spy.isValid());
+    const BackupRun run =
+        runBackup(worker, src_dir.path(), folder, dest_parent.filePath(QStringLiteral("dest")));
+    QVERIFY(run.completed);
+    QVERIFY(!run.success);
+    QVERIFY(!progress_spy.isEmpty());
+    for (const auto& event : progress_spy) {
+        const auto state = userProfileProgressState(event.at(0).toInt(),
+                                                    event.at(1).toInt(),
+                                                    event.at(2).toLongLong(),
+                                                    event.at(3).toLongLong());
+        QVERIFY(state.value < kPercentMax);
+    }
 }
 
 QTEST_MAIN(TestUserProfileBackupWorker)

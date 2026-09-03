@@ -1,5 +1,5 @@
 {
-  "head_commit": "383386497e546caf6c8e5bd3a9dca38941240a9e",
+  "head_commit": "68d8b01642f2d226c85f044aa412971a0cbf693c",
   "unit_rule": "include/**.h|.hpp, src/**.cpp|.h|.hpp, tests/**.cpp|.h|.mjs, scripts/**.py|.ps1|.sh, browser/**.js",
   "units": {
     "browser/extension/background.js": {
@@ -103,18 +103,16 @@
       "status": "reviewed"
     },
     "include/sak/advanced_uninstall_controller.h": {
-      "brief": "docs/review_briefs/include_sak_advanced_uninstall_controller.md",
-      "evidence": "driver",
       "group": "include",
-      "reviewed_blob": "ddba2b7fab0e0da4118598e042d010894bd0d4e0",
-      "status": "reviewed"
+      "previous_evidence": "driver",
+      "previous_review_blob": "a3ada2e028151759e04123f8a3db2c2b9f6e181d",
+      "status": "pending"
     },
     "include/sak/advanced_uninstall_panel.h": {
-      "brief": "docs/review_briefs/include_sak_advanced_uninstall_panel.md",
-      "evidence": "driver",
       "group": "include",
-      "reviewed_blob": "1412badc9a2ffcbf59a34ff44906a68ea0b4de6b",
-      "status": "reviewed"
+      "previous_evidence": "driver",
+      "previous_review_blob": "1412badc9a2ffcbf59a34ff44906a68ea0b4de6b",
+      "status": "pending"
     },
     "include/sak/advanced_uninstall_types.h": {
       "evidence": "cited",
@@ -153,7 +151,7 @@
     "include/sak/ai/ai_command_guard.h": {
       "group": "include",
       "previous_evidence": "driver",
-      "previous_review_blob": "38163cd496618e981f093dcd9299f500182a45d7",
+      "previous_review_blob": "ff21cb57ac87d51bbc7035bbc2a51fddab957893",
       "status": "pending"
     },
     "include/sak/ai/ai_command_tool_planner.h": {
@@ -1456,6 +1454,10 @@
       "status": "pending"
     },
     "include/sak/user_profile_backup_worker.h": {
+      "group": "include",
+      "status": "pending"
+    },
+    "include/sak/user_profile_progress.h": {
       "group": "include",
       "status": "pending"
     },

@@ -6,6 +6,8 @@
 #include <QRegularExpression>
 #include <QStringList>
 
+#include <utility>
+
 namespace sak::ai {
 
 namespace {
@@ -277,15 +279,16 @@ QString commandGuardApprovalReason(const QStringList& clauses) {
 
 }  // namespace
 
+AiCommandGuardResult::AiCommandGuardResult(QString block_error, QString approval_reason)
+    : m_block_error(std::move(block_error)), m_approval_reason(std::move(approval_reason)) {}
+
 AiCommandGuardResult evaluateCommandGuard(const AiCommandRequest& request) {
     const QStringList clauses = commandSecurityClauses(request);
-    AiCommandGuardResult result;
-    result.block_error = commandGuardBlockError(clauses);
-    if (result.block_error.isEmpty()) {
-        result.approval_reason = commandGuardApprovalReason(clauses);
+    QString block_error = commandGuardBlockError(clauses);
+    if (!block_error.isEmpty()) {
+        return AiCommandGuardResult(std::move(block_error), {});
     }
-    result.evaluated = true;
-    return result;
+    return AiCommandGuardResult({}, commandGuardApprovalReason(clauses));
 }
 
 }  // namespace sak::ai

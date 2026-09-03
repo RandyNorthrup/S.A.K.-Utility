@@ -109,12 +109,14 @@ public:
 Q_SIGNALS:
     /**
      * @brief Overall backup progress
-     * @param currentUser Index of current user being backed up
-     * @param totalUsers Total number of users
-     * @param bytesCopied Total bytes copied so far
+     * @param completedUsers Number of selected users whose
+     * backup attempt finished
+     * @param totalUsers Number of selected users
+     * @param
+     * bytesCopied Total bytes copied so far
      * @param totalBytes Estimated total bytes to copy
      */
-    void overallProgress(int currentUser, int totalUsers, qint64 bytesCopied, qint64 totalBytes);
+    void overallProgress(int completedUsers, int totalUsers, qint64 bytesCopied, qint64 totalBytes);
 
     /**
      * @brief Current file/folder progress
@@ -184,8 +186,6 @@ private:
     /// @brief Sum folder sizes for a single selected user
     qint64 accumulateUserFolderSizes(const UserProfile& user);
     void updateProgress(qint64 bytesAdded);
-    /// @brief Count selected users for progress tracking
-    void countSelectedUsers(int& currentUser, int& totalUsers) const;
 
     // Directory operations. @p depth is the recursion level; it is capped so a crafted deep
     // source tree cannot exhaust the worker thread's stack (see kMaxCopyDepth).
@@ -218,6 +218,8 @@ private:
 
     qint64 m_totalBytesToCopy{0};
     qint64 m_bytesCopied{0};
+    int m_totalUsersToBackup{0};
+    int m_completedUsers{0};
     int m_totalFilesToCopy{0};
     int m_filesCopied{0};
     int m_filesSkipped{0};

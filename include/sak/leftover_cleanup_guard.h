@@ -583,7 +583,8 @@ inline constexpr int kMaxCleanupPathLength = 4096;
 // Lexical (string-only) screens that need no path resolution: empty, over-length, non-drive-letter,
 // UNC/device, symlink/junction (leaf or ancestor), or an 8.3 short-name component. Split out so
 // filePathDeletionRefusal stays within the complexity budget.
-[[nodiscard]] inline QString cleanupFilePathStringRefusal(const QString& path) {
+[[nodiscard]] inline QString cleanupFilePathStringRefusal(const QString& path,
+                                                          bool allowLeafReparsePoint = false) {
     if (path.isEmpty()) {
         return QStringLiteral("empty path");
     }
@@ -603,7 +604,9 @@ inline constexpr int kMaxCleanupPathLength = 4096;
     if (isNetworkOrDevicePath(path)) {
         return QStringLiteral("refusing a UNC/device path");
     }
-    if (pathReparseUnsafe(path)) {
+    const bool reparseUnsafe = allowLeafReparsePoint ? pathHasReparsePointAncestor(path)
+                                                     : pathReparseUnsafe(path);
+    if (reparseUnsafe) {
         return QStringLiteral("refusing a symlink/junction path (or one nested under one)");
     }
     if (cleanupHasShortNameComponent(path)) {
@@ -613,9 +616,20 @@ inline constexpr int kMaxCleanupPathLength = 4096;
     return {};
 }
 
-[[nodiscard]] inline QString filePathDeletionRefusal(const QString& rawPath) {
+[[nodiscard]] inline QString cleanupDeletionScreenPath(const QString& path,
+                                                       bool allowLeafReparsePoint) {
+    const QFileInfo info(path);
+    if (allowLeafReparsePoint) {
+        return info.absoluteFilePath();
+    }
+    const QString canonical = info.canonicalFilePath();
+    return QDir::cleanPath(canonical.isEmpty() ? info.absoluteFilePath() : canonical);
+}
+
+[[nodiscard]] inline QString filePathDeletionRefusal(const QString& rawPath,
+                                                     bool allowLeafReparsePoint = false) {
     const QString path = rawPath.trimmed();
-    const QString string_refusal = cleanupFilePathStringRefusal(path);
+    const QString string_refusal = cleanupFilePathStringRefusal(path, allowLeafReparsePoint);
     if (!string_refusal.isEmpty()) {
         return string_refusal;
     }
@@ -624,10 +638,10 @@ inline constexpr int kMaxCleanupPathLength = 4096;
     // screens below (the kernel resolves X:\ to C:\Windows at delete time, but a lexical
     // absoluteFilePath would keep "x:/..." and slip every check). canonicalFilePath() is empty for
     // a nonexistent path -- deleting one is a no-op -- so fall back to the lexical absolute path.
-    const QFileInfo info(path);
-    const QString canonical = info.canonicalFilePath();
-    const QString clean = QDir::cleanPath(canonical.isEmpty() ? info.absoluteFilePath()
-                                                              : canonical);
+    // A reparse entry explicitly selected for LINK-only deletion must be screened by its own
+    // lexical name. canonicalFilePath follows the leaf and would validate/delete the target's
+    // identity instead of the link opened with FILE_FLAG_OPEN_REPARSE_POINT.
+    const QString clean = cleanupDeletionScreenPath(path, allowLeafReparsePoint);
     // A DOS-device / SUBST alias (or a symlink) can resolve to a UNC/device target; re-screen the
     // RESOLVED path so an aliased or reparse target that canonicalized to \\host\share can never
     // slip the local drive-letter checks below and be certified a safe local delete. (A mapped
@@ -678,11 +692,13 @@ inline constexpr int kMaxCleanupPathLength = 4096;
 /// resolution can re-open the swap window. Pure/string-only so it is unit-testable without a live
 /// junction.
 [[nodiscard]] inline QString cleanupHandleRedirectRefusal(const QString& requestedPath,
-                                                          const QString& handleFinalPath) {
+                                                          const QString& handleFinalPath,
+                                                          bool allowLeafReparsePoint = false) {
     if (handleFinalPath.trimmed().isEmpty()) {
         return QStringLiteral("could not resolve the real deletion target");
     }
-    const QString protectedRefusal = filePathDeletionRefusal(handleFinalPath);
+    const QString protectedRefusal = filePathDeletionRefusal(handleFinalPath,
+                                                             allowLeafReparsePoint);
     if (!protectedRefusal.isEmpty()) {
         return QStringLiteral("delete target resolved to a protected location (%1)")
             .arg(protectedRefusal);

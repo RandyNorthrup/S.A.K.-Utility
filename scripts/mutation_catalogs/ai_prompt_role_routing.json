@@ -1,0 +1,24 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_ai_assistant_panel_tool_dispatch",
+  "ctest_regex": "^test_ai_assistant_panel_tool_dispatch$",
+  "mutants": [
+    {
+      "id": "panel-promotes-stored-context-to-instructions",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "    request.instructions = assembly.trusted_instructions;",
+      "replace": "    request.instructions = assembly.trusted_instructions + assembly.untrusted_user_context;",
+      "expect": "killed",
+      "why": "storedMemoryAndSteeringStayInUserRole drives real ConversationStore memory and steering through both panel request builders and requires neither sentinel in instructions."
+    },
+    {
+      "id": "panel-drops-stored-user-context",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "    if (!assembly.untrusted_user_context.trimmed().isEmpty()) {",
+      "replace": "    if (assembly.untrusted_user_context.trimmed().isEmpty()) {",
+      "expect": "killed",
+      "why": "storedMemoryAndSteeringStayInUserRole requires stored memory and steering to remain present as a typed user-role message for initial and tool-continuation requests."
+    }
+  ]
+}

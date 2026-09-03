@@ -121,12 +121,14 @@ public:
 Q_SIGNALS:
     /**
      * @brief Overall progress update
-     * @param currentUser Current user index (1-based)
-     * @param totalUsers Total number of users to restore
+     * @param completedUsers Number of selected users whose
+     * restore attempt finished
+     * @param totalUsers Number of selected users to restore
+     *
      * @param bytesCopied Bytes restored so far
      * @param totalBytes Total bytes to restore
      */
-    void overallProgress(int currentUser, int totalUsers, qint64 bytesCopied, qint64 totalBytes);
+    void overallProgress(int completedUsers, int totalUsers, qint64 bytesCopied, qint64 totalBytes);
 
     /**
      * @brief File-level progress
@@ -303,6 +305,8 @@ private:
 
     qint64 m_totalBytesToRestore{0};
     qint64 m_bytesRestored{0};
+    int m_totalUsersToRestore{0};
+    int m_completedUsers{0};
     int m_totalFilesToRestore{0};
     int m_filesRestored{0};
     int m_filesSkipped{0};

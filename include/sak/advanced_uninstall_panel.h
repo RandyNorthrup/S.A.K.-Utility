@@ -79,6 +79,7 @@ private Q_SLOTS:
     void onEnumerationProgress(int current, int total);
     void onEnumerationFinished(QVector<sak::ProgramInfo> programs);
     void onEnumerationFailed(const QString& error);
+    void onEnumerationCancelled();
 
     void onUninstallStarted(const QString& program_name);
     void onUninstallProgress(int percent, const QString& phase);
@@ -89,9 +90,10 @@ private Q_SLOTS:
 
     void onCleanupStarted(int total_items);
     void onItemCleaned(const QString& path, bool success);
+    void onItemCleanupError(const QString& path, const QString& reason);
     void onCleanupFinished(int succeeded, int failed, qint64 bytes_recovered);
     void onCleanupCancelled();
-    void onRebootPendingItems(QStringList paths);
+    void onCleanupFailed(const QString& error);
     void onRecycleFallbackItems(QStringList paths);
 
     // Program table

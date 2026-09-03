@@ -8,6 +8,7 @@
 #include "sak/advanced_uninstall_controller.h"
 #include "sak/advanced_uninstall_panel.h"
 #include "sak/layout_constants.h"
+#include "sak/message_box_helpers.h"
 #include "sak/restore_point_manager.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
@@ -344,7 +345,9 @@ void AdvancedUninstallPanel::wireBatchUninstallQueueActions(const BatchQueueWidg
             return;
         }
 
-        m_controller->removeFromQueue(row);
+        if (!m_controller->removeFromQueue(row)) {
+            return;
+        }
         delete w.queue_list->takeItem(row);
 
         w.header_label->setText(
@@ -729,7 +732,13 @@ void AdvancedUninstallPanel::showSettingsDialog() {
     m_controller->setDefaultScanLevel(scan_level);
 
     m_controller->setShowSystemComponents(system_components_check->isChecked());
-    m_controller->saveSettings();
+    if (!m_controller->saveSettings()) {
+        sak::showWarningLogged(
+            this,
+            tr("Settings Not Saved"),
+            tr("Advanced Uninstall settings could not be written. Review the log and retry."));
+        return;
+    }
     Q_EMIT statusMessage(tr("Settings saved."), kDialogStatusTimeoutMs);
 }
 

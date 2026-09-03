@@ -5580,7 +5580,7 @@ QString AiAssistantPanel::messageText() const {
     return (m_messageEdit != nullptr) ? m_messageEdit->toPlainText().trimmed() : QString();
 }
 
-QString AiAssistantPanel::buildInstructions() const {
+ai::AiPromptAssembly AiAssistantPanel::buildPromptAssembly() const {
     ai::AiPromptAssemblyInput input;
     input.access_mode_label = currentAccessModeLabel();
     input.workflow_catalog = workflowCatalogInstructions(m_workflowStore.get());
@@ -5595,12 +5595,21 @@ QString AiAssistantPanel::buildInstructions() const {
         input.session_memory = m_conversationStore->memoryText(kSessionMemoryMaxChars, &error);
         if (!error.isEmpty()) {
             // Never ship a prompt that silently lost its session memory: mark the gap in
-            // the instructions and log it, instead of pretending there was no memory.
+            // untrusted user context and log it, instead of pretending there was no memory.
             logWarning("AI session memory unavailable: {}", error.toStdString());
             input.session_memory = QStringLiteral("[session memory unavailable: %1]").arg(error);
         }
     }
     return ai::AiPromptAssembler::assemble(input);
+}
+
+void AiAssistantPanel::applyPromptAssembly(ai::OpenAIResponseRequest& request) const {
+    const ai::AiPromptAssembly assembly = buildPromptAssembly();
+    request.instructions = assembly.trusted_instructions;
+    if (!assembly.untrusted_user_context.trimmed().isEmpty()) {
+        request.untrusted_input_messages.append(ai::OpenAIInputMessage{
+            ai::OpenAIInputMessageRole::User, assembly.untrusted_user_context});
+    }
 }
 
 QString AiAssistantPanel::contextInstructions() const {
@@ -8885,10 +8894,23 @@ ai::AiCommandResult AiAssistantPanel::runElevatedPowerShell(const ai::AiCommandR
 
 void AiAssistantPanel::continueAfterToolCalls(const ai::OpenAIResponseResult& result,
                                               QVector<ai::OpenAIFunctionOutput> outputs) {
+    ai::OpenAIResponseRequest request = buildToolContinuationRequest(result, std::move(outputs));
+    QJsonObject metadata;
+    metadata[QStringLiteral("outputs")] = request.function_outputs.size();
+    traceAiEvent(QStringLiteral("tool_queue"),
+                 QStringLiteral("local_tools"),
+                 QStringLiteral("completed"),
+                 metadata);
+    appendLocalEvent(tr("Returning tool output to OpenAI"));
+    m_client->createResponse(request);
+}
+
+ai::OpenAIResponseRequest AiAssistantPanel::buildToolContinuationRequest(
+    const ai::OpenAIResponseResult& result, QVector<ai::OpenAIFunctionOutput> outputs) const {
     ai::OpenAIResponseRequest request;
     request.api_key = apiKey();
     request.model = m_modelCombo->currentText().trimmed();
-    request.instructions = buildInstructions();
+    applyPromptAssembly(request);
     request.function_outputs = std::move(outputs);
     request.reasoning_effort = m_reasoningEffortCombo->currentText().trimmed().toLower();
     request.previous_response_id = result.id;
@@ -8899,14 +8921,7 @@ void AiAssistantPanel::continueAfterToolCalls(const ai::OpenAIResponseResult& re
     applyContextWindowPolicy(request);
     request.enable_web_search = true;
     request.enable_local_tools = currentAccessMode() != AccessMode::ChatAndResearch;
-    QJsonObject metadata;
-    metadata[QStringLiteral("outputs")] = request.function_outputs.size();
-    traceAiEvent(QStringLiteral("tool_queue"),
-                 QStringLiteral("local_tools"),
-                 QStringLiteral("completed"),
-                 metadata);
-    appendLocalEvent(tr("Returning tool output to OpenAI"));
-    m_client->createResponse(request);
+    return request;
 }
 
 void AiAssistantPanel::finishToolTurnAndContinue() {
@@ -12341,7 +12356,7 @@ ai::OpenAIResponseRequest AiAssistantPanel::buildChatRequest(const QString& mess
     ai::OpenAIResponseRequest request;
     request.api_key = apiKey();
     request.model = m_modelCombo->currentText().trimmed();
-    request.instructions = buildInstructions();
+    applyPromptAssembly(request);
     request.input = message;
     request.attachments = buildContextAttachments();
     request.reasoning_effort = m_reasoningEffortCombo->currentText().trimmed().toLower();

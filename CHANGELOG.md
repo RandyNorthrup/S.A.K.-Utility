@@ -8,6 +8,38 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **AI memory and steering are structurally untrusted** - Prompt assembly now returns separate
+  trusted instructions and untrusted user context. Workflow/skill catalogs, selected context,
+  ConversationStore memory and stored tool output, and queued steering never enter top-level
+  Responses instructions. Initial and tool-continuation requests serialize them only as validated
+  `user` messages; forged roles and blank structured messages fail before payload creation, token
+  counting, or network work. Fifteen prompt/Responses/panel mutants are killed and restored.
+
+- **Profile backup and restore byte progress is live and accessible** - Removed both discarded
+  byte-progress silences and the duplicate restore lambda. Backup and restore workers now emit
+  initial, throttled, and completed-user byte progress with accurate selected-user totals. A shared
+  overflow-safe presentation seam uses bytes when totals are known, user completion when they are
+  not, and an indeterminate accessible state when neither total exists. Both wizard pages expose
+  accessible names, descriptions, label buddies, real processed-byte completion, and cancellation
+  that never fabricates 100 percent. Four old-value/omitted-emission drills are red.
+
+- **Cleanup deletion fallbacks removed and controller state closed** - Permanent leftover removal
+  now uses one Windows 10/11 handle-bound seam for files, empty directories, and reparse links. The
+  same handle verifies final path and object type before deletion. Legacy disposition, pathname
+  file/directory removal, permission retry, and reboot-time pathname scheduling are removed; a
+  locked or unverifiable object remains and produces an actionable GUI/headless error. Disposable
+  tests preserve junction targets and hard-link peers. The uninstall controller now has terminal
+  enumeration/cleanup signals, wired early cancellation, distinct persisted/per-operation cleanup
+  policy, checked settings health/sync, validated scan levels, truthful leftover-scan state, queue
+  errors, safe enumeration-thread retirement, no dead filter/temp state, and consistent member
+  naming. Twenty-three cleanup/controller drills are red and restored. Wave 29 closes with all
+  whole-tree hooks green, a clean Release build, and all 273 CTests passing.
+
+- **AI command-guard result cannot bypass approval** - Guard state is private and constructible
+  only by evaluation. `allowed()` now means no block and no pending approval; separate accessors
+  expose blocked and approval-required decisions without permitting callers to fabricate an
+  inconsistent result. The expanded command-guard catalog kills all 20 mutants.
+
 - **AI command guard closed over executable inputs** - Preview and manifest prose can no longer
   alter command authorization. The guard now evaluates the command/program/argument request once,
   scopes registry recursion, binary-content reads, and cached-installer checks to the executable

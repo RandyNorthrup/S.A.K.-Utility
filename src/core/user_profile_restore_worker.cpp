@@ -323,6 +323,8 @@ bool UserProfileRestoreWorker::startRestore(const QString& backupPath,
 
             m_cancelled = false;
             m_bytesRestored = 0;
+            m_totalUsersToRestore = 0;
+            m_completedUsers = 0;
             m_filesRestored = 0;
             m_filesSkipped = 0;
             m_filesErrored = 0;
@@ -399,9 +401,9 @@ void UserProfileRestoreWorker::run() {
     // Calculate total size
     Q_EMIT logMessage(tr("Calculating total size..."), false);
     m_totalBytesToRestore = calculateTotalSize();
+    Q_EMIT overallProgress(0, m_totalUsersToRestore, 0, m_totalBytesToRestore);
 
     // Restore each mapped user
-    int userIndex = 0;
     for (const auto& mapping : m_mappings) {
         if (m_cancelled) {
             Q_EMIT logMessage(tr("Restore cancelled by user"), true);
@@ -428,9 +430,9 @@ void UserProfileRestoreWorker::run() {
             Q_EMIT logMessage(tr("Failed to restore user: %1").arg(mapping.source_username), true);
         }
 
-        userIndex++;
+        ++m_completedUsers;
         Q_EMIT overallProgress(
-            userIndex, static_cast<int>(m_mappings.size()), m_bytesRestored, m_totalBytesToRestore);
+            m_completedUsers, m_totalUsersToRestore, m_bytesRestored, m_totalBytesToRestore);
     }
 
     // Apply the selected machine-level WiFi/Ethernet settings after the file restore.
@@ -1022,11 +1024,13 @@ bool UserProfileRestoreWorker::verifyUserPayloadChecksum(const BackupUserData& u
 qint64 UserProfileRestoreWorker::calculateTotalSize() {
     qint64 totalSize = 0;
     m_totalFilesToRestore = 0;
+    m_totalUsersToRestore = 0;
 
     for (const auto& mapping : m_mappings) {
         if (!mapping.selected) {
             continue;
         }
+        ++m_totalUsersToRestore;
 
         const auto* user = findManifestUser(mapping.source_username);
         if (user == nullptr) {
@@ -1081,6 +1085,8 @@ void UserProfileRestoreWorker::updateProgress(qint64 bytesAdded) {
 
     if (m_filesRestored - m_lastProgressFileCount >= kRestoreProgressFileInterval ||
         m_bytesRestored - m_lastProgressByteCount >= kRestoreProgressByteInterval) {
+        Q_EMIT overallProgress(
+            m_completedUsers, m_totalUsersToRestore, m_bytesRestored, m_totalBytesToRestore);
         Q_EMIT fileProgress(m_filesRestored, m_totalFilesToRestore);
 
         m_lastProgressFileCount = m_filesRestored;

@@ -5,6 +5,22 @@
   "ctest_regex": "^test_ai_command_guard$",
   "mutants": [
     {
+      "id": "result-storage-becomes-publicly-mutable",
+      "file": "include/sak/ai/ai_command_guard.h",
+      "find": "private:\n    friend AiCommandGuardResult evaluateCommandGuard(const AiCommandRequest& request);",
+      "replace": "public:\n    friend AiCommandGuardResult evaluateCommandGuard(const AiCommandRequest& request);",
+      "expect": "killed",
+      "why": "The guard result owns private state so callers cannot fabricate allowed, blocked, or approval-required combinations."
+    },
+    {
+      "id": "approval-required-result-reports-allowed",
+      "file": "include/sak/ai/ai_command_guard.h",
+      "find": "        return m_block_error.isEmpty() && m_approval_reason.isEmpty();",
+      "replace": "        return m_block_error.isEmpty();",
+      "expect": "killed",
+      "why": "directProcessCacheInstallerRequiresApproval requires allowed() to stay false until the separate approval step succeeds."
+    },
+    {
       "id": "quoted-separator-splits-command",
       "file": "src/ai/ai_command_guard.cpp",
       "find": "        if (state.quote.isNull() && isClauseSeparator(ch)) {",

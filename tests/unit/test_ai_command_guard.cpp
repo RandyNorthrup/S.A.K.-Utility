@@ -5,6 +5,18 @@
 
 #include <QtTest/QtTest>
 
+#include <type_traits>
+
+template <typename T>
+concept PublicGuardStorage = requires(T value) {
+    value.m_block_error;
+    value.m_approval_reason;
+};
+
+static_assert(!std::is_default_constructible_v<sak::ai::AiCommandGuardResult>);
+static_assert(!std::is_aggregate_v<sak::ai::AiCommandGuardResult>);
+static_assert(!PublicGuardStorage<sak::ai::AiCommandGuardResult>);
+
 class AiCommandGuardTests : public QObject {
     Q_OBJECT
 
@@ -30,18 +42,18 @@ void AiCommandGuardTests::blocksBinaryContentDump() {
 
     const sak::ai::AiCommandGuardResult result = sak::ai::evaluateCommandGuard(request);
 
-    QCOMPARE(result.block_error,
+    QCOMPARE(result.blockError(),
              QStringLiteral("Blocked binary file dump. Use Get-Item, Get-FileHash, Authenticode "
                             "signature checks, or Format-Hex -Count for a small sample instead of "
                             "Get-Content/cat/type."));
-    QVERIFY(result.approval_reason.isEmpty());
+    QVERIFY(result.approvalReason().isEmpty());
 }
 
 void AiCommandGuardTests::binaryReadCheckIsClauseAndQuoteScoped() {
     const auto blockError = [](const QString& command) {
         sak::ai::AiCommandRequest request;
         request.command = command;
-        return sak::ai::evaluateCommandGuard(request).block_error;
+        return sak::ai::evaluateCommandGuard(request).blockError();
     };
 
     QVERIFY(blockError(QStringLiteral("Get-Content notes.txt; Get-FileHash tool.exe")).isEmpty());
@@ -60,7 +72,7 @@ void AiCommandGuardTests::binaryReadCheckIsClauseAndQuoteScoped() {
 void AiCommandGuardTests::nestedAndDirectProcessBinaryReadsAreBlocked() {
     sak::ai::AiCommandRequest control_clause;
     control_clause.command = QStringLiteral("if ($true) { Get-Content 'tool.exe' }");
-    QVERIFY(!sak::ai::evaluateCommandGuard(control_clause).block_error.isEmpty());
+    QVERIFY(!sak::ai::evaluateCommandGuard(control_clause).blockError().isEmpty());
 
     sak::ai::AiCommandRequest direct_process;
     direct_process.program =
@@ -68,14 +80,14 @@ void AiCommandGuardTests::nestedAndDirectProcessBinaryReadsAreBlocked() {
     direct_process.arguments = {QStringLiteral("-NoProfile"),
                                 QStringLiteral("-Command"),
                                 QStringLiteral("Get-Content 'tool.exe'")};
-    QVERIFY(!sak::ai::evaluateCommandGuard(direct_process).block_error.isEmpty());
+    QVERIFY(!sak::ai::evaluateCommandGuard(direct_process).blockError().isEmpty());
 }
 
 void AiCommandGuardTests::blocksBroadRegistryRecursion() {
     sak::ai::AiCommandRequest request;
     request.command = QStringLiteral("Get-ChildItem HKLM:\\Software -Recurse");
 
-    const QString error = sak::ai::evaluateCommandGuard(request).block_error;
+    const QString error = sak::ai::evaluateCommandGuard(request).blockError();
 
     QCOMPARE(error,
              QStringLiteral("Blocked broad recursive registry scan. Query exact uninstall/vendor "
@@ -86,7 +98,7 @@ void AiCommandGuardTests::registryRecursionCheckIsClauseScoped() {
     const auto blockError = [](const QString& command) {
         sak::ai::AiCommandRequest request;
         request.command = command;
-        return sak::ai::evaluateCommandGuard(request).block_error;
+        return sak::ai::evaluateCommandGuard(request).blockError();
     };
     const QString broad = QStringLiteral("Get-ChildItem HKLM:\\Software -Recurse");
     const QString narrow = QStringLiteral(
@@ -128,7 +140,7 @@ void AiCommandGuardTests::blocksPowerShellPidMutation() {
     request.command =
         QStringLiteral("$pid=0; [void][Win32]::GetWindowThreadProcessId($hWnd,[ref]$pid)");
 
-    const QString error = sak::ai::evaluateCommandGuard(request).block_error;
+    const QString error = sak::ai::evaluateCommandGuard(request).blockError();
 
     QCOMPARE(error,
              QStringLiteral("Blocked PowerShell $PID mutation. $PID is a read-only automatic "
@@ -149,7 +161,7 @@ void AiCommandGuardTests::checksumBypassCatchesEverySpellingAndSubstitution() {
     const auto blocked = [](const QString& command) {
         sak::ai::AiCommandRequest request;
         request.command = command;
-        return !sak::ai::evaluateCommandGuard(request).block_error.isEmpty();
+        return !sak::ai::evaluateCommandGuard(request).blockError().isEmpty();
     };
 
     // Every hyphenation and plurality of each bypass switch.
@@ -207,11 +219,11 @@ void AiCommandGuardTests::blocksChecksumBypass() {
 
     const sak::ai::AiCommandGuardResult result = sak::ai::evaluateCommandGuard(request);
 
-    QCOMPARE(result.block_error,
+    QCOMPARE(result.blockError(),
              QStringLiteral("Blocked package checksum bypass. Do not pass --ignore-checksums, "
                             "substitute checksums, or run cached installers after a package "
                             "checksum mismatch."));
-    QVERIFY(result.approval_reason.isEmpty());
+    QVERIFY(result.approvalReason().isEmpty());
 }
 
 void AiCommandGuardTests::asksApprovalForCachedPackageInstallerRun() {
@@ -219,7 +231,7 @@ void AiCommandGuardTests::asksApprovalForCachedPackageInstallerRun() {
     request.command =
         QStringLiteral("Start-Process 'C:/x/data/temp/chocolatey/pkg/1.0/setup.exe' -Wait");
 
-    const QString reason = sak::ai::evaluateCommandGuard(request).approval_reason;
+    const QString reason = sak::ai::evaluateCommandGuard(request).approvalReason();
 
     QCOMPARE(reason,
              QStringLiteral("Cached package installer execution requested after package-manager "
@@ -231,7 +243,7 @@ void AiCommandGuardTests::asksApprovalForEveryChocolateyCacheInstaller() {
     const auto approvalReason = [](const QString& command) {
         sak::ai::AiCommandRequest request;
         request.command = command;
-        return sak::ai::evaluateCommandGuard(request).approval_reason;
+        return sak::ai::evaluateCommandGuard(request).approvalReason();
     };
     const QStringList commands = {
         QStringLiteral("& '$env:TEMP\\chocolatey\\pkg\\setup.exe'"),
@@ -255,7 +267,7 @@ void AiCommandGuardTests::cacheApprovalIsClauseScopedAndRequiresInstaller() {
     const auto approvalReason = [](const QString& command) {
         sak::ai::AiCommandRequest request;
         request.command = command;
-        return sak::ai::evaluateCommandGuard(request).approval_reason;
+        return sak::ai::evaluateCommandGuard(request).approvalReason();
     };
     const QStringList benign = {
         QStringLiteral("Get-Content C:\\ProgramData\\chocolatey\\cache\\notes.txt"),
@@ -275,11 +287,11 @@ void AiCommandGuardTests::directProcessCacheInstallerRequiresApproval() {
     request.arguments = {QStringLiteral("/quiet")};
 
     const auto result = sak::ai::evaluateCommandGuard(request);
-    QVERIFY(result.evaluated);
-    QVERIFY(result.allowed());
+    QVERIFY(!result.allowed());
+    QVERIFY(!result.blocked());
     QVERIFY(result.requiresApproval());
-    QVERIFY(result.block_error.isEmpty());
-    QVERIFY(!result.approval_reason.isEmpty());
+    QVERIFY(result.blockError().isEmpty());
+    QVERIFY(!result.approvalReason().isEmpty());
 }
 
 void AiCommandGuardTests::safeReadOnlyCommandPasses() {
@@ -290,13 +302,11 @@ void AiCommandGuardTests::safeReadOnlyCommandPasses() {
 
     const sak::ai::AiCommandGuardResult result = sak::ai::evaluateCommandGuard(request);
 
-    // isEmpty() alone is also satisfied by a default (un-run) result; pin the derived contract so
-    // a guard that returned an un-evaluated default would fail.
-    QVERIFY(result.evaluated);
     QVERIFY(result.allowed());
+    QVERIFY(!result.blocked());
     QVERIFY(!result.requiresApproval());
-    QVERIFY(result.block_error.isEmpty());
-    QVERIFY(result.approval_reason.isEmpty());
+    QVERIFY(result.blockError().isEmpty());
+    QVERIFY(result.approvalReason().isEmpty());
 }
 
 QTEST_GUILESS_MAIN(AiCommandGuardTests)

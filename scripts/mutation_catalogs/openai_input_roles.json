@@ -1,0 +1,72 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_openai_responses_client",
+  "ctest_regex": "^test_openai_responses_client$",
+  "mutants": [
+    {
+      "id": "untrusted-message-becomes-developer-role",
+      "file": "src/ai/openai_responses_client.cpp",
+      "find": "    message[QStringLiteral(\"role\")] = QStringLiteral(\"user\");",
+      "replace": "    message[QStringLiteral(\"role\")] = QStringLiteral(\"developer\");",
+      "expect": "killed",
+      "why": "buildPayload_untrustedMessagesUseOnlyUserRole pins every supplemental message to the Responses API user role."
+    },
+    {
+      "id": "unsupported-role-is-accepted",
+      "file": "src/ai/openai_responses_client.cpp",
+      "find": "        if (message.role != OpenAIInputMessageRole::User) {",
+      "replace": "        if (message.text.isEmpty() && message.role != OpenAIInputMessageRole::User) {",
+      "expect": "killed",
+      "why": "rejectsMalformedUntrustedInputMessages requires forged enum values to fail before serialization, network generation, and token counting."
+    },
+    {
+      "id": "empty-user-message-is-accepted",
+      "file": "src/ai/openai_responses_client.cpp",
+      "find": "        if (message.text.trimmed().isEmpty()) {",
+      "replace": "        if (message.role != OpenAIInputMessageRole::User && message.text.trimmed().isEmpty()) {",
+      "expect": "killed",
+      "why": "rejectsMalformedUntrustedInputMessages refuses empty or whitespace-only structured messages instead of emitting ambiguous role records."
+    },
+    {
+      "id": "untrusted-messages-are-dropped",
+      "file": "src/ai/openai_responses_client.cpp",
+      "find": "        input_items.append(userTextInputMessage(message.text));",
+      "replace": "        if (message.text.isEmpty()) { input_items.append(userTextInputMessage(message.text)); }",
+      "expect": "killed",
+      "why": "Both payload role tests require stored context to survive serialization in initial and function-output continuations."
+    },
+    {
+      "id": "function-output-path-drops-user-context",
+      "file": "src/ai/openai_responses_client.cpp",
+      "find": "        input_items = functionOutputInputItems(request.function_outputs);",
+      "replace": "        return functionOutputInputItems(request.function_outputs);",
+      "expect": "killed",
+      "why": "buildPayload_functionOutputsRetainUntrustedUserContext requires tool continuation payloads to retain stored memory as a following user-role message."
+    },
+    {
+      "id": "generation-does-not-reject-malformed-role",
+      "file": "src/ai/openai_responses_client.cpp",
+      "find": "        Q_EMIT requestFailed(input_message_error);",
+      "replace": "        if (request.input.isEmpty()) { Q_EMIT requestFailed(input_message_error); }",
+      "expect": "killed",
+      "why": "rejectsMalformedUntrustedInputMessages requires createResponse to reject before opening a network request."
+    },
+    {
+      "id": "token-count-does-not-reject-malformed-role",
+      "file": "src/ai/openai_responses_client.cpp",
+      "find": "        Q_EMIT inputTokenCountFailed(request_id, input_message_error);",
+      "replace": "        if (request.input.isEmpty()) { Q_EMIT inputTokenCountFailed(request_id, input_message_error); }",
+      "expect": "killed",
+      "why": "rejectsMalformedUntrustedInputMessages pins the same fail-closed role validation on the input-token endpoint."
+    },
+    {
+      "id": "test-payload-serializes-malformed-role",
+      "file": "src/ai/openai_responses_client.cpp",
+      "find": "    if (!untrustedInputMessageError(request).isEmpty()) {",
+      "replace": "    if (request.model.isEmpty() && !untrustedInputMessageError(request).isEmpty()) {",
+      "expect": "killed",
+      "why": "rejectsMalformedUntrustedInputMessages requires the shared payload builder itself to refuse malformed roles, independent of caller validation."
+    }
+  ]
+}

@@ -1,8 +1,2 @@
-- [x] [CRITICAL] A default/unrun guard result or an approval-required command could be read as an
-  allow decision.
-  VERIFIED 2026-09-02: allowed requires evaluated plus no block; approval is mutually exclusive
-  with a block; the combined evaluator is the only path that marks evaluated. Focused tests pin
-  package-integrity bypasses, obfuscation, risky approvals and benign controls.
-
-Re-review result: zero open findings. Every field/function has live planner/test consumers and the
-header matches the fail-closed command-guard implementation.
+- HIGH - [include/sak/ai/ai_command_guard.h:27](include/sak/ai/ai_command_guard.h:27): `allowed()` returns true while `requiresApproval()` is true, permitting consumers to treat approval-required commands as executable without explicit approval.
+- MEDIUM - [include/sak/ai/ai_command_guard.h:18](include/sak/ai/ai_command_guard.h:18): Public mutable fields let callers fabricate evaluated/allowed results or simultaneous block and approval states, violating invariants stated at lines 21-29.

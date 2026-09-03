@@ -260,6 +260,8 @@ void UserProfileBackupWorker::startBackup(const BackupManifest& manifest,
 
     m_cancelled = false;
     m_bytesCopied = 0;
+    m_totalUsersToBackup = 0;
+    m_completedUsers = 0;
     m_filesCopied = 0;
     m_filesSkipped = 0;
     m_filesErrored = 0;
@@ -308,6 +310,7 @@ void UserProfileBackupWorker::run() {
     // requirement to compare against (an empty total would always pass).
     Q_EMIT logMessage(tr("Calculating total size..."), false);
     m_totalBytesToCopy = calculateTotalSize();
+    Q_EMIT overallProgress(0, m_totalUsersToBackup, 0, m_totalBytesToCopy);
     Q_EMIT logMessage(tr("Total estimated size: %1 GB")
                           .arg(static_cast<double>(m_totalBytesToCopy) / sak::kBytesPerGBf,
                                0,
@@ -343,7 +346,6 @@ void UserProfileBackupWorker::run() {
 
 void UserProfileBackupWorker::backupAllUsers() {
     // An empty list simply iterates zero times; see startBackup.
-    int userIndex = 0;
     for (const auto& user : m_users) {
         if (m_cancelled) {
             // run() owns the single terminal backupComplete signal; just stop.
@@ -361,21 +363,20 @@ void UserProfileBackupWorker::backupAllUsers() {
         if (!isSafePathSegment(user.username)) {
             Q_EMIT logMessage(tr("Skipping user with unsafe name: %1").arg(user.username), true);
             ++m_filesErrored;
-            continue;
+        } else {
+            Q_EMIT statusUpdate(user.username, tr("Starting backup..."));
+            Q_EMIT logMessage(tr("=== Backing up user: %1 ===").arg(user.username), false);
+
+            const QString userBackupPath = m_destinationPath + "/" + user.username;
+            if (!backupUser(user, userBackupPath)) {
+                Q_EMIT logMessage(tr("Failed to backup user: %1").arg(user.username), true);
+                // Continue with other users
+            }
         }
 
-        Q_EMIT statusUpdate(user.username, tr("Starting backup..."));
-        Q_EMIT logMessage(tr("=== Backing up user: %1 ===").arg(user.username), false);
-
-        const QString userBackupPath = m_destinationPath + "/" + user.username;
-        if (!backupUser(user, userBackupPath)) {
-            Q_EMIT logMessage(tr("Failed to backup user: %1").arg(user.username), true);
-            // Continue with other users
-        }
-
-        userIndex++;
+        ++m_completedUsers;
         Q_EMIT overallProgress(
-            userIndex, static_cast<int>(m_users.size()), m_bytesCopied, m_totalBytesToCopy);
+            m_completedUsers, m_totalUsersToBackup, m_bytesCopied, m_totalBytesToCopy);
     }
 }
 
@@ -813,29 +814,17 @@ qint64 UserProfileBackupWorker::accumulateUserFolderSizes(const UserProfile& use
 qint64 UserProfileBackupWorker::calculateTotalSize() {
     qint64 totalSize = 0;
     m_totalFilesToCopy = 0;
+    m_totalUsersToBackup = 0;
 
     for (const auto& user : m_users) {
         if (!user.is_selected) {
             continue;
         }
+        ++m_totalUsersToBackup;
         totalSize += accumulateUserFolderSizes(user);
     }
 
     return totalSize;
-}
-
-void UserProfileBackupWorker::countSelectedUsers(int& currentUser, int& totalUsers) const {
-    totalUsers = 0;
-    currentUser = 0;
-    for (int i = 0; i < m_users.size(); ++i) {
-        if (!m_users[i].is_selected) {
-            continue;
-        }
-        totalUsers++;
-        if (i < m_users.size() - 1) {
-            currentUser++;
-        }
-    }
 }
 
 void UserProfileBackupWorker::updateProgress(qint64 bytesAdded) {
@@ -846,10 +835,8 @@ void UserProfileBackupWorker::updateProgress(qint64 bytesAdded) {
 
     if (m_filesCopied - m_lastProgressFileCount >= kProgressEmitFileInterval ||
         m_bytesCopied - m_lastProgressByteCount >= kProgressEmitByteInterval) {
-        int currentUser = 0, totalUsers = 0;
-        countSelectedUsers(currentUser, totalUsers);
-
-        Q_EMIT overallProgress(currentUser, totalUsers, m_bytesCopied, m_totalBytesToCopy);
+        Q_EMIT overallProgress(
+            m_completedUsers, m_totalUsersToBackup, m_bytesCopied, m_totalBytesToCopy);
         Q_EMIT fileProgress(m_filesCopied, m_totalFilesToCopy);
 
         m_lastProgressFileCount = m_filesCopied;

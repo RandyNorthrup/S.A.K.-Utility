@@ -20,9 +20,16 @@ struct AiPromptAssemblyInput {
     bool unattended_full_access{false};
 };
 
+/// Trusted policy text and untrusted reference text are separate values so a caller cannot
+/// accidentally promote stored memory, catalogs, context, or steering into API instructions.
+struct AiPromptAssembly {
+    QString trusted_instructions;
+    QString untrusted_user_context;
+};
+
 class AiPromptAssembler {
 public:
-    [[nodiscard]] static QString assemble(const AiPromptAssemblyInput& input);
+    [[nodiscard]] static AiPromptAssembly assemble(const AiPromptAssemblyInput& input);
     [[nodiscard]] static QStringList baseGuardrails();
 };
 

@@ -17,6 +17,8 @@
 #include <memory>
 #include <type_traits>
 
+class AdvancedUninstallControllerTests;
+
 namespace sak {
 
 class ProgramEnumerator;
@@ -31,6 +33,8 @@ class RestorePointManager;
 /// uninstall -> scan -> cleanup pipeline.
 class AdvancedUninstallController : public QObject {
     Q_OBJECT
+
+    friend class ::AdvancedUninstallControllerTests;
 
 public:
     /// @brief Controller state machine states
@@ -81,16 +85,6 @@ public:
     /// @brief Clean selected leftover items
     void cleanLeftovers(const QVector<LeftoverItem>& selectedItems);
 
-    /// @brief The SAFE-risk subset of @p items, each marked selected, used by auto-clean-safe.
-    ///        Review/Risky leftovers are deliberately excluded (they always require human review).
-    ///        Pure/static so it is unit-testable without driving an uninstall.
-    static QVector<LeftoverItem> safeLeftovers(const QVector<LeftoverItem>& items);
-
-    /// @brief The non-Safe (Review/Risky) subset of @p items, kept for human review after an
-    ///        automatic Safe cleanup so they do not vanish from the panel. Pure/static (complement
-    ///        of safeLeftovers).
-    static QVector<LeftoverItem> nonSafeLeftovers(const QVector<LeftoverItem>& items);
-
     /// @brief True if @p item's type can go to the Recycle Bin (File/Folder or a file-shortcut
     ///        StartupEntry). Registry keys/values, services, tasks, firewall rules, shell
     ///        extensions have NO Recycle Bin and are IRREVERSIBLE -- auto-clean must never
@@ -110,8 +104,9 @@ public:
     /// @brief Add a program to the batch queue
     void addToQueue(const ProgramInfo& program, ScanLevel scanLevel, bool autoCleanSafe);
 
-    /// @brief Remove an item from the batch queue
-    void removeFromQueue(int index);
+    /// @brief Remove an item from the batch queue.
+    /// @return true when @p index named and removed an item; false with statusMessage otherwise.
+    [[nodiscard]] bool removeFromQueue(int index);
 
     /// @brief Get the current queue
     [[nodiscard]] QVector<UninstallQueueItem> queue() const;
@@ -124,11 +119,13 @@ public:
 
     // -- Settings --
 
-    /// @brief Load settings from ConfigManager
-    void loadSettings();
+    /// @brief Load settings from ConfigManager.
+    /// @return true only when the store and every persisted value were healthy.
+    [[nodiscard]] bool loadSettings();
 
-    /// @brief Save settings to ConfigManager
-    void saveSettings();
+    /// @brief Save and sync settings through ConfigManager.
+    /// @return true only when the store was healthy and the disk sync succeeded.
+    [[nodiscard]] bool saveSettings();
 
     /// @brief Get the auto-restore-point preference
     [[nodiscard]] bool autoRestorePoint() const;
@@ -175,6 +172,9 @@ Q_SIGNALS:
     /// @brief Programs enumeration failed
     void enumerationFailed(const QString& error);
 
+    /// @brief Programs enumeration was cancelled and reached its public terminal state.
+    void enumerationCancelled();
+
     /// @brief Uninstall pipeline started
     void uninstallStarted(const QString& programName);
 
@@ -219,6 +219,9 @@ Q_SIGNALS:
     /// @brief Individual item cleaned
     void itemCleaned(const QString& path, bool success);
 
+    /// @brief Actionable reason an individual cleanup item was left in place.
+    void itemCleanupError(const QString& path, const QString& reason);
+
     /// @brief Cleanup completed
     void cleanupFinished(int succeeded, int failed, qint64 bytesRecovered);
 
@@ -226,8 +229,11 @@ Q_SIGNALS:
     ///        must NOT be emitted on cancel or a cancelled cleanup reads as success)
     void cleanupCancelled();
 
-    /// @brief Locked files scheduled for removal on next Windows reboot
-    void rebootPendingItems(QStringList paths);
+    /// @brief Cleanup worker failed before it could produce cleanupFinished.
+    void cleanupFailed(const QString& error);
+
+    /// @brief Advanced Uninstall preferences could not be loaded or durably saved.
+    void settingsError(const QString& error);
 
     /// @brief Items that could NOT be sent to the Recycle Bin and were permanently deleted despite
     ///        recycle mode (so the UI can warn the user the recoverable-default was not honored).
@@ -251,6 +257,7 @@ private Q_SLOTS:
     // old run's result never overwrites the new one.
     void onEnumerationFinished(int generation, QVector<sak::ProgramInfo> programs);
     void onEnumerationFailed(int generation, const QString& error);
+    void onLeftoverScanStarted(sak::ScanLevel level);
 
     // Uninstall worker slots
     void onUninstallComplete(sak::UninstallReport report);
@@ -306,9 +313,8 @@ private:
     /// @brief Clean up all workers
     void cleanupWorkers();
 
-    /// Stop and join the enumeration thread, deleting it only after a confirmed
-    /// join so ~AdvancedUninstallController never leaves a live thread using the
-    /// freed m_enumerator (or lets ~QObject abort on a still-running QThread).
+    /// Stop and join the enumeration thread. If it refuses the bounded cooperative join, detach the
+    /// thread and enumerator together so controller teardown cannot destroy either live object.
     void stopEnumThread();
 
     void connectUninstallWorkerSignals(bool includeNativeSignals);
@@ -322,22 +328,21 @@ private:
 
     // Monotonic enumeration generation. Bumped on every refreshPrograms() so a stale completion
     // from a superseded (cancelled-then-restarted) run can be told apart from the current run's.
-    int m_enum_generation = 0;
+    int m_enumGeneration = 0;
+    bool m_enumerationStopping = false;
 
     // Workers
     std::unique_ptr<ProgramEnumerator> m_enumerator;
-    std::unique_ptr<UninstallWorker> m_uninstall_worker;
-    std::unique_ptr<CleanupWorker> m_cleanup_worker;
-    std::unique_ptr<RestorePointManager> m_restore_manager;
+    std::unique_ptr<UninstallWorker> m_uninstallWorker;
+    std::unique_ptr<CleanupWorker> m_cleanupWorker;
+    std::unique_ptr<RestorePointManager> m_restoreManager;
     QThread* m_enumThread = nullptr;
 
     // Data
     QVector<ProgramInfo> m_programs;
     QVector<UninstallQueueItem> m_queue;
     int m_batchIndex = -1;
-    bool m_batchRestorePointCreated = false;
-
-    bool m_autoCleanSafe = true;
+    bool m_currentAutoCleanSafe = false;
 
     // SAFE leftovers accumulated across a batch (only from items whose autoCleanSafeLeftovers is
     // set); auto-cleaned in one pass at batch end so a cleanup never runs concurrently with the
@@ -356,6 +361,7 @@ private:
     // Preferences
     ScanLevel m_defaultScanLevel = ScanLevel::Moderate;
     bool m_autoRestorePoint = true;
+    bool m_autoCleanSafePreference = true;
     bool m_showSystemComponents = false;
     bool m_useRecycleBin = false;
     bool m_selectAllByDefault = false;

@@ -27,7 +27,8 @@ namespace sak {
 ///
 /// Processes each item sequentially, reporting progress and continuing
 /// on individual failures. Tracks succeeded, failed, and bytes recovered.
-/// Supports recycle bin deletion and scheduling locked files for removal on reboot.
+/// Supports recycle bin deletion. Permanent filesystem removal is handle-bound and fails closed;
+/// locked objects are reported failed instead of being retried through a weaker pathname operation.
 class CleanupWorker : public WorkerBase {
     Q_OBJECT
 
@@ -59,8 +60,8 @@ public:
     CleanupWorker& operator=(CleanupWorker&&) = delete;
 
     /// @brief Require RECOVERABLE deletion: when set, a file/folder that cannot be sent to the
-    ///        Recycle Bin is reported FAILED and left in place rather than permanently deleted or
-    ///        scheduled for reboot removal. Used by AUTOMATIC (no human review) cleanup so an
+    ///        Recycle Bin is reported FAILED and left in place rather than permanently deleted.
+    ///        Used by AUTOMATIC (no human review) cleanup so an
     ///        auto-deleted item is always undoable. Must be paired with useRecycleBin=true.
     ///        Configure this BEFORE start(): m_requireRecoverable is read on the worker thread by
     ///        execute() and is not synchronized, so mutating it after the run begins is a data
@@ -99,10 +100,10 @@ public:
 
 Q_SIGNALS:
     void itemCleaned(const QString& path, bool success);
+    /// @brief Exact reason an item was left in place. Emitted before itemCleaned(path, false), so
+    ///        GUI and headless callers can surface an actionable error instead of only a count.
+    void itemCleanupError(const QString& path, const QString& reason);
     void cleanupComplete(int succeeded, int failed, qint64 bytesRecovered);
-
-    /// @brief Emitted when locked files are scheduled for removal on next reboot
-    void rebootPendingItems(QStringList paths);
 
     /// @brief Emitted when recycle-bin mode was requested but recycling failed and
     ///        the items were removed permanently instead. Surfaces the silent
@@ -116,8 +117,11 @@ private:
     QVector<LeftoverItem> m_items;
     bool m_useRecycleBin = false;
     bool m_requireRecoverable = false;   ///< Recycle-only: never permanently delete on recycle fail
-    QStringList m_rebootPendingPaths;    ///< Paths scheduled for removal on reboot
     QStringList m_recycleFallbackPaths;  ///< Recycle failed -> deleted permanently instead
+    QString m_currentItemError;          ///< First actionable failure for the current item
+
+    /// @brief Preserve the first actionable error for the current item and log every failure.
+    void noteItemFailure(const QString& reason);
 
     /// @brief Record @p path as a recycle->permanent fallback when @p fallback.
     void noteRecycleFallback(bool fallback, const QString& path);
@@ -157,13 +161,12 @@ private:
     ///        @p recycleFallback when a recycle failure falls through to permanent deletion.
     [[nodiscard]] RecycleOutcome attemptRecycle(const QString& path, bool& recycleFallback);
 
-    /// @brief Delete a file, falling back to recycle bin or reboot scheduling
+    /// @brief Delete a file through recycle mode or one identity-bound permanent-delete attempt.
     [[nodiscard]] bool deleteFile(const QString& path);
 
     /// @brief Recycle-or-permanent tail of deleteFile (after the reparse/redirect screens): try the
-    ///        Recycle Bin honoring recoverable-only mode, else permanently remove with the
-    ///        writable-retry/reboot tail. Split out to keep deleteFile within the complexity
-    ///        budget.
+    ///        Recycle Bin honoring recoverable-only mode, else permanently remove through the
+    ///        handle-bound seam. Split out to keep deleteFile within the complexity budget.
     [[nodiscard]] bool recycleOrPermanentFile(const QString& path);
 
     /// @brief Delete-time re-verification that @p path still resolves to exactly the validated
@@ -171,28 +174,25 @@ private:
     ///        into a junction so the same string resolves elsewhere; this opens a handle, reads the
     ///        object's real path (GetFinalPathNameByHandleW), and refuses (false) on a redirect or
     ///        a resolved-to-protected target. Non-Windows: always true. See
-    ///        cleanupHandleRedirectRefusal.
+    ///        cleanupHandleRedirectRefusal. Failure to open an existing object is a refusal, not a
+    ///        license to continue with a lexical/pathname-only check.
     [[nodiscard]] bool deleteTimeRedirectSafe(const QString& path);
 
-    /// @brief Permanently unlink a file. On Windows deletes BY HANDLE (open, re-verify, unlink via
-    ///        the handle -- no path re-resolution after the check), falling back to a string unlink
-    ///        only when the object could not be opened (locked/denied) and was NOT redirected.
+    /// @brief Permanently unlink a regular file through the shared verified-handle seam.
     [[nodiscard]] bool removeFilePermanent(const QString& path);
 
-    /// @brief Permanent-file removal tail of deleteFile: try by-handle delete, a writable-bit
-    /// retry,
-    ///        then reboot scheduling for a locked file. Split out to keep deleteFile within budget.
-    [[nodiscard]] bool removeFilePermanentWithRetry(const QString& path, bool recycleFallback);
-
-    /// Outcome of a by-handle permanent delete attempt.
-    enum class HandleDeleteOutcome {
-        Deleted,
-        Redirected,
-        NotOpenable
+    /// Expected identity class for the handle-bound delete. The class is captured by the caller and
+    /// re-read from the SAME handle used for deletion, so a file/directory/reparse swap is refused.
+    enum class VerifiedDeleteKind {
+        RegularFile,
+        Directory,
+        ReparsePoint
     };
-    /// @brief Open @p path (no leaf-reparse follow), verify it is still the validated target, and
-    ///        delete it via the handle. Redirected => refused, never fall back to a string delete.
-    [[nodiscard]] HandleDeleteOutcome deleteFileByVerifiedHandle(const QString& path);
+    /// @brief Open @p path without following a leaf reparse point, verify final path and object
+    ///        class from that handle, then delete through that SAME handle using the Windows 10+
+    ///        disposition API. No legacy disposition, chmod, pathname, or reboot retry exists.
+    [[nodiscard]] bool deletePathByVerifiedHandle(const QString& path,
+                                                  VerifiedDeleteKind expectedKind);
 
     /// @brief Dispatch cleanup for a single leftover item by type. Re-screens the item against the
     ///        leftover_cleanup_guard denylist FIRST (defense-in-depth) and refuses fail-closed, so
@@ -213,7 +213,7 @@ private:
     /// @brief Denylist refusal for a StartupEntry (registry value if named, else its on-disk file).
     [[nodiscard]] static QString startupEntryCleanupRefusal(const LeftoverItem& item);
 
-    /// @brief Delete a folder, falling back to reboot scheduling for locked contents
+    /// @brief Delete a folder through recycle mode or the handle-verified recursive walk.
     [[nodiscard]] bool deleteFolder(const QString& path);
 
     /// @brief Recycle-or-permanent tail of deleteFolder (after the reparse/redirect screens): try
@@ -235,23 +235,6 @@ private:
     ///        subdir -> recurse; file -> delete by verified handle. @p depth carries the recursion
     ///        depth so a pathologically deep tree fails closed instead of exhausting the stack.
     [[nodiscard]] bool removeVerifiedFolderEntry(const QFileInfo& entry, int depth);
-    /// @brief Remove an (expected-empty) directory by a redirect-verified handle (POSIX unlink),
-    ///        falling back to RemoveDirectoryW / reboot scheduling only when it cannot be opened.
-    [[nodiscard]] bool removeEmptyDirByVerifiedHandle(const QString& path);
-
-    /// @brief Unlink a reparse point (junction / symlink) WITHOUT touching its target
-    [[nodiscard]] bool unlinkReparsePoint(const QString& path);
-
-    /// @brief Record a reboot-removal schedule for @p path. A
-    ///        reboot-scheduled delete has not happened yet and cannot be pinned to the verified
-    ///        target, so callers still return false after this side effect (fail closed).
-    void noteRebootRemoval(const QString& path);
-
-    /// @brief Schedule a locked file for removal on next Windows reboot. Re-verifies the target by
-    ///        handle first and REFUSES to schedule a redirected / reparse-ancestor path; the
-    ///        reboot-time re-resolution itself is an inherent, unpinnable residual (documented).
-    [[nodiscard]] bool scheduleRebootRemoval(const QString& path);
-
     [[nodiscard]] bool deleteRegistryKey(const QString& fullKeyPath);
     [[nodiscard]] bool deleteRegistryValue(const QString& keyPath, const QString& valueName);
     [[nodiscard]] bool removeService(const QString& serviceName);

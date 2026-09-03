@@ -27,6 +27,22 @@
       "replace": "\"actions run ungated; mutating actions confirm; destructive actions also take a restore point; \"",
       "expect": "killed",
       "why": "Unattended non-catastrophic mutations may skip confirmation and restore points are offered, not guaranteed. assembleStatesActualRiskPolicy pins the real Assisted/Unattended/catastrophic policy and rejects the old claims."
+    },
+    {
+      "id": "untrusted-context-enters-instructions",
+      "file": "src/ai/ai_prompt_assembler.cpp",
+      "find": "    return AiPromptAssembly{trusted_lines.join(QLatin1Char('\\n')),\n                            untrusted_lines.join(QLatin1Char('\\n'))};",
+      "replace": "    return AiPromptAssembly{(trusted_lines + untrusted_lines).join(QLatin1Char('\\n')),\n                            untrusted_lines.join(QLatin1Char('\\n'))};",
+      "expect": "killed",
+      "why": "assembleIncludesDynamicSections requires catalogs, context, stored memory, and steering to be absent from trusted instructions while remaining byte-visible in untrusted user context."
+    },
+    {
+      "id": "untrusted-context-is-dropped",
+      "file": "src/ai/ai_prompt_assembler.cpp",
+      "find": "                            untrusted_lines.join(QLatin1Char('\\n'))};",
+      "replace": "                            QString()};",
+      "expect": "killed",
+      "why": "assembleIncludesDynamicSections requires role separation to preserve every dynamic section rather than silently deleting stored context."
     }
   ]
 }

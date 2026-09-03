@@ -11,9 +11,12 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QRegularExpression>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
+
+#include <windows.h>
 
 using namespace sak;
 
@@ -31,6 +34,10 @@ private Q_SLOTS:
     // Recycle-fallback surfacing (B10-23)
     void permanentMode_deletesAndEmitsNoRecycleFallback();
     void permanentMode_deletesNestedFolderTree();
+    void permanentMode_lockedFileFailsClosedWithReason();
+    void verifiedDelete_rejectsTargetKindSwap();
+    void verifiedDelete_unlinksJunctionOnly();
+    void verifiedDelete_preservesHardLinkPeer();
     void requireRecoverable_neverPermanentlyDeletes();
     // R5 p8_appaction-3: recycle mode implies recoverable-only unless opted out
     void recycleMode_defaultsToRecoverableOnly();
@@ -47,6 +54,15 @@ private Q_SLOTS:
     // Defense-in-depth: worker re-screens each item against the cleanup denylist (Codex-3)
     void deniedTargets_refusedWithoutDeletion();
     void itemCleanupRefusal_screensEachType();
+
+    // One identity-bound removal seam; every historical weaker fallback stays absent.
+    void verifiedDelete_hasNoLegacyDispositionFallback();
+    void verifiedDelete_hasNoByPathFileFallback();
+    void verifiedDelete_hasNoByPathDirectoryFallback();
+    void verifiedDelete_hasNoWritableRetryFallback();
+    void verifiedDelete_hasNoRebootPathFallback();
+    void verifiedDelete_requiresSameHandleIdentityAndType();
+    void verifiedDelete_failureIsSurfacedToCallers();
 
 private:
     // One row of the exhaustive recycle-decision property test. Nested inside the test class
@@ -75,6 +91,52 @@ private:
     static RecycleProbes recycleProbesFor(const RecycleDecisionRow& row);
     static void verifyRecycleDecisionRow(const RecycleDecisionRow& row);
 };
+
+namespace {
+
+class ScopedNativeHandle {
+public:
+    explicit ScopedNativeHandle(HANDLE handle) : m_handle(handle) {}
+    ~ScopedNativeHandle() {
+        if (m_handle != INVALID_HANDLE_VALUE) {
+            CloseHandle(m_handle);
+        }
+    }
+    ScopedNativeHandle(const ScopedNativeHandle&) = delete;
+    ScopedNativeHandle& operator=(const ScopedNativeHandle&) = delete;
+    [[nodiscard]] bool valid() const { return m_handle != INVALID_HANDLE_VALUE; }
+
+private:
+    HANDLE m_handle = INVALID_HANDLE_VALUE;
+};
+
+QString readRepoSource(const QString& relative_path) {
+    const QDir repo_root(
+        QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("../..")));
+    QFile file(repo_root.filePath(relative_path));
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    return QString::fromUtf8(file.readAll());
+}
+
+bool writeTestFile(const QString& path, const QByteArray& contents = QByteArrayLiteral("payload")) {
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly) && file.write(contents) == contents.size();
+}
+
+ProcessResult createJunction(const QString& junction, const QString& target) {
+    return runProcess(CleanupWorker::launchableSystemTool(QStringLiteral("cmd.exe")),
+                      {QStringLiteral("/d"),
+                       QStringLiteral("/c"),
+                       QStringLiteral("mklink"),
+                       QStringLiteral("/J"),
+                       QDir::toNativeSeparators(junction),
+                       QDir::toNativeSeparators(target)},
+                      10'000);
+}
+
+}  // namespace
 
 void TestCleanupWorker::construction_emptyItems() {
     QVector<LeftoverItem> empty_items;
@@ -203,6 +265,109 @@ void TestCleanupWorker::permanentMode_deletesNestedFolderTree() {
     const auto args = completeSpy.takeFirst();
     QCOMPARE(args.at(0).toInt(), 1);  // one folder item succeeded
     QCOMPARE(args.at(1).toInt(), 0);  // zero failed
+}
+
+void TestCleanupWorker::permanentMode_lockedFileFailsClosedWithReason() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString base = QFileInfo(dir.path()).canonicalFilePath();
+    QVERIFY(!base.isEmpty());
+    const QString path = QDir(base).filePath(QStringLiteral("locked-leftover.txt"));
+    QVERIFY(writeTestFile(path));
+
+    // Deny FILE_SHARE_DELETE so CleanupWorker cannot obtain the verified DELETE handle. The item
+    // must remain, fail, and surface an actionable reason -- never fall through to QFile/remove,
+    // chmod, RemoveDirectory, or reboot scheduling by pathname.
+    ScopedNativeHandle blocker(CreateFileW(reinterpret_cast<LPCWSTR>(path.utf16()),
+                                           GENERIC_READ,
+                                           FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                           nullptr,
+                                           OPEN_EXISTING,
+                                           FILE_ATTRIBUTE_NORMAL,
+                                           nullptr));
+    QVERIFY2(blocker.valid(), "failed to open the disposable sharing-violation fixture");
+
+    LeftoverItem item;
+    item.type = LeftoverItem::Type::File;
+    item.path = path;
+    item.selected = true;
+    CleanupWorker worker({item}, /*useRecycleBin=*/false);
+    QSignalSpy errorSpy(&worker, &CleanupWorker::itemCleanupError);
+    QSignalSpy itemSpy(&worker, &CleanupWorker::itemCleaned);
+    QSignalSpy completeSpy(&worker, &CleanupWorker::cleanupComplete);
+    worker.start();
+    QTRY_COMPARE_WITH_TIMEOUT(completeSpy.count(), 1, 5000);
+
+    QVERIFY(QFileInfo::exists(path));
+    QCOMPARE(errorSpy.count(), 1);
+    QCOMPARE(errorSpy.at(0).at(0).toString(), path);
+    const QString reason = errorSpy.at(0).at(1).toString();
+    QVERIFY(reason.contains(QStringLiteral("target identity")));
+    QVERIFY(reason.contains(QStringLiteral("Close applications")));
+    QVERIFY(reason.contains(QStringLiteral("no pathname fallback")));
+    QCOMPARE(itemSpy.count(), 1);
+    QCOMPARE(itemSpy.at(0).at(1).toBool(), false);
+    const auto summary = completeSpy.takeFirst();
+    QCOMPARE(summary.at(0).toInt(), 0);
+    QCOMPARE(summary.at(1).toInt(), 1);
+}
+
+void TestCleanupWorker::verifiedDelete_rejectsTargetKindSwap() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = QDir(dir.path()).filePath(QStringLiteral("changed-kind"));
+    QVERIFY(QDir().mkpath(path));
+
+    CleanupWorker worker({});
+    QVERIFY(
+        !worker.deletePathByVerifiedHandle(path, CleanupWorker::VerifiedDeleteKind::RegularFile));
+    QVERIFY(QDir(path).exists());
+    QVERIFY(worker.m_currentItemError.contains(QStringLiteral("Target type changed")));
+}
+
+void TestCleanupWorker::verifiedDelete_unlinksJunctionOnly() {
+    QTemporaryDir tree;
+    QTemporaryDir outside;
+    QVERIFY(tree.isValid());
+    QVERIFY(outside.isValid());
+    const QString root = QDir(tree.path()).filePath(QStringLiteral("leftover-tree"));
+    QVERIFY(QDir().mkpath(root));
+    const QString marker = QDir(outside.path()).filePath(QStringLiteral("keep.txt"));
+    QVERIFY(writeTestFile(marker, QByteArrayLiteral("outside")));
+    const QString junction = QDir(root).filePath(QStringLiteral("outside-link"));
+    const ProcessResult linked = createJunction(junction, outside.path());
+    QVERIFY2(linked.succeeded(),
+             qPrintable(
+                 QStringLiteral("mklink /J failed: %1 %2").arg(linked.std_out, linked.std_err)));
+    QVERIFY(QFileInfo(junction).isJunction());
+
+    QVERIFY(CleanupWorker::deleteFolderTreeVerified(root));
+    QVERIFY(!QFileInfo::exists(root));
+    QVERIFY(QFileInfo::exists(marker));
+    QFile kept(marker);
+    QVERIFY(kept.open(QIODevice::ReadOnly));
+    QCOMPARE(kept.readAll(), QByteArrayLiteral("outside"));
+}
+
+void TestCleanupWorker::verifiedDelete_preservesHardLinkPeer() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString peer = QDir(dir.path()).filePath(QStringLiteral("keep-peer.txt"));
+    const QString selected = QDir(dir.path()).filePath(QStringLiteral("remove-link.txt"));
+    QVERIFY(writeTestFile(peer, QByteArrayLiteral("shared")));
+    QVERIFY2(CreateHardLinkW(reinterpret_cast<LPCWSTR>(selected.utf16()),
+                             reinterpret_cast<LPCWSTR>(peer.utf16()),
+                             nullptr) != 0,
+             "failed to create disposable hard-link fixture");
+
+    CleanupWorker worker({});
+    QVERIFY(worker.deletePathByVerifiedHandle(selected,
+                                              CleanupWorker::VerifiedDeleteKind::RegularFile));
+    QVERIFY(!QFileInfo::exists(selected));
+    QVERIFY(QFileInfo::exists(peer));
+    QFile kept(peer);
+    QVERIFY(kept.open(QIODevice::ReadOnly));
+    QCOMPARE(kept.readAll(), QByteArrayLiteral("shared"));
 }
 
 void TestCleanupWorker::requireRecoverable_neverPermanentlyDeletes() {
@@ -566,6 +731,110 @@ void TestCleanupWorker::itemCleanupRefusal_screensEachType() {
     QCOMPARE(refusal(LeftoverItem::Type::StartupEntry,
                      QStringLiteral("\\\\server\\share\\Acme\\run.exe")),
              QStringLiteral("path must be an absolute drive-letter path"));
+}
+
+void TestCleanupWorker::verifiedDelete_hasNoLegacyDispositionFallback() {
+    const QString source = readRepoSource(QStringLiteral("src/core/cleanup_worker.cpp"));
+    QVERIFY2(!source.isEmpty(), "cleanup_worker.cpp could not be read");
+    QVERIFY(source.contains(QStringLiteral("FileDispositionInfoEx")));
+    const QRegularExpression legacy(QStringLiteral(R"(FileDispositionInfo\s*,)"));
+    QVERIFY2(!legacy.match(source).hasMatch(),
+             "legacy FileDispositionInfo delete-on-close fallback returned");
+}
+
+void TestCleanupWorker::verifiedDelete_hasNoByPathFileFallback() {
+    const QString source = readRepoSource(QStringLiteral("src/core/cleanup_worker.cpp"));
+    QVERIFY2(!source.isEmpty(), "cleanup_worker.cpp could not be read");
+    QVERIFY2(!source.contains(QStringLiteral("QFile::remove(")),
+             "pathname QFile deletion fallback returned");
+}
+
+void TestCleanupWorker::verifiedDelete_hasNoByPathDirectoryFallback() {
+    const QString source = readRepoSource(QStringLiteral("src/core/cleanup_worker.cpp"));
+    QVERIFY2(!source.isEmpty(), "cleanup_worker.cpp could not be read");
+    QVERIFY2(!source.contains(QStringLiteral("RemoveDirectoryW(")),
+             "pathname Win32 directory fallback returned");
+    QVERIFY2(!source.contains(QStringLiteral("QDir().rmdir(")),
+             "pathname Qt directory fallback returned");
+}
+
+void TestCleanupWorker::verifiedDelete_hasNoWritableRetryFallback() {
+    const QString source = readRepoSource(QStringLiteral("src/core/cleanup_worker.cpp"));
+    QVERIFY2(!source.isEmpty(), "cleanup_worker.cpp could not be read");
+    QVERIFY2(!source.contains(QStringLiteral("setPermissions(")),
+             "pathname permission mutation/retry fallback returned");
+    QVERIFY(source.contains(QStringLiteral("FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE")));
+}
+
+void TestCleanupWorker::verifiedDelete_hasNoRebootPathFallback() {
+    const QString source = readRepoSource(QStringLiteral("src/core/cleanup_worker.cpp"));
+    const QString header = readRepoSource(QStringLiteral("include/sak/cleanup_worker.h"));
+    QVERIFY2(!source.isEmpty() && !header.isEmpty(), "CleanupWorker sources could not be read");
+    for (const QString& forbidden : {QStringLiteral("MoveFileExW("),
+                                     QStringLiteral("MOVEFILE_DELAY_UNTIL_REBOOT"),
+                                     QStringLiteral("scheduleRebootRemoval"),
+                                     QStringLiteral("rebootPendingItems")}) {
+        QVERIFY2(!source.contains(forbidden) && !header.contains(forbidden),
+                 qPrintable(
+                     QStringLiteral("pathname reboot fallback returned: %1").arg(forbidden)));
+    }
+}
+
+void TestCleanupWorker::verifiedDelete_requiresSameHandleIdentityAndType() {
+    const QString source = readRepoSource(QStringLiteral("src/core/cleanup_worker.cpp"));
+    QVERIFY2(!source.isEmpty(), "cleanup_worker.cpp could not be read");
+    const qsizetype verifyBegin =
+        source.indexOf(QStringLiteral("QString verifiedDeleteHandleRefusal"));
+    const qsizetype deleteBegin =
+        source.indexOf(QStringLiteral("QString deleteVerifiedHandleFailure"), verifyBegin);
+    const qsizetype helperEnd = source.indexOf(QStringLiteral("bool registryLeafComponentIsLink"),
+                                               deleteBegin);
+    const qsizetype seamBegin =
+        source.indexOf(QStringLiteral("bool CleanupWorker::deletePathByVerifiedHandle"));
+    const qsizetype seamEnd =
+        source.indexOf(QStringLiteral("bool CleanupWorker::removeFilePermanent"), seamBegin);
+    QVERIFY(verifyBegin >= 0 && deleteBegin > verifyBegin && helperEnd > deleteBegin);
+    QVERIFY(seamBegin >= 0 && seamEnd > seamBegin);
+    const QString verification = source.mid(verifyBegin, deleteBegin - verifyBegin);
+    const QString deletionHelper = source.mid(deleteBegin, helperEnd - deleteBegin);
+    const QString seam = source.mid(seamBegin, seamEnd - seamBegin);
+    const qsizetype open = seam.indexOf(QStringLiteral("openForVerifiedDelete(path)"));
+    const qsizetype verificationCall = seam.indexOf(QStringLiteral("verifiedDeleteHandleRefusal("));
+    const qsizetype deletionCall = seam.indexOf(QStringLiteral("deleteVerifiedHandleFailure("));
+    QVERIFY(open >= 0);
+    QVERIFY(verificationCall > open);
+    QVERIFY(deletionCall > verificationCall);
+    QVERIFY(verification.contains(QStringLiteral("finalPathOfHandle(handle)")));
+    QVERIFY(verification.contains(QStringLiteral("cleanupHandleRedirectRefusal(")));
+    QVERIFY(verification.contains(QStringLiteral("GetFileInformationByHandle(")));
+    QVERIFY(deletionHelper.contains(QStringLiteral("SetFileInformationByHandle(")));
+    QCOMPARE(source.count(QStringLiteral("SetFileInformationByHandle(")), 1);
+    QVERIFY(seam.contains(QStringLiteral("expectedKind == VerifiedDeleteKind::ReparsePoint")));
+}
+
+void TestCleanupWorker::verifiedDelete_failureIsSurfacedToCallers() {
+    const QString workerHeader = readRepoSource(QStringLiteral("include/sak/cleanup_worker.h"));
+    const QString workerSource = readRepoSource(QStringLiteral("src/core/cleanup_worker.cpp"));
+    const QString controller =
+        readRepoSource(QStringLiteral("src/core/advanced_uninstall_controller.cpp"));
+    const QString controllerHeader =
+        readRepoSource(QStringLiteral("include/sak/advanced_uninstall_controller.h"));
+    const QString panel = readRepoSource(QStringLiteral("src/gui/advanced_uninstall_panel.cpp"));
+    const QString action = readRepoSource(QStringLiteral("src/core/app_mutating_actions.cpp"));
+    QVERIFY2(!workerHeader.isEmpty() && !workerSource.isEmpty() && !controller.isEmpty() &&
+                 !controllerHeader.isEmpty() && !panel.isEmpty() && !action.isEmpty(),
+             "Cleanup error consumer sources could not be read");
+    QVERIFY(workerHeader.contains(QStringLiteral("void itemCleanupError(")));
+    QVERIFY(workerSource.contains(QStringLiteral("Q_EMIT itemCleanupError(")));
+    QVERIFY(controllerHeader.contains(QStringLiteral("void itemCleanupError(")));
+    QVERIFY(controller.contains(QStringLiteral("&CleanupWorker::itemCleanupError")));
+    QVERIFY(controller.contains(QStringLiteral("&AdvancedUninstallController::itemCleanupError")));
+    QVERIFY(panel.contains(QStringLiteral("&AdvancedUninstallPanel::onItemCleanupError")));
+    QVERIFY(panel.contains(QStringLiteral("tr(\"Cleanup Incomplete\")")));
+    QVERIFY(panel.contains(QStringLiteral("the cleanup log, and retry.")));
+    QVERIFY(action.contains(QStringLiteral("QStringLiteral(\"error_count\")")));
+    QVERIFY(action.contains(QStringLiteral("QStringLiteral(\"errors\")")));
+    QVERIFY(action.contains(QStringLiteral("&CleanupWorker::itemCleanupError")));
 }
 
 QTEST_MAIN(TestCleanupWorker)

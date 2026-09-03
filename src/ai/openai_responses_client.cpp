@@ -280,6 +280,27 @@ QJsonObject textContentItem(const QString& text) {
     return item;
 }
 
+QString untrustedInputMessageError(const OpenAIResponseRequest& request) {
+    for (qsizetype index = 0; index < request.untrusted_input_messages.size(); ++index) {
+        const OpenAIInputMessage& message = request.untrusted_input_messages.at(index);
+        if (message.role != OpenAIInputMessageRole::User) {
+            return QStringLiteral("OpenAI untrusted input message %1 has an unsupported role")
+                .arg(index);
+        }
+        if (message.text.trimmed().isEmpty()) {
+            return QStringLiteral("OpenAI untrusted input message %1 is empty").arg(index);
+        }
+    }
+    return {};
+}
+
+QJsonObject userTextInputMessage(const QString& text) {
+    QJsonObject message;
+    message[QStringLiteral("role")] = QStringLiteral("user");
+    message[QStringLiteral("content")] = QJsonArray{textContentItem(text)};
+    return message;
+}
+
 QJsonObject textAttachmentItem(const OpenAIInputAttachment& attachment) {
     return textContentItem(
         attachment.label.trimmed().isEmpty()
@@ -335,7 +356,7 @@ QJsonObject attachmentContentItem(const OpenAIInputAttachment& attachment) {
     return item;
 }
 
-QJsonArray attachmentInput(const OpenAIResponseRequest& request) {
+QJsonObject attachmentInputMessage(const OpenAIResponseRequest& request) {
     QJsonArray content;
     content.append(textContentItem(request.input));
     for (const auto& attachment : request.attachments) {
@@ -344,10 +365,9 @@ QJsonArray attachmentInput(const OpenAIResponseRequest& request) {
             content.append(item);
         }
     }
-    QJsonObject message;
-    message[QStringLiteral("role")] = QStringLiteral("user");
+    QJsonObject message = userTextInputMessage(request.input);
     message[QStringLiteral("content")] = content;
-    return QJsonArray{message};
+    return message;
 }
 
 QJsonObject stringParameter(const QString& description) {
@@ -786,13 +806,24 @@ QJsonArray localToolDefinitions() {
 }
 
 QJsonValue responseInputValue(const OpenAIResponseRequest& request) {
-    if (!request.function_outputs.isEmpty()) {
-        return functionOutputInputItems(request.function_outputs);
+    const bool has_function_outputs = !request.function_outputs.isEmpty();
+    const bool has_untrusted_messages = !request.untrusted_input_messages.isEmpty();
+    const bool has_attachments = !request.attachments.isEmpty();
+    if (!has_function_outputs && !has_untrusted_messages && !has_attachments) {
+        return request.input;
     }
-    if (!request.attachments.isEmpty()) {
-        return attachmentInput(request);
+
+    QJsonArray input_items;
+    if (has_function_outputs) {
+        input_items = functionOutputInputItems(request.function_outputs);
     }
-    return request.input;
+    for (const OpenAIInputMessage& message : request.untrusted_input_messages) {
+        input_items.append(userTextInputMessage(message.text));
+    }
+    if (!has_function_outputs && (!request.input.isEmpty() || has_attachments)) {
+        input_items.append(attachmentInputMessage(request));
+    }
+    return input_items;
 }
 
 QJsonObject reasoningObject(const OpenAIResponseRequest& request) {
@@ -878,7 +909,13 @@ void OpenAIResponsesClient::createResponse(const OpenAIResponseRequest& request)
         Q_EMIT requestFailed(QStringLiteral("OpenAI model is empty"));
         return;
     }
-    if (request.input.trimmed().isEmpty() && request.function_outputs.isEmpty()) {
+    const QString input_message_error = untrustedInputMessageError(request);
+    if (!input_message_error.isEmpty()) {
+        Q_EMIT requestFailed(input_message_error);
+        return;
+    }
+    if (request.input.trimmed().isEmpty() && request.function_outputs.isEmpty() &&
+        request.untrusted_input_messages.isEmpty()) {
         Q_EMIT requestFailed(QStringLiteral("Message is empty"));
         return;
     }
@@ -903,6 +940,11 @@ void OpenAIResponsesClient::countInputTokens(const OpenAIResponseRequest& reques
     }
     if (request.model.trimmed().isEmpty()) {
         Q_EMIT inputTokenCountFailed(request_id, QStringLiteral("OpenAI model is empty"));
+        return;
+    }
+    const QString input_message_error = untrustedInputMessageError(request);
+    if (!input_message_error.isEmpty()) {
+        Q_EMIT inputTokenCountFailed(request_id, input_message_error);
         return;
     }
 
@@ -1192,6 +1234,9 @@ QByteArray OpenAIResponsesClient::buildResponsePayloadForTesting(
 }
 
 QByteArray OpenAIResponsesClient::buildResponsePayload(const OpenAIResponseRequest& request) const {
+    if (!untrustedInputMessageError(request).isEmpty()) {
+        return {};
+    }
     QJsonObject root;
     root[QStringLiteral("model")] = request.model.trimmed();
     root[QStringLiteral("instructions")] = request.instructions;
