@@ -1119,22 +1119,18 @@ public:
     LanUploadWorker(LanUploadRequest request, LanUploadSinks sinks)
         : m_request(std::move(request))
         , m_sinks(sinks)
+        , m_socket(new QTcpSocket(this))
+        , m_connectTimer(new QTimer(this))
+        , m_durationTimer(new QTimer(this))
+        , m_pumpTimer(new QTimer(this))
         , m_sendBuffer(createPatternBuffer(m_request.block_size_kb))
-        , m_blockSize(m_request.block_size_kb * static_cast<int>(sak::kBytesPerKB)) {}
+        , m_blockSize(m_request.block_size_kb * static_cast<int>(sak::kBytesPerKB)) {
+        m_connectTimer->setSingleShot(true);
+        m_durationTimer->setSingleShot(true);
+        m_pumpTimer->setInterval(kLanUploadPumpIntervalMs);
+    }
 
     void start() {
-        // A worker is allocated per runLanUpload() call and start() runs exactly once on it, from
-        // the single QThread::started connection made there, so no prior socket can be overwritten.
-        // The socket is parented to this worker, which the thread's finished signal deleteLater()s,
-        // so it is released even on a path where finish() never runs.
-        // cppcheck-suppress publicAllocationError ; parented to this worker, allocated once
-        m_socket = new QTcpSocket(this);
-        m_connectTimer = new QTimer(this);
-        m_connectTimer->setSingleShot(true);
-        m_durationTimer = new QTimer(this);
-        m_durationTimer->setSingleShot(true);
-        m_pumpTimer = new QTimer(this);
-        m_pumpTimer->setInterval(kLanUploadPumpIntervalMs);
         connectSignals();
         // Run the pump timer from the start (not just post-connect): pump() polls the cancel
         // flag and returns early until the socket is connected, so a cancel during the connect

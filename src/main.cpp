@@ -46,6 +46,7 @@
 
 #include <algorithm>
 #include <cstdlib>
+#include <exception>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -615,13 +616,14 @@ int main(int argc, char* argv[]) {
                                 "Fatal Error",
                                 QString("Unhandled exception: %1").arg(e.what()));
         return 1;
-    } catch (...) {  // Final safety net: re-throw in debug, exit in release
+    } catch (...) {  // Final safety net: terminate in debug, exit in release
         sak::logError("Unknown fatal error");
         std::println(std::cerr, "Unknown fatal error");
         sak::showCriticalLogged(nullptr, "Fatal Error", "Unknown unhandled exception");
 #ifndef NDEBUG
-        // cppcheck-suppress throwInEntryPoint ; intentional re-throw in debug builds only
-        throw;
+        // An exception escaping main has no handler and terminates the process. Make that debug
+        // outcome explicit instead of throwing across the entry-point boundary.
+        std::terminate();
 #else
         return 1;
 #endif

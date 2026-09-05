@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/linux_distro_catalog.h"
+#include "sak/network_transfer_runner.h"
 
+#include <QSignalSpy>
 #include <QTest>
 
 /**
@@ -49,6 +51,8 @@ private Q_SLOTS:
     void testFilenameFromChecksumsRejectsPathEvenWhenPatternPermits();
     void testFilenameFromChecksumsEmptyOrInvalidPattern();
     void testRollingDistrosCarryPattern();
+    void testMetadataFetch_httpFailure();
+    void testMetadataFetch_positiveControl();
 
     void testCancelAllWithNoPendingIsSafe();
 
@@ -440,6 +444,55 @@ void TestLinuxDistroCatalog::testRollingDistrosCarryPattern() {
     if (!ubuntu.id.isEmpty()) {
         QVERIFY(ubuntu.rollingFilenamePattern.isEmpty());
     }
+}
+
+void TestLinuxDistroCatalog::testMetadataFetch_httpFailure() {
+    sak::ScopedNetworkMetadataFaultInjector inject([](const auto&) {
+        sak::NetworkTransferResult result;
+        result.http_status = 503;
+        return std::optional{result};
+    });
+    LinuxDistroCatalog catalog;
+    QSignalSpy failed_spy(&catalog, &LinuxDistroCatalog::versionCheckFailed);
+    bool succeeded = false;
+    connect(&catalog,
+            &LinuxDistroCatalog::versionCheckCompleted,
+            &catalog,
+            [&](const auto&, const auto&, bool) { succeeded = true; });
+
+    catalog.checkLatestVersion(QStringLiteral("ventoy"));
+
+    QTRY_COMPARE(failed_spy.count(), 1);
+    QVERIFY(!succeeded);
+    QVERIFY(failed_spy.at(0).at(1).toString().contains(QStringLiteral("HTTP 503")));
+    QCOMPARE(catalog.distroById(QStringLiteral("ventoy")).version, QStringLiteral("1.1.12"));
+}
+
+void TestLinuxDistroCatalog::testMetadataFetch_positiveControl() {
+    sak::ScopedNetworkMetadataFaultInjector inject([](const auto&) {
+        sak::NetworkTransferResult result;
+        result.success = true;
+        result.http_status = 200;
+        result.body = QByteArrayLiteral(
+            R"({"tag_name":"1.2.3","assets":[{"name":"ventoy-1.2.3-livecd.iso","browser_download_url":"https://example.test/ventoy-1.2.3-livecd.iso","size":1234},{"name":"ventoy-1.2.3-livecd.iso.sha256","browser_download_url":"https://example.test/ventoy-1.2.3-livecd.iso.sha256","size":64}]})");
+        return std::optional{result};
+    });
+    LinuxDistroCatalog catalog;
+    QSignalSpy failed_spy(&catalog, &LinuxDistroCatalog::versionCheckFailed);
+    bool succeeded = false;
+    connect(&catalog,
+            &LinuxDistroCatalog::versionCheckCompleted,
+            &catalog,
+            [&](const auto&, const auto&, bool) { succeeded = true; });
+
+    catalog.checkLatestVersion(QStringLiteral("ventoy"));
+
+    QTRY_VERIFY(succeeded);
+    QCOMPARE(failed_spy.count(), 0);
+    const auto distro = catalog.distroById(QStringLiteral("ventoy"));
+    QCOMPARE(distro.version, QStringLiteral("1.2.3"));
+    QCOMPARE(catalog.resolveDownloadUrl(distro),
+             QStringLiteral("https://example.test/ventoy-1.2.3-livecd.iso"));
 }
 
 // ============================================================================

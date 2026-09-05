@@ -14,6 +14,7 @@
 
 #include <functional>
 #include <memory>
+#include <mutex>
 
 namespace sak::ai {
 
@@ -32,6 +33,8 @@ struct AiSubagentTask {
     // Tool policy uses this field to verify mutation intent without trusting delegated text.
     QString user_message;
     QString system_instructions;
+    /// Untrusted structured context sent as real user-role messages, never instructions.
+    QStringList untrusted_context_messages;
     QStringList context_refs;
     QStringList instructions_refs;
     AiToolPolicy tool_policy{AiToolPolicy::NoLocalExecution};
@@ -118,6 +121,8 @@ public:
         QString system_instructions;
         QString objective;
         QString context;
+        /// Must be transported as user-role messages, never appended to system instructions.
+        QStringList untrusted_user_messages;
         QString expected_output_schema;
         QString model;
         QString reasoning_effort;
@@ -163,6 +168,12 @@ public:
 class IAiSubagentToolExecutor {
 public:
     virtual ~IAiSubagentToolExecutor() = default;
+    /// @brief True only when simultaneous executeToolCall() invocations are supported.
+    ///
+    /// The default is fail-closed because most executors wrap mutable UI or store state.
+    /// Implementations may opt in only when their dispatcher and every reachable handler
+    /// have an explicit concurrent-call contract.
+    [[nodiscard]] virtual bool supportsConcurrentCalls() const noexcept { return false; }
     [[nodiscard]] virtual AiSubagentToolOutput executeToolCall(const AiSubagentTask& task,
                                                                const AiSubagentToolCall& call,
                                                                const CancellationToken& token) = 0;
@@ -189,10 +200,13 @@ struct AiSubagentRunnerOptions {
 /// does not own a worker thread; callers schedule it on whatever executor
 /// fits.
 ///
-/// NOT thread-safe: configure one runner (options, factory, tool executor) and
-/// then call run() on it from one thread at a time; the setters must not race a
-/// run(). The injected model client and tool executor are non-owning and must
-/// outlive every run() call made through this runner.
+/// Configure the runner before use; setters must never race run(). Concurrent
+/// run() calls are supported only when canRunConcurrently() returns true. That
+/// requires a factory-created model client per call and either no tool executor
+/// or an executor that explicitly reports concurrent-call safety. A directly
+/// injected model client is always serial-only. Non-owning dependencies must
+/// outlive every run() call. Factory invocation itself is serialized; the
+/// clients it returns remain isolated and may execute concurrently.
 class AiSubagentRunner {
 public:
     explicit AiSubagentRunner(IAiModelClient* model_client);
@@ -207,12 +221,16 @@ public:
     /// answer. The same applies when the task's policy is NoLocalExecution.
     void setToolExecutor(IAiSubagentToolExecutor* executor);
 
+    /// @brief Whether separate run() calls may execute simultaneously.
+    [[nodiscard]] bool canRunConcurrently() const noexcept;
+
     [[nodiscard]] AiSubagentResult run(const AiSubagentTask& task,
                                        const CancellationToken& parent_token) const;
 
 private:
     IAiModelClient* m_model_client{nullptr};
     AiModelClientFactory m_model_client_factory;
+    mutable std::mutex m_model_client_factory_mutex;
     IAiSubagentToolExecutor* m_tool_executor{nullptr};
     AiSubagentRunnerOptions m_options;
 };

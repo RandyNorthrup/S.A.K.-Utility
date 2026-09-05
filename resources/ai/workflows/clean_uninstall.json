@@ -35,6 +35,5 @@
     "Restore-point prompt occurs before risky uninstall.",
     "User data is preserved unless explicitly approved.",
     "Leftovers are reported separately from removed items."
-  ],
-  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+  ]
 }

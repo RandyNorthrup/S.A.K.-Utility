@@ -49,13 +49,17 @@ QString combinedInput(const IAiModelClient::Request& request) {
     return input;
 }
 
-OpenAIResponseRequest openAiRequestFromModelRequest(const IAiModelClient::Request& request,
-                                                    bool enable_web_search) {
+OpenAIResponseRequest buildOpenAiRequest(const IAiModelClient::Request& request,
+                                         bool enable_web_search) {
     OpenAIResponseRequest req;
     req.api_key = request.api_key;
     req.model = request.model;
     req.instructions = request.system_instructions;
     req.input = combinedInput(request);
+    for (const auto& message : request.untrusted_user_messages) {
+        req.untrusted_input_messages.append(
+            {.role = OpenAIInputMessageRole::User, .text = message});
+    }
     req.reasoning_effort = request.reasoning_effort;
     req.safety_identifier = request.safety_identifier;
     req.enable_web_search = enable_web_search;
@@ -172,6 +176,11 @@ void beginResponseRequest(QThread& network_thread,
 }
 
 }  // namespace
+
+OpenAIResponseRequest openAiRequestFromModelRequest(const IAiModelClient::Request& request,
+                                                    bool enable_web_search) {
+    return buildOpenAiRequest(request, enable_web_search);
+}
 
 OpenAIResponsesModelClient::OpenAIResponsesModelClient(QObject* parent)
     : QObject(parent), m_thread_starter(startNetworkThread) {}

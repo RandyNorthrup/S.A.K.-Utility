@@ -28,6 +28,5 @@
     "Secrets and unnecessary personal data are removed.",
     "Verification and residual risk are included.",
     "Generated report is saved as artifact."
-  ],
-  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+  ]
 }

@@ -38,6 +38,5 @@
     "Repair action matched evidence.",
     "Restore-point prompt occurred before risky repair.",
     "Final answer includes verification result and remaining risk."
-  ],
-  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+  ]
 }

@@ -85,9 +85,10 @@ limit at CCN 2 is a comment-density signal, not a complexity problem.
 When cppcheck reports something, the fix is the code, not the suppression. A suppression is
 permitted only where the finding is a proven tool limitation that no reasonable code change
 resolves, and it goes inline at the site, never in `cppcheck_suppressions.txt` (that file is
-closed: it holds only the global tool limits -- no Qt/system headers, single-TU
-`unusedFunction`/`unusedStructMember`, `unknownMacro` -- plus one recorded owner style
-decision and two tests-scoped entries). The form is:
+closed to new blanket exceptions: it holds missing-include/macro tool limits, single-TU
+`unusedFunction`, the normal-pass `unmatchedSuppression` setting, and the tracked
+`useStlAlgorithm` backlog. There are no test-wide suppression entries. Each remaining global
+entry must still be re-audited under the owner's last-resort rule). The form is:
 
 ```cpp
 // cppcheck-suppress knownConditionTrueFalse ; atomic stop flag checked across threads
@@ -128,7 +129,7 @@ Zero warnings. Zero errors. **This is a release hook -- it must always pass.**
 ```cpp
 class PascalCaseClass {};            // Classes, structs, enums
 void camelCaseFunction();            // Free functions and methods
-int m_camelCaseMember;               // Private members (m_ prefix)
+int m_snake_case_member;             // Private members (m_ prefix)
 constexpr int kPascalCaseConstant;   // Constants (k prefix)
 enum class PascalCase { Value };     // Enum values are PascalCase
 QString local_variable;              // Local variables are snake_case

@@ -28,6 +28,7 @@ private Q_SLOTS:
     void earlierInvalidFileDoesNotRejectLaterValidOne();
     void rejectDuplicatePhaseIds();
     void rejectDuplicateRequiredInputIds();
+    void rejectInvalidAgentPolicyAndReference();
     void rejectCmdPhaseCommandWithPlaceholder();
     void rejectOversizedNativeWorkflowFile();
     void rejectNativeFileTruncatedAfterOpen();
@@ -60,12 +61,6 @@ QJsonObject validWorkflowObject(const QString& id = QStringLiteral("sample_workf
     phase[QStringLiteral("arguments")] = arguments;
     root[QStringLiteral("phases")] = QJsonArray{phase};
     root[QStringLiteral("acceptance_criteria")] = QJsonArray{QStringLiteral("Workflow parses.")};
-    QJsonObject cancel;
-    cancel[QStringLiteral("cancel_children")] = true;
-    cancel[QStringLiteral("cancel_tools")] = true;
-    cancel[QStringLiteral("preserve_partial_artifacts")] = true;
-    cancel[QStringLiteral("report_partial_state")] = true;
-    root[QStringLiteral("cancel_policy")] = cancel;
     return root;
 }
 
@@ -120,6 +115,27 @@ void AiWorkflowStoreTests::parseValidWorkflow() {
              QStringLiteral("Workflow: Sample Workflow\nPurpose: Test workflow\nTask: Do the test "
                             "workflow.\nPhases:\n- plan: overseer\n  Plan the work.\n  Done when: "
                             "Plan complete.\nAcceptance criteria:\n- Workflow parses."));
+}
+
+void AiWorkflowStoreTests::rejectInvalidAgentPolicyAndReference() {
+    QJsonObject object = validWorkflowObject();
+    QJsonObject agent{{QStringLiteral("id"), QStringLiteral("reader")},
+                      {QStringLiteral("model_policy"), QStringLiteral("mystery_reasoning")},
+                      {QStringLiteral("tool_policy"), QStringLiteral("read_only_pc")}};
+    object[QStringLiteral("agents")] = QJsonArray{agent};
+    QJsonObject phase = object.value(QStringLiteral("phases")).toArray().first().toObject();
+    phase[QStringLiteral("type")] = QStringLiteral("delegate");
+    phase[QStringLiteral("agent")] = QStringLiteral("missing_agent");
+    object[QStringLiteral("phases")] = QJsonArray{phase};
+
+    QStringList errors;
+    const auto workflow =
+        sak::ai::WorkflowTemplate::fromJson(object, QStringLiteral("invalid_agent.json"), &errors);
+    QVERIFY(!workflow.isValid());
+    QVERIFY(errors.contains(
+        QStringLiteral("Agent reader has unsupported model_policy 'mystery_reasoning'")));
+    QVERIFY(errors.contains(
+        QStringLiteral("Delegate phase plan references unknown agent 'missing_agent'")));
 }
 
 void AiWorkflowStoreTests::rejectInvalidWorkflow() {

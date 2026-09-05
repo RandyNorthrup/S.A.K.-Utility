@@ -1,5 +1,5 @@
 // S.A.K. Utility -- cppcheck suppressions
-// Only fundamental tool limitations. All real findings fixed in code.
+// Existing analysis exceptions. R5 re-audits every entry for direct removal.
 
 // cppcheck does not have Qt/system headers available.
 missingInclude
@@ -11,10 +11,8 @@ unusedFunction
 // Meta-noise from the suppression file itself.
 unmatchedSuppression
 
-// cppcheck does not understand Qt macros even with -D defines.
-unknownMacro
-
-// Style suggestion to use STL algorithms; Qt-idiomatic loops are preferred.
+// Remaining algorithm-style debt is an INCOMPLETE direct-fix program in R5-IDX-16.
+// This existing exception is not a permanent Qt-style exemption.
 useStlAlgorithm
 
 // functionStatic has no file-level suppression. scripts/run_cppcheck.ps1 reports every finding,

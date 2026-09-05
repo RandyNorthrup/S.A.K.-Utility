@@ -35,6 +35,5 @@
     "Every bundled package is offline-capable (requires_network is 0); a bundle that still needs network at deploy time is NOT accepted.",
     "Failed packages are not hidden.",
     "Install-from-bundle instructions are included."
-  ],
-  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+  ]
 }

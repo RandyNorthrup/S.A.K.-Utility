@@ -37,7 +37,6 @@ ALLOWED_LITERALS = {"-1", "-1.0", "0", "0.0", "1", "1.0"}
 # (scripts/check_gui_magic_numbers.ps1) already uses for layout code.
 EXEMPT_FILES = {
     "src/core/partition_apfs_writer.cpp",
-    "include/sak/partition_apfs_writer.h",
     "src/core/partition_apfs_file_system_reader.cpp",
     "include/sak/apfs_compression.h",
     # The lzbitmap/lzvn/lzfse codecs and the resource-fork wrapper are the same
@@ -53,6 +52,14 @@ EXEMPT_FILES = {
     "src/core/apfs_crypto.cpp",
     "include/sak/partition_hfs_internal.h",
     "include/sak/partition_hfs_core.h",
+}
+
+# Coverage ratchet for formerly broad exemptions whose only raw literals were safe
+# semantic constants, not certified byte-layout or crypto values. These paths must
+# remain present and scanned; silently putting either back in EXEMPT_FILES would
+# recreate the whole-file blind spot this campaign removed.
+REQUIRED_SCANNED_FILES = {
+    "include/sak/partition_apfs_writer.h",
     "include/sak/partition_hfs_case_folding.h",
 }
 
@@ -324,6 +331,18 @@ def main() -> int:
     args = parser.parse_args()
 
     root = Path(args.root).resolve()
+    missing_required = sorted(
+        relative for relative in REQUIRED_SCANNED_FILES if not (root / relative).is_file()
+    )
+    reexempted_required = sorted(REQUIRED_SCANNED_FILES & EXEMPT_FILES)
+    if missing_required or reexempted_required:
+        details: list[str] = []
+        if missing_required:
+            details.append(f"missing required scanned files: {missing_required}")
+        if reexempted_required:
+            details.append(f"required scanned files were re-exempted: {reexempted_required}")
+        print(f"Magic-number check failed: {'; '.join(details)}.")
+        return 1
     scan_roots = list(DEFAULT_ROOTS)
     if args.include_tests:
         scan_roots.append("tests")

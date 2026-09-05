@@ -128,7 +128,7 @@ private:
     ///         true on clean end-of-file or a cancellation via @p stop_token.
     [[nodiscard]] bool hashFileInChunks(QFile& file,
                                         QCryptographicHash& hash,
-                                        hash_progress_callback& progress,
+                                        std::reference_wrapper<hash_progress_callback> progress,
                                         const std::stop_token& stop_token) const;
 };
 

@@ -7,10 +7,18 @@
 #pragma once
 
 #include "sak/partition_manager_types.h"
+#include "sak/process_runner.h"
 
 #include <QObject>
 
+#include <atomic>
+
 namespace sak {
+
+struct StorageInventoryScanResult {
+    PartitionInventory inventory;
+    bool cancelled{false};
+};
 
 class StorageInventoryWorker : public QObject {
     Q_OBJECT
@@ -19,6 +27,7 @@ public:
     explicit StorageInventoryWorker(QObject* parent = nullptr);
 
     [[nodiscard]] PartitionInventory scan();
+    void cancel() noexcept;
 
     /// Scan disks/partitions/volumes on this machine.
     /// @param allow_elevation when false, raw file-system probing of foreign
@@ -26,13 +35,19 @@ public:
     /// elevated helper): such partitions simply keep an empty file_system and a
     /// warning. Headless/read-only callers (e.g. the AI assistant) pass false so
     /// a "read-only" inventory can never silently trigger a privilege escalation.
-    [[nodiscard]] static PartitionInventory scanCurrentSystem(bool allow_elevation = true);
+    [[nodiscard]] static PartitionInventory scanCurrentSystem(
+        bool allow_elevation = true, const CancelCheck& should_cancel = {});
+    [[nodiscard]] static StorageInventoryScanResult scanCurrentSystemResult(
+        bool allow_elevation = true, const CancelCheck& should_cancel = {});
     [[nodiscard]] static PartitionInventory parseInventoryJson(const QByteArray& json_data);
     [[nodiscard]] static QString inventoryPowerShellScript();
 
 Q_SIGNALS:
     void inventoryReady(const sak::PartitionInventory& inventory);
     void inventoryError(const QString& message);
+
+private:
+    std::atomic_bool m_cancelled{false};
 };
 
 }  // namespace sak

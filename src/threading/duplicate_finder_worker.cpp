@@ -185,15 +185,20 @@ auto DuplicateFinderWorker::hashFiles(const std::vector<std::filesystem::path>& 
     // Sequential: a cancel-only monitor gives the same mid-file cancel; progress is emitted below
     // on THIS (worker) thread, so the monitor need not report it.
     sak::logInfo("Using sequential hash calculation");
-    // cppcheck-suppress unreadVariable ; RAII guard -- the jthread's DESTRUCTOR stops+joins the
-    // cancel monitor at scope exit, so the value is used even though it is never read.
-    const std::jthread cancel_monitor = startHashCancelMonitor();
+    std::jthread cancel_monitor = startHashCancelMonitor();
+    const auto stop_cancel_monitor = [&cancel_monitor]() {
+        cancel_monitor.request_stop();
+        if (cancel_monitor.joinable()) {
+            cancel_monitor.join();
+        }
+    };
     std::vector<std::pair<std::filesystem::path, std::string>> hashed_files;
     const size_t file_count = files.size();
     hashed_files.reserve(file_count);
 
     for (size_t i = 0; i < file_count; ++i) {
         if (checkStop()) {
+            stop_cancel_monitor();
             return std::unexpected(sak::error_code::operation_cancelled);
         }
 
@@ -209,6 +214,7 @@ auto DuplicateFinderWorker::hashFiles(const std::vector<std::filesystem::path>& 
             sak::logWarning("Failed to hash file: {}", file.string());
         }
     }
+    stop_cancel_monitor();
     return hashed_files;
 }
 

@@ -31,6 +31,5 @@
     "Storage/hardware indicators were considered.",
     "Driver advice uses official sources when possible.",
     "No blind driver removal or reset is recommended."
-  ],
-  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+  ]
 }

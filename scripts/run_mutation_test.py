@@ -4,8 +4,10 @@
 Applies a catalog of single-site source mutations one at a time, rebuilds the
 covering test target, runs it, and classifies each mutant:
 
-  KILLED     the test target FAILED (or the mutant did not compile) -- the suite
+  KILLED     the mutant compiled and the test target FAILED -- the suite
              detected the change, which is what we want.
+  ERROR      a build, timeout, missing test, or restoration failure invalidated
+             the run. Infrastructure failures never count as killed mutants.
   SURVIVED   the test target still PASSED with the code deliberately broken -- the
              suite cannot tell the mutant from the original. Unless the mutant is
              declared behaviourally EQUIVALENT (same output for every input, with a
@@ -81,9 +83,11 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import time
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -92,6 +96,54 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # restore cannot survive a hard kill, so the tree's true state is recorded here.
 SENTINEL_PATH = REPO_ROOT / ".mutation-in-progress.json"
 SNAPSHOT_DIR = REPO_ROOT / ".mutation-snapshot"
+BUILD_TIMEOUT_SECONDS = 1800
+TEST_CASE_TIMEOUT_SECONDS = 300
+TEST_COMMAND_TIMEOUT_SECONDS = 1800
+TERMINATION_TIMEOUT_SECONDS = 30
+RUN_LOG_DIR: Path | None = None
+COMMAND_SEQUENCE = 0
+UNCONFIRMED_CHILD_PID: int | None = None
+
+
+class HarnessError(RuntimeError):
+    """An infrastructure failure that cannot establish mutation evidence."""
+
+
+def _require_children_stopped() -> None:
+    if UNCONFIRMED_CHILD_PID is None:
+        return
+    payload = json.loads(SENTINEL_PATH.read_text(encoding="utf-8"))
+    payload["unconfirmed_child_pid"] = UNCONFIRMED_CHILD_PID
+    SENTINEL_PATH.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    raise HarnessError("Child tree may still be active; source and snapshot left intact")
+
+
+def _next_log_path(label: str) -> Path:
+    global RUN_LOG_DIR, COMMAND_SEQUENCE
+    if RUN_LOG_DIR is None:
+        RUN_LOG_DIR = REPO_ROOT / "build" / "mutation-runs" / f"{time.time_ns()}-{os.getpid()}"
+        RUN_LOG_DIR.mkdir(parents=True)
+        print(f"Mutation logs: {RUN_LOG_DIR}", flush=True)
+    COMMAND_SEQUENCE += 1
+    return RUN_LOG_DIR / f"{COMMAND_SEQUENCE:04d}-{label}.log"
+
+
+def _terminate_child_tree(process: subprocess.Popen, output) -> None:
+    """End only this harness's child tree, then wait before restoring source."""
+    system_root = os.environ.get("SystemRoot")
+    if not system_root:
+        raise HarnessError("SystemRoot is missing; cannot locate Windows taskkill")
+    taskkill = Path(system_root) / "System32" / "taskkill.exe"
+    if not taskkill.is_file():
+        raise HarnessError(f"Required child-tree termination tool missing: {taskkill}")
+    result = subprocess.run(
+        [str(taskkill), "/PID", str(process.pid), "/T", "/F"],
+        stdout=output, stderr=subprocess.STDOUT, timeout=TERMINATION_TIMEOUT_SECONDS,
+        creationflags=subprocess.CREATE_NO_WINDOW,
+    )
+    if result.returncode != 0:
+        raise HarnessError(f"Could not terminate child process tree {process.pid}")
+    process.wait(timeout=TERMINATION_TIMEOUT_SECONDS)
 
 
 def _snapshot_path(rel: str) -> Path:
@@ -190,6 +242,13 @@ def _recover() -> int:
             return 0
         print("Nothing to recover: no mutation run is marked in progress.")
         return 0
+    payload = json.loads(SENTINEL_PATH.read_text(encoding="utf-8"))
+    if payload.get("unconfirmed_child_pid") is not None:
+        print("ERROR: child-tree termination was not confirmed for PID "
+              f"{payload['unconfirmed_child_pid']}. Keep the snapshot intact. Verify "
+              "that this exact process tree has stopped before clearing that field "
+              "from the sentinel and retrying --recover.")
+        return 2
     if not SNAPSHOT_DIR.is_dir():
         # Fail closed and loudly: the sentinel names files that were mutated, and the
         # bytes needed to undo that are gone. Say exactly which files to inspect.
@@ -244,21 +303,80 @@ def _restore_file(path: Path, text: str, attempts: int = 30) -> bool:
     return False
 
 
-def _run(cmd: list[str]) -> int:
-    """Run a command from the repo root, discarding its output, return its code."""
-    return subprocess.run(
-        cmd, cwd=REPO_ROOT, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-    ).returncode
+def _run(cmd: list[str], timeout_seconds: int, log_path: Path) -> int:
+    """Capture diagnostics and bound the child without killing this restore owner."""
+    global UNCONFIRMED_CHILD_PID
+    print(f"Running {cmd[0]} (limit {timeout_seconds}s; log {log_path.name})", flush=True)
+    with log_path.open("wb") as output:
+        process = subprocess.Popen(
+            cmd, cwd=REPO_ROOT, stdout=output, stderr=subprocess.STDOUT,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        UNCONFIRMED_CHILD_PID = process.pid
+        try:
+            result = process.wait(timeout=timeout_seconds)
+        except (subprocess.TimeoutExpired, KeyboardInterrupt) as error:
+            _terminate_child_tree(process, output)
+            UNCONFIRMED_CHILD_PID = None
+            raise HarnessError(f"Command interrupted or timed out; see {log_path}") from error
+        UNCONFIRMED_CHILD_PID = None
+    if result != 0:
+        print(f"Command exited {result}; diagnostics: {log_path}", flush=True)
+    return result
 
 
 def _build(build_dir: str, config: str, target: str) -> bool:
     """Build one target. True on success."""
-    return _run(["cmake", "--build", build_dir, "--config", config, "--target", target]) == 0
+    return _run(["cmake", "--build", build_dir, "--config", config, "--target", target],
+                BUILD_TIMEOUT_SECONDS, _next_log_path("build")) == 0
 
 
 def _test_passes(build_dir: str, config: str, regex: str) -> bool:
-    """Run the covering test(s). True iff every selected test passed."""
-    return _run(["ctest", "--test-dir", build_dir, "-C", config, "-R", regex]) == 0
+    """Require executed tests; timeout, skip, and absent evidence are run errors."""
+    log_path = _next_log_path("test")
+    report_path = log_path.with_suffix(".xml")
+    qt_report_dir = REPO_ROOT / build_dir / "test_results"
+    prior_reports = {path.name: (path.stat().st_mtime_ns, path.stat().st_size)
+                     for path in qt_report_dir.glob("*.txt")}
+    result = _run(
+        ["ctest", "--test-dir", build_dir, "-C", config, "-R", regex,
+         "--no-tests=error", "--timeout", str(TEST_CASE_TIMEOUT_SECONDS),
+         "--output-on-failure", "--output-junit", str(report_path)],
+        TEST_COMMAND_TIMEOUT_SECONDS, log_path,
+    )
+    try:
+        cases = list(ET.parse(report_path).iter("testcase"))
+    except (OSError, ET.ParseError) as error:
+        raise HarnessError(f"CTest produced no valid result report: {report_path}") from error
+    if not cases:
+        raise HarnessError(f"CTest executed no matching tests; see {log_path}")
+    _retain_qt_reports(build_dir, cases, log_path, prior_reports)
+    failures = 0
+    for case in cases:
+        if case.find("skipped") is not None or case.get("status") in ("notrun", "disabled"):
+            raise HarnessError(f"CTest skipped a required test; see {log_path}")
+        failure = case.find("failure")
+        if failure is not None:
+            if failure.get("message") != "Failed":
+                raise HarnessError(f"CTest infrastructure failure: {failure.attrib}; see {log_path}")
+            failures += 1
+    if (result == 0) != (failures == 0):
+        raise HarnessError(f"CTest exit/result disagreement; see {log_path}")
+    return result == 0
+
+
+def _retain_qt_reports(build_dir: str, cases: list[ET.Element], log_path: Path,
+                       prior_reports: dict[str, tuple[int, int]]) -> None:
+    """Keep fresh Qt assertion output before a later mutant overwrites it."""
+    for case in cases:
+        name = case.get("name", "")
+        if not name or Path(name).name != name:
+            raise HarnessError("Invalid testcase name in CTest result report")
+        source = REPO_ROOT / build_dir / "test_results" / f"{name}.txt"
+        if source.is_file():
+            current = (source.stat().st_mtime_ns, source.stat().st_size)
+            if prior_reports.get(source.name) != current:
+                shutil.copyfile(source, log_path.with_name(f"{log_path.stem}-{name}.qttest.txt"))
 
 
 def main() -> int:
@@ -337,6 +455,7 @@ def main() -> int:
         return ok
 
     try:
+        _arm(catalog_path.name, originals, "baseline")
         # Baseline: the unmutated tree must build and pass, or results are meaningless.
         print("=== baseline (unmutated) ===")
         if not _build(build_dir, config, target):
@@ -348,6 +467,7 @@ def main() -> int:
         print("baseline OK\n")
 
         for m in selected:
+            print(f"Mutant {len(results) + 1}/{len(selected)}: {m['id']}", flush=True)
             rel = m["file"]
             mutated = originals[rel].replace(m["find"], m["replace"], 1)
             # Arm BEFORE the write, and name the mutant, so a kill at any instant from
@@ -356,13 +476,15 @@ def main() -> int:
             _write(REPO_ROOT / rel, mutated)
             try:
                 if not _build(build_dir, config, target):
-                    verdict = "KILLED (build)"  # a non-compiling mutant is detected
+                    raise HarnessError(f"Mutant {m['id']} did not compile; fix the catalog")
                 elif _test_passes(build_dir, config, regex):
                     verdict = "SURVIVED"
                 else:
                     verdict = "KILLED"
             finally:
-                _restore_file(REPO_ROOT / rel, originals[rel])
+                if UNCONFIRMED_CHILD_PID is None and not _restore_file(
+                        REPO_ROOT / rel, originals[rel]):
+                    raise HarnessError(f"Could not restore {rel}; mutation marker retained")
 
             results.append((m["id"], verdict, m["expect"]))
             note = ""
@@ -378,15 +500,21 @@ def main() -> int:
                         "naming the input that separates them), or, if the kill is a build "
                         "failure, fix the catalog entry -- source that does not compile is not "
                         "an equivalent program")
-            print(f"{m['id']:<48} {verdict:<16}{note}")
+            print(f"{m['id']:<48} {verdict:<16}{note}", flush=True)
     finally:
+        _require_children_stopped()
         # Only clear the on-disk record if the tree is provably clean. If a lock beat
         # the retries, the sentinel and the snapshot MUST stay: they are what keeps the
         # pre-commit hook refusing and what --recover needs to finish the job.
-        if restore_all():
-            _disarm()
+        if not restore_all():
+            raise HarnessError("Source restoration failed; mutation marker retained")
         # Rebuild the target back to its pristine object so the tree is left green.
-        _build(build_dir, config, target)
+        try:
+            if not _build(build_dir, config, target):
+                raise HarnessError("Restored-source build failed; mutation run is not certified")
+        finally:
+            _require_children_stopped()
+        _disarm()
 
     scope = ("equivalence claims only" if only_equivalents
              else "every mutant in the catalog")
@@ -411,4 +539,8 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except (HarnessError, OSError, subprocess.SubprocessError) as error:
+        print(f"MUTATION RESULT: ERROR: {error}", flush=True)
+        sys.exit(2)

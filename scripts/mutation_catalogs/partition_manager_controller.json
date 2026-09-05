@@ -1,0 +1,168 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_partition_manager_controller",
+  "ctest_regex": "^test_partition_manager_controller$",
+  "mutants": [
+    {
+      "id": "planning-phase-not-blocked",
+      "file": "src/core/partition_manager_controller.cpp",
+      "find": "m_state == PartitionManagerState::PlanningOperation ||\n                              m_state == PartitionManagerState::PreflightRunning",
+      "replace": "m_state == PartitionManagerState::Ready ||\n                              m_state == PartitionManagerState::PreflightRunning",
+      "expect": "killed",
+      "why": "activePhasesBlockInteraction requires reentrant queue planning to remain an interaction-blocking phase while Ready remains stable."
+    },
+    {
+      "id": "empty-inventory-treated-authoritative",
+      "file": "src/core/partition_manager_controller.cpp",
+      "find": "return !inventory.isEmpty() && !inventory.hasPartitionEnumerationFailure() &&",
+      "replace": "return inventory.isEmpty() && !inventory.hasPartitionEnumerationFailure() &&",
+      "expect": "killed",
+      "why": "failedVerificationRetainsQueueAndDowngradesReport requires an empty post-apply scan to fail verification and retain the queue."
+    },
+    {
+      "id": "partial-inventory-treated-authoritative",
+      "file": "src/core/partition_manager_controller.cpp",
+      "find": "!inventory.hasPartitionEnumerationFailure() &&\n           inventory.warnings.isEmpty()",
+      "replace": "inventory.hasPartitionEnumerationFailure() &&\n           inventory.warnings.isEmpty()",
+      "expect": "killed",
+      "why": "failedVerificationRetainsQueueAndDowngradesReport requires a partial inventory to downgrade the result."
+    },
+    {
+      "id": "warning-inventory-treated-authoritative",
+      "file": "src/core/partition_manager_controller.cpp",
+      "find": "inventory.warnings.isEmpty() && !inventory.layout_hash.isEmpty()",
+      "replace": "!inventory.layout_hash.isEmpty() && !inventory.layout_hash.isEmpty()",
+      "expect": "killed",
+      "why": "failedVerificationRetainsQueueAndDowngradesReport requires any inventory warning to fail post-apply verification."
+    },
+    {
+      "id": "fresh-planner-uses-old-apply-snapshot",
+      "file": "src/core/partition_manager_controller.cpp",
+      "find": "const auto preview = m_planner.previewOperation(projected_inventory, operation);\n        const bool projection_valid =",
+      "replace": "const auto preview = m_planner.previewOperation(m_apply_before_inventory, operation);\n        const bool projection_valid =",
+      "expect": "killed",
+      "why": "freshSameHashMetadataBlocksApply requires every queued operation to be replanned against the fresh preflight inventory."
+    },
+    {
+      "id": "matching-layout-rejected",
+      "file": "src/core/partition_manager_controller.cpp",
+      "find": "m_queue.baseLayoutHash() != m_inventory.layout_hash",
+      "replace": "m_queue.baseLayoutHash() == m_inventory.layout_hash",
+      "expect": "killed",
+      "why": "positive dry-run and real-apply tests require a matching fresh layout identity to pass preflight."
+    },
+    {
+      "id": "validated-queue-replacement-rejected",
+      "file": "src/core/partition_manager_controller.cpp",
+      "find": "if (!m_queue.replaceOperations(*operations))",
+      "replace": "if (m_queue.replaceOperations(*operations))",
+      "expect": "killed",
+      "why": "positive apply tests require an atomically installed fresh validation result to proceed."
+    },
+    {
+      "id": "dry-run-enters-live-verification",
+      "file": "src/core/partition_manager_controller.cpp",
+      "find": "if (request.dry_run) {\n        const auto terminal_state",
+      "replace": "if (!request.dry_run) {\n        const auto terminal_state",
+      "expect": "killed",
+      "why": "dryRunUsesFreshInventoryAndKeepsQueueDirty requires one preflight scan and no post-mutation scan for a non-mutating run."
+    },
+    {
+      "id": "elevation-state-transition-inverted",
+      "file": "src/core/partition_manager_controller.cpp",
+      "find": "if (use_elevation) {\n        setState(PartitionManagerState::AwaitingElevation);",
+      "replace": "if (!use_elevation) {\n        setState(PartitionManagerState::AwaitingElevation);",
+      "expect": "killed",
+      "why": "realApplyTransitionsAndCleansBeforeSignals requires AwaitingElevation before Applying only for a live elevated apply."
+    },
+    {
+      "id": "failed-verification-discards-queue",
+      "file": "src/core/partition_manager_controller.cpp",
+      "find": "if (result.success) {\n        m_queue.discard();",
+      "replace": "if (!result.success) {\n        m_queue.discard();",
+      "expect": "killed",
+      "why": "all three failed post-apply verification cases require the original queue to remain available for review."
+    },
+    {
+      "id": "apply-ownership-survives-terminal-signal",
+      "file": "src/core/partition_manager_controller.cpp",
+      "find": "m_apply_watcher = nullptr;\n    m_apply_cancel.reset();",
+      "replace": "m_apply_watcher = watcher;\n    m_apply_cancel.reset();",
+      "expect": "killed",
+      "why": "realApplyTransitionsAndCleansBeforeSignals requires completion callbacks to remain blocked, then terminal stateChanged to observe released watcher ownership."
+    },
+    {
+      "id": "queue-capacity-comparison-inverted",
+      "file": "src/core/partition_operation_queue.cpp",
+      "find": "preview.operations.size() > kMaxOperationCount - m_operations.size()",
+      "replace": "preview.operations.size() < kMaxOperationCount - m_operations.size()",
+      "expect": "killed",
+      "why": "queueCapacityRefusalIsAtomic requires a fitting batch to append and an overflowing batch to be refused without partial mutation."
+    },
+    {
+      "id": "finished-inventory-future-remains-cancellable",
+      "file": "src/core/partition_manager_controller.cpp",
+      "find": "m_inventory_watcher != nullptr && !m_inventory_watcher->isFinished()",
+      "replace": "m_inventory_watcher != nullptr && m_inventory_watcher->isFinished()",
+      "expect": "killed",
+      "why": "finishedInventoryFutureCannotBeRetroactivelyCancelled requires the queued-callback gap to stay blocked but no longer advertise cancellation."
+    },
+    {
+      "id": "queue-review-revision-ignored",
+      "file": "src/core/partition_manager_controller.cpp",
+      "find": "reviewed.revision == m_queue.revision() &&",
+      "replace": "reviewed.revision == reviewed.revision &&",
+      "expect": "killed",
+      "why": "changedQueueReviewTokenRefusesApply requires a revision change after modal review to refuse apply before any scan starts."
+    },
+    {
+      "id": "missing-stable-device-id-accepted",
+      "file": "src/core/partition_manager_controller.cpp",
+      "find": "if (operation.target.disk_unique_id.isEmpty())",
+      "replace": "if (!operation.target.disk_unique_id.isEmpty())",
+      "expect": "killed",
+      "why": "missingStableDiskIdentityBlocksPreflight requires a destructive target without Get-Disk UniqueId to fail closed."
+    },
+    {
+      "id": "fresh-device-unique-id-not-compared",
+      "file": "src/core/partition_manager_controller.cpp",
+      "find": "disk->unique_id.trimmed() != operation.target.disk_unique_id",
+      "replace": "disk->unique_id.trimmed() != operation.target.disk_serial_number",
+      "expect": "killed",
+      "why": "blankSerialDiskSwapWithSameLayoutTextBlocksApply requires fresh UniqueId comparison even when both disks report blank serials."
+    },
+    {
+      "id": "inventory-cancel-result-discarded",
+      "file": "src/core/partition_manager_controller.cpp",
+      "find": "finishRefresh(std::move(scan_result.inventory), scan_result.cancelled)",
+      "replace": "finishRefresh(std::move(scan_result.inventory), false)",
+      "expect": "killed",
+      "why": "inventoryRefreshCanBeCancelled requires cancellation to come from the completed scan result, not inferred controller token state."
+    },
+    {
+      "id": "batch-preview-ignores-projected-inventory",
+      "file": "src/core/partition_manager_controller.cpp",
+      "find": "const auto preview = m_planner.previewOperation(projected_inventory, operation);\n        batch.operations.append(preview.operations);",
+      "replace": "const auto preview = m_planner.previewOperation(m_inventory, operation);\n        batch.operations.append(preview.operations);",
+      "expect": "killed",
+      "why": "quickPartitionBatchUsesSequentialProjectedInventory requires Create APFS to validate against the Initialize GPT result, not the original RAW disk."
+    },
+    {
+      "id": "preflight-preview-ignores-prior-queued-layout-changes",
+      "file": "src/core/partition_manager_controller.cpp",
+      "find": "const auto preview = m_planner.previewOperation(projected_inventory, operation);\n        const bool projection_valid =",
+      "replace": "const auto preview = m_planner.previewOperation(inventory, operation);\n        const bool projection_valid =",
+      "expect": "killed",
+      "why": "quickPartitionBatchUsesSequentialProjectedInventory must complete injected apply after a fresh RAW inventory is projected through Initialize GPT before Create APFS."
+    },
+    {
+      "id": "raw-payload-target-unique-id-not-compared",
+      "file": "src/core/partition_manager_controller.cpp",
+      "find": "disk->unique_id.trimmed() != unique_id || disk->serial_number.trimmed() != serial",
+      "replace": "disk->serial_number.trimmed() != serial || disk->serial_number.trimmed() != serial",
+      "expect": "killed",
+      "why": "rawPayloadTargetSwapBlocksApply requires the destructive payload target UniqueId to be checked independently from the selected source disk."
+    }
+  ]
+}

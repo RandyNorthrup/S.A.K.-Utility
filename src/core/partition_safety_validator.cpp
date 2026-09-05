@@ -8,6 +8,8 @@
 
 #include "sak/partition_raw_device_io.h"
 
+#include <QDir>
+#include <QFileInfo>
 #include <QSet>
 #include <QStringList>
 
@@ -17,7 +19,40 @@
 #include <limits>
 #include <optional>
 
+#include <windows.h>
+
 namespace sak {
+
+PartitionPathVolumeIdentity resolvePartitionPathVolumeIdentity(const QString& path) {
+    constexpr DWORD kPathBufferChars = 32'768;
+    QString native_path = QDir::toNativeSeparators(path.trimmed());
+    if (native_path.isEmpty()) {
+        return {.volume_guid = {}, .error = QStringLiteral("Backup path is empty")};
+    }
+    while (!QFileInfo::exists(native_path)) {
+        const QString parent = QFileInfo(native_path).dir().absolutePath();
+        if (parent == native_path || parent.isEmpty()) {
+            return {.volume_guid = {},
+                    .error = QStringLiteral("No existing backup-path ancestor was found")};
+        }
+        native_path = QDir::toNativeSeparators(parent);
+    }
+    std::wstring volume_root(kPathBufferChars, L'\0');
+    if (!GetVolumePathNameW(
+            reinterpret_cast<LPCWSTR>(native_path.utf16()), volume_root.data(), kPathBufferChars)) {
+        return {.volume_guid = {},
+                .error = QStringLiteral("GetVolumePathNameW failed (%1)").arg(GetLastError())};
+    }
+    std::wstring volume_name(kPathBufferChars, L'\0');
+    if (!GetVolumeNameForVolumeMountPointW(
+            volume_root.c_str(), volume_name.data(), kPathBufferChars)) {
+        return {.volume_guid = {},
+                .error = QStringLiteral("GetVolumeNameForVolumeMountPointW failed (%1)")
+                             .arg(GetLastError())};
+    }
+    return {.volume_guid = QString::fromWCharArray(volume_name.c_str()).trimmed().toUpper(),
+            .error = {}};
+}
 
 namespace {
 
@@ -40,7 +75,7 @@ constexpr auto kApfsRootDirectoryNamePayload = "apfs_root_directory_name";
 constexpr auto kApfsRootFilePayloadBase64 = "apfs_root_file_payload_base64";
 constexpr auto kApfsRootFilePayloadText = "apfs_root_file_payload_text";
 constexpr auto kApfsRootFilePatchOffsetPayload = "apfs_root_file_patch_offset_bytes";
-constexpr auto kApfsGeneratedLayoutConfirmedPayload = "apfs_generated_layout_confirmed";
+constexpr auto kApfsCowMutationCertifiedPayload = "apfs_cow_mutation_certified";
 constexpr auto kApfsEncryptVolumePayload = "apfs_encrypt_volume";
 constexpr auto kApfsVolumePasswordPayload = "apfs_volume_password";
 constexpr qsizetype kApfsVolumeLabelMaxChars = 255;
@@ -519,6 +554,18 @@ QString normalizedBackupDirectory(const PartitionOperation& operation) {
     return path;
 }
 
+QString normalizedBackupVolumeGuid(const PartitionOperation& operation) {
+    return operation.payload.value(QStringLiteral("backup_volume_guid"))
+        .toString()
+        .trimmed()
+        .toUpper();
+}
+
+bool backupVolumeMatches(const PartitionOperation& operation, const PartitionVolumeInfo& volume) {
+    return !volume.volume_guid.trimmed().isEmpty() &&
+           normalizedBackupVolumeGuid(operation) == volume.volume_guid.trimmed().toUpper();
+}
+
 // Raw-device classification is ONE authority (sak::isWindowsRawDevicePath in
 // partition_raw_device_io.cpp) shared by the plan-time validator, the raw I/O layer and the
 // clone/image script builder. Accepting a \\?\ device spelling here while the executor
@@ -668,14 +715,14 @@ bool isSupportedExplicitChangeClusterUnit(const PartitionOperation& operation) {
 
 bool changeClusterMissingBackup(const PartitionOperation& operation) {
     return operation.type == PartitionOperationType::ChangeClusterSize &&
-           normalizedBackupDirectory(operation).isEmpty();
+           (normalizedBackupDirectory(operation).isEmpty() ||
+            normalizedBackupVolumeGuid(operation).isEmpty());
 }
 
 bool changeClusterBackupOnTargetVolume(const PartitionInfoEx& partition,
                                        const PartitionOperation& operation) {
     return operation.type == PartitionOperationType::ChangeClusterSize && partition.volume &&
-           targetPathStartsWithDrive(normalizedBackupDirectory(operation),
-                                     partition.volume->drive_letter);
+           backupVolumeMatches(operation, *partition.volume);
 }
 
 bool changeClusterMissingConfirmation(const PartitionOperation& operation) {
@@ -886,9 +933,9 @@ bool apfsRootFileMutationMissingConfirmation(const PartitionOperation& operation
            !payloadBool(operation, QStringLiteral("target_wipe_confirmed"));
 }
 
-bool apfsRootFileMutationMissingLayoutConfirmation(const PartitionOperation& operation) {
+bool apfsRootFileMutationMissingCowCertification(const PartitionOperation& operation) {
     return isApfsRootFileMutationOperation(operation.type) &&
-           !payloadBool(operation, QString::fromLatin1(kApfsGeneratedLayoutConfirmedPayload));
+           !payloadBool(operation, QString::fromLatin1(kApfsCowMutationCertifiedPayload));
 }
 
 bool apfsRootFileMutationMissingFileName(const PartitionOperation& operation) {
@@ -1323,7 +1370,8 @@ bool allocationLeavesDonorTooSmall(const PartitionInfoEx* donor,
 
 bool allocationMissingBackup(const PartitionOperation& operation) {
     return operation.type == PartitionOperationType::AllocateFreeSpace &&
-           normalizedBackupDirectory(operation).isEmpty();
+           (normalizedBackupDirectory(operation).isEmpty() ||
+            normalizedBackupVolumeGuid(operation).isEmpty());
 }
 
 bool allocationBackupOnTargetOrDonor(const PartitionInfoEx& target,
@@ -1332,10 +1380,8 @@ bool allocationBackupOnTargetOrDonor(const PartitionInfoEx& target,
     if (operation.type != PartitionOperationType::AllocateFreeSpace) {
         return false;
     }
-    const QString backup = normalizedBackupDirectory(operation);
-    return (target.volume && targetPathStartsWithDrive(backup, target.volume->drive_letter)) ||
-           ((donor != nullptr) && donor->volume &&
-            targetPathStartsWithDrive(backup, donor->volume->drive_letter));
+    return (target.volume && backupVolumeMatches(operation, *target.volume)) ||
+           ((donor != nullptr) && donor->volume && backupVolumeMatches(operation, *donor->volume));
 }
 
 bool allocationMissingConfirmation(const PartitionOperation& operation) {
@@ -1369,14 +1415,14 @@ bool backupRestoreMissingMountedVolume(const PartitionInfoEx& partition,
 
 bool backupRestoreMissingBackup(const PartitionOperation& operation) {
     return backupRestorePartitionOperation(operation.type) &&
-           normalizedBackupDirectory(operation).isEmpty();
+           (normalizedBackupDirectory(operation).isEmpty() ||
+            normalizedBackupVolumeGuid(operation).isEmpty());
 }
 
 bool backupRestoreBackupOnTargetVolume(const PartitionInfoEx& partition,
                                        const PartitionOperation& operation) {
     return backupRestorePartitionOperation(operation.type) && partition.volume &&
-           targetPathStartsWithDrive(normalizedBackupDirectory(operation),
-                                     partition.volume->drive_letter);
+           backupVolumeMatches(operation, *partition.volume);
 }
 
 bool backupRestoreMissingConfirmation(const PartitionOperation& operation) {
@@ -1465,7 +1511,8 @@ bool dynamicToBasicMissingPayload(const PartitionOperation& operation) {
                 .trimmed()
                 .isEmpty() ||
             operation.payload.value(QStringLiteral("file_system")).toString().trimmed().isEmpty() ||
-            normalizedBackupDirectory(operation).isEmpty());
+            normalizedBackupDirectory(operation).isEmpty() ||
+            normalizedBackupVolumeGuid(operation).isEmpty());
 }
 
 bool dynamicToBasicMissingConfirmation(const PartitionOperation& operation) {
@@ -1479,12 +1526,13 @@ bool dynamicToBasicUnsupportedFileSystem(const PartitionOperation& operation) {
                operation.payload.value(QStringLiteral("file_system")).toString());
 }
 
-bool dynamicToBasicBackupOnSourceVolume(const PartitionOperation& operation) {
+bool dynamicToBasicBackupOnSourceVolume(const PartitionDiskInfo& disk,
+                                        const PartitionOperation& operation) {
     if (operation.type != PartitionOperationType::ConvertDynamicDiskToBasic) {
         return false;
     }
-    const QString drive = operation.payload.value(QStringLiteral("drive_letter")).toString();
-    return targetPathStartsWithDrive(normalizedBackupDirectory(operation), drive);
+    return disk.partitions.size() == 1 && disk.partitions.first().volume &&
+           backupVolumeMatches(operation, *disk.partitions.first().volume);
 }
 
 bool dynamicToBasicUnsupportedDisk(const PartitionDiskInfo& disk,
@@ -1686,14 +1734,15 @@ void validateNonNativeToolContentBlockers(const PartitionInfoEx& partition,
         nonNativeToolUnsupportedOperation(operation),
         QStringLiteral(
             "Non-Windows filesystem tool support is limited to format, repair, resize, APFS "
-            "generated root-file/root-directory mutation, and HFS+ staged file mutation"));
+            "certified COW root-file/root-directory mutation, and HFS+ staged file mutation"));
     addBlockerIf(
         result,
         nonNativeToolUnsupportedFileSystem(operation),
         QStringLiteral(
             "Non-Windows write support is limited to ext2/ext3/ext4 create/format/repair/resize, "
             "HFS+/HFSX create/format/repair/staged file mutation, Linux swap create/format, and "
-            "APFS generated create/format/repair/root-file/root-directory mutation"));
+            "APFS generated create/format/repair and certified COW root-file/root-directory "
+            "mutation"));
     addBlockerIf(result,
                  nonNativeToolMissingTarget(operation),
                  QStringLiteral(
@@ -1717,21 +1766,19 @@ void validateApfsRootMutationContentBlockers(const PartitionOperation& operation
                                              PartitionValidationResult* result) {
     addBlockerIf(result,
                  apfsRootFileMutationMissingToolMarker(operation),
-                 QStringLiteral("APFS generated root mutation must use non-Windows tool payload"));
+                 QStringLiteral("APFS COW mutation must use non-Windows tool payload"));
     addBlockerIf(result,
                  apfsRootFileMutationUnsupportedFileSystem(operation),
-                 QStringLiteral("APFS generated root mutation requires APFS file system"));
+                 QStringLiteral("APFS COW mutation requires APFS file system"));
     addBlockerIf(result,
                  apfsRootFileMutationMissingTarget(operation),
-                 QStringLiteral(
-                     "APFS generated root mutation target must match selected raw partition"));
+                 QStringLiteral("APFS COW mutation target must match selected raw partition"));
     addBlockerIf(result,
                  apfsRootFileMutationMissingConfirmation(operation),
-                 QStringLiteral("APFS generated root mutation requires destructive confirmation"));
+                 QStringLiteral("APFS COW mutation requires destructive confirmation"));
     addBlockerIf(result,
-                 apfsRootFileMutationMissingLayoutConfirmation(operation),
-                 QStringLiteral(
-                     "APFS generated root mutation requires S.A.K. generated-layout confirmation"));
+                 apfsRootFileMutationMissingCowCertification(operation),
+                 QStringLiteral("APFS root mutation requires certified COW mutation capability"));
     addBlockerIf(result,
                  apfsRootFileMutationMissingFileName(operation),
                  apfsRootMutationMissingNameMessage(operation.type));
@@ -2121,7 +2168,7 @@ static void validateDynamicToBasicBlockers(const PartitionDiskInfo& disk,
                  QStringLiteral(
                      "Dynamic-to-basic conversion supports NTFS, FAT32, and exFAT only"));
     addBlockerIf(result,
-                 dynamicToBasicBackupOnSourceVolume(operation),
+                 dynamicToBasicBackupOnSourceVolume(disk, operation),
                  QStringLiteral("Backup directory must not be on the dynamic source volume"));
     addBlockerIf(
         result,
@@ -2340,8 +2387,8 @@ void PartitionSafetyValidator::validateUnallocatedOperation(const PartitionDiskI
                      QStringLiteral(
                          "Non-Windows write support is limited to ext2/ext3/ext4 "
                          "create/format/repair/resize, HFS+/HFSX create/format/repair/staged file "
-                         "mutation, Linux swap create/format, and APFS generated "
-                         "create/format/repair/root-file/root-directory mutation"));
+                         "mutation, Linux swap create/format, APFS generated create/format/repair, "
+                         "and certified COW root-file/root-directory mutation"));
         addBlockerIf(
             result,
             nonNativeToolMissingConfirmation(operation),

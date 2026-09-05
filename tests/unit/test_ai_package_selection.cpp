@@ -23,14 +23,15 @@ class AiPackageSelectionTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    void normalizesHumanPackageNames();
     void selectsExactIdFromMultipleCandidates();
     void selectsExactTitleAlias();
+    void refusesLossyIdAndTitleCollisions();
+    void rejectsNonPositiveCandidateLimitWithoutExposure();
+    void serializesOnlyCanonicalCandidateFields();
     void asksHumanForAmbiguousMatches();
     void reportsNoCandidatesWithoutGuessing();
     void doesNotAutoSelectLoneNonExactCandidate();
     void dropsCandidateWithDisallowedIdCharacters();
-    void lossyNormalizedKeyNeverAuthorizesSelection();
     void rejectsUnsafePackageIdDomain();
     void rejectsOversizedRawQueryBeforeTrimming();
     void boundsAndSanitizesCandidateMetadata();
@@ -38,15 +39,6 @@ private Q_SLOTS:
     void exposesConflictingDuplicateVersions();
     void reportsRejectedEntriesOnSuccessfulSelection();
 };
-
-void AiPackageSelectionTests::normalizesHumanPackageNames() {
-    QCOMPARE(sak::ai::normalizePackageQueryKey(QStringLiteral("Notepad++")),
-             QStringLiteral("notepadplusplus"));
-    QCOMPARE(sak::ai::normalizePackageQueryKey(QStringLiteral("Visual Studio Code")),
-             QStringLiteral("visualstudiocode"));
-    QCOMPARE(sak::ai::normalizePackageQueryKey(QStringLiteral("C# Tools")),
-             QStringLiteral("csharptools"));
-}
 
 void AiPackageSelectionTests::selectsExactIdFromMultipleCandidates() {
     QJsonArray packages;
@@ -72,6 +64,64 @@ void AiPackageSelectionTests::selectsExactTitleAlias() {
 
     QVERIFY(result.success);
     QCOMPARE(result.selected.package_id, QStringLiteral("vscode"));
+}
+
+void AiPackageSelectionTests::refusesLossyIdAndTitleCollisions() {
+    QJsonArray packages;
+    packages.append(packageObject(QStringLiteral("foobar"), QStringLiteral("Foo Bar")));
+
+    const auto collision = sak::ai::selectPackageForWorkflow(QStringLiteral("foo-bar"), packages);
+    QVERIFY(!collision.success);
+    QVERIFY(collision.requires_human);
+    QVERIFY(collision.selected.package_id.isEmpty());
+
+    const auto exact_id = sak::ai::selectPackageForWorkflow(QStringLiteral("FOOBAR"), packages);
+    QVERIFY(exact_id.success);
+    QCOMPARE(exact_id.selected.package_id, QStringLiteral("foobar"));
+
+    const auto exact_title = sak::ai::selectPackageForWorkflow(QStringLiteral("fOo BaR"), packages);
+    QVERIFY(exact_title.success);
+    QCOMPARE(exact_title.selected.package_id, QStringLiteral("foobar"));
+}
+
+void AiPackageSelectionTests::rejectsNonPositiveCandidateLimitWithoutExposure() {
+    QJsonArray packages;
+    packages.append(packageObject(QStringLiteral("firefox"), QStringLiteral("Firefox")));
+
+    for (const int invalid_limit : {0, -1}) {
+        const auto result =
+            sak::ai::selectPackageForWorkflow(QStringLiteral("firefox"), packages, invalid_limit);
+        QVERIFY(!result.success);
+        QVERIFY(!result.ambiguous);
+        QVERIFY(!result.requires_human);
+        QVERIFY(result.selected.package_id.isEmpty());
+        QVERIFY(result.candidates.isEmpty());
+        QCOMPARE(result.rejected_entries, 0);
+        QCOMPARE(result.error_message,
+                 QStringLiteral("Package candidate limit must be greater than zero (received %1)")
+                     .arg(invalid_limit));
+    }
+}
+
+void AiPackageSelectionTests::serializesOnlyCanonicalCandidateFields() {
+    sak::ai::AiPackageCandidate candidate;
+    candidate.package_id = QStringLiteral("tool");
+
+    const QJsonObject minimal = candidate.toJson();
+    QCOMPARE(minimal.value(QStringLiteral("package_id")).toString(), QStringLiteral("tool"));
+    QVERIFY(!minimal.contains(QStringLiteral("version")));
+    QVERIFY(!minimal.contains(QStringLiteral("title")));
+    QVERIFY(!minimal.contains(QStringLiteral("description")));
+
+    candidate.version = QStringLiteral("2.0");
+    candidate.title = QStringLiteral("Tool Suite");
+    candidate.description = QStringLiteral("Current description");
+    const QJsonObject populated = candidate.toJson();
+    QCOMPARE(populated.value(QStringLiteral("version")).toString(), QStringLiteral("2.0"));
+    QCOMPARE(populated.value(QStringLiteral("title")).toString(), QStringLiteral("Tool Suite"));
+    QCOMPARE(populated.value(QStringLiteral("description")).toString(),
+             QStringLiteral("Current description"));
+    QVERIFY(!populated.contains(QStringLiteral("source")));
 }
 
 void AiPackageSelectionTests::asksHumanForAmbiguousMatches() {
@@ -136,21 +186,6 @@ void AiPackageSelectionTests::dropsCandidateWithDisallowedIdCharacters() {
                             "search result(s) rejected)"));
 }
 
-void AiPackageSelectionTests::lossyNormalizedKeyNeverAuthorizesSelection() {
-    QJsonArray lossy;
-    lossy.append(packageObject(QStringLiteral("foobar"), QStringLiteral("Foo Bar")));
-    const auto refused = sak::ai::selectPackageForWorkflow(QStringLiteral("foo-bar"), lossy);
-    QVERIFY(!refused.success);
-    QVERIFY(refused.requires_human);
-    QVERIFY(refused.selected.package_id.isEmpty());
-
-    QJsonArray exact;
-    exact.append(packageObject(QStringLiteral("foo-bar"), QStringLiteral("Foo Bar")));
-    const auto selected = sak::ai::selectPackageForWorkflow(QStringLiteral("FOO-BAR"), exact);
-    QVERIFY(selected.success);
-    QCOMPARE(selected.selected.package_id, QStringLiteral("foo-bar"));
-}
-
 void AiPackageSelectionTests::rejectsUnsafePackageIdDomain() {
     const QStringList invalidIds = {
         QStringLiteral(" padded"),
@@ -205,7 +240,6 @@ void AiPackageSelectionTests::boundsAndSanitizesCandidateMetadata() {
     const auto acceptedResult = sak::ai::selectPackageForWorkflow(QStringLiteral("bounded"),
                                                                   accepted);
     QVERIFY(acceptedResult.success);
-    QVERIFY(!acceptedResult.selected.source.contains(QStringLiteral("blob")));
     QVERIFY(!acceptedResult.selected.toJson().contains(QStringLiteral("blob")));
 }
 

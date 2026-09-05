@@ -17,6 +17,16 @@ struct PartitionValidationResult {
     [[nodiscard]] bool allowed() const noexcept { return blockers.isEmpty(); }
 };
 
+struct PartitionPathVolumeIdentity {
+    QString volume_guid;
+    QString error;
+
+    [[nodiscard]] bool valid() const noexcept { return !volume_guid.isEmpty(); }
+};
+
+/// Resolve an existing Windows path to its stable volume GUID. No drive-text inference.
+[[nodiscard]] PartitionPathVolumeIdentity resolvePartitionPathVolumeIdentity(const QString& path);
+
 /// @brief Read an unsigned 64-bit field out of a partition-inventory JSON object.
 /// @return 0 when the key is absent, holds a non-numeric string, or holds a NEGATIVE number.
 /// @note The negative clamp is the point. A negative double cast straight to uint64_t wraps to

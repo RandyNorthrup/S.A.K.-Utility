@@ -8,6 +8,36 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **R5 Wave 31 local integration passed** - Partition operations now bind reviewed source and raw
+  target identities, validate atomic Quick Partition batches against projected layouts, and use a
+  locked Restore Image source handle. AI workflow recovery now authenticates and binds snapshots
+  to one-use generations, preserves instruction/data roles, and refuses silent context truncation.
+  Shared metadata downloads enforce HTTPS, status, size, deadline, and cancellation contracts.
+  Complete Release build and all 276 CTests pass. R5 retains explicit recovery-tool, review-ledger,
+  naming and app-driven VM certification work; this entry does not claim campaign completion.
+
+- **Removed an unused global analyzer suppression** - Whole-project analysis without
+  `unknownMacro` passes with 183/186 active checkers and no findings. The obsolete global exception
+  is removed. Remaining exceptions continue under direct-fix review, not permanent grandfathering.
+
+- **Mutation tests cannot wait indefinitely or pass on build errors** - The runner now retains
+  per-command logs, bounds child execution, requires actual CTest results, rejects infrastructure
+  failures, and verifies the restored build. Panel dialog callbacks close on failed assertions;
+  overdue dialog cleanup records a failure. Sixteen runner tests pass, including real timeout and
+  child-process cleanup cases, and seven isolated negative drills prove the guards. Unconfirmed
+  child termination retains the source snapshot and blocks recovery/build overlap. This addresses
+  the Change Cluster Size test that previously waited for manual interaction.
+
+- **R5 review coverage includes previously omitted source languages** - The ledger now enumerates
+  the first-party C shim, C/Python/PowerShell tests, and Windows command launchers. New entries start
+  pending. Seven classifier tests pass, and five omission cases each fail against the previous
+  implementation.
+
+- **Partition preview scaling uses exact bounded arithmetic** - Replaced an unsupported Windows
+  clang-analysis division intrinsic with one exact unsigned implementation. Fifteen boundary
+  controls and seven focused mutations cover full-width products, carries, quotient bits and
+  saturation; all 70 panel cases pass after restoration. No compiler branch or silence was added.
+
 - **AI access policy is one closed typed value** - A single `AiAccessMode` now flows from strict
   combo-box item data through panel snapshots, prompt assembly, tool policy, and Responses request
   validation. Localized/display text and contradictory booleans cannot select policy. Wrong-typed,

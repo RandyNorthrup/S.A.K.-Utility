@@ -18,12 +18,11 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/network_constants.h"
+#include "sak/network_transfer_runner.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
-#include <QNetworkRequest>
-#include <QSslConfiguration>
 #include <QUrlQuery>
 
 #include <algorithm>
@@ -229,15 +228,16 @@ void UupDumpApi::onBuildsFetchReply() {
     m_pendingReplies.removeOne(reply);
     reply->deleteLater();
 
-    if (reply->error() != QNetworkReply::NoError) {
+    const sak::NetworkTransferResult transfer = sak::takeNetworkMetadataResult(reply);
+    if (!transfer.success) {
         const QString errorMsg =
-            QString("Network error fetching builds: %1").arg(reply->errorString());
+            QString("Network error fetching builds: %1").arg(transfer.error_message);
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;
     }
 
-    const QByteArray data = reply->readAll();
+    const QByteArray data = transfer.body;
     QJsonParseError parseError;
     const QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 
@@ -300,15 +300,16 @@ void UupDumpApi::onLanguagesReply() {
     m_pendingReplies.removeOne(reply);
     reply->deleteLater();
 
-    if (reply->error() != QNetworkReply::NoError) {
+    const sak::NetworkTransferResult transfer = sak::takeNetworkMetadataResult(reply);
+    if (!transfer.success) {
         const QString errorMsg =
-            QString("Network error fetching languages: %1").arg(reply->errorString());
+            QString("Network error fetching languages: %1").arg(transfer.error_message);
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;
     }
 
-    const QByteArray data = reply->readAll();
+    const QByteArray data = transfer.body;
     QJsonParseError parseError;
     const QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 
@@ -368,16 +369,17 @@ void UupDumpApi::onEditionsReply() {
     m_pendingReplies.removeOne(reply);
     reply->deleteLater();
 
-    if (reply->error() != QNetworkReply::NoError) {
+    const sak::NetworkTransferResult transfer = sak::takeNetworkMetadataResult(reply);
+    if (!transfer.success) {
         const QString errorMsg =
-            QString("Network error fetching editions: %1").arg(reply->errorString());
+            QString("Network error fetching editions: %1").arg(transfer.error_message);
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;
     }
 
     QJsonObject response;
-    if (!parseApiResponse(reply->readAll(), "editions", response)) {
+    if (!parseApiResponse(transfer.body, "editions", response)) {
         return;
     }
 
@@ -409,15 +411,16 @@ void UupDumpApi::onFilesReply() {
     m_pendingReplies.removeOne(reply);
     reply->deleteLater();
 
-    if (reply->error() != QNetworkReply::NoError) {
+    const sak::NetworkTransferResult transfer = sak::takeNetworkMetadataResult(reply);
+    if (!transfer.success) {
         const QString errorMsg =
-            QString("Network error fetching files: %1").arg(reply->errorString());
+            QString("Network error fetching files: %1").arg(transfer.error_message);
         sak::logError(errorMsg.toStdString());
         Q_EMIT apiError(errorMsg);
         return;
     }
 
-    const QByteArray data = reply->readAll();
+    const QByteArray data = transfer.body;
     QJsonParseError parseError;
     const QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 
@@ -647,30 +650,16 @@ QNetworkReply* UupDumpApi::sendApiRequest(const QString& endpoint,
     }
     url.setQuery(query);
 
-    QNetworkRequest request(url);
-    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-    request.setRawHeader("Accept", "application/json");
-    request.setRawHeader("User-Agent", "SAK-Utility/1.0");
-
-    // Use TLS 1.2+
-    QSslConfiguration sslConfig = QSslConfiguration::defaultConfiguration();
-    sslConfig.setProtocol(QSsl::TlsV1_2OrLater);
-    request.setSslConfiguration(sslConfig);
-
-    // Bound the transfer so a stalled api.uupdump.net / proxy connection aborts and surfaces an
-    // error via the on*Reply error() branch instead of hanging the wizard step forever.
-    request.setTransferTimeout(sak::kHttpMetadataTransferTimeoutMs);
-
     sak::logInfo(QString("API request: %1").arg(url.toString()).toStdString());
 
-    QNetworkReply* reply = m_networkManager->get(request);
-    // Fail closed on an oversized response: abort once the peer streams past the ceiling so
-    // the reply handlers' readAll() can never buffer an unbounded body into memory.
-    connect(reply, &QNetworkReply::downloadProgress, reply, [reply](qint64 received, qint64 total) {
-        if (received > kMaxApiResponseBytes || total > kMaxApiResponseBytes) {
-            reply->abort();
-        }
-    });
+    QNetworkReply* reply = sak::startNetworkMetadataGet(
+        *m_networkManager,
+        {.url = url,
+         .raw_headers = {{QByteArrayLiteral("Content-Type"), QByteArrayLiteral("application/json")},
+                         {QByteArrayLiteral("Accept"), QByteArrayLiteral("application/json")},
+                         {QByteArrayLiteral("User-Agent"), QByteArrayLiteral("SAK-Utility/1.0")}},
+         .timeout_ms = sak::kHttpMetadataTransferTimeoutMs,
+         .max_response_bytes = kMaxApiResponseBytes});
     m_pendingReplies.append(reply);
     return reply;
 }

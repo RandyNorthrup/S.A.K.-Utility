@@ -2,13 +2,13 @@
 
 ## Overview
 
-Comprehensive test suite for SAK Utility using the **Qt Test** framework with **273 registered CTest tests** across **247 C++ test source files** plus script-backed helper tests. Tests cover AI assistant clients, chat-title generation, workflow orchestration, tool execution, cancellation, run state, trace storage, core utilities, security, elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX, hardening), diagnostics, partition management, ISO pipelines, deployment, email inspection, splash sizing, partition filesystem probe certification, and quick action validation.
+Comprehensive test suite for SAK Utility using the **Qt Test** framework with **276 registered CTest tests** across **248 C++ test source files** plus script-backed helper tests. Tests cover AI assistant clients, chat-title generation, workflow orchestration, tool execution, cancellation, run state, trace storage, core utilities, security, elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX, hardening), diagnostics, partition management, ISO pipelines, deployment, email inspection, splash sizing, partition filesystem probe certification, and quick action validation.
 
 ## Structure
 
 ```
 tests/
-+-- unit/                                  # Unit tests (244 C++ files, including actions/)
++-- unit/                                  # Unit tests (245 C++ files, including actions/)
 |   +-- actions/                           # Quick action validation tests
 |   |   +-- test_action_factory.cpp
 |   |   +-- test_all_actions_metadata.cpp
@@ -54,7 +54,9 @@ tests/
 |   +-- test_format_utils.cpp
 |   +-- test_hardware_inventory_scanner.cpp
 |   +-- test_image_source.cpp
-|   +-- test_input_validator.cpp    +-- test_install_script_parser.cpp|   +-- test_keep_awake.cpp
+|   +-- test_input_validator.cpp
+|   +-- test_install_script_parser.cpp
+|   +-- test_keep_awake.cpp
 |   +-- test_leftover_scanner.cpp
 |   +-- test_linux_distro_catalog.cpp
 |   +-- test_linux_iso_downloader.cpp
@@ -71,10 +73,10 @@ tests/
 |   +-- test_network_diagnostic_types.cpp
 |   +-- test_network_diagnostic_utils.cpp
 |   +-- test_network_share_browser.cpp
-    +-- test_nuget_dependency_resolver.cpp
-    +-- test_nuget_version_range.cpp
-    +-- test_organizer_worker.cpp
-    +-- test_package_list_manager.cpp
+|   +-- test_nuget_dependency_resolver.cpp
+|   +-- test_nuget_version_range.cpp
+|   +-- test_organizer_worker.cpp
+|   +-- test_package_list_manager.cpp
 |   +-- test_package_matcher.cpp
 |   +-- test_path_utils.cpp
 |   +-- test_permission_manager.cpp
@@ -88,7 +90,9 @@ tests/
 |   +-- test_regex_pattern_library.cpp
 |   +-- test_registry_snapshot_engine.cpp
 |   +-- test_resource_soak.cpp
-|   +-- test_restore_point_manager.cpp    +-- test_script_rewriter.cpp|   +-- test_secure_memory.cpp
+|   +-- test_restore_point_manager.cpp
+|   +-- test_script_rewriter.cpp
+|   +-- test_secure_memory.cpp
 |   +-- test_smart_disk_analyzer.cpp
 |   +-- test_smart_file_filter.cpp
 |   +-- test_streaming_decompressor.cpp
@@ -303,6 +307,7 @@ empty results, and service failures fail; dependency failure never becomes a pas
 |---|---|---|
 | test_partition_manager_core | `partition_manager_*` | Genuine Apple 2-chunk and 135-chunk/2-CIB fixture reconstruction, foreign scattered-internal-pool COW rotation and live-metadata exclusion, chained insert/patch/replace/delete read-back, foreign multi-CIB shrink, inventory parsing, resilient volume lookup script coverage, hidden EFI/MSR file-system fallback labels, file-system support registry coverage, read-only raw signature detection for ext2/ext3/ext4 with superblock metadata, XFS/Btrfs read-only superblock metadata and sanity warning coverage, APFS read-only container/checkpoint ring/object-map/volume-OID metadata, visible object-map tree anchors, visible referenced root/non-root B-tree node headers, root `btree_info_t` metadata, bounded volume-superblock candidate metadata, referenced-object-header preflight, APFS metadata object-checksum rejection in the read-only browser, APFS browse/extract/export capability registry coverage, fail-closed APFS writer certification preflight coverage including oversized generated-layout rejection and malformed spaceman chunk/CIB sanity warnings, APFS object checksum calculation/stamping/verification, operation-specific image-only file/format/repair/resize/volume-label mutation plan shapes, safe target-path normalization/traversal blockers, raw APFS format/write/patch/delete/directory/volume-label/repair blocker coverage for missing raw paths, missing confirmation, and image-only options, APFS generated/minimal layout guard rejection for malformed generated media and unsupported APFS layouts, APFS generated root-file write/patch/delete, empty root-directory create/delete, root-directory child-file write/patch/delete, and volume-label Apply script generation and safety gates, APFS image-only format scratch-image generation with APFS detection/free-space/root-listing proof and 9000-byte seed-file read-back proof, APFS generated-image volume-label change proof with old/new-label read-back, APFS generated-image root-file add/replace/byte-range patch/delete proof with bounded existing root-file preservation, multi-block read-back, negative read-back, and empty-root-after-delete coverage, APFS generated-image empty root-directory create/delete proof with empty-listing and absence validation, APFS generated-image root-directory child-file create/read/patch/delete proof with non-empty directory delete blocking and empty-directory-after-delete validation, APFS generated-image checksum-repair proof with corrupt-before/repaired-after browse and read-back, and sanity warning coverage, XFS/Btrfs/APFS metadata consistency capability registry coverage, ext2/ext3/ext4 read-only directory/file browsing, selected-file extraction, symlink target display/sidecar export, and bounded recursive directory export for direct, indirect, and extent-mapped data, HFS+ catalog consistency checks, HFS+ attributes B-tree key scans plus structured fork/inline metadata reporting, HFS+ catalog browsing, selected data/resource-fork extraction, selected inline/fork-backed attribute-value extraction, bounded recursive directory export with `.rsrc` sidecars, catalog/data/resource/attribute extents-overflow resolution, image-only same-size HFS+ data-fork overwrite with fail-closed gates, initial-extent and extents-overflow write coverage, data/resource-fork allocated-block grow/shrink replacement with catalog logical-size updates, stale-tail zeroing, inline-attribute replacement with record-capacity checks, fork-backed attribute replacement within existing allocated blocks, bounded initial-extent data/resource/fork-backed-attribute allocation growth with bitmap/counter read-back, broad allocation-growth blocking, unsupported inline/broad attribute-growth blocking, and read-back hashes, Linux swap header metadata and original SWAPSPACE2 format script generation, direct and HFS-wrapper HFS+, HFSX, and unknown data, filesystem tool-manifest approval/blocker coverage, manifest-gated read-only checker command generation and approval resolution, ext e2fsprogs format/repair/resize command generation with destructive confirmation blockers, HFS+/HFSX `newfs_hfs` format and `fsck_hfs` check/repair command generation, HFS staged selected-raw-partition data-fork/resource-fork/inline/fork-backed-attribute mutation script generation and safety blockers, APFS generated create/format/repair script generation through `sak_apfs_writer_cli.exe`, APFS GPT type validation, manifest-gated ext/HFS format/repair/grow/shrink scripts, non-native write safety gates including exact selected raw partition target matching, ext shrink usage-metadata blocker, native ext format rejection, safety blockers, Create Image read-only risk and unsafe destination blockers, resize/merge/MBR2GPT script generation, resize adjacent-free-space/no-op/below-used-space/start-move/donor-space blockers, recovery write-back acknowledgement/bounds blockers and scripts, offline-image and raw-source Data Recovery scan/restore with source-hash verification, clone verification scripts, offset partition-clone scripts, create selected-region offset scripts, create/format/change cluster-size scripts, create partition type scripts, partition-clone region overwrite confirmation and unsafe physical-target blockers, PowerShell escaping, redo-stack state, queue layout-hash guard |
 | test_partition_manager_panel | `PartitionManagerPanel` | AOMEI-style panel chrome, stateful Scan Disks/Refresh Disks inventory control, status-bar inventory summary, selection-gated sidebar actions, enabled HFS+ read-only catalog check action, enabled Inspect Non-Windows File System metadata report for detected non-native volumes, disabled unsupported HFS+/APFS/XFS/Btrfs Windows-native check/resize/cluster/label paths with active Non-Windows alternatives, generated-layout-gated APFS Container action dialog and queue wiring (snapshot-create mode with resize/name-field visibility toggling; the former per-file APFS/HFS mutation dialogs moved to the File Management explorer and are covered by its bridge and panel suites), XFS sanity metadata surfacing in File System tooltip, Properties, Inspect, and Check Non-Windows File System original metadata consistency report, Browse Non-Windows File System ext, HFS+, and APFS enablement including ext symlink target display and HFS+ selected attribute-value extraction, confirmed ext format/repair/grow/shrink, Linux swap format, APFS generated format, and generated APFS repair queue wiring with fixed selected raw partition targets for queued repair, fixed-width sidebar, compact icon text-link actions, no redundant sidebar preview box, fixed-size Icons8 SVG ribbon icon resources with disabled SVG mode mappings including the dedicated Dry Run icon, compact unframed 1 px disk-map gutter, full commercial legend roles, rendered legend swatches and inner bars matched to meaningful colors for GPT/Primary, Logical, Simple, Spanned, Striped, Mirrored, RAID5, and dark-gray Unallocated segments, rendered neutral outer disk-map shells, selected partition highlights, whole-disk row highlights, mouse/right-click disk-map target selection synchronized with table selection, redo enabled only after Undo creates a redoable action, equal-height disk tiles and partition segments, rounded disk row/tile containers, final Apply before/after diff, table and disk-map context menus without ribbon/Pending Operations commands, Properties including raw file-system metadata, Explore, Data Recovery image/raw-source entry point, Quick Partition preset-capable entry point, Extend Partition Wizard, Allocate Free Space adjacent-donor backup/delete/extend/recreate/restore queue path, unallocated Allocate Free Space To resize/move queue paths, Change Cluster Size queued backup/reformat/restore dialog, primary/logical conversion queue dialog, volume serial-number queue dialog, dynamic-to-basic queue dialog, Space Analyzer tree/largest-file/file-type views with Open/Explore/Copy Path actions, Disk Benchmark, Manage BitLocker status dialog, SSD Secure Erase readiness and typed queue-confirmation dialog, Make Bootable Media actions, create-dialog handle synchronization and direct preview-bar drag, disk separators, resizable disk map, and borderless no-row-number partition table |
+| test_partition_manager_controller | `PartitionManagerController` | Async cancellable refresh/apply-preflight/apply-verification state machine, fresh same-hash safety revalidation, failed/partial post-scan downgrade with queue retention, reentrant admission ownership, cancellable filesystem checks and teardown joins, authoritative inventory states, dry-run/undo/elevation transitions, and atomic 256-operation queue capacity |
 | test_sak_apfs_writer_cli | `sak_apfs_writer_cli.exe` | Production APFS helper self-test covering exact-size image grow then shrink, generated APFS image format, generated-image volume-label change with old/new-label read-back, generated-image root-file create/replace/byte-range patch/delete with payload/read-back or deleted-file hashes, generated-image empty root-directory create/delete with empty-listing and absence validation, generated-image root-directory child-file write/patch/delete with child read-back and empty-directory-after-delete validation, missing-delete and non-empty-directory-delete blocking, intentional metadata checksum corruption, generated-layout checksum repair, JSON output, and raw write/patch/delete/directory/child-file/volume-label command refusal for normal file paths. |
 | test_sak_hfs_writer_cli | `sak_hfs_writer_cli.exe` | Production HFS helper self-test covering JSON output, structured fail-closed rejection for non-HFS media and missing confirmation, successful same-size helper overwrite, data-fork allocation growth plus allocated-block grow/shrink/truncate, resource-fork allocation growth plus replace/truncate, inline-attribute replacement, fork-backed attribute replacement and bounded allocation growth, constrained empty-file create/read/list/delete, non-empty file create/read/list/delete, single-leaf catalog rename with list/read-back proof, empty-folder create/list/delete, secure released-block wipe on delete, distinct before/after hashes, and certifier read-back hash proof. |
 | partition_filesystem_probe_certifier | `PartitionFileSystemDetector`, `PartitionHfsFileSystemReader`, `PartitionApfsFileSystemReader`, `openFileOrRawDeviceReadOnly` | Certification helper for Linux/VM/physical metadata proof. It reads a raw image or Windows raw partition alias, emits JSON with detected file system, source, total/free bytes, details, and blockers, can require expected file-system plus no metadata sanity warnings, can build a tiny HFS+ writer fixture for helper certification, can add HFS+ root/list/read/check/attribute proof plus APFS root/list/read/export proof for physical Apple media, can build a generated image-only APFS format scratch image with multi-block seed-file read-back proof, can add, replace, or delete one bounded root regular file in a generated APFS scratch image while preserving existing bounded root regular files, can add or delete one bounded regular child file inside a supported generated APFS root directory, and can repair recognized APFS metadata object checksums in a separate generated scratch image. The self-test covers offset reads, invalid offset rejection, invalid HFS read cap and attribute file-ID rejection, invalid APFS export cap rejection, HFS/APFS-operation blocker exit codes on wrong input, generated APFS detection/root-listing/seed-file read-back, generated APFS empty-root write/read-back, non-empty generated-root add, existing-file replace, generated-root child-file write/read/delete, generated-root delete, preserved-file read-back, corrupt-checksum browse failure, checksum repair read-back, clean-image repair blocking, and overwrite blocking. |
@@ -395,6 +400,18 @@ stay read-only with exact blockers.
 | test_uup_conversion_pipeline | UUP-to-ISO | UUPMediaConverter exe existence, process attachment (no fork), help output, missing UUP dir, empty UUP dir |
 | test_offline_package_builder | Offline deployment | Opt-in Chocolatey dependency closure and package bundle; service/CDN failure hard-fails after opt-in |
 
+### Mutation Runner Regression Tests
+
+`test_mutation_runner` registers the Python runner tests with CTest. Sixteen cases exercise
+assertion kills, survivor refusal, compilation and restoration failure, missing/empty test
+reports, real CTest timeout, Windows child-tree cleanup, unconfirmed termination refusal, and
+retention of fresh Qt assertion logs. A timeout or compiler failure never counts as mutation
+coverage. Panel modal callbacks run offscreen, close through scoped ownership on failed
+assertions, and report watchdog expiry as failure.
+
+`test_review_ledger` verifies enumeration of first-party C, Python/PowerShell test code, Windows
+command launchers, existing source languages, and exclusion of resources/generated paths.
+
 ## Writing New Tests
 
 ### Template
@@ -480,6 +497,6 @@ exit-code, standard-input, simultaneous large input/output pipes, and timeout be
 ---
 
 **Test Framework:** Qt Test
-**Registered Tests:** 273 (CTest)
-**Test Files:** 247 C++ test source files plus script-backed helper tests
+**Registered Tests:** 276 (CTest)
+**Test Files:** 248 C++ test source files plus script-backed helper tests
 **Platform:** Windows 10/11

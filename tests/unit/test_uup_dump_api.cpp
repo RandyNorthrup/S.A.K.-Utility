@@ -4,9 +4,146 @@
 /// @file test_uup_dump_api.cpp
 /// @brief Unit tests for UupDumpApi static helpers and channel mappings
 
+#include "sak/network_transfer_runner.h"
 #include "sak/uup_dump_api.h"
 
+#include <QCoreApplication>
+#include <QDir>
+#include <QFile>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QTimer>
 #include <QtTest/QtTest>
+
+#include <algorithm>
+#include <cstring>
+
+namespace {
+
+constexpr int kTestMetadataTimeoutMs = 1000;
+constexpr qint64 kTestMetadataResponseCap = 64;
+constexpr qint64 kTestSmallMetadataCap = 4;
+constexpr qint64 kTestOversizedProgress = 5;
+constexpr int kLastSuccessfulHttpStatus = 299;
+constexpr int kRedirectHttpStatus = 300;
+constexpr int kOkHttpStatus = 200;
+
+class TransportFailureReply final : public QNetworkReply {
+public:
+    TransportFailureReply(const QNetworkRequest& request,
+                          NetworkError initial_error,
+                          bool fail_on_read,
+                          QObject* parent)
+        : QNetworkReply(parent), m_fail_on_read(fail_on_read) {
+        setRequest(request);
+        setUrl(request.url());
+        setAttribute(QNetworkRequest::HttpStatusCodeAttribute, kOkHttpStatus);
+        if (initial_error != NoError) {
+            setError(initial_error, QStringLiteral("Native transport timeout"));
+        }
+        open(QIODevice::ReadOnly);
+        QTimer::singleShot(0, this, [this]() { finish(); });
+    }
+
+    void abort() override {
+        if (!isFinished()) {
+            setError(OperationCanceledError, QStringLiteral("Transport cancelled"));
+            finish();
+        }
+    }
+
+    [[nodiscard]] qint64 bytesAvailable() const override {
+        return m_body.size() - m_offset + QNetworkReply::bytesAvailable();
+    }
+
+protected:
+    qint64 readData(char* data, qint64 max_size) override {
+        const qint64 count = std::min(max_size, m_body.size() - m_offset);
+        if (count <= 0) {
+            return -1;
+        }
+        std::memcpy(data, m_body.constData() + m_offset, static_cast<std::size_t>(count));
+        m_offset += count;
+        if (m_fail_on_read) {
+            setError(UnknownContentError, QStringLiteral("Invalid compressed metadata"));
+        }
+        return count;
+    }
+
+private:
+    void finish() {
+        if (!isFinished()) {
+            setFinished(true);
+            Q_EMIT finished();
+        }
+    }
+
+    const QByteArray m_body{QByteArrayLiteral("{}")};
+    qint64 m_offset{0};
+    bool m_fail_on_read{false};
+};
+
+class TransportFailureManager final : public QNetworkAccessManager {
+public:
+    TransportFailureManager(QNetworkReply::NetworkError initial_error, bool fail_on_read)
+        : m_initial_error(initial_error), m_fail_on_read(fail_on_read) {}
+
+protected:
+    QNetworkReply* createRequest(Operation, const QNetworkRequest& request, QIODevice*) override {
+        return new TransportFailureReply(request, m_initial_error, m_fail_on_read, this);
+    }
+
+private:
+    QNetworkReply::NetworkError m_initial_error{QNetworkReply::NoError};
+    bool m_fail_on_read{false};
+};
+
+QString readRepoSource(const QString& relative_path) {
+    const QDir repo_root(
+        QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("../..")));
+    QFile file(repo_root.filePath(relative_path));
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    return QString::fromUtf8(file.readAll());
+}
+
+sak::NetworkMetadataRequest validMetadataRequest() {
+    return {.url = QUrl(QStringLiteral("https://metadata.example.test/value.json")),
+            .timeout_ms = kTestMetadataTimeoutMs,
+            .max_response_bytes = kTestMetadataResponseCap};
+}
+
+sak::NetworkTransferResult consumeMetadataReply(QNetworkReply* reply) {
+    if (!reply->isFinished()) {
+        QSignalSpy finished(reply, &QNetworkReply::finished);
+        if (!finished.wait(kTestMetadataTimeoutMs)) {
+            QTest::qFail("Metadata reply did not finish within the test deadline",
+                         __FILE__,
+                         __LINE__);
+            reply->abort();
+            return {};
+        }
+    }
+    return sak::takeNetworkMetadataResult(reply);
+}
+
+sak::NetworkTransferResult runInjectedMetadata(
+    const sak::NetworkMetadataRequest& request,
+    const sak::NetworkTransferResult& injected,
+    const std::function<void(QNetworkReply*)>& before_finish = {}) {
+    sak::ScopedNetworkMetadataFaultInjector injector(
+        [injected](const auto&) { return std::optional{injected}; });
+    QNetworkAccessManager manager;
+    QNetworkReply* reply = sak::startNetworkMetadataGet(manager, request);
+    if (before_finish) {
+        before_finish(reply);
+    }
+    return consumeMetadataReply(reply);
+}
+
+}  // namespace
 
 class TestUupDumpApi : public QObject {
     Q_OBJECT
@@ -15,6 +152,17 @@ private Q_SLOTS:
     // -- Construction ----------------------------------------------
     void construction_default();
     void construction_nonCopyable();
+    void metadataFetch_offlineFailsClosed();
+    void metadataFetch_malformedFailsClosed();
+    void metadataFetch_positiveControl();
+    void metadataFetch_isCentralizedAndBounded();
+    void metadataSeam_rejectsInvalidSchemeTimeoutAndCap();
+    void metadataSeam_acceptsOnly2xxStatus();
+    void metadataSeam_rejectsOversizedFinalBody();
+    void metadataSeam_abortsOversizedLiveProgress();
+    void metadataSeam_classifiesCancellationSeparately();
+    void metadataSeam_classifiesNativeTimeout();
+    void metadataSeam_rejectsReadFailureAfterFinished();
 
     // -- channelToRing ---------------------------------------------
     void channelToRing_retail();
@@ -86,6 +234,210 @@ void TestUupDumpApi::construction_default() {
 void TestUupDumpApi::construction_nonCopyable() {
     QVERIFY(!std::is_copy_constructible_v<UupDumpApi>);
     QVERIFY(!std::is_move_constructible_v<UupDumpApi>);
+}
+
+void TestUupDumpApi::metadataFetch_offlineFailsClosed() {
+    sak::ScopedNetworkMetadataFaultInjector inject([](const auto&) {
+        sak::NetworkTransferResult result;
+        result.error_message = QStringLiteral("injected offline");
+        return std::optional{result};
+    });
+    UupDumpApi api;
+    QSignalSpy error_spy(&api, &UupDumpApi::apiError);
+    bool succeeded = false;
+    connect(&api, &UupDumpApi::buildsFetched, &api, [&](const auto&) { succeeded = true; });
+
+    api.fetchAvailableBuilds();
+
+    QCOMPARE(error_spy.count(), 0);
+    QTRY_COMPARE(error_spy.count(), 1);
+    QVERIFY(!succeeded);
+    QVERIFY(error_spy.at(0).at(0).toString().contains(QStringLiteral("injected offline")));
+}
+
+void TestUupDumpApi::metadataFetch_malformedFailsClosed() {
+    sak::ScopedNetworkMetadataFaultInjector inject([](const auto&) {
+        sak::NetworkTransferResult result;
+        result.success = true;
+        result.http_status = 200;
+        result.body = QByteArrayLiteral("{not-json");
+        return std::optional{result};
+    });
+    UupDumpApi api;
+    QSignalSpy error_spy(&api, &UupDumpApi::apiError);
+    bool succeeded = false;
+    connect(&api, &UupDumpApi::buildsFetched, &api, [&](const auto&) { succeeded = true; });
+
+    api.fetchAvailableBuilds();
+
+    QTRY_COMPARE(error_spy.count(), 1);
+    QVERIFY(!succeeded);
+    QVERIFY(error_spy.at(0).at(0).toString().contains(QStringLiteral("JSON parse error")));
+}
+
+void TestUupDumpApi::metadataFetch_positiveControl() {
+    sak::ScopedNetworkMetadataFaultInjector inject([](const auto&) {
+        sak::NetworkTransferResult result;
+        result.success = true;
+        result.http_status = 200;
+        result.body = QByteArrayLiteral(
+            R"({"response":{"builds":{"uuid-1":{"uuid":"uuid-1","title":"Windows 11","build":"26100","arch":"amd64","created":1}}}})");
+        return std::optional{result};
+    });
+    UupDumpApi api;
+    QSignalSpy error_spy(&api, &UupDumpApi::apiError);
+    bool succeeded = false;
+    connect(&api, &UupDumpApi::buildsFetched, &api, [&](const auto&) { succeeded = true; });
+
+    api.fetchAvailableBuilds();
+
+    QTRY_VERIFY(succeeded);
+    QCOMPARE(error_spy.count(), 0);
+}
+
+void TestUupDumpApi::metadataFetch_isCentralizedAndBounded() {
+    const QString iso = readRepoSource(QStringLiteral("src/core/linux_iso_downloader.cpp"));
+    const QString catalog = readRepoSource(QStringLiteral("src/core/linux_distro_catalog.cpp"));
+    const QString uup = readRepoSource(QStringLiteral("src/core/uup_dump_api.cpp"));
+    const QString runner = readRepoSource(QStringLiteral("src/core/network_transfer_runner.cpp"));
+    QVERIFY2(!iso.isEmpty() && !catalog.isEmpty() && !uup.isEmpty() && !runner.isEmpty(),
+             "metadata fetch sources could not be read");
+    QCOMPARE(iso.count(QStringLiteral("startNetworkMetadataGet(")), 2);
+    QCOMPARE(catalog.count(QStringLiteral("startNetworkMetadataGet(")), 1);
+    QCOMPARE(uup.count(QStringLiteral("startNetworkMetadataGet(")), 1);
+    QVERIFY(!iso.contains(QStringLiteral("nam->get(")));
+    QVERIFY(!catalog.contains(QStringLiteral("m_networkManager->get(")));
+    QVERIFY(!uup.contains(QStringLiteral("m_networkManager->get(")));
+    QVERIFY(runner.contains(QStringLiteral("deadline->start(request.timeout_ms)")));
+    QVERIFY(runner.contains(QStringLiteral("kMetadataOversizeProperty")));
+    QVERIFY(runner.contains(QStringLiteral("!isSuccessfulHttpStatus(result->http_status)")));
+    QVERIFY(runner.contains(QStringLiteral("result->timed_out")));
+    QVERIFY(runner.contains(QStringLiteral("reply->error() != QNetworkReply::NoError")));
+    QVERIFY(runner.contains(QStringLiteral("g_network_metadata_fault_injector")));
+    QVERIFY(runner.contains(QStringLiteral("thread_local NetworkMetadataFaultInjector")));
+    QVERIFY(runner.contains(QStringLiteral("QTimer::singleShot(0")));
+    QVERIFY(!runner.contains(QStringLiteral("fallback_manager")));
+}
+
+void TestUupDumpApi::metadataSeam_rejectsInvalidSchemeTimeoutAndCap() {
+    QNetworkAccessManager manager;
+    sak::ScopedNetworkMetadataFaultInjector injector([](const auto&) {
+        sak::NetworkTransferResult result;
+        result.success = true;
+        result.http_status = kOkHttpStatus;
+        result.body = QByteArrayLiteral("ok");
+        return std::optional{result};
+    });
+    auto request = validMetadataRequest();
+    request.url = QUrl(QStringLiteral("http://metadata.example.test/value.json"));
+    auto result = consumeMetadataReply(sak::startNetworkMetadataGet(manager, request));
+    QVERIFY(!result.success);
+    QVERIFY(result.error_message.contains(QStringLiteral("HTTPS")));
+
+    request = validMetadataRequest();
+    request.timeout_ms = 0;
+    result = consumeMetadataReply(sak::startNetworkMetadataGet(manager, request));
+    QVERIFY(!result.success);
+    QVERIFY(result.error_message.contains(QStringLiteral("timeout")));
+
+    request = validMetadataRequest();
+    request.max_response_bytes = 0;
+    result = consumeMetadataReply(sak::startNetworkMetadataGet(manager, request));
+    QVERIFY(!result.success);
+    QVERIFY(result.error_message.contains(QStringLiteral("positive")));
+}
+
+void TestUupDumpApi::metadataSeam_acceptsOnly2xxStatus() {
+    sak::NetworkTransferResult injected;
+    injected.success = true;
+    injected.http_status = kLastSuccessfulHttpStatus;
+    injected.body = QByteArrayLiteral("ok");
+    QVERIFY(runInjectedMetadata(validMetadataRequest(), injected).success);
+
+    injected.http_status = kRedirectHttpStatus;
+    const auto redirect = runInjectedMetadata(validMetadataRequest(), injected);
+    QVERIFY(!redirect.success);
+    QCOMPARE(redirect.http_status, kRedirectHttpStatus);
+    QVERIFY(redirect.error_message.contains(QStringLiteral("HTTP 300")));
+
+    injected.http_status = -1;
+    const auto invalid = runInjectedMetadata(validMetadataRequest(), injected);
+    QVERIFY(!invalid.success);
+    QCOMPARE(invalid.http_status, -1);
+    QVERIFY(invalid.body.isEmpty());
+    QVERIFY(invalid.error_message.contains(QStringLiteral("HTTP -1")));
+}
+
+void TestUupDumpApi::metadataSeam_rejectsOversizedFinalBody() {
+    auto request = validMetadataRequest();
+    request.max_response_bytes = kTestSmallMetadataCap;
+    sak::NetworkTransferResult injected;
+    injected.success = true;
+    injected.http_status = kOkHttpStatus;
+    injected.body = QByteArrayLiteral("12345");
+    const auto result = runInjectedMetadata(request, injected);
+    QVERIFY(!result.success);
+    QVERIFY(result.body.isEmpty());
+    QCOMPARE(result.bytes_received, 0);
+    QVERIFY(result.error_message.contains(QStringLiteral("size limit")));
+}
+
+void TestUupDumpApi::metadataSeam_abortsOversizedLiveProgress() {
+    auto request = validMetadataRequest();
+    request.max_response_bytes = kTestSmallMetadataCap;
+    sak::NetworkTransferResult injected;
+    injected.success = true;
+    injected.http_status = kOkHttpStatus;
+    injected.body = QByteArrayLiteral("1234");
+    const auto result = runInjectedMetadata(request, injected, [](QNetworkReply* reply) {
+        QVERIFY(QMetaObject::invokeMethod(reply,
+                                          "downloadProgress",
+                                          Qt::DirectConnection,
+                                          Q_ARG(qint64, kTestOversizedProgress),
+                                          Q_ARG(qint64, kTestOversizedProgress)));
+    });
+    QVERIFY(!result.success);
+    QVERIFY(!result.cancelled);
+    QVERIFY(result.error_message.contains(QStringLiteral("size limit")));
+}
+
+void TestUupDumpApi::metadataSeam_classifiesCancellationSeparately() {
+    sak::NetworkTransferResult injected;
+    injected.cancelled = true;
+    const auto cancelled = runInjectedMetadata(validMetadataRequest(), injected);
+    QVERIFY(!cancelled.success);
+    QVERIFY(cancelled.cancelled);
+    QVERIFY(!cancelled.timed_out);
+
+    injected = {};
+    injected.timed_out = true;
+    const auto timed_out = runInjectedMetadata(validMetadataRequest(), injected);
+    QVERIFY(!timed_out.success);
+    QVERIFY(timed_out.timed_out);
+    QVERIFY(!timed_out.cancelled);
+}
+
+void TestUupDumpApi::metadataSeam_classifiesNativeTimeout() {
+    TransportFailureManager manager(QNetworkReply::TimeoutError, false);
+    const auto result =
+        consumeMetadataReply(sak::startNetworkMetadataGet(manager, validMetadataRequest()));
+    QVERIFY(!result.success);
+    QVERIFY(result.timed_out);
+    QVERIFY(!result.cancelled);
+    QVERIFY(result.body.isEmpty());
+    QCOMPARE(result.error_message, QStringLiteral("Network metadata request timed out"));
+}
+
+void TestUupDumpApi::metadataSeam_rejectsReadFailureAfterFinished() {
+    TransportFailureManager manager(QNetworkReply::NoError, true);
+    const auto result =
+        consumeMetadataReply(sak::startNetworkMetadataGet(manager, validMetadataRequest()));
+    QVERIFY(!result.success);
+    QVERIFY(!result.timed_out);
+    QVERIFY(!result.cancelled);
+    QVERIFY(result.body.isEmpty());
+    QCOMPARE(result.bytes_received, 0);
+    QCOMPARE(result.error_message, QStringLiteral("Invalid compressed metadata"));
 }
 
 // ===================================================================

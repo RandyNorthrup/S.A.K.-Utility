@@ -10,8 +10,10 @@ ai_app_action_output.json
 ai_command_guard.json
 ai_command_tool_planner.json
 ai_conversation_store.json
+ai_dpapi_state.json
 ai_offline_downloader_runner.json
 ai_openai_model_client.json
+ai_orchestrator.json
 ai_package_selection.json
 ai_prompt_assembler.json
 ai_prompt_role_routing.json
@@ -25,6 +27,7 @@ ai_tool_health_ledger.json
 ai_tool_loop_detector.json
 ai_tool_result_recorder.json
 ai_trace_store.json
+ai_workflow_resume_auth.json
 ai_workflow_store.json
 apfs_compression.json
 apfs_crypto_keybag.json
@@ -47,10 +50,15 @@ mbox_header_parser.json
 mbox_parser.json
 mbox_transfer_decoder.json
 native_messaging.json
+network_metadata.json
 nuget_version_range.json
 openai_input_roles.json
+openai_response_body_cap.json
 openai_tool_descriptions.json
 package_matcher.json
+partition_manager_controller.json
+partition_manager_panel.json
+partition_restore_runtime.json
 pst_block_decoder.json
 pst_field_decoders.json
 quick_action_elevation.json

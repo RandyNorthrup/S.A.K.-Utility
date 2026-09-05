@@ -35,7 +35,7 @@ public:
                                                   const QString& agent_id,
                                                   const CancellationToken& token)>;
 
-    explicit AiSubagentToolExecutor(RawDispatch dispatch);
+    explicit AiSubagentToolExecutor(RawDispatch dispatch, bool concurrent_safe = false);
 
     /// Only these (lowercased) tool names may be dispatched; every other call
     /// fails closed. Defaults to empty (deny all) until the panel populates it.
@@ -44,10 +44,12 @@ public:
     [[nodiscard]] AiSubagentToolOutput executeToolCall(const AiSubagentTask& task,
                                                        const AiSubagentToolCall& call,
                                                        const CancellationToken& token) override;
+    [[nodiscard]] bool supportsConcurrentCalls() const noexcept override;
 
 private:
     RawDispatch m_dispatch;
     QSet<QString> m_allowed_tools;
+    bool m_concurrent_safe{false};
 };
 
 }  // namespace sak::ai

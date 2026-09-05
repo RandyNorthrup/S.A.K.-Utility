@@ -128,9 +128,9 @@ class AppInstallationPanel : public QWidget { };
 // Functions/Methods: camelCase
 void updateTableView();
 
-// Private Members: m_ prefix + camelCase
-QTableView* m_tableView;
-QString m_currentPath;
+// Private Members: m_ prefix + snake_case
+QTableView* m_table_view;
+QString m_current_path;
 
 // Local variables: snake_case
 QString file_path = getPath();

@@ -39,17 +39,7 @@ public:
     /// implicit conversion, so the underlying value is never handed out silently.
     [[nodiscard]] constexpr Underlying value() const noexcept { return m_value; }
 
-    // A StrongIndex holds a single trivially-copyable integer, so by-value is the correct and
-    // cheaper calling convention for these comparison operands; a const reference would only add
-    // an indirection.
-    // cppcheck-suppress passedByValue
-    [[nodiscard]] friend constexpr bool operator==(StrongIndex lhs, StrongIndex rhs) noexcept {
-        return lhs.m_value == rhs.m_value;
-    }
-    // cppcheck-suppress passedByValue
-    [[nodiscard]] friend constexpr bool operator!=(StrongIndex lhs, StrongIndex rhs) noexcept {
-        return lhs.m_value != rhs.m_value;
-    }
+    [[nodiscard]] constexpr bool operator==(const StrongIndex&) const noexcept = default;
 
 private:
     Underlying m_value{};

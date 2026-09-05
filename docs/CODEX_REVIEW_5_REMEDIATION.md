@@ -1005,8 +1005,8 @@ a parked design, per the bucket convention. Open work is what remains after thos
   Eight coverage-only compiler warning silences have structural fixes. Thirty-five active test
   skips have no stale identifiers, but fixture-backed PST/OST/EXIF/ISO/raw-image/network cases
   plus slow omap/sparse-container cases remain directly closable. Eight exact gitleaks history
-  fingerprints are bounded; one is a real historical VM credential and needs rotation plus
-  explicit history-rewrite authorization before removal.
+  fingerprints are bounded; one is the historical VM credential accepted by the owner under
+  R5-IDX-20. Its rotation/history decision is settled there, not an open remediation action.
   CPPCHECK SUPPRESSION WAVE 4, 2026-08-31: the test-wide suppressions are gone.
   `knownConditionTrueFalse` measured 12 current findings; six test suites now use stronger
   QCOMPARE/ordinal contracts or remove redundant truths, reveal is zero, and the path suppression
@@ -1575,6 +1575,171 @@ a parked design, per the bucket convention. Open work is what remains after thos
   build exit 0; full CTest 273/273, zero failures, 738.00 seconds. The fresh runtime skip audit reads
   247 current Qt logs, ignores 60 stale removed-test logs, and records 4,997 passed functions / 27
   reviewed skips (0.54 percent), with none stale or unreviewed.
+  WAVE 31, LOCAL INTEGRATION PASSED 2026-09-04: the current working tree contains the following
+  implementation and proof work. These changes do not close the campaign or establish a new full
+  application certification. The complete Release gate passed; follow-up items explicitly marked
+  INCOMPLETE below remain required work.
+  - Partition controller/queue/inventory now carry stable source and raw-copy-target identities,
+    asynchronous cancellable preflight and verification, review revision/fingerprint binding,
+    terminal signal ordering, atomic queue capacity, and sequential Quick Partition projection.
+    Restore Image hashes before approval and uses one locked source handle for runtime identity,
+    hashing and copying. Unknown volume identity refuses; drive-letter guesses are removed.
+    APFS foreign COW actions use truthful COW capability/evidence labels rather than generated-layout
+    provenance. Review details live in the corresponding header briefs; final local integration
+    proof is recorded below, with app-driven external certification kept separate.
+    Final Apply-through review caught preflight losing the sequence that admission projected. The
+    shared projection now advances during fresh revalidation too, while identity checks retain the
+    real fresh inventory as authority. RAW -> Initialize GPT -> Create APFS reaches injected Apply;
+    removing the fix reproduces the exact GPT blocker. The new guard and two affected guards are
+    compile-valid and killed; restored controller CTest passes.
+    W31-CERT-1, INCOMPLETE APP-DRIVEN RESTORE PROOF: matrix row vhd.image-restore currently exercises
+    Copy-Item between detached VHDX files in Invoke-VhdImageRestoreScenario, not the current
+    PartitionManagerController/PartitionExecutor RestoreImage path. Its selected historical VHD
+    report completed on 2026-06-03. Status/verifier code does not bind that row to current app/core
+    source or binary hashes, so its historical green is not proof of the Wave 31 restore changes.
+    Reuse the existing disposable-VHD creation, identity and cleanup guards on the authorized
+    Windows VM, but drive refreshInventory, CreateImage/RestoreImage admission, queueReviewToken,
+    applyQueue and executionFinished through the real controller/executor. Restore an app-produced
+    raw image into a second fresh disposable VHD, independently verify sentinel hashes and removal
+    of the target marker, and bind evidence to exact executed code. Old Copy-Item evidence must
+    not satisfy that stronger app-E2E contract. Existing VM preflight is
+    scripts/test_partition_manager_vhd_preflight.ps1 with RequireAdministrator and RequireReady;
+    no host disks or network adapter APPLY are authorized by this work.
+  - AI orchestration validates workflow and resume structure, serializes model-client factory
+    creation, caps parallelism, balances callbacks, surfaces missing overseer/software/guidance
+    authority, and separates trusted instructions from untrusted user/tool/history data. Resume
+    state uses current-user DPAPI with gate/run/workflow revision/phase/generation binding and
+    atomic one-use consumption; unsigned legacy state, replay and corrupt generation records
+    refuse. Context/guidance limits refuse instead of silently truncating. The final caller-buffer
+    zeroization, live Responses body-limit, DPAPI failure cleanup and context-notice delta kills all
+    thirteen compile-valid mutants. Restored builds pass and the three focused CTests pass in
+    168.06 seconds. Seven existing live-service/raw-storage/privilege skips across these suites
+    remain outside that scoped proof and must remain visible in the full skip/certification audit.
+  - Metadata downloads share the HTTPS-only bounded transfer seam in network_transfer_runner.
+    ISO, catalog and UUP callers retain cancellation/generation ownership. Direct seam cases now
+    cover invalid requests, 2xx status, body limits, deadline and cancellation. All twelve metadata
+    guards are compile-valid and killed. Final review additionally proved native Qt TimeoutError
+    without a private timeout property, errors raised during body reads, and negative HTTP status
+    refusal. Failed reads discard partial data. Restored four-target build and CTest pass; opt-in
+    live ISO cases remain visible in the skip audit. Candidate selection separately
+    refuses non-positive limits and uses canonical fields plus exact raw identifiers.
+  - Suppression review has removed inline exceptions through direct code changes: defaulted
+    StrongIndex comparison, checked panel geometry, constructor-owned LAN transfer objects,
+    orchestrator cancellation helpers, callback/COM reference ownership, explicit hash-monitor
+    shutdown, and debug fatal termination. Live source inventory is six production inline
+    cppcheck suppressions plus five test-only sites. Global missingInclude/useStlAlgorithm remain
+    open review programs. The global unknownMacro exception is removed after the complete
+    src/include/tests directory scan without it returned zero findings and 183/186 active
+    checkers. That probe changed only the suppression list, not the source or other analyzer flags.
+    A real missingInclude reveal identifies generated sak/version.h and test_uup_dump_api.moc
+    paths; those require explicit generated-header analysis inputs before the blanket exception
+    can be removed. The suppression is retained pending that tool-invocation fix, not closed as
+    unavoidable. Historical mutation totals predate the runner's rejection of noncompiling
+    mutants; they are not substitutes for execution under the corrected runner.
+    Twenty selected STL findings were directly refactored and the APFS API/HFS case-folding headers
+    are required-scanned, reducing magic-number exemptions from thirteen to eleven. The canonical
+    production magic-number gate passes; an opt-in test-literal inventory is not that gate.
+  - The owner caught Change Cluster Size waiting for manual input during a mutation. A QtTest
+    assertion inside the timer callback returned without closing the dialog. Modal callbacks now
+    reject through scoped ownership and overdue modal cleanup records a test failure. Interrupted
+    runs are discarded; source snapshots were recovered before continuing. The new offscreen panel
+    baseline initially passed 69 cases. All 46 product mutants compile and are killed by their tests,
+    with zero survivors or interaction-deadline failures. Three isolated callback/cleanup/cluster
+    drills separately prove unattended failure handling. Sources are restored and rebuilt.
+    Windows naming analysis then rejected the _udiv128 scaling intrinsic. One exact bounded
+    unsigned-division implementation replaces it without compiler branches or suppressions.
+    Fifteen full-width arithmetic controls and seven focused mutations pass; the final panel
+    baseline passes 70 cases. The affected Windows clang translation unit is clean. Full configured
+    naming and local integration gates pass after this last source change; header coverage limits
+    remain explicitly open below.
+    Core analysis also exposed five missing explicit aggregate-field initializers in the Windows
+    volume resolver. The returns now explicitly initialize the empty GUID/error fields. The
+    configured naming gate then passed 150 non-core and 157 core translation units, measuring
+    5,235 core-body findings with sixteen clean translation units held by the existing ratchet.
+  - NAMING HEADER COVERAGE IS INCOMPLETE. A separate Windows-path probe found that the root
+    HeaderFilterRegex hides header diagnostics. Against the same assistant-panel translation unit,
+    database and check, the default filter exits zero with no header diagnostics; a separator-aware
+    filter exposes 382 naming findings across sixteen first-party headers, including 115 in the
+    assistant-panel header. This is a one-TU lower bound, not a whole-tree measurement. The current
+    configured gate is not proof of header naming cleanliness. Correcting that filter, adding a
+    header-based negative gate test, and directly clearing the revealed header debt remain required
+    R5 work; no new suppression or baseline is authorized by this finding. Probe logs are
+    build/ai-header-filter-default.log and build/ai-header-filter-windows.log.
+    READ-ONLY INVENTORY COMPLETE: the separator-aware probe analyzed all 307 production translation
+    units (150 non-core, 157 core), with zero compiler/processing errors, and deduplicated 3,098
+    naming findings across 117 tracked include/sak headers. Ten additional generated-version
+    findings belong to cmake/version.h.in. Tests-only or unreachable headers are outside this
+    measured set. The largest source-header groups are partition_hfs_internal.h (817),
+    network_diagnostic_types.h (128), ai_assistant_panel.h (115), network_diagnostic_panel.h (113),
+    and error_codes.h (101). Inventory and exact logs live under build/header-naming-inventory*.
+    FIRST CLEANUP PREPARATION: all 115 assistant-panel findings are private fields. Semantic
+    exports identify references only in that header, its panel source, and the sole friend test;
+    two existing mutation-catalog anchors and six comments also need deliberate updates. The test
+    export exposes ten incomplete aggregate initializers (WorkflowPhase/WorkflowRequirement), so
+    it is not apply-ready. Repair those initializers and re-export before applying any rename.
+    Source and analyzer configuration remain unchanged during the current integration gate.
+  - The mutation runner itself had no child deadline, discarded diagnostics, counted failed
+    compilation as a killed mutant, and ignored its restoration build. It now retains command logs,
+    bounds Windows child trees and CTest cases, checks nonempty JUnit execution evidence, rejects
+    timeout/skip/build failures, and requires successful restoration. Unconfirmed child-tree
+    termination retains the source/snapshot and blocks recovery or another build. Sixteen Python
+    tests pass, including real CTest pass/failure/timeout and Windows child-tree cleanup. Seven
+    independent in-memory production mutations each turn the matching test red without touching
+    tracked source bytes. Fresh Qt assertion logs are retained per command; stale logs are omitted.
+    CTest registration and the completed full execution both contain 276 targets.
+    FULL-FILE FOLLOW-UP FOUND TWO RECOVERY GAPS, still INCOMPLETE: --recover restores and clears
+    a sentinel even when its recorded owner is the current live process. It also trusts the
+    surviving snapshot directory entries rather than the sentinel's complete file manifest;
+    removing the sole snapshot yielded RECOVERED: 0 file(s), exit zero, with the fixture source
+    still mutated and its marker gone. Both counterexamples used only the existing disposable
+    test fixture. Enforce owner/child quiescence and full safe snapshot/target validation before
+    restoration. The script stays pending in the ledger; scoped execution proof is not full
+    recovery certification.
+  - Review-ledger enumeration omitted the first-party C shim, C/Python/PowerShell test code, and
+    Windows command launchers. The language rule now includes those files and generates its own
+    recorded description from the executed rule. Newly discovered files remain pending review.
+    Seven classifier tests pass; five separate omissions each fail against the unchanged HEAD
+    implementation. The additional Python suite is registered as test_review_ledger.
+    The subsequent full-file ledger review found four INCOMPLETE integrity gaps: hidden-clean Git
+    index flags can conceal changed source; empty/missing/changed briefs retain driver credit;
+    an invalid mark can rewrite an unrestricted brief path before target/hash admission; invalid
+    negative counts and unknown groups misleadingly succeed. Counterexamples and exact scope are
+    stored in scripts_review_ledger.md under docs/review_briefs. Independent direct hashing of all
+    56 currently credited driver units matched live source, all briefs were present and nonempty,
+    and no assume-unchanged/skip-worktree paths were found. Thus the current marks are not shown
+    wrong, but the script remains pending until these future-invalidation/admission guards are
+    directly repaired and tested. The live ledger has 1,091 units and 648 pending; the AI panel
+    header remains pending for its revealed naming debt. Catalog inventory is 61 catalogs with
+    595 entries (589 expected killed, six declared equivalent), not a claim that this wave ran
+    every historical catalog under the corrected runner.
+  - A resumed build exposed a stale VS2019 cache with no Qt/toolchain path. Explicit VS2022 x64,
+    Qt 6.10.3, and the existing x64-windows vcpkg triplet regenerate successfully. No stale binary
+    test result is accepted after failed configure/build. CONTRIBUTING now agrees with the enforced
+    m_snake_case member naming convention.
+  All work under docs/future remains parked. R5 and APFS_LIVE_RECERT_FOLLOWONS remain active;
+  no document is archived until its actual open work and certification are complete.
+  FIRST FULL GATE, 2026-09-04: Release build exited zero; CTest completed 276 targets with one
+  failed executable (1221.04 seconds). Its two failed Advanced Uninstall assertions still spelled
+  the private member m_autoCleanupInProgress after the reviewed m_auto_cleanup_in_progress rename.
+  Both source-wiring assertions now use the current identifier without weakening their condition
+  or ordering checks. The rebuilt focused controller suite passes. A new full gate is required;
+  the first run is retained as failed evidence rather than combined with a focused rerun.
+  FINAL LOCAL GATE, 2026-09-04: the complete Release build exited zero, then the complete CTest
+  suite passed 276/276 with zero failures in 1052.17 seconds. Logs are
+  build/wave31-release-build-final.log and build/wave31-full-ctest-final.log; the independent CTest
+  XML is build/wave31-full-ctest-final.xml. The runtime skip audit reads 248 current Qt logs,
+  ignores 65 stale removed-test logs, and records 5,104 passed functions plus 27 reviewed skips
+  (0.53 percent). No stale or unreviewed skip remains; the static inventory is 24 sites in nine
+  files. These explicit external/privilege/live-service boundaries are not silently counted as
+  full app E2E coverage. Source remained frozen throughout the final build and CTest run.
+  The final whole-project cppcheck gate also passes with unknownMacro removed: the normal pass
+  reports zero findings, both passes retain 183/186 active checkers, and the reveal reports zero
+  stale inline suppressions. Its separate 289 useStlAlgorithm findings remain open direct-fix
+  work, not silently relabeled as unavoidable tool limitations.
+  The commit gate correctly refused the stale tally after G10-3 was reopened; this file's tally
+  is now reconciled to its actual markers. A separate LOW diagnostic follow-up remains INCOMPLETE:
+  check_doc_accuracy.ps1 always tells the operator to fix tests/README.md, even when its specific
+  violation is solely the R5 tally. Its footer must identify the actual failing document scope.
   SUPPRESSION RE-AUDIT REFRESH, 2026-09-01 through 2026-09-02: core naming remains broadly excluded
   while 5,244 findings are tracked as open and 16 clean TUs are ratcheted. The coverage compiler
   warning silences and unsupported-platform
@@ -1597,9 +1762,8 @@ a parked design, per the bucket convention. Open work is what remains after thos
   suppressions are re-audited, not inherited as permanent policy. Current batch: all pre-commit
   hooks passed; Release build exit 0; full CTest 265/265, zero failures, 804.48 seconds.
   STILL OPEN: core's 5,244 naming findings; the 294-item `useStlAlgorithm` program; broad
-  magic-number exemptions; the wider mutation/
-  fresh-host test-infra program; and the historical VM credential rotation/history-rewrite
-  decision.
+  magic-number exemptions; and the wider mutation/fresh-host test-infra program. The historical
+  VM credential decision is settled under R5-IDX-20; its recorded exposure conditions still apply.
   DIRECT-FIX WAVE 1 FINAL GATE: all changed-file pre-commit hooks passed; Release build exit 0;
   full CTest 266/266, zero failures, 820.46 seconds.
   NON-CORE CLANG HEALTH FINAL GATE: all changed-file pre-commit hooks passed; real naming gate
@@ -1726,7 +1890,7 @@ a parked design, per the bucket convention. Open work is what remains after thos
 
 Every item is [x] fixed/already-correct/settled or [~] an authorized multi-week infra
 program in progress (started slice by slice, per the owner's 2026-08-16 direction). Tally
-as of 2026-08-31, MEASURED not hand-carried: 675 [x] / 20 [~] / 0 [ ] MARKERS IN THIS FILE
+as of 2026-09-04, MEASURED not hand-carried: 674 [x] / 21 [~] / 0 [ ] MARKERS IN THIS FILE
 (`grep -oE '^\s*- \[[x~ ]\]' docs/CODEX_REVIEW_5_REMEDIATION.md | sort | uniq -c`). It said
 669 / 24 until 2026-08-30: the R5-IDX-4 closure flipped a marker and added entries, and the
 tally was not re-run, so the date stamp stayed current while the numbers behind it went
@@ -10825,12 +10989,17 @@ Running tally of gates that reported healthy while analyzing nothing:
 The campaign is complete only when ALL of the following are simultaneously true:
 
 - [~] R5-G10-1 All reproducibly enumerated per-file review units executed and every finding
-  dispositioned -- ACTIVE: live ledger 1065 total / 632 pending / 44 stored driver briefs.
+  dispositioned -- ACTIVE: exact current counts and proof boundaries are recorded in the latest
+  R5-IDX-16 wave above and reproduced by scripts/review_ledger.py status.
   - OPEN: continue LEDGER-1/2/3; Codex budget is available and user authorized multitasking.
 - [~] R5-G10-2 Zero open findings in this document -- ACTIVE: ledger and local programs remain;
   no Codex-budget or VM blocker applies.
   - OPEN: zero open findings in this document. Several items remain in progress (G18-3, G18-4, the G21 gate-hardening items, and the G10 acceptance criteria).
-- [x] R5-G10-3 cppcheck clean project-wide with only documented tool-limitation suppressions -- REOPENED 2026-08-30. The suppressions half is settled as written below, but the "clean project-wide" half was never true and no gate checks it: the pre-commit hook runs run_cppcheck.ps1 -Files, i.e. CHANGED FILES ONLY. Measured whole-project on 2026-08-30: 84 findings, all style or tool-limitation -- 40 funcArgNamesDifferent, 12 functionConst, 10 useInitializationList, 6 functionStatic and 16 singles. RE-measured after this commit's fixes: 48. The parameter-name pass took funcArgNamesDifferent 40 -> 6 and the transfer-engine work took functionConst 12 -> 10; the remainder is useInitializationList 10, functionConst 10, functionStatic 6, funcArgNamesDifferent 6, and 16 singles. Zero are real defects (all 13 non-style ones were triaged with an adversarial second pass). They are real in the HOOK's own mode though: three of them blocked this very commit the moment file_explorer_transfer_worker.cpp became a changed file, which is what the whole finding predicted -- and fixing those three cascaded, because reserveStagingPath calls destinationPathVacant and so became const-able itself, blocking the NEXT attempt in turn. Four const fixes to land one commit, in a file whose only real change was deleting a dead function. Settled part follows: cppcheck_suppressions.txt holds only fundamental cppcheck limits (no Qt/system headers, single-TU unusedFunction/unusedStructMember, unknownMacro, unmatchedSuppression) plus a recorded owner style decision (useStlAlgorithm) and tests-scoped entries; the 'delete the file' criterion is superseded because those suppressions must remain for the tool.
+- [~] R5-G10-3 cppcheck clean project-wide with only documented tool-limitation suppressions.
+  ACTIVE: the configured whole-project pass has zero findings. The owner-mandated review and
+  direct removal of remaining global/inline exceptions is INCOMPLETE under R5-IDX-16; the old
+  blanket claim that every suppression must remain is superseded.
+  HISTORICAL 2026-08-30 BASELINE: Measured whole-project on 2026-08-30: 84 findings, all style or tool-limitation -- 40 funcArgNamesDifferent, 12 functionConst, 10 useInitializationList, 6 functionStatic and 16 singles. RE-measured after this commit's fixes: 48. The parameter-name pass took funcArgNamesDifferent 40 -> 6 and the transfer-engine work took functionConst 12 -> 10; the remainder is useInitializationList 10, functionConst 10, functionStatic 6, funcArgNamesDifferent 6, and 16 singles. Zero are real defects (all 13 non-style ones were triaged with an adversarial second pass). They are real in the HOOK's own mode though: three of them blocked this very commit the moment file_explorer_transfer_worker.cpp became a changed file, which is what the whole finding predicted -- and fixing those three cascaded, because reserveStagingPath calls destinationPathVacant and so became const-able itself, blocking the NEXT attempt in turn. Four const fixes to land one commit, in a file whose only real change was deleting a dead function.
   - CLOSED 2026-08-30. The 48 remaining findings were driven to ZERO (measured whole-project:
     0 findings, 183/186 checkers active) and the acceptance is now ENFORCED by
     scripts/cppcheck_whole_project_gate.ps1 -- manual-stage in pre-commit, and on every CI

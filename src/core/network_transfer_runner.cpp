@@ -10,9 +10,12 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QSemaphore>
+#include <QSslConfiguration>
 #include <QThread>
 #include <QTimer>
 
+#include <algorithm>
+#include <cstring>
 #include <limits>
 #include <utility>
 
@@ -30,6 +33,160 @@ constexpr qint64 kDefaultMaxResponseBytes = 512LL * 1024 * 1024;  // 512 MiB
 // Only a 2xx status is an authoritative, complete body. The success range is [200, 300).
 constexpr int kHttpSuccessStatusMin = 200;
 constexpr int kHttpSuccessStatusEnd = 300;
+
+constexpr char kMetadataTimedOutProperty[] = "sak_metadata_timed_out";
+constexpr char kMetadataOversizeProperty[] = "sak_metadata_oversize";
+constexpr char kMetadataMaxBytesProperty[] = "sak_metadata_max_bytes";
+constexpr char kMetadataInjectedErrorProperty[] = "sak_metadata_injected_error";
+
+thread_local NetworkMetadataFaultInjector g_network_metadata_fault_injector;
+
+class InjectedMetadataReply final : public QNetworkReply {
+public:
+    InjectedMetadataReply(const QNetworkRequest& request,
+                          const NetworkTransferResult& result,
+                          QObject* parent)
+        : QNetworkReply(parent), m_body(result.body) {
+        setRequest(request);
+        setUrl(request.url());
+        setAttribute(QNetworkRequest::HttpStatusCodeAttribute, result.http_status);
+        setProperty(kMetadataInjectedErrorProperty, result.error_message);
+        if (result.timed_out) {
+            setProperty(kMetadataTimedOutProperty, true);
+            setError(QNetworkReply::TimeoutError,
+                     result.error_message.isEmpty()
+                         ? QStringLiteral("Network metadata request timed out")
+                         : result.error_message);
+        } else if (result.cancelled) {
+            setError(QNetworkReply::OperationCanceledError,
+                     result.error_message.isEmpty()
+                         ? QStringLiteral("Network metadata request cancelled")
+                         : result.error_message);
+        } else if (!result.success) {
+            setError(QNetworkReply::NetworkSessionFailedError,
+                     result.error_message.isEmpty()
+                         ? QStringLiteral("Network metadata request failed")
+                         : result.error_message);
+        }
+        open(QIODevice::ReadOnly);
+        QTimer::singleShot(0, this, [this]() { finish(); });
+    }
+
+    void abort() override {
+        if (isFinished()) {
+            return;
+        }
+        setError(QNetworkReply::OperationCanceledError,
+                 QStringLiteral("Network metadata request cancelled"));
+        // Constructor already queued finish() for the next event turn. Keep abort asynchronous too,
+        // so callers always have time to connect QNetworkReply::finished after this seam returns.
+    }
+
+    [[nodiscard]] qint64 bytesAvailable() const override {
+        return (m_body.size() - m_offset) + QNetworkReply::bytesAvailable();
+    }
+
+protected:
+    qint64 readData(char* data, qint64 max_size) override {
+        const qint64 remaining = m_body.size() - m_offset;
+        const qint64 count = std::min(max_size, remaining);
+        if (count <= 0) {
+            return -1;
+        }
+        std::memcpy(data, m_body.constData() + m_offset, static_cast<std::size_t>(count));
+        m_offset += count;
+        return count;
+    }
+
+private:
+    void finish() {
+        if (isFinished()) {
+            return;
+        }
+        setFinished(true);
+        if (!m_body.isEmpty()) {
+            Q_EMIT readyRead();
+        }
+        Q_EMIT finished();
+    }
+
+    QByteArray m_body;
+    qint64 m_offset{0};
+};
+
+QString metadataRequestValidationError(const NetworkMetadataRequest& request) {
+    if (!request.url.isValid() || request.url.isEmpty()) {
+        return QStringLiteral("Invalid metadata URL");
+    }
+    if (request.url.scheme() != QStringLiteral("https")) {
+        return QStringLiteral("Metadata URL must use HTTPS");
+    }
+    if (request.timeout_ms <= 0) {
+        return QStringLiteral("Metadata timeout must be positive");
+    }
+    if (request.max_response_bytes <= 0) {
+        return QStringLiteral("Metadata response-size limit must be positive");
+    }
+    return {};
+}
+
+QNetworkRequest metadataNetworkRequest(const NetworkMetadataRequest& request) {
+    QNetworkRequest network_request(request.url);
+    network_request.setTransferTimeout(request.timeout_ms);
+    network_request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
+                                 QNetworkRequest::NoLessSafeRedirectPolicy);
+    QSslConfiguration ssl_config = QSslConfiguration::defaultConfiguration();
+    ssl_config.setProtocol(QSsl::TlsV1_2OrLater);
+    network_request.setSslConfiguration(ssl_config);
+    for (const auto& [name, value] : request.raw_headers) {
+        network_request.setRawHeader(name, value);
+    }
+    return network_request;
+}
+
+QNetworkReply* injectedMetadataReply(QNetworkAccessManager& manager,
+                                     const QNetworkRequest& request,
+                                     const NetworkTransferResult& result,
+                                     qint64 max_response_bytes) {
+    auto* reply = new InjectedMetadataReply(request, result, &manager);
+    reply->setProperty(kMetadataMaxBytesProperty, max_response_bytes);
+    return reply;
+}
+
+bool isSuccessfulHttpStatus(int status) {
+    return status >= kHttpSuccessStatusMin && status < kHttpSuccessStatusEnd;
+}
+
+bool metadataReplyWasCancelled(QNetworkReply* reply,
+                               const NetworkTransferResult& result,
+                               bool oversized) {
+    return reply->error() == QNetworkReply::OperationCanceledError && !result.timed_out &&
+           !oversized;
+}
+
+bool recordMetadataReplyFailure(QNetworkReply* reply, NetworkTransferResult* result) {
+    result->http_status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    result->timed_out = reply->property(kMetadataTimedOutProperty).toBool() ||
+                        reply->error() == QNetworkReply::TimeoutError;
+    const bool oversized = reply->property(kMetadataOversizeProperty).toBool();
+    result->cancelled = metadataReplyWasCancelled(reply, *result, oversized);
+    if (result->timed_out) {
+        result->error_message = QStringLiteral("Network metadata request timed out");
+    } else if (oversized) {
+        result->error_message = QStringLiteral("Network metadata response exceeded size limit");
+    } else if (result->cancelled) {
+        result->error_message = QStringLiteral("Network metadata request cancelled");
+    } else if (result->http_status != 0 && !isSuccessfulHttpStatus(result->http_status)) {
+        result->error_message =
+            QStringLiteral("Network metadata request returned HTTP %1").arg(result->http_status);
+    } else if (reply->error() != QNetworkReply::NoError) {
+        const QString injected_error = reply->property(kMetadataInjectedErrorProperty).toString();
+        result->error_message = injected_error.isEmpty() ? reply->errorString() : injected_error;
+    } else if (result->http_status == 0) {
+        result->error_message = QStringLiteral("Network metadata reply had no HTTP status");
+    }
+    return !result->error_message.isEmpty();
+}
 
 struct NetworkTransferSinks {
     NetworkTransferResult* result{nullptr};
@@ -192,6 +349,91 @@ private:
 };
 
 }  // namespace
+
+ScopedNetworkMetadataFaultInjector::ScopedNetworkMetadataFaultInjector(
+    NetworkMetadataFaultInjector injector)
+    : m_previous(std::move(g_network_metadata_fault_injector)) {
+    g_network_metadata_fault_injector = std::move(injector);
+}
+
+ScopedNetworkMetadataFaultInjector::~ScopedNetworkMetadataFaultInjector() {
+    g_network_metadata_fault_injector = std::move(m_previous);
+}
+
+QNetworkReply* startNetworkMetadataGet(QNetworkAccessManager& manager,
+                                       const NetworkMetadataRequest& request) {
+    const QNetworkRequest network_request = metadataNetworkRequest(request);
+    const QString validation_error = metadataRequestValidationError(request);
+    if (!validation_error.isEmpty()) {
+        NetworkTransferResult failure;
+        failure.error_message = validation_error;
+        return injectedMetadataReply(manager, network_request, failure, request.max_response_bytes);
+    }
+
+    QNetworkReply* reply = nullptr;
+    if (g_network_metadata_fault_injector) {
+        const auto injected = g_network_metadata_fault_injector(request);
+        if (injected.has_value()) {
+            reply = injectedMetadataReply(
+                manager, network_request, *injected, request.max_response_bytes);
+        }
+    }
+
+    if (reply == nullptr) {
+        reply = manager.get(network_request);
+    }
+    reply->setProperty(kMetadataMaxBytesProperty, request.max_response_bytes);
+    reply->setReadBufferSize(request.max_response_bytes < std::numeric_limits<qint64>::max()
+                                 ? request.max_response_bytes + 1
+                                 : request.max_response_bytes);
+    auto* deadline = new QTimer(reply);
+    deadline->setSingleShot(true);
+    QObject::connect(deadline, &QTimer::timeout, reply, [reply]() {
+        reply->setProperty(kMetadataTimedOutProperty, true);
+        reply->abort();
+    });
+    QObject::connect(reply, &QNetworkReply::finished, deadline, &QTimer::stop);
+    QObject::connect(reply,
+                     &QNetworkReply::downloadProgress,
+                     reply,
+                     [reply, limit = request.max_response_bytes](qint64 received, qint64 total) {
+                         if (received > limit || total > limit) {
+                             reply->setProperty(kMetadataOversizeProperty, true);
+                             reply->abort();
+                         }
+                     });
+    deadline->start(request.timeout_ms);
+    return reply;
+}
+
+NetworkTransferResult takeNetworkMetadataResult(QNetworkReply* reply) {
+    NetworkTransferResult result;
+    if (reply == nullptr) {
+        result.error_message = QStringLiteral("Network metadata reply is unavailable");
+        return result;
+    }
+    if (recordMetadataReplyFailure(reply, &result)) {
+        return result;
+    }
+
+    result.body = reply->readAll();
+    // Qt can discover decompression/read errors while consuming an already-finished reply.
+    // A pre-read error check alone would publish partial metadata as a successful response.
+    if (recordMetadataReplyFailure(reply, &result)) {
+        result.body.clear();
+        return result;
+    }
+    result.bytes_received = result.body.size();
+    const qint64 limit = reply->property(kMetadataMaxBytesProperty).toLongLong();
+    if (limit <= 0 || result.body.size() > limit) {
+        result.body.clear();
+        result.bytes_received = 0;
+        result.error_message = QStringLiteral("Network metadata response exceeded size limit");
+        return result;
+    }
+    result.success = true;
+    return result;
+}
 
 NetworkTransferResult runNetworkTransfer(const NetworkTransferRequest& request,
                                          const NetworkCancelCheck& should_cancel,

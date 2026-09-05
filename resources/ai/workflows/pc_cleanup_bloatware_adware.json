@@ -38,6 +38,5 @@
     "Bloatware/adware candidates are recommendations unless exact app removal is approved.",
     "Verification captures before/after state.",
     "Report clearly says what changed and what still needs user decision."
-  ],
-  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+  ]
 }

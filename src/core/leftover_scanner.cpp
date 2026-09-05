@@ -246,10 +246,10 @@ QString LeftoverScanner::installLocationSyntaxRefusal(const QString& rawLocation
             "unexpanded variable or a whole volume)");
     }
     const QString screened = screeningPathForm(rawLocation);
-    for (const QString& root : criticalRoots) {
-        if (screeningPathForm(root).compare(screened, Qt::CaseInsensitive) == 0) {
-            return QStringLiteral("it is a system, shared or user-profile root directory");
-        }
+    if (std::ranges::any_of(criticalRoots, [&screened](const QString& root) {
+            return screeningPathForm(root).compare(screened, Qt::CaseInsensitive) == 0;
+        })) {
+        return QStringLiteral("it is a system, shared or user-profile root directory");
     }
     return {};
 }
@@ -266,14 +266,11 @@ bool LeftoverScanner::installLocationMatchesProgram(const QString& canonicalLoca
     // "App" and the "Publisher\App" pair are the two shapes a real install uses.
     const QStringList location_names{leaf, parent_leaf + leaf};
     const QStringList program_names{foldedName(displayName), foldedName(packageFamilyName)};
-    for (const QString& location_name : location_names) {
-        for (const QString& program_name : program_names) {
-            if (foldedNamesMatch(location_name, program_name)) {
-                return true;
-            }
-        }
-    }
-    return false;
+    return std::ranges::any_of(location_names, [&program_names](const QString& location_name) {
+        return std::ranges::any_of(program_names, [&location_name](const QString& program_name) {
+            return foldedNamesMatch(location_name, program_name);
+        });
+    });
 }
 
 LeftoverScanner::ScreenedInstallLocation LeftoverScanner::screenInstallLocation(
@@ -680,17 +677,13 @@ bool LeftoverScanner::registryKeyMatchesProgram(const QString& keyPath) const {
     };
 
     const QStringList components = keyPath.split('\\', Qt::SkipEmptyParts);
-    for (const auto& component : components) {
+    return std::ranges::any_of(components, [this](const QString& component) {
         const QString comp_lower = component.toLower();
         if (kRootComponents.contains(comp_lower)) {
-            continue;
+            return false;
         }
-        if (matchesProgramExact(comp_lower)) {
-            return true;
-        }
-    }
-
-    return false;
+        return matchesProgramExact(comp_lower);
+    });
 }
 
 QVector<LeftoverItem> LeftoverScanner::scanKnownRegistryPaths(
@@ -933,12 +926,7 @@ bool isNetshRuleSeparator(const QString& trimmed) {
     if (trimmed.length() < kMinFirewallSeparatorDashes) {
         return false;
     }
-    for (const QChar ch : trimmed) {
-        if (ch != QLatin1Char('-')) {
-            return false;
-        }
-    }
-    return true;
+    return std::ranges::all_of(trimmed, [](const QChar ch) { return ch == QLatin1Char('-'); });
 }
 }  // namespace
 
@@ -1397,12 +1385,8 @@ bool LeftoverScanner::matchesProgramExact(const QString& nameLower) const {
     if (nameLower.isEmpty()) {
         return false;
     }
-    for (const auto& exact : m_exactNames) {
-        if (nameLower == exact) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(m_exactNames,
+                               [&nameLower](const QString& exact) { return nameLower == exact; });
 }
 
 bool LeftoverScanner::matchesProgramStrict(const QString& text) const {

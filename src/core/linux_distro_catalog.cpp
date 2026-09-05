@@ -19,6 +19,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/network_constants.h"
+#include "sak/network_transfer_runner.h"
 
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -644,29 +645,19 @@ void LinuxDistroCatalog::checkLatestVersion(const QString& distroId) {
     const QString apiUrl = QString("https://api.github.com/repos/%1/%2/releases/latest")
                                .arg(distro.githubOwner, distro.githubRepo);
 
-    const QUrl requestUrl(apiUrl);
-    QNetworkRequest request(requestUrl);
-    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-    request.setRawHeader("Accept", "application/vnd.github+json");
-    request.setRawHeader("User-Agent", "SAK-Utility/1.0");
-    // Bound the transfer so a stalled GitHub/proxy connection aborts and surfaces an error via
-    // onGitHubReleaseReply instead of hanging in "Checking for latest version..." forever.
-    request.setTransferTimeout(sak::kHttpMetadataTransferTimeoutMs);
-
-    auto* reply = m_networkManager->get(request);
+    QNetworkReply* reply = sak::startNetworkMetadataGet(
+        *m_networkManager,
+        {.url = QUrl(apiUrl),
+         .raw_headers = {{QByteArrayLiteral("Content-Type"), QByteArrayLiteral("application/json")},
+                         {QByteArrayLiteral("Accept"),
+                          QByteArrayLiteral("application/vnd.github+json")},
+                         {QByteArrayLiteral("User-Agent"), QByteArrayLiteral("SAK-Utility/1.0")}},
+         .timeout_ms = sak::kHttpMetadataTransferTimeoutMs,
+         .max_response_bytes = kMaxGitHubReleaseBytes});
     reply->setProperty("distroId", distroId);
     m_pendingReplies.append(reply);
 
     connect(reply, &QNetworkReply::finished, this, &LinuxDistroCatalog::onGitHubReleaseReply);
-    // Bound the untrusted response as it arrives: abort once it runs past the cap instead of
-    // letting the reply buffer an arbitrarily large body. abort() delivers finished() with an
-    // error, which onGitHubReleaseReply reports as a failed version check (fail closed).
-    connect(reply, &QNetworkReply::downloadProgress, reply, [reply](qint64 received, qint64) {
-        if (received > kMaxGitHubReleaseBytes) {
-            reply->abort();
-        }
-    });
-
     sak::logInfo("Checking latest version for " + distroId.toStdString() + " via GitHub API");
 }
 
@@ -681,20 +672,15 @@ void LinuxDistroCatalog::onGitHubReleaseReply() {
 
     const QString distroId = reply->property("distroId").toString();
 
-    if (reply->error() != QNetworkReply::NoError) {
-        const QString error = QString("GitHub API error: %1").arg(reply->errorString());
+    const sak::NetworkTransferResult result = sak::takeNetworkMetadataResult(reply);
+    if (!result.success) {
+        const QString error = QString("GitHub API error: %1").arg(result.error_message);
         sak::logWarning(error.toStdString());
         Q_EMIT versionCheckFailed(distroId, error);
         return;
     }
 
-    const QByteArray data = reply->readAll();
-    if (data.size() > kMaxGitHubReleaseBytes) {
-        const QString error = QStringLiteral("GitHub API response exceeds size cap");
-        sak::logWarning(error.toStdString());
-        Q_EMIT versionCheckFailed(distroId, error);
-        return;
-    }
+    const QByteArray data = result.body;
     QJsonParseError parseError;
     const QJsonDocument doc = QJsonDocument::fromJson(data, &parseError);
 

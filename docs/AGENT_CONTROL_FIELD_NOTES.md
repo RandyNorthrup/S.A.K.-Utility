@@ -250,7 +250,8 @@ sideways.
   sorted environment (length-prefixed per entry, with an explicit inherit-from-parent marker, because
   an inheriting environment reports an empty list exactly like an empty one) and the open-time
   timeout. A read_only-profile process must never be reused for a full-access call.
-- **Responses API.** Set `truncation` to `auto`; the API default hard-fails a long
-  `previous_response_id` chain with a 400 context-length error. Use a stable per-session
-  `prompt_cache_key`. Strip BOTH from a token-count request -- they are generation-only, and leaving
-  them in makes the reported input count a lie.
+- **Responses context policy.** Set `truncation` to `disabled`, as enforced by
+  `AiAssistantPanel::applyContextWindowPolicy`. Refuse a known-full context locally and surface a
+  server context-limit error; silently discarding conversation evidence is not an acceptable
+  recovery path. Require explicit compaction before continuing. Use a stable per-session
+  `prompt_cache_key`. Strip both generation-only fields from token-count requests.

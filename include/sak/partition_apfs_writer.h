@@ -23,6 +23,8 @@ class QIODevice;
 
 namespace sak {
 
+inline constexpr uint32_t kSupportedApfsBlockSizeBytes = 4096;
+
 enum class PartitionApfsWriteOperation {
     CreateDirectory,
     DeleteDirectory,
@@ -782,7 +784,7 @@ public:
     ///        container of @p block_count blocks (default APFS 4096-byte blocks).
     ///        Pure function; no I/O. See @ref PartitionApfsContainerGeometry.
     [[nodiscard]] static PartitionApfsContainerGeometry computeContainerGeometry(
-        uint64_t block_count, uint32_t block_size = 4096);
+        uint64_t block_count, uint32_t block_size = kSupportedApfsBlockSizeBytes);
     [[nodiscard]] static std::optional<uint64_t> computeObjectChecksum(
         const QByteArray& object_bytes);
     [[nodiscard]] static bool stampObjectChecksum(QByteArray* object_bytes);

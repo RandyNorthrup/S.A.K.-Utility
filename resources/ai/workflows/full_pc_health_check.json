@@ -134,6 +134,5 @@
     "CPU/process findings use a live sample rather than lifetime CPU totals.",
     "Findings include severity, confidence, evidence, and next step.",
     "Final response states no changes were made unless the user approved them."
-  ],
-  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+  ]
 }

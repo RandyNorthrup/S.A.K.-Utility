@@ -76,6 +76,5 @@
     "Proxy cleanup runs only after approval.",
     "Verification captures post-action proxy state.",
     "Final report includes evidence, actions, cleanup status, risks, and follow-up items."
-  ],
-  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+  ]
 }

@@ -8,12 +8,22 @@
 #include <QRegularExpression>
 #include <QSet>
 
-#include <algorithm>
-
 namespace sak::ai {
 namespace {
 
 constexpr qsizetype kPackageDescriptionPreviewChars = 500;
+
+// Presentation-only key. This intentionally lossy transform may hide a redundant title in a
+// candidate label, but it must never authorize package selection.
+QString packageDisplayKey(const QString& value) {
+    QString normalized = value.trimmed().toLower();
+    normalized.replace(QStringLiteral("++"), QStringLiteral("plusplus"));
+    normalized.replace(QStringLiteral("+"), QStringLiteral("plus"));
+    normalized.replace(QStringLiteral("#"), QStringLiteral("sharp"));
+    normalized.replace(QStringLiteral("&"), QStringLiteral("and"));
+    normalized.remove(QRegularExpression(QStringLiteral(R"([^a-z0-9])")));
+    return normalized;
+}
 
 // Fail closed: a key that is PRESENT but holds a non-string value is MALFORMED input, not a
 // reason to fall through to the next alias -- silently taking a different field could turn a
@@ -80,24 +90,13 @@ bool candidateFromJson(const QJsonObject& object, AiPackageCandidate* candidate)
     candidate->version = raw_version.trimmed();
     candidate->title = raw_title.trimmed();
     candidate->description = raw_description.trimmed();
-    candidate->source = QJsonObject{{QStringLiteral("package_id"), candidate->package_id}};
-    if (!candidate->version.isEmpty()) {
-        candidate->source[QStringLiteral("version")] = candidate->version;
-    }
-    if (!candidate->title.isEmpty()) {
-        candidate->source[QStringLiteral("title")] = candidate->title;
-    }
-    if (!candidate->description.isEmpty()) {
-        candidate->source[QStringLiteral("description")] =
-            candidate->description.left(kPackageDescriptionPreviewChars);
-    }
     return true;
 }
 
 QString candidateSummary(const AiPackageCandidate& candidate) {
     QString label = candidate.package_id;
-    if (!candidate.title.isEmpty() && normalizePackageQueryKey(candidate.title) !=
-                                          normalizePackageQueryKey(candidate.package_id)) {
+    if (!candidate.title.isEmpty() &&
+        packageDisplayKey(candidate.title) != packageDisplayKey(candidate.package_id)) {
         label += QStringLiteral(" (%1)").arg(candidate.title);
     }
     if (!candidate.version.isEmpty()) {
@@ -253,7 +252,9 @@ QString AiPackageCandidate::displayName() const {
 }
 
 QJsonObject AiPackageCandidate::toJson() const {
-    QJsonObject object = source;
+    // Canonical members are the sole serialization authority. Optional empty values are absent;
+    // no retained source object can resurrect stale aliases or metadata.
+    QJsonObject object;
     object[QStringLiteral("package_id")] = package_id;
     if (!version.isEmpty()) {
         object[QStringLiteral("version")] = version;
@@ -283,20 +284,15 @@ QJsonObject AiPackageSelectionResult::toJson() const {
     return object;
 }
 
-QString normalizePackageQueryKey(const QString& value) {
-    QString normalized = value.trimmed().toLower();
-    normalized.replace(QStringLiteral("++"), QStringLiteral("plusplus"));
-    normalized.replace(QStringLiteral("+"), QStringLiteral("plus"));
-    normalized.replace(QStringLiteral("#"), QStringLiteral("sharp"));
-    normalized.replace(QStringLiteral("&"), QStringLiteral("and"));
-    normalized.remove(QRegularExpression(QStringLiteral(R"([^a-z0-9])")));
-    return normalized;
-}
-
 AiPackageSelectionResult selectPackageForWorkflow(const QString& query,
                                                   const QJsonArray& packages,
                                                   int candidate_limit) {
     AiPackageSelectionResult result;
+    if (candidate_limit <= 0) {
+        return refusedPackageSelection(
+            QStringLiteral("Package candidate limit must be greater than zero (received %1)")
+                .arg(candidate_limit));
+    }
     if (query.size() > kMaxPackageQueryChars) {
         return refusedPackageSelection(
             QStringLiteral("Package query is too long (%1 characters, limit %2)")
@@ -304,7 +300,7 @@ AiPackageSelectionResult selectPackageForWorkflow(const QString& query,
                 .arg(kMaxPackageQueryChars));
     }
     const QString clean_query = query.trimmed();
-    const int limit = std::max(1, candidate_limit);
+    const int limit = candidate_limit;
 
     // Fail closed on over-sized input rather than traversing and retaining it. Reject, never
     // truncate: a truncated scan could drop the real package and auto-select a different one.

@@ -158,7 +158,7 @@ auto file_hasher::calculateMd5(const std::filesystem::path& file_path,
 
         // Initialize MD5 hash
         QCryptographicHash hash(QCryptographicHash::Md5);
-        if (!hashFileInChunks(file, hash, progress, stop_token)) {
+        if (!hashFileInChunks(file, hash, std::ref(progress), stop_token)) {
             return std::unexpected(error_code::read_error);
         }
 
@@ -200,7 +200,7 @@ auto file_hasher::calculateSha256(const std::filesystem::path& file_path,
 
         // Initialize SHA-256 hash
         QCryptographicHash hash(QCryptographicHash::Sha256);
-        if (!hashFileInChunks(file, hash, progress, stop_token)) {
+        if (!hashFileInChunks(file, hash, std::ref(progress), stop_token)) {
             return std::unexpected(error_code::read_error);
         }
 
@@ -257,12 +257,10 @@ auto file_hasher::calculateSha256(std::span<const std::byte> data)
     }
 }
 
-bool file_hasher::hashFileInChunks(
-    QFile& file,
-    QCryptographicHash& hash,
-    // cppcheck-suppress constParameterReference ; move_only_function has non-const operator()
-    hash_progress_callback& progress,
-    const std::stop_token& stop_token) const {
+bool file_hasher::hashFileInChunks(QFile& file,
+                                   QCryptographicHash& hash,
+                                   std::reference_wrapper<hash_progress_callback> progress,
+                                   const std::stop_token& stop_token) const {
     // QFile::size() returns -1 when the size is unknown/unreadable; casting that to
     // size_t would yield a huge value that the concurrent-mutation check below then
     // compares against (and it also feeds progress reporting). Fail closed instead.
@@ -304,8 +302,8 @@ bool file_hasher::hashFileInChunks(
 
         hash.addData(buffer);
         bytes_processed += buffer.size();
-        if (progress) {
-            progress(bytes_processed, file_size);
+        if (progress.get()) {
+            progress.get()(bytes_processed, file_size);
         }
     }
     return true;

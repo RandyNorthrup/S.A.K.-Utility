@@ -33,6 +33,5 @@
     "Security/driver services were not blindly disabled.",
     "Any change has approval and rollback notes.",
     "Report identifies reboot/manual follow-up if needed."
-  ],
-  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+  ]
 }

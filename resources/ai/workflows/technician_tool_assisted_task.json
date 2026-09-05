@@ -42,6 +42,5 @@
     "Tool execution is approved according to access mode and logs are preserved.",
     "Post-run verification determines whether the task goal was met.",
     "Downloaded tool is removed after completion while reports and logs remain."
-  ],
-  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+  ]
 }

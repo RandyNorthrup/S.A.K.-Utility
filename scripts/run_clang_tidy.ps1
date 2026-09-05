@@ -129,7 +129,10 @@ try {
     New-Item -ItemType Directory -Force -Path $fpDir | Out-Null
     # Write UTF-8 WITHOUT a BOM: Windows PowerShell's -Encoding UTF8 prepends a BOM, and
     # run-clang-tidy's json.load then fails with 'Expecting value: line 1 column 1'.
-    $json = $kept | ConvertTo-Json -Depth 6
+    # -InputObject preserves the surrounding array when filtering selects exactly one TU.
+    # Pipeline input unwraps a one-item collection into a JSON object, which run-clang-tidy
+    # rejects because compile_commands.json must always have an array root.
+    $json = ConvertTo-Json -InputObject @($kept) -Depth 6
     [System.IO.File]::WriteAllText((Join-Path $fpDir "compile_commands.json"), $json,
         [System.Text.UTF8Encoding]::new($false))
     Write-Host "first-party translation units: $($kept.Count)"

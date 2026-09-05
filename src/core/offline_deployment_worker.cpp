@@ -34,6 +34,7 @@
 #include <QUrlQuery>
 #include <QXmlStreamReader>
 
+#include <algorithm>
 #include <optional>
 
 namespace sak {
@@ -162,10 +163,10 @@ bool writeDownloadedBody(const QString& output_path, const QByteArray& body) {
 /// never become the on-disk destination of an attacker-influenced download/copy.
 bool hasWindowsFilenameHazard(const QString& base) {
     static const QString kReservedChars = QStringLiteral("<>:\"|?*");
-    for (const QChar ch : base) {
-        if (ch.unicode() < kFirstPrintableAscii || kReservedChars.contains(ch)) {
-            return true;
-        }
+    if (std::ranges::any_of(base, [](const QChar ch) {
+            return ch.unicode() < kFirstPrintableAscii || kReservedChars.contains(ch);
+        })) {
+        return true;
     }
     if (base.endsWith(QLatin1Char('.')) || base.endsWith(QLatin1Char(' '))) {
         return true;
@@ -306,12 +307,9 @@ bool OfflineDeploymentWorker::isSafeInstallToken(const QString& token) {
     if (token.isEmpty() || token.startsWith(QLatin1Char('-'))) {
         return false;
     }
-    for (const QChar c : token) {
-        if (c.isSpace() || c.unicode() < kFirstPrintableAscii) {
-            return false;
-        }
-    }
-    return true;
+    return std::ranges::none_of(token, [](const QChar c) {
+        return c.isSpace() || c.unicode() < kFirstPrintableAscii;
+    });
 }
 
 /// @brief Parse .nuspec in extract_dir for the first dependency package ID.
@@ -2078,12 +2076,8 @@ void OfflineDeploymentWorker::writeReadme(const DeploymentManifest& manifest,
         stream << "Description: " << manifest.description << "\n";
     }
 
-    int packed = 0;
-    for (const auto& entry : manifest.packages) {
-        if (entry.offline_ready) {
-            ++packed;
-        }
-    }
+    const int packed = static_cast<int>(std::ranges::count_if(
+        manifest.packages, [](const auto& entry) { return entry.offline_ready; }));
     if (is_list) {
         stream << "Packages: " << manifest.packages.size()
                << " (all fetched from the Chocolatey feed at install)\n\n";

@@ -12,8 +12,10 @@
 #include <QClipboard>
 #include <QComboBox>
 #include <QContextMenuEvent>
+#include <QCoreApplication>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDir>
 #include <QFile>
 #include <QFrame>
 #include <QHash>
@@ -31,6 +33,7 @@
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPalette>
+#include <QPointer>
 #include <QPushButton>
 #include <QScopeGuard>
 #include <QScrollArea>
@@ -45,16 +48,24 @@
 #include <QTimer>
 #include <QToolButton>
 #include <QtTest/QtTest>
+#include <QVBoxLayout>
+#include <QWizard>
 
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
+#include <optional>
+#include <utility>
 
 class PartitionManagerPanelTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void init();
+    void cleanup();
+    void modalCallbackGuardRejectsOnEarlyReturn();
+    void modalInspectionCancelsWhenActionDoesNotOpen();
     void scanButtonIsStatefulAndInventorySummaryUsesStatusBar();
     void partitionTableUsesAomeiListChrome();
     void sidebarIsFixedAndHasNoRedundantPreviewBox();
@@ -76,6 +87,30 @@ private Q_SLOTS:
     void diskMapRendersTypeColorInsideNeutralShell();
     void bottomDiskMapCanResizeIntoTableSpace();
     void finalApplyReviewContainsLayoutDiff();
+    void applyReviewRejectsQueueMutation();
+    void applyPreviewPreservesTrailingFreeSpan();
+    void applyPreviewRefusesOverflowingFreeSpan();
+    void applyPreviewRefusesResizeSplitAndMergeOverflow();
+    void consumePreviewRefusesOverflowingFreeSpan();
+    void consumePreviewRefusesOverflowingRequest();
+    void consumePreviewPreservesNormalRemainders();
+    void clusterBackupIdentityFailsClosed();
+    void restoreImagePinsContentBeforeApproval();
+    void restoreImageSourceMapsDeviceGuid();
+    void restoreImageSourceRefusesDriveRootWithoutIdentity();
+    void restoreImageSourceMapsVolumeGuidRoot();
+    void restoreImageSourceRefusesAmbiguousIdentity();
+    void restoreImageSourceRefusesUnmappedIdentity();
+    void restoreImageSourceRefusesUncAliases();
+    void restoreImageQueuesConfirmedTarget();
+    void modalQueueBindsReviewedTarget();
+    void modalQueueRefusesChangedLayout();
+    void cloneAndUsedScalingDoNotOverflow() const;
+    void scaledBytesDivisionBoundaries() const;
+    void customRawCloneTargetsMustExist() const;
+    void apfsUnknownModeIsRefused() const;
+    void diskCopyWizardHasNoUnprobedCustomTarget();
+    void runtimeManifestUsesCanonicalTrustedResolver();
     void propertiesActionIsFirstClass();
     void propertiesDialogShowsRawFilesystemMetadata();
     void propertiesAndInspectShowRawFilesystemSanityNotes();
@@ -87,13 +122,19 @@ private Q_SLOTS:
     void spaceAnalyzerExposesCommercialViews();
     void changeClusterSizeQueuesVerifiedReformatOperation();
     void allocateFreeSpaceQueuesAdjacentDonorOperation();
+    void destructiveBackupIsRevalidatedAfterModal();
     void unallocatedAllocateFreeSpaceQueuesAdjacentEngines();
     void formerCommercialCompatibilityActionsQueueDirectEngines();
     void createDialogExposesSynchronizedHandleControls();
     void wipeActionLetsUserChooseScope();
     void quickPartitionSizesFailClosedOnMalformedCustomAndOverflow();
+    void quickPartitionBatchHonorsCapacityAtomically();
     void wizardEntryPointsRespectRunningOperationGuard() const;
+    void controllerWatcherLifetimeBlocksInteraction();
     void inventoryStateIsHonestAboutFailedPartitionEnumeration();
+
+private:
+    QTimer m_modal_watchdog;
 };
 
 namespace {
@@ -108,6 +149,68 @@ constexpr int kPreviewDragTargetEndMegabytes = 448;
 constexpr int kPreviewDragExpectedSizeMegabytes = 300;
 constexpr int kHorizontalMarginCount = 2;
 constexpr int kRenderedSegmentFillLightness = 160;
+constexpr int kModalWatchdogMs = 1500;
+
+class ScopedModalInspection {
+public:
+    template <typename Callback>
+    explicit ScopedModalInspection(Callback callback) {
+        // A refused action may never enter a modal loop. Destroying this timer before the
+        // captured stack locals prevents its callback from leaking into the next test.
+        m_timer.setSingleShot(true);
+        QObject::connect(&m_timer, &QTimer::timeout, &m_timer, std::move(callback));
+        m_timer.start(0);
+    }
+
+private:
+    QTimer m_timer;
+};
+
+auto rejectDialogOnReturn(QDialog* dialog) {
+    // QtTest assertions return from timer callbacks, leaving dialog.exec() running unless
+    // the callback owns a cleanup guard. QPointer also covers delete-on-close dialogs.
+    return qScopeGuard([guarded_dialog = QPointer<QDialog>(dialog)]() {
+        if (guarded_dialog && guarded_dialog->isVisible()) {
+            guarded_dialog->reject();
+        }
+    });
+}
+
+void clickEnabledDialogAccept(QDialog* dialog) {
+    auto* buttons = dialog->findChild<QDialogButtonBox*>();
+    QVERIFY2(buttons != nullptr, "Operation dialog needs its action button box");
+    auto* accept = buttons->button(QDialogButtonBox::Ok);
+    QVERIFY2(accept != nullptr, "Operation dialog needs its Add to Queue button");
+    QVERIFY2(accept->isEnabled(), "Valid operation must enable Add to Queue");
+    accept->click();
+}
+
+void failAndCloseUnexpectedInteraction(const char* reason) {
+    if (auto* popup = QApplication::activePopupWidget()) {
+        const QString failure =
+            QStringLiteral("%1: popup %2 (%3)")
+                .arg(QString::fromLatin1(reason), popup->windowTitle(), popup->accessibleName());
+        QTest::qFail(qPrintable(failure), __FILE__, __LINE__);
+        popup->close();
+    }
+    if (auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget())) {
+        const QString failure =
+            QStringLiteral("%1: dialog %2 (%3)")
+                .arg(QString::fromLatin1(reason), dialog->windowTitle(), dialog->accessibleName());
+        QTest::qFail(qPrintable(failure), __FILE__, __LINE__);
+        dialog->reject();
+    }
+}
+
+QString readRepoSource(const QString& relative_path) {
+    const QDir repo_root(
+        QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("../..")));
+    QFile file(repo_root.filePath(relative_path));
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    return QString::fromUtf8(file.readAll());
+}
 
 struct CreateDialogInspection {
     bool inspected{false};
@@ -435,6 +538,7 @@ int colorDistance(const QColor& lhs, const QColor& rhs) {
 sak::PartitionInventory applyReviewInventoryFixture() {
     sak::PartitionVolumeInfo volume;
     volume.drive_letter = QStringLiteral("T");
+    volume.volume_guid = QStringLiteral("target-device");
     volume.file_system = QStringLiteral("NTFS");
     volume.total_bytes = 128 * kTestMegabyteBytes;
     volume.free_bytes = 64 * kTestMegabyteBytes;
@@ -460,6 +564,42 @@ sak::PartitionInventory applyReviewInventoryFixture() {
     return inventory;
 }
 
+sak::PartitionInventory modalTargetBindingInventoryFixture() {
+    auto inventory = applyReviewInventoryFixture();
+    auto& disk = inventory.disks[0];
+    sak::PartitionInfoEx second = disk.partitions.first();
+    second.partition_number = sak::PartitionNumber{2};
+    second.offset_bytes = disk.partitions.first().offset_bytes + disk.partitions.first().size_bytes;
+    second.volume->drive_letter = QStringLiteral("D");
+    second.volume->volume_guid = QStringLiteral("\\\\?\\Volume{SECOND}\\");
+    disk.partitions.append(second);
+    disk.size_bytes = second.offset_bytes + second.size_bytes;
+    inventory.layout_hash = QStringLiteral("modal-target-binding-layout");
+    return inventory;
+}
+
+sak::PartitionInventory imageSourceMappingInventory() {
+    auto inventory = applyReviewInventoryFixture();
+    auto& target_volume = *inventory.disks[0].partitions[0].volume;
+    target_volume.volume_guid = QStringLiteral("\\\\?\\Volume{TARGET}\\");
+    target_volume.drive_letter = QStringLiteral("C");
+
+    sak::PartitionDiskInfo other_disk = inventory.disks[0];
+    other_disk.disk_number = sak::DiskNumber{1};
+    other_disk.partitions[0].disk_number = other_disk.disk_number;
+    other_disk.partitions[0].volume->volume_guid = QStringLiteral("\\\\?\\Volume{OTHER}\\");
+    other_disk.partitions[0].volume->drive_letter = QStringLiteral("D");
+    inventory.disks.append(other_disk);
+    return inventory;
+}
+
+std::optional<bool> imageSourceRelation(const sak::PartitionInventory& inventory,
+                                        const QString& path,
+                                        const QString& device,
+                                        const QString& root) {
+    return sak::partitionImageSourceOnTargetDiskForTest(inventory, path, device, root, 0);
+}
+
 sak::PartitionInventory allocateFreeSpaceInventoryFixture() {
     auto inventory = applyReviewInventoryFixture();
     auto& disk = inventory.disks[0];
@@ -469,6 +609,7 @@ sak::PartitionInventory allocateFreeSpaceInventoryFixture() {
 
     sak::PartitionVolumeInfo donorVolume;
     donorVolume.drive_letter = QStringLiteral("D");
+    donorVolume.volume_guid = QStringLiteral("donor-device");
     donorVolume.file_system = QStringLiteral("NTFS");
     donorVolume.label = QStringLiteral("Donor");
     donorVolume.total_bytes = 256 * kTestMegabyteBytes;
@@ -489,6 +630,7 @@ sak::PartitionInventory allocateFreeSpaceInventoryFixture() {
 sak::PartitionInventory metadataRebuildInventoryFixture(bool dynamicDisk = false) {
     sak::PartitionVolumeInfo volume;
     volume.drive_letter = QStringLiteral("T");
+    volume.volume_guid = QStringLiteral("source-device");
     volume.file_system = QStringLiteral("NTFS");
     volume.label = dynamicDisk ? QStringLiteral("DynData") : QStringLiteral("Data");
     volume.total_bytes = 256 * kTestMegabyteBytes;
@@ -510,6 +652,8 @@ sak::PartitionInventory metadataRebuildInventoryFixture(bool dynamicDisk = false
     disk.health_status = QStringLiteral("Healthy");
     disk.operational_status = QStringLiteral("Online");
     disk.size_bytes = 1024 * kTestMegabyteBytes;
+    disk.unallocated_regions.append(
+        {disk.disk_number, kTestMegabyteBytes, disk.size_bytes - kTestMegabyteBytes});
     disk.partitions.append(partition);
 
     sak::PartitionInventory inventory;
@@ -529,6 +673,7 @@ sak::PartitionInventory unallocatedAllocateInventoryFixture() {
 
     sak::PartitionVolumeInfo firstVolume;
     firstVolume.drive_letter = QStringLiteral("P");
+    firstVolume.volume_guid = QStringLiteral("previous-device");
     firstVolume.file_system = QStringLiteral("NTFS");
     firstVolume.label = QStringLiteral("Previous");
     firstVolume.total_bytes = 256 * kTestMegabyteBytes;
@@ -549,6 +694,7 @@ sak::PartitionInventory unallocatedAllocateInventoryFixture() {
 
     sak::PartitionVolumeInfo secondVolume;
     secondVolume.drive_letter = QStringLiteral("T");
+    secondVolume.volume_guid = QStringLiteral("next-device");
     secondVolume.file_system = QStringLiteral("NTFS");
     secondVolume.label = QStringLiteral("Next");
     secondVolume.total_bytes = 256 * kTestMegabyteBytes;
@@ -704,8 +850,9 @@ void verifyRawHfsSidebarControls(sak::PartitionManagerPanel* panel) {
 
 void verifyRawHfsInspectDialog(sak::PartitionManagerPanel* panel) {
     bool inspected = false;
-    QTimer::singleShot(0, [&]() {
+    const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
         QVERIFY2(dialog != nullptr, "Inspect filesystem dialog should open");
         auto* properties =
             dialog->findChild<QTableWidget*>(QStringLiteral("partitionPropertiesTable"));
@@ -760,8 +907,9 @@ void configureRawMetadataPanel(sak::PartitionManagerPanel* panel,
 
 void verifyMetadataCheckDialog(QToolButton* button, const QString& expectedFinding) {
     bool inspected = false;
-    QTimer::singleShot(0, [&]() {
+    const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
         QVERIFY2(dialog != nullptr, "Metadata check dialog should open");
         auto* properties =
             dialog->findChild<QTableWidget*>(QStringLiteral("partitionPropertiesTable"));
@@ -783,8 +931,9 @@ void verifyMetadataCheckDialog(QToolButton* button, const QString& expectedFindi
 
 void verifyXfsPropertiesAndInspect(sak::PartitionManagerPanel* panel) {
     bool propertiesInspected = false;
-    QTimer::singleShot(0, [&]() {
+    const ScopedModalInspection properties_inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
         QVERIFY2(dialog != nullptr, "Properties dialog should open");
         auto* properties =
             dialog->findChild<QTableWidget*>(QStringLiteral("partitionPropertiesTable"));
@@ -805,8 +954,9 @@ void verifyXfsPropertiesAndInspect(sak::PartitionManagerPanel* panel) {
     QVERIFY(propertiesInspected);
 
     bool inspectInspected = false;
-    QTimer::singleShot(0, [&]() {
+    const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
         QVERIFY2(dialog != nullptr, "Inspect filesystem dialog should open");
         auto* properties =
             dialog->findChild<QTableWidget*>(QStringLiteral("partitionPropertiesTable"));
@@ -851,8 +1001,9 @@ void queueExtFormatAndVerify() {
     sak::PartitionManagerPanel panel;
     configureRawWritePanel(&panel, QStringLiteral("ext4"));
     bool inspected = false;
-    QTimer::singleShot(0, [&]() {
+    const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
         QVERIFY2(dialog != nullptr, "Format dialog should open");
         auto* fileSystem = findAccessibleWidget<QComboBox>(dialog, QStringLiteral("File system"));
         QVERIFY(fileSystem != nullptr);
@@ -875,8 +1026,9 @@ void queueLinuxSwapFormatAndVerify() {
     sak::PartitionManagerPanel panel;
     configureRawWritePanel(&panel, QStringLiteral("Linux swap"));
     bool inspected = false;
-    QTimer::singleShot(0, [&]() {
+    const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
         QVERIFY2(dialog != nullptr, "Format dialog should open");
         auto* fileSystem = findAccessibleWidget<QComboBox>(dialog, QStringLiteral("File system"));
         QVERIFY(fileSystem != nullptr);
@@ -903,8 +1055,9 @@ void queueApfsFormatAndVerify() {
     sak::PartitionManagerPanel panel;
     configureRawWritePanel(&panel, QStringLiteral("APFS"));
     bool inspected = false;
-    QTimer::singleShot(0, [&]() {
+    const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
         QVERIFY2(dialog != nullptr, "Format dialog should open");
         auto* fileSystem = findAccessibleWidget<QComboBox>(dialog, QStringLiteral("File system"));
         QVERIFY(fileSystem != nullptr);
@@ -927,8 +1080,9 @@ void queueExtRepairAndVerify() {
     sak::PartitionManagerPanel panel;
     configureRawWritePanel(&panel, QStringLiteral("ext4"));
     bool inspected = false;
-    QTimer::singleShot(0, [&]() {
+    const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
         QVERIFY2(dialog != nullptr, "Non-Windows check dialog should open");
         auto* mode = findAccessibleWidget<QComboBox>(
             dialog, QStringLiteral("Non-Windows filesystem check mode"));
@@ -964,8 +1118,9 @@ void queueHfsRepairAndVerify() {
     sak::PartitionManagerPanel panel;
     configureRawWritePanel(&panel, QStringLiteral("HFS+"));
     bool inspected = false;
-    QTimer::singleShot(0, [&]() {
+    const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
         QVERIFY2(dialog != nullptr, "Non-Windows check dialog should open");
         auto* mode = findAccessibleWidget<QComboBox>(
             dialog, QStringLiteral("Non-Windows filesystem check mode"));
@@ -1020,8 +1175,9 @@ void queueGeneratedApfsRepairAndVerify() {
     QVERIFY2(table != nullptr, "Partition table should exist");
     table->selectRow(1);
     bool inspected = false;
-    QTimer::singleShot(0, [&]() {
+    const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
         QVERIFY2(dialog != nullptr, "Non-Windows check dialog should open");
         auto* mode = findAccessibleWidget<QComboBox>(
             dialog, QStringLiteral("Non-Windows filesystem check mode"));
@@ -1096,8 +1252,9 @@ void queueApfsVolumeLabelChangeAndVerify() {
     QVERIFY2(changeLabel->isEnabled(), "Change Label should enable for a generated APFS volume");
 
     bool handled = false;
-    QTimer::singleShot(0, [&]() {
+    const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
         QVERIFY2(dialog != nullptr, "Change Label input dialog should open");
         dialog->setTextValue(QStringLiteral("Renamed"));
         handled = true;
@@ -1107,6 +1264,12 @@ void queueApfsVolumeLabelChangeAndVerify() {
     QVERIFY(handled);
     verifySingleQueuedOperation(&panel,
                                 QStringLiteral("APFS Change Volume Label - Disk 0 Partition 1"));
+    const auto operations = panel.testQueuedOperationsForReview();
+    QCOMPARE(operations.size(), 1);
+    QVERIFY(
+        operations.first().payload.value(QStringLiteral("apfs_cow_mutation_certified")).toBool());
+    QVERIFY(
+        !operations.first().payload.contains(QStringLiteral("apfs_generated_layout_confirmed")));
 }
 
 // Drives the APFS Container action dialog into snapshot-create mode (checking
@@ -1130,8 +1293,9 @@ void queueApfsContainerSnapshotAndVerify() {
     QCOMPARE(button->toolTip(), QStringLiteral("Queue an APFS container action."));
 
     bool inspected = false;
-    QTimer::singleShot(0, [&]() {
+    const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
         QVERIFY2(dialog != nullptr, "APFS container dialog should open");
         auto* mode = findAccessibleWidget<QComboBox>(dialog,
                                                      QStringLiteral("APFS container action mode"));
@@ -1157,6 +1321,12 @@ void queueApfsContainerSnapshotAndVerify() {
     QVERIFY(inspected);
     verifySingleQueuedOperation(&panel,
                                 QStringLiteral("APFS Snapshot Create - Disk 0 Partition 1"));
+    const auto operations = panel.testQueuedOperationsForReview();
+    QCOMPARE(operations.size(), 1);
+    QVERIFY(
+        operations.first().payload.value(QStringLiteral("apfs_cow_mutation_certified")).toBool());
+    QVERIFY(
+        !operations.first().payload.contains(QStringLiteral("apfs_generated_layout_confirmed")));
 }
 
 void queueExtResizeAndVerify(bool grow) {
@@ -1168,8 +1338,9 @@ void queueExtResizeAndVerify(bool grow) {
     QVERIFY2(table != nullptr, "Partition table should exist");
     table->selectRow(1);
     bool inspected = false;
-    QTimer::singleShot(0, [&]() {
+    const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
         QVERIFY2(dialog != nullptr, "Resize dialog should open");
         auto* size = findAccessibleWidget<QSpinBox>(dialog,
                                                     QStringLiteral("Target partition size"));
@@ -1196,8 +1367,9 @@ void queueUnallocatedAllocateAndVerifyResize() {
     QVERIFY2(table != nullptr, "Partition table should exist");
     table->selectRow(table->rowCount() - 1);
     bool inspected = false;
-    QTimer::singleShot(0, [&]() {
+    const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
         QVERIFY2(dialog != nullptr, "Allocate Free Space To dialog should open");
         QCOMPARE(dialog->accessibleName(), QStringLiteral("Allocate Free Space To"));
         auto* target = findAccessibleWidget<QComboBox>(
@@ -1224,14 +1396,18 @@ void queueUnallocatedAllocateAndVerifyResize() {
 void queueUnallocatedAllocateAndVerifyMove() {
     QTemporaryDir backupRoot;
     QVERIFY(backupRoot.isValid());
+    sak::setPartitionStorageDeviceFixturesForTest(
+        {{QDir::fromNativeSeparators(backupRoot.path()), QStringLiteral("backup-device")}});
+    const auto reset = qScopeGuard([]() { sak::setPartitionStorageDeviceFixturesForTest({}); });
     sak::PartitionManagerPanel panel;
     panel.setTestInventoryForReview(unallocatedAllocateInventoryFixture());
     auto* table = panel.findChild<QTableWidget*>();
     QVERIFY2(table != nullptr, "Partition table should exist");
     table->selectRow(table->rowCount() - 1);
     bool inspected = false;
-    QTimer::singleShot(0, [&]() {
+    const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
         QVERIFY2(dialog != nullptr, "Allocate Free Space To dialog should open");
         QCOMPARE(dialog->accessibleName(), QStringLiteral("Allocate Free Space To"));
         auto* target = findAccessibleWidget<QComboBox>(
@@ -1247,7 +1423,7 @@ void queueUnallocatedAllocateAndVerifyMove() {
         QVERIFY(confirm != nullptr);
         confirm->setChecked(true);
         inspected = true;
-        dialog->accept();
+        clickEnabledDialogAccept(dialog);
     });
     auto* button = findToolButtonByName(&panel, QStringLiteral("Allocate Free Space"));
     QVERIFY2(button != nullptr, "Allocate Free Space action should exist");
@@ -1292,6 +1468,9 @@ QVector<ExpectedMetadataAction> expectedMetadataActions() {
 
 void queueMetadataActionAndVerify(const ExpectedMetadataAction& action,
                                   const QString& backupDirectory) {
+    sak::setPartitionStorageDeviceFixturesForTest(
+        {{QDir::fromNativeSeparators(backupDirectory), QStringLiteral("backup-device")}});
+    const auto reset = qScopeGuard([]() { sak::setPartitionStorageDeviceFixturesForTest({}); });
     sak::PartitionManagerPanel panel;
     panel.setTestInventoryForReview(metadataRebuildInventoryFixture(action.dynamic_disk));
     auto* table = panel.findChild<QTableWidget*>();
@@ -1306,8 +1485,9 @@ void queueMetadataActionAndVerify(const ExpectedMetadataAction& action,
     QCOMPARE(button->toolTip(), action.tooltip);
 
     bool inspected = false;
-    QTimer::singleShot(0, [&]() {
+    const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
         QVERIFY2(dialog != nullptr, "Operation dialog should open");
         QCOMPARE(dialog->accessibleName(), action.dialog_name);
         auto* backup = findAccessibleWidget<QLineEdit>(dialog, action.backup_accessible_name);
@@ -1317,7 +1497,7 @@ void queueMetadataActionAndVerify(const ExpectedMetadataAction& action,
         QVERIFY2(confirm != nullptr, qPrintable(action.confirm_accessible_name));
         confirm->setChecked(true);
         inspected = true;
-        dialog->accept();
+        clickEnabledDialogAccept(dialog);
     });
     button->click();
     QVERIFY(inspected);
@@ -1325,6 +1505,43 @@ void queueMetadataActionAndVerify(const ExpectedMetadataAction& action,
 }
 
 }  // namespace
+
+void PartitionManagerPanelTests::init() {
+    m_modal_watchdog.stop();
+    m_modal_watchdog.disconnect(this);
+    m_modal_watchdog.setSingleShot(false);
+    QObject::connect(&m_modal_watchdog, &QTimer::timeout, this, []() {
+        failAndCloseUnexpectedInteraction("Unattended interaction deadline exceeded");
+    });
+    m_modal_watchdog.start(kModalWatchdogMs);
+}
+
+void PartitionManagerPanelTests::cleanup() {
+    m_modal_watchdog.stop();
+    failAndCloseUnexpectedInteraction("Test left an interaction open");
+    flushDeferredDeletes();
+}
+
+void PartitionManagerPanelTests::modalCallbackGuardRejectsOnEarlyReturn() {
+    QDialog dialog;
+    QSignalSpy rejected(&dialog, &QDialog::rejected);
+    QTimer::singleShot(0, &dialog, [&dialog]() {
+        const auto reject_on_return = rejectDialogOnReturn(&dialog);
+        return;
+    });
+    QCOMPARE(dialog.exec(), QDialog::Rejected);
+    QCOMPARE(rejected.count(), 1);
+    QVERIFY(!dialog.isVisible());
+}
+
+void PartitionManagerPanelTests::modalInspectionCancelsWhenActionDoesNotOpen() {
+    bool invoked = false;
+    {
+        const ScopedModalInspection inspection([&invoked]() { invoked = true; });
+    }
+    QApplication::processEvents();
+    QVERIFY2(!invoked, "A refused action must not leave a callback capturing expired locals");
+}
 
 void PartitionManagerPanelTests::scanButtonIsStatefulAndInventorySummaryUsesStatusBar() {
     sak::PartitionManagerPanel panel;
@@ -2019,8 +2236,9 @@ void PartitionManagerPanelTests::finalApplyReviewContainsLayoutDiff() {
     panel.queueTestOperationForReview(sak::PartitionOperationType::SurfaceTest, target);
 
     bool inspected = false;
-    QTimer::singleShot(0, [&]() {
+    const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
         QVERIFY2(dialog != nullptr, "Apply review dialog should open");
         auto* preview =
             dialog->findChild<QWidget*>(QStringLiteral("partitionApplyLayoutDiffPreview"));
@@ -2035,6 +2253,507 @@ void PartitionManagerPanelTests::finalApplyReviewContainsLayoutDiff() {
 
     QVERIFY(!panel.showApplyReviewDialogForTest());
     QVERIFY(inspected);
+}
+
+void PartitionManagerPanelTests::applyReviewRejectsQueueMutation() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(applyReviewInventoryFixture());
+    sak::PartitionTarget target;
+    target.kind = sak::PartitionTargetKind::Disk;
+    target.disk_number = sak::DiskNumber{0};
+    panel.queueTestOperationForReview(sak::PartitionOperationType::SurfaceTest, target);
+
+    bool mutated = false;
+    const ScopedModalInspection inspection([&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        QVERIFY2(dialog != nullptr, "Apply review dialog should open");
+        panel.queueTestOperationForReview(sak::PartitionOperationType::OptimizeSsd, target);
+        mutated = true;
+        QTimer::singleShot(0, []() {
+            if (auto* warning = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                warning->accept();
+            }
+        });
+        dialog->accept();
+    });
+
+    QVERIFY(!panel.showApplyReviewDialogForTest());
+    QVERIFY(mutated);
+    QCOMPARE(panel.testQueuedOperationsForReview().size(), 2);
+}
+
+void PartitionManagerPanelTests::applyPreviewPreservesTrailingFreeSpan() {
+    sak::PartitionDiskInfo disk;
+    disk.disk_number = sak::DiskNumber{0};
+    disk.size_bytes = 1000;
+    disk.unallocated_regions.append({sak::DiskNumber{0}, 100, 900});
+
+    sak::PartitionOperation operation;
+    operation.type = sak::PartitionOperationType::Create;
+    operation.target.kind = sak::PartitionTargetKind::Unallocated;
+    operation.target.disk_number = disk.disk_number;
+    operation.target.offset_bytes = 300;
+    operation.payload.insert(QStringLiteral("size_bytes"), QStringLiteral("200"));
+
+    const QJsonArray segments = sak::partitionApplyPreviewSegmentsForTest(disk, {operation});
+    QCOMPARE(segments.size(), 3);
+    QCOMPARE(segments.at(0).toObject().value(QStringLiteral("bytes")).toString(),
+             QStringLiteral("200"));
+    QCOMPARE(segments.at(1).toObject().value(QStringLiteral("label")).toString(),
+             QStringLiteral("New"));
+    QCOMPARE(segments.at(1).toObject().value(QStringLiteral("bytes")).toString(),
+             QStringLiteral("200"));
+    QCOMPARE(segments.at(2).toObject().value(QStringLiteral("offset")).toString(),
+             QStringLiteral("500"));
+    QCOMPARE(segments.at(2).toObject().value(QStringLiteral("bytes")).toString(),
+             QStringLiteral("500"));
+}
+
+void PartitionManagerPanelTests::applyPreviewRefusesOverflowingFreeSpan() {
+    constexpr uint64_t kMaximum = std::numeric_limits<uint64_t>::max();
+    sak::PartitionDiskInfo disk;
+    disk.disk_number = sak::DiskNumber{0};
+    disk.size_bytes = kMaximum;
+    disk.unallocated_regions.append({sak::DiskNumber{0}, kMaximum - 50, 100});
+
+    sak::PartitionOperation operation;
+    operation.type = sak::PartitionOperationType::Create;
+    operation.target.kind = sak::PartitionTargetKind::Unallocated;
+    operation.target.disk_number = disk.disk_number;
+    operation.target.offset_bytes = kMaximum - 50;
+    operation.payload.insert(QStringLiteral("size_bytes"), QStringLiteral("10"));
+
+    const QJsonArray segments = sak::partitionApplyPreviewSegmentsForTest(disk, {operation});
+    QCOMPARE(segments.size(), 1);
+    QCOMPARE(segments.first().toObject().value(QStringLiteral("offset")).toString(),
+             QString::number(kMaximum - 50));
+    QCOMPARE(segments.first().toObject().value(QStringLiteral("bytes")).toString(),
+             QStringLiteral("100"));
+    QVERIFY(segments.first().toObject().value(QStringLiteral("unallocated")).toBool());
+}
+
+void PartitionManagerPanelTests::applyPreviewRefusesResizeSplitAndMergeOverflow() {
+    constexpr uint64_t kMaximum = std::numeric_limits<uint64_t>::max();
+    sak::PartitionDiskInfo resize_disk;
+    resize_disk.disk_number = sak::DiskNumber{0};
+    resize_disk.size_bytes = kMaximum;
+    sak::PartitionInfoEx resize_partition;
+    resize_partition.disk_number = resize_disk.disk_number;
+    resize_partition.partition_number = sak::PartitionNumber{1};
+    resize_partition.offset_bytes = kMaximum - 100;
+    resize_partition.size_bytes = 200;
+    resize_disk.partitions.append(resize_partition);
+    sak::PartitionOperation resize;
+    resize.type = sak::PartitionOperationType::Resize;
+    resize.target.kind = sak::PartitionTargetKind::Partition;
+    resize.target.disk_number = resize_disk.disk_number;
+    resize.target.partition_number = resize_partition.partition_number;
+    resize.payload.insert(QStringLiteral("target_size_bytes"), QStringLiteral("50"));
+    const auto resized = sak::partitionApplyPreviewSegmentsForTest(resize_disk, {resize});
+    QCOMPARE(resized.size(), 1);
+    QCOMPARE(resized.first().toObject().value(QStringLiteral("bytes")).toString(),
+             QStringLiteral("200"));
+
+    sak::PartitionDiskInfo split_disk = resize_disk;
+    split_disk.partitions[0].offset_bytes = kMaximum - 100;
+    split_disk.partitions[0].size_bytes = 200;
+    sak::PartitionOperation split = resize;
+    split.type = sak::PartitionOperationType::Split;
+    split.target.size_bytes = 200;
+    split.payload = {{QStringLiteral("first_size_bytes"), QStringLiteral("50")}};
+    const auto split_segments = sak::partitionApplyPreviewSegmentsForTest(split_disk, {split});
+    QCOMPARE(split_segments.size(), 1);
+    QCOMPARE(split_segments.first().toObject().value(QStringLiteral("bytes")).toString(),
+             QStringLiteral("200"));
+
+    sak::PartitionDiskInfo merge_disk = resize_disk;
+    merge_disk.partitions[0].offset_bytes = 0;
+    merge_disk.partitions[0].size_bytes = kMaximum - 10;
+    sak::PartitionInfoEx merge_source = merge_disk.partitions.first();
+    merge_source.partition_number = sak::PartitionNumber{2};
+    merge_source.offset_bytes = kMaximum - 10;
+    merge_source.size_bytes = 20;
+    merge_disk.partitions.append(merge_source);
+    sak::PartitionOperation merge = resize;
+    merge.type = sak::PartitionOperationType::Merge;
+    merge.payload = {{QStringLiteral("source_partition_number"), QStringLiteral("2")}};
+    const auto merged = sak::partitionApplyPreviewSegmentsForTest(merge_disk, {merge});
+    QCOMPARE(merged.size(), 2);
+    QCOMPARE(merged.at(0).toObject().value(QStringLiteral("bytes")).toString(),
+             QString::number(kMaximum - 10));
+    QCOMPARE(merged.at(1).toObject().value(QStringLiteral("bytes")).toString(),
+             QStringLiteral("20"));
+}
+
+void PartitionManagerPanelTests::consumePreviewRefusesOverflowingFreeSpan() {
+    constexpr uint64_t kMaximum = std::numeric_limits<uint64_t>::max();
+    const QJsonArray segments =
+        sak::partitionConsumeFreeSpanForTest(kMaximum - 50, 100, kMaximum - 10, 60);
+    QCOMPARE(segments.size(), 1);
+    QCOMPARE(segments.first().toObject().value(QStringLiteral("offset")).toString(),
+             QString::number(kMaximum - 50));
+    QCOMPARE(segments.first().toObject().value(QStringLiteral("bytes")).toString(),
+             QStringLiteral("100"));
+}
+
+void PartitionManagerPanelTests::consumePreviewRefusesOverflowingRequest() {
+    constexpr uint64_t kMaximum = std::numeric_limits<uint64_t>::max();
+    const QJsonArray segments =
+        sak::partitionConsumeFreeSpanForTest(0, kMaximum, kMaximum - 10, 60);
+    QCOMPARE(segments.size(), 1);
+    QCOMPARE(segments.first().toObject().value(QStringLiteral("offset")).toString(),
+             QStringLiteral("0"));
+    QCOMPARE(segments.first().toObject().value(QStringLiteral("bytes")).toString(),
+             QString::number(kMaximum));
+
+    const QJsonArray out_of_range = sak::partitionConsumeFreeSpanForTest(0, 1000, 900, 200);
+    QCOMPARE(out_of_range.size(), 1);
+    QCOMPARE(out_of_range.first().toObject().value(QStringLiteral("offset")).toString(),
+             QStringLiteral("0"));
+    QCOMPARE(out_of_range.first().toObject().value(QStringLiteral("bytes")).toString(),
+             QStringLiteral("1000"));
+}
+
+void PartitionManagerPanelTests::consumePreviewPreservesNormalRemainders() {
+    const QJsonArray segments = sak::partitionConsumeFreeSpanForTest(100, 900, 300, 200);
+    QCOMPARE(segments.size(), 2);
+    QCOMPARE(segments.at(0).toObject().value(QStringLiteral("offset")).toString(),
+             QStringLiteral("100"));
+    QCOMPARE(segments.at(0).toObject().value(QStringLiteral("bytes")).toString(),
+             QStringLiteral("200"));
+    QCOMPARE(segments.at(1).toObject().value(QStringLiteral("offset")).toString(),
+             QStringLiteral("500"));
+    QCOMPARE(segments.at(1).toObject().value(QStringLiteral("bytes")).toString(),
+             QStringLiteral("500"));
+}
+
+void PartitionManagerPanelTests::clusterBackupIdentityFailsClosed() {
+    const auto reset = qScopeGuard([]() { sak::setPartitionStorageDeviceFixturesForTest({}); });
+    sak::PartitionVolumeInfo volume;
+    volume.drive_letter = QStringLiteral("T");
+    const auto assess = [&volume](const QString& path) {
+        return sak::partitionClusterBackupAvailabilityForTest(path, volume);
+    };
+
+    sak::setPartitionStorageDeviceFixturesForTest(
+        {{QStringLiteral("C:/Backup"), QStringLiteral("\\\\?\\Volume{TARGET}\\")},
+         {QStringLiteral("E:/Alias"), QStringLiteral("\\\\?\\Volume{TARGET}\\")},
+         {QStringLiteral("G:/DonorAlias"), QStringLiteral("\\\\?\\Volume{DONOR}\\")},
+         {QStringLiteral("D:/Backup"), QStringLiteral("\\\\?\\Volume{OTHER}\\")}});
+    QVERIFY(!assess(QStringLiteral("D:/Backup")).value(QStringLiteral("enabled")).toBool());
+    QVERIFY(assess(QStringLiteral("D:/Backup"))
+                .value(QStringLiteral("reason"))
+                .toString()
+                .contains(QStringLiteral("Source volume identity")));
+
+    volume.volume_guid = QStringLiteral("\\\\?\\Volume{TARGET}");
+    QVERIFY(!assess(QStringLiteral("Z:/Unknown")).value(QStringLiteral("enabled")).toBool());
+    QVERIFY(assess(QStringLiteral("Z:/Unknown"))
+                .value(QStringLiteral("reason"))
+                .toString()
+                .contains(QStringLiteral("Backup volume identity")));
+    QVERIFY(!assess(QStringLiteral("C:/Backup")).value(QStringLiteral("enabled")).toBool());
+    QVERIFY(assess(QStringLiteral("C:/Backup"))
+                .value(QStringLiteral("reason"))
+                .toString()
+                .contains(QStringLiteral("would be erased")));
+    QVERIFY(!assess(QStringLiteral("E:/Alias")).value(QStringLiteral("enabled")).toBool());
+    QVERIFY(assess(QStringLiteral("D:/Backup")).value(QStringLiteral("enabled")).toBool());
+
+    sak::PartitionVolumeInfo donor;
+    donor.volume_guid = QStringLiteral("\\\\?\\Volume{DONOR}");
+    const QVector<sak::PartitionVolumeInfo> protected_volumes{volume, donor};
+    QVERIFY(!sak::partitionDestructiveBackupAvailabilityForTest(QStringLiteral("G:/DonorAlias"),
+                                                                protected_volumes)
+                 .value(QStringLiteral("enabled"))
+                 .toBool());
+    QVERIFY(sak::partitionDestructiveBackupAvailabilityForTest(QStringLiteral("D:/Backup"),
+                                                               protected_volumes)
+                .value(QStringLiteral("enabled"))
+                .toBool());
+}
+
+void PartitionManagerPanelTests::restoreImagePinsContentBeforeApproval() {
+    const QString source = readRepoSource(QStringLiteral("src/gui/partition_manager_panel.cpp"));
+    QVERIFY2(!source.isEmpty(), "partition manager source could not be read");
+    const qsizetype function_start =
+        source.indexOf(QStringLiteral("void PartitionManagerPanel::onRestoreImage()"));
+    const qsizetype function_end = source.indexOf(
+        QStringLiteral("QString PartitionManagerPanel::pinRestoreImageDigest"), function_start);
+    QVERIFY(function_start >= 0 && function_end > function_start);
+    const QString body = source.mid(function_start, function_end - function_start);
+    const qsizetype pin = body.indexOf(QStringLiteral("pinRestoreImageDigest(path)"));
+    const qsizetype approval = body.indexOf(QStringLiteral("showQuestionLogged("));
+    QVERIFY2(pin >= 0 && approval > pin, "restore image content must be pinned before approval");
+    QVERIFY(body.contains(QStringLiteral("SHA-256: %5")));
+}
+
+void PartitionManagerPanelTests::restoreImageQueuesConfirmedTarget() {
+    const QString source = readRepoSource(QStringLiteral("src/gui/partition_manager_panel.cpp"));
+    QVERIFY2(!source.isEmpty(), "partition manager source could not be read");
+    const qsizetype function_start =
+        source.indexOf(QStringLiteral("void PartitionManagerPanel::onRestoreImage()"));
+    const qsizetype function_end = source.indexOf(
+        QStringLiteral("QString PartitionManagerPanel::pinRestoreImageDigest"), function_start);
+    QVERIFY(function_start >= 0 && function_end > function_start);
+    const QString body = source.mid(function_start, function_end - function_start);
+    QVERIFY(body.contains(QStringLiteral(
+        "PartitionOperationType::RestoreImage, *selected, expected_layout_hash, payload")));
+    QVERIFY(!body.contains(
+        QStringLiteral("queueOperation(PartitionOperationType::RestoreImage, payload)")));
+}
+
+void PartitionManagerPanelTests::modalQueueBindsReviewedTarget() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(modalTargetBindingInventoryFixture());
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(1);
+    QApplication::processEvents();
+
+    bool accepted = false;
+    const ScopedModalInspection inspection([&]() {
+        auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        QVERIFY2(dialog != nullptr, "Hidden-state input dialog should open");
+        table->selectRow(2);
+        accepted = true;
+        dialog->accept();
+    });
+
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onSetPartitionHidden", Qt::DirectConnection));
+    QVERIFY(accepted);
+    const auto operations = panel.testQueuedOperationsForReview();
+    QCOMPARE(operations.size(), 1);
+    QCOMPARE(operations.first().target.partition_number.value(), uint32_t{1});
+}
+
+void PartitionManagerPanelTests::modalQueueRefusesChangedLayout() {
+    sak::PartitionManagerPanel panel;
+    const auto inventory = modalTargetBindingInventoryFixture();
+    panel.setTestInventoryForReview(inventory);
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(1);
+    QApplication::processEvents();
+    QSignalSpy statuses(&panel, &sak::PartitionManagerPanel::statusMessage);
+
+    const ScopedModalInspection inspection([&]() {
+        auto changed = inventory;
+        changed.layout_hash = QStringLiteral("changed-during-modal");
+        panel.setTestInventoryForReview(changed);
+        auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        QVERIFY2(dialog != nullptr, "Hidden-state input dialog should remain open");
+        dialog->accept();
+    });
+
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onSetPartitionHidden", Qt::DirectConnection));
+    QVERIFY(panel.testQueuedOperationsForReview().isEmpty());
+    const QString refusal = QStringLiteral(
+        "Disk inventory changed while the operation was being reviewed. Refresh and confirm it "
+        "again.");
+    QVERIFY(std::ranges::any_of(statuses, [&refusal](const auto& arguments) {
+        return arguments.at(0).toString() == refusal;
+    }));
+}
+
+void PartitionManagerPanelTests::cloneAndUsedScalingDoNotOverflow() const {
+    constexpr uint64_t kMaximum = std::numeric_limits<uint64_t>::max();
+    QCOMPARE(sak::partitionScaledBytesForTest(kMaximum, kMaximum, kMaximum), kMaximum);
+    QCOMPARE(sak::partitionScaledBytesForTest(kMaximum, 100, kMaximum), uint64_t{100});
+    QCOMPARE(sak::partitionUsedPercentForTest(kMaximum, kMaximum), 100);
+    QCOMPARE(sak::partitionUsedPercentForTest(kMaximum, kMaximum - 1), 0);
+}
+
+void PartitionManagerPanelTests::scaledBytesDivisionBoundaries() const {
+    constexpr uint64_t kMaximum = std::numeric_limits<uint64_t>::max();
+    constexpr uint64_t kHighBit = uint64_t{1} << (std::numeric_limits<uint64_t>::digits - 1);
+    QCOMPARE(sak::partitionScaledBytesForTest(0, kMaximum, 1), uint64_t{0});
+    QCOMPARE(sak::partitionScaledBytesForTest(kMaximum, 0, kMaximum), uint64_t{0});
+    QCOMPARE(sak::partitionScaledBytesForTest(1, 1, 0), kMaximum);
+    QCOMPARE(sak::partitionScaledBytesForTest(0, 0, 0), kMaximum);
+    QCOMPARE(sak::partitionScaledBytesForTest(7, 5, 3), uint64_t{11});
+    QCOMPARE(sak::partitionScaledBytesForTest(7, 5, 5), uint64_t{7});
+    QCOMPARE(sak::partitionScaledBytesForTest(kMaximum, kMaximum, kMaximum), kMaximum);
+    QCOMPARE(sak::partitionScaledBytesForTest(kMaximum - 1, kMaximum - 1, kMaximum - 1),
+             kMaximum - 1);
+    QCOMPARE(sak::partitionScaledBytesForTest(kMaximum - 1, kMaximum - 1, kMaximum), kMaximum - 2);
+    // Expected floors independently calculated using arbitrary-precision integer arithmetic.
+    QCOMPARE(sak::partitionScaledBytesForTest(kMaximum, kHighBit, kHighBit + 1), kMaximum - 2);
+    QCOMPARE(sak::partitionScaledBytesForTest(kMaximum - 2, kHighBit + 3, kHighBit + 7),
+             kMaximum - 10);
+    QCOMPARE(sak::partitionScaledBytesForTest(kHighBit, 2, 2), kHighBit);
+    QCOMPARE(sak::partitionScaledBytesForTest(kHighBit, 2, 1), kMaximum);
+    QCOMPARE(sak::partitionScaledBytesForTest(kMaximum, kHighBit + 2, 2), kMaximum);
+    // Product high limb equals divisor; the true quotient is exactly 2^64 and must saturate.
+    QCOMPARE(sak::partitionScaledBytesForTest(kMaximum - 3, kMaximum - 3, kMaximum - 7), kMaximum);
+}
+
+void PartitionManagerPanelTests::customRawCloneTargetsMustExist() const {
+    auto inventory = applyReviewInventoryFixture();
+    inventory.disks[0].partitions[0].volume->volume_guid = QStringLiteral("\\\\?\\Volume{TARGET}");
+    const auto assess = [&inventory](const QString& path) {
+        return sak::partitionCustomRawCloneBlockerForTest(inventory, path, 1);
+    };
+    QCOMPARE(sak::partitionStorageIdentityForTest(QStringLiteral("\\\\?\\Volume{TARGET}")),
+             sak::partitionStorageIdentityForTest(QStringLiteral("\\\\.\\Volume{TARGET}")));
+    QVERIFY(assess(QStringLiteral("\\\\.\\T:")).isEmpty());
+    const QString volume_guid_blocker = assess(QStringLiteral("\\\\?\\Volume{TARGET}"));
+    QVERIFY2(volume_guid_blocker.isEmpty(), qPrintable(volume_guid_blocker));
+    QVERIFY(assess(QStringLiteral("\\\\?\\PhysicalDrive0")).isEmpty());
+    QVERIFY(assess(QStringLiteral("\\\\?\\T:\\images\\copy.img")).isEmpty());
+    QVERIFY(assess(QStringLiteral("\\\\.\\Z:"))
+                .contains(QStringLiteral("not present in the current disk inventory")));
+    QVERIFY(assess(QStringLiteral("\\\\?\\PhysicalDrive99"))
+                .contains(QStringLiteral("not present in the current disk inventory")));
+    QVERIFY(assess(QStringLiteral("\\\\.\\not-a-device"))
+                .contains(QStringLiteral("not present in the current disk inventory")));
+    QCOMPARE(sak::partitionCanonicalCloneTargetForTest(QStringLiteral("  \\\\?\\PhysicalDrive7  ")),
+             QStringLiteral("\\\\.\\PhysicalDrive7"));
+    QCOMPARE(sak::partitionCanonicalCloneTargetForTest(
+                 QStringLiteral("\\\\?\\T:\\images\\copy.img")),
+             QStringLiteral("\\\\?\\T:\\images\\copy.img"));
+}
+
+void PartitionManagerPanelTests::apfsUnknownModeIsRefused() const {
+    const auto known = sak::partitionApfsMutationTypeForTest(QStringLiteral("snapshot-create"));
+    QVERIFY(known.has_value());
+    QCOMPARE(static_cast<int>(*known),
+             static_cast<int>(sak::PartitionOperationType::ApfsSnapshotCreate));
+    QVERIFY(!sak::partitionApfsMutationTypeForTest(QStringLiteral("unknown-mode")).has_value());
+    QVERIFY(!sak::partitionApfsMutationTypeForTest(QString()).has_value());
+    const QString source = readRepoSource(QStringLiteral("src/gui/partition_manager_panel.cpp"));
+    const QString header = readRepoSource(QStringLiteral("include/sak/partition_manager_panel.h"));
+    QVERIFY(!source.contains(QStringLiteral("ActionAction")));
+    QVERIFY(source.contains(QStringLiteral("Requires a certified writable COW container")));
+    QVERIFY(!source.contains(QStringLiteral("Requires a generated container")));
+    const qsizetype slots = header.indexOf(QStringLiteral("private Q_SLOTS:"));
+    const qsizetype private_section = header.indexOf(QStringLiteral("\nprivate:"), slots);
+    QVERIFY(slots >= 0 && private_section > slots);
+    QVERIFY(!header.mid(slots, private_section - slots)
+                 .contains(QStringLiteral("onChangeApfsVolumeLabel")));
+    QVERIFY(header.mid(private_section).contains(QStringLiteral("onChangeApfsVolumeLabel")));
+}
+
+void PartitionManagerPanelTests::diskCopyWizardHasNoUnprobedCustomTarget() {
+    sak::PartitionManagerPanel panel;
+    auto inventory = imageSourceMappingInventory();
+    sak::PartitionDiskInfo unknown_size = inventory.disks.last();
+    unknown_size.disk_number = sak::DiskNumber{2};
+    unknown_size.size_bytes = 0;
+    inventory.disks.append(unknown_size);
+    panel.setTestInventoryForReview(inventory);
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(0);
+
+    bool inspected = false;
+    const ScopedModalInspection inspection([&]() {
+        auto* wizard = qobject_cast<QWizard*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(wizard);
+        QVERIFY2(wizard != nullptr, "Copy Disk Wizard should open");
+        auto* target = findAccessibleWidget<QComboBox>(wizard, QStringLiteral("Target disk"));
+        QVERIFY2(target != nullptr, "Target disk selector should exist");
+        QCOMPARE(target->count(), 1);
+        QVERIFY(target->findText(QStringLiteral("Custom path")) < 0);
+        QVERIFY(findAccessibleWidget<QLineEdit>(wizard, QStringLiteral("Custom target path")) ==
+                nullptr);
+        inspected = true;
+        wizard->reject();
+    });
+
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onCloneDisk", Qt::DirectConnection));
+    QVERIFY(inspected);
+}
+
+void PartitionManagerPanelTests::restoreImageSourceMapsDeviceGuid() {
+    const auto inventory = imageSourceMappingInventory();
+    QCOMPARE(imageSourceRelation(inventory,
+                                 QStringLiteral("C:/Mount/Backup/image.img"),
+                                 QStringLiteral("\\\\?\\Volume{TARGET}"),
+                                 QStringLiteral("C:/Mount/Backup/")),
+             std::optional<bool>{true});
+    QCOMPARE(imageSourceRelation(inventory,
+                                 QStringLiteral("D:/Mount/Backup/image.img"),
+                                 QStringLiteral("\\\\?\\Volume{OTHER}"),
+                                 QStringLiteral("D:/Mount/Backup/")),
+             std::optional<bool>{false});
+}
+
+void PartitionManagerPanelTests::restoreImageSourceRefusesDriveRootWithoutIdentity() {
+    const auto inventory = imageSourceMappingInventory();
+    QVERIFY(!imageSourceRelation(
+                 inventory, QStringLiteral("C:/image.img"), QString(), QStringLiteral("C:/"))
+                 .has_value());
+    QVERIFY(!imageSourceRelation(
+                 inventory, QStringLiteral("D:/image.img"), QString(), QStringLiteral("D:/"))
+                 .has_value());
+}
+
+void PartitionManagerPanelTests::restoreImageSourceMapsVolumeGuidRoot() {
+    const auto inventory = imageSourceMappingInventory();
+    QCOMPARE(imageSourceRelation(inventory,
+                                 QStringLiteral("//?/Volume{TARGET}/image.img"),
+                                 QString(),
+                                 QStringLiteral("//?/Volume{TARGET}/")),
+             std::optional<bool>{true});
+}
+
+void PartitionManagerPanelTests::restoreImageSourceRefusesAmbiguousIdentity() {
+    auto inventory = imageSourceMappingInventory();
+    inventory.disks[1].partitions[0].volume->volume_guid =
+        QStringLiteral("\\\\?\\Volume{TARGET}\\");
+    QVERIFY(!imageSourceRelation(inventory,
+                                 QStringLiteral("C:/Mount/Backup/image.img"),
+                                 QStringLiteral("\\\\?\\Volume{TARGET}"),
+                                 QStringLiteral("C:/Mount/Backup/"))
+                 .has_value());
+}
+
+void PartitionManagerPanelTests::restoreImageSourceRefusesUnmappedIdentity() {
+    const auto inventory = imageSourceMappingInventory();
+    QVERIFY(!imageSourceRelation(inventory,
+                                 QStringLiteral("C:/Mount/Unknown/image.img"),
+                                 QString(),
+                                 QStringLiteral("C:/Mount/Unknown/"))
+                 .has_value());
+    QVERIFY(!imageSourceRelation(
+                 inventory, QStringLiteral("Z:/image.img"), QString(), QStringLiteral("Z:/"))
+                 .has_value());
+    QVERIFY(!imageSourceRelation(inventory,
+                                 QStringLiteral("C:/image.img"),
+                                 QStringLiteral("\\\\?\\Volume{UNKNOWN}"),
+                                 QStringLiteral("C:/"))
+                 .has_value());
+    auto missing_guid = inventory;
+    missing_guid.disks[0].partitions[0].volume->volume_guid.clear();
+    QVERIFY(!imageSourceRelation(missing_guid,
+                                 QStringLiteral("C:/image.img"),
+                                 QStringLiteral("\\\\?\\Volume{TARGET}"),
+                                 QStringLiteral("C:/"))
+                 .has_value());
+}
+
+void PartitionManagerPanelTests::restoreImageSourceRefusesUncAliases() {
+    const auto inventory = imageSourceMappingInventory();
+    for (const QString& path : {QStringLiteral("//server/share/image.img"),
+                                QStringLiteral("//localhost/C$/image.img"),
+                                QStringLiteral("//127.0.0.1/C$/image.img"),
+                                QStringLiteral("//?/UNC/server/share/image.img")}) {
+        QVERIFY(!imageSourceRelation(inventory, path, QString(), QString()).has_value());
+    }
+}
+
+void PartitionManagerPanelTests::runtimeManifestUsesCanonicalTrustedResolver() {
+    const QString source = readRepoSource(QStringLiteral("src/gui/partition_manager_panel.cpp"));
+    QVERIFY2(!source.isEmpty(), "partition manager source could not be read");
+    QCOMPARE(source.count(
+                 QStringLiteral("PartitionFileSystemToolManifest::resolveRuntimeManifestPath()")),
+             1);
+    QVERIFY(!source.contains(QStringLiteral("QString runtimeFilesystemManifestPath()")));
+    QVERIFY(!source.contains(QStringLiteral("kRuntimeManifestSourceFallbackDepth")));
 }
 
 void PartitionManagerPanelTests::propertiesActionIsFirstClass() {
@@ -2112,8 +2831,9 @@ void PartitionManagerPanelTests::propertiesDialogShowsRawFilesystemMetadata() {
     QCOMPARE(browseButton->toolTip(), QStringLiteral("Browse read-only ext4 directory entries"));
 
     bool inspected = false;
-    QTimer::singleShot(0, [&]() {
+    const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
         QVERIFY2(dialog != nullptr, "Properties dialog should open");
         auto* properties =
             dialog->findChild<QTableWidget*>(QStringLiteral("partitionPropertiesTable"));
@@ -2225,8 +2945,9 @@ void PartitionManagerPanelTests::apfsContainerActionAllowsWritableApfsVolumes() 
     QVERIFY(changeLabel->toolTip().contains(QStringLiteral("Rename this APFS volume")));
 
     bool handled = false;
-    QTimer::singleShot(0, [&]() {
+    const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QInputDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
         QVERIFY2(dialog != nullptr, "Change Label input dialog should open");
         dialog->setTextValue(QStringLiteral("ForeignRenamed"));
         handled = true;
@@ -2236,6 +2957,12 @@ void PartitionManagerPanelTests::apfsContainerActionAllowsWritableApfsVolumes() 
     QVERIFY(handled);
     verifySingleQueuedOperation(&panel,
                                 QStringLiteral("APFS Change Volume Label - Disk 0 Partition 1"));
+    const auto operations = panel.testQueuedOperationsForReview();
+    QCOMPARE(operations.size(), 1);
+    QVERIFY(
+        operations.first().payload.value(QStringLiteral("apfs_cow_mutation_certified")).toBool());
+    QVERIFY(
+        !operations.first().payload.contains(QStringLiteral("apfs_generated_layout_confirmed")));
 }
 
 void PartitionManagerPanelTests::manageBitLockerShowsStatusDialog() {
@@ -2256,8 +2983,9 @@ void PartitionManagerPanelTests::manageBitLockerShowsStatusDialog() {
     QVERIFY2(button != nullptr, "Manage BitLocker action should exist");
 
     bool inspected = false;
-    QTimer::singleShot(0, [&]() {
+    const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
         QVERIFY2(dialog != nullptr, "BitLocker dialog should open");
         QCOMPARE(dialog->objectName(), QStringLiteral("partitionBitLockerDialog"));
         QCOMPARE(dialog->accessibleName(), QStringLiteral("BitLocker management"));
@@ -2318,8 +3046,9 @@ void PartitionManagerPanelTests::diskDefragShowsOptimizeDialog() {
     QVERIFY2(button != nullptr, "Disk Defrag action should exist");
 
     bool inspected = false;
-    QTimer::singleShot(0, [&]() {
+    const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
         QVERIFY2(dialog != nullptr, "Optimize Drives dialog should open");
         QCOMPARE(dialog->objectName(), QStringLiteral("partitionOptimizeDrivesDialog"));
         QCOMPARE(dialog->accessibleName(), QStringLiteral("Disk defrag and optimization"));
@@ -2375,8 +3104,9 @@ void PartitionManagerPanelTests::ssdSecureEraseShowsQueueDialog() {
     QVERIFY2(button != nullptr, "SSD Secure Erase action should exist");
 
     bool inspected = false;
-    QTimer::singleShot(0, [&]() {
+    const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
         QVERIFY2(dialog != nullptr, "SSD Secure Erase dialog should open");
         QCOMPARE(dialog->objectName(), QStringLiteral("partitionSecureEraseDialog"));
         QCOMPARE(dialog->accessibleName(), QStringLiteral("SSD Secure Erase readiness"));
@@ -2476,7 +3206,12 @@ void PartitionManagerPanelTests::changeClusterSizeQueuesVerifiedReformatOperatio
     QVERIFY(backupRoot.isValid());
 
     sak::PartitionManagerPanel panel;
-    panel.setTestInventoryForReview(applyReviewInventoryFixture());
+    auto inventory = applyReviewInventoryFixture();
+    inventory.disks[0].partitions[0].volume->volume_guid = QStringLiteral("target-device");
+    panel.setTestInventoryForReview(inventory);
+    sak::setPartitionStorageDeviceFixturesForTest(
+        {{QDir::fromNativeSeparators(backupRoot.path()), QStringLiteral("backup-device")}});
+    const auto reset = qScopeGuard([]() { sak::setPartitionStorageDeviceFixturesForTest({}); });
 
     auto* table = panel.findChild<QTableWidget*>();
     QVERIFY2(table != nullptr, "Partition table should exist");
@@ -2488,8 +3223,9 @@ void PartitionManagerPanelTests::changeClusterSizeQueuesVerifiedReformatOperatio
              QStringLiteral("Back up, reformat with selected cluster size, restore, and verify"));
 
     bool inspected = false;
-    QTimer::singleShot(0, [&]() {
+    const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
         QVERIFY2(dialog != nullptr, "Change Cluster Size dialog should open");
         QCOMPARE(dialog->accessibleName(), QStringLiteral("Change Cluster Size"));
 
@@ -2510,8 +3246,13 @@ void PartitionManagerPanelTests::changeClusterSizeQueuesVerifiedReformatOperatio
             dialog, QStringLiteral("Confirm cluster-size reformat backup and restore"));
         QVERIFY(confirm != nullptr);
         confirm->setChecked(true);
+        auto* buttons = dialog->findChild<QDialogButtonBox*>();
+        QVERIFY(buttons != nullptr);
+        auto* add_to_queue = buttons->button(QDialogButtonBox::Ok);
+        QVERIFY(add_to_queue != nullptr);
+        QVERIFY2(add_to_queue->isEnabled(), "proven different backup volume should be queueable");
         inspected = true;
-        dialog->accept();
+        add_to_queue->click();
     });
 
     button->click();
@@ -2531,6 +3272,9 @@ void PartitionManagerPanelTests::allocateFreeSpaceQueuesAdjacentDonorOperation()
 
     sak::PartitionManagerPanel panel;
     panel.setTestInventoryForReview(allocateFreeSpaceInventoryFixture());
+    sak::setPartitionStorageDeviceFixturesForTest(
+        {{QDir::fromNativeSeparators(backupRoot.path()), QStringLiteral("backup-device")}});
+    const auto reset = qScopeGuard([]() { sak::setPartitionStorageDeviceFixturesForTest({}); });
 
     auto* table = panel.findChild<QTableWidget*>();
     QVERIFY2(table != nullptr, "Partition table should exist");
@@ -2543,8 +3287,9 @@ void PartitionManagerPanelTests::allocateFreeSpaceQueuesAdjacentDonorOperation()
                  "Back up adjacent donor, extend target, recreate donor, restore, and verify"));
 
     bool inspected = false;
-    QTimer::singleShot(0, [&]() {
+    const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
         QVERIFY2(dialog != nullptr, "Allocate Free Space dialog should open");
         QCOMPARE(dialog->accessibleName(), QStringLiteral("Allocate Free Space"));
 
@@ -2563,7 +3308,7 @@ void PartitionManagerPanelTests::allocateFreeSpaceQueuesAdjacentDonorOperation()
         QVERIFY(confirm != nullptr);
         confirm->setChecked(true);
         inspected = true;
-        dialog->accept();
+        clickEnabledDialogAccept(dialog);
     });
 
     button->click();
@@ -2573,6 +3318,43 @@ void PartitionManagerPanelTests::allocateFreeSpaceQueuesAdjacentDonorOperation()
     QVERIFY2(queue != nullptr, "Pending operation queue should exist");
     QCOMPARE(queue->count(), 1);
     QCOMPARE(queue->item(0)->text(), QStringLiteral("Allocate Free Space - Disk 0 Partition 1"));
+}
+
+void PartitionManagerPanelTests::destructiveBackupIsRevalidatedAfterModal() {
+    QTemporaryDir backup_root;
+    QVERIFY(backup_root.isValid());
+    sak::setPartitionStorageDeviceFixturesForTest(
+        {{QDir::fromNativeSeparators(backup_root.path()), QStringLiteral("donor-device")}});
+    const auto reset = qScopeGuard([]() { sak::setPartitionStorageDeviceFixturesForTest({}); });
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(allocateFreeSpaceInventoryFixture());
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    table->selectRow(1);
+
+    const ScopedModalInspection inspection([&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        QVERIFY2(dialog != nullptr, "Allocate Free Space dialog should open");
+        auto* backup = findAccessibleWidget<QLineEdit>(
+            dialog, QStringLiteral("Allocate donor backup directory"));
+        auto* confirm = findAccessibleWidget<QCheckBox>(
+            dialog, QStringLiteral("Confirm allocate-free-space backup and restore"));
+        QVERIFY(backup != nullptr && confirm != nullptr);
+        backup->setText(backup_root.path());
+        confirm->setChecked(true);
+        QTimer::singleShot(0, []() {
+            if (auto* warning = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+                warning->accept();
+            }
+        });
+        dialog->accept();
+    });
+
+    auto* button = findToolButtonByName(&panel, QStringLiteral("Allocate Free Space"));
+    QVERIFY2(button != nullptr, "Allocate Free Space action should exist");
+    button->click();
+    QVERIFY(panel.testQueuedOperationsForReview().isEmpty());
 }
 
 void PartitionManagerPanelTests::unallocatedAllocateFreeSpaceQueuesAdjacentEngines() {
@@ -2597,8 +3379,9 @@ void PartitionManagerPanelTests::createDialogExposesSynchronizedHandleControls()
 
     CreateDialogInspection result;
 
-    QTimer::singleShot(0, [&]() {
+    const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
         if (!dialog) {
             return;
         }
@@ -2625,8 +3408,9 @@ void PartitionManagerPanelTests::wipeActionLetsUserChooseScope() {
     QApplication::processEvents();
 
     bool inspected = false;
-    QTimer::singleShot(0, [&]() {
+    const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
         QVERIFY2(dialog != nullptr, "Wipe dialog should open");
         auto* mode = findAccessibleWidget<QComboBox>(dialog, QStringLiteral("Wipe scope"));
         QVERIFY2(mode != nullptr, "Wipe scope selector should exist for a partition target");
@@ -2695,6 +3479,75 @@ void PartitionManagerPanelTests::quickPartitionSizesFailClosedOnMalformedCustomA
     QVERIFY(!sak::partitionQuickSizesAreValidForTest(overflow, usable));
 }
 
+void PartitionManagerPanelTests::quickPartitionBatchHonorsCapacityAtomically() {
+    sak::PartitionDiskInfo disk;
+    disk.disk_number = sak::DiskNumber{0};
+    disk.partition_style = QStringLiteral("RAW");
+    disk.health_status = QStringLiteral("Healthy");
+    disk.operational_status = QStringLiteral("Online");
+    disk.size_bytes = 1024 * kTestMegabyteBytes;
+    disk.unallocated_regions.append(
+        {disk.disk_number, kTestMegabyteBytes, disk.size_bytes - kTestMegabyteBytes});
+    sak::PartitionInventory inventory;
+    inventory.layout_hash = QStringLiteral("quick-partition-capacity-layout");
+    inventory.disks.append(disk);
+    const QJsonObject options{{QStringLiteral("partition_count"), 1},
+                              {QStringLiteral("partition_scheme"), QStringLiteral("GPT")},
+                              {QStringLiteral("size_mode"), QStringLiteral("equal")},
+                              {QStringLiteral("file_system"), QStringLiteral("NTFS")},
+                              {QStringLiteral("allocation_unit_bytes"), QStringLiteral("0")},
+                              {QStringLiteral("label_prefix"), QStringLiteral("Data")},
+                              {QStringLiteral("full_format"), false}};
+    sak::PartitionTarget target;
+    target.kind = sak::PartitionTargetKind::Disk;
+    target.disk_number = disk.disk_number;
+    target.size_bytes = disk.size_bytes;
+
+    const auto fill_queue = [&target](sak::PartitionManagerPanel* panel, qsizetype count) {
+        for (qsizetype index = 0; index < count; ++index) {
+            panel->queueTestOperationForReview(sak::PartitionOperationType::SurfaceTest, target);
+        }
+    };
+
+    sak::PartitionManagerPanel refused;
+    refused.setTestInventoryForReview(inventory);
+    fill_queue(&refused, sak::PartitionOperationQueue::kMaxOperationCount - 1);
+    QVERIFY(!refused.queueQuickPartitionOperationsForTest(disk, options, inventory.layout_hash));
+    QCOMPARE(refused.testQueuedOperationsForReview().size(),
+             sak::PartitionOperationQueue::kMaxOperationCount - 1);
+    auto* refused_table = refused.findChild<QTableWidget*>();
+    QVERIFY2(refused_table != nullptr, "Partition table should exist");
+    refused_table->selectRow(0);
+    QSignalSpy refused_statuses(&refused, &sak::PartitionManagerPanel::statusMessage);
+    const ScopedModalInspection inspection([]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        QVERIFY2(dialog != nullptr, "Quick Partition dialog should open");
+        dialog->accept();
+    });
+    QVERIFY(QMetaObject::invokeMethod(&refused, "onQuickPartition", Qt::DirectConnection));
+    QVERIFY(std::ranges::none_of(refused_statuses, [](const auto& arguments) {
+        return arguments.at(0).toString() == QStringLiteral("Quick Partition queued");
+    }));
+
+    sak::PartitionManagerPanel accepted;
+    accepted.setTestInventoryForReview(inventory);
+    fill_queue(&accepted, sak::PartitionOperationQueue::kMaxOperationCount - 2);
+    QSignalSpy accepted_statuses(&accepted, &sak::PartitionManagerPanel::statusMessage);
+    const bool accepted_batch =
+        accepted.queueQuickPartitionOperationsForTest(disk, options, inventory.layout_hash);
+    const QString accepted_status = accepted_statuses.isEmpty()
+                                        ? QStringLiteral("no controller status")
+                                        : accepted_statuses.last().at(0).toString();
+    QVERIFY2(accepted_batch, qPrintable(accepted_status));
+    const auto accepted_operations = accepted.testQueuedOperationsForReview();
+    QCOMPARE(accepted_operations.size(), sak::PartitionOperationQueue::kMaxOperationCount);
+    QCOMPARE(static_cast<int>(accepted_operations.at(accepted_operations.size() - 2).type),
+             static_cast<int>(sak::PartitionOperationType::InitializeDisk));
+    QCOMPARE(static_cast<int>(accepted_operations.last().type),
+             static_cast<int>(sak::PartitionOperationType::Create));
+}
+
 namespace {
 
 // Dismisses whatever modal is up and reports whether it was a WIZARD (a message box is a
@@ -2723,9 +3576,10 @@ bool invokeWizardSlot(sak::PartitionManagerPanel* panel, const char* slot) {
 // work from an idle controller (so the refusal came from the guard, not an unqualified
 // fixture). Toolbar/context-menu enablement is deliberately not relied on: the context menu
 // stays live during an Apply.
-void verifyWizardGuardedWhileApplying(const char* slot,
-                                      const sak::PartitionInventory& inventory,
-                                      int select_row) {
+void verifyWizardGuardedWhileBusy(const char* slot,
+                                  const sak::PartitionInventory& inventory,
+                                  int select_row,
+                                  sak::PartitionManagerState busy_state) {
     sak::PartitionManagerPanel panel;
     panel.setTestInventoryForReview(inventory);
     auto* table = panel.findChild<QTableWidget*>();
@@ -2733,7 +3587,7 @@ void verifyWizardGuardedWhileApplying(const char* slot,
     table->selectRow(select_row);
     QApplication::processEvents();
 
-    panel.setTestApplyStateForReview(sak::PartitionManagerState::Applying);
+    panel.setTestApplyStateForReview(busy_state);
     // The wizard not opening is necessary but not sufficient: a slot that silently did nothing
     // (a missing entry point, a null selection) also satisfies it. The guard is what must have
     // fired, and it announces itself exactly once through statusMessage.
@@ -2741,7 +3595,8 @@ void verifyWizardGuardedWhileApplying(const char* slot,
     QVERIFY2(!invokeWizardSlot(&panel, slot), slot);
     QCOMPARE(guardSpy.count(), 1);
     QCOMPARE(guardSpy.takeFirst().at(0).toString(),
-             QStringLiteral("Finish or cancel the running operation before changing the queue"));
+             QStringLiteral("Wait for the current disk scan or operation to finish before "
+                            "changing the queue"));
     auto* queue = panel.findChild<QListWidget*>();
     QVERIFY2(queue != nullptr, "Pending operation queue should exist");
     QCOMPARE(queue->count(), 0);
@@ -2758,11 +3613,42 @@ void verifyWizardGuardedWhileApplying(const char* slot,
 // during an Apply corrupted the state machine mid-apply and mutated the queue the executor
 // was consuming. Every entry point now goes through the one central guard.
 void PartitionManagerPanelTests::wizardEntryPointsRespectRunningOperationGuard() const {
-    verifyWizardGuardedWhileApplying("onQuickPartition", unallocatedAllocateInventoryFixture(), 0);
-    verifyWizardGuardedWhileApplying("onAllocateFreeSpace", allocateFreeSpaceInventoryFixture(), 1);
-    verifyWizardGuardedWhileApplying("onConvertDynamicDiskToBasic",
-                                     metadataRebuildInventoryFixture(true),
-                                     0);
+    verifyWizardGuardedWhileBusy("onQuickPartition",
+                                 unallocatedAllocateInventoryFixture(),
+                                 0,
+                                 sak::PartitionManagerState::Applying);
+    verifyWizardGuardedWhileBusy("onAllocateFreeSpace",
+                                 allocateFreeSpaceInventoryFixture(),
+                                 1,
+                                 sak::PartitionManagerState::Applying);
+    verifyWizardGuardedWhileBusy("onConvertDynamicDiskToBasic",
+                                 metadataRebuildInventoryFixture(true),
+                                 0,
+                                 sak::PartitionManagerState::Applying);
+    verifyWizardGuardedWhileBusy("onQuickPartition",
+                                 unallocatedAllocateInventoryFixture(),
+                                 0,
+                                 sak::PartitionManagerState::RefreshingInventory);
+}
+
+void PartitionManagerPanelTests::controllerWatcherLifetimeBlocksInteraction() {
+    const QString source =
+        readRepoSource(QStringLiteral("src/core/partition_manager_controller.cpp"));
+    const QString panel_source =
+        readRepoSource(QStringLiteral("src/gui/partition_manager_panel.cpp"));
+    QVERIFY2(!source.isEmpty(), "partition manager controller source could not be read");
+    QVERIFY2(!panel_source.isEmpty(), "partition manager panel source could not be read");
+    QVERIFY(source.contains(QStringLiteral(
+        "const bool watcher_active = m_inventory_watcher != nullptr || m_apply_watcher != nullptr "
+        "||\n                                m_file_system_check_watcher != nullptr;")));
+    QVERIFY(source.contains(QStringLiteral("return watcher_active || phase_active;")));
+    QVERIFY(source.contains(QStringLiteral("m_inventory_watcher = watcher;")));
+    QVERIFY(source.contains(QStringLiteral("if (rejectQueueMutationIfBusy())")));
+    QVERIFY(panel_source.contains(QStringLiteral("if (m_controller->interactionBlocked())")));
+    QVERIFY(panel_source.contains(
+        QStringLiteral("const bool operation_running = m_controller->interactionBlocked();")));
+    QVERIFY(panel_source.contains(
+        QStringLiteral("const bool operation_cancellable = m_controller->canCancel();")));
 }
 
 // The scan-completion report is a pure function of the inventory, so the honesty rule is

@@ -20,13 +20,13 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/network_constants.h"
+#include "sak/network_transfer_runner.h"
 
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QFutureWatcher>
 #include <QNetworkReply>
-#include <QNetworkRequest>
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QtConcurrent/QtConcurrentRun>
@@ -63,7 +63,7 @@ QString formatSize(qint64 bytes) {
 // NoLessSafeRedirectPolicy refuses that downgrade, and Qt reports InsecureRedirectError.
 // That refusal is a safety measure -- not the user's fault -- so name the cause plainly
 // instead of surfacing a bare framework string the user cannot interpret.
-QString checksumFetchErrorMessage(QNetworkReply* reply) {
+QString checksumFetchErrorMessage(QNetworkReply* reply, const sak::NetworkTransferResult& result) {
     if (reply->error() == QNetworkReply::InsecureRedirectError) {
         return QStringLiteral(
             "Checksum download refused for safety: the download mirror redirected to an "
@@ -71,7 +71,7 @@ QString checksumFetchErrorMessage(QNetworkReply* reply) {
             "tampered with in transit. This is a mirror-side problem, not a problem with your "
             "settings -- please retry, which usually selects a different mirror.");
     }
-    return QStringLiteral("Checksum fetch failed: ") + reply->errorString();
+    return QStringLiteral("Checksum fetch failed: ") + result.error_message;
 }
 
 /// @brief Parse aria2c speed string (e.g. "2.3MiB", "512KiB") to MB/s
@@ -226,26 +226,14 @@ void LinuxISODownloader::startRollingFilenameDiscovery() {
     // the current filename is derived from the project's own published manifest.
     // requirePinnedChecksum already validated the URL is HTTPS and well-formed.
     auto* nam = new QNetworkAccessManager(this);
-    QNetworkRequest request{QUrl(m_checksumUrl)};
-    request.setRawHeader("User-Agent", "SAK-Utility/1.0");
-    // An HTTPS request that redirects onto a plain-HTTP mirror is refused outright
-    // rather than silently followed -- the discovered filename feeds a URL that is
-    // written to removable media, so its transport must not be downgraded.
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                         QNetworkRequest::NoLessSafeRedirectPolicy);
-    // Bound the transfer so a stalled peer aborts and surfaces an error via the finished
-    // handler instead of hanging (the oversize guard below only fires once bytes arrive).
-    request.setTransferTimeout(sak::kHttpMetadataTransferTimeoutMs);
-
     const quint64 generation = m_operationGeneration.load();
-    auto* reply = nam->get(request);
-    // Fail closed on an oversized response so readAll() can never buffer an
-    // unbounded body into memory.
-    connect(reply, &QNetworkReply::downloadProgress, reply, [reply](qint64 received, qint64 total) {
-        if (received > kMaxChecksumBytes || total > kMaxChecksumBytes) {
-            reply->abort();
-        }
-    });
+    QNetworkReply* reply = sak::startNetworkMetadataGet(
+        *nam,
+        {.url = QUrl(m_checksumUrl),
+         .raw_headers = {{QByteArrayLiteral("User-Agent"), QByteArrayLiteral("SAK-Utility/1.0")}},
+         .timeout_ms = sak::kHttpMetadataTransferTimeoutMs,
+         .max_response_bytes = kMaxChecksumBytes});
+    m_pendingMetadataReplies.append(reply);
     connect(reply, &QNetworkReply::finished, this, [this, reply, nam, generation]() {
         onRollingFilenameReplyFinished(reply, nam, generation);
     });
@@ -256,6 +244,7 @@ void LinuxISODownloader::onRollingFilenameReplyFinished(QNetworkReply* reply,
                                                         quint64 generation) {
     Q_ASSERT(reply);
     Q_ASSERT(nam);
+    m_pendingMetadataReplies.removeOne(reply);
     reply->deleteLater();
     nam->deleteLater();
 
@@ -263,15 +252,16 @@ void LinuxISODownloader::onRollingFilenameReplyFinished(QNetworkReply* reply,
         return;  // cancelled, or superseded by a newer download
     }
 
-    if (reply->error() != QNetworkReply::NoError) {
-        const QString error = checksumFetchErrorMessage(reply);
+    const sak::NetworkTransferResult result = sak::takeNetworkMetadataResult(reply);
+    if (!result.success) {
+        const QString error = checksumFetchErrorMessage(reply, result);
         sak::logWarning(error.toStdString());
         setPhase(Phase::Failed, "Filename discovery failed");
         Q_EMIT downloadError(error);
         return;
     }
 
-    const QString checksumData = QString::fromUtf8(reply->readAll());
+    const QString checksumData = QString::fromUtf8(result.body);
     const QString filename = LinuxDistroCatalog::filenameFromChecksums(checksumData,
                                                                        m_rollingFilenamePattern);
     if (filename.isEmpty()) {
@@ -773,6 +763,7 @@ void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply,
     // QNetworkAccessManager::get returned for it; neither can be null.
     Q_ASSERT(reply);
     Q_ASSERT(nam);
+    m_pendingMetadataReplies.removeOne(reply);
     reply->deleteLater();
     nam->deleteLater();
 
@@ -780,15 +771,16 @@ void LinuxISODownloader::onChecksumReplyFinished(QNetworkReply* reply,
         return;  // cancelled, or superseded by a newer download; emit no terminal signal
     }
 
-    if (reply->error() != QNetworkReply::NoError) {
-        const QString error = checksumFetchErrorMessage(reply);
+    const sak::NetworkTransferResult result = sak::takeNetworkMetadataResult(reply);
+    if (!result.success) {
+        const QString error = checksumFetchErrorMessage(reply, result);
         sak::logWarning(error.toStdString());
         setPhase(Phase::Failed, "Checksum fetch failed");
         Q_EMIT downloadError(error);
         return;
     }
 
-    const QString checksumData = QString::fromUtf8(reply->readAll());
+    const QString checksumData = QString::fromUtf8(result.body);
     const QString expectedFileName = QFileInfo(m_savePath).fileName();
     const QString expectedHash = parseExpectedHash(checksumData, expectedFileName);
 
@@ -871,33 +863,18 @@ void LinuxISODownloader::verifyChecksum() {
 
     // Fetch checksum file
     auto* nam = new QNetworkAccessManager(this);
-    const QUrl checksumUrl(m_checksumUrl);
-    QNetworkRequest request(checksumUrl);
-    request.setRawHeader("User-Agent", "SAK-Utility/1.0");
-    // The checksum is the only thing standing between a mirror-served ISO and the disk it is
-    // written to, so its own transport must not be downgraded. Pinned explicitly rather than
-    // left to the framework default: an HTTPS request that redirects onto a plain-HTTP mirror
-    // is refused outright instead of silently followed.
-    request.setAttribute(QNetworkRequest::RedirectPolicyAttribute,
-                         QNetworkRequest::NoLessSafeRedirectPolicy);
-    // Bound the transfer: if the peer connects then stalls without sending data, abort and
-    // surface an error via the finished handler's error() branch instead of hanging forever.
-    // The oversize guard below only fires once bytes actually arrive, so it cannot catch a stall.
-    request.setTransferTimeout(sak::kHttpMetadataTransferTimeoutMs);
-
     // Tag this fetch with the current operation generation so a reply that outlives a
     // cancel + restart is discarded instead of verifying the new download against the old
     // checksum file (which could fail it, or worse delete the new file).
     const quint64 generation = m_operationGeneration.load();
 
-    auto* reply = nam->get(request);
-    // Fail closed on an oversized checksum response: abort once the peer streams past the
-    // ceiling so readAll() below can never buffer an unbounded body into memory.
-    connect(reply, &QNetworkReply::downloadProgress, reply, [reply](qint64 received, qint64 total) {
-        if (received > kMaxChecksumBytes || total > kMaxChecksumBytes) {
-            reply->abort();
-        }
-    });
+    QNetworkReply* reply = sak::startNetworkMetadataGet(
+        *nam,
+        {.url = QUrl(m_checksumUrl),
+         .raw_headers = {{QByteArrayLiteral("User-Agent"), QByteArrayLiteral("SAK-Utility/1.0")}},
+         .timeout_ms = sak::kHttpMetadataTransferTimeoutMs,
+         .max_response_bytes = kMaxChecksumBytes});
+    m_pendingMetadataReplies.append(reply);
     connect(reply, &QNetworkReply::finished, this, [this, reply, nam, generation]() {
         onChecksumReplyFinished(reply, nam, generation);
     });
@@ -958,6 +935,13 @@ void LinuxISODownloader::cancel() {
         m_hashCancel->store(true);  // signal the self-contained hash task to stop
     }
     m_progressTimer->stop();
+    const QList<QNetworkReply*> pending_metadata = m_pendingMetadataReplies;
+    m_pendingMetadataReplies.clear();
+    for (QNetworkReply* reply : pending_metadata) {
+        if (reply != nullptr) {
+            reply->abort();
+        }
+    }
     m_catalog->cancelAll();
 
     if ((m_aria2cProcess != nullptr) && m_aria2cProcess->state() != QProcess::NotRunning) {

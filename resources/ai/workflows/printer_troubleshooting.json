@@ -33,6 +33,5 @@
     "Queue clear or service restart required approval.",
     "Driver/port/spooler status is included in report.",
     "No test page was printed unless user requested it."
-  ],
-  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+  ]
 }

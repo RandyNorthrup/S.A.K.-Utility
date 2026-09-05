@@ -24,6 +24,10 @@ namespace sak {
 
 namespace {
 
+bool cancellationRequested(const CancelCheck& should_cancel) {
+    return should_cancel && should_cancel();
+}
+
 bool jsonBool(const QJsonObject& object, const QString& key) {
     const auto value = object.value(key);
     if (value.isBool()) {
@@ -157,9 +161,9 @@ QString buildLayoutHash(const PartitionInventory& inventory) {
         // system status since planning invalidates the queue's apply hash and
         // forces a refresh + re-validation (which then applies the OS-disk block)
         // rather than dispatching a destructive op against a now-bootable disk.
-        hash.addData(QStringLiteral("%1|%2|%3|%4|%5|%6\n")
+        hash.addData(QStringLiteral("%1|%2|%3|%4|%5|%6|%7\n")
                          .arg(disk.disk_number.value())
-                         .arg(disk.serial_number, disk.partition_style)
+                         .arg(disk.unique_id, disk.serial_number, disk.partition_style)
                          .arg(disk.size_bytes)
                          .arg(disk.is_system ? 1 : 0)
                          .arg(disk.is_boot ? 1 : 0)
@@ -298,21 +302,29 @@ void appendRawProbeWarning(PartitionInventory* inventory,
             .arg(normalizedProbeError(elevatedError, QStringLiteral("not available"))));
 }
 
+struct RawProbeContext {
+    ElevationBroker* broker{nullptr};
+    bool* elevated_probe_unavailable{nullptr};
+    PartitionInventory* inventory{nullptr};
+    CancelCheck should_cancel;
+};
+
 std::optional<QByteArray> readProbeBytesWithRetry(const PartitionDiskInfo& disk,
                                                   const PartitionInfoEx& partition,
-                                                  ElevationBroker* broker,
-                                                  bool* elevatedProbeUnavailable,
-                                                  PartitionInventory* inventory) {
+                                                  const RawProbeContext& context) {
+    if (cancellationRequested(context.should_cancel)) {
+        return std::nullopt;
+    }
     QString localProbeError;
     auto bytes = PartitionFileSystemDetector::readProbeBytesFromDevicePath(
         disk.device_path, partition.offset_bytes, partition.size_bytes, &localProbeError);
-    if (bytes.has_value() || *elevatedProbeUnavailable) {
+    if (bytes.has_value() || *context.elevated_probe_unavailable) {
         return bytes;
     }
 
     const QString partitionPath = partitionDevicePath(disk, partition);
     QString partitionProbeError;
-    if (!partitionPath.isEmpty()) {
+    if (!partitionPath.isEmpty() && !cancellationRequested(context.should_cancel)) {
         bytes = PartitionFileSystemDetector::readProbeBytesFromDevicePath(
             partitionPath, 0, partition.size_bytes, &partitionProbeError);
         if (bytes.has_value()) {
@@ -327,15 +339,18 @@ std::optional<QByteArray> readProbeBytesWithRetry(const PartitionDiskInfo& disk,
                                           QStringLiteral("local partition read failed")));
     }
 
+    if (cancellationRequested(context.should_cancel)) {
+        return std::nullopt;
+    }
     QString elevatedProbeError;
-    bytes = readElevatedProbeBytes(broker, disk, partition, &elevatedProbeError);
+    bytes = readElevatedProbeBytes(context.broker, disk, partition, &elevatedProbeError);
     if (bytes.has_value()) {
         return bytes;
     }
 
-    appendRawProbeWarning(inventory, disk, partition, localProbeError, elevatedProbeError);
+    appendRawProbeWarning(context.inventory, disk, partition, localProbeError, elevatedProbeError);
     if (elevatedProbeErrorDisablesRetry(elevatedProbeError)) {
-        *elevatedProbeUnavailable = true;
+        *context.elevated_probe_unavailable = true;
     }
     return std::nullopt;
 }
@@ -395,15 +410,12 @@ std::optional<PartitionFileSystemDetection> supplementedRawFileSystemDetection(
 
 void applyRawFileSystemDetectionToPartition(const PartitionDiskInfo& disk,
                                             PartitionInfoEx* partition,
-                                            ElevationBroker* broker,
-                                            bool* elevatedProbeUnavailable,
-                                            PartitionInventory* inventory) {
-    if (!needsRawFileSystemDetection(*partition)) {
+                                            const RawProbeContext& context) {
+    if (cancellationRequested(context.should_cancel) || !needsRawFileSystemDetection(*partition)) {
         return;
     }
 
-    const auto bytes =
-        readProbeBytesWithRetry(disk, *partition, broker, elevatedProbeUnavailable, inventory);
+    const auto bytes = readProbeBytesWithRetry(disk, *partition, context);
     if (!bytes.has_value()) {
         return;
     }
@@ -415,7 +427,9 @@ void applyRawFileSystemDetectionToPartition(const PartitionDiskInfo& disk,
     }
 }
 
-void applyRawFileSystemDetection(PartitionInventory* inventory, bool allow_elevation) {
+void applyRawFileSystemDetection(PartitionInventory* inventory,
+                                 bool allow_elevation,
+                                 const CancelCheck& should_cancel) {
     if (inventory == nullptr) {
         return;
     }
@@ -429,11 +443,18 @@ void applyRawFileSystemDetection(PartitionInventory* inventory, bool allow_eleva
     bool elevatedProbeUnavailable = false;
     for (auto& disk : inventory->disks) {
         for (auto& partition : disk.partitions) {
+            if (cancellationRequested(should_cancel)) {
+                inventory->warnings.append(QStringLiteral("Inventory scan cancelled"));
+                return;
+            }
             if (allow_elevation && !elevatedBroker && needsRawFileSystemDetection(partition)) {
                 elevatedBroker = std::make_unique<ElevationBroker>();
             }
-            applyRawFileSystemDetectionToPartition(
-                disk, &partition, elevatedBroker.get(), &elevatedProbeUnavailable, inventory);
+            const RawProbeContext context{.broker = elevatedBroker.get(),
+                                          .elevated_probe_unavailable = &elevatedProbeUnavailable,
+                                          .inventory = inventory,
+                                          .should_cancel = should_cancel};
+            applyRawFileSystemDetectionToPartition(disk, &partition, context);
         }
     }
 }
@@ -443,6 +464,7 @@ PartitionDiskInfo parseDisk(const QJsonObject& object) {
     disk.disk_number =
         DiskNumber{static_cast<uint32_t>(object.value(QStringLiteral("Number")).toInt())};
     disk.device_path = QStringLiteral("\\\\.\\PhysicalDrive%1").arg(disk.disk_number.value());
+    disk.unique_id = object.value(QStringLiteral("UniqueId")).toString().trimmed();
     disk.model = object.value(QStringLiteral("FriendlyName")).toString();
     disk.serial_number = object.value(QStringLiteral("SerialNumber")).toString();
     disk.bus_type = object.value(QStringLiteral("BusType")).toString();
@@ -580,10 +602,12 @@ void appendInventoryMetadataWarnings(PartitionInventory* inventory) {
 StorageInventoryWorker::StorageInventoryWorker(QObject* parent) : QObject(parent) {}
 
 PartitionInventory StorageInventoryWorker::scan() {
-    auto inventory = scanCurrentSystem();
+    auto scan_result = scanCurrentSystemResult(true, [this]() { return m_cancelled.load(); });
+    auto& inventory = scan_result.inventory;
     // Fail closed: an empty inventory OR a disk whose partition enumeration failed is not a
     // faithful picture of the machine's storage, so it is never published as a ready inventory.
-    if (inventory.isEmpty() || inventory.hasPartitionEnumerationFailure()) {
+    if (scan_result.cancelled || inventory.isEmpty() ||
+        inventory.hasPartitionEnumerationFailure()) {
         const QString message = inventory.warnings.isEmpty()
                                     ? QStringLiteral("Inventory scan failed")
                                     : inventory.warnings.join(QStringLiteral("; "));
@@ -594,22 +618,41 @@ PartitionInventory StorageInventoryWorker::scan() {
     return inventory;
 }
 
-PartitionInventory StorageInventoryWorker::scanCurrentSystem(bool allow_elevation) {
-    const auto result =
-        runPowerShell(inventoryPowerShellScript(), sak::kTimeoutProcessLongMs, true, true);
+void StorageInventoryWorker::cancel() noexcept {
+    m_cancelled.store(true);
+}
+
+PartitionInventory StorageInventoryWorker::scanCurrentSystem(bool allow_elevation,
+                                                             const CancelCheck& should_cancel) {
+    return scanCurrentSystemResult(allow_elevation, should_cancel).inventory;
+}
+
+StorageInventoryScanResult StorageInventoryWorker::scanCurrentSystemResult(
+    bool allow_elevation, const CancelCheck& should_cancel) {
+    const auto result = runPowerShell(
+        inventoryPowerShellScript(), sak::kTimeoutProcessLongMs, true, true, should_cancel);
     if (!result.succeeded()) {
         PartitionInventory inventory;
         inventory.captured_at = QDateTime::currentDateTime();
-        inventory.warnings.append(result.std_err.trimmed().isEmpty()
-                                      ? QStringLiteral("Inventory scan failed")
-                                      : result.std_err.trimmed());
-        return inventory;
+        if (result.cancelled || cancellationRequested(should_cancel)) {
+            inventory.warnings.append(QStringLiteral("Inventory scan cancelled"));
+        } else {
+            inventory.warnings.append(result.std_err.trimmed().isEmpty()
+                                          ? QStringLiteral("Inventory scan failed")
+                                          : result.std_err.trimmed());
+        }
+        return {.inventory = std::move(inventory),
+                .cancelled = result.cancelled || cancellationRequested(should_cancel)};
     }
 
     auto inventory = parseInventoryJson(result.std_out.toUtf8());
-    applyRawFileSystemDetection(&inventory, allow_elevation);
+    applyRawFileSystemDetection(&inventory, allow_elevation, should_cancel);
+    if (cancellationRequested(should_cancel) &&
+        !inventory.warnings.contains(QStringLiteral("Inventory scan cancelled"))) {
+        inventory.warnings.append(QStringLiteral("Inventory scan cancelled"));
+    }
     inventory.layout_hash = buildLayoutHash(inventory);
-    return inventory;
+    return {.inventory = std::move(inventory), .cancelled = cancellationRequested(should_cancel)};
 }
 
 PartitionInventory StorageInventoryWorker::parseInventoryJson(const QByteArray& json_data) {
@@ -737,6 +780,7 @@ $disks = Get-Disk | ForEach-Object {
   $partitionQuery = Get-SakPartitionsForDisk -DiskNumber $disk.Number
   [pscustomobject]@{
     Number = $disk.Number
+    UniqueId = "$($disk.UniqueId)"
     FriendlyName = $disk.FriendlyName
     SerialNumber = $disk.SerialNumber
     HealthStatus = "$($disk.HealthStatus)"

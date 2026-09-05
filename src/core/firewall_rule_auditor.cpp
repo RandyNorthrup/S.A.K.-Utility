@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <bitset>
+#include <functional>
 #include <limits>
 #include <optional>
 
@@ -521,13 +522,12 @@ QVector<FirewallRule> FirewallRuleAuditor::findRulesByName(const QString& nameFi
 
 namespace {
 
-// The returned enumerator is only usable while the caller's apartment stays initialized, so
-// `com` is a non-const lvalue reference: that makes passing a temporary ComInitializer a compile
-// error rather than a CoUninitialize that lands before the caller has finished enumerating.
-// cppcheck-suppress constParameterReference ; a const& would bind a temporary ComInitializer
-std::optional<ComPtr<IEnumVARIANT>> initFirewallRuleEnumerator(ComInitializer& com,
-                                                               QString& error_out) {
-    if (!com.ok()) {
+// The returned enumerator is only usable while the caller's apartment stays initialized.
+// reference_wrapper is non-null and cannot bind a temporary, so CoUninitialize cannot land before
+// the caller has finished enumerating.
+std::optional<ComPtr<IEnumVARIANT>> initFirewallRuleEnumerator(
+    std::reference_wrapper<ComInitializer> com, QString& error_out) {
+    if (!com.get().ok()) {
         error_out = QStringLiteral("Failed to initialize COM");
         return std::nullopt;
     }
@@ -614,7 +614,7 @@ QVector<FirewallRule> FirewallRuleAuditor::enumerateViaCOM() {
 
     ComInitializer com;
     QString error_msg;
-    auto enumerator = initFirewallRuleEnumerator(com, error_msg);
+    auto enumerator = initFirewallRuleEnumerator(std::ref(com), error_msg);
     if (!enumerator) {
         m_enumerationOk = false;
         if (!error_msg.isEmpty()) {

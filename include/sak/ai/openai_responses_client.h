@@ -12,12 +12,17 @@
 #include <QStringList>
 #include <QVector>
 
+#include <expected>
+
+class OpenAIResponsesClientTests;
 class QNetworkReply;
 
 namespace sak::ai {
 
 class OpenAIResponsesClient : public QObject {
     Q_OBJECT
+
+    friend class ::OpenAIResponsesClientTests;
 
 public:
     explicit OpenAIResponsesClient(QObject* parent = nullptr);
@@ -56,8 +61,12 @@ Q_SIGNALS:
 private:
     [[nodiscard]] QNetworkRequest buildRequest(const QString& path, const QString& api_key) const;
     [[nodiscard]] QByteArray buildResponsePayload(const OpenAIResponseRequest& request) const;
+    void attachCreateReply(QNetworkReply* reply, qint64 max_bytes);
     void setCurrentReply(QNetworkReply* reply);
     void clearCurrentReply(QNetworkReply* reply);
+    void watchReplyBody(QNetworkReply* reply, qint64 max_bytes, const QString& limit_error);
+    [[nodiscard]] static std::expected<QByteArray, QString> readBoundedReplyBody(
+        QNetworkReply* reply, qint64 max_bytes, const QString& limit_error);
     void handleCreateFinished(QNetworkReply* reply);
     void handleModelsFinished(QNetworkReply* reply);
     void handleInputTokenCountFinished(QNetworkReply* reply, const QString& request_id);

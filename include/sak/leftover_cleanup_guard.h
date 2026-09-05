@@ -64,13 +64,14 @@ inline constexpr int kMaxCleanupPathLength = 4096;
     static const QStringList kHives = {QStringLiteral("HKLM\\"),
                                        QStringLiteral("HKCU\\"),
                                        QStringLiteral("HKCR\\")};
-    for (const QString& hive : kHives) {
-        if (fullKeyPath.startsWith(hive, Qt::CaseInsensitive)) {
-            subkeyOut = fullKeyPath.mid(hive.size());
-            return true;
-        }
+    const auto hive = std::ranges::find_if(kHives, [&fullKeyPath](const QString& candidate) {
+        return fullKeyPath.startsWith(candidate, Qt::CaseInsensitive);
+    });
+    if (hive == kHives.cend()) {
+        return false;
     }
-    return false;
+    subkeyOut = fullKeyPath.mid(hive->size());
+    return true;
 }
 
 /// Lower-cased, backslash-normalized subkey with leading/trailing/repeated separators collapsed, so
@@ -243,12 +244,13 @@ inline constexpr int kMaxCleanupPathLength = 4096;
 
 /// True if @p normalizedSubkey lands in an OS-critical registry subtree (prefix block).
 [[nodiscard]] inline QString cleanupProtectedRegistrySubtree(const QString& normalizedSubkey) {
-    for (const QString& prefix : cleanupDeniedRegistryPrefixes()) {
-        if (normalizedSubkey == prefix || normalizedSubkey.startsWith(prefix + QLatin1Char('\\'))) {
-            return prefix;
-        }
-    }
-    return {};
+    const QStringList& prefixes = cleanupDeniedRegistryPrefixes();
+    const auto prefix =
+        std::ranges::find_if(prefixes, [&normalizedSubkey](const QString& candidate) {
+            return normalizedSubkey == candidate ||
+                   normalizedSubkey.startsWith(candidate + QLatin1Char('\\'));
+        });
+    return prefix == prefixes.cend() ? QString() : *prefix;
 }
 
 /// Screen a registry KEY-tree deletion (RegDeleteTreeW deletes the key and ALL subkeys).

@@ -34,6 +34,5 @@
     "Risky reset commands were approved before running.",
     "Verification includes adapter, gateway, DNS, and endpoint checks.",
     "Report lists commands run and rollback/follow-up guidance."
-  ],
-  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+  ]
 }

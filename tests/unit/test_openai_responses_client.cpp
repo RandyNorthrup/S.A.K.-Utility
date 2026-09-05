@@ -6,10 +6,16 @@
 
 #include <QEventLoop>
 #include <QJsonDocument>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
+#include <QSignalSpy>
 #include <QTimer>
 #include <QtTest/QtTest>
+#include <QUrl>
 
 #include <algorithm>
+#include <cstring>
 
 class OpenAIResponsesClientTests : public QObject {
     Q_OBJECT
@@ -36,6 +42,10 @@ private Q_SLOTS:
     void buildPayload_functionOutputsRetainUntrustedUserContext();
     void rejectsMalformedUntrustedInputMessages();
     void rejectsUpstreamValidationError();
+    void liveResponseReadyReadOverflowAborts();
+    void liveResponseDownloadProgressOverflowAborts();
+    void finalResponseBodyCapRejectsUnderreportedOverflow();
+    void userCancellationIsNotClassifiedAsResponseFailure();
     void buildPayload_functionToolsUseStrictSchemas();
     void buildPayload_providerGatewayArgumentsAreStrictSchemaSafe();
     void buildPayload_packageToolWarnsAgainstScanInstalls();
@@ -46,6 +56,75 @@ private Q_SLOTS:
 };
 
 namespace {
+
+constexpr qint64 kInjectedBodyLimitBytes = 32;
+constexpr qint64 kInjectedOversizedBodyBytes = kInjectedBodyLimitBytes + 1;
+
+class InjectedNetworkReply final : public QNetworkReply {
+public:
+    explicit InjectedNetworkReply(QObject* parent = nullptr) : QNetworkReply(parent) {
+        const QNetworkRequest request(QUrl(QStringLiteral("https://api.openai.com/v1/responses")));
+        setRequest(request);
+        setUrl(request.url());
+        setOperation(QNetworkAccessManager::PostOperation);
+        open(QIODevice::ReadOnly);
+    }
+
+    void abort() override {
+        if (isFinished()) {
+            return;
+        }
+        m_aborted = true;
+        setError(QNetworkReply::OperationCanceledError, QStringLiteral("Operation canceled"));
+        setFinished(true);
+        Q_EMIT finished();
+    }
+
+    void appendBody(const QByteArray& bytes) {
+        m_body.append(bytes);
+        Q_EMIT readyRead();
+    }
+
+    void reportProgress(qint64 received, qint64 total) { Q_EMIT downloadProgress(received, total); }
+
+    void finish() {
+        setFinished(true);
+        Q_EMIT finished();
+    }
+
+    void setUnderreportedBytesAvailable(bool underreported) {
+        m_underreported_bytes_available = underreported;
+    }
+
+    [[nodiscard]] bool wasAborted() const noexcept { return m_aborted; }
+    [[nodiscard]] qint64 bytesReadByConsumer() const noexcept { return m_offset; }
+
+    [[nodiscard]] qint64 bytesAvailable() const override {
+        const qint64 remaining = m_body.size() - m_offset;
+        const qint64 visible = m_underreported_bytes_available && remaining > 0 ? 1 : remaining;
+        return visible + QNetworkReply::bytesAvailable();
+    }
+
+protected:
+    qint64 readData(char* data, qint64 max_size) override {
+        const qint64 remaining = m_body.size() - m_offset;
+        if (remaining <= 0) {
+            return -1;
+        }
+        const qint64 count = std::min(remaining, max_size);
+        std::memcpy(data, m_body.constData() + m_offset, static_cast<std::size_t>(count));
+        m_offset += count;
+        return count;
+    }
+
+    qint64 writeData(const char*, qint64) override { return -1; }
+
+private:
+    QByteArray m_body;
+    qint64 m_offset{0};
+    bool m_aborted{false};
+    bool m_underreported_bytes_available{false};
+};
 
 [[nodiscard]] QJsonObject payloadObject(const sak::ai::OpenAIResponseRequest& request) {
     const QByteArray payload =
@@ -838,6 +917,94 @@ void OpenAIResponsesClientTests::rejectsUpstreamValidationError() {
     QCOMPARE(count_failed_spy.count(), 1);
     QCOMPARE(count_failed_spy.first().at(0).toString(), QStringLiteral("invalid_access_mode"));
     QCOMPARE(count_failed_spy.first().at(1).toString(), request.validation_error);
+}
+
+void OpenAIResponsesClientTests::liveResponseReadyReadOverflowAborts() {
+    sak::ai::OpenAIResponsesClient client;
+    auto* reply = new InjectedNetworkReply(&client);
+    QSignalSpy failed(&client, &sak::ai::OpenAIResponsesClient::requestFailed);
+    QSignalSpy finished(&client, &sak::ai::OpenAIResponsesClient::requestFinished);
+    QSignalSpy ready(&client, &sak::ai::OpenAIResponsesClient::responseReady);
+    client.attachCreateReply(reply, kInjectedBodyLimitBytes);
+    QCOMPARE(reply->readBufferSize(), kInjectedOversizedBodyBytes);
+
+    reply->appendBody(QByteArray(kInjectedOversizedBodyBytes, 'x'));
+
+    QVERIFY(reply->wasAborted());
+    QCOMPARE(failed.count(), 1);
+    QCOMPARE(failed.first().at(0).toString(),
+             QStringLiteral("OpenAI response body exceeds the size limit"));
+    QCOMPARE(finished.count(), 1);
+    QCOMPARE(ready.count(), 0);
+    QVERIFY(!client.isBusy());
+}
+
+void OpenAIResponsesClientTests::liveResponseDownloadProgressOverflowAborts() {
+    sak::ai::OpenAIResponsesClient client;
+    auto* reply = new InjectedNetworkReply(&client);
+    QSignalSpy failed(&client, &sak::ai::OpenAIResponsesClient::requestFailed);
+    QSignalSpy finished(&client, &sak::ai::OpenAIResponsesClient::requestFinished);
+    client.attachCreateReply(reply, kInjectedBodyLimitBytes);
+    reply->reportProgress(1, kInjectedOversizedBodyBytes);
+
+    QVERIFY(reply->wasAborted());
+    QCOMPARE(failed.count(), 1);
+    QCOMPARE(failed.first().at(0).toString(),
+             QStringLiteral("OpenAI response body exceeds the size limit"));
+    QCOMPARE(finished.count(), 1);
+    QVERIFY(!client.isBusy());
+}
+
+void OpenAIResponsesClientTests::finalResponseBodyCapRejectsUnderreportedOverflow() {
+    InjectedNetworkReply exact_reply;
+    const QByteArray exact_body(kInjectedBodyLimitBytes, 'x');
+    exact_reply.appendBody(exact_body);
+    exact_reply.finish();
+    const auto accepted = sak::ai::OpenAIResponsesClient::readBoundedReplyBody(
+        &exact_reply,
+        kInjectedBodyLimitBytes,
+        QStringLiteral("OpenAI response body exceeds the size limit"));
+    QVERIFY(accepted.has_value());
+    QCOMPARE(*accepted, exact_body);
+
+    InjectedNetworkReply visible_overflow;
+    visible_overflow.appendBody(QByteArray(kInjectedOversizedBodyBytes, 'x'));
+    const auto rejected_before_read = sak::ai::OpenAIResponsesClient::readBoundedReplyBody(
+        &visible_overflow,
+        kInjectedBodyLimitBytes,
+        QStringLiteral("OpenAI response body exceeds the size limit"));
+    QVERIFY(!rejected_before_read.has_value());
+    QVERIFY(visible_overflow.wasAborted());
+    QCOMPARE(visible_overflow.bytesReadByConsumer(), qint64{0});
+
+    InjectedNetworkReply reply;
+    reply.setUnderreportedBytesAvailable(true);
+    reply.appendBody(QByteArray(kInjectedOversizedBodyBytes, 'x'));
+    reply.finish();
+
+    const auto body = sak::ai::OpenAIResponsesClient::readBoundedReplyBody(
+        &reply,
+        kInjectedBodyLimitBytes,
+        QStringLiteral("OpenAI response body exceeds the size limit"));
+
+    QVERIFY(!body.has_value());
+    QCOMPARE(body.error(), QStringLiteral("OpenAI response body exceeds the size limit"));
+    QCOMPARE(reply.bytesReadByConsumer(), kInjectedOversizedBodyBytes);
+}
+
+void OpenAIResponsesClientTests::userCancellationIsNotClassifiedAsResponseFailure() {
+    sak::ai::OpenAIResponsesClient client;
+    auto* reply = new InjectedNetworkReply(&client);
+    QSignalSpy failed(&client, &sak::ai::OpenAIResponsesClient::requestFailed);
+    QSignalSpy finished(&client, &sak::ai::OpenAIResponsesClient::requestFinished);
+    client.attachCreateReply(reply, kInjectedBodyLimitBytes);
+
+    client.cancel();
+
+    QVERIFY(reply->wasAborted());
+    QCOMPARE(failed.count(), 0);
+    QCOMPARE(finished.count(), 1);
+    QVERIFY(!client.isBusy());
 }
 
 void OpenAIResponsesClientTests::buildPayload_functionToolsUseStrictSchemas() {

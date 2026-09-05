@@ -17,6 +17,8 @@
 
 namespace sak {
 
+inline constexpr uint16_t kHfsCaseFoldPageOffsetMask = 0x00FF;
+
 inline constexpr uint16_t kHfsLowerCaseTable[] = {
     0x0100, 0x0200, 0x0000, 0x0300, 0x0400, 0x0500, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
     0x0000, 0x0000, 0x0000, 0x0000, 0x0600, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000,
@@ -266,7 +268,7 @@ static_assert(sizeof(kHfsLowerCaseTable) / sizeof(kHfsLowerCaseTable[0]) == 2816
         folded = units[(*index)++];
         const uint16_t page = kHfsLowerCaseTable[folded >> 8];
         if (page != 0) {
-            folded = kHfsLowerCaseTable[page + (folded & 0x00FF)];
+            folded = kHfsLowerCaseTable[page + (folded & kHfsCaseFoldPageOffsetMask)];
         }
     }
     return folded;

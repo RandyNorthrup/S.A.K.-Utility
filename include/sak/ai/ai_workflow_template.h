@@ -46,13 +46,6 @@ struct WorkflowPhase {
     bool always_run{false};
 };
 
-struct WorkflowCancelPolicy {
-    bool cancel_children{true};
-    bool cancel_tools{true};
-    bool preserve_partial_artifacts{true};
-    bool report_partial_state{true};
-};
-
 struct WorkflowTemplate {
     int schema_version{0};
     QString id;
@@ -69,8 +62,6 @@ struct WorkflowTemplate {
     QVector<WorkflowAgent> agents;
     QVector<WorkflowPhase> phases;
     QStringList acceptance_criteria;
-    WorkflowCancelPolicy cancel_policy;
-
     [[nodiscard]] bool isValid(QStringList* errors = nullptr) const;
     [[nodiscard]] QString promptSummary() const;
 

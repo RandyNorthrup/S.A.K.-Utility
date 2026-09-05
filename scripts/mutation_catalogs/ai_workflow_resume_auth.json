@@ -1,0 +1,152 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_ai_assistant_panel_tool_dispatch",
+  "ctest_regex": "^test_ai_assistant_panel_tool_dispatch$",
+  "mutants": [
+    {
+      "id": "unsigned-legacy-resume-state-is-accepted",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "std::expected<QJsonObject, QString> AiAssistantPanel::unprotectWorkflowResumeState(\r\n    const QJsonObject& protected_state) {",
+      "replace": "std::expected<QJsonObject, QString> AiAssistantPanel::unprotectWorkflowResumeState(\r\n    const QJsonObject& protected_state) {\r\n    if (protected_state.value(QStringLiteral(\"schema\")).toString() == QLatin1String(\"sak.ai.workflow_recovery_resume.v1\")) { return protected_state; }",
+      "expect": "killed",
+      "why": "workflowResumeSnapshotRequiresDpapiAuthentication intentionally refuses old plaintext/unsigned snapshots rather than replaying them."
+    },
+    {
+      "id": "protected-envelope-is-used-without-dpapi-authentication",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "    return authenticatedWorkflowResumeObject(*ciphertext);",
+      "replace": "    return protected_state;",
+      "expect": "killed",
+      "why": "workflowResumeSnapshotRequiresDpapiAuthentication requires a DPAPI-authenticated plaintext object and rejects modified ciphertext."
+    },
+    {
+      "id": "resume-snapshot-omits-pre-generated-gate-binding",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "    resume_state[QStringLiteral(\"gate_id\")] = gate_id;",
+      "replace": "    resume_state[QStringLiteral(\"gate_id\")] = gate_id + QStringLiteral(\"_created_too_late\");",
+      "expect": "killed",
+      "why": "workflowResumeSnapshotBindsGeneratedGateBeforeProtection proves the gate identity exists inside the authenticated snapshot before persistence."
+    },
+    {
+      "id": "resume-current-gate-id-binding-is-bypassed",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "    if (resume_state.value(QStringLiteral(\"gate_id\")).toString() != gate.gate_id ||",
+      "replace": "    if ((gate.gate_id.isEmpty() && resume_state.value(QStringLiteral(\"gate_id\")).toString() != gate.gate_id) ||",
+      "expect": "killed",
+      "why": "workflowResumeBindingRejectsStaleContext refuses a validly authenticated snapshot copied from a different gate."
+    },
+    {
+      "id": "resume-current-gate-phase-binding-is-bypassed",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "        resume_state.value(QStringLiteral(\"gate_phase_id\")).toString() != gate.phase_id) {",
+      "replace": "        (gate.phase_id.isEmpty() && resume_state.value(QStringLiteral(\"gate_phase_id\")).toString() != gate.phase_id)) {",
+      "expect": "killed",
+      "why": "workflowResumeBindingRejectsStaleContext refuses a snapshot created for a different recovery phase."
+    },
+    {
+      "id": "resume-current-run-binding-is-bypassed",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "    if (resume_state.value(QStringLiteral(\"run_id\")).toString() != gate.run_id ||",
+      "replace": "    if ((gate.run_id.isEmpty() && resume_state.value(QStringLiteral(\"run_id\")).toString() != gate.run_id) ||",
+      "expect": "killed",
+      "why": "workflowResumeBindingRejectsStaleContext refuses reuse across runs even when other snapshot fields are unchanged."
+    },
+    {
+      "id": "resume-current-workflow-binding-is-bypassed",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "        resume_state.value(QStringLiteral(\"workflow_id\")).toString() != gate.workflow_id ||",
+      "replace": "        (gate.workflow_id.isEmpty() && resume_state.value(QStringLiteral(\"workflow_id\")).toString() != gate.workflow_id) ||",
+      "expect": "killed",
+      "why": "workflowResumeBindingRejectsStaleContext refuses reuse across workflows even when run and gate fields match."
+    },
+    {
+      "id": "resume-workflow-revision-binding-is-bypassed",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "        resume_state.value(QStringLiteral(\"workflow_revision\")).toString() != *revision) {",
+      "replace": "        (workflow.id.isEmpty() && resume_state.value(QStringLiteral(\"workflow_revision\")).toString() != *revision)) {",
+      "expect": "killed",
+      "why": "workflowResumeBindingRejectsStaleContext refuses a snapshot after its workflow definition changes."
+    },
+    {
+      "id": "resume-next-phase-binding-is-bypassed",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "        start_index != next_index || next_index != history.toArray().size()) {",
+      "replace": "        (workflow.id.isEmpty() && start_index != next_index) || (workflow.id.isEmpty() && next_index != history.toArray().size())) {",
+      "expect": "killed",
+      "why": "workflowResumeBindingRejectsStaleContext requires next_phase_index to match both trusted history length and resume start."
+    },
+    {
+      "id": "resume-zero-generation-is-accepted",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "    if (!generation.isDouble() || !std::isfinite(raw_generation) || raw_generation <= 0.0 ||",
+      "replace": "    if (!generation.isDouble() || !std::isfinite(raw_generation) || raw_generation < 0.0 ||",
+      "expect": "killed",
+      "why": "workflowResumeBindingRejectsStaleContext requires positive monotonic resume generations."
+    },
+    {
+      "id": "resume-fractional-generation-is-accepted",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "        std::floor(raw_generation) != raw_generation) {",
+      "replace": "        (resume_state.isEmpty() && std::floor(raw_generation) != raw_generation)) {",
+      "expect": "killed",
+      "why": "workflowResumeBindingRejectsStaleContext requires an exact integer generation before conversion to qint64."
+    },
+    {
+      "id": "resume-consumed-generation-is-replayed",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "    if (*latest_generation >= generation) {",
+      "replace": "    if (run_id.isEmpty() && *latest_generation >= generation) {",
+      "expect": "killed",
+      "why": "workflowResumeGenerationConsumptionIsAtomic requires one winner and refuses same or older generations for the run."
+    },
+    {
+      "id": "corrupt-resume-generation-state-is-treated-as-zero",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "    if (!parsed || persisted < 0) {",
+      "replace": "    if (!parsed && persisted < 0) {",
+      "expect": "killed",
+      "why": "workflowResumeGenerationStateCorruptionFailsClosed prevents damaged anti-replay state from resetting the monotonic counter."
+    },
+    {
+      "id": "server-auto-truncation-is-reenabled",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "    request.truncation = QStringLiteral(\"disabled\");",
+      "replace": "    request.truncation = QStringLiteral(\"auto\");",
+      "expect": "killed",
+      "why": "contextWindowPolicyNeverEnablesServerAutoDrop requires explicit refusal instead of server-side context loss."
+    },
+    {
+      "id": "persisted-gate-id-differs-from-protected-snapshot",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "            : preferred_gate_id.trimmed();",
+      "replace": "            : preferred_gate_id.trimmed() + QStringLiteral(\"_late\");",
+      "expect": "killed",
+      "why": "workflowRecoveryGatePersistsPreGeneratedIdentity requires the persisted gate to use the exact ID already authenticated inside its resume snapshot."
+    },
+    {
+      "id": "resume-protect-caller-plaintext-is-not-wiped",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "        qScopeGuard([&plaintext]() { wipeWorkflowResumePlaintext(&plaintext); });",
+      "replace": "        qScopeGuard([&plaintext]() { plaintext.squeeze(); });",
+      "expect": "killed",
+      "why": "workflowResumePlaintextBuffersAreWipedOnEveryExit requires the caller-owned serialized resume plaintext to be zeroed after DPAPI protection."
+    },
+    {
+      "id": "resume-unprotect-decrypted-plaintext-is-not-wiped",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "        qScopeGuard([&plaintext]() { wipeWorkflowResumePlaintext(&*plaintext); });",
+      "replace": "        qScopeGuard([&plaintext]() { plaintext->squeeze(); });",
+      "expect": "killed",
+      "why": "workflowResumePlaintextBuffersAreWipedOnEveryExit requires authenticated plaintext to be zeroed after both successful and failed JSON parsing."
+    },
+    {
+      "id": "context-pressure-ui-claims-server-auto-truncation",
+      "file": "src/gui/ai_assistant_panel.cpp",
+      "find": "            ? tr(\"Context window ~%1% full (%2 of %3 tokens). Full-context requests are refused \"",
+      "replace": "            ? tr(\"Context window ~%1% full (%2 of %3 tokens). The server is auto-truncating \"",
+      "expect": "killed",
+      "why": "contextPressureMessageDescribesLocalRefusal requires truthful wording: local refusal and disabled server truncation."
+    }
+  ]
+}

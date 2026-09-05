@@ -60,6 +60,7 @@
 #include <QString>
 #include <QStringList>
 
+#include <algorithm>
 #include <cmath>
 #include <expected>
 #include <functional>
@@ -2712,12 +2713,10 @@ QJsonObject setAdapterDhcpParamsSchema() {
 // so a prompt-injected or bogus name is refused before any command runs.
 QString resolveEthernetAdapter(EthernetConfigManager& manager, const QString& requested) {
     const QStringList adapters = manager.listEthernetAdapters();
-    for (const QString& candidate : adapters) {
-        if (candidate.compare(requested, Qt::CaseInsensitive) == 0) {
-            return candidate;
-        }
-    }
-    return QString();
+    const auto resolved = std::ranges::find_if(adapters, [&requested](const QString& candidate) {
+        return candidate.compare(requested, Qt::CaseInsensitive) == 0;
+    });
+    return resolved == adapters.cend() ? QString() : *resolved;
 }
 
 // Reset a named network adapter (Ethernet or Wi-Fi) to automatic (DHCP) via EthernetConfigManager
@@ -4252,14 +4251,16 @@ std::optional<AppActionResult> validatePartitionApplyArgs(const QJsonObject& arg
                                                   QStringLiteral("payload"),
                                                   QStringLiteral("confirm_layout_hash"),
                                                   QStringLiteral("dry_run")};
-    for (const QString& key : args.keys()) {
-        if (!kAllowedApplyArgs.contains(key)) {
-            return AppActionResult{false,
-                                   QStringLiteral(
-                                       "Unknown argument '%1' for apply_operation (allowed: %2)")
-                                       .arg(key, kAllowedApplyArgs.join(QStringLiteral(", "))),
-                                   {}};
-        }
+    const QStringList argument_keys = args.keys();
+    const auto unknown_key = std::ranges::find_if(argument_keys, [](const QString& key) {
+        return !kAllowedApplyArgs.contains(key);
+    });
+    if (unknown_key != argument_keys.cend()) {
+        return AppActionResult{false,
+                               QStringLiteral(
+                                   "Unknown argument '%1' for apply_operation (allowed: %2)")
+                                   .arg(*unknown_key, kAllowedApplyArgs.join(QStringLiteral(", "))),
+                               {}};
     }
     if (!args.value(QStringLiteral("disk_number")).isDouble()) {
         return AppActionResult{false,
@@ -4301,13 +4302,11 @@ FlashTargetResolution resolveFlashTarget(const PartitionInventory& inventory, in
             QStringLiteral("Refusing to flash: the disk inventory scan reported "
                            "warnings and cannot be trusted to identify the system disk"));
     }
-    const PartitionDiskInfo* target = nullptr;
-    for (const PartitionDiskInfo& disk : inventory.disks) {
-        if (static_cast<int>(disk.disk_number.value()) == disk_number) {
-            target = &disk;
-            break;
-        }
-    }
+    const auto target_it =
+        std::ranges::find_if(inventory.disks, [disk_number](const PartitionDiskInfo& disk) {
+            return static_cast<int>(disk.disk_number.value()) == disk_number;
+        });
+    const PartitionDiskInfo* target = target_it == inventory.disks.cend() ? nullptr : &(*target_it);
     if (target == nullptr) {
         return refuse(QStringLiteral("No physical disk with number %1 was found").arg(disk_number));
     }
@@ -4402,13 +4401,11 @@ PartitionApplyResolution resolvePartitionApplyTarget(const PartitionInventory& i
                            "(confirm_layout_hash does not match the current inventory); re-run "
                            "preview_operation and retry"));
     }
-    const PartitionDiskInfo* target = nullptr;
-    for (const PartitionDiskInfo& disk : inventory.disks) {
-        if (static_cast<int>(disk.disk_number.value()) == disk_number) {
-            target = &disk;
-            break;
-        }
-    }
+    const auto target_it =
+        std::ranges::find_if(inventory.disks, [disk_number](const PartitionDiskInfo& disk) {
+            return static_cast<int>(disk.disk_number.value()) == disk_number;
+        });
+    const PartitionDiskInfo* target = target_it == inventory.disks.cend() ? nullptr : &(*target_it);
     if (target == nullptr) {
         return refuse(QStringLiteral("No physical disk with number %1 was found").arg(disk_number));
     }

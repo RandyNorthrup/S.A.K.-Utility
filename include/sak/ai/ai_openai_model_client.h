@@ -15,6 +15,10 @@ class QThread;
 
 namespace sak::ai {
 
+/// @brief Convert the generic model request while preserving untrusted text as user-role messages.
+[[nodiscard]] OpenAIResponseRequest openAiRequestFromModelRequest(
+    const IAiModelClient::Request& request, bool enable_web_search);
+
 /// @brief IAiModelClient adapter over OpenAIResponsesClient.
 ///
 /// Wraps the signal-based responses client in a synchronous invoke() backed by

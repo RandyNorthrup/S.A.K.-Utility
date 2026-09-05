@@ -20,7 +20,11 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonValue>
+#include <QScopeGuard>
 #include <QtTest/QtTest>
+#include <QVector>
+
+#include <algorithm>
 
 class AiCredentialStoreTests : public QObject {
     Q_OBJECT
@@ -31,7 +35,63 @@ private Q_SLOTS:
     void leavesOrdinaryTextAlone();
     void redactsJsonWithoutDestroyingTheDocument();
     void redactsSecretsNamedByTheirJsonKey();
+    void dpapiProtectsAndAuthenticatesLocalState();
+    void credentialDecryptFailureWipesCiphertextAndEntropy();
 };
+
+void AiCredentialStoreTests::credentialDecryptFailureWipesCiphertextAndEntropy() {
+    QVector<QByteArray> wiped_inputs;
+    sak::ai::CredentialStore::setCredentialDecryptInputWipeObserverForTesting(
+        [&wiped_inputs](const QByteArray& bytes) { wiped_inputs.append(bytes); });
+    const auto clear_observer = qScopeGuard(
+        []() { sak::ai::CredentialStore::setCredentialDecryptInputWipeObserverForTesting({}); });
+    QString error;
+    const QString result = sak::ai::CredentialStore::decryptCredentialBytesForTesting(
+        QByteArray("invalid DPAPI ciphertext"), &error);
+
+    QVERIFY(result.isEmpty());
+    QVERIFY(!error.isEmpty());
+    constexpr qsizetype kExpectedWipedInputCount = 2;
+    QCOMPARE(wiped_inputs.size(), kExpectedWipedInputCount);
+    for (const auto& bytes : wiped_inputs) {
+        QVERIFY(!bytes.isEmpty());
+        QVERIFY(std::ranges::all_of(bytes, [](char value) { return value == 0; }));
+    }
+}
+
+void AiCredentialStoreTests::dpapiProtectsAndAuthenticatesLocalState() {
+    bool wipe_observed = false;
+    bool wiped_to_zero = false;
+    sak::ai::CredentialStore::setDpapiPlaintextWipeObserverForTesting(
+        [&wipe_observed, &wiped_to_zero](const QByteArray& bytes) {
+            wipe_observed = true;
+            wiped_to_zero = std::ranges::all_of(bytes, [](char value) { return value == 0; });
+        });
+    const auto clear_observer = qScopeGuard(
+        []() { sak::ai::CredentialStore::setDpapiPlaintextWipeObserverForTesting({}); });
+    const QByteArray plaintext("authenticated workflow state");
+    const QByteArray purpose("SAK test purpose v1");
+    const auto protected_data = sak::ai::CredentialStore::protectCurrentUserData(plaintext,
+                                                                                 purpose);
+    QVERIFY2(protected_data.has_value(),
+             qPrintable(protected_data ? QString{} : protected_data.error()));
+    QVERIFY(*protected_data != plaintext);
+    QVERIFY(wipe_observed);
+    QVERIFY(wiped_to_zero);
+    const auto restored = sak::ai::CredentialStore::unprotectCurrentUserData(*protected_data,
+                                                                             purpose);
+    QVERIFY2(restored.has_value(), qPrintable(restored ? QString{} : restored.error()));
+    QCOMPARE(*restored, plaintext);
+
+    QVERIFY(!sak::ai::CredentialStore::unprotectCurrentUserData(*protected_data,
+                                                                QByteArray("wrong purpose"))
+                 .has_value());
+    QByteArray tampered = *protected_data;
+    constexpr qsizetype kTamperDivisor = 2;
+    const qsizetype tamper_index = tampered.size() / kTamperDivisor;
+    tampered[tamper_index] = static_cast<char>(tampered.at(tamper_index) ^ 1);
+    QVERIFY(!sak::ai::CredentialStore::unprotectCurrentUserData(tampered, purpose).has_value());
+}
 
 void AiCredentialStoreTests::redactsBearerTokensAcrossTheWholeAlphabet() {
     // base64url (A-Za-z0-9-_) was covered. STANDARD base64 was not: '+' and '/' and the '='

@@ -10,12 +10,14 @@
 #include "sak/ai/ai_tool_policy.h"
 #include "sak/ai/ai_workflow_template.h"
 
+#include <QByteArray>
 #include <QHash>
 #include <QJsonObject>
 #include <QSet>
 #include <QString>
 #include <QVector>
 
+#include <expected>
 #include <functional>
 
 namespace sak::ai {
@@ -33,7 +35,16 @@ struct AiPhaseExecution {
     QString skip_reason;
     QString error_message;
     qint64 duration_ms{0};
+
+    /// @brief Canonical phase record used by run results and recovery snapshots.
+    /// Delegate-only status is omitted from non-delegate phases.
+    [[nodiscard]] QJsonObject toJson() const;
+    [[nodiscard]] static std::expected<AiPhaseExecution, QString> fromJson(
+        const QJsonObject& object);
 };
+
+/// Hard resource ceiling independent of workflow/session input.
+inline constexpr int kMaxParallelSubagents = 8;
 
 struct AiOrchestrationOptions {
     int max_parallel_subagents{1};
@@ -44,19 +55,15 @@ struct AiOrchestrationOptions {
     // Defaults to the most restrictive policy so an unset ceiling fails closed.
     AiToolPolicy session_policy_ceiling{AiToolPolicy::NoLocalExecution};
     QString default_model;
-    QString default_reasoning_effort;
     QString api_key;
     QString user_message;
     QJsonObject input_values;
     bool resume_enabled{false};
     int resume_start_phase_index{0};
     QVector<AiPhaseExecution> resume_prior_phases;
-    QSet<QString> resume_flags;
-    QJsonObject resume_phase_results;
-    // Identity of the persisted resume record (P1-15). When non-empty the orchestrator trusts
-    // the resume records only if these match the workflow/run actually executing; a mismatch
-    // means the record is from a different run and the resume is ignored (fresh run, normal
-    // per-phase gates). Callers that persist no identity leave these empty (enforcement skipped).
+    // Resume identity is mandatory when resume_enabled is true. Both ids must be non-empty and
+    // exactly match the workflow/run. Flags and phase-results are derived from validated history;
+    // callers cannot inject either block independently.
     QString resume_workflow_id;
     QString resume_run_id;
 };
@@ -82,7 +89,15 @@ struct AiWorkflowPhaseContext {
     QJsonObject phase_results;
     QSet<QString> flags;
     QVector<AiPhaseExecution> prior_phases;
+    QString workflow_guidance;
 };
+
+/// @brief Field-aware bounded workflow state for an untrusted user-role model message.
+[[nodiscard]] std::expected<QString, QString> untrustedWorkflowContextMessage(
+    const AiWorkflowPhaseContext& context);
+[[nodiscard]] std::expected<QString, QString> completeWorkflowGuidanceText(const QByteArray& bytes,
+                                                                           const QString& reference,
+                                                                           qsizetype max_bytes);
 
 /// @brief Executes workflow `tool_action` and `cleanup` phases on behalf of
 /// the orchestrator. Injected so tests can simulate success/failure/cancel
@@ -96,33 +111,39 @@ public:
                                                    const CancellationToken& token) = 0;
 };
 
-/// @brief Optional callback for `overseer` phases; callers provide the concrete
-/// overseer behavior that emits trace, asks the human, or short-circuits the run.
-using OverseerPhaseHandler =
-    std::function<QJsonObject(const WorkflowPhase& phase, const CancellationToken& token)>;
+/// @brief Required callback when a workflow declares `overseer` phases.
+/// Missing handlers and results without an explicit boolean success fail closed.
+using OverseerPhaseHandler = std::function<QJsonObject(const WorkflowPhase& phase,
+                                                       const AiWorkflowPhaseContext& context,
+                                                       const CancellationToken& token)>;
 
-/// @brief Optional callback invoked on the orchestrator's worker thread after
-/// each phase execution is appended to the result. UI callers should marshal
-/// to the main thread inside the callback.
+/// @brief Optional callback invoked after a declared workflow phase reaches a
+/// terminal record. Each callback is paired with exactly one started callback.
 using PhaseCompletedCallback = std::function<void(const AiPhaseExecution& execution)>;
 
-/// @brief Optional callback invoked immediately before a phase begins running.
-/// UI callers should marshal to the main thread inside the callback.
+/// @brief Optional callback invoked before a declared workflow phase is evaluated.
+///
+/// Both lifecycle callbacks run sequentially on the thread that called run(),
+/// including when delegate work runs in parallel. Retry/reassignment attempts
+/// remain metadata of the declared phase and do not create unpaired lifecycle
+/// events. UI callers should marshal to the main thread inside the callback.
 using PhaseStartedCallback = std::function<void(const WorkflowPhase& phase)>;
 
 /// @brief Resolves a workflow instruction/skill reference (e.g.
 /// "skills/package-selection.md") to its full guidance text. Injected so the
 /// orchestrator stays I/O-free and testable; the panel wires it to the bundled
-/// resources / skill store. Returns empty when the reference cannot be resolved.
-using WorkflowGuidanceResolver = std::function<QString(const QString& ref)>;
+/// resources / skill store. An error or empty successful value fails preflight.
+using WorkflowGuidanceResolution = std::expected<QString, QString>;
+using WorkflowGuidanceResolver = std::function<WorkflowGuidanceResolution(const QString& ref)>;
 
 /// @brief Reports whether a workflow's declared required-software entry is
 /// actually available in the current environment. Injected so the orchestrator
 /// stays I/O-free; the panel wires it to the real tool registry / system probe.
-/// Return true when available. When no resolver is set the preflight is skipped
-/// (nothing regresses); when set, a required-and-unavailable entry fails the run
-/// closed before any phase executes.
-using SoftwareAvailabilityResolver = std::function<bool(const WorkflowRequirement& requirement)>;
+/// A false value means known-but-unavailable. An unexpected value means the kind
+/// or probe is unsupported. Both fail preflight, as does a missing resolver.
+using SoftwareAvailabilityResolution = std::expected<bool, QString>;
+using SoftwareAvailabilityResolver =
+    std::function<SoftwareAvailabilityResolution(const WorkflowRequirement& requirement)>;
 
 /// @brief Runs a workflow's phases end-to-end. Sequential by default;
 /// consecutive `delegate` phases whose agent tool_policy is read-only are
@@ -147,6 +168,10 @@ public:
                                            const CancellationToken& root_token) const;
 
     [[nodiscard]] static bool isReadOnlyPolicy(AiToolPolicy policy);
+    /// @brief Validate an untrusted resume snapshot after canonical JSON decoding.
+    [[nodiscard]] static QString validateResumeState(const WorkflowTemplate& workflow,
+                                                     const QString& run_id,
+                                                     const AiOrchestrationOptions& options);
 
 private:
     struct PhaseGroup {
@@ -187,15 +212,10 @@ private:
     void initializeRunState(const WorkflowTemplate& workflow,
                             const QString& run_id,
                             RunState* state) const;
-    void applyResumeState(const WorkflowTemplate& workflow, RunState* state) const;
-    // True when the persisted resume identity (options.resume_workflow_id/resume_run_id) is
-    // either unset or matches the workflow/run being executed. A present-but-mismatched id
-    // means the record belongs to a different run and must not be trusted (P1-15).
-    [[nodiscard]] bool resumeIdentityMatches(const WorkflowTemplate& workflow,
-                                             const RunState& state) const;
-    static void seedResumeExecutedIndex(const WorkflowTemplate& workflow,
-                                        const AiPhaseExecution& prior,
-                                        RunState* state);
+    [[nodiscard]] QString applyResumeState(const WorkflowTemplate& workflow, RunState* state) const;
+    static void seedDerivedResumeState(const AiPhaseExecution& prior,
+                                       int phase_index,
+                                       RunState* state);
     [[nodiscard]] AiPhaseExecution executeWorkflowPhase(const WorkflowTemplate& workflow,
                                                         const WorkflowPhase& phase,
                                                         const RunState& state,
@@ -249,6 +269,7 @@ private:
                                         GroupOutcome* outcome,
                                         RunState* state);
     static void recordCleanupFailureIfNeeded(const AiPhaseExecution& execution, RunState* state);
+    static void recordRecoveryCallbackFailure(const QString& callback_error, RunState* state);
     static void updateOutcomeFromRecoveryDecision(const AiPhaseExecution& execution,
                                                   const AiRecoveryDecision& recovery,
                                                   GroupOutcome* outcome);
@@ -266,25 +287,26 @@ private:
         const QString& run_id,
         const AiWorkflowPhaseContext& context,
         const CancellationToken& parent_token) const;
-    [[nodiscard]] AiSubagentTask buildDelegateTask(const WorkflowTemplate& workflow,
-                                                   const WorkflowPhase& phase,
-                                                   const QString& run_id,
-                                                   const AiWorkflowPhaseContext& context) const;
+    [[nodiscard]] std::expected<AiSubagentTask, QString> buildDelegateTask(
+        const WorkflowTemplate& workflow,
+        const WorkflowPhase& phase,
+        const QString& run_id,
+        const AiWorkflowPhaseContext& context) const;
     [[nodiscard]] AiPhaseExecution executeToolPhase(const WorkflowPhase& phase,
                                                     AiToolPolicy policy,
                                                     const AiWorkflowPhaseContext& context,
                                                     const CancellationToken& parent_token) const;
     [[nodiscard]] AiPhaseExecution executeOverseerPhase(
-        const WorkflowPhase& phase, const CancellationToken& parent_token) const;
+        const WorkflowPhase& phase,
+        const AiWorkflowPhaseContext& context,
+        const CancellationToken& parent_token) const;
     [[nodiscard]] AiToolPolicy policyForAgent(const WorkflowTemplate& workflow,
                                               const QString& agent_id) const;
-    // Concatenates the resolved bodies of the workflow's instruction and skill
-    // references into a single guidance block for the subagent. Empty when no
-    // resolver is set or nothing resolves.
-    [[nodiscard]] QString resolveWorkflowGuidance(const WorkflowTemplate& workflow) const;
-    // Returns the id (or kind) of the first required-and-unavailable software
-    // entry, or empty when everything required is available / no resolver is set.
-    [[nodiscard]] QString missingRequiredSoftware(const WorkflowTemplate& workflow) const;
+    [[nodiscard]] WorkflowGuidanceResolution resolveWorkflowGuidance(
+        const WorkflowTemplate& workflow) const;
+    // Empty means all required probes succeeded and reported available.
+    [[nodiscard]] QString requiredSoftwareError(const WorkflowTemplate& workflow) const;
+    [[nodiscard]] QString prepareRunState(const WorkflowTemplate& workflow, RunState* state) const;
 
     AiSubagentRunner* m_subagent_runner{nullptr};
     IAiToolExecutor* m_tool_executor{nullptr};

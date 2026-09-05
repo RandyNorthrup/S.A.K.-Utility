@@ -18,6 +18,7 @@
 
 #include "sak/linux_distro_catalog.h"
 #include "sak/linux_iso_downloader.h"
+#include "sak/network_transfer_runner.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -115,6 +116,9 @@ private Q_SLOTS:
 
     // Verify-result staleness guard (B10-19)
     void testShouldApplyVerifyResult_gating();
+    void testMetadataFetch_timeoutFailsChecksum();
+    void testMetadataFetch_malformedRollingFails();
+    void testMetadataFetch_cancelAbortsPending();
 
     // ========================================================================
     // Network Tests (explicit opt-in; failures after opt-in are authoritative)
@@ -785,6 +789,73 @@ void LinuxISODownloaderTests::testShouldApplyVerifyResult_gating() {
     // Superseded by a newer operation -> discard the stale result.
     QVERIFY(!LinuxISODownloader::shouldApplyVerifyResult(false, 5, 6));
     QVERIFY(!LinuxISODownloader::shouldApplyVerifyResult(true, 5, 6));
+}
+
+void LinuxISODownloaderTests::testMetadataFetch_timeoutFailsChecksum() {
+    sak::ScopedNetworkMetadataFaultInjector inject([](const auto&) {
+        sak::NetworkTransferResult result;
+        result.timed_out = true;
+        result.error_message = QStringLiteral("injected timeout");
+        return std::optional{result};
+    });
+    LinuxISODownloader downloader;
+    downloader.m_checksumUrl = QStringLiteral("https://example.test/SHA256SUMS");
+    downloader.m_checksumType = QStringLiteral("sha256");
+    downloader.m_savePath = QStringLiteral("C:/disposable/not-downloaded.iso");
+    QSignalSpy error_spy(&downloader, &LinuxISODownloader::downloadError);
+
+    downloader.verifyChecksum();
+
+    QTRY_COMPARE(error_spy.count(), 1);
+    QCOMPARE(downloader.m_phase, LinuxISODownloader::Phase::Failed);
+    QVERIFY(error_spy.at(0).at(0).toString().contains(QStringLiteral("timed out")));
+}
+
+void LinuxISODownloaderTests::testMetadataFetch_malformedRollingFails() {
+    sak::ScopedNetworkMetadataFaultInjector inject([](const auto&) {
+        sak::NetworkTransferResult result;
+        result.success = true;
+        result.http_status = 200;
+        result.body = QByteArrayLiteral("published metadata without a checksum record");
+        return std::optional{result};
+    });
+    LinuxISODownloader downloader;
+    downloader.m_checksumUrl = QStringLiteral("https://example.test/SHA256SUMS");
+    downloader.m_currentDistroId = QStringLiteral("kali-linux");
+    downloader.m_rollingFilenamePattern =
+        QStringLiteral(R"(^kali-linux-[0-9.]+-installer-amd64\.iso$)");
+    QSignalSpy error_spy(&downloader, &LinuxISODownloader::downloadError);
+
+    downloader.startRollingFilenameDiscovery();
+
+    QTRY_COMPARE(error_spy.count(), 1);
+    QCOMPARE(downloader.m_phase, LinuxISODownloader::Phase::Failed);
+    QVERIFY(error_spy.at(0).at(0).toString().contains(
+        QStringLiteral("Could not determine the current download filename")));
+}
+
+void LinuxISODownloaderTests::testMetadataFetch_cancelAbortsPending() {
+    sak::ScopedNetworkMetadataFaultInjector inject([](const auto&) {
+        sak::NetworkTransferResult result;
+        result.success = true;
+        result.http_status = 200;
+        result.body = QByteArrayLiteral("unused");
+        return std::optional{result};
+    });
+    LinuxISODownloader downloader;
+    downloader.m_checksumUrl = QStringLiteral("https://example.test/SHA256SUMS");
+    downloader.m_checksumType = QStringLiteral("sha256");
+    QSignalSpy error_spy(&downloader, &LinuxISODownloader::downloadError);
+
+    downloader.verifyChecksum();
+    QCOMPARE(downloader.m_pendingMetadataReplies.size(), 1);
+    QCOMPARE(error_spy.count(), 0);
+    downloader.cancel();
+
+    QCOMPARE(downloader.m_pendingMetadataReplies.size(), 0);
+    QCOMPARE(downloader.m_phase, LinuxISODownloader::Phase::Idle);
+    QCoreApplication::processEvents();
+    QCOMPARE(error_spy.count(), 0);
 }
 
 // ============================================================================

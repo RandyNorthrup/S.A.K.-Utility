@@ -224,6 +224,16 @@ the rest is a debt-reduction + test-infra program (multi-session, much of it cos
       156/156-TU proof pass established zero findings in those files before the manifest expanded;
       the final healthy pass now measures 5,244 findings across 80 files and enforces 16 clean TUs.
       The wider core naming and style backlog remains open.
+      PROGRESS 2026-09-04: the configured gate is healthy on 150 non-core and 157 core translation
+      units, measuring 5,235 core-body findings and preserving sixteen clean translation units.
+      A separate Windows header-filter probe exposes an additional coverage gap: 382 naming
+      findings across sixteen headers from one translation unit were hidden by the configured
+      path filter. This is a lower bound; header-filter correction, negative gate coverage and
+      direct header naming cleanup remain INCOMPLETE in the R5 owner document. The configured pass
+      must not be described as header-clean.
+      The completed read-only 307-TU inventory now measures 3,098 unique naming findings across
+      117 source headers, plus ten generated-version findings owned by cmake/version.h.in.
+      It excludes tests-only or unreachable headers; exact counts and scope remain in R5.
 - [x] cppcheck-suppression audit -- DONE, corrected 2026-08-31. All 26 inline suppressions were
       re-checked with inline suppressions disabled. Three genuinely suppressed nothing and remain
       removed. A real template-instantiating include-path run later proved two `strong_index.h`
@@ -274,6 +284,17 @@ the rest is a debt-reduction + test-infra program (multi-session, much of it cos
       naming gate now covers 157/157 core TUs with 5,244 findings across 80 files and 16
       ratcheted-clean TUs. All whole-tree pre-commit hooks pass; Release build exit 0; full CTest
       273/273, zero failures, 738.00 seconds.
+      PROGRESS 2026-09-04, WAVE 31 LOCAL GATE PASSED: partition controller/modal/restore and AI
+      trust-boundary catalog additions have focused execution proof. The owner-observed Change
+      Cluster Size modal
+      hang exposed a test callback that returned on assertion failure without closing its dialog.
+      Scoped dialog cleanup and failure-reporting watchdogs now bound that path. The mutation
+      runner retains logs and refuses timeout, no-test, compilation, and restoration-build failures;
+      sixteen registered Python cases and seven isolated negative drills prove those runner guards.
+      Complete Release build and all 276 CTests pass, with 27 reviewed runtime skips kept visible.
+      Inventory is 61 catalogs/595 entries, not a rerun claim for all historical entries. Full-file
+      follow-up found required recovery and ledger integrity fixes; Windows header naming and
+      app-driven Restore Image VM proof also remain INCOMPLETE. Current item status stays in R5.
       WAVE 23 FINAL GATE: all changed-file hooks passed; naming passed 151/151 non-core TUs clean
       and 156/156 core TUs healthy with 5,266 findings across 81 files and 16 clean TUs enforced;
       full clang-cl coverage build exit 0; Release build exit 0; full CTest 268/268, zero failures,

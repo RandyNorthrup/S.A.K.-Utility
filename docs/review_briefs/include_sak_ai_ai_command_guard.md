@@ -1,2 +1,8 @@
-- HIGH - [include/sak/ai/ai_command_guard.h:27](include/sak/ai/ai_command_guard.h:27): `allowed()` returns true while `requiresApproval()` is true, permitting consumers to treat approval-required commands as executable without explicit approval.
-- MEDIUM - [include/sak/ai/ai_command_guard.h:18](include/sak/ai/ai_command_guard.h:18): Public mutable fields let callers fabricate evaluated/allowed results or simultaneous block and approval states, violating invariants stated at lines 21-29.
+- [x] [HIGH] `allowed()` returned true while approval was still required.
+  RESOLVED 2026-09-02: allowed now requires evaluated, unblocked, and no pending approval. The
+  command-guard mutation catalog pins all result-state combinations.
+- [x] [MEDIUM] Public mutable fields allowed callers to fabricate contradictory guard results.
+  RESOLVED 2026-09-02: result state is private and construction-bound to guard evaluation; callers
+  receive accessors only.
+
+Exact current-blob re-review 2026-09-03: NO FINDINGS.

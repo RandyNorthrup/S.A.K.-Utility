@@ -129,6 +129,7 @@ foreach(test_name ${UNIT_TESTS})
             "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/elevation_manager.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/logger.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/logger.h"
+            ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
         )
     endif()
 
@@ -142,6 +143,7 @@ foreach(test_name ${UNIT_TESTS})
             "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/bundled_tools_manager.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/logger.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/logger.h"
+            ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
         )
     endif()
 
@@ -361,6 +363,56 @@ add_test(NAME test_partition_manager_core COMMAND test_partition_manager_core
          -o "${TEST_OUTPUT_DIR}/test_partition_manager_core.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_partition_manager_core")
+
+# test_partition_manager_controller - async preflight/apply/verification state machine
+add_executable(test_partition_manager_controller
+    unit/test_partition_manager_controller.cpp
+    ../src/core/partition_raw_device_io.cpp
+    ../src/core/partition_manager_controller.cpp
+    ../src/core/partition_manager_types.cpp
+    ../src/core/partition_file_system_detector.cpp
+    ../src/core/partition_file_system_registry.cpp
+    ../src/core/partition_file_system_tool_manifest.cpp
+    ../src/core/partition_file_system_tool_runner.cpp
+    ../src/core/storage_inventory_worker.cpp
+    ../src/core/elevation_broker.cpp
+    ../src/core/partition_safety_validator.cpp
+    ../src/core/partition_operation_planner.cpp
+    ../src/core/partition_operation_queue.cpp
+    ../src/core/partition_report_generator.cpp
+    ${SAK_PROCESS_RUNNER_SOURCES}
+    ../src/core/logger.cpp
+    ../include/sak/partition_manager_controller.h
+    ../include/sak/partition_executor.h
+    ../include/sak/partition_manager_types.h
+    ../include/sak/partition_file_system_detector.h
+    ../include/sak/partition_file_system_registry.h
+    ../include/sak/partition_file_system_tool_manifest.h
+    ../include/sak/partition_file_system_tool_runner.h
+    ../include/sak/partition_raw_device_io.h
+    ../include/sak/elevation_broker.h
+    ../include/sak/storage_inventory_worker.h
+    ../include/sak/partition_safety_validator.h
+    ../include/sak/partition_operation_planner.h
+    ../include/sak/partition_operation_queue.h
+)
+set_target_properties(test_partition_manager_controller PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_partition_manager_controller PRIVATE
+    Qt6::Core Qt6::Concurrent Qt6::Test ZLIB::ZLIB sak_lzfse ${PLATFORM_LIBS}
+)
+target_include_directories(test_partition_manager_controller PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+target_compile_definitions(test_partition_manager_controller PRIVATE
+    SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS
+)
+add_test(NAME test_partition_manager_controller COMMAND test_partition_manager_controller
+         -o "${TEST_OUTPUT_DIR}/test_partition_manager_controller.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_partition_manager_controller")
 
 # partition_file_recovery_certifier - external lab helper for live-volume Data Recovery proof
 add_executable(partition_file_recovery_certifier
@@ -619,6 +671,10 @@ target_include_directories(test_partition_manager_panel PRIVATE
 add_test(NAME test_partition_manager_panel COMMAND test_partition_manager_panel
          -o "${TEST_OUTPUT_DIR}/test_partition_manager_panel.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+set_tests_properties(test_partition_manager_panel PROPERTIES
+    TIMEOUT 120
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+)
 message(STATUS "Added unit test: test_partition_manager_panel")
 
 # test_wifi_manager_panel --- SSID injection safety in buildWindowsScript
@@ -2617,6 +2673,7 @@ add_executable(test_fuzz_uup_manifest_guard
     ../src/core/uup_dump_api.cpp
     ../include/sak/uup_dump_api.h
     ../src/core/logger.cpp
+    ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
     fuzz/fuzz_harness.h
 )
 set_target_properties(test_fuzz_uup_manifest_guard PROPERTIES
@@ -4945,6 +5002,7 @@ add_executable(test_image_flasher_panel
     ../src/core/elevation_manager.cpp
     ../src/core/input_validator.cpp
     ${SAK_PROCESS_RUNNER_SOURCES}
+    ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
     ../src/core/logger.cpp
     # Listed so AUTOMOC generates the meta-objects for these Q_OBJECT classes.
     ../include/sak/image_flasher_panel.h
@@ -5444,6 +5502,7 @@ add_executable(test_linux_distro_catalog
     ../src/core/linux_distro_catalog.cpp
     ../include/sak/linux_distro_catalog.h
     ../src/core/logger.cpp
+    ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
 )
 set_target_properties(test_linux_distro_catalog PROPERTIES
     AUTOMOC ON
@@ -5547,6 +5606,7 @@ add_executable(test_uup_dump_api
     ../src/core/uup_dump_api.cpp
     ../include/sak/uup_dump_api.h
     ../src/core/logger.cpp
+    ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
 )
 set_target_properties(test_uup_dump_api PROPERTIES
     AUTOMOC ON
@@ -5577,6 +5637,7 @@ add_executable(test_uup_iso_builder
     ../src/core/elevation_manager.cpp
     ../include/sak/elevation_manager.h
     ../src/core/logger.cpp
+    ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
 )
 set_target_properties(test_uup_iso_builder PROPERTIES
     AUTOMOC ON
@@ -7761,6 +7822,16 @@ if(PLATFORM_WINDOWS)
              COMMAND "${SAK_PYTHON_EXECUTABLE}"
                      "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_run_lizard_js_baseline.py")
     set_tests_properties(test_run_lizard_js_baseline PROPERTIES TIMEOUT 60)
+
+    add_test(NAME test_mutation_runner
+             COMMAND "${SAK_PYTHON_EXECUTABLE}"
+                     "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mutation_runner.py")
+    set_tests_properties(test_mutation_runner PROPERTIES TIMEOUT 60)
+
+    add_test(NAME test_review_ledger
+             COMMAND "${SAK_PYTHON_EXECUTABLE}"
+                     "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_review_ledger.py")
+    set_tests_properties(test_review_ledger PROPERTIES TIMEOUT 60)
 
     add_test(NAME test_gate_parity
              COMMAND "${SAK_PYTHON_EXECUTABLE}"

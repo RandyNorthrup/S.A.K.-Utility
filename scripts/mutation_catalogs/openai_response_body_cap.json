@@ -1,0 +1,72 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_openai_responses_client",
+  "ctest_regex": "^test_openai_responses_client$",
+  "mutants": [
+    {
+      "id": "create-response-does-not-install-live-body-watchers",
+      "file": "src/ai/openai_responses_client.cpp",
+      "find": "    watchReplyBody(reply, max_bytes, QStringLiteral(\"OpenAI response body exceeds the size limit\"));",
+      "replace": "    reply->setReadBufferSize(max_bytes + 1);",
+      "expect": "killed",
+      "why": "liveResponseReadyReadOverflowAborts drives the same attachCreateReply authority as production and requires live overflow watchers to be installed."
+    },
+    {
+      "id": "live-response-read-buffer-exceeds-hard-cap",
+      "file": "src/ai/openai_responses_client.cpp",
+      "find": "    reply->setReadBufferSize(max_bytes + 1);",
+      "replace": "    reply->setReadBufferSize(max_bytes + 2);",
+      "expect": "killed",
+      "why": "liveResponseReadyReadOverflowAborts pins the one-byte sentinel buffer used to detect overflow without unbounded growth."
+    },
+    {
+      "id": "ready-read-overflow-does-not-abort-live-response",
+      "file": "src/ai/openai_responses_client.cpp",
+      "find": "        if (reply->bytesAvailable() > max_bytes) {",
+      "replace": "        if (reply->bytesAvailable() > max_bytes && limit_error.isEmpty()) {",
+      "expect": "killed",
+      "why": "liveResponseReadyReadOverflowAborts requires the live buffer crossing its cap to abort before final body collection."
+    },
+    {
+      "id": "download-progress-overflow-does-not-abort-live-response",
+      "file": "src/ai/openai_responses_client.cpp",
+      "find": "                if (received > max_bytes || total > max_bytes) {",
+      "replace": "                if ((received > max_bytes || total > max_bytes) && limit_error.isEmpty()) {",
+      "expect": "killed",
+      "why": "liveResponseDownloadProgressOverflowAborts requires known or received transfer size overflow to abort immediately."
+    },
+    {
+      "id": "streaming-overflow-is-classified-as-network-cancel",
+      "file": "src/ai/openai_responses_client.cpp",
+      "find": "    reply->setProperty(kBodyLimitErrorProperty, limit_error);",
+      "replace": "    reply->setProperty(kBodyLimitErrorProperty, limit_error.left(0));",
+      "expect": "killed",
+      "why": "liveResponseDownloadProgressOverflowAborts requires an overflow abort to surface the size-limit reason, never OperationCanceledError."
+    },
+    {
+      "id": "final-body-pre-read-cap-is-bypassed",
+      "file": "src/ai/openai_responses_client.cpp",
+      "find": "    if ((declared && content_length > max_bytes) || reply->bytesAvailable() > max_bytes) {",
+      "replace": "    if (((declared && content_length > max_bytes) || reply->bytesAvailable() > max_bytes) && limit_error.isEmpty()) {",
+      "expect": "killed",
+      "why": "finalResponseBodyCapRejectsUnderreportedOverflow proves visible overflow is refused before readAll consumes any bytes."
+    },
+    {
+      "id": "final-body-post-read-cap-is-bypassed",
+      "file": "src/ai/openai_responses_client.cpp",
+      "find": "    if (body.size() > max_bytes) {",
+      "replace": "    if (body.size() > max_bytes && limit_error.isEmpty()) {",
+      "expect": "killed",
+      "why": "finalResponseBodyCapRejectsUnderreportedOverflow requires the final cap to catch a reply that underreports bytesAvailable."
+    },
+    {
+      "id": "user-cancel-is-reclassified-as-network-failure",
+      "file": "src/ai/openai_responses_client.cpp",
+      "find": "    reply->disconnect(this);\r\n    reply->abort();\r\n    reply->deleteLater();\r\n    Q_EMIT requestFinished();",
+      "replace": "    if (reply->isFinished()) {\r\n        reply->disconnect(this);\r\n    }\r\n    reply->abort();\r\n    reply->deleteLater();\r\n    Q_EMIT requestFinished();",
+      "expect": "killed",
+      "why": "userCancellationIsNotClassifiedAsResponseFailure requires deliberate cancel to emit one completion and no requestFailed signal."
+    }
+  ]
+}

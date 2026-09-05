@@ -7,13 +7,15 @@
 #pragma once
 
 #include "sak/partition_manager_controller.h"
-#include "sak/widget_helpers.h"
 
 #include <QColor>
+#include <QJsonArray>
 #include <QJsonObject>
 #include <QStringList>
+#include <QVector>
 #include <QWidget>
 
+#include <cstdint>
 #include <memory>
 #include <optional>
 
@@ -26,7 +28,6 @@ class QToolButton;
 class QVBoxLayout;
 class QTableWidget;
 class QTextEdit;
-class QWidget;
 class QPoint;
 
 class QFileInfo;
@@ -46,11 +47,18 @@ public:
     explicit PartitionManagerPanel(QWidget* parent = nullptr);
     ~PartitionManagerPanel() override = default;
 
-    [[nodiscard]] LogToggleSwitch* logToggle() const { return m_logToggle; }
+    [[nodiscard]] LogToggleSwitch* logToggle() const { return m_log_toggle; }
 
 #ifdef SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS
     void setTestInventoryForReview(const PartitionInventory& inventory);
     void queueTestOperationForReview(PartitionOperationType type, const PartitionTarget& target);
+    void queueTestOperationForReview(PartitionOperationType type,
+                                     const PartitionTarget& target,
+                                     const QString& expected_layout_hash);
+    [[nodiscard]] QVector<PartitionOperation> testQueuedOperationsForReview() const;
+    [[nodiscard]] bool queueQuickPartitionOperationsForTest(const PartitionDiskInfo& disk,
+                                                            const QJsonObject& options,
+                                                            const QString& expected_layout_hash);
     [[nodiscard]] bool showApplyReviewDialogForTest();
     // Puts the controller into a running-operation state so a test can assert that the
     // wizard entry points refuse to mutate the queue an executor is consuming.
@@ -78,12 +86,11 @@ private Q_SLOTS:
     void onFormatPartition();
     void onSetDriveLetter();
     void onSetPartitionLabel();
-    void onChangeApfsVolumeLabel();
     void onCheckFileSystem();
     void onInspectNonNativeFileSystem();
     void onBrowseNonNativeFileSystem();
     void onCheckNonNativeFileSystem();
-    void onApfsRootFileMutation();
+    void onApfsContainerAction();
     void onSurfaceTest();
     void onSpaceAnalyzer();
     void onSetPartitionHidden();
@@ -114,14 +121,6 @@ private Q_SLOTS:
     void onCopyPartitionWizard();
     void onCreateImage();
     void onRestoreImage();
-    /// SHA-256 the image the operator just approved, with a cancellable progress dialog.
-    /// Empty means failed or cancelled, and the caller must then queue NOTHING: the emitted
-    /// restore script refuses an operation that carries no content fingerprint (M-B3-1 A).
-    [[nodiscard]] QString pinRestoreImageDigest(const QString& path);
-    /// Every reason the chosen image cannot be restored onto @p target, each reported with
-    /// its own specific message. False means a refusal was already shown to the user.
-    [[nodiscard]] bool restoreImageSelectionIsUsable(const QFileInfo& image_info,
-                                                     const PartitionTarget& target);
     void onDataRecovery();
     void onPartitionRecoveryWizard();
     void onMigrateOs();
@@ -132,6 +131,17 @@ private Q_SLOTS:
     void onExecutionFinished(const sak::PartitionExecutionResult& result);
 
 private:
+    void onChangeApfsVolumeLabel();
+    /// SHA-256 the selected image before operator approval, with a cancellable progress dialog.
+    /// Empty means failed or cancelled, and the caller must then queue NOTHING: the emitted
+    /// restore script refuses an operation that carries no content fingerprint (M-B3-1 A).
+    [[nodiscard]] QString pinRestoreImageDigest(const QString& path);
+    /// Preflight file shape, self-disk placement, and capacity before approval. The following
+    /// digest stage separately proves readability and pins content. False means this helper
+    /// already showed the refusal.
+    [[nodiscard]] bool restoreImageSelectionIsUsable(const QFileInfo& image_info,
+                                                     const PartitionTarget& target);
+
     enum class TableRowKind {
         Disk,
         Partition,
@@ -156,10 +166,10 @@ private:
         bool browse_non_native_filesystem{false};
         // Action runs the non-native check/repair path (fsck-class tools).
         bool check_non_native_filesystem{false};
-        // Action queues an APFS container op (snapshot/resize) on a generated container.
-        bool apfs_root_file_mutation{false};
+        // Action queues a certified APFS COW container operation (snapshot/resize).
+        bool apfs_container_action{false};
         // Action is the unified "Change Label" verb (Windows-native volume label or a
-        // generated APFS container's COW volume-label commit); enablement spans both paths.
+        // certified APFS COW volume-label commit); enablement spans both paths.
         bool change_label{false};
     };
 
@@ -242,14 +252,26 @@ private:
     void queueOperation(PartitionOperationType type,
                         const PartitionTarget& target,
                         const QJsonObject& payload = {});
+    void queueOperation(PartitionOperationType type,
+                        const PartitionTarget& target,
+                        const QString& expected_layout_hash,
+                        const QJsonObject& payload = {});
     [[nodiscard]] bool queueMutationBlockedByRunningOperation();
-    bool queueUnallocatedFreeSpace(const PartitionTarget& target, const PartitionDiskInfo& disk);
+    [[nodiscard]] bool reviewedLayoutChanged(const QString& expected_layout_hash);
+    bool queueUnallocatedFreeSpace(const PartitionTarget& target,
+                                   const PartitionDiskInfo& disk,
+                                   const QString& expected_layout_hash);
     bool queueAdjacentDonorFreeSpace(const PartitionTarget& target,
                                      const PartitionDiskInfo& disk,
-                                     const PartitionInfoEx& partition);
-    void queueQuickPartitionOperations(const PartitionDiskInfo& disk, const QJsonObject& options);
-    void queueBitLockerUnlock(QJsonObject payload);
-    [[nodiscard]] bool showApplyReviewDialog();
+                                     const PartitionInfoEx& partition,
+                                     const QString& expected_layout_hash);
+    [[nodiscard]] bool queueQuickPartitionOperations(const PartitionDiskInfo& disk,
+                                                     const QJsonObject& options,
+                                                     const QString& expected_layout_hash);
+    void queueBitLockerUnlock(const PartitionTarget& target,
+                              const QString& expected_layout_hash,
+                              QJsonObject payload);
+    [[nodiscard]] std::optional<PartitionQueueReviewToken> showApplyReviewDialog();
     void showSelectedTargetContextMenuAt(const QPoint& global_position);
     void addDiskContextMenuActions(QMenu& menu);
     void addPartitionContextMenuActions(QMenu& menu);
@@ -272,35 +294,62 @@ private:
     [[nodiscard]] static QColor unallocatedColor();
 
     std::unique_ptr<PartitionManagerController> m_controller;
-    PanelHeaderWidgets m_headerWidgets;
     QTableWidget* m_table{nullptr};
-    QWidget* m_diskMapContainer{nullptr};
-    QListWidget* m_queueList{nullptr};
+    QWidget* m_disk_map_container{nullptr};
+    QListWidget* m_queue_list{nullptr};
     QTextEdit* m_details{nullptr};
-    QLabel* m_pendingLabel{nullptr};
-    QAbstractButton* m_refreshButton{nullptr};
-    QAbstractButton* m_applyButton{nullptr};
-    QAbstractButton* m_cancelButton{nullptr};
-    QAbstractButton* m_dryRunButton{nullptr};
-    QAbstractButton* m_discardButton{nullptr};
-    QAbstractButton* m_undoButton{nullptr};
-    QAbstractButton* m_redoButton{nullptr};
-    QVector<QAbstractButton*> m_targetButtons;
-    LogToggleSwitch* m_logToggle{nullptr};
+    QLabel* m_pending_label{nullptr};
+    QAbstractButton* m_refresh_button{nullptr};
+    QAbstractButton* m_apply_button{nullptr};
+    QAbstractButton* m_cancel_button{nullptr};
+    QAbstractButton* m_dry_run_button{nullptr};
+    QAbstractButton* m_discard_button{nullptr};
+    QAbstractButton* m_undo_button{nullptr};
+    QAbstractButton* m_redo_button{nullptr};
+    QVector<QAbstractButton*> m_target_buttons;
+    LogToggleSwitch* m_log_toggle{nullptr};
     // Empty/loading overlay for m_table; parented to m_table, so m_table owns its lifetime.
-    ui::ViewEmptyState* m_tableEmptyState{nullptr};
-    bool m_inventoryLoadStarted{false};
+    ui::ViewEmptyState* m_table_empty_state{nullptr};
+    bool m_inventory_load_started{false};
 };
 
 #ifdef SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS
-[[nodiscard]] QJsonObject partitionManagerAnalyzeSpaceForTest(const QString& rootPath);
+[[nodiscard]] QJsonObject partitionManagerAnalyzeSpaceForTest(const QString& root_path);
 // Test seam for the Quick Partition size logic: exposes the pure size-derivation and validity
 // helpers so the fail-closed handling of malformed custom sizes and the overflow-safe total can be
 // unit tested without driving the full modal flow.
 [[nodiscard]] QVector<uint64_t> partitionQuickSizesForOptionsForTest(const QJsonObject& options,
-                                                                     uint64_t usableBytes);
+                                                                     uint64_t usable_bytes);
 [[nodiscard]] bool partitionQuickSizesAreValidForTest(const QVector<uint64_t>& sizes,
-                                                      uint64_t usableBytes);
+                                                      uint64_t usable_bytes);
+[[nodiscard]] QJsonArray partitionApplyPreviewSegmentsForTest(
+    const PartitionDiskInfo& disk, QVector<PartitionOperation> operations);
+[[nodiscard]] QJsonArray partitionConsumeFreeSpanForTest(uint64_t segment_offset,
+                                                         uint64_t segment_bytes,
+                                                         uint64_t consume_offset,
+                                                         uint64_t consume_bytes);
+[[nodiscard]] uint64_t partitionScaledBytesForTest(uint64_t bytes,
+                                                   uint64_t multiplier,
+                                                   uint64_t divisor);
+[[nodiscard]] int partitionUsedPercentForTest(uint64_t used_bytes, uint64_t total_bytes);
+[[nodiscard]] std::optional<PartitionOperationType> partitionApfsMutationTypeForTest(
+    const QString& mode);
+[[nodiscard]] QString partitionCustomRawCloneBlockerForTest(const PartitionInventory& inventory,
+                                                            const QString& target_path,
+                                                            uint64_t source_size_bytes);
+[[nodiscard]] QString partitionCanonicalCloneTargetForTest(const QString& target_path);
+[[nodiscard]] QString partitionStorageIdentityForTest(const QString& value);
+void setPartitionStorageDeviceFixturesForTest(QJsonObject fixtures);
+[[nodiscard]] QJsonObject partitionClusterBackupAvailabilityForTest(
+    const QString& backup, const PartitionVolumeInfo& volume);
+[[nodiscard]] QJsonObject partitionDestructiveBackupAvailabilityForTest(
+    const QString& backup, const QVector<PartitionVolumeInfo>& protected_volumes);
+[[nodiscard]] std::optional<bool> partitionImageSourceOnTargetDiskForTest(
+    const PartitionInventory& inventory,
+    const QString& source_path,
+    const QString& storage_device,
+    const QString& storage_root,
+    uint32_t target_disk_number);
 #endif
 
 }  // namespace sak

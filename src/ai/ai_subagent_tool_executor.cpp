@@ -80,11 +80,15 @@ bool parseArguments(const AiSubagentToolCall& call,
 
 }  // namespace
 
-AiSubagentToolExecutor::AiSubagentToolExecutor(RawDispatch dispatch)
-    : m_dispatch(std::move(dispatch)) {}
+AiSubagentToolExecutor::AiSubagentToolExecutor(RawDispatch dispatch, bool concurrent_safe)
+    : m_dispatch(std::move(dispatch)), m_concurrent_safe(concurrent_safe) {}
 
 void AiSubagentToolExecutor::setAllowedTools(QSet<QString> tool_names) {
     m_allowed_tools = std::move(tool_names);
+}
+
+bool AiSubagentToolExecutor::supportsConcurrentCalls() const noexcept {
+    return m_concurrent_safe;
 }
 
 AiSubagentToolOutput AiSubagentToolExecutor::executeToolCall(const AiSubagentTask& task,

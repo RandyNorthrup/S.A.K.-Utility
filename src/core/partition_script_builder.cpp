@@ -64,7 +64,7 @@ constexpr auto kApfsRootDirectoryNamePayload = "apfs_root_directory_name";
 constexpr auto kApfsRootFilePayloadBase64 = "apfs_root_file_payload_base64";
 constexpr auto kApfsRootFilePayloadText = "apfs_root_file_payload_text";
 constexpr auto kApfsRootFilePatchOffsetPayload = "apfs_root_file_patch_offset_bytes";
-constexpr auto kApfsGeneratedLayoutConfirmedPayload = "apfs_generated_layout_confirmed";
+constexpr auto kApfsCowMutationCertifiedPayload = "apfs_cow_mutation_certified";
 constexpr auto kApfsAdditionalVolumeNamesPayload = "apfs_additional_volume_names";
 constexpr auto kApfsCompressZlibPayload = "apfs_compress_zlib";
 constexpr auto kApfsSnapshotNamePayload = "apfs_snapshot_name";
@@ -153,6 +153,73 @@ QString requirePartitionIdentity(const PartitionTarget& target) {
                 "%1.Trim('{}'))) { throw 'Partition identity mismatch (GUID)' }\n")
                 .arg(PartitionScriptBuilder::quotePowerShell(target.partition_guid.trimmed()));
     }
+    return script;
+}
+
+QString requireDiskIdentity(const PartitionTarget& target) {
+    return QStringLiteral(
+               "$sakIdentityDisk = Get-Disk -Number %1 -ErrorAction Stop\n"
+               "$sakActualUniqueId = \"$($sakIdentityDisk.UniqueId)\".Trim()\n"
+               "if ([string]::IsNullOrWhiteSpace($sakActualUniqueId) -or "
+               "-not [string]::Equals($sakActualUniqueId, %2, "
+               "[System.StringComparison]::OrdinalIgnoreCase)) { "
+               "throw 'Disk identity mismatch (UniqueId)' }\n"
+               "$sakActualSerial = \"$($sakIdentityDisk.SerialNumber)\".Trim()\n"
+               "if (-not [string]::Equals($sakActualSerial, %3, "
+               "[System.StringComparison]::Ordinal)) { "
+               "throw 'Disk identity mismatch (serial)' }\n"
+               "if ([uint64]$sakIdentityDisk.Size -ne [uint64]%4) { "
+               "throw 'Disk identity mismatch (size)' }\n")
+        .arg(target.disk_number.value())
+        .arg(PartitionScriptBuilder::quotePowerShell(target.disk_unique_id.trimmed()),
+             PartitionScriptBuilder::quotePowerShell(target.disk_serial_number.trimmed()))
+        .arg(uintArg(target.disk_size_bytes));
+}
+
+bool lineMutatesDiskNumber(const QString& line) {
+    if (line.trimmed().startsWith(QStringLiteral("function "))) {
+        return false;
+    }
+    static const QStringList kMutationCommands = {QStringLiteral("Clear-Disk "),
+                                                  QStringLiteral("Initialize-Disk "),
+                                                  QStringLiteral("Set-Disk "),
+                                                  QStringLiteral("New-Partition "),
+                                                  QStringLiteral("Remove-Partition "),
+                                                  QStringLiteral("Resize-Partition "),
+                                                  QStringLiteral("Set-Partition ")};
+    const bool names_disk = line.contains(QStringLiteral("-DiskNumber")) ||
+                            line.contains(QStringLiteral("-Number"));
+    return names_disk && std::ranges::any_of(kMutationCommands, [&line](const QString& command) {
+               return line.contains(command);
+           });
+}
+
+PartitionScript addDiskIdentityGuards(PartitionScript script, const PartitionOperation& operation) {
+    if (!script.blockers.isEmpty()) {
+        return script;
+    }
+    const QStringList source_lines = script.script.split(u'\n', Qt::KeepEmptyParts);
+    const bool mutates_disk_number = std::ranges::any_of(source_lines, lineMutatesDiskNumber);
+    const bool requires_identity = mutates_disk_number &&
+                                   operation.target.kind == PartitionTargetKind::Disk;
+    if (requires_identity && (operation.target.disk_unique_id.trimmed().isEmpty() ||
+                              operation.target.disk_size_bytes == 0)) {
+        script.script.clear();
+        script.blockers.append(QStringLiteral("Destructive disk identity was not pinned"));
+        return script;
+    }
+    if (!mutates_disk_number || operation.target.disk_unique_id.trimmed().isEmpty()) {
+        return script;
+    }
+    const QString guard = requireDiskIdentity(operation.target);
+    QStringList guarded_lines;
+    for (const auto& line : source_lines) {
+        if (lineMutatesDiskNumber(line)) {
+            guarded_lines.append(guard.trimmed());
+        }
+        guarded_lines.append(line);
+    }
+    script.script = guarded_lines.join(u'\n');
     return script;
 }
 
@@ -736,23 +803,23 @@ QString apfsRootFileMutationCommand(PartitionOperationType type) {
 QString apfsRootFileMutationEvidenceId(PartitionOperationType type) {
     switch (type) {
     case PartitionOperationType::ApfsWriteRootFile:
-        return QStringLiteral("ui.apfs-generated-raw-root-file-write");
+        return QStringLiteral("ui.apfs-cow-raw-root-file-write");
     case PartitionOperationType::ApfsPatchRootFile:
-        return QStringLiteral("ui.apfs-generated-raw-root-file-patch");
+        return QStringLiteral("ui.apfs-cow-raw-root-file-patch");
     case PartitionOperationType::ApfsPatchRootDirectoryFile:
-        return QStringLiteral("ui.apfs-generated-raw-root-directory-file-patch");
+        return QStringLiteral("ui.apfs-cow-raw-root-directory-file-patch");
     case PartitionOperationType::ApfsDeleteRootFile:
-        return QStringLiteral("ui.apfs-generated-raw-root-file-delete");
+        return QStringLiteral("ui.apfs-cow-raw-root-file-delete");
     case PartitionOperationType::ApfsWriteRootDirectoryFile:
-        return QStringLiteral("ui.apfs-generated-raw-root-directory-file-write");
+        return QStringLiteral("ui.apfs-cow-raw-root-directory-file-write");
     case PartitionOperationType::ApfsDeleteRootDirectoryFile:
-        return QStringLiteral("ui.apfs-generated-raw-root-directory-file-delete");
+        return QStringLiteral("ui.apfs-cow-raw-root-directory-file-delete");
     case PartitionOperationType::ApfsCreateRootDirectory:
-        return QStringLiteral("ui.apfs-generated-raw-root-directory-create");
+        return QStringLiteral("ui.apfs-cow-raw-root-directory-create");
     case PartitionOperationType::ApfsDeleteRootDirectory:
-        return QStringLiteral("ui.apfs-generated-raw-root-directory-delete");
+        return QStringLiteral("ui.apfs-cow-raw-root-directory-delete");
     case PartitionOperationType::ApfsChangeVolumeLabel:
-        return QStringLiteral("ui.apfs-generated-raw-volume-label-change");
+        return QStringLiteral("ui.apfs-cow-raw-volume-label-change");
     default:
         return {};
     }
@@ -1097,13 +1164,13 @@ QString apfsRootFileMutationPrerequisiteBlocker(const PartitionOperation& operat
     if (!payloadBool(operation, QString::fromLatin1(kTargetWipeConfirmedPayload))) {
         return QStringLiteral("APFS root-file mutation requires confirmation");
     }
-    if (!payloadBool(operation, QString::fromLatin1(kApfsGeneratedLayoutConfirmedPayload))) {
-        return QStringLiteral("APFS root-file mutation requires generated-layout confirmation");
+    if (!payloadBool(operation, QString::fromLatin1(kApfsCowMutationCertifiedPayload))) {
+        return QStringLiteral("APFS root-file mutation requires certified COW capability");
     }
     if (operation.target.size_bytes < kMinimumApfsGeneratedRawFormatBytes ||
         operation.target.size_bytes > kMaximumApfsGeneratedMultiCibFormatBytes) {
         return QStringLiteral(
-            "APFS generated raw mutation supports single-CIB, multi-CIB, metadata-overflow, and "
+            "APFS COW raw mutation supports single-CIB, multi-CIB, metadata-overflow, and "
             "CAB-tier targets from 64 MiB through 24 TiB; larger targets remain blocked");
     }
     return {};
@@ -1123,11 +1190,11 @@ QString apfsSnapshotCommand(PartitionOperationType type) {
 QString apfsSnapshotEvidenceId(PartitionOperationType type) {
     switch (type) {
     case PartitionOperationType::ApfsSnapshotDelete:
-        return QStringLiteral("ui.apfs-generated-raw-snapshot-delete");
+        return QStringLiteral("ui.apfs-cow-raw-snapshot-delete");
     case PartitionOperationType::ApfsSnapshotRevert:
-        return QStringLiteral("ui.apfs-generated-raw-snapshot-revert");
+        return QStringLiteral("ui.apfs-cow-raw-snapshot-revert");
     default:
-        return QStringLiteral("ui.apfs-generated-raw-snapshot-create");
+        return QStringLiteral("ui.apfs-cow-raw-snapshot-create");
     }
 }
 
@@ -1143,7 +1210,7 @@ QString apfsSnapshotVerb(PartitionOperationType type) {
 }
 
 // Snapshot create/delete/revert share the format/mutation prerequisites (raw APFS target,
-// destructive + generated-layout confirmation, certified size range) plus a snapshot name.
+// destructive + certified-COW confirmation, certified size range) plus a snapshot name.
 QString apfsSnapshotPrerequisiteBlocker(const PartitionOperation& operation,
                                         const QString& snapshotName) {
     const QString targetBlocker = rawPartitionTargetPathBlocker(operation);
@@ -1158,13 +1225,13 @@ QString apfsSnapshotPrerequisiteBlocker(const PartitionOperation& operation,
     if (!payloadBool(operation, QString::fromLatin1(kTargetWipeConfirmedPayload))) {
         return QStringLiteral("APFS snapshot mutation requires confirmation");
     }
-    if (!payloadBool(operation, QString::fromLatin1(kApfsGeneratedLayoutConfirmedPayload))) {
-        return QStringLiteral("APFS snapshot mutation requires generated-layout confirmation");
+    if (!payloadBool(operation, QString::fromLatin1(kApfsCowMutationCertifiedPayload))) {
+        return QStringLiteral("APFS snapshot mutation requires certified COW capability");
     }
     if (operation.target.size_bytes < kMinimumApfsGeneratedRawFormatBytes ||
         operation.target.size_bytes > kMaximumApfsGeneratedMultiCibFormatBytes) {
         return QStringLiteral(
-            "APFS generated raw snapshot mutation supports single-CIB, multi-CIB, "
+            "APFS COW snapshot mutation supports single-CIB, multi-CIB, "
             "metadata-overflow, and CAB-tier targets from 64 MiB through 24 TiB");
     }
     if (snapshotName.isEmpty()) {
@@ -1194,11 +1261,11 @@ QString apfsA7Command(PartitionOperationType type) {
 QString apfsA7EvidenceId(PartitionOperationType type) {
     switch (type) {
     case PartitionOperationType::ApfsCloneRootFile:
-        return QStringLiteral("ui.apfs-generated-raw-file-clone");
+        return QStringLiteral("ui.apfs-cow-raw-file-clone");
     case PartitionOperationType::ApfsHardlinkRootFile:
-        return QStringLiteral("ui.apfs-generated-raw-file-hardlink");
+        return QStringLiteral("ui.apfs-cow-raw-file-hardlink");
     default:
-        return QStringLiteral("ui.apfs-generated-raw-resize");
+        return QStringLiteral("ui.apfs-cow-raw-resize");
     }
 }
 
@@ -1229,13 +1296,13 @@ QString apfsA7PrerequisiteBlocker(const PartitionOperation& operation,
     if (!payloadBool(operation, QString::fromLatin1(kTargetWipeConfirmedPayload))) {
         return QStringLiteral("APFS clone/hard link/resize requires confirmation");
     }
-    if (!payloadBool(operation, QString::fromLatin1(kApfsGeneratedLayoutConfirmedPayload))) {
-        return QStringLiteral("APFS clone/hard link/resize requires generated-layout confirmation");
+    if (!payloadBool(operation, QString::fromLatin1(kApfsCowMutationCertifiedPayload))) {
+        return QStringLiteral("APFS clone/hard link/resize requires certified COW capability");
     }
     if (operation.target.size_bytes < kMinimumApfsGeneratedRawFormatBytes ||
         operation.target.size_bytes > kMaximumApfsGeneratedMultiCibFormatBytes) {
         return QStringLiteral(
-            "APFS generated raw clone/hard link/resize supports single-CIB, multi-CIB, "
+            "APFS COW clone/hard link/resize supports single-CIB, multi-CIB, "
             "metadata-overflow, and CAB-tier targets from 64 MiB through 24 TiB");
     }
     if (apfsA7IsLinkOp(operation.type) && (sourceName.isEmpty() || newName.isEmpty())) {
@@ -2409,7 +2476,7 @@ QString cloneTransferOpenFunctionsScript() {
     return QStringLiteral(
         "function Open-SakRead([string]$p) { return [System.IO.File]::Open($p, "
         "[System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, "
-        "[System.IO.FileShare]::ReadWrite) }\n"
+        "[System.IO.FileShare]::Read) }\n"
         "function Open-SakWrite([string]$p) { if ($p.StartsWith('\\\\.\\')) { return "
         "[System.IO.File]::Open($p, [System.IO.FileMode]::Open, "
         "[System.IO.FileAccess]::Write, [System.IO.FileShare]::None) }; return "
@@ -2449,35 +2516,52 @@ QString cloneTransferVerificationFunctionsScript() {
         "} } }\n");
 }
 
-QString cloneTransferRawTargetFunctionsScript() {
+QString cloneTransferRawTargetFunctionsScript(const PartitionOperation& operation) {
     return QStringLiteral(
-        "function Get-SakPhysicalDriveNumber([string]$p) { if (-not "
-        "$p.StartsWith('\\\\.\\PhysicalDrive', [System.StringComparison]::OrdinalIgnoreCase)) { "
-        "return $null }; $suffix = "
-        "$p.Substring('\\\\.\\PhysicalDrive'.Length); $n = -1; if (-not "
-        "[int]::TryParse($suffix, [ref]$n)) { throw 'Invalid physical target disk path' }; "
-        "return $n }\n"
-        "function Assert-SakRawWriteTarget([string]$p) { $n = Get-SakPhysicalDriveNumber "
-        "$p; if ($null -eq $n) { return $null }; $disk = Get-Disk -Number $n -ErrorAction "
-        "Stop; if ($disk.IsBoot -or $disk.IsSystem) { throw 'Target disk is current OS "
-        "disk' }; if ($disk.IsReadOnly) { throw 'Target disk is read-only' }; if "
-        "($disk.BusType -eq 'Spaces') { throw 'Storage Spaces target disks are blocked' }; "
-        "Set-Disk -Number $n -IsOffline $true -ErrorAction Stop; $verify = "
-        "Get-Disk -Number $n -ErrorAction Stop; if (-not $verify.IsOffline) { throw "
-        "'Could not take target disk offline (locked/pagefile); aborting to avoid "
-        "corrupting mounted volumes' }; return $n }\n"
-        "function Restore-SakRawWriteTarget($n) { if ($null -ne $n) { Set-Disk -Number $n "
-        "-IsOffline $false -ErrorAction Stop } }\n");
+               "$sakExpectedTargetUniqueId = %1\n"
+               "$sakExpectedTargetSerial = %2\n"
+               "$sakExpectedTargetSize = [uint64]%3\n"
+               "function Get-SakPhysicalDriveNumber([string]$p) { if (-not "
+               "$p.StartsWith('\\\\.\\PhysicalDrive', "
+               "[System.StringComparison]::OrdinalIgnoreCase)) { "
+               "return $null }; $suffix = "
+               "$p.Substring('\\\\.\\PhysicalDrive'.Length); $n = -1; if (-not "
+               "[int]::TryParse($suffix, [ref]$n)) { throw 'Invalid physical target disk path' }; "
+               "return $n }\n"
+               "function Assert-SakRawWriteTarget([string]$p) { $n = Get-SakPhysicalDriveNumber "
+               "$p; if ($null -eq $n) { return $null }; $disk = Get-Disk -Number $n -ErrorAction "
+               "Stop; if (-not $sakExpectedTargetUniqueId -or $sakExpectedTargetSize -eq 0) { "
+               "throw 'Raw target disk identity was not pinned' }; "
+               "$sakActualTargetUniqueId = \"$($disk.UniqueId)\".Trim(); "
+               "$sakActualTargetSerial = \"$($disk.SerialNumber)\".Trim(); "
+               "if (-not [string]::Equals($sakActualTargetUniqueId, $sakExpectedTargetUniqueId, "
+               "[System.StringComparison]::OrdinalIgnoreCase) -or "
+               "-not [string]::Equals($sakActualTargetSerial, $sakExpectedTargetSerial, "
+               "[System.StringComparison]::Ordinal) -or [uint64]$disk.Size -ne "
+               "$sakExpectedTargetSize) { throw 'Raw target disk identity mismatch' }; "
+               "if ($disk.IsBoot -or $disk.IsSystem) { throw 'Target disk is current OS "
+               "disk' }; if ($disk.IsReadOnly) { throw 'Target disk is read-only' }; if "
+               "($disk.BusType -eq 'Spaces') { throw 'Storage Spaces target disks are blocked' }; "
+               "Set-Disk -Number $n -IsOffline $true -ErrorAction Stop; $verify = "
+               "Get-Disk -Number $n -ErrorAction Stop; if (-not $verify.IsOffline) { throw "
+               "'Could not take target disk offline (locked/pagefile); aborting to avoid "
+               "corrupting mounted volumes' }; return $n }\n"
+               "function Restore-SakRawWriteTarget($n) { if ($null -ne $n) { Set-Disk -Number $n "
+               "-IsOffline $false -ErrorAction Stop } }\n")
+        .arg(PartitionScriptBuilder::quotePowerShell(
+                 payloadString(operation, QStringLiteral("target_disk_unique_id")).trimmed()),
+             PartitionScriptBuilder::quotePowerShell(
+                 payloadString(operation, QStringLiteral("target_disk_serial_number")).trimmed()),
+             uintArg(payloadUInt64(operation, QStringLiteral("target_disk_size_bytes"))));
 }
 
 QString cloneTransferCopyBodyScript() {
     return QStringLiteral(
-        "try { if ($expectedBytes -eq 0) { $expectedBytes = [uint64]$in.Length "
+        "if ($expectedBytes -eq 0) { $expectedBytes = [uint64]$in.Length "
         "- $sourceOffset }; [void]$in.Seek([int64]$sourceOffset, "
         "[System.IO.SeekOrigin]::Begin); $out = Open-SakWrite $dst; try { "
         "[void]$out.Seek([int64]$targetOffset, [System.IO.SeekOrigin]::Begin); "
-        "Copy-SakBytes $in $out $expectedBytes; $out.Flush($true) } finally { $out.Dispose() } } "
-        "finally { $in.Dispose() }\n");
+        "Copy-SakBytes $in $out $expectedBytes; $out.Flush($true) } finally { $out.Dispose() }\n");
 }
 
 // The verification runs while the target disk is still held offline (inside the outer
@@ -2486,27 +2570,33 @@ QString cloneTransferCopyBodyScript() {
 QString cloneTransferVerifyBodyScript() {
     return QStringLiteral(
         "if (-not [string]::IsNullOrWhiteSpace($verifyMode)) { if ($expectedBytes -eq 0) { "
-        "throw 'Verification requires known source size' }; $srcVerify = Open-SakRead $src; "
-        "$dstVerify = Open-SakRead $dst; try { if ($verifyMode -like 'Full*') { "
-        "Write-Output 'Running full clone verification'; Assert-SakFullCopy $srcVerify "
+        "throw 'Verification requires known source size' }; $dstVerify = Open-SakRead $dst; "
+        "try { if ($verifyMode -like 'Full*') { "
+        "Write-Output 'Running full clone verification'; Assert-SakFullCopy $in "
         "$dstVerify $expectedBytes $sourceOffset $targetOffset } else { Write-Output "
-        "'Running sample clone verification'; Assert-SakSampleCopy $srcVerify $dstVerify "
+        "'Running sample clone verification'; Assert-SakSampleCopy $in $dstVerify "
         "$expectedBytes $sourceOffset $targetOffset } } finally { $dstVerify.Dispose(); "
-        "$srcVerify.Dispose() } }\n");
+        "} }\n");
 }
 
-QString cloneTransferExecutionScript() {
-    return QStringLiteral(
-               "$in = Open-SakRead $src\n"
+QString cloneTransferExecutionScript(bool source_already_open) {
+    const QString open_source = source_already_open ? QString()
+                                                    : QStringLiteral("$in = Open-SakRead $src\n");
+    return open_source +
+           QStringLiteral(
                "if ($expectedBytes -gt 0 -and $sourceOffset -eq 0 -and -not "
                "$src.StartsWith('\\\\.\\') -and [uint64]$in.Length -ne $expectedBytes) { "
-               "$in.Dispose(); throw \"Source image changed since it was queued (expected "
-               "$expectedBytes bytes, found $($in.Length)); aborting before touching the "
+               "$actualSourceBytes = [uint64]$in.Length; $in.Dispose(); throw \"Source image "
+               "changed since it was queued (expected $expectedBytes bytes, found "
+               "$actualSourceBytes); aborting before touching the "
                "target disk\" }\n"
+               "try {\n"
                "$sakRawTargetDisk = Assert-SakRawWriteTarget $dst\n"
                "try {\n") +
            cloneTransferCopyBodyScript() + cloneTransferVerifyBodyScript() +
-           QStringLiteral("}\nfinally { Restore-SakRawWriteTarget $sakRawTargetDisk }\n");
+           QStringLiteral(
+               "}\nfinally { Restore-SakRawWriteTarget $sakRawTargetDisk }\n"
+               "}\nfinally { $in.Dispose() }\n");
 }
 
 // Runtime authoritative guard for Create Image: the validator's textual
@@ -2574,25 +2664,57 @@ QString restoreImageContentPinScript(const QString& source, const QString& expec
                "$expectedImgHash = %2\n"
                "if (-not $expectedImgHash) { throw 'Restore Image was queued without a content "
                "fingerprint; refusing to restore without verifying the approved image' }\n"
-               "$actualImgHash = (Get-FileHash -LiteralPath $imgPin -Algorithm SHA256).Hash."
-               "ToLowerInvariant()\n"
-               "if ($actualImgHash -ne $expectedImgHash) { throw ('Restore Image content changed "
+               "$in = [System.IO.File]::Open($imgPin, [System.IO.FileMode]::Open, "
+               "[System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)\n"
+               "if (-not ('SakLockedFilePath' -as [type])) { Add-Type -TypeDefinition @'\n"
+               "using System; using System.Runtime.InteropServices; using System.Text;\n"
+               "public static class SakLockedFilePath {\n"
+               "  [DllImport(\"kernel32.dll\", CharSet=CharSet.Unicode, SetLastError=true)]\n"
+               "  public static extern uint GetFinalPathNameByHandle(IntPtr handle, "
+               "StringBuilder path, uint length, uint flags);\n"
+               "}\n"
+               "'@ }\n"
+               "$sakLockedPathBuffer = New-Object System.Text.StringBuilder 32768\n"
+               "$sakLockedPathLength = [SakLockedFilePath]::GetFinalPathNameByHandle("
+               "$in.SafeFileHandle.DangerousGetHandle(), $sakLockedPathBuffer, 32768, 0)\n"
+               "if ($sakLockedPathLength -eq 0 -or $sakLockedPathLength -ge 32768) { "
+               "$in.Dispose(); throw 'Restore Image could not resolve the locked source handle' "
+               "}\n"
+               "$imgLockedPath = $sakLockedPathBuffer.ToString()\n"
+               "try { $sha256 = [System.Security.Cryptography.SHA256]::Create(); try { "
+               "$actualImgHash = ([System.BitConverter]::ToString("
+               "$sha256.ComputeHash($in))).Replace('-', '').ToLowerInvariant() } finally { "
+               "$sha256.Dispose() } } catch { $in.Dispose(); throw }\n"
+               "if ($actualImgHash -ne $expectedImgHash) { $in.Dispose(); throw ('Restore Image "
+               "content changed "
                "since it was approved (expected {0}, found {1}); refusing to write an image the "
                "operator did not approve' -f $expectedImgHash, $actualImgHash) }\n"
+               "$in.Position = 0\n"
                "Write-Output 'Restore Image content fingerprint verified'\n")
         .arg(PartitionScriptBuilder::quotePowerShell(QDir::toNativeSeparators(source)),
              PartitionScriptBuilder::quotePowerShell(expected_sha256.toLower()));
 }
 
-QString restoreImageSourceGuardScript(const QString& source, uint32_t targetDiskNumber) {
+QString restoreImageSourceAdmissionScript(const QString& source) {
+    return QStringLiteral(
+               "$imgSrc = %1\n"
+               "if ($imgSrc.StartsWith('\\\\?\\UNC\\', "
+               "[System.StringComparison]::OrdinalIgnoreCase) -or "
+               "($imgSrc.StartsWith('\\\\') -and -not $imgSrc.StartsWith('\\\\.\\') -and -not "
+               "$imgSrc.StartsWith('\\\\?\\Volume{', "
+               "[System.StringComparison]::OrdinalIgnoreCase))) { throw 'Restore Image source "
+               "must be a local, resolvable path; UNC/network sources are not supported for raw "
+               "restore' }\n")
+        .arg(PartitionScriptBuilder::quotePowerShell(QDir::toNativeSeparators(source)));
+}
+
+QString restoreImageSourceGuardScript(uint32_t target_disk_number) {
     return sakVolumeGuidFunctionScript() + optionalDiskPartitionsFunctionScript() +
            optionalPartitionVolumeFunctionScript() +
            QStringLiteral(
-               "$imgSrc = %1\n"
-               "$tgtDiskNumber = %2\n"
-               "if ($imgSrc.StartsWith('\\\\') -and -not $imgSrc.StartsWith('\\\\.\\') -and -not "
-               "$imgSrc.StartsWith('\\\\?\\')) { throw 'Restore Image source must be a local, "
-               "resolvable path; UNC/network sources are not supported for raw restore' }\n"
+               "$imgSrc = $imgLockedPath\n"
+               "$tgtDiskNumber = %1\n"
+               "try {\n"
                "$srcGuid = $null\n"
                "try { $srcGuid = (Get-SakVolumeGuid $imgSrc).TrimEnd('\\') } catch "
                "{ throw ('Restore Image cannot resolve the source volume identity for {0}: {1}; "
@@ -2605,15 +2727,18 @@ QString restoreImageSourceGuardScript(const QString& source, uint32_t targetDisk
                "$volume = Get-SakOptionalPartitionVolume $_; "
                "if ($volume -and $volume.UniqueId) { $volume.UniqueId.TrimEnd('\\') } })\n"
                "if ($tgtVolGuids -contains $srcGuid) { throw 'Restore Image source resides on the "
-               "target disk; it would be overwritten mid-restore' }\n")
-               .arg(PartitionScriptBuilder::quotePowerShell(QDir::toNativeSeparators(source)),
-                    QString::number(targetDiskNumber));
+               "target disk; it would be overwritten mid-restore' }\n"
+               "} catch { $in.Dispose(); throw }\n")
+               .arg(target_disk_number);
 }
 
-QString cloneTransferScript(const CloneTransferSpec& spec) {
+QString cloneTransferScript(const CloneTransferSpec& spec,
+                            const PartitionOperation& operation,
+                            bool source_already_open = false) {
     return cloneTransferPreludeScript(spec) + cloneTransferOpenFunctionsScript() +
-           cloneTransferVerificationFunctionsScript() + cloneTransferRawTargetFunctionsScript() +
-           cloneTransferExecutionScript();
+           cloneTransferVerificationFunctionsScript() +
+           cloneTransferRawTargetFunctionsScript(operation) +
+           cloneTransferExecutionScript(source_already_open);
 }
 
 QString osMigrationBootValidationScript() {
@@ -4066,9 +4191,10 @@ void PartitionScriptBuilder::appendAdvancedBuilders(QHash<int, Builder>* builder
 PartitionScript PartitionScriptBuilder::buildScript(const PartitionOperation& operation) const {
     static const QHash<int, Builder> kBuilders = buildOperationDispatchTable();
     const auto builder = kBuilders.constFind(static_cast<int>(operation.type));
-    return builder == kBuilders.constEnd()
-               ? invalidScript(QStringLiteral("Unsupported partition operation"))
-               : (this->*builder.value())(operation);
+    auto script = builder == kBuilders.constEnd()
+                      ? invalidScript(QStringLiteral("Unsupported partition operation"))
+                      : (this->*builder.value())(operation);
+    return addDiskIdentityGuards(std::move(script), operation);
 }
 
 QString PartitionScriptBuilder::quotePowerShell(const QString& value) {
@@ -4309,7 +4435,7 @@ PartitionScript PartitionScriptBuilder::buildApfsRootFileMutationScript(
                    ? QStringLiteral("root directory file")
                    : (apfsRootDirectoryMutation(operation.type) ? QStringLiteral("root directory")
                                                                 : QStringLiteral("root file")));
-    out.preview = QStringLiteral("%1 APFS generated %2 %3 on Disk %4 Partition %5")
+    out.preview = QStringLiteral("%1 APFS COW %2 %3 on Disk %4 Partition %5")
                       .arg(apfsRootFileMutationVerb(operation.type),
                            targetNoun,
                            apfsRootFileMutationDisplayName(input),
@@ -5020,6 +5146,11 @@ PartitionScript PartitionScriptBuilder::buildCloneOrImageScript(
     if (!blocker.isEmpty()) {
         return invalidScript(blocker);
     }
+    if (rawDevicePhysicalDriveNumber(spec.target).has_value() &&
+        (payloadString(operation, QStringLiteral("target_disk_unique_id")).trimmed().isEmpty() ||
+         payloadUInt64(operation, QStringLiteral("target_disk_size_bytes")) == 0)) {
+        return invalidScript(QStringLiteral("Raw target disk identity was not pinned"));
+    }
 
     PartitionScript out;
     out.preview = toDisplayString(operation.type) + QStringLiteral(" from ") + spec.source +
@@ -5032,12 +5163,14 @@ PartitionScript PartitionScriptBuilder::buildCloneOrImageScript(
             payloadBool(operation, QStringLiteral("overwrite_confirmed")));
     }
     if (operation.type == PartitionOperationType::RestoreImage) {
-        out.script += restoreImageSourceGuardScript(spec.source,
-                                                    operation.target.disk_number.value());
+        out.script += restoreImageSourceAdmissionScript(spec.source);
         out.script += restoreImageContentPinScript(
             spec.source, payloadString(operation, QStringLiteral("source_sha256")));
+        out.script += restoreImageSourceGuardScript(operation.target.disk_number.value());
     }
-    out.script += cloneTransferScript(spec);
+    out.script += cloneTransferScript(spec,
+                                      operation,
+                                      operation.type == PartitionOperationType::RestoreImage);
     if (operation.type == PartitionOperationType::MigrateOs) {
         out.script += osMigrationBootValidationScript();
     }

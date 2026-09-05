@@ -54,13 +54,13 @@ REMEDIATION_DOC = REPO_ROOT / "docs" / "CODEX_REVIEW_5_REMEDIATION.md"
 
 # The unit rule, stated once and executed here. Anything not matched is not a review unit --
 # generated files, binaries, resources and docs are excluded on purpose.
-UNIT_RULES = [
-    ("include", lambda p: p.startswith("include/") and p.endswith((".h", ".hpp"))),
-    ("src", lambda p: p.startswith("src/") and p.endswith((".cpp", ".h", ".hpp"))),
-    ("tests", lambda p: p.startswith("tests/") and p.endswith((".cpp", ".h", ".mjs"))),
-    ("scripts", lambda p: p.startswith("scripts/") and p.endswith((".py", ".ps1", ".sh"))),
-    ("browser", lambda p: p.startswith("browser/") and p.endswith(".js")),
-]
+UNIT_RULES = {
+    "include": (".h", ".hpp"),
+    "src": (".c", ".cpp", ".h", ".hpp"),
+    "tests": (".c", ".cpp", ".h", ".hpp", ".js", ".mjs", ".py", ".ps1", ".sh"),
+    "scripts": (".py", ".ps1", ".sh", ".cmd", ".bat"),
+    "browser": (".js",),
+}
 
 
 def fail(message: str) -> None:
@@ -77,8 +77,8 @@ def git(*args: str) -> str:
 
 
 def classify(path: str) -> str | None:
-    for group, matches in UNIT_RULES:
-        if matches(path):
+    for group, extensions in UNIT_RULES.items():
+        if path.startswith(f"{group}/") and path.endswith(extensions):
             return group
     return None
 
@@ -154,8 +154,8 @@ def cmd_inventory(quiet: bool = False) -> int:
     dropped = sorted(set(existing) - set(units))
     state["units"] = merged
     state["head_commit"] = git("rev-parse", "HEAD").strip()
-    state["unit_rule"] = ("include/**.h|.hpp, src/**.cpp|.h|.hpp, tests/**.cpp|.h|.mjs, "
-                          "scripts/**.py|.ps1|.sh, browser/**.js")
+    state["unit_rule"] = ", ".join(
+        f"{group}/**{'|'.join(extensions)}" for group, extensions in UNIT_RULES.items())
     save_state(state)
     if not quiet:
         print(f"inventory: {len(merged)} units at {state['head_commit'][:12]}")

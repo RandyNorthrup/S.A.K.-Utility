@@ -30,6 +30,5 @@
     "Affected versions are explicit and matched against the target version; an unproven match is reported as unverified.",
     "Mitigation and urgency are clear.",
     "Unconfirmed forum claims are separated from official guidance."
-  ],
-  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+  ]
 }

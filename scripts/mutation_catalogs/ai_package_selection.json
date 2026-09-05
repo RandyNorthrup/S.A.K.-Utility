@@ -8,9 +8,17 @@
       "id": "lossy-key-authorizes-exact-selection",
       "file": "src/ai/ai_package_selection.cpp",
       "find": "candidate.package_id.compare(clean_query, Qt::CaseInsensitive) == 0",
-      "replace": "normalizePackageQueryKey(candidate.package_id) == normalizePackageQueryKey(clean_query)",
+      "replace": "packageDisplayKey(candidate.package_id) == packageDisplayKey(clean_query)",
       "expect": "killed",
-      "why": "Lossy normalization removes punctuation, so foo-bar and foobar share a key. lossyNormalizedKeyNeverAuthorizesSelection requires the sole foobar candidate to stay human-gated for query foo-bar while raw case-insensitive foo-bar still selects."
+      "why": "Lossy normalization removes punctuation, so foo-bar and foobar share a key. refusesLossyIdAndTitleCollisions requires the sole foobar candidate to stay human-gated for query foo-bar while raw case-insensitive FOOBAR still selects."
+    },
+    {
+      "id": "lossy-title-key-authorizes-exact-selection",
+      "file": "src/ai/ai_package_selection.cpp",
+      "find": "candidate.title.compare(clean_query, Qt::CaseInsensitive) == 0",
+      "replace": "packageDisplayKey(candidate.title) == packageDisplayKey(clean_query)",
+      "expect": "killed",
+      "why": "Lossy display normalization is not selection authority. refusesLossyIdAndTitleCollisions requires query foo-bar to remain human-gated against title Foo Bar, while case-insensitive raw exact title and id matches still select."
     },
     {
       "id": "package-id-whitespace-rewrite-restored",
@@ -37,12 +45,12 @@
       "why": "Every present alias is attacker-controlled. boundsAndSanitizesCandidateMetadata requires an oversized title and an oversized whitespace description to be rejected before retention."
     },
     {
-      "id": "arbitrary-source-object-retained",
+      "id": "stale-source-version-authority-restored",
       "file": "src/ai/ai_package_selection.cpp",
-      "find": "candidate->source = QJsonObject{{QStringLiteral(\"package_id\"), candidate->package_id}};",
-      "replace": "candidate->source = object;",
+      "find": "object[QStringLiteral(\"package_id\")] = package_id;",
+      "replace": "object[QStringLiteral(\"version\")] = QStringLiteral(\"stale\");\n    object[QStringLiteral(\"package_id\")] = package_id;",
       "expect": "killed",
-      "why": "Copying the complete search object retains unlimited unknown metadata. boundsAndSanitizesCandidateMetadata supplies a 100000-character blob and requires it absent from both source and serialized candidate."
+      "why": "A retained alternate serialization authority can resurrect a stale version when the canonical member is empty. serializesOnlyCanonicalCandidateFields requires optional empty canonical fields to be absent."
     },
     {
       "id": "later-alias-validation-short-circuited",
@@ -67,6 +75,14 @@
       "replace": "return selectedPackageResult(exact_matches.first(), 0);",
       "expect": "killed",
       "why": "A mixed valid/malformed response must not hide rejected records just because one candidate selected. reportsRejectedEntriesOnSuccessfulSelection requires rejected_entries=1 in the result and JSON."
+    },
+    {
+      "id": "zero-candidate-limit-accepted",
+      "file": "src/ai/ai_package_selection.cpp",
+      "find": "if (candidate_limit <= 0) {",
+      "replace": "if (candidate_limit < 0) {",
+      "expect": "killed",
+      "why": "Zero is not a usable reporting limit and must fail before parsing or exposing candidates. rejectsNonPositiveCandidateLimitWithoutExposure requires an explicit refusal for both zero and negative limits."
     }
   ]
 }

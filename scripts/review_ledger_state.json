@@ -1,6 +1,6 @@
 {
-  "head_commit": "88a236b9f53b1cc0a778f687592d36acfe91ddf1",
-  "unit_rule": "include/**.h|.hpp, src/**.cpp|.h|.hpp, tests/**.cpp|.h|.mjs, scripts/**.py|.ps1|.sh, browser/**.js",
+  "head_commit": "b2bbdb4fbda853b685dd9e6dc34869520bdf49e1",
+  "unit_rule": "include/**.h|.hpp, src/**.c|.cpp|.h|.hpp, tests/**.c|.cpp|.h|.hpp|.js|.mjs|.py|.ps1|.sh, scripts/**.py|.ps1|.sh|.cmd|.bat, browser/**.js",
   "units": {
     "browser/extension/background.js": {
       "evidence": "cited",
@@ -112,10 +112,13 @@
       "status": "reviewed"
     },
     "include/sak/advanced_uninstall_panel.h": {
+      "brief": "docs/review_briefs/include_sak_advanced_uninstall_panel.md",
+      "evidence": "driver",
       "group": "include",
       "previous_evidence": "driver",
       "previous_review_blob": "1412badc9a2ffcbf59a34ff44906a68ea0b4de6b",
-      "status": "pending"
+      "reviewed_blob": "9646f219bccc80d7a00db3baa600d2088cfe1c5c",
+      "status": "reviewed"
     },
     "include/sak/advanced_uninstall_types.h": {
       "evidence": "cited",
@@ -152,10 +155,13 @@
       "status": "reviewed"
     },
     "include/sak/ai/ai_command_guard.h": {
+      "brief": "docs/review_briefs/include_sak_ai_ai_command_guard.md",
+      "evidence": "driver",
       "group": "include",
       "previous_evidence": "driver",
       "previous_review_blob": "ff21cb57ac87d51bbc7035bbc2a51fddab957893",
-      "status": "pending"
+      "reviewed_blob": "eff2589c6367668c324876a792a0d6cd169eb621",
+      "status": "reviewed"
     },
     "include/sak/ai/ai_command_tool_planner.h": {
       "brief": "docs/review_briefs/include_sak_ai_ai_command_tool_planner.md",
@@ -174,9 +180,10 @@
       "status": "reviewed"
     },
     "include/sak/ai/ai_credential_store.h": {
-      "evidence": "cited",
+      "brief": "docs/review_briefs/include_sak_ai_ai_credential_store.md",
+      "evidence": "driver",
       "group": "include",
-      "reviewed_blob": null,
+      "reviewed_blob": "c9e523af85c8c4871737c1f26d195b7120a68230",
       "status": "reviewed"
     },
     "include/sak/ai/ai_execution_broker.h": {
@@ -265,16 +272,24 @@
       "brief": "docs/review_briefs/include_sak_ai_ai_openai_model_client.md",
       "evidence": "driver",
       "group": "include",
-      "reviewed_blob": "c8d9dfa25728f673cbffc070d33134ee196786a4",
+      "previous_evidence": "driver",
+      "previous_review_blob": "c8d9dfa25728f673cbffc070d33134ee196786a4",
+      "reviewed_blob": "06c957bbcab36c37ba8a1b9d07fec71582f19558",
       "status": "reviewed"
     },
     "include/sak/ai/ai_orchestrator.h": {
+      "brief": "docs/review_briefs/include_sak_ai_ai_orchestrator.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": "0b6a60a4ddcc8d4f57c4ac60b774c1f1ec85bfb0",
+      "status": "reviewed"
     },
     "include/sak/ai/ai_package_selection.h": {
+      "brief": "docs/review_briefs/include_sak_ai_ai_package_selection.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": "705fb69498c93023299c2534b250370b86de3c88",
+      "status": "reviewed"
     },
     "include/sak/ai/ai_package_tool_planner.h": {
       "group": "include",
@@ -333,12 +348,18 @@
       "status": "pending"
     },
     "include/sak/ai/ai_subagent_runner.h": {
+      "brief": "docs/review_briefs/include_sak_ai_ai_subagent_runner.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": "668b57dd851860ecf8a5457a9b6d15b60a01ccf3",
+      "status": "reviewed"
     },
     "include/sak/ai/ai_subagent_tool_executor.h": {
+      "brief": "docs/review_briefs/include_sak_ai_ai_subagent_tool_executor.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": "50a19c8965540c1c236f866ec891b8efaa7194be",
+      "status": "reviewed"
     },
     "include/sak/ai/ai_token_usage_tracker.h": {
       "group": "include",
@@ -401,16 +422,22 @@
       "status": "pending"
     },
     "include/sak/ai/ai_workflow_template.h": {
+      "brief": "docs/review_briefs/include_sak_ai_ai_workflow_template.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": "6c2f666989b4981d6e7138cdba4719c7bf6b7335",
+      "status": "reviewed"
     },
     "include/sak/ai/openai_response_types.h": {
       "group": "include",
       "status": "pending"
     },
     "include/sak/ai/openai_responses_client.h": {
+      "brief": "docs/review_briefs/include_sak_ai_openai_responses_client.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": "f429caf23d5c10feb423879b7e76163ee86fca16",
+      "status": "reviewed"
     },
     "include/sak/ai_assistant_panel.h": {
       "group": "include",
@@ -1127,9 +1154,10 @@
       "status": "pending"
     },
     "include/sak/network_transfer_runner.h": {
-      "evidence": "cited",
+      "brief": "docs/review_briefs/include_sak_network_transfer_runner.md",
+      "evidence": "driver",
       "group": "include",
-      "reviewed_blob": null,
+      "reviewed_blob": "9f1dd0c375cdf1e6fefc26630c96664565e99f70",
       "status": "reviewed"
     },
     "include/sak/nuget_dependency_resolver.h": {
@@ -1257,12 +1285,18 @@
       "status": "reviewed"
     },
     "include/sak/partition_manager_controller.h": {
+      "brief": "docs/review_briefs/include_sak_partition_manager_controller.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": "e65fa172c73f5f4419ed48c99b7689d231cd843f",
+      "status": "reviewed"
     },
     "include/sak/partition_manager_panel.h": {
+      "brief": "docs/review_briefs/include_sak_partition_manager_panel.md",
+      "evidence": "driver",
       "group": "include",
-      "status": "pending"
+      "reviewed_blob": "f473c61d1827646374fe85df681334ae18baa9bf",
+      "status": "reviewed"
     },
     "include/sak/partition_manager_types.h": {
       "evidence": "cited",
@@ -1940,6 +1974,14 @@
       "group": "scripts",
       "status": "pending"
     },
+    "scripts/launch_partition_manager_bitlocker_mutation_external_gate_elevated.cmd": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/launch_partition_manager_bitlocker_mutation_external_gate_local.cmd": {
+      "group": "scripts",
+      "status": "pending"
+    },
     "scripts/launch_partition_manager_bitlocker_mutation_external_gate_local.ps1": {
       "group": "scripts",
       "status": "pending"
@@ -1948,7 +1990,19 @@
       "group": "scripts",
       "status": "pending"
     },
+    "scripts/launch_partition_manager_file_recovery_external_gate_elevated.cmd": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/launch_partition_manager_file_recovery_external_gate_local.cmd": {
+      "group": "scripts",
+      "status": "pending"
+    },
     "scripts/launch_partition_manager_file_recovery_external_gate_local.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/launch_partition_manager_hdd_defrag_external_gate_elevated.cmd": {
       "group": "scripts",
       "status": "pending"
     },
@@ -1960,7 +2014,15 @@
       "group": "scripts",
       "status": "pending"
     },
+    "scripts/launch_partition_manager_offline_bios_bcd_break.cmd": {
+      "group": "scripts",
+      "status": "pending"
+    },
     "scripts/launch_partition_manager_offline_bios_bcd_break_local.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/launch_partition_manager_offline_bios_bcdboot_repair.cmd": {
       "group": "scripts",
       "status": "pending"
     },
@@ -1968,11 +2030,23 @@
       "group": "scripts",
       "status": "pending"
     },
+    "scripts/launch_partition_manager_offline_bios_mbr_fixture_build.cmd": {
+      "group": "scripts",
+      "status": "pending"
+    },
     "scripts/launch_partition_manager_offline_bios_mbr_fixture_build_local.ps1": {
       "group": "scripts",
       "status": "pending"
     },
+    "scripts/launch_partition_manager_offline_uefi_bcd_break.cmd": {
+      "group": "scripts",
+      "status": "pending"
+    },
     "scripts/launch_partition_manager_offline_uefi_bcd_break_local.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/launch_partition_manager_offline_uefi_bcdboot_repair.cmd": {
       "group": "scripts",
       "status": "pending"
     },
@@ -1992,6 +2066,10 @@
       "group": "scripts",
       "status": "pending"
     },
+    "scripts/launch_partition_manager_system_mbr2gpt_external_gate.cmd": {
+      "group": "scripts",
+      "status": "pending"
+    },
     "scripts/launch_partition_manager_system_mbr2gpt_external_gate_local.ps1": {
       "group": "scripts",
       "status": "pending"
@@ -2000,7 +2078,15 @@
       "group": "scripts",
       "status": "pending"
     },
+    "scripts/launch_partition_manager_vm_data_external_gates_nonusb.cmd": {
+      "group": "scripts",
+      "status": "pending"
+    },
     "scripts/launch_partition_manager_vm_gate_host.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/launch_partition_manager_vm_ssd_usb_external_gates.cmd": {
       "group": "scripts",
       "status": "pending"
     },
@@ -3434,6 +3520,10 @@
       "reviewed_blob": null,
       "status": "reviewed"
     },
+    "src/core/sak_lzvn_shim.c": {
+      "group": "src",
+      "status": "pending"
+    },
     "src/core/script_rewriter.cpp": {
       "group": "src",
       "status": "pending"
@@ -4062,6 +4152,10 @@
       "group": "tests",
       "status": "pending"
     },
+    "tests/fixtures/cppcheck_c_language_probe.c": {
+      "group": "tests",
+      "status": "pending"
+    },
     "tests/fuzz/fuzz_harness.h": {
       "evidence": "cited",
       "group": "tests",
@@ -4157,6 +4251,10 @@
       "group": "tests",
       "reviewed_blob": null,
       "status": "reviewed"
+    },
+    "tests/unit/test_active_doc_references.py": {
+      "group": "tests",
+      "status": "pending"
     },
     "tests/unit/test_advanced_search_controller.cpp": {
       "group": "tests",
@@ -4402,6 +4500,10 @@
       "group": "tests",
       "status": "pending"
     },
+    "tests/unit/test_apple_filesystem_capability_matrix.py": {
+      "group": "tests",
+      "status": "pending"
+    },
     "tests/unit/test_backup_destination_guard.cpp": {
       "group": "tests",
       "status": "pending"
@@ -4460,6 +4562,10 @@
       "group": "tests",
       "status": "pending"
     },
+    "tests/unit/test_clang_tidy_naming_gate.py": {
+      "group": "tests",
+      "status": "pending"
+    },
     "tests/unit/test_cleanup_worker.cpp": {
       "evidence": "cited",
       "group": "tests",
@@ -4479,6 +4585,10 @@
       "status": "pending"
     },
     "tests/unit/test_conversion_report_generator.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_cppcheck_qt_slot_classifier.py": {
       "group": "tests",
       "status": "pending"
     },
@@ -4796,6 +4906,10 @@
       "group": "tests",
       "status": "pending"
     },
+    "tests/unit/test_gate_parity.py": {
+      "group": "tests",
+      "status": "pending"
+    },
     "tests/unit/test_hardware_inventory_scanner.cpp": {
       "group": "tests",
       "status": "pending"
@@ -4882,6 +4996,10 @@
       "group": "tests",
       "status": "pending"
     },
+    "tests/unit/test_mutation_runner.py": {
+      "group": "tests",
+      "status": "pending"
+    },
     "tests/unit/test_native_messaging.cpp": {
       "group": "tests",
       "status": "pending"
@@ -4952,6 +5070,10 @@
       "group": "tests",
       "status": "pending"
     },
+    "tests/unit/test_pack_extension.ps1": {
+      "group": "tests",
+      "status": "pending"
+    },
     "tests/unit/test_package_internalization_engine.cpp": {
       "group": "tests",
       "status": "pending"
@@ -4961,6 +5083,10 @@
       "status": "pending"
     },
     "tests/unit/test_package_matcher.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_partition_manager_controller.cpp": {
       "group": "tests",
       "status": "pending"
     },
@@ -5034,6 +5160,10 @@
       "group": "tests",
       "status": "pending"
     },
+    "tests/unit/test_register_native_host.ps1": {
+      "group": "tests",
+      "status": "pending"
+    },
     "tests/unit/test_registry_snapshot_engine.cpp": {
       "group": "tests",
       "status": "pending"
@@ -5048,7 +5178,15 @@
       "group": "tests",
       "status": "pending"
     },
+    "tests/unit/test_review_ledger.py": {
+      "group": "tests",
+      "status": "pending"
+    },
     "tests/unit/test_rich_text_safety.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_run_lizard_js_baseline.py": {
       "group": "tests",
       "status": "pending"
     },

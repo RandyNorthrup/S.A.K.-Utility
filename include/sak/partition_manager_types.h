@@ -224,6 +224,8 @@ struct UnallocatedRegion {
 struct PartitionDiskInfo {
     DiskNumber disk_number{};
     QString device_path;
+    /// Stable MSFT_Disk identity reported by Get-Disk UniqueId.
+    QString unique_id;
     QString model;
     QString serial_number;
     QString bus_type;
@@ -286,6 +288,21 @@ struct PartitionTarget {
     QString drive_letter{};
     uint64_t offset_bytes{0};
     uint64_t size_bytes{0};
+    QString disk_unique_id;
+    QString disk_serial_number;
+    uint64_t disk_size_bytes{0};
+};
+
+struct PartitionOperationRequest {
+    PartitionOperationType type{PartitionOperationType::Create};
+    PartitionTarget target;
+    QJsonObject payload;
+};
+
+struct PartitionQueueReviewToken {
+    quint64 revision{0};
+    QString fingerprint;
+    QString layout_hash;
 };
 
 struct PartitionOperation {

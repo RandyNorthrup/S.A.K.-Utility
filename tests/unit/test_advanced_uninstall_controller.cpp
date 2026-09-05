@@ -723,7 +723,7 @@ void AdvancedUninstallControllerTests::startBatch_exposesFailureTerminalAndCheck
         QStringLiteral("m_controller->currentState() == AdvancedUninstallController::State::Idle"),
         batch_failed_handler);
     const qsizetype auto_cleanup_reset =
-        panel.indexOf(QStringLiteral("m_autoCleanupInProgress = false"), idle_guard);
+        panel.indexOf(QStringLiteral("m_auto_cleanup_in_progress = false"), idle_guard);
     QVERIFY(batch_failed_handler >= 0 && idle_guard > batch_failed_handler &&
             auto_cleanup_reset > idle_guard);
 }
@@ -1309,7 +1309,7 @@ void AdvancedUninstallControllerTests::deferredAutoClean_mergesSuccessfulAndFail
     QVERIFY(header.contains(
         QStringLiteral("[[nodiscard]] bool maybeAutoCleanSafeLeftovers(UninstallReport& report")));
     QVERIFY(panel.contains(QStringLiteral("&AdvancedUninstallController::leftoversUpdated")));
-    QVERIFY(panel.contains(QStringLiteral("if (m_autoCleanupInProgress)")));
+    QVERIFY(panel.contains(QStringLiteral("if (m_auto_cleanup_in_progress)")));
     QCOMPARE(panel.count(QStringLiteral("Leftover scan complete:")), 1);
 }
 

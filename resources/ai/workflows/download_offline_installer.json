@@ -35,6 +35,5 @@
     "Any alternate source is the vendor's official distribution point; a source that is not official is reported and not downloaded.",
     "If no installer was obtained, the final response says so explicitly, and researched URLs are never reported as artifacts.",
     "Final response states exact artifact location."
-  ],
-  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+  ]
 }

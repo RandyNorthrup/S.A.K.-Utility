@@ -84,6 +84,7 @@
 #include <initializer_list>
 #include <limits>
 #include <memory>
+#include <numeric>
 #include <optional>
 #include <stop_token>
 #include <thread>
@@ -335,10 +336,11 @@ QString imageFormatToString(ImageFormat format) {
                                      {ImageFormat::XZ, "xz"},
                                      {ImageFormat::DMG, "dmg"},
                                      {ImageFormat::DSK, "dsk"}};
-    for (const Entry& entry : kMap) {
-        if (entry.format == format) {
-            return QString::fromLatin1(entry.name);
-        }
+    const auto entry = std::ranges::find_if(kMap, [format](const Entry& candidate) {
+        return candidate.format == format;
+    });
+    if (entry != std::ranges::end(kMap)) {
+        return QString::fromLatin1(entry->name);
     }
     return QStringLiteral("unknown");
 }
@@ -1255,12 +1257,8 @@ AppActionResult listDrives(const QJsonObject& args) {
                 {}};
     }
 
-    int removable_count = 0;
-    for (const sak::DriveInfo& drive : drives) {
-        if (drive.isRemovable) {
-            ++removable_count;
-        }
-    }
+    const int removable_count = static_cast<int>(std::ranges::count_if(
+        drives, [](const sak::DriveInfo& drive) { return drive.isRemovable; }));
 
     QJsonArray listed;
     for (const sak::DriveInfo& drive : drives) {
@@ -3158,11 +3156,10 @@ void flattenPstFolders(const PstFolder& folder, QJsonArray& out) {
 }
 
 int countPstFolders(const PstFolder& folder) {
-    int total = 1;
-    for (const PstFolder& child : folder.children) {
-        total += countPstFolders(child);
-    }
-    return total;
+    return std::accumulate(
+        folder.children.cbegin(), folder.children.cend(), 1, [](int total, const PstFolder& child) {
+            return total + countPstFolders(child);
+        });
 }
 
 QJsonObject serializePstItem(const PstItemSummary& item) {
@@ -4252,12 +4249,9 @@ bool isLocalScanTarget(const QString& target) {
                     {"172.16.0.0", kPrivatePrefix172},
                     {"192.168.0.0", kPrivatePrefix192},
                     {"fc00::", kPrivatePrefixFc00}};
-    for (const auto& range : kPrivate) {
-        if (addr.isInSubnet(QHostAddress(QString::fromLatin1(range.net)), range.bits)) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(kPrivate, [&addr](const auto& range) {
+        return addr.isInSubnet(QHostAddress(QString::fromLatin1(range.net)), range.bits);
+    });
 }
 
 // Collect the ports to scan from an explicit "ports" array and/or a
@@ -4583,10 +4577,10 @@ AppActionResult mtrHost(const QJsonObject& args) {
                                        .arg(target),
                                    serializeMtrResult(r)};
         }
-        double worst_loss = 0.0;
-        for (const MtrHopStats& hop : r.hops) {
-            worst_loss = std::max(worst_loss, hop.lossPercent);
-        }
+        const double worst_loss = std::accumulate(
+            r.hops.cbegin(), r.hops.cend(), 0.0, [](double worst, const MtrHopStats& hop) {
+                return std::max(worst, hop.lossPercent);
+            });
         const QString message = QStringLiteral("%1: %2 cycle(s), %3 hop(s), worst-hop loss %4%")
                                     .arg(target)
                                     .arg(r.totalCycles)

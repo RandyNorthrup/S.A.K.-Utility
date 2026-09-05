@@ -20,6 +20,22 @@
 
 namespace {
 
+void configureDeterministicPreflight(sak::ai::AiOrchestrator* orchestrator) {
+    orchestrator->setOverseerHandler([](const sak::ai::WorkflowPhase&,
+                                        const sak::ai::AiWorkflowPhaseContext&,
+                                        const sak::ai::CancellationToken&) {
+        return QJsonObject{{QStringLiteral("success"), true}};
+    });
+    orchestrator->setGuidanceResolver(
+        [](const QString& ref) -> sak::ai::WorkflowGuidanceResolution {
+            return QStringLiteral("fixture guidance for %1").arg(ref);
+        });
+    orchestrator->setSoftwareResolver(
+        [](const sak::ai::WorkflowRequirement&) -> sak::ai::SoftwareAvailabilityResolution {
+            return true;
+        });
+}
+
 class FakeModelClient : public sak::ai::IAiModelClient {
 public:
     Response invoke(const Request& /*request*/, const sak::ai::CancellationToken& token) override {
@@ -324,6 +340,7 @@ void AiWorkflowEvalsTests::downloadOfflineInstallerExecutesSakFirstThenCleansUp(
     TracingToolExecutor tool;
     sak::ai::AiSubagentRunner runner(&model);
     sak::ai::AiOrchestrator orchestrator(&runner, &tool);
+    configureDeterministicPreflight(&orchestrator);
 
     auto root = sak::ai::CancellationToken::createRoot(QStringLiteral("eval_run_1"));
     const auto result = orchestrator.run(workflow, QStringLiteral("eval_run_1"), root);
@@ -353,6 +370,7 @@ void AiWorkflowEvalsTests::downloadOfflineInstallerRunsFallbackAfterSakFailure()
     tool.fail_phase_ids.insert(QStringLiteral("direct_download"));
     sak::ai::AiSubagentRunner runner(&model);
     sak::ai::AiOrchestrator orchestrator(&runner, &tool);
+    configureDeterministicPreflight(&orchestrator);
 
     auto root = sak::ai::CancellationToken::createRoot(QStringLiteral("eval_fallback_run"));
     const auto result = orchestrator.run(workflow, QStringLiteral("eval_fallback_run"), root);
@@ -390,6 +408,7 @@ void AiWorkflowEvalsTests::installAppWorkflowFallsBackAfterPackageLookupFailure(
     tool.fail_phase_ids.insert(QStringLiteral("precheck"));
     sak::ai::AiSubagentRunner runner(&model);
     sak::ai::AiOrchestrator orchestrator(&runner, &tool);
+    configureDeterministicPreflight(&orchestrator);
 
     auto root = sak::ai::CancellationToken::createRoot(QStringLiteral("eval_install_fallback_run"));
     const auto result =
@@ -446,6 +465,7 @@ void AiWorkflowEvalsTests::cancellationDuringWorkflowPropagatesToChildren() {
     TracingToolExecutor tool;
     sak::ai::AiSubagentRunner runner(&model);
     sak::ai::AiOrchestrator orchestrator(&runner, &tool);
+    configureDeterministicPreflight(&orchestrator);
 
     auto root = sak::ai::CancellationToken::createRoot(QStringLiteral("eval_cancel_run"));
     const auto result = orchestrator.run(workflow, QStringLiteral("eval_cancel_run"), root);
@@ -472,6 +492,7 @@ void AiWorkflowEvalsTests::cleanupFailureInSeededWorkflowIsRecordedNotFatal() {
     tool.fail_phase_ids.insert(QStringLiteral("cleanup"));
     sak::ai::AiSubagentRunner runner(&model);
     sak::ai::AiOrchestrator orchestrator(&runner, &tool);
+    configureDeterministicPreflight(&orchestrator);
 
     auto root = sak::ai::CancellationToken::createRoot(QStringLiteral("eval_cleanup_fail"));
     const auto result = orchestrator.run(workflow, QStringLiteral("eval_cleanup_fail"), root);
@@ -492,6 +513,7 @@ void AiWorkflowEvalsTests::reportFailureRunsAlwaysCleanup() {
     TracingToolExecutor tool;
     sak::ai::AiSubagentRunner runner(&model);
     sak::ai::AiOrchestrator orchestrator(&runner, &tool);
+    configureDeterministicPreflight(&orchestrator);
 
     auto root = sak::ai::CancellationToken::createRoot(QStringLiteral("eval_report_fail"));
     const auto result = orchestrator.run(workflow, QStringLiteral("eval_report_fail"), root);
@@ -1005,6 +1027,7 @@ void AiWorkflowEvalsTests::seededWorkflowsContinueAfterEmptyDelegateFailure() {
         TracingToolExecutor tool;
         sak::ai::AiSubagentRunner runner(&model);
         sak::ai::AiOrchestrator orchestrator(&runner, &tool);
+        configureDeterministicPreflight(&orchestrator);
         sak::ai::AiOrchestrationOptions opts;
         opts.stop_on_phase_failure = false;
         orchestrator.setOptions(opts);

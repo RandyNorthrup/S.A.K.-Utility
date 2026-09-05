@@ -39,6 +39,5 @@
     "User data, browser profiles, and unrelated apps are preserved.",
     "Verification checks installed state and persistence leftovers.",
     "Report separates removed target from leftovers requiring separate approval."
-  ],
-  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+  ]
 }

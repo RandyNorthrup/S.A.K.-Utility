@@ -36,10 +36,25 @@ constexpr qsizetype kMinimumOpenAiApiKeyLength = 20;
 // raw_json, joined output). A Responses/models JSON document is at most a few MiB;
 // 64 MiB is generous while bounding a hostile or oversized endpoint (e.g. a MITM or
 // redirected peer) from amplifying memory through repeated copies. Fails closed.
-constexpr qsizetype kMaxResponseBodyBytes = 64LL * 1024 * 1024;
+constexpr qint64 kMaxResponseBodyBytes = 64LL * 1024 * 1024;
+constexpr char kBodyLimitErrorProperty[] = "sakOpenAiBodyLimitError";
 
 [[nodiscard]] QString firstNonEmptyError(const QString& first, const QString& fallback) {
     return first.trimmed().isEmpty() ? fallback : first;
+}
+
+[[nodiscard]] QString bodyLimitRejection(const QNetworkReply* reply) {
+    return reply->property(kBodyLimitErrorProperty).toString();
+}
+
+void rejectReplyForBodyLimit(QNetworkReply* reply, const QString& limit_error) {
+    if (!bodyLimitRejection(reply).isEmpty()) {
+        return;
+    }
+    reply->setProperty(kBodyLimitErrorProperty, limit_error);
+    if (!reply->isFinished()) {
+        reply->abort();
+    }
 }
 
 [[nodiscard]] QString contentTextFromValue(const QJsonValue& value) {
@@ -926,12 +941,7 @@ void OpenAIResponsesClient::createResponse(const OpenAIResponseRequest& request)
     auto network_request = buildRequest(QStringLiteral("/v1/responses"), request.api_key);
     const QByteArray payload = buildResponsePayload(request);
     auto* reply = m_network_manager.post(network_request, payload);
-    setCurrentReply(reply);
-
-    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
-        handleCreateFinished(reply);
-    });
-    Q_EMIT requestStarted();
+    attachCreateReply(reply, kMaxResponseBodyBytes);
 }
 
 void OpenAIResponsesClient::countInputTokens(const OpenAIResponseRequest& request,
@@ -969,6 +979,9 @@ void OpenAIResponsesClient::countInputTokens(const OpenAIResponseRequest& reques
     connect(reply, &QNetworkReply::finished, this, [this, reply, request_id]() {
         handleInputTokenCountFinished(reply, request_id);
     });
+    watchReplyBody(reply,
+                   kMaxResponseBodyBytes,
+                   QStringLiteral("OpenAI input-token body exceeds the size limit"));
 }
 
 void OpenAIResponsesClient::listModels(const QString& api_key) {
@@ -989,6 +1002,9 @@ void OpenAIResponsesClient::listModels(const QString& api_key) {
         handleModelsFinished(reply);
     });
     Q_EMIT requestStarted();
+    watchReplyBody(reply,
+                   kMaxResponseBodyBytes,
+                   QStringLiteral("OpenAI model list body exceeds the size limit"));
 }
 
 void OpenAIResponsesClient::cancel() {
@@ -1250,6 +1266,15 @@ QByteArray OpenAIResponsesClient::buildResponsePayload(const OpenAIResponseReque
     return QJsonDocument(root).toJson(QJsonDocument::Compact);
 }
 
+void OpenAIResponsesClient::attachCreateReply(QNetworkReply* reply, qint64 max_bytes) {
+    setCurrentReply(reply);
+    connect(reply, &QNetworkReply::finished, this, [this, reply]() {
+        handleCreateFinished(reply);
+    });
+    Q_EMIT requestStarted();
+    watchReplyBody(reply, max_bytes, QStringLiteral("OpenAI response body exceeds the size limit"));
+}
+
 void OpenAIResponsesClient::setCurrentReply(QNetworkReply* reply) {
     // Both callers pass a reply straight from QNetworkAccessManager::post/get, which always
     // returns a live object (errors arrive on the reply, never as a null pointer).
@@ -1263,20 +1288,76 @@ void OpenAIResponsesClient::clearCurrentReply(QNetworkReply* reply) {
     }
 }
 
+void OpenAIResponsesClient::watchReplyBody(QNetworkReply* reply,
+                                           qint64 max_bytes,
+                                           const QString& limit_error) {
+    Q_ASSERT(reply);
+    Q_ASSERT(max_bytes > 0 && max_bytes < std::numeric_limits<qint64>::max());
+    reply->setReadBufferSize(max_bytes + 1);
+    connect(reply, &QNetworkReply::readyRead, this, [reply, max_bytes, limit_error]() {
+        if (reply->bytesAvailable() > max_bytes) {
+            rejectReplyForBodyLimit(reply, limit_error);
+        }
+    });
+    connect(reply,
+            &QNetworkReply::downloadProgress,
+            this,
+            [reply, max_bytes, limit_error](qint64 received, qint64 total) {
+                if (received > max_bytes || total > max_bytes) {
+                    rejectReplyForBodyLimit(reply, limit_error);
+                }
+            });
+    bool declared = false;
+    const qint64 content_length =
+        reply->header(QNetworkRequest::ContentLengthHeader).toLongLong(&declared);
+    if (declared && content_length > max_bytes) {
+        rejectReplyForBodyLimit(reply, limit_error);
+    }
+}
+
+std::expected<QByteArray, QString> OpenAIResponsesClient::readBoundedReplyBody(
+    QNetworkReply* reply, qint64 max_bytes, const QString& limit_error) {
+    const QString rejection = bodyLimitRejection(reply);
+    if (!rejection.isEmpty()) {
+        return std::unexpected(rejection);
+    }
+    bool declared = false;
+    const qint64 content_length =
+        reply->header(QNetworkRequest::ContentLengthHeader).toLongLong(&declared);
+    if ((declared && content_length > max_bytes) || reply->bytesAvailable() > max_bytes) {
+        rejectReplyForBodyLimit(reply, limit_error);
+        return std::unexpected(limit_error);
+    }
+    const QByteArray body = reply->readAll();
+    if (body.size() > max_bytes) {
+        rejectReplyForBodyLimit(reply, limit_error);
+        return std::unexpected(limit_error);
+    }
+    return body;
+}
+
 void OpenAIResponsesClient::handleCreateFinished(QNetworkReply* reply) {
     clearCurrentReply(reply);
     reply->deleteLater();
 
-    const QByteArray body = reply->readAll();
+    const auto body =
+        readBoundedReplyBody(reply,
+                             kMaxResponseBodyBytes,
+                             QStringLiteral("OpenAI response body exceeds the size limit"));
+    if (!body) {
+        Q_EMIT requestFailed(body.error());
+        Q_EMIT requestFinished();
+        return;
+    }
     if (reply->error() != QNetworkReply::NoError) {
-        const QString api_error = extractApiError(body);
+        const QString api_error = extractApiError(*body);
         Q_EMIT requestFailed(firstNonEmptyError(api_error, reply->errorString()));
         Q_EMIT requestFinished();
         return;
     }
 
     QString parse_error;
-    const auto result = parseResponseObject(body, &parse_error);
+    const auto result = parseResponseObject(*body, &parse_error);
     if (!parse_error.isEmpty()) {
         Q_EMIT requestFailed(parse_error);
         Q_EMIT requestFinished();
@@ -1291,16 +1372,24 @@ void OpenAIResponsesClient::handleModelsFinished(QNetworkReply* reply) {
     clearCurrentReply(reply);
     reply->deleteLater();
 
-    const QByteArray body = reply->readAll();
+    const auto body =
+        readBoundedReplyBody(reply,
+                             kMaxResponseBodyBytes,
+                             QStringLiteral("OpenAI model list body exceeds the size limit"));
+    if (!body) {
+        Q_EMIT requestFailed(body.error());
+        Q_EMIT requestFinished();
+        return;
+    }
     if (reply->error() != QNetworkReply::NoError) {
-        const QString api_error = extractApiError(body);
+        const QString api_error = extractApiError(*body);
         Q_EMIT requestFailed(firstNonEmptyError(api_error, reply->errorString()));
         Q_EMIT requestFinished();
         return;
     }
 
     QString parse_error;
-    const auto models = parseModelsList(body, &parse_error);
+    const auto models = parseModelsList(*body, &parse_error);
     if (!parse_error.isEmpty()) {
         Q_EMIT requestFailed(parse_error);
         Q_EMIT requestFinished();
@@ -1318,16 +1407,23 @@ void OpenAIResponsesClient::handleInputTokenCountFinished(QNetworkReply* reply,
     }
     reply->deleteLater();
 
-    const QByteArray body = reply->readAll();
+    const auto body =
+        readBoundedReplyBody(reply,
+                             kMaxResponseBodyBytes,
+                             QStringLiteral("OpenAI input-token body exceeds the size limit"));
+    if (!body) {
+        Q_EMIT inputTokenCountFailed(request_id, body.error());
+        return;
+    }
     if (reply->error() != QNetworkReply::NoError) {
-        const QString api_error = extractApiError(body);
+        const QString api_error = extractApiError(*body);
         Q_EMIT inputTokenCountFailed(request_id,
                                      firstNonEmptyError(api_error, reply->errorString()));
         return;
     }
 
     QString parse_error;
-    const qint64 tokens = parseInputTokenCountObject(body, &parse_error);
+    const qint64 tokens = parseInputTokenCountObject(*body, &parse_error);
     if (!parse_error.isEmpty()) {
         Q_EMIT inputTokenCountFailed(request_id, parse_error);
         return;
@@ -1341,6 +1437,7 @@ void OpenAIResponsesClient::cancelInputTokenCount() {
     }
     auto* reply = m_input_tokens_reply;
     m_input_tokens_reply = nullptr;
+    reply->disconnect(this);
     reply->abort();
     reply->deleteLater();
 }

@@ -12,9 +12,7 @@
 #include <QComboBox>
 #include <QLabel>
 #include <QLineEdit>
-#include <QMenu>
 #include <QPushButton>
-#include <QSplitter>
 #include <QTableWidget>
 #include <QWidget>
 
@@ -22,7 +20,6 @@
 #include <type_traits>
 
 class QVBoxLayout;
-class QHBoxLayout;
 class QDialog;
 class QCheckBox;
 class QRadioButton;
@@ -232,18 +229,18 @@ private:
     // -- Status Bar --
     int m_cleanup_progress{0};
     int m_cleanup_total{0};
-    bool m_autoCleanupInProgress{false};
-    bool m_autoCleanupFailureReported{false};
+    bool m_auto_cleanup_in_progress{false};
+    bool m_auto_cleanup_failure_reported{false};
 
     // -- Log toggle --
     LogToggleSwitch* m_log_toggle{nullptr};
 
     // -- Data --
-    QVector<ProgramInfo> m_allPrograms;        ///< Full unfiltered list
-    QVector<ProgramInfo> m_filteredPrograms;   ///< Currently displayed programs
-    QVector<LeftoverItem> m_currentLeftovers;  ///< Current leftover scan results
-    QString m_searchFilter;
-    ViewFilter m_viewFilter = ViewFilter::All;
+    QVector<ProgramInfo> m_all_programs;        ///< Full unfiltered list
+    QVector<ProgramInfo> m_filtered_programs;   ///< Currently displayed programs
+    QVector<LeftoverItem> m_current_leftovers;  ///< Current leftover scan results
+    QString m_search_filter;
+    ViewFilter m_view_filter = ViewFilter::All;
 
     // -- Table Column Indices --
     static constexpr int kColCheck = 0;

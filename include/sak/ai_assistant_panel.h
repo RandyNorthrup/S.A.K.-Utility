@@ -296,8 +296,8 @@ private:
     // used/limit. Shared by the usage label and the pressure notifier so both agree.
     [[nodiscard]] double currentContextUsageRatio() const;
     // Emit a one-time transcript notice when exact context usage crosses into the
-    // warning (>=80%) or critical (>=95%) band, so the user is told to compact even
-    // though the server now auto-truncates. Fires only on an upward level change.
+    // warning (>=80%) or critical (>=95%) band, so the user is told to compact before
+    // local full-context refusal. Server-side truncation stays disabled.
     void notifyContextPressureIfCrossed();
     void setApiKeyStatus(const QString& text,
                          const char* color,
@@ -685,7 +685,8 @@ private:
     [[nodiscard]] QString beginHumanGate(const QString& kind,
                                          const QString& name,
                                          const QString& question,
-                                         const QJsonObject& metadata = {});
+                                         const QJsonObject& metadata = {},
+                                         const QString& preferred_gate_id = {});
     void resolveHumanGate(const QString& gate_id,
                           const QString& status,
                           const QString& decision,
@@ -752,6 +753,9 @@ private:
     void resumeWorkflowInputGate(const ai::AiHumanGate& gate);
     void resumeApprovalGate(const ai::AiHumanGate& gate);
     [[nodiscard]] bool resumeWorkflowRecoveryGate(const ai::AiHumanGate& gate);
+    [[nodiscard]] bool consumeAuthenticatedWorkflowResume(const ai::WorkflowTemplate& workflow,
+                                                          const ai::AiHumanGate& gate,
+                                                          const QJsonObject& resume_state);
     [[nodiscard]] const ai::WorkflowTemplate* recoveryWorkflowForGate(const ai::AiHumanGate& gate,
                                                                       QJsonObject* metadata,
                                                                       QJsonObject* resume_state);
@@ -768,6 +772,8 @@ private:
     [[nodiscard]] QJsonObject phaseTranscriptMetadata(const ai::AiPhaseExecution& execution,
                                                       QStringList* transcript_details);
     void appendRecoveryMetadata(const ai::AiPhaseExecution& execution, QJsonObject* metadata);
+    [[nodiscard]] std::expected<QJsonObject, QString> buildProtectedWorkflowResumeState(
+        const ai::AiPhaseExecution& execution, const QString& gate_id, int next_phase_index);
     void appendSubagentTranscriptDetails(const QJsonObject& subagent_result,
                                          QJsonObject* metadata,
                                          QStringList* transcript_details) const;
@@ -884,9 +890,38 @@ private:
                                 const QJsonObject& resume_state);
     [[nodiscard]] static ai::AiOrchestratorResult executeWorkflowRun(
         const WorkflowRunLaunch& launch);
+    static void configureWorkflowOrchestrator(ai::AiOrchestrator* orchestrator,
+                                              ai::AiSubagentRunner* runner,
+                                              const WorkflowRunLaunch& launch);
     static void configureWorkflowRunner(ai::AiSubagentRunner* runner);
     [[nodiscard]] static ai::AiOrchestrationOptions workflowOrchestrationOptions(
         const WorkflowRunLaunch& launch);
+    [[nodiscard]] static ai::SoftwareAvailabilityResolution workflowRequirementAvailable(
+        const ai::WorkflowRequirement& requirement);
+    [[nodiscard]] static QJsonObject runWorkflowOverseerPhase(
+        ai::AiSubagentRunner* runner,
+        const WorkflowRunLaunch& launch,
+        const ai::WorkflowPhase& phase,
+        const ai::AiWorkflowPhaseContext& context,
+        const ai::CancellationToken& token);
+    [[nodiscard]] static std::expected<QJsonObject, QString> protectWorkflowResumeState(
+        const QJsonObject& resume_state);
+    [[nodiscard]] static std::expected<QJsonObject, QString> unprotectWorkflowResumeState(
+        const QJsonObject& protected_state);
+    static void setWorkflowResumePlaintextWipeObserverForTesting(
+        std::function<void(const QByteArray&)> observer);
+    [[nodiscard]] static std::expected<QString, QString> workflowRevision(
+        const ai::WorkflowTemplate& workflow);
+    [[nodiscard]] static QString workflowResumeBindingError(const ai::WorkflowTemplate& workflow,
+                                                            const ai::AiHumanGate& gate,
+                                                            const QJsonObject& resume_state);
+    [[nodiscard]] static bool consumeWorkflowResumeGeneration(const QString& session_directory,
+                                                              const QString& run_id,
+                                                              const QString& gate_id,
+                                                              qint64 generation,
+                                                              QString* error_message);
+    [[nodiscard]] static std::expected<qint64, QString> nextWorkflowResumeGeneration(
+        const QString& session_directory, const QString& run_id, qint64 current_generation);
     static void applyWorkflowResumeState(ai::AiOrchestrationOptions* options,
                                          const QJsonObject& resume_state);
     static void connectWorkflowOrchestratorCallbacks(ai::AiOrchestrator* orchestrator,
@@ -898,9 +933,8 @@ private:
                         const QString& workflow_id = {},
                         const QJsonObject& workflow_inputs = {});
     [[nodiscard]] ai::OpenAIResponseRequest buildChatRequest(const QString& message) const;
-    // Set the server-side context-window policy (auto truncation) and the stable
-    // per-session prompt-cache key on every Responses request, so both the first
-    // turn and tool-continuation turns manage a growing context identically.
+    // Disable server-side context truncation and set the stable per-session prompt-cache key.
+    // Over-limit requests fail explicitly instead of silently dropping prior evidence.
     void applyContextWindowPolicy(ai::OpenAIResponseRequest& request) const;
     void startChatRequest(const QString& message);
     void cancelActiveRunToken();
@@ -1020,6 +1054,7 @@ private:
     QString m_activeWorkflowCurrentPhase;
     QHash<QString, int> m_activeWorkflowPhaseStartCounts;
     int m_activeWorkflowCompletedPhaseCount{0};
+    qint64 m_workflowResumeGeneration{0};
     ai::CancellationToken m_runToken;
     ai::AiRunState m_runState;
     bool m_loadingSessionPicker{false};

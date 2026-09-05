@@ -1,0 +1,56 @@
+{
+  "build_dir": "build",
+  "config": "Release",
+  "target": "test_ai_credential_store",
+  "ctest_regex": "^test_ai_credential_store$",
+  "mutants": [
+    {
+      "id": "dpapi-protection-drops-purpose-entropy",
+      "file": "src/ai/ai_credential_store.cpp",
+      "find": "    const BOOL protected_ok = CryptProtectData(&input,\n                                               L\"SAK Utility authenticated local state\",\n                                               &entropy,",
+      "replace": "    const BOOL protected_ok = CryptProtectData(&input,\n                                               L\"SAK Utility authenticated local state\",\n                                               nullptr,",
+      "expect": "killed",
+      "why": "dpapiProtectsAndAuthenticatesLocalState requires purpose-bound protection so ciphertext cannot be reused across record types."
+    },
+    {
+      "id": "dpapi-authentication-drops-purpose-entropy",
+      "file": "src/ai/ai_credential_store.cpp",
+      "find": "        &input, nullptr, &entropy, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &output);",
+      "replace": "        &input, nullptr, nullptr, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &output);",
+      "expect": "killed",
+      "why": "dpapiProtectsAndAuthenticatesLocalState requires the exact purpose during authentication and rejects a wrong purpose."
+    },
+    {
+      "id": "dpapi-authentication-failure-returns-plaintext",
+      "file": "src/ai/ai_credential_store.cpp",
+      "find": "    if (unprotected_ok == 0) {\n        return std::unexpected(\n            QStringLiteral(\"DPAPI authentication failed: %1\").arg(winErrorMessage(GetLastError())));\n    }",
+      "replace": "    if (unprotected_ok == 0) {\n        return QByteArray(\"unauthenticated\");\n    }",
+      "expect": "killed",
+      "why": "dpapiProtectsAndAuthenticatesLocalState requires wrong-purpose and tampered ciphertext to return no plaintext at all."
+    },
+    {
+      "id": "dpapi-protection-plaintext-copy-is-not-zeroed",
+      "file": "src/ai/ai_credential_store.cpp",
+      "find": "        sak::secure_wiper::wipe(plaintext_copy.data(),\n                                static_cast<std::size_t>(plaintext_copy.size()));",
+      "replace": "        sak::secure_wiper::wipe(plaintext_copy.data(), 0);",
+      "expect": "killed",
+      "why": "dpapiProtectsAndAuthenticatesLocalState observes the DPAPI input copy after RAII cleanup and requires every byte to be zero."
+    },
+    {
+      "id": "credential-decrypt-failure-leaves-ciphertext-copy-in-memory",
+      "file": "src/ai/ai_credential_store.cpp",
+      "find": "        sak::secure_wiper::wipe(encrypted.data(), static_cast<std::size_t>(encrypted.size()));",
+      "replace": "        sak::secure_wiper::wipe(encrypted.data(), 0);",
+      "expect": "killed",
+      "why": "credentialDecryptFailureWipesCiphertextAndEntropy requires the scoped failure cleanup to zero the mutable encrypted input copy."
+    },
+    {
+      "id": "credential-decrypt-failure-leaves-entropy-copy-in-memory",
+      "file": "src/ai/ai_credential_store.cpp",
+      "find": "        sak::secure_wiper::wipe(entropy.data(), static_cast<std::size_t>(entropy.size()));\n        if (g_credential_decrypt_input_wipe_observer) {",
+      "replace": "        sak::secure_wiper::wipe(entropy.data(), 0);\n        if (g_credential_decrypt_input_wipe_observer) {",
+      "expect": "killed",
+      "why": "credentialDecryptFailureWipesCiphertextAndEntropy requires the scoped failure cleanup to zero DPAPI entropy too."
+    }
+  ]
+}

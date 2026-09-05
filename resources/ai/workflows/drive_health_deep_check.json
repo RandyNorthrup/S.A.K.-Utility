@@ -107,6 +107,5 @@
     "Warnings cite event IDs or command evidence when available.",
     "Permission-denied or missing storage reliability counters are explicitly disclosed.",
     "Backup advice is included when failure risk is non-trivial."
-  ],
-  "cancel_policy": {"cancel_children": true, "cancel_tools": true, "preserve_partial_artifacts": true, "report_partial_state": true}
+  ]
 }

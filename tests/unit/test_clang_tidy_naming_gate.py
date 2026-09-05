@@ -224,8 +224,7 @@ class ClangTidyNamingGateTests(unittest.TestCase):
                 core_entries = json.loads(
                     (root / "build-tidy-core" / "compile_commands.json").read_text(encoding="utf-8")
                 )
-                if isinstance(core_entries, dict):
-                    core_entries = [core_entries]
+                self.assertIsInstance(core_entries, list)
                 self.assertEqual(len(core_entries), 1)
                 self.assertIn("/src/core/", core_entries[0]["file"].replace("\\", "/"))
 
@@ -257,8 +256,7 @@ class ClangTidyNamingGateTests(unittest.TestCase):
                 prepared = json.loads(
                     (root / "build-tidy-fp" / "compile_commands.json").read_text(encoding="utf-8")
                 )
-                if isinstance(prepared, dict):
-                    prepared = [prepared]
+                self.assertIsInstance(prepared, list)
                 self.assertEqual([entry["file"] for entry in prepared], [str(live)])
 
     def test_healthy_expected_translation_unit_count_passes(self) -> None:

@@ -16,6 +16,7 @@
 #include <QJsonObject>
 #include <QJsonParseError>
 #include <QSaveFile>
+#include <QScopeGuard>
 
 #include <algorithm>
 #include <optional>
@@ -44,6 +45,11 @@ constexpr char kDpapiEntropy[] = "SAK Utility/OpenAI API Key/v1";
 // The credential file holds one Base64 DPAPI blob wrapping a single API key; a few KiB
 // at most. Cap the read so a corrupt/oversized file cannot be slurped whole into memory.
 constexpr qint64 kMaxCredentialFileBytes = 256LL * 1024LL;
+constexpr qsizetype kMaxDpapiPayloadBytes = 8LL * 1024LL * 1024LL;
+constexpr qsizetype kMaxDpapiCiphertextBytes = kMaxDpapiPayloadBytes * 2;
+constexpr qsizetype kMaxDpapiPurposeBytes = 512;
+std::function<void(const QByteArray&)> g_dpapi_plaintext_wipe_observer;
+std::function<void(const QByteArray&)> g_credential_decrypt_input_wipe_observer;
 
 [[nodiscard]] QString winErrorMessage(DWORD code) {
     return QStringLiteral("Windows error %1").arg(static_cast<qulonglong>(code));
@@ -123,6 +129,14 @@ QString decryptCredentialBytes(QByteArray encrypted, QString* error_message) {
     DATA_BLOB entropy_blob{};
     entropy_blob.pbData = reinterpret_cast<BYTE*>(entropy.data());
     entropy_blob.cbData = static_cast<DWORD>(entropy.size());
+    const auto wipe_inputs = qScopeGuard([&encrypted, &entropy]() {
+        sak::secure_wiper::wipe(encrypted.data(), static_cast<std::size_t>(encrypted.size()));
+        sak::secure_wiper::wipe(entropy.data(), static_cast<std::size_t>(entropy.size()));
+        if (g_credential_decrypt_input_wipe_observer) {
+            g_credential_decrypt_input_wipe_observer(encrypted);
+            g_credential_decrypt_input_wipe_observer(entropy);
+        }
+    });
 
     DATA_BLOB out_blob{};
     if (CryptUnprotectData(&in_blob,
@@ -146,8 +160,6 @@ QString decryptCredentialBytes(QByteArray encrypted, QString* error_message) {
         SecureZeroMemory(out_blob.pbData, out_blob.cbData);
         LocalFree(out_blob.pbData);
     }
-    sak::secure_wiper::wipe(encrypted.data(), static_cast<std::size_t>(encrypted.size()));
-    sak::secure_wiper::wipe(entropy.data(), static_cast<std::size_t>(entropy.size()));
     return api_key;
 }
 
@@ -243,6 +255,101 @@ bool CredentialStore::isPersistentStorageAvailable() noexcept {
 
 QString CredentialStore::credentialFilePath() {
     return QDir(credentialDirectory()).filePath(QStringLiteral("openai_api_key.dpapi.json"));
+}
+
+std::expected<QByteArray, QString> CredentialStore::protectCurrentUserData(
+    const QByteArray& plaintext, const QByteArray& purpose) {
+    if (plaintext.isEmpty() || plaintext.size() > kMaxDpapiPayloadBytes) {
+        return std::unexpected(QStringLiteral("DPAPI plaintext is empty or exceeds its limit"));
+    }
+    if (purpose.isEmpty() || purpose.size() > kMaxDpapiPurposeBytes) {
+        return std::unexpected(QStringLiteral("DPAPI purpose is empty or exceeds its limit"));
+    }
+    QByteArray plaintext_copy = plaintext;
+    const auto wipe_plaintext = qScopeGuard([&plaintext_copy]() {
+        sak::secure_wiper::wipe(plaintext_copy.data(),
+                                static_cast<std::size_t>(plaintext_copy.size()));
+        if (g_dpapi_plaintext_wipe_observer) {
+            g_dpapi_plaintext_wipe_observer(plaintext_copy);
+        }
+    });
+    QByteArray purpose_copy = purpose;
+    DATA_BLOB input{static_cast<DWORD>(plaintext_copy.size()),
+                    reinterpret_cast<BYTE*>(plaintext_copy.data())};
+    DATA_BLOB entropy{static_cast<DWORD>(purpose_copy.size()),
+                      reinterpret_cast<BYTE*>(purpose_copy.data())};
+    DATA_BLOB output{};
+    const BOOL protected_ok = CryptProtectData(&input,
+                                               L"SAK Utility authenticated local state",
+                                               &entropy,
+                                               nullptr,
+                                               nullptr,
+                                               CRYPTPROTECT_UI_FORBIDDEN,
+                                               &output);
+    if (protected_ok == 0) {
+        return std::unexpected(
+            QStringLiteral("DPAPI protection failed: %1").arg(winErrorMessage(GetLastError())));
+    }
+    const qsizetype output_size = static_cast<qsizetype>(output.cbData);
+    if (output_size <= 0 || output_size > kMaxDpapiCiphertextBytes) {
+        SecureZeroMemory(output.pbData, output.cbData);
+        LocalFree(output.pbData);
+        return std::unexpected(QStringLiteral("DPAPI ciphertext has an invalid size"));
+    }
+    QByteArray ciphertext(reinterpret_cast<const char*>(output.pbData),
+                          static_cast<int>(output.cbData));
+    SecureZeroMemory(output.pbData, output.cbData);
+    LocalFree(output.pbData);
+    return ciphertext;
+}
+
+std::expected<QByteArray, QString> CredentialStore::unprotectCurrentUserData(
+    const QByteArray& ciphertext, const QByteArray& purpose) {
+    if (ciphertext.isEmpty() || ciphertext.size() > kMaxDpapiCiphertextBytes) {
+        return std::unexpected(QStringLiteral("DPAPI ciphertext is empty or exceeds its limit"));
+    }
+    if (purpose.isEmpty() || purpose.size() > kMaxDpapiPurposeBytes) {
+        return std::unexpected(QStringLiteral("DPAPI purpose is empty or exceeds its limit"));
+    }
+    QByteArray ciphertext_copy = ciphertext;
+    QByteArray purpose_copy = purpose;
+    DATA_BLOB input{static_cast<DWORD>(ciphertext_copy.size()),
+                    reinterpret_cast<BYTE*>(ciphertext_copy.data())};
+    DATA_BLOB entropy{static_cast<DWORD>(purpose_copy.size()),
+                      reinterpret_cast<BYTE*>(purpose_copy.data())};
+    DATA_BLOB output{};
+    const BOOL unprotected_ok = CryptUnprotectData(
+        &input, nullptr, &entropy, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &output);
+    if (unprotected_ok == 0) {
+        return std::unexpected(
+            QStringLiteral("DPAPI authentication failed: %1").arg(winErrorMessage(GetLastError())));
+    }
+    const qsizetype output_size = static_cast<qsizetype>(output.cbData);
+    if (output_size <= 0 || output_size > kMaxDpapiPayloadBytes) {
+        SecureZeroMemory(output.pbData, output.cbData);
+        LocalFree(output.pbData);
+        return std::unexpected(QStringLiteral("DPAPI plaintext has an invalid size"));
+    }
+    QByteArray plaintext(reinterpret_cast<const char*>(output.pbData),
+                         static_cast<int>(output.cbData));
+    SecureZeroMemory(output.pbData, output.cbData);
+    LocalFree(output.pbData);
+    return plaintext;
+}
+
+void CredentialStore::setDpapiPlaintextWipeObserverForTesting(
+    std::function<void(const QByteArray&)> observer) {
+    g_dpapi_plaintext_wipe_observer = std::move(observer);
+}
+
+void CredentialStore::setCredentialDecryptInputWipeObserverForTesting(
+    std::function<void(const QByteArray&)> observer) {
+    g_credential_decrypt_input_wipe_observer = std::move(observer);
+}
+
+QString CredentialStore::decryptCredentialBytesForTesting(QByteArray encrypted,
+                                                          QString* error_message) {
+    return decryptCredentialBytes(std::move(encrypted), error_message);
 }
 
 QString CredentialStore::loadApiKey(QString* error_message) {

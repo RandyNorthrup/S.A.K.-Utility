@@ -7,6 +7,7 @@
 
 #include <QCryptographicHash>
 #include <QFuture>
+#include <QList>
 #include <QObject>
 #include <QProcess>
 #include <QString>
@@ -180,6 +181,8 @@ private Q_SLOTS:
     void onProgressPollTimer();
 
 private:
+    friend class LinuxISODownloaderTests;
+
     void setPhase(Phase phase, const QString& description);
     void startAria2cDownload(const QString& url, const QString& savePath, const QString& fileName);
     bool prepareAria2cDownload(const QString& url, const QString& fileName, QString* aria2Path);
@@ -237,6 +240,7 @@ private:
     // Non-empty only for a rolling-release distro whose current filename must be
     // discovered from the checksum file before download (R5-G22-10).
     QString m_rollingFilenamePattern;
+    QList<QNetworkReply*> m_pendingMetadataReplies;
     qint64 m_totalSize = 0;
     std::atomic<bool> m_cancelled{false};
     // Bumped on every new download and on cancel; a background hash tags itself

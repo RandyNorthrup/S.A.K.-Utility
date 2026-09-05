@@ -146,20 +146,6 @@ QVector<WorkflowPhase> phasesFromJson(const QJsonValue& value, QStringList* erro
     return result;
 }
 
-WorkflowCancelPolicy cancelPolicyFromJson(const QJsonValue& value) {
-    WorkflowCancelPolicy policy;
-    if (!value.isObject()) {
-        return policy;
-    }
-    const QJsonObject object = value.toObject();
-    policy.cancel_children = object.value(QStringLiteral("cancel_children")).toBool(true);
-    policy.cancel_tools = object.value(QStringLiteral("cancel_tools")).toBool(true);
-    policy.preserve_partial_artifacts =
-        object.value(QStringLiteral("preserve_partial_artifacts")).toBool(true);
-    policy.report_partial_state = object.value(QStringLiteral("report_partial_state")).toBool(true);
-    return policy;
-}
-
 void addMissingError(QStringList* errors, const QString& field) {
     if (errors != nullptr) {
         errors->append(QStringLiteral("Missing required field: %1").arg(field));
@@ -193,6 +179,37 @@ void validateWorkflowRequiredFields(const WorkflowTemplate& workflow, QStringLis
            type.compare(QStringLiteral("tool_action"), Qt::CaseInsensitive) == 0 ||
            type.compare(QStringLiteral("cleanup"), Qt::CaseInsensitive) == 0 ||
            type.compare(QStringLiteral("overseer"), Qt::CaseInsensitive) == 0;
+}
+
+[[nodiscard]] bool isKnownModelPolicy(const QString& policy) {
+    const QString normalized = policy.trimmed().toLower();
+    return normalized == QLatin1String("fast_reasoning") ||
+           normalized == QLatin1String("deep_reasoning") ||
+           normalized == QLatin1String("careful_reasoning") ||
+           normalized == QLatin1String("web_research") || normalized == QLatin1String("writer");
+}
+
+void validateWorkflowAgents(const WorkflowTemplate& workflow, QStringList* errors) {
+    QSet<QString> seen_ids;
+    for (const auto& agent : workflow.agents) {
+        if (agent.id.isEmpty() || seen_ids.contains(agent.id)) {
+            errors->append(
+                QStringLiteral("Workflow %1 has an empty or duplicate agent id").arg(workflow.id));
+        } else {
+            seen_ids.insert(agent.id);
+        }
+        if (!isKnownModelPolicy(agent.model_policy)) {
+            errors->append(QStringLiteral("Agent %1 has unsupported model_policy '%2'")
+                               .arg(agent.id, agent.model_policy));
+        }
+    }
+    for (const auto& phase : workflow.phases) {
+        if (phase.type.compare(QStringLiteral("delegate"), Qt::CaseInsensitive) == 0 &&
+            !seen_ids.contains(phase.agent)) {
+            errors->append(QStringLiteral("Delegate phase %1 references unknown agent '%2'")
+                               .arg(phase.id, phase.agent));
+        }
+    }
 }
 
 // A shell phase's command template is validated at LOAD, for user AND bundled workflows,
@@ -348,6 +365,7 @@ bool WorkflowTemplate::isValid(QStringList* errors) const {
     validateWorkflowRequiredFields(*this, target);
     validateWorkflowPhases(*this, target);
     validateWorkflowInputs(*this, target);
+    validateWorkflowAgents(*this, target);
     return target->size() == before;
 }
 
@@ -392,7 +410,6 @@ WorkflowTemplate WorkflowTemplate::fromJson(const QJsonObject& object,
     workflow.phases = phasesFromJson(object.value(QStringLiteral("phases")), errors);
     workflow.acceptance_criteria =
         stringListFromJson(object.value(QStringLiteral("acceptance_criteria")));
-    workflow.cancel_policy = cancelPolicyFromJson(object.value(QStringLiteral("cancel_policy")));
     (void)workflow.isValid(errors);
     return workflow;
 }

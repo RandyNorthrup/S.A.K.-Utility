@@ -628,11 +628,11 @@ repos:
       #
       #     A push uploads HISTORY, not the working tree, so redacting a file
       #     does nothing about the blob already in an earlier commit. The
-      #     commit-time scan above deliberately runs -SkipExternalTools (regex
-      #     only, current files only) so it stays fast -- which is exactly why
-      #     every commit in this repo has passed while a live credential sits
-      #     in history at 08035cf1. See the PRE-PUSH BLOCKER section at the top
-      #     of docs/RELEASE_READINESS.md.
+      #     regex scan above runs -SkipExternalTools; the separate gitleaks-staged
+      #     hook checks the staged diff before it enters history. The historical
+      #     cert-rig credential has one owner-authorized fingerprint exception,
+      #     documented as accepted risk under R5-IDX-20 and RELEASE_READINESS.md.
+      #     It is not an unresolved push blocker or permission for new exceptions.
       #
       #     Until this hook existed, NOTHING ran at push time and the blocker
       #     was enforced only by a human remembering to read a document. It

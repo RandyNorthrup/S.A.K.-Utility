@@ -55,7 +55,6 @@ constexpr uint64_t kDefaultMaxApfsPayloadBytes = 64ULL * 1024ULL * 1024ULL;
 // holes), so logical size does not drive the commit cost there.
 constexpr uint64_t kApfsInPlaceCommitMaxBytes = 32ULL * 1024ULL * 1024ULL * 1024ULL * 1024ULL;
 constexpr uint64_t kMinimumApfsContainerBytes = 64ULL * 1024ULL * 1024ULL;
-constexpr uint32_t kSupportedApfsBlockSizeBytes = 4096;
 constexpr qsizetype kMaximumApfsVolumeNameChars = 255;
 constexpr qsizetype kMinimumKeyValuePartCount = 2;
 constexpr qsizetype kApfsSnapshotCountPrefixLength = 10;

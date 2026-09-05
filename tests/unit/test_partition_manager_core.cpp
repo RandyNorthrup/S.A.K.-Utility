@@ -19,6 +19,7 @@
 #include "sak/partition_file_system_registry.h"
 #include "sak/partition_file_system_tool_manifest.h"
 #include "sak/partition_file_system_tool_runner.h"
+#include "sak/partition_hfs_case_folding.h"
 #include "sak/partition_hfs_file_system_reader.h"
 #include "sak/partition_operation_planner.h"
 #include "sak/partition_operation_queue.h"
@@ -125,6 +126,22 @@ template <typename CommitResult>
 void expectSingleBlocker(const CommitResult& result, const QString& blocker) {
     QVERIFY2(!result.ok, qPrintable(blocker));
     QCOMPARE(result.blockers, QStringList{blocker});
+}
+
+void pinRawTargetIdentity(QJsonObject* payload) {
+    payload->insert(QStringLiteral("target_disk_unique_id"), QStringLiteral("test-raw-target-id"));
+    payload->insert(QStringLiteral("target_disk_serial_number"), QString());
+    const QString target_size =
+        payload->value(QStringLiteral("target_size_bytes")).toString(QStringLiteral("2097152"));
+    payload->insert(QStringLiteral("target_disk_size_bytes"), target_size);
+}
+
+void pinDiskTargetIdentity(PartitionTarget* target) {
+    constexpr uint64_t kDefaultTestDiskIdentityBytes = 4ULL * 1024ULL * 1024ULL * 1024ULL;
+    target->disk_unique_id = QStringLiteral("test-selected-disk-id");
+    target->disk_serial_number = QString();
+    target->disk_size_bytes = target->size_bytes == 0 ? kDefaultTestDiskIdentityBytes
+                                                      : target->size_bytes;
 }
 
 // Boundary-steered block index for the format-write confinement property (G23-7): interior, the
@@ -1552,6 +1569,7 @@ private Q_SLOTS:
     void extFileSystemReader_boundsBlockAndInodeReferences();
     void extFileSystemReader_rejectsUnknownIncompatFeature();
     void extFileSystemReader_rejectsMalformedExtentTree();
+    void hfsCaseFolding_usesWholeLowByteWithinUnicodePage();
     void hfsFileSystemReader_listsDirectoriesAndReadsFiles();
     void hfsFileSystemReader_rejectsVolumeGeometryPastDeviceEnd();
     void hfsFileSystemReader_exportsDirectoriesAndResourceForks();
@@ -1770,6 +1788,8 @@ private Q_SLOTS:
     void scriptBuilder_createImageRefusesExistingWithoutOverwrite();
     void scriptBuilder_restoreImageGuardsUncAndOnTargetDiskSource();
     void scriptBuilder_restoreImagePinsSourceContent();  // M-B3-1 part A
+    void scriptBuilder_guardsDiskIdentityImmediatelyBeforeMutation();
+    void scriptBuilder_requiresAndChecksRawTargetDiskIdentity();
     void apfsWriter_freeQueueRunInBoundsRejectsOutOfRange();
     void apfsWriter_freeQueueExpansionBudgetFailsClosed();
     void apfsWriter_formatBlockWriteNeverEscapesValidatedTarget();
@@ -1856,7 +1876,9 @@ QByteArray fixtureJson() {
                                       {QStringLiteral("IsSystem"), true},
                                       {QStringLiteral("IsReadOnly"), false},
                                       {QStringLiteral("Volume"), QJsonValue()}};
-    const QJsonObject dataVolume{{QStringLiteral("DriveLetter"), QStringLiteral("C")},
+    const QJsonObject dataVolume{{QStringLiteral("UniqueId"),
+                                  QStringLiteral("fixture-data-volume-guid")},
+                                 {QStringLiteral("DriveLetter"), QStringLiteral("C")},
                                  {QStringLiteral("FileSystem"), QStringLiteral("NTFS")},
                                  {QStringLiteral("FileSystemLabel"), QStringLiteral("Windows")},
                                  {QStringLiteral("HealthStatus"), QStringLiteral("Healthy")},
@@ -1880,6 +1902,7 @@ QByteArray fixtureJson() {
                                     {QStringLiteral("Volume"), dataVolume}};
     const QJsonObject disk{
         {QStringLiteral("Number"), 0},
+        {QStringLiteral("UniqueId"), QStringLiteral("test-disk-unique-id")},
         {QStringLiteral("FriendlyName"), QStringLiteral("Test SSD")},
         {QStringLiteral("SerialNumber"), QStringLiteral("ABC123")},
         {QStringLiteral("HealthStatus"), QStringLiteral("Healthy")},
@@ -2908,7 +2931,7 @@ QJsonObject baseExtToolPayload() {
 QJsonObject baseApfsRootFileMutationPayload() {
     QJsonObject payload = baseExtToolPayload();
     payload[QStringLiteral("file_system")] = QStringLiteral("APFS");
-    payload[QStringLiteral("apfs_generated_layout_confirmed")] = true;
+    payload[QStringLiteral("apfs_cow_mutation_certified")] = true;
     payload[QStringLiteral("apfs_root_file_name")] = QStringLiteral("sak-test.txt");
     payload[QStringLiteral("apfs_root_file_payload_text")] = QStringLiteral("hello from apply");
     payload[QStringLiteral("apfs_root_file_patch_offset_bytes")] = QStringLiteral("6");
@@ -3205,6 +3228,7 @@ void appendAdjacentDonorPartition(PartitionInventory* inventory) {
     const auto& target = disk.partitions.at(1);
     PartitionVolumeInfo donorVolume;
     donorVolume.drive_letter = QStringLiteral("D");
+    donorVolume.volume_guid = QStringLiteral("donor-volume-guid");
     donorVolume.label = QStringLiteral("Donor");
     donorVolume.file_system = QStringLiteral("NTFS");
     donorVolume.total_bytes = 1024ULL * 1024ULL * 1024ULL;
@@ -3237,6 +3261,7 @@ PartitionInventory singleDataDiskInventory(bool dynamicDisk = false) {
 
     PartitionVolumeInfo volume;
     volume.drive_letter = QStringLiteral("T");
+    volume.volume_guid = QStringLiteral("single-data-volume-guid");
     volume.label = dynamicDisk ? QStringLiteral("DynData") : QStringLiteral("Data");
     volume.file_system = QStringLiteral("NTFS");
     volume.total_bytes = 1024ULL * 1024ULL * 1024ULL;
@@ -3667,6 +3692,16 @@ void PartitionManagerCoreTests::extFileSystemReader_rejectsMalformedExtentTree()
         PartitionExtFileSystemReader::readFile(&physicalBuffer, QStringLiteral("/hello.txt"), 1024);
     QVERIFY(!physicalRead.ok);
     QVERIFY(physicalRead.blockers.join(' ').contains(QStringLiteral("out-of-range")));
+}
+
+void PartitionManagerCoreTests::hfsCaseFolding_usesWholeLowByteWithinUnicodePage() {
+    const uint16_t fullwidth_upper_a[] = {0xFF21};
+    const uint16_t fullwidth_lower_a[] = {0xFF41};
+    QCOMPARE(fastUnicodeCompare(fullwidth_upper_a, 1, fullwidth_lower_a, 1), 0);
+
+    const uint16_t fullwidth_upper_z[] = {0xFF3A};
+    const uint16_t fullwidth_lower_z[] = {0xFF5A};
+    QCOMPARE(fastUnicodeCompare(fullwidth_upper_z, 1, fullwidth_lower_z, 1), 0);
 }
 
 void PartitionManagerCoreTests::hfsFileSystemReader_listsDirectoriesAndReadsFiles() {
@@ -6883,6 +6918,7 @@ void verifyApfsSingleChunkTierGeometry() {
     QCOMPARE(empty.chunk_count, static_cast<uint64_t>(0));
     QCOMPARE(empty.cib_count, static_cast<uint64_t>(0));
     QCOMPARE(empty.ip_block_count, static_cast<uint64_t>(0));
+    QCOMPARE(empty.block_size, kTestApfsBlockSize);
 
     // 64 MiB (16384 blocks) -> the current single-chunk certified floor.
     const auto sixtyFour = PartitionApfsWriter::computeContainerGeometry(16'384);
@@ -16921,6 +16957,7 @@ void PartitionManagerCoreTests::inventoryParser_parsesDiskAndPartition() {
     const auto inventory = StorageInventoryWorker::parseInventoryJson(fixtureJson());
     QCOMPARE(inventory.disks.size(), 1);
     QCOMPARE(inventory.disks.first().disk_number.value(), 0u);
+    QCOMPARE(inventory.disks.first().unique_id, QStringLiteral("test-disk-unique-id"));
     QCOMPARE(inventory.disks.first().partitions.size(), 2);
     QVERIFY(inventory.disks.first().partitions.first().is_efi);
     QVERIFY(inventory.disks.first().partitions.first().volume.has_value());
@@ -16943,6 +16980,14 @@ void PartitionManagerCoreTests::inventoryParser_parsesDiskAndPartition() {
     QCOMPARE(inventory.disks.first().partitions.at(1).volume->file_system_source,
              PartitionFileSystemDetector::windowsVolumeSource());
     QVERIFY(!inventory.layout_hash.isEmpty());
+    QJsonDocument changed_document = QJsonDocument::fromJson(fixtureJson());
+    QJsonArray changed_disks = changed_document.array();
+    QJsonObject changed_disk = changed_disks.first().toObject();
+    changed_disk[QStringLiteral("UniqueId")] = QStringLiteral("replacement-disk-unique-id");
+    changed_disks[0] = changed_disk;
+    const auto changed_inventory = StorageInventoryWorker::parseInventoryJson(
+        QJsonDocument(changed_disks).toJson(QJsonDocument::Compact));
+    QVERIFY(changed_inventory.layout_hash != inventory.layout_hash);
 }
 
 void PartitionManagerCoreTests::inventoryParser_surfacesUnknownDirtyState() {
@@ -17550,7 +17595,7 @@ void verifyApfsRootFileWritePatchDeleteScripts(const PartitionScriptBuilder* bui
                                       QStringLiteral("commit-raw-file-write"),
                                       QStringLiteral("--payload-file"),
                                       QStringLiteral("FromBase64String"),
-                                      QStringLiteral("ui.apfs-generated-raw-root-file-write"),
+                                      QStringLiteral("ui.apfs-cow-raw-root-file-write"),
                                       extToolRawTargetPath()}});
     verifyScriptContains(builder,
                          target,
@@ -17558,7 +17603,7 @@ void verifyApfsRootFileWritePatchDeleteScripts(const PartitionScriptBuilder* bui
                           .payload = baseApfsRootFileMutationPayload(),
                           .present = {QStringLiteral("commit-raw-file-patch"),
                                       QStringLiteral("-PatchOffsetBytes 6"),
-                                      QStringLiteral("ui.apfs-generated-raw-root-file-patch")}});
+                                      QStringLiteral("ui.apfs-cow-raw-root-file-patch")}});
 
     QJsonObject deletePayload = baseApfsRootFileMutationPayload();
     deletePayload.remove(QStringLiteral("apfs_root_file_payload_text"));
@@ -17568,7 +17613,7 @@ void verifyApfsRootFileWritePatchDeleteScripts(const PartitionScriptBuilder* bui
                          {.type = PartitionOperationType::ApfsDeleteRootFile,
                           .payload = deletePayload,
                           .present = {QStringLiteral("commit-raw-file-delete"),
-                                      QStringLiteral("ui.apfs-generated-raw-root-file-delete")},
+                                      QStringLiteral("ui.apfs-cow-raw-root-file-delete")},
                           .absent = {QStringLiteral("FromBase64String")}});
 }
 
@@ -17586,7 +17631,7 @@ void verifyApfsRootDirectoryFileScripts(const PartitionScriptBuilder* builder,
                      QStringLiteral("-DirectoryName"),
                      QStringLiteral("-FileName"),
                      QStringLiteral("-PayloadFile $payloadPath"),
-                     QStringLiteral("ui.apfs-generated-raw-root-directory-file-write")}});
+                     QStringLiteral("ui.apfs-cow-raw-root-directory-file-write")}});
     verifyScriptContains(
         builder,
         target,
@@ -17597,21 +17642,20 @@ void verifyApfsRootDirectoryFileScripts(const PartitionScriptBuilder* builder,
                      QStringLiteral("-FileName"),
                      QStringLiteral("-PayloadFile $payloadPath"),
                      QStringLiteral("-PatchOffsetBytes 6"),
-                     QStringLiteral("ui.apfs-generated-raw-root-directory-file-patch")}});
+                     QStringLiteral("ui.apfs-cow-raw-root-directory-file-patch")}});
 
     QJsonObject directoryFileDeletePayload = directoryFilePayload;
     directoryFileDeletePayload.remove(QStringLiteral("apfs_root_file_payload_text"));
     directoryFileDeletePayload.remove(QStringLiteral("apfs_root_file_patch_offset_bytes"));
-    verifyScriptContains(
-        builder,
-        target,
-        {.type = PartitionOperationType::ApfsDeleteRootDirectoryFile,
-         .payload = directoryFileDeletePayload,
-         .present = {QStringLiteral("commit-raw-directory-child-delete"),
-                     QStringLiteral("-DirectoryName"),
-                     QStringLiteral("-FileName"),
-                     QStringLiteral("ui.apfs-generated-raw-root-directory-file-delete")},
-         .absent = {QStringLiteral("FromBase64String")}});
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::ApfsDeleteRootDirectoryFile,
+                          .payload = directoryFileDeletePayload,
+                          .present = {QStringLiteral("commit-raw-directory-child-delete"),
+                                      QStringLiteral("-DirectoryName"),
+                                      QStringLiteral("-FileName"),
+                                      QStringLiteral("ui.apfs-cow-raw-root-directory-file-delete")},
+                          .absent = {QStringLiteral("FromBase64String")}});
 }
 
 void verifyApfsRootDirectoryAndLabelScripts(const PartitionScriptBuilder* builder,
@@ -17624,22 +17668,20 @@ void verifyApfsRootDirectoryAndLabelScripts(const PartitionScriptBuilder* builde
     createDirectoryPayload[QStringLiteral("apfs_root_directory_name")] =
         QStringLiteral("Proof Folder");
     createDirectoryPayload.remove(QStringLiteral("apfs_root_file_name"));
-    verifyScriptContains(
-        builder,
-        target,
-        {.type = PartitionOperationType::ApfsCreateRootDirectory,
-         .payload = createDirectoryPayload,
-         .present = {QStringLiteral("commit-raw-directory-create"),
-                     QStringLiteral("-DirectoryName"),
-                     QStringLiteral("ui.apfs-generated-raw-root-directory-create")},
-         .absent = {QStringLiteral("FromBase64String")}});
-    verifyScriptContains(
-        builder,
-        target,
-        {.type = PartitionOperationType::ApfsDeleteRootDirectory,
-         .payload = createDirectoryPayload,
-         .present = {QStringLiteral("commit-raw-directory-delete"),
-                     QStringLiteral("ui.apfs-generated-raw-root-directory-delete")}});
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::ApfsCreateRootDirectory,
+                          .payload = createDirectoryPayload,
+                          .present = {QStringLiteral("commit-raw-directory-create"),
+                                      QStringLiteral("-DirectoryName"),
+                                      QStringLiteral("ui.apfs-cow-raw-root-directory-create")},
+                          .absent = {QStringLiteral("FromBase64String")}});
+    verifyScriptContains(builder,
+                         target,
+                         {.type = PartitionOperationType::ApfsDeleteRootDirectory,
+                          .payload = createDirectoryPayload,
+                          .present = {QStringLiteral("commit-raw-directory-delete"),
+                                      QStringLiteral("ui.apfs-cow-raw-root-directory-delete")}});
 
     QJsonObject labelPayload = deletePayload;
     labelPayload.remove(QStringLiteral("apfs_root_file_name"));
@@ -17650,7 +17692,7 @@ void verifyApfsRootDirectoryAndLabelScripts(const PartitionScriptBuilder* builde
                           .payload = labelPayload,
                           .present = {QStringLiteral("change-raw-volume-label"),
                                       QStringLiteral("-VolumeName 'SAK Relabeled'"),
-                                      QStringLiteral("ui.apfs-generated-raw-volume-label-change")},
+                                      QStringLiteral("ui.apfs-cow-raw-volume-label-change")},
                           .absent = {QStringLiteral("FromBase64String"),
                                      QStringLiteral("-FileName")}});
 }
@@ -17666,16 +17708,19 @@ void verifyApfsSnapshotMutationScripts(const PartitionScriptBuilder& builder,
         PartitionOperationType::ApfsSnapshotCreate, target, snapshotPayload));
     QVERIFY2(create.valid(), qPrintable(create.blockers.join(QStringLiteral("; "))));
     QVERIFY(create.script.contains(QStringLiteral("commit-raw-snapshot-create")));
+    QVERIFY(create.script.contains(QStringLiteral("ui.apfs-cow-raw-snapshot-create")));
     QVERIFY(create.script.contains(QStringLiteral("-SnapshotName 'sak.ui.snap'")));
     QVERIFY(create.script.contains(QStringLiteral("--snapshot-name")));
 
     const auto del = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::ApfsSnapshotDelete, target, snapshotPayload));
     QVERIFY(del.script.contains(QStringLiteral("commit-raw-snapshot-delete")));
+    QVERIFY(del.script.contains(QStringLiteral("ui.apfs-cow-raw-snapshot-delete")));
 
     const auto revert = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::ApfsSnapshotRevert, target, snapshotPayload));
     QVERIFY(revert.script.contains(QStringLiteral("commit-raw-snapshot-revert")));
+    QVERIFY(revert.script.contains(QStringLiteral("ui.apfs-cow-raw-snapshot-revert")));
 
     const auto noName = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::ApfsSnapshotCreate, target, baseApfsRootFileMutationPayload()));
@@ -17696,6 +17741,7 @@ void verifyApfsCloneHardlinkResizeScripts(const PartitionScriptBuilder& builder,
         PartitionOperationType::ApfsCloneRootFile, target, linkPayload));
     QVERIFY2(clone.valid(), qPrintable(clone.blockers.join(QStringLiteral("; "))));
     QVERIFY(clone.script.contains(QStringLiteral("commit-raw-file-clone")));
+    QVERIFY(clone.script.contains(QStringLiteral("ui.apfs-cow-raw-file-clone")));
     QVERIFY(clone.script.contains(QStringLiteral("-FileName 'src.bin'")));
     QVERIFY(clone.script.contains(QStringLiteral("-NewFileName 'copy.bin'")));
     QVERIFY(clone.script.contains(QStringLiteral("--new-file-name")));
@@ -17703,11 +17749,13 @@ void verifyApfsCloneHardlinkResizeScripts(const PartitionScriptBuilder& builder,
     const auto link = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::ApfsHardlinkRootFile, target, linkPayload));
     QVERIFY(link.script.contains(QStringLiteral("commit-raw-file-hardlink")));
+    QVERIFY(link.script.contains(QStringLiteral("ui.apfs-cow-raw-file-hardlink")));
 
     const auto resize = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::ApfsResizeContainer, target, baseApfsRootFileMutationPayload()));
     QVERIFY2(resize.valid(), qPrintable(resize.blockers.join(QStringLiteral("; "))));
     QVERIFY(resize.script.contains(QStringLiteral("commit-raw-resize")));
+    QVERIFY(resize.script.contains(QStringLiteral("ui.apfs-cow-raw-resize")));
 
     const auto noName = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::ApfsCloneRootFile, target, baseApfsRootFileMutationPayload()));
@@ -17726,12 +17774,12 @@ void PartitionManagerCoreTests::scriptBuilder_buildsApfsRootFileMutationScripts(
     verifyApfsRootDirectoryFileScripts(&builder, target);
     verifyApfsRootDirectoryAndLabelScripts(&builder, target);
 
-    QJsonObject missingLayout = baseApfsRootFileMutationPayload();
-    missingLayout[QStringLiteral("apfs_generated_layout_confirmed")] = false;
+    QJsonObject missingCertification = baseApfsRootFileMutationPayload();
+    missingCertification[QStringLiteral("apfs_cow_mutation_certified")] = false;
     const auto blocked = builder.buildScript(PartitionOperationPlanner::makeOperation(
-        PartitionOperationType::ApfsWriteRootFile, target, missingLayout));
+        PartitionOperationType::ApfsWriteRootFile, target, missingCertification));
     QVERIFY(!blocked.valid());
-    QVERIFY(blocked.blockers.join(' ').contains(QStringLiteral("generated-layout")));
+    QVERIFY(blocked.blockers.join(' ').contains(QStringLiteral("certified COW")));
 
     // A1 promotion: in-place root-file mutation now runs on the certified multi-CIB /
     // metadata-overflow / CAB COW engine, so the production mutation gate accepts targets
@@ -18213,6 +18261,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsAdvancedParityScripts() {
     PartitionTarget diskTarget;
     diskTarget.kind = PartitionTargetKind::Disk;
     diskTarget.disk_number = DiskNumber{7};
+    pinDiskTargetIdentity(&diskTarget);
     auto init = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::InitializeDisk,
         diskTarget,
@@ -18244,6 +18293,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsRecoveredPartitionRestoreScr
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
     target.disk_number = DiskNumber{4};
+    pinDiskTargetIdentity(&target);
     QJsonObject payload;
     payload[QStringLiteral("offset_bytes")] = QStringLiteral("1048576000");
     payload[QStringLiteral("size_bytes")] = QStringLiteral("209715200");
@@ -18284,7 +18334,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsCloneVerificationScript() {
     // B1-68: the target disk must stay offline through verification -- the online restore
     // must come after the verify, so Windows cannot mount/modify the disk between the copy
     // and the compare.
-    const int verifyAt = script.script.indexOf(QStringLiteral("Assert-SakFullCopy $srcVerify"));
+    const int verifyAt = script.script.indexOf(QStringLiteral("Assert-SakFullCopy $in"));
     const int restoreAt =
         script.script.indexOf(QStringLiteral("finally { Restore-SakRawWriteTarget"));
     QVERIFY(verifyAt >= 0);
@@ -18307,6 +18357,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsOffsetPartitionCloneScript()
     payload[QStringLiteral("source_offset_bytes")] = QStringLiteral("4096");
     payload[QStringLiteral("target_offset_bytes")] = QStringLiteral("1048576");
     payload[QStringLiteral("verify_mode")] = QStringLiteral("Sample verification");
+    pinRawTargetIdentity(&payload);
     auto operation = PartitionOperationPlanner::makeOperation(
         PartitionOperationType::ClonePartition, target, payload);
 
@@ -18316,7 +18367,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsOffsetPartitionCloneScript()
     QVERIFY(script.script.contains(QStringLiteral("$sourceOffset = [uint64]4096")));
     QVERIFY(script.script.contains(QStringLiteral("$targetOffset = [uint64]1048576")));
     QVERIFY(script.script.contains(QStringLiteral(
-        "Assert-SakSampleCopy $srcVerify $dstVerify $expectedBytes $sourceOffset $targetOffset")));
+        "Assert-SakSampleCopy $in $dstVerify $expectedBytes $sourceOffset $targetOffset")));
     QVERIFY(script.script.contains(QStringLiteral("[int64]($targetStart + $point)")));
     // The raw write must abort if the target disk could not actually be taken offline,
     // rather than silently corrupting a still-mounted volume.
@@ -18333,6 +18384,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsOsMigrationBootValidationScr
     payload[QStringLiteral("source_size_bytes")] = QStringLiteral("1048576");
     payload[QStringLiteral("target_size_bytes")] = QStringLiteral("2097152");
     payload[QStringLiteral("verify_mode")] = QStringLiteral("Sample verification");
+    pinRawTargetIdentity(&payload);
     auto operation = PartitionOperationPlanner::makeOperation(PartitionOperationType::MigrateOs,
                                                               target,
                                                               payload);
@@ -18383,6 +18435,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsClearLevelDiskWipeScript() {
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
     target.disk_number = DiskNumber{4};
+    pinDiskTargetIdentity(&target);
     auto operation = PartitionOperationPlanner::makeOperation(PartitionOperationType::WipeDisk,
                                                               target);
 
@@ -18458,6 +18511,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsEmptyDataDiskStyleConversion
     PartitionTarget target;
     target.kind = PartitionTargetKind::Disk;
     target.disk_number = DiskNumber{4};
+    pinDiskTargetIdentity(&target);
     QJsonObject payload;
     payload[QStringLiteral("target_style")] = QStringLiteral("MBR");
     auto operation = PartitionOperationPlanner::makeOperation(
@@ -18505,6 +18559,7 @@ void PartitionManagerCoreTests::scriptBuilder_rejectsEnumArgumentCommandInjectio
     PartitionTarget conv_target;
     conv_target.kind = PartitionTargetKind::Disk;
     conv_target.disk_number = DiskNumber{4};
+    pinDiskTargetIdentity(&conv_target);
     QJsonObject conv_payload;
     conv_payload[QStringLiteral("target_style")] = QStringLiteral("GPT; calc.exe");
     auto conv_bad = builder.buildScript(PartitionOperationPlanner::makeOperation(
@@ -18662,11 +18717,16 @@ void PartitionManagerCoreTests::scriptBuilder_restoreImageGuardsUncAndOnTargetDi
     payload[QStringLiteral("target_size_bytes")] = QStringLiteral("2097152");
     payload[QStringLiteral("target_wipe_confirmed")] = true;
     payload[QStringLiteral("overwrite_confirmed")] = true;
+    pinRawTargetIdentity(&payload);
 
     const auto script =
         PartitionScriptBuilder().buildScript(PartitionOperationPlanner::makeOperation(
             PartitionOperationType::RestoreImage, target, payload));
     QVERIFY(script.script.contains(QStringLiteral("UNC/network sources are not supported")));
+    QVERIFY(script.script.contains(QStringLiteral(
+        "$imgSrc.StartsWith('\\\\?\\UNC\\', [System.StringComparison]::OrdinalIgnoreCase)")));
+    QVERIFY(script.script.contains(QStringLiteral(
+        "$imgSrc.StartsWith('\\\\?\\Volume{', [System.StringComparison]::OrdinalIgnoreCase)")));
     QVERIFY(script.script.contains(QStringLiteral("resides on the target disk")));
     QVERIFY(script.script.contains(QStringLiteral("$tgtDiskNumber = 2")));
     QVERIFY(script.script.contains(QStringLiteral("function Get-SakOptionalPartitionVolume")));
@@ -18696,6 +18756,7 @@ void PartitionManagerCoreTests::scriptBuilder_restoreImagePinsSourceContent() {
     payload[QStringLiteral("overwrite_confirmed")] = true;
     payload[QStringLiteral("source_sha256")] =
         QStringLiteral("A3F1B2C4D5E6079889AABBCCDDEEFF00112233445566778899AABBCCDDEEFF00");
+    pinRawTargetIdentity(&payload);
 
     const auto pinned =
         PartitionScriptBuilder().buildScript(PartitionOperationPlanner::makeOperation(
@@ -18704,7 +18765,18 @@ void PartitionManagerCoreTests::scriptBuilder_restoreImagePinsSourceContent() {
     // against; an upper-case pin would never match and would fail every legitimate restore.
     QVERIFY(pinned.script.contains(
         QStringLiteral("a3f1b2c4d5e6079889aabbccddeeff00112233445566778899aabbccddeeff00")));
-    QVERIFY(pinned.script.contains(QStringLiteral("Get-FileHash")));
+    QVERIFY(!pinned.script.contains(QStringLiteral("Get-FileHash")));
+    QCOMPARE(pinned.script.count(QStringLiteral("File]::Open($imgPin")), 1);
+    QVERIFY(pinned.script.contains(
+        QStringLiteral("$in = [System.IO.File]::Open($imgPin, [System.IO.FileMode]::Open, "
+                       "[System.IO.FileAccess]::Read, [System.IO.FileShare]::Read)")));
+    QVERIFY(pinned.script.contains(QStringLiteral("$sha256.ComputeHash($in)")));
+    QVERIFY(pinned.script.contains(QStringLiteral("GetFinalPathNameByHandle")));
+    QVERIFY(pinned.script.contains(QStringLiteral("$imgSrc = $imgLockedPath")));
+    QVERIFY(!pinned.script.contains(QStringLiteral("$srcVerify = Open-SakRead $src")));
+    QVERIFY(pinned.script.contains(
+        QStringLiteral("$actualSourceBytes = [uint64]$in.Length; $in.Dispose(); throw")));
+    QVERIFY(!pinned.script.contains(QStringLiteral("found $($in.Length)")));
     // Pin the emitted CONDITIONS, not just the message text. Asserting only that the words
     // "content changed" appear passes against a script whose test can never fire -- the drill
     // proved it: mutating the guard to `if ($false)` left every message in place and the test
@@ -18728,6 +18800,64 @@ void PartitionManagerCoreTests::scriptBuilder_restoreImagePinsSourceContent() {
     // is the only outcome, so the pinned digest text is absent.
     QVERIFY(!unpinned.script.contains(
         QStringLiteral("a3f1b2c4d5e6079889aabbccddeeff00112233445566778899aabbccddeeff00")));
+}
+
+void PartitionManagerCoreTests::scriptBuilder_guardsDiskIdentityImmediatelyBeforeMutation() {
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Disk;
+    target.disk_number = DiskNumber{7};
+    target.disk_unique_id = QStringLiteral("stable-disk-id");
+    target.disk_serial_number = QString();
+    target.disk_size_bytes = 64ULL * 1024ULL * 1024ULL;
+    QJsonObject payload;
+    payload[QStringLiteral("partition_style")] = QStringLiteral("GPT");
+    const auto script =
+        PartitionScriptBuilder().buildScript(PartitionOperationPlanner::makeOperation(
+            PartitionOperationType::InitializeDisk, target, payload));
+    QVERIFY2(script.valid(), qPrintable(script.blockers.join(QStringLiteral("; "))));
+    const qsizetype mutation = script.script.indexOf(QStringLiteral("Initialize-Disk -Number 7"));
+    const qsizetype identity = script.script.lastIndexOf(
+        QStringLiteral("$sakIdentityDisk = Get-Disk -Number 7"), mutation);
+    QVERIFY(identity >= 0);
+    QVERIFY(identity < mutation);
+    const QString guard = script.script.mid(identity, mutation - identity);
+    QVERIFY(guard.contains(QStringLiteral("Disk identity mismatch (UniqueId)")));
+    QVERIFY(guard.contains(QStringLiteral("Disk identity mismatch (serial)")));
+    QVERIFY(guard.contains(QStringLiteral("Disk identity mismatch (size)")));
+    QVERIFY(script.script.contains(guard + QStringLiteral("Initialize-Disk -Number 7")));
+}
+
+void PartitionManagerCoreTests::scriptBuilder_requiresAndChecksRawTargetDiskIdentity() {
+    PartitionTarget source;
+    source.kind = PartitionTargetKind::Disk;
+    source.disk_number = DiskNumber{3};
+    QJsonObject payload;
+    payload[QStringLiteral("source_path")] = QStringLiteral("D:\\source.img");
+    payload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\PhysicalDrive8");
+    payload[QStringLiteral("source_size_bytes")] = QStringLiteral("1048576");
+    payload[QStringLiteral("target_size_bytes")] = QStringLiteral("2097152");
+    payload[QStringLiteral("target_wipe_confirmed")] = true;
+    PartitionScriptBuilder builder;
+    const auto missing = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::CloneDisk, source, payload));
+    QVERIFY(!missing.valid());
+    QCOMPARE(missing.blockers,
+             QStringList{QStringLiteral("Raw target disk identity was not pinned")});
+
+    pinRawTargetIdentity(&payload);
+    const auto guarded = builder.buildScript(PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::CloneDisk, source, payload));
+    QVERIFY2(guarded.valid(), qPrintable(guarded.blockers.join(QStringLiteral("; "))));
+    const qsizetype identity_check =
+        guarded.script.indexOf(QStringLiteral("Raw target disk identity mismatch"));
+    const qsizetype mutation =
+        guarded.script.indexOf(QStringLiteral("Set-Disk -Number $n -IsOffline $true"));
+    QVERIFY(identity_check >= 0);
+    QVERIFY(mutation > identity_check);
+    QVERIFY(guarded.script.contains(QStringLiteral("$sakExpectedTargetSize")));
+    QVERIFY(guarded.script.contains(QStringLiteral("$sakExpectedTargetSerial")));
+    QVERIFY(guarded.script.contains(
+        QStringLiteral("[string]::Equals($sakActualTargetUniqueId, $sakExpectedTargetUniqueId")));
 }
 
 void PartitionManagerCoreTests::apfsWriter_freeQueueRunInBoundsRejectsOutOfRange() {
@@ -19205,6 +19335,7 @@ void PartitionManagerCoreTests::scriptBuilder_createImageEmitsDestinationGuard()
     clonePayload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
     clonePayload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\PhysicalDrive1");
     clonePayload[QStringLiteral("target_wipe_confirmed")] = true;
+    pinRawTargetIdentity(&clonePayload);
     const auto clone = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::CloneDisk, cloneTarget, clonePayload));
     QVERIFY(!clone.script.contains(QStringLiteral("resolves onto the source disk")));
@@ -19517,6 +19648,7 @@ void PartitionManagerCoreTests::
     QJsonObject payload;
     payload[QStringLiteral("source_path")] = QStringLiteral("D:\\images\\disk0.img");
     payload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
+    pinRawTargetIdentity(&payload);
     auto operation = PartitionOperationPlanner::makeOperation(PartitionOperationType::RestoreImage,
                                                               target,
                                                               payload);
@@ -20058,12 +20190,12 @@ void verifyApfsSafetyValidatorFailClosedCases(const PartitionInventory& inventor
     directoryFilePayload[QStringLiteral("apfs_root_directory_name")] =
         QStringLiteral("Proof Folder");
 
-    QJsonObject missingLayout = payload;
-    missingLayout[QStringLiteral("apfs_generated_layout_confirmed")] = false;
+    QJsonObject missingCertification = payload;
+    missingCertification[QStringLiteral("apfs_cow_mutation_certified")] = false;
     auto preview = previewNonNativeOperation(
-        inventory, PartitionOperationType::ApfsWriteRootFile, target, missingLayout);
+        inventory, PartitionOperationType::ApfsWriteRootFile, target, missingCertification);
     QVERIFY(!preview.canApply());
-    QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("generated-layout")));
+    QVERIFY(preview.blockers.join(' ').contains(QStringLiteral("certified COW")));
 
     QJsonObject forgedTarget = payload;
     forgedTarget[QStringLiteral("target_path")] =
@@ -20137,7 +20269,7 @@ void verifyApfsContainerToolValidatorCases(const PartitionInventory& inventory,
             const auto preview = previewNonNativeOperation(inventory, type, target, foreignPayload);
             QVERIFY2(!preview.canApply(), qPrintable(foreign));
             QVERIFY2(preview.blockers.join(' ').contains(
-                         QStringLiteral("APFS generated create/format/repair")),
+                         QStringLiteral("APFS generated create/format/repair and certified COW")),
                      qPrintable(preview.blockers.join(QStringLiteral("; "))));
         }
     }
@@ -20694,6 +20826,7 @@ void PartitionManagerCoreTests::safetyValidator_blocksUnsafeAllocateFreeSpacePay
     validPayload[QStringLiteral("source_file_system")] = donor.volume->file_system;
     validPayload[QStringLiteral("source_label")] = donor.volume->label;
     validPayload[QStringLiteral("backup_directory")] = QStringLiteral("Z:\\SAKBackups");
+    validPayload[QStringLiteral("backup_volume_guid")] = QStringLiteral("backup-volume-guid");
     validPayload[QStringLiteral("target_wipe_confirmed")] = true;
     preview = planner.previewOperation(
         inventory,
@@ -20703,6 +20836,7 @@ void PartitionManagerCoreTests::safetyValidator_blocksUnsafeAllocateFreeSpacePay
 
     QJsonObject sameVolumeBackup = validPayload;
     sameVolumeBackup[QStringLiteral("backup_directory")] = QStringLiteral("D:\\backup");
+    sameVolumeBackup[QStringLiteral("backup_volume_guid")] = donor.volume->volume_guid;
     preview = planner.previewOperation(
         inventory,
         PartitionOperationPlanner::makeOperation(
@@ -20818,6 +20952,7 @@ void PartitionManagerCoreTests::safetyValidator_allowsConfirmedOfflineRebuildOpe
     payload[QStringLiteral("file_system")] = partition.volume->file_system;
     payload[QStringLiteral("label")] = partition.volume->label;
     payload[QStringLiteral("backup_directory")] = QStringLiteral("Z:\\SAKBackups");
+    payload[QStringLiteral("backup_volume_guid")] = QStringLiteral("backup-volume-guid");
     payload[QStringLiteral("target_wipe_confirmed")] = true;
 
     PartitionOperationPlanner planner;
@@ -20878,6 +21013,7 @@ void PartitionManagerCoreTests::safetyValidator_blocksUnsafeOfflineRebuildOperat
     sameVolumePayload[QStringLiteral("drive_letter")] = QStringLiteral("T");
     sameVolumePayload[QStringLiteral("file_system")] = QStringLiteral("NTFS");
     sameVolumePayload[QStringLiteral("backup_directory")] = QStringLiteral("T:\\backup");
+    sameVolumePayload[QStringLiteral("backup_volume_guid")] = partition.volume->volume_guid;
     sameVolumePayload[QStringLiteral("target_wipe_confirmed")] = true;
     preview = planner.previewOperation(
         inventory,
@@ -21011,6 +21147,7 @@ void PartitionManagerCoreTests::safetyValidator_blocksUnsafeClusterSizePayloads(
     sameVolumePayload[QStringLiteral("allocation_unit_bytes")] = QStringLiteral("4096");
     sameVolumePayload[QStringLiteral("backup_directory")] =
         QStringLiteral("%1:\\backup").arg(target.drive_letter.left(1).toUpper());
+    sameVolumePayload[QStringLiteral("backup_volume_guid")] = partition.volume->volume_guid;
     sameVolumePayload[QStringLiteral("target_wipe_confirmed")] = true;
     preview = planner.previewOperation(
         inventory,
@@ -21021,6 +21158,7 @@ void PartitionManagerCoreTests::safetyValidator_blocksUnsafeClusterSizePayloads(
 
     QJsonObject validPayload = sameVolumePayload;
     validPayload[QStringLiteral("backup_directory")] = QStringLiteral("D:\\SAKBackups");
+    validPayload[QStringLiteral("backup_volume_guid")] = QStringLiteral("backup-volume-guid");
     preview = planner.previewOperation(
         inventory,
         PartitionOperationPlanner::makeOperation(
@@ -21561,6 +21699,7 @@ void PartitionManagerCoreTests::safetyValidator_bindsRecreateSizesToLiveVolumes(
         QString::number(dynamicPartition.size_bytes);
     dynamicPayload[QStringLiteral("file_system")] = QStringLiteral("NTFS");
     dynamicPayload[QStringLiteral("backup_directory")] = QStringLiteral("Z:\\SAKBackups");
+    dynamicPayload[QStringLiteral("backup_volume_guid")] = QStringLiteral("backup-volume-guid");
     dynamicPayload[QStringLiteral("target_wipe_confirmed")] = true;
     auto dynamicOp = PartitionOperationPlanner::makeOperation(
         PartitionOperationType::ConvertDynamicDiskToBasic, diskTarget, dynamicPayload);
@@ -21596,6 +21735,7 @@ void PartitionManagerCoreTests::safetyValidator_bindsRecreateSizesToLiveVolumes(
     primaryPayload[QStringLiteral("drive_letter")] = basicPartition.volume->drive_letter;
     primaryPayload[QStringLiteral("file_system")] = basicPartition.volume->file_system;
     primaryPayload[QStringLiteral("backup_directory")] = QStringLiteral("Z:\\SAKBackups");
+    primaryPayload[QStringLiteral("backup_volume_guid")] = QStringLiteral("backup-volume-guid");
     primaryPayload[QStringLiteral("target_wipe_confirmed")] = true;
     auto primaryOp = PartitionOperationPlanner::makeOperation(
         PartitionOperationType::ConvertPrimaryLogical, partitionTarget, primaryPayload);
@@ -21660,6 +21800,7 @@ void PartitionManagerCoreTests::scriptBuilder_emitsCanonicalRawTargetForExtended
     payload[QStringLiteral("source_size_bytes")] = QStringLiteral("1048576");
     payload[QStringLiteral("target_size_bytes")] = QStringLiteral("2097152");
     payload[QStringLiteral("target_wipe_confirmed")] = true;
+    pinRawTargetIdentity(&payload);
     PartitionScriptBuilder builder;
     const auto script = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::CloneDisk, target, payload));
@@ -21721,6 +21862,7 @@ void PartitionManagerCoreTests::scriptBuilder_clonePartitionRegionFailsClosed() 
 
     QJsonObject okPayload = zeroOffsetPayload;
     okPayload[QStringLiteral("target_offset_bytes")] = QStringLiteral("1048576");
+    pinRawTargetIdentity(&okPayload);
     const auto ok = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::ClonePartition, target, okPayload));
     QVERIFY2(ok.valid(), qPrintable(ok.blockers.join(QStringLiteral("; "))));

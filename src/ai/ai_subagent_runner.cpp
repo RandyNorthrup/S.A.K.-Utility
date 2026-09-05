@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <limits>
+#include <mutex>
 #include <utility>
 
 namespace sak::ai {
@@ -169,6 +170,7 @@ IAiModelClient::Request modelRequestForTask(const AiSubagentTask& task) {
     request.system_instructions = task.system_instructions;
     request.objective = task.objective;
     request.context = subagentContext(task);
+    request.untrusted_user_messages = task.untrusted_context_messages;
     request.expected_output_schema = task.expected_output_schema;
     request.model = task.model;
     request.reasoning_effort = task.reasoning_effort;
@@ -953,6 +955,7 @@ QJsonObject AiSubagentTask::toJson() const {
     obj[QStringLiteral("objective")] = objective;
     obj[QStringLiteral("user_message")] = user_message;
     obj[QStringLiteral("system_instructions")] = system_instructions;
+    obj[QStringLiteral("untrusted_context_messages")] = writeStringList(untrusted_context_messages);
     obj[QStringLiteral("context_refs")] = writeStringList(context_refs);
     obj[QStringLiteral("instructions_refs")] = writeStringList(instructions_refs);
     obj[QStringLiteral("tool_policy")] = toolPolicyToString(tool_policy);
@@ -974,6 +977,8 @@ AiSubagentTask AiSubagentTask::fromJson(const QJsonObject& object) {
     task.objective = object.value(QStringLiteral("objective")).toString();
     task.user_message = object.value(QStringLiteral("user_message")).toString();
     task.system_instructions = object.value(QStringLiteral("system_instructions")).toString();
+    task.untrusted_context_messages =
+        readStringList(object.value(QStringLiteral("untrusted_context_messages")));
     task.context_refs = readStringList(object.value(QStringLiteral("context_refs")));
     task.instructions_refs = readStringList(object.value(QStringLiteral("instructions_refs")));
     task.tool_policy = toolPolicyFromString(object.value(QStringLiteral("tool_policy")).toString());
@@ -1091,6 +1096,11 @@ void AiSubagentRunner::setToolExecutor(IAiSubagentToolExecutor* executor) {
     m_tool_executor = executor;
 }
 
+bool AiSubagentRunner::canRunConcurrently() const noexcept {
+    return static_cast<bool>(m_model_client_factory) &&
+           (m_tool_executor == nullptr || m_tool_executor->supportsConcurrentCalls());
+}
+
 AiSubagentResult AiSubagentRunner::run(const AiSubagentTask& task,
                                        const CancellationToken& parent_token) const {
     if (tokenCancelled(parent_token)) {
@@ -1100,6 +1110,7 @@ AiSubagentResult AiSubagentRunner::run(const AiSubagentTask& task,
     std::unique_ptr<IAiModelClient> owned_client;
     IAiModelClient* model_client = m_model_client;
     if (m_model_client_factory) {
+        const std::scoped_lock factory_lock(m_model_client_factory_mutex);
         owned_client = m_model_client_factory();
         model_client = owned_client.get();
     }
