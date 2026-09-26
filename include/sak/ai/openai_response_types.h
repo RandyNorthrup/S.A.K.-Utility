@@ -56,6 +56,8 @@ struct OpenAIResponseRequest {
     QString safety_identifier;
     bool enable_web_search{false};
     bool enable_local_tools{false};
+    /// Built-in web search tool type; OpenAI-compatible vendors differ here.
+    QString web_search_tool_type{QStringLiteral("web_search_preview")};
 };
 
 struct OpenAIResponseResult {

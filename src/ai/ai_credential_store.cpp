@@ -20,6 +20,7 @@
 #include <QSaveFile>
 
 #include <optional>
+#include <string>
 #include <utility>
 
 #ifdef Q_OS_WIN
@@ -34,10 +35,24 @@ namespace {
 
 #ifdef Q_OS_WIN
 constexpr auto kCredentialProvider = "dpapi-current-user-v1";
-constexpr char kDpapiEntropy[] = "SAK Utility/OpenAI API Key/v1";
 
 [[nodiscard]] QString winErrorMessage(DWORD code) {
     return QStringLiteral("Windows error %1").arg(static_cast<qulonglong>(code));
+}
+
+/// DPAPI entropy is per provider so one provider's blob cannot be replayed as
+/// another's. The OpenAI value predates multi-provider support and is kept
+/// verbatim so existing remembered keys still decrypt.
+[[nodiscard]] QByteArray dpapiEntropy(ModelProviderId provider) {
+    return QStringLiteral("SAK Utility/%1 API Key/v1")
+        .arg(modelProviderInfo(provider).vendor)
+        .toUtf8();
+}
+
+[[nodiscard]] std::wstring dpapiDescription(ModelProviderId provider) {
+    return QStringLiteral("SAK Utility %1 API Key")
+        .arg(modelProviderInfo(provider).vendor)
+        .toStdWString();
 }
 #endif
 
@@ -86,12 +101,14 @@ std::optional<QByteArray> encryptedCredentialBytes(const QJsonObject& root,
     return encrypted;
 }
 
-QString decryptCredentialBytes(QByteArray encrypted, QString* error_message) {
+QString decryptCredentialBytes(QByteArray encrypted,
+                               ModelProviderId provider,
+                               QString* error_message) {
     DATA_BLOB in_blob{};
     in_blob.pbData = reinterpret_cast<BYTE*>(encrypted.data());
     in_blob.cbData = static_cast<DWORD>(encrypted.size());
 
-    QByteArray entropy(kDpapiEntropy, static_cast<int>(sizeof(kDpapiEntropy) - 1));
+    QByteArray entropy = dpapiEntropy(provider);
     DATA_BLOB entropy_blob{};
     entropy_blob.pbData = reinterpret_cast<BYTE*>(entropy.data());
     entropy_blob.cbData = static_cast<DWORD>(entropy.size());
@@ -133,20 +150,23 @@ bool ensureCredentialDirectory(const QString& path, QString* error_message) {
     return false;
 }
 
-std::optional<QJsonObject> protectedCredentialRoot(const QString& api_key, QString* error_message) {
+std::optional<QJsonObject> protectedCredentialRoot(const QString& api_key,
+                                                   ModelProviderId provider,
+                                                   QString* error_message) {
     QByteArray bytes = api_key.toUtf8();
     DATA_BLOB in_blob{};
     in_blob.pbData = reinterpret_cast<BYTE*>(bytes.data());
     in_blob.cbData = static_cast<DWORD>(bytes.size());
 
-    QByteArray entropy(kDpapiEntropy, static_cast<int>(sizeof(kDpapiEntropy) - 1));
+    QByteArray entropy = dpapiEntropy(provider);
     DATA_BLOB entropy_blob{};
     entropy_blob.pbData = reinterpret_cast<BYTE*>(entropy.data());
     entropy_blob.cbData = static_cast<DWORD>(entropy.size());
 
+    const std::wstring description = dpapiDescription(provider);
     DATA_BLOB out_blob{};
     const BOOL protected_ok = CryptProtectData(&in_blob,
-                                               L"SAK Utility OpenAI API Key",
+                                               description.c_str(),
                                                &entropy_blob,
                                                nullptr,
                                                nullptr,
@@ -164,6 +184,7 @@ std::optional<QJsonObject> protectedCredentialRoot(const QString& api_key, QStri
     QJsonObject root;
     root[QStringLiteral("version")] = 1;
     root[QStringLiteral("provider")] = QString::fromLatin1(kCredentialProvider);
+    root[QStringLiteral("model_provider")] = modelProviderKey(provider);
     root[QStringLiteral("created_utc")] =
         QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
     root[QStringLiteral("ciphertext")] = QString::fromLatin1(encrypted.toBase64());
@@ -206,16 +227,33 @@ bool CredentialStore::isPersistentStorageAvailable() const noexcept {
 }
 
 QString CredentialStore::credentialFilePath() const {
-    return QDir(credentialDirectory()).filePath(QStringLiteral("openai_api_key.dpapi.json"));
+    return credentialFilePath(ModelProviderId::OpenAI);
+}
+
+QString CredentialStore::credentialFilePath(ModelProviderId provider) const {
+    return QDir(credentialDirectory())
+        .filePath(QStringLiteral("%1_api_key.dpapi.json").arg(modelProviderKey(provider)));
 }
 
 QString CredentialStore::loadApiKey(QString* error_message) const {
+    return loadApiKey(ModelProviderId::OpenAI, error_message);
+}
+
+bool CredentialStore::saveApiKey(const QString& api_key, QString* error_message) const {
+    return saveApiKey(ModelProviderId::OpenAI, api_key, error_message);
+}
+
+bool CredentialStore::deleteApiKey(QString* error_message) const {
+    return deleteApiKey(ModelProviderId::OpenAI, error_message);
+}
+
+QString CredentialStore::loadApiKey(ModelProviderId provider, QString* error_message) const {
     if (error_message) {
         error_message->clear();
     }
 
 #ifdef Q_OS_WIN
-    const auto root = readCredentialRoot(credentialFilePath(), error_message);
+    const auto root = readCredentialRoot(credentialFilePath(provider), error_message);
     if (!root.has_value()) {
         return {};
     }
@@ -227,15 +265,18 @@ QString CredentialStore::loadApiKey(QString* error_message) const {
     if (!encrypted.has_value()) {
         return {};
     }
-    return decryptCredentialBytes(std::move(*encrypted), error_message);
+    return decryptCredentialBytes(std::move(*encrypted), provider, error_message);
 #else
+    Q_UNUSED(provider);
     setError(error_message,
              QStringLiteral("Encrypted persistent credential storage is not available"));
     return {};
 #endif
 }
 
-bool CredentialStore::saveApiKey(const QString& api_key, QString* error_message) const {
+bool CredentialStore::saveApiKey(ModelProviderId provider,
+                                 const QString& api_key,
+                                 QString* error_message) const {
     if (error_message) {
         error_message->clear();
     }
@@ -246,16 +287,17 @@ bool CredentialStore::saveApiKey(const QString& api_key, QString* error_message)
     }
 
 #ifdef Q_OS_WIN
-    const QString path = credentialFilePath();
+    const QString path = credentialFilePath(provider);
     if (!ensureCredentialDirectory(path, error_message)) {
         return false;
     }
-    const auto root = protectedCredentialRoot(api_key, error_message);
+    const auto root = protectedCredentialRoot(api_key, provider, error_message);
     if (!root.has_value()) {
         return false;
     }
     return writeCredentialRoot(path, *root, error_message);
 #else
+    Q_UNUSED(provider);
     Q_UNUSED(api_key);
     setError(error_message,
              QStringLiteral("Encrypted persistent credential storage is not available"));
@@ -263,13 +305,13 @@ bool CredentialStore::saveApiKey(const QString& api_key, QString* error_message)
 #endif
 }
 
-bool CredentialStore::deleteApiKey(QString* error_message) const {
+bool CredentialStore::deleteApiKey(ModelProviderId provider, QString* error_message) const {
     if (error_message) {
         error_message->clear();
     }
 
 #ifdef Q_OS_WIN
-    const QString path = credentialFilePath();
+    const QString path = credentialFilePath(provider);
     if (!QFileInfo::exists(path)) {
         return true;
     }
@@ -281,6 +323,7 @@ bool CredentialStore::deleteApiKey(QString* error_message) const {
     }
     return false;
 #else
+    Q_UNUSED(provider);
     if (error_message) {
         *error_message = QStringLiteral("Encrypted persistent credential storage is not available");
     }
@@ -314,6 +357,10 @@ QString CredentialStore::redactSecrets(const QString& text) {
     result.replace(kAwsAccessKey, QStringLiteral("[redacted-aws-key]"));
     static const QRegularExpression kGoogleApiKey(QStringLiteral(R"(\bAIza[A-Za-z0-9_\-]{35}\b)"));
     result.replace(kGoogleApiKey, QStringLiteral("[redacted-google-key]"));
+    // Google OAuth access tokens held by Gemini CLI sign-in.
+    static const QRegularExpression kGoogleOAuthToken(
+        QStringLiteral(R"(\bya29\.[A-Za-z0-9_\-\.]{20,})"));
+    result.replace(kGoogleOAuthToken, QStringLiteral("[redacted-google-oauth-token]"));
 
     // Slack tokens (xox[bopas]-...) and Stripe keys (sk_live_..., rk_live_...)
     static const QRegularExpression kSlackToken(

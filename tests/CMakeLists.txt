@@ -1135,6 +1135,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_openai_responses_client.cpp")
         ../src/core/app_paths.cpp
         ../src/ai/ai_token_usage_tracker.cpp
         ../src/ai/ai_credential_store.cpp
+        ../src/ai/ai_model_provider.cpp
         ../src/ai/ai_paths.cpp
         ../src/core/secure_memory.cpp
         ../src/core/logger.cpp
@@ -1158,6 +1159,48 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_openai_responses_client.cpp")
     add_test(NAME test_openai_responses_client COMMAND test_openai_responses_client
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_openai_responses_client")
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_model_providers.cpp")
+    add_executable(test_ai_model_providers
+        unit/test_ai_model_providers.cpp
+        ../src/ai/ai_model_provider.cpp
+        ../src/ai/ai_api_support.cpp
+        ../src/ai/ai_chat_backend.cpp
+        ../src/ai/ai_model_router.cpp
+        ../src/ai/ai_backend_factory.cpp
+        ../src/ai/ai_openai_api_backend.cpp
+        ../src/ai/ai_anthropic_api_backend.cpp
+        ../src/ai/ai_gemini_api_backend.cpp
+        ../src/ai/openai_responses_client.cpp
+        ../src/core/app_paths.cpp
+        ../src/ai/ai_token_usage_tracker.cpp
+        ../src/ai/ai_credential_store.cpp
+        ../src/ai/ai_paths.cpp
+        ../src/core/secure_memory.cpp
+        ../src/core/logger.cpp
+        ../include/sak/ai/ai_model_provider.h
+        ../include/sak/ai/ai_api_support.h
+        ../include/sak/ai/ai_chat_backend.h
+        ../include/sak/ai/ai_model_router.h
+        ../include/sak/ai/ai_openai_api_backend.h
+        ../include/sak/ai/ai_anthropic_api_backend.h
+        ../include/sak/ai/ai_gemini_api_backend.h
+        ../include/sak/ai/openai_responses_client.h
+    )
+    set_target_properties(test_ai_model_providers PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_model_providers PRIVATE
+        Qt6::Core Qt6::Test Qt6::Network ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_ai_model_providers PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_model_providers COMMAND test_ai_model_providers
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_model_providers")
 endif()
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_provider_registry.cpp")
@@ -1326,6 +1369,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_app_action_planner.cpp")
         ../src/ai/ai_execution_broker.cpp
         ../src/ai/ai_tool_policy.cpp
         ../src/ai/ai_credential_store.cpp
+        ../src/ai/ai_model_provider.cpp
         ../src/ai/ai_paths.cpp
         ../src/core/app_paths.cpp
         ../src/core/secure_memory.cpp
@@ -1383,6 +1427,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_command_tool_planner.cpp")
         ../src/ai/ai_execution_broker.cpp
         ../src/ai/ai_tool_policy.cpp
         ../src/ai/ai_credential_store.cpp
+        ../src/ai/ai_model_provider.cpp
         ../src/ai/ai_paths.cpp
         ../src/core/app_paths.cpp
         ../src/core/secure_memory.cpp
@@ -1528,6 +1573,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_execution_broker.cpp")
         ../src/core/app_paths.cpp
         ../src/ai/ai_execution_broker.cpp
         ../src/ai/ai_credential_store.cpp
+        ../src/ai/ai_model_provider.cpp
         ../src/ai/ai_paths.cpp
         ../src/core/secure_memory.cpp
         ../include/sak/ai/ai_execution_broker.h
@@ -1686,6 +1732,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_trace_store.cpp")
         unit/test_ai_trace_store.cpp
         ../src/ai/ai_trace_store.cpp
         ../src/ai/ai_credential_store.cpp
+        ../src/ai/ai_model_provider.cpp
         ../src/ai/ai_paths.cpp
         ../src/ai/ai_token_usage_tracker.cpp
         ../src/core/app_paths.cpp
@@ -1784,6 +1831,7 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_workflow_powershell_tool_run
         ../src/ai/ai_command_guard.cpp
         ../src/ai/ai_execution_broker.cpp
         ../src/ai/ai_credential_store.cpp
+        ../src/ai/ai_model_provider.cpp
         ../src/ai/ai_paths.cpp
         ../src/core/app_paths.cpp
         ../src/core/secure_memory.cpp

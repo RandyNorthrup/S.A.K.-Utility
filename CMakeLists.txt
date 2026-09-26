@@ -701,6 +701,10 @@ set(AI_SOURCES)
 if(SAK_ENABLE_AI_ASSISTANT)
     list(APPEND AI_SOURCES
         src/ai/ai_app_action_planner.cpp
+        src/ai/ai_anthropic_api_backend.cpp
+        src/ai/ai_api_support.cpp
+        src/ai/ai_backend_factory.cpp
+        src/ai/ai_chat_backend.cpp
         src/ai/ai_credential_store.cpp
         src/ai/ai_cancellation_token.cpp
         src/ai/ai_command_guard.cpp
@@ -708,11 +712,15 @@ if(SAK_ENABLE_AI_ASSISTANT)
         src/ai/ai_chat_title.cpp
         src/ai/ai_conversation_store.cpp
         src/ai/ai_execution_broker.cpp
+        src/ai/ai_gemini_api_backend.cpp
         src/ai/ai_human_gate.cpp
         src/ai/ai_human_gate_store.cpp
         src/ai/ai_lease_manager.cpp
         src/ai/ai_mcp_http_client.cpp
         src/ai/ai_mcp_stdio_client.cpp
+        src/ai/ai_model_provider.cpp
+        src/ai/ai_model_router.cpp
+        src/ai/ai_openai_api_backend.cpp
         src/ai/ai_openai_model_client.cpp
         src/ai/ai_orchestrator.cpp
         src/ai/ai_offline_downloader_tool_runner.cpp
@@ -742,6 +750,9 @@ if(SAK_ENABLE_AI_ASSISTANT)
         src/ai/openai_responses_client.cpp
         src/gui/ai_transcript_view.cpp
         include/sak/ai/ai_app_action_planner.h
+        include/sak/ai/ai_anthropic_api_backend.h
+        include/sak/ai/ai_api_support.h
+        include/sak/ai/ai_chat_backend.h
         include/sak/ai/ai_credential_store.h
         include/sak/ai/ai_cancellation_token.h
         include/sak/ai/ai_command_guard.h
@@ -749,11 +760,15 @@ if(SAK_ENABLE_AI_ASSISTANT)
         include/sak/ai/ai_chat_title.h
         include/sak/ai/ai_conversation_store.h
         include/sak/ai/ai_execution_broker.h
+        include/sak/ai/ai_gemini_api_backend.h
         include/sak/ai/ai_human_gate.h
         include/sak/ai/ai_human_gate_store.h
         include/sak/ai/ai_lease_manager.h
         include/sak/ai/ai_mcp_http_client.h
         include/sak/ai/ai_mcp_stdio_client.h
+        include/sak/ai/ai_model_provider.h
+        include/sak/ai/ai_model_router.h
+        include/sak/ai/ai_openai_api_backend.h
         include/sak/ai/ai_openai_model_client.h
         include/sak/ai/ai_orchestrator.h
         include/sak/ai/ai_offline_downloader_tool_runner.h

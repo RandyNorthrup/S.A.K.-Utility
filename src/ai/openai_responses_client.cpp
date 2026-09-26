@@ -567,7 +567,7 @@ QJsonObject reasoningObject(const OpenAIResponseRequest& request) {
 QJsonArray enabledToolDefinitions(const OpenAIResponseRequest& request) {
     QJsonArray tools;
     if (request.enable_web_search) {
-        tools.append(QJsonObject{{QStringLiteral("type"), QStringLiteral("web_search_preview")}});
+        tools.append(QJsonObject{{QStringLiteral("type"), request.web_search_tool_type}});
     }
     if (request.enable_local_tools) {
         for (const auto& tool : localToolDefinitions()) {
@@ -603,8 +603,22 @@ void appendResponseTools(QJsonObject* root, const OpenAIResponseRequest& request
 
 }  // namespace
 
-OpenAIResponsesClient::OpenAIResponsesClient(QObject* parent) : QObject(parent) {
+OpenAIResponsesClient::OpenAIResponsesClient(QObject* parent)
+    : QObject(parent)
+    , m_base_url(QString::fromLatin1(kOpenAiBaseUrl))
+    , m_vendor_label(QStringLiteral("OpenAI")) {
     m_network_manager.setRedirectPolicy(QNetworkRequest::NoLessSafeRedirectPolicy);
+}
+
+void OpenAIResponsesClient::setBaseUrl(const QString& base_url) {
+    m_base_url = base_url.trimmed();
+    while (m_base_url.endsWith(QChar(u'/'))) {
+        m_base_url.chop(1);
+    }
+}
+
+void OpenAIResponsesClient::setVendorLabel(const QString& vendor_label) {
+    m_vendor_label = vendor_label.trimmed();
 }
 
 OpenAIResponsesClient::~OpenAIResponsesClient() {
@@ -614,15 +628,16 @@ OpenAIResponsesClient::~OpenAIResponsesClient() {
 
 void OpenAIResponsesClient::createResponse(const OpenAIResponseRequest& request) {
     if (isBusy()) {
-        Q_EMIT requestFailed(QStringLiteral("OpenAI request already running"));
+        Q_EMIT requestFailed(QStringLiteral("%1 request already running").arg(m_vendor_label));
         return;
     }
     if (!hasUsableApiKey(request.api_key)) {
-        Q_EMIT requestFailed(QStringLiteral("OpenAI API key is missing or too short"));
+        Q_EMIT requestFailed(
+            QStringLiteral("%1 API key is missing or too short").arg(m_vendor_label));
         return;
     }
     if (request.model.trimmed().isEmpty()) {
-        Q_EMIT requestFailed(QStringLiteral("OpenAI model is empty"));
+        Q_EMIT requestFailed(QStringLiteral("%1 model is empty").arg(m_vendor_label));
         return;
     }
     if (request.input.trimmed().isEmpty() && request.function_outputs.isEmpty()) {
@@ -823,7 +838,7 @@ bool OpenAIResponsesClient::hasUsableApiKey(const QString& api_key) noexcept {
 
 QNetworkRequest OpenAIResponsesClient::buildRequest(const QString& path,
                                                     const QString& api_key) const {
-    QUrl url(QString::fromLatin1(kOpenAiBaseUrl) + path);
+    QUrl url(m_base_url + path);
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, QStringLiteral("application/json"));
     request.setHeader(QNetworkRequest::UserAgentHeader,
@@ -838,6 +853,10 @@ QNetworkRequest OpenAIResponsesClient::buildRequest(const QString& path,
     ssl.setProtocol(QSsl::TlsV1_2OrLater);
     request.setSslConfiguration(ssl);
     return request;
+}
+
+QJsonArray OpenAIResponsesClient::localToolDefinitionsForProviders() {
+    return localToolDefinitions();
 }
 
 QByteArray OpenAIResponsesClient::buildResponsePayloadForTesting(

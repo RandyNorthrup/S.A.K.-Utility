@@ -6,6 +6,7 @@
 #include "sak/ai/openai_response_types.h"
 
 #include <QByteArray>
+#include <QJsonArray>
 #include <QNetworkAccessManager>
 #include <QObject>
 #include <QString>
@@ -26,6 +27,10 @@ public:
     OpenAIResponsesClient(const OpenAIResponsesClient&) = delete;
     OpenAIResponsesClient& operator=(const OpenAIResponsesClient&) = delete;
 
+    /// @brief Point the client at an OpenAI-compatible Responses API host.
+    void setBaseUrl(const QString& base_url);
+    void setVendorLabel(const QString& vendor_label);
+
     void createResponse(const OpenAIResponseRequest& request);
     void countInputTokens(const OpenAIResponseRequest& request, const QString& request_id);
     void listModels(const QString& api_key);
@@ -43,6 +48,9 @@ public:
     [[nodiscard]] static bool hasUsableApiKey(const QString& api_key) noexcept;
     [[nodiscard]] static QByteArray buildResponsePayloadForTesting(
         const OpenAIResponseRequest& request);
+    /// @brief S.A.K. local tool definitions (OpenAI function-tool shape) for
+    /// other provider backends to translate into their own tool formats.
+    [[nodiscard]] static QJsonArray localToolDefinitionsForProviders();
 
 Q_SIGNALS:
     void requestStarted();
@@ -63,6 +71,8 @@ private:
     void handleInputTokenCountFinished(QNetworkReply* reply, const QString& request_id);
     void cancelInputTokenCount();
 
+    QString m_base_url;
+    QString m_vendor_label;
     QNetworkAccessManager m_network_manager;
     QNetworkReply* m_current_reply{nullptr};
     QNetworkReply* m_input_tokens_reply{nullptr};
