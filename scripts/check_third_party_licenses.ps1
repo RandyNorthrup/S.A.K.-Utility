@@ -40,6 +40,11 @@ try {
         "Chocolatey",
         "smartmontools",
         "iPerf3",
+        "OpenAI Codex",
+        "Claude Code",
+        "Gemini CLI",
+        "Node.js",
+        "Muse Code",
         "Icons8"
     )
 

@@ -46,6 +46,9 @@ public:
     void cancelSignIn() override;
     void signOut() override;
     void resetConversation() override;
+    void setWorkspaceDirectory(const QString& directory) override;
+    void setApprovalPolicy(AiApprovalPolicy policy) override;
+    void resolveApproval(const QString& approval_id, AiApprovalDecision decision) override;
 
     /// @brief Factory for every built-in provider backend.
     [[nodiscard]] static AiChatBackend* createDefaultBackend(ModelProviderId provider,
@@ -61,6 +64,8 @@ private:
     QHash<int, AiChatBackend*> m_backends;
     ModelProviderId m_provider{ModelProviderId::OpenAI};
     ModelAuthMode m_mode{ModelAuthMode::ApiKey};
+    QString m_workspace_directory;
+    AiApprovalPolicy m_approval_policy{AiApprovalPolicy::Ask};
 };
 
 }  // namespace sak::ai

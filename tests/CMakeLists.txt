@@ -1170,6 +1170,14 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_model_providers.cpp")
         ../src/ai/ai_model_router.cpp
         ../src/ai/ai_backend_factory.cpp
         ../src/ai/ai_openai_api_backend.cpp
+        ../src/ai/ai_agent_backend.cpp
+        ../src/ai/ai_agent_runtime.cpp
+        ../src/ai/ai_claude_code_backend.cpp
+        ../src/ai/ai_codex_backend.cpp
+        ../src/ai/ai_gemini_cli_backend.cpp
+        ../src/ai/ai_muse_code_backend.cpp
+        ../src/ai/ai_stdio_json_process.cpp
+        ../src/ai/ai_tool_bridge_server.cpp
         ../src/ai/ai_anthropic_api_backend.cpp
         ../src/ai/ai_gemini_api_backend.cpp
         ../src/ai/openai_responses_client.cpp
@@ -1201,6 +1209,53 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_model_providers.cpp")
     add_test(NAME test_ai_model_providers COMMAND test_ai_model_providers
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
     message(STATUS "Added unit test: test_ai_model_providers")
+endif()
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_agent_backends.cpp")
+    add_executable(test_ai_agent_backends
+        unit/test_ai_agent_backends.cpp
+        ../src/ai/ai_agent_backend.cpp
+        ../src/ai/ai_agent_runtime.cpp
+        ../src/ai/ai_api_support.cpp
+        ../src/ai/ai_chat_backend.cpp
+        ../src/ai/ai_claude_code_backend.cpp
+        ../src/ai/ai_codex_backend.cpp
+        ../src/ai/ai_gemini_cli_backend.cpp
+        ../src/ai/ai_model_provider.cpp
+        ../src/ai/ai_muse_code_backend.cpp
+        ../src/ai/ai_stdio_json_process.cpp
+        ../src/ai/ai_tool_bridge_server.cpp
+        ../src/ai/openai_responses_client.cpp
+        ../src/ai/ai_token_usage_tracker.cpp
+        ../src/ai/ai_credential_store.cpp
+        ../src/ai/ai_paths.cpp
+        ../src/core/app_paths.cpp
+        ../src/core/secure_memory.cpp
+        ../src/core/logger.cpp
+        ../include/sak/ai/ai_agent_backend.h
+        ../include/sak/ai/ai_agent_runtime.h
+        ../include/sak/ai/ai_chat_backend.h
+        ../include/sak/ai/ai_claude_code_backend.h
+        ../include/sak/ai/ai_codex_backend.h
+        ../include/sak/ai/ai_gemini_cli_backend.h
+        ../include/sak/ai/ai_muse_code_backend.h
+        ../include/sak/ai/ai_stdio_json_process.h
+        ../include/sak/ai/ai_tool_bridge_server.h
+        ../include/sak/ai/openai_responses_client.h
+    )
+    set_target_properties(test_ai_agent_backends PROPERTIES
+        AUTOMOC ON
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+    )
+    target_link_libraries(test_ai_agent_backends PRIVATE
+        Qt6::Core Qt6::Test Qt6::Network ${PLATFORM_LIBS}
+    )
+    target_include_directories(test_ai_agent_backends PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/../include
+    )
+    add_test(NAME test_ai_agent_backends COMMAND test_ai_agent_backends
+             WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    message(STATUS "Added unit test: test_ai_agent_backends")
 endif()
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_ai_provider_registry.cpp")

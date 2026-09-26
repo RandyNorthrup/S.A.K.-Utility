@@ -701,10 +701,14 @@ set(AI_SOURCES)
 if(SAK_ENABLE_AI_ASSISTANT)
     list(APPEND AI_SOURCES
         src/ai/ai_app_action_planner.cpp
+        src/ai/ai_agent_backend.cpp
+        src/ai/ai_agent_runtime.cpp
         src/ai/ai_anthropic_api_backend.cpp
         src/ai/ai_api_support.cpp
         src/ai/ai_backend_factory.cpp
         src/ai/ai_chat_backend.cpp
+        src/ai/ai_claude_code_backend.cpp
+        src/ai/ai_codex_backend.cpp
         src/ai/ai_credential_store.cpp
         src/ai/ai_cancellation_token.cpp
         src/ai/ai_command_guard.cpp
@@ -713,6 +717,7 @@ if(SAK_ENABLE_AI_ASSISTANT)
         src/ai/ai_conversation_store.cpp
         src/ai/ai_execution_broker.cpp
         src/ai/ai_gemini_api_backend.cpp
+        src/ai/ai_gemini_cli_backend.cpp
         src/ai/ai_human_gate.cpp
         src/ai/ai_human_gate_store.cpp
         src/ai/ai_lease_manager.cpp
@@ -720,6 +725,7 @@ if(SAK_ENABLE_AI_ASSISTANT)
         src/ai/ai_mcp_stdio_client.cpp
         src/ai/ai_model_provider.cpp
         src/ai/ai_model_router.cpp
+        src/ai/ai_muse_code_backend.cpp
         src/ai/ai_openai_api_backend.cpp
         src/ai/ai_openai_model_client.cpp
         src/ai/ai_orchestrator.cpp
@@ -734,8 +740,10 @@ if(SAK_ENABLE_AI_ASSISTANT)
         src/ai/ai_recovery_policy.cpp
         src/ai/ai_run_state.cpp
         src/ai/ai_run_state_store.cpp
+        src/ai/ai_stdio_json_process.cpp
         src/ai/ai_subagent_runner.cpp
         src/ai/ai_token_usage_tracker.cpp
+        src/ai/ai_tool_bridge_server.cpp
         src/ai/ai_tool_call_router.cpp
         src/ai/ai_tool_dispatcher.cpp
         src/ai/ai_tool_health_ledger.cpp
@@ -750,9 +758,13 @@ if(SAK_ENABLE_AI_ASSISTANT)
         src/ai/openai_responses_client.cpp
         src/gui/ai_transcript_view.cpp
         include/sak/ai/ai_app_action_planner.h
+        include/sak/ai/ai_agent_backend.h
+        include/sak/ai/ai_agent_runtime.h
         include/sak/ai/ai_anthropic_api_backend.h
         include/sak/ai/ai_api_support.h
         include/sak/ai/ai_chat_backend.h
+        include/sak/ai/ai_claude_code_backend.h
+        include/sak/ai/ai_codex_backend.h
         include/sak/ai/ai_credential_store.h
         include/sak/ai/ai_cancellation_token.h
         include/sak/ai/ai_command_guard.h
@@ -761,6 +773,7 @@ if(SAK_ENABLE_AI_ASSISTANT)
         include/sak/ai/ai_conversation_store.h
         include/sak/ai/ai_execution_broker.h
         include/sak/ai/ai_gemini_api_backend.h
+        include/sak/ai/ai_gemini_cli_backend.h
         include/sak/ai/ai_human_gate.h
         include/sak/ai/ai_human_gate_store.h
         include/sak/ai/ai_lease_manager.h
@@ -768,6 +781,7 @@ if(SAK_ENABLE_AI_ASSISTANT)
         include/sak/ai/ai_mcp_stdio_client.h
         include/sak/ai/ai_model_provider.h
         include/sak/ai/ai_model_router.h
+        include/sak/ai/ai_muse_code_backend.h
         include/sak/ai/ai_openai_api_backend.h
         include/sak/ai/ai_openai_model_client.h
         include/sak/ai/ai_orchestrator.h
@@ -782,8 +796,10 @@ if(SAK_ENABLE_AI_ASSISTANT)
         include/sak/ai/ai_recovery_policy.h
         include/sak/ai/ai_run_state.h
         include/sak/ai/ai_run_state_store.h
+        include/sak/ai/ai_stdio_json_process.h
         include/sak/ai/ai_subagent_runner.h
         include/sak/ai/ai_token_usage_tracker.h
+        include/sak/ai/ai_tool_bridge_server.h
         include/sak/ai/ai_tool_call_router.h
         include/sak/ai/ai_tool_dispatcher.h
         include/sak/ai/ai_tool_health_ledger.h
@@ -996,6 +1012,43 @@ if(MSVC)
 endif()
 
 add_dependencies(sak_utility sak_apfs_writer_cli)
+
+# ============================================================================
+# AI tool bridge (stdio MCP relay that exposes S.A.K. tools to agent runtimes)
+# ============================================================================
+
+if(SAK_ENABLE_AI_ASSISTANT)
+    add_executable(sak_ai_tool_bridge
+        src/tools/sak_ai_tool_bridge.cpp
+    )
+
+    set_target_properties(sak_ai_tool_bridge PROPERTIES
+        WIN32_EXECUTABLE FALSE
+    )
+
+    target_link_libraries(sak_ai_tool_bridge PRIVATE
+        Qt6::Core
+        Qt6::Network
+    )
+
+    target_compile_definitions(sak_ai_tool_bridge PRIVATE
+        QT_NO_KEYWORDS
+        QT_DEPRECATED_WARNINGS
+        QT_DISABLE_DEPRECATED_BEFORE=0x060000
+    )
+
+    if(MSVC)
+        string(FIND "${CMAKE_MSVC_RUNTIME_LIBRARY}" "DLL" _sak_ai_bridge_crt_pos)
+        if(_sak_ai_bridge_crt_pos EQUAL -1)
+            target_link_options(sak_ai_tool_bridge PRIVATE
+                /NODEFAULTLIB:MSVCRT
+                /NODEFAULTLIB:MSVCRTD
+            )
+        endif()
+    endif()
+
+    add_dependencies(sak_utility sak_ai_tool_bridge)
+endif()
 
 # ============================================================================
 # HFS Writer CLI (Partition Manager image-only HFS apply bridge)

@@ -137,6 +137,10 @@ bld/
 !tools/mcp/**
 tools/mcp/_build/
 tools/mcp/**/*.spec
+# AI agent runtimes are fetched and verified at build time by
+# scripts/bundle_ai_agents.ps1 (too large and vendor-owned to commit).
+tools/ai_agents/*
+!tools/ai_agents/README.md
 
 # Linker files
 *.ilk

@@ -117,6 +117,7 @@ Copy-RequiredFile (Join-Path $buildRoot "sak_utility.exe") $packageRoot
 Copy-RequiredFile (Join-Path $buildRoot "sak_elevated_helper.exe") $packageRoot
 Copy-RequiredFile (Join-Path $buildRoot "sak_apfs_writer_cli.exe") $packageRoot
 Copy-RequiredFile (Join-Path $buildRoot "sak_hfs_writer_cli.exe") $packageRoot
+Copy-RequiredFile (Join-Path $buildRoot "sak_ai_tool_bridge.exe") $packageRoot
 Copy-RequiredFile (Join-Path $buildRoot "sak_splash.png") $packageRoot
 Copy-OptionalFile (Join-Path $buildRoot "icon.ico") $packageRoot
 

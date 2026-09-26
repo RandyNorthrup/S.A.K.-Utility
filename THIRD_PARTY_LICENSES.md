@@ -494,6 +494,75 @@ limitations under the License.
 
 ---
 
+## OpenAI Codex
+
+**License:** Apache License 2.0
+**Version:** 0.157.0 (`rust-v0.157.0`)
+**Website:** https://developers.openai.com/codex
+**Source:** https://github.com/openai/codex
+**Used for:** GPT in the AI Assistant with the user's own ChatGPT plan (Codex app-server)
+**Bundled at:** `tools/ai_agents/codex/` (unmodified release package, with its `LICENSE` and `NOTICE`)
+
+Downloaded by `scripts/bundle_ai_agents.ps1` and verified against the GitHub
+release digest and Authenticode signature. OpenAI Codex, Copyright 2025 OpenAI;
+the upstream `NOTICE` file ships alongside the binaries. S.A.K. Utility is not
+affiliated with or endorsed by OpenAI.
+
+---
+
+## Claude Code
+
+**License:** Proprietary - (c) Anthropic PBC. All rights reserved.
+**Version:** 2.1.274
+**Website:** https://code.claude.com/
+**Terms:** https://code.claude.com/docs/en/legal-and-compliance
+**Used for:** Claude in the AI Assistant with the user's own Claude plan
+**Bundled at:** `tools/ai_agents/claude/claude.exe` (unmodified native executable)
+
+Preinstalled under Anthropic's published conditions for products that run
+Claude Code: the binary is shipped unmodified, none of its authentication
+methods are removed or restricted, and each user signs in through Claude
+Code's own flow with their own subscription or API key. S.A.K. Utility never
+collects, stores or relays Claude credentials and does not pay for or resell
+Claude usage. S.A.K. Utility runs Claude Code; it is not built, endorsed by or
+affiliated with Anthropic.
+
+---
+
+## Gemini CLI
+
+**License:** Apache License 2.0
+**Version:** 0.61.0
+**Website:** https://github.com/google-gemini/gemini-cli
+**Used for:** Gemini in the AI Assistant with a Google Workspace / Gemini Code Assist account
+**Bundled at:** `tools/ai_agents/gemini/bundle/` (only in builds made with `-IncludeGemini`)
+
+Copyright Google LLC. The upstream `LICENSE` ships alongside the bundle.
+
+---
+
+## Node.js
+
+**License:** MIT (Node.js) plus the licenses of its bundled dependencies, listed in the shipped `LICENSE`
+**Version:** 24.21.0 (LTS)
+**Website:** https://nodejs.org/
+**Used for:** Private runtime for the bundled Gemini CLI; not added to PATH
+**Bundled at:** `tools/ai_agents/gemini/node/` (only in builds made with `-IncludeGemini`)
+
+---
+
+## Muse Code
+
+**License:** Proprietary (Meta). **Not bundled.**
+**Website:** https://dev.meta.ai/docs/muse-code
+**Used for:** Muse in the AI Assistant with the user's own Muse subscription
+
+No redistribution grant has been published for the `muse` executable, so S.A.K.
+Utility does not ship it. It uses a copy the user installs with Meta's official
+installer.
+
+---
+
 ## CMake
 
 **License:** BSD 3-Clause

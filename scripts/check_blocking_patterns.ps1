@@ -65,6 +65,8 @@ try {
         '^src[\\/]ai[\\/]ai_openai_model_client\.cpp:\d+:',
         '^src[\\/]ai[\\/]ai_mcp_http_client\.cpp:\d+:',
         '^src[\\/]ai[\\/]ai_mcp_stdio_client\.cpp:\d+:',
+        '^src[\\/]ai[\\/]ai_stdio_json_process\.cpp:\d+:',
+        '^src[\\/]tools[\\/]sak_ai_tool_bridge\.cpp:\d+:',
         '^src[\\/]gui[\\/]ai_assistant_panel\.cpp:\d+:',
         '^src[\\/]gui[\\/]organizer_panel\.cpp:\d+:'
     )

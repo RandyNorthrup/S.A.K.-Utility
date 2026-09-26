@@ -49,6 +49,8 @@ AiChatBackend* AiModelRouter::backendFor(ModelProviderId provider, ModelAuthMode
     }
     m_backends.insert(key, backend);
     connectBackend(backend);
+    backend->setWorkspaceDirectory(m_workspace_directory);
+    backend->setApprovalPolicy(m_approval_policy);
     return backend;
 }
 
@@ -102,6 +104,14 @@ void AiModelRouter::connectBackend(AiChatBackend* backend) {
             Q_EMIT activityText(text);
         }
     });
+    connect(backend,
+            &AiChatBackend::approvalRequested,
+            this,
+            [this, active](const AiAgentApproval& approval) {
+                if (active()) {
+                    Q_EMIT approvalRequested(approval);
+                }
+            });
     connect(backend, &AiChatBackend::signInUrlReady, this, &AiChatBackend::signInUrlReady);
     connect(
         backend, &AiChatBackend::accountStatusChanged, this, &AiChatBackend::accountStatusChanged);
@@ -178,6 +188,26 @@ void AiModelRouter::signOut() {
 void AiModelRouter::resetConversation() {
     for (auto* backend : std::as_const(m_backends)) {
         backend->resetConversation();
+    }
+}
+
+void AiModelRouter::setWorkspaceDirectory(const QString& directory) {
+    m_workspace_directory = directory;
+    for (auto* backend : std::as_const(m_backends)) {
+        backend->setWorkspaceDirectory(directory);
+    }
+}
+
+void AiModelRouter::setApprovalPolicy(AiApprovalPolicy policy) {
+    m_approval_policy = policy;
+    for (auto* backend : std::as_const(m_backends)) {
+        backend->setApprovalPolicy(policy);
+    }
+}
+
+void AiModelRouter::resolveApproval(const QString& approval_id, AiApprovalDecision decision) {
+    if (auto* backend = activeBackend()) {
+        backend->resolveApproval(approval_id, decision);
     }
 }
 

@@ -27,6 +27,28 @@ struct AiAccountStatus {
     QString detail;
 };
 
+/// @brief How an agent runtime's own permission prompts are answered.
+enum class AiApprovalPolicy {
+    Ask,
+    AllowAll,
+    DenyAll,
+};
+
+enum class AiApprovalDecision {
+    AllowOnce,
+    AllowForSession,
+    Deny,
+};
+
+/// @brief A permission prompt raised by an agent runtime (not by S.A.K. tools,
+/// which keep going through the panel's own tool policy and human gates).
+struct AiAgentApproval {
+    QString id;
+    QString title;
+    QString detail;
+    bool can_allow_for_session{true};
+};
+
 /// @brief Provider-neutral, signal-based chat transport used by the assistant.
 ///
 /// The request/result structs keep their historical OpenAI names because they
@@ -65,6 +87,11 @@ public:
     /// @brief Drop cached conversation state (new chat / session switch).
     virtual void resetConversation();
 
+    /// @brief Folder agent runtimes use as their working directory.
+    virtual void setWorkspaceDirectory(const QString& directory);
+    virtual void setApprovalPolicy(AiApprovalPolicy policy);
+    virtual void resolveApproval(const QString& approval_id, AiApprovalDecision decision);
+
 Q_SIGNALS:
     void requestStarted();
     void requestFinished();
@@ -76,8 +103,10 @@ Q_SIGNALS:
     void accountStatusChanged(const sak::ai::AiAccountStatus& status);
     void signInUrlReady(const QUrl& url);
     void activityText(const QString& text);
+    void approvalRequested(const sak::ai::AiAgentApproval& approval);
 };
 
 }  // namespace sak::ai
 
 Q_DECLARE_METATYPE(sak::ai::AiAccountStatus)
+Q_DECLARE_METATYPE(sak::ai::AiAgentApproval)

@@ -2,9 +2,15 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/ai/ai_anthropic_api_backend.h"
+#include "sak/ai/ai_claude_code_backend.h"
+#include "sak/ai/ai_codex_backend.h"
 #include "sak/ai/ai_gemini_api_backend.h"
+#include "sak/ai/ai_gemini_cli_backend.h"
 #include "sak/ai/ai_model_router.h"
+#include "sak/ai/ai_muse_code_backend.h"
 #include "sak/ai/ai_openai_api_backend.h"
+
+#include <utility>
 
 namespace sak::ai {
 
@@ -25,8 +31,17 @@ AiChatBackend* createApiKeyBackend(ModelProviderId provider, QObject* parent) {
 }
 
 AiChatBackend* createSubscriptionBackend(ModelProviderId provider, QObject* parent) {
-    Q_UNUSED(provider);
-    Q_UNUSED(parent);
+    AiAgentRuntime runtime = AiAgentRuntime::forApplication();
+    switch (provider) {
+    case ModelProviderId::OpenAI:
+        return new CodexAppServerBackend(std::move(runtime), parent);
+    case ModelProviderId::Anthropic:
+        return new ClaudeCodeBackend(std::move(runtime), parent);
+    case ModelProviderId::Google:
+        return new GeminiCliBackend(std::move(runtime), parent);
+    case ModelProviderId::Muse:
+        return new MuseCodeBackend(std::move(runtime), parent);
+    }
     return nullptr;
 }
 

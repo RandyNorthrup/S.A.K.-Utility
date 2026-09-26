@@ -17,6 +17,7 @@ $required = @(
     'sak_elevated_helper.exe',
     'sak_apfs_writer_cli.exe',
     'sak_hfs_writer_cli.exe',
+    'sak_ai_tool_bridge.exe',
     'Qt6Core.dll',
     'Qt6Widgets.dll',
     'platforms/qwindows.dll',

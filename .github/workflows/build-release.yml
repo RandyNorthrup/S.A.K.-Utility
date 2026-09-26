@@ -115,6 +115,16 @@ jobs:
         # packaged ZIP get the same bundled tools layout as local releases.
         & scripts/bundle_mcp_servers.ps1 -BuildWin32 -Python python
 
+    - name: Bundle AI agent runtimes
+      shell: pwsh
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      run: |
+        # Codex app-server + Claude Code (unmodified, checksum and signature
+        # verified) for the AI Assistant's subscription sign-in modes.
+        # Add -IncludeGemini to also ship Gemini CLI with a private Node.js.
+        & scripts/bundle_ai_agents.ps1
+
     - name: Install release gate tools
       shell: pwsh
       run: |
