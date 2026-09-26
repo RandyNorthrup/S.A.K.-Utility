@@ -112,10 +112,35 @@ AiAssistantPanel --> AiModelRouter (AiChatBackend) --> one backend per provider 
   upstream, so the bundle pins one release (`scripts/bundle_ai_agents.ps1`).
   Re-test on every upgrade.
 
-## Packaging
+## Status and next step (paused)
 
-`scripts/bundle_ai_agents.ps1` (run in CI after the MCP bundle step) fills
-`tools/ai_agents/` with pinned releases:
+Work is parked on branch `claude/confident-johnson-j4rnul`. The runtimes are
+**not** bundled in release builds: the CI bundling step was removed because
+the decision is to ship **one-click in-app downloads** instead. Until that
+lands, subscription modes show the runtime as not installed unless a
+technician runs `scripts/bundle_ai_agents.ps1` locally for a build.
+
+Next step, one-click downloads:
+
+1. When a subscription runtime is missing, the Account button offers
+   **Download <runtime>** and states the size and source.
+2. Download into the S.A.K. data root (`data/ai_agents/runtimes/<runtime>/`),
+   which stays writable when the app folder is read-only, and add that folder
+   to `AiAgentRuntime`'s search paths.
+3. Verify each file the same way the bundle script does before first use:
+   vendor-published SHA-256 or sha512, plus the Authenticode publisher on
+   Windows executables. On any mismatch, discard the download.
+4. Tell the user: show progress in the panel, a toast or status message when
+   the download finishes or fails, and a log line with the version and source.
+5. Muse Code keeps using Meta's official per-user installer (it has no
+   redistribution grant); the existing one-click install already does this.
+6. Check for runtime updates using the same pinned-version table, and ask
+   before updating.
+
+## Packaging (manual, until one-click downloads land)
+
+`scripts/bundle_ai_agents.ps1` fills `tools/ai_agents/` with pinned releases
+when run by hand for a build:
 
 | Runtime | Source | Verification |
 |---|---|---|

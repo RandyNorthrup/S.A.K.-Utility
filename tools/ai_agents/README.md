@@ -1,7 +1,8 @@
 # AI agent runtimes
 
-This folder is filled at build time by `scripts/bundle_ai_agents.ps1`; only
-this README is committed.
+This folder is filled only when `scripts/bundle_ai_agents.ps1` is run by hand
+for a build; release CI does not bundle runtimes (one-click in-app downloads
+are the planned delivery). Only this README is committed.
 
 | Folder    | Runtime                                   | Used by                          |
 |-----------|-------------------------------------------|----------------------------------|
