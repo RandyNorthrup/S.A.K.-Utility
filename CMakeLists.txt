@@ -813,6 +813,7 @@ if(SAK_ENABLE_AI_ASSISTANT)
         include/sak/ai/openai_response_types.h
         include/sak/ai/openai_responses_client.h
         src/gui/ai_assistant_panel.cpp
+        src/gui/ai_assistant_panel_providers.cpp
         include/sak/ai_assistant_panel.h
         include/sak/ai_transcript_view.h
     )

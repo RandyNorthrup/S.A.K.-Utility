@@ -5,6 +5,7 @@
 
 #include "sak/ai/ai_cancellation_token.h"
 #include "sak/ai/ai_execution_broker.h"
+#include "sak/ai/ai_model_router.h"
 #include "sak/ai/ai_orchestrator.h"
 #include "sak/ai/ai_run_state.h"
 #include "sak/ai/ai_tool_call_router.h"
@@ -129,6 +130,10 @@ private Q_SLOTS:
     void onBrokerStdoutChunk(const QString& command_id, const QString& chunk);
     void onBrokerStderrChunk(const QString& command_id, const QString& chunk);
     void onBrokerFinished(const QString& command_id, const sak::ai::AiCommandResult& result);
+    void onProviderSelectionChanged();
+    void onAccountStatusChanged(const sak::ai::AiAccountStatus& status);
+    void onSignInUrlReady(const QUrl& url);
+    void onAgentApprovalRequested(const sak::ai::AiAgentApproval& approval);
 
 private:
     enum class AccessMode {
@@ -239,6 +244,23 @@ private:
     void setupComposerSendActions(QHBoxLayout* actionRow, QWidget* composer);
     void connectAiClient();
     void connectOpenAiClientSignals();
+    void connectModelProviderSignals();
+    void setupContextPaneProviderSection(QVBoxLayout* layout, QWidget* pane);
+    void restoreProviderSelection();
+    void applyProviderSelection();
+    void populateProviderModels();
+    void updateProviderControls(bool busy);
+    void updateSignInButton(bool busy);
+    void handleSubscriptionCredentialClick();
+    void offerAgentRuntimeInstall();
+    void syncAgentContext();
+    [[nodiscard]] bool hasModelCredential() const;
+    [[nodiscard]] QString credentialStatusText() const;
+    void clearLoadedApiKey(ai::ModelProviderId provider, const QString& vendor);
+    [[nodiscard]] ai::ModelProviderId currentProvider() const;
+    [[nodiscard]] ai::ModelAuthMode currentAuthMode() const;
+    [[nodiscard]] QString currentProviderLabel() const;
+    [[nodiscard]] bool workflowsAllowedForSelection(QString* reason) const;
     void connectExecutionBrokerSignals();
     void connectElevationBrokerSignals();
     void handleElevationBrokerProgress(int percent, const QString& status);
@@ -668,6 +690,8 @@ private:
         QString api_key;
         QString model;
         QString reasoning;
+        ai::ModelProviderId provider{ai::ModelProviderId::OpenAI};
+        ai::ModelAuthMode auth_mode{ai::ModelAuthMode::ApiKey};
         QJsonObject input_values;
         QJsonObject resume_state;
         QString user_message;
@@ -729,6 +753,8 @@ private:
     LogToggleSwitch* m_logToggle{nullptr};
 
     QPushButton* m_loadKeyButton{nullptr};
+    QComboBox* m_providerCombo{nullptr};
+    QComboBox* m_authModeCombo{nullptr};
     QComboBox* m_modelCombo{nullptr};
     QLabel* m_sessionRoleValueLabel{nullptr};
     QComboBox* m_promptTemplateCombo{nullptr};
@@ -759,7 +785,7 @@ private:
     QPushButton* m_sendButton{nullptr};
     QPushButton* m_generateReportButton{nullptr};
 
-    std::unique_ptr<ai::OpenAIResponsesClient> m_client;
+    std::unique_ptr<ai::AiModelRouter> m_client;
     std::unique_ptr<ai::CredentialStore> m_credentialStore;
     std::unique_ptr<ai::ConversationStore> m_conversationStore;
     std::unique_ptr<ElevationBroker> m_elevationBroker;
@@ -777,6 +803,7 @@ private:
     std::unique_ptr<OfflineDeploymentWorker> m_offlineWorker;
     QVector<ContextItem> m_contextItems;
     QString m_apiKey;
+    ai::AiAccountStatus m_accountStatus;
     QString m_taskStatus;
     QString m_previousResponseId;
     QString m_sessionRole;

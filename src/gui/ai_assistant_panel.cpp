@@ -712,6 +712,9 @@ ModelContextWindow modelContextWindowInfo(const QString& model_id) {
             return {rule.tokens, true};
         }
     }
+    if (const qint64 tokens = ai::providerContextWindowTokens(model); tokens > 0) {
+        return {tokens, true};
+    }
     return {};
 }
 
@@ -3306,7 +3309,7 @@ QLabel* makeRailTitle(QWidget* parent, const QString& text) {
 
 AiAssistantPanel::AiAssistantPanel(QWidget* parent)
     : QWidget(parent)
-    , m_client(std::make_unique<ai::OpenAIResponsesClient>(this))
+    , m_client(std::make_unique<ai::AiModelRouter>(this))
     , m_credentialStore(std::make_unique<ai::CredentialStore>())
     , m_conversationStore(std::make_unique<ai::ConversationStore>())
     , m_elevationBroker(std::make_unique<ElevationBroker>(this))
@@ -3381,7 +3384,7 @@ void AiAssistantPanel::initializeStandardPanel(bool workflows_loaded,
                                                const QString& health_ledger_error) {
     setupUi();
     connectAiClient();
-    loadRememberedApiKey();
+    restoreProviderSelection();
     updateCredentialControls();
     updateTokenLabels();
     refreshContextList();
@@ -3437,8 +3440,7 @@ AiAssistantPanel::~AiAssistantPanel() {
 
 QString AiAssistantPanel::statusDetails() const {
     const QString task = m_taskStatus.isEmpty() ? tr("Idle") : m_taskStatus;
-    const QString key = ai::OpenAIResponsesClient::hasUsableApiKey(apiKey()) ? tr("Loaded")
-                                                                             : tr("No key");
+    const QString key = credentialStatusText();
     QString access;
     switch (currentAccessMode()) {
     case AccessMode::ChatAndResearch:
@@ -3549,7 +3551,8 @@ void AiAssistantPanel::setupUi() {
         this,
         QStringLiteral(":/icons/icons/panel_ai.svg"),
         tr("AI Assistant"),
-        tr("OpenAI-powered technician assistant with controlled local execution"),
+        tr("Technician assistant for GPT, Claude, Gemini and Muse with controlled local "
+           "execution"),
         rootLayout);
 
     auto* workspace = createChatWorkspace();
@@ -3665,7 +3668,8 @@ void AiAssistantPanel::setupContextPaneSessionSection(QVBoxLayout* layout, QWidg
 
 void AiAssistantPanel::setupContextPaneAgentSection(QVBoxLayout* layout, QWidget* pane) {
     layout->addSpacing(sak::ui::kSpacingMedium);
-    layout->addWidget(makeRailTitle(pane, tr("GPT Assistant")));
+    layout->addWidget(makeRailTitle(pane, tr("AI Assistant")));
+    setupContextPaneProviderSection(layout, pane);
 
     layout->addWidget(makeFieldLabel(pane, tr("Model")));
     m_modelCombo = new QComboBox(pane);
@@ -3674,8 +3678,8 @@ void AiAssistantPanel::setupContextPaneAgentSection(QVBoxLayout* layout, QWidget
     m_modelCombo->setEditable(true);
     m_modelCombo->addItems(
         {QStringLiteral("gpt-5.5"), QStringLiteral("gpt-5.4"), QStringLiteral("gpt-5.4-mini")});
-    m_modelCombo->setToolTip(tr("Choose or type the OpenAI model for this session"));
-    setAccessible(m_modelCombo, tr("AI model"), tr("OpenAI model for the active session"));
+    m_modelCombo->setToolTip(tr("Choose or type the model for this session"));
+    setAccessible(m_modelCombo, tr("AI model"), tr("Model for the active session"));
     connect(m_modelCombo, &QComboBox::currentTextChanged, this, [this]() {
         scheduleContextTokenRefresh();
         updateRunTelemetryLabels();
@@ -3706,11 +3710,43 @@ void AiAssistantPanel::setupContextPaneAgentSection(QVBoxLayout* layout, QWidget
     requireFocusForWheel(m_reasoningEffortCombo, this);
     m_reasoningEffortCombo->addItems({tr("Low"), tr("Medium"), tr("High")});
     m_reasoningEffortCombo->setCurrentIndex(1);
-    m_reasoningEffortCombo->setToolTip(tr("Set reasoning effort for supported OpenAI models"));
+    m_reasoningEffortCombo->setToolTip(tr("Set reasoning effort for supported models"));
     setAccessible(m_reasoningEffortCombo,
                   tr("Reasoning effort"),
                   tr("Reasoning effort sent to supported models"));
     layout->addWidget(m_reasoningEffortCombo);
+}
+
+void AiAssistantPanel::setupContextPaneProviderSection(QVBoxLayout* layout, QWidget* pane) {
+    layout->addWidget(makeFieldLabel(pane, tr("Provider")));
+    m_providerCombo = new QComboBox(pane);
+    configureReadableCombo(m_providerCombo);
+    requireFocusForWheel(m_providerCombo, this);
+    for (const auto& info : ai::modelProviders()) {
+        m_providerCombo->addItem(info.display_name, info.key);
+    }
+    m_providerCombo->setToolTip(tr("Choose which frontier model family answers in this panel"));
+    setAccessible(m_providerCombo, tr("AI provider"), tr("Model family used by the assistant"));
+    layout->addWidget(m_providerCombo);
+
+    layout->addWidget(makeFieldLabel(pane, tr("Sign-in")));
+    m_authModeCombo = new QComboBox(pane);
+    configureReadableCombo(m_authModeCombo);
+    requireFocusForWheel(m_authModeCombo, this);
+    m_authModeCombo->addItem(tr("API key"), ai::modelAuthModeKey(ai::ModelAuthMode::ApiKey));
+    m_authModeCombo->addItem(tr("Subscription sign-in"),
+                             ai::modelAuthModeKey(ai::ModelAuthMode::Subscription));
+    m_authModeCombo->setToolTip(
+        tr("API key: pay per use with a vendor API key. Subscription sign-in: use your own "
+           "ChatGPT, Claude, Google or Muse plan through the vendor's own app and sign-in."));
+    setAccessible(m_authModeCombo, tr("AI sign-in method"), tr("API key or subscription sign-in"));
+    layout->addWidget(m_authModeCombo);
+
+    for (QComboBox* combo : {m_providerCombo, m_authModeCombo}) {
+        connect(combo, &QComboBox::currentIndexChanged, this, [this]() {
+            onProviderSelectionChanged();
+        });
+    }
 }
 
 void AiAssistantPanel::setupContextPaneWorkflowPicker(QVBoxLayout* layout, QWidget* pane) {
@@ -3866,12 +3902,12 @@ void AiAssistantPanel::setupContextPaneCredentialSection(QVBoxLayout* layout, QW
     layout->addSpacing(sak::ui::kSpacingMedium);
     auto* keyRow = new QHBoxLayout();
     keyRow->setSpacing(sak::ui::kSpacingSmall);
-    keyRow->addWidget(makeRailTitle(pane, tr("OpenAI API Key")));
+    keyRow->addWidget(makeRailTitle(pane, tr("Account")));
     keyRow->addStretch();
     m_loadKeyButton = new QPushButton(tr("Load Key"), pane);
     configureCompactButton(m_loadKeyButton);
-    m_loadKeyButton->setToolTip(tr("Enter an OpenAI API key without displaying it in the panel"));
-    setAccessible(m_loadKeyButton, tr("Load OpenAI API key"));
+    m_loadKeyButton->setToolTip(tr("Enter an API key without displaying it in the panel"));
+    setAccessible(m_loadKeyButton, tr("Load API key"));
     connect(m_loadKeyButton, &QPushButton::clicked, this, &AiAssistantPanel::onLoadApiKeyClicked);
     keyRow->addWidget(m_loadKeyButton);
     layout->addLayout(keyRow);
@@ -3881,12 +3917,12 @@ void AiAssistantPanel::setupContextPaneCredentialSection(QVBoxLayout* layout, QW
     m_connectionStatusIconLabel = new QLabel(pane);
     m_connectionStatusIconLabel->setFixedWidth(kConnectionStatusIconWidth);
     m_connectionStatusIconLabel->setAlignment(Qt::AlignCenter);
-    m_connectionStatusIconLabel->setToolTip(tr("OpenAI API key status indicator"));
-    setAccessible(m_connectionStatusIconLabel, tr("OpenAI key status indicator"));
+    m_connectionStatusIconLabel->setToolTip(tr("API key or sign-in status indicator"));
+    setAccessible(m_connectionStatusIconLabel, tr("AI account status indicator"));
     keyStatusRow->addWidget(m_connectionStatusIconLabel);
 
     m_connectionStatusLabel = new QLabel(pane);
-    m_connectionStatusLabel->setToolTip(tr("OpenAI API key status"));
+    m_connectionStatusLabel->setToolTip(tr("API key or sign-in status"));
     setAccessible(m_connectionStatusLabel, tr("AI connection status"));
     keyStatusRow->addWidget(m_connectionStatusLabel, 1);
     layout->addLayout(keyStatusRow);
@@ -4176,33 +4212,32 @@ void AiAssistantPanel::connectOpenAiClientSignals() {
     qRegisterMetaType<sak::ai::AiCommandResult>("sak::ai::AiCommandResult");
     Q_ASSERT(m_client);
     connect(m_client.get(),
-            &ai::OpenAIResponsesClient::requestStarted,
+            &ai::AiChatBackend::requestStarted,
             this,
             &AiAssistantPanel::onRequestStarted);
     connect(m_client.get(),
-            &ai::OpenAIResponsesClient::requestFinished,
+            &ai::AiChatBackend::requestFinished,
             this,
             &AiAssistantPanel::onRequestFinished);
     connect(m_client.get(),
-            &ai::OpenAIResponsesClient::responseReady,
+            &ai::AiChatBackend::responseReady,
             this,
             &AiAssistantPanel::onResponseReady);
+    connect(
+        m_client.get(), &ai::AiChatBackend::modelsReady, this, &AiAssistantPanel::onModelsReady);
     connect(m_client.get(),
-            &ai::OpenAIResponsesClient::modelsReady,
-            this,
-            &AiAssistantPanel::onModelsReady);
-    connect(m_client.get(),
-            &ai::OpenAIResponsesClient::inputTokenCountReady,
+            &ai::AiChatBackend::inputTokenCountReady,
             this,
             &AiAssistantPanel::onInputTokenCountReady);
     connect(m_client.get(),
-            &ai::OpenAIResponsesClient::inputTokenCountFailed,
+            &ai::AiChatBackend::inputTokenCountFailed,
             this,
             &AiAssistantPanel::onInputTokenCountFailed);
     connect(m_client.get(),
-            &ai::OpenAIResponsesClient::requestFailed,
+            &ai::AiChatBackend::requestFailed,
             this,
             &AiAssistantPanel::onRequestFailed);
+    connectModelProviderSignals();
 }
 
 void AiAssistantPanel::connectExecutionBrokerSignals() {
@@ -4279,14 +4314,15 @@ void AiAssistantPanel::ensureActivityTimer() {
 void AiAssistantPanel::loadRememberedApiKey() {
     Q_ASSERT(m_credentialStore);
     QString error;
-    const QString remembered_key = m_credentialStore->loadApiKey(&error);
+    const QString remembered_key = m_credentialStore->loadApiKey(currentProvider(), &error);
     if (!remembered_key.isEmpty()) {
         m_apiKey = remembered_key;
         setApiKeyStatus(tr("Remembered key loaded"),
                         sak::ui::kStatusColorSuccess,
                         QString(QChar(kStatusMarkerSuccess)),
                         sak::ui::kStatusColorSuccess);
-        appendLocalEvent(tr("Remembered OpenAI key loaded from encrypted app credential file"));
+        appendLocalEvent(tr("Remembered %1 key loaded from encrypted app credential file")
+                             .arg(ai::modelProviderInfo(currentProvider()).vendor));
         scheduleContextTokenRefresh();
     } else if (!error.isEmpty()) {
         setApiKeyStatus(tr("Credential load failed"),
@@ -4314,17 +4350,24 @@ void AiAssistantPanel::setApiKeyStatus(const QString& text,
 }
 
 void AiAssistantPanel::updateLoadKeyButton(bool has_key, bool busy) {
+    updateProviderControls(busy);
+    if (currentAuthMode() == ai::ModelAuthMode::Subscription) {
+        updateSignInButton(busy);
+        return;
+    }
+    const QString vendor = ai::modelProviderInfo(currentProvider()).vendor;
     if (m_loadKeyButton) {
         m_loadKeyButton->setEnabled(!busy);
         m_loadKeyButton->setText(has_key ? tr("Clear Key") : tr("Load Key"));
         m_loadKeyButton->setIcon(QIcon());
         m_loadKeyButton->setStyleSheet(sak::ui::kPrimaryButtonStyle);
         m_loadKeyButton->setToolTip(
-            has_key
-                ? tr("Clear the loaded OpenAI API key from this session and encrypted app storage")
-                : tr("Enter an OpenAI API key without displaying it in the panel"));
+            has_key ? tr("Clear the loaded %1 API key from this session and encrypted app storage")
+                          .arg(vendor)
+                    : tr("Enter a %1 API key without displaying it in the panel").arg(vendor));
         setAccessible(m_loadKeyButton,
-                      has_key ? tr("Clear OpenAI API key") : tr("Load OpenAI API key"));
+                      has_key ? tr("Clear %1 API key").arg(vendor)
+                              : tr("Load %1 API key").arg(vendor));
     }
 }
 
@@ -4377,7 +4420,7 @@ void AiAssistantPanel::updateResumeGateButton(bool has_key, bool busy) {
 }
 
 void AiAssistantPanel::updateCredentialControls() {
-    const bool has_key = ai::OpenAIResponsesClient::hasUsableApiKey(apiKey());
+    const bool has_key = hasModelCredential();
     const bool busy = isAiBusy();
     updateLoadKeyButton(has_key, busy);
     if (m_newSessionButton) {
@@ -4417,7 +4460,7 @@ void AiAssistantPanel::updatePrimaryActionButton() {
         return;
     }
 
-    const bool has_key = ai::OpenAIResponsesClient::hasUsableApiKey(apiKey());
+    const bool has_key = hasModelCredential();
     m_sendButton->setText(tr("Send"));
     m_sendButton->setIcon(QIcon(QStringLiteral(":/icons/icons/icons8-send.svg")));
     m_sendButton->setIconSize(QSize(sak::ui::kUiIconSmall, sak::ui::kUiIconSmall));
@@ -4451,8 +4494,12 @@ void AiAssistantPanel::scheduleContextTokenRefresh() {
         return;
     }
     ensureContextTokenTimer();
-    if (!ai::OpenAIResponsesClient::hasUsableApiKey(apiKey())) {
+    if (!hasModelCredential()) {
         resetContextTokenCount(tr("key needed"));
+        return;
+    }
+    if (!m_client->supportsInputTokenCount()) {
+        resetContextTokenCount(tr("reported after reply"));
         return;
     }
     if (!m_modelCombo || m_modelCombo->currentText().trimmed().isEmpty()) {
@@ -4465,7 +4512,7 @@ void AiAssistantPanel::scheduleContextTokenRefresh() {
 }
 
 void AiAssistantPanel::refreshContextTokenCount() {
-    if (!m_client || !ai::OpenAIResponsesClient::hasUsableApiKey(apiKey()) || !m_modelCombo) {
+    if (!m_client || !hasModelCredential() || !m_modelCombo) {
         resetContextTokenCount(tr("key needed"));
         return;
     }
@@ -4541,10 +4588,10 @@ void AiAssistantPanel::updateContextWindowUsageLabel() {
         const QString limit_text = documented_limit ? QLocale().toString(limit) : tr("unknown");
         const QString compact_hint =
             documented_limit ? tr(" Consider compacting or starting a fresh chat near 80%.")
-                             : tr(" Select a documented OpenAI model to show the exact window.");
+                             : tr(" Select a documented model to show the exact window.");
         m_contextWindowLabel->setToolTip(
-            tr("Exact input context usage: %1 of %2 tokens for %3. Count comes from OpenAI "
-               "/v1/responses/input_tokens using the same model-visible Responses payload, "
+            tr("Exact input context usage: %1 of %2 tokens for %3. Count comes from the "
+               "provider's token-count endpoint using the same model-visible payload, "
                "including current draft, instructions, tools, previous response chain, and "
                "attached context.%4")
                 .arg(usage.isEmpty() ? tr("pending") : usage,
@@ -4570,7 +4617,7 @@ bool AiAssistantPanel::isAiBusy() const {
 }
 
 void AiAssistantPanel::setUiBusy(bool busy) {
-    m_taskStatus = busy ? tr("OpenAI request running") : tr("Idle");
+    m_taskStatus = busy ? tr("AI request running") : tr("Idle");
     emitStatusDetails();
     setActivityIndicator(busy ? tr("Thinking") : QString(), busy);
     if (m_loadKeyButton) {
@@ -7349,7 +7396,7 @@ void AiAssistantPanel::continueAfterToolCalls(const ai::OpenAIResponseResult& re
                  QStringLiteral("local_tools"),
                  QStringLiteral("completed"),
                  metadata);
-    appendLocalEvent(tr("Returning tool output to OpenAI"));
+    appendLocalEvent(tr("Returning tool output to %1").arg(currentProviderLabel()));
     m_client->createResponse(request);
 }
 
@@ -9072,6 +9119,12 @@ void AiAssistantPanel::runWorkflowAsync(const ai::WorkflowTemplate& workflow,
         appendLocalEvent(tr("Workflow run already in progress"));
         return;
     }
+    QString blocked_reason;
+    if (!workflowsAllowedForSelection(&blocked_reason)) {
+        appendLocalEvent(blocked_reason);
+        Q_EMIT statusMessage(blocked_reason, sak::kTimerStatusDefaultMs);
+        return;
+    }
     beginWorkflowRunUiState(workflow, user_message, input_values, preferred_run_id, resume_state);
     resetWorkflowRunWatcher();
     startWorkflowRunFuture(workflow, user_message, input_values, resume_state);
@@ -9148,6 +9201,8 @@ void AiAssistantPanel::startWorkflowRunFuture(const ai::WorkflowTemplate& workfl
                                    api_key,
                                    model,
                                    reasoning,
+                                   currentProvider(),
+                                   currentAuthMode(),
                                    input_values_copy,
                                    resume_state_copy,
                                    user_message,
@@ -9160,9 +9215,14 @@ void AiAssistantPanel::startWorkflowRunFuture(const ai::WorkflowTemplate& workfl
 
 ai::AiOrchestratorResult AiAssistantPanel::executeWorkflowRun(const WorkflowRunLaunch& launch) {
     ai::AiSubagentRunner runner(nullptr);
-    runner.setModelClientFactory([]() {
+    const ai::ModelProviderId provider = launch.provider;
+    const ai::ModelAuthMode auth_mode = launch.auth_mode;
+    runner.setModelClientFactory([provider, auth_mode]() {
         auto client = std::make_unique<ai::OpenAIResponsesModelClient>();
         client->setEnableWebSearch(true);
+        client->setBackendFactory([provider, auth_mode](QObject* parent) {
+            return ai::AiModelRouter::createDefaultBackend(provider, auth_mode, parent);
+        });
         return client;
     });
     configureWorkflowRunner(&runner);
@@ -9366,6 +9426,7 @@ void AiAssistantPanel::finishAiRunTrace(const QString& status, const QJsonObject
 void AiAssistantPanel::onAccessModeChanged(int index) {
     (void)index;
     updateAccessStatus();
+    syncAgentContext();
     appendLocalEvent(tr("Access mode set to %1").arg(currentAccessModeLabel()));
     Q_EMIT statusMessage(tr("AI access mode: %1").arg(currentAccessModeLabel()),
                          sak::kTimerStatusDefaultMs);
@@ -9427,8 +9488,8 @@ void AiAssistantPanel::onResumeGateClicked() {
                              sak::kTimerStatusDefaultMs);
         return;
     }
-    if (!ai::OpenAIResponsesClient::hasUsableApiKey(apiKey())) {
-        Q_EMIT statusMessage(tr("Load OpenAI API key before resuming workflow"),
+    if (!hasModelCredential()) {
+        Q_EMIT statusMessage(tr("Load a key or sign in before resuming the workflow"),
                              sak::kTimerStatusDefaultMs);
         return;
     }
@@ -9993,8 +10054,7 @@ void AiAssistantPanel::onNewSessionClicked() {
     m_runToken = {};
     m_runState = {};
     m_taskStatus = tr("Idle");
-    resetContextTokenCount(ai::OpenAIResponsesClient::hasUsableApiKey(apiKey()) ? tr("pending")
-                                                                                : tr("key needed"));
+    resetContextTokenCount(hasModelCredential() ? tr("pending") : tr("key needed"));
     if (m_tokenTracker) {
         m_tokenTracker->reset();
         updateTokenLabels();
@@ -10023,46 +10083,58 @@ void AiAssistantPanel::onNewSessionClicked() {
     Q_EMIT statusMessage(tr("AI chat workspace ready"), sak::kTimerStatusDefaultMs);
 }
 
-void AiAssistantPanel::onLoadApiKeyClicked() {
-    if (ai::OpenAIResponsesClient::hasUsableApiKey(apiKey())) {
-        const auto choice =
-            sak::showQuestionLogged(this,
-                                    tr("Clear OpenAI API Key"),
-                                    tr("Clear the loaded OpenAI API key from this session and the "
-                                       "encrypted app credential file?"),
-                                    QMessageBox::Yes | QMessageBox::No,
-                                    QMessageBox::No);
-        if (choice != QMessageBox::Yes) {
-            return;
-        }
+void AiAssistantPanel::clearLoadedApiKey(ai::ModelProviderId provider, const QString& vendor) {
+    const auto choice =
+        sak::showQuestionLogged(this,
+                                tr("Clear %1 API Key").arg(vendor),
+                                tr("Clear the loaded %1 API key from this session and the "
+                                   "encrypted app credential file?")
+                                    .arg(vendor),
+                                QMessageBox::Yes | QMessageBox::No,
+                                QMessageBox::No);
+    if (choice != QMessageBox::Yes) {
+        return;
+    }
 
-        QString error;
-        const bool deleted = !m_credentialStore || m_credentialStore->deleteApiKey(&error);
-        m_apiKey.clear();
-        if (deleted) {
-            resetContextTokenCount(tr("key needed"));
-            setApiKeyStatus(tr("Not loaded"),
-                            sak::ui::kStatusColorError,
-                            QString(QChar(kStatusMarkerError)),
-                            sak::ui::kStatusColorError);
-            appendLocalEvent(tr("OpenAI API key cleared"));
-            Q_EMIT statusMessage(tr("OpenAI API key cleared"), sak::kTimerStatusDefaultMs);
-        } else {
-            setApiKeyStatus(tr("Credential clear failed"),
-                            sak::ui::kStatusColorError,
-                            QString(QChar(kStatusMarkerError)),
-                            sak::ui::kStatusColorError);
-            appendLocalEvent(tr("Credential clear failed: %1").arg(error));
-            Q_EMIT statusMessage(tr("OpenAI credential clear failed"), sak::kTimerStatusDefaultMs);
-        }
-        updateCredentialControls();
+    QString error;
+    const bool deleted = !m_credentialStore || m_credentialStore->deleteApiKey(provider, &error);
+    m_apiKey.clear();
+    if (deleted) {
+        resetContextTokenCount(tr("key needed"));
+        setApiKeyStatus(tr("Not loaded"),
+                        sak::ui::kStatusColorError,
+                        QString(QChar(kStatusMarkerError)),
+                        sak::ui::kStatusColorError);
+        appendLocalEvent(tr("%1 API key cleared").arg(vendor));
+        Q_EMIT statusMessage(tr("%1 API key cleared").arg(vendor), sak::kTimerStatusDefaultMs);
+    } else {
+        setApiKeyStatus(tr("Credential clear failed"),
+                        sak::ui::kStatusColorError,
+                        QString(QChar(kStatusMarkerError)),
+                        sak::ui::kStatusColorError);
+        appendLocalEvent(tr("Credential clear failed: %1").arg(error));
+        Q_EMIT statusMessage(tr("%1 credential clear failed").arg(vendor),
+                             sak::kTimerStatusDefaultMs);
+    }
+    updateCredentialControls();
+}
+
+void AiAssistantPanel::onLoadApiKeyClicked() {
+    if (currentAuthMode() == ai::ModelAuthMode::Subscription) {
+        handleSubscriptionCredentialClick();
+        return;
+    }
+    const ai::ModelProviderId provider = currentProvider();
+    const QString vendor = ai::modelProviderInfo(provider).vendor;
+    if (hasModelCredential()) {
+        clearLoadedApiKey(provider, vendor);
         return;
     }
 
     bool accepted = false;
     const QString key = QInputDialog::getText(this,
-                                              tr("Load OpenAI API Key"),
-                                              tr("OpenAI API Key"),
+                                              tr("Load %1 API Key").arg(vendor),
+                                              tr("%1 API Key").arg(vendor),
                                               QLineEdit::Password,
                                               QString(),
                                               &accepted)
@@ -10088,7 +10160,7 @@ void AiAssistantPanel::onLoadApiKeyClicked() {
                     QStringLiteral("..."),
                     sak::ui::kStatusColorWarning);
     updateCredentialControls();
-    appendLocalEvent(tr("OpenAI API key loaded into memory"));
+    appendLocalEvent(tr("%1 API key loaded into memory").arg(vendor));
     m_client->listModels(apiKey());
 }
 
@@ -10260,7 +10332,9 @@ void AiAssistantPanel::startChatRequest(const QString& message) {
     m_activeUserMessage = message;
     const ai::OpenAIResponseRequest request = buildChatRequest(message);
     startAiRunTrace(message, request.model);
-    appendLocalEvent(tr("OpenAI response requested with model %1").arg(request.model));
+    syncAgentContext();
+    appendLocalEvent(
+        tr("%1 response requested with model %2").arg(currentProviderLabel(), request.model));
     m_client->createResponse(request);
 }
 
@@ -10633,17 +10707,21 @@ void AiAssistantPanel::onModelsReady(const QStringList& model_ids) {
     }
     updateRunTelemetryLabels();
 
+    appendLocalEvent(tr("Loaded %1 %2 models").arg(model_ids.size()).arg(currentProviderLabel()));
+    if (currentAuthMode() == ai::ModelAuthMode::Subscription) {
+        return;  // Model list refresh after sign-in; there is no key to save.
+    }
     QString save_error;
-    const bool saved = m_credentialStore && m_credentialStore->saveApiKey(apiKey(), &save_error);
+    const bool saved = m_credentialStore &&
+                       m_credentialStore->saveApiKey(currentProvider(), apiKey(), &save_error);
     setApiKeyStatus(saved ? tr("Key valid and saved") : tr("Key valid"),
                     sak::ui::kStatusColorSuccess,
                     QString(QChar(kStatusMarkerSuccess)),
                     sak::ui::kStatusColorSuccess);
     if (!saved && !save_error.isEmpty()) {
-        appendLocalEvent(tr("OpenAI key valid but credential save failed: %1").arg(save_error));
+        appendLocalEvent(tr("API key valid but credential save failed: %1").arg(save_error));
     }
-    appendLocalEvent(tr("Loaded %1 OpenAI models").arg(model_ids.size()));
-    Q_EMIT statusMessage(tr("OpenAI key valid; models loaded"), sak::kTimerStatusDefaultMs);
+    Q_EMIT statusMessage(tr("API key valid; models loaded"), sak::kTimerStatusDefaultMs);
 }
 
 void AiAssistantPanel::onInputTokenCountReady(const QString& request_id, qint64 input_tokens) {

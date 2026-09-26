@@ -3,14 +3,18 @@
 
 #include "sak/ai/ai_openai_model_client.h"
 
+#include "sak/ai/ai_openai_api_backend.h"
 #include "sak/layout_constants.h"
 
+#include <QDir>
 #include <QSemaphore>
 #include <QThread>
 #include <QTimer>
+#include <QUuid>
 
 #include <atomic>
 #include <memory>
+#include <utility>
 
 namespace sak::ai {
 
@@ -82,14 +86,56 @@ IAiModelClient::Response modelResponseFromState(const ModelInvokeState& state,
     return response;
 }
 
+template <typename Finish>
+void connectInvokeResult(AiChatBackend* client,
+                         QObject* worker,
+                         ModelInvokeState* state,
+                         Finish finish) {
+    QObject::connect(client,
+                     &AiChatBackend::responseReady,
+                     worker,
+                     [state, finish](const OpenAIResponseResult& result) {
+                         state->result = result;
+                         state->got_response = true;
+                         finish();
+                     });
+    QObject::connect(client,
+                     &AiChatBackend::requestFailed,
+                     worker,
+                     [state, finish](const QString& error_message) {
+                         state->error = error_message;
+                         state->got_failure = true;
+                         finish();
+                     });
+}
+
+/// Agent runtimes get a private scratch workspace per call so parallel
+/// subagents never share a project instructions file, and never prompt.
+void prepareAgentBackend(AiChatBackend* client, const QString& workspace) {
+    if (client->authMode() != ModelAuthMode::Subscription) {
+        return;
+    }
+    client->setWorkspaceDirectory(workspace);
+    client->setApprovalPolicy(AiApprovalPolicy::DenyAll);
+}
+
 }  // namespace
 
-OpenAIResponsesModelClient::OpenAIResponsesModelClient(QObject* parent) : QObject(parent) {}
+OpenAIResponsesModelClient::OpenAIResponsesModelClient(QObject* parent)
+    : QObject(parent), m_backend_factory([](QObject* owner) -> AiChatBackend* {
+        return new OpenAIApiBackend(owner);
+    }) {}
 
 OpenAIResponsesModelClient::~OpenAIResponsesModelClient() = default;
 
 void OpenAIResponsesModelClient::setEnableWebSearch(bool enabled) {
     m_enable_web_search = enabled;
+}
+
+void OpenAIResponsesModelClient::setBackendFactory(BackendFactory factory) {
+    if (factory) {
+        m_backend_factory = std::move(factory);
+    }
 }
 
 IAiModelClient::Response OpenAIResponsesModelClient::invoke(const Request& request,
@@ -101,6 +147,10 @@ IAiModelClient::Response OpenAIResponsesModelClient::invoke(const Request& reque
     }
 
     const OpenAIResponseRequest req = openAiRequestFromModelRequest(request, m_enable_web_search);
+    const BackendFactory factory = m_backend_factory;
+    const QString workspace = QDir(QDir::tempPath())
+                                  .filePath(QStringLiteral("sak_ai_subagents/%1")
+                                                .arg(QUuid::createUuid().toString(QUuid::Id128)));
     ModelInvokeState state;
     QSemaphore done;
     QThread network_thread;
@@ -108,7 +158,15 @@ IAiModelClient::Response OpenAIResponsesModelClient::invoke(const Request& reque
     worker->moveToThread(&network_thread);
     QObject::connect(&network_thread, &QThread::finished, worker, &QObject::deleteLater);
     QObject::connect(&network_thread, &QThread::started, worker, [&, worker, req]() {
-        auto* client = new OpenAIResponsesClient(worker);
+        AiChatBackend* client = factory(worker);
+        if (!client) {
+            state.error = QStringLiteral("Selected AI provider is not available");
+            state.got_failure = true;
+            done.release();
+            network_thread.quit();
+            return;
+        }
+        prepareAgentBackend(client, workspace);
         auto* cancel_timer = new QTimer(worker);
         auto* timeout_timer = new QTimer(worker);
         cancel_timer->setInterval(kCancellationPollIntervalMs);
@@ -123,22 +181,7 @@ IAiModelClient::Response OpenAIResponsesModelClient::invoke(const Request& reque
             done.release();
             network_thread.quit();
         };
-        QObject::connect(client,
-                         &OpenAIResponsesClient::responseReady,
-                         worker,
-                         [&, finish](const OpenAIResponseResult& result) {
-                             state.result = result;
-                             state.got_response = true;
-                             finish();
-                         });
-        QObject::connect(client,
-                         &OpenAIResponsesClient::requestFailed,
-                         worker,
-                         [&, finish](const QString& error_message) {
-                             state.error = error_message;
-                             state.got_failure = true;
-                             finish();
-                         });
+        connectInvokeResult(client, worker, &state, finish);
         QObject::connect(cancel_timer, &QTimer::timeout, worker, [&, finish]() {
             if (tokenCancelled(token)) {
                 state.error = token.cancelReason();
@@ -157,6 +200,7 @@ IAiModelClient::Response OpenAIResponsesModelClient::invoke(const Request& reque
     done.acquire();
     network_thread.quit();
     network_thread.wait();
+    QDir(workspace).removeRecursively();
 
     return modelResponseFromState(state, token);
 }
