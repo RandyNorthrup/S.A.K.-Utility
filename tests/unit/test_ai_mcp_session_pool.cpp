@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/ai/ai_mcp_session_pool.h"
+#include "sak/contained_process_quarantine.h"
 #include "sak/layout_constants.h"
 #include "sak/windows_process_job.h"
 
@@ -35,6 +36,7 @@ namespace {
 
 namespace native_mcp = sak::testfixtures::mcp;
 using native_mcp::failureDiagnostic;
+using native_mcp::fakeProcessId;
 
 constexpr auto kFakeMcpModeEnv = "SAK_TEST_MCP_POOL_SERVER_MODE";
 constexpr auto kFakeMcpMarkerEnv = "SAK_TEST_MCP_POOL_SERVER_MARKER";
@@ -55,7 +57,12 @@ struct FakeServerBehavior {
 
 struct PoolCleanupObservation {
     std::atomic_bool fail_termination{false};
+    // Hung child: TerminateJobObject reports success but nothing dies, so the primary wait
+    // runs out its deadline exactly as a child that outlives cleanup under machine load does.
+    std::atomic_bool ignore_termination{false};
     std::atomic_int termination_attempts{0};
+    std::atomic_int job_handle_closes{0};
+    std::atomic<HANDLE> job{nullptr};  // The most recently created Job, for membership checks.
     std::atomic_int controllers_created{0};
     std::atomic_int controllers_finished{0};
     std::atomic_int controllers_destroyed{0};
@@ -265,33 +272,8 @@ sak::ai::AiMcpStdioCallRequest fakePoolRequest(const QString& mode, const QStrin
             .timeout_ms = native_mcp::kRequestTimeoutMs};
 }
 
-std::expected<qint64, QString> fakeProcessId(const QJsonObject& result) {
-    const auto is_error = result.value(QStringLiteral("isError"));
-    const auto content_value = result.value(QStringLiteral("content"));
-    if (!is_error.isBool() || is_error.toBool() || !content_value.isArray()) {
-        return std::unexpected(QStringLiteral("Fake MCP process-id result shape is invalid"));
-    }
-    const auto content = content_value.toArray();
-    if (content.size() != 1 || !content.at(0).isObject()) {
-        return std::unexpected(QStringLiteral("Fake MCP process-id content shape is invalid"));
-    }
-    const auto block = content.at(0).toObject();
-    const auto text_value = block.value(QStringLiteral("text"));
-    if (block.value(QStringLiteral("type")).toString() != QLatin1String("text") ||
-        !text_value.isString()) {
-        return std::unexpected(QStringLiteral("Fake MCP process-id content is not text"));
-    }
-    const QString text = text_value.toString();
-    bool valid_pid = false;
-    const qint64 pid = text.toLongLong(&valid_pid);
-    if (!valid_pid || QString::number(pid) != text) {
-        return std::unexpected(QStringLiteral("Fake MCP process-id text is not canonical decimal"));
-    }
-    return pid;
-}
-
-std::expected<native_mcp::ProcessGeneration, QString> observeFakeProcess(
-    sak::ai::AiMcpSessionPool& pool, sak::ai::AiMcpStdioCallRequest request) {
+std::expected<qint64, QString> fakeProcessPid(sak::ai::AiMcpSessionPool& pool,
+                                              sak::ai::AiMcpStdioCallRequest request) {
     request.tool_name = QStringLiteral("process-id");
     const auto result = pool.callTool(request);
     if (!result) {
@@ -301,7 +283,12 @@ std::expected<native_mcp::ProcessGeneration, QString> observeFakeProcess(
     if (!payload.isObject()) {
         return std::unexpected(QStringLiteral("Fake MCP process-id payload is not an object"));
     }
-    const auto pid = fakeProcessId(payload.toObject());
+    return fakeProcessId(payload.toObject());
+}
+
+std::expected<native_mcp::ProcessGeneration, QString> observeFakeProcess(
+    sak::ai::AiMcpSessionPool& pool, sak::ai::AiMcpStdioCallRequest request) {
+    const auto pid = fakeProcessPid(pool, std::move(request));
     if (!pid) {
         return std::unexpected(pid.error());
     }
@@ -331,10 +318,15 @@ private Q_SLOTS:
     void partialCloseAllRetainsFailedEntry();
     void closeAllHonorsContendedLockDeadline_data();
     void closeAllHonorsContendedLockDeadline();
+    void destructionQuarantinesUnprovenCleanup_data();
+    void destructionQuarantinesUnprovenCleanup();
 
 private:
     static std::unique_ptr<sak::ai::AiMcpStdioSession> observedSession(
         const std::shared_ptr<PoolCleanupObservation>& observed);
+    static void verifyUnprovenCloseAll(sak::ai::AiMcpSessionPool& pool,
+                                       PoolCleanupObservation& observed,
+                                       bool hung_child);
     static void verifyBlockedAdmissions(sak::ai::AiMcpSessionPool& pool,
                                         const sak::ai::AiMcpStdioCallRequest& request);
     static sak::ai::AiMcpStdioCallRequest requestWith(const QString& command,
@@ -361,7 +353,21 @@ std::unique_ptr<sak::ai::AiMcpStdioSession> AiMcpSessionPoolTests::observedSessi
                 SetLastError(ERROR_ACCESS_DENIED);
                 return FALSE;
             }
+            if (observed->ignore_termination.load()) {
+                return TRUE;
+            }
             return native_terminate(job, exit_code);
+        };
+        const auto native_create = api.create_job;
+        api.create_job = [observed, native_create](LPSECURITY_ATTRIBUTES attributes, LPCWSTR name) {
+            const HANDLE job = native_create(attributes, name);
+            observed->job.store(job);
+            return job;
+        };
+        const auto native_close = api.close_handle;
+        api.close_handle = [observed, native_close](HANDLE handle) {
+            observed->job_handle_closes.fetch_add(1);
+            return native_close(handle);
         };
         return sak::WindowsProcessJob::createWithApi(std::move(api));
     };
@@ -807,6 +813,90 @@ void AiMcpSessionPoolTests::closeAllHonorsContendedLockDeadline() {
     QCOMPARE(observed->controllers_destroyed.load(), 1);
     const auto exited = generation->waitForExit();
     QVERIFY2(exited.has_value(), qPrintable(failureDiagnostic(exited)));
+}
+
+void AiMcpSessionPoolTests::verifyUnprovenCloseAll(sak::ai::AiMcpSessionPool& pool,
+                                                   PoolCleanupObservation& observed,
+                                                   bool hung_child) {
+    if (hung_child) {
+        observed.ignore_termination.store(true);
+        const auto timed_out = pool.closeAllWithDeadline(
+            QDeadlineTimer(native_mcp::kHungChildCleanupDeadlineMs, Qt::PreciseTimer));
+        QVERIFY(!timed_out);
+        // Caller and Worker share one deadline, so either bound may be the one observed first.
+        const QString primary =
+            QStringLiteral("MCP primary cleanup failed: Process operation timed out");
+        const QString dispatch = QStringLiteral("MCP worker cleanup dispatch exceeded deadline");
+        QVERIFY2(timed_out.error() == primary || timed_out.error() == dispatch,
+                 qPrintable(timed_out.error()));
+    } else {
+        observed.fail_termination.store(true);
+        const auto refused = pool.closeAll();
+        QVERIFY(!refused);
+        QCOMPARE(refused.error(), QStringLiteral("Terminate Windows process Job failed (err=5)"));
+    }
+    QCOMPARE(pool.pooledSlotCount(), 1);
+}
+
+void AiMcpSessionPoolTests::destructionQuarantinesUnprovenCleanup_data() {
+    QTest::addColumn<bool>("hung_child");
+    QTest::newRow("termination-refused") << false;
+    QTest::newRow("hung-child-cleanup-timeout") << true;
+}
+
+void AiMcpSessionPoolTests::destructionQuarantinesUnprovenCleanup() {
+    QFETCH(bool, hung_child);
+    QTemporaryDir temporary_dir;
+    QVERIFY(temporary_dir.isValid());
+    const auto observed = std::make_shared<PoolCleanupObservation>();
+    const int custody_before = sak::ContainedProcessQuarantine::retainedCount();
+    auto pool = std::make_unique<sak::ai::AiMcpSessionPool>();
+    // Every early Qt assertion return disarms, destroys the pool, then releases custody.
+    const auto recover = qScopeGuard([&]() {
+        observed->fail_termination.store(false);
+        observed->ignore_termination.store(false);
+        pool.reset();
+        if (!native_mcp::releaseCustodyTo(custody_before)) {
+            qFatal("Custody fixture could not release its retained MCP session");
+        }
+    });
+    pool->m_session_factory = [observed]() {
+        return observedSession(observed);
+    };
+    const auto request = fakePoolRequest(QStringLiteral("empty-success"),
+                                         temporary_dir.filePath(QStringLiteral("custody.marker")));
+    const auto pid = fakeProcessPid(*pool, request);
+    QVERIFY2(pid.has_value(), qPrintable(failureDiagnostic(pid)));
+    auto generation = native_mcp::ProcessGeneration::observe(*pid);
+    QVERIFY2(generation.has_value(), qPrintable(failureDiagnostic(generation)));
+    verifyUnprovenCloseAll(*pool, *observed, hung_child);
+    verifyBlockedAdmissions(*pool, request);
+    // Destruction reruns closeAll(); a refusal keeps that attempt immediate for the hung row.
+    observed->ignore_termination.store(false);
+    observed->fail_termination.store(true);
+    pool.reset();  // Used to qFatal: "MCP pool destruction refused: ..."
+    QCOMPARE(sak::ContainedProcessQuarantine::retainedCount(), custody_before + 1);
+    const QString reason = sak::ContainedProcessQuarantine::retainedReasons().constLast();
+    QVERIFY2(reason.startsWith(QStringLiteral("MCP pool destruction could not prove cleanup: ")),
+             qPrintable(reason));
+    // Contained, not torn down: the child lives inside the still-open Job, its controller runs.
+    const auto alive = generation->isAlive();
+    QVERIFY2(alive.has_value(), qPrintable(failureDiagnostic(alive)));
+    QVERIFY(*alive);
+    QCOMPARE(observed->job_handle_closes.load(), 0);
+    const auto contained = native_mcp::isProcessInJob(*pid, observed->job.load());
+    QVERIFY2(contained.has_value(), qPrintable(failureDiagnostic(contained)));
+    QVERIFY(*contained);
+    QCOMPARE(observed->controllers_destroyed.load(), 0);
+    observed->fail_termination.store(false);
+    const auto released = native_mcp::releaseCustodyTo(custody_before);
+    QVERIFY2(released.has_value(), qPrintable(failureDiagnostic(released)));
+    QCOMPARE(observed->controllers_destroyed.load(), 1);
+    QCOMPARE(observed->job_handle_closes.load(), 1);
+    // The retained Job, not the child's own deadline, ended the child.
+    const auto exited = generation->waitForExit();
+    QVERIFY2(exited.has_value(), qPrintable(failureDiagnostic(exited)));
+    QCOMPARE(*exited, DWORD{sak::kWindowsProcessJobFailureExitCode});
 }
 
 void AiMcpSessionPoolTests::missingCommandFailsCleanlyAndCloses() {

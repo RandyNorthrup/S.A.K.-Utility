@@ -84,8 +84,37 @@ AiMcpSessionPool::AiMcpSessionPool()
 AiMcpSessionPool::~AiMcpSessionPool() {
     const auto closed = closeAll();
     if (!closed) {
-        qFatal("MCP pool destruction refused: %s", qPrintable(closed.error()));
+        quarantineUnprovenSessions(closed.error());
     }
+}
+
+void AiMcpSessionPool::quarantineUnprovenSessions(const QString& cleanup_error) {
+    // Report + contain (owner decision 2026-10-24). This was a qFatal, so one pooled child that
+    // outlived the shared cleanup deadline under machine load took the whole application down.
+    // closeAll() already spent that deadline; each still-owned session goes to process-lifetime
+    // custody as it stands, without a second wait, where its kill-on-close Job stays armed.
+    //
+    // A lock held NOW is different: closeAll() has released both levels, so a holder is a caller
+    // still running inside a pool under destruction. That use-after-free is a programming error
+    // no custody can contain, and it still stops the process.
+    const std::unique_lock<QMutex> lock(m_mutex, std::try_to_lock);
+    if (!lock.owns_lock()) {
+        qFatal("MCP pool destroyed while in use: %s", qPrintable(cleanup_error));
+    }
+    const QString reason =
+        QStringLiteral("MCP pool destruction could not prove cleanup: %1").arg(cleanup_error);
+    for (const auto& slot : m_sessions) {
+        Entry& entry = *slot.second;
+        const std::unique_lock<QMutex> entry_lock(entry.mutex, std::try_to_lock);
+        if (!entry_lock.owns_lock()) {
+            qFatal("MCP pool destroyed during an in-flight call: %s", qPrintable(cleanup_error));
+        }
+        entry.detached = true;
+        if (entry.session) {
+            AiMcpStdioSession::quarantine(std::move(entry.session), reason);
+        }
+    }
+    m_sessions.clear();
 }
 
 std::expected<std::shared_ptr<AiMcpSessionPool::Entry>, QString> AiMcpSessionPool::entryFor(

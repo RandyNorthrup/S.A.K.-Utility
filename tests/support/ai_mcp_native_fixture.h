@@ -7,6 +7,7 @@
 #pragma once
 
 #include "sak/ai/ai_mcp_stdio_session.h"
+#include "sak/contained_process_quarantine.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -45,6 +46,10 @@ inline constexpr char kLocalAppDataEnvironment[] = "LOCALAPPDATA";
 inline constexpr char kSecurityProfileEnvironment[] = "WIN32_MCP_SECURITY_PROFILE";
 inline constexpr int kRequestTimeoutMs = 5000;
 inline constexpr DWORD kProcessExitWaitMs = 5000;
+// Long enough for the Worker to reach waitForFinished, so a hung child usually reports the
+// observed "Process operation timed out" rather than only the dispatch deadline.
+inline constexpr int kHungChildCleanupDeadlineMs = 250;
+inline constexpr int kCustodyRecoveryAttempts = 3;
 
 enum class SecurityProfile {
     ReadOnly,
@@ -87,6 +92,82 @@ private:
 template <typename Value>
 QString failureDiagnostic(const std::expected<Value, QString>& result) {
     return result ? QString{} : result.error();
+}
+
+/// Fixture recovery for contained-process custody: retries until at most @p expected_count
+/// owners remain. Each retry is one ordinary bounded cleanup per retained owner.
+inline std::expected<void, QString> releaseCustodyTo(int expected_count) {
+    QString last_error = QStringLiteral("Custody retry never ran");
+    for (int attempt = 0; attempt < kCustodyRecoveryAttempts; ++attempt) {
+        if (sak::ContainedProcessQuarantine::retainedCount() <= expected_count) {
+            return {};
+        }
+        const auto retried = sak::ContainedProcessQuarantine::retryRetained();
+        if (!retried) {
+            last_error = retried.error();
+        }
+    }
+    if (sak::ContainedProcessQuarantine::retainedCount() <= expected_count) {
+        return {};
+    }
+    return std::unexpected(last_error);
+}
+
+/// Whether process @p pid is assigned to @p job. Asking through the owner's own Job handle
+/// observes containment directly: a closed handle or a vanished process is an error, never a
+/// false negative. (A console child is not the Job's only member -- its conhost.exe joins too.)
+inline std::expected<bool, QString> isProcessInJob(qint64 pid, HANDLE job) {
+    if (pid <= 0 || static_cast<quint64>(pid) > std::numeric_limits<DWORD>::max()) {
+        return std::unexpected(QStringLiteral("Cannot query Job membership of pid %1").arg(pid));
+    }
+    const HANDLE process =
+        ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
+    if (process == nullptr) {
+        const DWORD error = ::GetLastError();
+        return std::unexpected(QStringLiteral("OpenProcess(%1) for Job membership failed (err=%2)")
+                                   .arg(pid)
+                                   .arg(error));
+    }
+    BOOL in_job = FALSE;
+    const BOOL queried = ::IsProcessInJob(process, job, &in_job);
+    const DWORD query_error = queried == FALSE ? ::GetLastError() : ERROR_SUCCESS;
+    if (::CloseHandle(process) == FALSE) {
+        const DWORD error = ::GetLastError();
+        return std::unexpected(
+            QStringLiteral("CloseHandle(process %1) failed (err=%2)").arg(pid).arg(error));
+    }
+    if (queried == FALSE) {
+        return std::unexpected(
+            QStringLiteral("IsProcessInJob(%1) failed (err=%2)").arg(pid).arg(query_error));
+    }
+    return in_job != FALSE;
+}
+
+/// Parses a fake server's process-id tools/call result: one text block holding the server's
+/// own canonical decimal PID, with isError explicitly false.
+inline std::expected<qint64, QString> fakeProcessId(const QJsonObject& result) {
+    const auto is_error = result.value(QStringLiteral("isError"));
+    const auto content_value = result.value(QStringLiteral("content"));
+    if (!is_error.isBool() || is_error.toBool() || !content_value.isArray()) {
+        return std::unexpected(QStringLiteral("Fake MCP process-id result shape is invalid"));
+    }
+    const auto content = content_value.toArray();
+    if (content.size() != 1 || !content.at(0).isObject()) {
+        return std::unexpected(QStringLiteral("Fake MCP process-id content shape is invalid"));
+    }
+    const auto block = content.at(0).toObject();
+    const auto text_value = block.value(QStringLiteral("text"));
+    if (block.value(QStringLiteral("type")).toString() != QLatin1String("text") ||
+        !text_value.isString()) {
+        return std::unexpected(QStringLiteral("Fake MCP process-id content is not text"));
+    }
+    const QString text = text_value.toString();
+    bool valid_pid = false;
+    const qint64 pid = text.toLongLong(&valid_pid);
+    if (!valid_pid || QString::number(pid) != text) {
+        return std::unexpected(QStringLiteral("Fake MCP process-id text is not canonical decimal"));
+    }
+    return pid;
 }
 
 inline QString builtInCommand() {

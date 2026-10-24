@@ -930,6 +930,8 @@ set(GUI_SOURCES
     src/core/process_runner.cpp
     include/sak/process_runner.h
     include/sak/windows_process_job.h
+    src/core/contained_process_quarantine.cpp
+    include/sak/contained_process_quarantine.h
     src/core/network_transfer_runner.cpp
     include/sak/network_transfer_runner.h
     src/gui/diagnostic_benchmark_panel.cpp

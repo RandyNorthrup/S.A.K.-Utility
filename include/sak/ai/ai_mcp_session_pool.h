@@ -55,7 +55,9 @@ public:
 
     /// Closes every pooled session with one shared cleanup deadline. Failed entries remain
     /// owned and prevent further admissions until a successful closeAll retry. Idempotent.
-    /// Destruction fails closed if cleanup cannot be established.
+    /// Destruction that cannot establish cleanup logs the diagnostic and transfers each unproven
+    /// session to sak::ContainedProcessQuarantine, whose kill-on-close Jobs stay armed, instead of
+    /// terminating the application. Destroying a pool that is still in use remains fatal.
     [[nodiscard]] std::expected<void, QString> closeAll();
 
     /// Number of pooled session SLOTS currently held -- including a slot whose session already
@@ -96,6 +98,8 @@ private:
     void releaseIfClosed(Entry& entry);
     [[nodiscard]] QString closeAfterFailure(Entry& entry, const QString& primary_error);
     [[nodiscard]] std::expected<void, QString> closeAllWithDeadline(const QDeadlineTimer& deadline);
+    // Destruction-only: moves every session closeAll() could not prove clean into custody.
+    void quarantineUnprovenSessions(const QString& cleanup_error);
 
     mutable QMutex m_mutex;  // guards m_sessions (the map), not the sessions
     std::map<QString, std::shared_ptr<Entry>> m_sessions;

@@ -33,6 +33,13 @@ set(SAK_WINDOWS_PROCESS_JOB_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/windows_process_job.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/windows_process_job.h"
 )
+set(SAK_CONTAINED_PROCESS_QUARANTINE_SOURCES
+    # Custody logs every owner it takes, so the logger rides along as one group: a target cannot
+    # pick up the quarantine without the dependency that reports what it retained.
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/contained_process_quarantine.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/contained_process_quarantine.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/logger.cpp"
+)
 set(SAK_ELEVATION_SOURCES
     # The AI command path asks ElevationManager whether THIS process is already elevated, so a
     # "non-admin" launch that inherits an elevated token is still policed (B1-3 / H6). It logs,
@@ -1956,6 +1963,7 @@ if(SAK_ENABLE_AI_ASSISTANT)
         unit/test_ai_assistant_panel_tool_dispatch.cpp
         ${_panel_dispatch_test_srcs}
         ${SAK_WINDOWS_PROCESS_JOB_SOURCES}
+        ${CMAKE_SOURCE_DIR}/src/core/contained_process_quarantine.cpp
         ${CMAKE_SOURCE_DIR}/resources/ai.qrc
         ${CMAKE_SOURCE_DIR}/resources/icons.qrc
         ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_extension_installer.cpp
@@ -2970,6 +2978,7 @@ message(STATUS "Added unit test: test_fuzz_mbox_container")
 add_executable(test_ai_provider_gateway
     unit/test_ai_provider_gateway.cpp
     ${SAK_WINDOWS_PROCESS_JOB_SOURCES}
+    ${SAK_CONTAINED_PROCESS_QUARANTINE_SOURCES}
     ../src/ai/ai_provider_gateway.cpp
     ../src/ai/ai_provider_gateway_authorization.cpp
     ../src/ai/ai_provider_registry.cpp
@@ -3379,6 +3388,7 @@ message(STATUS "Added unit test: test_ai_mcp_http_client")
 add_executable(test_ai_mcp_stdio_session
     unit/test_ai_mcp_stdio_session.cpp
     ${SAK_WINDOWS_PROCESS_JOB_SOURCES}
+    ${SAK_CONTAINED_PROCESS_QUARANTINE_SOURCES}
     support/ai_mcp_native_fixture.h
     ../src/ai/ai_mcp_stdio_session.cpp
     ../include/sak/ai/ai_mcp_stdio_session.h
@@ -3403,6 +3413,7 @@ message(STATUS "Added unit test: test_ai_mcp_stdio_session")
 add_executable(test_ai_mcp_session_pool
     unit/test_ai_mcp_session_pool.cpp
     ${SAK_WINDOWS_PROCESS_JOB_SOURCES}
+    ${SAK_CONTAINED_PROCESS_QUARANTINE_SOURCES}
     support/ai_mcp_native_fixture.h
     ../src/ai/ai_mcp_session_pool.cpp
     ../src/ai/ai_mcp_stdio_session.cpp

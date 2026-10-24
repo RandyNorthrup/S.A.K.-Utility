@@ -4,6 +4,7 @@
 #include "sak/ai/ai_mcp_stdio_session.h"
 
 #include "sak/ai/ai_mcp_jsonrpc.h"
+#include "sak/contained_process_quarantine.h"
 #include "sak/layout_constants.h"
 #include "sak/windows_process_job.h"
 
@@ -197,13 +198,19 @@ std::expected<std::optional<QJsonObject>, QString> AiMcpStdioSession::drainMatch
 
 class AiMcpStdioSession::Worker : public QObject {
 public:
-    Worker(std::atomic_bool* open_state, int initial_request_id, JobFactory job_factory)
-        : m_open_state(open_state)
+    Worker(std::shared_ptr<std::atomic_bool> open_state,
+           int initial_request_id,
+           JobFactory job_factory)
+        : m_open_state(std::move(open_state))
         , m_next_id(initial_request_id)
         , m_job_factory(std::move(job_factory)) {}
 
     ~Worker() override {
         m_open_state->store(false, std::memory_order_release);
+        // Invariant, not a cleanup timeout: this Worker is deleted only after its controller
+        // finishes, and the session quits that controller only after doClose() proved the Job
+        // empty. An unproven cleanup keeps the controller running in custody instead, so
+        // reaching this means a live QProcess or non-empty Job is about to be destroyed.
         if (m_job || (m_process != nullptr && m_process->state() != QProcess::NotRunning)) {
             qFatal("MCP worker destruction refused: process cleanup is unproven");
         }
@@ -529,7 +536,7 @@ private:
     QProcess* m_process{nullptr};
     std::unique_ptr<BoundedPipeDevice> m_stdout_device;
     std::unique_ptr<BoundedPipeDevice> m_stderr_device;
-    std::atomic_bool* m_open_state{nullptr};
+    std::shared_ptr<std::atomic_bool> m_open_state;
     QByteArray m_stderr_tail;
     int m_next_id{0};
     int m_timeout_ms{kMinimumRequestTimeoutMs};
@@ -543,8 +550,52 @@ AiMcpStdioSession::AiMcpStdioSession()
 AiMcpStdioSession::~AiMcpStdioSession() {
     const auto closed = close();
     if (!closed) {
-        qFatal("MCP session destruction refused: %s", qPrintable(closed.error()));
+        // Report + contain (owner decision 2026-10-24). This was a qFatal, so a child that merely
+        // outlived the cleanup deadline under machine load took the whole application down. The
+        // live Worker, QProcess and kill-on-close Job are neither destroyed nor abandoned: custody
+        // owns them until a retry proves cleanup or the process exits and the OS closes the Job.
+        quarantine(takeRetainedOwnership(),
+                   QStringLiteral("MCP session destruction could not prove cleanup: %1")
+                       .arg(closed.error()));
     }
+}
+
+namespace {
+
+// Custody adapter: one cleanup retry is one ordinary bounded close() of the retained session.
+// It is destroyed only after that close succeeded, so ~AiMcpStdioSession then has nothing left.
+class QuarantinedSession final : public sak::ContainedProcessQuarantine::Owner {
+public:
+    explicit QuarantinedSession(std::unique_ptr<AiMcpStdioSession> session)
+        : m_session(std::move(session)) {}
+
+    [[nodiscard]] std::expected<void, QString> retryCleanup() override {
+        return m_session->close();
+    }
+
+private:
+    std::unique_ptr<AiMcpStdioSession> m_session;
+};
+
+}  // namespace
+
+std::unique_ptr<AiMcpStdioSession> AiMcpStdioSession::takeRetainedOwnership() {
+    auto retained = std::make_unique<AiMcpStdioSession>();
+    retained->m_worker = std::exchange(m_worker, nullptr);
+    retained->m_worker_liveness = m_worker_liveness;
+    m_worker_liveness.clear();
+    retained->m_thread = std::exchange(m_thread, nullptr);
+    retained->m_join_requested = std::exchange(m_join_requested, false);
+    retained->m_pending_cleanup = std::exchange(m_pending_cleanup, nullptr);
+    // The Worker keeps writing liveness through this exact flag from its own thread.
+    retained->m_open = std::exchange(m_open, std::make_shared<std::atomic_bool>(false));
+    return retained;
+}
+
+void AiMcpStdioSession::quarantine(std::unique_ptr<AiMcpStdioSession> session,
+                                   const QString& reason) {
+    sak::ContainedProcessQuarantine::retain(
+        std::make_unique<QuarantinedSession>(std::move(session)), reason);
 }
 
 void AiMcpStdioSession::setThreadStarterForTesting(std::function<void(QThread&)> starter) {
@@ -565,7 +616,7 @@ std::expected<void, QString> AiMcpStdioSession::startWorker() {
     if (!m_thread->isRunning()) {
         return std::unexpected(QStringLiteral("Could not start MCP session worker thread"));
     }
-    m_worker = new Worker(&m_open, m_initial_request_id_for_testing, m_job_factory);
+    m_worker = new Worker(m_open, m_initial_request_id_for_testing, m_job_factory);
     m_worker_liveness = m_worker;
     m_worker->moveToThread(m_thread);
     // Check affinity instead of moveToThread's return type, which was void in Qt 6.5.
@@ -605,7 +656,7 @@ std::expected<void, QString> AiMcpStdioSession::open(const AiMcpSessionConfig& c
 }
 
 bool AiMcpStdioSession::isOpen() const {
-    return m_open.load(std::memory_order_acquire);
+    return m_open->load(std::memory_order_acquire);
 }
 
 int AiMcpStdioSession::effectiveRequestTimeoutMs(int requested_ms) {
@@ -613,7 +664,7 @@ int AiMcpStdioSession::effectiveRequestTimeoutMs(int requested_ms) {
 }
 
 std::expected<QVector<AiMcpToolDescriptor>, QString> AiMcpStdioSession::listTools() {
-    if (!m_open || (m_worker == nullptr)) {
+    if (!isOpen() || (m_worker == nullptr)) {
         return std::unexpected(QStringLiteral("MCP session is not open"));
     }
     std::expected<QVector<AiMcpToolDescriptor>, QString> result;
@@ -630,7 +681,7 @@ std::expected<QVector<AiMcpToolDescriptor>, QString> AiMcpStdioSession::listTool
 
 std::expected<QJsonObject, QString> AiMcpStdioSession::callTool(const QString& tool_name,
                                                                 const QJsonObject& arguments) {
-    if (!m_open || (m_worker == nullptr)) {
+    if (!isOpen() || (m_worker == nullptr)) {
         return std::unexpected(QStringLiteral("MCP session is not open"));
     }
     std::expected<QJsonObject, QString> result;
@@ -714,7 +765,7 @@ std::expected<void, QString> AiMcpStdioSession::cleanupWorkerBeforeJoin(
 }
 
 std::expected<void, QString> AiMcpStdioSession::closeWithDeadline(const QDeadlineTimer& deadline) {
-    m_open.store(false, std::memory_order_release);
+    m_open->store(false, std::memory_order_release);
     if (m_thread != nullptr) {
         if (m_thread == QThread::currentThread()) {
             return std::unexpected(
@@ -742,7 +793,7 @@ std::expected<void, QString> AiMcpStdioSession::closeWithDeadline(const QDeadlin
         m_worker = nullptr;
         m_join_requested = false;
     }
-    m_open = false;
+    m_open->store(false, std::memory_order_release);
     return {};
 }
 

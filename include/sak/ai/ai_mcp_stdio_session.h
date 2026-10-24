@@ -110,7 +110,9 @@ public:
 
     /// Stops the contained process family and joins the worker only after observed cleanup.
     /// Failure retains ownership and refuses further requests; a later close may retry cleanup.
-    /// Idempotent. Destruction fails closed if this operation cannot establish safe teardown.
+    /// Idempotent. Destruction that cannot prove cleanup logs the diagnostic and transfers the
+    /// live worker, process and kill-on-close Job to sak::ContainedProcessQuarantine instead of
+    /// destroying them or terminating the application; the child still cannot outlive the app.
     [[nodiscard]] std::expected<void, QString> close();
 
     /// Strict parser shared by live discovery and parser tests. A page without a tools array, a
@@ -137,6 +139,11 @@ private:
         const QDeadlineTimer& deadline,
         const std::function<QString()>& timeout_message);
     [[nodiscard]] QString closeAfterFailure(const QString& primary_error);
+    /// Moves every retained cleanup obligation (controller, Worker, pending close, liveness flag)
+    /// into a new session object and leaves this one closed. Used only after cleanup failed.
+    [[nodiscard]] std::unique_ptr<AiMcpStdioSession> takeRetainedOwnership();
+    /// Hands a session whose close failed to process-lifetime custody with its diagnostic.
+    static void quarantine(std::unique_ptr<AiMcpStdioSession> session, const QString& reason);
     [[nodiscard]] bool isClosed() const;
     /// Exposes the actual QObject only to friend tests for controlled worker-lifetime faults.
     [[nodiscard]] QObject* workerObjectForTesting() const;
@@ -147,7 +154,9 @@ private:
     std::shared_ptr<PendingCleanup> m_pending_cleanup;  // One queued close, retained on timeout.
     std::function<void(QThread&)> m_thread_starter;
     JobFactory m_job_factory;
-    std::atomic_bool m_open{false};
+    // Shared with the Worker, which writes process liveness from its own thread; shared ownership
+    // keeps that write target valid when a failed teardown moves the Worker into custody.
+    std::shared_ptr<std::atomic_bool> m_open{std::make_shared<std::atomic_bool>(false)};
     // Private boundary-test seed, copied into the real Worker before it starts serving requests.
     // Normal sessions always start with zero IDs issued; no public counter override exists.
     int m_initial_request_id_for_testing{0};
