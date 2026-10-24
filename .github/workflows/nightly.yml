@@ -1,0 +1,298 @@
+name: Nightly (T4)
+
+# Tier T4 (AGENTS.md, "The gate"): nightly and on demand. Debug + AddressSanitizer, line
+# coverage, whole-tree cppcheck and dead code, clang-tidy naming, the mutation-catalog ratchet,
+# and the T4 CTest labels. None of it runs on push; T2 (ci.yml) is the per-push gate.
+
+on:
+  schedule:
+    # 08:23 UTC: the small hours across the US, off the top of the hour when scheduled runs
+    # queue up.
+    - cron: '23 8 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  T4_LABELS: '^(tooling-extended|mutation|coverage|tidy|cert-tooling|fuzz-extended)$'
+  CPPCHECK_VERSION: '2.20.0'
+  CPPCHECK_SHA256: 'bb1132bca1bca857a6ce3f04605698f002196070a947cae7015eeddc3c00f449'
+  # clang-tidy comes from Program Files\LLVM (scripts/run_clang_tidy.ps1). The image ships an
+  # older LLVM; install the version developers run so the naming gate parses the same way.
+  LLVM_VERSION: '22.1.1'
+  LLVM_SHA256: 'e7fec06b4696be82bf8d4b846ebf6b810ed6f27d9eefdce46baf5330ea6e9ed4'
+
+jobs:
+  # ==========================================================================================
+  # The T4 CTest labels. Builds only the base set and the executables those tests run.
+  # ==========================================================================================
+  t4-tests:
+    name: T4 CTest labels
+    runs-on: windows-2022
+    timeout-minutes: 120
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - name: Toolchain
+      uses: ./.github/actions/windows-build-env
+
+    - name: Configure
+      shell: pwsh
+      run: |
+        cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+          -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" `
+          -DVCPKG_APPLOCAL_DEPS=OFF `
+          -DVCPKG_TARGET_TRIPLET="$env:VCPKG_TRIPLET" `
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+          -DSAK_PYTHON_EXECUTABLE="$env:pythonLocation\python.exe"
+        $configureExit = $LASTEXITCODE
+        "CONFIGURE EXIT: $configureExit"
+        exit $configureExit
+
+    - name: Plan
+      shell: pwsh
+      run: |
+        & scripts/plan_ci_build_shards.ps1 -BuildDir build -ShardCount 1 -ShardIndex 0 `
+          -SelectedTestsOnly -LabelRegex $env:T4_LABELS -OutFile build/ci-plan.json
+
+    - name: Build
+      id: build
+      shell: pwsh
+      run: |
+        $plan = Get-Content -Raw build/ci-plan.json | ConvertFrom-Json
+        $targets = @($plan.build_targets) -join ';'
+        msbuild build/SAK_Utility.sln /m /nologo /verbosity:minimal /p:Configuration=Release /p:Platform=x64 "/t:$targets"
+        $buildExit = $LASTEXITCODE
+        "BUILD EXIT: $buildExit"
+        exit $buildExit
+
+    - name: Test (T4 labels)
+      shell: pwsh
+      run: |
+        ctest --test-dir build -C Release -j $env:NUMBER_OF_PROCESSORS --output-on-failure --no-tests=error -L $env:T4_LABELS
+        $ctestExit = $LASTEXITCODE
+        "CTEST EXIT: $ctestExit"
+        exit $ctestExit
+
+    - name: Upload test logs
+      if: ${{ failure() && steps.build.outcome == 'success' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: t4-test-logs
+        path: |
+          build/test_results/*.txt
+          build/Testing/Temporary/LastTest.log
+        retention-days: 14
+        if-no-files-found: warn
+
+  # ==========================================================================================
+  # Whole-tree static analysis. Each gate is its own step and runs even after another fails.
+  # ==========================================================================================
+  t4-static:
+    name: T4 static analysis
+    runs-on: windows-2022
+    timeout-minutes: 180
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - name: Toolchain
+      uses: ./.github/actions/windows-build-env
+
+    - name: Install cppcheck
+      shell: pwsh
+      run: |
+        $msi = Join-Path $env:RUNNER_TEMP "cppcheck.msi"
+        Invoke-WebRequest -Uri "https://github.com/danmar/cppcheck/releases/download/$env:CPPCHECK_VERSION/cppcheck-$env:CPPCHECK_VERSION-x64-Setup.msi" -OutFile $msi
+        $hash = (Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($hash -ne $env:CPPCHECK_SHA256) { throw "cppcheck installer hash $hash does not match the pin" }
+        $p = Start-Process msiexec.exe -ArgumentList @('/i', $msi, '/qn', '/norestart') -Wait -PassThru
+        if ($p.ExitCode -ne 0) { throw "cppcheck install exited $($p.ExitCode)" }
+        "$env:ProgramFiles\Cppcheck" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+        $version = (& "$env:ProgramFiles\Cppcheck\cppcheck.exe" --version) -join ' '
+        Write-Host $version
+        if ($version -notmatch "Cppcheck $([regex]::Escape($env:CPPCHECK_VERSION))(\s|$)") { throw "cppcheck is not $env:CPPCHECK_VERSION" }
+
+    - name: Install LLVM
+      shell: pwsh
+      run: |
+        $exe = Join-Path $env:RUNNER_TEMP "LLVM-$env:LLVM_VERSION-win64.exe"
+        Invoke-WebRequest -Uri "https://github.com/llvm/llvm-project/releases/download/llvmorg-$env:LLVM_VERSION/LLVM-$env:LLVM_VERSION-win64.exe" -OutFile $exe
+        $hash = (Get-FileHash -LiteralPath $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($hash -ne $env:LLVM_SHA256) { throw "LLVM installer hash $hash does not match the pin" }
+        # The image's LLVM is a Chocolatey package; remove it so the installer owns the folder.
+        choco uninstall llvm -y --no-progress
+        $p = Start-Process $exe -ArgumentList @('/S') -Wait -PassThru
+        if ($p.ExitCode -ne 0) { throw "LLVM install exited $($p.ExitCode)" }
+        $version = (& "$env:ProgramFiles\LLVM\bin\clang-tidy.exe" --version) -join ' '
+        Write-Host $version
+        if ($version -notmatch "version $([regex]::Escape($env:LLVM_VERSION))(\s|$)") { throw "clang-tidy is not $env:LLVM_VERSION" }
+
+    # The clang-tidy gate rebuilds Ninja compile databases from the configured build cache.
+    - name: Configure
+      shell: pwsh
+      run: |
+        cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+          -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" `
+          -DVCPKG_APPLOCAL_DEPS=OFF `
+          -DVCPKG_TARGET_TRIPLET="$env:VCPKG_TRIPLET" `
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+          -DSAK_PYTHON_EXECUTABLE="$env:pythonLocation\python.exe"
+        $configureExit = $LASTEXITCODE
+        "CONFIGURE EXIT: $configureExit"
+        exit $configureExit
+
+    - name: Gate tool versions
+      id: setup
+      shell: pwsh
+      run: '& scripts/check_tool_preflight.ps1 -IncludeOptional'
+
+    # Whole project, both passes; asserts cppcheck's own active-checker count so a silently
+    # degraded analyzer cannot pass.
+    - name: cppcheck whole-project gate
+      if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+      shell: pwsh
+      run: '& scripts/cppcheck_whole_project_gate.ps1'
+
+    - name: Dead first-party source function gate
+      if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+      shell: pwsh
+      run: '& scripts/check_dead_code.ps1'
+
+    - name: clang-tidy naming health + ratchet
+      if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+      shell: pwsh
+      run: '& scripts/clang_tidy_naming_gate.ps1'
+
+    # Every catalog find-string still occurs exactly once in current source and the catalog set
+    # matches MANIFEST.txt. Static; the slow build+mutate pass stays local.
+    - name: Mutation-catalog integrity
+      if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+      shell: pwsh
+      run: python scripts/run_all_mutation_catalogs.py --validate
+
+  # ==========================================================================================
+  # Debug configuration + AddressSanitizer over the native suites.
+  #
+  # Only Release was ever built or tested, and three failures hid behind that: ENABLE_ASAN=ON
+  # applied no flag under the multi-config generator (0 of 246 projects instrumented), nine
+  # test executables could not run in Debug at all (Q_ASSERT guards, and one real persistent-
+  # model-index corruption Release cannot detect), and Debug was assumed broken so nobody saw
+  # either. A configuration that is never built rots. The script-test labels are left out
+  # here: they exercise the Release tree (build/Release) by design.
+  # ==========================================================================================
+  asan:
+    name: Debug build + AddressSanitizer
+    runs-on: windows-2022
+    timeout-minutes: 330
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - name: Toolchain
+      uses: ./.github/actions/windows-build-env
+
+    - name: Configure (Debug, ASan)
+      shell: pwsh
+      run: |
+        cmake -S . -B build-debug -G "Visual Studio 17 2022" -A x64 `
+          -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" `
+          -DVCPKG_APPLOCAL_DEPS=OFF `
+          -DVCPKG_TARGET_TRIPLET="$env:VCPKG_TRIPLET" `
+          -DENABLE_ASAN=ON `
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+          -DSAK_PYTHON_EXECUTABLE="$env:pythonLocation\python.exe"
+        $configureExit = $LASTEXITCODE
+        "CONFIGURE EXIT: $configureExit"
+        exit $configureExit
+
+    - name: Build (Debug)
+      shell: pwsh
+      run: |
+        cmake --build build-debug --config Debug --parallel
+        $buildExit = $LASTEXITCODE
+        "BUILD EXIT: $buildExit"
+        exit $buildExit
+
+    - name: Test (Debug, ASan, native suites)
+      shell: pwsh
+      run: |
+        ctest --test-dir build-debug -C Debug -j $env:NUMBER_OF_PROCESSORS --output-on-failure --no-tests=error `
+          -L '^(product|fuzz-extended)$'
+        $ctestExit = $LASTEXITCODE
+        "CTEST EXIT: $ctestExit"
+        exit $ctestExit
+
+  # ==========================================================================================
+  # Line coverage (OpenCppCoverage) over the curated core set. RelWithDebInfo, because the
+  # Release build strips the PDBs coverage maps against. See docs/COVERAGE_BASELINE.md.
+  # ==========================================================================================
+  coverage:
+    name: Line coverage (core subsystems)
+    runs-on: windows-2022
+    timeout-minutes: 150
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - name: Toolchain
+      uses: ./.github/actions/windows-build-env
+
+    - name: Install OpenCppCoverage
+      shell: pwsh
+      run: |
+        choco install opencppcoverage -y --no-progress
+        if ($LASTEXITCODE -ne 0) { throw "choco install opencppcoverage exited $LASTEXITCODE" }
+
+    - name: Configure
+      shell: pwsh
+      run: |
+        cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+          -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" `
+          -DVCPKG_APPLOCAL_DEPS=OFF `
+          -DVCPKG_TARGET_TRIPLET="$env:VCPKG_TRIPLET" `
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+          -DSAK_PYTHON_EXECUTABLE="$env:pythonLocation\python.exe"
+        $configureExit = $LASTEXITCODE
+        "CONFIGURE EXIT: $configureExit"
+        exit $configureExit
+
+    - name: Build core tests (RelWithDebInfo)
+      shell: pwsh
+      run: |
+        cmake --build build --config RelWithDebInfo --parallel --target `
+          test_pst_parser test_fuzz_pst_parser test_mbox_parser test_fuzz_mbox_headers `
+          test_fuzz_mbox_transfer_decoder test_iso_analyzer test_fuzz_iso_analyzer `
+          test_ai_tool_policy test_fuzz_command_classifier test_fuzz_email_sanitizer `
+          test_fuzz_mcp_framing test_crash_reporter test_encryption test_input_validator `
+          test_path_utils test_email_types
+        $buildExit = $LASTEXITCODE
+        "BUILD EXIT: $buildExit"
+        exit $buildExit
+
+    - name: Measure coverage
+      shell: pwsh
+      env:
+        QT_QPA_PLATFORM: offscreen
+      run: |
+        & scripts/run_coverage.ps1 `
+          -TestRegex '^test_(pst_parser|fuzz_pst_parser|mbox_parser|fuzz_mbox_headers|fuzz_mbox_transfer_decoder|iso_analyzer|fuzz_iso_analyzer|ai_tool_policy|fuzz_command_classifier|fuzz_email_sanitizer|fuzz_mcp_framing|crash_reporter|encryption|input_validator|path_utils|email_types)$' `
+          -OutDir build/coverage `
+          -QtBin "$env:QT_ROOT_DIR/bin"
+
+    - name: Upload coverage report
+      uses: actions/upload-artifact@v7
+      with:
+        name: coverage-html
+        path: build/coverage/html
+        retention-days: 30

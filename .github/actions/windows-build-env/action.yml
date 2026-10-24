@@ -1,0 +1,134 @@
+name: Windows build environment
+description: >
+  The toolchain every S.A.K. Utility workflow builds or gates with: Python with the pinned gate
+  tools (requirements-gates.txt), ripgrep, and optionally Qt, MSBuild and the vcpkg packages.
+  One definition, so ci.yml, release.yml and nightly.yml cannot drift apart.
+
+inputs:
+  build-tools:
+    description: "'true' to also install Qt, MSBuild and the vcpkg packages"
+    default: 'true'
+  qt-version:
+    description: Qt version (msvc2022_64)
+    default: '6.10.3'
+  python-version:
+    description: Python version for the gate tools and the Python CTests
+    default: '3.14'
+  vcpkg-triplet:
+    description: >
+      vcpkg triplet. x64-windows builds against the DYNAMIC CRT, which Qt's msvc2022_64 binaries
+      and this project use; CMakeLists refuses a triplet whose CRT disagrees.
+    default: 'x64-windows'
+  vcpkg-packages:
+    description: Space-separated vcpkg ports
+    default: 'zlib bzip2 liblzma'
+  ripgrep-version:
+    description: ripgrep release
+    default: '15.2.0'
+  ripgrep-sha256:
+    description: SHA-256 of the x86_64-pc-windows-msvc zip of that release
+    default: '71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5'
+
+runs:
+  using: composite
+  steps:
+  - name: Set up Python
+    uses: actions/setup-python@v7
+    with:
+      python-version: ${{ inputs.python-version }}
+      cache: pip
+      cache-dependency-path: requirements-gates.txt
+
+  # The image ships its own LLVM (a different clang-format) on PATH. The pinned wheel must be
+  # the one the gates resolve, or "formatted" means something different here than locally.
+  - name: Install pinned gate tools
+    shell: pwsh
+    run: |
+      python -m pip install --disable-pip-version-check -r requirements-gates.txt
+      if ($LASTEXITCODE -ne 0) { throw "pip install exited $LASTEXITCODE" }
+      $pin = (Select-String -LiteralPath requirements-gates.txt -Pattern '^clang-format==(.+)$').Matches[0].Groups[1].Value
+      $resolved = (Get-Command clang-format.exe -ErrorAction Stop).Source
+      $version = (& $resolved --version) -join ' '
+      Write-Host "clang-format: $resolved -> $version"
+      if ($version -notmatch "version $([regex]::Escape($pin))(\s|$)") {
+        throw "clang-format on PATH is not the pinned $pin"
+      }
+      lizard --version
+      python -m pre_commit --version
+
+  - name: Install ripgrep
+    shell: pwsh
+    env:
+      RG_VERSION: ${{ inputs.ripgrep-version }}
+      RG_SHA256: ${{ inputs.ripgrep-sha256 }}
+    run: |
+      $zip = Join-Path $env:RUNNER_TEMP "ripgrep.zip"
+      $url = "https://github.com/BurntSushi/ripgrep/releases/download/$env:RG_VERSION/ripgrep-$env:RG_VERSION-x86_64-pc-windows-msvc.zip"
+      Invoke-WebRequest -Uri $url -OutFile $zip
+      $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+      if ($hash -ne $env:RG_SHA256) { throw "ripgrep archive hash $hash does not match the pin" }
+      Expand-Archive -LiteralPath $zip -DestinationPath $env:RUNNER_TEMP -Force
+      $dir = Join-Path $env:RUNNER_TEMP "ripgrep-$env:RG_VERSION-x86_64-pc-windows-msvc"
+      $dir | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      & (Join-Path $dir rg.exe) --version
+
+  - name: Install Qt
+    if: ${{ inputs.build-tools == 'true' }}
+    uses: jurplel/install-qt-action@v4
+    with:
+      version: ${{ inputs.qt-version }}
+      host: 'windows'
+      target: 'desktop'
+      arch: 'win64_msvc2022_64'
+      cache: true
+
+  - name: Set up MSBuild
+    if: ${{ inputs.build-tools == 'true' }}
+    uses: microsoft/setup-msbuild@v3
+    with:
+      vs-version: '[17.0,18.0)'
+
+  # The vcpkg binary cache is keyed on what decides the binaries: the runner image (its
+  # compiler), the vcpkg commit that image ships, the triplet and the port list. There is no
+  # partial restore key, so a new vcpkg or a new port is built rather than served stale.
+  - name: Resolve vcpkg cache key
+    id: vcpkg
+    if: ${{ inputs.build-tools == 'true' }}
+    shell: pwsh
+    env:
+      SAK_VCPKG_TRIPLET: ${{ inputs.vcpkg-triplet }}
+      SAK_VCPKG_PACKAGES: ${{ inputs.vcpkg-packages }}
+    run: |
+      $root = $env:VCPKG_INSTALLATION_ROOT
+      if (-not $root -or -not (Test-Path -LiteralPath (Join-Path $root 'vcpkg.exe'))) {
+        throw "vcpkg not found at VCPKG_INSTALLATION_ROOT='$root'"
+      }
+      $root = $root.Replace('\', '/')
+      $commit = (git -C $root rev-parse HEAD).Trim()
+      if ($LASTEXITCODE -ne 0 -or -not $commit) { throw "Cannot read the vcpkg commit at $root" }
+      $ports = ($env:SAK_VCPKG_PACKAGES -split '\s+' | Where-Object { $_ } | Sort-Object) -join '-'
+      $dir = Join-Path $env:RUNNER_TEMP "vcpkg-bincache"
+      New-Item -ItemType Directory -Force -Path $dir | Out-Null
+      "VCPKG_ROOT=$root" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      "VCPKG_TRIPLET=$env:SAK_VCPKG_TRIPLET" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      "key=vcpkg-$env:ImageOS-$env:ImageVersion-$env:SAK_VCPKG_TRIPLET-$commit-$ports" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+      "dir=$dir" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+      Write-Host "vcpkg $root at $commit; ports $ports"
+
+  - name: Cache vcpkg binaries
+    if: ${{ inputs.build-tools == 'true' }}
+    uses: actions/cache@v6
+    with:
+      path: ${{ steps.vcpkg.outputs.dir }}
+      key: ${{ steps.vcpkg.outputs.key }}
+
+  - name: Install vcpkg packages
+    if: ${{ inputs.build-tools == 'true' }}
+    shell: pwsh
+    env:
+      VCPKG_BINARY_SOURCES: clear;files,${{ steps.vcpkg.outputs.dir }},readwrite
+      SAK_VCPKG_PACKAGES: ${{ inputs.vcpkg-packages }}
+    run: |
+      $ports = $env:SAK_VCPKG_PACKAGES -split '\s+' | Where-Object { $_ } | ForEach-Object { "${_}:$env:VCPKG_TRIPLET" }
+      & (Join-Path $env:VCPKG_ROOT 'vcpkg.exe') install @ports
+      if ($LASTEXITCODE -ne 0) { throw "vcpkg install exited $LASTEXITCODE" }

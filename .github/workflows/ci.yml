@@ -1,0 +1,334 @@
+name: CI (T2)
+
+# Tier T2 (AGENTS.md, "The gate"): every push to dev or main and every pull request to them.
+# Build every target, run the T2 CTest labels in parallel, the whole-tree static gates, and the
+# post-build gates against the built Release app. T3 (package, sign, release) is release.yml;
+# T4 (ASan, coverage, whole-tree cppcheck, dead code, clang-tidy, T4 labels) is nightly.yml.
+
+on:
+  push:
+    branches:
+      - dev
+      - main
+  pull_request:
+    branches:
+      - dev
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A superseded run of the same branch or pull request stops instead of finishing work its
+# successor has already made irrelevant. A run on main always finishes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  # Anchored on purpose. An unanchored "product|release-tooling|tooling|cert" also matches
+  # tooling-extended and cert-tooling, which pulls 23 T4 tests into T2.
+  T2_LABELS: '^(product|release-tooling|tooling|cert)$'
+
+jobs:
+  # ==========================================================================================
+  # Whole-tree static gates. No build needed. Each gate is its own step, so a red gate cannot
+  # be hidden by a later green one, and every gate still runs after an earlier one fails.
+  # ==========================================================================================
+  static-gates:
+    name: T2 static gates (whole tree)
+    # Pinned to windows-2022 (Visual Studio 2022 / v17), matching the build jobs.
+    runs-on: windows-2022
+    timeout-minutes: 20
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - name: Toolchain
+      uses: ./.github/actions/windows-build-env
+      with:
+        build-tools: 'false'
+
+    - name: Cache pre-commit environments
+      id: setup
+      uses: actions/cache@v6
+      with:
+        path: ~\.cache\pre-commit
+        key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml', 'requirements-gates.txt') }}
+
+    - name: Repository hygiene (whole tree)
+      if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+      shell: pwsh
+      run: '& scripts/check_repository_hygiene.ps1'
+
+    - name: Test registration
+      if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+      shell: pwsh
+      run: '& scripts/check_test_registration.ps1'
+
+    - name: Qt resource manifests
+      if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+      shell: pwsh
+      run: '& scripts/check_qrc_resources.ps1'
+
+    - name: PowerShell syntax (whole tree)
+      if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+      shell: pwsh
+      run: '& scripts/check_powershell_syntax.ps1'
+
+    # An explicit whole-tree list plus -RequireFiles: with no arguments the script legitimately
+    # exits 0 ("No C++ files to format", its pre-commit contract), so a bare call would be a
+    # green gate that checked nothing. The exclusion is unanchored to match the hook's exclude.
+    - name: Formatting (clang-format, whole first-party tree)
+      if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+      shell: pwsh
+      run: |
+        $files = git ls-files '*.c' '*.cpp' '*.h' '*.hpp' '*.cxx' '*.cc' '*.hxx' |
+          Where-Object { $_ -notmatch '(third_party|3rdparty|external|_archived)/' }
+        Write-Host "clang-format over $(@($files).Count) first-party sources"
+        & scripts/run_clang_format.ps1 -Check -RequireFiles -Files $files
+
+    - name: Complexity (lizard, C++ and JavaScript)
+      if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+      shell: pwsh
+      run: python scripts/run_lizard.py
+
+    # With no arguments the script scans every tracked file (git ls-files).
+    - name: ASCII-only text (whole tree)
+      if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+      shell: pwsh
+      run: '& scripts/check_ascii_only.ps1'
+
+    - name: Secret and developer-path scan (regex, current tree)
+      if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+      shell: pwsh
+      run: '& scripts/scan_secrets.ps1 -SkipExternalTools'
+
+    - name: Third-party licenses
+      if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+      shell: pwsh
+      run: '& scripts/check_third_party_licenses.ps1'
+
+    - name: Blocking patterns
+      if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+      shell: pwsh
+      run: '& scripts/check_blocking_patterns.ps1'
+
+    - name: GUI style tokens
+      if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+      shell: pwsh
+      run: '& scripts/check_gui_style_tokens.ps1'
+
+    - name: GUI magic numbers
+      if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+      shell: pwsh
+      run: '& scripts/check_gui_magic_numbers.ps1'
+
+    - name: GUI stylesheet literals
+      if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+      shell: pwsh
+      run: '& scripts/check_gui_stylesheet_literals.ps1'
+
+    - name: Magic numbers
+      if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+      shell: pwsh
+      run: python scripts/check_magic_numbers.py
+
+    - name: Logged message boxes
+      if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+      shell: pwsh
+      run: '& scripts/check_logged_message_boxes.ps1'
+
+    - name: Error-message uniqueness
+      if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+      shell: pwsh
+      run: '& scripts/check_error_message_uniqueness.ps1'
+
+    - name: Build-system lint
+      if: ${{ !cancelled() && steps.setup.outcome == 'success' }}
+      shell: pwsh
+      run: '& scripts/check_build_system_lint.ps1'
+
+  # ==========================================================================================
+  # Build every target and run the T2 labels, spread over several runners.
+  #
+  # One hosted runner needs well over an hour for the whole tree (each test executable compiles
+  # its own copy of the first-party sources and links with LTCG). Each shard configures the same
+  # tree and runs scripts/plan_ci_build_shards.ps1, which gives every shard the base set
+  # (sak_utility and what it stages into build/Release) plus a share of the other targets, and
+  # each T2 test to the shard that builds the executables it runs. The plan refuses to leave a
+  # default-build target unbuilt or a T2 test unassigned; the T2 result job checks that every
+  # shard computed the same plan and that every T2 test was registered on some shard.
+  # ==========================================================================================
+  build-test:
+    name: T2 build + test (shard ${{ matrix.shard }})
+    runs-on: windows-2022
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - name: Toolchain
+      uses: ./.github/actions/windows-build-env
+
+    - name: Configure
+      shell: pwsh
+      run: |
+        cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+          -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" `
+          -DVCPKG_APPLOCAL_DEPS=OFF `
+          -DVCPKG_TARGET_TRIPLET="$env:VCPKG_TRIPLET" `
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+          -DSAK_PYTHON_EXECUTABLE="$env:pythonLocation\python.exe"
+        $configureExit = $LASTEXITCODE
+        "CONFIGURE EXIT: $configureExit"
+        exit $configureExit
+
+    - name: Plan this shard
+      id: plan
+      shell: pwsh
+      run: |
+        & scripts/plan_ci_build_shards.ps1 -BuildDir build `
+          -ShardCount ${{ strategy.job-total }} -ShardIndex ${{ strategy.job-index }} `
+          -LabelRegex $env:T2_LABELS -OutFile build/ci-plan.json
+        $plan = Get-Content -Raw build/ci-plan.json | ConvertFrom-Json
+        Write-Host "Targets: $($plan.build_targets -join ' ')"
+        Write-Host "Tests:   $($plan.tests -join ' ')"
+
+    - name: Build
+      id: build
+      shell: pwsh
+      run: |
+        $plan = Get-Content -Raw build/ci-plan.json | ConvertFrom-Json
+        $targets = @($plan.build_targets) -join ';'
+        msbuild build/SAK_Utility.sln /m /nologo /verbosity:minimal /p:Configuration=Release /p:Platform=x64 "/t:$targets"
+        $buildExit = $LASTEXITCODE
+        "BUILD EXIT: $buildExit"
+        exit $buildExit
+
+    # Post-build gates against the built app: once, on shard 0, before the parallel tests load
+    # the machine (the startup budget is a wall-clock limit).
+    - name: Windows runtime dependencies
+      if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.shard == 0 }}
+      shell: pwsh
+      run: '& scripts/verify_windows_runtime_dependencies.ps1 -RootDir build/Release -PrimaryExe sak_utility.exe'
+
+    - name: Startup performance budget
+      if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.shard == 0 }}
+      shell: pwsh
+      run: '& scripts/check_startup_budget.ps1'
+
+    - name: Accessibility runtime audit
+      if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.shard == 0 }}
+      shell: pwsh
+      run: '& scripts/check_accessibility_patterns.ps1'
+
+    - name: Test (T2 labels, this shard)
+      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+      shell: pwsh
+      run: |
+        $plan = Get-Content -Raw build/ci-plan.json | ConvertFrom-Json
+        ctest --test-dir build -C Release -j $env:NUMBER_OF_PROCESSORS --output-on-failure --no-tests=error `
+          -L $env:T2_LABELS -R $plan.tests_regex
+        $ctestExit = $LASTEXITCODE
+        "CTEST EXIT: $ctestExit"
+        exit $ctestExit
+
+    # The skip audit runs once over every shard's logs in the T2 result job. It needs each
+    # shard's registration: a test's command resolves only where its executable was built.
+    - name: Record this shard's test registration
+      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+      shell: pwsh
+      run: |
+        $plan = Get-Content -Raw build/ci-plan.json | ConvertFrom-Json
+        $json = ctest --test-dir build -C Release --show-only=json-v1 -L $env:T2_LABELS -R $plan.tests_regex
+        if ($LASTEXITCODE -ne 0) { throw "ctest --show-only exited $LASTEXITCODE" }
+        [IO.File]::WriteAllText((Join-Path $env:GITHUB_WORKSPACE 'build/ci-registration.json'), ($json -join "`n"))
+
+    - name: Upload test logs
+      if: ${{ !cancelled() && steps.plan.outcome == 'success' }}
+      uses: actions/upload-artifact@v7
+      with:
+        name: t2-shard-${{ matrix.shard }}
+        path: |
+          build/ci-plan.json
+          build/ci-registration.json
+          build/test_results/*.txt
+          build/Testing/Temporary/LastTest.log
+        retention-days: 14
+        if-no-files-found: warn
+
+  # ==========================================================================================
+  # One required status for branch protection: every T2 job passed, all shards ran one plan,
+  # and the skip audit holds the whole T2 run's QtTest logs to the reviewed baseline.
+  # ==========================================================================================
+  t2-result:
+    name: T2 result
+    needs: [static-gates, build-test]
+    if: ${{ always() }}
+    runs-on: windows-2022
+    timeout-minutes: 15
+
+    steps:
+    - name: Checkout code
+      if: ${{ needs.build-test.result == 'success' }}
+      uses: actions/checkout@v7
+
+    - name: Download shard logs
+      if: ${{ needs.build-test.result == 'success' }}
+      uses: actions/download-artifact@v8
+      with:
+        pattern: t2-shard-*
+        path: shards
+
+    - name: Merge shard registrations
+      if: ${{ needs.build-test.result == 'success' }}
+      shell: pwsh
+      run: |
+        $plans = @(Get-ChildItem shards -Recurse -Filter ci-plan.json | ForEach-Object { Get-Content -Raw $_.FullName | ConvertFrom-Json })
+        if ($plans.Count -eq 0) { throw "No shard plans were uploaded" }
+        $count = [int]$plans[0].shard_count
+        if ($plans.Count -ne $count) { throw "Expected $count shard plans, found $($plans.Count)" }
+        $digests = @($plans | ForEach-Object { $_.digest } | Sort-Object -Unique)
+        if ($digests.Count -ne 1) { throw "Shards computed different build plans: $($digests -join ', ')" }
+        $planned = @($plans | ForEach-Object { @($_.tests) } | Sort-Object)
+        $tests = [System.Collections.Generic.List[object]]::new()
+        foreach ($file in Get-ChildItem shards -Recurse -Filter ci-registration.json) {
+          foreach ($t in (Get-Content -Raw $file.FullName | ConvertFrom-Json).tests) {
+            $tests.Add([ordered]@{ name = $t.name; command = @($t.command) })
+          }
+        }
+        $registered = @($tests | ForEach-Object { $_.name } | Sort-Object)
+        $diff = Compare-Object -ReferenceObject $planned -DifferenceObject $registered
+        if ($diff) { throw "Shard registrations differ from the plan: $($diff | Out-String)" }
+        New-Item -ItemType Directory -Force -Path build/test_results | Out-Null
+        Get-ChildItem shards -Recurse -File -Filter *.txt |
+          Where-Object { $_.Directory.Name -eq 'test_results' } |
+          Copy-Item -Destination build/test_results -Force
+        $merged = [ordered]@{ kind = 'ctestInfo'; version = [ordered]@{ major = 1; minor = 0 }; tests = $tests }
+        [IO.File]::WriteAllText((Join-Path $env:GITHUB_WORKSPACE 'build/t2-registration.json'), ($merged | ConvertTo-Json -Depth 6))
+        Write-Host "Plan $($digests[0]): $count shards, $($registered.Count) T2 tests"
+
+    # ctest scores a binary Passed even when every function called QSKIP. This holds every skip
+    # in the whole T2 run to tests/skip_baseline.txt and fails on an unreviewed skip, a stale
+    # baseline entry, or a registered QtTest with no log.
+    - name: Test-skip audit (whole T2 run)
+      if: ${{ needs.build-test.result == 'success' }}
+      shell: pwsh
+      run: '& scripts/check_test_skips.ps1 -RegistrationJsonPath build/t2-registration.json'
+
+    - name: Every T2 job passed
+      if: ${{ always() }}
+      shell: pwsh
+      run: |
+        Write-Host "static-gates: ${{ needs.static-gates.result }}"
+        Write-Host "build-test:   ${{ needs.build-test.result }}"
+        if ('${{ needs.static-gates.result }}' -ne 'success' -or '${{ needs.build-test.result }}' -ne 'success') {
+          exit 1
+        }

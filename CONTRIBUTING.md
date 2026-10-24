@@ -54,6 +54,15 @@ Thank you for your interest in contributing to S.A.K. Utility! This document pro
    cmake --build build --config Release
    ```
 
+6. **Install the pinned gate tools and the hooks** (CI installs the same `requirements-gates.txt`,
+   so clang-format, lizard and pre-commit are the same versions locally and in CI):
+   ```powershell
+   python -m venv .venv
+   .venv\Scripts\python -m pip install -r requirements-gates.txt
+   .venv\Scripts\pre-commit install --install-hooks
+   .venv\Scripts\pre-commit install --hook-type pre-push
+   ```
+
 ## How to Contribute
 
 ### Reporting Bugs
