@@ -503,22 +503,45 @@ include_directories(
 # Source Files
 # ============================================================================
 
-# Core utility modules
-set(CORE_SOURCES
+# Foundation: logging, paths, process execution and containment, elevation queries, hashing and
+# the worker thread base. Qt Core only, and used by almost every other unit, which is why it is
+# its own library: the writer CLIs, the elevated helper and the narrowest tests link it without
+# pulling in anything above it.
+set(SAK_FOUNDATION_SOURCES
     src/core/logger.cpp
     src/core/app_paths.cpp
-    src/core/crash_reporter.cpp
-    src/core/file_hash.cpp
-    src/core/file_scanner.cpp
     src/core/path_utils.cpp
+    src/core/secure_memory.cpp
+    src/core/file_hash.cpp
+    src/core/process_runner.cpp
+    src/core/contained_process_quarantine.cpp
+    src/core/elevation_manager.cpp
+    src/core/bundled_tools_manager.cpp
+    src/core/user_profile_types.cpp
+    src/threading/worker_base.cpp
+    include/sak/logger.h
+    include/sak/app_paths.h
+    include/sak/path_utils.h
+    include/sak/secure_memory.h
+    include/sak/file_hash.h
+    include/sak/process_runner.h
+    include/sak/windows_process_job.h
+    include/sak/contained_process_quarantine.h
+    include/sak/elevation_manager.h
+    include/sak/bundled_tools_manager.h
+    include/sak/user_profile_types.h
+    include/sak/worker_base.h
+)
+
+# Core utility modules
+set(CORE_SOURCES
+    src/core/crash_reporter.cpp
+    src/core/file_scanner.cpp
     src/core/config_manager.cpp
     src/core/input_validator.cpp
-    src/core/secure_memory.cpp
     src/core/encryption.cpp
     src/core/backup_file_codec.cpp
     src/core/keep_awake.cpp
-    src/core/elevation_manager.cpp
-    src/core/bundled_tools_manager.cpp
     src/core/app_scanner.cpp
     src/core/chocolatey_manager.cpp
     src/core/vulnerability_scanner.cpp
@@ -527,7 +550,6 @@ set(CORE_SOURCES
     src/core/app_installation_worker.cpp
     src/core/app_installation_busy.cpp
     src/core/user_data_manager.cpp
-    src/core/user_profile_types.cpp
     src/core/smart_file_filter.cpp
     src/core/windows_user_scanner.cpp
     src/core/permission_manager.cpp
@@ -609,17 +631,11 @@ set(CORE_SOURCES
     src/core/partition_executor.cpp
     src/core/partition_manager_controller.cpp
     src/core/partition_report_generator.cpp
-    include/sak/logger.h
-    include/sak/app_paths.h
     include/sak/crash_reporter.h
-    include/sak/file_hash.h
     include/sak/file_scanner.h
-    include/sak/path_utils.h
     include/sak/input_validator.h
-    include/sak/secure_memory.h
     include/sak/encryption.h
     include/sak/keep_awake.h
-    include/sak/elevation_manager.h
     include/sak/elevation_gate.h
     include/sak/elevation_tier.h
     include/sak/elevated_pipe_protocol.h
@@ -629,7 +645,6 @@ set(CORE_SOURCES
     src/core/elevated_pipe_server.cpp
     include/sak/elevated_task_dispatcher.h
     src/core/elevated_task_dispatcher.cpp
-    include/sak/bundled_tools_manager.h
     include/sak/error_codes.h
     include/sak/aligned_buffer.h
     include/sak/format_utils.h
@@ -659,7 +674,6 @@ set(CORE_SOURCES
     include/sak/migration_report.h
     include/sak/app_installation_worker.h
     include/sak/user_data_manager.h
-    include/sak/user_profile_types.h
     include/sak/user_profile_progress.h
     include/sak/smart_file_filter.h
     include/sak/windows_user_scanner.h
@@ -834,13 +848,11 @@ set(CORE_SOURCES
 
 # Threading infrastructure
 set(THREADING_SOURCES
-    src/threading/worker_base.cpp
     src/threading/organizer_worker.cpp
     src/threading/duplicate_finder_worker.cpp
     src/threading/flash_worker.cpp
     src/threading/partition_apply_worker.cpp
     src/threading/network_probe_worker.cpp
-    include/sak/worker_base.h
     include/sak/organizer_worker.h
     include/sak/duplicate_finder_worker.h
     include/sak/flash_worker.h
@@ -927,11 +939,6 @@ set(GUI_SOURCES
     include/sak/quick_action_controller.h
     src/core/quick_action_result_io.cpp
     include/sak/quick_action_result_io.h
-    src/core/process_runner.cpp
-    include/sak/process_runner.h
-    include/sak/windows_process_job.h
-    src/core/contained_process_quarantine.cpp
-    include/sak/contained_process_quarantine.h
     src/core/network_transfer_runner.cpp
     include/sak/network_transfer_runner.h
     src/gui/diagnostic_benchmark_panel.cpp
@@ -1240,7 +1247,8 @@ else()
     target_compile_options(sak_lzfse PRIVATE -w)
 endif()
 
-# One compiled Job owner shared by the app, helper and ProcessRunner test consumers.
+# One compiled Job owner. sak_foundation archives it beside ProcessRunner, and the test suite
+# links it directly into any target that still compiles process_runner.cpp itself.
 # The Qt-private pipe implementation must be compiled exactly once per binary;
 # linking this object target avoids duplicating it into every test source list.
 add_library(sak_windows_process_job OBJECT
@@ -1254,6 +1262,29 @@ target_link_libraries(sak_windows_process_job PRIVATE
     Qt6::Core Qt6::CorePrivate
 )
 target_compile_definitions(sak_windows_process_job PRIVATE QT_NO_KEYWORDS)
+
+# ============================================================================
+# Product libraries -- each first-party source is compiled once, here
+# ============================================================================
+#
+# The application, the elevated helper, the writer CLIs and the test suite all link these static
+# libraries. A linker takes only the objects a binary references, so linking a library is not a
+# request for everything in it. sak_add_product_library gives each moc'd header its own object for
+# the same reason (see cmake/SakProductLibrary.cmake). Qt resource files stay on the executables:
+# an archived rcc object registers its resources from a static initializer nothing references,
+# and the linker would drop it.
+include(SakProductLibrary)
+
+sak_add_product_library(sak_foundation ${SAK_FOUNDATION_SOURCES})
+target_link_libraries(sak_foundation
+    PUBLIC
+        Qt6::Core
+        ${PLATFORM_LIBS}
+    PRIVATE
+        # The Job owner's objects are archived into this library, so ProcessRunner and the Job it
+        # owns always arrive together.
+        sak_windows_process_job
+)
 
 # ============================================================================
 # Executable Target
@@ -1334,7 +1365,7 @@ target_link_libraries(sak_utility PRIVATE
     BZip2::BZip2
     LibLZMA::LibLZMA
     sak_lzfse
-    sak_windows_process_job
+    sak_foundation
     ${PLATFORM_LIBS}
 )
 
@@ -1452,20 +1483,15 @@ if(PLATFORM_WINDOWS)
     # Helper sources: action implementations + IPC layer + entry point
     set(HELPER_SOURCES
         src/elevated/elevated_helper_main.cpp
-        src/core/app_paths.cpp
         src/core/elevated_pipe_server.cpp
         src/core/elevated_task_dispatcher.cpp
-        src/core/logger.cpp
         src/core/quick_action.cpp
-        src/core/process_runner.cpp
         src/core/permission_manager.cpp
-        src/core/elevation_manager.cpp
         src/actions/verify_system_files_action.cpp
         src/actions/check_disk_errors_action.cpp
         src/actions/reset_network_action.cpp
         src/actions/backup_bitlocker_keys_action.cpp
         include/sak/elevated_pipe_protocol.h
-        include/sak/app_paths.h
         include/sak/elevated_pipe_server.h
         include/sak/elevated_task_dispatcher.h
         include/sak/permission_manager.h
@@ -1506,7 +1532,7 @@ if(PLATFORM_WINDOWS)
     target_link_libraries(sak_elevated_helper PRIVATE
         Qt6::Core
         Qt6::Gui
-        sak_windows_process_job
+        sak_foundation
         Threads::Threads
         ${PLATFORM_LIBS}
     )

@@ -44,6 +44,8 @@ install_manifest.txt
 !cmake/copy_tools_bundle.cmake
 # Source-bound certification stamp implementation is first-party build code.
 !cmake/SakSourceFingerprint.cmake
+# The product-library helper the root CMakeLists.txt includes is first-party build code too.
+!cmake/SakProductLibrary.cmake
 
 # ============================================================================
 # Visual Studio / MSBuild

@@ -21,10 +21,13 @@ file(MAKE_DIRECTORY "${TEST_OUTPUT_DIR}")
 # (RUNTIME_OUTPUT_DIRECTORY_RELEASE) avoids the extra subdirectory.
 set(SAK_MAIN_OUTPUT_DIR "${CMAKE_BINARY_DIR}/Release")
 
-set(SAK_APP_PATHS_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/app_paths.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/app_paths.h"
-)
+# Product code a test exercises comes from the static product libraries declared in the root
+# CMakeLists.txt (sak_foundation and the layers above it): a test target lists its own test
+# sources, fixtures and fakes, and links the libraries. A library carries its own dependencies, so
+# a new product source reaches every test that needs it without editing any test target. The
+# source lists below remain for code not yet in a library, and for the certification helpers,
+# which compile their production sources directly so the source fingerprint they embed binds
+# every object they are built from.
 set(SAK_PROCESS_RUNNER_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/process_runner.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/process_runner.h"
@@ -32,22 +35,6 @@ set(SAK_PROCESS_RUNNER_SOURCES
 set(SAK_WINDOWS_PROCESS_JOB_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/windows_process_job.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/windows_process_job.h"
-)
-set(SAK_CONTAINED_PROCESS_QUARANTINE_SOURCES
-    # Custody logs every owner it takes, so the logger rides along as one group: a target cannot
-    # pick up the quarantine without the dependency that reports what it retained.
-    "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/contained_process_quarantine.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/contained_process_quarantine.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/logger.cpp"
-)
-set(SAK_ELEVATION_SOURCES
-    # The AI command path asks ElevationManager whether THIS process is already elevated, so a
-    # "non-admin" launch that inherits an elevated token is still policed (B1-3 / H6). It logs,
-    # so the logger rides along -- kept as one group rather than two lines per target, so a new
-    # target cannot pick up half of the dependency.
-    "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/elevation_manager.cpp"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/elevation_manager.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/logger.cpp"
 )
 set(SAK_NETWORK_TRANSFER_RUNNER_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/network_transfer_runner.cpp"
@@ -119,27 +106,15 @@ foreach(test_name ${UNIT_TESTS})
         "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/${component_name}.cpp"
         "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/${component_name}.h"
     )
-    list(APPEND impl_sources
-        "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/logger.cpp"
-        "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/logger.h"
-    )
 
     if(test_name STREQUAL "test_windows_iso_downloader")
         list(APPEND impl_sources
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/app_paths.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/app_paths.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/uup_dump_api.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/uup_dump_api.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/uup_iso_builder.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/uup_iso_builder.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/windows_iso_downloader.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/windows_iso_downloader.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/bundled_tools_manager.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/bundled_tools_manager.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/elevation_manager.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/elevation_manager.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/logger.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/logger.h"
             ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
         )
     endif()
@@ -150,10 +125,6 @@ foreach(test_name ${UNIT_TESTS})
             "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/linux_iso_downloader.h"
             "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/linux_distro_catalog.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/linux_distro_catalog.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/bundled_tools_manager.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/bundled_tools_manager.h"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/logger.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/logger.h"
             ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
         )
     endif()
@@ -185,6 +156,7 @@ foreach(test_name ${UNIT_TESTS})
         endif()
 
         target_link_libraries(${test_name} PRIVATE
+            sak_foundation
             Qt6::Core
             Qt6::Test
             ${extra_unit_libs}
@@ -212,15 +184,13 @@ endforeach()
 # test_worker_base - WorkerBase lifecycle, exception safety, cancellation
 add_executable(test_worker_base
     unit/test_worker_base.cpp
-    ../src/threading/worker_base.cpp
-    ../include/sak/worker_base.h
-    ../src/core/logger.cpp
 )
 set_target_properties(test_worker_base PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_worker_base PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_worker_base PRIVATE
@@ -273,9 +243,6 @@ message(STATUS "Added unit test: test_ai_model_catalog")
 add_executable(test_restore_point_manager
     unit/test_restore_point_manager.cpp
     ../src/core/restore_point_manager.cpp
-    ../src/core/elevation_manager.cpp
-    ../src/core/process_runner.cpp
-    ../src/core/logger.cpp
     ../include/sak/restore_point_manager.h
 )
 set_target_properties(test_restore_point_manager PROPERTIES
@@ -283,6 +250,7 @@ set_target_properties(test_restore_point_manager PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_restore_point_manager PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_restore_point_manager PRIVATE
@@ -458,8 +426,6 @@ add_executable(test_partition_manager_controller
     ../src/core/partition_operation_planner.cpp
     ../src/core/partition_operation_queue.cpp
     ../src/core/partition_report_generator.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/core/logger.cpp
     ../include/sak/partition_manager_controller.h
     ../include/sak/partition_executor.h
     ../include/sak/partition_manager_types.h
@@ -479,6 +445,7 @@ set_target_properties(test_partition_manager_controller PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_partition_manager_controller PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Concurrent Qt6::Test ZLIB::ZLIB sak_lzfse ${PLATFORM_LIBS}
 )
 target_include_directories(test_partition_manager_controller PRIVATE
@@ -765,9 +732,6 @@ message(STATUS "Added HFS writer CLI self-test: test_sak_hfs_writer_cli")
 # test_partition_manager_panel - GUI chrome guard for AOMEI-style layout
 add_executable(test_partition_manager_panel
     unit/test_partition_manager_panel.cpp
-    # Restore Image fingerprints the approved image with sak::file_hasher before it queues,
-    # so the panel now pulls the hasher in (M-B3-1 part A).
-    ../src/core/file_hash.cpp
     ../src/gui/partition_manager_panel.cpp
     ../src/gui/view_empty_state.cpp
     ../include/sak/view_empty_state.h
@@ -797,10 +761,7 @@ add_executable(test_partition_manager_panel
     ../src/core/partition_executor.cpp
     ../src/core/partition_report_generator.cpp
     ../src/core/config_manager.cpp
-    ../src/core/app_paths.cpp
     ../src/core/elevation_broker.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/core/logger.cpp
     ../resources/icons.qrc
     ../include/sak/partition_manager_panel.h
     ../include/sak/file_recovery_engine.h
@@ -826,6 +787,7 @@ set_target_properties(test_partition_manager_panel PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_partition_manager_panel PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Concurrent Qt6::Widgets Qt6::Test sak_lzfse ${PLATFORM_LIBS}
 )
 target_compile_definitions(test_partition_manager_panel PRIVATE
@@ -850,13 +812,10 @@ add_executable(test_wifi_manager_panel
     ../src/gui/detachable_log_window.cpp
     ../src/gui/follow_scroll_controller.cpp
     ../src/third_party/qrcodegen/qrcodegen.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/core/logger.cpp
     ../src/core/wifi_setup_script.cpp
     # The panel now scans through the shared headless scanner instead of its own netsh parse,
     # so the target links the real thing rather than a second copy of the same logic.
     ../src/core/wifi_profile_scanner.cpp
-    ../src/core/user_profile_types.cpp
     ../include/sak/wifi_manager_panel.h
     ../include/sak/detachable_log_window.h
 )
@@ -865,6 +824,7 @@ set_target_properties(test_wifi_manager_panel PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_wifi_manager_panel PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Concurrent Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_wifi_manager_panel PRIVATE
@@ -923,7 +883,6 @@ message(STATUS "Added unit test: test_file_explorer_properties_calc")
 add_executable(test_iso_analyzer
     unit/test_iso_analyzer.cpp
     ../src/core/iso_analyzer.cpp
-    ../src/core/logger.cpp
     ../include/sak/iso_analyzer.h
 )
 set_target_properties(test_iso_analyzer PROPERTIES
@@ -931,6 +890,7 @@ set_target_properties(test_iso_analyzer PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_iso_analyzer PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_iso_analyzer PRIVATE
@@ -945,7 +905,6 @@ message(STATUS "Added unit test: test_iso_analyzer")
 add_executable(test_user_profile_restore_selection
     unit/test_user_profile_restore_selection.cpp
     ../src/core/user_profile_restore_selection.cpp
-    ../src/core/user_profile_types.cpp
     ../include/sak/user_profile_restore_selection.h
 )
 set_target_properties(test_user_profile_restore_selection PROPERTIES
@@ -953,6 +912,7 @@ set_target_properties(test_user_profile_restore_selection PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_user_profile_restore_selection PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_user_profile_restore_selection PRIVATE
@@ -975,11 +935,7 @@ add_executable(test_diagnostic_controller
     ../src/core/stress_test_worker.cpp
     ../src/core/thermal_monitor.cpp
     ../src/core/diagnostic_report_generator.cpp
-    ../src/core/bundled_tools_manager.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/threading/worker_base.cpp
     ../src/core/keep_awake.cpp
-    ../src/core/logger.cpp
     ../include/sak/diagnostic_controller.h
     ../include/sak/hardware_inventory_scanner.h
     ../include/sak/smart_disk_analyzer.h
@@ -989,14 +945,13 @@ add_executable(test_diagnostic_controller
     ../include/sak/stress_test_worker.h
     ../include/sak/thermal_monitor.h
     ../include/sak/diagnostic_report_generator.h
-    ../include/sak/bundled_tools_manager.h
-    ../include/sak/worker_base.h
 )
 set_target_properties(test_diagnostic_controller PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_diagnostic_controller PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test Qt6::Concurrent ZLIB::ZLIB ${PLATFORM_LIBS}
 )
 target_include_directories(test_diagnostic_controller PRIVATE
@@ -1011,8 +966,6 @@ message(STATUS "Added unit test: test_diagnostic_controller")
 add_executable(test_hardware_inventory_scanner
     unit/test_hardware_inventory_scanner.cpp
     ../src/core/hardware_inventory_scanner.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/core/logger.cpp
     ../include/sak/hardware_inventory_scanner.h
 )
 set_target_properties(test_hardware_inventory_scanner PROPERTIES
@@ -1020,6 +973,7 @@ set_target_properties(test_hardware_inventory_scanner PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_hardware_inventory_scanner PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test Qt6::Concurrent ZLIB::ZLIB ${PLATFORM_LIBS}
 )
 target_include_directories(test_hardware_inventory_scanner PRIVATE
@@ -1034,15 +988,14 @@ message(STATUS "Added unit test: test_hardware_inventory_scanner")
 add_executable(test_thermal_monitor
     unit/test_thermal_monitor.cpp
     ../src/core/thermal_monitor.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
     ../include/sak/thermal_monitor.h
-    ../src/core/logger.cpp
 )
 set_target_properties(test_thermal_monitor PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_thermal_monitor PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Concurrent Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_thermal_monitor PRIVATE
@@ -1058,13 +1011,13 @@ add_executable(test_diagnostic_report_generator
     unit/test_diagnostic_report_generator.cpp
     ../src/core/diagnostic_report_generator.cpp
     ../include/sak/diagnostic_report_generator.h
-    ../src/core/logger.cpp
 )
 set_target_properties(test_diagnostic_report_generator PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_diagnostic_report_generator PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_diagnostic_report_generator PRIVATE
@@ -1080,15 +1033,13 @@ add_executable(test_cpu_benchmark_worker
     unit/test_cpu_benchmark_worker.cpp
     ../src/core/cpu_benchmark_worker.cpp
     ../include/sak/cpu_benchmark_worker.h
-    ../src/threading/worker_base.cpp
-    ../include/sak/worker_base.h
-    ../src/core/logger.cpp
 )
 set_target_properties(test_cpu_benchmark_worker PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_cpu_benchmark_worker PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Concurrent Qt6::Test ZLIB::ZLIB ${PLATFORM_LIBS}
 )
 target_include_directories(test_cpu_benchmark_worker PRIVATE
@@ -1106,15 +1057,13 @@ add_executable(test_disk_benchmark_worker
     ../include/sak/disk_benchmark_worker.h
     ../src/core/keep_awake.cpp
     ../include/sak/keep_awake.h
-    ../src/threading/worker_base.cpp
-    ../include/sak/worker_base.h
-    ../src/core/logger.cpp
 )
 set_target_properties(test_disk_benchmark_worker PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_disk_benchmark_worker PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_disk_benchmark_worker PRIVATE
@@ -1130,15 +1079,13 @@ add_executable(test_memory_benchmark_worker
     unit/test_memory_benchmark_worker.cpp
     ../src/core/memory_benchmark_worker.cpp
     ../include/sak/memory_benchmark_worker.h
-    ../src/threading/worker_base.cpp
-    ../include/sak/worker_base.h
-    ../src/core/logger.cpp
 )
 set_target_properties(test_memory_benchmark_worker PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_memory_benchmark_worker PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_memory_benchmark_worker PRIVATE
@@ -1155,19 +1102,16 @@ add_executable(test_stress_test_worker
     ../src/core/stress_test_worker.cpp
     ../include/sak/stress_test_worker.h
     ../src/core/thermal_monitor.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
     ../include/sak/thermal_monitor.h
     ../src/core/keep_awake.cpp
     ../include/sak/keep_awake.h
-    ../src/threading/worker_base.cpp
-    ../include/sak/worker_base.h
-    ../src/core/logger.cpp
 )
 set_target_properties(test_stress_test_worker PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_stress_test_worker PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Concurrent Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_stress_test_worker PRIVATE
@@ -1188,14 +1132,13 @@ message(STATUS "Added unit test: test_stress_test_worker")
 add_executable(test_encryption
     unit/test_encryption.cpp
     ../src/core/encryption.cpp
-    ../src/core/secure_memory.cpp
-    ../src/core/logger.cpp
 )
 set_target_properties(test_encryption PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_encryption PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_encryption PRIVATE
@@ -1211,14 +1154,13 @@ add_executable(test_backup_file_codec
     unit/test_backup_file_codec.cpp
     ../src/core/backup_file_codec.cpp
     ../src/core/encryption.cpp
-    ../src/core/secure_memory.cpp
-    ../src/core/logger.cpp
 )
 set_target_properties(test_backup_file_codec PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_backup_file_codec PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ZLIB::ZLIB ${PLATFORM_LIBS}
 )
 target_include_directories(test_backup_file_codec PRIVATE
@@ -1232,14 +1174,13 @@ message(STATUS "Added unit test: test_backup_file_codec")
 # test_file_hash - MD5/SHA256, verify correct/incorrect, progress, cancellation
 add_executable(test_file_hash
     unit/test_file_hash.cpp
-    ../src/core/file_hash.cpp
-    ../src/core/logger.cpp
 )
 set_target_properties(test_file_hash PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_file_hash PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_file_hash PRIVATE
@@ -1253,14 +1194,13 @@ message(STATUS "Added unit test: test_file_hash")
 # test_path_utils - safe path, traversal, pattern matching, directory size
 add_executable(test_path_utils
     unit/test_path_utils.cpp
-    ../src/core/path_utils.cpp
-    ../src/core/logger.cpp
 )
 set_target_properties(test_path_utils PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_path_utils PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_path_utils PRIVATE
@@ -1274,14 +1214,13 @@ message(STATUS "Added unit test: test_path_utils")
 # test_secure_memory - wipe, secure_buffer, secure_allocator, secure random
 add_executable(test_secure_memory
     unit/test_secure_memory.cpp
-    ../src/core/secure_memory.cpp
-    ../src/core/logger.cpp
 )
 set_target_properties(test_secure_memory PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_secure_memory PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_secure_memory PRIVATE
@@ -1296,13 +1235,13 @@ message(STATUS "Added unit test: test_secure_memory")
 add_executable(test_input_validator
     unit/test_input_validator.cpp
     ../src/core/input_validator.cpp
-    ../src/core/logger.cpp
 )
 set_target_properties(test_input_validator PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_input_validator PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_input_validator PRIVATE
@@ -1323,7 +1262,6 @@ add_executable(test_decompressor_factory
     ../src/core/gzip_decompressor.cpp
     ../src/core/bzip2_decompressor.cpp
     ../src/core/xz_decompressor.cpp
-    ../src/core/logger.cpp
     ../include/sak/streaming_decompressor.h
     ../include/sak/gzip_decompressor.h
     ../include/sak/bzip2_decompressor.h
@@ -1334,6 +1272,7 @@ set_target_properties(test_decompressor_factory PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_decompressor_factory PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
 )
 target_include_directories(test_decompressor_factory PRIVATE
@@ -1347,10 +1286,7 @@ message(STATUS "Added unit test: test_decompressor_factory")
 # test_config_manager - singleton, get/set, defaults, signals, typed accessors
 add_executable(test_config_manager
     unit/test_config_manager.cpp
-    ../src/core/app_paths.cpp
     ../src/core/config_manager.cpp
-    ../src/core/logger.cpp
-    ../include/sak/app_paths.h
     ../include/sak/config_manager.h
 )
 set_target_properties(test_config_manager PROPERTIES
@@ -1358,6 +1294,7 @@ set_target_properties(test_config_manager PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_config_manager PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_config_manager PRIVATE
@@ -1372,10 +1309,7 @@ message(STATUS "Added unit test: test_config_manager")
 # round-trip, older-version migrate (no data loss), newer-version preserve+unhealthy
 add_executable(test_config_schema_versioning
     unit/test_config_schema_versioning.cpp
-    ../src/core/app_paths.cpp
     ../src/core/config_manager.cpp
-    ../src/core/logger.cpp
-    ../include/sak/app_paths.h
     ../include/sak/config_manager.h
 )
 set_target_properties(test_config_schema_versioning PROPERTIES
@@ -1383,6 +1317,7 @@ set_target_properties(test_config_schema_versioning PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_config_schema_versioning PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_config_schema_versioning PRIVATE
@@ -1397,14 +1332,13 @@ message(STATUS "Added unit test: test_config_schema_versioning")
 add_executable(test_smart_file_filter
     unit/test_smart_file_filter.cpp
     ../src/core/smart_file_filter.cpp
-    ../src/core/user_profile_types.cpp
-    ../src/core/logger.cpp
 )
 set_target_properties(test_smart_file_filter PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_smart_file_filter PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_smart_file_filter PRIVATE
@@ -1467,17 +1401,13 @@ add_executable(test_ethernet_config_manager
     # The single owner of every netsh adapter command: the manager's restore legs are thin
     # adapters over it rather than a second implementation (R5-IDX-19b).
     ../src/core/network_adapter_admin.cpp
-    ../src/core/logger.cpp
-    ../src/core/process_runner.cpp
-    # EthernetConfigInfo::parseNetIpConfigJson -- the language-neutral adapter scan the manager
-    # now shares with the backup wizard instead of scraping localized netsh labels.
-    ../src/core/user_profile_types.cpp
 )
 set_target_properties(test_ethernet_config_manager PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_ethernet_config_manager PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_ethernet_config_manager PRIVATE
@@ -1492,14 +1422,13 @@ message(STATUS "Added unit test: test_ethernet_config_manager")
 add_executable(test_file_scanner
     unit/test_file_scanner.cpp
     ../src/core/file_scanner.cpp
-    ../src/core/path_utils.cpp
-    ../src/core/logger.cpp
 )
 set_target_properties(test_file_scanner PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_file_scanner PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_file_scanner PRIVATE
@@ -1546,10 +1475,6 @@ add_executable(test_file_explorer_session_store
     ../src/core/file_explorer_types.cpp
     ../src/core/file_explorer_layout_metrics.cpp
     ../src/core/file_explorer_session_store.cpp
-    # The session store now surfaces its own failures instead of swallowing them, which pulls
-    # in the logger; carry it the way the helper-built unit tests do.
-    ../src/core/logger.cpp
-    ../include/sak/logger.h
     ../include/sak/file_explorer_types.h
     ../include/sak/file_explorer_layout_metrics.h
     ../include/sak/file_explorer_session_store.h
@@ -1560,6 +1485,7 @@ set_target_properties(test_file_explorer_session_store PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_file_explorer_session_store PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_file_explorer_session_store PRIVATE
@@ -1653,12 +1579,10 @@ add_executable(test_file_management_explorer_panel
     ../include/sak/file_explorer_properties_dialog.h
     ../src/core/file_explorer_properties_calc.cpp
     ../src/core/file_management_file_system.cpp
-    ../src/core/file_hash.cpp
     ../src/core/recycle_bin.cpp
     ../src/core/drive_unmounter.cpp
     ../include/sak/drive_unmounter.h
     ../src/core/advanced_search_worker.cpp
-    ../src/threading/worker_base.cpp
     ../src/core/apfs_crypto.cpp
     ../src/core/apfs_keybag.cpp
     ../src/core/partition_apfs_file_system_reader.cpp
@@ -1675,8 +1599,6 @@ add_executable(test_file_management_explorer_panel
     # parser that reads disk geometry and the panel share one clamped implementation.
     ../src/core/partition_safety_validator.cpp
     ../src/core/elevation_broker.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/core/logger.cpp
     ../resources/icons.qrc
     ../include/sak/file_explorer_sidebar.h
     ../include/sak/file_explorer_breadcrumb.h
@@ -1700,7 +1622,6 @@ add_executable(test_file_management_explorer_panel
     ../include/sak/file_explorer_command_registry.h
     ../include/sak/file_management_file_system.h
     ../include/sak/advanced_search_worker.h
-    ../include/sak/worker_base.h
     ../include/sak/storage_inventory_worker.h
     ../include/sak/elevation_broker.h
 )
@@ -1710,6 +1631,7 @@ set_target_properties(test_file_management_explorer_panel PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_file_management_explorer_panel PRIVATE
+    sak_foundation
     Qt6::Core Qt6::CorePrivate Qt6::Concurrent Qt6::Widgets Qt6::Test ZLIB::ZLIB sak_lzfse
     ${PLATFORM_LIBS}
 )
@@ -1729,8 +1651,6 @@ message(STATUS "Added unit test: test_file_management_explorer_panel")
 add_executable(test_file_management_file_system
     unit/test_file_management_file_system.cpp
     ../src/core/file_management_file_system.cpp
-    ../src/core/file_hash.cpp
-    ../src/core/logger.cpp
     ../src/core/apfs_crypto.cpp
     ../src/core/apfs_keybag.cpp
     ../src/core/partition_apfs_file_system_reader.cpp
@@ -1755,6 +1675,7 @@ set_target_properties(test_file_management_file_system PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_file_management_file_system PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ZLIB::ZLIB sak_lzfse ${PLATFORM_LIBS}
 )
 target_include_directories(test_file_management_file_system PRIVATE
@@ -1768,14 +1689,13 @@ message(STATUS "Added unit test: test_file_management_file_system")
 # test_process_runner - echo, exit code, stderr, timeout, cancellation, PowerShell
 add_executable(test_process_runner
     unit/test_process_runner.cpp
-    ../src/core/process_runner.cpp
-    ../src/core/logger.cpp
 )
 set_target_properties(test_process_runner PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_process_runner PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_process_runner PRIVATE
@@ -1789,13 +1709,13 @@ message(STATUS "Added unit test: test_process_runner")
 # test_windows_process_job - atomic startup containment and checked Job cleanup
 add_executable(test_windows_process_job
     unit/test_windows_process_job.cpp
-    ${SAK_WINDOWS_PROCESS_JOB_SOURCES}
 )
 set_target_properties(test_windows_process_job PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_windows_process_job PRIVATE
+    sak_foundation
     Qt6::Core Qt6::CorePrivate Qt6::Test
 )
 target_include_directories(test_windows_process_job PRIVATE
@@ -1810,14 +1730,13 @@ message(STATUS "Added unit test: test_windows_process_job")
 # test_resource_soak - R5-G23-10 long-session handle/GDI/memory-growth soak
 add_executable(test_resource_soak
     unit/test_resource_soak.cpp
-    ../src/core/process_runner.cpp
-    ../src/core/logger.cpp
 )
 set_target_properties(test_resource_soak PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_resource_soak PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_resource_soak PRIVATE
@@ -1852,25 +1771,21 @@ message(STATUS "Added unit test: test_ai_token_usage_tracker")
 add_executable(test_openai_responses_client
     unit/test_openai_responses_client.cpp
     ../src/ai/openai_responses_client.cpp
-    ../src/core/app_paths.cpp
     ../src/ai/ai_token_usage_tracker.cpp
     ../src/ai/ai_credential_store.cpp
     ../src/ai/ai_secret_redaction.cpp
     ../src/ai/ai_paths.cpp
-    ../src/core/secure_memory.cpp
-    ../src/core/logger.cpp
     ../include/sak/ai/openai_responses_client.h
-    ../include/sak/app_paths.h
     ../include/sak/ai/ai_token_usage_tracker.h
     ../include/sak/ai/ai_credential_store.h
     ../include/sak/ai/ai_paths.h
-    ../include/sak/secure_memory.h
 )
 set_target_properties(test_openai_responses_client PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_openai_responses_client PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test Qt6::Network ${PLATFORM_LIBS}
 )
 target_include_directories(test_openai_responses_client PRIVATE
@@ -1965,12 +1880,9 @@ if(SAK_ENABLE_AI_ASSISTANT)
     add_executable(test_ai_assistant_panel_tool_dispatch
         unit/test_ai_assistant_panel_tool_dispatch.cpp
         ${_panel_dispatch_test_srcs}
-        ${SAK_WINDOWS_PROCESS_JOB_SOURCES}
-        ${CMAKE_SOURCE_DIR}/src/core/contained_process_quarantine.cpp
         ${CMAKE_SOURCE_DIR}/resources/ai.qrc
         ${CMAKE_SOURCE_DIR}/resources/icons.qrc
         ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_extension_installer.cpp
-        ${CMAKE_SOURCE_DIR}/src/core/app_paths.cpp
         ${CMAKE_SOURCE_DIR}/src/core/chocolatey_manager.cpp
         ${CMAKE_SOURCE_DIR}/src/core/package_list_manager.cpp
         ${CMAKE_SOURCE_DIR}/src/core/offline_deployment_worker.cpp
@@ -1981,9 +1893,6 @@ if(SAK_ENABLE_AI_ASSISTANT)
         ${CMAKE_SOURCE_DIR}/src/core/script_rewriter.cpp
         ${CMAKE_SOURCE_DIR}/src/core/network_transfer_runner.cpp
         ${CMAKE_SOURCE_DIR}/src/core/elevation_broker.cpp
-        ${CMAKE_SOURCE_DIR}/src/core/elevation_manager.cpp
-        ${CMAKE_SOURCE_DIR}/src/core/logger.cpp
-        ${CMAKE_SOURCE_DIR}/src/core/process_runner.cpp
         # Headless app-action surface (sak_app_action tool) + the QuickActions it seeds.
         ${CMAKE_SOURCE_DIR}/src/core/app_action_registry.cpp
         ${CMAKE_SOURCE_DIR}/src/core/app_action_bridge.cpp
@@ -2046,26 +1955,22 @@ if(SAK_ENABLE_AI_ASSISTANT)
         ${CMAKE_SOURCE_DIR}/src/core/partition_file_system_tool_runner.cpp
         ${CMAKE_SOURCE_DIR}/src/core/partition_file_system_tool_manifest.cpp
         ${CMAKE_SOURCE_DIR}/src/core/elevation_broker.cpp
-        ${CMAKE_SOURCE_DIR}/src/core/process_runner.cpp
         ${CMAKE_SOURCE_DIR}/src/core/vulnerability_scanner.cpp
         ${CMAKE_SOURCE_DIR}/src/core/image_source.cpp
         ${CMAKE_SOURCE_DIR}/src/core/decompressor_factory.cpp
         ${CMAKE_SOURCE_DIR}/src/core/streaming_decompressor.cpp
-        ${CMAKE_SOURCE_DIR}/src/core/file_hash.cpp
         ${CMAKE_SOURCE_DIR}/src/core/gzip_decompressor.cpp
         ${CMAKE_SOURCE_DIR}/src/core/bzip2_decompressor.cpp
         ${CMAKE_SOURCE_DIR}/src/core/xz_decompressor.cpp
         # W1b async read-only op: the search ENGINE (worker) is driven directly, so
         # the controller/regex-library/config-manager are intentionally not linked.
         ${CMAKE_SOURCE_DIR}/src/core/advanced_search_worker.cpp
-        ${CMAKE_SOURCE_DIR}/src/threading/worker_base.cpp
         # W1c sync read-only diagnostics ops: the scanners are driven directly.
         ${CMAKE_SOURCE_DIR}/src/core/hardware_inventory_scanner.cpp
         ${CMAKE_SOURCE_DIR}/src/core/smart_disk_analyzer.cpp
         # diagnostics.read_temperatures: ThermalMonitor::pollOnce (static, QtConcurrent already
         # linked). Uses runProcess (bundled no-shell powershell poll).
         ${CMAKE_SOURCE_DIR}/src/core/thermal_monitor.cpp
-        ${CMAKE_SOURCE_DIR}/src/core/bundled_tools_manager.cpp
         # W1c email.read_mbox: the MBOX parser (synchronous read API) is driven directly.
         ${CMAKE_SOURCE_DIR}/src/core/mbox_parser.cpp
         # email.search_mbox: EmailSearchWorker (synchronous searchMbox, emits inline) drives the
@@ -2088,10 +1993,6 @@ if(SAK_ENABLE_AI_ASSISTANT)
         # here, but the ops link against the pure seam (name validation, resolution, argument
         # vectors) which test_network_adapter_admin covers directly.
         ${CMAKE_SOURCE_DIR}/src/core/network_adapter_admin.cpp
-        # EthernetConfigManager now maps its capture through
-        # EthernetConfigInfo::parseNetIpConfigJson (language-neutral, replacing the
-        # localized netsh scrape), so its translation unit is required here too.
-        ${CMAKE_SOURCE_DIR}/src/core/user_profile_types.cpp
         # files.compress_zip / files.extract_zip: FileExplorerArchiveService (static, synchronous,
         # QZipReader/QZipWriter via Qt6::CorePrivate -- already linked). zip-slip/bomb hardening is
         # in the engine; the op-layer path guards + new/empty-dir + no-clobber are covered by tests.
@@ -2128,7 +2029,6 @@ if(SAK_ENABLE_AI_ASSISTANT)
         # files.scan_directory: file_scanner (synchronous std::filesystem walk, follow_symlinks off
         # + cycle detection) driven directly; path_utils provides its pattern matching.
         ${CMAKE_SOURCE_DIR}/src/core/file_scanner.cpp
-        ${CMAKE_SOURCE_DIR}/src/core/path_utils.cpp
         # diagnostics.run_benchmark: the CPU + memory benchmark workers (WorkerBase QThreads, pure
         # in-memory compute) are driven directly through the AsyncActionInvocation bridge. The
         # benchmark EXECUTION is not re-run here (it is timing-sensitive and covered by the
@@ -2186,7 +2086,6 @@ if(SAK_ENABLE_AI_ASSISTANT)
         ${CMAKE_SOURCE_DIR}/include/sak/chocolatey_manager.h
         ${CMAKE_SOURCE_DIR}/include/sak/detachable_log_window.h
         ${CMAKE_SOURCE_DIR}/include/sak/elevation_broker.h
-        ${CMAKE_SOURCE_DIR}/include/sak/elevation_manager.h
         ${CMAKE_SOURCE_DIR}/include/sak/offline_deployment_worker.h
         ${CMAKE_SOURCE_DIR}/include/sak/package_internalization_engine.h
         ${CMAKE_SOURCE_DIR}/include/sak/app_action_service.h
@@ -2206,7 +2105,6 @@ if(SAK_ENABLE_AI_ASSISTANT)
         ${CMAKE_SOURCE_DIR}/include/sak/bzip2_decompressor.h
         ${CMAKE_SOURCE_DIR}/include/sak/xz_decompressor.h
         ${CMAKE_SOURCE_DIR}/include/sak/advanced_search_worker.h
-        ${CMAKE_SOURCE_DIR}/include/sak/worker_base.h
         ${CMAKE_SOURCE_DIR}/include/sak/hardware_inventory_scanner.h
         ${CMAKE_SOURCE_DIR}/include/sak/smart_disk_analyzer.h
         ${CMAKE_SOURCE_DIR}/include/sak/thermal_monitor.h
@@ -2254,6 +2152,7 @@ if(SAK_ENABLE_AI_ASSISTANT)
     target_compile_definitions(test_ai_assistant_panel_tool_dispatch PRIVATE
         SAK_WIN_REGISTRY_TESTS)
     target_link_libraries(test_ai_assistant_panel_tool_dispatch PRIVATE
+        sak_foundation
         Qt6::Core Qt6::CorePrivate Qt6::Widgets Qt6::Concurrent Qt6::Network Qt6::Xml
         Qt6::Test Threads::Threads ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA sak_lzfse
         ${PLATFORM_LIBS}
@@ -2278,15 +2177,13 @@ add_executable(test_ai_async_tool_runner
     unit/test_ai_async_tool_runner.cpp
     ../src/ai/ai_async_tool_runner.cpp
     ../include/sak/ai/ai_async_tool_runner.h
-    # The runner logs the exception it swallows so a thrown-away tool failure is not
-    # silent; that pulls in the logger.
-    ../src/core/logger.cpp
 )
 set_target_properties(test_ai_async_tool_runner PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_ai_async_tool_runner PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Concurrent Qt6::Test
 )
 target_include_directories(test_ai_async_tool_runner PRIVATE
@@ -2301,16 +2198,13 @@ add_executable(test_ai_tool_health_ledger
     unit/test_ai_tool_health_ledger.cpp
     ../src/ai/ai_tool_health_ledger.cpp
     ../include/sak/ai/ai_tool_health_ledger.h
-    # The ledger now reports its own failures instead of swallowing them, which pulls in the
-    # logger; carry it the same way the helper-built unit tests do.
-    ../src/core/logger.cpp
-    ../include/sak/logger.h
 )
 set_target_properties(test_ai_tool_health_ledger PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_ai_tool_health_ledger PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Concurrent Qt6::Test
 )
 target_include_directories(test_ai_tool_health_ledger PRIVATE
@@ -2456,7 +2350,6 @@ message(STATUS "Added unit test: test_fuzz_email_sanitizer")
 add_executable(test_fuzz_pst_parser
     unit/test_fuzz_pst_parser.cpp
     ../src/core/pst_parser.cpp
-    ../src/core/logger.cpp
     ../include/sak/pst_parser.h
     fuzz/fuzz_harness.h
     support/pst_fixture.h
@@ -2466,6 +2359,7 @@ set_target_properties(test_fuzz_pst_parser PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_fuzz_pst_parser PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_fuzz_pst_parser PRIVATE
@@ -2483,7 +2377,6 @@ message(STATUS "Added unit test: test_fuzz_pst_parser")
 add_executable(test_fuzz_pst_structure
     unit/test_fuzz_pst_structure.cpp
     ../src/core/pst_parser.cpp
-    ../src/core/logger.cpp
     ../include/sak/pst_parser.h
     fuzz/fuzz_harness.h
     support/pst_fixture.h
@@ -2493,6 +2386,7 @@ set_target_properties(test_fuzz_pst_structure PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_fuzz_pst_structure PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_fuzz_pst_structure PRIVATE
@@ -2514,7 +2408,6 @@ add_executable(test_fuzz_decompressor
     ../src/core/gzip_decompressor.cpp
     ../src/core/bzip2_decompressor.cpp
     ../src/core/xz_decompressor.cpp
-    ../src/core/logger.cpp
     ../include/sak/streaming_decompressor.h
     ../include/sak/gzip_decompressor.h
     ../include/sak/bzip2_decompressor.h
@@ -2526,6 +2419,7 @@ set_target_properties(test_fuzz_decompressor PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_fuzz_decompressor PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
 )
 target_include_directories(test_fuzz_decompressor PRIVATE
@@ -2636,7 +2530,6 @@ message(STATUS "Added unit test: test_fuzz_mbox_transfer_decoder")
 add_executable(test_fuzz_iso_analyzer
     unit/test_fuzz_iso_analyzer.cpp
     ../src/core/iso_analyzer.cpp
-    ../src/core/logger.cpp
     ../include/sak/iso_analyzer.h
     fuzz/fuzz_harness.h
 )
@@ -2645,6 +2538,7 @@ set_target_properties(test_fuzz_iso_analyzer PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_fuzz_iso_analyzer PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_fuzz_iso_analyzer PRIVATE
@@ -2718,7 +2612,6 @@ message(STATUS "Added unit test: test_fuzz_fs_detector")
 add_executable(test_fuzz_install_script
     unit/test_fuzz_install_script.cpp
     ../src/core/install_script_parser.cpp
-    ../src/core/logger.cpp
     ../include/sak/install_script_parser.h
     fuzz/fuzz_harness.h
 )
@@ -2727,6 +2620,7 @@ set_target_properties(test_fuzz_install_script PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_fuzz_install_script PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_fuzz_install_script PRIVATE
@@ -2839,8 +2733,6 @@ add_executable(test_fuzz_backup_codec
     unit/test_fuzz_backup_codec.cpp
     ../src/core/backup_file_codec.cpp
     ../src/core/encryption.cpp
-    ../src/core/secure_memory.cpp
-    ../src/core/logger.cpp
     fuzz/fuzz_harness.h
 )
 set_target_properties(test_fuzz_backup_codec PROPERTIES
@@ -2848,6 +2740,7 @@ set_target_properties(test_fuzz_backup_codec PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_fuzz_backup_codec PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ZLIB::ZLIB ${PLATFORM_LIBS}
 )
 target_include_directories(test_fuzz_backup_codec PRIVATE
@@ -2870,7 +2763,6 @@ add_executable(test_fuzz_uup_manifest_guard
     unit/test_fuzz_uup_manifest_guard.cpp
     ../src/core/uup_dump_api.cpp
     ../include/sak/uup_dump_api.h
-    ../src/core/logger.cpp
     ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
     fuzz/fuzz_harness.h
 )
@@ -2879,6 +2771,7 @@ set_target_properties(test_fuzz_uup_manifest_guard PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_fuzz_uup_manifest_guard PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test Qt6::Network ${PLATFORM_LIBS}
 )
 target_include_directories(test_fuzz_uup_manifest_guard PRIVATE
@@ -2898,11 +2791,7 @@ message(STATUS "Added unit test: test_fuzz_uup_manifest_guard")
 add_executable(test_fuzz_smart_report
     unit/test_fuzz_smart_report.cpp
     ../src/core/smart_disk_analyzer.cpp
-    ../src/core/bundled_tools_manager.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/core/logger.cpp
     ../include/sak/smart_disk_analyzer.h
-    ../include/sak/bundled_tools_manager.h
     fuzz/fuzz_harness.h
 )
 set_target_properties(test_fuzz_smart_report PROPERTIES
@@ -2910,6 +2799,7 @@ set_target_properties(test_fuzz_smart_report PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_fuzz_smart_report PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_fuzz_smart_report PRIVATE
@@ -2930,13 +2820,10 @@ message(STATUS "Added unit test: test_fuzz_smart_report")
 add_executable(test_fuzz_ai_response
     unit/test_fuzz_ai_response.cpp
     ../src/ai/openai_responses_client.cpp
-    ../src/core/app_paths.cpp
     ../src/ai/ai_token_usage_tracker.cpp
     ../src/ai/ai_credential_store.cpp
     ../src/ai/ai_secret_redaction.cpp
     ../src/ai/ai_paths.cpp
-    ../src/core/secure_memory.cpp
-    ../src/core/logger.cpp
     ../include/sak/ai/openai_responses_client.h
     fuzz/fuzz_harness.h
 )
@@ -2945,6 +2832,7 @@ set_target_properties(test_fuzz_ai_response PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_fuzz_ai_response PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test Qt6::Network ${PLATFORM_LIBS}
 )
 target_include_directories(test_fuzz_ai_response PRIVATE
@@ -2965,7 +2853,6 @@ message(STATUS "Added unit test: test_fuzz_ai_response")
 add_executable(test_fuzz_mbox_container
     unit/test_fuzz_mbox_container.cpp
     ../src/core/mbox_parser.cpp
-    ../src/core/logger.cpp
     ../include/sak/mbox_parser.h
     fuzz/fuzz_harness.h
 )
@@ -2974,6 +2861,7 @@ set_target_properties(test_fuzz_mbox_container PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_fuzz_mbox_container PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Concurrent Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_fuzz_mbox_container PRIVATE
@@ -2986,8 +2874,6 @@ message(STATUS "Added unit test: test_fuzz_mbox_container")
 
 add_executable(test_ai_provider_gateway
     unit/test_ai_provider_gateway.cpp
-    ${SAK_WINDOWS_PROCESS_JOB_SOURCES}
-    ${SAK_CONTAINED_PROCESS_QUARANTINE_SOURCES}
     ../src/ai/ai_provider_gateway.cpp
     ../src/ai/ai_provider_gateway_authorization.cpp
     ../src/ai/ai_provider_registry.cpp
@@ -3006,6 +2892,7 @@ set_target_properties(test_ai_provider_gateway PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_ai_provider_gateway PRIVATE
+    sak_foundation
     Qt6::Core Qt6::CorePrivate Qt6::Network Qt6::Test
 )
 target_include_directories(test_ai_provider_gateway PRIVATE
@@ -3017,20 +2904,15 @@ add_test(NAME test_ai_provider_gateway COMMAND test_ai_provider_gateway
 message(STATUS "Added unit test: test_ai_provider_gateway")
 
 add_executable(test_ai_app_action_planner
-    ${SAK_ELEVATION_SOURCES}
     unit/test_ai_app_action_planner.cpp
     ../src/ai/ai_app_action_planner.cpp
     ../src/ai/ai_command_guard.cpp
     ../src/ai/ai_command_tool_planner.cpp
     ../src/ai/ai_execution_broker.cpp
-    # ai_execution_broker resolves interpreters through sak::systemPowerShellPath.
-    ${SAK_PROCESS_RUNNER_SOURCES}
     ../src/ai/ai_tool_policy.cpp
     ../src/ai/ai_credential_store.cpp
     ../src/ai/ai_secret_redaction.cpp
     ../src/ai/ai_paths.cpp
-    ../src/core/app_paths.cpp
-    ../src/core/secure_memory.cpp
     ../include/sak/ai/ai_app_action_planner.h
     ../include/sak/ai/ai_command_guard.h
     ../include/sak/ai/ai_command_tool_planner.h
@@ -3038,14 +2920,13 @@ add_executable(test_ai_app_action_planner
     ../include/sak/ai/ai_tool_policy.h
     ../include/sak/ai/ai_credential_store.h
     ../include/sak/ai/ai_paths.h
-    ../include/sak/app_paths.h
-    ../include/sak/secure_memory.h
 )
 set_target_properties(test_ai_app_action_planner PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_ai_app_action_planner PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_ai_app_action_planner PRIVATE
@@ -3275,9 +3156,6 @@ add_executable(test_ai_credential_store
     ../src/ai/ai_credential_store.cpp
     ../src/ai/ai_secret_redaction.cpp
     ../src/ai/ai_paths.cpp
-    ../src/core/app_paths.cpp
-    ../src/core/secure_memory.cpp
-    ../src/core/logger.cpp
     ../include/sak/ai/ai_credential_store.h
 )
 set_target_properties(test_ai_credential_store PROPERTIES
@@ -3285,6 +3163,7 @@ set_target_properties(test_ai_credential_store PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_ai_credential_store PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_ai_credential_store PRIVATE
@@ -3316,33 +3195,27 @@ add_test(NAME test_ai_command_guard COMMAND test_ai_command_guard
 message(STATUS "Added unit test: test_ai_command_guard")
 
 add_executable(test_ai_command_tool_planner
-    ${SAK_ELEVATION_SOURCES}
     unit/test_ai_command_tool_planner.cpp
     ../src/ai/ai_command_tool_planner.cpp
     ../src/ai/ai_command_guard.cpp
     ../src/ai/ai_execution_broker.cpp
-    # ai_execution_broker resolves interpreters through sak::systemPowerShellPath.
-    ${SAK_PROCESS_RUNNER_SOURCES}
     ../src/ai/ai_tool_policy.cpp
     ../src/ai/ai_credential_store.cpp
     ../src/ai/ai_secret_redaction.cpp
     ../src/ai/ai_paths.cpp
-    ../src/core/app_paths.cpp
-    ../src/core/secure_memory.cpp
     ../include/sak/ai/ai_command_tool_planner.h
     ../include/sak/ai/ai_command_guard.h
     ../include/sak/ai/ai_execution_broker.h
     ../include/sak/ai/ai_tool_policy.h
     ../include/sak/ai/ai_credential_store.h
     ../include/sak/ai/ai_paths.h
-    ../include/sak/app_paths.h
-    ../include/sak/secure_memory.h
 )
 set_target_properties(test_ai_command_tool_planner PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_ai_command_tool_planner PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_ai_command_tool_planner PRIVATE
@@ -3396,8 +3269,6 @@ message(STATUS "Added unit test: test_ai_mcp_http_client")
 
 add_executable(test_ai_mcp_stdio_session
     unit/test_ai_mcp_stdio_session.cpp
-    ${SAK_WINDOWS_PROCESS_JOB_SOURCES}
-    ${SAK_CONTAINED_PROCESS_QUARANTINE_SOURCES}
     support/ai_mcp_native_fixture.h
     ../src/ai/ai_mcp_stdio_session.cpp
     ../include/sak/ai/ai_mcp_stdio_session.h
@@ -3407,6 +3278,7 @@ set_target_properties(test_ai_mcp_stdio_session PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_ai_mcp_stdio_session PRIVATE
+    sak_foundation
     Qt6::Core Qt6::CorePrivate Qt6::Test
 )
 target_include_directories(test_ai_mcp_stdio_session PRIVATE
@@ -3421,8 +3293,6 @@ message(STATUS "Added unit test: test_ai_mcp_stdio_session")
 
 add_executable(test_ai_mcp_session_pool
     unit/test_ai_mcp_session_pool.cpp
-    ${SAK_WINDOWS_PROCESS_JOB_SOURCES}
-    ${SAK_CONTAINED_PROCESS_QUARANTINE_SOURCES}
     support/ai_mcp_native_fixture.h
     ../src/ai/ai_mcp_session_pool.cpp
     ../src/ai/ai_mcp_stdio_session.cpp
@@ -3434,6 +3304,7 @@ set_target_properties(test_ai_mcp_session_pool PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_ai_mcp_session_pool PRIVATE
+    sak_foundation
     Qt6::Core Qt6::CorePrivate Qt6::Test
 )
 target_include_directories(test_ai_mcp_session_pool PRIVATE
@@ -3472,23 +3343,20 @@ add_executable(test_app_action_service
     ../src/core/app_action_registry.cpp
     ../src/core/quick_action.cpp
     ../src/core/quick_action_controller.cpp
-    ../src/core/app_paths.cpp
     ../src/core/elevation_broker.cpp
-    ../src/core/elevation_manager.cpp
-    ../src/core/logger.cpp
     ../src/core/quick_action_result_io.cpp
     ../include/sak/app_action_service.h
     ../include/sak/app_action_registry.h
     ../include/sak/quick_action.h
     ../include/sak/quick_action_controller.h
     ../include/sak/elevation_broker.h
-    ../include/sak/elevation_manager.h
 )
 set_target_properties(test_app_action_service PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_app_action_service PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Gui Qt6::Test advapi32 shell32
 )
 target_include_directories(test_app_action_service PRIVATE
@@ -3501,7 +3369,6 @@ message(STATUS "Added unit test: test_app_action_service")
 
 add_executable(test_ai_conversation_store
     unit/test_ai_conversation_store.cpp
-    ../src/core/app_paths.cpp
     ../src/ai/ai_conversation_store.cpp
     ../src/ai/ai_credential_store.cpp
     ../src/ai/ai_secret_redaction.cpp
@@ -3510,7 +3377,6 @@ add_executable(test_ai_conversation_store
     ../src/ai/ai_token_usage_tracker.cpp
     ../include/sak/ai/ai_conversation_store.h
     ../include/sak/ai/ai_store_file_loader.h
-    ../include/sak/app_paths.h
     ../include/sak/ai/ai_paths.h
     ../include/sak/ai/ai_token_usage_tracker.h
 )
@@ -3519,6 +3385,7 @@ set_target_properties(test_ai_conversation_store PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_ai_conversation_store PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test Crypt32
 )
 target_include_directories(test_ai_conversation_store PRIVATE
@@ -3551,26 +3418,21 @@ add_test(NAME test_ai_chat_title COMMAND test_ai_chat_title
 message(STATUS "Added unit test: test_ai_chat_title")
 
 add_executable(test_ai_execution_broker
-    ${SAK_ELEVATION_SOURCES}
     unit/test_ai_execution_broker.cpp
-    ../src/core/app_paths.cpp
     ../src/ai/ai_execution_broker.cpp
     ../src/ai/ai_credential_store.cpp
     ../src/ai/ai_secret_redaction.cpp
     ../src/ai/ai_paths.cpp
-    ../src/core/secure_memory.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
     ../include/sak/ai/ai_execution_broker.h
-    ../include/sak/app_paths.h
     ../include/sak/ai/ai_credential_store.h
     ../include/sak/ai/ai_paths.h
-    ../include/sak/secure_memory.h
 )
 set_target_properties(test_ai_execution_broker PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_ai_execution_broker PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_ai_execution_broker PRIVATE
@@ -3713,21 +3575,17 @@ add_executable(test_ai_trace_store
     ../src/ai/ai_secret_redaction.cpp
     ../src/ai/ai_paths.cpp
     ../src/ai/ai_token_usage_tracker.cpp
-    ../src/core/app_paths.cpp
-    ../src/core/logger.cpp
-    ../src/core/secure_memory.cpp
     ../include/sak/ai/ai_trace_store.h
     ../include/sak/ai/ai_credential_store.h
     ../include/sak/ai/ai_paths.h
     ../include/sak/ai/ai_token_usage_tracker.h
-    ../include/sak/app_paths.h
-    ../include/sak/secure_memory.h
 )
 set_target_properties(test_ai_trace_store PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_ai_trace_store PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_ai_trace_store PRIVATE
@@ -3764,7 +3622,6 @@ add_executable(test_ai_skill_store
     ../src/ai/ai_skill_store.cpp
     ../src/ai/ai_store_file_loader.cpp
     ../src/ai/ai_paths.cpp
-    ../src/core/app_paths.cpp
     ../include/sak/ai/ai_skill.h
     ../include/sak/ai/ai_skill_store.h
     ../include/sak/ai/ai_store_file_loader.h
@@ -3776,6 +3633,7 @@ set_target_properties(test_ai_skill_store PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_ai_skill_store PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test
 )
 target_include_directories(test_ai_skill_store PRIVATE
@@ -3807,7 +3665,6 @@ add_test(NAME test_ai_lease_manager COMMAND test_ai_lease_manager
 message(STATUS "Added unit test: test_ai_lease_manager")
 
 add_executable(test_ai_subagent_tool_executor
-    ${SAK_ELEVATION_SOURCES}
     unit/test_ai_subagent_tool_executor.cpp
     ../src/ai/ai_subagent_tool_executor.cpp
     ../src/ai/ai_cancellation_token.cpp
@@ -3819,6 +3676,7 @@ set_target_properties(test_ai_subagent_tool_executor PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_ai_subagent_tool_executor PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test
 )
 target_include_directories(test_ai_subagent_tool_executor PRIVATE
@@ -3891,33 +3749,27 @@ add_test(NAME test_ai_offline_downloader_tool_runner
 message(STATUS "Added unit test: test_ai_offline_downloader_tool_runner")
 
 add_executable(test_ai_workflow_powershell_tool_runner
-    ${SAK_ELEVATION_SOURCES}
     unit/test_ai_workflow_powershell_tool_runner.cpp
     ../src/ai/ai_workflow_powershell_tool_runner.cpp
     ../src/ai/ai_workflow_placeholders.cpp
     ../src/ai/ai_command_guard.cpp
     ../src/ai/ai_execution_broker.cpp
-    # ai_execution_broker resolves interpreters through sak::systemPowerShellPath.
-    ${SAK_PROCESS_RUNNER_SOURCES}
     ../src/ai/ai_credential_store.cpp
     ../src/ai/ai_secret_redaction.cpp
     ../src/ai/ai_paths.cpp
-    ../src/core/app_paths.cpp
-    ../src/core/secure_memory.cpp
     ../include/sak/ai/ai_workflow_powershell_tool_runner.h
     ../include/sak/ai/ai_workflow_placeholders.h
     ../include/sak/ai/ai_command_guard.h
     ../include/sak/ai/ai_execution_broker.h
     ../include/sak/ai/ai_credential_store.h
     ../include/sak/ai/ai_paths.h
-    ../include/sak/app_paths.h
-    ../include/sak/secure_memory.h
 )
 set_target_properties(test_ai_workflow_powershell_tool_runner PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_ai_workflow_powershell_tool_runner PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_ai_workflow_powershell_tool_runner PRIVATE
@@ -3939,15 +3791,13 @@ add_executable(test_ai_tool_dispatcher
     ../include/sak/ai/ai_tool_dispatcher.h
     ../include/sak/ai/ai_tool_health_ledger.h
     ../include/sak/ai/ai_tool_policy.h
-    # Pulled in by the health ledger, which now surfaces its own failures.
-    ../src/core/logger.cpp
-    ../include/sak/logger.h
 )
 set_target_properties(test_ai_tool_dispatcher PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_ai_tool_dispatcher PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test
 )
 target_include_directories(test_ai_tool_dispatcher PRIVATE
@@ -3987,19 +3837,18 @@ add_executable(test_ai_tool_result_recorder
     ../src/ai/ai_store_file_loader.cpp
     ../src/ai/ai_paths.cpp
     ../src/ai/ai_tool_result_recorder.cpp
-    ../src/core/app_paths.cpp
     ../include/sak/ai/ai_conversation_store.h
     ../include/sak/ai/ai_credential_store.h
     ../include/sak/ai/ai_paths.h
     ../include/sak/ai/ai_store_file_loader.h
     ../include/sak/ai/ai_tool_result_recorder.h
-    ../include/sak/app_paths.h
 )
 set_target_properties(test_ai_tool_result_recorder PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_ai_tool_result_recorder PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test crypt32
 )
 target_include_directories(test_ai_tool_result_recorder PRIVATE
@@ -4136,7 +3985,6 @@ message(STATUS "Added unit test: test_ai_orchestrator")
 
 add_executable(test_ai_workflow_store
     unit/test_ai_workflow_store.cpp
-    ../src/core/app_paths.cpp
     ../src/ai/ai_paths.cpp
     ../src/ai/ai_store_file_loader.cpp
     ../src/ai/ai_workflow_store.cpp
@@ -4144,7 +3992,6 @@ add_executable(test_ai_workflow_store
     ../src/ai/ai_workflow_placeholders.cpp
     ../include/sak/ai/ai_paths.h
     ../include/sak/ai/ai_store_file_loader.h
-    ../include/sak/app_paths.h
     ../include/sak/ai/ai_workflow_store.h
     ../include/sak/ai/ai_workflow_template.h
     ../resources/ai.qrc
@@ -4155,6 +4002,7 @@ set_target_properties(test_ai_workflow_store PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_ai_workflow_store PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test
 )
 target_include_directories(test_ai_workflow_store PRIVATE
@@ -4168,17 +4016,14 @@ message(STATUS "Added unit test: test_ai_workflow_store")
 add_executable(test_smart_disk_analyzer
     unit/test_smart_disk_analyzer.cpp
     ../src/core/smart_disk_analyzer.cpp
-    ../src/core/bundled_tools_manager.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/core/logger.cpp
     ../include/sak/smart_disk_analyzer.h
-    ../include/sak/bundled_tools_manager.h
 )
 set_target_properties(test_smart_disk_analyzer PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_smart_disk_analyzer PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_smart_disk_analyzer PRIVATE
@@ -4194,10 +4039,7 @@ add_executable(test_package_matcher
     unit/test_package_matcher.cpp
     ../src/core/package_matcher.cpp
     ../src/core/app_scanner.cpp
-    ../src/core/bundled_tools_manager.cpp
     ../src/core/chocolatey_manager.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/core/logger.cpp
     ../include/sak/package_matcher.h
     ../include/sak/chocolatey_manager.h
 )
@@ -4206,6 +4048,7 @@ set_target_properties(test_package_matcher PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_package_matcher PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test Qt6::Concurrent ${PLATFORM_LIBS}
 )
 target_include_directories(test_package_matcher PRIVATE
@@ -4222,7 +4065,6 @@ message(STATUS "Added unit test: test_package_matcher")
 add_executable(test_drive_scanner
     unit/test_drive_scanner.cpp
     ../src/core/drive_scanner.cpp
-    ../src/core/logger.cpp
     ../include/sak/drive_scanner.h
 )
 set_target_properties(test_drive_scanner PROPERTIES
@@ -4230,6 +4072,7 @@ set_target_properties(test_drive_scanner PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_drive_scanner PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Concurrent Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_drive_scanner PRIVATE
@@ -4244,14 +4087,13 @@ message(STATUS "Added unit test: test_drive_scanner")
 add_executable(test_permission_manager
     unit/test_permission_manager.cpp
     ../src/core/permission_manager.cpp
-    ../src/core/elevation_manager.cpp
-    ../src/core/logger.cpp
 )
 set_target_properties(test_permission_manager PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_permission_manager PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_permission_manager PRIVATE
@@ -4265,14 +4107,13 @@ message(STATUS "Added unit test: test_permission_manager")
 # test_elevation_manager - isElevated, canElevate, error messages
 add_executable(test_elevation_manager
     unit/test_elevation_manager.cpp
-    ../src/core/elevation_manager.cpp
-    ../src/core/logger.cpp
 )
 set_target_properties(test_elevation_manager PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_elevation_manager PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_elevation_manager PRIVATE
@@ -4326,14 +4167,13 @@ add_executable(test_elevated_task_dispatcher
     unit/test_elevated_task_dispatcher.cpp
     ../src/core/elevated_task_dispatcher.cpp
     ../include/sak/elevated_task_dispatcher.h
-    ../src/core/logger.cpp
-    ../include/sak/logger.h
 )
 set_target_properties(test_elevated_task_dispatcher PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_elevated_task_dispatcher PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_elevated_task_dispatcher PRIVATE
@@ -4350,26 +4190,20 @@ add_executable(test_mixed_tier_operations
     unit/test_mixed_tier_operations.cpp
     ../src/core/elevated_task_dispatcher.cpp
     ../src/core/permission_manager.cpp
-    ../src/core/elevation_manager.cpp
     ../src/core/user_profile_backup_worker.cpp
-    ../src/core/user_profile_types.cpp
     ../src/core/smart_file_filter.cpp
-    ../src/core/path_utils.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/core/logger.cpp
     ../src/core/backup_file_codec.cpp
     ../src/core/encryption.cpp
-    ../src/core/secure_memory.cpp
     ../include/sak/elevated_task_dispatcher.h
     ../include/sak/permission_manager.h
     ../include/sak/user_profile_backup_worker.h
-    ../include/sak/user_profile_types.h
 )
 set_target_properties(test_mixed_tier_operations PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_mixed_tier_operations PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Concurrent Qt6::Test ZLIB::ZLIB ${PLATFORM_LIBS}
 )
 target_include_directories(test_mixed_tier_operations PRIVATE
@@ -4383,9 +4217,6 @@ message(STATUS "Added unit test: test_mixed_tier_operations")
 # test_elevation_ux - Phase 4 shield icon extraction, elevation banner, style tokens
 add_executable(test_elevation_ux
     unit/test_elevation_ux.cpp
-    ../src/core/elevation_manager.cpp
-    ../src/core/logger.cpp
-    ../include/sak/elevation_manager.h
     ../include/sak/shield_icon.h
     ../include/sak/elevation_banner.h
     ../resources/icons.qrc
@@ -4396,6 +4227,7 @@ set_target_properties(test_elevation_ux PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_elevation_ux PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Widgets Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_elevation_ux PRIVATE
@@ -4409,9 +4241,7 @@ message(STATUS "Added unit test: test_elevation_ux")
 # test_elevation_hardening - Phase 5 legacy removal, tier coverage, gate, allowlist, IPC
 add_executable(test_elevation_hardening
     unit/test_elevation_hardening.cpp
-    ../src/core/elevation_manager.cpp
     ../src/core/elevated_task_dispatcher.cpp
-    ../src/core/logger.cpp
     ../include/sak/elevation_tier.h
     ../include/sak/elevation_gate.h
     ../include/sak/elevated_pipe_protocol.h
@@ -4422,6 +4252,7 @@ set_target_properties(test_elevation_hardening PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_elevation_hardening PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Widgets Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_elevation_hardening PRIVATE
@@ -4442,7 +4273,6 @@ add_executable(test_streaming_decompressor
     ../src/core/gzip_decompressor.cpp
     ../src/core/bzip2_decompressor.cpp
     ../src/core/xz_decompressor.cpp
-    ../src/core/logger.cpp
     ../include/sak/streaming_decompressor.h
     ../include/sak/gzip_decompressor.h
     ../include/sak/bzip2_decompressor.h
@@ -4453,6 +4283,7 @@ set_target_properties(test_streaming_decompressor PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_streaming_decompressor PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
 )
 target_include_directories(test_streaming_decompressor PRIVATE
@@ -4466,13 +4297,13 @@ message(STATUS "Added unit test: test_streaming_decompressor")
 # test_logger - initialization, level filtering, file output, thread safety
 add_executable(test_logger
     unit/test_logger.cpp
-    ../src/core/logger.cpp
 )
 set_target_properties(test_logger PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_logger PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_logger PRIVATE
@@ -4492,13 +4323,13 @@ add_executable(test_install_script_parser
     unit/test_install_script_parser.cpp
     ../src/core/install_script_parser.cpp
     ../include/sak/install_script_parser.h
-    ../src/core/logger.cpp
 )
 set_target_properties(test_install_script_parser PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_install_script_parser PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_install_script_parser PRIVATE
@@ -4516,13 +4347,13 @@ add_executable(test_script_rewriter
     ../src/core/install_script_parser.cpp
     ../include/sak/script_rewriter.h
     ../include/sak/install_script_parser.h
-    ../src/core/logger.cpp
 )
 set_target_properties(test_script_rewriter PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_script_rewriter PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_script_rewriter PRIVATE
@@ -4538,13 +4369,13 @@ add_executable(test_package_list_manager
     unit/test_package_list_manager.cpp
     ../src/core/package_list_manager.cpp
     ../include/sak/package_list_manager.h
-    ../src/core/logger.cpp
 )
 set_target_properties(test_package_list_manager PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_package_list_manager PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_package_list_manager PRIVATE
@@ -4559,9 +4390,7 @@ message(STATUS "Added unit test: test_package_list_manager")
 add_executable(test_vulnerability_scanner
     unit/test_vulnerability_scanner.cpp
     ../src/core/vulnerability_scanner.cpp
-    ../src/core/app_paths.cpp
     ../include/sak/vulnerability_scanner.h
-    ../include/sak/app_paths.h
     ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
 )
 set_target_properties(test_vulnerability_scanner PROPERTIES
@@ -4569,6 +4398,7 @@ set_target_properties(test_vulnerability_scanner PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_vulnerability_scanner PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Gui Qt6::Test Qt6::Network ${PLATFORM_LIBS}
 )
 target_include_directories(test_vulnerability_scanner PRIVATE
@@ -4630,14 +4460,13 @@ add_executable(test_offline_package_search
     ../include/sak/chocolatey_manager.h
     ../src/core/package_list_manager.cpp
     ../include/sak/package_list_manager.h
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/core/logger.cpp
 )
 set_target_properties(test_offline_package_search PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_offline_package_search PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test Qt6::Network Qt6::Xml Qt6::Widgets ${PLATFORM_LIBS}
 )
 target_include_directories(test_offline_package_search PRIVATE
@@ -4693,18 +4522,8 @@ add_executable(test_action_factory
     ../include/sak/quick_action.h
 
     # Dependencies used by actions
-    ../src/core/process_runner.cpp
-    ../include/sak/process_runner.h
-    ../src/core/logger.cpp
-    ../include/sak/logger.h
-    ../src/core/bundled_tools_manager.cpp
-    ../include/sak/bundled_tools_manager.h
-    ../src/core/path_utils.cpp
-    ../include/sak/path_utils.h
     ../src/core/windows_user_scanner.cpp
     ../include/sak/windows_user_scanner.h
-    ../src/core/user_profile_types.cpp
-    ../include/sak/user_profile_types.h
     ../src/core/chocolatey_manager.cpp
     ../include/sak/chocolatey_manager.h
 
@@ -4737,6 +4556,7 @@ set_target_properties(test_action_factory PROPERTIES
 )
 
 target_link_libraries(test_action_factory PRIVATE
+    sak_foundation
     Qt6::Core
     Qt6::Test
     Qt6::Widgets
@@ -4764,18 +4584,8 @@ add_executable(test_backup_bitlocker_keys_action
     ../include/sak/quick_action.h
 
     # Dependencies used by the action
-    ../src/core/process_runner.cpp
-    ../include/sak/process_runner.h
-    ../src/core/logger.cpp
-    ../include/sak/logger.h
-    ../src/core/bundled_tools_manager.cpp
-    ../include/sak/bundled_tools_manager.h
-    ../src/core/path_utils.cpp
-    ../include/sak/path_utils.h
     ../src/core/windows_user_scanner.cpp
     ../include/sak/windows_user_scanner.h
-    ../src/core/user_profile_types.cpp
-    ../include/sak/user_profile_types.h
     ../src/core/chocolatey_manager.cpp
     ../include/sak/chocolatey_manager.h
 
@@ -4790,6 +4600,7 @@ set_target_properties(test_backup_bitlocker_keys_action PROPERTIES
 )
 
 target_link_libraries(test_backup_bitlocker_keys_action PRIVATE
+    sak_foundation
     Qt6::Core
     Qt6::Test
     Qt6::Widgets
@@ -4817,18 +4628,8 @@ add_executable(test_verify_system_files_action
     ../include/sak/quick_action.h
 
     # Dependencies used by the action
-    ../src/core/process_runner.cpp
-    ../include/sak/process_runner.h
-    ../src/core/logger.cpp
-    ../include/sak/logger.h
-    ../src/core/bundled_tools_manager.cpp
-    ../include/sak/bundled_tools_manager.h
-    ../src/core/path_utils.cpp
-    ../include/sak/path_utils.h
     ../src/core/windows_user_scanner.cpp
     ../include/sak/windows_user_scanner.h
-    ../src/core/user_profile_types.cpp
-    ../include/sak/user_profile_types.h
     ../src/core/chocolatey_manager.cpp
     ../include/sak/chocolatey_manager.h
 
@@ -4843,6 +4644,7 @@ set_target_properties(test_verify_system_files_action PROPERTIES
 )
 
 target_link_libraries(test_verify_system_files_action PRIVATE
+    sak_foundation
     Qt6::Core
     Qt6::Test
     Qt6::Widgets
@@ -4870,18 +4672,8 @@ add_executable(test_check_disk_errors_action
     ../include/sak/quick_action.h
 
     # Dependencies used by the action
-    ../src/core/process_runner.cpp
-    ../include/sak/process_runner.h
-    ../src/core/logger.cpp
-    ../include/sak/logger.h
-    ../src/core/bundled_tools_manager.cpp
-    ../include/sak/bundled_tools_manager.h
-    ../src/core/path_utils.cpp
-    ../include/sak/path_utils.h
     ../src/core/windows_user_scanner.cpp
     ../include/sak/windows_user_scanner.h
-    ../src/core/user_profile_types.cpp
-    ../include/sak/user_profile_types.h
     ../src/core/chocolatey_manager.cpp
     ../include/sak/chocolatey_manager.h
 
@@ -4896,6 +4688,7 @@ set_target_properties(test_check_disk_errors_action PROPERTIES
 )
 
 target_link_libraries(test_check_disk_errors_action PRIVATE
+    sak_foundation
     Qt6::Core
     Qt6::Test
     Qt6::Widgets
@@ -4923,18 +4716,8 @@ add_executable(test_reset_network_action
     ../include/sak/quick_action.h
 
     # Dependencies used by the action
-    ../src/core/process_runner.cpp
-    ../include/sak/process_runner.h
-    ../src/core/logger.cpp
-    ../include/sak/logger.h
-    ../src/core/bundled_tools_manager.cpp
-    ../include/sak/bundled_tools_manager.h
-    ../src/core/path_utils.cpp
-    ../include/sak/path_utils.h
     ../src/core/windows_user_scanner.cpp
     ../include/sak/windows_user_scanner.h
-    ../src/core/user_profile_types.cpp
-    ../include/sak/user_profile_types.h
     ../src/core/chocolatey_manager.cpp
     ../include/sak/chocolatey_manager.h
 
@@ -4949,6 +4732,7 @@ set_target_properties(test_reset_network_action PROPERTIES
 )
 
 target_link_libraries(test_reset_network_action PRIVATE
+    sak_foundation
     Qt6::Core
     Qt6::Test
     Qt6::Widgets
@@ -4976,18 +4760,8 @@ add_executable(test_generate_system_report_action
     ../include/sak/quick_action.h
 
     # Dependencies used by the action
-    ../src/core/process_runner.cpp
-    ../include/sak/process_runner.h
-    ../src/core/logger.cpp
-    ../include/sak/logger.h
-    ../src/core/bundled_tools_manager.cpp
-    ../include/sak/bundled_tools_manager.h
-    ../src/core/path_utils.cpp
-    ../include/sak/path_utils.h
     ../src/core/windows_user_scanner.cpp
     ../include/sak/windows_user_scanner.h
-    ../src/core/user_profile_types.cpp
-    ../include/sak/user_profile_types.h
     ../src/core/chocolatey_manager.cpp
     ../include/sak/chocolatey_manager.h
 
@@ -5002,6 +4776,7 @@ set_target_properties(test_generate_system_report_action PROPERTIES
 )
 
 target_link_libraries(test_generate_system_report_action PRIVATE
+    sak_foundation
     Qt6::Core
     Qt6::Test
     Qt6::Widgets
@@ -5026,18 +4801,8 @@ add_executable(test_screenshot_settings_action
 
     ../src/core/quick_action.cpp
     ../include/sak/quick_action.h
-    ../src/core/process_runner.cpp
-    ../include/sak/process_runner.h
-    ../src/core/logger.cpp
-    ../include/sak/logger.h
-    ../src/core/bundled_tools_manager.cpp
-    ../include/sak/bundled_tools_manager.h
-    ../src/core/path_utils.cpp
-    ../include/sak/path_utils.h
     ../src/core/windows_user_scanner.cpp
     ../include/sak/windows_user_scanner.h
-    ../src/core/user_profile_types.cpp
-    ../include/sak/user_profile_types.h
     ../src/core/chocolatey_manager.cpp
     ../include/sak/chocolatey_manager.h
 
@@ -5051,6 +4816,7 @@ set_target_properties(test_screenshot_settings_action PROPERTIES
 )
 
 target_link_libraries(test_screenshot_settings_action PRIVATE
+    sak_foundation
     Qt6::Core
     Qt6::Gui
     Qt6::Test
@@ -5076,18 +4842,8 @@ add_executable(test_optimize_power_settings_action
 
     ../src/core/quick_action.cpp
     ../include/sak/quick_action.h
-    ../src/core/process_runner.cpp
-    ../include/sak/process_runner.h
-    ../src/core/logger.cpp
-    ../include/sak/logger.h
-    ../src/core/bundled_tools_manager.cpp
-    ../include/sak/bundled_tools_manager.h
-    ../src/core/path_utils.cpp
-    ../include/sak/path_utils.h
     ../src/core/windows_user_scanner.cpp
     ../include/sak/windows_user_scanner.h
-    ../src/core/user_profile_types.cpp
-    ../include/sak/user_profile_types.h
     ../src/core/chocolatey_manager.cpp
     ../include/sak/chocolatey_manager.h
 
@@ -5101,6 +4857,7 @@ set_target_properties(test_optimize_power_settings_action PROPERTIES
 )
 
 target_link_libraries(test_optimize_power_settings_action PRIVATE
+    sak_foundation
     Qt6::Core
     Qt6::Test
     Qt6::Widgets
@@ -5189,7 +4946,6 @@ add_executable(test_image_flasher_panel
     ../src/gui/info_button.cpp
     ../src/core/flash_coordinator.cpp
     ../src/threading/flash_worker.cpp
-    ../src/threading/worker_base.cpp
     ../src/core/image_source.cpp
     ../src/core/drive_unmounter.cpp
     ../src/core/drive_scanner.cpp
@@ -5201,7 +4957,6 @@ add_executable(test_image_flasher_panel
     ../src/core/keep_awake.cpp
     ../src/core/iso_analyzer.cpp
     ../src/core/config_manager.cpp
-    ../src/core/app_paths.cpp
     ../src/core/windows_iso_downloader.cpp
     ../src/core/linux_iso_downloader.cpp
     ../src/core/linux_distro_catalog.cpp
@@ -5209,12 +4964,8 @@ add_executable(test_image_flasher_panel
     ../src/core/uup_dump_api.cpp
     ../src/core/windows_usb_creator.cpp
     ../src/core/windows_usb_creator_extract.cpp
-    ../src/core/bundled_tools_manager.cpp
-    ../src/core/elevation_manager.cpp
     ../src/core/input_validator.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
     ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
-    ../src/core/logger.cpp
     # Listed so AUTOMOC generates the meta-objects for these Q_OBJECT classes.
     ../include/sak/image_flasher_panel.h
     ../include/sak/image_flasher_settings_dialog.h
@@ -5225,7 +4976,6 @@ add_executable(test_image_flasher_panel
     ../include/sak/info_button.h
     ../include/sak/flash_coordinator.h
     ../include/sak/flash_worker.h
-    ../include/sak/worker_base.h
     ../include/sak/image_source.h
     ../include/sak/drive_unmounter.h
     ../include/sak/drive_scanner.h
@@ -5235,14 +4985,12 @@ add_executable(test_image_flasher_panel
     ../include/sak/xz_decompressor.h
     ../include/sak/uup_dump_api.h
     ../include/sak/linux_distro_catalog.h
-    ../include/sak/bundled_tools_manager.h
     ../include/sak/iso_analyzer.h
     ../include/sak/config_manager.h
     ../include/sak/windows_iso_downloader.h
     ../include/sak/linux_iso_downloader.h
     ../include/sak/uup_iso_builder.h
     ../include/sak/windows_usb_creator.h
-    ../include/sak/elevation_manager.h
 )
 set_target_properties(test_image_flasher_panel PROPERTIES
     AUTOMOC ON
@@ -5250,6 +4998,7 @@ set_target_properties(test_image_flasher_panel PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_image_flasher_panel PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Test
     ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
 )
@@ -5289,13 +5038,13 @@ add_executable(test_quick_action
     unit/test_quick_action.cpp
     ../src/core/quick_action.cpp
     ../include/sak/quick_action.h
-    ../src/core/logger.cpp
 )
 set_target_properties(test_quick_action PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_quick_action PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_quick_action PRIVATE
@@ -5309,14 +5058,13 @@ message(STATUS "Added unit test: test_quick_action")
 # test_user_profile_types - Serialization round-trips (TST-05)
 add_executable(test_user_profile_types
     unit/test_user_profile_types.cpp
-    ../src/core/user_profile_types.cpp
-    ../src/core/logger.cpp
 )
 set_target_properties(test_user_profile_types PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_user_profile_types PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_user_profile_types PRIVATE
@@ -5333,20 +5081,16 @@ add_executable(test_user_data_manager
     ../src/core/user_data_manager.cpp
     ../src/core/cleanup_worker.cpp
     ../include/sak/cleanup_worker.h
-    ../src/threading/worker_base.cpp
-    ../include/sak/worker_base.h
     ../src/core/recycle_bin.cpp
     ../include/sak/user_data_manager.h
     ../src/core/encryption.cpp
-    ../src/core/secure_memory.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/core/logger.cpp
 )
 set_target_properties(test_user_data_manager PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_user_data_manager PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_user_data_manager PRIVATE
@@ -5381,17 +5125,13 @@ add_executable(test_duplicate_finder_worker
     ../include/sak/partition_raw_device_io.h
     ../include/sak/partition_file_system_detector.h
     ../include/sak/partition_file_system_registry.h
-    ../src/threading/worker_base.cpp
-    ../include/sak/worker_base.h
-    ../src/core/file_hash.cpp
-    ../include/sak/file_hash.h
-    ../src/core/logger.cpp
 )
 set_target_properties(test_duplicate_finder_worker PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_duplicate_finder_worker PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test Qt6::Concurrent ZLIB::ZLIB sak_lzfse ${PLATFORM_LIBS}
 )
 target_include_directories(test_duplicate_finder_worker PRIVATE
@@ -5407,9 +5147,6 @@ add_executable(test_organizer_worker
     unit/test_organizer_worker.cpp
     ../src/threading/organizer_worker.cpp
     ../include/sak/organizer_worker.h
-    ../src/threading/worker_base.cpp
-    ../include/sak/worker_base.h
-    ../src/core/logger.cpp
     ../src/core/input_validator.cpp
 )
 set_target_properties(test_organizer_worker PROPERTIES
@@ -5417,6 +5154,7 @@ set_target_properties(test_organizer_worker PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_organizer_worker PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test Qt6::Concurrent ${PLATFORM_LIBS}
 )
 target_include_directories(test_organizer_worker PRIVATE
@@ -5440,17 +5178,15 @@ add_executable(test_app_installation_worker
     ../include/sak/migration_report.h
     ../src/core/app_scanner.cpp
     ../include/sak/app_scanner.h
-    ../src/core/bundled_tools_manager.cpp
     ../src/core/package_matcher.cpp
     ../include/sak/package_matcher.h
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/core/logger.cpp
 )
 set_target_properties(test_app_installation_worker PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_app_installation_worker PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test Qt6::Concurrent Qt6::Network ${PLATFORM_LIBS}
 )
 target_include_directories(test_app_installation_worker PRIVATE
@@ -5489,31 +5225,22 @@ add_executable(test_user_profile_restore_worker
     unit/test_user_profile_restore_worker.cpp
     ../src/core/user_profile_restore_worker.cpp
     ../include/sak/user_profile_restore_worker.h
-    ../src/core/user_profile_types.cpp
-    ../include/sak/user_profile_types.h
     ../src/core/smart_file_filter.cpp
     ../include/sak/smart_file_filter.h
     ../src/core/permission_manager.cpp
     ../include/sak/permission_manager.h
-    ../src/core/elevation_manager.cpp
-    ../include/sak/elevation_manager.h
     ../src/core/windows_user_scanner.cpp
     ../include/sak/windows_user_scanner.h
-    ../src/core/path_utils.cpp
-    ../include/sak/path_utils.h
-    ../src/core/process_runner.cpp
-    ../include/sak/process_runner.h
-    ../src/core/logger.cpp
     ../src/core/backup_file_codec.cpp
     ../include/sak/backup_file_codec.h
     ../src/core/encryption.cpp
-    ../src/core/secure_memory.cpp
 )
 set_target_properties(test_user_profile_restore_worker PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_user_profile_restore_worker PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ZLIB::ZLIB ${PLATFORM_LIBS}
 )
 target_include_directories(test_user_profile_restore_worker PRIVATE
@@ -5530,14 +5257,13 @@ add_executable(test_windows_usb_creator
     ../src/core/windows_usb_creator.cpp
     ../src/core/windows_usb_creator_extract.cpp
     ../include/sak/windows_usb_creator.h
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/core/logger.cpp
 )
 set_target_properties(test_windows_usb_creator PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_windows_usb_creator PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_windows_usb_creator PRIVATE
@@ -5554,7 +5280,6 @@ add_executable(test_flash_worker
     ../src/threading/flash_worker.cpp
     ../src/core/drive_scanner.cpp
     ../include/sak/drive_scanner.h
-    ../src/threading/worker_base.cpp
     ../src/core/image_source.cpp
     ../src/core/streaming_decompressor.cpp
     ../src/core/decompressor_factory.cpp
@@ -5562,9 +5287,7 @@ add_executable(test_flash_worker
     ../src/core/bzip2_decompressor.cpp
     ../src/core/xz_decompressor.cpp
     ../src/core/keep_awake.cpp
-    ../src/core/logger.cpp
     ../include/sak/flash_worker.h
-    ../include/sak/worker_base.h
     ../include/sak/image_source.h
     ../include/sak/streaming_decompressor.h
     ../include/sak/decompressor_factory.h
@@ -5578,6 +5301,7 @@ set_target_properties(test_flash_worker PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_flash_worker PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Concurrent Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
 )
 target_compile_definitions(test_flash_worker PRIVATE
@@ -5602,13 +5326,13 @@ add_executable(test_quick_action_result_io
     ../include/sak/quick_action_result_io.h
     ../src/core/quick_action.cpp
     ../include/sak/quick_action.h
-    ../src/core/logger.cpp
 )
 set_target_properties(test_quick_action_result_io PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_quick_action_result_io PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_quick_action_result_io PRIVATE
@@ -5624,13 +5348,13 @@ add_executable(test_keep_awake
     unit/test_keep_awake.cpp
     ../src/core/keep_awake.cpp
     ../include/sak/keep_awake.h
-    ../src/core/logger.cpp
 )
 set_target_properties(test_keep_awake PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_keep_awake PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_keep_awake PRIVATE
@@ -5644,30 +5368,25 @@ message(STATUS "Added unit test: test_keep_awake")
 # test_quick_action_controller - registration, lookup, category filtering
 add_executable(test_quick_action_controller
     unit/test_quick_action_controller.cpp
-    ../src/core/app_paths.cpp
     ../src/core/quick_action_controller.cpp
-    ../include/sak/app_paths.h
     ../include/sak/quick_action_controller.h
     ../src/core/quick_action.cpp
     ../include/sak/quick_action.h
     ../src/core/quick_action_result_io.cpp
     ../include/sak/quick_action_result_io.h
-    ../src/core/elevation_manager.cpp
-    ../include/sak/elevation_manager.h
     ../src/core/elevation_broker.cpp
     ../include/sak/elevation_broker.h
     ../src/core/elevated_pipe_server.cpp
     ../include/sak/elevated_pipe_server.h
     ../src/core/elevated_task_dispatcher.cpp
     ../include/sak/elevated_task_dispatcher.h
-    ../src/core/logger.cpp
-    ../include/sak/logger.h
 )
 set_target_properties(test_quick_action_controller PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_quick_action_controller PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_quick_action_controller PRIVATE
@@ -5685,19 +5404,17 @@ add_executable(test_migration_report
     ../include/sak/migration_report.h
     ../src/core/app_scanner.cpp
     ../include/sak/app_scanner.h
-    ../src/core/bundled_tools_manager.cpp
     ../src/core/package_matcher.cpp
     ../include/sak/package_matcher.h
     ../src/core/chocolatey_manager.cpp
     ../include/sak/chocolatey_manager.h
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/core/logger.cpp
 )
 set_target_properties(test_migration_report PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_migration_report PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test Qt6::Concurrent Qt6::Network ${PLATFORM_LIBS}
 )
 target_include_directories(test_migration_report PRIVATE
@@ -5713,7 +5430,6 @@ add_executable(test_linux_distro_catalog
     unit/test_linux_distro_catalog.cpp
     ../src/core/linux_distro_catalog.cpp
     ../include/sak/linux_distro_catalog.h
-    ../src/core/logger.cpp
     ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
 )
 set_target_properties(test_linux_distro_catalog PROPERTIES
@@ -5721,6 +5437,7 @@ set_target_properties(test_linux_distro_catalog PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_linux_distro_catalog PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test Qt6::Network ${PLATFORM_LIBS}
 )
 target_include_directories(test_linux_distro_catalog PRIVATE
@@ -5738,8 +5455,6 @@ add_executable(test_flash_coordinator
     ../include/sak/flash_coordinator.h
     ../src/threading/flash_worker.cpp
     ../include/sak/flash_worker.h
-    ../src/threading/worker_base.cpp
-    ../include/sak/worker_base.h
     ../src/core/image_source.cpp
     ../include/sak/image_source.h
     ../src/core/drive_unmounter.cpp
@@ -5758,13 +5473,13 @@ add_executable(test_flash_coordinator
     ../include/sak/xz_decompressor.h
     ../src/core/keep_awake.cpp
     ../include/sak/keep_awake.h
-    ../src/core/logger.cpp
 )
 set_target_properties(test_flash_coordinator PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_flash_coordinator PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Concurrent Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
 )
 target_compile_definitions(test_flash_coordinator PRIVATE
@@ -5783,25 +5498,19 @@ add_executable(test_user_profile_backup_worker
     unit/test_user_profile_backup_worker.cpp
     ../src/core/user_profile_backup_worker.cpp
     ../include/sak/user_profile_backup_worker.h
-    ../src/core/user_profile_types.cpp
-    ../include/sak/user_profile_types.h
     ../src/core/smart_file_filter.cpp
     ../include/sak/smart_file_filter.h
     ../src/core/permission_manager.cpp
     ../include/sak/permission_manager.h
-    ../src/core/elevation_manager.cpp
-    ../include/sak/elevation_manager.h
-    ../src/core/path_utils.cpp
-    ../src/core/logger.cpp
     ../src/core/backup_file_codec.cpp
     ../src/core/encryption.cpp
-    ../src/core/secure_memory.cpp
 )
 set_target_properties(test_user_profile_backup_worker PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_user_profile_backup_worker PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ZLIB::ZLIB ${PLATFORM_LIBS}
 )
 target_include_directories(test_user_profile_backup_worker PRIVATE
@@ -5817,7 +5526,6 @@ add_executable(test_uup_dump_api
     unit/test_uup_dump_api.cpp
     ../src/core/uup_dump_api.cpp
     ../include/sak/uup_dump_api.h
-    ../src/core/logger.cpp
     ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
 )
 set_target_properties(test_uup_dump_api PROPERTIES
@@ -5825,6 +5533,7 @@ set_target_properties(test_uup_dump_api PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_uup_dump_api PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test Qt6::Network ${PLATFORM_LIBS}
 )
 target_include_directories(test_uup_dump_api PRIVATE
@@ -5838,17 +5547,10 @@ message(STATUS "Added unit test: test_uup_dump_api")
 # test_uup_iso_builder - phase defaults, cancel, weight constants
 add_executable(test_uup_iso_builder
     unit/test_uup_iso_builder.cpp
-    ../src/core/app_paths.cpp
     ../src/core/uup_iso_builder.cpp
-    ../include/sak/app_paths.h
     ../include/sak/uup_iso_builder.h
     ../src/core/uup_dump_api.cpp
     ../include/sak/uup_dump_api.h
-    ../src/core/bundled_tools_manager.cpp
-    ../include/sak/bundled_tools_manager.h
-    ../src/core/elevation_manager.cpp
-    ../include/sak/elevation_manager.h
-    ../src/core/logger.cpp
     ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
 )
 set_target_properties(test_uup_iso_builder PROPERTIES
@@ -5856,6 +5558,7 @@ set_target_properties(test_uup_iso_builder PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_uup_iso_builder PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test Qt6::Network ${PLATFORM_LIBS}
 )
 target_include_directories(test_uup_iso_builder PRIVATE
@@ -5875,18 +5578,8 @@ add_executable(test_all_actions_metadata
     ../include/sak/quick_action.h
 
     # Dependencies used by actions
-    ../src/core/process_runner.cpp
-    ../include/sak/process_runner.h
-    ../src/core/logger.cpp
-    ../include/sak/logger.h
-    ../src/core/bundled_tools_manager.cpp
-    ../include/sak/bundled_tools_manager.h
-    ../src/core/path_utils.cpp
-    ../include/sak/path_utils.h
     ../src/core/windows_user_scanner.cpp
     ../include/sak/windows_user_scanner.h
-    ../src/core/user_profile_types.cpp
-    ../include/sak/user_profile_types.h
     ../src/core/chocolatey_manager.cpp
     ../include/sak/chocolatey_manager.h
 
@@ -5918,6 +5611,7 @@ set_target_properties(test_all_actions_metadata PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_all_actions_metadata PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test Qt6::Widgets ${PLATFORM_LIBS}
 )
 target_include_directories(test_all_actions_metadata PRIVATE
@@ -5955,9 +5649,6 @@ message(STATUS "Added unit test: test_advanced_search_types")
 add_executable(test_regex_pattern_library
     unit/test_regex_pattern_library.cpp
     ../src/core/regex_pattern_library.cpp
-    ../src/core/app_paths.cpp
-    ../src/core/logger.cpp
-    ../include/sak/app_paths.h
     ../include/sak/regex_pattern_library.h
 )
 set_target_properties(test_regex_pattern_library PROPERTIES
@@ -5965,6 +5656,7 @@ set_target_properties(test_regex_pattern_library PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_regex_pattern_library PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_regex_pattern_library PRIVATE
@@ -5990,9 +5682,6 @@ add_executable(test_advanced_search_worker
     ../src/core/partition_file_system_detector.cpp
     ../src/core/partition_file_system_registry.cpp
     ../src/core/advanced_search_worker.cpp
-    ../src/core/file_hash.cpp
-    ../src/threading/worker_base.cpp
-    ../src/core/logger.cpp
     ../include/sak/file_management_file_system.h
     ../include/sak/advanced_search_worker.h
     ../include/sak/partition_apfs_file_system_reader.h
@@ -6002,13 +5691,13 @@ add_executable(test_advanced_search_worker
     ../include/sak/partition_raw_device_io.h
     ../include/sak/partition_file_system_detector.h
     ../include/sak/partition_file_system_registry.h
-    ../include/sak/worker_base.h
 )
 set_target_properties(test_advanced_search_worker PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_advanced_search_worker PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Gui Qt6::Test ZLIB::ZLIB sak_lzfse
 )
 target_include_directories(test_advanced_search_worker PRIVATE
@@ -6035,12 +5724,8 @@ add_executable(test_advanced_search_controller
     ../src/core/partition_file_system_registry.cpp
     ../src/core/advanced_search_controller.cpp
     ../src/core/advanced_search_worker.cpp
-    ../src/core/file_hash.cpp
     ../src/core/regex_pattern_library.cpp
     ../src/core/config_manager.cpp
-    ${SAK_APP_PATHS_SOURCES}
-    ../src/threading/worker_base.cpp
-    ../src/core/logger.cpp
     ../include/sak/file_management_file_system.h
     ../include/sak/advanced_search_controller.h
     ../include/sak/advanced_search_worker.h
@@ -6053,13 +5738,13 @@ add_executable(test_advanced_search_controller
     ../include/sak/partition_file_system_registry.h
     ../include/sak/regex_pattern_library.h
     ../include/sak/config_manager.h
-    ../include/sak/worker_base.h
 )
 set_target_properties(test_advanced_search_controller PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_advanced_search_controller PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Gui Qt6::Test ZLIB::ZLIB sak_lzfse
 )
 target_include_directories(test_advanced_search_controller PRIVATE
@@ -6449,7 +6134,6 @@ message(STATUS "Added unit test: test_advanced_uninstall_types")
 add_executable(test_windows_user_scanner
     unit/test_windows_user_scanner.cpp
     ../src/core/windows_user_scanner.cpp
-    ../src/core/logger.cpp
     ../include/sak/windows_user_scanner.h
 )
 set_target_properties(test_windows_user_scanner PROPERTIES
@@ -6457,6 +6141,7 @@ set_target_properties(test_windows_user_scanner PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_windows_user_scanner PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_windows_user_scanner PRIVATE
@@ -6471,10 +6156,7 @@ message(STATUS "Added unit test: test_windows_user_scanner")
 add_executable(test_app_scanner
     unit/test_app_scanner.cpp
     ../src/core/app_scanner.cpp
-    ../src/core/bundled_tools_manager.cpp
     ../src/core/chocolatey_manager.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/core/logger.cpp
     ../include/sak/app_scanner.h
     ../include/sak/chocolatey_manager.h
 )
@@ -6483,6 +6165,7 @@ set_target_properties(test_app_scanner PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_app_scanner PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_app_scanner PRIVATE
@@ -6497,8 +6180,6 @@ message(STATUS "Added unit test: test_app_scanner")
 add_executable(test_chocolatey_manager
     unit/test_chocolatey_manager.cpp
     ../src/core/chocolatey_manager.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/core/logger.cpp
     ../include/sak/chocolatey_manager.h
 )
 set_target_properties(test_chocolatey_manager PROPERTIES
@@ -6506,6 +6187,7 @@ set_target_properties(test_chocolatey_manager PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_chocolatey_manager PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_chocolatey_manager PRIVATE
@@ -6521,17 +6203,14 @@ add_executable(test_cleanup_worker
     unit/test_cleanup_worker.cpp
     ../src/core/cleanup_worker.cpp
     ../src/core/recycle_bin.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/threading/worker_base.cpp
-    ../src/core/logger.cpp
     ../include/sak/cleanup_worker.h
-    ../include/sak/worker_base.h
 )
 set_target_properties(test_cleanup_worker PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_cleanup_worker PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_cleanup_worker PRIVATE
@@ -6553,12 +6232,7 @@ add_executable(test_advanced_uninstall_controller
     ../src/core/recycle_bin.cpp
     ../src/core/registry_snapshot_engine.cpp
     ../src/core/restore_point_manager.cpp
-    ../src/core/elevation_manager.cpp
     ../src/core/config_manager.cpp
-    ${SAK_APP_PATHS_SOURCES}
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/threading/worker_base.cpp
-    ../src/core/logger.cpp
     ../include/sak/advanced_uninstall_controller.h
     ../include/sak/program_enumerator.h
     ../include/sak/uninstall_worker.h
@@ -6567,13 +6241,13 @@ add_executable(test_advanced_uninstall_controller
     ../include/sak/registry_snapshot_engine.h
     ../include/sak/restore_point_manager.h
     ../include/sak/config_manager.h
-    ../include/sak/worker_base.h
 )
 set_target_properties(test_advanced_uninstall_controller PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_advanced_uninstall_controller PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_advanced_uninstall_controller PRIVATE
@@ -6602,8 +6276,6 @@ add_executable(test_leftover_scanner
     unit/test_leftover_scanner.cpp
     ../src/core/leftover_scanner.cpp
     ../src/core/registry_snapshot_engine.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/core/logger.cpp
     ../include/sak/leftover_scanner.h
     ../include/sak/registry_snapshot_engine.h
 )
@@ -6612,6 +6284,7 @@ set_target_properties(test_leftover_scanner PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_leftover_scanner PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_leftover_scanner PRIVATE
@@ -6626,8 +6299,6 @@ message(STATUS "Added unit test: test_leftover_scanner")
 add_executable(test_program_enumerator
     unit/test_program_enumerator.cpp
     ../src/core/program_enumerator.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/core/logger.cpp
     ../include/sak/program_enumerator.h
 )
 set_target_properties(test_program_enumerator PROPERTIES
@@ -6635,6 +6306,7 @@ set_target_properties(test_program_enumerator PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_program_enumerator PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_program_enumerator PRIVATE
@@ -6649,7 +6321,6 @@ message(STATUS "Added unit test: test_program_enumerator")
 add_executable(test_registry_snapshot_engine
     unit/test_registry_snapshot_engine.cpp
     ../src/core/registry_snapshot_engine.cpp
-    ../src/core/logger.cpp
     ../include/sak/registry_snapshot_engine.h
 )
 set_target_properties(test_registry_snapshot_engine PROPERTIES
@@ -6657,6 +6328,7 @@ set_target_properties(test_registry_snapshot_engine PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_registry_snapshot_engine PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_registry_snapshot_engine PRIVATE
@@ -6696,8 +6368,6 @@ add_executable(test_network_diagnostic_utils
     ../src/core/wifi_analyzer.cpp
     ../src/core/port_scanner.cpp
     ../src/core/dns_diagnostic_tool.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/core/logger.cpp
     ../include/sak/wifi_analyzer.h
     ../include/sak/port_scanner.h
     ../include/sak/dns_diagnostic_tool.h
@@ -6707,6 +6377,7 @@ set_target_properties(test_network_diagnostic_utils PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_network_diagnostic_utils PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_network_diagnostic_utils PRIVATE
@@ -6775,14 +6446,13 @@ message(STATUS "Added unit test: test_active_connections_monitor")
 # composition, and existence probes for absent entries.
 add_executable(test_bundled_tools_manager
     unit/test_bundled_tools_manager.cpp
-    ../src/core/bundled_tools_manager.cpp
-    ../include/sak/bundled_tools_manager.h
 )
 set_target_properties(test_bundled_tools_manager PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_bundled_tools_manager PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_bundled_tools_manager PRIVATE
@@ -6798,7 +6468,6 @@ message(STATUS "Added unit test: test_bundled_tools_manager")
 add_executable(test_drive_unmounter
     unit/test_drive_unmounter.cpp
     ../src/core/drive_unmounter.cpp
-    ../src/core/logger.cpp
     ../include/sak/drive_unmounter.h
 )
 set_target_properties(test_drive_unmounter PROPERTIES
@@ -6806,6 +6475,7 @@ set_target_properties(test_drive_unmounter PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_drive_unmounter PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_drive_unmounter PRIVATE
@@ -6826,8 +6496,6 @@ add_executable(test_image_source
     ../src/core/gzip_decompressor.cpp
     ../src/core/bzip2_decompressor.cpp
     ../src/core/xz_decompressor.cpp
-    ../src/core/file_hash.cpp
-    ../src/core/logger.cpp
     ../include/sak/image_source.h
     ../include/sak/streaming_decompressor.h
     ../include/sak/gzip_decompressor.h
@@ -6839,6 +6507,7 @@ set_target_properties(test_image_source PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_image_source PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
 )
 target_include_directories(test_image_source PRIVATE
@@ -6854,7 +6523,6 @@ message(STATUS "Added unit test: test_image_source")
 add_executable(test_network_adapter_inspector
     unit/test_network_adapter_inspector.cpp
     ../src/core/network_adapter_inspector.cpp
-    ../src/core/logger.cpp
     ../include/sak/network_adapter_inspector.h
 )
 set_target_properties(test_network_adapter_inspector PROPERTIES
@@ -6862,6 +6530,7 @@ set_target_properties(test_network_adapter_inspector PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_network_adapter_inspector PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_network_adapter_inspector PRIVATE
@@ -6885,8 +6554,6 @@ add_executable(test_network_diagnostic_controller
     ../src/core/ethernet_config_manager.cpp
     # The single owner of every netsh adapter command (R5-IDX-19b).
     ../src/core/network_adapter_admin.cpp
-    # EthernetConfigInfo::parseNetIpConfigJson -- see the ethernet manager's locale fix.
-    ../src/core/user_profile_types.cpp
     ../src/core/firewall_rule_auditor.cpp
     ../src/core/network_adapter_inspector.cpp
     ../src/core/network_diagnostic_report_generator.cpp
@@ -6894,8 +6561,6 @@ add_executable(test_network_diagnostic_controller
     ../src/core/port_scanner.cpp
     ../src/core/wifi_analyzer.cpp
     ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/core/logger.cpp
     ../include/sak/network_diagnostic_controller.h
     ../include/sak/active_connections_monitor.h
     ../include/sak/bandwidth_tester.h
@@ -6914,6 +6579,7 @@ set_target_properties(test_network_diagnostic_controller PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_network_diagnostic_controller PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_network_diagnostic_controller PRIVATE
@@ -6954,15 +6620,10 @@ add_executable(test_uninstall_worker
     ../src/core/leftover_scanner.cpp
     ../src/core/registry_snapshot_engine.cpp
     ../src/core/restore_point_manager.cpp
-    ../src/core/elevation_manager.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/threading/worker_base.cpp
-    ../src/core/logger.cpp
     ../include/sak/uninstall_worker.h
     ../include/sak/leftover_scanner.h
     ../include/sak/registry_snapshot_engine.h
     ../include/sak/restore_point_manager.h
-    ../include/sak/worker_base.h
 )
 set_target_properties(test_uninstall_worker PROPERTIES
     AUTOMOC ON
@@ -6972,6 +6633,7 @@ set_target_properties(test_uninstall_worker PROPERTIES
 # program icon, so ProgramInfo cannot compile without it. Mirrors test_advanced_uninstall_-
 # controller, which links the same sources. QGuiApplication opens no window here.
 target_link_libraries(test_uninstall_worker PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_uninstall_worker PRIVATE
@@ -6987,7 +6649,6 @@ message(STATUS "Added unit test: test_uninstall_worker")
 add_executable(test_wifi_analyzer
     unit/test_wifi_analyzer.cpp
     ../src/core/wifi_analyzer.cpp
-    ../src/core/logger.cpp
     ../include/sak/wifi_analyzer.h
 )
 set_target_properties(test_wifi_analyzer PROPERTIES
@@ -6995,6 +6656,7 @@ set_target_properties(test_wifi_analyzer PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_wifi_analyzer PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_wifi_analyzer PRIVATE
@@ -7011,8 +6673,6 @@ add_executable(test_bandwidth_tester
     unit/test_bandwidth_tester.cpp
     ../src/core/bandwidth_tester.cpp
     ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/core/logger.cpp
     ../include/sak/bandwidth_tester.h
 )
 set_target_properties(test_bandwidth_tester PROPERTIES
@@ -7020,6 +6680,7 @@ set_target_properties(test_bandwidth_tester PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_bandwidth_tester PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Network Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_bandwidth_tester PRIVATE
@@ -7057,7 +6718,6 @@ message(STATUS "Added unit test: test_connectivity_tester")
 add_executable(test_dns_diagnostic_tool
     unit/test_dns_diagnostic_tool.cpp
     ../src/core/dns_diagnostic_tool.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
     ../include/sak/dns_diagnostic_tool.h
 )
 set_target_properties(test_dns_diagnostic_tool PROPERTIES
@@ -7065,6 +6725,7 @@ set_target_properties(test_dns_diagnostic_tool PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_dns_diagnostic_tool PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_dns_diagnostic_tool PRIVATE
@@ -7172,8 +6833,6 @@ message(STATUS "Added unit test: test_windows_path_policy")
 add_executable(test_network_adapter_admin
     unit/test_network_adapter_admin.cpp
     ../src/core/network_adapter_admin.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/core/logger.cpp
     ../include/sak/network_adapter_admin.h
 )
 set_target_properties(test_network_adapter_admin PROPERTIES
@@ -7181,6 +6840,7 @@ set_target_properties(test_network_adapter_admin PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_network_adapter_admin PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_network_adapter_admin PRIVATE
@@ -7194,15 +6854,13 @@ message(STATUS "Added unit test: test_network_adapter_admin")
 add_executable(test_wifi_profile_scanner
     unit/test_wifi_profile_scanner.cpp
     ../src/core/wifi_profile_scanner.cpp
-    ../src/core/user_profile_types.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/core/logger.cpp
 )
 set_target_properties(test_wifi_profile_scanner PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_wifi_profile_scanner PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_wifi_profile_scanner PRIVATE
@@ -7240,7 +6898,6 @@ message(STATUS "Added unit test: test_email_types")
 add_executable(test_pst_parser
     unit/test_pst_parser.cpp
     ../src/core/pst_parser.cpp
-    ../src/core/logger.cpp
     ../include/sak/pst_parser.h
 )
 set_target_properties(test_pst_parser PROPERTIES
@@ -7248,6 +6905,7 @@ set_target_properties(test_pst_parser PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_pst_parser PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_pst_parser PRIVATE
@@ -7268,7 +6926,6 @@ add_executable(test_ost_integration
     ../src/core/email_attachment_saver.cpp
     ../src/core/mbox_parser.cpp
     ../src/core/pst_parser.cpp
-    ../src/core/logger.cpp
     ../include/sak/email_export_worker.h
     ../include/sak/eml_writer.h
     ../include/sak/html_email_writer.h
@@ -7281,6 +6938,7 @@ set_target_properties(test_ost_integration PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_ost_integration PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_ost_integration PRIVATE
@@ -7295,7 +6953,6 @@ message(STATUS "Added integration test: test_ost_integration")
 add_executable(test_mbox_parser
     unit/test_mbox_parser.cpp
     ../src/core/mbox_parser.cpp
-    ../src/core/logger.cpp
     ../include/sak/mbox_parser.h
 )
 set_target_properties(test_mbox_parser PROPERTIES
@@ -7303,6 +6960,7 @@ set_target_properties(test_mbox_parser PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_mbox_parser PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Concurrent Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_mbox_parser PRIVATE
@@ -7319,7 +6977,6 @@ add_executable(test_email_search_worker
     ../src/core/email_search_worker.cpp
     ../src/core/pst_parser.cpp
     ../src/core/mbox_parser.cpp
-    ../src/core/logger.cpp
     ../include/sak/email_search_worker.h
     ../include/sak/pst_parser.h
     ../include/sak/mbox_parser.h
@@ -7329,6 +6986,7 @@ set_target_properties(test_email_search_worker PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_email_search_worker PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_email_search_worker PRIVATE
@@ -7349,7 +7007,6 @@ add_executable(test_email_export_worker
     ../src/core/pdf_email_writer.cpp
     ../src/core/pst_parser.cpp
     ../src/core/mbox_parser.cpp
-    ../src/core/logger.cpp
     ../include/sak/email_export_worker.h
     ../include/sak/eml_writer.h
     ../include/sak/html_email_writer.h
@@ -7362,6 +7019,7 @@ set_target_properties(test_email_export_worker PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_email_export_worker PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_email_export_worker PRIVATE
@@ -7376,8 +7034,6 @@ message(STATUS "Added unit test: test_email_export_worker")
 add_executable(test_email_profile_manager
     unit/test_email_profile_manager.cpp
     ../src/core/email_profile_manager.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/core/logger.cpp
     ../include/sak/email_profile_manager.h
 )
 set_target_properties(test_email_profile_manager PROPERTIES
@@ -7385,6 +7041,7 @@ set_target_properties(test_email_profile_manager PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_email_profile_manager PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_email_profile_manager PRIVATE
@@ -7399,8 +7056,6 @@ message(STATUS "Added unit test: test_email_profile_manager")
 add_executable(test_wifi_setup_script
     unit/test_wifi_setup_script.cpp
     ../src/core/wifi_setup_script.cpp
-    ../src/core/process_runner.cpp
-    ../src/core/logger.cpp
     ../include/sak/wifi_setup_script.h
 )
 set_target_properties(test_wifi_setup_script PROPERTIES
@@ -7408,6 +7063,7 @@ set_target_properties(test_wifi_setup_script PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_wifi_setup_script PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_wifi_setup_script PRIVATE
@@ -7442,7 +7098,6 @@ message(STATUS "Added unit test: test_deadline_canceller")
 add_executable(test_email_attachment_saver
     unit/test_email_attachment_saver.cpp
     ../src/core/email_attachment_saver.cpp
-    ../src/core/logger.cpp
     ../include/sak/email_attachment_saver.h
 )
 set_target_properties(test_email_attachment_saver PROPERTIES
@@ -7450,6 +7105,7 @@ set_target_properties(test_email_attachment_saver PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_email_attachment_saver PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_email_attachment_saver PRIVATE
@@ -7476,8 +7132,6 @@ add_executable(test_email_attachments_browser_dialog
     ../src/core/eml_writer.cpp
     ../src/core/html_email_writer.cpp
     ../src/core/pdf_email_writer.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
-    ../src/core/logger.cpp
     ../include/sak/email_attachments_browser_dialog.h
     ../include/sak/email_inspector_controller.h
     ../include/sak/view_empty_state.h
@@ -7493,6 +7147,7 @@ set_target_properties(test_email_attachments_browser_dialog PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_email_attachments_browser_dialog PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Concurrent Qt6::Gui Qt6::Widgets Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_email_attachments_browser_dialog PRIVATE
@@ -7527,7 +7182,6 @@ message(STATUS "Added unit test: test_email_view_ids")
 add_executable(test_email_report_generator
     unit/test_email_report_generator.cpp
     ../src/core/email_report_generator.cpp
-    ../src/core/logger.cpp
     ../include/sak/email_report_generator.h
 )
 set_target_properties(test_email_report_generator PROPERTIES
@@ -7535,6 +7189,7 @@ set_target_properties(test_email_report_generator PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_email_report_generator PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_email_report_generator PRIVATE
@@ -7554,9 +7209,7 @@ add_executable(test_package_internalization_engine
     ../src/core/script_rewriter.cpp
     ../src/core/nuget_dependency_resolver.cpp
     ../src/core/nuget_version_range.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
     ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
-    ../src/core/logger.cpp
     ../include/sak/package_internalization_engine.h
     ../include/sak/install_script_parser.h
     ../include/sak/script_rewriter.h
@@ -7568,6 +7221,7 @@ set_target_properties(test_package_internalization_engine PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_package_internalization_engine PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Network Qt6::Xml Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_package_internalization_engine PRIVATE
@@ -7588,10 +7242,7 @@ add_executable(test_offline_deployment_worker
     ../src/core/script_rewriter.cpp
     ../src/core/nuget_dependency_resolver.cpp
     ../src/core/nuget_version_range.cpp
-    ../src/core/bundled_tools_manager.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
     ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
-    ../src/core/logger.cpp
     ../include/sak/offline_deployment_worker.h
     ../include/sak/package_internalization_engine.h
     ../include/sak/install_script_parser.h
@@ -7604,6 +7255,7 @@ set_target_properties(test_offline_deployment_worker PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_offline_deployment_worker PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test Qt6::Network Qt6::Xml Qt6::Concurrent ${PLATFORM_LIBS}
 )
 target_include_directories(test_offline_deployment_worker PRIVATE
@@ -7624,10 +7276,7 @@ add_executable(test_offline_package_builder
     ../src/core/script_rewriter.cpp
     ../src/core/nuget_dependency_resolver.cpp
     ../src/core/nuget_version_range.cpp
-    ../src/core/bundled_tools_manager.cpp
-    ${SAK_PROCESS_RUNNER_SOURCES}
     ${SAK_NETWORK_TRANSFER_RUNNER_SOURCES}
-    ../src/core/logger.cpp
     ../include/sak/offline_deployment_worker.h
     ../include/sak/package_internalization_engine.h
     ../include/sak/install_script_parser.h
@@ -7640,6 +7289,7 @@ set_target_properties(test_offline_package_builder PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_offline_package_builder PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test Qt6::Network Qt6::Xml Qt6::Concurrent ${PLATFORM_LIBS}
 )
 target_include_directories(test_offline_package_builder PRIVATE
@@ -7702,7 +7352,6 @@ message(STATUS "Added unit test: test_email_folder_selection")
 add_executable(test_eml_writer
     unit/test_eml_writer.cpp
     ../src/core/eml_writer.cpp
-    ../src/core/logger.cpp
     ../include/sak/eml_writer.h
     ../include/sak/email_types.h
 )
@@ -7711,6 +7360,7 @@ set_target_properties(test_eml_writer PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_eml_writer PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_eml_writer PRIVATE
@@ -7734,7 +7384,6 @@ add_executable(test_ost_converter_controller
     ../src/core/deleted_item_scanner.cpp
     ../src/core/conversion_report_generator.cpp
     ../src/core/pst_parser.cpp
-    ../src/core/logger.cpp
     ../include/sak/ost_converter_controller.h
     ../include/sak/ost_conversion_worker.h
     ../include/sak/eml_writer.h
@@ -7746,6 +7395,7 @@ set_target_properties(test_ost_converter_controller PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_ost_converter_controller PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Gui Qt6::Network Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_ost_converter_controller PRIVATE
@@ -7761,7 +7411,6 @@ add_executable(test_mbox_writer
     unit/test_mbox_writer.cpp
     ../src/core/mbox_writer.cpp
     ../src/core/eml_writer.cpp
-    ../src/core/logger.cpp
     ../include/sak/mbox_writer.h
     ../include/sak/eml_writer.h
     ../include/sak/email_types.h
@@ -7771,6 +7420,7 @@ set_target_properties(test_mbox_writer PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_mbox_writer PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_mbox_writer PRIVATE
@@ -7786,7 +7436,6 @@ add_executable(test_html_email_writer
     unit/test_html_email_writer.cpp
     ../src/core/html_email_writer.cpp
     ../src/core/email_attachment_saver.cpp
-    ../src/core/logger.cpp
     ../include/sak/html_email_writer.h
     ../include/sak/email_types.h
 )
@@ -7795,6 +7444,7 @@ set_target_properties(test_html_email_writer PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_html_email_writer PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_html_email_writer PRIVATE
@@ -7809,7 +7459,6 @@ message(STATUS "Added unit test: test_html_email_writer")
 add_executable(test_pdf_email_writer
     unit/test_pdf_email_writer.cpp
     ../src/core/pdf_email_writer.cpp
-    ../src/core/logger.cpp
     ../include/sak/pdf_email_writer.h
     ../include/sak/email_types.h
 )
@@ -7818,6 +7467,7 @@ set_target_properties(test_pdf_email_writer PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_pdf_email_writer PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_pdf_email_writer PRIVATE
@@ -7832,7 +7482,6 @@ message(STATUS "Added unit test: test_pdf_email_writer")
 add_executable(test_conversion_report_generator
     unit/test_conversion_report_generator.cpp
     ../src/core/conversion_report_generator.cpp
-    ../src/core/logger.cpp
     ../include/sak/conversion_report_generator.h
     ../include/sak/ost_converter_types.h
     ../include/sak/email_types.h
@@ -7842,6 +7491,7 @@ set_target_properties(test_conversion_report_generator PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_conversion_report_generator PRIVATE
+    sak_foundation
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_conversion_report_generator PRIVATE
