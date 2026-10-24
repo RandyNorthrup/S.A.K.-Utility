@@ -144,6 +144,9 @@ $selectedSet = [System.Collections.Generic.HashSet[string]]::new([string[]]$sele
 $required = @{}
 $exeRe = [regex]'[/\\]Release[/\\](?<name>[A-Za-z0-9_.+-]+)\.exe"'
 $addTestRe = [regex]'^\s*add_test\(\[=\[(?<name>[^\]]+)\]=\](?<rest>.*)$'
+$quotedArgRe = [regex]'"(?<value>[^"]*)"'
+$scriptExeRe = [regex]'(?<![A-Za-z0-9_])(?<name>[A-Za-z0-9_]+)\.exe(?![A-Za-z0-9_])'
+$scriptExeCache = @{}
 $testFiles = @(Get-ChildItem -LiteralPath $buildFull -Recurse -Filter CTestTestfile.cmake -File)
 foreach ($file in $testFiles) {
     foreach ($line in [System.IO.File]::ReadLines($file.FullName)) {
@@ -157,6 +160,23 @@ foreach ($file in $testFiles) {
         foreach ($exe in $exeRe.Matches($m.Groups["rest"].Value)) {
             $target = $exe.Groups["name"].Value
             if ($projects.ContainsKey($target)) { $null = $required[$name].Add($target) }
+        }
+        # A script test can also run a built executable its command line never names (the
+        # runtime-dependency regression verifies partition_manager_live_certifier.exe from
+        # build/Release). Any default-build target the script text names as <target>.exe is
+        # required too. Over-inclusion only costs build time; a missed one fails the test red.
+        foreach ($arg in $quotedArgRe.Matches($m.Groups["rest"].Value)) {
+            $path = $arg.Groups["value"].Value
+            if ($path -notmatch '\.(ps1|py|mjs|js)$' -or -not (Test-Path -LiteralPath $path -PathType Leaf)) { continue }
+            if (-not $scriptExeCache.ContainsKey($path)) {
+                $named = [System.Collections.Generic.SortedSet[string]]::new([StringComparer]::Ordinal)
+                foreach ($ref in $scriptExeRe.Matches([System.IO.File]::ReadAllText((Resolve-Path -LiteralPath $path).Path))) {
+                    $target = $ref.Groups["name"].Value
+                    if ($projects.ContainsKey($target)) { $null = $named.Add($target) }
+                }
+                $scriptExeCache[$path] = $named
+            }
+            foreach ($target in $scriptExeCache[$path]) { $null = $required[$name].Add($target) }
         }
     }
 }

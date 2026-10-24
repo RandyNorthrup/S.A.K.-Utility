@@ -176,6 +176,8 @@ jobs:
 
     - name: Toolchain
       uses: ./.github/actions/windows-build-env
+      with:
+        cppcheck: 'true'
 
     - name: Configure
       shell: pwsh
@@ -212,29 +214,46 @@ jobs:
         "BUILD EXIT: $buildExit"
         exit $buildExit
 
+    # The app and its suite run as a standard user; a hosted runner is an elevated administrator.
+    # Everything that runs the built binaries goes through scripts/invoke_unelevated.ps1, which
+    # gives it a standard-user token and refuses to run if that token is still elevated. That
+    # token needs explicit write access to the tree the elevated steps created.
+    - name: Grant the standard-user token access to the workspace
+      id: grant
+      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+      shell: pwsh
+      run: |
+        $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        $sw = [Diagnostics.Stopwatch]::StartNew()
+        icacls $env:GITHUB_WORKSPACE /grant "*${sid}:(OI)(CI)F" /T /C /Q
+        $grantExit = $LASTEXITCODE
+        "icacls exit $grantExit after $([int]$sw.Elapsed.TotalSeconds) s"
+        exit $grantExit
+
     # Post-build gates against the built app: once, on shard 0, before the parallel tests load
     # the machine (the startup budget is a wall-clock limit).
     - name: Windows runtime dependencies
-      if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.shard == 0 }}
+      if: ${{ !cancelled() && steps.grant.outcome == 'success' && matrix.shard == 0 }}
       shell: pwsh
       run: '& scripts/verify_windows_runtime_dependencies.ps1 -RootDir build/Release -PrimaryExe sak_utility.exe'
 
     - name: Startup performance budget
-      if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.shard == 0 }}
+      if: ${{ !cancelled() && steps.grant.outcome == 'success' && matrix.shard == 0 }}
       shell: pwsh
-      run: '& scripts/check_startup_budget.ps1'
+      run: '& scripts/invoke_unelevated.ps1 -FilePath pwsh -- -NoProfile -NonInteractive -File scripts/check_startup_budget.ps1'
 
     - name: Accessibility runtime audit
-      if: ${{ !cancelled() && steps.build.outcome == 'success' && matrix.shard == 0 }}
+      if: ${{ !cancelled() && steps.grant.outcome == 'success' && matrix.shard == 0 }}
       shell: pwsh
-      run: '& scripts/check_accessibility_patterns.ps1'
+      run: '& scripts/invoke_unelevated.ps1 -FilePath pwsh -- -NoProfile -NonInteractive -File scripts/check_accessibility_patterns.ps1'
 
     - name: Test (T2 labels, this shard)
-      if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+      if: ${{ !cancelled() && steps.grant.outcome == 'success' }}
       shell: pwsh
       run: |
         $plan = Get-Content -Raw build/ci-plan.json | ConvertFrom-Json
-        ctest --test-dir build -C Release -j $env:NUMBER_OF_PROCESSORS --output-on-failure --no-tests=error `
+        & scripts/invoke_unelevated.ps1 -FilePath ctest -- --test-dir build -C Release `
+          -j $env:NUMBER_OF_PROCESSORS --output-on-failure --no-tests=error `
           -L $env:T2_LABELS -R $plan.tests_regex
         $ctestExit = $LASTEXITCODE
         "CTEST EXIT: $ctestExit"
@@ -276,19 +295,20 @@ jobs:
     timeout-minutes: 15
 
     steps:
+    # The audit also runs when a shard's tests failed, so one run reports every problem.
     - name: Checkout code
-      if: ${{ needs.build-test.result == 'success' }}
+      if: ${{ needs.build-test.result == 'success' || needs.build-test.result == 'failure' }}
       uses: actions/checkout@v7
 
     - name: Download shard logs
-      if: ${{ needs.build-test.result == 'success' }}
+      if: ${{ needs.build-test.result == 'success' || needs.build-test.result == 'failure' }}
       uses: actions/download-artifact@v8
       with:
         pattern: t2-shard-*
         path: shards
 
     - name: Merge shard registrations
-      if: ${{ needs.build-test.result == 'success' }}
+      if: ${{ needs.build-test.result == 'success' || needs.build-test.result == 'failure' }}
       shell: pwsh
       run: |
         $plans = @(Get-ChildItem shards -Recurse -Filter ci-plan.json | ForEach-Object { Get-Content -Raw $_.FullName | ConvertFrom-Json })
@@ -319,7 +339,7 @@ jobs:
     # in the whole T2 run to tests/skip_baseline.txt and fails on an unreviewed skip, a stale
     # baseline entry, or a registered QtTest with no log.
     - name: Test-skip audit (whole T2 run)
-      if: ${{ needs.build-test.result == 'success' }}
+      if: ${{ needs.build-test.result == 'success' || needs.build-test.result == 'failure' }}
       shell: pwsh
       run: '& scripts/check_test_skips.ps1 -RegistrationJsonPath build/t2-registration.json'
 

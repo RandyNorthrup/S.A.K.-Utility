@@ -28,6 +28,15 @@ inputs:
   ripgrep-sha256:
     description: SHA-256 of the x86_64-pc-windows-msvc zip of that release
     default: '71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5'
+  cppcheck:
+    description: "'true' to install cppcheck (the T2 Qt-slot classifier test and the T4 gates run it)"
+    default: 'false'
+  cppcheck-version:
+    description: cppcheck release, the version developers run
+    default: '2.20.0'
+  cppcheck-sha256:
+    description: SHA-256 of cppcheck-<version>-x64-Setup.msi
+    default: 'bb1132bca1bca857a6ce3f04605698f002196070a947cae7015eeddc3c00f449'
 
 runs:
   using: composite
@@ -71,6 +80,24 @@ runs:
       $dir = Join-Path $env:RUNNER_TEMP "ripgrep-$env:RG_VERSION-x86_64-pc-windows-msvc"
       $dir | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
       & (Join-Path $dir rg.exe) --version
+
+  - name: Install cppcheck
+    if: ${{ inputs.cppcheck == 'true' }}
+    shell: pwsh
+    env:
+      CPPCHECK_VERSION: ${{ inputs.cppcheck-version }}
+      CPPCHECK_SHA256: ${{ inputs.cppcheck-sha256 }}
+    run: |
+      $msi = Join-Path $env:RUNNER_TEMP "cppcheck.msi"
+      Invoke-WebRequest -Uri "https://github.com/danmar/cppcheck/releases/download/$env:CPPCHECK_VERSION/cppcheck-$env:CPPCHECK_VERSION-x64-Setup.msi" -OutFile $msi
+      $hash = (Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash.ToLowerInvariant()
+      if ($hash -ne $env:CPPCHECK_SHA256) { throw "cppcheck installer hash $hash does not match the pin" }
+      $p = Start-Process msiexec.exe -ArgumentList @('/i', $msi, '/qn', '/norestart') -Wait -PassThru
+      if ($p.ExitCode -ne 0) { throw "cppcheck install exited $($p.ExitCode)" }
+      "$env:ProgramFiles\Cppcheck" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      $version = (& "$env:ProgramFiles\Cppcheck\cppcheck.exe" --version) -join ' '
+      Write-Host $version
+      if ($version -notmatch "Cppcheck $([regex]::Escape($env:CPPCHECK_VERSION))(\s|$)") { throw "cppcheck is not $env:CPPCHECK_VERSION" }
 
   - name: Install Qt
     if: ${{ inputs.build-tools == 'true' }}
