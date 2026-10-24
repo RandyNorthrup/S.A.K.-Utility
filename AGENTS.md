@@ -153,9 +153,12 @@ tier as proof of a wider one.
 |---|---|---|---|
 | T1 | pre-commit, changed files only | under 60 s | hygiene, format, lizard, cppcheck, staged secret scan, ASCII, blocking patterns, test registration, claim/manifest checks when their inputs change |
 | T1p | pre-push | ~1 min | full-history secret scan |
-| T2 | CI on every push to `dev` and every PR | ~25 min | build, CTest in parallel (excluding the cert/meta/mutation/coverage labels), whole-tree style gates, licenses, startup budget, accessibility, skip audit, runtime DLLs |
+| T2 | CI on every push to `dev` and every PR | ~25 min | build, CTest in parallel over the `product`, `release-tooling`, `tooling` and `cert` labels, whole-tree style gates, licenses, startup budget, accessibility, skip audit, runtime DLLs |
 | T3 | CI on a version tag only | -- | package, smoke, end-to-end, readiness, sign, verify, publish, certification evidence checks |
-| T4 | nightly and manual | -- | ASan, coverage, whole-tree cppcheck and dead code, clang-tidy, mutation, cert tooling tests |
+| T4 | nightly and manual | -- | ASan, coverage, whole-tree cppcheck and dead code, clang-tidy, mutation, and the `tooling-extended`, `mutation`, `coverage`, `tidy`, `cert-tooling` and `fuzz-extended` CTest labels |
+
+CTest labels are set in one block at the end of `tests/CMakeLists.txt`; `tests/README.md` lists
+what each holds. Configure fails for a script test with no label.
 
 Before a local commit that touches code: T1 hooks, a build, and the tests your change can reach
 (`ctest -L <label>` or `-R`). A fix that changes a message another subsystem asserts on is not

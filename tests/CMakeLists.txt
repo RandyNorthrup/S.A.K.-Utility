@@ -379,6 +379,9 @@ target_compile_definitions(test_partition_manager_core PRIVATE
 add_test(NAME test_partition_manager_core COMMAND test_partition_manager_core
          -o "${TEST_OUTPUT_DIR}/test_partition_manager_core.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+# About 3x the measured 201 s (Wave 69 serial run). COST makes a parallel run start the
+# longest test first instead of leaving it as the tail.
+set_tests_properties(test_partition_manager_core PROPERTIES TIMEOUT 600 COST 201)
 message(STATUS "Added unit test: test_partition_manager_core")
 
 # The five Create Image lock runtime shapes each launch the full PowerShell guard
@@ -2797,6 +2800,9 @@ target_include_directories(test_fuzz_apfs_reader PRIVATE
 add_test(NAME test_fuzz_apfs_reader COMMAND test_fuzz_apfs_reader
          -o "${TEST_OUTPUT_DIR}/test_fuzz_apfs_reader.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+# About 3x the measured 25 s (Wave 69 serial run) so a hang fails in minutes, not at the
+# 1500 s CTest default.
+set_tests_properties(test_fuzz_apfs_reader PROPERTIES TIMEOUT 75)
 message(STATUS "Added unit test: test_fuzz_apfs_reader")
 
 # test_fuzz_nuget_version_range - deterministic mutation-fuzz of the NuGet version / version-range
@@ -2850,6 +2856,9 @@ target_include_directories(test_fuzz_backup_codec PRIVATE
 add_test(NAME test_fuzz_backup_codec COMMAND test_fuzz_backup_codec
          -o "${TEST_OUTPUT_DIR}/test_fuzz_backup_codec.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+# About 3x the measured 127 s (Wave 69 serial run). Over the 60 s T2 fuzz budget, so it is
+# labelled fuzz-extended (T4) in the label block at the end of this file.
+set_tests_properties(test_fuzz_backup_codec PROPERTIES TIMEOUT 380)
 message(STATUS "Added unit test: test_fuzz_backup_codec")
 
 # test_fuzz_uup_manifest_guard - deterministic mutation-fuzz of the UUP-dump aria2 manifest-entry
@@ -8196,6 +8205,168 @@ foreach(_sak_runner_target IN LISTS _sak_runner_targets)
     endif()
 endforeach()
 message(STATUS "ProcessRunner Windows Job linked to ${_sak_runner_job_link_count} test targets")
+
+# ============================================================================
+# CTest labels, resource locks and serial runs (owner ruling 2026-10-24)
+# ============================================================================
+#
+# Every registered test carries exactly one tier label; tests/README.md maps each label to its
+# tier (AGENTS.md "The gate"). A native QtTest executable defaults to `product`. A script test
+# must be listed by name below, and configure FAILS for a test that is neither a native test
+# target nor listed, and for a listed name that is not registered: a script test that silently
+# lands in a tier nobody runs is the dead-test failure the test-registration gate exists to stop.
+set(_sak_label_lists
+    "product:_sak_labels_product"
+    "release-tooling:_sak_labels_release_tooling"
+    "tooling:_sak_labels_tooling"
+    "cert:_sak_labels_cert"
+    "tooling-extended:_sak_labels_tooling_extended"
+    "mutation:_sak_labels_mutation"
+    "coverage:_sak_labels_coverage"
+    "tidy:_sak_labels_tidy"
+    "cert-tooling:_sak_labels_cert_tooling"
+    "fuzz-extended:_sak_labels_fuzz_extended")
+# Product scripts and the per-row registrations of one native executable.
+set(_sak_labels_product
+    test_browser_extension_pure test_pack_extension test_register_native_host
+    test_sak_apfs_writer_cli test_sak_hfs_writer_cli
+    test_partition_image_volume_lock_whole_disk
+    test_partition_image_volume_lock_selected_partition
+    test_partition_image_volume_lock_selected_mbr_unpinned_guid
+    test_partition_image_volume_lock_offline_whole_disk
+    test_partition_image_volume_lock_offline_selected_partition)
+set(_sak_labels_release_tooling test_startup_budget test_windows_runtime_dependencies)
+set(_sak_labels_tooling
+    test_process_capture test_process_capture_windows_powershell
+    test_run_lizard_js_baseline test_cppcheck_qt_slot_classifier)
+set(_sak_labels_cert test_apple_filesystem_capability_matrix)
+set(_sak_labels_tooling_extended
+    test_process_capture_ownership test_process_capture_ownership_windows_powershell
+    test_process_capture_deadline test_process_capture_deadline_windows_powershell
+    test_process_capture_output test_process_capture_output_windows_powershell
+    test_process_capture_stdin test_process_capture_stdin_windows_powershell
+    test_process_capture_environment test_process_capture_environment_windows_powershell
+    test_false_green_command_propagation test_false_green_command_propagation_windows_powershell
+    test_stage_portable_release test_release_archive_recovery)
+set(_sak_labels_mutation test_mutation_runner)
+set(_sak_labels_coverage test_coverage_runners test_coverage_runners_windows_powershell)
+set(_sak_labels_tidy test_clang_tidy_naming_gate)
+set(_sak_labels_cert_tooling
+    test_source_fingerprint test_partition_manager_certification_tools
+    test_partition_manager_controller_evidence test_partition_manager_controller_restore_routing
+    test_partition_manager_live_certifier test_partition_filesystem_probe_certifier
+    test_file_management_live_certifier_gate
+    test_new_partition_manager_automation_vm_security
+    test_new_partition_manager_automation_vm_security_windows_powershell)
+# Fuzz suites are product tests that also carry `fuzz`. One measured over the 60-second T2 fuzz
+# budget (about 127 s serially), so it runs in T4 under fuzz-extended instead of product.
+set(_sak_labels_fuzz_extended test_fuzz_backup_codec)
+
+# RESOURCE_LOCK groups. Each names the shared resource that makes its members unsafe to overlap.
+#   portable_data_root: every test executable lives in the one Release output directory, and
+#     app_paths::dataRoot() is <exe dir>/data, so these share data/config/Utility.ini,
+#     data/logs and data/ai_sessions (writers measured by diffing that tree around each test
+#     run alone; the panels read the config the writers reset). The staging, archive and
+#     startup-budget scripts read that same tree.
+#   system_clipboard / desktop_session: the real Windows clipboard and interactive desktop.
+#   image_scratch: SAK_TEST_IMAGE_SCRATCH_ROOT, where the core suite builds 17 GB sparse
+#     images. It is the only consumer today; the lock names the owner for the next one.
+set(_sak_lock_portable_data_root
+    test_config_manager test_config_schema_versioning test_regex_pattern_library
+    test_advanced_search_controller test_advanced_uninstall_controller
+    test_ai_assistant_panel_tool_dispatch test_app_action_service test_quick_action_controller
+    test_image_flasher_panel test_network_diagnostic_controller test_partition_manager_panel
+    test_startup_budget test_stage_portable_release test_release_archive_recovery)
+set(_sak_lock_system_clipboard test_ai_transcript_view test_win32_mcp_server)
+set(_sak_lock_desktop_session test_win32_mcp_server test_follow_scroll_controller)
+set(_sak_lock_image_scratch test_partition_manager_core)
+# Timing-sensitive: wall-clock budgets, process deadlines, handle-growth soaks and child
+# process sessions whose bounds a fully loaded machine can exceed. Each runs alone.
+# The last two are machine-saturating rather than delicate: source_fingerprint drives real
+# VS2022 configure/build fixtures and archive recovery zips and re-verifies the whole package.
+# Alone they take about 110 s and 76 s; started together with the other heavy tests by a
+# -j 8 run, both crossed their 180 s limits (2026-10-24). The limits stay; the overlap goes.
+set(_sak_run_serial
+    test_process_capture_deadline test_process_capture_deadline_windows_powershell
+    test_startup_budget test_windows_process_job test_resource_soak
+    test_ai_mcp_stdio_session test_ai_mcp_session_pool
+    test_source_fingerprint test_release_archive_recovery)
+
+get_property(_sak_label_tests DIRECTORY PROPERTY TESTS)
+foreach(_sak_pair IN LISTS _sak_label_lists)
+    string(REPLACE ":" ";" _sak_pair_parts "${_sak_pair}")
+    list(GET _sak_pair_parts 1 _sak_list_var)
+    foreach(_sak_listed IN LISTS ${_sak_list_var})
+        if(NOT _sak_listed IN_LIST _sak_label_tests)
+            message(FATAL_ERROR "Label list ${_sak_list_var} names unregistered test ${_sak_listed}")
+        endif()
+    endforeach()
+endforeach()
+foreach(_sak_lock_list _sak_lock_portable_data_root _sak_lock_system_clipboard
+        _sak_lock_desktop_session _sak_lock_image_scratch _sak_run_serial)
+    foreach(_sak_listed IN LISTS ${_sak_lock_list})
+        if(NOT _sak_listed IN_LIST _sak_label_tests)
+            message(FATAL_ERROR "${_sak_lock_list} names unregistered test ${_sak_listed}")
+        endif()
+    endforeach()
+endforeach()
+
+set(_sak_offscreen_count 0)
+foreach(_sak_test IN LISTS _sak_label_tests)
+    set(_sak_test_label "")
+    foreach(_sak_pair IN LISTS _sak_label_lists)
+        string(REPLACE ":" ";" _sak_pair_parts "${_sak_pair}")
+        list(GET _sak_pair_parts 0 _sak_candidate_label)
+        list(GET _sak_pair_parts 1 _sak_list_var)
+        if(_sak_test IN_LIST ${_sak_list_var})
+            if(_sak_test_label)
+                message(FATAL_ERROR "${_sak_test} is listed under two labels")
+            endif()
+            set(_sak_test_label "${_sak_candidate_label}")
+        endif()
+    endforeach()
+    if(NOT _sak_test_label)
+        if(NOT TARGET ${_sak_test})
+            message(FATAL_ERROR
+                    "${_sak_test} is not a native test target and has no label. Add it to the "
+                    "label list for its tier in tests/CMakeLists.txt.")
+        endif()
+        set(_sak_test_label product)
+    endif()
+    set(_sak_test_labels "${_sak_test_label}")
+    if(_sak_test MATCHES "^test_fuzz_")
+        list(APPEND _sak_test_labels fuzz)
+    endif()
+    set_property(TEST ${_sak_test} PROPERTY LABELS ${_sak_test_labels})
+
+    foreach(_sak_lock portable_data_root system_clipboard desktop_session image_scratch)
+        if(_sak_test IN_LIST _sak_lock_${_sak_lock})
+            set_property(TEST ${_sak_test} APPEND PROPERTY RESOURCE_LOCK ${_sak_lock})
+        endif()
+    endforeach()
+    if(_sak_test IN_LIST _sak_run_serial)
+        set_property(TEST ${_sak_test} PROPERTY RUN_SERIAL TRUE)
+    endif()
+
+    # Native GUI suites run on the offscreen platform by default: no window reaches the
+    # developer desktop and a parallel neighbour cannot steal focus from it. The real desktop
+    # and clipboard tests keep the native platform, which is what they exist to exercise.
+    if(TARGET ${_sak_test} AND _sak_test_label STREQUAL "product"
+       AND NOT _sak_test IN_LIST _sak_lock_desktop_session
+       AND NOT _sak_test IN_LIST _sak_lock_system_clipboard)
+        get_target_property(_sak_test_links ${_sak_test} LINK_LIBRARIES)
+        if("Qt6::Widgets" IN_LIST _sak_test_links OR "Qt6::Gui" IN_LIST _sak_test_links)
+            get_test_property(${_sak_test} ENVIRONMENT _sak_test_env)
+            if(NOT _sak_test_env MATCHES "QT_QPA_PLATFORM=")
+                set_property(TEST ${_sak_test} APPEND PROPERTY ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+            endif()
+            math(EXPR _sak_offscreen_count "${_sak_offscreen_count} + 1")
+        endif()
+    endif()
+endforeach()
+list(LENGTH _sak_label_tests _sak_label_test_count)
+message(STATUS "Test labels: ${_sak_label_test_count} tests labelled; "
+               "${_sak_offscreen_count} native GUI suites on the offscreen platform")
 
 # ============================================================================
 # Debug / sanitizer run environment

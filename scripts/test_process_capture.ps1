@@ -56,6 +56,21 @@ function Assert-CaptureFixtureBinding([Diagnostics.Process]$Process, $Binding, [
     )
 }
 
+# A fixture receipt is published by an atomic rename (process_capture_deadline_fixture.py
+# receipt()), so once the path exists its content is complete. Reading it in that same instant
+# still hit "being used by another process" once in a -j 8 full suite (2026-10-24): something
+# else on the host had the fresh file open. That is "not readable yet", retried only inside the
+# caller's existing bounded setup window; a receipt that never becomes readable still expires.
+function Read-FixtureReceipt([string]$Path, [Diagnostics.Stopwatch]$Setup, [double]$LimitSeconds, [string]$Label) {
+    while ($true) {
+        if (Test-Path -LiteralPath $Path) {
+            try { return ([IO.File]::ReadAllText($Path) | ConvertFrom-Json) } catch [IO.IOException] { }
+        }
+        Assert-True ($Setup.Elapsed.TotalSeconds -lt $LimitSeconds) "$Label identity setup expired"
+        [Threading.Thread]::Sleep(5)
+    }
+}
+
 function Resolve-FixturePython {
     # Fixtures bind the launched process's PID/generation, so they need the interpreter that
     # actually runs. A venv python.exe on Windows is a launcher stub that starts the base
@@ -240,7 +255,8 @@ function Test-CaptureIoDeadline([string]$Mode, [string]$ShellPath) {
             foreach ($role in @('parent','child')) {
                 $path=Join-Path $root ($role+'.json')
                 if ($held.ContainsKey($role) -or -not (Test-Path -LiteralPath $path)) { continue }
-                $binding=Get-Content -LiteralPath $path -Raw|ConvertFrom-Json
+                # Not readable yet is the same as not present yet; the outer 30 s watchdog bounds it.
+                try { $binding=[IO.File]::ReadAllText($path)|ConvertFrom-Json } catch [IO.IOException] { continue }
                 $process=[Diagnostics.Process]::GetProcessById($binding.pid)
                 try { Assert-CaptureFixtureBinding $process $binding "Deadline $role" }
                 catch { $process.Dispose(); throw }
@@ -384,11 +400,7 @@ function Test-CaptureOutputCase($Case) {
             $roles=if($Case.mode -eq 'output-hold-stdout'){@('parent','child')}else{@('parent')}
             foreach($role in $roles) {
                 $path=Join-Path $root ($role+'.json')
-                while(-not (Test-Path -LiteralPath $path)) {
-                    Assert-True ($setup.Elapsed.TotalSeconds -lt $identitySetupLimitSeconds) 'Output fixture identity setup expired'
-                    [Threading.Thread]::Sleep(5)
-                }
-                $binding=Get-Content -LiteralPath $path -Raw|ConvertFrom-Json
+                $binding=Read-FixtureReceipt $path $setup $identitySetupLimitSeconds 'Output fixture'
                 if(-not $state.held.ContainsKey($role)) {
                     $state.held[$role]=[Diagnostics.Process]::GetProcessById($binding.pid)
                     $state.bindings[$role]=$binding
@@ -444,11 +456,8 @@ function Test-CaptureOutputCase($Case) {
                 Assert-CaptureFixtureBinding $held $state.bindings.utility 'Output termination utility'
                 $setup=[Diagnostics.Stopwatch]::StartNew()
                 $receipt=Join-Path $utilityRoot 'parent.json'
-                while(-not (Test-Path -LiteralPath $receipt)) {
-                    Assert-True ($setup.Elapsed.TotalSeconds -lt $identitySetupLimitSeconds) 'Output utility identity setup expired'
-                    [Threading.Thread]::Sleep(5)
-                }
-                Assert-CaptureFixtureBinding $held (Get-Content -LiteralPath $receipt -Raw|ConvertFrom-Json) 'Output utility receipt'
+                $utilityBinding=Read-FixtureReceipt $receipt $setup $identitySetupLimitSeconds 'Output utility'
+                Assert-CaptureFixtureBinding $held $utilityBinding 'Output utility receipt'
                 [IO.File]::WriteAllText((Join-Path $utilityRoot 'output-ready.ack'),'utility bound')
                 [IO.File]::WriteAllText((Join-Path $utilityRoot 'output-release.ack'),'utility wait admitted')
                 return $true

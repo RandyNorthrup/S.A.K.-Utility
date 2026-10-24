@@ -49,8 +49,15 @@ keeps their history.
 
 ### Open release infrastructure
 
-- Tiered gates (T1-T4) with CI on every push to `dev`, CTest labels, resource locks and parallel
-  runs; retire the meta-gates on the approved list.
+- Tiered gates: the local tiers (T1 commit hooks, T1p pre-push, manual-stage T2-T4 twins), the
+  meta-gate retirements, CTest labels, resource locks and parallel runs are in place
+  (2026-10-24). Open: rewrite the CI workflows to run T2 on every push to `dev` by label.
+- Intermittent, cause unidentified: once in a `-j 8` full suite (2026-10-24)
+  `test_advanced_uninstall_controller` failed because `ConfigManager::sync` got a settings access
+  error on the shared `data/config/Utility.ini`, at the serial tail with no other CTest test
+  running; seven serial reruns of the same sequence passed and Defender real-time protection is
+  off. If a user's machine can hold that file the same way, a settings save fails visibly
+  rather than silently, but it fails.
 - One shared core library so first-party sources compile once instead of once per test target.
 - Certification status block in `docs/PARTITION_MANAGER_CERTIFICATION.md` generated from the
   certification JSON; retire the regex-over-prose claim gates.

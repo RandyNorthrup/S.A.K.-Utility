@@ -31,24 +31,54 @@ tests/
 
 ## Running Tests
 
-### Build and Run All
+### Labels and tiers
+
+Every registered test carries exactly one tier label (set in the label block at the end of
+`tests/CMakeLists.txt`; configure fails for an unlabelled script test). Gate tiers are defined in
+`AGENTS.md`, "The gate".
+
+| Label | Tier | What it holds |
+|---|---|---|
+| `product` | T2 | Native QtTest suites (the default) and the product scripts: browser extension, pack/register, the Create Image lock rows, the APFS/HFS writer CLIs |
+| `release-tooling` | T2 | Startup budget and runtime-DLL audit regressions |
+| `tooling` | T2 | Core process-capture contract, lizard JS baseline, cppcheck Qt-slot classifier |
+| `cert` | T2 | Apple filesystem capability matrix gate (JSON only) |
+| `tooling-extended` | T4 | Process-capture ownership/deadline/output/stdin/environment scopes, false-green harness, portable staging and archive recovery |
+| `mutation` | T4 | Mutation runner regressions |
+| `coverage` | T4 | Coverage runner regressions |
+| `tidy` | T4 | clang-tidy naming gate regressions |
+| `cert-tooling` | T4 | Certification-tool self-tests: verifiers, controller evidence/routing, live and probe certifiers, source fingerprint, automation-VM security |
+| `fuzz-extended` | T4 | Fuzz suites over the 60-second T2 fuzz budget (`test_fuzz_backup_codec`) |
+
+`fuzz` is an extra label on every `test_fuzz_*` suite, alongside its tier label.
+
+Parallel runs are safe by construction, not by luck. Tests that share a resource carry a
+`RESOURCE_LOCK`: `portable_data_root` (every test executable lives in the one Release directory,
+and `app_paths::dataRoot()` is that directory plus `data`), `system_clipboard`,
+`desktop_session`, and `image_scratch` (`SAK_TEST_IMAGE_SCRATCH_ROOT`). Wall-clock and deadline
+tests are `RUN_SERIAL`, and so are the two tests that saturate the machine on their own (the
+source-fingerprint build fixtures and portable archive recovery). Native GUI suites run on the offscreen platform unless they exist to
+exercise the real desktop or clipboard. If a test fails only under `-j`, fix its isolation (a
+lock, a serial run, its own data root), never its assertion.
 
 ```powershell
-cmake --build build --config Release --target RUN_TESTS
+# T2 tests, as CI runs them
+ctest --test-dir build -C Release -j 8 --output-on-failure -L "^(product|release-tooling|tooling|cert)$"
+
+# T4 tests
+ctest --test-dir build -C Release -j 8 --output-on-failure -L "^(tooling-extended|mutation|coverage|tidy|cert-tooling|fuzz-extended)$"
+
+# Everything, or one label, or the tests a change can reach
+ctest --test-dir build -C Release -j 8 --output-on-failure
+ctest --test-dir build -C Release -j 8 -L fuzz
+ctest --test-dir build -C Release -R "test_encryption"
+
+# What a label selects, without running it
+ctest --test-dir build -C Release -N -L product
 ```
 
-### Using CTest
-
-```powershell
-cd build
-ctest --build-config Release --output-on-failure
-
-# Pattern matching
-ctest -R "test_encryption"
-
-# Verbose output
-ctest -VV
-```
+Image tests need a disk with room for sparse multi-gigabyte images: point `TEMP`, `TMP` and
+`SAK_TEST_IMAGE_SCRATCH_ROOT` at it for the one command rather than persistently.
 
 ### Custom Targets
 
