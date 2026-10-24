@@ -61,7 +61,6 @@ struct ProcessResult {
 using CancelCheck = std::function<bool()>;
 using ProcessOutputCallback = std::function<void(const QString& chunk, bool is_stderr)>;
 using ProcessStartedCallback = std::function<void(qint64 process_id)>;
-using ProcessTerminationCallback = std::function<void()>;
 
 struct ProcessStreamingRequest {
     QString program;
@@ -69,7 +68,6 @@ struct ProcessStreamingRequest {
     int timeout_ms{0};
     ProcessOutputCallback on_output;
     ProcessStartedCallback on_started;
-    ProcessTerminationCallback on_terminate;
     CancelCheck should_cancel;
 };
 

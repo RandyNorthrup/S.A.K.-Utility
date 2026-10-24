@@ -19,7 +19,9 @@ Set-Location $ProjectRoot
 $WindowsUserPathRegex = "C:[\\/]+Users[\\/]+(?!Username\b|Public\b|Default\b|All Users\b)[^\\/\s""']+"
 
 $Patterns = @(
-    @{ Name = "OpenAI/API key"; Regex = "sk-(proj-)?[A-Za-z0-9_-]{20,}" },
+    # Require a token start: an embedded suffix of an identifier is not an API key.
+    # Punctuation, whitespace and string boundaries still admit real key-shaped values.
+    @{ Name = "OpenAI/API key"; Regex = "(?<![A-Za-z0-9_])sk-(proj-)?[A-Za-z0-9_-]{20,}" },
     @{ Name = "Context7 API key"; Regex = "ctx7sk-[A-Za-z0-9-]{20,}" },
     @{ Name = "GitHub token"; Regex = "gh[pousr]_[A-Za-z0-9_]{30,}" },
     @{ Name = "AWS access key"; Regex = "(AKIA|ASIA)[0-9A-Z]{16}" },

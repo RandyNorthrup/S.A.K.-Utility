@@ -24,6 +24,7 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QDirIterator>
+#include <QElapsedTimer>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QFormLayout>
@@ -193,9 +194,26 @@ DedupSettingsWidgets addDedupSettingsRows(QFormLayout* layout,
 }  // namespace
 
 OrganizerPanel::OrganizerPanel(QWidget* parent) : QWidget(parent), m_worker(nullptr) {
+    QElapsedTimer startup_timer;
+    startup_timer.start();
+    const bool startup_smoke =
+        QCoreApplication::instance()->property("sakStartupSmokeTest").toBool();
     setupUi();
+    if (startup_smoke) {
+        logInfo("OrganizerPanel startup: setupUi took {} ms", startup_timer.restart());
+        logger::instance().flush();
+    }
     refreshMountedFileSystemTargets();
+    if (startup_smoke) {
+        logInfo("OrganizerPanel startup: mounted target refresh took {} ms",
+                startup_timer.restart());
+        logger::instance().flush();
+    }
     setupDefaultCategories();
+    if (startup_smoke) {
+        logInfo("OrganizerPanel startup: default categories took {} ms", startup_timer.elapsed());
+        logger::instance().flush();
+    }
     logInfo("OrganizerPanel initialized");
 }
 

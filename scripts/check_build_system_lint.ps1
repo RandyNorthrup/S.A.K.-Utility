@@ -69,6 +69,54 @@ $warningDisabledTargets = @([regex]::Matches($rootText, $targetOptionsRegex) |
     Where-Object { $_.Groups['options'].Value -match $warningDisableRegex } |
     ForEach-Object { $_.Groups['target'].Value } |
     Sort-Object -Unique)
+
+function Get-WarningLevelOwnershipViolations {
+    param([string]$Source, [string[]]$DisabledTargets)
+    $issues = [Collections.Generic.List[string]]::new()
+    if ($DisabledTargets.Count -eq 0) { return @() }
+
+    # /WX does not promote MSVC's D9025 command-line warning to an error.
+    # A target-specific warning level must coexist with strict product /W4.
+    $globalOptions = [regex]::Matches($Source, '(?ms)add_compile_options\s*\((?<body>.*?)\)')
+    foreach ($options in $globalOptions) {
+        if ($options.Groups['body'].Value -match '(?m)^\s*/W4(?:\s|#|$)') {
+            $issues.Add('CMakeLists.txt: bare global /W4 conflicts with a vendored /w target')
+        }
+    }
+    foreach ($targetName in $DisabledTargets) {
+        $scopedWarningLevel = '$<$<NOT:$<STREQUAL:$<TARGET_PROPERTY:NAME>,' +
+            $targetName + '>>:/W4>'
+        if (-not $Source.Contains($scopedWarningLevel)) {
+            $issues.Add("CMakeLists.txt: /W4 must exclude warning-disabled target " +
+                        "'$targetName' without weakening other targets")
+        }
+    }
+    if ($DisabledTargets -contains 'sak_lzfse') {
+        $visualStudioBlock = [regex]::Match($Source,
+            '(?ms)if\(MSVC AND CMAKE_GENERATOR MATCHES "Visual Studio"\)' +
+            '(?<body>.*?)elseif\(MSVC\)')
+        $metadata = 'VS_SETTINGS "WarningLevel=TurnOffAllWarnings"'
+        if (-not $visualStudioBlock.Success -or
+            -not $visualStudioBlock.Groups['body'].Value.Contains($metadata) -or
+            -not $visualStudioBlock.Groups['body'].Value.Contains(
+                'get_target_property(_sak_lzfse_sources sak_lzfse SOURCES)')) {
+            $issues.Add('CMakeLists.txt: Visual Studio vendor source warning metadata missing')
+        }
+    }
+    return $issues.ToArray()
+}
+$violations += @(Get-WarningLevelOwnershipViolations -Source $rootText -DisabledTargets $warningDisabledTargets)
+
+# In-memory negative control: losing the MSBuild metadata must turn this gate red.
+if ($warningDisabledTargets -contains 'sak_lzfse') {
+    $withoutMetadata = $rootText.Replace('VS_SETTINGS "WarningLevel=TurnOffAllWarnings"',
+        'VS_SETTINGS "WarningLevel=Level1"')
+    $revealed = @(Get-WarningLevelOwnershipViolations -Source $withoutMetadata `
+        -DisabledTargets $warningDisabledTargets)
+    if (-not @($revealed | Where-Object { $_ -match 'Visual Studio vendor source' }).Count) {
+        $violations += 'Build-system warning-boundary red drill did not detect removed metadata'
+    }
+}
 foreach ($targetName in $warningDisabledTargets) {
     $targetDeclarationRegex = ('(?ms)add_(?:library|executable)\s*\(\s*' +
         [regex]::Escape($targetName) + '\b(?<sources>.*?)\)')

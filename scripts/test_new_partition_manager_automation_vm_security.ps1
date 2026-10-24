@@ -44,6 +44,25 @@ function Assert-Fails([scriptblock]$Action, [string]$Pattern, [string]$Message) 
     }
 }
 
+function Test-GuestAdminProbeInheritsPolicy {
+    $source = Get-Content -LiteralPath $AutomationScript -Raw -ErrorAction Stop
+    $tokens = $null
+    $errors = $null
+    $ast = [Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)
+    Assert-True (@($errors).Count -eq 0) 'VM automation source did not parse'
+    $definitions = @($ast.FindAll({ param($node)
+        $node -is [Management.Automation.Language.FunctionDefinitionAst] -and
+            $node.Name -eq 'Wait-GuestDirectAdmin'
+    }, $true))
+    Assert-True ($definitions.Count -eq 1) 'Guest admin probe function is missing or duplicated'
+    $body = $definitions[0].Body.Extent.Text
+    Assert-True ($body.Contains('"-Command", $adminProbeCommand')) (
+        'Guest admin probe no longer uses the inline command contract')
+    Assert-True ($body -notmatch '(?i)\b(?:ExecutionPolicy|Bypass)\b') (
+        'Guest admin inline probe overrides inherited PowerShell policy')
+    Write-Host 'PASS VM guest admin inline probe inherits execution policy'
+}
+
 function New-DirectoryJunction([string]$Path, [string]$Target) {
     $output = & "$env:SystemRoot\System32\cmd.exe" /d /c mklink /J $Path $Target 2>&1
     if ($LASTEXITCODE -ne 0) {
@@ -54,7 +73,7 @@ function New-DirectoryJunction([string]$Path, [string]$Target) {
 function Invoke-AutomationNativeCase([string]$FakeVBox) {
     $hostPath = (Get-Process -Id $PID).Path
     return Invoke-CapturedProcess -FilePath $hostPath -Arguments @(
-        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+        '-NoProfile', '-NonInteractive',
         '-File', $AutomationScript, '-VBoxManage', $FakeVBox, '-TestNativeCaptureOnly'
     )
 }
@@ -71,6 +90,7 @@ $fakeVariables = @(
 )
 
 try {
+    Test-GuestAdminProbeInheritsPolicy
     foreach ($path in @($testRoot, $outsideRoot)) {
         if (Test-Path -LiteralPath $path) {
             Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction Stop

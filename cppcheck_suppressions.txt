@@ -11,7 +11,7 @@ unusedFunction
 // Meta-noise from the suppression file itself.
 unmatchedSuppression
 
-// Remaining algorithm-style debt is an INCOMPLETE direct-fix program in R5-IDX-16.
+// Remaining algorithm-style debt is an INCOMPLETE direct-fix program in R5-IDX-33.
 // This existing exception is not a permanent Qt-style exemption.
 useStlAlgorithm
 

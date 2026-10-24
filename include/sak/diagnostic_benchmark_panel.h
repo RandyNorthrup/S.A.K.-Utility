@@ -160,7 +160,7 @@ private:
 
     // -- Section Builders ----------------------------------------
     QWidget* createDiagnosticsTab();
-    QWidget* createBenchmarkTab();
+    void createBenchmarkTab();
     QGroupBox* createHardwareSection();
     QGroupBox* createSmartSection();
     QGroupBox* createBenchmarkSection();

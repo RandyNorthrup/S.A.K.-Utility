@@ -29,6 +29,10 @@ set(SAK_PROCESS_RUNNER_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/process_runner.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/process_runner.h"
 )
+set(SAK_WINDOWS_PROCESS_JOB_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/windows_process_job.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/windows_process_job.h"
+)
 set(SAK_ELEVATION_SOURCES
     # The AI command path asks ElevationManager whether THIS process is already elevated, so a
     # "non-admin" launch that inherits an elevated token is still policed (B1-3 / H6). It logs,
@@ -301,9 +305,9 @@ add_test(NAME test_diagnostic_types COMMAND test_diagnostic_types
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_diagnostic_types")
 
-# test_partition_manager_core - inventory parsing, safety, scripts, queue
-add_executable(test_partition_manager_core
-    unit/test_partition_manager_core.cpp
+# Shared production runtime for core tests and app-driven external certification helpers.
+# No test substitute or test-only compile definition belongs in this source list.
+set(SAK_PARTITION_CORE_RUNTIME_SOURCES
     ../src/core/file_recovery_engine.cpp
     ../src/core/apfs_crypto.cpp
     ../src/core/apfs_keybag.cpp
@@ -346,6 +350,12 @@ add_executable(test_partition_manager_core
     ../include/sak/partition_operation_planner.h
     ../include/sak/partition_operation_queue.h
 )
+
+# test_partition_manager_core - inventory parsing, safety, scripts, queue
+add_executable(test_partition_manager_core
+    unit/test_partition_manager_core.cpp
+    ${SAK_PARTITION_CORE_RUNTIME_SOURCES}
+)
 set_target_properties(test_partition_manager_core PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
@@ -363,6 +373,64 @@ add_test(NAME test_partition_manager_core COMMAND test_partition_manager_core
          -o "${TEST_OUTPUT_DIR}/test_partition_manager_core.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_partition_manager_core")
+
+# The five Create Image lock runtime shapes each launch the full PowerShell guard
+# fixture. Register each data row independently so one slow row cannot consume
+# the aggregate core test's deadline or conceal which shape failed.
+add_executable(test_partition_image_volume_lock
+    unit/test_partition_image_volume_lock.cpp
+    ${SAK_PARTITION_CORE_RUNTIME_SOURCES}
+)
+set_target_properties(test_partition_image_volume_lock PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_partition_image_volume_lock PRIVATE
+    Qt6::Core Qt6::Test ZLIB::ZLIB sak_lzfse ${PLATFORM_LIBS}
+)
+target_include_directories(test_partition_image_volume_lock PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+target_compile_definitions(test_partition_image_volume_lock PRIVATE QT_NO_KEYWORDS)
+add_test(NAME test_partition_image_volume_lock_whole_disk
+         COMMAND test_partition_image_volume_lock
+                 scriptBuilder_createImageVolumeLocksRuntime:whole-disk
+                 -o "${TEST_OUTPUT_DIR}/test_partition_image_volume_lock_whole_disk.txt,txt"
+                 -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+add_test(NAME test_partition_image_volume_lock_selected_partition
+         COMMAND test_partition_image_volume_lock
+                 scriptBuilder_createImageVolumeLocksRuntime:selected-partition
+                 -o "${TEST_OUTPUT_DIR}/test_partition_image_volume_lock_selected_partition.txt,txt"
+                 -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+add_test(NAME test_partition_image_volume_lock_selected_mbr_unpinned_guid
+         COMMAND test_partition_image_volume_lock
+                 scriptBuilder_createImageVolumeLocksRuntime:selected-mbr-unpinned-guid
+                 -o "${TEST_OUTPUT_DIR}/test_partition_image_volume_lock_selected_mbr_unpinned_guid.txt,txt"
+                 -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+add_test(NAME test_partition_image_volume_lock_offline_whole_disk
+         COMMAND test_partition_image_volume_lock
+                 scriptBuilder_createImageVolumeLocksRuntime:offline-whole-disk
+                 -o "${TEST_OUTPUT_DIR}/test_partition_image_volume_lock_offline_whole_disk.txt,txt"
+                 -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+add_test(NAME test_partition_image_volume_lock_offline_selected_partition
+         COMMAND test_partition_image_volume_lock
+                 scriptBuilder_createImageVolumeLocksRuntime:offline-selected-partition
+                 -o "${TEST_OUTPUT_DIR}/test_partition_image_volume_lock_offline_selected_partition.txt,txt"
+                 -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+set_tests_properties(
+    test_partition_image_volume_lock_whole_disk
+    test_partition_image_volume_lock_selected_partition
+    test_partition_image_volume_lock_selected_mbr_unpinned_guid
+    test_partition_image_volume_lock_offline_whole_disk
+    test_partition_image_volume_lock_offline_selected_partition
+    PROPERTIES TIMEOUT 210
+)
+message(STATUS "Added five Create Image source-lock runtime tests")
 
 # test_partition_manager_controller - async preflight/apply/verification state machine
 add_executable(test_partition_manager_controller
@@ -413,6 +481,94 @@ add_test(NAME test_partition_manager_controller COMMAND test_partition_manager_c
          -o "${TEST_OUTPUT_DIR}/test_partition_manager_controller.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_partition_manager_controller")
+
+# App-driven external restore proof uses production runtime, never the controller unit test's
+# substitute executor. This helper is not an unattended destructive CTest.
+set(SAK_PARTITION_LIVE_CERTIFIER_SOURCES
+    certification/partition_manager_live_certifier.cpp
+    ${SAK_PARTITION_CORE_RUNTIME_SOURCES}
+    ${SAK_WINDOWS_PROCESS_JOB_SOURCES}
+    ../src/core/elevation_manager.cpp
+    ../src/core/file_hash.cpp
+    ../src/core/partition_manager_controller.cpp
+    ../src/core/partition_report_generator.cpp
+    ../include/sak/elevation_manager.h
+    ../include/sak/file_hash.h
+    ../include/sak/partition_manager_controller.h
+)
+add_executable(partition_manager_live_certifier ${SAK_PARTITION_LIVE_CERTIFIER_SOURCES})
+set_target_properties(partition_manager_live_certifier PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(partition_manager_live_certifier PRIVATE
+    Qt6::Core Qt6::CorePrivate Qt6::Concurrent ZLIB::ZLIB sak_lzfse ${PLATFORM_LIBS} virtdisk
+)
+target_include_directories(partition_manager_live_certifier PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+
+# Conservatively bind the complete first-party public-header tree. This includes transitive
+# partition dependencies; an unrelated public-header change may require a fresh certification,
+# but no undeclared header edit may silently reuse an earlier source stamp.
+file(GLOB_RECURSE SAK_PARTITION_CERTIFICATION_HEADERS CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/include/sak/*.h"
+    "${CMAKE_SOURCE_DIR}/include/sak/*.hpp"
+)
+# The linked codec archive contains both upstream C and the separately compiled first-party
+# shim. Derive their files from the actual targets, not a second hand-maintained source list.
+get_target_property(SAK_PARTITION_CODEC_SOURCES sak_lzfse SOURCES)
+get_target_property(SAK_PARTITION_CODEC_SOURCE_DIR sak_lzfse SOURCE_DIR)
+get_target_property(SAK_PARTITION_SHIM_SOURCES sak_lzfse_shim SOURCES)
+list(REMOVE_ITEM SAK_PARTITION_CODEC_SOURCES "$<TARGET_OBJECTS:sak_lzfse_shim>")
+set(SAK_PARTITION_CODEC_INPUTS)
+foreach(codec_source IN LISTS SAK_PARTITION_CODEC_SOURCES SAK_PARTITION_SHIM_SOURCES)
+    if(codec_source MATCHES "\\$<")
+        message(FATAL_ERROR "Unbound conditional codec source: ${codec_source}")
+    endif()
+    file(REAL_PATH "${codec_source}" codec_path BASE_DIRECTORY "${SAK_PARTITION_CODEC_SOURCE_DIR}")
+    list(APPEND SAK_PARTITION_CODEC_INPUTS "${codec_path}")
+endforeach()
+file(GLOB_RECURSE SAK_PARTITION_CODEC_HEADERS CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/third_party/lzfse/src/*.h"
+)
+include("${CMAKE_SOURCE_DIR}/cmake/SakSourceFingerprint.cmake")
+sak_compute_source_fingerprint(SAK_PARTITION_CERTIFIER_SOURCE_SHA256 "${CMAKE_SOURCE_DIR}"
+    ${SAK_PARTITION_LIVE_CERTIFIER_SOURCES}
+    ${SAK_PARTITION_CERTIFICATION_HEADERS}
+    ${SAK_PARTITION_CODEC_INPUTS}
+    ${SAK_PARTITION_CODEC_HEADERS}
+    "${CMAKE_SOURCE_DIR}/CMakeLists.txt"
+    "${CMAKE_CURRENT_SOURCE_DIR}/CMakeLists.txt"
+    "${CMAKE_SOURCE_DIR}/cmake/SakSourceFingerprint.cmake"
+    "${CMAKE_SOURCE_DIR}/scripts/verify_source_fingerprint.py"
+)
+# Only the reporting entrypoint consumes the stamp. A changed stamp must not needlessly
+# rebuild every linked runtime object whose own source and compile settings are unchanged.
+set_property(SOURCE certification/partition_manager_live_certifier.cpp APPEND PROPERTY
+    COMPILE_DEFINITIONS
+    SAK_PARTITION_CERTIFIER_SOURCE_SHA256="${SAK_PARTITION_CERTIFIER_SOURCE_SHA256}"
+)
+# Retain the exact digest preimage beside the executable. Verification can rehash these source
+# inputs and compare the manifest digest with the stamp reported by the executed helper.
+set(SAK_PARTITION_CERTIFIER_SOURCE_MANIFEST
+    "${CMAKE_CURRENT_BINARY_DIR}/partition_manager_live_certifier.sources.txt"
+)
+file(GENERATE OUTPUT "${SAK_PARTITION_CERTIFIER_SOURCE_MANIFEST}"
+    CONTENT "${SAK_PARTITION_CERTIFIER_SOURCE_SHA256_RECORDS}"
+    NEWLINE_STYLE LF
+)
+sak_add_source_fingerprint_guard(partition_manager_live_certifier "${CMAKE_SOURCE_DIR}"
+    "${SAK_PARTITION_CERTIFIER_SOURCE_MANIFEST}" "${SAK_PARTITION_CERTIFIER_SOURCE_SHA256}"
+    sak_lzfse sak_lzfse_shim
+)
+add_custom_command(TARGET partition_manager_live_certifier POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${SAK_PARTITION_CERTIFIER_SOURCE_MANIFEST}"
+        "$<TARGET_FILE_DIR:partition_manager_live_certifier>/partition_manager_live_certifier.sources.txt"
+    VERBATIM
+)
+message(STATUS "Added app-driven certification helper: partition_manager_live_certifier")
 
 # partition_file_recovery_certifier - external lab helper for live-volume Data Recovery proof
 add_executable(partition_file_recovery_certifier
@@ -472,7 +628,7 @@ endif()
 add_test(NAME test_partition_filesystem_probe_certifier
          COMMAND "${SAK_TEST_POWERSHELL_PATH}"
                  -NoProfile
-                 -ExecutionPolicy Bypass
+                 -NonInteractive
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_filesystem_probe_certifier.ps1"
                  -CertifierPath "$<TARGET_FILE:partition_filesystem_probe_certifier>"
                  -OutputRoot "${TEST_OUTPUT_DIR}/partition_filesystem_probe_certifier"
@@ -568,7 +724,7 @@ endif()
 add_test(NAME test_file_management_live_certifier_gate
          COMMAND "${SAK_TEST_POWERSHELL_PATH}"
                  -NoProfile
-                 -ExecutionPolicy Bypass
+                 -NonInteractive
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_file_management_live_certifier_gate.ps1"
                  -CertifierPath "$<TARGET_FILE:file_management_live_certifier>"
                  -OutputRoot "${TEST_OUTPUT_DIR}/file_management_live_certifier_gate"
@@ -578,7 +734,7 @@ message(STATUS "Added live-certifier gate self-test: test_file_management_live_c
 add_test(NAME test_sak_apfs_writer_cli
          COMMAND "${SAK_TEST_POWERSHELL_PATH}"
                  -NoProfile
-                 -ExecutionPolicy Bypass
+                 -NonInteractive
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_sak_apfs_writer_cli.ps1"
                  -CliPath "$<TARGET_FILE:sak_apfs_writer_cli>"
                  -OutputRoot "${TEST_OUTPUT_DIR}/sak_apfs_writer_cli"
@@ -588,7 +744,7 @@ message(STATUS "Added APFS writer CLI self-test: test_sak_apfs_writer_cli")
 add_test(NAME test_sak_hfs_writer_cli
          COMMAND "${SAK_TEST_POWERSHELL_PATH}"
                  -NoProfile
-                 -ExecutionPolicy Bypass
+                 -NonInteractive
                  -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_sak_hfs_writer_cli.ps1"
                  -CliPath "$<TARGET_FILE:sak_hfs_writer_cli>"
                  -CertifierPath "$<TARGET_FILE:partition_filesystem_probe_certifier>"
@@ -1620,6 +1776,27 @@ add_test(NAME test_process_runner COMMAND test_process_runner
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_process_runner")
 
+# test_windows_process_job - atomic startup containment and checked Job cleanup
+add_executable(test_windows_process_job
+    unit/test_windows_process_job.cpp
+    ${SAK_WINDOWS_PROCESS_JOB_SOURCES}
+)
+set_target_properties(test_windows_process_job PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_windows_process_job PRIVATE
+    Qt6::Core Qt6::CorePrivate Qt6::Test
+)
+target_include_directories(test_windows_process_job PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_windows_process_job COMMAND test_windows_process_job
+         -o "${TEST_OUTPUT_DIR}/test_windows_process_job.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+set_tests_properties(test_windows_process_job PROPERTIES TIMEOUT 60)
+message(STATUS "Added unit test: test_windows_process_job")
+
 # test_resource_soak - R5-G23-10 long-session handle/GDI/memory-growth soak
 add_executable(test_resource_soak
     unit/test_resource_soak.cpp
@@ -1778,6 +1955,9 @@ if(SAK_ENABLE_AI_ASSISTANT)
     add_executable(test_ai_assistant_panel_tool_dispatch
         unit/test_ai_assistant_panel_tool_dispatch.cpp
         ${_panel_dispatch_test_srcs}
+        ${SAK_WINDOWS_PROCESS_JOB_SOURCES}
+        ${CMAKE_SOURCE_DIR}/resources/ai.qrc
+        ${CMAKE_SOURCE_DIR}/resources/icons.qrc
         ${CMAKE_SOURCE_DIR}/src/win32mcp/browser_extension_installer.cpp
         ${CMAKE_SOURCE_DIR}/src/core/app_paths.cpp
         ${CMAKE_SOURCE_DIR}/src/core/chocolatey_manager.cpp
@@ -2079,6 +2259,7 @@ if(SAK_ENABLE_AI_ASSISTANT)
              COMMAND test_ai_assistant_panel_tool_dispatch
              -o "${TEST_OUTPUT_DIR}/test_ai_assistant_panel_tool_dispatch.txt,txt" -o -,txt
              WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+    set_tests_properties(test_ai_assistant_panel_tool_dispatch PROPERTIES TIMEOUT 300)
     message(STATUS "Added unit test: test_ai_assistant_panel_tool_dispatch")
 endif()
 
@@ -2788,6 +2969,7 @@ message(STATUS "Added unit test: test_fuzz_mbox_container")
 
 add_executable(test_ai_provider_gateway
     unit/test_ai_provider_gateway.cpp
+    ${SAK_WINDOWS_PROCESS_JOB_SOURCES}
     ../src/ai/ai_provider_gateway.cpp
     ../src/ai/ai_provider_gateway_authorization.cpp
     ../src/ai/ai_provider_registry.cpp
@@ -2806,7 +2988,7 @@ set_target_properties(test_ai_provider_gateway PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_ai_provider_gateway PRIVATE
-    Qt6::Core Qt6::Network Qt6::Test
+    Qt6::Core Qt6::CorePrivate Qt6::Network Qt6::Test
 )
 target_include_directories(test_ai_provider_gateway PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
@@ -3196,6 +3378,8 @@ message(STATUS "Added unit test: test_ai_mcp_http_client")
 
 add_executable(test_ai_mcp_stdio_session
     unit/test_ai_mcp_stdio_session.cpp
+    ${SAK_WINDOWS_PROCESS_JOB_SOURCES}
+    support/ai_mcp_native_fixture.h
     ../src/ai/ai_mcp_stdio_session.cpp
     ../include/sak/ai/ai_mcp_stdio_session.h
 )
@@ -3204,18 +3388,22 @@ set_target_properties(test_ai_mcp_stdio_session PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_ai_mcp_stdio_session PRIVATE
-    Qt6::Core Qt6::Test
+    Qt6::Core Qt6::CorePrivate Qt6::Test
 )
 target_include_directories(test_ai_mcp_stdio_session PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
+add_dependencies(test_ai_mcp_stdio_session sak_utility)
 add_test(NAME test_ai_mcp_stdio_session COMMAND test_ai_mcp_stdio_session
          -o "${TEST_OUTPUT_DIR}/test_ai_mcp_stdio_session.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+set_tests_properties(test_ai_mcp_stdio_session PROPERTIES TIMEOUT 60)
 message(STATUS "Added unit test: test_ai_mcp_stdio_session")
 
 add_executable(test_ai_mcp_session_pool
     unit/test_ai_mcp_session_pool.cpp
+    ${SAK_WINDOWS_PROCESS_JOB_SOURCES}
+    support/ai_mcp_native_fixture.h
     ../src/ai/ai_mcp_session_pool.cpp
     ../src/ai/ai_mcp_stdio_session.cpp
     ../include/sak/ai/ai_mcp_session_pool.h
@@ -3226,14 +3414,16 @@ set_target_properties(test_ai_mcp_session_pool PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_ai_mcp_session_pool PRIVATE
-    Qt6::Core Qt6::Test
+    Qt6::Core Qt6::CorePrivate Qt6::Test
 )
 target_include_directories(test_ai_mcp_session_pool PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
+add_dependencies(test_ai_mcp_session_pool sak_utility)
 add_test(NAME test_ai_mcp_session_pool COMMAND test_ai_mcp_session_pool
          -o "${TEST_OUTPUT_DIR}/test_ai_mcp_session_pool.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+set_tests_properties(test_ai_mcp_session_pool PROPERTIES TIMEOUT 60)
 message(STATUS "Added unit test: test_ai_mcp_session_pool")
 
 add_executable(test_app_action_registry
@@ -4967,6 +5157,7 @@ message(STATUS "Added unit test: test_flash_types")
 # nothing. Runs offscreen.
 add_executable(test_image_flasher_panel
     unit/test_image_flasher_panel.cpp
+    ../resources/icons.qrc
     ../src/gui/image_flasher_panel.cpp
     ../src/gui/view_empty_state.cpp
     ../include/sak/view_empty_state.h
@@ -5035,6 +5226,7 @@ add_executable(test_image_flasher_panel
 )
 set_target_properties(test_image_flasher_panel PROPERTIES
     AUTOMOC ON
+    AUTORCC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_image_flasher_panel PRIVATE
@@ -6117,9 +6309,6 @@ target_link_libraries(test_browser_extension_installer PRIVATE
 target_include_directories(test_browser_extension_installer PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
-target_compile_definitions(test_browser_extension_installer PRIVATE
-    SAK_REPO_ROOT="${CMAKE_SOURCE_DIR}"
-)
 # AUTOMOC forwards target compile definitions to moc (unlike the builtin _WIN32). The product
 # configures only on Windows, so register the registry slots unconditionally.
 target_compile_definitions(test_browser_extension_installer PRIVATE SAK_WIN_REGISTRY_TESTS)
@@ -6374,6 +6563,19 @@ add_test(NAME test_advanced_uninstall_controller COMMAND test_advanced_uninstall
          -o "${TEST_OUTPUT_DIR}/test_advanced_uninstall_controller.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_advanced_uninstall_controller")
+
+# Source-inspection tests read committed source through the configured source root.
+# Executable-relative ../.. breaks in nested build trees and can silently read build/src.
+foreach(_sak_source_root_test IN ITEMS
+        test_partition_manager_panel
+        test_process_runner
+        test_uup_dump_api
+        test_cleanup_worker
+        test_advanced_uninstall_controller
+        test_browser_extension_installer)
+    target_compile_definitions(${_sak_source_root_test} PRIVATE
+        SAK_REPO_ROOT="${CMAKE_SOURCE_DIR}")
+endforeach()
 
 # test_leftover_scanner - pattern building, risk classification, scan levels, cancellation
 add_executable(test_leftover_scanner
@@ -7679,6 +7881,7 @@ message(STATUS "Test output directory: ${TEST_OUTPUT_DIR}")
 # directly and uses Q_SLOTS/Q_EMIT, so QT_NO_KEYWORDS is safe for each.
 foreach(_sak_core_test_target
         test_partition_manager_core
+        partition_manager_live_certifier
         partition_filesystem_probe_certifier
         file_management_live_certifier
         test_partition_manager_panel
@@ -7714,6 +7917,24 @@ if(PLATFORM_WINDOWS)
                 "pwsh was not found, so the PowerShell guard tests could not run. "
                 "Refusing to configure a test suite that silently drops them.")
     endif()
+    add_test(NAME test_partition_manager_live_certifier
+             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_SOURCE_DIR}/scripts/test_partition_manager_live_certifier.ps1"
+                     -CertifierPath "$<TARGET_FILE:partition_manager_live_certifier>"
+                     -OutputRoot "${TEST_OUTPUT_DIR}/partition_manager_live_certifier")
+    set_tests_properties(test_partition_manager_live_certifier PROPERTIES TIMEOUT 120)
+
+    add_test(NAME test_partition_manager_controller_evidence
+             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_controller_evidence.ps1")
+    set_tests_properties(test_partition_manager_controller_evidence PROPERTIES TIMEOUT 120)
+
+    add_test(NAME test_partition_manager_controller_restore_routing
+             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_SOURCE_DIR}/scripts/test_partition_manager_controller_restore_routing.ps1"
+                     -RunGuardDrills)
+    set_tests_properties(test_partition_manager_controller_restore_routing PROPERTIES TIMEOUT 60)
+
     foreach(_sak_ps_test test_pack_extension test_register_native_host)
         add_test(NAME ${_sak_ps_test}
                  COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
@@ -7727,9 +7948,9 @@ if(PLATFORM_WINDOWS)
     # release workflow, and CI has not run for 776 commits (R5-G21-7). An 800-line self
     # test that executes once per release is not a gate, so it runs in the suite now.
     #
-    # -OutputRoot is redirected into the build tree. Its default writes synthetic reports
-    # under artifacts/ in the working copy, which would dirty the repo on every ctest run
-    # and mix generated fixtures in with the real captured certification evidence.
+    # -OutputRoot is explicit in the build tree. Its default also stays under
+    # build/test_results so standalone self-tests cannot mix synthetic fixtures
+    # with captured certification evidence under artifacts/.
     add_test(NAME test_partition_manager_certification_tools
              COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
                      -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_manager_certification_tools.ps1"
@@ -7740,13 +7961,18 @@ if(PLATFORM_WINDOWS)
     # 5.1, and sequential pipe reads can deadlock when both streams fill. This hermetic test
     # drives the shared ProcessStartInfo seam through exit 0/7, large dual-stream output,
     # argument quoting, and a bounded timeout. It also pins the named certification runners to
-    # that seam and rejects their old scoped capture blocks. The two registrations below run the
-    # same contract under pwsh and Windows PowerShell 5.1.
+    # that seam and rejects their old scoped capture blocks. Keep each bounded group separate
+    # under pwsh and Windows PowerShell 5.1: the old aggregate crossed its 60-second deadline
+    # at different groups on repeated runs, hiding the remaining assertions.
     add_test(NAME test_process_capture
              COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1")
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
+                     -CoreOnly)
     set_tests_properties(test_process_capture PROPERTIES TIMEOUT 60)
 
+    # CTest is a native parent: unlike a direct PowerShell-to-PowerShell launch, it retains
+    # the caller's PowerShell 7 module path. Clear only that inherited variable at each
+    # Windows PowerShell launch so 5.1 initializes its own standard-module search paths.
     set(SAK_WINDOWS_POWERSHELL_EXECUTABLE
         "$ENV{SystemRoot}/System32/WindowsPowerShell/v1.0/powershell.exe")
     if(NOT EXISTS "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}")
@@ -7755,9 +7981,69 @@ if(PLATFORM_WINDOWS)
                 "regression test cannot run.")
     endif()
     add_test(NAME test_process_capture_windows_powershell
-             COMMAND "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1")
+             COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
+                     "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
+                     -CoreOnly)
     set_tests_properties(test_process_capture_windows_powershell PROPERTIES TIMEOUT 60)
+
+    add_test(NAME test_process_capture_ownership
+             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
+                     -OwnershipOnly)
+    add_test(NAME test_process_capture_ownership_windows_powershell
+             COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
+                     "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
+                     -OwnershipOnly)
+    add_test(NAME test_process_capture_deadline
+             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
+                     -DeadlineOnly)
+    add_test(NAME test_process_capture_deadline_windows_powershell
+             COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
+                     "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
+                     -DeadlineOnly)
+    add_test(NAME test_process_capture_output
+             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
+                     -OutputOnly)
+    add_test(NAME test_process_capture_output_windows_powershell
+             COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
+                     "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
+                     -OutputOnly)
+    add_test(NAME test_process_capture_stdin
+             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
+                     -StdinOnly)
+    add_test(NAME test_process_capture_stdin_windows_powershell
+             COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
+                     "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
+                     -StdinOnly)
+    add_test(NAME test_process_capture_environment
+             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
+                     -EnvironmentOnly)
+    add_test(NAME test_process_capture_environment_windows_powershell
+             COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
+                     "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
+                     -EnvironmentOnly)
+    set_tests_properties(
+        test_process_capture_ownership
+        test_process_capture_ownership_windows_powershell
+        test_process_capture_deadline
+        test_process_capture_deadline_windows_powershell
+        test_process_capture_output
+        test_process_capture_output_windows_powershell
+        test_process_capture_stdin
+        test_process_capture_stdin_windows_powershell
+        test_process_capture_environment
+        test_process_capture_environment_windows_powershell
+        PROPERTIES TIMEOUT 60)
 
     # Coverage reports are evidence only when every child/tool succeeds and every output is fresh.
     # Fake native tools make each refusal deterministic without needing an instrumented build.
@@ -7767,7 +8053,8 @@ if(PLATFORM_WINDOWS)
     set_tests_properties(test_coverage_runners PROPERTIES TIMEOUT 300)
 
     add_test(NAME test_coverage_runners_windows_powershell
-             COMMAND "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+             COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
+                     "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
                      -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_coverage_runners.ps1")
     set_tests_properties(test_coverage_runners_windows_powershell PROPERTIES TIMEOUT 300)
 
@@ -7777,21 +8064,38 @@ if(PLATFORM_WINDOWS)
     set_tests_properties(test_new_partition_manager_automation_vm_security PROPERTIES TIMEOUT 120)
 
     add_test(NAME test_new_partition_manager_automation_vm_security_windows_powershell
-             COMMAND "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+             COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
+                     "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
                      -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_new_partition_manager_automation_vm_security.ps1")
     set_tests_properties(
         test_new_partition_manager_automation_vm_security_windows_powershell PROPERTIES TIMEOUT 120)
 
     add_test(NAME test_false_green_command_propagation
              COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_false_green_command_propagation.ps1")
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_false_green_command_propagation.ps1"
+                     -Scope Portable)
     set_tests_properties(test_false_green_command_propagation PROPERTIES TIMEOUT 60)
 
     add_test(NAME test_false_green_command_propagation_windows_powershell
-             COMMAND "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_false_green_command_propagation.ps1")
+             COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
+                     "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_false_green_command_propagation.ps1"
+                     -Scope Portable)
     set_tests_properties(
         test_false_green_command_propagation_windows_powershell PROPERTIES TIMEOUT 60)
+
+    add_test(NAME test_false_green_ledger
+             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_false_green_command_propagation.ps1"
+                     -Scope Ledger)
+    set_tests_properties(test_false_green_ledger PROPERTIES TIMEOUT 60)
+
+    add_test(NAME test_false_green_ledger_windows_powershell
+             COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
+                     "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_false_green_command_propagation.ps1"
+                     -Scope Ledger)
+    set_tests_properties(test_false_green_ledger_windows_powershell PROPERTIES TIMEOUT 60)
 
     add_test(NAME test_startup_budget
              COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
@@ -7805,8 +8109,15 @@ if(PLATFORM_WINDOWS)
 
     add_test(NAME test_stage_portable_release
              COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_stage_portable_release.ps1")
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_stage_portable_release.ps1"
+                     -BuildDirectory "${CMAKE_BINARY_DIR}" -SkipArchiveContracts)
     set_tests_properties(test_stage_portable_release PROPERTIES TIMEOUT 240)
+
+    add_test(NAME test_release_archive_recovery
+             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_stage_portable_release.ps1"
+                     -BuildDirectory "${CMAKE_BINARY_DIR}" -ArchiveOnly)
+    set_tests_properties(test_release_archive_recovery PROPERTIES TIMEOUT 180)
 
     add_test(NAME test_rehearse_ci_paths
              COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
@@ -7831,7 +8142,17 @@ if(PLATFORM_WINDOWS)
     add_test(NAME test_review_ledger
              COMMAND "${SAK_PYTHON_EXECUTABLE}"
                      "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_review_ledger.py")
-    set_tests_properties(test_review_ledger PROPERTIES TIMEOUT 60)
+    set_tests_properties(test_review_ledger PROPERTIES TIMEOUT 180)
+
+    add_test(NAME test_doc_accuracy
+             COMMAND "${SAK_PYTHON_EXECUTABLE}"
+                     "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_doc_accuracy.py")
+    set_tests_properties(test_doc_accuracy PROPERTIES TIMEOUT 60)
+
+    add_test(NAME test_source_fingerprint
+             COMMAND "${SAK_PYTHON_EXECUTABLE}"
+                     "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_source_fingerprint.py")
+    set_tests_properties(test_source_fingerprint PROPERTIES TIMEOUT 180)
 
     add_test(NAME test_gate_parity
              COMMAND "${SAK_PYTHON_EXECUTABLE}"
@@ -7876,6 +8197,34 @@ add_test(NAME test_browser_extension_pure
          COMMAND "${SAK_NODE_EXECUTABLE}" --test
                  "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_browser_extension_pure.mjs")
 set_tests_properties(test_browser_extension_pure PROPERTIES TIMEOUT 120)
+
+# ProcessRunner now owns one atomic Windows Job. Every target compiling its
+# implementation needs the same compiled Job owner; direct Job-source targets
+# already provide it and must not link a second copy. Derive this from actual
+# target sources so new consumers cannot silently omit containment at link time.
+get_property(_sak_runner_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+set(_sak_runner_job_link_count 0)
+foreach(_sak_runner_target IN LISTS _sak_runner_targets)
+    get_target_property(_sak_runner_sources "${_sak_runner_target}" SOURCES)
+    if(NOT _sak_runner_sources)
+        continue()
+    endif()
+    set(_sak_has_runner_source FALSE)
+    set(_sak_has_direct_job_source FALSE)
+    foreach(_sak_runner_source IN LISTS _sak_runner_sources)
+        get_filename_component(_sak_runner_basename "${_sak_runner_source}" NAME)
+        if(_sak_runner_basename STREQUAL "process_runner.cpp")
+            set(_sak_has_runner_source TRUE)
+        elseif(_sak_runner_basename STREQUAL "windows_process_job.cpp")
+            set(_sak_has_direct_job_source TRUE)
+        endif()
+    endforeach()
+    if(_sak_has_runner_source AND NOT _sak_has_direct_job_source)
+        target_link_libraries("${_sak_runner_target}" PRIVATE sak_windows_process_job)
+        math(EXPR _sak_runner_job_link_count "${_sak_runner_job_link_count} + 1")
+    endif()
+endforeach()
+message(STATUS "ProcessRunner Windows Job linked to ${_sak_runner_job_link_count} test targets")
 
 # ============================================================================
 # Debug / sanitizer run environment

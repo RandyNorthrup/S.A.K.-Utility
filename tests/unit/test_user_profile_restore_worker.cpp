@@ -103,13 +103,10 @@ static bool writeFile(const QString& path, const QByteArray& content) {
 }
 
 static bool cancellationWasAnnounced(const QSignalSpy& logSpy) {
-    for (const auto& args : logSpy) {
-        if (args.at(0).toString() == QStringLiteral("Canceling restore...") &&
-            !args.at(1).toBool()) {
-            return true;
-        }
-    }
-    return false;
+    return std::ranges::any_of(logSpy, [](const auto& args) {
+        return args.at(0).toString() == QStringLiteral("Canceling restore...") &&
+               !args.at(1).toBool();
+    });
 }
 
 static bool progressNeverCompleted(const QSignalSpy& progressSpy) {
@@ -665,16 +662,12 @@ void UserProfileRestoreWorkerTests::sourceUserNotInManifest() {
     QCOMPARE(completeSpy.first().at(0).toBool(), false);
 
     // Check that a warning was logged about the missing user.
-    bool foundWarning = false;
-    for (const auto& args : logSpy) {
+    const bool foundWarning = std::ranges::any_of(logSpy, [](const auto& args) {
         // The exact message names the MISSING user; a contains() on the prefix would pass even
         // if the warning pointed at the wrong (or an empty) user name.
-        if (args.at(0).toString() == QStringLiteral("Source user not found in manifest: Bob") &&
-            args.at(1).toBool()) {
-            foundWarning = true;
-            break;
-        }
-    }
+        return args.at(0).toString() == QStringLiteral("Source user not found in manifest: Bob") &&
+               args.at(1).toBool();
+    });
     QVERIFY2(foundWarning, "Expected warning about source user not in manifest");
     // The failure is COUNTED, so the summary reports the error rather than a clean zero-file run.
     QCOMPARE(completeSpy.first().at(1).toString(),
@@ -1283,13 +1276,9 @@ void UserProfileRestoreWorkerTests::logMessageSignalEmitted() {
     QCOMPARE(logSpy.at(0).at(1).toBool(), false);
 
     // Check for "Restore Started" message.
-    bool foundStart = false;
-    for (const auto& args : logSpy) {
-        if (args.at(0).toString().contains(QStringLiteral("Restore Started"))) {
-            foundStart = true;
-            break;
-        }
-    }
+    const bool foundStart = std::ranges::any_of(logSpy, [](const auto& args) {
+        return args.at(0).toString().contains(QStringLiteral("Restore Started"));
+    });
     QVERIFY2(foundStart, "Expected '=== Restore Started ===' log message");
 }
 
@@ -1500,18 +1489,14 @@ void UserProfileRestoreWorkerTests::missingFolderSourceFailsClosed() {
     // ...and it failed for THIS reason: the missing source folder is reported as a
     // warning, and the destination folder is never created (restoreFolder bails before
     // its mkpath). Without these, any unrelated failure would satisfy the flag check.
-    bool reported = false;
-    for (const auto& args : logSpy) {
+    const bool reported = std::ranges::any_of(logSpy, [&backupDir](const auto& args) {
         // "naming the missing source folder" is the claim -- so assert the NAME, not just the
         // prefix. The path is the manifest-composed source, built by buildSafePath.
-        if (args.at(0).toString() ==
-                QStringLiteral("Source folder does not exist: ") +
-                    QDir(backupDir.path()).filePath(QStringLiteral("MfsUser/Documents")) &&
-            args.at(1).toBool()) {
-            reported = true;
-            break;
-        }
-    }
+        return args.at(0).toString() ==
+                   QStringLiteral("Source folder does not exist: ") +
+                       QDir(backupDir.path()).filePath(QStringLiteral("MfsUser/Documents")) &&
+               args.at(1).toBool();
+    });
     QVERIFY2(reported, "Expected a warning naming the missing source folder");
     QVERIFY(!QDir(destDir.path() + "/Users/MfsUser/Documents").exists());
     // Counted as an error, so the summary reports it rather than a clean empty run.

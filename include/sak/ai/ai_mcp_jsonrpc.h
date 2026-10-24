@@ -9,15 +9,16 @@
 #include <QJsonParseError>
 #include <QString>
 
+#include <expected>
+
 /// @file ai_mcp_jsonrpc.h
 /// @brief Single source of truth for the Model Context Protocol JSON-RPC 2.0
-/// framing used by both the one-shot stdio client and the persistent stdio
-/// session. Keeping the protocol version, client identity, and message shapes in
-/// one place stops the two transports from drifting apart.
+/// framing shared by the persistent stdio session and bundled server. Keeping the
+/// protocol version, client identity, and message shapes in one place prevents drift.
 namespace sak::ai::mcp {
 
 /// MCP protocol revision this client speaks. Bump in lock-step with server
-/// support; both transports must advertise the same value.
+/// support; clients and servers must advertise the same value.
 inline constexpr char kProtocolVersion[] = "2024-11-05";
 
 /// Hard ceiling on a single newline-delimited JSON-RPC message. The stdio transports
@@ -102,37 +103,26 @@ inline constexpr int kMaxJsonRpcMessageBytes = 16 * 1024 * 1024;
     return bytes;
 }
 
-/// Parse one newline-delimited JSON-RPC line into an object. Returns an empty
-/// object and sets @p error_message on malformed input; clears it on success.
-[[nodiscard]] inline QJsonObject parseJsonLine(const QByteArray& line, QString* error_message) {
+/// Parse one newline-delimited JSON-RPC line into its intact object, or return
+/// the specific size, syntax, or version failure. Failure cannot resemble an empty success.
+[[nodiscard]] inline std::expected<QJsonObject, QString> parseJsonLine(const QByteArray& line) {
     if (line.size() > kMaxJsonRpcMessageBytes) {
-        if (error_message) {
-            *error_message = QStringLiteral("MCP message exceeds the %1-byte ceiling")
-                                 .arg(kMaxJsonRpcMessageBytes);
-        }
-        return {};
+        return std::unexpected(
+            QStringLiteral("MCP message exceeds the %1-byte ceiling").arg(kMaxJsonRpcMessageBytes));
     }
     QJsonParseError parse_error;
     const QJsonDocument doc = QJsonDocument::fromJson(line.trimmed(), &parse_error);
     if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
-        if (error_message) {
-            *error_message = QStringLiteral("Invalid MCP stdio JSON response: %1")
-                                 .arg(parse_error.errorString());
-        }
-        return {};
+        return std::unexpected(
+            QStringLiteral("Invalid MCP stdio JSON response: %1").arg(parse_error.errorString()));
     }
     const QJsonObject object = doc.object();
     // JSON-RPC 2.0 mandates the version tag on every request, response, and notification.
     // Reject a message that omits or misstates it rather than passing an unvalidated object
     // onward as success -- an arbitrary syntactically-valid object is not a JSON-RPC message.
     if (object.value(QStringLiteral("jsonrpc")).toString() != QLatin1String("2.0")) {
-        if (error_message) {
-            *error_message = QStringLiteral("MCP message is missing the JSON-RPC 2.0 version tag");
-        }
-        return {};
-    }
-    if (error_message) {
-        error_message->clear();
+        return std::unexpected(
+            QStringLiteral("MCP message is missing the JSON-RPC 2.0 version tag"));
     }
     return object;
 }

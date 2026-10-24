@@ -7,18 +7,27 @@
     disposable-VHD evidence and external VM/hardware/lab evidence. Default mode
     validates report shape and failed scenarios. Strict switches turn skipped
     VHD or missing external evidence into release-blocking failures.
+.PARAMETER ControllerCertifierPath
+    Independently selected local helper. Default: build/Release/partition_manager_live_certifier.exe.
+.PARAMETER ControllerSourceManifestPath
+    Independently selected raw source sidecar. Default: build/Release/partition_manager_live_certifier.sources.txt.
+    Relative overrides resolve from this checkout, never from report claims. No artifact search occurs.
 #>
 
 [CmdletBinding()]
 param(
     [string]$ReportPath = "",
-    [string]$CertificationRoot = "artifacts\partition-manager-certification",
+    [string]$CertificationRoot = "artifacts\partition-manager-certification\vhd-strict",
     [string]$ExternalEvidenceManifest = "",
+    [string]$ControllerCertifierPath = "",
+    [string]$ControllerSourceManifestPath = "",
     [switch]$RequireVhdDataDiskEvidence,
     [switch]$RequireExternalGateEvidence
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "partition_manager_certification_report.ps1")
+. (Join-Path $PSScriptRoot "partition_manager_controller_evidence.ps1")
 
 function Resolve-ProjectRoot {
     return Split-Path -Parent (Split-Path -Parent $PSCommandPath)
@@ -36,47 +45,6 @@ function Read-CertificationMatrix {
 $CertificationMatrix = Read-CertificationMatrix
 $ExpectedVhdScenarioIds = @($CertificationMatrix.vhd_scenarios | ForEach-Object { $_.id })
 $ExpectedExternalGateIds = @($CertificationMatrix.external_gates | ForEach-Object { $_.id })
-
-function Resolve-LatestCertificationReport {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Root
-    )
-
-    # Order by the timestamp the report RECORDS, never by the file's mtime. Which certification
-    # run is authoritative is a fact about when the run happened, and mtime is not that: any
-    # tool that rewrites an old evidence file -- a path repoint, a reformat, a checkout --
-    # makes it the newest file on disk and silently changes which run this gate verifies.
-    # That is not hypothetical. Repointing a matrix path inside the stored reports moved
-    # selection onto a run from the previous day whose scenario names predated a rename, and
-    # the gate failed on a name mismatch that had nothing to do with the edit. Reading the
-    # embedded time makes the choice depend on the run instead of on the filesystem.
-    $resolvedRoot = Resolve-Path -LiteralPath $Root -ErrorAction Stop
-    $reports = @(Get-ChildItem -LiteralPath $resolvedRoot.Path -Recurse -Filter "partition-manager-certification-report.json")
-    if ($reports.Count -eq 0) {
-        throw "No Partition Manager certification reports found under $($resolvedRoot.Path)"
-    }
-
-    $dated = @()
-    foreach ($report in $reports) {
-        $stamp = $null
-        try {
-            $parsed = Get-Content -LiteralPath $report.FullName -Raw | ConvertFrom-Json
-            $recorded = if ($parsed.completed_utc) { $parsed.completed_utc } else { $parsed.started_utc }
-            $stamp = [datetime]::Parse($recorded, $null,
-                [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor
-                [System.Globalization.DateTimeStyles]::AssumeUniversal)
-        } catch {
-            # A report that cannot be read or carries no usable timestamp must not silently
-            # become the newest one. Fail closed rather than fall back to mtime.
-            throw ("Certification report cannot be ordered, it has no readable completed_utc/started_utc: " +
-                   $report.FullName)
-        }
-        $dated += [pscustomobject]@{ Path = $report.FullName; Stamp = $stamp }
-    }
-
-    return (@($dated | Sort-Object Stamp -Descending))[0].Path
-}
 
 function Read-JsonFile {
     param(
@@ -311,6 +279,12 @@ function Assert-PassedVhdEvidencePayload {
             Assert-EvidenceValueRequirement -Evidence $Result.evidence -Key $key -Requirement $requirement -MessagePrefix "Passed VHD scenario $($Result.id)"
         }
     }
+    if ($Result.id -eq 'vhd.image-restore') {
+        $inputs = Resolve-PartitionManagerControllerBuildInputs -ProjectRoot (Resolve-ProjectRoot) `
+            -ControllerCertifierPath $ControllerCertifierPath -ControllerSourceManifestPath $ControllerSourceManifestPath
+        [void](Assert-PartitionManagerControllerScenarioEvidence -Evidence $Result.evidence `
+            -ReportDirectory $Script:ControllerReportDirectory @inputs)
+    }
 }
 
 function Assert-PassedExternalEvidencePayload {
@@ -541,9 +515,10 @@ $projectRoot = Resolve-ProjectRoot
 Push-Location $projectRoot
 try {
     if ([string]::IsNullOrWhiteSpace($ReportPath)) {
-        $ReportPath = Resolve-LatestCertificationReport -Root (Join-Path $projectRoot $CertificationRoot)
+        $ReportPath = Resolve-LatestCertificationReport -Root $CertificationRoot
     }
 
+    $Script:ControllerReportDirectory = Split-Path -Parent (Resolve-Path -LiteralPath $ReportPath -ErrorAction Stop).Path
     $report = Read-JsonFile -Path $ReportPath
     Assert-Condition -Condition ($report.tool -eq "partition-manager-destructive-certification") -Message "Unexpected certification report tool"
     Assert-ReportMetadata -Report $report

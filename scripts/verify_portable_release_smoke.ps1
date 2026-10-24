@@ -17,6 +17,7 @@ $required = @(
     'sak_elevated_helper.exe',
     'sak_apfs_writer_cli.exe',
     'sak_hfs_writer_cli.exe',
+    'sak_browser_control.crx',
     'Qt6Core.dll',
     'Qt6Gui.dll',
     'Qt6Widgets.dll',
@@ -44,7 +45,7 @@ if (Test-Path -LiteralPath (Join-Path $root 'tools/mcp/_build')) {
 if (Test-Path -LiteralPath (Join-Path $root 'tools/filesystem/_build')) {
     Fail 'tools/filesystem/_build leaked into package'
 }
-foreach ($rel in @('data/ai_sessions', 'data/temp', 'data/logs', 'data/config', '_logs')) {
+foreach ($rel in @('data/ai_sessions', 'data/temp', 'data/logs', 'data/config', 'data/crashes', '_logs')) {
     if (Test-Path -LiteralPath (Join-Path $root $rel)) {
         Fail "mutable runtime data leaked into package: $rel"
     }
@@ -52,6 +53,13 @@ foreach ($rel in @('data/ai_sessions', 'data/temp', 'data/logs', 'data/config', 
 foreach ($rel in @('tools/chocolatey/lib-bad', 'tools/chocolatey/cache', 'tools/chocolatey/temp')) {
     if (Test-Path -LiteralPath (Join-Path $root $rel)) {
         Fail "Chocolatey mutable runtime state leaked into package: $rel"
+    }
+}
+$chocolateyLogs = Join-Path $root 'tools/chocolatey/logs'
+if (Test-Path -LiteralPath $chocolateyLogs) {
+    if (-not (Test-Path -LiteralPath $chocolateyLogs -PathType Container) -or
+        @(Get-ChildItem -LiteralPath $chocolateyLogs -Force -ErrorAction Stop).Count -gt 0) {
+        Fail 'Chocolatey runtime logs leaked into package'
     }
 }
 

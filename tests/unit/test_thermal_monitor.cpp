@@ -4,11 +4,27 @@
 /// @file test_thermal_monitor.cpp
 /// @brief Unit tests for ThermalMonitor timer behavior and polling
 
+#include "sak/process_runner.h"
 #include "sak/thermal_monitor.h"
 
+#include <QScopeGuard>
+#include <QSemaphore>
+#include <QThread>
 #include <QtTest/QtTest>
 
+#include <atomic>
+#include <optional>
+
 using namespace sak;
+
+namespace {
+ProcessResult successfulSensorQuery() {
+    ProcessResult result;
+    result.exit_code = 0;
+    result.std_out = QStringLiteral("cpu=42.0");
+    return result;
+}
+}  // namespace
 
 class ThermalMonitorTests : public QObject {
     Q_OBJECT
@@ -40,32 +56,43 @@ void ThermalMonitorTests::initialState() {
 }
 
 void ThermalMonitorTests::startStop() {
-    // Counter declared before the monitor so it outlives the connection.
+    // Hold the first query in flight so stop() always races the poll, regardless of
+    // PowerShell startup time or whether this host has readable sensors.
+    QSemaphore poll_entered;
+    QSemaphore finish_poll;
+    ScopedProcessFaultInjector injector(
+        [&](const QString&, const QStringList&) -> std::optional<ProcessResult> {
+            poll_entered.release();
+            finish_poll.acquire();
+            return successfulSensorQuery();
+        });
+
     int updates = 0;
     ThermalMonitor monitor;
+    const auto unblock_poll = qScopeGuard([&] {
+        finish_poll.release();
+        monitor.stop();
+    });
     QObject::connect(&monitor,
                      &ThermalMonitor::readingsUpdated,
                      &monitor,
                      [&updates](const QVector<sak::ThermalReading>&) { ++updates; });
+    QSignalSpy finished_spy(&monitor.m_poll_watcher,
+                            &QFutureWatcher<QVector<ThermalReading>>::finished);
+    QVERIFY(finished_spy.isValid());
 
     monitor.start(500);  // 500ms interval
-
-    // After start(), the initial async poll launches immediately
+    QVERIFY2(poll_entered.tryAcquire(1, 5000), "Initial sensor query did not start");
     QVERIFY(monitor.isRunning());
 
-    // Stop while that first poll is still in flight. During a poll the timer is NOT
-    // active, so the stop intent survives only through m_active; and nothing spins the
-    // event loop between start() and stop(), so the watcher's finished callout (and
-    // therefore onPollComplete) cannot have run yet.
+    // During the held poll the one-shot timer is inactive. Only m_active carries
+    // stop intent into onPollComplete().
+    QVERIFY(!monitor.m_timer.isActive());
     monitor.stop();
-
-    // The in-flight poll drains and NOTHING re-arms the timer: without the m_active
-    // guard in onPollComplete the stale result would be processed and the timer
-    // restarted, leaving isRunning() true forever and readings arriving after stop().
-    QTRY_VERIFY_WITH_TIMEOUT(!monitor.isRunning(), 30'000);
-    QTest::qWait(250);     // let any queued watcher callout be delivered
+    finish_poll.release();
+    QTRY_VERIFY_WITH_TIMEOUT(finished_spy.count() >= 1, 5000);
     QVERIFY(!monitor.isRunning());
-    QCOMPARE(updates, 0);  // the result of a poll that outlived stop() is dropped
+    QCOMPARE(updates, 0);  // result of a poll that outlived stop() is dropped
 }
 
 // start() fires the initial poll IMMEDIATELY rather than merely arming the timer. The
@@ -76,6 +103,13 @@ void ThermalMonitorTests::startStop() {
 // Proved here without racing the poll: with a 30s interval, a reading can only arrive quickly if
 // start() polled at once. If it merely armed the timer, nothing can arrive for 30 seconds.
 void ThermalMonitorTests::startFiresInitialPollImmediately() {
+    std::atomic<int> queries{0};
+    ScopedProcessFaultInjector injector(
+        [&](const QString&, const QStringList&) -> std::optional<ProcessResult> {
+            queries.fetch_add(1);
+            return successfulSensorQuery();
+        });
+
     int cycles = 0;
     ThermalMonitor monitor;
     QObject::connect(&monitor,
@@ -84,9 +118,10 @@ void ThermalMonitorTests::startFiresInitialPollImmediately() {
                      [&cycles](const QVector<sak::ThermalReading>&) { ++cycles; });
 
     monitor.start(30'000);
-    QTRY_VERIFY_WITH_TIMEOUT(cycles >= 1, 20'000);
+    QTRY_VERIFY_WITH_TIMEOUT(cycles >= 1, 5000);
+    QCOMPARE(queries.load(), 1);
     monitor.stop();
-    QTRY_VERIFY_WITH_TIMEOUT(!monitor.isRunning(), 30'000);
+    QVERIFY(!monitor.isRunning());
 }
 
 void ThermalMonitorTests::pollOnceReadingsAreWellFormed() {
@@ -111,43 +146,41 @@ void ThermalMonitorTests::pollOnceReadingsAreWellFormed() {
 }
 
 void ThermalMonitorTests::singleShotTimerBehavior() {
-    // Verify the timer doesn't accumulate concurrent polls.
-    // With async polling, each cycle takes several seconds (PS startup + WMI),
-    // so we allow generous time and just verify no runaway accumulation.
+    // Exercise the real timer, watcher and result path with a controlled process result.
+    // Poll time is fixed by this fixture, not by host PowerShell/WMI scheduling.
+    std::atomic<int> active_queries{0};
+    std::atomic<int> peak_queries{0};
+    ScopedProcessFaultInjector injector(
+        [&](const QString&, const QStringList&) -> std::optional<ProcessResult> {
+            const int concurrent = active_queries.fetch_add(1) + 1;
+            int peak = peak_queries.load();
+            while (concurrent > peak && !peak_queries.compare_exchange_weak(peak, concurrent)) {}
+            QThread::msleep(150);
+            active_queries.fetch_sub(1);
+            return successfulSensorQuery();
+        });
+
     ThermalMonitor monitor;
     QSignalSpy readings_spy(&monitor, &ThermalMonitor::readingsUpdated);
     QVERIFY(readings_spy.isValid());
-    monitor.start(500);
+    monitor.start(250);
+    QVERIFY(monitor.m_timer.isSingleShot());
 
-    // processReadings emits readingsUpdated for EVERY completed cycle -- with an empty
-    // reading vector on a box whose sensors need admin -- so this counts poll CYCLES on
-    // any machine. Bounded by the sensor-query timeout, so it always arrives.
-    QTRY_VERIFY_WITH_TIMEOUT(readings_spy.count() >= 1, 30'000);
-
-    // A completed cycle must leave the monitor ARMED for the next one: onPollComplete re-arms
-    // the single-shot timer in the same slot invocation that emitted the readings. Drop that
-    // re-arm and the monitor emits exactly one reading set and goes silent -- and the runaway
-    // bound below then passes VACUOUSLY with window_cycles == 0.
-    QTRY_VERIFY_WITH_TIMEOUT(monitor.isRunning(), 5000);
+    // Lower bound is eventual rather than a fixed 3s window. Removing the
+    // onPollComplete timer re-arm leaves exactly one cycle and fails this check.
+    QTRY_VERIFY_WITH_TIMEOUT(readings_spy.count() >= 3, 10'000);
+    QCOMPARE(monitor.m_timer.interval(), 250);
+    QCOMPARE(peak_queries.load(), 1);
 
     const int cycles_before_window = readings_spy.count();
-    QTest::qWait(3000);
+    QTest::qWait(1000);
     monitor.stop();
 
-    // Polls are strictly serialized: the timer is single-shot and re-armed only after a
-    // poll completes, and onTimerTick defers while one is in flight. A 3s window at a
-    // 500ms interval can therefore retire only a handful of cycles even if every poll
-    // returned instantly; a timer that stacked a poll per tick would blow past this.
+    // A 1s window with 250ms cadence cannot accumulate unbounded cycles. The
+    // separate three-cycle lower bound above keeps this upper bound non-vacuous.
     const int window_cycles = readings_spy.count() - cycles_before_window;
-    // The bound is TWO-SIDED. An upper bound alone is satisfied by window_cycles == 0, i.e. by a
-    // monitor that went silent -- and isRunning() above does not rule that out, because a monitor
-    // that never re-arms its single-shot timer still reports running. A 3s window at the 500ms
-    // interval this fixture uses must retire at least one further cycle.
-    QVERIFY2(window_cycles >= 1,
-             qPrintable(
-                 QString("Monitor went silent: %1 cycles in the window").arg(window_cycles)));
-    QVERIFY2(window_cycles <= 12,
-             qPrintable(QString("Runaway poll cycles: %1").arg(window_cycles)));
+    QVERIFY2(window_cycles <= 5, qPrintable(QString("Runaway poll cycles: %1").arg(window_cycles)));
+    QCOMPARE(peak_queries.load(), 1);
 }
 
 // B5 tail: a non-positive poll interval must never arm the timer (0 busy-spins,

@@ -68,7 +68,7 @@ if(MSVC)
 
     # Warning Level 4, Warnings as Errors, Strict Conformance
     add_compile_options(
-        /W4                 # Warning level 4
+        "$<$<NOT:$<STREQUAL:$<TARGET_PROPERTY:NAME>,sak_lzfse>>:/W4>" # Strict except vendored /w target
         /WX                 # Treat warnings as errors
         /permissive-        # Strict C++ conformance
         /Zc:__cplusplus     # Enable correct __cplusplus macro
@@ -929,6 +929,7 @@ set(GUI_SOURCES
     include/sak/quick_action_result_io.h
     src/core/process_runner.cpp
     include/sak/process_runner.h
+    include/sak/windows_process_job.h
     src/core/network_transfer_runner.cpp
     include/sak/network_transfer_runner.h
     src/gui/diagnostic_benchmark_panel.cpp
@@ -1220,11 +1221,37 @@ add_library(sak_lzfse STATIC
 target_include_directories(sak_lzfse SYSTEM PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/third_party/lzfse/src
 )
-if(MSVC)
+if(MSVC AND CMAKE_GENERATOR MATCHES "Visual Studio")
+    # Native MSBuild metadata selects one warning level per vendor source.
+    # A command-line /w after Visual Studio's default /W1 emits D9025 even
+    # when the project's /W4 is excluded from this target.
+    get_target_property(_sak_lzfse_sources sak_lzfse SOURCES)
+    foreach(_sak_lzfse_source IN LISTS _sak_lzfse_sources)
+        if(_sak_lzfse_source MATCHES "\\.c$")
+            set_source_files_properties("${_sak_lzfse_source}" PROPERTIES
+                VS_SETTINGS "WarningLevel=TurnOffAllWarnings")
+        endif()
+    endforeach()
+elseif(MSVC)
     target_compile_options(sak_lzfse PRIVATE /w)
 else()
     target_compile_options(sak_lzfse PRIVATE -w)
 endif()
+
+# One compiled Job owner shared by the app, helper and ProcessRunner test consumers.
+# The Qt-private pipe implementation must be compiled exactly once per binary;
+# linking this object target avoids duplicating it into every test source list.
+add_library(sak_windows_process_job OBJECT
+    src/core/windows_process_job.cpp
+    include/sak/windows_process_job.h
+)
+target_include_directories(sak_windows_process_job PUBLIC
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)
+target_link_libraries(sak_windows_process_job PRIVATE
+    Qt6::Core Qt6::CorePrivate
+)
+target_compile_definitions(sak_windows_process_job PRIVATE QT_NO_KEYWORDS)
 
 # ============================================================================
 # Executable Target
@@ -1305,6 +1332,7 @@ target_link_libraries(sak_utility PRIVATE
     BZip2::BZip2
     LibLZMA::LibLZMA
     sak_lzfse
+    sak_windows_process_job
     ${PLATFORM_LIBS}
 )
 
@@ -1476,6 +1504,7 @@ if(PLATFORM_WINDOWS)
     target_link_libraries(sak_elevated_helper PRIVATE
         Qt6::Core
         Qt6::Gui
+        sak_windows_process_job
         Threads::Threads
         ${PLATFORM_LIBS}
     )
@@ -1733,6 +1762,7 @@ install(TARGETS sak_elevated_helper
 # configure-time FATAL_ERROR above; ship what was verified.
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tools/"
     DESTINATION bin/tools
+    PATTERN "_build" EXCLUDE
 )
 
 # AI provider/app policy, minus the secret templates that must never ship.
@@ -1789,17 +1819,27 @@ if(PLATFORM_WINDOWS)
         COMMAND ${WINDEPLOYQT} --no-translations --no-compiler-runtime $<TARGET_FILE:sak_utility>
         COMMENT "Running windeployqt..."
     )
-    # ... and the same for the install tree, which install(TARGETS) alone leaves
-    # without any Qt runtime at all.
+    # Install from the tool's validated plan. Raw deployment can copy this host's Windows
+    # ICU forwarder into the package, which is not valid for every supported Windows version.
+    find_program(SAK_QT_DEPLOY_POWERSHELL powershell.exe
+        PATHS "$ENV{SystemRoot}/System32/WindowsPowerShell/v1.0"
+        NO_DEFAULT_PATH REQUIRED)
+    # A CMake process launched from PowerShell 7 inherits its module search path. The
+    # selected Windows PowerShell 5.1 child must reconstruct its own standard module path;
+    # otherwise a Core Utility module can hide Get-FileHash in the deployment helper.
     install(CODE "
         execute_process(
-            COMMAND \"${WINDEPLOYQT}\" --no-translations --no-compiler-runtime
-                    \"\${CMAKE_INSTALL_PREFIX}/bin/sak_utility.exe\"
+            COMMAND \"${CMAKE_COMMAND}\" -E env --unset=PSModulePath
+                    \"${SAK_QT_DEPLOY_POWERSHELL}\" -NoProfile -NonInteractive
+                    -ExecutionPolicy RemoteSigned
+                    -File \"${CMAKE_CURRENT_SOURCE_DIR}/scripts/deploy_qt_runtime.ps1\"
+                    -WindeployqtPath \"${WINDEPLOYQT}\"
+                    -ApplicationPath \"\${CMAKE_INSTALL_PREFIX}/bin/sak_utility.exe\"
             RESULT_VARIABLE _sak_windeployqt_result)
         if(NOT _sak_windeployqt_result EQUAL 0)
             message(FATAL_ERROR
-                \"windeployqt failed on the installed executable (result \${_sak_windeployqt_result}); \"
-                \"the installed tree would be missing the Qt runtime.\")
+                \"Validated Qt deployment failed (result \${_sak_windeployqt_result}); \"
+                \"the install cannot be accepted as a complete runtime package.\")
         endif()
     ")
 

@@ -31,7 +31,7 @@
     {
       "id": "binary-read-crosses-clauses",
       "file": "src/ai/ai_command_guard.cpp",
-      "find": "bool commandContainsBinaryContentRead(const QStringList& clauses) {\n    for (const QString& clause : clauses) {\n        QString command_syntax = clause;\n        command_syntax.replace(kQuotedTextRegex, QStringLiteral(\" \"));\n        const bool reads_content = kReadCommandRegex.match(command_syntax).hasMatch() ||\n                                   kQuotedCallReadRegex.match(clause).hasMatch() ||\n                                   kInterpolatedReadRegex.match(clause).hasMatch();\n        if (reads_content && kBinaryExtensionRegex.match(clause).hasMatch()) {\n            return true;\n        }\n    }\n    return false;\n}",
+      "find": "bool commandContainsBinaryContentRead(const QStringList& clauses) {\n    return std::any_of(clauses.cbegin(), clauses.cend(), [](const QString& clause) {\n        QString command_syntax = clause;\n        command_syntax.replace(kQuotedTextRegex, QStringLiteral(\" \"));\n        const bool reads_content = kReadCommandRegex.match(command_syntax).hasMatch() ||\n                                   kQuotedCallReadRegex.match(clause).hasMatch() ||\n                                   kInterpolatedReadRegex.match(clause).hasMatch();\n        return reads_content && kBinaryExtensionRegex.match(clause).hasMatch();\n    });\n}",
       "replace": "bool commandContainsBinaryContentRead(const QStringList& clauses) {\n    const QString combined = clauses.join(QLatin1Char(' '));\n    QString command_syntax = combined;\n    command_syntax.replace(kQuotedTextRegex, QStringLiteral(\" \"));\n    return (kReadCommandRegex.match(command_syntax).hasMatch() ||\n            kQuotedCallReadRegex.match(combined).hasMatch() ||\n            kInterpolatedReadRegex.match(combined).hasMatch()) &&\n           kBinaryExtensionRegex.match(combined).hasMatch();\n}",
       "expect": "killed",
       "why": "binaryReadCheckIsClauseAndQuoteScoped requires a read verb and binary path in the same executable clause; a safe text read followed by a separate file-hash command must pass."
@@ -71,7 +71,7 @@
     {
       "id": "registry-recursion-crosses-clauses",
       "file": "src/ai/ai_command_guard.cpp",
-      "find": "bool commandContainsBroadRegistryRecursion(const QStringList& clauses) {\n    for (const QString& clause : clauses) {\n        if (kRegistryRootRegex.match(clause).hasMatch() &&\n            kActiveRecurseRegex.match(clause).hasMatch()) {\n            return true;\n        }\n    }\n    return false;\n}",
+      "find": "bool commandContainsBroadRegistryRecursion(const QStringList& clauses) {\n    return std::any_of(clauses.cbegin(), clauses.cend(), [](const QString& clause) {\n        return kRegistryRootRegex.match(clause).hasMatch() &&\n               kActiveRecurseRegex.match(clause).hasMatch();\n    });\n}",
       "replace": "bool commandContainsBroadRegistryRecursion(const QStringList& clauses) {\n    const QString combined = clauses.join(QLatin1Char(' '));\n    return kRegistryRootRegex.match(combined).hasMatch() &&\n           kActiveRecurseRegex.match(combined).hasMatch();\n}",
       "expect": "killed",
       "why": "registryRecursionCheckIsClauseScoped keeps an exact SOFTWARE read separate from unrelated filesystem recursion."
@@ -79,8 +79,8 @@
     {
       "id": "provider-qualified-registry-root-is-ignored",
       "file": "src/ai/ai_command_guard.cpp",
-      "find": "    QStringLiteral(R\"((?:(?:hklm|hkcu):\\\\|registry::hkey_(?:local_machine|)\"\n                   R\"(current_user)\\\\)software(?:\\\\)?(?:['\"`\\s,;)]|$))\"),",
-      "replace": "    QStringLiteral(R\"((?:hklm|hkcu):\\\\software(?:\\\\)?(?:['\"`\\s,;)]|$))\"),",
+      "find": "registry::hkey_(?:local_machine|)",
+      "replace": "registry::ignored_hkey_(?:local_machine|)",
       "expect": "killed",
       "why": "registryRecursionCheckIsClauseScoped blocks broad recursion through Registry::HKEY_LOCAL_MACHINE and Registry::HKEY_CURRENT_USER provider-qualified roots."
     },
@@ -143,15 +143,15 @@
     {
       "id": "cache-path-without-installer-is-approved",
       "file": "src/ai/ai_command_guard.cpp",
-      "find": "        if (clauseContainsChocolateyCachePath(clause) &&\n            kInstallerExtensionRegex.match(clause).hasMatch()) {",
-      "replace": "        if (clauseContainsChocolateyCachePath(clause)) {",
+      "find": "        return clauseContainsChocolateyCachePath(clause) &&\n               kInstallerExtensionRegex.match(clause).hasMatch();",
+      "replace": "        return clauseContainsChocolateyCachePath(clause);",
       "expect": "killed",
       "why": "cacheApprovalIsClauseScopedAndRequiresInstaller keeps ordinary text files in a Chocolatey cache readable without a sensitive-execution prompt."
     },
     {
       "id": "cache-path-and-installer-cross-clauses",
       "file": "src/ai/ai_command_guard.cpp",
-      "find": "bool commandContainsCachedPackageInstallerRun(const QStringList& clauses) {\n    // Any reference to a package-cache installer needs approval. Requiring one of a fixed\n    // set of launch verbs failed open: request.program can name the installer directly,\n    // and \"msiexec /i\", &\"path\" without a space, a tab-separated call operator or an\n    // environment-variable path all launch it without matching any of those verbs.\n    for (const QString& clause : clauses) {\n        if (clauseContainsChocolateyCachePath(clause) &&\n            kInstallerExtensionRegex.match(clause).hasMatch()) {\n            return true;\n        }\n    }\n    return false;\n}",
+      "find": "bool commandContainsCachedPackageInstallerRun(const QStringList& clauses) {\n    // Any reference to a package-cache installer needs approval. Requiring one of a fixed\n    // set of launch verbs failed open: request.program can name the installer directly,\n    // and \"msiexec /i\", &\"path\" without a space, a tab-separated call operator or an\n    // environment-variable path all launch it without matching any of those verbs.\n    return std::any_of(clauses.cbegin(), clauses.cend(), [](const QString& clause) {\n        return clauseContainsChocolateyCachePath(clause) &&\n               kInstallerExtensionRegex.match(clause).hasMatch();\n    });\n}",
       "replace": "bool commandContainsCachedPackageInstallerRun(const QStringList& clauses) {\n    const QString combined = clauses.join(QLatin1Char(' '));\n    return clauseContainsChocolateyCachePath(combined) &&\n           kInstallerExtensionRegex.match(combined).hasMatch();\n}",
       "expect": "killed",
       "why": "cacheApprovalIsClauseScopedAndRequiresInstaller keeps a cache text read separate from a later verified installer launch."

@@ -79,6 +79,7 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QDirIterator>
+#include <QElapsedTimer>
 #include <QEventLoop>
 #include <QFile>
 #include <QFileDialog>
@@ -3629,6 +3630,14 @@ QLabel* makeRailTitle(QWidget* parent, const QString& text) {
     return label;
 }
 
+void logAiStartupPhase(QElapsedTimer* timer, const char* phase) {
+    if (!qApp->property("sakStartupSmokeTest").toBool()) {
+        return;
+    }
+    logInfo("AiAssistantPanel startup: {} took {} ms", phase, timer->restart());
+    logger::instance().flush();
+}
+
 }  // namespace
 
 AiAssistantPanel::AiAssistantPanel(QWidget* parent)
@@ -3651,6 +3660,9 @@ AiAssistantPanel::AiAssistantPanel(QWidget* parent)
     , m_chocoManager(std::make_unique<ChocolateyManager>(this))
     , m_packageListManager(std::make_unique<PackageListManager>())
     , m_offlineWorker(std::make_unique<OfflineDeploymentWorker>(this)) {
+    QElapsedTimer phase_timer;
+    phase_timer.start();
+    logAiStartupPhase(&phase_timer, "member initialization complete");
     configureExecutionBrokers();
     connect(m_asyncToolRunner.get(),
             &ai::AiAsyncToolRunner::finished,
@@ -3662,19 +3674,27 @@ AiAssistantPanel::AiAssistantPanel(QWidget* parent)
             &ai::AiAsyncToolRunner::drained,
             this,
             &AiAssistantPanel::onAsyncToolDrained);
+    logAiStartupPhase(&phase_timer, "broker and signal wiring");
     m_taskStatus = tr("Idle");
     if (initializeAccessibilityAuditUi()) {
         return;
     }
+    logAiStartupPhase(&phase_timer, "accessibility mode check");
 
     QStringList workflow_errors;
     const bool workflows_loaded = loadWorkflowDefaults(&workflow_errors);
+    logAiStartupPhase(&phase_timer, "workflow defaults");
     QStringList skill_errors;
     loadSkillDefaults(&skill_errors);
+    logAiStartupPhase(&phase_timer, "skill defaults");
     const QString health_ledger_error = initializeToolHealthLedger();
+    logAiStartupPhase(&phase_timer, "tool health ledger");
     registerToolDispatcherHandlers();
+    logAiStartupPhase(&phase_timer, "tool dispatcher handlers");
     initializeStandardPanel(workflows_loaded, workflow_errors, skill_errors, health_ledger_error);
+    logAiStartupPhase(&phase_timer, "standard panel");
     initializePackageManager();
+    logAiStartupPhase(&phase_timer, "package manager");
     logInfo("AiAssistantPanel initialized");
 }
 
@@ -3743,16 +3763,27 @@ void AiAssistantPanel::initializeStandardPanel(bool workflows_loaded,
                                                const QStringList& workflow_errors,
                                                const QStringList& skill_errors,
                                                const QString& health_ledger_error) {
+    QElapsedTimer phase_timer;
+    phase_timer.start();
     setupUi();
+    logAiStartupPhase(&phase_timer, "setup UI");
     connectAiClient();
+    logAiStartupPhase(&phase_timer, "connect AI client");
     loadRememberedApiKey();
+    logAiStartupPhase(&phase_timer, "remembered API key");
     updateCredentialControls();
+    logAiStartupPhase(&phase_timer, "credential controls");
     updateTokenLabels();
+    logAiStartupPhase(&phase_timer, "token labels");
     refreshContextList();
+    logAiStartupPhase(&phase_timer, "context list");
     updateAccessStatus();
+    logAiStartupPhase(&phase_timer, "access status");
     m_pendingSessionTitle = tr("AI Session");
     reloadSessionPicker();
+    logAiStartupPhase(&phase_timer, "session picker");
     refreshTraceStoreForSession();
+    logAiStartupPhase(&phase_timer, "trace store");
     appendLocalEvent(tr("AI Assistant panel initialized"));
     if (!health_ledger_error.isEmpty()) {
         appendLocalEvent(tr("AI tool health ledger load failed: %1").arg(health_ledger_error));
@@ -3982,6 +4013,8 @@ bool AiAssistantPanel::eventFilter(QObject* watched, QEvent* event) {
 
 void AiAssistantPanel::setupUi() {
     Q_ASSERT(layout() == nullptr);
+    QElapsedTimer phase_timer;
+    phase_timer.start();
 
     auto* root_layout = new QVBoxLayout(this);
     root_layout->setContentsMargins(sak::ui::kMarginMedium,
@@ -3996,15 +4029,20 @@ void AiAssistantPanel::setupUi() {
         tr("AI Assistant"),
         tr("OpenAI-powered technician assistant with controlled local execution"),
         root_layout);
+    logAiStartupPhase(&phase_timer, "panel header");
 
     auto* workspace = createChatWorkspace();
+    logAiStartupPhase(&phase_timer, "chat workspace");
     setAccessible(workspace, tr("AI Assistant workspace"), tr("AI assistant chat workspace"));
     root_layout->addWidget(workspace, 1);
 
     createStatusStrip(root_layout);
+    logAiStartupPhase(&phase_timer, "status strip");
 }
 
 QWidget* AiAssistantPanel::createChatWorkspace() {
+    QElapsedTimer phase_timer;
+    phase_timer.start();
     auto* content = new QWidget(this);
     content->setStyleSheet(sak::ui::bareBackgroundStyle(sak::ui::kColorBgWhite));
     auto* layout = new QVBoxLayout(content);
@@ -4014,17 +4052,26 @@ QWidget* AiAssistantPanel::createChatWorkspace() {
 
     auto* splitter = new QSplitter(Qt::Horizontal, content);
     splitter->setChildrenCollapsible(false);
-    splitter->addWidget(createConversationPane());
-    splitter->addWidget(createContextPane());
+    auto* conversation = createConversationPane();
+    logAiStartupPhase(&phase_timer, "conversation pane");
+    splitter->addWidget(conversation);
+    createContextPane(splitter);
+    logAiStartupPhase(&phase_timer, "context pane");
     splitter->setStretchFactor(0, 1);
     splitter->setStretchFactor(1, 0);
+    logAiStartupPhase(&phase_timer, "splitter stretch factors");
     splitter->setSizes({kContextSplitterConversationWidth, kContextSplitterRailWidth});
+    logAiStartupPhase(&phase_timer, "splitter sizes");
     layout->addWidget(splitter, 1);
+    logAiStartupPhase(&phase_timer, "workspace layout");
 
     return content;
 }
 
-QWidget* AiAssistantPanel::createContextPane() {
+void AiAssistantPanel::createContextPane(QSplitter* splitter) {
+    Q_ASSERT(splitter != nullptr);
+    QElapsedTimer phase_timer;
+    phase_timer.start();
     auto* pane = new QFrame(this);
     pane->setObjectName(QStringLiteral("aiContextPane"));
     pane->setMinimumWidth(kContextPaneMinWidth);
@@ -4037,26 +4084,31 @@ QWidget* AiAssistantPanel::createContextPane() {
                                sak::ui::kMarginMedium);
     layout->setSpacing(sak::ui::kSpacingSmall);
 
-    // Adopt and style the scroll area while the pane is still empty: both
-    // setWidget and an ancestor setStyleSheet re-polish every existing
-    // descendant, so finalizing the ancestor chain first lets each section
-    // widget be polished exactly once at creation.
-    auto* scroll = createScrollArea(this, pane);
+    // Put the empty scroll shell in its final splitter before populating it.
+    // Reparenting a populated pane makes Qt re-polish every descendant.
+    auto* scroll = createScrollArea(splitter, pane);
     scroll->setObjectName(QStringLiteral("aiContextScroll"));
     scroll->setMinimumWidth(kContextScrollMinWidth);
     scroll->setMaximumWidth(kContextScrollMaxWidth);
     scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     scroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    splitter->addWidget(scroll);
+    logAiStartupPhase(&phase_timer, "empty context splitter insertion");
     scroll->setStyleSheet(
         sak::ui::backgroundStyle("QScrollArea#aiContextScroll", sak::ui::kColorBgSurface));
+    logAiStartupPhase(&phase_timer, "context scroll shell");
 
     setupContextPaneSessionSection(layout, pane);
+    logAiStartupPhase(&phase_timer, "context session section");
     setupContextPaneAgentSection(layout, pane);
+    logAiStartupPhase(&phase_timer, "context agent section");
     setupContextPaneAccessSection(layout, pane);
+    logAiStartupPhase(&phase_timer, "context access section");
     setupContextPaneCredentialSection(layout, pane);
+    logAiStartupPhase(&phase_timer, "context credential section");
     setupContextPaneBrowserExtensionSection(layout, pane);
+    logAiStartupPhase(&phase_timer, "context browser section");
     layout->addStretch();
-    return scroll;
 }
 
 void AiAssistantPanel::setupContextPaneBrowserExtensionSection(QVBoxLayout* layout, QWidget* pane) {

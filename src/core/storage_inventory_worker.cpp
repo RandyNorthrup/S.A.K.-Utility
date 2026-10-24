@@ -154,6 +154,13 @@ void appendUnallocatedRegions(PartitionDiskInfo* disk) {
     }
 }
 
+QString diskOfflineStateToken(const PartitionDiskInfo& disk) {
+    if (!disk.is_offline.has_value()) {
+        return QStringLiteral("unknown");
+    }
+    return *disk.is_offline ? QStringLiteral("offline") : QStringLiteral("online");
+}
+
 QString buildLayoutHash(const PartitionInventory& inventory) {
     QCryptographicHash hash(QCryptographicHash::Sha256);
     for (const auto& disk : inventory.disks) {
@@ -161,12 +168,13 @@ QString buildLayoutHash(const PartitionInventory& inventory) {
         // system status since planning invalidates the queue's apply hash and
         // forces a refresh + re-validation (which then applies the OS-disk block)
         // rather than dispatching a destructive op against a now-bootable disk.
-        hash.addData(QStringLiteral("%1|%2|%3|%4|%5|%6|%7\n")
+        hash.addData(QStringLiteral("%1|%2|%3|%4|%5|%6|%7|%8\n")
                          .arg(disk.disk_number.value())
                          .arg(disk.unique_id, disk.serial_number, disk.partition_style)
                          .arg(disk.size_bytes)
                          .arg(disk.is_system ? 1 : 0)
                          .arg(disk.is_boot ? 1 : 0)
+                         .arg(diskOfflineStateToken(disk))
                          .toUtf8());
         for (const auto& partition : disk.partitions) {
             hash.addData(QStringLiteral("%1|%2|%3|%4|%5|%6\n")
@@ -459,6 +467,14 @@ void applyRawFileSystemDetection(PartitionInventory* inventory,
     }
 }
 
+std::optional<bool> parseDiskOfflineState(const QJsonObject& object) {
+    const auto value = object.value(QStringLiteral("IsOffline"));
+    if (!value.isBool()) {
+        return std::nullopt;
+    }
+    return value.toBool();
+}
+
 PartitionDiskInfo parseDisk(const QJsonObject& object) {
     PartitionDiskInfo disk;
     disk.disk_number =
@@ -498,6 +514,7 @@ PartitionDiskInfo parseDisk(const QJsonObject& object) {
     disk.is_system = jsonBool(object, QStringLiteral("IsSystem"));
     disk.is_boot = jsonBool(object, QStringLiteral("IsBoot"));
     disk.is_read_only = jsonBool(object, QStringLiteral("IsReadOnly"));
+    disk.is_offline = parseDiskOfflineState(object);
     disk.is_dynamic = jsonBool(object, QStringLiteral("IsDynamic"));
     // Get-Disk stringifies MSFT_Disk BusType enum value 16 as "Spaces" (NOT "Storage Spaces"), so
     // the old contains("Storage Spaces") never matched and every Storage-Spaces blocker keyed on
@@ -804,6 +821,7 @@ $disks = Get-Disk | ForEach-Object {
     IsBoot = [bool]$disk.IsBoot
     IsSystem = [bool]$disk.IsSystem
     IsReadOnly = [bool]$disk.IsReadOnly
+    IsOffline = if ($disk.IsOffline -is [bool]) { $disk.IsOffline } else { $null }
     IsDynamic = if ($disk.PSObject.Properties.Name -contains 'IsDynamic') { [bool]$disk.IsDynamic } else { $false }
 )PS");
 }

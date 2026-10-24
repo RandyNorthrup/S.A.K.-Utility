@@ -17,9 +17,8 @@
 ///   parseFrame:   consumed always stays within [0, buffer size]; an Ok frame consumes
 ///                 a positive number of bytes; a NeedMore frame consumes nothing; and
 ///                 re-parsing the tail after an Ok never faults.
-///   parseJsonLine: exactly one of {parsed object, error string} is populated -- a
-///                 success yields a non-empty object with the "2.0" version tag and no
-///                 error, a rejection yields an empty object and a reason.
+///   parseJsonLine: expected carries either an intact object with the "2.0" version
+///                 tag or a non-empty failure reason, never success-shaped failure.
 ///
 /// A consumed value that ran past the buffer, or a success that left the version tag
 /// unchecked, is the class of off-by-one/overflow defect this exists to catch. No
@@ -110,30 +109,23 @@ QString nativeFrameInvariant(const QByteArray& input) {
 }
 
 QString jsonRpcInvariant(const QByteArray& input) {
-    QString error;
-    const QJsonObject parsed = sak::ai::mcp::parseJsonLine(input, &error);
-    // Exactly one of {parsed object, error} is populated: success -> object, no error;
-    // rejection -> empty object, a reason.
-    if (parsed.isEmpty() == error.isEmpty()) {
-        return QStringLiteral("parseJsonLine ambiguous result: object empty=%1, error empty=%2")
-            .arg(parsed.isEmpty())
-            .arg(error.isEmpty());
+    const auto parsed = sak::ai::mcp::parseJsonLine(input);
+    if (!parsed) {
+        return parsed.error().isEmpty()
+                   ? QStringLiteral("parseJsonLine rejected input without a failure reason")
+                   : QString{};
     }
-    if (!parsed.isEmpty() &&
-        parsed.value(QStringLiteral("jsonrpc")).toString() != QLatin1String("2.0")) {
+    if (parsed->value(QStringLiteral("jsonrpc")).toString() != QLatin1String("2.0")) {
         return QStringLiteral("parseJsonLine accepted a message without the 2.0 version tag");
     }
-    if (!parsed.isEmpty()) {
-        // Expectation derived from the INPUT bytes, not from the object the parser handed back:
-        // parseJsonLine returns doc.object() intact, so an accepted message must be exactly the
-        // document that arrived on the wire. A version that MANUFACTURES the "2.0" tag instead
-        // of refusing -- the fail-open normalization -- adds a key the input never carried and
-        // trips here on every mutant that reaches it.
-        const QJsonObject source = QJsonDocument::fromJson(input.trimmed()).object();
-        if (parsed != source) {
-            return QStringLiteral(
-                "parseJsonLine returned an object the input bytes did not contain");
-        }
+    // Expectation derived from the INPUT bytes, not from the object the parser handed back:
+    // parseJsonLine returns doc.object() intact, so an accepted message must be exactly the
+    // document that arrived on the wire. A version that MANUFACTURES the "2.0" tag instead
+    // of refusing -- the fail-open normalization -- adds a key the input never carried and
+    // trips here on every mutant that reaches it.
+    const QJsonObject source = QJsonDocument::fromJson(input.trimmed()).object();
+    if (*parsed != source) {
+        return QStringLiteral("parseJsonLine returned an object the input bytes did not contain");
     }
     return {};
 }
@@ -212,17 +204,16 @@ private Q_SLOTS:
     // that stops a hostile MCP server from flooding QJsonDocument::fromJson with one giant line)
     // is never reached by fuzzing. Drive it directly.
     void jsonRpcLineRefusesOverCeiling() {
-        QString error;
         // One byte over the 16 MiB ceiling of pure 'a' bytes: rejected for SIZE before any DOM
         // is allocated. The "ceiling" reason (not the "Invalid ... JSON" parse reason) proves
         // the size branch fired first -- if the guard were removed, fromJson would run on the
         // garbage and the reason would be a parse error instead, failing this assertion.
         const QByteArray over(sak::ai::mcp::kMaxJsonRpcMessageBytes + 1, 'a');
-        const QJsonObject rejected = sak::ai::mcp::parseJsonLine(over, &error);
-        QVERIFY(rejected.isEmpty());
+        const auto rejected = sak::ai::mcp::parseJsonLine(over);
+        QVERIFY(!rejected.has_value());
         // Byte-exact: the reason names the ceiling VALUE, which separates the size branch from
         // the parse-error and version-tag branches word for word.
-        QCOMPARE(error, QStringLiteral("MCP message exceeds the 16777216-byte ceiling"));
+        QCOMPARE(rejected.error(), QStringLiteral("MCP message exceeds the 16777216-byte ceiling"));
 
         // Boundary: the guard is strictly greater-than, so a line of EXACTLY the ceiling is
         // legal and must still parse. A >= mutation would wrongly refuse a maximum-sized
@@ -233,20 +224,18 @@ private Q_SLOTS:
             sak::ai::mcp::kMaxJsonRpcMessageBytes - at_ceiling.size() - at_tail.size(), 'a'));
         at_ceiling.append(at_tail);
         QCOMPARE(at_ceiling.size(), sak::ai::mcp::kMaxJsonRpcMessageBytes);
-        QString at_error;
-        const QJsonObject at_parsed = sak::ai::mcp::parseJsonLine(at_ceiling, &at_error);
-        QVERIFY2(at_error.isEmpty(), at_error.toUtf8().constData());
-        QCOMPARE(at_parsed.value(QStringLiteral("id")).toInt(), 1);
+        const auto at_parsed = sak::ai::mcp::parseJsonLine(at_ceiling);
+        QVERIFY(at_parsed.has_value());
+        QCOMPARE(at_parsed->value(QStringLiteral("id")).toInt(), 1);
 
         // Non-vacuity: a well-formed line under the ceiling still parses to a JSON-RPC object.
         const QByteArray ok("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}\n");
-        const QJsonObject parsed = sak::ai::mcp::parseJsonLine(ok, &error);
-        QVERIFY(!parsed.isEmpty());
-        QVERIFY(error.isEmpty());
+        const auto parsed = sak::ai::mcp::parseJsonLine(ok);
+        QVERIFY(parsed.has_value());
         // The WHOLE object, not one field: parseJsonLine returns doc.object() intact and its
         // callers correlate on "id" and dispatch on "result"/"error", so a version that kept
         // only the fields this test looked at would break every one of them.
-        QCOMPARE(parsed,
+        QCOMPARE(*parsed,
                  QJsonObject({{QStringLiteral("jsonrpc"), QStringLiteral("2.0")},
                               {QStringLiteral("id"), 1},
                               {QStringLiteral("result"), QJsonObject{}}}));
@@ -262,34 +251,31 @@ private Q_SLOTS:
         // (ai_mcp_jsonrpc.h:91), which reports the PARSE reason. Dropping that arm is otherwise
         // silent: QJsonDocument::object() on an array document yields {}, so the message would
         // fall through to the version-tag guard and be refused with the WRONG reason while the
-        // fuzz invariant (empty object + non-empty error) still held. Qt rejects every other
+        // fuzz invariant (unexpected with a non-empty error) still held. Qt rejects every other
         // non-object top-level value as a parse error, so an array is the only input that
         // reaches this arm.
-        QString array_error;
-        const QJsonObject array_parsed = sak::ai::mcp::parseJsonLine(QByteArray("[1,2,3]\n"),
-                                                                     &array_error);
-        QVERIFY(array_parsed.isEmpty());
-        QVERIFY2(array_error.startsWith(QStringLiteral("Invalid MCP stdio JSON response:")),
-                 array_error.toUtf8().constData());
+        const auto array_parsed = sak::ai::mcp::parseJsonLine(QByteArray("[1,2,3]\n"));
+        QVERIFY(!array_parsed.has_value());
+        QVERIFY2(array_parsed.error().startsWith(
+                     QStringLiteral("Invalid MCP stdio JSON response:")),
+                 qPrintable(array_parsed.error()));
 
         // Raw garbage: same arm, reached through its parse-error half.
-        QString garbage_error;
-        const QJsonObject garbage_parsed =
-            sak::ai::mcp::parseJsonLine(QByteArray("not json at all\n"), &garbage_error);
-        QVERIFY(garbage_parsed.isEmpty());
-        QVERIFY2(garbage_error.startsWith(QStringLiteral("Invalid MCP stdio JSON response:")),
-                 garbage_error.toUtf8().constData());
+        const auto garbage_parsed = sak::ai::mcp::parseJsonLine(QByteArray("not json at all\n"));
+        QVERIFY(!garbage_parsed.has_value());
+        QVERIFY2(garbage_parsed.error().startsWith(
+                     QStringLiteral("Invalid MCP stdio JSON response:")),
+                 qPrintable(garbage_parsed.error()));
 
         // A syntactically valid object that omits the version tag: the THIRD branch. Byte-exact
         // on this first-party string, so no other branch can masquerade as it.
-        QString version_error;
-        const QJsonObject version_parsed =
-            sak::ai::mcp::parseJsonLine(QByteArray("{\"id\":7,\"result\":{}}\n"), &version_error);
-        QVERIFY(version_parsed.isEmpty());
-        QCOMPARE(version_error,
+        const auto version_parsed =
+            sak::ai::mcp::parseJsonLine(QByteArray("{\"id\":7,\"result\":{}}\n"));
+        QVERIFY(!version_parsed.has_value());
+        QCOMPARE(version_parsed.error(),
                  QStringLiteral("MCP message is missing the JSON-RPC 2.0 version tag"));
         // The three reasons are pairwise distinct, which is what makes the branch identifiable.
-        QVERIFY(array_error != version_error);
+        QVERIFY(array_parsed.error() != version_parsed.error());
     }
 };
 

@@ -7,18 +7,27 @@
     VM/hardware/lab evidence manifest and emits a machine-readable claim level.
     This does not replace strict verification; it makes release-note wording
     deterministic.
+.PARAMETER ControllerCertifierPath
+    Independently selected local helper. Default: build/Release/partition_manager_live_certifier.exe.
+.PARAMETER ControllerSourceManifestPath
+    Independently selected raw source sidecar. Default: build/Release/partition_manager_live_certifier.sources.txt.
+    Relative overrides resolve from this checkout, never from report claims. No artifact search occurs.
 #>
 
 [CmdletBinding()]
 param(
     [string]$ReportPath = "",
-    [string]$CertificationRoot = "artifacts\partition-manager-certification",
+    [string]$CertificationRoot = "artifacts\partition-manager-certification\vhd-strict",
     [string]$ExternalEvidenceManifest = "",
+    [string]$ControllerCertifierPath = "",
+    [string]$ControllerSourceManifestPath = "",
     [string]$OutputPath = "",
     [switch]$Quiet
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "partition_manager_certification_report.ps1")
+. (Join-Path $PSScriptRoot "partition_manager_controller_evidence.ps1")
 
 function Resolve-ProjectRoot {
     return Split-Path -Parent (Split-Path -Parent $PSCommandPath)
@@ -41,22 +50,6 @@ if ($ExpectedVhdScenarioIds.Count -eq 0) {
 }
 if ($ExpectedExternalGateIds.Count -eq 0) {
     throw "Partition Manager certification matrix has no external gates"
-}
-
-function Resolve-LatestCertificationReport {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Root
-    )
-
-    $resolvedRoot = Resolve-Path -LiteralPath $Root -ErrorAction Stop
-    $reports = @(Get-ChildItem -LiteralPath $resolvedRoot.Path -Recurse -Filter "partition-manager-certification-report.json" |
-        Sort-Object LastWriteTimeUtc -Descending)
-    if ($reports.Count -eq 0) {
-        throw "No Partition Manager certification reports found under $($resolvedRoot.Path)"
-    }
-
-    return $reports[0].FullName
 }
 
 function Read-JsonFile {
@@ -95,20 +88,25 @@ function Test-EvidenceReference {
             $candidatePaths += Join-Path $ManifestDirectory $Result.evidence_path
         }
 
+        $exists = $false
         foreach ($candidate in $candidatePaths) {
             if (Test-Path -LiteralPath $candidate -PathType Leaf) {
-                return $true
+                $exists = $true
+                break
             }
         }
+        if (-not $exists) { return $false }
     }
 
     if ($hasUrl) {
         $uri = $null
         $validUri = [System.Uri]::TryCreate($Result.evidence_url, [System.UriKind]::Absolute, [ref]$uri)
-        return ($validUri -and ($uri.Scheme -eq "https" -or $uri.Scheme -eq "http"))
+        # Match strict verification: every supplied reference must validate. A valid local
+        # artifact must not hide an insecure URL, nor may a URL hide a missing artifact.
+        if (-not ($validUri -and ($uri.Scheme -eq "https"))) { return $false }
     }
 
-    return $false
+    return $true
 }
 
 function Get-ResultById {
@@ -232,7 +230,7 @@ function Test-EvidenceValueRequirement {
     $actualValues = ConvertTo-EvidenceValueStrings -Value $Evidence.PSObject.Properties[$Key].Value
     if ($null -ne $Requirement.PSObject.Properties["allowed_values"]) {
         $allowedValues = @($Requirement.allowed_values | ForEach-Object { $_.ToString() })
-        if (@($actualValues | Where-Object { $allowedValues -contains $_ }).Count -eq 0) {
+        if ($actualValues.Count -eq 0 -or @($actualValues | Where-Object { $allowedValues -notcontains $_ }).Count -gt 0) {
             return $false
         }
     }
@@ -308,6 +306,17 @@ function Test-VhdEvidenceComplete {
         [object]$Result
     )
 
+    if ($Result.id -eq 'vhd.image-restore') {
+        try {
+            $inputs = Resolve-PartitionManagerControllerBuildInputs -ProjectRoot (Resolve-ProjectRoot) `
+                -ControllerCertifierPath $ControllerCertifierPath -ControllerSourceManifestPath $ControllerSourceManifestPath
+            [void](Assert-PartitionManagerControllerScenarioEvidence -Evidence $Result.evidence `
+                -ReportDirectory $Script:ControllerReportDirectory @inputs)
+        } catch {
+            $Script:VhdEvidenceReasons[$Result.id] = $_.Exception.Message
+            return $false
+        }
+    }
     if (-not (Test-ScenarioContractComplete -Result $Result)) {
         return $false
     }
@@ -357,16 +366,18 @@ $projectRoot = Resolve-ProjectRoot
 Push-Location $projectRoot
 try {
     if ([string]::IsNullOrWhiteSpace($ReportPath)) {
-        $ReportPath = Resolve-LatestCertificationReport -Root (Join-Path $projectRoot $CertificationRoot)
+        $ReportPath = Resolve-LatestCertificationReport -Root $CertificationRoot
     }
 
     $resolvedReportPath = (Resolve-Path -LiteralPath $ReportPath -ErrorAction Stop).Path
+    $Script:ControllerReportDirectory = Split-Path -Parent $resolvedReportPath
     $report = Read-JsonFile -Path $resolvedReportPath
     $reportResults = @($report.results)
     $failedIds = @($reportResults | Where-Object { $_.status -eq "Failed" } | ForEach-Object { $_.id })
 
     $passedVhdIds = @()
     $incompleteVhdIds = @()
+    $Script:VhdEvidenceReasons = [ordered]@{}
     foreach ($id in $ExpectedVhdScenarioIds) {
         $matches = @(Get-ResultById -Results $reportResults -Id $id)
         if ($matches.Count -eq 1 -and $matches[0].status -eq "Passed" -and
@@ -375,6 +386,9 @@ try {
         }
         else {
             $incompleteVhdIds += $id
+            if (-not $Script:VhdEvidenceReasons.Contains($id)) {
+                $Script:VhdEvidenceReasons[$id] = 'Result missing, duplicated, not Passed, or missing required evidence contract'
+            }
         }
     }
 
@@ -434,6 +448,7 @@ try {
             passed = $passedVhdIds.Count
             required = $ExpectedVhdScenarioIds.Count
             incomplete_ids = $incompleteVhdIds
+            incomplete_reasons = $Script:VhdEvidenceReasons
         }
         external_gates = [ordered]@{
             manifest_path = $externalManifestPath

@@ -15,9 +15,11 @@ setupUi, window-state load, status bar, log window, panels, lazy-tab placeholder
 about. Read the newest log under `sak::app_paths::logsDirectory()` (portable `data/logs` beside
 the exe when that is writable).
 
-The load-bearing line is the one in `MainWindow::createStatusBar`: it reports the family count
-and how long the GUI thread still had to wait for the font database. That is the first point in
-startup that needs fonts, so it is where a font-database regression surfaces.
+`MainWindow::createStatusBar` reports the family count and how long its forced
+query waited for the font database. This is the first explicit startup family
+query, so it exposes the long native stall. The W51 experiment removed the
+query and eager warmup, but was reverted after inconclusive whole-startup
+comparison; those logs are historical, not the current implementation.
 
 **Offscreen timing is not desktop timing.** `QT_QPA_PLATFORM=offscreen` takes a different font
 path, and the desktop-only font cost never reproduced headless. `scripts/check_startup_budget.ps1`
@@ -27,16 +29,223 @@ desktop-only startup regression will still be noticed by a human first.
 
 ## Font database traps
 
-The mechanism and its two fixes are documented where they live: `forceGdiFontDatabase()` and
-`startFontDatabaseWarmup()` in `src/main.cpp`. What those comments do not say:
+The warmup lives in `startFontDatabaseWarmup()` in `src/main.cpp`. The W51
+candidate removed it under the owner's conditional test approval, then restored
+it byte-for-byte when the evidence did not meet that condition. The former
+`forceGdiFontDatabase()` set an ineffective runtime variable and has been
+removed; its historical comment was not evidence that GDI was selected.
+The current startup failure and backend comparison are tracked in R5. What earlier probes missed:
 
 | Trap | Why it misleads | Defence |
 | --- | --- | --- |
 | The alias-table cost migrates between probes | Building the family alias table is a *second* full walk of every installed family, separate from `QFontDatabase::families()`. It is triggered by the first font MATCH that misses -- a style-sheet fallback stack naming a family that is not installed -- so it attaches to whichever font operation happens next and looks like a different panel's cost on every run. | Never attribute it to the panel the timing log blames. Confirm by moving the probe. |
-| An existence check does not trigger it | `QFontDatabase::hasFamily()` does not build the alias table; only a real match does. | This is why the warmup constructs `QFontMetrics(QFont("sak-alias-warmup-probe")).height()` rather than a cheaper query. A cheaper query moves the cost back onto the GUI thread. |
-| A freshly built exe pays an antivirus tax | Real-time AV deep-scans a new binary's font-file reads, so the first run after a build is slower for reasons unrelated to the change. | Not app-fixable (code signing is the lever). Re-run the *same* binary before calling anything a regression. |
-| Environment-variable timing | `QT_NO_DIRECTWRITE` is read by the platform plugin during `QApplication` init. Setting it afterwards is silently a no-op -- no warning, just the slow path. | Set it before the `QApplication` constructor, as `initializeApp` does. |
-| The warmup thread must be owned and joined | Detached, it touches font-database internals while `QApplication` is being destroyed. It presents as heap corruption at process exit, on a stack with nothing to do with fonts. | `qAddPostRoutine(joinFontDatabaseWarmup)`. |
+| An existence check does not trigger it | `QFontDatabase::hasFamily()` does not build the alias table; only a real match does. | The warmup constructs `QFontMetrics(QFont("sak-alias-warmup-probe")).height()` rather than a cheaper query. The W51 experiment temporarily removed this synthetic work; actual UI font matching remained. |
+| A freshly built exe can pay an antivirus tax | A first-run delay alone does not establish its cause. Font backend choice and file/cache state can also differ. | Compare the same binary with explicit backend evidence; do not dismiss a startup failure as antivirus cost without measurements. |
+| An unsupported environment variable is a no-op even at the right time | Qt 6.10.3's Windows integration chooses the font database from parsed platform options, not the runtime `QT_NO_DIRECTWRITE` variable formerly used by the app. | Verify the pinned Qt implementation and actual selected backend. Setting the variable before `QApplication` did not prove a GDI selection. |
+| The warmup thread must be owned and joined | Detached, it touches font-database internals while `QApplication` is being destroyed. It presents as heap corruption at process exit, on a stack with nothing to do with fonts. | The current code uses `qAddPostRoutine(joinFontDatabaseWarmup)`; W51 removed the thread only for its reverted experiment. |
+
+Pinned source: [Qt 6.10.3 Windows integration](https://raw.githubusercontent.com/qt/qtbase/v6.10.3/src/plugins/platforms/windows/qwindowsintegration.cpp)
+parses `fontengine=gdi` and `nodirectwrite` as platform options before choosing its database.
+The supported argument forms are documented by
+[QGuiApplication](https://doc.qt.io/qt-6.10/qguiapplication.html#QGuiApplication).
+No backend change or timeout relaxation is certified by this source inspection alone.
+
+The 2026-09-06 same-binary native A/B/A comparison did not justify a backend switch. After the
+original 40.433-second font wait, unchanged default-backend runs completed the startup gate in
+5.436 and 5.176 seconds. The explicit GDI arm completed in 8.996 seconds: its families query was
+faster, but status-bar work was slower. Keep the original failed first-run evidence; warm passes
+do not prove that its cause is fixed. All arms retained the same 45-second deadline and real
+teardown, with no service, antivirus or font-cache change. Evidence is under
+build/wave32-font-backend-2fd6351917f140fc9076a216c9479873.
+
+## Font-startup experiment -- reverted after inconclusive comparison
+
+The owner approved testing removal of eager font enumeration/warmup on 2026-09-06, keeping the
+change only if verified. The fresh EA3EF304...1231089A package failed the existing 30-second native
+startup gate: its forced family census consumed 26.405 seconds, and status-bar construction took
+29.084 seconds. That failure remains under build/pk32-final-bc5bbc12; a later warm pass would not
+erase it. Baseline source bytes are retained under build/wave32-font-lazy-experiment-e67bf3a4.
+
+The experiment removed the census, the synthetic missing-family match and their owned warmup
+thread. It left font rendering/theming, the current backend choice and real startup/status-bar
+timing intact. Qt's own initialization may still be expensive: the pinned
+[family-list implementation](https://raw.githubusercontent.com/qt/qtbase/v6.10.3/src/gui/text/qfontdatabase.cpp)
+locks and initializes its database, and the pinned
+[DirectWrite initializer](https://raw.githubusercontent.com/qt/qtbase/v6.10.3/src/gui/text/windows/qwindowsdirectwritefontdatabase.cpp)
+walks the system font collection and additional names. Removing manual calls is therefore an
+experiment, not proof that Qt avoids enumeration.
+
+The candidate passed fresh native package tests in 16.239 seconds on Windows PowerShell 5.1 and
+6.213 seconds on PowerShell 7, both under the unchanged 30-second cap, restoring each exact package
+tree. Those first-run timings alone do not establish causation. A matched Windows PowerShell 5.1
+ABBA comparison measured baseline 6.717/9.060 seconds versus candidate 8.303/7.305 seconds. Means
+of 7.888 and 7.804 seconds are within the observed variation, not a demonstrated improvement.
+Per the owner's conditional authorization, the experiment was reverted. Both source files match
+their exact saved baseline hashes. Evidence: build/font-abba-9c16c6b0/results.json and
+build/pk32-final-d7ef82e7/proof.json. The intermittent first-start delay remains INCOMPLETE;
+neither antivirus attribution nor a backend change is established by these observations.
+
+Wave48 current-source observation, 2026-09-24: a fresh 157-file native Windows
+stage timed out under the unchanged 30-second startup smoke bound, with no
+success marker and a zero-byte application log. A second fresh stage with the
+identical app SHA256 passed, as did fresh ZIP extraction and Windows 11 VM
+startup. Those passes do not erase the first failure or establish an antivirus,
+font-backend, or MCP cause. The on-timeout phase is not observable in the
+zero-byte log; capture a bounded live phase trace on a future cold run before
+changing font initialization or relaxing the startup gate. Evidence and exact
+hashes: `build/wave48-transaction-package-vm-evidence.md`.
+
+Current diagnostic follow-up: smoke-mode startup now emits three flushed stderr
+milestones around Qt application construction and app initialization. It also
+flushes the application log before main-window construction and on both sides
+of the first font database query. The portable smoke gate requires the stderr
+milestones in order; its 41 mocked contracts and copied-guard red drill pass.
+This is observability, not a font fix. Current compiled-package/native proof
+for these new source bytes was attempted: the fresh W49 native package timed
+out at the unchanged 30-second limit while the complete CTest suite was
+running. Stderr shows Qt app construction and app initialization both finished;
+the flushed log ends at `entering font database query`, before `font database
+ready`. This narrows the stall to the first GUI-thread family query or its
+shared font initialization, but does not distinguish warmup, backend, cache,
+antivirus, or concurrent load. After the full 287/287 CTest run, independent
+fresh stages with the same binary passed native smoke under PowerShell 7 and
+Windows PowerShell 5.1 without test load. Those passes do not erase the timed
+out first run. See `build/wave49-startup-phase-evidence.md`.
+
+An uncontended fresh default-backend extraction then independently timed out
+at the same first font query, while a fresh explicit-GDI arm completed in
+12.557 seconds. A following same-binary fresh-extract A/B/B/A comparison had
+all four arms pass within 8.324 seconds or less. That mixed result is evidence
+to keep investigating, not evidence to switch the product backend or relax the
+deadline. The no-op `QT_NO_DIRECTWRITE` override and its escape hatch were
+then removed with a source-contract red/green drill under PowerShell 7 and
+5.1; this changes no Qt backend on the pinned build. Full Release/package
+proof for those final source bytes is still required. The actual font-query
+timeout remains open.
+
+W50 confirms the no-op override cleanup did not fix startup: full Release and
+287/287 CTests passed, as did Windows 11 VM native/accessibility checks, but
+the first fresh local ZIP extraction timed out at the unchanged 30-second
+native gate. Its forced GUI-thread family query eventually returned 2491
+families after 28839 ms, leaving no time for clean shutdown. Evidence:
+`build/wave50-baseline-evidence.md`. The approved lazy-font change must be
+tested against this real failure, not assumed effective from a warm pass.
+The W51 source contract was red on W50's eager census and green after the
+candidate removal on PowerShell 7 and 5.1. Its targeted build and 12-arm
+fresh-ZIP A/B/B/A run passed, but mean whole-startup times differed by only
+0.043 seconds and neither arm reproduced the rare timeout. The removal was
+reverted to exact W50 source hashes, along with the candidate-only contract.
+See `build/wave51-lazy-font-experiment.md`. Startup reliability remains open.
+
+W67c recurrence, 2026-09-25: after a complete 300/300 local CTest gate and a
+fresh single-use 157-file portable stage, the default 30-second native smoke
+timed out. The staged app log stopped at `MainWindow startup: entering font
+database query`, before its forced `QFontDatabase::families()` census returned.
+The captured stderr reached `phase=app-initialized`; no `sak_utility` process
+remained after the smoke, but one log and empty temp/crash directories did.
+The source still performs a background families query plus alias-font match
+in `main.cpp` and a forced GUI-thread families census in `main_window.cpp`.
+W51's 12-arm mean comparison did not verify a benefit from removing them,
+and this fresh failure does not alone prove which Qt/font-cache stage stalls.
+Do not raise the 30-second gate or claim native startup reliability. Evidence:
+`build/wave67c-package-native.log`.
+
+## Wave 68 native startup diagnosis -- not a certified fix
+
+The owner allowed removing the eager font warmup/census only if verified.
+Removing both passed a targeted build but failed a fresh native extraction;
+the experiment was restored. A narrower trial removed only the synthetic
+missing-family alias match while retaining the family census. Its native
+30-second smoke also failed and the match was restored. The currently
+live source therefore retains both warmup and census. Targeted builds
+do not replace a full Release build, complete CTest or current-binary package
+and VM proof.
+
+Several widget tree changes reduced local construction costs: the AI Assistant,
+Benchmark and Diagnostics, App Installation, and Application Management use
+empty attached shells before populated children. Native smoke displays the
+initial shell before materializing all lazy tabs; it requires the all-panels
+marker before success. Headless smoke and accessibility audit still construct
+all tabs before their checks. The portable runner's 42 mocked contracts and
+its copied missing-phase and missing-all-panels red drills passed. These are
+contract checks, not a native package pass.
+
+The default 30-second native gate remains red. A temporary diagnostic Qt
+`notify()` probe measured a 31,328 ms `QEvent::MetaCall` while building tabs
+and a 47,563 ms `QEvent::LayoutRequest` on MainWindow afterward. Both event
+numbers were checked against pinned Qt 6.10.3 `qcoreevent.h`. Pinned Qt
+[QTabWidget source](https://raw.githubusercontent.com/qt/qtbase/v6.10.3/src/widgets/widgets/qtabwidget.cpp)
+queries each tab's size hint, and
+[QStackedLayout source](https://raw.githubusercontent.com/qt/qtbase/v6.10.3/src/widgets/kernel/qstackedlayout.cpp)
+also walks its pages. A temporary per-tab probe measured the first File
+Management `sizeHint()` at 51,334 ms; its Advanced Search sub-tab then stalled
+in a separate run. A deeper probe stopped at the Regex Patterns button's
+first size hint. Replacing that text chevron with an existing SVG icon did not
+make whole native startup pass and was restored. The slow call can migrate
+between widgets; do not call that button the root cause without a controlled
+same-binary comparison. All temporary event/hint probe source was restored
+byte-for-byte. The associated raw logs are under the active Release tree's
+`data/logs` with timestamps 12-00-12, 12-08-53, 12-13-16 and 12-24-23 on
+2026-09-25; they are diagnostic, not portable-package receipts.
+
+The same native campaign also revealed `scripts/process_capture.ps1` failing
+closed when its `taskkill /T /F` utility exceeded the unchanged 5-second
+cleanup budget. A test-owned app process sometimes remained alive briefly.
+This reopens R5-IDX-39 despite its earlier scoped fixture passes. Windows
+Performance Recorder's CPU profile could not start on this host because
+system performance profiling policy returned `0xc5585011`; the in-process
+event probe provided narrower evidence without changing host policy.
+
+## QApplication argument ownership
+
+Qt retains `argc` by reference and requires both argument inputs to stay valid through application
+destruction: [Qt 6.10.3 constructor contract](https://doc.qt.io/qt-6.10/qguiapplication.html#QGuiApplication).
+The old `initializeApp(int argc, ...)` constructed a static QApplication from its local copy;
+returning left that reference dangling. `runApplication` now owns a local QApplication alongside
+its argument-count parameter, and `initializeApp(QApplication&, ...)` only configures it.
+
+The existing startup-budget regression script includes a narrow source-ownership contract. It
+rejects the original source before launching anything and accepts the fixed structure on Windows
+PowerShell 5.1 and PowerShell 7. Its two positive controls and seventeen exact-reason negative
+controls are structural evidence, not a C++ semantic analyzer or an undefined-behavior-dependent
+test. The fixed app builds successfully. The later Wave 32 teardown cleanup removes both
+`std::_Exit` success shortcuts and their ignored flush results. Headless startup and accessibility
+audit now return normally through MainWindow and QApplication destruction. Their separate runtime
+gates pass with the same app hash, unchanged limits and no remaining app process; evidence is under
+build/wave32-teardown-runtime-c2448695c39744bb9da1639a1dfde11f. Native desktop and full-suite proof
+remain separate requirements.
+
+## Fatal reporting after application destruction
+
+The lifetime correction also changes the exception boundary: `runApplication` destroys its
+QApplication before its caller handles a failure. The former `main` catches then tried to create
+a Qt message box without a live application. Fatal reporting now uses a private Qt-free `noexcept`
+boundary in `src/main.cpp`. It writes and checks stderr, invokes the Qt-independent critical logger,
+and uses a fixed native Windows notice only for interactive launches. Native notice failure retains
+the immediate Windows error and reports it through the checked diagnostic path. If every output
+channel is unavailable, the process still fails; no visible or durable artifact is promised.
+
+The existing startup-budget regression extracts the actual production boundary and its helpers
+into an isolated CMake executable. Only diagnostic outputs and the application runner are injected.
+The runner's local ownership sentinel proves reporting follows stack unwinding; native notice
+callbacks are nonmodal, so this does not prove a rendered dialog or real QApplication teardown.
+Each explicit diagnostic mode stays noninteractive even when the runner rewrites argv before
+throwing. Standard and unknown Release exceptions, exact argument matching, stderr write/flush
+errors, immediate last-error capture, sink bindings and bounded failure reporting are checked.
+
+Run the narrow compiled probe under either Windows PowerShell 5.1 or PowerShell 7:
+
+```powershell
+& scripts/test_startup_budget.ps1 -FatalRuntimeOnly
+& scripts/test_startup_budget.ps1 -FatalRuntimeOnly -FatalMutationDrill
+```
+
+The second invocation independently reverses production guards in extracted source copies. Each
+mutant must compile under `/W4 /WX` and fail its own runtime assertion; compile failures earn no
+coverage credit. Separate lexer-based checks reject Qt use in each fatal helper and missing catches.
+The live source is never planted with a mutant. These checks augment the existing complete Release,
+CTest, real-app startup, accessibility and native-package gates; they do not replace those gates.
+The current evidence and remaining release status belong to `CODEX_REVIEW_5_REMEDIATION.md`.
 
 ## Disproven -- do not re-chase
 
@@ -98,10 +307,10 @@ of member declaration order.
    not a reproduction. Drive the same build many times per arm and compare failure rates, with the
    suspected component behind a temporary environment variable so the two arms differ by exactly
    one thing.
-4. **Run non-headless.** Headless smoke calls `std::_Exit(0)` on success, which skips every
-   destructor and hides teardown faults completely. `scripts/run_portable_e2e_smoke.ps1` sets
-   `SAK_STARTUP_SMOKE_HEADLESS` only under CI and explicitly clears it otherwise, so a local run
-   does exercise teardown. Keep it that way.
+4. **Compare native and headless runs.** Both now return through normal destruction. Before
+   Wave 32, headless success used `std::_Exit(0)` and skipped every destructor, so those historical
+   green runs are not teardown evidence. Headless still skips native exposure and painting; it
+   cannot replace a desktop run for those behaviors.
 
 ## What the startup gates actually cover
 
@@ -111,8 +320,8 @@ of member declaration order.
 - Headless smoke skips `show()` (`prepareMainWindowForStartup`, `src/main.cpp`). Nothing is ever
   exposed: no `showEvent`, no paint, no realized geometry. Deferred-on-show work, layout, and
   truncation bugs are invisible to it and need a desktop run or an exposed-widget test.
-- The accessibility audit also exits through `_Exit(0)` to avoid teardown crashes in automation,
-  so it is not a teardown gate either.
+- The accessibility audit now returns normally after reporting its result. Its real process exit
+  is part of the gate; the written accessibility result alone still does not prove teardown.
 
 ## Widget sizing: hand-computed widths always undercount
 

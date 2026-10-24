@@ -6,12 +6,15 @@
 
 #include "sak/partition_raw_device_io.h"
 
+#include <QDir>
 #include <QFile>
 #include <QFileDevice>
+#include <QFileInfo>
 #include <QIODevice>
 
 #include <algorithm>
 #include <limits>
+#include <optional>
 #include <utility>
 #include <vector>
 
@@ -353,8 +356,8 @@ private:
 
 namespace {
 
-// Copy a byte range from src to dst in chunks; the destination is sparse, so ranges we
-// never write stay holes. Returns false on any short read/write.
+// Copy a byte range from src to dst in chunks. Sparse mode calls this only for allocated
+// ranges; dense mode calls it for the whole source. Returns false on any short read/write.
 bool copyHandleRange(HANDLE src, HANDLE dst, qint64 offset, qint64 length) {
     constexpr DWORD kChunk = 4u * 1024u * 1024u;
     std::vector<char> buffer(kChunk);
@@ -370,17 +373,78 @@ bool copyHandleRange(HANDLE src, HANDLE dst, qint64 offset, qint64 length) {
         const DWORD want =
             static_cast<DWORD>(std::min<qint64>(remaining, static_cast<qint64>(kChunk)));
         DWORD got = 0;
-        if ((ReadFile(src, buffer.data(), want, &got, nullptr) == 0) || got == 0) {
+        if (ReadFile(src, buffer.data(), want, &got, nullptr) == 0) {
+            return false;
+        }
+        if (got == 0) {
+            SetLastError(ERROR_HANDLE_EOF);
             return false;
         }
         DWORD wrote = 0;
-        if ((WriteFile(dst, buffer.data(), got, &wrote, nullptr) == 0) || wrote != got) {
+        if (WriteFile(dst, buffer.data(), got, &wrote, nullptr) == 0) {
+            return false;
+        }
+        if (wrote != got) {
+            SetLastError(ERROR_WRITE_FAULT);
             return false;
         }
         position += got;
         remaining -= got;
     }
     return true;
+}
+
+enum class ImageCopyMode {
+    Sparse,
+    Dense
+};
+
+std::optional<ImageCopyMode> chooseImageCopyMode(
+    HANDLE src, HANDLE dst, const QString& destination, qint64 size, QString* errorMessage) {
+    DWORD sourceFlags = 0;
+    DWORD destinationFlags = 0;
+    if ((GetVolumeInformationByHandleW(
+             src, nullptr, 0, nullptr, nullptr, &sourceFlags, nullptr, 0) == 0) ||
+        (GetVolumeInformationByHandleW(
+             dst, nullptr, 0, nullptr, nullptr, &destinationFlags, nullptr, 0) == 0)) {
+        setError(errorMessage,
+                 QStringLiteral("Unable to inspect image-copy volume: %1")
+                     .arg(win32ErrorMessage(GetLastError())));
+        return std::nullopt;
+    }
+    if ((sourceFlags & FILE_SUPPORTS_SPARSE_FILES) != 0 &&
+        (destinationFlags & FILE_SUPPORTS_SPARSE_FILES) != 0) {
+        DWORD returned = 0;
+        if (DeviceIoControl(dst, FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, &returned, nullptr) ==
+            0) {
+            setError(errorMessage,
+                     QStringLiteral("Unable to mark image-copy destination sparse: %1")
+                         .arg(win32ErrorMessage(GetLastError())));
+            return std::nullopt;
+        }
+        return ImageCopyMode::Sparse;
+    }
+    const QString destinationDirectory =
+        QDir::toNativeSeparators(QFileInfo(destination).absolutePath());
+    ULARGE_INTEGER available{};
+    if (GetDiskFreeSpaceExW(reinterpret_cast<LPCWSTR>(destinationDirectory.utf16()),
+                            &available,
+                            nullptr,
+                            nullptr) == 0) {
+        setError(errorMessage,
+                 QStringLiteral("Unable to inspect dense image-copy capacity: %1")
+                     .arg(win32ErrorMessage(GetLastError())));
+        return std::nullopt;
+    }
+    if (size < 0 || static_cast<quint64>(size) > available.QuadPart) {
+        setError(errorMessage,
+                 QStringLiteral("Dense image copy requires %1 bytes but only %2 bytes are "
+                                "available on the destination volume")
+                     .arg(size)
+                     .arg(available.QuadPart));
+        return std::nullopt;
+    }
+    return ImageCopyMode::Dense;
 }
 
 bool copyAllocatedRanges(HANDLE src, HANDLE dst, qint64 size) {
@@ -425,6 +489,32 @@ bool copyAllocatedRanges(HANDLE src, HANDLE dst, qint64 size) {
     return true;
 }
 
+bool copyImageContent(HANDLE src, HANDLE dst, qint64 size, ImageCopyMode mode) {
+    LARGE_INTEGER end{};
+    end.QuadPart = size;
+    if (mode == ImageCopyMode::Sparse) {
+        return (SetFilePointerEx(dst, end, nullptr, FILE_BEGIN) != 0) && (SetEndOfFile(dst) != 0) &&
+               copyAllocatedRanges(src, dst, size);
+    }
+    return copyHandleRange(src, dst, 0, size) &&
+           (SetFilePointerEx(dst, end, nullptr, FILE_BEGIN) != 0) && (SetEndOfFile(dst) != 0);
+}
+
+void disposeFailedImageCopy(HANDLE dst, QString* errorMessage) {
+    FILE_DISPOSITION_INFO disposition{};
+    disposition.DeleteFile = TRUE;
+    if (SetFileInformationByHandle(dst, FileDispositionInfo, &disposition, sizeof(disposition)) !=
+        0) {
+        return;
+    }
+    const QString cleanupError = win32ErrorMessage(GetLastError());
+    const QString copyError = errorMessage == nullptr ? QStringLiteral("Image copy failed")
+                                                      : *errorMessage;
+    setError(errorMessage,
+             QStringLiteral("%1; partial destination could not be disposed: %2")
+                 .arg(copyError, cleanupError));
+}
+
 bool copyFileSparseWindows(const QString& source,
                            const QString& destination,
                            QString* errorMessage) {
@@ -444,7 +534,7 @@ bool copyFileSparseWindows(const QString& source,
         return false;
     }
     const HANDLE dst = CreateFileW(reinterpret_cast<LPCWSTR>(destination.utf16()),
-                                   GENERIC_READ | GENERIC_WRITE,
+                                   GENERIC_READ | GENERIC_WRITE | DELETE,
                                    0,
                                    nullptr,
                                    CREATE_NEW,
@@ -455,24 +545,23 @@ bool copyFileSparseWindows(const QString& source,
         CloseHandle(src);
         return false;
     }
-    DWORD returned = 0;
-    DeviceIoControl(dst, FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, &returned, nullptr);
-    // FlushFileBuffers before close fails closed on a copy the OS could not durably persist,
-    // so a caller never treats a write-cache/media failure as a completed sparse copy. The
-    // FSCTL_SET_SPARSE result is intentionally not checked -- a non-sparse destination is a
-    // space-efficiency loss, not an incorrect copy, so it must not fail the operation.
-    const bool ok = (SetFilePointerEx(dst, size, nullptr, FILE_BEGIN) != 0) &&
-                    (SetEndOfFile(dst) != 0) && copyAllocatedRanges(src, dst, size.QuadPart) &&
+    const auto mode = chooseImageCopyMode(src, dst, destination, size.QuadPart, errorMessage);
+    const bool ok = mode.has_value() && copyImageContent(src, dst, size.QuadPart, *mode) &&
                     (FlushFileBuffers(dst) != 0);
-    if (!ok) {
+    if (mode.has_value() && !ok) {
         setError(errorMessage, win32ErrorMessage(GetLastError()));
+    }
+    if (!ok) {
+        disposeFailedImageCopy(dst, errorMessage);
     }
     CloseHandle(src);
     CloseHandle(dst);
-    if (!ok) {
-        DeleteFileW(reinterpret_cast<LPCWSTR>(destination.utf16()));
-    }
     return ok;
+}
+
+[[nodiscard]] HANDLE nativeFileHandle(int fileDescriptor) {
+    return fileDescriptor < 0 ? INVALID_HANDLE_VALUE
+                              : reinterpret_cast<HANDLE>(_get_osfhandle(fileDescriptor));
 }
 
 }  // namespace
@@ -482,10 +571,7 @@ bool copyFileSparse(const QString& source, const QString& destination, QString* 
 }
 
 void markFileSparse(int fileDescriptor) {
-    if (fileDescriptor < 0) {
-        return;
-    }
-    auto* const handle = reinterpret_cast<HANDLE>(_get_osfhandle(fileDescriptor));
+    HANDLE handle = nativeFileHandle(fileDescriptor);
     if (handle == INVALID_HANDLE_VALUE) {
         return;
     }
@@ -527,13 +613,13 @@ constexpr qsizetype kExtendedDevicePrefixLength = 4;  // "\\?\"
 }  // namespace
 
 bool isWindowsRawDevicePath(const QString& path) {
-    // Device paths are case-insensitive on Windows (e.g. lowercase "globalroot"). The Windows
-    // device spellings are recognized on every build host so the plan-time validator and the
-    // executor cannot disagree about whether a target is a raw device. POSIX device nodes are
-    // classified too, so the image-only gate refuses them rather than opening a QFile.
+    // Windows device paths are case-insensitive. The validator and executor share their raw
+    // classification. A root-relative dev path (any case or slash dialect) is also raw-looking
+    // hostile input on Windows: image-only gates refuse it, and the raw openers reject it.
     const QString normalized = normalizedDevicePath(path);
     return normalized.startsWith(QStringLiteral("\\\\.\\"), Qt::CaseInsensitive) ||
-           isExtendedWindowsRawDevice(normalized) || path.startsWith(QStringLiteral("/dev/"));
+           isExtendedWindowsRawDevice(normalized) ||
+           normalized.startsWith(QStringLiteral("\\dev\\"), Qt::CaseInsensitive);
 }
 
 QString canonicalRawDevicePath(const QString& path) {
@@ -559,6 +645,16 @@ std::optional<uint32_t> rawDevicePhysicalDriveNumber(const QString& path) {
     return ok ? std::optional<uint32_t>(static_cast<uint32_t>(value)) : std::nullopt;
 }
 
+namespace {
+[[nodiscard]] bool requireCanonicalRawOpenPath(const QString& path, QString* errorMessage) {
+    if (!canonicalRawDevicePath(path).isEmpty()) {
+        return true;
+    }
+    setError(errorMessage, QStringLiteral("Unsupported raw device path on Windows"));
+    return false;
+}
+}  // namespace
+
 bool flushDeviceBuffers(QIODevice* device, QString* errorMessage) {
     if (device == nullptr) {
         setError(errorMessage, QStringLiteral("No open device to flush"));
@@ -574,6 +670,19 @@ bool flushDeviceBuffers(QIODevice* device, QString* errorMessage) {
     if (auto* file = qobject_cast<QFileDevice*>(device)) {
         if (!file->flush()) {
             setError(errorMessage, file->errorString());
+            return false;
+        }
+        // QFileDevice::flush drains Qt buffers but does not force the Windows file cache
+        // to storage. The APFS/HFS+ commit callers require a checked OS flush as well.
+        HANDLE handle = nativeFileHandle(file->handle());
+        if (handle == INVALID_HANDLE_VALUE) {
+            setError(errorMessage, QStringLiteral("No native file handle for durable flush"));
+            return false;
+        }
+        if (FlushFileBuffers(handle) == 0) {
+            setError(errorMessage,
+                     QStringLiteral("Windows file flush failed: %1")
+                         .arg(win32ErrorMessage(GetLastError())));
             return false;
         }
         return true;
@@ -592,6 +701,9 @@ std::unique_ptr<QIODevice> openFileOrRawDeviceReadOnly(const QString& path, QStr
     }
 
     if (isWindowsRawDevicePath(path)) {
+        if (!requireCanonicalRawOpenPath(path, errorMessage)) {
+            return {};
+        }
         auto device = std::make_unique<WindowsRawDevice>(path, false);
         if (!device->open(QIODevice::ReadOnly)) {
             setError(errorMessage, device->errorString());
@@ -616,6 +728,9 @@ std::unique_ptr<QIODevice> openFileOrRawDeviceReadWrite(const QString& path,
     }
 
     if (isWindowsRawDevicePath(path)) {
+        if (!requireCanonicalRawOpenPath(path, errorMessage)) {
+            return {};
+        }
         auto device = std::make_unique<WindowsRawDevice>(path, true);
         if (!device->open(QIODevice::ReadWrite)) {
             setError(errorMessage, device->errorString());

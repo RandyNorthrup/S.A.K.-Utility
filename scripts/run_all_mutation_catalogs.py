@@ -54,6 +54,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from mutation_catalog_text import adapt_mutation_text
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CATALOG_DIR = REPO_ROOT / "scripts" / "mutation_catalogs"
 MANIFEST_PATH = CATALOG_DIR / "MANIFEST.txt"
@@ -125,7 +127,11 @@ def _validate_mutant(mutant: dict, source_text: str) -> str | None:
         return f"mutant {mutant['id']}: expect must be 'killed' or 'equivalent'"
     if mutant["expect"] == "equivalent" and not mutant.get("why", "").strip():
         return f"mutant {mutant['id']}: an equivalent mutant requires a 'why' rationale"
-    count = source_text.count(mutant["find"])
+    try:
+        find, _ = adapt_mutation_text(source_text, mutant["find"], mutant["replace"])
+    except ValueError as exc:
+        return f"mutant {mutant['id']}: {exc} in {mutant['file']}"
+    count = source_text.count(find)
     if count != 1:
         return (f"mutant {mutant['id']}: find-string occurs {count} times in "
                 f"{mutant['file']} (must be exactly 1 -- catalog has gone stale)")

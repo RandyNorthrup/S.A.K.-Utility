@@ -60,8 +60,6 @@ class QtSlotClassifierTests(unittest.TestCase):
                 powershell,
                 "-NoProfile",
                 "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
                 "-File",
                 str(RUNNER_PATH),
                 "-PrintInputScope",
@@ -204,6 +202,53 @@ void Product::callback() {}
         self.assertIn("Invoke-CapturedProcess", runner)
         self.assertNotIn("Start-Process -FilePath $CppcheckExe", runner)
 
+    def test_cppcheck_resolves_qr_header_used_by_first_party_code(self) -> None:
+        runner = RUNNER_PATH.read_text(encoding="ascii")
+        root = "src/third_party/qrcodegen"
+        self.assertTrue((PROJECT_ROOT / root / "qrcodegen.hpp").is_file())
+        self.assertIn(f'"-I", (Join-Path $ProjectRoot "{root}")', runner)
+
+    def test_cppcheck_reveal_resolves_qr_header_in_live_translation_unit(self) -> None:
+        powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+        self.assertIsNotNone(powershell, "Windows PowerShell is required for cppcheck")
+        suppression_lines = (PROJECT_ROOT / "cppcheck_suppressions.txt").read_text(
+            encoding="ascii"
+        ).splitlines()
+        suppressions_path = self.root / "qr_reveal_suppressions.txt"
+        suppressions_path.write_text(
+            "\n".join(line for line in suppression_lines if line.strip() != "missingInclude")
+            + "\n",
+            encoding="ascii",
+        )
+        errors_path = self.root / "qr_reveal_errors.txt"
+        source = PROJECT_ROOT / "src" / "gui" / "wifi_manager_panel.cpp"
+        result = subprocess.run(
+            [
+                powershell,
+                "-NoProfile",
+                "-NonInteractive",
+                "-File",
+                str(RUNNER_PATH),
+                "-SuppressionsFile",
+                str(suppressions_path),
+                "-ErrorsFile",
+                str(errors_path),
+                "-SuppressFindingOutput",
+                "-Files",
+                str(source),
+            ],
+            cwd=PROJECT_ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=45,
+        )
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        findings = errors_path.read_text(encoding="utf-8", errors="replace")
+        self.assertIn('Include file: "wifi_manager_panel.moc" not found.', findings)
+        self.assertNotIn('Include file: "qrcodegen.hpp" not found.', findings)
+        self.assertIn("Active checkers:", findings)
+
     def test_classified_diagnostics_fail_closed_on_read_or_tool_failure(self) -> None:
         runner = RUNNER_PATH.read_text(encoding="ascii")
         self.assertIn(
@@ -272,8 +317,6 @@ void Product::callback() {}
                     powershell,
                     "-NoProfile",
                     "-NonInteractive",
-                    "-ExecutionPolicy",
-                    "Bypass",
                     "-File",
                     str(RUNNER_PATH),
                     "-PrintInputScope",

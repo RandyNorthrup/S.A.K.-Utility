@@ -1134,8 +1134,8 @@ Acceptance:
 - Accessibility audit passes.
 - Destructive operation evidence covers strict disposable VHD, VM, and imported
   external hardware/lab gates for the shipped scope.
-- Release cannot ship unless strict readiness keeps accepting the current
-  HardwareCertified evidence set with zero certification gaps.
+- Release remains blocked until strict readiness accepts HardwareCertified evidence
+  with zero certification gaps.
 
 ### Implementation Checklist
 

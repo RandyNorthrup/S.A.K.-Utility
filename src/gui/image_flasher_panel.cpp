@@ -144,7 +144,10 @@ ImageFlasherPanel::ImageFlasherPanel(QWidget* parent)
             this,
             &ImageFlasherPanel::onWindowsISODownloaded);
 
-    if (!QCoreApplication::instance()->property("sakAccessibilityAudit").toBool()) {
+    const bool non_interactive_gate =
+        QCoreApplication::instance()->property("sakAccessibilityAudit").toBool() ||
+        QCoreApplication::instance()->property("sakStartupSmokeTest").toBool();
+    if (!non_interactive_gate) {
         m_driveScanner->start();
     }
 

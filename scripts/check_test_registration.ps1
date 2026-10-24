@@ -37,6 +37,136 @@ param()
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
+function Remove-CMakeComments {
+    param([string]$Text)
+    # Quoted/bracket arguments and escaped characters are opaque. Removing '#' inside
+    # them would change real arguments; bracket comments can span complete fake routes.
+    $pattern = '(?s)\\.|"(?:\\.|[^"\\])*"|\[(?<argEquals>=*)\[.*?\]\k<argEquals>\]|(?<comment>\#\[(?<commentEquals>=*)\[.*?\]\k<commentEquals>\]|\#[^\r\n]*)'
+    return [regex]::Replace($Text, $pattern, [Text.RegularExpressions.MatchEvaluator]{
+        param($match)
+        if ($match.Groups['comment'].Success) {
+            return [regex]::Replace($match.Value, '[^\r\n]', ' ')
+        }
+        return $match.Value
+    })
+}
+
+function Get-CMakeCommandBodies {
+    param([string]$Text, [string]$CommandName)
+    $pattern = '(?s)\\.|"(?:\\.|[^"\\])*"|\[(?<argEquals>=*)\[.*?\]\k<argEquals>\]|(?<command>(?<name>[A-Za-z_][A-Za-z0-9_]*)\s*\()|(?<open>\()|(?<close>\))'
+    $bodies = [Collections.Generic.List[string]]::new()
+    $depth = 0
+    $maximumDepth = 256
+    $name = ''
+    $start = 0
+    foreach ($token in [regex]::Matches($Text, $pattern)) {
+        if ($token.Groups['command'].Success -or $token.Groups['open'].Success) {
+            if ($depth -eq 0) {
+                $name = $token.Groups['name'].Value
+                $start = $token.Index + $token.Length
+            }
+            $depth++
+            if ($depth -gt $maximumDepth) { throw 'CMake command nesting exceeds the registration parser bound' }
+        } elseif ($token.Groups['close'].Success) {
+            if ($depth -le 0) { throw 'Unbalanced CMake command in test registration input' }
+            $depth--
+            if ($depth -eq 0 -and $name -ieq $CommandName) {
+                $bodies.Add($Text.Substring($start, $token.Index - $start))
+            }
+        }
+    }
+    if ($depth -ne 0) { throw 'Unterminated CMake command in test registration input' }
+    return $bodies.ToArray()
+}
+
+function Get-CMakeArguments {
+    param([string]$Text)
+    return @([regex]::Matches($Text, '(?s)"(?:\\.|[^"\\])*"|\[(?<argEquals>=*)\[.*?\]\k<argEquals>\]|(?:\\.|[^\s])+') |
+        ForEach-Object {
+            $value = $_.Value
+            if ($value.StartsWith('"') -and $value.EndsWith('"')) {
+                $value = $value.Substring(1, $value.Length - 2)
+            } elseif ($value -match '(?s)^\[(?<equals>=*)\[(?<argument>.*?)\]\k<equals>\]$') {
+                $value = $matches['argument']
+            }
+            $value
+        })
+}
+
+function Get-CMakeRegisteredCommandTargets {
+    param([string[]]$AddTestBodies)
+    $targets = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($body in $AddTestBodies) {
+        $tokens = @(Get-CMakeArguments $body)
+        if ($tokens.Count -lt 3 -or $tokens[0] -cne 'NAME') { continue }
+        $commandIndex = [Array]::IndexOf($tokens, 'COMMAND', 2)
+        if ($commandIndex -lt 0) { continue }
+        for ($index = $commandIndex + 1; $index -lt $tokens.Count; $index++) {
+            $argument = $tokens[$index]
+            if ($argument -cin @('CONFIGURATIONS', 'WORKING_DIRECTORY', 'COMMAND_EXPAND_LISTS')) { break }
+            $isExecutable = $index -eq ($commandIndex + 1)
+            if ($isExecutable -and $argument -cmatch '^[A-Za-z_][A-Za-z0-9_]*$') {
+                [void]$targets.Add($argument)
+            }
+            # The certification wrapper executes the exact -CertifierPath argument.
+            # A TARGET_FILE in unrelated data/output arguments is not execution evidence.
+            if (($isExecutable -or $tokens[$index - 1] -ceq '-CertifierPath') -and
+                $argument -cmatch '^\$<TARGET_FILE:([A-Za-z_][A-Za-z0-9_]*)>$') {
+                [void]$targets.Add($matches[1])
+            }
+        }
+    }
+    return @($targets)
+}
+
+function Assert-CMakePowerShellLaunches {
+    param([string[]]$AddTestBodies)
+    $violations = [Collections.Generic.List[string]]::new()
+    # Direct engines used by this tree, including the three CMake-resolved paths.
+    # This is source registration policy, not evaluation of arbitrary CMake wrappers.
+    $engines = @('${SAK_TEST_POWERSHELL_PATH}', '${SAK_PWSH_EXECUTABLE}',
+        '${SAK_WINDOWS_POWERSHELL_EXECUTABLE}')
+    foreach ($body in $AddTestBodies) {
+        $tokens = @(Get-CMakeArguments $body)
+        if ($tokens.Count -lt 4 -or $tokens[0] -cne 'NAME') { continue }
+        $commandIndex = [Array]::IndexOf($tokens, 'COMMAND', 2)
+        if ($commandIndex -lt 0 -or $commandIndex + 1 -ge $tokens.Count) { continue }
+        $engineIndex = $commandIndex + 1
+        $engine = $tokens[$engineIndex]
+        if (($engine -ceq '${CMAKE_COMMAND}' -or $engine -match '(?i)(^|[\\/])cmake(\.exe)?$') -and
+            $engineIndex + 2 -lt $tokens.Count -and $tokens[$engineIndex + 1] -ceq '-E' -and
+            $tokens[$engineIndex + 2] -ceq 'env') {
+            # Resolve only the executed command of a real cmake -E env wrapper.
+            # Engine names in assignment values or script arguments are data, not launches.
+            $engineIndex += 3
+            while ($engineIndex -lt $tokens.Count -and
+                ($tokens[$engineIndex] -cmatch '^--unset=[A-Za-z_][A-Za-z0-9_]*$' -or
+                 $tokens[$engineIndex] -cmatch '^[A-Za-z_][A-Za-z0-9_]*=')) { $engineIndex++ }
+            if ($engineIndex -lt $tokens.Count -and $tokens[$engineIndex] -ceq '--') { $engineIndex++ }
+            if ($engineIndex -ge $tokens.Count) { continue }
+            $engine = $tokens[$engineIndex]
+        }
+        if ($engine -cnotin $engines -and $engine -notmatch '(?i)(^|[\\/])(pwsh|powershell)(\.exe)?$') { continue }
+        $arguments = [Collections.Generic.List[string]]::new()
+        for ($index = $engineIndex + 1; $index -lt $tokens.Count; $index++) {
+            if ($tokens[$index] -cin @('CONFIGURATIONS', 'WORKING_DIRECTORY', 'COMMAND_EXPAND_LISTS')) { break }
+            $arguments.Add($tokens[$index])
+        }
+        # The canonical two host flags must occur before -File, not inside script
+        # arguments, comments or one quoted example. Extra host switches (including
+        # every spelling of a policy override) are not silently accepted.
+        $valid = $arguments.Count -ge 4 -and $arguments[2] -ieq '-File' -and
+            $arguments[3] -match '\.ps1$' -and
+            ((($arguments[0] -ieq '-NoProfile') -and ($arguments[1] -ieq '-NonInteractive')) -or
+             (($arguments[0] -ieq '-NonInteractive') -and ($arguments[1] -ieq '-NoProfile')))
+        if (-not $valid) { $violations.Add($tokens[1]) }
+    }
+    if ($violations.Count -gt 0) {
+        throw ('PowerShell CTest launch policy rejected: ' + ($violations -join ', ') +
+            '. Require -NoProfile -NonInteractive -File with no execution-policy override.')
+    }
+}
+
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 $TestsDir = Join-Path $ProjectRoot 'tests'
 $TestsCMake = Join-Path $TestsDir 'CMakeLists.txt'
@@ -64,8 +194,8 @@ $IntentionallyUnregistered = @(
 # CMakeLists: the root file declares the application and CLI targets
 # (sak_utility, sak_elevated_helper, the writer CLIs), which are programs rather
 # than tests and must never be expected to appear in ctest.
-$testsCMakeText = Get-Content $TestsCMake -Raw
-$cmakeText = $testsCMakeText + "`n" + (Get-Content $RootCMake -Raw)
+$testsCMakeText = Remove-CMakeComments (Get-Content $TestsCMake -Raw)
+$cmakeText = $testsCMakeText + "`n" + (Remove-CMakeComments (Get-Content $RootCMake -Raw))
 
 $sources = @(Get-ChildItem -Path $TestsDir -Recurse -File -Filter 'test_*.cpp')
 if ($sources.Count -eq 0) {
@@ -73,10 +203,15 @@ if ($sources.Count -eq 0) {
     exit 1
 }
 
-$declaredTargets = @([regex]::Matches($testsCMakeText, '(?m)^\s*add_executable\(\s*([A-Za-z0-9_]+)') |
-    ForEach-Object { $_.Groups[1].Value })
-$registeredTests = @([regex]::Matches($testsCMakeText, 'add_test\(\s*NAME\s+([A-Za-z0-9_$\{\}]+)') |
-    ForEach-Object { $_.Groups[1].Value })
+$declaredTargets = @(Get-CMakeCommandBodies $testsCMakeText 'add_executable' | ForEach-Object {
+    if ($_ -match '^\s*([A-Za-z0-9_]+)') { $matches[1] }
+})
+$addTestBodies = @(Get-CMakeCommandBodies $testsCMakeText 'add_test')
+Assert-CMakePowerShellLaunches $addTestBodies
+$registeredTests = @($addTestBodies | ForEach-Object {
+    if ($_ -match '^\s*NAME\s+([A-Za-z0-9_$\{\}]+)') { $matches[1] }
+})
+$registeredCommandTargets = @(Get-CMakeRegisteredCommandTargets $addTestBodies)
 
 # Targets and add_test names can both come from a foreach(test_name ...) loop, in
 # which case the literal name never appears and the CMake text carries
@@ -125,6 +260,7 @@ $unregistered = @()
 foreach ($target in $declaredTargets) {
     if ($IntentionallyUnregistered -contains $target) { continue }
     if ($registeredTests -contains $target) { continue }
+    if ($registeredCommandTargets -contains $target) { continue }
     if ($loopRegistered -contains $target) { continue }
     $unregistered += $target
 }

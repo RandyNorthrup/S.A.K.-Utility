@@ -1018,15 +1018,14 @@ QJsonObject AiProviderGateway::callWin32Mcp(const Win32McpCallPlan& plan,
     if (m_mcp_pool == nullptr) {
         return jsonFailure(error_message, QStringLiteral("Win32 MCP session pool is unavailable"));
     }
-    QString transport_error;
-    QJsonObject message = m_mcp_pool->callTool(request, transport_error);
-    if (message.isEmpty()) {
+    const auto message = m_mcp_pool->callTool(request);
+    if (!message) {
         if (error_message != nullptr) {
-            *error_message = transport_error;
+            *error_message = message.error();
         }
         return {};
     }
-    const QString result_error = mcpEnvelopeError(message.value(QStringLiteral("result")));
+    const QString result_error = mcpEnvelopeError(message->value(QStringLiteral("result")));
     if (!result_error.isEmpty()) {
         return jsonFailure(error_message, QStringLiteral("Win32 MCP %1").arg(result_error));
     }
@@ -1034,7 +1033,7 @@ QJsonObject AiProviderGateway::callWin32Mcp(const Win32McpCallPlan& plan,
         error_message->clear();
     }
     return win32McpResult(
-        plan.provider, plan.tool_name, plan.tool_arguments, plan.security_profile, message);
+        plan.provider, plan.tool_name, plan.tool_arguments, plan.security_profile, *message);
 }
 
 bool AiProviderGateway::isWin32ReadOnlyTool(const QString& tool_name) {

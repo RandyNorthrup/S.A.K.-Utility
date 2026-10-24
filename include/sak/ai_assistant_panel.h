@@ -232,7 +232,7 @@ private:
 
     void setupUi();
     QWidget* createChatWorkspace();
-    QWidget* createContextPane();
+    void createContextPane(QSplitter* splitter);
     QWidget* createConversationPane();
     void createStatusStrip(QVBoxLayout* root_layout);
     void configureExecutionBrokers();

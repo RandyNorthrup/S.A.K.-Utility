@@ -112,6 +112,8 @@ private Q_SLOTS:
     void initTestCase() {
         // Keep the panel's stores out of the real user data directory.
         QStandardPaths::setTestModeEnabled(true);
+        QVERIFY(QFile::exists(QStringLiteral(":/ai/skills/artifact-verification.md")));
+        QVERIFY(QFile::exists(QStringLiteral(":/icons/icons/icons8-send.svg")));
     }
 
     void packageErrorUsesCanonicalStrictSchema() {

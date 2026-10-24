@@ -131,6 +131,9 @@ QJsonObject PartitionReportGenerator::diskToJson(const PartitionDiskInfo& disk) 
     object[QStringLiteral("partition_style")] = disk.partition_style;
     object[QStringLiteral("size_bytes")] = QString::number(disk.size_bytes);
     object[QStringLiteral("health_status")] = disk.health_status;
+    object[QStringLiteral("is_offline")] =
+        disk.is_offline.has_value() ? QJsonValue(*disk.is_offline) : QJsonValue(QJsonValue::Null);
+    object[QStringLiteral("is_read_only")] = disk.is_read_only;
     object[QStringLiteral("partitions")] = partitions;
     return object;
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Prove review-ledger inventory hashes only dirty tracked working-tree files."""
+"""Prove one filtered live-hash batch covers every unit, including Git-hidden file edits."""
 
 from __future__ import annotations
 
@@ -17,40 +17,45 @@ def main() -> int:
     ledger = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(ledger)
 
+    if root.exists():
+        raise RuntimeError("batch probe requires a new disposable fixture directory")
     (root / "src").mkdir(parents=True)
     unit_count = 256
-    for index in range(unit_count):
-        (root / "src" / f"unit_{index}.cpp").write_text(
-            "int value = 0;\n", encoding="ascii")
-
-    clean_blob = "a" * 40
-    dirty_blob = "b" * 40
+    paths = [f"src/unit_{index}.cpp" for index in range(unit_count)]
+    paths[8] = "src/unit with space.cpp"
+    paths[9] = "src/unit_caf\u00e9.cpp"
+    for path in paths:
+        (root / path).write_bytes(b"int value = 0;\r\n")
+    (root / ".gitattributes").write_text("*.cpp text eol=lf\n", encoding="ascii")
+    ledger.REPO_ROOT = root
+    real_git = ledger.git
+    real_git("init", "--quiet")
+    real_git("config", "core.autocrlf", "false")
+    real_git("add", ".gitattributes", "src")
+    real_git("update-index", "--assume-unchanged", "src/unit_7.cpp")
+    real_git("update-index", "--skip-worktree", "src/unit_199.cpp")
     dirty = {"src/unit_7.cpp", "src/unit_199.cpp"}
-    index_records = "".join(
-        f"100644 {clean_blob} 0\tsrc/unit_{index}.cpp\0"
-        for index in range(unit_count)
-    )
+    for path in dirty:
+        (root / path).write_bytes(b"int value = 1;\r\n")
+    assert not real_git("diff-files", "--name-only").strip()
+    clean_blob = real_git("hash-object", "--path=src/unit_0.cpp", "--", "src/unit_0.cpp").strip()
+    dirty_blob = real_git("hash-object", "--path=src/unit_7.cpp", "--", "src/unit_7.cpp").strip()
+    assert clean_blob != dirty_blob
+    assert clean_blob != real_git("hash-object", "--no-filters", "--", "src/unit_0.cpp").strip()
     calls: list[tuple[str, ...]] = []
 
-    def fake_git(*args: str) -> str:
+    def recording_git(*args: str, **keywords) -> str:
         calls.append(args)
-        if args == ("diff-files", "--name-only", "-z", "--"):
-            return "\0".join(sorted(dirty)) + "\0"
-        if args == ("ls-files", "-s", "-z"):
-            return index_records
-        if args[0] == "hash-object":
-            return dirty_blob + "\n"
-        raise AssertionError(f"unexpected git call: {args}")
+        return real_git(*args, **keywords)
 
-    ledger.REPO_ROOT = root
-    ledger.git = fake_git
+    ledger.git = recording_git
     units = ledger.current_units()
     hash_calls = [call for call in calls if call[0] == "hash-object"]
     assert len(units) == unit_count
-    assert len(hash_calls) == len(dirty), hash_calls
-    assert {call[-1] for call in hash_calls} == dirty
-    assert units["src/unit_0.cpp"]["blob"] == clean_blob
-    assert units["src/unit_7.cpp"]["blob"] == dirty_blob
+    assert hash_calls == [("hash-object", "--stdin-paths")], hash_calls
+    assert not any(call[0] == "diff-files" for call in calls)
+    for path in paths:
+        assert units[path]["blob"] == (dirty_blob if path in dirty else clean_blob), path
     print("Review ledger batch hashing probe passed.")
     return 0
 

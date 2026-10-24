@@ -15,6 +15,8 @@
 // Comfortably above the ~10ms cooperative shutdown and far below the 15s wait that precedes
 // terminate(), so the two paths are unambiguously separated.
 constexpr qint64 kCooperativeShutdownBudgetMs = 5000;
+constexpr int kWorkerStartTimeoutMs = 5000;
+constexpr unsigned long kWorkerStopPollMs = 10;
 
 // ============================================================================
 // Test Worker Implementations
@@ -93,6 +95,7 @@ class CancellableWorker : public WorkerBase {
     Q_OBJECT
 public:
     using WorkerBase::WorkerBase;
+    ~CancellableWorker() override { stopAndJoin(); }
 
     /// Qt's own interruption flag, sampled ON THE WORKER THREAD at the moment the stop is
     /// observed. It has to be read there: QThread::isInterruptionRequested() answers false once
@@ -102,9 +105,25 @@ public:
 protected:
     auto execute() -> std::expected<void, sak::error_code> override {
         while (!checkStop()) {
-            QThread::msleep(10);
+            QThread::msleep(kWorkerStopPollMs);
         }
         interruption_seen_on_stop.store(isInterruptionRequested(), std::memory_order_release);
+        return {};
+    }
+};
+
+/// Exercises WorkerBase's last-resort destructor join without any derived
+/// members that could be destroyed before the base destructor joins.
+class BaseDestructorProbeWorker : public WorkerBase {
+    Q_OBJECT
+public:
+    using WorkerBase::WorkerBase;
+
+protected:
+    auto execute() -> std::expected<void, sak::error_code> override {
+        while (!checkStop()) {
+            QThread::msleep(kWorkerStopPollMs);
+        }
         return {};
     }
 };
@@ -285,9 +304,7 @@ void WorkerBaseTests::cancellation() {
     QSignalSpy finished_spy(&worker, &WorkerBase::finished);
 
     worker.start();
-    QThread::msleep(50);  // Let it start running
-
-    QVERIFY(worker.isExecuting());
+    QTRY_VERIFY_WITH_TIMEOUT(worker.isExecuting(), kWorkerStartTimeoutMs);
     worker.requestStop();
     QVERIFY(worker.wait(5000));
 
@@ -348,8 +365,7 @@ void WorkerBaseTests::isExecutingFlag() {
     QVERIFY(!worker.isExecuting());
 
     worker.start();
-    QThread::msleep(50);
-    QVERIFY(worker.isExecuting());
+    QTRY_VERIFY_WITH_TIMEOUT(worker.isExecuting(), kWorkerStartTimeoutMs);
 
     worker.requestStop();
     QVERIFY(worker.wait(5000));
@@ -376,9 +392,8 @@ void WorkerBaseTests::destructorStopsThread() {
     // destructors take the not-running early-out.
     std::atomic<bool> cancelled_seen{false};
     QElapsedTimer timer;
-    timer.start();
     {
-        CancellableWorker worker;
+        BaseDestructorProbeWorker worker;
         QObject::connect(
             &worker,
             &WorkerBase::cancelled,
@@ -386,8 +401,9 @@ void WorkerBaseTests::destructorStopsThread() {
             [&cancelled_seen]() { cancelled_seen.store(true, std::memory_order_release); },
             Qt::DirectConnection);
         worker.start();
-        QThread::msleep(50);
+        QTRY_VERIFY_WITH_TIMEOUT(worker.isExecuting(), kWorkerStartTimeoutMs);
         QVERIFY(worker.isRunning());
+        timer.start();
     }
     // run() reached its own cancellation epilogue: the thread was not force-terminated.
     QVERIFY2(cancelled_seen.load(std::memory_order_acquire),

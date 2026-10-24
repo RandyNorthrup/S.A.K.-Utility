@@ -149,7 +149,7 @@ QString requirePartitionIdentity(const PartitionTarget& target) {
     if (!target.partition_guid.trimmed().isEmpty()) {
         script +=
             QStringLiteral(
-                "if ($p.Guid -and ($p.Guid.Trim('{}') -ne "
+                "if (-not $p.Guid -or ($p.Guid.Trim('{}') -ne "
                 "%1.Trim('{}'))) { throw 'Partition identity mismatch (GUID)' }\n")
                 .arg(PartitionScriptBuilder::quotePowerShell(target.partition_guid.trimmed()));
     }
@@ -2270,6 +2270,95 @@ bool cloneTargetTooSmall(const CloneTransferSpec& spec) {
     return spec.source_size > spec.target_size;
 }
 
+QString createImageSourceRangeError(const PartitionTarget& target,
+                                    const CloneTransferSpec& spec,
+                                    bool offline) {
+    const uint64_t size = target.kind == PartitionTargetKind::Disk ? target.disk_size_bytes
+                                                                   : target.size_bytes;
+    const uint64_t expected_offset =
+        offline && target.kind != PartitionTargetKind::Disk ? target.offset_bytes : 0;
+    if (size == 0 || spec.source_size != size || spec.source_offset != expected_offset) {
+        return QStringLiteral(
+            "Create Image requires the complete pinned source size and selected capture offset");
+    }
+    if (expected_offset > target.disk_size_bytes ||
+        size > target.disk_size_bytes - expected_offset) {
+        return QStringLiteral("Create Image selected source range exceeds the pinned disk");
+    }
+    return {};
+}
+
+QString createImageSourceIdentityError(const PartitionTarget& target,
+                                       const CloneTransferSpec& spec,
+                                       bool offline) {
+    if (target.disk_unique_id.trimmed().isEmpty() || target.disk_size_bytes == 0) {
+        return QStringLiteral("Create Image source disk identity was not pinned");
+    }
+    const bool partition = target.kind == PartitionTargetKind::Partition ||
+                           target.kind == PartitionTargetKind::Volume;
+    if (target.kind != PartitionTargetKind::Disk &&
+        (!partition || target.partition_number.value() == 0)) {
+        return QStringLiteral("Create Image source must match the selected volume");
+    }
+    return createImageSourceRangeError(target, spec, offline);
+}
+
+QString createImageVolumeGuidPath(QString guid) {
+    // Inventory supplies a root path; opening the volume requires its bare device spelling.
+    if (guid.endsWith(QLatin1Char('\\'))) {
+        guid.chop(1);
+    }
+    return canonicalRawDevicePath(guid);
+}
+
+QString createImageVolumeSourceError(const PartitionTarget& target, const CloneTransferSpec& spec) {
+    const bool partition = target.kind == PartitionTargetKind::Partition ||
+                           target.kind == PartitionTargetKind::Volume;
+    if (!partition || isPhysicalDrivePath(spec.source) || target.partition_number.value() == 0) {
+        return QStringLiteral("Create Image source must match the selected volume");
+    }
+    const QString letter_path = QStringLiteral("\\\\.\\%1:").arg(target.drive_letter.toUpper());
+    const QString guid_path = createImageVolumeGuidPath(target.volume_guid);
+    if ((!PartitionScriptBuilder::isValidDriveLetter(target.drive_letter) ||
+         spec.source.compare(letter_path, Qt::CaseInsensitive) != 0) &&
+        (guid_path.isEmpty() || spec.source.compare(guid_path, Qt::CaseInsensitive) != 0)) {
+        return QStringLiteral("Create Image source must match the selected volume");
+    }
+    return {};
+}
+
+QString createImageSourceSpecError(const PartitionOperation& operation,
+                                   const CloneTransferSpec& spec) {
+    if (operation.type != PartitionOperationType::CreateImage) {
+        return {};
+    }
+    if (spec.verify_mode != QStringLiteral("Full")) {
+        return QStringLiteral("Create Image requires Full verification");
+    }
+    if (!isRawDevicePath(spec.source)) {
+        return {};
+    }
+    const QString mode = payloadString(operation, QStringLiteral("source_capture_mode"));
+    if (!QStringList{QStringLiteral("LockedVolumes"), QStringLiteral("OfflineDisk")}.contains(
+            mode)) {
+        return QStringLiteral(
+            "Create Image requires an explicit LockedVolumes or OfflineDisk mode");
+    }
+    const bool offline = mode == QStringLiteral("OfflineDisk");
+    const auto& target = operation.target;
+    if (const QString blocker = createImageSourceIdentityError(target, spec, offline);
+        !blocker.isEmpty()) {
+        return blocker;
+    }
+    if (target.kind == PartitionTargetKind::Disk || offline) {
+        const auto disk = rawDevicePhysicalDriveNumber(spec.source);
+        return disk && *disk == target.disk_number.value()
+                   ? QString()
+                   : QStringLiteral("Create Image source must match the selected disk");
+    }
+    return createImageVolumeSourceError(target, spec);
+}
+
 // A partition clone writes raw bytes at an explicit target offset. A zero offset seeks the
 // target device to sector 0 and lays the source over the target disk's partition table instead
 // of the intended region, and an unknown source size makes the copied byte count come from the
@@ -2309,6 +2398,9 @@ QString validateCloneOrImageScript(const PartitionOperation& operation,
     }
     if (cloneTargetTooSmall(spec)) {
         return QStringLiteral("Target is smaller than source");
+    }
+    if (const QString blocker = createImageSourceSpecError(operation, spec); !blocker.isEmpty()) {
+        return blocker;
     }
     if (const QString blocker = clonePartitionSpecError(operation, spec); !blocker.isEmpty()) {
         return blocker;
@@ -2485,7 +2577,7 @@ QString cloneTransferOpenFunctionsScript() {
         "function Read-SakExact($stream, [int]$count) { $buf = New-Object byte[] $count; "
         "$off = 0; while ($off -lt $count) { $read = $stream.Read($buf, $off, $count - "
         "$off); if ($read -le 0) { throw 'Unexpected end of stream during verification' }; "
-        "$off += $read }; return $buf }\n"
+        "$off += $read }; return ,$buf }\n"
         "function Copy-SakBytes($from, $to, [uint64]$bytes) { if ($bytes -eq 0) { "
         "throw 'Clone source size could not be established; aborting before writing target' }; "
         "$buf = New-Object byte[] $bufferBytes; "
@@ -2495,25 +2587,53 @@ QString cloneTransferOpenFunctionsScript() {
         "$to.Write($buf, 0, $read); $left -= [uint64]$read } }\n");
 }
 
+QString cloneByteComparerScript() {
+    // Keep exact first-mismatch reporting without enumerating hundreds of millions of
+    // individual bytes through PowerShell. The buffer remains one byte[] pipeline value.
+    return QStringLiteral(R"PS(if (-not ('Sak.CloneByteComparer' -as [type])) {
+Add-Type -TypeDefinition @'
+using System;
+namespace Sak {
+public static class CloneByteComparer {
+    public static int FirstMismatch(byte[] left, byte[] right, int count) {
+        if (left == null || right == null || count < 0 ||
+            count > left.Length || count > right.Length) {
+            throw new ArgumentException("Clone comparison requires complete bounded buffers");
+        }
+        for (int index = 0; index < count; ++index) {
+            if (left[index] != right[index]) return index;
+        }
+        return -1;
+    }
+}
+}
+'@
+}
+)PS");
+}
+
 QString cloneTransferVerificationFunctionsScript() {
-    return QStringLiteral(
-        "function Assert-SakFullCopy($from, $to, [uint64]$bytes, [uint64]$sourceStart, "
-        "[uint64]$targetStart) { $left = $bytes; $pos = [uint64]0; $from.Position = "
-        "[int64]$sourceStart; $to.Position = [int64]$targetStart; while ($left -gt 0) { "
-        "$take = [int][Math]::Min([uint64]$bufferBytes, $left); $a = Read-SakExact $from "
-        "$take; $b = Read-SakExact $to $take; for ($i = 0; $i -lt $take; $i++) { if ($a[$i] "
-        "-ne $b[$i]) { throw \"Full verification mismatch at byte $($pos + [uint64]$i)\" } "
-        "}; $pos += [uint64]$take; $left -= [uint64]$take } }\n"
-        "function Assert-SakSampleCopy($from, $to, [uint64]$bytes, [uint64]$sourceStart, "
-        "[uint64]$targetStart) { $sample = [int][Math]::Min([uint64]$bufferBytes, $bytes); "
-        "$middle = [uint64]([Math]::Max([int64]0, [int64]($bytes / 2) - [int64]($sample / "
-        "2))); $tail = [uint64]([Math]::Max([int64]0, [int64]$bytes - [int64]$sample)); "
-        "foreach ($point in @([uint64]0, $middle, $tail) | Select-Object -Unique) { "
-        "$from.Position = [int64]($sourceStart + $point); $to.Position = "
-        "[int64]($targetStart + $point); $a = Read-SakExact $from $sample; $b = "
-        "Read-SakExact $to $sample; for ($i = 0; $i -lt $sample; $i++) { if ($a[$i] -ne "
-        "$b[$i]) { throw \"Sample verification mismatch at byte $($point + [uint64]$i)\" } "
-        "} } }\n");
+    return cloneByteComparerScript() +
+           QStringLiteral(
+               "function Assert-SakFullCopy($from, $to, [uint64]$bytes, [uint64]$sourceStart, "
+               "[uint64]$targetStart) { $left = $bytes; $pos = [uint64]0; $from.Position = "
+               "[int64]$sourceStart; $to.Position = [int64]$targetStart; while ($left -gt 0) { "
+               "$take = [int][Math]::Min([uint64]$bufferBytes, $left); $a = Read-SakExact $from "
+               "$take; $b = Read-SakExact $to $take; $mismatch = "
+               "[Sak.CloneByteComparer]::FirstMismatch($a, $b, $take); if ($mismatch -ge 0) { "
+               "throw \"Full verification mismatch at byte $($pos + [uint64]$mismatch)\" }; "
+               "$pos += [uint64]$take; $left -= [uint64]$take } }\n"
+               "function Assert-SakSampleCopy($from, $to, [uint64]$bytes, [uint64]$sourceStart, "
+               "[uint64]$targetStart) { $sample = [int][Math]::Min([uint64]$bufferBytes, $bytes); "
+               "$middle = [uint64]([Math]::Max([int64]0, [int64]($bytes / 2) - [int64]($sample / "
+               "2))); $tail = [uint64]([Math]::Max([int64]0, [int64]$bytes - [int64]$sample)); "
+               "foreach ($point in @([uint64]0, $middle, $tail) | Select-Object -Unique) { "
+               "$from.Position = [int64]($sourceStart + $point); $to.Position = "
+               "[int64]($targetStart + $point); $a = Read-SakExact $from $sample; $b = "
+               "Read-SakExact $to $sample; $mismatch = "
+               "[Sak.CloneByteComparer]::FirstMismatch($a, $b, $sample); if ($mismatch -ge 0) { "
+               "throw \"Sample verification mismatch at byte $($point + [uint64]$mismatch)\" } "
+               "} }\n");
 }
 
 QString cloneTransferRawTargetFunctionsScript(const PartitionOperation& operation) {
@@ -2579,7 +2699,7 @@ QString cloneTransferVerifyBodyScript() {
         "} }\n");
 }
 
-QString cloneTransferExecutionScript(bool source_already_open) {
+QString cloneTransferExecutionScript(bool source_already_open, const QString& post_verification) {
     const QString open_source = source_already_open ? QString()
                                                     : QStringLiteral("$in = Open-SakRead $src\n");
     return open_source +
@@ -2593,7 +2713,7 @@ QString cloneTransferExecutionScript(bool source_already_open) {
                "try {\n"
                "$sakRawTargetDisk = Assert-SakRawWriteTarget $dst\n"
                "try {\n") +
-           cloneTransferCopyBodyScript() + cloneTransferVerifyBodyScript() +
+           cloneTransferCopyBodyScript() + cloneTransferVerifyBodyScript() + post_verification +
            QStringLiteral(
                "}\nfinally { Restore-SakRawWriteTarget $sakRawTargetDisk }\n"
                "}\nfinally { $in.Dispose() }\n");
@@ -2732,13 +2852,378 @@ QString restoreImageSourceGuardScript(uint32_t target_disk_number) {
                .arg(target_disk_number);
 }
 
+QString imageVolumeLockNativeDeclarationsScript() {
+    // FSCTL_LOCK_VOLUME flushes cached data and holds the filesystem quiescent until its
+    // handle closes. A read-sharing physical-disk handle alone does not stop NTFS writes.
+    return QStringLiteral(R"PS(if (-not ('Sak.ImageVolumeLock' -as [type])) {
+Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using Microsoft.Win32.SafeHandles;
+namespace Sak {
+public static class ImageVolumeLock {
+    private const uint GenericRead = 0x80000000;
+    private const uint ShareReadWrite = 3;
+    private const uint OpenExisting = 3;
+    private const uint LockVolume = 0x00090018;
+    private const uint AllowExtendedDASD = 0x00090083;
+    private const uint StorageDeviceNumber = 0x002D1080;
+    private const uint GetDiskAttributes = 0x000700F0;
+    private const uint DiskDeviceType = 7;
+    [StructLayout(LayoutKind.Sequential)]
+    private struct DeviceNumber { public uint Type; public uint Disk; public uint Partition; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct DiskAttributes { public uint Version; public uint Reserved; public ulong Flags; }
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern SafeFileHandle CreateFile(string path, uint access, uint share,
+        IntPtr security, uint disposition, uint flags, IntPtr template);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeviceIoControl(SafeFileHandle handle, uint code,
+        IntPtr input, uint inputSize, IntPtr output, uint outputSize,
+        out uint returned, IntPtr overlapped);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeviceIoControl(SafeFileHandle handle, uint code,
+        IntPtr input, uint inputSize, out DeviceNumber output, uint outputSize,
+        out uint returned, IntPtr overlapped);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool DeviceIoControl(SafeFileHandle handle, uint code,
+        IntPtr input, uint inputSize, out DiskAttributes output, uint outputSize,
+        out uint returned, IntPtr overlapped);
+)PS");
+}
+
+QString imageSourceAttributesNativeScript() {
+    return QStringLiteral(R"PS(
+    public static SafeFileHandle OpenDiskControl(string path, uint disk) {
+        SafeFileHandle handle = CreateFile(path, 0, ShareReadWrite,
+            IntPtr.Zero, OpenExisting, 0, IntPtr.Zero);
+        try {
+            if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error(),
+                "Create Image cannot open its source disk identity handle: " + path);
+            Verify(handle, disk, 0, false);
+            return handle;
+        } catch { handle.Dispose(); throw; }
+    }
+    public static ulong ReadDiskAttributes(SafeFileHandle handle) {
+        DiskAttributes actual;
+        uint returned;
+        uint required = (uint)Marshal.SizeOf(typeof(DiskAttributes));
+        if (!DeviceIoControl(handle, GetDiskAttributes, IntPtr.Zero, 0, out actual,
+            required, out returned, IntPtr.Zero)) throw new Win32Exception(
+                Marshal.GetLastWin32Error(), "Create Image cannot query source disk attributes");
+        if (returned != required || actual.Version != required) throw new InvalidOperationException(
+            "Create Image source disk attributes reply is invalid");
+        return actual.Flags;
+    }
+)PS");
+}
+
+QString imageVolumeLockNativeScript() {
+    return imageVolumeLockNativeDeclarationsScript() + imageSourceAttributesNativeScript() +
+           QStringLiteral(R"PS(
+    public static SafeFileHandle Acquire(string path) {
+        SafeFileHandle handle = CreateFile(path, GenericRead, ShareReadWrite,
+            IntPtr.Zero, OpenExisting, 0, IntPtr.Zero);
+        try {
+            if (handle.IsInvalid) throw new Win32Exception(Marshal.GetLastWin32Error(),
+                "Create Image cannot open the source volume for exclusive capture: " + path);
+            uint returned;
+            if (!DeviceIoControl(handle, LockVolume, IntPtr.Zero, 0, IntPtr.Zero, 0,
+                out returned, IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error(),
+                "Create Image cannot lock the source volume. Close its open files; running " +
+                "system/pagefile volumes require an offline capture. No live-copy fallback: " + path);
+            return handle;
+        } catch { handle.Dispose(); throw; }
+    }
+    public static void Verify(SafeFileHandle handle, uint disk, uint partition, bool checkPartition) {
+        DeviceNumber actual;
+        uint returned;
+        uint required = (uint)Marshal.SizeOf(typeof(DeviceNumber));
+        if (!DeviceIoControl(handle, StorageDeviceNumber, IntPtr.Zero, 0, out actual,
+            required, out returned, IntPtr.Zero)) throw new Win32Exception(
+                Marshal.GetLastWin32Error(), "Create Image cannot identify the opened source");
+        if (returned != required || actual.Type != DiskDeviceType || actual.Disk != disk ||
+            (checkPartition && actual.Partition != partition)) throw new InvalidOperationException(
+                "Create Image opened source device identity mismatch");
+    }
+    public static void AllowExtendedRead(SafeFileHandle handle) {
+        // The caller reads exactly the pinned partition size, including its final sectors.
+        uint returned;
+        if (!DeviceIoControl(handle, AllowExtendedDASD, IntPtr.Zero, 0, IntPtr.Zero, 0,
+            out returned, IntPtr.Zero)) throw new Win32Exception(Marshal.GetLastWin32Error(),
+                "Create Image cannot enable complete source partition reads");
+    }
+}
+}
+'@
+}
+function Open-SakImageVolumeLock([string]$Path) { return [Sak.ImageVolumeLock]::Acquire($Path) }
+function Assert-SakImageDevice($Handle, [uint32]$PartitionNumber, [bool]$CheckPartition) {
+    [Sak.ImageVolumeLock]::Verify($Handle, $sakImageSourceDisk, $PartitionNumber, $CheckPartition)
+}
+function Open-SakImageDiskControl([string]$Path) {
+    return [Sak.ImageVolumeLock]::OpenDiskControl($Path, $sakImageSourceDisk)
+}
+function Get-SakImageDiskAttributes($Handle) {
+    return [Sak.ImageVolumeLock]::ReadDiskAttributes($Handle)
+}
+function Open-SakImageLockedRead($Handle) {
+    [Sak.ImageVolumeLock]::AllowExtendedRead($Handle)
+    return [System.IO.FileStream]::new($Handle, [System.IO.FileAccess]::Read)
+}
+)PS");
+}
+
+QString imageSourceVolumePathScript() {
+    // Get-Volume hides a volume locked by another process; fresh partition access paths
+    // still identify it. Always acquire our own native lock on that primary identity.
+    return QStringLiteral(R"PS(function Get-SakImageVolumePath($Partition) {
+    $guidPrefix = '\\?\Volume{'
+    $guidCharacters = 36
+    $guids = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $hasPathHint = $false
+    foreach ($path in @($Partition.AccessPaths)) {
+        if ($null -eq $path -or ($path -is [string] -and $path.Length -eq 0)) { continue }
+        if ($path -isnot [string]) { throw 'Create Image source access path is not a string' }
+        $hasPathHint = $true
+        if ($path -match '^\\\\\?\\Volume\{[0-9a-fA-F-]{36}\}\\$') {
+            $parsed = [guid]::Empty
+            if (-not [guid]::TryParse($path.Substring($guidPrefix.Length, $guidCharacters),
+                [ref]$parsed)) {
+                throw 'Create Image source volume GUID is invalid'
+            }
+            [void]$guids.Add($path.TrimEnd('\').ToLowerInvariant())
+        }
+    }
+    if ($guids.Count -gt 1) { throw 'Create Image source volume identity is ambiguous' }
+    if ($guids.Count -eq 1) { return @($guids)[0] }
+    $drive = [string]$Partition.DriveLetter
+    $noDrive = $drive.Length -eq 0 -or $drive -eq [string][char]0
+    $type = ([string]$Partition.GptType).Trim().Trim('{}').ToLowerInvariant()
+    $msr = $type -eq 'e3c9e316-0b5c-4db8-817d-f92df00215ae'
+    if ($msr -and -not $hasPathHint -and $noDrive) { return '' }
+    throw ('Create Image cannot resolve an exclusive source volume identity. ' +
+        'The source may be locked, hidden, or use a filesystem Windows cannot mount; ' +
+        'use explicit OfflineDisk capture only after taking the source offline.')
+}
+function Assert-SakImagePartitionCount($Disk, [int]$Actual) {
+    $count = $Disk.NumberOfPartitions
+    $integer = $count -is [int] -or $count -is [uint32] -or
+        $count -is [long] -or $count -is [uint64]
+    if (-not $integer -or $count -lt 0 -or [uint64]$count -ne [uint64]$Actual) {
+        throw 'Create Image source partition count is unknown or disagrees with enumeration'
+    }
+}
+)PS");
+}
+
+QString imageSourceLayoutScript() {
+    return imageSourceVolumePathScript() + QStringLiteral(R"PS(
+function Get-SakImageSourceLayout([bool]$ResolveVolumes) {
+    if (-not $PSBoundParameters.ContainsKey('ResolveVolumes')) {
+        throw 'Create Image source layout query requires an explicit volume-resolution phase'
+    }
+    $parts = @(Get-SakOptionalDiskPartitions -DiskNumber $sakImageSourceDisk)
+    $disk = Get-Disk -Number $sakImageSourceDisk -ErrorAction Stop
+    Assert-SakImagePartitionCount $disk $parts.Count
+    if ($sakImageSourcePartition -ne 0) {
+        $parts = @($parts | Where-Object { $_.PartitionNumber -eq $sakImageSourcePartition })
+        if ($parts.Count -ne 1) { throw 'Create Image selected source partition is absent or ambiguous' }
+    }
+    $numbers = [System.Collections.Generic.HashSet[uint32]]::new()
+    $volumes = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    foreach ($part in ($parts | Sort-Object PartitionNumber)) {
+        if ($null -eq $part.DiskNumber -or $part.DiskNumber -ne $sakImageSourceDisk -or
+            $null -eq $part.PartitionNumber -or $part.PartitionNumber -le 0 -or
+            -not $numbers.Add([uint32]$part.PartitionNumber)) {
+            throw 'Create Image source partition identity is incomplete or ambiguous'
+        }
+        if ($null -eq $part.Offset -or $null -eq $part.Size -or $part.Offset -lt 0 -or
+            $part.Size -le 0 -or [uint64]$part.Offset -gt $sakImageSourceSize -or
+            [uint64]$part.Size -gt ($sakImageSourceSize - [uint64]$part.Offset)) {
+            throw 'Create Image source partition geometry is invalid'
+        }
+        $volumePath = ''
+        if ($ResolveVolumes) {
+            $volumePath = Get-SakImageVolumePath $part
+            if ($volumePath -and -not $volumes.Add($volumePath)) {
+                throw 'Create Image source volume identity repeats'
+            }
+        }
+        [pscustomobject][ordered]@{ PartitionNumber = [uint32]$part.PartitionNumber
+            Offset = [uint64]$part.Offset; Size = [uint64]$part.Size
+            Guid = ([string]$part.Guid).Trim().Trim('{}').ToLowerInvariant()
+            GptType = ([string]$part.GptType).Trim().Trim('{}').ToLowerInvariant()
+            MbrType = ([string]$part.MbrType).ToLowerInvariant(); VolumePath = $volumePath }
+    }
+}
+function Get-SakImageLayoutKey($Layout) {
+    $identity = @($Layout | Select-Object PartitionNumber, Offset, Size, Guid, GptType, MbrType)
+    return ConvertTo-Json -InputObject $identity -Depth 4 -Compress
+}
+function Close-SakImageSourceLocks($Resources) {
+    for ($index = $Resources.Count - 1; $index -ge 0; $index--) {
+        try { $Resources[$index].Dispose() }
+        catch { Write-Output $_.Exception.Message }
+    }
+}
+)PS");
+}
+
+QString imageSourceIdentityScript(const PartitionOperation& operation) {
+    const auto& target = operation.target;
+    const uint32_t partition =
+        target.kind == PartitionTargetKind::Disk ? 0 : target.partition_number.value();
+    QString partition_guard = partition == 0 ? QString() : requirePartitionIdentity(target);
+    const QString mode = payloadString(operation, QStringLiteral("source_capture_mode"));
+    if (partition != 0 && mode == QStringLiteral("OfflineDisk") && target.offset_bytes == 0) {
+        partition_guard += QStringLiteral(
+            "if ([uint64]$p.Offset -ne 0) { throw 'Partition identity mismatch (offset)' }\n");
+    }
+    return QStringLiteral(
+               "$sakImageSourceDisk = [uint32]%1\n"
+               "$sakImageSourcePartition = [uint32]%2\n"
+               "$sakImageSourceSize = [uint64]%3\n"
+               "$sakImageCaptureMode = %4\n"
+               "$sakImageExpectedOffline = ($sakImageCaptureMode -eq 'OfflineDisk')\n"
+               "$sakImageDiskPath = '\\\\.\\PhysicalDrive%1'\n"
+               "function Assert-SakImageSourceIdentity {\n")
+               .arg(target.disk_number.value())
+               .arg(partition)
+               .arg(uintArg(target.disk_size_bytes),
+                    PartitionScriptBuilder::quotePowerShell(mode)) +
+           requireDiskIdentity(target) + partition_guard + QStringLiteral(R"PS(
+    if ($sakIdentityDisk.IsOffline -isnot [bool]) {
+        throw 'Create Image source offline state is unknown'
+    }
+    if ($sakIdentityDisk.IsOffline -ne $sakImageExpectedOffline) {
+        throw 'Create Image capture mode does not match the current source offline state'
+    }
+    if ($sakIdentityDisk.IsBoot -isnot [bool] -or $sakIdentityDisk.IsSystem -isnot [bool]) {
+        throw 'Create Image source system identity is unknown'
+    }
+    if ($sakImageExpectedOffline -and ($sakIdentityDisk.IsBoot -or $sakIdentityDisk.IsSystem)) {
+        throw 'Create Image OfflineDisk mode refuses the current OS source disk'
+    }
+}
+function Assert-SakImageAttributeMode([uint64]$Attributes) {
+    $offlineFlag = [uint64]1
+    $offline = ($Attributes -band $offlineFlag) -ne 0
+    if ($offline -ne $sakImageExpectedOffline) {
+        throw 'Create Image native source offline state does not match the capture mode'
+    }
+}
+)PS");
+}
+
+QString imageSourceAcquireScript(const PartitionOperation& operation) {
+    return imageSourceIdentityScript(operation) + QStringLiteral(R"PS(
+$sakImageResources = [System.Collections.Generic.List[System.IDisposable]]::new()
+$sakImageLocks = @()
+$sakImageFailure = $null
+$sakImageCleanupErrors = @()
+try {
+    Assert-SakImageSourceIdentity
+    $sakImageDiskHandle = Open-SakImageDiskControl $sakImageDiskPath
+    $sakImageResources.Add($sakImageDiskHandle)
+    $sakImageOriginalAttributes = Get-SakImageDiskAttributes $sakImageDiskHandle
+    Assert-SakImageAttributeMode $sakImageOriginalAttributes
+    $sakImageLayout = @(Get-SakImageSourceLayout -ResolveVolumes (-not $sakImageExpectedOffline))
+    $sakImageLayoutKey = Get-SakImageLayoutKey $sakImageLayout
+    foreach ($volume in $sakImageLayout) {
+        if (-not $volume.VolumePath) { continue }
+        $handle = Open-SakImageVolumeLock $volume.VolumePath
+        $sakImageResources.Add($handle)
+        Assert-SakImageDevice $handle $volume.PartitionNumber $true
+        $sakImageLocks += [pscustomobject]@{ PartitionNumber = $volume.PartitionNumber; Handle = $handle }
+    }
+    Assert-SakImageSourceIdentity
+    $sakImageLockedLayout = @(Get-SakImageSourceLayout -ResolveVolumes $false)
+    $sakImageLockedLayoutKey = Get-SakImageLayoutKey $sakImageLockedLayout
+    if ($sakImageLayoutKey -cne $sakImageLockedLayoutKey) {
+        $sakImageDiagnosticLimit = 4096
+        $beforeKey = $sakImageLayoutKey.Substring(0,
+            [Math]::Min($sakImageDiagnosticLimit, $sakImageLayoutKey.Length))
+        $afterKey = $sakImageLockedLayoutKey.Substring(0,
+            [Math]::Min($sakImageDiagnosticLimit, $sakImageLockedLayoutKey.Length))
+        throw (('Create Image source layout changed while acquiring volume locks. ' +
+            'Layout keys (up to {0} characters each): Before ({1} characters): {2}; ' +
+            'After ({3} characters): {4}') -f $sakImageDiagnosticLimit, $sakImageLayoutKey.Length,
+            $beforeKey, $sakImageLockedLayoutKey.Length, $afterKey)
+    }
+    foreach ($held in $sakImageLocks) {
+        Assert-SakImageDevice $held.Handle $held.PartitionNumber $true
+    }
+)PS");
+}
+
+QString imageSourceOpenScript() {
+    return QStringLiteral(R"PS(
+    $physicalRead = $sakImageSourcePartition -eq 0 -or $sakImageExpectedOffline
+    if ($physicalRead) {
+        $in = Open-SakRead $src
+    } else {
+        if ($sakImageLocks.Count -ne 1) { throw 'Create Image source volume could not be locked' }
+        $in = Open-SakImageLockedRead $sakImageLocks[0].Handle
+    }
+    $sakImageResources.Add($in)
+    Assert-SakImageDevice $in.SafeFileHandle $sakImageSourcePartition (-not $physicalRead)
+    Assert-SakImageSourceIdentity
+)PS");
+}
+
+QString imageSourcePostVerificationScript() {
+    return QStringLiteral(R"PS(
+    Assert-SakImageSourceIdentity
+    Assert-SakImageDevice $sakImageDiskHandle 0 $false
+    $sakImageFinalAttributes = Get-SakImageDiskAttributes $sakImageDiskHandle
+    Assert-SakImageAttributeMode $sakImageFinalAttributes
+    if ($sakImageFinalAttributes -ne $sakImageOriginalAttributes) {
+        throw 'Create Image source disk attributes changed during capture'
+    }
+    $sakImageFinalLayout = @(Get-SakImageSourceLayout -ResolveVolumes $false)
+    if ((Get-SakImageLayoutKey $sakImageFinalLayout) -cne $sakImageLayoutKey) {
+        throw 'Create Image source partition identity changed during capture'
+    }
+    foreach ($held in $sakImageLocks) {
+        Assert-SakImageDevice $held.Handle $held.PartitionNumber $true
+    }
+)PS");
+}
+
+QString imageSourceReleaseScript() {
+    return QStringLiteral(R"PS(} catch { $sakImageFailure = $_ }
+finally { $sakImageCleanupErrors = @(Close-SakImageSourceLocks $sakImageResources) }
+if ($sakImageFailure) {
+    if ($sakImageCleanupErrors.Count -gt 0) {
+        throw ($sakImageFailure.Exception.Message + '; Source lock cleanup: ' +
+            ($sakImageCleanupErrors -join '; '))
+    }
+    throw $sakImageFailure
+}
+if ($sakImageCleanupErrors.Count -gt 0) {
+    throw ('Create Image source lock cleanup failed: ' + ($sakImageCleanupErrors -join '; '))
+}
+)PS");
+}
+
 QString cloneTransferScript(const CloneTransferSpec& spec,
                             const PartitionOperation& operation,
                             bool source_already_open = false) {
-    return cloneTransferPreludeScript(spec) + cloneTransferOpenFunctionsScript() +
-           cloneTransferVerificationFunctionsScript() +
-           cloneTransferRawTargetFunctionsScript(operation) +
-           cloneTransferExecutionScript(source_already_open);
+    QString script = cloneTransferPreludeScript(spec) + cloneTransferOpenFunctionsScript() +
+                     cloneTransferVerificationFunctionsScript() +
+                     cloneTransferRawTargetFunctionsScript(operation);
+    if (operation.type == PartitionOperationType::CreateImage && isRawDevicePath(spec.source)) {
+        return script + imageVolumeLockNativeScript() + imageSourceLayoutScript() +
+               imageSourceAcquireScript(operation) + imageSourceOpenScript() +
+               cloneTransferExecutionScript(true, imageSourcePostVerificationScript()) +
+               imageSourceReleaseScript();
+    }
+    return script + cloneTransferExecutionScript(source_already_open, QString());
 }
 
 QString osMigrationBootValidationScript() {

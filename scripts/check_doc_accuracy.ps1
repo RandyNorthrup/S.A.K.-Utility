@@ -170,6 +170,10 @@ Add-NumberClaimViolations $readmeText 'End-to-end workflow tests\s*\((\d+)\s+fil
 Add-TableNameViolations $readmeText $registered $violations
 Add-TreeFileViolations $readmeText $fileNames $violations
 
+$documentsToFix = New-Object "System.Collections.Generic.List[string]"
+$readmeViolationCount = $violations.Count
+if ($readmeViolationCount -gt 0) { $documentsToFix.Add("tests/README.md") }
+
 # ---------------------------------------------------------------------------
 # 2. docs/CODEX_REVIEW_5_REMEDIATION.md -- its own checkbox tally.
 #
@@ -220,13 +224,17 @@ if (Test-Path -LiteralPath $remediationPath) {
     }
 }
 
+if ($violations.Count -gt $readmeViolationCount) {
+    $documentsToFix.Add("docs/CODEX_REVIEW_5_REMEDIATION.md")
+}
+
 if ($violations.Count -gt 0) {
     Write-Host "Doc-accuracy gate FAILED: a doc does not match reality --"
     $violations | ForEach-Object { Write-Host "  $_" }
     Write-Host ""
     Write-Host "Reality: $registeredCount registered ctest tests, $totalCppCount C++ test"
     Write-Host "source files ($unitCount unit incl. actions/, $integrationCount integration)."
-    Write-Host "Fix tests/README.md to match; do not weaken this gate."
+    Write-Host "Fix $($documentsToFix -join ', ') to match; do not weaken this gate."
     exit 1
 }
 

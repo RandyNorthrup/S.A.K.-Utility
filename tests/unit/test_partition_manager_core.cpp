@@ -26,6 +26,7 @@
 #include "sak/partition_raw_device_io.h"
 #include "sak/partition_safety_validator.h"
 #include "sak/partition_script_builder.h"
+#include "sak/process_runner.h"
 #include "sak/storage_inventory_worker.h"
 
 #include "../support/byte_writer.h"
@@ -51,6 +52,9 @@
 #include <tuple>
 #include <type_traits>
 
+#include <windows.h>
+
+#include <io.h>
 #include <zlib.h>
 
 using namespace sak;
@@ -142,6 +146,16 @@ void pinDiskTargetIdentity(PartitionTarget* target) {
     target->disk_serial_number = QString();
     target->disk_size_bytes = target->size_bytes == 0 ? kDefaultTestDiskIdentityBytes
                                                       : target->size_bytes;
+}
+
+void pinCreateImageSource(PartitionTarget* target, QJsonObject* payload) {
+    pinDiskTargetIdentity(target);
+    payload->insert(QStringLiteral("verify_mode"), QStringLiteral("Full"));
+    payload->insert(QStringLiteral("source_capture_mode"), QStringLiteral("LockedVolumes"));
+    payload->insert(QStringLiteral("source_size_bytes"),
+                    QString::number(target->kind == PartitionTargetKind::Disk
+                                        ? target->disk_size_bytes
+                                        : target->size_bytes));
 }
 
 // Boundary-steered block index for the format-write confinement property (G23-7): interior, the
@@ -395,9 +409,19 @@ bool expandApfsBlockMap(const QString& source, const QString& destination, QStri
         return false;
     }
     QFile output(destination);
-    if (!output.open(QIODevice::WriteOnly) ||
-        !output.resize(static_cast<qint64>(header->imageBytes))) {
+    if (!output.open(QIODevice::WriteOnly)) {
         *error = output.errorString();
+        return false;
+    }
+    markFileSparse(output.handle());
+    if (!output.resize(static_cast<qint64>(header->imageBytes))) {
+        const DWORD nativeError = GetLastError();
+        *error = QStringLiteral(
+                     "unable to size APFS block-map fixture to %1 bytes "
+                     "(Windows error %2): %3")
+                     .arg(header->imageBytes)
+                     .arg(nativeError)
+                     .arg(output.errorString());
         return false;
     }
     QSet<uint64_t> seen;
@@ -1743,6 +1767,9 @@ private Q_SLOTS:
     void fileSystemToolRunner_blocksUnapprovedOrUnsupportedReadOnlyChecks();
     void fileSystemToolRunner_resolvesApprovedToolPath();
     void inventoryParser_parsesDiskAndPartition();
+    void inventoryParser_offlineStateIsStrict_data();
+    void inventoryParser_offlineStateIsStrict();
+    void inventoryParser_offlineStateChangesLayoutHash();
     void inventoryParser_surfacesUnknownDirtyState();
     void inventoryParser_surfacesUnknownReliabilityState();
     void inventoryParser_blocksFailedVolumeLookup();
@@ -1786,6 +1813,13 @@ private Q_SLOTS:
     void safetyValidator_blocksDiskScopedWipeWithPartitionTarget();
     void safetyValidator_blocksOsDiskDataPartitionMutation();
     void scriptBuilder_createImageRefusesExistingWithoutOverwrite();
+    void scriptBuilder_createImageRequiresFullAndPinnedSource();
+    void scriptBuilder_createImageOfflineRangeIsPinned();
+    void safetyValidator_imageReadOnlyAndCaptureModes();
+    void safetyValidator_imageReadOnlyAndCaptureModes_data();
+    void safetyValidator_imageModeRequiresKnownMatchingState();
+    void scriptBuilder_createImagePinsSelectedVolume();
+    void scriptBuilder_createImageLocksSourceUntilVerification();
     void scriptBuilder_restoreImageGuardsUncAndOnTargetDiskSource();
     void scriptBuilder_restoreImagePinsSourceContent();  // M-B3-1 part A
     void scriptBuilder_guardsDiskIdentityImmediatelyBeforeMutation();
@@ -1801,6 +1835,8 @@ private Q_SLOTS:
     void safetyValidator_blocksSplitBootOsDiskMutations();
     void safetyValidator_blocksClonePartitionWithoutTargetOffset();
     void rawDeviceClassifier_recognizesExtendedDeviceForms();
+    void rawDeviceIo_refusesForeignRawPathReadOnly();
+    void rawDeviceIo_refusesForeignRawPathReadWrite();
     void flushDeviceBuffers_surfacesFailureAndFlushesFile();
     void rawDeviceIo_copyFileSparsePreservesContentAndSucceeds();
     void scriptBuilder_createImageEmitsDestinationGuard();
@@ -1925,6 +1961,7 @@ QByteArray fixtureJson() {
         {QStringLiteral("IsBoot"), true},
         {QStringLiteral("IsSystem"), true},
         {QStringLiteral("IsReadOnly"), false},
+        {QStringLiteral("IsOffline"), false},
         {QStringLiteral("Partitions"), QJsonArray{systemPartition, dataPartition}}};
     return QJsonDocument(QJsonArray{disk}).toJson(QJsonDocument::Compact);
 }
@@ -16580,7 +16617,9 @@ void PartitionManagerCoreTests::apfsWriter_foreignMultiChunkCowPatchWriteDeleteR
 }
 
 void PartitionManagerCoreTests::apfsWriter_foreignMultiCibRotationExcludesEveryLiveBitmap() {
-    QTemporaryDir temp;
+    const QString scratchRoot = qEnvironmentVariable("SAK_TEST_IMAGE_SCRATCH_ROOT");
+    QTemporaryDir temp(QDir(scratchRoot.isEmpty() ? QDir::tempPath() : scratchRoot)
+                           .filePath(QStringLiteral("sak-apfs-multicib-XXXXXX")));
     QVERIFY(temp.isValid());
     const QDir dir(temp.path());
     QString expandError;
@@ -16990,6 +17029,53 @@ void PartitionManagerCoreTests::inventoryParser_parsesDiskAndPartition() {
     QVERIFY(changed_inventory.layout_hash != inventory.layout_hash);
 }
 
+void PartitionManagerCoreTests::inventoryParser_offlineStateIsStrict_data() {
+    QTest::addColumn<QJsonValue>("value");
+    QTest::addColumn<bool>("known");
+    QTest::addColumn<bool>("offline");
+    QTest::newRow("online") << QJsonValue(false) << true << false;
+    QTest::newRow("offline") << QJsonValue(true) << true << true;
+    QTest::newRow("missing") << QJsonValue(QJsonValue::Undefined) << false << false;
+    QTest::newRow("null") << QJsonValue(QJsonValue::Null) << false << false;
+    QTest::newRow("text-true") << QJsonValue(QStringLiteral("true")) << false << false;
+    QTest::newRow("text-false") << QJsonValue(QStringLiteral("false")) << false << false;
+    QTest::newRow("numeric-zero") << QJsonValue(0) << false << false;
+    QTest::newRow("numeric-one") << QJsonValue(1) << false << false;
+    QTest::newRow("array") << QJsonValue(QJsonArray{false}) << false << false;
+    QTest::newRow("object") << QJsonValue(QJsonObject{{"offline", true}}) << false << false;
+}
+
+void PartitionManagerCoreTests::inventoryParser_offlineStateIsStrict() {
+    QFETCH(QJsonValue, value);
+    QFETCH(bool, known);
+    QFETCH(bool, offline);
+    QJsonArray disks = QJsonDocument::fromJson(fixtureJson()).array();
+    QJsonObject disk = disks.first().toObject();
+    disk.insert(QStringLiteral("IsOffline"), value);
+    disks[0] = disk;
+    const auto inventory =
+        StorageInventoryWorker::parseInventoryJson(QJsonDocument(disks).toJson());
+    QCOMPARE(inventory.disks.first().is_offline.has_value(), known);
+    if (known) {
+        QCOMPARE(*inventory.disks.first().is_offline, offline);
+    }
+}
+
+void PartitionManagerCoreTests::inventoryParser_offlineStateChangesLayoutHash() {
+    QSet<QString> hashes;
+    for (const QJsonValue value : {QJsonValue(), QJsonValue(false), QJsonValue(true)}) {
+        QJsonArray disks = QJsonDocument::fromJson(fixtureJson()).array();
+        QJsonObject disk = disks.first().toObject();
+        disk.insert(QStringLiteral("IsOffline"), value);
+        disks[0] = disk;
+        const auto inventory =
+            StorageInventoryWorker::parseInventoryJson(QJsonDocument(disks).toJson());
+        QVERIFY(!inventory.layout_hash.isEmpty());
+        QVERIFY(!hashes.contains(inventory.layout_hash));
+        hashes.insert(inventory.layout_hash);
+    }
+}
+
 void PartitionManagerCoreTests::inventoryParser_surfacesUnknownDirtyState() {
     QJsonDocument document = QJsonDocument::fromJson(fixtureJson());
     QJsonArray disks = document.array();
@@ -17233,6 +17319,8 @@ void PartitionManagerCoreTests::safetyValidator_refusesEveryOperationOnUnreadabl
 
 void PartitionManagerCoreTests::inventoryScript_handlesRawDisksWithoutAbort() {
     const QString script = StorageInventoryWorker::inventoryPowerShellScript();
+    QVERIFY(script.contains(QStringLiteral(
+        "IsOffline = if ($disk.IsOffline -is [bool]) { $disk.IsOffline } else { $null }")));
     QVERIFY2(script.contains(QStringLiteral("$ProgressPreference = 'SilentlyContinue'")),
              "Inventory script should suppress progress records so stdout remains JSON-only.");
     QVERIFY2(script.contains(QStringLiteral("Get-Partition -DiskNumber $DiskNumber "
@@ -18689,6 +18777,7 @@ void PartitionManagerCoreTests::scriptBuilder_createImageRefusesExistingWithoutO
     payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
     payload[QStringLiteral("target_path")] = QStringLiteral("D:\\images\\disk0.img");
     payload[QStringLiteral("source_size_bytes")] = QString::number(target.size_bytes);
+    pinCreateImageSource(&target, &payload);
 
     PartitionScriptBuilder builder;
     auto denied = builder.buildScript(PartitionOperationPlanner::makeOperation(
@@ -18700,6 +18789,304 @@ void PartitionManagerCoreTests::scriptBuilder_createImageRefusesExistingWithoutO
     auto allowed = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::CreateImage, target, payload));
     QVERIFY(allowed.script.contains(QStringLiteral("$allowOverwrite = $true")));
+}
+
+void PartitionManagerCoreTests::scriptBuilder_createImageRequiresFullAndPinnedSource() {
+    constexpr uint64_t kImageBytes = 4096;
+    PartitionTarget target;
+    target.disk_number = DiskNumber{7};
+    target.size_bytes = kImageBytes;
+    QJsonObject payload{{"source_path", "\\\\.\\PhysicalDrive7"},
+                        {"target_path", "D:\\images\\fixture.img"}};
+    pinCreateImageSource(&target, &payload);
+    const auto original = PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::CreateImage, target, payload);
+    PartitionScriptBuilder builder;
+    QVERIFY(builder.buildScript(original).valid());
+    const auto expect = [&builder](const PartitionOperation& operation, const QString& reason) {
+        const auto script = builder.buildScript(operation);
+        QVERIFY(!script.valid());
+        QCOMPARE(script.blockers, QStringList{reason});
+    };
+    for (const auto& mode : {QString(), QStringLiteral("Sample"), QStringLiteral("None")}) {
+        auto operation = original;
+        operation.payload[QStringLiteral("verify_mode")] = mode;
+        expect(operation, QStringLiteral("Create Image requires Full verification"));
+    }
+    for (const auto& mode : {QString(), QStringLiteral("Automatic")}) {
+        auto operation = original;
+        operation.payload[QStringLiteral("source_capture_mode")] = mode;
+        expect(operation,
+               QStringLiteral(
+                   "Create Image requires an explicit LockedVolumes or OfflineDisk mode"));
+    }
+    auto operation = original;
+    operation.target.disk_unique_id.clear();
+    expect(operation, QStringLiteral("Create Image source disk identity was not pinned"));
+    operation = original;
+    operation.target.disk_size_bytes = 0;
+    expect(operation, QStringLiteral("Create Image source disk identity was not pinned"));
+    operation = original;
+    operation.payload[QStringLiteral("source_size_bytes")] = QString::number(kImageBytes - 1);
+    expect(
+        operation,
+        QStringLiteral(
+            "Create Image requires the complete pinned source size and selected capture offset"));
+    operation = original;
+    operation.payload[QStringLiteral("source_offset_bytes")] = QStringLiteral("1");
+    expect(
+        operation,
+        QStringLiteral(
+            "Create Image requires the complete pinned source size and selected capture offset"));
+    operation = original;
+    operation.payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive8");
+    expect(operation, QStringLiteral("Create Image source must match the selected disk"));
+}
+
+void PartitionManagerCoreTests::scriptBuilder_createImageOfflineRangeIsPinned() {
+    constexpr uint64_t kDiskBytes = 4096;
+    constexpr uint64_t kPartitionBytes = 1024;
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = DiskNumber{7};
+    target.partition_number = PartitionNumber{2};
+    target.size_bytes = kPartitionBytes;
+    target.offset_bytes = kPartitionBytes;
+    QJsonObject payload{{"source_path", "\\\\.\\PhysicalDrive7"},
+                        {"target_path", "D:\\images\\offline.img"}};
+    pinCreateImageSource(&target, &payload);
+    target.disk_size_bytes = kDiskBytes;
+    payload[QStringLiteral("source_capture_mode")] = QStringLiteral("OfflineDisk");
+    payload[QStringLiteral("source_offset_bytes")] = QString::number(target.offset_bytes);
+    auto operation = PartitionOperationPlanner::makeOperation(PartitionOperationType::CreateImage,
+                                                              target,
+                                                              payload);
+    PartitionScriptBuilder builder;
+    const auto valid = builder.buildScript(operation);
+    QVERIFY2(valid.valid(), qPrintable(valid.blockers.join(';')));
+    QVERIFY(valid.script.contains(QStringLiteral("$sourceOffset = [uint64]1024")));
+    QVERIFY(valid.script.contains(QStringLiteral("$sakImageCaptureMode = 'OfflineDisk'")));
+    operation.payload[QStringLiteral("source_offset_bytes")] = QStringLiteral("0");
+    QVERIFY(!builder.buildScript(operation).valid());
+    operation.payload[QStringLiteral("source_offset_bytes")] = QString::number(kDiskBytes);
+    operation.target.offset_bytes = kDiskBytes;
+    QCOMPARE(builder.buildScript(operation).blockers,
+             QStringList{
+                 QStringLiteral("Create Image selected source range exceeds the pinned disk")});
+    operation.target.offset_bytes = kDiskBytes + 1;
+    operation.payload[QStringLiteral("source_offset_bytes")] = QString::number(kDiskBytes + 1);
+    QCOMPARE(builder.buildScript(operation).blockers,
+             QStringList{
+                 QStringLiteral("Create Image selected source range exceeds the pinned disk")});
+    operation.target.offset_bytes = 0;
+    operation.payload[QStringLiteral("source_offset_bytes")] = QStringLiteral("0");
+    const auto zero = builder.buildScript(operation);
+    QVERIFY(zero.valid());
+    QVERIFY(zero.script.contains(QStringLiteral("if ([uint64]$p.Offset -ne 0)")));
+    operation.payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\E:");
+    QVERIFY(!builder.buildScript(operation).valid());
+    operation.payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive7");
+    operation.target.kind = PartitionTargetKind::Unallocated;
+    QVERIFY(!builder.buildScript(operation).valid());
+}
+
+void PartitionManagerCoreTests::safetyValidator_imageReadOnlyAndCaptureModes_data() {
+    QTest::addColumn<bool>("partition_target");
+    QTest::addColumn<bool>("disk_read_only");
+    QTest::addColumn<bool>("offline");
+    QTest::newRow("disk-online") << false << true << false;
+    QTest::newRow("disk-offline") << false << true << true;
+    QTest::newRow("partition-disk-readonly") << true << true << false;
+    QTest::newRow("partition-only-readonly") << true << false << false;
+    QTest::newRow("partition-offline-readonly") << true << true << true;
+}
+
+void PartitionManagerCoreTests::safetyValidator_imageReadOnlyAndCaptureModes() {
+    QFETCH(bool, partition_target);
+    QFETCH(bool, disk_read_only);
+    QFETCH(bool, offline);
+    auto inventory = StorageInventoryWorker::parseInventoryJson(fixtureJson());
+    makeFixtureDataPartitionMutable(&inventory);
+    auto& disk = inventory.disks.first();
+    disk.is_read_only = disk_read_only;
+    disk.is_offline = offline;
+    auto& partition = disk.partitions[1];
+    partition.is_read_only = !disk_read_only;
+    PartitionTarget target;
+    target.kind = partition_target ? PartitionTargetKind::Partition : PartitionTargetKind::Disk;
+    target.disk_number = disk.disk_number;
+    target.partition_number = partition.partition_number;
+    target.size_bytes = partition_target ? partition.size_bytes : disk.size_bytes;
+    target.offset_bytes = partition.offset_bytes;
+    target.drive_letter = QStringLiteral("C");
+    QJsonObject payload{{"source_path",
+                         partition_target && !offline ? "\\\\.\\C:" : "\\\\.\\PhysicalDrive0"},
+                        {"target_path", "D:\\images\\source.img"},
+                        {"source_size_bytes", QString::number(target.size_bytes)},
+                        {"source_capture_mode", offline ? "OfflineDisk" : "LockedVolumes"},
+                        {"verify_mode", "Full"},
+                        {"target_wipe_confirmed", true},
+                        {"file_system", "NTFS"}};
+    auto operation = PartitionOperationPlanner::makeOperation(PartitionOperationType::CreateImage,
+                                                              target,
+                                                              payload);
+    PartitionOperationPlanner planner;
+    const auto image = planner.previewOperation(inventory, operation);
+    QVERIFY2(image.canApply(), qPrintable(image.blockers.join(';')));
+    operation.type = partition_target ? PartitionOperationType::Format
+                                      : PartitionOperationType::WipeDisk;
+    const auto mutation = planner.previewOperation(inventory, operation);
+    QVERIFY(!mutation.canApply());
+    QVERIFY(mutation.blockers.join(';').contains(QStringLiteral("read-only")));
+    operation.type = PartitionOperationType::CreateImage;
+    operation.payload[QStringLiteral("target_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
+    const auto raw_destination = planner.previewOperation(inventory, operation);
+    QVERIFY(!raw_destination.canApply());
+    QVERIFY(raw_destination.blockers.join(';').contains(QStringLiteral("file path")));
+}
+
+void PartitionManagerCoreTests::safetyValidator_imageModeRequiresKnownMatchingState() {
+    auto inventory = StorageInventoryWorker::parseInventoryJson(fixtureJson());
+    makeFixtureDataPartitionMutable(&inventory);
+    auto& disk = inventory.disks.first();
+    PartitionTarget target;
+    target.disk_number = disk.disk_number;
+    target.size_bytes = disk.size_bytes;
+    QJsonObject payload{{"source_path", "\\\\.\\PhysicalDrive0"},
+                        {"target_path", "D:\\images\\source.img"},
+                        {"source_size_bytes", QString::number(disk.size_bytes)},
+                        {"source_capture_mode", "LockedVolumes"},
+                        {"verify_mode", "Full"}};
+    auto operation = PartitionOperationPlanner::makeOperation(PartitionOperationType::CreateImage,
+                                                              target,
+                                                              payload);
+    PartitionOperationPlanner planner;
+    const auto expect = [&]() {
+        return planner.previewOperation(inventory, operation).blockers;
+    };
+    disk.is_offline.reset();
+    QVERIFY(
+        expect().contains(QStringLiteral("Create Image source online/offline state is unknown")));
+    disk.is_offline = true;
+    QVERIFY(
+        expect().contains(QStringLiteral("LockedVolumes capture requires an online source disk")));
+    operation.payload[QStringLiteral("source_capture_mode")] = QStringLiteral("OfflineDisk");
+    QVERIFY(planner.previewOperation(inventory, operation).canApply());
+    disk.is_offline = false;
+    QVERIFY(expect().contains(
+        QStringLiteral("OfflineDisk capture requires an already-offline source disk")));
+    operation.payload.remove(QStringLiteral("source_capture_mode"));
+    QVERIFY(
+        expect().contains(QStringLiteral("Create Image requires an explicit source capture mode")));
+    operation.payload[QStringLiteral("source_capture_mode")] = QStringLiteral("Automatic");
+    QVERIFY(
+        expect().contains(QStringLiteral("Create Image requires an explicit source capture mode")));
+    operation.payload[QStringLiteral("source_capture_mode")] = QStringLiteral("OfflineDisk");
+    disk.is_offline = true;
+    disk.is_boot = true;
+    QVERIFY(expect().contains(QStringLiteral("Offline capture cannot target the current OS disk")));
+    disk.is_boot = false;
+    disk.is_system = true;
+    QVERIFY(expect().contains(QStringLiteral("Offline capture cannot target the current OS disk")));
+}
+
+void PartitionManagerCoreTests::scriptBuilder_createImagePinsSelectedVolume() {
+    constexpr uint64_t kImageBytes = 4096;
+    constexpr uint64_t kPartitionBytes = 1024;
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Partition;
+    target.disk_number = DiskNumber{7};
+    target.partition_number = PartitionNumber{2};
+    target.size_bytes = kPartitionBytes;
+    target.drive_letter = QStringLiteral("E");
+    QJsonObject payload{{"source_path", "\\\\.\\E:"}, {"target_path", "D:\\images\\fixture.img"}};
+    pinCreateImageSource(&target, &payload);
+    target.disk_size_bytes = kImageBytes;
+    const auto original = PartitionOperationPlanner::makeOperation(
+        PartitionOperationType::CreateImage, target, payload);
+    PartitionScriptBuilder builder;
+    QVERIFY(builder.buildScript(original).valid());
+    const auto expect_volume_error = [&builder](const PartitionOperation& operation) {
+        const auto script = builder.buildScript(operation);
+        QVERIFY(!script.valid());
+        QCOMPARE(script.blockers,
+                 QStringList{QStringLiteral("Create Image source must match the selected volume")});
+    };
+    auto operation = original;
+    operation.payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\F:");
+    expect_volume_error(operation);
+    operation = original;
+    operation.target.kind = PartitionTargetKind::Unallocated;
+    expect_volume_error(operation);
+    operation = original;
+    operation.target.partition_number = PartitionNumber{0};
+    expect_volume_error(operation);
+    operation = original;
+    operation.target.drive_letter = QStringLiteral("EE");
+    operation.payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\EE:");
+    expect_volume_error(operation);
+    operation = original;
+    operation.target.volume_guid = QStringLiteral("\\\\.\\PhysicalDrive7");
+    operation.payload[QStringLiteral("source_path")] = operation.target.volume_guid;
+    expect_volume_error(operation);
+    operation = original;
+    operation.target.drive_letter.clear();
+    operation.target.volume_guid =
+        QStringLiteral("\\\\?\\Volume{11111111-1111-1111-1111-111111111111}\\");
+    operation.payload[QStringLiteral("source_path")] = operation.target.volume_guid.chopped(1);
+    QVERIFY(builder.buildScript(operation).valid());
+    operation.payload[QStringLiteral("source_path")] =
+        QStringLiteral("\\\\?\\Volume{22222222-2222-2222-2222-222222222222}");
+    expect_volume_error(operation);
+    operation = original;
+    operation.target.size_bytes = 0;
+    operation.payload[QStringLiteral("source_size_bytes")] = QStringLiteral("0");
+    const auto empty = builder.buildScript(operation);
+    QVERIFY(!empty.valid());
+    QCOMPARE(
+        empty.blockers,
+        QStringList{QStringLiteral(
+            "Create Image requires the complete pinned source size and selected capture offset")});
+}
+
+void PartitionManagerCoreTests::scriptBuilder_createImageLocksSourceUntilVerification() {
+    constexpr uint64_t kImageBytes = 4096;
+    PartitionTarget target;
+    target.disk_number = DiskNumber{7};
+    target.size_bytes = kImageBytes;
+    QJsonObject payload{{"source_path", "\\\\.\\PhysicalDrive7"},
+                        {"target_path", "D:\\images\\fixture.img"}};
+    pinCreateImageSource(&target, &payload);
+    const auto script =
+        PartitionScriptBuilder().buildScript(PartitionOperationPlanner::makeOperation(
+            PartitionOperationType::CreateImage, target, payload));
+    QVERIFY2(script.valid(), qPrintable(script.blockers.join(';')));
+    const auto lock = script.script.indexOf(QStringLiteral("$handle = Open-SakImageVolumeLock"));
+    const auto read = script.script.indexOf(QStringLiteral("$in = Open-SakRead $src"));
+    const auto copy = script.script.indexOf(QStringLiteral("Copy-SakBytes $in $out"));
+    const auto verify = script.script.indexOf(QStringLiteral("Assert-SakFullCopy $in"));
+    const auto release = script.script.indexOf(QStringLiteral("finally { $sakImageCleanupErrors"));
+    QVERIFY(lock >= 0);
+    QVERIFY(read > lock);
+    QVERIFY(copy > read);
+    QVERIFY(verify > copy);
+    QVERIFY(release > verify);
+    const auto attribute_check = script.script.indexOf(
+        QStringLiteral("$sakImageFinalAttributes -ne $sakImageOriginalAttributes"));
+    const auto dispose = script.script.lastIndexOf(QStringLiteral("finally { $in.Dispose() }"));
+    QVERIFY(attribute_check > verify);
+    QVERIFY(dispose > attribute_check);
+    QVERIFY(script.script.contains(QStringLiteral("$sakImageResources.Add($handle)")));
+    QVERIFY(script.script.contains(QStringLiteral("Assert-SakImageDevice $handle")));
+    QVERIFY(
+        script.script.contains(QStringLiteral("$sakImageLayoutKey -cne $sakImageLockedLayoutKey")));
+    QVERIFY(
+        script.script.contains(QStringLiteral("Get-SakImageSourceLayout -ResolveVolumes $false")));
+    QVERIFY(script.script.contains(
+        QStringLiteral("Select-Object PartitionNumber, Offset, Size, Guid, GptType, MbrType")));
+    QVERIFY(script.script.contains(QStringLiteral("Assert-SakImageDevice $held.Handle")));
+    QVERIFY(script.script.contains(QStringLiteral("Assert-SakImageDevice $in.SafeFileHandle")));
+    QVERIFY(script.script.contains(QStringLiteral("throw $sakImageFailure")));
 }
 
 void PartitionManagerCoreTests::scriptBuilder_restoreImageGuardsUncAndOnTargetDiskSource() {
@@ -19239,7 +19626,6 @@ void PartitionManagerCoreTests::safetyValidator_blocksClonePartitionWithoutTarge
 void PartitionManagerCoreTests::rawDeviceClassifier_recognizesExtendedDeviceForms() {
     // B2-10: the image-only raw-target gate must recognize every raw-device
     // spelling, not just the \\.\ and GLOBALROOT prefixes.
-#ifdef Q_OS_WIN
     QVERIFY(sak::isWindowsRawDevicePath(QStringLiteral("\\\\.\\PhysicalDrive0")));
     QVERIFY(sak::isWindowsRawDevicePath(QStringLiteral("\\\\?\\PhysicalDrive3")));
     QVERIFY(sak::isWindowsRawDevicePath(
@@ -19251,10 +19637,40 @@ void PartitionManagerCoreTests::rawDeviceClassifier_recognizesExtendedDeviceForm
         QStringLiteral("\\\\?\\Volume{12345678-1234-1234-1234-1234567890ab}\\dir\\x.img")));
     QVERIFY(!sak::isWindowsRawDevicePath(QStringLiteral("\\\\?\\C:\\images\\x.img")));
     QVERIFY(!sak::isWindowsRawDevicePath(QStringLiteral("D:\\images\\x.img")));
-#else
+    // A POSIX device spelling is hostile raw-looking input on this Windows-only app:
+    // the image-only path must refuse it, not mistake it for an ordinary file.
     QVERIFY(sak::isWindowsRawDevicePath(QStringLiteral("/dev/sda")));
+    QVERIFY(sak::isWindowsRawDevicePath(QStringLiteral(" /dev/sda ")));
+    QVERIFY(sak::isWindowsRawDevicePath(QStringLiteral("/DEV/sda")));
+    QVERIFY(sak::isWindowsRawDevicePath(QStringLiteral("\\dev\\sda")));
+    QVERIFY(sak::isWindowsRawDevicePath(QStringLiteral(" \\DeV/sda ")));
     QVERIFY(!sak::isWindowsRawDevicePath(QStringLiteral("/home/x/img.dmg")));
-#endif
+}
+
+void PartitionManagerCoreTests::rawDeviceIo_refusesForeignRawPathReadOnly() {
+    const QString path = QStringLiteral("/dev/sak-raw-open-guard-f4c0f95f384f");
+    QVERIFY(!QFileInfo::exists(path));
+    QString error;
+    QVERIFY(!sak::openFileOrRawDeviceReadOnly(path, &error));
+    QCOMPARE(error, QStringLiteral("Unsupported raw device path on Windows"));
+    const QString alias = QStringLiteral("/DEV/sak-raw-open-guard-f4c0f95f384f");
+    QVERIFY(!QFileInfo::exists(alias));
+    error.clear();
+    QVERIFY(!sak::openFileOrRawDeviceReadOnly(alias, &error));
+    QCOMPARE(error, QStringLiteral("Unsupported raw device path on Windows"));
+}
+
+void PartitionManagerCoreTests::rawDeviceIo_refusesForeignRawPathReadWrite() {
+    const QString path = QStringLiteral("/dev/sak-raw-open-guard-f4c0f95f384f");
+    QVERIFY(!QFileInfo::exists(path));
+    QString error;
+    QVERIFY(!sak::openFileOrRawDeviceReadWrite(path, &error));
+    QCOMPARE(error, QStringLiteral("Unsupported raw device path on Windows"));
+    const QString alias = QStringLiteral("\\dev\\sak-raw-open-guard-f4c0f95f384f");
+    QVERIFY(!QFileInfo::exists(alias));
+    error.clear();
+    QVERIFY(!sak::openFileOrRawDeviceReadWrite(alias, &error));
+    QCOMPARE(error, QStringLiteral("Unsupported raw device path on Windows"));
 }
 
 void PartitionManagerCoreTests::flushDeviceBuffers_surfacesFailureAndFlushesFile() {
@@ -19276,13 +19692,22 @@ void PartitionManagerCoreTests::flushDeviceBuffers_surfacesFailureAndFlushesFile
     QVERIFY2(sak::flushDeviceBuffers(&file, &flushError), qPrintable(flushError));
     QCOMPARE(file.size(), static_cast<qint64>(7));
     file.close();
+
+    // Qt flush() succeeds on a read-only QFile because it has no Qt write buffer.
+    // Windows FlushFileBuffers requires a writable native handle, so accepting this
+    // request would prove that the helper never reached the OS durability boundary.
+    QFile readOnly(path);
+    QVERIFY(readOnly.open(QIODevice::ReadOnly));
+    QString readOnlyError;
+    QVERIFY2(!sak::flushDeviceBuffers(&readOnly, &readOnlyError),
+             "Read-only QFile was accepted as durably flushed");
+    QVERIFY(readOnlyError.startsWith(QStringLiteral("Windows file flush failed:")));
+    readOnly.close();
 }
 
 void PartitionManagerCoreTests::rawDeviceIo_copyFileSparsePreservesContentAndSucceeds() {
-    // F36 regression: copyFileSparse now flushes the destination durably before close (the
-    // FlushFileBuffers is folded into the success chain). This asserts the success path still
-    // completes and the copied bytes are byte-identical -- i.e. the added durable flush did not
-    // regress a normal, non-sparse copy.
+    // The copy flushes before close. A sparse-capable source/destination pair preserves holes;
+    // a non-sparse file system selects a capacity-checked dense copy before writing.
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
     const QString source = QDir(temp.path()).filePath(QStringLiteral("src.bin"));
@@ -19303,6 +19728,14 @@ void PartitionManagerCoreTests::rawDeviceIo_copyFileSparsePreservesContentAndSuc
     QFile out(dest);
     QVERIFY(out.open(QIODevice::ReadOnly));
     QCOMPARE(out.readAll(), payload);
+    DWORD volumeFlags = 0;
+    const auto handle = reinterpret_cast<HANDLE>(_get_osfhandle(out.handle()));
+    QVERIFY(GetVolumeInformationByHandleW(
+                handle, nullptr, 0, nullptr, nullptr, &volumeFlags, nullptr, 0) != 0);
+    const DWORD destinationAttributes = GetFileAttributesW(reinterpret_cast<LPCWSTR>(dest.utf16()));
+    QVERIFY(destinationAttributes != INVALID_FILE_ATTRIBUTES);
+    QCOMPARE((destinationAttributes & FILE_ATTRIBUTE_SPARSE_FILE) != 0,
+             (volumeFlags & FILE_SUPPORTS_SPARSE_FILES) != 0);
     out.close();
 
     // The destination must not already exist for a second copy (fail closed on CREATE_NEW).
@@ -19321,6 +19754,7 @@ void PartitionManagerCoreTests::scriptBuilder_createImageEmitsDestinationGuard()
     QJsonObject payload;
     payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
     payload[QStringLiteral("target_path")] = QStringLiteral("D:\\images\\disk0.img");
+    pinCreateImageSource(&target, &payload);
     const auto image = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::CreateImage, target, payload));
     QVERIFY2(image.valid(), qPrintable(image.blockers.join(QStringLiteral("; "))));
@@ -19428,6 +19862,7 @@ void PartitionManagerCoreTests::scriptBuilder_waveCBackupAndCloneDurabilityFailC
     QJsonObject imagePayload;
     imagePayload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
     imagePayload[QStringLiteral("target_path")] = QStringLiteral("D:\\images\\disk0.img");
+    pinCreateImageSource(&imageTarget, &imagePayload);
     const auto image = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::CreateImage, imageTarget, imagePayload));
     QVERIFY2(image.valid(), qPrintable(image.blockers.join(QStringLiteral("; "))));
@@ -19454,6 +19889,7 @@ void PartitionManagerCoreTests::scriptBuilder_waveCIdentityDismountImageGuardFai
     QVERIFY(fmt.script.contains(QStringLiteral("Partition identity mismatch (offset)")));
     QVERIFY(fmt.script.contains(QStringLiteral("[uint64]$p.Offset -ne [uint64]1048576")));
     QVERIFY(fmt.script.contains(QStringLiteral("Partition identity mismatch (GUID)")));
+    QVERIFY(fmt.script.contains(QStringLiteral("if (-not $p.Guid -or")));
 
     // Codex-3 F10: APFS raw mutation dismount permits only the exact no-volume condition.
     // Any other Get-Volume failure and every real dismount failure propagate.
@@ -19481,6 +19917,7 @@ void PartitionManagerCoreTests::scriptBuilder_waveCIdentityDismountImageGuardFai
     QJsonObject imagePayload;
     imagePayload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
     imagePayload[QStringLiteral("target_path")] = QStringLiteral("D:\\images\\disk0.img");
+    pinCreateImageSource(&imageTarget, &imagePayload);
     const auto image = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::CreateImage, imageTarget, imagePayload));
     QVERIFY2(image.valid(), qPrintable(image.blockers.join(QStringLiteral("; "))));
@@ -19566,6 +20003,8 @@ void PartitionManagerCoreTests::
     payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
     payload[QStringLiteral("target_path")] = QStringLiteral("D:\\images\\disk0.img");
     payload[QStringLiteral("source_size_bytes")] = QString::number(target.size_bytes);
+    payload[QStringLiteral("source_capture_mode")] = QStringLiteral("LockedVolumes");
+    payload[QStringLiteral("verify_mode")] = QStringLiteral("Full");
     auto operation = PartitionOperationPlanner::makeOperation(PartitionOperationType::CreateImage,
                                                               target,
                                                               payload);
@@ -19626,6 +20065,7 @@ void PartitionManagerCoreTests::safetyValidator_blocksCreateImageVolumeGuidAlias
     payload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
     payload[QStringLiteral("target_path")] = QStringLiteral("\\\\?\\Volume%1\\disk0.img").arg(guid);
     payload[QStringLiteral("source_size_bytes")] = QString::number(target.size_bytes);
+    payload[QStringLiteral("source_capture_mode")] = QStringLiteral("LockedVolumes");
     auto operation = PartitionOperationPlanner::makeOperation(PartitionOperationType::CreateImage,
                                                               target,
                                                               payload);
@@ -21819,6 +22259,7 @@ void PartitionManagerCoreTests::scriptBuilder_emitsCanonicalRawTargetForExtended
     QJsonObject imagePayload;
     imagePayload[QStringLiteral("source_path")] = QStringLiteral("\\\\.\\PhysicalDrive0");
     imagePayload[QStringLiteral("target_path")] = QStringLiteral("D:\\images\\disk0.img");
+    pinCreateImageSource(&target, &imagePayload);
     const auto image = builder.buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::CreateImage, target, imagePayload));
     QVERIFY2(image.valid(), qPrintable(image.blockers.join(QStringLiteral("; "))));

@@ -4,15 +4,21 @@
 #include "sak/process_runner.h"
 
 #include "sak/layout_constants.h"
+#include "sak/windows_process_job.h"
 
-#include <QDateTime>
+#include <QDeadlineTimer>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QProcess>
 #include <QStandardPaths>
+#include <QThread>
 
+#include <algorithm>
+#include <expected>
+#include <limits>
+#include <memory>
 #include <optional>
 #include <utility>
 
@@ -58,7 +64,6 @@ struct ProcessRunRequest {
     CancelCheck should_cancel;
     ProcessOutputCallback on_output;
     ProcessStartedCallback on_started;
-    ProcessTerminationCallback on_terminate;
 };
 
 void appendOutput(ProcessResult* result,
@@ -87,84 +92,210 @@ void drainProcessOutput(QProcess* proc,
     appendOutput(result, on_output, proc->readAllStandardError(), true);
 }
 
-// Dispatch a detached whole-tree kill (taskkill /T) for the child rooted at
-// @p pid. Returns true only if the kill helper was actually launched. A false
-// return (no pid, or startDetached refused to spawn) MUST NOT be read as
-// "terminated" -- the caller falls back to QProcess::kill so the direct child
-// is always signalled rather than the cancel silently no-opping.
-bool dispatchDetachedTreeKill(qint64 pid) {
-    if (pid <= 0) {
-        return false;
+constexpr qint64 kProcessJobPollMs = 25;
+constexpr int kNormalDescendantGraceMs = 1000;
+
+void appendProcessFailure(ProcessResult* result, const QString& detail) {
+    if (!result->std_err.isEmpty()) {
+        result->std_err += QLatin1Char('\n');
     }
-    // Launch the System32-qualified taskkill DIRECTLY (no cmd.exe shell, and never a bare
-    // "taskkill" that a PATH/CWD-planted binary could satisfy): the tree kill can be
-    // dispatched from an elevated worker, so both the program AND the tool it invokes must
-    // be resolved absolutely. taskkill /T reaps the whole child tree. Unresolvable ->
-    // return false so the caller kills the direct child instead.
-    const QString taskkill = system32Path(QStringLiteral("taskkill.exe"));
-    if (taskkill.isEmpty()) {
-        return false;
-    }
-    return QProcess::startDetached(
-        taskkill,
-        {QStringLiteral("/PID"), QString::number(pid), QStringLiteral("/T"), QStringLiteral("/F")});
+    result->std_err += detail;
+    result->exit_code = -1;
 }
 
-void terminateProcess(QProcess* proc, const ProcessTerminationCallback& on_terminate) {
-    if (on_terminate) {
-        on_terminate();
+std::expected<bool, QString> waitForEmptyJob(const WindowsProcessJob& job,
+                                             const QDeadlineTimer& deadline) {
+    for (;;) {
+        const auto observed = job.accounting();
+        if (!observed) {
+            return std::unexpected(observed.error());
+        }
+        if (observed->active_processes == 0) {
+            return true;
+        }
+        const qint64 remaining = deadline.remainingTime();
+        if (remaining <= 0) {
+            return false;
+        }
+        QThread::msleep(static_cast<unsigned long>(std::min(remaining, kProcessJobPollMs)));
     }
-    // Reap orphaned grandchildren via the detached whole-tree kill, and ALWAYS also kill
-    // the direct child. startDetached only proves the kill helper LAUNCHED, not that
-    // taskkill actually reached and terminated the child, so the child we own must be
-    // signalled directly here rather than trusted to the detached, best-effort tree kill.
-    // A cancel/timeout can then never leave the direct child running while we report it
-    // torn down.
-    dispatchDetachedTreeKill(proc->processId());
-    proc->kill();
 }
 
-bool startProcess(const ProcessRunRequest& request, QProcess* proc, ProcessResult* result) {
+std::expected<bool, QString> settleContainedDescendants(WindowsProcessJob& job,
+                                                        bool terminate_now) {
+    bool forced_descendants = terminate_now;
+    if (!terminate_now) {
+        const QDeadlineTimer grace(kNormalDescendantGraceMs, Qt::PreciseTimer);
+        const auto settled = waitForEmptyJob(job, grace);
+        if (!settled) {
+            return std::unexpected(settled.error());
+        }
+        forced_descendants = !*settled;
+    }
+    if (forced_descendants) {
+        const auto active = job.accounting();
+        if (!active) {
+            return std::unexpected(active.error());
+        }
+        if (active->active_processes != 0) {
+            const auto terminated = job.terminate();
+            if (!terminated) {
+                return std::unexpected(terminated.error());
+            }
+        }
+    }
+    return !terminate_now && forced_descendants;
+}
+
+std::expected<void, QString> waitForPrimaryExit(QProcess* proc, const QDeadlineTimer& deadline) {
+    if (proc->state() != QProcess::NotRunning) {
+        const qint64 remaining = deadline.remainingTime();
+        if (remaining <= 0 || !proc->waitForFinished(static_cast<int>(
+                                  std::min<qint64>(remaining, std::numeric_limits<int>::max())))) {
+            return std::unexpected(
+                QStringLiteral("Contained process primary did not finish before cleanup deadline"));
+        }
+    }
+    return {};
+}
+
+std::expected<bool, QString> finishContainedProcess(QProcess* proc,
+                                                    WindowsProcessJob& job,
+                                                    bool terminate_now) {
+    const QDeadlineTimer deadline(sak::kTimeoutProcessTerminateMs, Qt::PreciseTimer);
+    const auto forced_descendants = settleContainedDescendants(job, terminate_now);
+    if (!forced_descendants) {
+        return std::unexpected(forced_descendants.error());
+    }
+    const auto primary = waitForPrimaryExit(proc, deadline);
+    if (!primary) {
+        return std::unexpected(primary.error());
+    }
+    const auto empty = waitForEmptyJob(job, deadline);
+    if (!empty) {
+        return std::unexpected(empty.error());
+    }
+    if (!*empty) {
+        return std::unexpected(
+            QStringLiteral("Process Job still has active members at cleanup deadline"));
+    }
+    const auto closed = job.closeEmpty();
+    if (!closed) {
+        return std::unexpected(closed.error());
+    }
+    return *forced_descendants;
+}
+
+bool finishContainedOrFailFast(QProcess* proc, WindowsProcessJob& job, bool terminate_now) {
+    const auto finished = finishContainedProcess(proc, job, terminate_now);
+    if (!finished) {
+        qFatal("ProcessRunner refused unproved Job cleanup: %s", qPrintable(finished.error()));
+    }
+    return *finished;
+}
+
+std::expected<void, QString> startProcess(const ProcessRunRequest& request,
+                                          QProcess* proc,
+                                          WindowsProcessJob& job) {
     if (request.environment != nullptr) {
         proc->setProcessEnvironment(*request.environment);
     }
-    proc->start(request.program, request.args);
-    if (proc->waitForStarted(sak::kTimeoutProcessStartMs)) {
-        // Close the child's stdin so any tool that reads it gets immediate EOF
-        // instead of blocking. Chocolatey's non-elevated "Do you want to
-        // continue?" prompt (not suppressed by --yes) otherwise stalls ~20s per
-        // package waiting on a stdin that never arrives; with EOF it proceeds at
-        // once. We never write to a child's stdin, so this is always safe.
-        proc->closeWriteChannel();
-        return true;
+    const auto installed = job.installOn(*proc);
+    if (!installed) {
+        return std::unexpected(
+            QStringLiteral("Failed to prepare contained process: %1").arg(installed.error()));
     }
-    result->std_err = QStringLiteral("Failed to start process: %1").arg(proc->errorString());
-    return false;
+    proc->start(request.program, request.args);
+    const bool started = proc->waitForStarted(sak::kTimeoutProcessStartMs);
+    const auto completed = job.completeLaunch(*proc, started);
+    if (!completed) {
+        return std::unexpected(
+            QStringLiteral("Failed to verify contained process launch: %1").arg(completed.error()));
+    }
+    if (!started) {
+        return std::unexpected(
+            QStringLiteral("Failed to start process: %1").arg(proc->errorString()));
+    }
+    // No caller writes stdin. Immediate EOF also prevents an unattended
+    // Chocolatey prompt from waiting on an inherited open pipe.
+    proc->closeWriteChannel();
+    return {};
 }
 
 bool stopForCancelOrTimeout(const ProcessRunRequest& request,
-                            QProcess* proc,
                             ProcessResult* result,
                             const QElapsedTimer& timer) {
     if (request.should_cancel && request.should_cancel()) {
         result->cancelled = true;
-        terminateProcess(proc, request.on_terminate);
         return true;
     }
     if (request.timeout_ms > 0 && timer.elapsed() >= request.timeout_ms) {
         result->timed_out = true;
         result->std_err += QStringLiteral("Process timed out");
-        terminateProcess(proc, request.on_terminate);
         return true;
     }
     return false;
 }
 
+bool pollContainedProcess(const ProcessRunRequest& request, QProcess* proc, ProcessResult* result) {
+    QElapsedTimer timer;
+    timer.start();
+    constexpr int kPollMs = 100;
+    for (;;) {
+        if (proc->waitForFinished(kPollMs) || proc->state() == QProcess::NotRunning) {
+            drainProcessOutput(proc, result, request.on_output);
+            return false;
+        }
+        drainProcessOutput(proc, result, request.on_output);
+        if (stopForCancelOrTimeout(request, result, timer)) {
+            return true;
+        }
+    }
+}
+
+ProcessResult completeStartedRun(const ProcessRunRequest& request,
+                                 QProcess* proc,
+                                 WindowsProcessJob& job,
+                                 ProcessResult result) {
+    bool containment_closed = false;
+    try {
+        if (request.on_started) {
+            request.on_started(proc->processId());
+        }
+        if (pollContainedProcess(request, proc, &result)) {
+            finishContainedOrFailFast(proc, job, true);
+            containment_closed = true;
+            drainProcessOutput(proc, &result, request.on_output);
+            return result;
+        }
+        result.exit_code = proc->exitCode();
+        result.exit_status = static_cast<int>(proc->exitStatus());
+        const bool forced_descendants = finishContainedOrFailFast(proc, job, false);
+        containment_closed = true;
+        if (forced_descendants) {
+            appendProcessFailure(&result,
+                                 QStringLiteral(
+                                     "Contained process descendants remained after primary exit"));
+        }
+    } catch (const std::exception& error) {
+        appendProcessFailure(
+            &result,
+            QStringLiteral("Process callback failed: %1").arg(QString::fromUtf8(error.what())));
+        if (!containment_closed) {
+            finishContainedOrFailFast(proc, job, true);
+        }
+    } catch (...) {
+        appendProcessFailure(&result,
+                             QStringLiteral("Process callback failed with an unknown exception"));
+        if (!containment_closed) {
+            finishContainedOrFailFast(proc, job, true);
+        }
+    }
+    return result;
+}
+
 ProcessResult runProcessInternal(const ProcessRunRequest& request) {
-    // Test-only fault injection (R5-G14-17): an armed injector fully substitutes for the
-    // launch so a caller's mid-operation failure path runs without a real child. Null in
-    // production (never installed), so this is a single predicate check. A nullopt return
-    // means "no fault this time" -- fall through to the real launch (pass-through).
+    // An installed test injector substitutes one launch; nullopt requests the real path.
     if (g_process_fault_injector) {
         if (std::optional<ProcessResult> injected = g_process_fault_injector(request.program,
                                                                              request.args)) {
@@ -173,46 +304,28 @@ ProcessResult runProcessInternal(const ProcessRunRequest& request) {
     }
 
     ProcessResult result;
-    result.exit_code = -1;
-
-    // Honor a cancel that is ALREADY set before we launch: a pre-cancelled request must
-    // not start a (possibly destructive, elevated) process at all. Without this the
-    // command runs to completion and can report success, because should_cancel is
-    // otherwise first consulted only after the process has already been started.
+    // Pre-cancellation must never launch a possibly destructive child.
     if (request.should_cancel && request.should_cancel()) {
         result.cancelled = true;
         return result;
     }
 
     QProcess proc;
-    if (!startProcess(request, &proc, &result)) {
+    auto created_job = WindowsProcessJob::create();
+    if (!created_job) {
+        appendProcessFailure(
+            &result,
+            QStringLiteral("Failed to prepare contained process: %1").arg(created_job.error()));
         return result;
     }
-    if (request.on_started) {
-        request.on_started(proc.processId());
+    auto job = std::move(*created_job);
+    const auto started = startProcess(request, &proc, *job);
+    if (!started) {
+        appendProcessFailure(&result, started.error());
+        finishContainedOrFailFast(&proc, *job, true);
+        return result;
     }
-
-    QElapsedTimer timer;
-    timer.start();
-    constexpr int kPollMs = 100;
-    while (true) {
-        if (proc.waitForFinished(kPollMs)) {
-            drainProcessOutput(&proc, &result, request.on_output);
-            break;
-        }
-        drainProcessOutput(&proc, &result, request.on_output);
-
-        if (stopForCancelOrTimeout(request, &proc, &result, timer)) {
-            proc.waitForFinished(sak::kTimeoutProcessTerminateMs);
-            drainProcessOutput(&proc, &result, request.on_output);
-            return result;
-        }
-    }
-
-    result.exit_code = proc.exitCode();
-    result.exit_status = static_cast<int>(proc.exitStatus());
-
-    return result;
+    return completeStartedRun(request, &proc, *job, std::move(result));
 }
 
 }  // namespace
@@ -237,13 +350,14 @@ ProcessResult runProcess(const QString& program,
                          const QStringList& args,
                          int timeout_ms,
                          const CancelCheck& should_cancel) {
-    return runProcessInternal({.program = program,
-                               .args = args,
-                               .timeout_ms = timeout_ms,
-                               .should_cancel = should_cancel,
-                               .on_output = {},
-                               .on_started = {},
-                               .on_terminate = {}});
+    return runProcessInternal({
+        .program = program,
+        .args = args,
+        .timeout_ms = timeout_ms,
+        .should_cancel = should_cancel,
+        .on_output = {},
+        .on_started = {},
+    });
 }
 
 ProcessResult runProcessWithEnvironment(const QString& program,
@@ -251,14 +365,15 @@ ProcessResult runProcessWithEnvironment(const QString& program,
                                         int timeout_ms,
                                         const QProcessEnvironment& environment,
                                         const CancelCheck& should_cancel) {
-    return runProcessInternal({.program = program,
-                               .args = args,
-                               .timeout_ms = timeout_ms,
-                               .environment = &environment,
-                               .should_cancel = should_cancel,
-                               .on_output = {},
-                               .on_started = {},
-                               .on_terminate = {}});
+    return runProcessInternal({
+        .program = program,
+        .args = args,
+        .timeout_ms = timeout_ms,
+        .environment = &environment,
+        .should_cancel = should_cancel,
+        .on_output = {},
+        .on_started = {},
+    });
 }
 
 ProcessResult runPowerShell(const QString& script,
@@ -289,7 +404,6 @@ ProcessResult runPowerShell(const QString& script,
     return runProcess(powershell, args, timeout_ms, should_cancel);
 }
 
-#ifdef Q_OS_WIN
 // Reject anything that is not a bare, System32/Windows-relative name (subdirectories with
 // forward slashes -- "WindowsPowerShell/v1.0/powershell.exe" -- are fine). An empty name, a
 // ".." traversal, or an already-absolute/rooted path could escape the resolved system
@@ -298,10 +412,8 @@ static bool isContainedRelativeExe(const QString& relativeExe) {
     return !relativeExe.isEmpty() && !relativeExe.contains(QStringLiteral("..")) &&
            !QDir::isAbsolutePath(relativeExe);
 }
-#endif
 
 QString system32Path(const QString& relativeExe) {
-#ifdef Q_OS_WIN
     if (!isContainedRelativeExe(relativeExe)) {
         return {};  // fail closed: an un-contained name must not be joined under System32
     }
@@ -312,13 +424,9 @@ QString system32Path(const QString& relativeExe) {
     }
     return QDir::cleanPath(QString::fromWCharArray(buffer, static_cast<int>(len)) +
                            QLatin1Char('/') + relativeExe);
-#else
-    return relativeExe;
-#endif
 }
 
 QString resolveBareExecutable(const QString& name) {
-#ifdef Q_OS_WIN
     const QString system32 = system32Path(name);
     if (!system32.isEmpty() && QFileInfo(system32).isFile()) {
         return system32;
@@ -334,7 +442,6 @@ QString resolveBareExecutable(const QString& name) {
             return suffixed;
         }
     }
-#endif
     QStringList search;
     const QStringList entries = qEnvironmentVariable("PATH").split(QDir::listSeparator(),
                                                                    Qt::SkipEmptyParts);
@@ -358,7 +465,6 @@ ExecutableIdentity executableIdentity(const QString& absolute_path) {
     if (absolute_path.isEmpty()) {
         return identity;
     }
-#ifdef Q_OS_WIN
     const std::wstring wide = absolute_path.toStdWString();
     // Metadata only, and share everything: this is a WITNESS, not a lock. FILE_FLAG_
     // BACKUP_SEMANTICS is absent deliberately -- a directory is not a launch target, and
@@ -389,19 +495,6 @@ ExecutableIdentity executableIdentity(const QString& absolute_path) {
                              static_cast<qint64>(info.ftLastWriteTime.dwLowDateTime);
     identity.valid = true;
     return identity;
-#else
-    // Off Windows there is no volume-serial/file-index pair to read, so the identity is
-    // WEAKER by construction: size and modification time only. Stated rather than hidden --
-    // a replacement that preserves both would compare equal here and not on Windows.
-    const QFileInfo info(absolute_path);
-    if (!info.isFile()) {
-        return identity;
-    }
-    identity.size_bytes = info.size();
-    identity.last_write_ms = info.lastModified().toMSecsSinceEpoch();
-    identity.valid = true;
-    return identity;
-#endif
 }
 
 bool sameExecutable(const ExecutableIdentity& lhs, const ExecutableIdentity& rhs) {
@@ -416,7 +509,6 @@ bool sameExecutable(const ExecutableIdentity& lhs, const ExecutableIdentity& rhs
 }
 
 QString windowsDirPath(const QString& relativeExe) {
-#ifdef Q_OS_WIN
     if (!isContainedRelativeExe(relativeExe)) {
         return {};  // fail closed: an un-contained name must not be joined under %WINDIR%
     }
@@ -427,9 +519,6 @@ QString windowsDirPath(const QString& relativeExe) {
     }
     return QDir::cleanPath(QString::fromWCharArray(buffer, static_cast<int>(len)) +
                            QLatin1Char('/') + relativeExe);
-#else
-    return relativeExe;
-#endif
 }
 
 bool startDetachedSystem32Tool(const QString& relativeExe,
@@ -460,25 +549,22 @@ bool startDetachedWindowsTool(const QString& relativeExe, const QStringList& arg
 }
 
 QString systemPowerShellPath() {
-#ifdef Q_OS_WIN
     const QString path = system32Path(QStringLiteral("WindowsPowerShell/v1.0/powershell.exe"));
     // Fail closed on a missing interpreter rather than hand a non-existent path to
     // CreateProcess: the caller must surface "cannot resolve PowerShell", never retry
     // with the bare name.
     return QFile::exists(path) ? path : QString();
-#else
-    return QStringLiteral("powershell.exe");
-#endif
 }
 
 ProcessResult runProcessStreaming(const ProcessStreamingRequest& request) {
-    return runProcessInternal({.program = request.program,
-                               .args = request.args,
-                               .timeout_ms = request.timeout_ms,
-                               .should_cancel = request.should_cancel,
-                               .on_output = request.on_output,
-                               .on_started = request.on_started,
-                               .on_terminate = request.on_terminate});
+    return runProcessInternal({
+        .program = request.program,
+        .args = request.args,
+        .timeout_ms = request.timeout_ms,
+        .should_cancel = request.should_cancel,
+        .on_output = request.on_output,
+        .on_started = request.on_started,
+    });
 }
 
 void setProcessFaultInjectorForTesting(ProcessFaultInjector injector) {

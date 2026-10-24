@@ -69,8 +69,9 @@ others. All clean on real Apple containers (apfsck kernel-free oracle + Apple ke
       list-image + import-image correctly resolve the first volume (wave C target-volume oid)
       and re-emit apfsck-clean.
 
-Confirmed already (not defects): flat multi-chunk import re-emit is apfsck-clean; in-place
-COW on a real MULTI-chunk internal pool correctly fail-closes at F16 (see WS3).
+At the August 10 checkpoint, flat multi-chunk import re-emit was apfsck-clean, while in-place
+COW on a real MULTI-chunk internal pool failed closed at F16. WS3c below subsequently implemented
+and certified the foreign-pool in-place path; that former refusal is not a current limitation.
 
 Residual carried to WS1-followups: reading an APPLE-created snapshot chain (needs a SIP-off
 Mac to harvest one); the physical MacBook rig (10.10.11.38) or a VM SIP-disable is the path.
@@ -119,10 +120,11 @@ kernel continuation. The multi-CIB shrink inverse also passed.
       all files sha-preserved. Sub-chunk sources unchanged; 225/225.
 
 - [x] WS3c FOREIGN MULTI-CHUNK IN-PLACE COW -- CLOSED 2026-08-31 (corruption-critical,
-      dedicated pass). In-place COW file mutation (patch/insert/write/delete) on a real
-      MULTI-chunk Apple internal pool fails closed at nextIpSlot (correctly, per WS3a). The
-      refusal is safe; the feature is the work.
-      WHY IT IS A DEDICATED PASS, not a quick reuse: the resize foreignOverflow machinery is
+      dedicated pass). The LANDED and CERT records below describe the completed path.
+      PRE-FIX INVESTIGATION (historical): in-place COW file mutation (patch/insert/write/delete)
+      on a real MULTI-chunk Apple internal pool failed closed at nextIpSlot, per WS3a.
+      That refusal was safe, but the feature still needed implementation at that checkpoint.
+      WHY IT REQUIRED A DEDICATED PASS, not a quick reuse: the resize foreignOverflow machinery is
       OVERFLOW-specific -- it is entered only when a mutation SPILLS past chunk 0 (the boundary
       chunk allocation at partition_apfs_writer.cpp reanchorForeignOverflowAllocation (line
       10936; the name here was configureOverflowAllocation, which exists nowhere), which sets
@@ -136,9 +138,9 @@ kernel continuation. The multi-CIB shrink inverse also passed.
       slot, build the used-set from the live IP bitmap) for EVERY in-place commit is the real
       work -- comparable in scope + risk to the original wave E2 foreignOverflow effort, and it
       must be certified byte-for-byte against real Apple containers before it can ship (a wrong
-      rotation silently corrupts live Apple metadata). Supported alternatives for real
-      multi-chunk Apple mutation today: import-image (flat root files) and resize.
-      DESIGN SKETCH: (1) in loadFsCommitContext, run the foreign-IP probe (foreignIpGeometryInRange
+      rotation silently corrupts live Apple metadata). Before WS3c landed, the supported
+      alternatives were import-image (flat root files) and resize.
+      PRE-FIX DESIGN SKETCH: (1) in loadFsCommitContext, run the foreign-IP probe (foreignIpGeometryInRange
       / the spaceman ip_base+ip_bm_base read) unconditionally, not just on the overflow path, and
       set a ctx.foreignIp flag + the real ring geometry. (2) generalize computeIpRotation: when
       ctx.foreignIp, compute the next real ring slot from ip_bm_free_head/tail + the live slot

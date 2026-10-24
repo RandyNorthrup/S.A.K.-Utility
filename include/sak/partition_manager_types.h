@@ -245,6 +245,8 @@ struct PartitionDiskInfo {
     bool is_removable{false};
     bool is_read_only{false};
     bool is_dynamic{false};
+    /// Unknown when inventory did not provide a Boolean; never infer source availability.
+    std::optional<bool> is_offline;
     bool is_storage_spaces{false};
     QVector<PartitionInfoEx> partitions;
     QVector<UnallocatedRegion> unallocated_regions;

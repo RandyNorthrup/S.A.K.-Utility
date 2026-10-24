@@ -5,15 +5,15 @@
 .DESCRIPTION
     This non-destructive gate reads the machine-readable certification status and
     scans release-facing documentation for unsupported certification claims. It
-    also verifies required caveat text remains present while the claim level is
-    below hardware certification, and rejects stale blocker text once strict
-    hardware certification is complete.
+    also binds the authoritative current-state block to accepted evidence counts
+    and exact incomplete gate IDs. Historical sections cannot satisfy current
+    caveats, and completed gate groups are not described as still incomplete.
 #>
 
 [CmdletBinding()]
 param(
     [string]$StatusPath = "",
-    [string]$CertificationRoot = "artifacts\partition-manager-certification\readiness",
+    [string]$CertificationRoot = "artifacts\partition-manager-certification\vhd-strict",
     [string]$ExternalEvidenceManifest = "",
     [string[]]$ClaimFiles = @(
         "README.md",
@@ -50,27 +50,15 @@ function Resolve-StatusPath {
         return (Resolve-Path -LiteralPath $StatusPath -ErrorAction Stop).Path
     }
 
-    $effectiveCertificationRoot = $CertificationRoot
-    $effectiveExternalEvidenceManifest = $ExternalEvidenceManifest
-    if ($CertificationRoot -eq "artifacts\partition-manager-certification\readiness" -and
-        [string]::IsNullOrWhiteSpace($ExternalEvidenceManifest)) {
-        $strictRoot = "artifacts\partition-manager-certification\vhd-strict"
-        $strictManifest = "artifacts\partition-manager-certification\vm-lab\external-evidence.imported.json"
-        if ((Test-Path -LiteralPath (Join-Path $ProjectRoot $strictRoot) -PathType Container) -and
-            (Test-Path -LiteralPath (Join-Path $ProjectRoot $strictManifest) -PathType Leaf)) {
-            $effectiveCertificationRoot = $strictRoot
-            $effectiveExternalEvidenceManifest = $strictManifest
-        }
-    }
-
+    # External evidence is an explicit authority choice, never inferred from old files.
     $statusOutputPath = Join-Path $ProjectRoot "artifacts\partition-manager-certification\claim-check-status.json"
     $arguments = @{
-        CertificationRoot = $effectiveCertificationRoot
+        CertificationRoot = $CertificationRoot
         OutputPath = $statusOutputPath
         Quiet = $true
     }
-    if (-not [string]::IsNullOrWhiteSpace($effectiveExternalEvidenceManifest)) {
-        $arguments.ExternalEvidenceManifest = $effectiveExternalEvidenceManifest
+    if (-not [string]::IsNullOrWhiteSpace($ExternalEvidenceManifest)) {
+        $arguments.ExternalEvidenceManifest = $ExternalEvidenceManifest
     }
 
     # Delete any prior status file first so a generator run that exits without writing
@@ -170,70 +158,155 @@ function Assert-NoUnsupportedClaims {
     }
 }
 
+function Get-CurrentCertificationClaimLines {
+    param(
+        [Parameter(Mandatory = $true)][object[]]$ClaimLines
+    )
+    $document = @($ClaimLines | Where-Object {
+        $_.path.Replace('\', '/') -ceq 'docs/PARTITION_MANAGER_CERTIFICATION.md'
+    })
+    $headings = @($document | Where-Object { $_.text.Trim() -ceq '## Current Certification State' })
+    if ($headings.Count -ne 1) {
+        throw 'Expected one Current Certification State heading in docs/PARTITION_MANAGER_CERTIFICATION.md'
+    }
+    $current = [Collections.Generic.List[object]]::new()
+    foreach ($line in $document) {
+        if ($line.line_number -le $headings[0].line_number) { continue }
+        if ($line.text -match '^\s*#{1,6}\s') { break }
+        $current.Add($line)
+    }
+    return $current.ToArray()
+}
+
+function Get-ClaimEvidenceGroup {
+    param([object]$Group, [string[]]$ExpectedIds, [string]$Name)
+    if ($null -eq $Group -or $ExpectedIds.Count -eq 0 -or
+        @($ExpectedIds | Sort-Object -Unique).Count -ne $ExpectedIds.Count) {
+        throw "Invalid certification status or matrix group: $Name"
+    }
+    foreach ($field in @('passed', 'required')) {
+        $property = $Group.PSObject.Properties[$field]
+        if ($null -eq $property -or
+            ($property.Value -isnot [int] -and $property.Value -isnot [long]) -or $property.Value -lt 0) {
+            throw "Certification status $Name $field must be a nonnegative integer"
+        }
+    }
+    if ($Group.required -ne $ExpectedIds.Count -or $Group.passed -gt $Group.required) {
+        throw "Certification status $Name counts do not match the certification matrix"
+    }
+    $incomplete = $Group.PSObject.Properties['incomplete_ids']
+    if ($null -eq $incomplete -or $incomplete.Value -isnot [Array]) {
+        throw "Certification status $Name incomplete_ids must be an array"
+    }
+    $ids = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($id in $incomplete.Value) {
+        if ($id -isnot [string] -or $ExpectedIds -cnotcontains $id -or -not $ids.Add($id)) {
+            throw "Certification status $Name contains an unknown or duplicate incomplete ID"
+        }
+    }
+    if ($Group.passed + $ids.Count -ne $Group.required) {
+        throw "Certification status $Name passed plus incomplete does not equal required"
+    }
+    return [pscustomobject]@{ passed = $Group.passed; required = $Group.required; incomplete_ids = @($ids) }
+}
+
+function Get-CurrentClaimValue {
+    param([object[]]$Lines, [string]$Label)
+    $prefix = $Label + ':'
+    $values = @($Lines | ForEach-Object {
+        $text = ($_.text -replace '\s+', ' ').Trim()
+        if ($text.StartsWith($prefix, [StringComparison]::Ordinal)) {
+            $text.Substring($prefix.Length).Trim().TrimEnd('.').Replace('`', '')
+        }
+    })
+    if ($values.Count -ne 1) { throw "Current certification state requires exactly one '$Label' line" }
+    return $values[0]
+}
+
+function Assert-CurrentClaimValue {
+    param([object[]]$Lines, [string]$Label, [string]$Expected)
+    $actual = Get-CurrentClaimValue $Lines $Label
+    if ($actual -cne $Expected) {
+        throw "Current certification state mismatch for '$Label': expected '$Expected', found '$actual'"
+    }
+}
+
+function Assert-CurrentIncompleteIds {
+    param([object[]]$Lines, [string]$Label, [AllowEmptyCollection()][string[]]$Expected)
+    $value = Get-CurrentClaimValue $Lines $Label
+    $actual = if ($value -ceq 'none') { @() } else { @($value -split ',' | ForEach-Object { $_.Trim() }) }
+    if (@($actual).Count -ne $Expected.Count -or
+        @($actual | Sort-Object -Unique).Count -ne @($actual).Count) {
+        throw "Current certification state incomplete-ID set mismatch for '$Label'"
+    }
+    foreach ($id in $actual) {
+        if ($Expected -cnotcontains $id) { throw "Current certification state incomplete-ID set mismatch for '$Label'" }
+    }
+}
+
 function Assert-RequiredCaveats {
     param(
-        [Parameter(Mandatory = $true)]
-        [object[]]$ClaimLines,
-        [Parameter(Mandatory = $true)]
-        [string]$ClaimLevel
+        [Parameter(Mandatory = $true)][object[]]$ClaimLines,
+        [Parameter(Mandatory = $true)][object]$Status,
+        [Parameter(Mandatory = $true)][object]$Matrix
     )
+    $current = @(Get-CurrentCertificationClaimLines $ClaimLines)
+    $vhd = Get-ClaimEvidenceGroup $Status.vhd_data_disk @($Matrix.vhd_scenarios | ForEach-Object { $_.id }) 'VHD'
+    $external = Get-ClaimEvidenceGroup $Status.external_gates @($Matrix.external_gates | ForEach-Object { $_.id }) 'external'
+    $hasVhdGaps = @($vhd.incomplete_ids).Count -gt 0
+    $hasExternalGaps = @($external.incomplete_ids).Count -gt 0
+    if (($Status.claim_level -ceq 'HardwareCertified' -and ($hasVhdGaps -or $hasExternalGaps)) -or
+        ($Status.claim_level -ceq 'VhdDataDiskCertified' -and ($hasVhdGaps -or -not $hasExternalGaps)) -or
+        ($Status.claim_level -ceq 'CodeCompleteOnly' -and -not $hasVhdGaps)) {
+        throw 'Certification status claim level contradicts its incomplete evidence sets'
+    }
+    Assert-CurrentClaimValue $current 'Current claim level' $Status.claim_level
+    Assert-CurrentClaimValue $current 'Accepted VHD evidence' "$($vhd.passed)/$($vhd.required)"
+    Assert-CurrentClaimValue $current 'Accepted external evidence' "$($external.passed)/$($external.required)"
+    Assert-CurrentIncompleteIds $current 'Incomplete VHD scenarios' @($vhd.incomplete_ids)
+    Assert-CurrentIncompleteIds $current 'Incomplete external gates' @($external.incomplete_ids)
 
-    $allText = (($ClaimLines | ForEach-Object { $_.text }) -join "`n") -replace "\s+", " "
+    $allText = (($current | ForEach-Object { $_.text }) -join "`n") -replace '\s+', ' '
     $required = @()
-    if ($ClaimLevel -eq "HardwareCertified") {
+    if ($Status.claim_level -cne 'HardwareCertified') {
         $required = @(
-            "HardwareCertified",
-            "strict VHD proof has 12/12",
-            "18/18 external VM/hardware/lab gates passed"
+            'destructive certification remains partial',
+            'Do not mark the Partition Manager destructive paths fully certified until those reports exist'
         )
-
-        $forbidden = @(
-            "destructive VM certification remains a release gate",
-            "still require external VM/hardware/lab evidence",
-            "hardware certification remains blocked",
-            "claims still wait on the full external VM/hardware/lab matrix",
-            "remaining 12 external VM/hardware/lab gates",
-            "External VM/hardware/lab gates remain incomplete",
-            "destructive certification remains partial",
-            "VHD or VM/hardware/lab evidence is incomplete",
-            "Do not mark the Partition Manager destructive paths fully certified until those reports exist"
+        if ($hasVhdGaps) { $required += 'VHD evidence is incomplete' }
+        if ($hasExternalGaps) { $required += 'VM/hardware/lab evidence is incomplete' }
+        if ($Status.claim_level -ceq 'FailedEvidence') { $required += 'evidence verification failed' }
+    }
+    $forbidden = @()
+    if (-not $hasVhdGaps) {
+        $forbidden += @('VHD evidence is incomplete', 'VHD or VM/hardware/lab evidence is incomplete')
+    }
+    if (-not $hasExternalGaps) {
+        $forbidden += @('still require external VM/hardware/lab evidence',
+            'External VM/hardware/lab gates remain incomplete',
+            'VM/hardware/lab evidence is incomplete')
+    }
+    if ($Status.claim_level -ceq 'HardwareCertified') {
+        $forbidden += @(
+            'destructive VM certification remains a release gate', 'hardware certification remains blocked',
+            'claims still wait on the full external VM/hardware/lab matrix', 'remaining 12 external VM/hardware/lab gates',
+            'destructive certification remains partial', 'VHD evidence is incomplete',
+            'VM/hardware/lab evidence is incomplete',
+            'Do not mark the Partition Manager destructive paths fully certified until those reports exist'
         )
-        # Match blocker phrases per line, but SKIP the claim-level GLOSSARY definitions
-        # (markdown list items of the form "- `LevelName` - ..."). Those define what the
-        # LOWER levels mean and legitimately describe incomplete evidence; they are not a
-        # stale status blocker sitting beside the HardwareCertified claim. This mirrors the
-        # allowed-context exclusion Assert-NoUnsupportedClaims already applies.
-        $definitionPattern = '^\s*-\s*`[A-Za-z]+`\s*-'
-        foreach ($claim in $ClaimLines) {
-            if ($claim.text -match $definitionPattern) { continue }
-            $normalizedLine = $claim.text -replace "\s+", " "
-            foreach ($phrase in $forbidden) {
-                $normalizedPhrase = $phrase -replace "\s+", " "
-                if ($normalizedLine.Contains($normalizedPhrase)) {
-                    throw ("Stale Partition Manager certification blocker remains in " +
-                        "release-facing docs: $($claim.path):$($claim.line_number): $phrase")
-                }
+    }
+    foreach ($claim in $current) {
+        if ($claim.text -match '^\s*-\s*`[A-Za-z]+`\s*-') { continue }
+        $line = $claim.text -replace '\s+', ' '
+        foreach ($phrase in $forbidden) {
+            if ($line.Contains($phrase)) {
+                throw "Stale Partition Manager certification blocker in current state: $($claim.path):$($claim.line_number): $phrase"
             }
         }
     }
-    else {
-        $required = @(
-            "destructive VM certification remains a release gate",
-            "System MBR-to-GPT, OS migration reboot proof, UEFI/BIOS boot repair, removable USB, SSD/NVMe, SSD secure erase, non-adjacent partition move, primary/logical, volume serial-number, dynamic-to-basic, and physical wipe cases still require external VM/hardware/lab evidence",
-            "destructive certification remains partial",
-            "CodeCompleteOnly"
-        )
-
-        if ($ClaimLevel -eq "CodeCompleteOnly") {
-            $required += "VHD or VM/hardware/lab evidence is incomplete"
-        }
-        $required += "Do not mark the Partition Manager destructive paths fully certified until those reports exist"
-    }
-
     foreach ($phrase in $required) {
-        $normalizedPhrase = $phrase -replace "\s+", " "
-        if (-not $allText.Contains($normalizedPhrase)) {
-            throw "Partition Manager certification caveat missing from release-facing docs: $phrase"
+        if (-not $allText.Contains($phrase)) {
+            throw "Partition Manager certification caveat missing from current state: $phrase"
         }
     }
 }
@@ -245,6 +318,9 @@ try {
     $status = Read-JsonFile -Path $resolvedStatusPath
     if ($status.tool -ne "partition-manager-certification-status") {
         throw "Unexpected Partition Manager certification status tool: $($status.tool)"
+    }
+    if (($status.schema_version -isnot [int] -and $status.schema_version -isnot [long]) -or $status.schema_version -ne 1) {
+        throw 'Unsupported Partition Manager certification status schema_version'
     }
     if ([string]::IsNullOrWhiteSpace($status.claim_level)) {
         throw "Partition Manager certification status missing claim_level"
@@ -259,8 +335,12 @@ try {
     }
 
     $claimLines = @(Get-ClaimLines -ProjectRoot $projectRoot -Files $ClaimFiles)
+    $matrix = Read-JsonFile -Path (Join-Path $projectRoot 'certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json')
+    if (($matrix.schema_version -isnot [int] -and $matrix.schema_version -isnot [long]) -or $matrix.schema_version -ne 1) {
+        throw 'Unsupported Partition Manager certification matrix schema_version'
+    }
     Assert-NoUnsupportedClaims -ClaimLines $claimLines -ClaimLevel $status.claim_level
-    Assert-RequiredCaveats -ClaimLines $claimLines -ClaimLevel $status.claim_level
+    Assert-RequiredCaveats -ClaimLines $claimLines -Status $status -Matrix $matrix
 
     Write-Host "Partition Manager release claims passed for claim level: $($status.claim_level)"
 }

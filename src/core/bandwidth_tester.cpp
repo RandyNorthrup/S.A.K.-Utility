@@ -124,7 +124,6 @@ IperfProcessResult runIperfClientProcess(const QString& program,
                              .timeout_ms = kProcessTimeout,
                              .on_output = {},
                              .on_started = [&](qint64) { started = true; },
-                             .on_terminate = {},
                              .should_cancel = [&cancelled]() { return cancelled.load(); }});
 
     done = true;

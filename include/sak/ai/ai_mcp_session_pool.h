@@ -10,8 +10,13 @@
 #include <QString>
 #include <QVector>
 
+#include <atomic>
+#include <expected>
+#include <functional>
 #include <map>
 #include <memory>
+
+class AiMcpSessionPoolTests;
 
 /// @file ai_mcp_session_pool.h
 /// @brief A thread-safe cache of persistent MCP stdio sessions, keyed so that a
@@ -24,7 +29,7 @@ namespace sak::ai {
 
 class AiMcpSessionPool {
 public:
-    AiMcpSessionPool() = default;
+    AiMcpSessionPool();
     ~AiMcpSessionPool();
 
     AiMcpSessionPool(const AiMcpSessionPool&) = delete;
@@ -33,21 +38,25 @@ public:
     /// Runs one tool call on the pooled session for (request.command, request environment,
     /// effective timeout), opening the session on first use and reusing it afterwards. Returns a
     /// transport wrapper shaped as {"result": ...}; JSON-RPC correlation members are consumed by
-    /// the persistent session and are not re-synthesized. On error returns {} and sets
-    /// @p error_message. A transport/session error drops that session so the next call reopens it;
-    /// pre-session validation and capacity refusals leave existing sessions intact.
-    [[nodiscard]] QJsonObject callTool(const AiMcpStdioCallRequest& request,
-                                       QString& error_message);
+    /// the persistent session and are not re-synthesized. On error returns a non-empty diagnostic.
+    /// A transport/session error drops the session only after checked cleanup. If cleanup fails,
+    /// ownership is retained and subsequent pool admissions are refused until closeAll succeeds.
+    /// Pre-session validation and capacity refusals leave existing sessions intact.
+    [[nodiscard]] std::expected<QJsonObject, QString> callTool(
+        const AiMcpStdioCallRequest& request);
 
     /// Discovers the tools advertised by the server for (request.command, request environment,
     /// effective timeout) via tools/list, reusing the pooled session. request.tool_name and
     /// request.arguments are ignored.
-    [[nodiscard]] QVector<AiMcpToolDescriptor> listTools(const AiMcpStdioCallRequest& request,
-                                                         QString& error_message);
+    /// On failure returns a non-empty diagnostic; an empty advertised catalog is a successful
+    /// value, not a failure sentinel.
+    [[nodiscard]] std::expected<QVector<AiMcpToolDescriptor>, QString> listTools(
+        const AiMcpStdioCallRequest& request);
 
-    /// Closes every pooled session (joins their worker threads). Idempotent; also
-    /// run by the destructor.
-    void closeAll();
+    /// Closes every pooled session with one shared cleanup deadline. Failed entries remain
+    /// owned and prevent further admissions until a successful closeAll retry. Idempotent.
+    /// Destruction fails closed if cleanup cannot be established.
+    [[nodiscard]] std::expected<void, QString> closeAll();
 
     /// Number of pooled session SLOTS currently held -- including a slot whose session already
     /// failed or was closed and is waiting to be reopened or reclaimed. This is deliberately NOT
@@ -61,6 +70,8 @@ public:
     [[nodiscard]] static QString sessionKeyForTesting(const AiMcpStdioCallRequest& request);
 
 private:
+    friend class ::AiMcpSessionPoolTests;
+
     struct Entry {
         std::unique_ptr<AiMcpStdioSession> session;
         QMutex mutex;  // serializes calls to this one session (it is one-at-a-time)
@@ -73,18 +84,23 @@ private:
     // Returns a shared handle so an in-flight caller keeps its Entry (and its
     // mutex) alive even if closeAll() clears the map concurrently -- the caller
     // then locks a live mutex and simply sees a null (or detached) session,
-    // instead of touching freed memory. Returns nullptr when the pool already
-    // holds its maximum number of distinct sessions (fail closed).
-    [[nodiscard]] std::shared_ptr<Entry> entryFor(const AiMcpStdioCallRequest& request);
+    // instead of touching freed memory. Returns a diagnostic when the pool already holds its
+    // maximum number of distinct sessions (fail closed).
+    [[nodiscard]] std::expected<std::shared_ptr<Entry>, QString> entryFor(
+        const AiMcpStdioCallRequest& request);
 
     // Opens entry.session for `request` if not already open. Call with entry.mutex
-    // held. Returns false (and sets *error) on open failure, dropping the session.
-    [[nodiscard]] static bool ensureSessionOpen(Entry& entry,
-                                                const AiMcpStdioCallRequest& request,
-                                                QString& error);
+    // held. Returns the open diagnostic; drops only proved-clean owners, retaining failed cleanup.
+    [[nodiscard]] std::expected<void, QString> ensureSessionOpen(
+        Entry& entry, const AiMcpStdioCallRequest& request);
+    void releaseIfClosed(Entry& entry);
+    [[nodiscard]] QString closeAfterFailure(Entry& entry, const QString& primary_error);
+    [[nodiscard]] std::expected<void, QString> closeAllWithDeadline(const QDeadlineTimer& deadline);
 
     mutable QMutex m_mutex;  // guards m_sessions (the map), not the sessions
     std::map<QString, std::shared_ptr<Entry>> m_sessions;
+    std::atomic_bool m_cleanup_blocked{false};
+    std::function<std::unique_ptr<AiMcpStdioSession>()> m_session_factory;
 };
 
 }  // namespace sak::ai

@@ -114,6 +114,8 @@ private Q_SLOTS:
     void onPollComplete();
 
 private:
+    friend class ::ThermalMonitorTests;
+
     /// @brief Build the combined PowerShell script that queries all sensors
     /// @return PowerShell script string
     [[nodiscard]] static QString buildCombinedThermalScript();

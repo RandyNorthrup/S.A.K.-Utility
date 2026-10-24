@@ -45,13 +45,19 @@
 #include <QWidget>
 
 #include <algorithm>
-#include <cstdlib>
+#include <array>
+#include <cerrno>
+#include <cstdio>
+#include <cstring>
 #include <exception>
 #include <filesystem>
 #include <iostream>
 #include <memory>
 #include <print>
+#include <stdexcept>
 #include <thread>
+
+#include <windows.h>
 
 namespace {
 
@@ -65,6 +71,17 @@ struct RuntimeOptions {
     bool startup_smoke_test{false};
     bool no_splash{false};
 };
+
+void writeStartupSmokePhase(bool startup_smoke_test, const char* phase) {
+    if (!startup_smoke_test) {
+        return;
+    }
+    const auto tick = static_cast<unsigned long long>(::GetTickCount64());
+    if (std::fprintf(stderr, "SAK_STARTUP_PHASE tick_ms=%llu phase=%s\n", tick, phase) < 0 ||
+        std::fflush(stderr) != 0) {
+        throw std::runtime_error("Startup smoke phase output failed");
+    }
+}
 
 QString findSplashPath() {
     const QString app_dir = QCoreApplication::applicationDirPath();
@@ -89,9 +106,9 @@ QString findIconPath() {
     return it != candidates.end() ? *it : QString{};
 }
 
-bool hasRawArgument(int argc, char* argv[], const char* name) {
+bool hasRawArgument(int argc, const char* const argv[], const char* name) noexcept {
     for (int i = 1; i < argc; ++i) {
-        if (QString::fromLocal8Bit(argv[i]) == QString::fromLatin1(name)) {
+        if (std::strcmp(argv[i], name) == 0) {
             return true;
         }
     }
@@ -278,20 +295,8 @@ int runAccessibilityAudit(sak::MainWindow& main_window) {
     return 0;
 }
 
-/// @brief Populate the font database off the GUI thread.
-///
-/// The first widget polish otherwise pays the full enumeration on the GUI
-/// thread - over a second with thousands of installed font families, and tens
-/// of seconds when a freshly built binary's font-file reads are additionally
-/// being scanned by real-time antivirus. QFontDatabase is thread-safe; if the
-/// GUI thread needs fonts before the warmup finishes it simply blocks on the
-/// shared mutex for the remaining time instead of the full cost.
-// The warmup thread is owned, never detached: it calls into the Qt font
-// database, and a detached copy still running during QApplication teardown would
-// touch those internals as they are destroyed (observed as a heap-corruption
-// crash at process exit). joinFontDatabaseWarmup() is registered with
-// qAddPostRoutine so it is joined at the very start of ~QCoreApplication, before
-// any font-database teardown, and normally the thread has long since finished.
+// Keep the owned warmup and synthetic alias match until a native comparison
+// verifies a replacement across the complete startup and teardown path.
 std::thread g_font_warmup_thread;
 
 void joinFontDatabaseWarmup() {
@@ -303,44 +308,12 @@ void joinFontDatabaseWarmup() {
 void startFontDatabaseWarmup() {
     g_font_warmup_thread = std::thread([]() {
         QFontDatabase::families();
-        // Force a full font MATCH for a family that is not installed: the
-        // first such miss builds the alias table by walking every installed
-        // family (a second multi-second pass with large font collections),
-        // and style-sheet font stacks trigger exactly that miss. Fonts are
-        // thread-safe in Qt 6, so pay it here instead of on the GUI thread.
         QFontMetrics(QFont(QStringLiteral("sak-alias-warmup-probe"))).height();
     });
 }
 
-#if defined(_WIN32)
-/// @brief Force Qt onto the GDI font database instead of the DirectWrite backend.
-///
-/// Qt 6 defaults to the DirectWrite font database on Windows. Its enumeration
-/// re-reads every installed font file on each launch unless the DirectWrite font
-/// cache service (FontCache3.0.0.0) is running; where that service is stopped,
-/// real-time antivirus scans each of those thousands of reads and the first font
-/// query blocks the GUI thread for tens of seconds (measured 31 s here with 2491
-/// families and the service stopped). The GDI font database instead uses the
-/// always-on FontCache service, populates the identical family set in about a
-/// second, and does not depend on any per-machine service state. Must run before
-/// QApplication is constructed so the platform plugin reads it during init.
-void forceGdiFontDatabase() {
-    // Escape hatch: a machine whose DirectWrite font cache service is healthy can
-    // set SAK_USE_DIRECTWRITE=1 to keep Qt's default DirectWrite backend and its
-    // rendering. Left off, the GDI database is forced (the safe default above).
-    if (qEnvironmentVariableIntValue("SAK_USE_DIRECTWRITE") == 1) {
-        return;
-    }
-    qputenv("QT_NO_DIRECTWRITE", "1");
-}
-#endif
-
-/// @brief Initialize the Qt application and apply theming.
-QApplication& initializeApp(int argc, char* argv[], const RuntimeOptions& options) {
-#if defined(_WIN32)
-    forceGdiFontDatabase();
-#endif
-    static QApplication app(argc, argv);
+/// @brief Configure the caller-owned Qt application and apply theming.
+void initializeApp(QApplication& app, const RuntimeOptions& options) {
     startFontDatabaseWarmup();
     qAddPostRoutine(joinFontDatabaseWarmup);
     app.setApplicationName(sak::get_product_name());
@@ -350,6 +323,7 @@ QApplication& initializeApp(int argc, char* argv[], const RuntimeOptions& option
     app.setProperty("sakAccessibilityAudit", options.accessibility_audit);
     app.setProperty("sakAccessibilityAuditOutput", options.accessibility_audit_output);
     app.setProperty("sakStartupSmokeTest", options.startup_smoke_test);
+    app.setProperty("sakStartupSmokeHeadless", options.startup_smoke_test && ciStartupSmokeMode());
 
     const QString icon_path = findIconPath();
     if (!icon_path.isEmpty()) {
@@ -360,8 +334,6 @@ QApplication& initializeApp(int argc, char* argv[], const RuntimeOptions& option
     if (!options.accessibility_audit) {
         sak::ui::installThemePolishHelper(app);
     }
-
-    return app;
 }
 
 /// @brief Initialize the logger subsystem.
@@ -400,13 +372,7 @@ void logStartupBanner() {
     sak::logInfo("SAK Utility Starting");
     sak::logInfo("Version: {}", sak::get_version());
     sak::logInfo("C++ Standard: C++{}", __cplusplus);
-#ifdef SAK_PLATFORM_WINDOWS
     sak::logInfo("Platform: Windows");
-#elif defined(SAK_PLATFORM_MACOS)
-    sak::logInfo("Platform: macOS");
-#elif defined(SAK_PLATFORM_LINUX)
-    sak::logInfo("Platform: Linux");
-#endif
     sak::logInfo("Qt Version: {}", QT_VERSION_STR);
     sak::logInfo("===========================================");
 }
@@ -461,18 +427,19 @@ bool shouldShowSplash(const RuntimeOptions& options) {
     return !options.no_splash && !options.startup_smoke_test && !options.accessibility_audit;
 }
 
-int runMainEventLoop(QApplication& app, bool startup_smoke_test, bool headless_smoke_test) {
-    const int result = app.exec();
+int runMainEventLoop(QApplication& app, bool startup_smoke_test) {
+    int result = app.exec();
+
+    if (startup_smoke_test && result == 0 && !app.property("sakStartupAllPanelsBuilt").toBool()) {
+        sak::logError("Startup smoke exited before all tool panels were constructed");
+        result = 1;
+    }
 
     sak::logInfo("Application shutting down with exit code: {}", result);
     sak::logger::instance().flush();
 
     if (startup_smoke_test && result == 0) {
         std::println("SAK_STARTUP_SMOKE_OK");
-        if (headless_smoke_test) {
-            (void)std::fflush(stdout);
-            std::_Exit(0);
-        }
     }
 
     return result;
@@ -494,11 +461,6 @@ int runAccessibilityAuditHeadless(QApplication& app, sak::MainWindow& main_windo
     app.setQuitOnLastWindowClosed(previous_quit_on_last_window_closed);
     sak::logInfo("Accessibility audit shutting down with exit code: {}", result);
     sak::logger::instance().flush();
-    if (result == 0) {
-        // Audit status is already written; avoid Qt/shared-folder teardown crashes in automation.
-        (void)std::fflush(stdout);
-        std::_Exit(0);
-    }
     return result;
 }
 
@@ -515,6 +477,9 @@ int showMainWindow(QApplication& app,
     }
 
     sak::logInfo("Creating main window...");
+    if (startup_smoke_test) {
+        sak::logger::instance().flush();
+    }
     if (accessibility_audit) {
         writeAccessibilityAuditStatus(QStringLiteral("constructing-main-window"));
     }
@@ -522,10 +487,13 @@ int showMainWindow(QApplication& app,
     window_timer.start();
     sak::MainWindow main_window;
     sak::logInfo("Main window constructed in {} ms", window_timer.restart());
+    if (startup_smoke_test) {
+        sak::logger::instance().flush();
+    }
     if (accessibility_audit) {
         writeAccessibilityAuditStatus(QStringLiteral("main-window-constructed"));
     }
-    const bool headless_smoke_test = startup_smoke_test && ciStartupSmokeMode();
+    const bool headless_smoke_test = app.property("sakStartupSmokeHeadless").toBool();
     prepareMainWindowForStartup(main_window, headless_smoke_test);
     sak::logInfo("Main window show took {} ms", window_timer.elapsed());
 
@@ -549,17 +517,23 @@ int showMainWindow(QApplication& app,
     }
 
     logMainWindowReady(headless_smoke_test);
-    return runMainEventLoop(app, startup_smoke_test, headless_smoke_test);
+    return runMainEventLoop(app, startup_smoke_test);
 }
 
 int runApplication(int argc, char* argv[]) {
     const RuntimeOptions options = runtimeOptionsFromArgs(argc, argv);
+    writeStartupSmokePhase(options.startup_smoke_test, "before-qt-app");
     if (options.accessibility_audit) {
         writeAccessibilityAuditStatusTo(options.accessibility_audit_output,
                                         QStringLiteral("parsed-arguments"));
     }
 
-    QApplication& app = initializeApp(argc, argv, options);
+    // Qt retains argc by reference. This scope owns both the argument count and
+    // the application, so argc remains alive until application teardown finishes.
+    QApplication app(argc, argv);
+    writeStartupSmokePhase(options.startup_smoke_test, "qt-app-ready");
+    initializeApp(app, options);
+    writeStartupSmokePhase(options.startup_smoke_test, "app-initialized");
     if (options.accessibility_audit) {
         writeAccessibilityAuditStatus(QStringLiteral("app-initialized"));
     }
@@ -585,8 +559,102 @@ int runApplication(int argc, char* argv[]) {
     } else {
         logStartupBanner();
     }
+    if (options.startup_smoke_test) {
+        sak::logger::instance().flush();
+    }
     return showMainWindow(
         app, options.startup_smoke_test, shouldShowSplash(options), options.accessibility_audit);
+}
+
+struct FatalErrorOutput {
+    decltype(&std::fprintf) write{&std::fprintf};
+    decltype(&std::fflush) flush{&std::fflush};
+    decltype(&::MessageBoxW) dialog{&::MessageBoxW};
+    decltype(&::GetLastError) last_error{&::GetLastError};
+};
+
+void writeFatalStderr(const char* text, const FatalErrorOutput& output) noexcept {
+    const int written = output.write(stderr, "%s\n", text);
+    const int write_error = errno;
+    const int flushed = output.flush(stderr);
+    const int flush_error = errno;
+    if (written < 0 || flushed != 0) {
+        sak::logCritical("Fatal stderr output failed (write errno {}, flush errno {})",
+                         written < 0 ? write_error : 0,
+                         flushed != 0 ? flush_error : 0);
+    }
+}
+
+void reportFatalErrorTo(const char* detail,
+                        bool interactive,
+                        const FatalErrorOutput& output) noexcept {
+    // QApplication has already unwound. Only C/Win32 output and the Qt-independent
+    // noexcept logger are valid here. Critical logging checks its own write/flush;
+    // the logger's separate void flush() cannot establish successful persistence.
+    writeFatalStderr("Fatal error:", output);
+    writeFatalStderr(detail, output);
+    // Publish primary diagnostics before the logger's first-use construction.
+    // If stderr, logger initialization, or native UI cannot operate, reporting
+    // cannot promise a visible/durable artifact; the caller still fails closed.
+    sak::logCritical("Fatal error");
+    sak::logCritical(detail);
+    if (!interactive) {
+        return;
+    }
+    constexpr wchar_t kTitle[] = L"S.A.K. Utility -- Fatal Error";
+    constexpr wchar_t kNotice[] =
+        L"S.A.K. Utility encountered a fatal error and cannot continue.\r\n\r\n"
+        L"Include any available application log or terminal output when reporting this issue.";
+    if (output.dialog(nullptr, kNotice, kTitle, MB_OK | MB_ICONERROR | MB_TASKMODAL) != 0) {
+        return;
+    }
+    const DWORD native_error = output.last_error();
+    sak::logCritical("Native fatal error notice failed (Windows error {})", native_error);
+    constexpr std::size_t kDiagnosticBytes = 96;
+    std::array<char, kDiagnosticBytes> diagnostic{};
+    const int length = std::snprintf(diagnostic.data(),
+                                     diagnostic.size(),
+                                     "Native fatal error notice failed (Windows error %lu)",
+                                     static_cast<unsigned long>(native_error));
+    if (length < 0 || static_cast<std::size_t>(length) >= diagnostic.size()) {
+        writeFatalStderr("Native fatal notice failed; its error-code formatting also failed",
+                         output);
+        return;
+    }
+    writeFatalStderr(diagnostic.data(), output);
+}
+
+void reportFatalError(const char* detail, bool interactive) noexcept {
+    reportFatalErrorTo(detail, interactive, FatalErrorOutput{});
+}
+
+using ApplicationRunner = int (*)(int, char*[]);
+using FatalReporter = void (*)(const char*, bool) noexcept;
+
+int runApplicationGuarded(int argc,
+                          char* argv[],
+                          ApplicationRunner runner = runApplication,
+                          FatalReporter reporter = reportFatalError) noexcept {
+    // Preserve noninteractive diagnostic modes even after Qt rewrites argv or
+    // its application has been destroyed. This ASCII scan performs no allocation.
+    const bool interactive = !hasRawArgument(argc, argv, "--smoke-test") &&
+                             !hasRawArgument(argc, argv, "--startup-smoke-test") &&
+                             !hasRawArgument(argc, argv, "--accessibility-audit");
+    try {
+        return runner(argc, argv);
+    } catch (const std::exception& error) {
+        reporter(error.what(), interactive);
+        return 1;
+    } catch (...) {
+        // Non-standard exceptions still need a Qt-free diagnostic after teardown.
+        // Debug retains termination for debugger visibility; Release refuses startup.
+        reporter("Unknown unhandled exception", interactive);
+#ifndef NDEBUG
+        std::terminate();
+#else
+        return 1;
+#endif
+    }
 }
 
 }  // namespace
@@ -606,26 +674,5 @@ int main(int argc, char* argv[]) {
     }
 #endif
 
-    try {
-        return runApplication(argc, argv);
-
-    } catch (const std::exception& e) {
-        sak::logError("Fatal error: {}", e.what());
-        std::println(std::cerr, "Fatal error: {}", e.what());
-        sak::showCriticalLogged(nullptr,
-                                "Fatal Error",
-                                QString("Unhandled exception: %1").arg(e.what()));
-        return 1;
-    } catch (...) {  // Final safety net: terminate in debug, exit in release
-        sak::logError("Unknown fatal error");
-        std::println(std::cerr, "Unknown fatal error");
-        sak::showCriticalLogged(nullptr, "Fatal Error", "Unknown unhandled exception");
-#ifndef NDEBUG
-        // An exception escaping main has no handler and terminates the process. Make that debug
-        // outcome explicit instead of throwing across the entry-point boundary.
-        std::terminate();
-#else
-        return 1;
-#endif
-    }
+    return runApplicationGuarded(argc, argv);
 }

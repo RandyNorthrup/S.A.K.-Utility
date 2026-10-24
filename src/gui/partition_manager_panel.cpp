@@ -12043,35 +12043,92 @@ void PartitionManagerPanel::onCopyPartitionWizard() {
         PartitionOperationType::ClonePartition, *selected, expected_layout_hash, payload);
 }
 
+namespace {
+
+bool isImageSourceTarget(PartitionTargetKind kind) {
+    return kind == PartitionTargetKind::Disk || kind == PartitionTargetKind::Partition;
+}
+
+QString createImageSourcePath(const PartitionTarget& selected,
+                              const PartitionDiskInfo& disk,
+                              bool offline_source) {
+    if (selected.kind == PartitionTargetKind::Disk || offline_source) {
+        return QStringLiteral("\\\\.\\PhysicalDrive%1").arg(selected.disk_number.value());
+    }
+    const auto* partition = PartitionSafetyValidator::findPartition(disk,
+                                                                    selected.partition_number);
+    if (partition == nullptr) {
+        return {};
+    }
+    const auto target = partitionTargetFromPartition(*partition);
+    if (!target.drive_letter.isEmpty()) {
+        return QStringLiteral("\\\\.\\%1:").arg(target.drive_letter.left(1).toUpper());
+    }
+    QString volume_path = target.volume_guid;
+    if (volume_path.endsWith(QLatin1Char('\\')) || volume_path.endsWith(QLatin1Char('/'))) {
+        volume_path.chop(1);
+    }
+    return canonicalRawDevicePath(volume_path);
+}
+
+QJsonObject createImageQueuePayload(const PartitionTarget& selected,
+                                    bool offline_source,
+                                    const QString& source_path,
+                                    const QString& image_path) {
+    const uint64_t source_offset = offline_source && selected.kind == PartitionTargetKind::Partition
+                                       ? selected.offset_bytes
+                                       : 0;
+    return {{QStringLiteral("source_path"), source_path},
+            {QStringLiteral("target_path"), image_path},
+            {QStringLiteral("source_size_bytes"), QString::number(selected.size_bytes)},
+            {QStringLiteral("verify_mode"), QStringLiteral("Full")},
+            {QStringLiteral("source_capture_mode"),
+             offline_source ? QStringLiteral("OfflineDisk") : QStringLiteral("LockedVolumes")},
+            {QStringLiteral("source_offset_bytes"), QString::number(source_offset)}};
+}
+
+}  // namespace
+
 void PartitionManagerPanel::onCreateImage() {
     const auto selected = selectedTarget();
-    if (!selected || (selected->kind != PartitionTargetKind::Disk &&
-                      selected->kind != PartitionTargetKind::Partition)) {
+    if (!selected || !isImageSourceTarget(selected->kind)) {
         Q_EMIT statusMessage(tr("Select a source disk or partition first"),
                              sak::kTimerStatusDefaultMs);
         return;
     }
+    const auto* source_disk = selectedDisk();
+    if (source_disk == nullptr || !source_disk->is_offline.has_value()) {
+        const QString reason = tr(
+            "Source disk online/offline state is unknown. Refresh inventory before creating "
+            "an image.");
+        sak::logWarning("Partition Manager: {}", reason.toStdString());
+        Q_EMIT statusMessage(reason, sak::kTimerStatusDefaultMs);
+        return;
+    }
+    const bool offline_source = *source_disk->is_offline;
+    if (offline_source && (source_disk->is_boot || source_disk->is_system)) {
+        const QString reason = tr("Offline capture cannot target the current OS disk.");
+        sak::logWarning("Partition Manager: {}", reason.toStdString());
+        Q_EMIT statusMessage(reason, sak::kTimerStatusDefaultMs);
+        return;
+    }
     const QString expected_layout_hash = m_controller->inventory().layout_hash;
 
-    QString source_path;
-    if (selected->kind == PartitionTargetKind::Disk) {
-        source_path = QStringLiteral("\\\\.\\PhysicalDrive%1").arg(selected->disk_number.value());
-    } else if (!selected->drive_letter.isEmpty()) {
-        source_path = QStringLiteral("\\\\.\\%1:").arg(selected->drive_letter.left(1).toUpper());
-    } else {
-        showWarningLogged(this,
-                          tr("Create Image"),
-                          tr("Partition images require a mounted volume in v1."));
+    const QString source_path = createImageSourcePath(*selected, *source_disk, offline_source);
+    if (source_path.isEmpty()) {
+        const QString reason = tr(
+            "Partition imaging requires a stable volume identity or an already-offline "
+            "source disk.");
+        sak::logWarning("Partition Manager: {}", reason.toStdString());
+        Q_EMIT statusMessage(reason, sak::kTimerStatusDefaultMs);
         return;
     }
 
     const QString path = QFileDialog::getSaveFileName(
         this, tr("Create Image"), QString(), tr("Disk images (*.img);;All files (*)"));
     if (!path.isEmpty()) {
-        QJsonObject payload;
-        payload[QStringLiteral("source_path")] = source_path;
-        payload[QStringLiteral("target_path")] = path;
-        payload[QStringLiteral("source_size_bytes")] = QString::number(selected->size_bytes);
+        const QJsonObject payload =
+            createImageQueuePayload(*selected, offline_source, source_path, path);
         queueOperation(
             PartitionOperationType::CreateImage, *selected, expected_layout_hash, payload);
     }

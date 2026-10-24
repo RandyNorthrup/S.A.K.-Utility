@@ -67,6 +67,7 @@
 #include <QUrl>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <memory>
 #include <tuple>
@@ -5945,6 +5946,44 @@ private Q_SLOTS:
         auto* empty = child<QLabel>(flyout, "fileExplorerStatusEmptyLabel");
         QVERIFY(empty);
         QTRY_VERIFY(empty->isVisible());
+    }
+
+    void statusCenterTerminalProgressHeadersDropLivePercentage() {
+        struct TerminalCase {
+            sak::FileExplorerReturnResult result;
+            sak::FileExplorerStatusItemKind kind;
+            QString header;
+        };
+        const std::array cases{
+            TerminalCase{sak::FileExplorerReturnResult::Success,
+                         sak::FileExplorerStatusItemKind::Successful,
+                         QStringLiteral("Deleted 1 item from \"example\"")},
+            TerminalCase{sak::FileExplorerReturnResult::Failed,
+                         sak::FileExplorerStatusItemKind::Error,
+                         QStringLiteral("Error deleting 1 item from \"example\"")},
+            TerminalCase{sak::FileExplorerReturnResult::Cancelled,
+                         sak::FileExplorerStatusItemKind::Canceled,
+                         QStringLiteral("Canceled deleting 1 item from \"example\"")},
+        };
+        for (const auto& terminal : cases) {
+            sak::FileExplorerStatusCardRequest request;
+            request.operation = sak::FileExplorerOperationType::Delete;
+            request.source = {QStringLiteral("C:/fixtures/example/doomed.txt")};
+            request.items_count = 1;
+            request.can_provide_progress = true;
+            sak::FileExplorerStatusCenterItem item(request);
+            sak::FileExplorerStatusProgress progress;
+            progress.status = terminal.result;
+            progress.enumeration_completed = true;
+            progress.total_size = 9;
+            progress.processed_size = 9;
+            progress.items_count = 1;
+            progress.processed_items_count = 1;
+            item.reportProgress(progress);
+            QCOMPARE(item.kind(), terminal.kind);
+            QCOMPARE(item.progressPercentage(), 100);
+            QCOMPARE(item.header(), terminal.header);
+        }
     }
 
     void permanentDeleteRunsOnWorkerWithDeleteCard() {

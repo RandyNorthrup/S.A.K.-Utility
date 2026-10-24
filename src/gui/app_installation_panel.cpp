@@ -132,6 +132,10 @@ void AppInstallationPanel::setupUi() {
                                     sak::ui::kMarginMedium,
                                     sak::ui::kMarginMedium,
                                     sak::ui::kMarginMedium);
+    // A scroll area needs its content layout before setWidget(). Attach the
+    // empty shell before filling it so startup avoids polishing a full tree.
+    scroll_area->setWidget(content_widget);
+    root_layout->addWidget(scroll_area);
 
     // Elevation info banner (hidden when already admin)
     if (auto* banner = sak::createElevationBanner(content_widget)) {
@@ -139,11 +143,13 @@ void AppInstallationPanel::setupUi() {
     }
 
     // === Tab Widget: Online Install | Offline Deploy ===
-    m_tabWidget = new QTabWidget(this);
+    m_tabWidget = new QTabWidget(content_widget);
     m_tabWidget->setAccessibleName(tr("Application installation mode tabs"));
+    main_layout->addWidget(m_tabWidget, 1);
 
     // --- Tab 0: Online Install ---
-    auto* online_tab = new QWidget(this);
+    auto* online_tab = new QWidget(m_tabWidget);
+    m_tabWidget->addTab(online_tab, tr("Online Install"));
     auto* online_layout = new QVBoxLayout(online_tab);
     online_layout->setContentsMargins(
         sak::ui::kMarginNone, sak::ui::kMarginSmall, sak::ui::kMarginNone, sak::ui::kMarginNone);
@@ -157,16 +163,9 @@ void AppInstallationPanel::setupUi() {
     setupUi_queueSection(side_by_side);
     online_layout->addLayout(side_by_side, 1);
 
-    m_tabWidget->addTab(online_tab, tr("Online Install"));
-
     setupUi_offlineTab(m_tabWidget);
 
-    main_layout->addWidget(m_tabWidget, 1);
-
     setupUi_bottomBar(main_layout);
-
-    scroll_area->setWidget(content_widget);
-    root_layout->addWidget(scroll_area);
 }
 
 void AppInstallationPanel::setupUi_searchBar(QVBoxLayout* main_layout) {
@@ -666,7 +665,8 @@ void AppInstallationPanel::setupOfflineActionsGroup(QVBoxLayout* offline_layout)
 }
 
 void AppInstallationPanel::setupUi_offlineTab(QTabWidget* tabs) {
-    auto* offline_tab = new QWidget(this);
+    auto* offline_tab = new QWidget(tabs);
+    tabs->addTab(offline_tab, tr("Offline Deploy"));
     auto* offline_layout = new QVBoxLayout(offline_tab);
     offline_layout->setContentsMargins(
         sak::ui::kMarginNone, sak::ui::kMarginSmall, sak::ui::kMarginNone, sak::ui::kMarginNone);
@@ -680,8 +680,6 @@ void AppInstallationPanel::setupUi_offlineTab(QTabWidget* tabs) {
     setupOfflineDeployListGroup(side_by_side);
     offline_layout->addLayout(side_by_side, 1);
     setupOfflineActionsGroup(offline_layout);
-
-    tabs->addTab(offline_tab, tr("Offline Deploy"));
 }
 
 // ============================================================================

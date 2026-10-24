@@ -41,8 +41,6 @@ class ActiveDocReferenceTests(unittest.TestCase):
                 powershell,
                 "-NoProfile",
                 "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
                 "-File",
                 str(SCRIPT),
                 "-ProjectRoot",

@@ -42,6 +42,8 @@ install_manifest.txt
 *.cmake
 # Build script invoked by a POST_BUILD -P command; must be tracked despite *.cmake
 !cmake/copy_tools_bundle.cmake
+# Source-bound certification stamp implementation is first-party build code.
+!cmake/SakSourceFingerprint.cmake
 
 # ============================================================================
 # Visual Studio / MSBuild

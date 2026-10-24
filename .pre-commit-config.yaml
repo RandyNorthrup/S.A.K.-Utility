@@ -582,13 +582,19 @@ repos:
         language: system
         pass_filenames: false
 
+      # Manual (release tier, owner 2026-10-24): it binds the stored VM report to the local
+      # certifier binary and source manifest, so it cannot pass on any commit after a bound
+      # source changes until a VM recertification. Run it on release bytes:
+      #       pre-commit run --hook-stage manual partition-cert-verification
       - id: partition-cert-verification
         name: "Partition Manager certification verification"
         description: "The stored strict-VHD certification report matches the matrix"
         entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
           -File scripts/verify_partition_manager_certification.ps1
+          -CertificationRoot artifacts/partition-manager-certification/vhd-strict
         language: system
         pass_filenames: false
+        stages: [manual]
 
       # -------------------------------------------------------------------
       # 9. Third-party licenses (previously CI-only)

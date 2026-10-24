@@ -37,8 +37,54 @@ unless the generated claim level is `HardwareCertified`.
 
 ## Current Certification State
 
-Current default non-mutating readiness status as of 2026-06-02 UTC / 2026-06-02
-PDT is `CodeCompleteOnly`. The latest default release-readiness proof passed on
+Current claim level: `CodeCompleteOnly`.
+On this evidence, destructive certification remains partial because VHD evidence is incomplete
+and VM/hardware/lab evidence is incomplete.
+The 2026-09-25 W68 VM run below passed all twelve VHD scenarios, but the
+controller-driven image-restore row is bound to the exact W68 source manifest and was
+refused for the current tree ("Source changed: CMakeLists.txt"). It needs a new controller
+build and VM recertification on the release bytes; no image-restore failure was observed.
+Accepted VHD evidence: 11/12.
+Accepted external evidence: 0/18.
+Incomplete VHD scenarios: vhd.image-restore.
+Incomplete external gates: external.system-mbr2gpt, external.os-migration-reboot, external.boot-repair-uefi, external.boot-repair-bios, external.usb-removable, external.file-level-data-recovery, external.ssd-retrim, external.hdd-defrag-execution, external.ssd-secure-erase, external.bitlocker, external.bitlocker-mutation, external.allocate-free-space, external.partition-move, external.cluster-size-change, external.primary-logical-conversion, external.volume-serial-number, external.dynamic-to-basic, external.hardware-wipe.
+
+On 2026-09-25 the elevated Windows 11 VM strict workflow passed all twelve
+disposable-VHD scenarios, including application-controller CreateImage and
+RestoreImage, and its strict verification, gap report and artifact bundle
+passed. The VM and host independently verified the same W68 controller binary
+and 403-file source manifest. The host copy of the report is
+`artifacts/partition-manager-certification/vhd-strict/run-20260925-121253/partition-manager-certification-report.json`.
+The controller-driven image-restore row binds the binary/source, finished
+worker descendants and independently verified restored data. The other eleven
+VHD rows are OS/storage assays, not proof of every application controller end
+to end. This result does not certify native online partition/DASD capture,
+opaque or foreign source modes, external hardware, the whole GUI, or a release
+package.
+
+The 2026-09-19 `CodeCompleteOnly` state (11/12 VHD) was a source-freshness
+refusal after MCP typed-result changes, not an observed image-restore failure.
+The historical wave33 and wave38 reports remain retained under the strict VHD
+root; they do not substitute for the W68 report. Later changes to any source
+bound by the W68 manifest require a new controller build and recertification.
+
+The default claim check selects strict VHD evidence without importing an external manifest.
+The retained historical manifest has eighteen accepted rows under its original contracts, but
+file existence alone does not bind those records to this current application handoff. External
+evidence must be explicitly supplied and verified; no historical record has been deleted or
+relabeled. Native online partition/DASD capture, opaque or foreign source modes, current external
+hardware proof and whole-application E2E certification remain open. VHD proof does not establish
+whole-application certification or a complete release handoff.
+The active repair and proof ledger is [R5](CODEX_REVIEW_5_REMEDIATION.md).
+Do not mark the Partition Manager destructive paths fully certified until those reports exist.
+
+The June checkpoints below are historical evidence, not a current certification claim. Their
+retained artifacts remain available; they have not been relabeled as passing the stronger contract.
+
+### Historical June 2026 checkpoints
+
+The default non-mutating readiness status as of 2026-06-02 UTC / 2026-06-02
+PDT was `CodeCompleteOnly`. That default release-readiness proof passed on
 2026-06-02 09:40 PDT with the non-mutating harness report at
 `artifacts\partition-manager-certification\readiness\run-20260602-094050\partition-manager-certification-report.json`.
 That readiness run also verified
@@ -48,8 +94,8 @@ That readiness run also verified
 and
 `artifacts\partition-manager-certification\readiness\certification-artifact-bundle.json`.
 
-Strict disposable-VHD status is `VhdDataDiskCertified` when release readiness
-uses the strict evidence root. The latest elevated strict VHD proof passed on
+At that checkpoint, strict status was reported as `VhdDataDiskCertified`, not a current claim,
+when release readiness used the strict evidence root. The elevated strict VHD proof passed on
 2026-06-02 19:49 PDT / 2026-06-03 UTC with 12/12 VHD gates passed, no failures,
 and no skipped VHD scenarios at
 `artifacts\partition-manager-certification\vhd-strict\run-20260602-194934\partition-manager-certification-report.json`.
@@ -57,17 +103,17 @@ The previous strict proof passed on 2026-06-01 20:34 PDT at
 `artifacts\partition-manager-certification\vhd-strict\run-20260601-203234\partition-manager-certification-report.json`.
 Strict readiness against that evidence passed on 2026-06-01 22:13 PDT with
 `-PartitionCertificationRoot artifacts\partition-manager-certification\vhd-strict -RequirePartitionVhdEvidence`.
-Default readiness still records a non-admin VHD preflight blocker when run from
-this shell, while the elevated strict preflight recorded administrator=true and
-ready=true. The VM-lab external manifest now has 18/18 external gates passed.
+That default readiness recorded a non-admin VHD preflight blocker, while the elevated
+strict preflight recorded administrator=true and ready=true. The retained VM-lab external
+manifest records 18/18 external gates passed.
 The imported manifest is
 `artifacts\partition-manager-certification\vm-lab\external-evidence.imported.json`.
 The paired imported checklist is
 `artifacts\partition-manager-certification\vm-lab\external-evidence.imported.checklist.md`,
 and the importer refreshed the VM-lab run-sheet manifest references to match
 that imported manifest before strict handoff.
-The imported claim level now reaches `HardwareCertified`: strict VHD proof has
-12/12 VHD mutation scenarios passed, and the imported external manifest at
+The historical imported claim level was reported as `HardwareCertified`: that strict VHD proof
+recorded 12/12 VHD mutation scenarios passed, and the imported external manifest at
 `artifacts\partition-manager-certification\vm-lab\external-evidence.imported.json`
 has 18/18 external VM/hardware/lab gates passed with non-empty
 matrix-required evidence values and local artifact paths. The paired checklist
@@ -673,6 +719,18 @@ PowerShell 7 and Windows PowerShell 5.1; a child-start failure terminates the ga
 becoming a successful report. File Recovery requires the modern NTFS-qualified fsutil syntax;
 failure never retries a legacy command form.
 
+The current FAT-to-NTFS assay uses this same capture seam with a 120-second budget for
+its fixed 256 MiB partition, validates an uppercase single-letter drive, and sends the
+expected volume label followed by EOF. Capture output is bounded per stream; a failed
+or overflowing I/O worker is an error, never a successful truncated result. Confirmed
+native failure permits cleanup of the owned fixture and records the converter failure.
+Unverified completion instead preserves both the VHD file and its attachment, fails the
+scenario, and prevents later destructive scenario bodies from running. The application
+controller restore assay uses that same run-level safety stop when descendant completion
+is unknown. Confirmed cleanup never clears a stop raised by an earlier scenario.
+These September 19 harness changes have local regression coverage in progress; the
+September 8 retained VM evidence above does not certify the changed harness execution.
+
 Before requesting UAC or starting the destructive VHD run, use the read-only
 preflight:
 
@@ -905,8 +963,8 @@ Each scenario produces `Passed`, `Failed`, or `Skipped` evidence in `partition-m
 
 ## External Gates
 
-These scenarios need disposable VM or hardware lab proof. The imported VM-lab
-manifest currently has 18/18 external gates passed: `external.bitlocker`,
+These scenarios need disposable VM or hardware lab proof. The historical June 2026 VM-lab
+manifest recorded 18/18 external gates passed under its original contracts: `external.bitlocker`,
 `external.bitlocker-mutation`, `external.file-level-data-recovery`,
 `external.allocate-free-space`, `external.cluster-size-change`,
 `external.hdd-defrag-execution`, `external.usb-removable`,
@@ -915,21 +973,22 @@ manifest currently has 18/18 external gates passed: `external.bitlocker`,
 `external.volume-serial-number`, `external.dynamic-to-basic`, and
 `external.hardware-wipe`, `external.os-migration-reboot`,
 `external.boot-repair-uefi`, `external.boot-repair-bios`, and
-`external.system-mbr2gpt`.
+`external.system-mbr2gpt`. These retained records are not current application certification;
+the Current Certification State section identifies the evidence selected for the current handoff.
 
-- `external.system-mbr2gpt` - System MBR-to-GPT conversion in disposable boot VM. Passed. This also satisfies
+- `external.system-mbr2gpt` - System MBR-to-GPT conversion in disposable boot VM. Historical June result: Passed. This demonstrated
   System MBR-to-GPT conversion in a disposable boot VM. Disposable BIOS/MBR VM
   `SAK-PM-BIOS-MBR-Fixture-20260603-091138` validated and converted disk 0
   with `mbr2gpt` exit code 0, changed layout from MBR to GPT, created an EFI
   System partition, and the converted disk booted under fresh EFI VM
   `SAK-PM-MBR2GPT-EFI-Boot-20260603-1140` to Guest Additions run level 3.
-- `external.os-migration-reboot` - OS migration target boot and firmware-order proof. Passed. A target-only cloned OS VM booted
+- `external.os-migration-reboot` - OS migration target boot and firmware-order proof. Historical June result: Passed. A target-only cloned OS VM booted
   from the cloned disk with UEFI firmware and reached Guest Additions run level
   3.
-- `external.boot-repair-uefi` - UEFI boot repair with intentionally broken BCD. Passed. A disposable UEFI boot disk was
+- `external.boot-repair-uefi` - UEFI boot repair with intentionally broken BCD. Historical June result: Passed. A disposable UEFI boot disk was
   snapshotted, BCD/fallback loader were removed, broken boot was captured, and
   offline `bcdboot` repair restored a run-level-3 boot.
-- `external.boot-repair-bios` - BIOS/MBR boot repair with intentionally broken BCD. Passed. A disposable BIOS/MBR boot disk was
+- `external.boot-repair-bios` - BIOS/MBR boot repair with intentionally broken BCD. Historical June result: Passed. A disposable BIOS/MBR boot disk was
   snapshotted, `\Boot\BCD` was removed, Windows Recovery `0xc000000f` was
   captured, and offline `bcdboot` plus `bootsect` restored a run-level-3 boot.
 - `external.usb-removable` - USB removable disk destructive operation proof.
@@ -943,15 +1002,21 @@ manifest currently has 18/18 external gates passed: `external.bitlocker`,
 - `external.dynamic-to-basic` - Dynamic disk to basic conversion proof in a disposable VM.
 - `external.hardware-wipe` - Non-system hardware wipe on disposable physical disk.
 
-The harness records these as `ExternalGate` IDs, and the VM-lab imported manifest now has passed `report.json` evidence for every listed gate.
+The harness records these as `ExternalGate` IDs. The historical June VM-lab imported manifest
+retains passing `report.json` records for each listed gate; their existence does not automatically
+select or certify them for a current handoff.
 
 ## Release Rule
 
-Release readiness can pass in default non-mutating mode for code-complete behavior, or in strict mode with imported evidence for `HardwareCertified`. Release notes and UI copy must keep that distinction clear:
+Default aggregate readiness creates non-mutating scratch planning evidence; it cannot satisfy
+documentation that claims a stronger current evidence set. Current VHD verification requires an
+explicit strict root and `-RequirePartitionVhdEvidence`. External evidence must also be explicit;
+`HardwareCertified` requires every current VHD and external gate to pass verification. Release
+notes and UI copy must keep these evidence scopes distinct:
 
 - Automated gates prove non-destructive logic and generated scripts.
 - VHD matrix proves disposable data-disk destructive flows.
-- VM/hardware/lab matrix proves system MBR-to-GPT, OS migration reboot proof, UEFI/BIOS boot repair, removable USB, SSD/NVMe, HDD defrag execution, SSD secure erase, non-adjacent partition move, primary-logical/serial/dynamic conversion, and physical wipe flows. BitLocker, BitLocker mutation, file-level recovery, adjacent-donor Allocate Free Space, existing-volume cluster-size change, and HDD defrag execution are also imported; the full 18/18 external evidence set now upgrades the strict handoff to `HardwareCertified`.
+- VM/hardware/lab evidence must prove system MBR-to-GPT, OS migration reboot, UEFI/BIOS boot repair, removable USB, SSD/NVMe, HDD defrag execution, SSD secure erase, non-adjacent partition move, primary-logical/serial/dynamic conversion, and physical wipe flows. The same requirement applies to BitLocker, BitLocker mutation, file-level recovery, adjacent-donor Allocate Free Space and existing-volume cluster-size change. The historical 18/18 imported set does not automatically upgrade the current handoff to `HardwareCertified`.
 - The verifier script enforces those boundaries when strict release evidence is required.
 - Release readiness runs the certification-matrix integrity guard, syntax-checks the strict VHD and strict hardware orchestrators, then runs the harness in plan-only mode, creates an external-evidence JSON scaffold plus human lab checklist plus per-gate lab package from the same matrix, writes and verifies the read-only VHD preflight report, verifies the checklist and lab package, verifies both report shape and manifest shape, writes a certification-status summary, writes and verifies JSON/Markdown certification-gap reports, writes and verifies a hashed certification-artifact bundle, and runs the non-destructive certification-tool self-test, so certification schema drift fails without touching disks.
 - Certification scenario IDs, evidence keys, and safety contracts must stay in `certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json`; update the matrix and self-test together when adding or changing a certification gate.

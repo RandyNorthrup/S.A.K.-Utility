@@ -26,6 +26,7 @@
 #include <QClipboard>
 #include <QComboBox>
 #include <QDateTime>
+#include <QElapsedTimer>
 #include <QFileDialog>
 #include <QGroupBox>
 #include <QHBoxLayout>
@@ -69,6 +70,15 @@ constexpr int kDiskThermalMaxC = 70;
 constexpr ushort kSuitePendingSymbol = 0x23F3;
 constexpr int kProgressMaximum = 100;
 
+void logDiagnosticStartupPhase(QElapsedTimer* timer, const char* phase) {
+    const auto elapsed_ms = timer->restart();
+    if (!qApp->property("sakStartupSmokeTest").toBool()) {
+        return;
+    }
+    logInfo("DiagnosticBenchmarkPanel startup: {} took {} ms", phase, elapsed_ms);
+    logger::instance().flush();
+}
+
 }  // namespace
 
 // ============================================================================
@@ -88,8 +98,10 @@ DiagnosticBenchmarkPanel::DiagnosticBenchmarkPanel(QWidget* parent)
     createQuickActions();
     logInfo("DiagnosticBenchmarkPanel: createQuickActions complete");
 
-    // Runtime only. Accessibility audit must not start hardware polling side effects.
-    if (!qApp->property("sakAccessibilityAudit").toBool()) {
+    // Non-interactive gates construct the panel but must not start hardware polling.
+    const bool non_interactive_gate = qApp->property("sakAccessibilityAudit").toBool() ||
+                                      qApp->property("sakStartupSmokeTest").toBool();
+    if (!non_interactive_gate) {
         logInfo("DiagnosticBenchmarkPanel: startThermalMonitoring start");
         m_controller->startThermalMonitoring(kThermalMonitorIntervalMs);
     }
@@ -107,6 +119,8 @@ DiagnosticBenchmarkPanel::~DiagnosticBenchmarkPanel() {
 
 void DiagnosticBenchmarkPanel::setupUi() {
     Q_ASSERT(layout() == nullptr);  // setupUi not called twice
+    QElapsedTimer phase_timer;
+    phase_timer.start();
     auto* root_layout = new QVBoxLayout(this);
     root_layout->setContentsMargins(sak::ui::kMarginMedium,
                                     sak::ui::kMarginMedium,
@@ -121,15 +135,22 @@ void DiagnosticBenchmarkPanel::setupUi() {
         tr("Diagnostics"),
         tr("Hardware inventory, SMART analysis, and thermal monitoring"),
         root_layout);
+    logDiagnosticStartupPhase(&phase_timer, "panel header");
 
     // Tabbed content -- Diagnostics tab and Benchmark tab
     m_tabs = new QTabWidget(this);
     setAccessible(m_tabs,
                   tr("Diagnostics and benchmarks tabs"),
                   tr("Switch between system diagnostics and benchmark tools"));
-    m_tabs->addTab(createDiagnosticsTab(), tr("Diagnostics"));
-    m_tabs->addTab(createBenchmarkTab(), tr("Benchmarks"));
+    // Finalize the empty parent chain before child sections are populated.
     root_layout->addWidget(m_tabs, 1);
+    logDiagnosticStartupPhase(&phase_timer, "empty tab layout attachment");
+    auto* diagnostics = createDiagnosticsTab();
+    logDiagnosticStartupPhase(&phase_timer, "diagnostics tab content");
+    m_tabs->addTab(diagnostics, tr("Diagnostics"));
+    logDiagnosticStartupPhase(&phase_timer, "diagnostics tab insertion");
+    createBenchmarkTab();
+    logDiagnosticStartupPhase(&phase_timer, "benchmarks tab content");
 
     // Update header when sub-tab changes
     connect(m_tabs, &QTabWidget::currentChanged, this, [this](int index) {
@@ -160,6 +181,7 @@ void DiagnosticBenchmarkPanel::setupUi() {
     log_toggle_layout->addWidget(m_logToggle);
     log_toggle_layout->addStretch();
     root_layout->addLayout(log_toggle_layout);
+    logDiagnosticStartupPhase(&phase_timer, "log toggle");
 }
 
 // ============================================================================
@@ -176,6 +198,9 @@ QWidget* DiagnosticBenchmarkPanel::createDiagnosticsTab() {
     layout->setContentsMargins(
         sak::ui::kMarginSmall, sak::ui::kMarginSmall, sak::ui::kMarginSmall, sak::ui::kMarginSmall);
     layout->setSpacing(sak::ui::kSpacingDefault);
+    // Adopt the empty content shell before adding descendants: setWidget()
+    // re-polishes a populated tree and can block first display for seconds.
+    scroll_area->setWidget(content_widget);
 
     layout->addWidget(createHardwareSection());
     layout->addWidget(createSmartSection());
@@ -183,29 +208,35 @@ QWidget* DiagnosticBenchmarkPanel::createDiagnosticsTab() {
     layout->addWidget(createSystemMaintenanceSection());
     layout->addStretch();
 
-    scroll_area->setWidget(content_widget);
     return scroll_area;
 }
 
-QWidget* DiagnosticBenchmarkPanel::createBenchmarkTab() {
-    auto* scroll_area = new QScrollArea(this);
+void DiagnosticBenchmarkPanel::createBenchmarkTab() {
+    QElapsedTimer phase_timer;
+    phase_timer.start();
+    auto* scroll_area = new QScrollArea(m_tabs);
     scroll_area->setWidgetResizable(true);
     scroll_area->setFrameShape(QFrame::NoFrame);
+    m_tabs->addTab(scroll_area, tr("Benchmarks"));
+    logDiagnosticStartupPhase(&phase_timer, "empty benchmarks tab insertion");
 
     auto* content_widget = new QWidget(scroll_area);
     auto* layout = new QVBoxLayout(content_widget);
     layout->setContentsMargins(
         sak::ui::kMarginSmall, sak::ui::kMarginSmall, sak::ui::kMarginSmall, sak::ui::kMarginSmall);
     layout->setSpacing(sak::ui::kSpacingDefault);
+    scroll_area->setWidget(content_widget);
+    logDiagnosticStartupPhase(&phase_timer, "benchmark scroll attachment");
 
     layout->addWidget(createBenchmarkSection());
+    logDiagnosticStartupPhase(&phase_timer, "benchmark section");
     layout->addWidget(createStressTestSection());
+    logDiagnosticStartupPhase(&phase_timer, "stress section");
     layout->addWidget(createSuiteSection());
+    logDiagnosticStartupPhase(&phase_timer, "suite section");
     layout->addWidget(createReportSection());
+    logDiagnosticStartupPhase(&phase_timer, "report section");
     layout->addStretch();
-
-    scroll_area->setWidget(content_widget);
-    return scroll_area;
 }
 
 // ============================================================================

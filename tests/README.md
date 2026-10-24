@@ -2,13 +2,13 @@
 
 ## Overview
 
-Comprehensive test suite for SAK Utility using the **Qt Test** framework with **276 registered CTest tests** across **248 C++ test source files** plus script-backed helper tests. Tests cover AI assistant clients, chat-title generation, workflow orchestration, tool execution, cancellation, run state, trace storage, core utilities, security, elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX, hardening), diagnostics, partition management, ISO pipelines, deployment, email inspection, splash sizing, partition filesystem probe certification, and quick action validation.
+Comprehensive test suite for SAK Utility using the **Qt Test** framework with **300 registered CTest tests** across **250 C++ test source files** plus script-backed helper tests. Tests cover AI assistant clients, chat-title generation, workflow orchestration, tool execution, cancellation, run state, trace storage, core utilities, security, elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX, hardening), diagnostics, partition management, ISO pipelines, deployment, email inspection, splash sizing, partition filesystem probe certification, and quick action validation.
 
 ## Structure
 
 ```
 tests/
-+-- unit/                                  # Unit tests (245 C++ files, including actions/)
++-- unit/                                  # Unit tests (247 C++ files, including actions/)
 |   +-- actions/                           # Quick action validation tests
 |   |   +-- test_action_factory.cpp
 |   |   +-- test_all_actions_metadata.cpp
@@ -108,6 +108,7 @@ tests/
 |   +-- test_wifi_analyzer.cpp
 |   +-- test_wifi_profile_scanner.cpp
 |   +-- test_windows_iso_downloader.cpp
+|   +-- test_windows_process_job.cpp
 |   +-- test_windows_usb_creator.cpp
 |   +-- test_windows_user_scanner.cpp
 |   +-- test_worker_base.cpp
@@ -164,21 +165,41 @@ Live-test policy: paid OpenAI, UUP dump, Linux ISO network, and Chocolatey bundl
 explicit environment-variable opt-outs. Once requested, missing credentials, timeouts, API errors,
 empty results, and service failures fail; dependency failure never becomes a passing skip.
 
+The Win32 MCP session and pool suites are ordinary bounded process-transport tests. They launch
+the built `sak_utility.exe` in its real headless MCP mode, give each child a temporary
+`LOCALAPPDATA`, and issue only `health_check` plus catalog discovery. They verify persistent
+process reuse and read-only/full-policy isolation without driving the desktop, clipboard, browser,
+registry or network. Full application and live browser/desktop behavior remain separate E2E scope.
+Pool cleanup regressions use owned fake servers, held process-generation handles and per-instance
+native faults to check combined error reporting, retained ownership, blocked replacement, partial
+cleanup and explicit recovery. The shared Windows Job suite covers startup attributes, real
+descendant containment and cleanup-failure ownership under a 60-second CTest deadline. Explicit
+fake-child modes use an independent 10-second lifetime guard, including while blocked on stdin.
+The shared `process_capture.ps1` self-test runs core, ownership, deadline,
+output, stdin and environment scopes as separate 60-second CTests under both
+PowerShell 7 and Windows PowerShell 5.1. The previous aggregate reached its
+60-second limit at different subcases on two runs; splitting preserves every
+assertion while making a slow group identifiable without loosening a limit.
+Controlled three-second Python receipt delays separately exercise the parent
+and termination-utility setup handshakes; neither changes production deadlines.
+
 ## Test Categories
 
 ### Core Utilities
 | Test | Module Under Test | Coverage |
 |---|---|---|
+| test_partition_image_volume_lock (five CTests) | `PartitionScriptBuilder`, Create Image source locks | Each disk/selected-partition, pinned/unpinned GUID, and offline capture shape executes the full generated PowerShell lock fixture and its guard drills in a separately bounded CTest. No row is dropped from the former aggregate core test. |
 | test_path_utils | `path_utils` | Path validation, normalization, sanitization, env-var expansion, safe-delete checks |
 | test_logger | `logger` | Log levels, formatting, file rotation, thread safety |
 | test_config_manager | `config_manager` | Get/set values, persistence, portable mode, type conversions |
 | test_file_scanner | `file_scanner` | Recursive scan, extension/size/date filters, cancellation, controlled junction-cycle fixtures, and injected canonical-resolution failure |
 | test_file_hash | `file_hash` | MD5/SHA-256 hashing, large-file streaming, hash comparison |
-| test_process_runner | `process_runner` | Process execution, stdout/stderr capture, timeout, exit codes, detached-tool fault injection, and five GUI detached-launch failure guards |
+| test_process_runner | `process_runner` | Process execution, stdout/stderr capture, timeout, exit codes, held-generation Job cleanup on cancellation, timeout, normal-exit survivors and callback exceptions, detached-tool fault injection, and five GUI detached-launch failure guards |
+| test_windows_process_job | `windows_process_job` | Native preparation failures, startup modifier preservation, real child/descendant containment, retained handles after cleanup failures, and isolated fail-closed destruction |
 | test_resource_soak | `process_runner` | Long-session handle/GDI/USER/memory-growth soak over the real launchers |
 | test_error_codes | `error_codes` | Error code enum values, category strings, display messages |
 | test_input_validator | `input_validator` | Path, IP, port, Chocolatey name, and URL validation |
-| test_worker_base | `worker_base` | Thread lifecycle, cancellation, progress signals |
+| test_worker_base | `worker_base` | Thread lifecycle, bounded readiness before cancellation, derived-member-safe destructor joins, progress signals |
 | test_format_utils | `format_utils` | Number/size/duration formatting helpers |
 | test_bundled_tools_manager | `bundled_tools_manager` | Tool detection, path resolution, version checks |
 | test_keep_awake | `keep_awake` | System sleep prevention, cleanup on destruction |
@@ -264,6 +285,7 @@ empty results, and service failures fail; dependency failure never becomes a pas
 | test_uup_dump_api | `uup_dump_api` | UUP Dump API parsing, edition/language selection |
 | test_uup_iso_builder | `uup_iso_builder` | UUP-to-ISO conversion, converter process management |
 | test_drive_scanner | `drive_scanner` | Physical drive enumeration, USB detection, formatting info |
+| test_image_flasher_panel | `ImageFlasherPanel` | Real panel Flash-button gating, rejected-image state, startup-smoke scanner isolation, and linked production SVG resources; no raw-disk write |
 | test_drive_unmounter | `drive_unmounter` | Volume unmount, lock/unlock |
 | test_flash_types | `flash_types` | Flash operation data structures |
 | test_flash_worker | `flash_worker` | Raw sector write, verification, decompression |
@@ -321,6 +343,23 @@ format/repair, root-file mutation, empty root-directory mutation,
 root-directory child-file mutation, plus raw-command
 refusal for normal file paths. The certifier
 self-test covers the same existing-target format lane for file-backed images.
+
+The foreign multi-CIB APFS case in `test_partition_manager_core` expands two
+18,043,854,848-byte disk images. Set `SAK_TEST_IMAGE_SCRATCH_ROOT` to an
+existing scratch directory on a storage drive with at least 40 GB free before
+running it; an explicit but unusable directory fails the test. The test uses
+the system temporary directory only when the variable is unset. Set `TEMP`
+and `TMP` to that same directory for the complete CTest run so other scratch
+images also stay on the storage drive. Sparse allocation is attempted when
+supported, but the test does not require it (for example, on exFAT). On slow
+non-sparse storage the case can exceed Qt Test's default 300000 ms function
+watchdog; set `QTEST_FUNCTION_TIMEOUT=900000` for that run without changing
+any test assertion. The measured local exFAT case took 518182 ms.
+The `rawDeviceIo_copyFileSparsePreservesContentAndSucceeds` row also checks
+that a sparse-capable volume produces a sparse destination and a non-sparse
+volume produces a byte-identical dense destination. Run that row on each
+filesystem to exercise both production copy strategies; a pass on NTFS alone
+does not prove exFAT behavior.
 
 Destructive Partition Manager certification is intentionally outside CTest. Release readiness runs `scripts/check_partition_manager_certification_matrix_integrity.ps1`, `scripts/check_partition_manager_commercial_gate_matrix.ps1`, `scripts/check_partition_manager_external_checklist.ps1`, `scripts/check_partition_manager_external_lab_package.ps1`, `scripts/check_partition_manager_vhd_preflight_report.ps1`, `scripts/check_partition_manager_certification_gap_report.ps1`, `scripts/check_partition_manager_certification_bundle.ps1`, and `scripts/check_partition_manager_feature_matrix.ps1` first so matrix IDs, evidence/value contracts, certification docs, strict VHD and strict hardware orchestrator coverage, generated lab-checklist and per-gate lab-package coverage, current VHD preflight blockers, current incomplete-gate reporting, status-aware next commands, hashed artifact-bundle integrity, visible blocker dialogs, and the commercial-parity feature list stay mapped to implementation, UI, tests, docs, `certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json`, release-claim wording, and certification evidence. It then runs the certification harness in plan-only mode, creates an external-evidence JSON scaffold, Markdown lab checklist, and per-gate lab package with required evidence payload placeholders plus `report.template.json` evidence-report scaffolds, verifies report/manifest/checklist/lab-package shape plus matrix-backed required evidence keys and safety contracts, writes a read-only VHD preflight report, writes a certification-status summary that counts only complete non-empty VHD and external payload values, writes and verifies JSON/Markdown certification-gap reports, writes and verifies a hashed certification-artifact bundle, checks release-facing docs with `scripts/check_partition_manager_release_claims.ps1`, and runs `scripts/test_partition_manager_certification_tools.ps1` without mutating disks. The self-test covers claim levels, VHD preflight, completed per-gate `report.json` import into the external manifest, malformed evidence, generated-checklist/lab-package/report-template acceptance, strict hardware handoff acceptance/rejection, stale-checklist/lab-package gate/evidence/value rejection, status-aware gap-report generation, and artifact-bundle verification. Use `scripts/run_partition_manager_vhd_certification_strict.ps1 -RelaunchElevated` for the one-command disposable-VHD evidence handoff, including raw-region partition clone and image restore gates, then scaffold external VM/hardware/lab evidence with `scripts/new_partition_manager_external_evidence_manifest.ps1 -CreateEvidenceDirectories`, fill each gate `report.json`, import with `scripts/update_partition_manager_external_manifest_from_reports.ps1 -RequireAllReports`, verify the imported manifest with `scripts/run_partition_manager_hardware_certification_strict.ps1`, run `scripts/get_partition_manager_certification_status.ps1`, and complete the external gates in `docs/PARTITION_MANAGER_CERTIFICATION.md`.
 
@@ -402,15 +441,52 @@ stay read-only with exact blockers.
 
 ### Mutation Runner Regression Tests
 
-`test_mutation_runner` registers the Python runner tests with CTest. Sixteen cases exercise
+`test_mutation_runner` registers the Python runner tests with CTest. Eighty-four cases exercise
 assertion kills, survivor refusal, compilation and restoration failure, missing/empty test
 reports, real CTest timeout, Windows child-tree cleanup, unconfirmed termination refusal, and
-retention of fresh Qt assertion logs. A timeout or compiler failure never counts as mutation
+retention of fresh Qt assertion logs, exclusive admission, process-instance binding, job-contained
+children, and complete hashed snapshot validation before restoration. A timeout or compiler failure never counts as mutation
 coverage. Panel modal callbacks run offscreen, close through scoped ownership on failed
 assertions, and report watchdog expiry as failure.
+LF-authored catalog needles adapt to LF or CRLF source without changing source
+bytes; mixed or bare-CR line endings fail closed. Validator and runner share
+that rule, and a real copied mutation restores original CRLF bytes exactly.
+Windows Job cleanup pins live member process handles before termination and
+waits for those exact objects to signal; an accounting count of zero alone is
+not treated as descendant-exit proof. Negative tests cover incomplete member
+lists, foreign process binding, unsignaled members and failed enumeration.
 
-`test_review_ledger` verifies enumeration of first-party C, Python/PowerShell test code, Windows
-command launchers, existing source languages, and exclusion of resources/generated paths.
+`test_review_ledger` has 77 cases covering source-language/CMake enumeration, live filtered hashes
+despite hidden Git index flags, source/brief byte binding, safe admission before writes, strict
+selection arguments, explicit all-or-nothing legacy evidence migration, and metadata-only archival
+of exact owner-moved briefs. Archive cases cover path-sensitive filters, raw-byte/state pinning,
+complete-set rechecks, duplicate keys, stale/malformed manifests, junction escapes, missing old
+directories, atomic failure and append-only history across repeated review/archive cycles.
+Generated/resource paths remain outside the declared source rules; newly enumerated units start pending.
+The fixture builds one clean committed Git template, then copies it and refreshes
+its index stat cache per case. Each test still mutates an isolated repository;
+the template avoids repeating Git init/config/commit for all 77 cases.
+
+`test_doc_accuracy` exercises matching claims and README-only, R5-only, and combined failures on
+both Windows PowerShell 5.1 and PowerShell 7. Its four cases require the correction footer to name
+the actual failing document, not direct an R5 tally repair to the test README.
+
+`test_source_fingerprint` runs real Windows VS2022 CMake configure/build fixtures. Twelve cases
+verify path/content binding, deterministic duplicate handling, header-triggered regeneration,
+rename invalidation, and refusal of missing, empty or out-of-root inputs. Certification source
+stamps must change before a helper rebuild when its declared inputs change. Native archive/object
+fixtures cover same-size backdated C/C++/header edits, uppercase extensions, and Windows junction
+escape/retarget refusal; the gate verifies rebuilt code output, not just a new digest string.
+
+`test_partition_manager_live_certifier` runs only non-destructive native CLI/admission contracts.
+`test_partition_manager_controller_evidence` exercises strict report/binary/current-source proof,
+including paired process-only `SAK_CERTIFIER_BUILD_ROOT` selection and whitespace refusal.
+The certification hook defaults to the strict VHD evidence root; set that variable to an
+explicit configured build directory when the current Release tree is not `build/`.
+`test_partition_manager_controller_restore_routing` uses real extracted producer functions with
+mocked storage/process boundaries and isolated negative drills; it proves cleanup preserves files
+after failed detach or unconfirmed worker shutdown. None of these CTests performs a VHD write.
+Actual controller-driven CreateImage/RestoreImage remains a separate approved-VM certification.
 
 ## Writing New Tests
 
@@ -479,8 +555,8 @@ QCOMPARE(spy.count(), 1);
 `QSKIP` is reserved for real environment or certification interlocks, never an unsupported
 application-platform branch. `tests/skip_site_inventory.txt` holds every static site by file and
 exact count, while `tests/skip_baseline.txt` holds the functions that skipped in the latest full
-run. Wave 26 leaves 25 static sites across 10 files after replacing assistant inventory, drive,
-junction, and ConversationStore manifest-failure skips with deterministic fixtures. Check
+run. The W66 audit found 22 static sites across 7 files and 25 reviewed
+runtime skips, with none stale. Check
 dormant/static coverage with
 `powershell scripts/check_test_skips.ps1 -StaticOnly`; the full skip audit also requires fresh
 per-test logs from complete CTest. It reads CTest's JSON registration to require every current Qt
@@ -488,15 +564,21 @@ log and exclude stale logs from removed tests, so a stale success cannot inflate
 missing current log cannot disappear from the audit.
 
 PowerShell gate regressions run under both PowerShell 7 and Windows PowerShell 5.1. The
-false-green command harness covers analyzer and ledger exit propagation plus working-tree review
+false-green command harness has separate Portable and Ledger CTests per host,
+each with its own unchanged 60-second limit. Together they cover analyzer and
+ledger exit propagation plus working-tree review
 hashes, live ledger refresh, exact-blob mark binding, same-status-row target mutation, missing
 targets, clean-index/dirty-only hash batching, PowerShell launcher resolution, standard-input
 delivery, and bounded review timeouts. Process capture tests independently pin output, error,
 exit-code, standard-input, simultaneous large input/output pipes, and timeout behavior.
+Portable staging and archive-recovery fixtures are separate CTests. The
+archive scope hard-kills isolated child publishers at publication boundaries,
+tests prior/candidate pair reconciliation and tamper refusal, and keeps its
+own 180-second limit; the staging scope retains its 240-second limit.
 
 ---
 
 **Test Framework:** Qt Test
-**Registered Tests:** 276 (CTest)
-**Test Files:** 248 C++ test source files plus script-backed helper tests
+**Registered Tests:** 300 (CTest)
+**Test Files:** 250 C++ test source files plus script-backed helper tests
 **Platform:** Windows 10/11

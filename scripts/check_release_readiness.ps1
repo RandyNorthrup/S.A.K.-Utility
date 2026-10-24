@@ -51,7 +51,21 @@ function Assert-ContainedProjectPath {
     }
 }
 
+function Assert-PartitionEvidenceMode {
+    param([string]$Root, [bool]$RequireVhd, [bool]$RequireExternal)
+    if ($RequireVhd -or $RequireExternal) { return }
+    $strictRoot = [IO.Path]::GetFullPath((Join-Path $ProjectRoot 'artifacts\partition-manager-certification\vhd-strict')).TrimEnd('\', '/')
+    $candidate = if ([IO.Path]::IsPathRooted($Root)) { $Root } else { Join-Path $ProjectRoot $Root }
+    $resolved = [IO.Path]::GetFullPath($candidate).TrimEnd('\', '/')
+    if ([string]::Equals($resolved, $strictRoot, [StringComparison]::OrdinalIgnoreCase)) {
+        throw 'Plan-only readiness cannot write the strict certification root. Pass -RequirePartitionVhdEvidence or -RequirePartitionExternalEvidence to verify existing evidence.'
+    }
+}
+
+# Refuse unsafe mode selection before any child check or generated artifact write.
 Assert-ContainedProjectPath -Path $PartitionCertificationRoot -Label "-PartitionCertificationRoot"
+Assert-PartitionEvidenceMode -Root $PartitionCertificationRoot `
+    -RequireVhd ([bool]$RequirePartitionVhdEvidence) -RequireExternal ([bool]$RequirePartitionExternalEvidence)
 
 function Invoke-IsolatedPowerShellScript {
     param(
@@ -60,7 +74,7 @@ function Invoke-IsolatedPowerShellScript {
     )
 
     $hostPath = (Get-Process -Id $PID).Path
-    & $hostPath -NoProfile -ExecutionPolicy Bypass -File $ScriptPath
+    & $hostPath -NoProfile -NonInteractive -File $ScriptPath
     if ($LASTEXITCODE -ne 0) {
         throw "Release readiness check failed: $ScriptPath"
     }
@@ -255,25 +269,8 @@ try {
     $partitionCertificationRoot = $PartitionCertificationRoot
     $partitionExternalEvidenceManifest = $PartitionExternalEvidenceManifest
     $partitionExternalEvidenceChecklist = $PartitionExternalEvidenceChecklist
-    # Auto-detection only fills in evidence the caller supplied none of. An explicitly passed
-    # checklist (or manifest, or non-default root) is never replaced by auto-detected evidence.
-    if ($PartitionCertificationRoot -eq "artifacts\partition-manager-certification\readiness" -and
-        [string]::IsNullOrWhiteSpace($PartitionExternalEvidenceManifest) -and
-        [string]::IsNullOrWhiteSpace($PartitionExternalEvidenceChecklist)) {
-        $strictRoot = "artifacts\partition-manager-certification\vhd-strict"
-        $strictManifest = "artifacts\partition-manager-certification\vm-lab\external-evidence.imported.json"
-        $strictChecklist = "artifacts\partition-manager-certification\vm-lab\external-evidence.imported.checklist.md"
-        if ((Test-Path -LiteralPath (Join-Path $ProjectRoot $strictRoot) -PathType Container) -and
-            (Test-Path -LiteralPath (Join-Path $ProjectRoot $strictManifest) -PathType Leaf) -and
-            (Test-Path -LiteralPath (Join-Path $ProjectRoot $strictChecklist) -PathType Leaf)) {
-            $partitionCertificationRoot = $strictRoot
-            $partitionExternalEvidenceManifest = $strictManifest
-            $partitionExternalEvidenceChecklist = $strictChecklist
-            $requirePartitionVhdEvidenceStrict = $true
-            $requirePartitionExternalEvidenceStrict = $true
-            Write-Host "Using auto-detected strict Partition Manager evidence under $partitionCertificationRoot"
-        }
-    }
+    # Keep scratch planning separate from explicitly selected certification evidence.
+    # Existing historical files must not change roots, external inputs or requirements.
     $partitionExternalEvidencePath = if ([string]::IsNullOrWhiteSpace($partitionExternalEvidenceManifest)) {
         Join-Path $partitionCertificationRoot "external-evidence.template.json"
     }

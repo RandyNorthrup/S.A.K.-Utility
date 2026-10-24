@@ -1,45 +1,172 @@
 {
-  "head_commit": "b2bbdb4fbda853b685dd9e6dc34869520bdf49e1",
-  "unit_rule": "include/**.h|.hpp, src/**.c|.cpp|.h|.hpp, tests/**.c|.cpp|.h|.hpp|.js|.mjs|.py|.ps1|.sh, scripts/**.py|.ps1|.sh|.cmd|.bat, browser/**.js",
+  "brief_binding_migration": {
+    "confirmed_units": [
+      "include/sak/action_constants.h",
+      "include/sak/actions/backup_bitlocker_keys_action.h",
+      "include/sak/actions/check_disk_errors_action.h",
+      "include/sak/actions/generate_system_report_action.h",
+      "include/sak/actions/optimize_power_settings_action.h",
+      "include/sak/actions/reset_network_action.h",
+      "include/sak/actions/screenshot_settings_action.h",
+      "include/sak/actions/verify_system_files_action.h",
+      "include/sak/advanced_search_panel.h",
+      "include/sak/advanced_search_types.h",
+      "include/sak/advanced_uninstall_controller.h",
+      "include/sak/advanced_uninstall_panel.h",
+      "include/sak/ai/ai_app_action_planner.h",
+      "include/sak/ai/ai_async_tool_runner.h",
+      "include/sak/ai/ai_cancellation_token.h",
+      "include/sak/ai/ai_chat_title.h",
+      "include/sak/ai/ai_command_guard.h",
+      "include/sak/ai/ai_command_tool_planner.h",
+      "include/sak/ai/ai_conversation_store.h",
+      "include/sak/ai/ai_credential_store.h",
+      "include/sak/ai/ai_human_gate.h",
+      "include/sak/ai/ai_human_gate_store.h",
+      "include/sak/ai/ai_lease_manager.h",
+      "include/sak/ai/ai_mcp_http_client.h",
+      "include/sak/ai/ai_mcp_session_pool.h",
+      "include/sak/ai/ai_mcp_stdio_session.h",
+      "include/sak/ai/ai_model_catalog.h",
+      "include/sak/ai/ai_offline_downloader_tool_runner.h",
+      "include/sak/ai/ai_openai_model_client.h",
+      "include/sak/ai/ai_orchestrator.h",
+      "include/sak/ai/ai_package_selection.h",
+      "include/sak/ai/ai_subagent_runner.h",
+      "include/sak/ai/ai_subagent_tool_executor.h",
+      "include/sak/ai/ai_workflow_template.h",
+      "include/sak/ai/openai_responses_client.h",
+      "include/sak/network_transfer_runner.h",
+      "include/sak/partition_manager_controller.h",
+      "include/sak/partition_manager_panel.h",
+      "scripts/new_partition_manager_automation_vm.ps1",
+      "scripts/owner_only_staging_file.ps1",
+      "scripts/run_branch_coverage.ps1",
+      "scripts/run_coverage.ps1",
+      "scripts/test_coverage_runners.ps1",
+      "scripts/test_new_partition_manager_automation_vm_security.ps1",
+      "src/ai/ai_conversation_store.cpp",
+      "src/ai/ai_human_gate.cpp",
+      "src/ai/ai_skill_store.cpp",
+      "src/ai/ai_store_file_loader.cpp",
+      "src/ai/ai_tool_health_ledger.cpp",
+      "src/ai/ai_tool_loop_detector.cpp",
+      "src/ai/ai_tool_result_recorder.cpp",
+      "src/ai/ai_trace_store.cpp",
+      "src/ai/ai_workflow_store.cpp",
+      "src/core/app_action_service.cpp",
+      "tests/unit/actions/test_action_factory.cpp",
+      "tests/unit/actions/test_all_actions_metadata.cpp"
+    ],
+    "manifest_sha256": "60537c04ccf99f3d42a05222187507608cd7694c79c20ebe0bfc1fe9b5d091f5",
+    "original_state_sha256": "6c81e68e6ba276274b3da579b6c61b746a7e0997603cf03f89e9a2e677eac231"
+  },
+  "brief_relocations": [
+    {
+      "manifest_sha256": "00d0108acb24d316183c2dff5de1cfc20cae0ae5e73fc54c22885177715ca30c",
+      "original_state_sha256": "9444f2b2abdf06cd166d5beeeec42d3c45d429bd980aa5be347e8ceb66652c0a",
+      "relocated_units": [
+        "include/sak/action_constants.h",
+        "include/sak/actions/backup_bitlocker_keys_action.h",
+        "include/sak/actions/check_disk_errors_action.h",
+        "include/sak/actions/generate_system_report_action.h",
+        "include/sak/actions/screenshot_settings_action.h",
+        "include/sak/actions/verify_system_files_action.h",
+        "include/sak/advanced_search_panel.h",
+        "include/sak/advanced_search_types.h",
+        "include/sak/advanced_uninstall_panel.h",
+        "include/sak/ai/ai_app_action_planner.h",
+        "include/sak/ai/ai_async_tool_runner.h",
+        "include/sak/ai/ai_command_guard.h",
+        "include/sak/ai/ai_credential_store.h",
+        "include/sak/ai/ai_openai_model_client.h",
+        "include/sak/ai/ai_orchestrator.h",
+        "include/sak/ai/ai_package_selection.h",
+        "include/sak/ai/ai_subagent_runner.h",
+        "include/sak/ai/ai_subagent_tool_executor.h",
+        "include/sak/ai/ai_workflow_template.h",
+        "include/sak/ai/openai_responses_client.h",
+        "include/sak/network_transfer_runner.h",
+        "include/sak/partition_manager_controller.h",
+        "include/sak/partition_manager_panel.h",
+        "scripts/new_partition_manager_automation_vm.ps1",
+        "scripts/owner_only_staging_file.ps1",
+        "scripts/run_branch_coverage.ps1",
+        "scripts/run_coverage.ps1",
+        "scripts/test_coverage_runners.ps1",
+        "scripts/test_new_partition_manager_automation_vm_security.ps1",
+        "src/ai/ai_conversation_store.cpp",
+        "src/ai/ai_skill_store.cpp",
+        "src/ai/ai_store_file_loader.cpp",
+        "src/ai/ai_tool_health_ledger.cpp",
+        "src/ai/ai_tool_loop_detector.cpp",
+        "src/ai/ai_tool_result_recorder.cpp",
+        "src/ai/ai_trace_store.cpp",
+        "src/ai/ai_workflow_store.cpp",
+        "src/core/app_action_service.cpp",
+        "tests/unit/actions/test_action_factory.cpp",
+        "tests/unit/actions/test_all_actions_metadata.cpp"
+      ]
+    }
+  ],
+  "head_commit": "65fa4c58f251f4b5949797a74e71a80f5e7e4e60",
+  "schema_version": 2,
+  "unit_rule": "include/**.h|.hpp, src/**.c|.cpp|.h|.hpp, tests/**.c|.cpp|.h|.hpp|.js|.mjs|.py|.ps1|.sh, scripts/**.py|.ps1|.sh|.cmd|.bat, browser/**.js, cmake/**.cmake, CMakeLists.txt=cmake, tests/CMakeLists.txt=cmake",
   "units": {
+    "CMakeLists.txt": {
+      "group": "cmake",
+      "status": "pending"
+    },
     "browser/extension/background.js": {
       "evidence": "cited",
       "group": "browser",
       "reviewed_blob": null,
       "status": "reviewed"
     },
+    "cmake/SakSourceFingerprint.cmake": {
+      "group": "cmake",
+      "status": "pending"
+    },
+    "cmake/copy_tools_bundle.cmake": {
+      "group": "cmake",
+      "status": "pending"
+    },
     "include/sak/action_constants.h": {
-      "brief": "docs/review_briefs/include_sak_action_constants.md",
+      "brief": "docs/archive/review_briefs/include_sak_action_constants.md",
       "evidence": "driver",
       "group": "include",
       "previous_evidence": "driver",
       "previous_review_blob": "a74b92278cd4cc02d60558c08f7c33c000f91845",
       "reviewed_blob": "7aaec803f7e47c6ab43eccfeb0ffeef0c71907a1",
+      "reviewed_brief_blob": "2458870f5486de8eccf36b323097d167d51c7ac6",
       "status": "reviewed"
     },
     "include/sak/actions/backup_bitlocker_keys_action.h": {
-      "brief": "docs/review_briefs/include_sak_actions_backup_bitlocker_keys_action.md",
+      "brief": "docs/archive/review_briefs/include_sak_actions_backup_bitlocker_keys_action.md",
       "evidence": "driver",
       "group": "include",
       "previous_evidence": "driver",
       "previous_review_blob": "ff81d53667ff01afd3e4c8e2fbe3b4ed267eed38",
       "reviewed_blob": "6e8f32657d78b4c57e0a74dd9fca386aaa303e6a",
+      "reviewed_brief_blob": "e0daac92bc3ec97646c8acde312c4431e3b8c344",
       "status": "reviewed"
     },
     "include/sak/actions/check_disk_errors_action.h": {
-      "brief": "docs/review_briefs/include_sak_actions_check_disk_errors_action.md",
+      "brief": "docs/archive/review_briefs/include_sak_actions_check_disk_errors_action.md",
       "evidence": "driver",
       "group": "include",
       "previous_evidence": "driver",
       "previous_review_blob": "bc4e573126d98ed916747356220401861acc7014",
       "reviewed_blob": "c049e8a4f38ad64a73a689c880b4109b8e142e07",
+      "reviewed_brief_blob": "dc8369711ac6ac0fb4bb758fb44168a7263af201",
       "status": "reviewed"
     },
     "include/sak/actions/generate_system_report_action.h": {
-      "brief": "docs/review_briefs/include_sak_actions_generate_system_report_action.md",
+      "brief": "docs/archive/review_briefs/include_sak_actions_generate_system_report_action.md",
       "evidence": "driver",
       "group": "include",
       "reviewed_blob": "c4dd491de79a83c499367f018366d257731dd2aa",
+      "reviewed_brief_blob": "6050672eeecd7dd229e4e9b8b9028c4e4bc9d9a7",
       "status": "reviewed"
     },
     "include/sak/actions/optimize_power_settings_action.h": {
@@ -47,6 +174,7 @@
       "evidence": "driver",
       "group": "include",
       "reviewed_blob": "536eedc84c268b1f4f06ce88475bd0438c357b7c",
+      "reviewed_brief_blob": "9b828f7e1692bb777b37a8a44d4cf84d8f579286",
       "status": "reviewed"
     },
     "include/sak/actions/reset_network_action.h": {
@@ -54,20 +182,23 @@
       "evidence": "driver",
       "group": "include",
       "reviewed_blob": "4ca2c7a5de51763e55fdffc4a3c76f8728cea11c",
+      "reviewed_brief_blob": "17ac2a39a19c9a96dc13b244dd648ef9640cf3cd",
       "status": "reviewed"
     },
     "include/sak/actions/screenshot_settings_action.h": {
-      "brief": "docs/review_briefs/include_sak_actions_screenshot_settings_action.md",
+      "brief": "docs/archive/review_briefs/include_sak_actions_screenshot_settings_action.md",
       "evidence": "driver",
       "group": "include",
       "reviewed_blob": "46342bc0713230e490c7337f0fe1760245ec218e",
+      "reviewed_brief_blob": "c0ee0c7ff55a2480b49b07d2e6ab0c5b8a6d8ef5",
       "status": "reviewed"
     },
     "include/sak/actions/verify_system_files_action.h": {
-      "brief": "docs/review_briefs/include_sak_actions_verify_system_files_action.md",
+      "brief": "docs/archive/review_briefs/include_sak_actions_verify_system_files_action.md",
       "evidence": "driver",
       "group": "include",
       "reviewed_blob": "f27a84be0e65fabaab8ca885f4f8ee2dadb479b1",
+      "reviewed_brief_blob": "b93adb9913ccf4ec3fe7dafd771720a2aab001df",
       "status": "reviewed"
     },
     "include/sak/active_connections_monitor.h": {
@@ -83,17 +214,19 @@
       "status": "reviewed"
     },
     "include/sak/advanced_search_panel.h": {
-      "brief": "docs/review_briefs/include_sak_advanced_search_panel.md",
+      "brief": "docs/archive/review_briefs/include_sak_advanced_search_panel.md",
       "evidence": "driver",
       "group": "include",
       "reviewed_blob": "411cdda70144e880ea114e4ab87c08731937d487",
+      "reviewed_brief_blob": "fae5d24869ffd2f389638b094350f4dd68133a3f",
       "status": "reviewed"
     },
     "include/sak/advanced_search_types.h": {
-      "brief": "docs/review_briefs/include_sak_advanced_search_types.md",
+      "brief": "docs/archive/review_briefs/include_sak_advanced_search_types.md",
       "evidence": "driver",
       "group": "include",
       "reviewed_blob": "ef8bef5775e819005bcc4d6cc00ac0537d8419fc",
+      "reviewed_brief_blob": "fe336343bbec84e9bb9972124617c5c5b894c6c8",
       "status": "reviewed"
     },
     "include/sak/advanced_search_worker.h": {
@@ -109,15 +242,17 @@
       "previous_evidence": "driver",
       "previous_review_blob": "d063dc28c40f5f5f8ea7f6abf799de8c4b851b7c",
       "reviewed_blob": "d093197ebf7d5725663da6a6c4ff20e5f7355beb",
+      "reviewed_brief_blob": "c34f9b34e83f98affed5efe745193ab56ba47427",
       "status": "reviewed"
     },
     "include/sak/advanced_uninstall_panel.h": {
-      "brief": "docs/review_briefs/include_sak_advanced_uninstall_panel.md",
+      "brief": "docs/archive/review_briefs/include_sak_advanced_uninstall_panel.md",
       "evidence": "driver",
       "group": "include",
       "previous_evidence": "driver",
       "previous_review_blob": "1412badc9a2ffcbf59a34ff44906a68ea0b4de6b",
       "reviewed_blob": "9646f219bccc80d7a00db3baa600d2088cfe1c5c",
+      "reviewed_brief_blob": "664fc52e530340c80c24e5bdbe86317390706a7c",
       "status": "reviewed"
     },
     "include/sak/advanced_uninstall_types.h": {
@@ -127,17 +262,19 @@
       "status": "reviewed"
     },
     "include/sak/ai/ai_app_action_planner.h": {
-      "brief": "docs/review_briefs/include_sak_ai_ai_app_action_planner.md",
+      "brief": "docs/archive/review_briefs/include_sak_ai_ai_app_action_planner.md",
       "evidence": "driver",
       "group": "include",
       "reviewed_blob": "6b558205c81dc971b3ecb93af2398db76e58f8aa",
+      "reviewed_brief_blob": "b4c1c4fb48536da5a0bb31a155f5f99d596e195a",
       "status": "reviewed"
     },
     "include/sak/ai/ai_async_tool_runner.h": {
-      "brief": "docs/review_briefs/include_sak_ai_ai_async_tool_runner.md",
+      "brief": "docs/archive/review_briefs/include_sak_ai_ai_async_tool_runner.md",
       "evidence": "driver",
       "group": "include",
       "reviewed_blob": "483a442a05c5f123d4fbf216b09e0c746926270e",
+      "reviewed_brief_blob": "ee1d0ede4c945346d291d93cde2ce1fa292ba2d9",
       "status": "reviewed"
     },
     "include/sak/ai/ai_cancellation_token.h": {
@@ -145,6 +282,7 @@
       "evidence": "driver",
       "group": "include",
       "reviewed_blob": "05434aa904ee28399ccff4190dfa12eb352f9b80",
+      "reviewed_brief_blob": "66bf2a5c3aa297bea5d6e0e1173c6901367345e9",
       "status": "reviewed"
     },
     "include/sak/ai/ai_chat_title.h": {
@@ -152,15 +290,17 @@
       "evidence": "driver",
       "group": "include",
       "reviewed_blob": "241b67d31b2864b5dd8ba1a517ac47becbe42099",
+      "reviewed_brief_blob": "74a0ad18fe303693bfedba1aabbac38a0efae4c3",
       "status": "reviewed"
     },
     "include/sak/ai/ai_command_guard.h": {
-      "brief": "docs/review_briefs/include_sak_ai_ai_command_guard.md",
+      "brief": "docs/archive/review_briefs/include_sak_ai_ai_command_guard.md",
       "evidence": "driver",
       "group": "include",
       "previous_evidence": "driver",
       "previous_review_blob": "ff21cb57ac87d51bbc7035bbc2a51fddab957893",
       "reviewed_blob": "eff2589c6367668c324876a792a0d6cd169eb621",
+      "reviewed_brief_blob": "554b7ab2b45d47a5be557ebb6f0c6262c01bee58",
       "status": "reviewed"
     },
     "include/sak/ai/ai_command_tool_planner.h": {
@@ -168,6 +308,7 @@
       "evidence": "driver",
       "group": "include",
       "reviewed_blob": "532829904729d90cfb37e59072c47088deb93786",
+      "reviewed_brief_blob": "85d774e879158212662b11793962d845618d0201",
       "status": "reviewed"
     },
     "include/sak/ai/ai_conversation_store.h": {
@@ -177,13 +318,15 @@
       "previous_evidence": "driver",
       "previous_review_blob": "2b4b26b9da1258f4a478bd9198b7d63f3c0ffd5c",
       "reviewed_blob": "eed2f8770f2b3f8affa60a4e5dc257dec11dd429",
+      "reviewed_brief_blob": "d9eb9514a5dd415ad22dafb10730bdd73322be33",
       "status": "reviewed"
     },
     "include/sak/ai/ai_credential_store.h": {
-      "brief": "docs/review_briefs/include_sak_ai_ai_credential_store.md",
+      "brief": "docs/archive/review_briefs/include_sak_ai_ai_credential_store.md",
       "evidence": "driver",
       "group": "include",
       "reviewed_blob": "c9e523af85c8c4871737c1f26d195b7120a68230",
+      "reviewed_brief_blob": "e0802a56105280b35481a577e4dafa0e3471ab56",
       "status": "reviewed"
     },
     "include/sak/ai/ai_execution_broker.h": {
@@ -197,6 +340,7 @@
       "evidence": "driver",
       "group": "include",
       "reviewed_blob": "e4465f7e128558549120e1a406d601e89c058c13",
+      "reviewed_brief_blob": "ea1e1ec0a2596f280858cbb600d7703383557cf5",
       "status": "reviewed"
     },
     "include/sak/ai/ai_human_gate_store.h": {
@@ -206,6 +350,7 @@
       "previous_evidence": "driver",
       "previous_review_blob": "6640a3c994e18d70f23f19368db903e496260b6b",
       "reviewed_blob": "73f4290bd6be74aa3b185563b12c27b6ca1ba5ad",
+      "reviewed_brief_blob": "c34f9b34e83f98affed5efe745193ab56ba47427",
       "status": "reviewed"
     },
     "include/sak/ai/ai_lease_manager.h": {
@@ -215,6 +360,7 @@
       "previous_evidence": "driver",
       "previous_review_blob": "b41c377e69104099382d90112632e16a0a2858e4",
       "reviewed_blob": "fed3fe91ce406ac7de5181e66f27b34139bae958",
+      "reviewed_brief_blob": "c34f9b34e83f98affed5efe745193ab56ba47427",
       "status": "reviewed"
     },
     "include/sak/ai/ai_mcp_http_client.h": {
@@ -224,6 +370,7 @@
       "previous_evidence": "driver",
       "previous_review_blob": "ac4f4d33c7e19fa02d211aeb66553ff0a3ef3ff0",
       "reviewed_blob": "a7c68384af928023c6f88c2df30420650cee3ed7",
+      "reviewed_brief_blob": "c34f9b34e83f98affed5efe745193ab56ba47427",
       "status": "reviewed"
     },
     "include/sak/ai/ai_mcp_jsonrpc.h": {
@@ -239,6 +386,7 @@
       "previous_evidence": "driver",
       "previous_review_blob": "168d6d30e97bf75e13448ff85d33a554a1152c7e",
       "reviewed_blob": "6754754d400b838b46b3acd0d3686ba4e756e400",
+      "reviewed_brief_blob": "c34f9b34e83f98affed5efe745193ab56ba47427",
       "status": "reviewed"
     },
     "include/sak/ai/ai_mcp_stdio_session.h": {
@@ -248,6 +396,7 @@
       "previous_evidence": "driver",
       "previous_review_blob": "0811c5f0c91e144143e5408dd05f898ee349ca6f",
       "reviewed_blob": "72a5639ee7759ee375d178c03d807782c22d03de",
+      "reviewed_brief_blob": "742337b923b91982fc46c8b9ceb7f09c07b640ef",
       "status": "reviewed"
     },
     "include/sak/ai/ai_model_catalog.h": {
@@ -257,6 +406,7 @@
       "previous_evidence": "driver",
       "previous_review_blob": "d779300484b019dc70865d782924516bc3b5c09a",
       "reviewed_blob": "5ee88c2808ca200ecc1013678fbf9f03b2a92639",
+      "reviewed_brief_blob": "bec7690278d76f8902a46423542b056308e5fb78",
       "status": "reviewed"
     },
     "include/sak/ai/ai_offline_downloader_tool_runner.h": {
@@ -266,29 +416,33 @@
       "previous_evidence": "driver",
       "previous_review_blob": "98401fba78b5ec3257a604fcc28c56f83a252d5c",
       "reviewed_blob": "84a1da3da40b9f7e0272e0e58250d310bf4bbd31",
+      "reviewed_brief_blob": "c34f9b34e83f98affed5efe745193ab56ba47427",
       "status": "reviewed"
     },
     "include/sak/ai/ai_openai_model_client.h": {
-      "brief": "docs/review_briefs/include_sak_ai_ai_openai_model_client.md",
+      "brief": "docs/archive/review_briefs/include_sak_ai_ai_openai_model_client.md",
       "evidence": "driver",
       "group": "include",
       "previous_evidence": "driver",
       "previous_review_blob": "c8d9dfa25728f673cbffc070d33134ee196786a4",
       "reviewed_blob": "06c957bbcab36c37ba8a1b9d07fec71582f19558",
+      "reviewed_brief_blob": "ac09320d9e4730cb4e908b7f0f29bff003a89380",
       "status": "reviewed"
     },
     "include/sak/ai/ai_orchestrator.h": {
-      "brief": "docs/review_briefs/include_sak_ai_ai_orchestrator.md",
+      "brief": "docs/archive/review_briefs/include_sak_ai_ai_orchestrator.md",
       "evidence": "driver",
       "group": "include",
       "reviewed_blob": "0b6a60a4ddcc8d4f57c4ac60b774c1f1ec85bfb0",
+      "reviewed_brief_blob": "e9ca23fd3a94e897fc5a878d5a467aa41cc5d628",
       "status": "reviewed"
     },
     "include/sak/ai/ai_package_selection.h": {
-      "brief": "docs/review_briefs/include_sak_ai_ai_package_selection.md",
+      "brief": "docs/archive/review_briefs/include_sak_ai_ai_package_selection.md",
       "evidence": "driver",
       "group": "include",
       "reviewed_blob": "705fb69498c93023299c2534b250370b86de3c88",
+      "reviewed_brief_blob": "f4fd30d826d43a3e6f18a9eb8313d98ce00975aa",
       "status": "reviewed"
     },
     "include/sak/ai/ai_package_tool_planner.h": {
@@ -348,17 +502,19 @@
       "status": "pending"
     },
     "include/sak/ai/ai_subagent_runner.h": {
-      "brief": "docs/review_briefs/include_sak_ai_ai_subagent_runner.md",
+      "brief": "docs/archive/review_briefs/include_sak_ai_ai_subagent_runner.md",
       "evidence": "driver",
       "group": "include",
       "reviewed_blob": "668b57dd851860ecf8a5457a9b6d15b60a01ccf3",
+      "reviewed_brief_blob": "0a6d45b4a3eb015b202d0f0ecf49d55b751684a6",
       "status": "reviewed"
     },
     "include/sak/ai/ai_subagent_tool_executor.h": {
-      "brief": "docs/review_briefs/include_sak_ai_ai_subagent_tool_executor.md",
+      "brief": "docs/archive/review_briefs/include_sak_ai_ai_subagent_tool_executor.md",
       "evidence": "driver",
       "group": "include",
       "reviewed_blob": "50a19c8965540c1c236f866ec891b8efaa7194be",
+      "reviewed_brief_blob": "17eb86225b1494046a2efc7bc50519219f579453",
       "status": "reviewed"
     },
     "include/sak/ai/ai_token_usage_tracker.h": {
@@ -422,10 +578,11 @@
       "status": "pending"
     },
     "include/sak/ai/ai_workflow_template.h": {
-      "brief": "docs/review_briefs/include_sak_ai_ai_workflow_template.md",
+      "brief": "docs/archive/review_briefs/include_sak_ai_ai_workflow_template.md",
       "evidence": "driver",
       "group": "include",
       "reviewed_blob": "6c2f666989b4981d6e7138cdba4719c7bf6b7335",
+      "reviewed_brief_blob": "cbf80dedb8253e9fa7f166df8818f5c34b89587d",
       "status": "reviewed"
     },
     "include/sak/ai/openai_response_types.h": {
@@ -433,10 +590,11 @@
       "status": "pending"
     },
     "include/sak/ai/openai_responses_client.h": {
-      "brief": "docs/review_briefs/include_sak_ai_openai_responses_client.md",
+      "brief": "docs/archive/review_briefs/include_sak_ai_openai_responses_client.md",
       "evidence": "driver",
       "group": "include",
       "reviewed_blob": "f429caf23d5c10feb423879b7e76163ee86fca16",
+      "reviewed_brief_blob": "3dc71103215603551f657680a75647e2455e446b",
       "status": "reviewed"
     },
     "include/sak/ai_assistant_panel.h": {
@@ -1154,10 +1312,11 @@
       "status": "pending"
     },
     "include/sak/network_transfer_runner.h": {
-      "brief": "docs/review_briefs/include_sak_network_transfer_runner.md",
+      "brief": "docs/archive/review_briefs/include_sak_network_transfer_runner.md",
       "evidence": "driver",
       "group": "include",
       "reviewed_blob": "9f1dd0c375cdf1e6fefc26630c96664565e99f70",
+      "reviewed_brief_blob": "3702459d992394071545c4a991306a9a317d0c5e",
       "status": "reviewed"
     },
     "include/sak/nuget_dependency_resolver.h": {
@@ -1285,17 +1444,19 @@
       "status": "reviewed"
     },
     "include/sak/partition_manager_controller.h": {
-      "brief": "docs/review_briefs/include_sak_partition_manager_controller.md",
+      "brief": "docs/archive/review_briefs/include_sak_partition_manager_controller.md",
       "evidence": "driver",
       "group": "include",
       "reviewed_blob": "e65fa172c73f5f4419ed48c99b7689d231cd843f",
+      "reviewed_brief_blob": "1696d900db556c965720939302bd1a2846b8369e",
       "status": "reviewed"
     },
     "include/sak/partition_manager_panel.h": {
-      "brief": "docs/review_briefs/include_sak_partition_manager_panel.md",
+      "brief": "docs/archive/review_briefs/include_sak_partition_manager_panel.md",
       "evidence": "driver",
       "group": "include",
       "reviewed_blob": "f473c61d1827646374fe85df681334ae18baa9bf",
+      "reviewed_brief_blob": "f572878ec36a418781b391532830baebbebedfe0",
       "status": "reviewed"
     },
     "include/sak/partition_manager_types.h": {
@@ -1956,6 +2117,10 @@
       "group": "scripts",
       "status": "pending"
     },
+    "scripts/deploy_qt_runtime.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
     "scripts/generate_compile_commands.ps1": {
       "evidence": "cited",
       "group": "scripts",
@@ -2091,10 +2256,11 @@
       "status": "pending"
     },
     "scripts/new_partition_manager_automation_vm.ps1": {
-      "brief": "docs/review_briefs/scripts_new_partition_manager_automation_vm.md",
+      "brief": "docs/archive/review_briefs/scripts_new_partition_manager_automation_vm.md",
       "evidence": "driver",
       "group": "scripts",
       "reviewed_blob": "94322b0f5d2cf422ac4a60d1154d9d0d8ec42ca5",
+      "reviewed_brief_blob": "75c36ad5585df474b1b8028686589e8ecc2a5485",
       "status": "reviewed"
     },
     "scripts/new_partition_manager_certification_bundle.ps1": {
@@ -2110,11 +2276,24 @@
       "status": "pending"
     },
     "scripts/owner_only_staging_file.ps1": {
-      "brief": "docs/review_briefs/scripts_owner_only_staging_file.md",
+      "brief": "docs/archive/review_briefs/scripts_owner_only_staging_file.md",
       "evidence": "driver",
       "group": "scripts",
       "reviewed_blob": "a5e4a0022f74fb2d528f091c2ec1b96ed6c9f6c4",
+      "reviewed_brief_blob": "9f59222e8135dc24ff8e86aadf9750fc1062288f",
       "status": "reviewed"
+    },
+    "scripts/partition_manager_certification_report.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/partition_manager_certification_steps.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/partition_manager_controller_evidence.ps1": {
+      "group": "scripts",
+      "status": "pending"
     },
     "scripts/partition_manager_storage.ps1": {
       "group": "scripts",
@@ -2149,10 +2328,11 @@
       "status": "reviewed"
     },
     "scripts/run_branch_coverage.ps1": {
-      "brief": "docs/review_briefs/scripts_run_branch_coverage.md",
+      "brief": "docs/archive/review_briefs/scripts_run_branch_coverage.md",
       "evidence": "driver",
       "group": "scripts",
       "reviewed_blob": "284c4c19c3b98b11321d394c9b3d0bbda923c2b4",
+      "reviewed_brief_blob": "d818e0982d9d9a2ec36187eb67200697c58e541b",
       "status": "reviewed"
     },
     "scripts/run_clang_format.ps1": {
@@ -2168,10 +2348,11 @@
       "status": "reviewed"
     },
     "scripts/run_coverage.ps1": {
-      "brief": "docs/review_briefs/scripts_run_coverage.md",
+      "brief": "docs/archive/review_briefs/scripts_run_coverage.md",
       "evidence": "driver",
       "group": "scripts",
       "reviewed_blob": "60df89f08d7d9297527e0680d08e2c2dc0ade3e6",
+      "reviewed_brief_blob": "4d00a52e383c156beddef13254deb78ba464b0ce",
       "status": "reviewed"
     },
     "scripts/run_cppcheck.ps1": {
@@ -2353,10 +2534,11 @@
       "status": "pending"
     },
     "scripts/test_coverage_runners.ps1": {
-      "brief": "docs/review_briefs/scripts_test_coverage_runners.md",
+      "brief": "docs/archive/review_briefs/scripts_test_coverage_runners.md",
       "evidence": "driver",
       "group": "scripts",
       "reviewed_blob": "b598122fb7421618c21d8e48bc4ffd3149c2d1ff",
+      "reviewed_brief_blob": "1c8e114fe7dddc58857b14a13eb2632b8c6bd290",
       "status": "reviewed"
     },
     "scripts/test_false_green_command_propagation.ps1": {
@@ -2368,10 +2550,11 @@
       "status": "pending"
     },
     "scripts/test_new_partition_manager_automation_vm_security.ps1": {
-      "brief": "docs/review_briefs/scripts_test_new_partition_manager_automation_vm_security.md",
+      "brief": "docs/archive/review_briefs/scripts_test_new_partition_manager_automation_vm_security.md",
       "evidence": "driver",
       "group": "scripts",
       "reviewed_blob": "375cb2481e1030c52c4041aa6d37e8b75cfcf8ef",
+      "reviewed_brief_blob": "89bf83915e7df7cf2b5f0deff04eb6801cf18bad",
       "status": "reviewed"
     },
     "scripts/test_partition_filesystem_probe_certifier.ps1": {
@@ -2383,6 +2566,14 @@
       "group": "scripts",
       "reviewed_blob": null,
       "status": "reviewed"
+    },
+    "scripts/test_partition_manager_controller_restore_routing.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/test_partition_manager_live_certifier.ps1": {
+      "group": "scripts",
+      "status": "pending"
     },
     "scripts/test_partition_manager_vhd_preflight.ps1": {
       "evidence": "cited",
@@ -2447,6 +2638,10 @@
       "status": "pending"
     },
     "scripts/verify_signed_release.ps1": {
+      "group": "scripts",
+      "status": "pending"
+    },
+    "scripts/verify_source_fingerprint.py": {
       "group": "scripts",
       "status": "pending"
     },
@@ -2533,12 +2728,13 @@
       "status": "pending"
     },
     "src/ai/ai_conversation_store.cpp": {
-      "brief": "docs/review_briefs/src_ai_ai_conversation_store.md",
+      "brief": "docs/archive/review_briefs/src_ai_ai_conversation_store.md",
       "evidence": "driver",
       "group": "src",
       "previous_evidence": "driver",
       "previous_review_blob": "a4caf858c911fa69089ba00b798db0321b75d5d5",
       "reviewed_blob": "30dcefb30071c80cc72a41fb32a751b4b2e1dbe3",
+      "reviewed_brief_blob": "1fcaf383a97dfdbc35622d61d39b739013c06682",
       "status": "reviewed"
     },
     "src/ai/ai_credential_store.cpp": {
@@ -2558,6 +2754,7 @@
       "evidence": "driver",
       "group": "src",
       "reviewed_blob": "3e1170640f7a4e1381701d8aa3ee3fc295a7264c",
+      "reviewed_brief_blob": "c34f9b34e83f98affed5efe745193ab56ba47427",
       "status": "reviewed"
     },
     "src/ai/ai_human_gate_store.cpp": {
@@ -2669,21 +2866,23 @@
       "status": "pending"
     },
     "src/ai/ai_skill_store.cpp": {
-      "brief": "docs/review_briefs/src_ai_ai_skill_store.md",
+      "brief": "docs/archive/review_briefs/src_ai_ai_skill_store.md",
       "evidence": "driver",
       "group": "src",
       "previous_evidence": "driver",
       "previous_review_blob": "89596efb173162638e5887e637ae5db661f3ac1e",
       "reviewed_blob": "2280ff901c416626950aea8febbd49cd8b0217ca",
+      "reviewed_brief_blob": "6185d331280695207b791d9215cdbb609820505c",
       "status": "reviewed"
     },
     "src/ai/ai_store_file_loader.cpp": {
-      "brief": "docs/review_briefs/src_ai_ai_store_file_loader.md",
+      "brief": "docs/archive/review_briefs/src_ai_ai_store_file_loader.md",
       "evidence": "driver",
       "group": "src",
       "previous_evidence": "driver",
       "previous_review_blob": "13a20f58488a3bcebf64e2b2862f791edee39cbf",
       "reviewed_blob": "27b11c1b25ae19714f16614dfe7c03b7bf30c324",
+      "reviewed_brief_blob": "9c0e232b7b333a5078cfb89ef8bec1ee385f4a86",
       "status": "reviewed"
     },
     "src/ai/ai_subagent_runner.cpp": {
@@ -2715,17 +2914,19 @@
       "status": "reviewed"
     },
     "src/ai/ai_tool_health_ledger.cpp": {
-      "brief": "docs/review_briefs/src_ai_ai_tool_health_ledger.md",
+      "brief": "docs/archive/review_briefs/src_ai_ai_tool_health_ledger.md",
       "evidence": "driver",
       "group": "src",
       "reviewed_blob": "5e5c399722d98e170cfe1f311201b39e9b5079b0",
+      "reviewed_brief_blob": "c356da5620677989e2827477abfcfceae4f2d8ed",
       "status": "reviewed"
     },
     "src/ai/ai_tool_loop_detector.cpp": {
-      "brief": "docs/review_briefs/src_ai_ai_tool_loop_detector.md",
+      "brief": "docs/archive/review_briefs/src_ai_ai_tool_loop_detector.md",
       "evidence": "driver",
       "group": "src",
       "reviewed_blob": "59c71da09af96796c1d68190db1c0d8bdcfd5ea4",
+      "reviewed_brief_blob": "41a8e41978e0c04d5baf2cf13cfeaeda84194456",
       "status": "reviewed"
     },
     "src/ai/ai_tool_policy.cpp": {
@@ -2735,10 +2936,11 @@
       "status": "reviewed"
     },
     "src/ai/ai_tool_result_recorder.cpp": {
-      "brief": "docs/review_briefs/src_ai_ai_tool_result_recorder.md",
+      "brief": "docs/archive/review_briefs/src_ai_ai_tool_result_recorder.md",
       "evidence": "driver",
       "group": "src",
       "reviewed_blob": "af41bfa35dae4a03f2627c9dde5a66de51bf2c72",
+      "reviewed_brief_blob": "439f726ffbd90a3f63ab209a2e4b7dbd1796d5e7",
       "status": "reviewed"
     },
     "src/ai/ai_tool_turn.cpp": {
@@ -2748,10 +2950,11 @@
       "status": "reviewed"
     },
     "src/ai/ai_trace_store.cpp": {
-      "brief": "docs/review_briefs/src_ai_ai_trace_store.md",
+      "brief": "docs/archive/review_briefs/src_ai_ai_trace_store.md",
       "evidence": "driver",
       "group": "src",
       "reviewed_blob": "a1fbf9335bfd96e6b99cacf33a24387c6e9086e3",
+      "reviewed_brief_blob": "2c46f95382fc26289ba5da9eb231ee78e07c75d3",
       "status": "reviewed"
     },
     "src/ai/ai_win32_gui_runner.cpp": {
@@ -2779,12 +2982,13 @@
       "status": "reviewed"
     },
     "src/ai/ai_workflow_store.cpp": {
-      "brief": "docs/review_briefs/src_ai_ai_workflow_store.md",
+      "brief": "docs/archive/review_briefs/src_ai_ai_workflow_store.md",
       "evidence": "driver",
       "group": "src",
       "previous_evidence": "driver",
       "previous_review_blob": "1f98ef216e36a94cea9f2d3d61014f6663a4752b",
       "reviewed_blob": "e534e30da6608f3f52adae6722e7bb0290992e8e",
+      "reviewed_brief_blob": "12d71811f55d6880c616bc3277bbacd3624ddb8b",
       "status": "reviewed"
     },
     "src/ai/ai_workflow_template.cpp": {
@@ -2848,10 +3052,11 @@
       "status": "reviewed"
     },
     "src/core/app_action_service.cpp": {
-      "brief": "docs/review_briefs/src_core_app_action_service.md",
+      "brief": "docs/archive/review_briefs/src_core_app_action_service.md",
       "evidence": "driver",
       "group": "src",
       "reviewed_blob": "1e9531f1e45e6a7058c0fd84db52600c07c2ec1f",
+      "reviewed_brief_blob": "e8c1f0c5dc339f4cba333ff3bbf1e6321ec0c579",
       "status": "reviewed"
     },
     "src/core/app_installation_busy.cpp": {
@@ -4136,6 +4341,10 @@
       "reviewed_blob": null,
       "status": "reviewed"
     },
+    "tests/CMakeLists.txt": {
+      "group": "cmake",
+      "status": "pending"
+    },
     "tests/certification/file_management_live_certifier.cpp": {
       "group": "tests",
       "status": "pending"
@@ -4149,6 +4358,10 @@
       "status": "pending"
     },
     "tests/certification/partition_filesystem_probe_certifier.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/certification/partition_manager_live_certifier.cpp": {
       "group": "tests",
       "status": "pending"
     },
@@ -4205,17 +4418,19 @@
       "status": "reviewed"
     },
     "tests/unit/actions/test_action_factory.cpp": {
-      "brief": "docs/review_briefs/tests_unit_actions_test_action_factory.md",
+      "brief": "docs/archive/review_briefs/tests_unit_actions_test_action_factory.md",
       "evidence": "driver",
       "group": "tests",
       "reviewed_blob": "f121244e0c3c77e629a5f700adbecfc6c0be8121",
+      "reviewed_brief_blob": "4b87922fc17c1f37bc3e430f5ccddd9cb76e02a3",
       "status": "reviewed"
     },
     "tests/unit/actions/test_all_actions_metadata.cpp": {
-      "brief": "docs/review_briefs/tests_unit_actions_test_all_actions_metadata.md",
+      "brief": "docs/archive/review_briefs/tests_unit_actions_test_all_actions_metadata.md",
       "evidence": "driver",
       "group": "tests",
       "reviewed_blob": "f8b0cbc8787a2688158f0f743b673434ee4e044b",
+      "reviewed_brief_blob": "ba9053a675d3ac911a2f4eae6e792c15e6fce38e",
       "status": "reviewed"
     },
     "tests/unit/actions/test_backup_bitlocker_keys_action.cpp": {
@@ -4629,6 +4844,10 @@
       "status": "pending"
     },
     "tests/unit/test_dns_diagnostic_tool.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_doc_accuracy.py": {
       "group": "tests",
       "status": "pending"
     },
@@ -5090,6 +5309,10 @@
       "group": "tests",
       "status": "pending"
     },
+    "tests/unit/test_partition_manager_controller_evidence.ps1": {
+      "group": "tests",
+      "status": "pending"
+    },
     "tests/unit/test_partition_manager_core.cpp": {
       "evidence": "cited",
       "group": "tests",
@@ -5205,6 +5428,10 @@
       "status": "pending"
     },
     "tests/unit/test_smart_file_filter.cpp": {
+      "group": "tests",
+      "status": "pending"
+    },
+    "tests/unit/test_source_fingerprint.py": {
       "group": "tests",
       "status": "pending"
     },

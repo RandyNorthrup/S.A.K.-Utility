@@ -337,17 +337,25 @@ void TestScriptRewriter::rewriteToFile_invalidPath_failsGracefully() {
     auto parsed = parser.parse("# empty");
 
     // A non-empty map with a resource-free script makes rewrite() itself succeed,
-    // so failure can ONLY come from the un-writable output path below -- otherwise
+    // so failure can ONLY come from the file used as an output parent below -- otherwise
     // rewrite() bails on the empty map and the invalid-path branch is never reached.
     QHash<QString, QString> filenames;
     filenames["https://example.com/x.exe"] = "x.exe";
 
+    QTemporaryDir owned;
+    QVERIFY(owned.isValid());
+    const QString blocker_path = owned.filePath(QStringLiteral("blocker"));
+    QFile blocker(blocker_path);
+    QVERIFY(blocker.open(QIODevice::WriteOnly));
+    QCOMPARE(blocker.write(QByteArrayLiteral("x")), qint64{1});
+    blocker.close();
+    const QString output_path = blocker_path + QStringLiteral("/script.ps1");
+
     sak::ScriptRewriter rewriter;
-    auto result = rewriter.rewriteToFile(parsed, filenames, "Z:\\nonexistent\\path\\script.ps1");
+    auto result = rewriter.rewriteToFile(parsed, filenames, output_path);
 
     QVERIFY(!result.success);
-    QCOMPARE(result.error_message,
-             QStringLiteral("Cannot write to: Z:\\nonexistent\\path\\script.ps1"));
+    QCOMPARE(result.error_message, QStringLiteral("Cannot write to: %1").arg(output_path));
 }
 
 QTEST_GUILESS_MAIN(TestScriptRewriter)

@@ -11,10 +11,9 @@
 # A skip is only acceptable when the thing it needs genuinely cannot exist on
 # a build machine. "Hard to set up" is not a reason - it is a fixture to write.
 #
-# Re-measured after filesystem/adapter host-state closure: 5094 test functions passed and 28
-# skipped, so 0.55 percent of what the suite could execute did not execute.
-# Wave 26 removed seven dormant host-conditional sites. None was an observed row in this
-# latest-run baseline, so its 28 runtime rows stay unchanged until the next complete suite audit.
+# The W66 full-suite audit found 5244 passed test functions and 25 reviewed
+# skips, or 0.47 percent of executed functions. The static source inventory
+# has 22 QSKIP sites across 7 files; none is in a dead application-platform arm.
 # That number is the point of this file. ctest reports a binary as Passed when
 # every one of its functions skipped, so without this the suite can report
 # 222/222 while a subsystem quietly stops being exercised.
@@ -54,8 +53,6 @@ test_openai_responses_client::OpenAIResponsesClientTests::realInputTokenCountSmo
 test_openai_responses_client::OpenAIResponsesClientTests::realModelToolLoopSmokeTest_optIn = Bills several real OpenAI requests. SAK_AI_REAL_MODEL_TEST=1 opts in; after opt-in, missing credentials or API failures fail.
 test_linux_iso_downloader::LinuxISODownloaderTests::testGitHubVersionCheck_Network = Live GitHub API check; SAK_RUN_LIVE_LINUX_ISO_TESTS=1 opts in, then timeout/API failure hard-fails.
 test_linux_iso_downloader::LinuxISODownloaderTests::testDirectUrlReachable_Ubuntu = Live Ubuntu CDN reachability check; SAK_RUN_LIVE_LINUX_ISO_TESTS=1 opts in, then timeout/status failure hard-fails.
-test_ai_mcp_stdio_session::AiMcpStdioSessionTests::liveWin32McpPersistentSession_optIn = Same live engine, held open across calls. SAK_MCP_SESSION_LIVE_TEST=1 opts in.
-test_ai_mcp_session_pool::AiMcpSessionPoolTests::liveWin32McpReuseAndIsolation_optIn = Same live engine, several concurrent sessions. SAK_MCP_SESSION_LIVE_TEST=1 opts in.
 test_windows_iso_downloader::WindowsISODownloaderTests::testFetchBuilds = Live UUP dump API test; init() skips unless SAK_RUN_LIVE_UUP_TESTS is set, then any timeout/API/empty result fails (G18-5).
 test_windows_iso_downloader::WindowsISODownloaderTests::testGetFilesReturnsResults = Live UUP dump API test; init() skips unless SAK_RUN_LIVE_UUP_TESTS is set, then any timeout/API/empty result fails (G18-5).
 test_windows_iso_downloader::WindowsISODownloaderTests::testFileUrlsAreValid = Live UUP dump API test; init() skips unless SAK_RUN_LIVE_UUP_TESTS is set, then any timeout/API/empty result fails (G18-5).

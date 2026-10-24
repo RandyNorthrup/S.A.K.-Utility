@@ -19,7 +19,9 @@ namespace sak {
 /// @brief Single raw-device classification authority for every caller (plan-time safety
 ///        validator, raw I/O, clone/image script builder). Recognizes the \\.\ device
 ///        namespace, \\?\PhysicalDriveN, the \\?\GLOBALROOT\ device namespace, a BARE
-///        \\?\Volume{GUID} handle, and POSIX /dev/ nodes. A \\?\Volume{GUID}\dir\file form
+///        \\?\Volume{GUID} handle. Root-relative /dev/ or \dev\ spellings in any case are
+///        hostile raw-looking input for Windows fail-closed gates, not supported POSIX devices. A
+///        \\?\Volume{GUID}\dir\file form
 ///        has a separator after the closing brace and is an ordinary extended-length FILE
 ///        path; the generic \\?\ long-path prefix is deliberately NOT matched.
 [[nodiscard]] bool isWindowsRawDevicePath(const QString& path);
@@ -38,15 +40,16 @@ namespace sak {
 [[nodiscard]] std::optional<uint32_t> rawDevicePhysicalDriveNumber(const QString& path);
 
 /// @brief Best-effort mark an open file (by descriptor) sparse so a large logical size
-///        materializes only written regions. No-op where unsupported; POSIX files are
-///        already sparse via ftruncate. @p fileDescriptor is QFile::handle().
+///        materializes only written regions. No-op where unsupported.
+///        @p fileDescriptor is QFile::handle().
 void markFileSparse(int fileDescriptor);
 
-/// @brief Copy @p source to @p destination preserving sparseness, so a multi-TiB
-///        container with mostly-hole content (only its metadata written) copies in the
-///        size of its allocated data, not its logical size. On Windows this reads only
-///        the source's allocated ranges into a sparse destination; elsewhere it falls
-///        back to a hole-preserving file copy. @p destination must not already exist.
+/// @brief Copy @p source to a new @p destination. When both Windows volumes support
+///        sparse files, copy only allocated ranges into a sparse destination. Otherwise
+///        select a dense copy up front, require enough destination space for the full
+///        logical size, and copy every byte. Unknown capabilities and failed sparse setup
+///        are errors, never reasons to silently switch strategies. The destination must
+///        not already exist.
 [[nodiscard]] bool copyFileSparse(const QString& source,
                                   const QString& destination,
                                   QString* errorMessage = nullptr);

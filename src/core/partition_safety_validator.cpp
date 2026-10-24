@@ -1591,7 +1591,8 @@ void validatePartitionTargetState(const PartitionDiskInfo& disk,
                  hasUnknownBitLockerState(partition),
                  QStringLiteral("BitLocker protection and lock state could not be determined"));
     addBlockerIf(result,
-                 disk.is_read_only || partition.is_read_only,
+                 (disk.is_read_only || partition.is_read_only) &&
+                     operation.type != PartitionOperationType::CreateImage,
                  QStringLiteral("Target partition is read-only"));
     addBlockerIf(result,
                  disk.is_dynamic || disk.is_storage_spaces,
@@ -2073,6 +2074,38 @@ bool PartitionSafetyValidator::isSystemProtectedPartition(const PartitionInfoEx&
            partition.is_recovery;
 }
 
+static void validateImageCaptureSourceState(const PartitionDiskInfo& disk,
+                                            const PartitionOperation& operation,
+                                            PartitionValidationResult* result) {
+    const QString source = operation.payload.value(QStringLiteral("source_path")).toString();
+    if (operation.type != PartitionOperationType::CreateImage || !isWindowsRawDevicePath(source)) {
+        return;
+    }
+    if (!disk.is_offline.has_value()) {
+        result->blockers.append(
+            QStringLiteral("Create Image source online/offline state is unknown"));
+        return;
+    }
+    const QString mode = operation.payload.value(QStringLiteral("source_capture_mode")).toString();
+    if (mode == QStringLiteral("LockedVolumes")) {
+        addBlockerIf(result,
+                     *disk.is_offline,
+                     QStringLiteral("LockedVolumes capture requires an online source disk"));
+        return;
+    }
+    if (mode != QStringLiteral("OfflineDisk")) {
+        result->blockers.append(
+            QStringLiteral("Create Image requires an explicit source capture mode"));
+        return;
+    }
+    addBlockerIf(result,
+                 !*disk.is_offline,
+                 QStringLiteral("OfflineDisk capture requires an already-offline source disk"));
+    addBlockerIf(result,
+                 disk.is_system || disk.is_boot,
+                 QStringLiteral("Offline capture cannot target the current OS disk"));
+}
+
 PartitionValidationResult PartitionSafetyValidator::validate(const PartitionInventory& inventory,
                                                              const PartitionOperation& operation) {
     PartitionValidationResult result;
@@ -2094,6 +2127,7 @@ PartitionValidationResult PartitionSafetyValidator::validate(const PartitionInve
         return result;
     }
 
+    validateImageCaptureSourceState(*disk, operation, &result);
     addCommonDiskWarnings(*disk, &result);
 
     if (operationTargetScopeMismatch(operation)) {
@@ -2133,7 +2167,9 @@ PartitionValidationResult PartitionSafetyValidator::validate(const PartitionInve
 static void validateDiskStateBlockers(const PartitionDiskInfo& disk,
                                       const PartitionOperation& operation,
                                       PartitionValidationResult* result) {
-    addBlockerIf(result, disk.is_read_only, QStringLiteral("Target disk is read-only"));
+    addBlockerIf(result,
+                 disk.is_read_only && operation.type != PartitionOperationType::CreateImage,
+                 QStringLiteral("Target disk is read-only"));
     addBlockerIf(result,
                  (disk.is_dynamic && !allowsDynamicDiskOperation(operation.type)) ||
                      disk.is_storage_spaces,

@@ -15,10 +15,15 @@ param(
     [switch]$KeepVhd,
     [switch]$RelaunchElevated,
     [string]$ExternalEvidenceManifest = "",
-    [string]$ExternalEvidenceChecklist = ""
+    [string]$ExternalEvidenceChecklist = "",
+    [string]$ControllerCertifierPath = "build\Release\partition_manager_live_certifier.exe",
+    [string]$ControllerSourceManifestPath = "build\Release\partition_manager_live_certifier.sources.txt"
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "partition_manager_certification_report.ps1")
+. (Join-Path $PSScriptRoot "partition_manager_certification_steps.ps1")
+. (Join-Path $PSScriptRoot "process_capture.ps1")
 
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 $Script:StrictFailurePath = ""
@@ -35,19 +40,6 @@ function Resolve-ProjectPath {
     return (Join-Path $ProjectRoot $Path)
 }
 
-function ConvertTo-ProcessArgument {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Value
-    )
-
-    if ($Value -match '[\s"]') {
-        return '"' + ($Value -replace '"', '\"') + '"'
-    }
-
-    return $Value
-}
-
 function Test-Administrator {
     $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = New-Object Security.Principal.WindowsPrincipal($identity)
@@ -61,9 +53,9 @@ function Invoke-ElevatedRelaunch {
         "-ExecutionPolicy",
         "Bypass",
         "-File",
-        (ConvertTo-ProcessArgument -Value $PSCommandPath),
+        (ConvertTo-WindowsProcessArgument -Argument $PSCommandPath),
         "-OutputRoot",
-        (ConvertTo-ProcessArgument -Value $OutputRoot),
+        (ConvertTo-WindowsProcessArgument -Argument $OutputRoot),
         "-VhdSizeMB",
         $VhdSizeMB.ToString()
     )
@@ -73,47 +65,19 @@ function Invoke-ElevatedRelaunch {
     }
     if (-not [string]::IsNullOrWhiteSpace($ExternalEvidenceManifest)) {
         $arguments += "-ExternalEvidenceManifest"
-        $arguments += (ConvertTo-ProcessArgument -Value $ExternalEvidenceManifest)
+        $arguments += (ConvertTo-WindowsProcessArgument -Argument $ExternalEvidenceManifest)
     }
     if (-not [string]::IsNullOrWhiteSpace($ExternalEvidenceChecklist)) {
         $arguments += "-ExternalEvidenceChecklist"
-        $arguments += (ConvertTo-ProcessArgument -Value $ExternalEvidenceChecklist)
+        $arguments += (ConvertTo-WindowsProcessArgument -Argument $ExternalEvidenceChecklist)
     }
+
+    $arguments += @("-ControllerCertifierPath", (ConvertTo-WindowsProcessArgument $ControllerCertifierPath))
+    $arguments += @("-ControllerSourceManifestPath", (ConvertTo-WindowsProcessArgument $ControllerSourceManifestPath))
 
     Write-Host "Relaunching strict Partition Manager VHD certification in an elevated PowerShell window..."
-    $process = Start-Process -FilePath $hostPath -ArgumentList $arguments -Verb RunAs -Wait -PassThru
+    $process = Start-Process -FilePath $hostPath -ArgumentList $arguments -Verb RunAs -WindowStyle Hidden -Wait -PassThru
     exit $process.ExitCode
-}
-
-function Invoke-CheckedStep {
-    param(
-        [Parameter(Mandatory = $true)]
-        [scriptblock]$Body,
-        [Parameter(Mandatory = $true)]
-        [string]$Name
-    )
-
-    $global:LASTEXITCODE = 0
-    & $Body
-    $exitCode = $LASTEXITCODE
-    if ($exitCode -ne 0) {
-        throw "Partition Manager strict VHD certification step failed: $Name"
-    }
-}
-
-function Resolve-LatestCertificationReport {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Root
-    )
-
-    $resolvedRoot = Resolve-Path -LiteralPath $Root -ErrorAction Stop
-    $reports = @(Get-ChildItem -LiteralPath $resolvedRoot.Path -Recurse -Filter "partition-manager-certification-report.json" |
-        Sort-Object LastWriteTimeUtc -Descending)
-    if ($reports.Count -eq 0) {
-        throw "No Partition Manager certification reports found under $($resolvedRoot.Path)"
-    }
-    return $reports[0].FullName
 }
 
 Push-Location $ProjectRoot
@@ -144,7 +108,7 @@ try {
     $externalEvidenceRoot = Join-Path $resolvedOutputRoot "external-evidence"
 
     if ([string]::IsNullOrWhiteSpace($ExternalEvidenceManifest)) {
-        Invoke-CheckedStep -Name "external evidence scaffold" -Body {
+        Invoke-CheckedStep -Workflow "strict VHD" -Name "external evidence scaffold" -Body {
             & scripts\new_partition_manager_external_evidence_manifest.ps1 `
                 -OutputPath $externalManifestPath `
                 -ChecklistPath $externalChecklistPath `
@@ -162,13 +126,13 @@ try {
         }
     }
 
-    Invoke-CheckedStep -Name "external checklist" -Body {
+    Invoke-CheckedStep -Workflow "strict VHD" -Name "external checklist" -Body {
         & scripts\check_partition_manager_external_checklist.ps1 `
             -ChecklistPath $externalChecklistPath `
             -ManifestPath $externalManifestPath
     }
     if ([string]::IsNullOrWhiteSpace($ExternalEvidenceManifest)) {
-        Invoke-CheckedStep -Name "external lab package" -Body {
+        Invoke-CheckedStep -Workflow "strict VHD" -Name "external lab package" -Body {
             & scripts\check_partition_manager_external_lab_package.ps1 `
                 -EvidenceRoot $externalEvidenceRoot `
                 -ManifestPath $externalManifestPath
@@ -176,7 +140,7 @@ try {
     }
 
     $preflightPath = Join-Path $resolvedOutputRoot "vhd-preflight.json"
-    Invoke-CheckedStep -Name "VHD preflight" -Body {
+    Invoke-GeneratedArtifactStep -Workflow "strict VHD" -Name "VHD preflight" -Paths @($preflightPath) -Body {
         & scripts\test_partition_manager_vhd_preflight.ps1 `
             -OutputRoot $resolvedOutputRoot `
             -OutputPath $preflightPath `
@@ -184,7 +148,7 @@ try {
             -RequireReady `
             -Quiet
     }
-    Invoke-CheckedStep -Name "VHD preflight report verification" -Body {
+    Invoke-CheckedStep -Workflow "strict VHD" -Name "VHD preflight report verification" -Body {
         & scripts\check_partition_manager_vhd_preflight_report.ps1 -ReportPath $preflightPath
     }
 
@@ -193,6 +157,7 @@ try {
         RunVhdDataDiskMatrix = $true
         RequireVhdDataDiskEvidence = $true
         VhdSizeMB = $VhdSizeMB
+        ControllerCertifierPath = $ControllerCertifierPath
     }
     if ($KeepVhd) {
         $harnessArgs.KeepVhd = $true
@@ -201,21 +166,25 @@ try {
         $harnessArgs.RelaunchElevated = $true
     }
 
-    Invoke-CheckedStep -Name "destructive disposable-VHD matrix" -Body {
+    Invoke-CheckedStep -Workflow "strict VHD" -Name "destructive disposable-VHD matrix" -Body {
         & scripts\run_partition_manager_destructive_certification.ps1 @harnessArgs
     }
 
     $reportPath = Resolve-LatestCertificationReport -Root $resolvedOutputRoot
-    Invoke-CheckedStep -Name "strict VHD verification" -Body {
+    Invoke-CheckedStep -Workflow "strict VHD" -Name "strict VHD verification" -Body {
         & scripts\verify_partition_manager_certification.ps1 `
+            -ControllerCertifierPath $ControllerCertifierPath `
+            -ControllerSourceManifestPath $ControllerSourceManifestPath `
             -ReportPath $reportPath `
             -ExternalEvidenceManifest $externalManifestPath `
             -RequireVhdDataDiskEvidence
     }
 
     $statusPath = Join-Path $resolvedOutputRoot "certification-status.json"
-    Invoke-CheckedStep -Name "certification status" -Body {
+    Invoke-GeneratedArtifactStep -Workflow "strict VHD" -Name "certification status" -Paths @($statusPath) -Body {
         & scripts\get_partition_manager_certification_status.ps1 `
+            -ControllerCertifierPath $ControllerCertifierPath `
+            -ControllerSourceManifestPath $ControllerSourceManifestPath `
             -ReportPath $reportPath `
             -ExternalEvidenceManifest $externalManifestPath `
             -OutputPath $statusPath `
@@ -224,7 +193,7 @@ try {
 
     $gapReportPath = Join-Path $resolvedOutputRoot "certification-gap-report.json"
     $gapMarkdownPath = Join-Path $resolvedOutputRoot "certification-gap-report.md"
-    Invoke-CheckedStep -Name "certification gap report" -Body {
+    Invoke-GeneratedArtifactStep -Workflow "strict VHD" -Name "certification gap report" -Paths @($gapReportPath, $gapMarkdownPath) -Body {
         & scripts\new_partition_manager_certification_gap_report.ps1 `
             -StatusPath $statusPath `
             -OutputPath $gapReportPath `
@@ -232,7 +201,7 @@ try {
             -Force `
             -Quiet
     }
-    Invoke-CheckedStep -Name "certification gap report verification" -Body {
+    Invoke-CheckedStep -Workflow "strict VHD" -Name "certification gap report verification" -Body {
         & scripts\check_partition_manager_certification_gap_report.ps1 `
             -StatusPath $statusPath `
             -GapReportPath $gapReportPath `
@@ -240,7 +209,7 @@ try {
     }
 
     $bundlePath = Join-Path $resolvedOutputRoot "certification-artifact-bundle.json"
-    Invoke-CheckedStep -Name "certification artifact bundle" -Body {
+    Invoke-GeneratedArtifactStep -Workflow "strict VHD" -Name "certification artifact bundle" -Paths @($bundlePath) -Body {
         & scripts\new_partition_manager_certification_bundle.ps1 `
             -CertificationRoot $resolvedOutputRoot `
             -StatusPath $statusPath `
@@ -253,11 +222,14 @@ try {
             -Force `
             -Quiet
     }
-    Invoke-CheckedStep -Name "certification artifact bundle verification" -Body {
+    Invoke-CheckedStep -Workflow "strict VHD" -Name "certification artifact bundle verification" -Body {
         & scripts\check_partition_manager_certification_bundle.ps1 -BundlePath $bundlePath
     }
 
     $status = Get-Content -LiteralPath $statusPath -Raw | ConvertFrom-Json
+    if ($status.claim_level -isnot [string]) {
+        throw "Strict VHD certification status has a non-string claim_level; refusing certification."
+    }
     if ($status.claim_level -ne "VhdDataDiskCertified" -and $status.claim_level -ne "HardwareCertified") {
         throw "Strict VHD workflow did not reach VhdDataDiskCertified. Claim level: $($status.claim_level)"
     }

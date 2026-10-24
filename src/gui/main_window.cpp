@@ -70,6 +70,7 @@
 #include <QWheelEvent>
 
 #include <array>
+#include <stdexcept>
 
 namespace sak {
 
@@ -332,6 +333,20 @@ bool isStartupSmokeMode() {
     return (app != nullptr) && app->property("sakStartupSmokeTest").toBool();
 }
 
+bool isHeadlessStartupSmokeMode() {
+    const auto* app = QCoreApplication::instance();
+    return (app != nullptr) && app->property("sakStartupSmokeHeadless").toBool();
+}
+
+void logLazyTabTransition(int slot, const char* step, QElapsedTimer* timer) {
+    const auto elapsed_ms = timer->restart();
+    if (!isStartupSmokeMode()) {
+        return;
+    }
+    logInfo("MainWindow startup: lazy slot {} {} took {} ms", slot, step, elapsed_ms);
+    logger::instance().flush();
+}
+
 void addTabWithTooltip(QTabWidget* tab_widget,
                        QWidget* panel,
                        const char* tab_title,
@@ -443,6 +458,15 @@ QTextBrowser* createHtmlBrowser(QWidget* parent, const char* html, const QString
     return browser;
 }
 
+QWidget* addEmptyPanelTab(QTabWidget* tabs, const QString& title) {
+    auto* shell = new QWidget(tabs);
+    auto* layout = new QVBoxLayout(shell);
+    layout->setContentsMargins(ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
+    layout->setSpacing(ui::kSpacingNone);
+    tabs->addTab(shell, title);
+    return shell;
+}
+
 }  // namespace
 
 MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
@@ -521,15 +545,25 @@ void MainWindow::setupUi() {
 }
 
 void MainWindow::createStatusBar() {
-    // First point in startup that needs the font database; with the async
-    // warmup from main() this normally reads back instantly, and the log
-    // shows how long the GUI thread still had to wait when it did not.
     QElapsedTimer font_timer;
     font_timer.start();
+    if (isStartupSmokeMode()) {
+        logInfo("MainWindow startup: entering font database query");
+        logger::instance().flush();
+    }
     const auto font_family_count = QFontDatabase::families().size();
     logInfo("MainWindow startup: font database ready ({} families) after {} ms",
             font_family_count,
             font_timer.elapsed());
+    if (isStartupSmokeMode()) {
+        logger::instance().flush();
+    }
+    QElapsedTimer status_timer;
+    status_timer.start();
+    if (isStartupSmokeMode()) {
+        logInfo("MainWindow startup: entering status bar construction");
+        logger::instance().flush();
+    }
 
     // Persistent status label. Every panel relays status text through it, and that text embeds
     // file paths, program names, adapter names and AI output, so it renders verbatim.
@@ -537,6 +571,10 @@ void MainWindow::createStatusBar() {
     m_status_label->setContentsMargins(
         sak::ui::kMarginTight, sak::ui::kMarginNone, sak::ui::kMarginTight, sak::ui::kMarginNone);
     statusBar()->addWidget(m_status_label, 1);
+    if (isStartupSmokeMode()) {
+        logInfo("MainWindow startup: first status label ready after {} ms", status_timer.elapsed());
+        logger::instance().flush();
+    }
 
     m_vulnerability_summary_label = new QLabel(this);
     m_vulnerability_summary_label->setContentsMargins(sak::ui::kSpacingDefault,
@@ -575,6 +613,10 @@ void MainWindow::createStatusBar() {
     statusBar()->addPermanentWidget(m_vulnerability_summary_label);
 
     createElevationStatusWidgets();
+    if (isStartupSmokeMode()) {
+        logInfo("MainWindow startup: status widgets ready after {} ms", status_timer.elapsed());
+        logger::instance().flush();
+    }
 }
 
 void MainWindow::createElevationStatusWidgets() {
@@ -653,22 +695,22 @@ void MainWindow::createPanels() {
     });
     setupLogRouting();
     updateTabShortcutHints(m_tab_widget);
-    if (isAccessibilityAuditMode() || isStartupSmokeMode()) {
+    if (isAccessibilityAuditMode() || isHeadlessStartupSmokeMode()) {
         // The accessibility scan needs the full widget tree, and the startup
-        // smoke gate must catch a crash in ANY panel constructor - lazy tabs
-        // would otherwise leave every tool panel unbuilt in both modes.
-        for (int slot = 0; slot < static_cast<int>(m_lazyTabs.size()); ++slot) {
-            materializeTab(slot);
-        }
+        // headless gate has no show event. Native smoke builds every panel
+        // after the empty window is exposed, preserving constructor coverage.
+        materializeAllToolTabs();
     }
 }
 
 void MainWindow::registerLazyToolTabs() {
     Q_ASSERT(m_tab_widget);
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
+    const int ai_slot = static_cast<int>(m_lazyTabs.size());
     addLazyPlaceholder("AI Assistant", kTooltipAiAssistant, ":/icons/icons/panel_ai.svg");
-    m_lazyTabs.push_back(
-        {.build = [this] { createAiAssistantPanelTab(); }, .wire = [this] { wireAiPanel(); }});
+    m_lazyTabs.push_back({.build = [this, ai_slot] { createAiAssistantPanelTab(ai_slot); },
+                          .wire = [this] { wireAiPanel(); },
+                          .in_place = true});
 #endif
     addLazyPlaceholder("Backup and Restore",
                        kTooltipUserMigration,
@@ -698,18 +740,21 @@ void MainWindow::registerLazyToolTabs() {
     addLazyPlaceholder("Benchmark and Diagnostics",
                        kTooltipDiagnostics,
                        ":/icons/icons/panel_diagnostic.svg");
-    m_lazyTabs.push_back(
-        {.build = [this] { createDiagnosticPanel(); }, .wire = [this] { wireDiagnosticPanel(); }});
+    m_lazyTabs.push_back({.build = [this] { createDiagnosticPanel(); },
+                          .wire = [this] { wireDiagnosticPanel(); },
+                          .in_place = true});
 
     addLazyPlaceholder("Email Tools", kTooltipEmailTool, ":/icons/icons/panel_email.svg");
     m_lazyTabs.push_back(
         {.build = [this] { createEmailToolsPanel(); }, .wire = [this] { wireEmailPanels(); }});
 
+    m_slotAppManagement = static_cast<int>(m_lazyTabs.size());
     addLazyPlaceholder("Application Management",
                        kTooltipAppManagement,
                        ":/icons/icons/panel_app_install.svg");
     m_lazyTabs.push_back({.build = [this] { createAppManagementPanel(); },
-                          .wire = [this] { wireAppManagementPanels(); }});
+                          .wire = [this] { wireAppManagementPanels(); },
+                          .in_place = true});
 
     addLazyPlaceholder("Network Management",
                        kTooltipNetworkManagement,
@@ -735,12 +780,24 @@ void MainWindow::materializeTab(int slot) {
     lazy.built = true;
 
     QWidget* placeholder = m_tab_widget->widget(slot);
+    const bool was_selected = (m_tab_widget->currentIndex() == slot);
+    const int tab_count_before = m_tab_widget->count();
     QElapsedTimer build_timer;
     build_timer.start();
-    lazy.build();  // Constructs the real panel and appends its tab at the end.
+    lazy.build();
+    if (lazy.in_place) {
+        finishInPlaceLazyTab(slot, placeholder, tab_count_before, build_timer.elapsed());
+        return;
+    }
+    if (m_tab_widget->count() != tab_count_before + 1) {
+        throw std::logic_error("Lazy panel did not append exactly one tab");
+    }
+    QElapsedTimer transition_timer;
+    transition_timer.start();
     logInfo("MainWindow: tab {} built in {} ms",
             m_tab_widget->tabText(m_tab_widget->count() - 1).toStdString(),
             build_timer.restart());
+    logLazyTabTransition(slot, "build log", &transition_timer);
 
     // Move the freshly built tab into the placeholder's slot and drop the
     // placeholder. Signals are blocked so the restructure does not emit a storm
@@ -749,26 +806,81 @@ void MainWindow::materializeTab(int slot) {
         const QSignalBlocker blocker(m_tab_widget);
         const int appended = m_tab_widget->count() - 1;
         m_tab_widget->tabBar()->moveTab(appended, slot);  // real -> slot; placeholder -> slot + 1
+        logLazyTabTransition(slot, "moveTab", &transition_timer);
         m_tab_widget->removeTab(slot + 1);
-        m_tab_widget->setCurrentIndex(slot);
+        logLazyTabTransition(slot, "removeTab", &transition_timer);
+        // A user-activated placeholder was selected; bulk smoke/audit builds
+        // hidden tabs without forcing each expensive first-show polish now.
+        if (was_selected) {
+            m_tab_widget->setCurrentIndex(slot);
+        }
+        logLazyTabTransition(slot, "selection update", &transition_timer);
     }
     if (placeholder != nullptr) {
         placeholder->deleteLater();
     }
 
     lazy.wire();  // Panel now occupies its final slot; safe to wire status/logs.
+    logLazyTabTransition(slot, "wire", &transition_timer);
     // The rebuilt tab re-set its base tooltip; re-append the shortcut hint.
     updateTabShortcutHints(m_tab_widget);
 }
 
+void MainWindow::materializeAllToolTabs() {
+    for (int slot = 0; slot < static_cast<int>(m_lazyTabs.size()); ++slot) {
+        materializeTab(slot);
+    }
+    if (isStartupSmokeMode()) {
+        qApp->setProperty("sakStartupAllPanelsBuilt", true);
+        logInfo("MainWindow startup: all tool panels materialized");
+        logger::instance().flush();
+    }
+}
+
+void MainWindow::finishInPlaceLazyTab(int slot,
+                                      QWidget* placeholder,
+                                      int tab_count_before,
+                                      qint64 elapsed_ms) {
+    if (m_tab_widget->count() != tab_count_before || placeholder == nullptr ||
+        placeholder->layout() == nullptr) {
+        throw std::logic_error("In-place lazy panel did not populate its existing tab");
+    }
+    logInfo("MainWindow: tab {} built in {} ms",
+            m_tab_widget->tabText(slot).toStdString(),
+            elapsed_ms);
+    if (isStartupSmokeMode()) {
+        logger::instance().flush();
+    }
+    m_lazyTabs[slot].wire();
+    updateTabShortcutHints(m_tab_widget);
+}
+
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
-void MainWindow::createAiAssistantPanelTab() {
-    m_ai_assistant_panel = std::make_unique<AiAssistantPanel>(this);
-    addTabWithTooltip(m_tab_widget,
-                      m_ai_assistant_panel.get(),
-                      "AI Assistant",
-                      kTooltipAiAssistant,
-                      ":/icons/icons/panel_ai.svg");
+void MainWindow::createAiAssistantPanelTab(int slot) {
+    if (isStartupSmokeMode()) {
+        logInfo("MainWindow startup: creating AI Assistant panel");
+        logger::instance().flush();
+    }
+    // Populate the placeholder already owned by QTabWidget. Moving a
+    // populated AI tab re-polishes its entire descendant tree.
+    auto* wrapper = m_tab_widget->widget(slot);
+    if (wrapper == nullptr || wrapper->layout() != nullptr) {
+        throw std::logic_error("AI Assistant placeholder is unavailable or already populated");
+    }
+    wrapper->setAccessibleName(tr("AI Assistant"));
+    auto* layout = new QVBoxLayout(wrapper);
+    layout->setContentsMargins(ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
+    layout->setSpacing(ui::kSpacingNone);
+    if (isStartupSmokeMode()) {
+        logInfo("MainWindow startup: AI Assistant placeholder ready");
+        logger::instance().flush();
+    }
+    m_ai_assistant_panel = std::make_unique<AiAssistantPanel>(wrapper);
+    layout->addWidget(m_ai_assistant_panel.get());
+    if (isStartupSmokeMode()) {
+        logInfo("MainWindow startup: AI Assistant panel attached to tab");
+        logger::instance().flush();
+    }
 }
 #endif
 
@@ -785,14 +897,33 @@ void MainWindow::createBackupRestorePanel() {
 
 void MainWindow::createFileManagementPanel() {
     logInfo("MainWindow: creating File Management panels");
+    if (isStartupSmokeMode()) {
+        logger::instance().flush();
+    }
     m_organizer_panel = std::make_unique<OrganizerPanel>(this);
+    if (isStartupSmokeMode()) {
+        logInfo("MainWindow startup: Organizer panel constructed");
+        logger::instance().flush();
+    }
     m_advanced_search_panel = std::make_unique<AdvancedSearchPanel>(this);
+    if (isStartupSmokeMode()) {
+        logInfo("MainWindow startup: Advanced Search panel constructed");
+        logger::instance().flush();
+    }
     m_organizer_panel->tabWidget()->addTab(m_advanced_search_panel.get(), tr("Advanced Search"));
+    if (isStartupSmokeMode()) {
+        logInfo("MainWindow startup: Advanced Search inner tab attached");
+        logger::instance().flush();
+    }
     addTabWithTooltip(m_tab_widget,
                       m_organizer_panel.get(),
                       "File Management",
                       kTooltipOrganizer,
                       ":/icons/icons/panel_organizer.svg");
+    if (isStartupSmokeMode()) {
+        logInfo("MainWindow startup: File Management outer tab attached");
+        logger::instance().flush();
+    }
     logInfo("MainWindow: File Management panels initialized");
 }
 
@@ -821,13 +952,24 @@ void MainWindow::createImageFlasherPanel() {
 
 void MainWindow::createDiagnosticPanel() {
     logInfo("MainWindow: creating Benchmark and Diagnostics panel");
-    m_diagnostic_benchmark_panel = std::make_unique<DiagnosticBenchmarkPanel>(this);
-    addTabWithTooltip(m_tab_widget,
-                      m_diagnostic_benchmark_panel.get(),
-                      "Benchmark and Diagnostics",
-                      kTooltipDiagnostics,
-                      ":/icons/icons/panel_diagnostic.svg");
+    auto* wrapper = m_tab_widget->widget(m_slotDiagnostic);
+    if (wrapper == nullptr || wrapper->layout() != nullptr) {
+        throw std::logic_error("Diagnostic placeholder is unavailable or already populated");
+    }
+    wrapper->setAccessibleName(tr("Benchmark and Diagnostics"));
+    auto* layout = new QVBoxLayout(wrapper);
+    layout->setContentsMargins(ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
+    layout->setSpacing(ui::kSpacingNone);
+    if (isStartupSmokeMode()) {
+        logInfo("MainWindow startup: Diagnostic placeholder ready");
+        logger::instance().flush();
+    }
+    m_diagnostic_benchmark_panel = std::make_unique<DiagnosticBenchmarkPanel>(wrapper);
+    layout->addWidget(m_diagnostic_benchmark_panel.get());
     logInfo("MainWindow: Benchmark and Diagnostics panel initialized");
+    if (isStartupSmokeMode()) {
+        logger::instance().flush();
+    }
 }
 
 void MainWindow::createEmailToolsPanel() {
@@ -900,10 +1042,12 @@ void MainWindow::createEmailToolsPanel() {
 void MainWindow::createAppManagementPanel() {
     Q_ASSERT(m_tab_widget);
     Q_ASSERT(!m_app_installation_panel);
-    createAppManagementChildPanels();
-
     logInfo("MainWindow: creating Application Management wrapper");
-    auto* app_mgmt_wrapper = new QWidget(this);
+    auto* app_mgmt_wrapper = m_tab_widget->widget(m_slotAppManagement);
+    if (app_mgmt_wrapper == nullptr || app_mgmt_wrapper->layout() != nullptr) {
+        throw std::logic_error("Application Management placeholder is unavailable or populated");
+    }
+    app_mgmt_wrapper->setAccessibleName(tr("Application Management"));
     auto* app_mgmt_layout = new QVBoxLayout(app_mgmt_wrapper);
     app_mgmt_layout->setContentsMargins(
         ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium, ui::kMarginMedium);
@@ -919,10 +1063,13 @@ void MainWindow::createAppManagementPanel() {
     auto* app_tabs = new QTabWidget(app_mgmt_wrapper);
     app_tabs->setAccessibleName(tr("Application management tabs"));
     m_application_tabs = app_tabs;
-    app_tabs->addTab(m_app_installation_panel.get(), tr("App Installation"));
-    app_tabs->addTab(m_advanced_uninstall_panel.get(), tr("Advanced Uninstall"));
-    app_tabs->addTab(m_vulnerability_panel.get(), tr("Vulnerability Scanner"));
     app_mgmt_layout->addWidget(app_tabs, 1);
+    // Insert empty tab shells first; adding fully populated panels to a tab
+    // widget synchronously polishes their entire descendant tree.
+    QWidget* app_install_shell = addEmptyPanelTab(app_tabs, tr("App Installation"));
+    QWidget* advanced_shell = addEmptyPanelTab(app_tabs, tr("Advanced Uninstall"));
+    QWidget* vulnerability_shell = addEmptyPanelTab(app_tabs, tr("Vulnerability Scanner"));
+    createAppManagementChildPanels(app_install_shell, advanced_shell, vulnerability_shell);
 
     connect(app_tabs, &QTabWidget::currentChanged, this, [this, app_hdr](int index) {
         struct TabMeta {
@@ -954,26 +1101,38 @@ void MainWindow::createAppManagementPanel() {
         updateVulnerabilityStatusBarVisibility();
     });
 
-    addTabWithTooltip(m_tab_widget,
-                      app_mgmt_wrapper,
-                      "Application Management",
-                      kTooltipAppManagement,
-                      ":/icons/icons/panel_app_install.svg");
     updateVulnerabilityStatusBarVisibility();
     logInfo("MainWindow: Application Management panels initialized");
 }
 
-void MainWindow::createAppManagementChildPanels() {
+void MainWindow::createAppManagementChildPanels(QWidget* app_install_shell,
+                                                QWidget* advanced_shell,
+                                                QWidget* vulnerability_shell) {
     logInfo("MainWindow: creating Application Management panels");
     logInfo("MainWindow: creating App Installation panel");
-    m_app_installation_panel = std::make_unique<AppInstallationPanel>(this);
+    if (isStartupSmokeMode()) {
+        logger::instance().flush();
+    }
+    m_app_installation_panel = std::make_unique<AppInstallationPanel>(app_install_shell);
+    app_install_shell->layout()->addWidget(m_app_installation_panel.get());
     logInfo("MainWindow: App Installation panel initialized");
     logInfo("MainWindow: creating Advanced Uninstall panel");
-    m_advanced_uninstall_panel = std::make_unique<AdvancedUninstallPanel>(this);
+    if (isStartupSmokeMode()) {
+        logger::instance().flush();
+    }
+    m_advanced_uninstall_panel = std::make_unique<AdvancedUninstallPanel>(advanced_shell);
+    advanced_shell->layout()->addWidget(m_advanced_uninstall_panel.get());
     logInfo("MainWindow: Advanced Uninstall panel initialized");
     logInfo("MainWindow: creating Vulnerability Scanner panel");
-    m_vulnerability_panel = std::make_unique<VulnerabilityPanel>(this);
+    if (isStartupSmokeMode()) {
+        logger::instance().flush();
+    }
+    m_vulnerability_panel = std::make_unique<VulnerabilityPanel>(vulnerability_shell);
+    vulnerability_shell->layout()->addWidget(m_vulnerability_panel.get());
     logInfo("MainWindow: Vulnerability Scanner panel initialized");
+    if (isStartupSmokeMode()) {
+        logger::instance().flush();
+    }
 }
 
 void MainWindow::createNetworkManagementPanel() {
@@ -1830,9 +1989,15 @@ void MainWindow::showEvent(QShowEvent* event) {
         return;
     }
     m_lazyDefaultBuilt = true;
-    // Let the empty shell paint first, then build the initially-selected panel
-    // off the critical path so the window becomes visible immediately.
-    QTimer::singleShot(0, this, [this]() { materializeTab(m_tab_widget->currentIndex()); });
+    // Let the empty shell paint first. Native smoke still constructs every
+    // panel before its success marker; ordinary startup builds the selected tab.
+    QTimer::singleShot(0, this, [this]() {
+        if (isStartupSmokeMode()) {
+            materializeAllToolTabs();
+        } else {
+            materializeTab(m_tab_widget->currentIndex());
+        }
+    });
 }
 
 void MainWindow::applyTabBarChevrons() {

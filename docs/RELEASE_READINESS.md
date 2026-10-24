@@ -4,6 +4,353 @@ Current HFS+/APFS driver capability status is owned by
 `certification/APPLE_FILESYSTEM_CAPABILITY_MATRIX.json`. Historical milestone text below is not a
 second status owner; release-facing Apple filesystem claims must mirror the gated matrix.
 
+## Current gate boundary: Wave 68 source candidate (2026-09-25)
+
+W67c is the last complete local gate: Release build and 300/300 CTests passed,
+but its fresh native package smoke timed out. Wave 68 has only targeted app
+builds and copied portable-runner contract tests; its native 30-second smoke
+still fails. Font warmup/census removal and a narrower alias-only removal
+were both restored under the owner's keep-only-if-verified condition. A
+targeted Release app rebuild passed for restored source, but no complete
+source gate followed. Current-binary package, accessibility, Windows 11 VM,
+Windows 10, hardware, security and signing gates remain open. R5 owns item
+status; `docs/GUI_STARTUP_FIELD_NOTES.md` owns the timing detail. Future
+plans under `docs/future/` remain parked.
+
+## Historical package/VM proof: Wave 44 (2026-09-23)
+
+The live R5 tracking document owns item status. Wave 44 passed a full
+VS2022 Release build and all 287 registered CTests. Fresh portable ZIP staging,
+static/runtime dependency checks, native Windows startup from staged and
+extracted folders, and exact 159-file ZIP/extract hash comparison passed. On
+the Windows 11 x64 VM, the transferred ZIP hash matched, 159 files extracted,
+package startup smoke passed, and the app's accessibility audit reported
+`SAK_ACCESSIBILITY_AUDIT_OK missing=0 checked=1950`. Evidence is under
+`build/wave44-*`, including `build/wave44-vm-windows-startup-evidence.md`.
+The retained Wave44 ZIP and `build/wave44-real-package-archive.log` still hold
+its archive and binary hashes. A Wave45 staging-test attempt removed the old
+global `Release/SHA256SUMS.txt`; it must not be cited as a current manifest.
+
+Wave 45 changes ProcessRunner and the elevated helper after these package/VM
+receipts. Wave 44 is historical proof, not proof of the current binary.
+Neither wave certifies interactive
+console UI, Windows 10, raw disks, external Apple media, hardware, live model
+calls, signing, or the whole release. Seven vendor `/w` override warnings and
+their 48 revealed strict diagnostics remain open, as do ProcessRunner process-
+tree certification and portable-staging path replacement. The 25 reviewed local Qt
+skips are not treated as executed external or destructive tests.
+
+## Wave 48 local/Windows 11 scope (2026-09-24, not release certification)
+
+The current-source VS2022 Release build and all 287 CTests passed. An earlier
+full run failed 1/287 when integer-rounded MCP cleanup timed out before its
+deadline; passing the original QDeadlineTimer to the semaphore fixed that
+defect. Focused test passed 20 repeats and a copied-source early-return drill
+went green/red/restored-green. Skip audit found 25 reviewed skips, none stale.
+Whole-tree cppcheck, stale-inline-suppression reveal, dead-code probe, full
+repository secret scan, and extracted-package Gitleaks scan passed.
+
+Archive now builds and verifies candidate ZIP/checksum before publication,
+retains prior outputs for checked rollback, and refuses incoherent prior
+manifests or unresolved recovery markers. Owned PS7/5.1 fixtures exercised
+compression and separate ZIP/checksum publish failures, same-name and new-name
+releases, and copied-source rollback/prior-binding red drills. Fresh 157-file
+ZIP had exact extraction hashes, no bundled logs, static/runtime check pass,
+and native startup pass. Windows 11 VM matched ZIP/app hashes, passed native
+startup and accessibility audit (`SAK_ACCESSIBILITY_AUDIT_OK missing=0
+checked=1950`), and left no owned process or crash/temp/log items. Exact
+evidence is `build/wave48-transaction-package-vm-evidence.md`.
+
+One other fresh local stage of this same app binary timed out under the
+unchanged 30-second native startup gate. Its later local/VM successes do not
+erase that failure. Cold/intermittent startup is INCOMPLETE and blocks a
+reliable release claim. Two-file archive publication is not crash-atomic;
+interrupted transactions fail closed pending explicit recovery. The staging
+path-swap race also remains open. Wave47 is historical for the older app and
+archive script, not proof of current bytes.
+
+Subsequent smoke-only startup phase diagnostics now flush the before/after Qt
+and font-query boundaries, and the portable runner requires ordered markers.
+Its 41 mocked contracts and copied-guard red drill pass. These newer source
+bytes completed an all-target Release build and fresh 157-file stage/static
+check. The first native stage then timed out under the unchanged 30-second
+limit while complete CTest was concurrently running. Its flushed log stops at
+the first GUI-thread font-family query after successful Qt initialization.
+The complete CTest subsequently passed 287/287. Two independent fresh stages
+of the same app hash passed the native smoke under PowerShell 7 and Windows
+PowerShell 5.1 after CTest ended. See `build/wave49-startup-phase-evidence.md`.
+The same W49 ZIP passed exact 157-file local extraction hashes, static/native
+smoke, and extracted-directory Gitleaks. Windows 11 VM transfer/extraction
+hashes matched, native smoke passed, and accessibility audit reported
+`missing=0 checked=1950`; two runtime log items were retained after the audit,
+so post-audit pristine state is not claimed. The earlier first-run timeout is
+not resolved. Wave48 binary receipts are historical for these bytes.
+Another uncontended fresh default-backend extract also timed out at the first
+font query. An explicit-GDI arm passed, but a following A/B/B/A same-binary
+comparison passed all four arms; no backend switch is justified yet. The
+unchanged 30-second native startup reliability gate remains a release blocker.
+After those W49 binary receipts, source-only cleanup removed the ineffective
+DirectWrite override and escape hatch. Its old-code red/new-code green source
+contract passed on both PowerShell hosts. W50 then passed a full Release
+build, 287/287 CTests, current ZIP hash/extraction, and Windows 11 VM
+native/accessibility checks. The first fresh local ZIP extraction still timed
+out at the unchanged 30-second native gate: its forced font-family query
+took 28839 ms. See `build/wave50-baseline-evidence.md`. W49 receipts are
+historical for W50 bytes; the underlying timeout remains unresolved.
+The owner-approved W51 lazy-font candidate compiled and passed 12 matched
+fresh-ZIP native A/B/B/A runs, but whole-startup means were nearly equal and
+neither arm reproduced the rare timeout. Under the owner's keep-only-if-
+verified condition, it was reverted to exact W50 source hashes. The current
+all-target build now exits 0, but the rebuilt app SHA256 is
+`128403965F367238348DFA64B7CC0703FB68A6014E6F7169A9BBBBF656D6612C`.
+The version header embeds build date/time; W50 package/VM receipts do not
+certify these new bytes. W52 now has exact 157-file local extraction hashes,
+static/runtime checks, an extracted-directory Gitleaks pass, and Windows 11
+VM hash-matched native startup plus accessibility audit (`missing=0
+checked=1950`). Final complete CTest passed 287/287; skip audit found 25
+reviewed skips. The uncontended fresh local ZIP-extract native smoke passed in
+22.823 seconds under the unchanged 30-second limit. See
+`build/wave52-restored-evidence.md`. Earlier first-run timeouts remain a
+release blocker; this later pass does not establish reliable startup.
+Wave53 then removed five unnecessary nested test-launch policy overrides;
+the app hash stayed unchanged, so W52 package/VM proof still binds to its
+binary. The complete Release build and 287/287 CTest passed for the latest
+test-script bytes; skip audit found 25 reviewed skips, none stale. Other
+policy overrides and the startup reliability blocker remain open.
+Wave54 removed nine additional test-only policy overrides with focused
+red/green guards and real PS7/PS5 and Python test passes. The app binary is
+unchanged; its full Release build and 287/287 CTests passed before Wave55.
+Wave55 then repaired the portable-stage regression fixture's unbounded copy
+of historical Release packages/ZIPs. Its unchanged 240-second CTest had
+approached timeout at 221.77 seconds; the bounded fixture passed a focused
+registered run in 84.74 seconds, and the full PS7/PS5 scripts passed with
+independent exclusion drills. The first full gate failed 1/287 when a
+different combined false-green test reached its 60-second timeout; staging
+passed in 105.64 seconds under the same slow run. Portable and Ledger scopes
+were then registered separately on PS7/PS5 without increasing their limits;
+focused runs pass. The new full Release build and 289/289 CTests passed; in
+that slow full run the split scopes took 16.55-22.83 seconds and bounded
+staging 94.76 seconds under their unchanged limits. Skip audit found 25
+reviewed skips. The actual production path-swap/crash-recovery risks are
+unaffected.
+Wave56 removed two more unneeded policy overrides from the review-unit and
+release-readiness child launchers. Exact red/green guards plus isolated
+success/failure and review timeout fixtures passed on PS7/PS5. No destructive
+readiness workflow was invoked. The latest all-target Release build and
+289/289 CTests passed, with 25 reviewed skips and none stale; hardware/VM
+policy overrides remain individually open.
+Wave59 removed the unnecessary Bypass flag from the VirtualBox guest-admin
+inline probe. Its exact guard was red/green and the automation-VM security
+fixture passed under PS7/PS5. No provisioning or destructive VM path was
+executed. Its all-target Release build passed, but full CTest failed 1/290
+when the second 18,043,854,848-byte APFS scratch image could not resize on
+the system temporary drive. The failure log is retained at
+`build/wave59-partition-core-failure.txt`; this is not a green release gate.
+Wave60 routes that large test's images through the explicit
+`SAK_TEST_IMAGE_SCRATCH_ROOT`. A focused run on D: (`Storage 4TB`, exFAT)
+allocated both images but hit Qt Test's 300-second function timeout. The
+failed-run images were removed after exact path/content checks; the log is
+retained at `build/wave60-apfs-focused.txt`. With the documented Qt Test
+timeout raised to 900000 ms, the same focused case passed on D: in 518182 ms;
+its temporary directory cleaned itself up. The subsequent full D: diagnostic
+was stopped after 174/290 tests: its partition-core test had 46 failed
+assertions, and 13 test executables had failed under an all-exFAT temporary
+environment. This is not a complete gate. The same full partition-core test
+passed 322 assertions, zero failures on E: NTFS in 138731 ms. A direct
+capability-based copy fix now has a successful targeted build, old-red/new-
+green 8 KiB copy proof on D: exFAT, 4/4 APFS reader fuzz assertions on D:,
+and 322 passing partition-core assertions on E: NTFS. It is not yet a full
+gate: complete latest-source Release/CTest on E:, capacity/failure-cleanup
+proof, and current-binary VM/package checks remain open. A separate new-image
+sizing path still marks sparse only as a best effort, then resizes without a
+non-sparse capacity preflight; its partial-image failure cleanup is also open
+under R5-IDX-37. The copy fix does not close that create path.
+Wave61 local gate then passed an all-target Release build and all 290 CTests
+with temporary files on E: NTFS, in 1904.85 seconds. The skip audit found
+5242 passed Qt functions and 25 reviewed skips, none stale. The built app
+SHA256 is `8DD34358DBD3A5C2F9FDA5C5BEA2513689D9AA651AC0842856DF82C0F68D0C4A`.
+The D: exFAT copy regression and APFS reader fuzz case passed on the fixed
+binary. The fresh W61 package staged 157 files; ZIP SHA256
+`3F4D4D893C5966F11277C2A9745E3FA762C83EBA226B5740D926166B555817D6`
+matched on `WIN-11-VM`, and all 157 extracted member hashes matched locally
+and on the VM. Local and VM native startup passed. The VM accessibility audit
+exited zero with `missing=0 checked=1950`; its fetched status artifact hash
+matched. The VM retained two log items/three extra runtime files after the
+audit, not a pristine post-audit package. Details:
+`build/wave61-local-and-vm-evidence.md`. Dense-capacity/failure-cleanup
+drills, the separate APFS new-image capacity defect, reliable cold startup,
+hardware and release gates remain open. This is local/package/Windows 11 VM
+proof only, not full-app certification.
+R5-IDX-38 also blocks file-backed APFS and HFS+ durability claims: the current
+`flushDeviceBuffers` QFile branch flushes Qt buffers but does not call the
+Windows `FlushFileBuffers` API for the OS file cache. Current green tests and
+package startup do not prove those image writes durable across power loss.
+New APFS image-format paths also close/hash the QFile without a checked OS
+flush; a hash of cached bytes is not durable-write evidence.
+Wave62 removed four blanket execution-policy bypasses from the certification
+gap report's suggested commands. The real generated-list assertion went red
+on the old text and the full certification-tool self-test passed under PS7
+and Windows PowerShell 5.1 without overrides. No VHD or hardware command was
+run. Host-side runbook commands now inherit policy; fresh extraction uses a
+single-use path rather than deleting a fixed folder. The two UNC in-guest
+Bypass examples still require separate proof or a direct fix. A fresh
+complete Release/CTest gate for the changed script/test bytes is still
+required; the W61 app/ZIP/VM proof binds unchanged binaries only.
+That W62 all-target build exited zero, but complete CTest failed 1/290:
+`test_process_capture` reached its existing 60-second timeout. A focused
+registered rerun also timed out at a different subcase. W63 splits its core,
+ownership, deadline, output, stdin and environment contracts into 12
+separately bounded PS7/PS5 CTests (300 total), with no limit increase or
+assertion drop. The focused 12/12 run passed. An initial CMake loop gave a
+false static doc count (292 vs 300 live); explicit registrations now make
+both doc-accuracy and live CTest JSON count 300. Full Release/CTest and skip
+audit were still open at that point. W62 is not a green gate.
+The first explicit W63 scoped run failed 1/12 in PS7 output. A repeated
+output run showed the fixture's two-second Python receipt setup expired
+before `parent.json` appeared; the test had hidden that original exception.
+Controlled three-second parent and termination-utility receipt delays proved
+the old waits red and bounded ten-second fixture-only waits green. Neither
+production capture deadlines nor the 60-second CTest limits changed. Focused
+PS7/PS5 output scopes passed after the fix. Each was then repeated five
+times (10/10 green) under unchanged limits.
+The final W63 all-target Release build exited zero and all 300 CTests passed
+in 1613.35 seconds. Skip audit: 5242 passed Qt functions, 25 reviewed skips,
+none stale. The app SHA stayed
+`8DD34358DBD3A5C2F9FDA5C5BEA2513689D9AA651AC0842856DF82C0F68D0C4A`,
+but the rebuilt helper SHA is now
+`467AFBB372A9E8327531F3C8F0F7355E05B1FFD17380C504463A2BD098F1D778`.
+Fresh W63 package/VM checks now bind the new helper: ZIP SHA256
+`142B5B089986DA7C856FED559F67CF50A1447FB7A73E170EEA13742798FF3927`,
+157/157 extracted member hashes matched locally and on Windows 11 VM,
+native startup passed in both places, and the VM accessibility audit reported
+`missing=0 checked=1950` with a fetched matching status hash. Two VM log
+items/three extra runtime files remained after audit; see
+`build/wave63-local-and-vm-evidence.md`. R5-IDX-35 through R5-IDX-38,
+R5-IDX-40 and external/release gates remain open.
+Wave64 has a gated shared APFS/HFS+ QFile flush fix. A read-only handle
+test went red on the old Qt-only flush and green when the helper called
+Windows `FlushFileBuffers` after Qt flush. The newly created APFS format path
+still needs its own checked flush. The full partition-core test passed 322
+assertions on E: and targeted cppcheck passed. The all-target Release build
+then exited zero and all 300 CTests passed in 1924.96 seconds, with 25
+reviewed skips and none stale. Current app/helper SHA256 values are
+`3EE453FF4F755DAE13BB5D5421DD13C2E5A9B7A6A3B469F55F12BDA14B988FD3`
+and `67B7E4546D11841B9F605046E4DE0EDEE14F43607FBA5992D475759F2EE0C622`.
+Whole-project cppcheck passed with zero normal findings, 183/186 active
+checkers and zero stale inline suppressions; dead-code probing found zero
+high-confidence unique definitions. Fresh W64 ZIP SHA256
+`04966536B01DBDA45D9D861F5EC229B255615FD8327E1AAD7A8DEAC72AB63BD5`
+had 157/157 matching extracted files locally and on Windows 11 VM. Native
+startup and VM accessibility (`missing=0 checked=1950`) passed on current
+app/helper hashes. Two VM log items/three extra runtime files remained
+after audit; see `build/wave64-local-and-vm-evidence.md`. This is not
+physical power-loss certification, and the new APFS image-format path still
+lacks its own checked OS flush.
+Staging took 142.70 seconds under 240, and archive recovery took 171.41
+under 180, versus 65.18/73.28 in W63; this sharply reduced timing
+margin is open as R5-IDX-41, not a reason to raise limits. An isolated
+focused rerun passed in 77.34/104.81 seconds, so the slow-run cause remains
+unidentified. W63 package/VM proof is historical for the W64 binaries.
+Wave65 moves the `/dev/sda` raw-looking-input assertion out of an inactive
+non-Windows test arm and removes only that dead branch. A compile-successful
+mutation of the production classifier made the now-active Windows test red;
+exact source restoration rebuilt it green. This is a test-coverage fix, not
+Linux application support. Full Release/CTest and current-package binding
+were still open at that point.
+The caller audit then found both Windows raw-device openers passing `/dev/...`
+through to `CreateFileW`. Separate non-existent-path read/write tests were
+red on the old OS error, and a whitespace-padded `/dev/sda` classifier test
+was red. A shared canonical raw-open check now refuses these before native
+open. Uppercase `/DEV/...`, backslash `\dev\...`, and padded mixed-case
+spellings then made the classifier/read/write tests red on the old code;
+normalized case-insensitive classification now routes them to that same
+refusal. All three targeted tests and the full 324-function partition-core
+test pass on E:, with no scratch residue. The all-target Release build and
+300/300 CTests passed in 2361.54 seconds; skip audit found 5244 passed Qt
+functions and 25 reviewed skips, none stale. Current app/helper SHA256 are
+`9F52E92C8C35EAAE6047CC664B724BDF8E92983E7DB81D5FD2EC8DB621A8AC96`
+and `332CFC4B96BDCAA73A72B30B9F880932F3C1290B6BBCBB8613D368C91B354DB0`.
+Whole-project cppcheck passed with 183/186 active checkers, zero normal
+findings and zero stale inline suppressions; dead-code probing found zero
+high-confidence unique definitions. Fresh W65 ZIP SHA256
+`7406BD0CEB3688E4DF2BBE1A4239B95D05E5AE2EF7B6A0B822CC4750EC4CDE45`
+had 157/157 matching extracted members locally and on Windows 11 VM.
+Native startup and accessibility (`missing=0 checked=1950`) passed on
+current app/helper hashes. Two VM log items/three extra runtime files
+remained after audit; see `build/wave65-local-and-vm-evidence.md`. W64
+binary receipts are historical. The raw-path item is closed, but APFS/HFS+
+capacity/durability, staging reliability and external/release gates remain.
+W66's read-only cppcheck reveal removed the two broad missing-include
+exceptions only in a private scan. It exposed 260 project and 5753 system
+include diagnostics; 252 project names were generated Qt MOC files, while
+the eight non-MOC names resolved under the real generated/vendor include
+roots. The live suppressions and gate were not changed. Direct include
+routing and a narrow, red-drilled MOC classifier remain open under R5-IDX-33.
+The subsequent narrow QR include-root change removed its private-reveal
+diagnostic, while a live LZFSE root candidate exposed a finding in vendored
+code and was rolled back without a suppression. The all-target W66 Release
+build and complete 300/300 CTest passed; whole-tree cppcheck, dead-code and
+skip audits passed too (`build/wave66-local-evidence.md`). The rebuilt
+app/helper hashes exactly match the W65 package-bound binaries, and neither
+changed QA file is a ZIP member. W65 native/VM runtime receipts still bind
+those binaries; the unproved LZFSE/generated/system include routing and
+global algorithm-style exception remain under R5-IDX-33.
+W67 subsequently changed `ai_command_guard.cpp`, a test source and the
+registered QR reveal test. Focused builds/tests and private analyzer reveals
+pass, but complete W67 CTest timed out `test_review_ledger` at 180 seconds
+(299/300 passed, exit 8); the full gate is RED and package/VM binding for
+these code bytes remains OPEN. W65/W66 runtime receipts are historical for the current
+source candidate. A transient cppcheck capture-file cleanup lock remains
+unfixed. The R5 tracking document was reconstructed from a verified Wave 41
+Git object after a full-disk write failure; its recovery overlay, not older
+historical checked markers, controls current claims. The three certifier
+self-tests also retained unbounded image run folders in `build/test_results`;
+successful-run cleanup is open and external evidence under `artifacts/` was
+not deleted.
+W67b then passed `test_review_ledger` in 85.99 seconds in the complete suite,
+but `test_mutation_runner` failed its exact descendant-exit postcondition:
+the complete gate remained 299/300, exit 8. Bounded Job member handle pinning
+and fail-closed negative guards are now a focused-tested candidate under
+R5-IDX-45. The full gate and current package/VM binding remain open.
+W67c then passed the complete all-target Release build and 300/300 CTests
+(skip audit: 5244 pass, 25 reviewed skips, none stale). Whole-tree cppcheck
+and dead-code gates passed; the algorithm-style reveal fell to 280 without a
+new suppression. A fresh 157-file stage passed static/runtime checks, but
+its default 30-second native startup smoke timed out at the first font
+database query (`build/wave67c-package-native.log`). One log remained, no app
+process. Current package/VM and release readiness stay RED/OPEN; do not cite
+W65 native/VM receipts for the changed W67c app binary.
+Historical Wave57 adds explicit recovery for versioned interrupted archive transactions:
+normal publication still refuses stale markers, while an operator-requested
+recovery validates lock/snapshot/output hashes and either keeps a complete
+candidate pair or restores the prior pair. Owned hard-crash/tamper fixtures
+pass under PS7/PS5. Archive and staging scopes are separately registered
+(290 CTests), with unchanged limits. Full Release build and 290/290 CTests
+passed. The current-script W57 ZIP has exact 157-file local extraction,
+static/runtime/native smoke and Gitleaks passes; Windows 11 VM ZIP/app/helper
+hashes matched, with native smoke and accessibility audit passing. See
+`build/wave57-archive-recovery-evidence.md`. Staging path replacement,
+physical crash durability, elevated-helper live action and reliable cold
+startup are not certified by those checks.
+
+Interrupted archive recovery is operator-requested, not automatic. After
+confirming no publisher is running, keep the exact lock and transaction
+directory intact and invoke the archive script with the original build root
+and package name plus `-RecoverInterrupted`. The command refuses an absent,
+active, unversioned, wrong-name or tampered record; never delete the marker
+or force a new archive over an unproved pair. Recheck the resulting ZIP and
+`SHA256SUMS.txt` hashes before using them. `-CleanMutableRuntimeData` cannot
+be combined with recovery. This runbook is for versioned process-interrupted
+transactions only, not a power-loss certification or a path-swap workaround.
+No W51 candidate full-suite or VM certification is credited.
+
+This proves only local plus one VM path. Windows 10, visible interactive UI,
+raw-disk and adapter APPLY, external media/hardware, live model, signing, and
+the release matrix remain open. ProcessRunner cancellation and timeout cleanup
+have separate copied-source red drills with outer Job containment; the
+elevated-helper live action path has not been exercised on the VM. Do not
+archive R5-P7-20 or mark the release certified on this scope.
+
 ## PUBLISHED CREDENTIAL: macOS cert-rig VM password (accepted risk, SETTLED)
 
 The section that stood here described this as a PRE-PUSH blocker and stated that the finding was
@@ -278,20 +625,19 @@ Use:
 $version = (Get-Content VERSION -Raw).Trim()
 $packageName = "SAK-Utility-v$version"
 
-powershell -ExecutionPolicy Bypass -File scripts/stage_portable_release.ps1 `
+powershell -NoProfile -File scripts/stage_portable_release.ps1 `
   -BuildDir build\Release `
   -PackageName $packageName
 
-powershell -ExecutionPolicy Bypass -File scripts/create_release_archive.ps1 `
+powershell -NoProfile -File scripts/create_release_archive.ps1 `
   -BuildDir build\Release `
   -PackageName $packageName
 
-$extract = "build\Release\clean-readiness-extract"
-Remove-Item -Recurse -Force $extract -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force -Path $extract | Out-Null
-Expand-Archive -LiteralPath "build\Release\$packageName-Windows-x64.zip" -DestinationPath $extract -Force
+$extract = Join-Path 'build\Release' ('clean-readiness-extract-' + [guid]::NewGuid().ToString('N'))
+if (Test-Path -LiteralPath $extract) { throw "Extraction target already exists: $extract" }
+Expand-Archive -LiteralPath "build\Release\$packageName-Windows-x64.zip" -DestinationPath $extract
 
-powershell -ExecutionPolicy Bypass -File scripts/check_release_readiness.ps1 `
+powershell -NoProfile -File scripts/check_release_readiness.ps1 `
   -PackageRoot $extract `
   -RequireSignedPackage
 ```
@@ -351,7 +697,7 @@ it fails unless strict VHD evidence verifies and every disposable-VHD scenario
 passes.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/check_release_readiness.ps1 `
+powershell -NoProfile -File scripts/check_release_readiness.ps1 `
   -PartitionCertificationRoot artifacts\partition-manager-certification\vhd-strict `
   -RequirePartitionVhdEvidence
 ```
@@ -457,7 +803,7 @@ Partition Manager ext filesystem write support has a dedicated destructive VM
 gate. Preferred host-driven run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File `
+powershell -NoProfile -File `
   scripts\launch_partition_manager_vm_gate_host.ps1 `
   -Gate ext-filesystem `
   -DiskNumber 1 `
@@ -551,7 +897,7 @@ is not bundled or required at runtime.
 Physical Apple filesystem validation is optional and read-only:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File `
+powershell -NoProfile -File `
   scripts\run_partition_manager_physical_apple_probe_validation.ps1 `
   -DiskNumber 2
 ```
@@ -620,7 +966,7 @@ Physical cross-filesystem destructive validation is optional and must target
 known expendable external media:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File `
+powershell -NoProfile -File `
   scripts\launch_partition_manager_physical_cross_filesystem_destructive_validation_local.ps1 `
   -DiskNumber 2 `
   -ExpectedSerialNumber DD564198838A8 `
@@ -653,7 +999,7 @@ Linux swap raw-partition VM proof now has a dedicated destructive runner and
 launcher. Preferred host-driven run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File `
+powershell -NoProfile -File `
   scripts\launch_partition_manager_vm_gate_host.ps1 `
   -Gate linux-swap `
   -DiskNumber 1 `
@@ -696,9 +1042,24 @@ imported manifest
 `artifacts\partition-manager-certification\vm-lab\external-evidence.imported.json`
 and paired imported checklist
 `artifacts\partition-manager-certification\vm-lab\external-evidence.imported.checklist.md`.
-The current imported status is `HardwareCertified`: 18/18 external gates
-passed and strict VHD evidence remains 12/12 passed. The final gates completed
-on 2026-06-03 PDT:
+The imported status was reported as `HardwareCertified` at the June checkpoint: 18/18 external
+gates and 12/12 VHD scenarios were recorded as passed. Current R5 verification rejects the old
+image-restore proof because it copied VHD containers instead of exercising the application
+controller. The replacement controller-driven report and supplementary refusal/offline fixtures
+passed host validation at their frozen source checkpoint. After the CTest launch repair changed
+the bound build configuration, the rebuilt helper repeated the complete VHD matrix and five
+supplementary cases; current-source host validation passed again.
+ The September 8 checkpoint supported `VhdDataDiskCertified`, not a permanent current claim.
+ The 2026-09-19 `CodeCompleteOnly` (11/12) state was a source-freshness refusal after the
+ MCP header changed; the earlier report remains historical. On 2026-09-25 the Windows 11 VM
+ strict disposable-VHD run passed 12/12 scenarios with the W68 controller binary and its
+ 403-file source manifest. The host independently verified the copied report under
+ `artifacts/partition-manager-certification/vhd-strict/run-20260925-121253/` against that same
+ explicit binary/manifest. The current VHD-only claim is `VhdDataDiskCertified`; no external
+ manifest is implicitly selected.
+ The historical 18-row external manifest is retained but is not fresh current-application proof.
+Release remains incomplete on current external/hardware and whole-application E2E evidence.
+The historical external-gate batch completed on 2026-06-03 PDT:
 
 - `external.os-migration-reboot`: target-only cloned OS VM booted with UEFI
   firmware to Guest Additions run level 3.
@@ -713,13 +1074,13 @@ on 2026-06-03 PDT:
   after VirtualBox UEFI boot-file normalization.
 
 Strict release readiness with
-`-RequirePartitionVhdEvidence -RequirePartitionExternalEvidence` passes and the
-release-claim guard accepts the completed certification wording.
-The minimal machine-readable release evidence snapshot is tracked under
+`-RequirePartitionVhdEvidence -RequirePartitionExternalEvidence` passed at that checkpoint;
+that historical run does not itself prove the current source or the stronger image-restore contract.
+The historical machine-readable release evidence snapshot is tracked under
 `artifacts\partition-manager-certification\vhd-strict\run-20260602-194934\`
 and `artifacts\partition-manager-certification\vm-lab\external-evidence\` so a
-clean CI checkout can verify `HardwareCertified` claims without local-only
-artifact state.
+clean checkouts retain the provenance. That snapshot alone no longer supports a current
+`HardwareCertified` claim; use the current matrix and R5 evidence requirements.
 
 1. Extract the release ZIP into a clean folder.
 2. Run `sak_utility.exe`.

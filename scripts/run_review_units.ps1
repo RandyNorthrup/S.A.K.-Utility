@@ -27,7 +27,7 @@
     How many units to run. Each is a separate xhigh Codex call, so this is the budget dial.
 
 .PARAMETER Group
-    Restrict to one ledger group: src, include, tests, scripts, browser.
+    Restrict to one ledger group: src, include, tests, scripts, browser, cmake.
 
 .EXAMPLE
     ./scripts/run_review_units.ps1 -Count 5 -Group src
@@ -92,7 +92,7 @@ function Resolve-ReviewCommand([System.Management.Automation.CommandInfo]$Comman
         return [pscustomobject]@{
             FilePath = (Get-Process -Id $PID).Path
             PrefixArguments = @(
-                '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+                '-NoProfile', '-NonInteractive',
                 '-File', $CommandInfo.Source
             )
         }

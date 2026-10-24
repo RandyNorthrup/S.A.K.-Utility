@@ -23297,8 +23297,9 @@ static bool copyToScratchImage(const QString& sourcePath,
                                const QString& outputPath,
                                QLatin1StringView purpose,
                                QStringList* blockers) {
-    // Preserve sparseness: a multi-TiB container has only its metadata written, so the
-    // scratch copies in the size of its allocated data, not its logical size.
+    // The shared copier preserves holes when both volumes support sparse files. On a
+    // non-sparse volume it checks full logical-size capacity before a dense copy, so a
+    // multi-TiB scratch image refuses instead of filling the destination silently.
     QString copyError;
     if (copyFileSparse(sourcePath, outputPath, &copyError)) {
         return true;

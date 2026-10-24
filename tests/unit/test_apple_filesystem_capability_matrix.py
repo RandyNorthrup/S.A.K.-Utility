@@ -1,4 +1,6 @@
+import ast
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -33,6 +35,41 @@ COMMERCIAL_FIXTURE_FILES = (
 
 
 class AppleFilesystemCapabilityMatrixTests(unittest.TestCase):
+    def test_child_gate_launches_inherit_execution_policy(self):
+        targets = (
+            (Path(__file__), self.__class__.__name__, ("run_gate", "run_commercial_gate")),
+            (
+                PROJECT_ROOT / "tests/unit/test_active_doc_references.py",
+                "ActiveDocReferenceTests",
+                ("run_gate",),
+            ),
+            (
+                PROJECT_ROOT / "tests/unit/test_cppcheck_qt_slot_classifier.py",
+                "QtSlotClassifierTests",
+                ("cppcheck_input_scope", "test_header_outside_first_party_roots_fails_closed"),
+            ),
+        )
+        for path, class_name, methods in targets:
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            test_class = next(
+                node
+                for node in tree.body
+                if isinstance(node, ast.ClassDef) and node.name == class_name
+            )
+            for name in methods:
+                method = next(
+                    node
+                    for node in test_class.body
+                    if isinstance(node, ast.FunctionDef) and node.name == name
+                )
+                literals = {
+                    node.value
+                    for node in ast.walk(method)
+                    if isinstance(node, ast.Constant) and isinstance(node.value, str)
+                }
+                self.assertNotIn("-ExecutionPolicy", literals, f"{path.name}:{name}")
+                self.assertNotIn("Bypass", literals, f"{path.name}:{name}")
+
     def setUp(self):
         if POWERSHELL is None:
             self.fail("PowerShell is required for the Apple capability matrix test")
@@ -52,8 +89,6 @@ class AppleFilesystemCapabilityMatrixTests(unittest.TestCase):
                 POWERSHELL,
                 "-NoProfile",
                 "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
                 "-File",
                 str(SCRIPT),
                 "-ProjectRoot",
@@ -77,8 +112,6 @@ class AppleFilesystemCapabilityMatrixTests(unittest.TestCase):
                 POWERSHELL,
                 "-NoProfile",
                 "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
                 "-File",
                 str(COMMERCIAL_SCRIPT),
                 "-ProjectRoot",
@@ -165,21 +198,41 @@ class AppleFilesystemCapabilityMatrixTests(unittest.TestCase):
         self.assertIn("dynamic-to-basic", diagnostic)
         self.assertIn("CHANGELOG.md", diagnostic)
 
-    def test_commercial_gate_uses_current_hardware_evidence_after_audit_archive(self):
+    def test_current_commercial_mapping_does_not_require_a_hardware_promotion_claim(self):
+        result = self.run_commercial_gate()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("feature groups mapped to", result.stdout)
+
+    def test_commercial_gate_requires_hardware_wipe_scope_after_audit_archive(self):
         certification = self.root / "docs" / "PARTITION_MANAGER_CERTIFICATION.md"
         text = (PROJECT_ROOT / certification.relative_to(self.root)).read_text(encoding="utf-8")
         certification.parent.mkdir(parents=True, exist_ok=True)
+        scope = "Non-system hardware wipe on disposable physical disk"
+        self.assertEqual(text.count(scope), 1)
         certification.write_text(
-            text.replace("full 18/18 external evidence set now upgrades the strict handoff",
-                         "removed hardware evidence"),
+            text.replace(scope, "removed hardware scope"),
             encoding="utf-8",
         )
         result = self.run_commercial_gate()
         self.assertNotEqual(result.returncode, 0)
         diagnostic = result.stdout + result.stderr
         self.assertIn("Physical hardware wipe", diagnostic)
-        self.assertIn("full 18/18 external evidence set", diagnostic)
+        # Both PowerShell hosts wrap error records at different word boundaries.
+        # Require every expected word in order, allowing only layout between them.
+        self.assertRegex(diagnostic, r"\s+(?:\|\s*)?".join(map(re.escape, scope.split())))
         self.assertIn("PARTITION_MANAGER_CERTIFICATION.md", diagnostic)
+
+    def test_commercial_gate_requires_hardware_wipe_evidence_id_in_document(self):
+        certification = self.root / "docs" / "PARTITION_MANAGER_CERTIFICATION.md"
+        text = (PROJECT_ROOT / certification.relative_to(self.root)).read_text(encoding="utf-8")
+        evidence_id = "external.hardware-wipe"
+        self.assertGreater(text.count(evidence_id), 0)
+        certification.write_text(text.replace(evidence_id, "removed.hardware-wipe"), encoding="utf-8")
+        result = self.run_commercial_gate()
+        self.assertNotEqual(result.returncode, 0)
+        diagnostic = result.stdout + result.stderr
+        self.assertIn("Physical hardware wipe", diagnostic)
+        self.assertIn(evidence_id, diagnostic)
 
 
 if __name__ == "__main__":

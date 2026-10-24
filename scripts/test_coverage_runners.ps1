@@ -70,7 +70,7 @@ function Set-FakeMode {
 function Invoke-Runner([string]$Script, [string[]]$Arguments) {
     $hostPath = (Get-Process -Id $PID).Path
     $prefix = @(
-        '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', $Script
+        '-NoProfile', '-NonInteractive', '-File', $Script
     )
     return Invoke-CapturedProcess -FilePath $hostPath -Arguments ($prefix + $Arguments)
 }

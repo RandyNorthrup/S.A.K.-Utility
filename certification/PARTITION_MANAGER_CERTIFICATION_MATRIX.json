@@ -170,14 +170,38 @@
         "target_disk_number",
         "pre_restore_marker",
         "sentinel_verified",
-        "target_overwritten"
+        "target_overwritten",
+        "execution_engine",
+        "controller_executed",
+        "worker_descendants_finished",
+        "controller_run_id",
+        "controller_report",
+        "controller_report_sha256",
+        "source_digest",
+        "certifier_binary_sha256",
+        "create_image_operation_id",
+        "restore_image_operation_id",
+        "source_image_sha256",
+        "sentinel_sha256",
+        "independent_verification"
       ],
+      "required_evidence_values": {
+        "execution_engine": {
+          "allowed_values": [
+            "PartitionManagerController"
+          ]
+        }
+      },
       "safety_contract": [
         "disposable_vhd_only",
         "source_dismounted_before_restore",
         "target_identity_recorded_before_overwrite",
         "target_attached_after_restore",
-        "restored_sentinel_file_verified"
+        "restored_sentinel_file_verified",
+        "controller_create_image_and_restore_image_executed",
+        "worker_descendants_confirmed_finished",
+        "independent_post_reattach_verification",
+        "helper_binary_and_current_source_digest_bound"
       ]
     },
     {

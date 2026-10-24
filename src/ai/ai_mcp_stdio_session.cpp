@@ -5,18 +5,27 @@
 
 #include "sak/ai/ai_mcp_jsonrpc.h"
 #include "sak/layout_constants.h"
+#include "sak/windows_process_job.h"
 
-#include <QElapsedTimer>
+#include <QDeadlineTimer>
 #include <QFileInfo>
+#include <QIODevice>
 #include <QJsonArray>
 #include <QMetaObject>
 #include <QProcess>
+#include <QSemaphore>
 #include <QSet>
 #include <QThread>
 
-#include <windows.h>
+#include <algorithm>
+#include <cstring>
+#include <limits>
+#include <optional>
+#include <utility>
 
-#include <tlhelp32.h>
+#include <private/qobject_p.h>
+#include <private/qprocess_p.h>
+#include <private/qwindowspipereader_p.h>
 
 namespace sak::ai {
 
@@ -30,6 +39,51 @@ constexpr qint64 kMaxStdioReadBufferBytes = 8 * 1024 * 1024;  // 8 MiB
 constexpr qsizetype kMaxStderrTailBytes = 64 * 1024;          // 64 KiB
 constexpr int kMaxToolsListPages = 128;
 constexpr qsizetype kMaxDiscoveredTools = 4096;
+constexpr int kProcessCleanupTimeoutMs = 5000;
+constexpr qint64 kProcessCleanupPollMs = 25;
+
+class BoundedPipeDevice final : public QIODevice {
+public:
+    explicit BoundedPipeDevice(QWindowsPipeReader* reader) : m_reader(reader) {
+        open(QIODevice::ReadOnly);
+    }
+
+    [[nodiscard]] bool isSequential() const override { return true; }
+    [[nodiscard]] qint64 bytesAvailable() const override {
+        return QIODevice::bytesAvailable() + (m_reader ? m_reader->bytesAvailable() : 0);
+    }
+    [[nodiscard]] bool canReadLine() const override {
+        return QIODevice::canReadLine() || (m_reader && m_reader->canReadLine());
+    }
+
+protected:
+    qint64 readData(char* data, qint64 max_length) override {
+        return m_reader ? m_reader->read(data, max_length) : -1;
+    }
+    qint64 readLineData(char* data, qint64 max_length) override {
+        if (!m_reader || max_length <= 0 || max_length > kMaxStdioReadBufferBytes) {
+            return -1;
+        }
+        // QWindowsPipeReader reserves one byte for its terminating NUL, while
+        // QIODevice::readLineData's max_length counts payload bytes. Supply
+        // that extra byte so Qt's incremental long-line reader sees a full
+        // chunk and continues until the actual newline.
+        QByteArray chunk(static_cast<qsizetype>(max_length + 1), '\0');
+        const qint64 read = m_reader->readLine(chunk.data(), chunk.size());
+        if (read > 0) {
+            std::memcpy(data, chunk.constData(), static_cast<size_t>(read));
+        }
+        return read;
+    }
+    qint64 writeData(const char*, qint64) override { return -1; }
+
+private:
+    QPointer<QWindowsPipeReader> m_reader;
+};
+
+void startSessionThread(QThread& thread) {
+    thread.start();
+}
 
 std::expected<AiMcpToolDescriptor, QString> parseToolDescriptor(const QJsonValue& entry) {
     if (!entry.isObject()) {
@@ -53,54 +107,140 @@ std::expected<AiMcpToolDescriptor, QString> parseToolDescriptor(const QJsonValue
                                .input_schema = input_schema.toObject()};
 }
 
-// Kill the server and any children it spawned. A bare QProcess::kill leaks
-// grandchildren; an MCP server that shells out would otherwise strand them.
-void terminateProcessTree(DWORD process_id) {
-    if (process_id == 0) {
-        return;
+std::expected<std::optional<QJsonObject>, QString> parseMatchingLine(const QByteArray& line,
+                                                                     int id) {
+    if (line.isEmpty()) {
+        return {};
     }
-    HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snapshot != INVALID_HANDLE_VALUE) {
-        PROCESSENTRY32W entry{};
-        entry.dwSize = sizeof(entry);
-        if (Process32FirstW(snapshot, &entry) != 0) {
-            do {
-                if (entry.th32ParentProcessID == process_id) {
-                    terminateProcessTree(entry.th32ProcessID);
-                }
-            } while (Process32NextW(snapshot, &entry) != 0);
-        }
-        CloseHandle(snapshot);
+    const auto message = mcp::parseJsonLine(line);
+    if (!message || message->value(QStringLiteral("id")).toInt(-1) != id) {
+        return {};
     }
-    HANDLE process = OpenProcess(PROCESS_TERMINATE, FALSE, process_id);
-    if (process != nullptr) {
-        TerminateProcess(process, 1);
-        CloseHandle(process);
+    if (message->contains(QStringLiteral("error"))) {
+        return std::unexpected(mcp::jsonRpcErrorMessage(*message));
     }
+    if (!message->value(QStringLiteral("result")).isObject()) {
+        return std::unexpected(QStringLiteral("MCP stdio response missing a result object"));
+    }
+    return std::optional<QJsonObject>{*message};
+}
+
+std::expected<QByteArray, QString> readCompleteLine(QIODevice& input, qint64 buffered) {
+    // canReadLine() established a newline in these already-buffered bytes. A
+    // bounded read avoids extending allocation as a producer refills the pipe.
+    const QByteArray line = input.readLine(buffered + 1);
+    if (!line.endsWith('\n')) {
+        return std::unexpected(QStringLiteral("MCP stdio response line became incomplete"));
+    }
+    return line.trimmed();
+}
+
+std::expected<std::optional<QJsonObject>, QString> parseLineWithinDeadline(
+    QIODevice& input,
+    qint64 buffered,
+    int id,
+    const QDeadlineTimer& deadline,
+    const std::function<QString()>& timeout_message) {
+    const auto line = readCompleteLine(input, buffered);
+    if (!line) {
+        return std::unexpected(line.error());
+    }
+    if (deadline.hasExpired()) {
+        return std::unexpected(timeout_message());
+    }
+    const auto matched = parseMatchingLine(*line, id);
+    if (deadline.hasExpired()) {
+        return std::unexpected(timeout_message());
+    }
+    return matched;
 }
 
 }  // namespace
 
 // Owns the server QProcess and performs all I/O. Lives on the session's dedicated
-// worker thread; every method here runs on that thread (invoked via a blocking
-// queued connection from the public API), so QProcess is only ever touched from
-// one thread and requests are naturally serialized -- at most one is outstanding.
+// worker thread; public requests use blocking queued calls and close uses an
+// owned, deadline-bound queued completion. QProcess is touched on one thread,
+// and public calls remain sequential -- at most one request is outstanding.
+struct AiMcpStdioSession::PendingCleanup {
+    QSemaphore completed;
+    std::expected<void, QString> result;
+};
+
+// Check each buffered line against one request deadline. Non-matching replies,
+// notifications, and server log lines are noise, never a reason to extend time.
+std::expected<std::optional<QJsonObject>, QString> AiMcpStdioSession::drainMatchingLines(
+    QIODevice& input,
+    int id,
+    const QDeadlineTimer& deadline,
+    const std::function<QString()>& timeout_message) {
+    for (;;) {
+        if (deadline.hasExpired()) {
+            return std::unexpected(timeout_message());
+        }
+        const qint64 buffered = input.bytesAvailable();
+        if (buffered > kMaxStdioReadBufferBytes ||
+            (buffered == kMaxStdioReadBufferBytes && !input.canReadLine())) {
+            return std::unexpected(
+                QStringLiteral("MCP stdio response exceeded %1 bytes without a newline")
+                    .arg(kMaxStdioReadBufferBytes));
+        }
+        if (!input.canReadLine()) {
+            return {};
+        }
+        const auto matched =
+            parseLineWithinDeadline(input, buffered, id, deadline, timeout_message);
+        if (!matched || matched->has_value()) {
+            return matched;
+        }
+    }
+}
+
 class AiMcpStdioSession::Worker : public QObject {
 public:
-    explicit Worker(std::atomic_bool* open_state) : m_open_state(open_state) {}
+    Worker(std::atomic_bool* open_state, int initial_request_id, JobFactory job_factory)
+        : m_open_state(open_state)
+        , m_next_id(initial_request_id)
+        , m_job_factory(std::move(job_factory)) {}
 
     ~Worker() override {
         m_open_state->store(false, std::memory_order_release);
-        closeJob();  // Safety net: reap the tree if teardown did not already close the job.
+        if (m_job || (m_process != nullptr && m_process->state() != QProcess::NotRunning)) {
+            qFatal("MCP worker destruction refused: process cleanup is unproven");
+        }
     }
 
-    bool doOpen(const AiMcpSessionConfig& config, QString* error_message) {
+    std::expected<void, QString> doOpen(const AiMcpSessionConfig& config) {
         m_open_state->store(false, std::memory_order_release);
         m_timeout_ms = AiMcpStdioSession::effectiveRequestTimeoutMs(config.request_timeout_ms);
         const QString command = config.command.trimmed();
         if (command.isEmpty() || !QFileInfo::exists(command)) {
-            setError(error_message, QStringLiteral("MCP stdio command missing: %1").arg(command));
-            return false;
+            return std::unexpected(QStringLiteral("MCP stdio command missing: %1").arg(command));
+        }
+        const auto initialize_id = nextId();
+        if (!initialize_id) {
+            return std::unexpected(initialize_id.error());
+        }
+        const auto started = startContainedProcess(config, command);
+        if (!started) {
+            return std::unexpected(started.error());
+        }
+        const auto initialized = initializeProtocol(*initialize_id);
+        if (!initialized) {
+            return std::unexpected(initialized.error());
+        }
+        m_open_state->store(m_process->state() == QProcess::Running, std::memory_order_release);
+        return {};
+    }
+
+    std::expected<void, QString> startContainedProcess(const AiMcpSessionConfig& config,
+                                                       const QString& command) {
+        auto job = m_job_factory();
+        if (!job) {
+            return std::unexpected(job.error());
+        }
+        m_job = std::move(*job);
+        if (!m_job) {
+            return std::unexpected(QStringLiteral("MCP containment factory returned no Job"));
         }
         m_process = new QProcess(this);
         m_process->setProgram(command);
@@ -116,227 +256,188 @@ public:
                          [this](int, QProcess::ExitStatus) {
                              m_open_state->store(false, std::memory_order_release);
                          });
+        const auto prepared =
+            m_job->installOn(*m_process,
+                             sak::WindowsJobPipeLimits{.stdout_bytes = kMaxStdioReadBufferBytes,
+                                                       .stderr_bytes = kMaxStderrTailBytes});
+        if (!prepared) {
+            return std::unexpected(prepared.error());
+        }
         m_process->start();
-        if (!m_process->waitForStarted(m_timeout_ms)) {
-            setError(error_message,
-                     QStringLiteral("Could not start MCP stdio server: %1")
-                         .arg(m_process->errorString()));
-            stopProcess();
-            return false;
+        const bool started = m_process->waitForStarted(m_timeout_ms);
+        const auto completed = m_job->completeLaunch(*m_process, started);
+        if (!completed) {
+            return std::unexpected(completed.error());
         }
-        // Place the live server in a kill-on-close Job Object now (while it is running) so its
-        // whole descendant tree is reaped at teardown -- even when the server later exits on its
-        // OWN, where a parent-PID snapshot walk would find nothing (children reparented).
-        if (!assignProcessToJob()) {
-            setError(error_message,
-                     QStringLiteral("Could not secure MCP stdio server process tree"));
-            stopProcess();
-            return false;
+        if (!started) {
+            return std::unexpected(QStringLiteral("Could not start MCP stdio server: %1")
+                                       .arg(m_process->errorString()));
         }
-
-        QString handshake_error;
-        const int initialize_id = nextId();
-        const QJsonObject initialize_message =
-            request(mcp::initializePayload(initialize_id), initialize_id, &handshake_error);
-        if (!handshake_error.isEmpty()) {
-            setError(error_message,
-                     QStringLiteral("MCP initialize failed: %1").arg(handshake_error));
-            stopProcess();
-            return false;
+        auto* const state = static_cast<QProcessPrivate*>(QObjectPrivate::get(m_process));
+        if (state->stdoutChannel.reader == nullptr || state->stderrChannel.reader == nullptr) {
+            return std::unexpected(QStringLiteral("MCP bounded stdio readers are unavailable"));
         }
-        const QString initialize_error = mcp::initializeResponseError(initialize_message);
-        if (!initialize_error.isEmpty()) {
-            setError(error_message, initialize_error);
-            stopProcess();
-            return false;
-        }
-        // "initialized" is a notification: no response is expected.
-        if (!writeMessage(mcp::initializedNotification(), error_message)) {
-            stopProcess();
-            return false;
-        }
-        m_open_state->store(true, std::memory_order_release);
-        return true;
+        m_stdout_device = std::make_unique<BoundedPipeDevice>(state->stdoutChannel.reader);
+        m_stderr_device = std::make_unique<BoundedPipeDevice>(state->stderrChannel.reader);
+        return {};
     }
 
-    QVector<AiMcpToolDescriptor> doListTools(QString* error_message) {
+    std::expected<void, QString> initializeProtocol(int initialize_id) {
+        const auto initialize_message = request(mcp::initializePayload(initialize_id),
+                                                initialize_id);
+        if (!initialize_message) {
+            return std::unexpected(
+                QStringLiteral("MCP initialize failed: %1").arg(initialize_message.error()));
+        }
+        const QString initialize_error = mcp::initializeResponseError(*initialize_message);
+        if (!initialize_error.isEmpty()) {
+            return std::unexpected(initialize_error);
+        }
+        // "initialized" is a notification: no response is expected.
+        return writeMessage(mcp::initializedNotification(),
+                            QDeadlineTimer(m_timeout_ms, Qt::PreciseTimer));
+    }
+
+    std::expected<QVector<AiMcpToolDescriptor>, QString> doListTools() {
         QVector<AiMcpToolDescriptor> tools;
         QSet<QString> seen_cursors;
         QString cursor;
         for (int page_number = 0; page_number < kMaxToolsListPages; ++page_number) {
-            const int id = nextId();
-            const QJsonObject message =
-                request(mcp::toolsListPayload(id, cursor), id, error_message);
-            if ((error_message != nullptr) && !error_message->isEmpty()) {
-                return {};
+            const auto id = nextId();
+            if (!id) {
+                return std::unexpected(id.error());
+            }
+            const auto message = request(mcp::toolsListPayload(*id, cursor), *id);
+            if (!message) {
+                return std::unexpected(message.error());
             }
             const auto page = AiMcpStdioSession::parseToolsListPage(
-                message.value(QStringLiteral("result")).toObject());
+                message->value(QStringLiteral("result")).toObject());
             if (!page.has_value()) {
-                setError(error_message, page.error());
-                return {};
+                return std::unexpected(page.error());
             }
             if (page->tools.size() > kMaxDiscoveredTools - tools.size()) {
-                setError(error_message,
-                         QStringLiteral("MCP tools/list exceeded the %1-tool ceiling")
-                             .arg(kMaxDiscoveredTools));
-                return {};
+                return std::unexpected(QStringLiteral("MCP tools/list exceeded the %1-tool ceiling")
+                                           .arg(kMaxDiscoveredTools));
             }
             tools.append(page->tools);
             if (page->next_cursor.isEmpty()) {
-                if (error_message != nullptr) {
-                    error_message->clear();
-                }
                 return tools;
             }
             if (seen_cursors.contains(page->next_cursor)) {
-                setError(error_message, QStringLiteral("MCP tools/list returned a cursor cycle"));
-                return {};
+                return std::unexpected(QStringLiteral("MCP tools/list returned a cursor cycle"));
             }
             seen_cursors.insert(page->next_cursor);
             cursor = page->next_cursor;
         }
-        setError(
-            error_message,
+        return std::unexpected(
             QStringLiteral("MCP tools/list exceeded the %1-page ceiling").arg(kMaxToolsListPages));
-        return {};
     }
 
-    QJsonObject doCallTool(const QString& tool_name,
-                           const QJsonObject& arguments,
-                           QString* error_message) {
+    std::expected<QJsonObject, QString> doCallTool(const QString& tool_name,
+                                                   const QJsonObject& arguments) {
         if (tool_name.trimmed().isEmpty()) {
-            setError(error_message, QStringLiteral("MCP tool name is empty"));
-            return {};
+            return std::unexpected(QStringLiteral("MCP tool name is empty"));
         }
-        const int id = nextId();
-        const QJsonObject message =
-            request(mcp::toolCallPayload(id, tool_name, arguments), id, error_message);
-        if ((error_message != nullptr) && !error_message->isEmpty()) {
-            return {};
+        const auto id = nextId();
+        if (!id) {
+            return std::unexpected(id.error());
         }
-        const QJsonObject result = message.value(QStringLiteral("result")).toObject();
+        const auto message = request(mcp::toolCallPayload(*id, tool_name, arguments), *id);
+        if (!message) {
+            return std::unexpected(message.error());
+        }
+        const QJsonObject result = message->value(QStringLiteral("result")).toObject();
         // Fail closed on a malformed tools/call result: MCP requires a content array (an error
         // result still carries content plus isError:true). Without this, a result missing content
         // would be handed back to the caller as a successful call.
         if (!result.value(QStringLiteral("content")).isArray()) {
-            setError(error_message,
-                     QStringLiteral("MCP tools/call result missing a content array"));
-            return {};
+            return std::unexpected(QStringLiteral("MCP tools/call result missing a content array"));
         }
         return result;
     }
 
-    void doClose() { stopProcess(); }
+    std::expected<void, QString> doClose(const QDeadlineTimer& deadline) {
+        return stopProcess(deadline);
+    }
 
 private:
-    int nextId() { return ++m_next_id; }
+    std::expected<int, QString> nextId() {
+        if (m_next_id == std::numeric_limits<int>::max()) {
+            return std::unexpected(QStringLiteral("MCP request ID space exhausted"));
+        }
+        return ++m_next_id;
+    }
 
     // Writes a request and blocks (synchronously, on this worker thread) until the
-    // matching-id response arrives. Returns the full JSON-RPC message; sets
-    // *error_message and returns {} on a JSON-RPC error, timeout, or server exit.
-    QJsonObject request(const QJsonObject& payload, int id, QString* error_message) {
-        if (!writeMessage(payload, error_message)) {
-            return {};
+    // matching-id response arrives, or returns the specific write/response failure.
+    std::expected<QJsonObject, QString> request(const QJsonObject& payload, int id) {
+        const QDeadlineTimer deadline(m_timeout_ms, Qt::PreciseTimer);
+        const auto written = writeMessage(payload, deadline);
+        if (!written) {
+            return std::unexpected(written.error());
         }
-        return awaitResponse(id, error_message);
+        return awaitResponse(id, deadline);
     }
 
-    bool writeMessage(const QJsonObject& object, QString* error_message) {
+    std::expected<void, QString> writeMessage(const QJsonObject& object,
+                                              const QDeadlineTimer& deadline) {
         if ((m_process == nullptr) || m_process->state() == QProcess::NotRunning) {
             m_open_state->store(false, std::memory_order_release);
-            setError(error_message, QStringLiteral("MCP stdio server is not running"));
-            return false;
+            return std::unexpected(QStringLiteral("MCP stdio server is not running"));
+        }
+        if (deadline.hasExpired()) {
+            return std::unexpected(timeoutMessage());
         }
         const QByteArray bytes = mcp::jsonLine(object);
-        if (m_process->write(bytes) != bytes.size() ||
-            !m_process->waitForBytesWritten(m_timeout_ms)) {
-            setError(error_message, QStringLiteral("Could not write MCP request to stdio server"));
-            return false;
+        if (m_process->write(bytes) != bytes.size()) {
+            return std::unexpected(QStringLiteral("Could not write MCP request to stdio server"));
         }
-        return true;
+        const qint64 remaining = deadline.remainingTime();
+        if (remaining <= 0) {
+            return std::unexpected(timeoutMessage());
+        }
+        const int wait_ms =
+            static_cast<int>(std::min<qint64>(remaining, std::numeric_limits<int>::max()));
+        if (!m_process->waitForBytesWritten(wait_ms)) {
+            return std::unexpected(
+                deadline.hasExpired()
+                    ? timeoutMessage()
+                    : QStringLiteral("Could not write MCP request to stdio server"));
+        }
+        return {};
     }
 
-    QJsonObject awaitResponse(int id, QString* error_message) {
-        QElapsedTimer timer;
-        timer.start();
+    std::expected<QJsonObject, QString> awaitResponse(int id, const QDeadlineTimer& deadline) {
         for (;;) {
-            const QJsonObject matched = drainMatchingLines(id, error_message);
-            if (!matched.isEmpty() || ((error_message != nullptr) && !error_message->isEmpty())) {
-                return matched;
+            const auto matched = AiMcpStdioSession::drainMatchingLines(
+                *m_stdout_device, id, deadline, [this]() { return timeoutMessage(); });
+            if (!matched) {
+                return std::unexpected(matched.error());
             }
-            if (m_process->bytesAvailable() > kMaxStdioReadBufferBytes) {
-                setError(error_message,
-                         QStringLiteral("MCP stdio response exceeded %1 bytes without a newline")
-                             .arg(kMaxStdioReadBufferBytes));
-                return {};
+            if (matched->has_value()) {
+                return **matched;
             }
-            const int remaining = m_timeout_ms - static_cast<int>(timer.elapsed());
+            const qint64 remaining = deadline.remainingTime();
             if (remaining <= 0) {
-                setError(error_message, timeoutMessage());
-                return {};
+                return std::unexpected(timeoutMessage());
             }
-            if (!m_process->waitForReadyRead(remaining)) {
-                setError(error_message,
-                         m_process->state() == QProcess::NotRunning ? exitedMessage()
-                                                                    : timeoutMessage());
-                return {};
+            const int wait_ms =
+                static_cast<int>(std::min<qint64>(remaining, std::numeric_limits<int>::max()));
+            if (!m_process->waitForReadyRead(wait_ms)) {
+                return std::unexpected(m_process->state() == QProcess::NotRunning
+                                           ? exitedMessage()
+                                           : timeoutMessage());
             }
             drainStderr();
         }
     }
 
-    // Reads every complete line currently buffered, returning the first whose id
-    // matches. Non-matching ids (stale responses) and id-less notifications are
-    // skipped; non-JSON stdout lines (stray server logs) are tolerated and skipped.
-    // A JSON-RPC error object for our id sets *error_message and returns {}.
-    QJsonObject drainMatchingLines(int id, QString* error_message) {
-        // Enforce the byte cap BEFORE reading any line: a server can buffer a single
-        // newline-terminated line larger than the cap, and canReadLine()/readLine() would
-        // allocate the whole oversized line before the post-drain guard in awaitResponse runs.
-        // Fail closed up front so the cap bounds a single huge line and newline-free
-        // accumulation alike.
-        if (m_process->bytesAvailable() > kMaxStdioReadBufferBytes) {
-            setError(error_message,
-                     QStringLiteral("MCP stdio response exceeded %1 bytes without a newline")
-                         .arg(kMaxStdioReadBufferBytes));
-            return {};
-        }
-        while (m_process->canReadLine()) {
-            const QByteArray line = m_process->readLine().trimmed();
-            if (line.isEmpty()) {
-                continue;
-            }
-            QString parse_error;
-            const QJsonObject message = mcp::parseJsonLine(line, &parse_error);
-            if (message.isEmpty() || message.value(QStringLiteral("id")).toInt(-1) != id) {
-                continue;
-            }
-            if (message.contains(QStringLiteral("error"))) {
-                setError(error_message, mcp::jsonRpcErrorMessage(message));
-                return {};
-            }
-            // Fail closed on a malformed id-matching response: require a JSON-RPC result
-            // object (initialize/tools/list/tools/call all return objects). Without this an
-            // absent/scalar result would be read as an empty {} success by doCallTool.
-            if (!message.value(QStringLiteral("result")).isObject()) {
-                setError(error_message,
-                         QStringLiteral("MCP stdio response missing a result object"));
-                return {};
-            }
-            if (error_message != nullptr) {
-                error_message->clear();
-            }
-            return message;
-        }
-        return {};
-    }
-
     void drainStderr() {
-        if (m_process == nullptr) {
+        if (m_stderr_device == nullptr) {
             return;
         }
-        m_stderr_tail.append(m_process->readAllStandardError());
+        m_stderr_tail.append(m_stderr_device->read(kMaxStderrTailBytes));
         if (m_stderr_tail.size() > kMaxStderrTailBytes) {
             m_stderr_tail = m_stderr_tail.right(kMaxStderrTailBytes);
         }
@@ -360,121 +461,147 @@ private:
                    : QStringLiteral("MCP stdio server exited before response: %1").arg(tail);
     }
 
-    void stopProcess() {
+    std::expected<void, QString> waitForPrimaryExit(const QDeadlineTimer& deadline) {
+        if (m_process == nullptr || m_process->state() == QProcess::NotRunning) {
+            return {};
+        }
+        const qint64 remaining = deadline.remainingTime();
+        if (remaining <= 0) {
+            return std::unexpected(QStringLiteral("MCP primary cleanup deadline expired"));
+        }
+        const int wait_ms =
+            static_cast<int>(qMin<qint64>(remaining, std::numeric_limits<int>::max()));
+        if (!m_process->waitForFinished(wait_ms)) {
+            return std::unexpected(
+                QStringLiteral("MCP primary cleanup failed: %1").arg(m_process->errorString()));
+        }
+        return {};
+    }
+
+    std::expected<void, QString> waitForEmptyJob(const QDeadlineTimer& deadline) {
+        for (;;) {
+            const auto accounting = m_job->accounting();
+            if (!accounting) {
+                return std::unexpected(accounting.error());
+            }
+            if (accounting->active_processes == 0) {
+                return {};
+            }
+            const qint64 remaining = deadline.remainingTime();
+            if (remaining <= 0) {
+                return std::unexpected(QStringLiteral("MCP descendants exceeded cleanup deadline"));
+            }
+            QThread::msleep(static_cast<unsigned long>(qMin(kProcessCleanupPollMs, remaining)));
+        }
+    }
+
+    std::expected<void, QString> stopProcess(const QDeadlineTimer& deadline) {
         m_open_state->store(false, std::memory_order_release);
-        if (m_job_handle != nullptr) {
-            // The kill-on-close Job Object reaps the entire descendant tree -- including a
-            // server that already exited on its own and left orphaned descendants, which the
-            // NotRunning early-return below would otherwise skip. Supersedes the per-process
-            // terminate/kill and avoids a stale-PID walk.
-            closeJob();
-            return;
+        if (!m_job) {
+            return waitForPrimaryExit(deadline);
         }
-        if ((m_process == nullptr) || m_process->state() == QProcess::NotRunning) {
-            return;
+        const auto accounting = m_job->accounting();
+        if (!accounting) {
+            return std::unexpected(accounting.error());
         }
-        const qint64 pid = m_process->processId();
-        m_process->closeWriteChannel();
-        terminateProcessTree(static_cast<DWORD>(pid));
-        m_process->kill();
-        m_process->waitForFinished(kMinimumRequestTimeoutMs);
-    }
-
-    bool assignProcessToJob() {
-        if ((m_process == nullptr) || m_process->processId() <= 0) {
-            return false;
+        if (accounting->active_processes != 0) {
+            const auto terminated = m_job->terminate();
+            if (!terminated) {
+                return std::unexpected(terminated.error());
+            }
         }
-        m_job_handle = ::CreateJobObjectW(nullptr, nullptr);
-        if (m_job_handle == nullptr) {
-            return false;
+        const auto primary = waitForPrimaryExit(deadline);
+        if (!primary) {
+            return std::unexpected(primary.error());
         }
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
-        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        if (::SetInformationJobObject(
-                m_job_handle, JobObjectExtendedLimitInformation, &limits, sizeof(limits)) == 0) {
-            closeJob();  // Without KILL_ON_JOB_CLOSE the job cannot guarantee cleanup; drop it.
-            return false;
+        const auto empty = waitForEmptyJob(deadline);
+        if (!empty) {
+            return std::unexpected(empty.error());
         }
-        const HANDLE proc = ::OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE,
-                                          FALSE,
-                                          static_cast<DWORD>(m_process->processId()));
-        if (proc == nullptr) {
-            closeJob();
-            return false;
+        const auto closed = m_job->closeEmpty();
+        if (!closed) {
+            return std::unexpected(closed.error());
         }
-        const bool assigned = ::AssignProcessToJobObject(m_job_handle, proc) != 0;
-        ::CloseHandle(proc);
-        if (!assigned) {
-            closeJob();
-        }
-        return assigned;
-    }
-
-    void closeJob() {
-        if (m_job_handle != nullptr) {
-            ::CloseHandle(m_job_handle);  // KILL_ON_JOB_CLOSE reaps any surviving descendants.
-            m_job_handle = nullptr;
-        }
-    }
-
-    static void setError(QString* error_message, const QString& message) {
-        if (error_message != nullptr) {
-            *error_message = message;
-        }
+        m_job.reset();
+        return {};
     }
 
     QProcess* m_process{nullptr};
+    std::unique_ptr<BoundedPipeDevice> m_stdout_device;
+    std::unique_ptr<BoundedPipeDevice> m_stderr_device;
     std::atomic_bool* m_open_state{nullptr};
     QByteArray m_stderr_tail;
     int m_next_id{0};
     int m_timeout_ms{kMinimumRequestTimeoutMs};
-    HANDLE m_job_handle{nullptr};
+    JobFactory m_job_factory;
+    std::unique_ptr<sak::WindowsProcessJob> m_job;
 };
 
-AiMcpStdioSession::AiMcpStdioSession() = default;
+AiMcpStdioSession::AiMcpStdioSession()
+    : m_thread_starter(startSessionThread), m_job_factory(sak::WindowsProcessJob::create) {}
 
 AiMcpStdioSession::~AiMcpStdioSession() {
-    close();
+    const auto closed = close();
+    if (!closed) {
+        qFatal("MCP session destruction refused: %s", qPrintable(closed.error()));
+    }
 }
 
-bool AiMcpStdioSession::open(const AiMcpSessionConfig& config, QString& error_message) {
-    error_message.clear();
-    close();
+void AiMcpStdioSession::setThreadStarterForTesting(std::function<void(QThread&)> starter) {
+    m_thread_starter = starter ? std::move(starter) : startSessionThread;
+}
+
+std::expected<void, QString> AiMcpStdioSession::startWorker() {
     m_thread = new QThread;
-    // Start the thread BEFORE creating/moving the worker. If the OS cannot spawn
-    // the thread (thread exhaustion), the blocking queued call below would post an
-    // event no event loop ever runs and hang the caller forever. Bailing here keeps
-    // that path a returned error, and means the worker only ever exists alongside a
-    // running event loop.
-    m_thread->start();
-    if (!m_thread->isRunning()) {
-        delete m_thread;
-        m_thread = nullptr;
-        error_message = QStringLiteral("Could not start MCP session worker thread");
-        return false;
+    // Detach on the allocating caller. A later sequential caller can then adopt the
+    // controller after joining, without relying on the creator having an event loop.
+    m_thread->moveToThread(nullptr);
+    if (m_thread->thread() != nullptr) {
+        return std::unexpected(QStringLiteral("Could not detach MCP session thread controller"));
     }
-
-    m_worker = new Worker(&m_open);
+    // Start before creating the worker: a failed launch must never reach a blocking
+    // queued invocation whose event loop cannot run.
+    m_thread_starter(*m_thread);
+    if (!m_thread->isRunning()) {
+        return std::unexpected(QStringLiteral("Could not start MCP session worker thread"));
+    }
+    m_worker = new Worker(&m_open, m_initial_request_id_for_testing, m_job_factory);
+    m_worker_liveness = m_worker;
     m_worker->moveToThread(m_thread);
+    // Check affinity instead of moveToThread's return type, which was void in Qt 6.5.
+    if (m_worker->thread() != m_thread) {
+        delete m_worker;  // A refused move leaves this newly created worker on the caller.
+        m_worker = nullptr;
+        return std::unexpected(QStringLiteral("Could not move MCP session worker to its thread"));
+    }
     QObject::connect(m_thread, &QThread::finished, m_worker, &QObject::deleteLater);
+    return {};
+}
 
-    bool ok = false;
-    QString error;
+std::expected<void, QString> AiMcpStdioSession::open(const AiMcpSessionConfig& config) {
+    const auto previous = close();
+    if (!previous) {
+        return std::unexpected(previous.error());
+    }
+    const auto started = startWorker();
+    if (!started) {
+        return std::unexpected(closeAfterFailure(started.error()));
+    }
+    std::expected<void, QString> result;
     const bool invoked = QMetaObject::invokeMethod(
         m_worker,
-        [this, &config, &error, &ok]() { ok = m_worker->doOpen(config, &error); },
+        [this, &config, &result]() { result = m_worker->doOpen(config); },
         Qt::BlockingQueuedConnection);
     if (!invoked) {
         // The blocking call could not be delivered to the worker's event loop; fail closed
         // rather than reporting a silent, error-less non-open.
-        error = QStringLiteral("Could not dispatch open to the MCP session worker");
-        ok = false;
+        result =
+            std::unexpected(QStringLiteral("Could not dispatch open to the MCP session worker"));
     }
-    error_message = error;
-    if (!ok) {
-        close();
+    if (!result) {
+        return std::unexpected(closeAfterFailure(result.error()));
     }
-    return ok;
+    return result;
 }
 
 bool AiMcpStdioSession::isOpen() const {
@@ -485,76 +612,138 @@ int AiMcpStdioSession::effectiveRequestTimeoutMs(int requested_ms) {
     return qMax(requested_ms, kMinimumRequestTimeoutMs);
 }
 
-QVector<AiMcpToolDescriptor> AiMcpStdioSession::listTools(QString& error_message) {
-    error_message.clear();
+std::expected<QVector<AiMcpToolDescriptor>, QString> AiMcpStdioSession::listTools() {
     if (!m_open || (m_worker == nullptr)) {
-        error_message = QStringLiteral("MCP session is not open");
-        return {};
+        return std::unexpected(QStringLiteral("MCP session is not open"));
     }
-    QVector<AiMcpToolDescriptor> result;
-    QString error;
+    std::expected<QVector<AiMcpToolDescriptor>, QString> result;
     const bool invoked = QMetaObject::invokeMethod(
         m_worker,
-        [this, &result, &error]() { result = m_worker->doListTools(&error); },
+        [this, &result]() { result = m_worker->doListTools(); },
         Qt::BlockingQueuedConnection);
     if (!invoked) {
-        error_message = QStringLiteral("Could not dispatch tools/list to the MCP session worker");
-        return {};
-    }
-    error_message = error;
-    if (!error.isEmpty()) {
-        return {};
+        return std::unexpected(
+            QStringLiteral("Could not dispatch tools/list to the MCP session worker"));
     }
     return result;
 }
 
-QJsonObject AiMcpStdioSession::callTool(const QString& tool_name,
-                                        const QJsonObject& arguments,
-                                        QString& error_message) {
-    error_message.clear();
+std::expected<QJsonObject, QString> AiMcpStdioSession::callTool(const QString& tool_name,
+                                                                const QJsonObject& arguments) {
     if (!m_open || (m_worker == nullptr)) {
-        error_message = QStringLiteral("MCP session is not open");
-        return {};
+        return std::unexpected(QStringLiteral("MCP session is not open"));
     }
-    QJsonObject result;
-    QString error;
+    std::expected<QJsonObject, QString> result;
     const bool invoked = QMetaObject::invokeMethod(
         m_worker,
-        [this, &tool_name, &arguments, &result, &error]() {
-            result = m_worker->doCallTool(tool_name, arguments, &error);
+        [this, &tool_name, &arguments, &result]() {
+            result = m_worker->doCallTool(tool_name, arguments);
         },
         Qt::BlockingQueuedConnection);
     if (!invoked) {
-        error_message = QStringLiteral("Could not dispatch tools/call to the MCP session worker");
-        return {};
-    }
-    error_message = error;
-    if (!error.isEmpty()) {
-        return {};
+        return std::unexpected(
+            QStringLiteral("Could not dispatch tools/call to the MCP session worker"));
     }
     return result;
 }
 
-void AiMcpStdioSession::close() {
-    if (m_thread != nullptr) {
-        // Only issue the blocking call while the worker's event loop is actually
-        // running (it always is once open() succeeds); guarding this keeps close()
-        // safe even if the thread were ever stopped, so it cannot hang like the
-        // pre-guard open() start-failure path could.
-        if ((m_worker != nullptr) && m_thread->isRunning()) {
-            QMetaObject::invokeMethod(
-                m_worker, [this]() { m_worker->doClose(); }, Qt::BlockingQueuedConnection);
+std::expected<void, QString> AiMcpStdioSession::close() {
+    return closeWithDeadline(QDeadlineTimer(kProcessCleanupTimeoutMs));
+}
+
+QString AiMcpStdioSession::closeAfterFailure(const QString& primary_error) {
+    const auto closed = close();
+    return closed ? primary_error
+                  : QStringLiteral("%1; MCP cleanup failed: %2").arg(primary_error, closed.error());
+}
+
+bool AiMcpStdioSession::isClosed() const {
+    return m_thread == nullptr;
+}
+
+QObject* AiMcpStdioSession::workerObjectForTesting() const {
+    return m_worker;
+}
+
+std::expected<void, QString> AiMcpStdioSession::cleanupWorkerBeforeJoin(
+    const QDeadlineTimer& deadline) {
+    if (m_worker == nullptr) {
+        return {};
+    }
+    if (!m_thread->isRunning()) {
+        if (!m_thread->wait(deadline)) {
+            return std::unexpected(QStringLiteral("MCP worker thread exceeded cleanup deadline"));
         }
-        m_thread->quit();
-        // SAK-ALLOW-BLOCKING: `delete m_thread` follows, and deleting a live QThread aborts
-        // the process. doClose() above already ran to completion on that thread via a
-        // blocking queued call, so the event loop has nothing left but to exit.
-        m_thread->wait();
+        if (m_worker_liveness) {
+            return std::unexpected(
+                QStringLiteral("MCP cleanup unavailable: worker thread is not running"));
+        }
+        // Worker destructor already proved its process/Job clean. A queued event may have
+        // been dropped when its event loop stopped; no callback can still reach this state.
+        m_pending_cleanup.reset();
+        return {};
+    }
+    // A timed-out caller retains this exact request. A later close waits for the same Worker
+    // completion instead of posting an unbounded queue of duplicate cleanup operations.
+    if (!m_pending_cleanup) {
+        m_pending_cleanup = std::make_shared<PendingCleanup>();
+        Worker* const worker = m_worker;
+        const auto request = m_pending_cleanup;
+        const bool invoked = QMetaObject::invokeMethod(
+            worker,
+            [worker, request, deadline]() {
+                request->result = deadline.hasExpired()
+                                      ? std::unexpected(QStringLiteral(
+                                            "MCP worker cleanup dispatch exceeded deadline"))
+                                      : worker->doClose(deadline);
+                request->completed.release();
+            },
+            Qt::QueuedConnection);
+        if (!invoked) {
+            m_pending_cleanup.reset();
+            return std::unexpected(
+                QStringLiteral("Could not dispatch close to the MCP session worker"));
+        }
+    }
+    if (!m_pending_cleanup->completed.tryAcquire(1, deadline)) {
+        return std::unexpected(QStringLiteral("MCP worker cleanup dispatch exceeded deadline"));
+    }
+    auto cleanup = std::move(m_pending_cleanup->result);
+    m_pending_cleanup.reset();
+    return cleanup;
+}
+
+std::expected<void, QString> AiMcpStdioSession::closeWithDeadline(const QDeadlineTimer& deadline) {
+    m_open.store(false, std::memory_order_release);
+    if (m_thread != nullptr) {
+        if (m_thread == QThread::currentThread()) {
+            return std::unexpected(
+                QStringLiteral("MCP session close cannot run on its own managed thread"));
+        }
+        if (!m_join_requested) {
+            const auto cleanup = cleanupWorkerBeforeJoin(deadline);
+            if (!cleanup) {
+                return std::unexpected(cleanup.error());
+            }
+            m_join_requested = true;
+            m_thread->quit();
+        }
+        // A timeout retains this session/controller. Cleanup is already proved, so retry joins
+        // without dispatching to a Worker whose event loop may have stopped or been deleted.
+        if (!m_thread->wait(deadline)) {
+            return std::unexpected(QStringLiteral("MCP worker thread exceeded cleanup deadline"));
+        }
+        m_thread->moveToThread(QThread::currentThread());
+        if (m_thread->thread() != QThread::currentThread()) {
+            qFatal("Could not adopt joined MCP session thread controller for destruction");
+        }
         delete m_thread;  // m_worker was deleteLater'd on QThread::finished
         m_thread = nullptr;
         m_worker = nullptr;
+        m_join_requested = false;
     }
     m_open = false;
+    return {};
 }
 
 std::expected<AiMcpToolsListPage, QString> AiMcpStdioSession::parseToolsListPage(

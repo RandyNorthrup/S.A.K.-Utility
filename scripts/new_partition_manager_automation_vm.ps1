@@ -257,7 +257,6 @@ if (`$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
             "--exe", "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe",
             "--",
             "-NoProfile",
-            "-ExecutionPolicy", "Bypass",
             "-Command", $adminProbeCommand
         ) -AllowFailure
         $probeText = $probe.output -join "`n"

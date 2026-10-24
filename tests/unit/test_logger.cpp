@@ -4,8 +4,8 @@
 /// @file test_logger.cpp
 /// @brief Unit tests for the thread-safe logging system
 ///
-/// IMPORTANT: sak::logger is a Meyer's singleton. Once initialized, calling
-/// initialize() again fails because the internal ofstream is already open.
+/// IMPORTANT: sak::logger is a Meyer's singleton. Reinitializing with a valid
+/// directory replaces its sink; a rejected directory must preserve that sink.
 /// All tests share a single initialization performed in initTestCase().
 /// Each test uses unique marker strings for content verification.
 
@@ -31,7 +31,7 @@ private Q_SLOTS:
     // Initialization (verified against the single init)
     void initialize_validDir();
     void initialize_createsDir();
-    void initialize_reInitFails();
+    void initialize_reInitWithFileAsDirectoryFails();
 
     // Level control
     void setLevel_getLevel();
@@ -143,19 +143,12 @@ void LoggerTests::initialize_createsDir() {
     QVERIFY(std::filesystem::is_directory(m_logSubDir));
 }
 
-void LoggerTests::initialize_reInitFails() {
-    // Re-initializing a singleton logger should fail gracefully
+void LoggerTests::initialize_reInitWithFileAsDirectoryFails() {
+    // A regular file cannot become the log directory; refusal keeps the first sink.
     auto& log = sak::logger::instance();
     const auto originalFile = log.getLogFile();
-    auto result = log.initialize(std::filesystem::path("Z:\\InvalidDrive\\NoDir"), "reinit");
-    QVERIFY(!result.has_value());
-
-    // Class (A): a refusal reported through !has_value() alone is satisfied by ANY
-    // of initialize()'s distinct failure modes -- not_a_directory, permission_denied,
-    // unknown_error from ensureLogDirectory, or the later stream-open write_error --
-    // so the guard this fixture is aimed at can be dead and the test stays green.
-    // Pin the REASON with a deterministic, machine-invariant fixture: a path that IS
-    // a regular file must be refused as not_a_directory.
+    // Pin the precise refusal reason with a test-owned regular file, independent of
+    // drive letters, mounts, permissions and the developer's data.
     QTemporaryDir occupied;
     QVERIFY(occupied.isValid());
     const std::filesystem::path fileAsDir = std::filesystem::path(occupied.path().toStdWString()) /

@@ -99,15 +99,13 @@ bool serveRequests(BrowserControl* browser_ptr, const Win32McpServerPolicy& poli
         if (line.empty()) {
             continue;
         }
-        QString parse_error;
-        const QJsonObject request = sak::ai::mcp::parseJsonLine(QByteArray::fromStdString(line),
-                                                                &parse_error);
-        if (!parse_error.isEmpty()) {
+        const auto request = sak::ai::mcp::parseJsonLine(QByteArray::fromStdString(line));
+        if (!request) {
             // A malformed line carries no reliable id to answer against; drop it and
             // keep serving rather than desynchronizing the stream.
             continue;
         }
-        const std::optional<QJsonObject> response = handleRequest(request, browser_ptr, policy);
+        const std::optional<QJsonObject> response = handleRequest(*request, browser_ptr, policy);
         if (response.has_value() && !writeResponse(response.value())) {
             (void)std::fprintf(stderr, "win32 mcp: response write failed; closing stream\n");
             return false;  // lost response ack: abnormal teardown

@@ -16,10 +16,15 @@ param(
     [string]$RootDir,
 
     [ValidateNotNullOrEmpty()]
-    [string]$PrimaryExe = "sak_utility.exe"
+    [string]$PrimaryExe = "sak_utility.exe",
+
+    # Build trees may contain windeployqt's copied OS forwarders. Shippable package
+    # search directories must not: those files can replace the target OS version.
+    [switch]$RequireNoSystemDlls
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "windows_runtime_dlls.ps1")
 
 function Find-Dumpbin {
     $fromPath = Get-Command dumpbin.exe -ErrorAction SilentlyContinue
@@ -54,58 +59,6 @@ function Find-Dumpbin {
     throw "dumpbin.exe was not found. Install Visual Studio Build Tools or run from a Developer PowerShell."
 }
 
-function Test-IsSystemDll {
-    param([string]$Name)
-
-    $lower = $Name.ToLowerInvariant()
-    if ($lower -like "api-ms-win-*.dll" -or $lower -like "ext-ms-*.dll") {
-        return $true
-    }
-
-    $systemDlls = @(
-        "advapi32.dll",
-        "bcrypt.dll",
-        "comdlg32.dll",
-        "crypt32.dll",
-        # DbgHelp is a Windows System32 component. CrashReporter links dbghelp.lib for
-        # MiniDumpWriteDump; copying a private dbghelp.dll beside the app would replace the
-        # serviced OS implementation and is neither required nor desirable.
-        "dbghelp.dll",
-        "dnsapi.dll",
-        "dwmapi.dll",
-        "dxgi.dll",
-        "gdi32.dll",
-        "imm32.dll",
-        "iphlpapi.dll",
-        "kernel32.dll",
-        "msimg32.dll",
-        "netapi32.dll",
-        "ole32.dll",
-        "oleacc.dll",
-        "oleaut32.dll",
-        "powrprof.dll",
-        "rstrtmgr.dll",
-        "secur32.dll",
-        "setupapi.dll",
-        "shell32.dll",
-        "shlwapi.dll",
-        "user32.dll",
-        "userenv.dll",
-        "uxtheme.dll",
-        "version.dll",
-        "winhttp.dll",
-        "winmm.dll",
-        # Windows Trust Verification API, System32 only and never redistributable.
-        # ChocolateyManager calls WinVerifyTrust to Authenticode-check the installer it
-        # is about to run, which is what put this in the import table.
-        "wintrust.dll",
-        "wlanapi.dll",
-        "ws2_32.dll"
-    )
-
-    return $systemDlls -contains $lower
-}
-
 function Get-PeMachine {
     param([Parameter(Mandatory = $true)][string]$Path)
 
@@ -133,7 +86,7 @@ function Get-PeMachine {
             $peHeader[2] -ne 0 -or $peHeader[3] -ne 0) {
             return $null  # missing the 'PE\0\0' signature
         }
-        return ($peHeader[4] -bor ($peHeader[5] -shl 8))  # IMAGE_FILE_HEADER.Machine
+        return ([int]$peHeader[4] -bor ([int]$peHeader[5] -shl 8))  # IMAGE_FILE_HEADER.Machine
     } catch {
         return $null
     } finally {
@@ -154,6 +107,13 @@ if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
 $resolvedExe = (Resolve-Path -LiteralPath $exePath).Path
 if (-not $resolvedExe.StartsWith($root.Path, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "Primary executable resolves outside the package root: $resolvedExe"
+}
+if ($RequireNoSystemDlls) {
+    Assert-NoPackageSystemDlls -Directory $root.Path
+    $primaryDirectory = Split-Path -Parent $resolvedExe
+    if (-not $primaryDirectory.Equals($root.Path, [System.StringComparison]::OrdinalIgnoreCase)) {
+        Assert-NoPackageSystemDlls -Directory $primaryDirectory
+    }
 }
 $exeMachine = Get-PeMachine -Path $resolvedExe
 if ($null -eq $exeMachine) {

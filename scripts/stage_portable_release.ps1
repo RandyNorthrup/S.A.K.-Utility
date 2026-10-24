@@ -18,6 +18,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "path_reparse_guard.ps1")
 
 function Resolve-RequiredPath([string]$Path, [string]$Description) {
     if (-not (Test-Path -LiteralPath $Path)) {
@@ -47,6 +48,8 @@ function Copy-RequiredDirectoryContents([string]$SourceDirectory, [string]$Desti
     if (-not (Test-Path -LiteralPath $SourceDirectory -PathType Container)) {
         throw "$Description directory missing: $SourceDirectory"
     }
+    [void](Get-StageDirectTreeItem -Root $SourceDirectory -Description $Description)
+    [void](Assert-StageDirectDirectoryPath -Path $DestinationDirectory -Description $Description -RequireExisting $false)
     New-Item -ItemType Directory -Force -Path $DestinationDirectory | Out-Null
     Copy-Item -Path (Join-Path $SourceDirectory "*") -Destination $DestinationDirectory -Recurse -Force
     Write-Host "  Bundled: $Description"
@@ -105,16 +108,10 @@ function Copy-DirectoryExcludingBuildScratch([string]$SourceDirectory, [string]$
 # the layout is not what this script believes it is -- refuse rather than recursively
 # deleting whatever happens to be sitting there.
 function Remove-PathIfExists([string]$Path, [string]$ExpectedType) {
-    if (@("Leaf", "Container") -notcontains $ExpectedType) {
-        throw "Remove-PathIfExists needs ExpectedType 'Leaf' or 'Container': $ExpectedType"
-    }
-    if (-not (Test-Path -LiteralPath $Path)) {
+    if (-not (Assert-StageSafeDeleteTarget $Path $ExpectedType)) {
         return
     }
-    if (-not (Test-Path -LiteralPath $Path -PathType $ExpectedType)) {
-        throw "Refusing to remove '$Path': expected a $ExpectedType"
-    }
-    Remove-Item -LiteralPath $Path -Recurse -Force
+    Remove-Item -LiteralPath $Path -Recurse -Force -ErrorAction Stop
 }
 
 # $ErrorActionPreference does not fail this script on a nonzero exit code coming out of a
@@ -131,6 +128,12 @@ function Invoke-RequiredScript([string]$ScriptPath, [hashtable]$ScriptArguments)
     }
 }
 
+$selectedBuildRoot = if ([IO.Path]::IsPathRooted($BuildDir)) {
+    $BuildDir
+} else {
+    Join-Path (Get-Location).ProviderPath $BuildDir
+}
+[void](Assert-StageDirectDirectoryPath -Path $selectedBuildRoot -Description 'Build directory' -RequireExisting $true)
 $buildRoot = Resolve-RequiredPath $BuildDir "Build directory"
 if ([string]::IsNullOrWhiteSpace($RepoRoot)) {
     $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
@@ -146,14 +149,12 @@ if ($PackageName -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') {
 }
 
 $packageRoot = Join-Path $buildRoot $PackageName
-$zipPath = Join-Path $buildRoot "$PackageName-Windows-x64.zip"
-$checksumPath = Join-Path $buildRoot "SHA256SUMS.txt"
 
 Remove-PathIfExists $packageRoot "Container"
-Remove-PathIfExists $zipPath "Leaf"
-Remove-PathIfExists $checksumPath "Leaf"
+[void](Assert-StageDirectDirectoryPath -Path $packageRoot -Description 'Staging root' -RequireExisting $false)
 New-Item -ItemType Directory -Force -Path $packageRoot | Out-Null
 $packageRoot = (Resolve-Path -LiteralPath $packageRoot).Path
+[void](Assert-StageDirectDirectoryPath -Path $packageRoot -Description 'Staging root' -RequireExisting $true)
 if (-not $packageRoot.StartsWith($buildRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "Staging root escaped the build directory: $packageRoot"
 }
@@ -164,6 +165,7 @@ Copy-RequiredFile (Join-Path $buildRoot "sak_utility.exe") $packageRoot
 Copy-RequiredFile (Join-Path $buildRoot "sak_elevated_helper.exe") $packageRoot
 Copy-RequiredFile (Join-Path $buildRoot "sak_apfs_writer_cli.exe") $packageRoot
 Copy-RequiredFile (Join-Path $buildRoot "sak_hfs_writer_cli.exe") $packageRoot
+Copy-RequiredFile (Join-Path $buildRoot "sak_browser_control.crx") $packageRoot
 Copy-RequiredFile (Join-Path $buildRoot "sak_splash.png") $packageRoot
 Copy-OptionalFile (Join-Path $buildRoot "icon.ico") $packageRoot
 
@@ -179,6 +181,7 @@ $pluginDirs = @(
 foreach ($dir in $pluginDirs) {
     $source = Join-Path $buildRoot $dir
     if (Test-Path -LiteralPath $source -PathType Container) {
+        [void](Get-StageDirectTreeItem -Root $source -Description "Plugin directory $dir")
         Copy-Item -LiteralPath $source -Destination $packageRoot -Recurse -Force
         $count = (Get-ChildItem -LiteralPath $source -Filter "*.dll" -Recurse -ErrorAction Stop | Measure-Object).Count
         Write-Host "  Bundled: $dir/ ($count plugins)"
@@ -218,12 +221,17 @@ Remove-PathIfExists (Join-Path $toolsRoot "mcp/_build") "Container"
 Remove-PathIfExists (Join-Path $toolsRoot "filesystem/_build") "Container"
 # A suppressed enumeration error here would read as "no machine-local configs found" and
 # ship them; let the failure surface instead.
-Get-ChildItem -LiteralPath $toolsRoot -Recurse -Filter "*.local.json" -ErrorAction Stop |
-    Remove-Item -Force
+$toolLocalFiles = @(Get-StageDirectTreeItem -Root $toolsRoot -Description 'Bundled tools' |
+    Where-Object { -not $_.PSIsContainer -and $_.Name -like '*.local.json' })
+foreach ($localFile in $toolLocalFiles) {
+    if (Assert-StageSafeDeleteTarget $localFile.FullName 'Leaf') {
+        Remove-Item -LiteralPath $localFile.FullName -Force -ErrorAction Stop
+    }
+}
 
 $chocoPath = Join-Path $toolsRoot "chocolatey"
 if (Test-Path -LiteralPath $chocoPath -PathType Container) {
-    foreach ($sub in @("lib-bad", "cache", "temp")) {
+    foreach ($sub in @("lib-bad", "cache", "temp", "logs")) {
         Remove-PathIfExists (Join-Path $chocoPath $sub) "Container"
     }
     foreach ($sub in @("lib", ".chocolatey", "logs")) {
@@ -239,8 +247,13 @@ Copy-RequiredDirectoryContents `
     (Join-Path $buildRoot "data/ai/app_manifests") `
     (Join-Path $packageRoot "data/ai/app_manifests") `
     "data/ai/app_manifests"
-Get-ChildItem -LiteralPath (Join-Path $packageRoot "data/ai") -Recurse -Filter "*.local.json" -ErrorAction Stop |
-    Remove-Item -Force
+$aiLocalFiles = @(Get-StageDirectTreeItem -Root (Join-Path $packageRoot 'data/ai') -Description 'Bundled AI data' |
+    Where-Object { -not $_.PSIsContainer -and $_.Name -like '*.local.json' })
+foreach ($localFile in $aiLocalFiles) {
+    if (Assert-StageSafeDeleteTarget $localFile.FullName 'Leaf') {
+        Remove-Item -LiteralPath $localFile.FullName -Force -ErrorAction Stop
+    }
+}
 
 Copy-RequiredFile (Join-Path $repoRootPath "README.md") $packageRoot
 Copy-RequiredFile (Join-Path $repoRootPath "LICENSE") $packageRoot
@@ -255,6 +268,7 @@ foreach ($relativePath in @("data/ai_sessions", "data/temp", "data/logs", "_logs
 $critical = @(
     "sak_utility.exe",
     "sak_elevated_helper.exe",
+    "sak_browser_control.crx",
     "sak_splash.png",
     "Qt6Core.dll",
     "Qt6Widgets.dll",
@@ -295,7 +309,7 @@ if ($localFiles) {
 }
 
 Invoke-RequiredScript (Join-Path $repoRootPath "scripts/verify_windows_runtime_dependencies.ps1") `
-    @{ RootDir = $packageRoot; PrimaryExe = "sak_utility.exe" }
+    @{ RootDir = $packageRoot; PrimaryExe = "sak_utility.exe"; RequireNoSystemDlls = $true }
 
 $files = Get-ChildItem -LiteralPath $packageRoot -Recurse -File
 $totalSize = ($files | Measure-Object -Property Length -Sum).Sum

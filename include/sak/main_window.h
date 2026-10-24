@@ -128,7 +128,9 @@ private:
 
     /// @brief Create the Application Management composite panel tab
     void createAppManagementPanel();
-    void createAppManagementChildPanels();
+    void createAppManagementChildPanels(QWidget* app_install_shell,
+                                        QWidget* advanced_shell,
+                                        QWidget* vulnerability_shell);
 
     /// @brief Create the Network Management composite panel tab
     void createNetworkManagementPanel();
@@ -161,6 +163,15 @@ private:
     /// @brief Build (if needed) the tool panel occupying a lazy tab slot.
     void materializeTab(int slot);
 
+    /// @brief Construct every tool tab for a complete non-interactive gate.
+    void materializeAllToolTabs();
+
+    /// @brief Finish an in-place lazy tab without moving its populated widget tree.
+    void finishInPlaceLazyTab(int slot,
+                              QWidget* placeholder,
+                              int tab_count_before,
+                              qint64 elapsed_ms);
+
     /// @brief Connect the tab-change/log-window routing that must exist once.
     void setupLogRouting();
 
@@ -181,7 +192,7 @@ private:
     void wireNetworkPanels();
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
     /// @brief Construct the AI Assistant panel and add it as the last tab.
-    void createAiAssistantPanelTab();
+    void createAiAssistantPanelTab(int slot);
     void wireAiPanel();
 #endif
 
@@ -242,8 +253,9 @@ protected:
 private:
     /// @brief A tool tab that constructs its panel(s) lazily on first activation.
     struct LazyTab {
-        std::function<void()> build;  ///< Constructs panel(s), appended as the last tab.
+        std::function<void()> build;  ///< Constructs panel(s) in place or as a last tab.
         std::function<void()> wire;   ///< MainWindow-level wiring; runs after the tab is in place.
+        bool in_place{false};         ///< Populate the existing placeholder without moving it.
         bool built{false};
     };
 
@@ -264,6 +276,7 @@ private:
     bool m_lazyDefaultBuilt{false};
     int m_slotImageFlasher{-1};
     int m_slotDiagnostic{-1};
+    int m_slotAppManagement{-1};
 
     // Feature panels
     std::unique_ptr<UserMigrationPanel> m_user_migration_panel;

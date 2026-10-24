@@ -138,13 +138,13 @@ function New-NextCommandList {
     $externalEvidenceRootArg = ConvertTo-ProjectRelativePath -Path (Join-Path $strictCertificationRoot "external-evidence")
 
     if ($VhdGapIds.Count -gt 0) {
-        $commands.Add("powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_partition_manager_vhd_certification_strict.ps1 -RelaunchElevated")
+        $commands.Add("powershell -NoProfile -File scripts\run_partition_manager_vhd_certification_strict.ps1 -RelaunchElevated")
     }
 
     if ($ExternalGapIds.Count -gt 0) {
-        $commands.Add("powershell -NoProfile -ExecutionPolicy Bypass -File scripts\new_partition_manager_external_evidence_manifest.ps1 -OutputPath $externalManifestArg -ChecklistPath $externalChecklistArg -EvidenceRoot $externalEvidenceRootArg -CreateEvidenceDirectories -Force")
-        $commands.Add("powershell -NoProfile -ExecutionPolicy Bypass -File scripts\update_partition_manager_external_manifest_from_reports.ps1 -ManifestPath $externalManifestArg -EvidenceRoot $externalEvidenceRootArg -OutputPath $externalImportedManifestArg -RequireAllReports -Force")
-        $commands.Add("powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_partition_manager_hardware_certification_strict.ps1 -CertificationRoot $strictCertificationRootArg -ExternalEvidenceManifest $externalImportedManifestArg -ExternalEvidenceChecklist $externalChecklistArg -ExternalEvidenceRoot $externalEvidenceRootArg")
+        $commands.Add("powershell -NoProfile -File scripts\new_partition_manager_external_evidence_manifest.ps1 -OutputPath $externalManifestArg -ChecklistPath $externalChecklistArg -EvidenceRoot $externalEvidenceRootArg -CreateEvidenceDirectories -Force")
+        $commands.Add("powershell -NoProfile -File scripts\update_partition_manager_external_manifest_from_reports.ps1 -ManifestPath $externalManifestArg -EvidenceRoot $externalEvidenceRootArg -OutputPath $externalImportedManifestArg -RequireAllReports -Force")
+        $commands.Add("powershell -NoProfile -File scripts\run_partition_manager_hardware_certification_strict.ps1 -CertificationRoot $strictCertificationRootArg -ExternalEvidenceManifest $externalImportedManifestArg -ExternalEvidenceChecklist $externalChecklistArg -ExternalEvidenceRoot $externalEvidenceRootArg")
     }
 
     return $commands.ToArray()

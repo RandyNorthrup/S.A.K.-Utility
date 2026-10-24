@@ -413,8 +413,10 @@ void FileExplorerStatusCenterItem::applyProgressPercentAndSpeed(
         m_speed_text = tr("N/A");
     }
     appendGraphPoint(m_progress_percentage, graph_speed);
-    if (m_enumeration_completed && !m_indeterminate) {
-        // Files appends the live percentage to the rebuilt header.
+    if (m_enumeration_completed && !m_indeterminate &&
+        branchForResult(m_return_result) == kBranchInProgress) {
+        // Only a live header carries the percentage; terminal progress has
+        // already rebuilt its success, error, or cancellation wording.
         m_header += tr(" (%1%)").arg(m_progress_percentage);
     }
 }

@@ -15,6 +15,7 @@
 /// and list a technician clicks), because the defect lived in the wiring between
 /// selection state and button state, not in any single function.
 
+#include "sak/drive_scanner.h"
 #include "sak/image_flasher_panel.h"
 
 #include <QApplication>
@@ -62,6 +63,7 @@ private Q_SLOTS:
     void init();
     void cleanup();
 
+    void smokeModeDoesNotStartHardwareScanner();
     void flashIsDisabledWithNothingSelected();
     void flashStaysDisabledWithADriveButNoImage();
     void flashEnablesOnlyWithBothAnImageAndADrive();
@@ -89,6 +91,9 @@ void ImageFlasherPanelTests::initTestCase() {
     // The panel starts a DriveScanner thread unless this property is set. The
     // tests place their own row in the list, so a live scan would only race it.
     QCoreApplication::instance()->setProperty("sakAccessibilityAudit", true);
+    QCoreApplication::instance()->setProperty("sakStartupSmokeTest", false);
+    QVERIFY2(QFile::exists(QStringLiteral(":/icons/icons/panel_image_flasher.svg")),
+             "Image Flasher panel test must link its production icon resources");
     QVERIFY(m_dir.isValid());
 }
 
@@ -98,6 +103,8 @@ void ImageFlasherPanelTests::init() {
 
 void ImageFlasherPanelTests::cleanup() {
     m_panel.reset();
+    QCoreApplication::instance()->setProperty("sakAccessibilityAudit", true);
+    QCoreApplication::instance()->setProperty("sakStartupSmokeTest", false);
 }
 
 QPushButton* ImageFlasherPanelTests::flashButton() const {
@@ -158,6 +165,20 @@ QString ImageFlasherPanelTests::writeImage(const QString& name, const QByteArray
 // ============================================================================
 // Flash button gating
 // ============================================================================
+
+void ImageFlasherPanelTests::smokeModeDoesNotStartHardwareScanner() {
+    m_panel.reset();
+    QCoreApplication::instance()->setProperty("sakAccessibilityAudit", false);
+    QCoreApplication::instance()->setProperty("sakStartupSmokeTest", true);
+    m_panel = std::make_unique<ImageFlasherPanel>();
+
+    auto* scanner = m_panel->findChild<DriveScanner*>();
+    QVERIFY(scanner);
+    auto* refresh_timer = scanner->findChild<QTimer*>();
+    QVERIFY(refresh_timer);
+    QVERIFY2(!refresh_timer->isActive(),
+             "non-interactive startup smoke must not begin a host drive scan");
+}
 
 void ImageFlasherPanelTests::flashIsDisabledWithNothingSelected() {
     QPushButton* flash = flashButton();

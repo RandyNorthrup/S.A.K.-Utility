@@ -12,11 +12,11 @@
 #include <QClipboard>
 #include <QComboBox>
 #include <QContextMenuEvent>
-#include <QCoreApplication>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
+#include <QFileDialog>
 #include <QFrame>
 #include <QHash>
 #include <QHeaderView>
@@ -66,6 +66,9 @@ private Q_SLOTS:
     void cleanup();
     void modalCallbackGuardRejectsOnEarlyReturn();
     void modalInspectionCancelsWhenActionDoesNotOpen();
+    void createImageAlwaysRequestsFullVerification_data();
+    void createImageAlwaysRequestsFullVerification();
+    void createImageRefusesUnknownOfflineState();
     void scanButtonIsStatefulAndInventorySummaryUsesStatusBar();
     void partitionTableUsesAomeiListChrome();
     void sidebarIsFixedAndHasNoRedundantPreviewBox();
@@ -203,8 +206,7 @@ void failAndCloseUnexpectedInteraction(const char* reason) {
 }
 
 QString readRepoSource(const QString& relative_path) {
-    const QDir repo_root(
-        QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("../..")));
+    const QDir repo_root(QStringLiteral(SAK_REPO_ROOT));
     QFile file(repo_root.filePath(relative_path));
     if (!file.open(QIODevice::ReadOnly)) {
         return {};
@@ -1541,6 +1543,108 @@ void PartitionManagerPanelTests::modalInspectionCancelsWhenActionDoesNotOpen() {
     }
     QApplication::processEvents();
     QVERIFY2(!invoked, "A refused action must not leave a callback capturing expired locals");
+}
+
+void PartitionManagerPanelTests::createImageAlwaysRequestsFullVerification_data() {
+    QTest::addColumn<int>("source_row");
+    QTest::addColumn<bool>("offline_source");
+    QTest::addColumn<bool>("guid_source");
+    QTest::addColumn<QString>("expected_source");
+    QTest::addColumn<QString>("expected_offset");
+    const QString physical = QStringLiteral("\\\\.\\PhysicalDrive0");
+    const auto inventory = modalTargetBindingInventoryFixture();
+    const QString second_offset = QString::number(inventory.disks[0].partitions[1].offset_bytes);
+    QTest::newRow("online-disk") << 0 << false << false << physical << QStringLiteral("0");
+    QTest::newRow("online-partition")
+        << 1 << false << false << QStringLiteral("\\\\.\\T:") << QStringLiteral("0");
+    QTest::newRow("offline-disk") << 0 << true << false << physical << QStringLiteral("0");
+    QTest::newRow("offline-partition") << 2 << true << false << physical << second_offset;
+    QTest::newRow("volume-guid-no-letter")
+        << 1 << false << true
+        << QStringLiteral("\\\\.\\Volume{11111111-2222-3333-4444-555555555555}")
+        << QStringLiteral("0");
+}
+
+void PartitionManagerPanelTests::createImageAlwaysRequestsFullVerification() {
+    QFETCH(int, source_row);
+    QFETCH(bool, offline_source);
+    QFETCH(bool, guid_source);
+    QFETCH(QString, expected_source);
+    QFETCH(QString, expected_offset);
+    QTemporaryDir destination;
+    QVERIFY(destination.isValid());
+    const bool native_dialogs_disabled = QApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs);
+    const auto restore_dialog_policy = qScopeGuard([native_dialogs_disabled]() {
+        QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, native_dialogs_disabled);
+    });
+    sak::PartitionManagerPanel panel;
+    auto inventory = modalTargetBindingInventoryFixture();
+    inventory.disks[0].is_offline = offline_source;
+    if (guid_source) {
+        auto& volume = *inventory.disks[0].partitions[0].volume;
+        volume.drive_letter.clear();
+        volume.volume_guid =
+            QStringLiteral("\\\\?\\Volume{11111111-2222-3333-4444-555555555555}\\");
+    }
+    panel.setTestInventoryForReview(inventory);
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY(table != nullptr);
+    table->selectRow(source_row);
+    const QString image_path = destination.filePath(QStringLiteral("verified.img"));
+    bool inspected = false;
+    const ScopedModalInspection inspection([&]() {
+        auto* dialog = qobject_cast<QFileDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        QVERIFY2(dialog != nullptr, "Create Image must open its destination dialog");
+        dialog->setDirectory(destination.path());
+        dialog->selectFile(QStringLiteral("verified.img"));
+        auto* buttons = dialog->findChild<QDialogButtonBox*>();
+        QVERIFY(buttons != nullptr);
+        auto* save = buttons->button(QDialogButtonBox::Save);
+        QVERIFY(save != nullptr && save->isEnabled());
+        inspected = true;
+        save->click();
+    });
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onCreateImage", Qt::DirectConnection));
+    QVERIFY(inspected);
+    const auto operations = panel.testQueuedOperationsForReview();
+    QCOMPARE(operations.size(), 1);
+    QCOMPARE(operations.first().type, sak::PartitionOperationType::CreateImage);
+    QCOMPARE(operations.first().payload.value(QStringLiteral("verify_mode")).toString(),
+             QStringLiteral("Full"));
+    QCOMPARE(operations.first().payload.value(QStringLiteral("source_capture_mode")).toString(),
+             offline_source ? QStringLiteral("OfflineDisk") : QStringLiteral("LockedVolumes"));
+    QCOMPARE(operations.first().payload.value(QStringLiteral("source_path")).toString(),
+             expected_source);
+    QCOMPARE(operations.first().payload.value(QStringLiteral("source_offset_bytes")).toString(),
+             expected_offset);
+    QCOMPARE(QDir::fromNativeSeparators(
+                 operations.first().payload.value(QStringLiteral("target_path")).toString()),
+             image_path);
+    QVERIFY2(!QFileInfo::exists(image_path), "Queuing must not write the image");
+}
+
+void PartitionManagerPanelTests::createImageRefusesUnknownOfflineState() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(modalTargetBindingInventoryFixture());
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY(table != nullptr);
+    table->selectRow(0);
+    QSignalSpy statuses(&panel, &sak::PartitionManagerPanel::statusMessage);
+    bool dialog_opened = false;
+    const ScopedModalInspection inspection([&]() {
+        auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
+        const auto reject_on_return = rejectDialogOnReturn(dialog);
+        dialog_opened = dialog != nullptr;
+    });
+    QVERIFY(QMetaObject::invokeMethod(&panel, "onCreateImage", Qt::DirectConnection));
+    QVERIFY(!dialog_opened);
+    QVERIFY(panel.testQueuedOperationsForReview().isEmpty());
+    QCOMPARE(statuses.count(), 1);
+    QCOMPARE(statuses[0][0].toString(),
+             QStringLiteral("Source disk online/offline state is unknown. Refresh inventory "
+                            "before creating an image."));
 }
 
 void PartitionManagerPanelTests::scanButtonIsStatefulAndInventorySummaryUsesStatusBar() {

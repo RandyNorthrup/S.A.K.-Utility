@@ -47,10 +47,6 @@
 #include <stop_token>
 #include <thread>
 
-#ifdef _WIN32
-#include <windows.h>
-#endif
-
 namespace {
 constexpr int kQuickActionCancelPollMs = sak::kTimerRetryBaseMs;
 constexpr int kThermalQueryTimeoutMs = sak::kTimeoutThermalQueryMs;
@@ -321,96 +317,6 @@ QString cappedTaskOutput(const QString& value, int max_bytes, bool* truncated = 
            QStringLiteral("\n...[output truncated to %1 bytes]").arg(max_bytes);
 }
 
-#ifdef _WIN32
-struct ElevatedJobGuard {
-    HANDLE m_job{nullptr};
-    ~ElevatedJobGuard() {
-        if (m_job != nullptr) {
-            ::CloseHandle(m_job);  // KILL_ON_JOB_CLOSE reaps survivors
-        }
-    }
-    // Create the KILL_ON_JOB_CLOSE job on first use. Returns false (job left null) if
-    // creation or configuration fails so the caller does not rely on an unconfigured job.
-    bool ensureJob() {
-        if (m_job != nullptr) {
-            return true;
-        }
-        m_job = ::CreateJobObjectW(nullptr, nullptr);
-        if (m_job == nullptr) {
-            sak::logError("ElevatedHelper: CreateJobObject failed: {}", ::GetLastError());
-            return false;
-        }
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
-        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        if (::SetInformationJobObject(
-                m_job, JobObjectExtendedLimitInformation, &limits, sizeof(limits)) == 0) {
-            sak::logError("ElevatedHelper: SetInformationJobObject failed: {}", ::GetLastError());
-            ::CloseHandle(m_job);
-            m_job = nullptr;
-            return false;
-        }
-        return true;
-    }
-    // Last resort for a started child that could not be placed in the job: without the job it
-    // escapes KILL_ON_JOB_CLOSE and can outlive the helper, so kill it now.
-    static void terminateUncontained(qint64 pid) {
-        const HANDLE handle = ::OpenProcess(PROCESS_TERMINATE, FALSE, static_cast<DWORD>(pid));
-        if (handle == nullptr) {
-            sak::logError(
-                "ElevatedHelper: OpenProcess to terminate uncontained child {} "
-                "failed: {}",
-                pid,
-                ::GetLastError());
-            return;
-        }
-        if (::TerminateProcess(handle, 1) == 0) {
-            sak::logError("ElevatedHelper: TerminateProcess for uncontained child {} failed: {}",
-                          pid,
-                          ::GetLastError());
-        }
-        ::CloseHandle(handle);
-    }
-    void assign(qint64 pid) {
-        if (pid <= 0) {
-            return;
-        }
-        // Fail closed: an unassigned elevated child escapes KILL_ON_JOB_CLOSE and could
-        // survive helper exit, so terminate it now rather than leak an orphaned descendant.
-        // That applies just as much when the job itself could not be created as when the
-        // assignment failed.
-        if (!ensureJob()) {
-            sak::logError("ElevatedHelper: no job object; terminating uncontained child {}", pid);
-            terminateUncontained(pid);
-            return;
-        }
-        const HANDLE handle =
-            ::OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE, FALSE, static_cast<DWORD>(pid));
-        if (handle == nullptr) {
-            sak::logError("ElevatedHelper: OpenProcess for job assign failed: {}",
-                          ::GetLastError());
-            terminateUncontained(pid);
-            return;
-        }
-        if (::AssignProcessToJobObject(m_job, handle) == 0) {
-            sak::logError("ElevatedHelper: AssignProcessToJobObject failed: {}; terminating child",
-                          ::GetLastError());
-            if (::TerminateProcess(handle, 1) == 0) {
-                sak::logError(
-                    "ElevatedHelper: TerminateProcess after failed job assign "
-                    "failed: {}",
-                    ::GetLastError());
-            }
-        }
-        ::CloseHandle(handle);
-    }
-    void terminate() const {
-        if ((m_job != nullptr) && (::TerminateJobObject(m_job, 1) == 0)) {
-            sak::logError("ElevatedHelper: TerminateJobObject failed: {}", ::GetLastError());
-        }
-    }
-};
-#endif
-
 constexpr int kDefaultPowerShellTimeoutSeconds = 120;
 constexpr int kMinPowerShellTimeoutSeconds = 5;
 constexpr int kMaxPowerShellTimeoutSeconds = 3600;
@@ -623,8 +529,9 @@ QString resolveSystemPowerShellPath() {
 // before the request is sent, and this process enforces only the parent-pid/image binding on the
 // pipe. There is deliberately no command allowlist -- a technician utility must be able to run
 // arbitrary administrative PowerShell -- so the containment that does apply is the
-// KILL_ON_JOB_CLOSE job, the clamped timeout, the capped output, and success gated on
-// completedSuccessfully(). -ExecutionPolicy Bypass is the standard programmatic mode.
+// ProcessRunner's atomic kill-on-close Windows Job, the clamped timeout, the capped output,
+// and success gated on completedSuccessfully(). -ExecutionPolicy Bypass is the standard
+// programmatic mode.
 QStringList elevatedPowerShellArgs(const QString& command) {
     return {QStringLiteral("-NoProfile"),
             QStringLiteral("-ExecutionPolicy"),
@@ -648,41 +555,10 @@ void configureElevatedPowerShellProgress(sak::ProcessStreamingRequest* request,
 
 void configureElevatedPowerShellStart(sak::ProcessStreamingRequest* request,
                                       bool* started,
-                                      sak::ProgressCallback* progress
-#ifdef _WIN32
-                                      ,
-                                      ElevatedJobGuard* job
-#endif
-) {
-    request->on_started = [started,
-                           progress
-#ifdef _WIN32
-                           ,
-                           job
-#endif
-    ](qint64 process_id) {
+                                      sak::ProgressCallback* progress) {
+    request->on_started = [started, progress](qint64) {
         *started = true;
-#ifdef _WIN32
-        job->assign(process_id);
-#endif
         (*progress)(kPowerShellRunningProgress, QStringLiteral("Elevated PowerShell running"));
-    };
-}
-
-void configureElevatedPowerShellTerminate(sak::ProcessStreamingRequest* request
-#ifdef _WIN32
-                                          ,
-                                          ElevatedJobGuard* job
-#endif
-) {
-    request->on_terminate = [
-#ifdef _WIN32
-                                job
-#endif
-    ]() {
-#ifdef _WIN32
-        job->terminate();
-#endif
     };
 }
 
@@ -715,10 +591,6 @@ sak::TaskHandlerResult runElevatedPowerShellTask(const QJsonObject& payload,
 
     progress(kPowerShellStartProgress, QStringLiteral("Starting elevated PowerShell"));
 
-#ifdef _WIN32
-    ElevatedJobGuard job;
-#endif
-
     bool started = false;
     sak::ProcessStreamingRequest request;
     request.program = powershell_path;
@@ -727,20 +599,7 @@ sak::TaskHandlerResult runElevatedPowerShellTask(const QJsonObject& payload,
     configureElevatedPowerShellProgress(&request,
                                         &progress,
                                         std::min(config->m_half_cap, kMaxProgressChunkBytes));
-    configureElevatedPowerShellStart(&request,
-                                     &started,
-                                     &progress
-#ifdef _WIN32
-                                     ,
-                                     &job
-#endif
-    );
-    configureElevatedPowerShellTerminate(&request
-#ifdef _WIN32
-                                         ,
-                                         &job
-#endif
-    );
+    configureElevatedPowerShellStart(&request, &started, &progress);
     request.should_cancel = std::move(is_cancelled);
     const auto result = sak::runProcessStreaming(request);
 

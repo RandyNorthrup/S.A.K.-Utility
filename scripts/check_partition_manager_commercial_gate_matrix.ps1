@@ -235,11 +235,13 @@ $gates = @(
     @{
         name = "Physical hardware wipe"
         ids = @("external.hardware-wipe")
+        # This gate maps capability scope to its evidence ID. Current certification
+        # levels belong to the status/claim verifier, never a hard-coded promotion sentence.
         evidence = @(
             @{ path = $scriptBuilderPath; patterns = @("Clear-Disk -Number %1 -RemoveData -RemoveOEM") },
             @{ path = $certificationPath; patterns = @(
                 "Non-system hardware wipe on disposable physical disk",
-                "full 18/18 external evidence set now upgrades the strict handoff"
+                "external.hardware-wipe"
             ) }
         )
     },

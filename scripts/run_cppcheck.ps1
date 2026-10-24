@@ -158,6 +158,8 @@ $CppcheckArgs = @(
     "-j", "$Jobs"                   # Parallel normally; unusedFunction gate deliberately uses 1
     "-I", (Join-Path $ProjectRoot "include")
     "-I", (Join-Path $ProjectRoot "src")
+    # Resolve the tracked QR header used by first-party code.
+    "-I", (Join-Path $ProjectRoot "src/third_party/qrcodegen")
 )
 
 # Add suppressions file if it exists

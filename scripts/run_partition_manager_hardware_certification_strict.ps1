@@ -16,10 +16,14 @@ param(
     [string]$ExternalEvidenceManifest = "",
     [string]$ExternalEvidenceChecklist = "",
     [string]$ExternalEvidenceRoot = "",
-    [string]$OutputRoot = ""
+    [string]$OutputRoot = "",
+    [string]$ControllerCertifierPath = "build\Release\partition_manager_live_certifier.exe",
+    [string]$ControllerSourceManifestPath = "build\Release\partition_manager_live_certifier.sources.txt"
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot "partition_manager_certification_report.ps1")
+. (Join-Path $PSScriptRoot "partition_manager_certification_steps.ps1")
 
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 
@@ -34,71 +38,6 @@ function Resolve-ProjectPath {
     }
 
     return Join-Path $ProjectRoot $Path
-}
-
-function Invoke-CheckedStep {
-    param(
-        [Parameter(Mandatory = $true)]
-        [scriptblock]$Body,
-        [Parameter(Mandatory = $true)]
-        [string]$Name
-    )
-
-    $global:LASTEXITCODE = 0
-    & $Body
-    # $LASTEXITCODE alone is not a complete status contract for an in-process .ps1 call: a
-    # checker that fails without an explicit `exit` leaves the pre-seeded 0 in place. Take
-    # the last statement's success ($?) as well, so a failing step cannot pass silently.
-    $stepSucceeded = $?
-    $exitCode = $LASTEXITCODE
-    if (-not $stepSucceeded -or $exitCode -ne 0) {
-        throw "Partition Manager strict hardware certification step failed: $Name (exit code $exitCode, succeeded=$stepSucceeded)"
-    }
-}
-
-# A generated artifact must be proven to come from THIS run: clear it first, then require
-# the producing step to have recreated it. Otherwise a step that quietly produced nothing
-# leaves a stale HardwareCertified status/bundle for the later checks to consume.
-function Clear-GeneratedArtifact {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Path
-    )
-
-    if (Test-Path -LiteralPath $Path) {
-        Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
-    }
-    if (Test-Path -LiteralPath $Path) {
-        throw "Could not clear stale certification artifact before regenerating it: $Path"
-    }
-}
-
-function Assert-GeneratedArtifact {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Path,
-        [Parameter(Mandatory = $true)]
-        [string]$Name
-    )
-
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-        throw "Partition Manager strict hardware certification step '$Name' did not produce $Path"
-    }
-}
-
-function Resolve-LatestCertificationReport {
-    param(
-        [Parameter(Mandatory = $true)]
-        [string]$Root
-    )
-
-    $resolvedRoot = Resolve-Path -LiteralPath $Root -ErrorAction Stop
-    $reports = @(Get-ChildItem -LiteralPath $resolvedRoot.Path -Recurse -Filter "partition-manager-certification-report.json" |
-        Sort-Object LastWriteTimeUtc -Descending)
-    if ($reports.Count -eq 0) {
-        throw "No Partition Manager certification reports found under $($resolvedRoot.Path)"
-    }
-    return $reports[0].FullName
 }
 
 Push-Location $ProjectRoot
@@ -148,20 +87,22 @@ try {
         $ExternalEvidenceRoot = Join-Path (Split-Path -Parent $resolvedExternalManifest) "external-evidence"
     }
 
-    Invoke-CheckedStep -Name "external checklist" -Body {
+    Invoke-CheckedStep -Workflow "strict hardware" -Name "external checklist" -Body {
         & scripts\check_partition_manager_external_checklist.ps1 `
             -ChecklistPath $externalChecklistCheckPath `
             -ManifestPath $externalManifestCheckPath
     }
 
-    Invoke-CheckedStep -Name "external lab package" -Body {
+    Invoke-CheckedStep -Workflow "strict hardware" -Name "external lab package" -Body {
         & scripts\check_partition_manager_external_lab_package.ps1 `
             -EvidenceRoot $ExternalEvidenceRoot `
             -ManifestPath $externalManifestCheckPath
     }
 
-    Invoke-CheckedStep -Name "strict hardware evidence verification" -Body {
+    Invoke-CheckedStep -Workflow "strict hardware" -Name "strict hardware evidence verification" -Body {
         & scripts\verify_partition_manager_certification.ps1 `
+            -ControllerCertifierPath $ControllerCertifierPath `
+            -ControllerSourceManifestPath $ControllerSourceManifestPath `
             -ReportPath $resolvedReportPath `
             -ExternalEvidenceManifest $resolvedExternalManifest `
             -RequireVhdDataDiskEvidence `
@@ -169,22 +110,20 @@ try {
     }
 
     $statusPath = Join-Path $resolvedOutputRoot "hardware-certification-status.json"
-    Clear-GeneratedArtifact -Path $statusPath
-    Invoke-CheckedStep -Name "hardware certification status" -Body {
+    Invoke-GeneratedArtifactStep -Workflow "strict hardware" -Name "hardware certification status" -Paths @($statusPath) -Body {
         & scripts\get_partition_manager_certification_status.ps1 `
+            -ControllerCertifierPath $ControllerCertifierPath `
+            -ControllerSourceManifestPath $ControllerSourceManifestPath `
             -ReportPath $resolvedReportPath `
             -ExternalEvidenceManifest $resolvedExternalManifest `
             -OutputPath $statusPath `
             -Quiet
     }
 
-    Assert-GeneratedArtifact -Path $statusPath -Name "hardware certification status"
 
     $gapReportPath = Join-Path $resolvedOutputRoot "hardware-certification-gap-report.json"
     $gapMarkdownPath = Join-Path $resolvedOutputRoot "hardware-certification-gap-report.md"
-    Clear-GeneratedArtifact -Path $gapReportPath
-    Clear-GeneratedArtifact -Path $gapMarkdownPath
-    Invoke-CheckedStep -Name "hardware certification gap report" -Body {
+    Invoke-GeneratedArtifactStep -Workflow "strict hardware" -Name "hardware certification gap report" -Paths @($gapReportPath, $gapMarkdownPath) -Body {
         & scripts\new_partition_manager_certification_gap_report.ps1 `
             -StatusPath $statusPath `
             -OutputPath $gapReportPath `
@@ -192,9 +131,7 @@ try {
             -Force `
             -Quiet
     }
-    Assert-GeneratedArtifact -Path $gapReportPath -Name "hardware certification gap report"
-    Assert-GeneratedArtifact -Path $gapMarkdownPath -Name "hardware certification gap report"
-    Invoke-CheckedStep -Name "hardware certification gap verification" -Body {
+    Invoke-CheckedStep -Workflow "strict hardware" -Name "hardware certification gap verification" -Body {
         & scripts\check_partition_manager_certification_gap_report.ps1 `
             -StatusPath $statusPath `
             -GapReportPath $gapReportPath `
@@ -203,8 +140,7 @@ try {
 
     $bundlePath = Join-Path $resolvedOutputRoot "hardware-certification-artifact-bundle.json"
     $preflightPath = Join-Path $resolvedCertificationRoot "vhd-preflight.json"
-    Clear-GeneratedArtifact -Path $bundlePath
-    Invoke-CheckedStep -Name "hardware certification artifact bundle" -Body {
+    Invoke-GeneratedArtifactStep -Workflow "strict hardware" -Name "hardware certification artifact bundle" -Paths @($bundlePath) -Body {
         & scripts\new_partition_manager_certification_bundle.ps1 `
             -CertificationRoot $resolvedCertificationRoot `
             -StatusPath $statusPath `
@@ -217,8 +153,7 @@ try {
             -Force `
             -Quiet
     }
-    Assert-GeneratedArtifact -Path $bundlePath -Name "hardware certification artifact bundle"
-    Invoke-CheckedStep -Name "hardware certification artifact bundle verification" -Body {
+    Invoke-CheckedStep -Workflow "strict hardware" -Name "hardware certification artifact bundle verification" -Body {
         & scripts\check_partition_manager_certification_bundle.ps1 -BundlePath $bundlePath
     }
 

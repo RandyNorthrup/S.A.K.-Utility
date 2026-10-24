@@ -6,6 +6,7 @@
 #include <QRegularExpression>
 #include <QStringList>
 
+#include <algorithm>
 #include <utility>
 
 namespace sak::ai {
@@ -164,36 +165,27 @@ QStringList commandSecurityClauses(const AiCommandRequest& request) {
 }
 
 bool commandContainsBinaryContentRead(const QStringList& clauses) {
-    for (const QString& clause : clauses) {
+    return std::any_of(clauses.cbegin(), clauses.cend(), [](const QString& clause) {
         QString command_syntax = clause;
         command_syntax.replace(kQuotedTextRegex, QStringLiteral(" "));
         const bool reads_content = kReadCommandRegex.match(command_syntax).hasMatch() ||
                                    kQuotedCallReadRegex.match(clause).hasMatch() ||
                                    kInterpolatedReadRegex.match(clause).hasMatch();
-        if (reads_content && kBinaryExtensionRegex.match(clause).hasMatch()) {
-            return true;
-        }
-    }
-    return false;
+        return reads_content && kBinaryExtensionRegex.match(clause).hasMatch();
+    });
 }
 
 bool commandContainsBroadRegistryRecursion(const QStringList& clauses) {
-    for (const QString& clause : clauses) {
-        if (kRegistryRootRegex.match(clause).hasMatch() &&
-            kActiveRecurseRegex.match(clause).hasMatch()) {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(clauses.cbegin(), clauses.cend(), [](const QString& clause) {
+        return kRegistryRootRegex.match(clause).hasMatch() &&
+               kActiveRecurseRegex.match(clause).hasMatch();
+    });
 }
 
 bool commandContainsPowerShellPidMutation(const QStringList& clauses) {
-    for (const QString& clause : clauses) {
-        if (kPidAssignmentRegex.match(clause).hasMatch()) {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(clauses.cbegin(), clauses.cend(), [](const QString& clause) {
+        return kPidAssignmentRegex.match(clause).hasMatch();
+    });
 }
 
 bool commandContainsChecksumBypass(const QStringList& clauses) {
@@ -210,17 +202,14 @@ bool commandContainsChecksumBypass(const QStringList& clauses) {
     //
     // A switch prefix is required (- / -- / /), so ordinary prose that merely contains the word
     // "checksum" in a preview or a comment does not trip the guard.
-    for (const QString& clause : clauses) {
-        if (kBypassSwitchRegex.match(clause).hasMatch() ||
-            clause.contains(QStringLiteral("chocolateyignorechecksums")) ||
-            clause.contains(QStringLiteral("chocolateyallowemptychecksums")) ||
-            clause.contains(QStringLiteral("ignorechecksum")) ||
-            clause.contains(QStringLiteral("allowemptychecksum")) ||
-            clause.contains(QStringLiteral("skipchecksum"))) {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(clauses.cbegin(), clauses.cend(), [](const QString& clause) {
+        return kBypassSwitchRegex.match(clause).hasMatch() ||
+               clause.contains(QStringLiteral("chocolateyignorechecksums")) ||
+               clause.contains(QStringLiteral("chocolateyallowemptychecksums")) ||
+               clause.contains(QStringLiteral("ignorechecksum")) ||
+               clause.contains(QStringLiteral("allowemptychecksum")) ||
+               clause.contains(QStringLiteral("skipchecksum"));
+    });
 }
 
 bool clauseContainsChocolateyCachePath(const QString& clause) {
@@ -235,13 +224,10 @@ bool commandContainsCachedPackageInstallerRun(const QStringList& clauses) {
     // set of launch verbs failed open: request.program can name the installer directly,
     // and "msiexec /i", &"path" without a space, a tab-separated call operator or an
     // environment-variable path all launch it without matching any of those verbs.
-    for (const QString& clause : clauses) {
-        if (clauseContainsChocolateyCachePath(clause) &&
-            kInstallerExtensionRegex.match(clause).hasMatch()) {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(clauses.cbegin(), clauses.cend(), [](const QString& clause) {
+        return clauseContainsChocolateyCachePath(clause) &&
+               kInstallerExtensionRegex.match(clause).hasMatch();
+    });
 }
 
 QString commandGuardBlockError(const QStringList& clauses) {

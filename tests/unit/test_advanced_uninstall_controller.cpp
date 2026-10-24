@@ -11,7 +11,6 @@
 #include "sak/restore_point_manager.h"
 #include "sak/uninstall_worker.h"
 
-#include <QCoreApplication>
 #include <QDir>
 #include <QFile>
 #include <QSignalSpy>
@@ -112,8 +111,7 @@ private Q_SLOTS:
 namespace {
 
 QString readRepoSource(const QString& relative_path) {
-    const QDir repo_root(
-        QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("../..")));
+    const QDir repo_root(QStringLiteral(SAK_REPO_ROOT));
     QFile file(repo_root.filePath(relative_path));
     if (!file.open(QIODevice::ReadOnly)) {
         return {};

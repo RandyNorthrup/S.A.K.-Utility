@@ -4,9 +4,12 @@
 #include "sak/ai/ai_mcp_session_pool.h"
 
 #include <QCryptographicHash>
+#include <QDeadlineTimer>
 #include <QStringList>
 
 #include <algorithm>
+#include <limits>
+#include <mutex>
 
 namespace sak::ai {
 
@@ -17,6 +20,16 @@ namespace {
 // caller exhaust processes/threads/handles. When the pool is full and a new key arrives we first
 // reclaim any already-dead slot, then fail the call closed rather than spawning without limit.
 constexpr std::size_t kMaxPooledSessions = 32;
+constexpr int kPoolCleanupTimeoutMs = 5000;
+
+std::unique_lock<QMutex> lockBeforeDeadline(QMutex& mutex, const QDeadlineTimer& deadline) {
+    const qint64 remaining =
+        std::clamp<qint64>(deadline.remainingTime(), 0, std::numeric_limits<int>::max());
+    if (!mutex.tryLock(static_cast<int>(remaining))) {
+        return {};
+    }
+    return std::unique_lock<QMutex>(mutex, std::adopt_lock);
+}
 
 // The cache key must isolate launch environments: a server started read-only must
 // never be reused for a full-access call. Key on the command plus a hash of the
@@ -55,24 +68,33 @@ AiMcpSessionConfig configFor(const AiMcpStdioCallRequest& request) {
             .request_timeout_ms = AiMcpStdioSession::effectiveRequestTimeoutMs(request.timeout_ms)};
 }
 
-bool environmentCanBePooled(const AiMcpStdioCallRequest& request, QString& error_message) {
+std::expected<void, QString> environmentCanBePooled(const AiMcpStdioCallRequest& request) {
     if (!request.environment.inheritsFromParent()) {
-        return true;
+        return {};
     }
-    error_message = QStringLiteral("MCP session pool requires an explicit process environment");
-    return false;
+    return std::unexpected(
+        QStringLiteral("MCP session pool requires an explicit process environment"));
 }
 
 }  // namespace
 
+AiMcpSessionPool::AiMcpSessionPool()
+    : m_session_factory([]() { return std::make_unique<AiMcpStdioSession>(); }) {}
+
 AiMcpSessionPool::~AiMcpSessionPool() {
-    closeAll();
+    const auto closed = closeAll();
+    if (!closed) {
+        qFatal("MCP pool destruction refused: %s", qPrintable(closed.error()));
+    }
 }
 
-std::shared_ptr<AiMcpSessionPool::Entry> AiMcpSessionPool::entryFor(
+std::expected<std::shared_ptr<AiMcpSessionPool::Entry>, QString> AiMcpSessionPool::entryFor(
     const AiMcpStdioCallRequest& request) {
     const QString key = sessionKey(request);
     const QMutexLocker lock(&m_mutex);
+    if (m_cleanup_blocked.load(std::memory_order_acquire)) {
+        return std::unexpected(QStringLiteral("MCP pool cleanup is unresolved; refusing reuse"));
+    }
     auto it = m_sessions.find(key);
     if (it == m_sessions.end()) {
         if (m_sessions.size() >= kMaxPooledSessions) {
@@ -94,7 +116,7 @@ std::shared_ptr<AiMcpSessionPool::Entry> AiMcpSessionPool::entryFor(
             }
         }
         if (m_sessions.size() >= kMaxPooledSessions) {
-            return nullptr;  // fail closed: too many distinct live sessions to add another
+            return std::unexpected(QStringLiteral("MCP session pool is at capacity"));
         }
         it = m_sessions.emplace(key, std::make_shared<Entry>()).first;
     }
@@ -104,116 +126,161 @@ std::shared_ptr<AiMcpSessionPool::Entry> AiMcpSessionPool::entryFor(
     return it->second;
 }
 
-bool AiMcpSessionPool::ensureSessionOpen(Entry& entry,
-                                         const AiMcpStdioCallRequest& request,
-                                         QString& error) {
+std::expected<void, QString> AiMcpSessionPool::ensureSessionOpen(
+    Entry& entry, const AiMcpStdioCallRequest& request) {
     if (entry.detached) {
         // closeAll() tore this Entry down and dropped it from the map. Refuse to reopen so a call
         // that grabbed the handle mid-teardown cannot spawn a process after shutdown.
-        error = QStringLiteral("MCP session pool is closing");
-        return false;
+        return std::unexpected(QStringLiteral("MCP session pool is closing"));
+    }
+    if (m_cleanup_blocked.load(std::memory_order_acquire)) {
+        return std::unexpected(QStringLiteral("MCP pool cleanup is unresolved; refusing reuse"));
     }
     if (entry.session && entry.session->isOpen()) {
-        return true;
+        return {};
     }
-    entry.session = std::make_unique<AiMcpStdioSession>();
-    if (!entry.session->open(configFor(request), error)) {
+    if (entry.session) {
+        const auto closed = entry.session->close();
+        if (!closed) {
+            m_cleanup_blocked.store(true, std::memory_order_release);
+            return std::unexpected(closed.error());
+        }
         entry.session.reset();
-        return false;
     }
-    return true;
+    entry.session = m_session_factory();
+    if (!entry.session) {
+        return std::unexpected(QStringLiteral("MCP session factory returned no session"));
+    }
+    const auto open_result = entry.session->open(configFor(request));
+    if (!open_result) {
+        // open() already attempted its one cleanup boundary. Never retry it implicitly or
+        // destroy retained ownership when that attempt could not prove cleanup.
+        releaseIfClosed(entry);
+        return std::unexpected(open_result.error());
+    }
+    return {};
 }
 
-QJsonObject AiMcpSessionPool::callTool(const AiMcpStdioCallRequest& request,
-                                       QString& error_message) {
-    error_message.clear();
+void AiMcpSessionPool::releaseIfClosed(Entry& entry) {
+    if (entry.session->isClosed()) {
+        entry.session.reset();
+    } else {
+        m_cleanup_blocked.store(true, std::memory_order_release);
+    }
+}
+
+QString AiMcpSessionPool::closeAfterFailure(Entry& entry, const QString& primary_error) {
+    const QString diagnostic = entry.session->closeAfterFailure(primary_error);
+    releaseIfClosed(entry);
+    return diagnostic;
+}
+
+std::expected<QJsonObject, QString> AiMcpSessionPool::callTool(
+    const AiMcpStdioCallRequest& request) {
     if (request.command.trimmed().isEmpty()) {
-        error_message = QStringLiteral("MCP stdio command is empty");
-        return {};
+        return std::unexpected(QStringLiteral("MCP stdio command is empty"));
     }
     if (request.tool_name.trimmed().isEmpty()) {
-        error_message = QStringLiteral("MCP tool name is empty");
-        return {};
+        return std::unexpected(QStringLiteral("MCP tool name is empty"));
     }
-    if (!environmentCanBePooled(request, error_message)) {
-        return {};
+    const auto environment_result = environmentCanBePooled(request);
+    if (!environment_result) {
+        return std::unexpected(environment_result.error());
     }
-    const std::shared_ptr<Entry> entry = entryFor(request);
-    if (!entry) {
-        error_message = QStringLiteral("MCP session pool is at capacity");
-        return {};
+    const auto entry_result = entryFor(request);
+    if (!entry_result) {
+        return std::unexpected(entry_result.error());
     }
+    const std::shared_ptr<Entry>& entry = *entry_result;
     const QMutexLocker call_lock(&entry->mutex);
 
-    QString error;
-    if (!ensureSessionOpen(*entry, request, error)) {
-        error_message = error;
-        return {};
+    const auto open_result = ensureSessionOpen(*entry, request);
+    if (!open_result) {
+        return std::unexpected(open_result.error());
     }
 
-    const QJsonObject result =
-        entry->session->callTool(request.tool_name, request.arguments, error);
-    if (!error.isEmpty()) {
-        // The call failed -- the process may have died. Drop the session so the next
-        // call reopens a fresh one rather than writing into a corpse.
-        entry->session.reset();
-        error_message = error;
-        return {};
+    const auto call_result = entry->session->callTool(request.tool_name, request.arguments);
+    if (!call_result) {
+        return std::unexpected(closeAfterFailure(*entry, call_result.error()));
     }
-    error_message.clear();
-    // Wrap the tool result so callers that read message["result"] -- the shape the one-shot
-    // client returns -- work unchanged against this transport. This is NOT a complete JSON-RPC
+    // Preserve the gateway transport wrapper {"result": ...}. This is NOT a complete JSON-RPC
     // message: the "jsonrpc" and "id" members belong to the session's own request/response
     // correlation and are consumed there, so re-synthesising them here would invent values
-    // rather than report them. The comment used to claim the full shape; it does not.
-    return QJsonObject{{QStringLiteral("result"), result}};
+    // rather than report them.
+    return QJsonObject{{QStringLiteral("result"), *call_result}};
 }
 
-QVector<AiMcpToolDescriptor> AiMcpSessionPool::listTools(const AiMcpStdioCallRequest& request,
-                                                         QString& error_message) {
-    error_message.clear();
+std::expected<QVector<AiMcpToolDescriptor>, QString> AiMcpSessionPool::listTools(
+    const AiMcpStdioCallRequest& request) {
     if (request.command.trimmed().isEmpty()) {
-        error_message = QStringLiteral("MCP stdio command is empty");
-        return {};
+        return std::unexpected(QStringLiteral("MCP stdio command is empty"));
     }
-    if (!environmentCanBePooled(request, error_message)) {
-        return {};
+    const auto environment_result = environmentCanBePooled(request);
+    if (!environment_result) {
+        return std::unexpected(environment_result.error());
     }
-    const std::shared_ptr<Entry> entry = entryFor(request);
-    if (!entry) {
-        error_message = QStringLiteral("MCP session pool is at capacity");
-        return {};
+    const auto entry_result = entryFor(request);
+    if (!entry_result) {
+        return std::unexpected(entry_result.error());
     }
+    const std::shared_ptr<Entry>& entry = *entry_result;
     const QMutexLocker call_lock(&entry->mutex);
 
-    QString error;
-    if (!ensureSessionOpen(*entry, request, error)) {
-        error_message = error;
-        return {};
+    const auto open_result = ensureSessionOpen(*entry, request);
+    if (!open_result) {
+        return std::unexpected(open_result.error());
     }
 
-    const QVector<AiMcpToolDescriptor> tools = entry->session->listTools(error);
-    if (!error.isEmpty()) {
-        entry->session.reset();
-        error_message = error;
-        return {};
+    auto tools = entry->session->listTools();
+    if (!tools) {
+        return std::unexpected(closeAfterFailure(*entry, tools.error()));
     }
-    error_message.clear();
     return tools;
 }
 
-void AiMcpSessionPool::closeAll() {
-    const QMutexLocker lock(&m_mutex);
-    for (auto& [key, entry] : m_sessions) {
+std::expected<void, QString> AiMcpSessionPool::closeAll() {
+    return closeAllWithDeadline(QDeadlineTimer(kPoolCleanupTimeoutMs));
+}
+
+std::expected<void, QString> AiMcpSessionPool::closeAllWithDeadline(
+    const QDeadlineTimer& deadline) {
+    const auto lock = lockBeforeDeadline(m_mutex, deadline);
+    if (!lock) {
+        m_cleanup_blocked.store(true, std::memory_order_release);
+        return std::unexpected(QStringLiteral("MCP pool remained busy through cleanup deadline"));
+    }
+    QStringList errors;
+    for (auto iterator = m_sessions.begin(); iterator != m_sessions.end();) {
+        // Keep the Entry alive through mutex unlock even when the map's reference is erased.
+        const auto entry = iterator->second;
         // Serialize against any in-flight call on this entry before tearing its
         // session down, so we never destroy a session mid-call.
-        const QMutexLocker entry_lock(&entry->mutex);
-        entry->session.reset();
+        const auto entry_lock = lockBeforeDeadline(entry->mutex, deadline);
+        if (!entry_lock) {
+            errors.append(QStringLiteral("MCP pool entry remained busy through cleanup deadline"));
+            ++iterator;
+            continue;
+        }
         // Mark detached under the entry mutex so an in-flight caller that grabbed this handle
         // before we cleared the map cannot reopen a session on it after closeAll() returns.
         entry->detached = true;
+        if (entry->session) {
+            const auto closed = entry->session->closeWithDeadline(deadline);
+            if (!closed) {
+                errors.append(closed.error());
+                ++iterator;
+                continue;
+            }
+            entry->session.reset();
+        }
+        iterator = m_sessions.erase(iterator);
     }
-    m_sessions.clear();
+    const bool unresolved = !errors.isEmpty();
+    m_cleanup_blocked.store(unresolved, std::memory_order_release);
+    if (unresolved) {
+        return std::unexpected(errors.join(QStringLiteral("; ")));
+    }
+    return {};
 }
 
 int AiMcpSessionPool::pooledSlotCount() const {

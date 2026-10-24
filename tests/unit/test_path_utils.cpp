@@ -383,11 +383,11 @@ void PathUtilsTests::availableSpace_validPath() {
 }
 
 void PathUtilsTests::availableSpace_invalidPath() {
-    auto result =
-        sak::path_utils::getAvailableSpace(std::filesystem::path("Z:\\NonExistent\\Path"));
-    // GetDiskFreeSpaceEx cannot answer for a path that does not exist, and every
-    // filesystem_error out of space() maps to read_error. Fail closed: no
-    // fabricated byte count, and no quietly-successful query either.
+    // file1.txt is owned by this test and is a regular file. A child under that
+    // file can never be a directory, regardless of which host drives are mounted.
+    const auto invalid_path = m_basePath / "file1.txt" / "no-child";
+    QVERIFY(std::filesystem::is_regular_file(m_basePath / "file1.txt"));
+    const auto result = sak::path_utils::getAvailableSpace(invalid_path);
     QVERIFY(!result.has_value());
     QCOMPARE(result.error(), sak::error_code::read_error);
 }
