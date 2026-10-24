@@ -1,11 +1,12 @@
 <#
 .SYNOPSIS
-    Verifies Partition Manager certification matrix integrity and doc/tool coverage.
+    Verifies Partition Manager certification matrix integrity and tool coverage.
 
 .DESCRIPTION
     Static release gate. It does not mutate disks. It prevents certification IDs,
-    evidence keys, value requirements, safety contracts, docs, and harness coverage
-    from drifting apart before release readiness creates any reports.
+    evidence keys, value requirements, safety contracts, and harness coverage
+    from drifting apart before release readiness creates any reports. It reads the
+    matrix JSON and the scripts that consume it, never documentation prose.
 #>
 
 [CmdletBinding()]
@@ -180,12 +181,9 @@ try {
     $allIds = @($vhdScenarios + $externalGates | ForEach-Object { $_.id })
     Assert-UniqueStrings -Values $allIds -FieldName "certification scenario id" -Id "certification\PARTITION_MANAGER_CERTIFICATION_MATRIX.json"
 
-    $certificationDoc = Get-RepoText -RelativePath "docs\PARTITION_MANAGER_CERTIFICATION.md"
-    foreach ($scenario in @($vhdScenarios + $externalGates)) {
-        Assert-TextContains -Text $certificationDoc -Pattern $scenario.id -SourceName "docs\PARTITION_MANAGER_CERTIFICATION.md"
-        Assert-TextContains -Text $certificationDoc -Pattern $scenario.name -SourceName "docs\PARTITION_MANAGER_CERTIFICATION.md"
-    }
-
+    # No doc check: the certification document lists every ID and name in a block generated
+    # from this JSON (check_partition_manager_release_claims.ps1 -Update), so a "doc cites the
+    # matrix" assertion would only test the generator (retired 2026-10-24, owner ruling).
     $harness = Get-RepoText -RelativePath "scripts\run_partition_manager_destructive_certification.ps1"
     foreach ($scenario in $vhdScenarios) {
         Assert-TextContains -Text $harness -Pattern $scenario.id -SourceName "scripts\run_partition_manager_destructive_certification.ps1"

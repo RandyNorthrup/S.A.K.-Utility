@@ -25,10 +25,10 @@ keys, required values, and non-empty verification summary.
 `scripts/check_partition_manager_certification_bundle.ps1` bind the current
 status, harness report, VHD preflight, gap report, external manifest, and lab
 checklist together with SHA-256 hashes for release handoff.
-`scripts/check_partition_manager_release_claims.ps1` then checks README,
-changelog, audit, plan, certification, and readiness wording against the
-generated claim level so release notes cannot accidentally claim more
-certification than the evidence supports.
+`scripts/check_partition_manager_release_claims.ps1 -Update` then writes the generated
+"Current Certification State" block below from that computed status, and the same script
+without `-Update` (the T3 `partition-release-claims` check) fails when the block is stale, so
+this document cannot show more certification than the evidence supports.
 `scripts/run_partition_manager_hardware_certification_strict.ps1` is the final
 non-mutating hardware-certification handoff. It verifies an existing strict VHD
 evidence root, the external JSON manifest, the paired checklist, and the
@@ -37,17 +37,90 @@ unless the generated claim level is `HardwareCertified`.
 
 ## Current Certification State
 
+<!-- BEGIN GENERATED certification-state: do not edit by hand. Regenerate with scripts/check_partition_manager_release_claims.ps1 -Update -->
+
 Current claim level: `CodeCompleteOnly`.
-On this evidence, destructive certification remains partial because VHD evidence is incomplete
-and VM/hardware/lab evidence is incomplete.
-The 2026-09-25 W68 VM run below passed all twelve VHD scenarios, but the
-controller-driven image-restore row is bound to the exact W68 source manifest and was
-refused for the current tree ("Source changed: CMakeLists.txt"). It needs a new controller
-build and VM recertification on the release bytes; no image-restore failure was observed.
 Accepted VHD evidence: 11/12.
 Accepted external evidence: 0/18.
 Incomplete VHD scenarios: vhd.image-restore.
 Incomplete external gates: external.system-mbr2gpt, external.os-migration-reboot, external.boot-repair-uefi, external.boot-repair-bios, external.usb-removable, external.file-level-data-recovery, external.ssd-retrim, external.hdd-defrag-execution, external.ssd-secure-erase, external.bitlocker, external.bitlocker-mutation, external.allocate-free-space, external.partition-move, external.cluster-size-change, external.primary-logical-conversion, external.volume-serial-number, external.dynamic-to-basic, external.hardware-wipe.
+
+On this evidence, destructive certification remains partial because VHD evidence is incomplete and VM/hardware/lab evidence is incomplete.
+Do not mark the Partition Manager destructive paths fully certified until those reports exist.
+
+Disposable-VHD scenarios (`certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json`):
+
+| Scenario | Name | Accepted on this evidence |
+|---|---|---|
+| `vhd.create-format-resize-delete` | Create, format, resize, and delete data partition | yes |
+| `vhd.fat32-to-ntfs` | FAT32 to NTFS in-place conversion | yes |
+| `vhd.quick-partition` | Quick Partition equal-size data-disk layout | yes |
+| `vhd.quick-partition-custom` | Quick Partition custom size and label layout | yes |
+| `vhd.quick-partition-mbr` | Quick Partition MBR four-data-partition layout | yes |
+| `vhd.adjacent-extend` | Adjacent free-space Extend Partition Wizard path | yes |
+| `vhd.recovered-partition-restore` | Recovered partition write-back candidate restore | yes |
+| `vhd.empty-style-conversion` | Empty data disk GPT/MBR conversion | yes |
+| `vhd.clear-disk-wipe` | Clear-level non-system disk wipe | yes |
+| `vhd.image-clone` | Offline VHD image clone and sentinel verification | yes |
+| `vhd.image-restore` | Offline VHD image restore and overwrite verification | no |
+| `vhd.partition-clone-region` | Partition clone to raw target region | yes |
+
+External VM/hardware/lab gates (same matrix):
+
+| Gate | Name | Accepted on this evidence |
+|---|---|---|
+| `external.system-mbr2gpt` | System MBR-to-GPT conversion in disposable boot VM | no |
+| `external.os-migration-reboot` | OS migration target boot and firmware-order proof | no |
+| `external.boot-repair-uefi` | UEFI boot repair with intentionally broken BCD | no |
+| `external.boot-repair-bios` | BIOS/MBR boot repair with intentionally broken BCD | no |
+| `external.usb-removable` | USB removable disk destructive operation proof | no |
+| `external.file-level-data-recovery` | File-level Data Recovery scan and restore proof | no |
+| `external.ssd-retrim` | SSD/NVMe ReTrim and vendor purge warning proof | no |
+| `external.hdd-defrag-execution` | Direct in-app HDD defrag execution proof | no |
+| `external.ssd-secure-erase` | SSD/NVMe secure erase command execution proof | no |
+| `external.bitlocker` | BitLocker locked/unlocked data-volume blocker proof | no |
+| `external.bitlocker-mutation` | In-app BitLocker unlock/suspend/resume mutation proof | no |
+| `external.allocate-free-space` | Allocate Free Space adjacent donor-volume backup/delete/extend/recreate/restore proof | no |
+| `external.partition-move` | Offline partition start-move proof | no |
+| `external.cluster-size-change` | Existing-volume cluster-size change proof | no |
+| `external.primary-logical-conversion` | Primary/logical conversion on disposable MBR disk | no |
+| `external.volume-serial-number` | Volume serial-number metadata mutation proof | no |
+| `external.dynamic-to-basic` | Dynamic disk to basic conversion proof | no |
+| `external.hardware-wipe` | Non-system hardware wipe on disposable physical disk | no |
+
+Apple filesystem driver capabilities (`certification/APPLE_FILESYSTEM_CAPABILITY_MATRIX.json`):
+
+| Capability | Filesystem | Name | Status |
+|---|---|---|---|
+| `H-a` | HFS+ | Special-file node-pool growth | certified 2026-06-14 |
+| `H-b` | HFS+ | Depth-general and width-general catalog and attributes B-trees | certified 2026-06-17 |
+| `H-c` | HFS+ | B-tree underflow merge and rebalance | certified 2026-06-21 |
+| `H-d` | HFS+ | General allocator and multi-leaf extents-overflow trees | certified 2026-06-25 |
+| `H-e` | HFS+ | Hardlinks, symlinks, private metadata, and complex delete | certified 2026-06-27 |
+| `H-f` | HFS+ | Broad attribute growth and attribute overflow records | certified 2026-06-27 |
+| `H-g` | HFS+ | Big-endian journal replay | certified 2026-06-27 |
+| `H-h` | HFS+ | HFS wrapper and embedded HFS+ offset writes | certified 2026-06-27 |
+| `A-a` | APFS | Multi-CIB and multi-chunk space manager | certified 2026-08-31 |
+| `A-b` | APFS | Crash-safe in-place COW mutation of Apple containers | certified 2026-08-31 |
+| `A-c` | APFS | Snapshot create, delete, and revert | certified 2026-06-26 |
+| `A-d` | APFS | Multi-volume containers | certified 2026-06-26 |
+| `A-e` | APFS | Compression read and write | certified 2026-06-27 |
+| `A-f` | APFS | Credential-gated FileVault encryption | certified 2026-06-27 |
+| `A-g` | APFS | Container grow and shrink | certified 2026-08-31 |
+| `A-h` | APFS | Clones, sparse files, hardlinks, xattr and ACL, sealed-volume policy | certified 2026-06-28 |
+| `A-i` | APFS | Fusion and multi-device Tier2 containers | design decision: out of scope, fails closed |
+
+<!-- END GENERATED certification-state -->
+
+The block above is generated from the claim level that
+`scripts/get_partition_manager_certification_status.ps1` computes from `certification/*.json`
+and the selected evidence. It is the only current certification status in this document;
+everything below it is narrative and history, and no gate parses that prose.
+
+The 2026-09-25 W68 VM run below passed all twelve VHD scenarios, but the
+controller-driven image-restore row is bound to the exact W68 source manifest and was
+refused for the current tree ("Source changed: CMakeLists.txt"). It needs a new controller
+build and VM recertification on the release bytes; no image-restore failure was observed.
 
 On 2026-09-25 the elevated Windows 11 VM strict workflow passed all twelve
 disposable-VHD scenarios, including application-controller CreateImage and
@@ -887,12 +960,19 @@ When `evidence_path` is used for a passed gate, the verifier requires that local
 The verifier rejects unexpected or duplicate scenario IDs, missing schema version, malformed timestamps, mismatched summary counts, failed harness scenarios, missing external artifacts for passed gates, and malformed evidence URLs.
 For passed VHD and external scenarios, it also rejects missing or blank required evidence values such as disk identity, size/layout verification, sentinel checks, file-system conversion proof, boot proof, BitLocker state, or hardware wipe proof. Matrix-defined required values are enforced too, so the UEFI boot-repair gate must record UEFI mode and the BIOS/MBR boot-repair gate must record BIOS or Legacy BIOS mode. Numeric zero and boolean false remain valid recorded values when the scenario contract expects them. For external manifests, it requires the matrix-backed safety contract, a complete non-empty `evidence` payload, plus either an existing `evidence_path` or a valid HTTP/HTTPS `evidence_url` when strict external evidence is requested.
 
-Generate deterministic release-claim wording from the same evidence:
+Compute the claim level from the same evidence:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts/get_partition_manager_certification_status.ps1 `
   -ReportPath artifacts/partition-manager-certification/run-YYYYMMDD-HHMMSS/partition-manager-certification-report.json `
   -ExternalEvidenceManifest artifacts/partition-manager-certification/external-evidence.json
+```
+
+Then regenerate the Current Certification State block from that status (`-StatusPath`) or from
+the default strict-VHD evidence it computes itself:
+
+```powershell
+pwsh -NoProfile -File scripts/check_partition_manager_release_claims.ps1 -Update
 ```
 
 Claim levels are:
@@ -944,20 +1024,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/run_partition_manage
 
 ## VHD Matrix Coverage
 
-The VHD matrix covers Windows-supported destructive data-disk flows without touching existing disks:
-
-- `vhd.create-format-resize-delete` - Create, format, resize, and delete data partition.
-- `vhd.fat32-to-ntfs` - FAT32 to NTFS in-place conversion.
-- `vhd.quick-partition` - Quick Partition equal-size data-disk layout.
-- `vhd.quick-partition-custom` - Quick Partition custom size and label layout.
-- `vhd.quick-partition-mbr` - Quick Partition MBR four-data-partition layout, including any Windows-created extended/logical container for the MBR fourth data partition.
-- `vhd.adjacent-extend` - Adjacent free-space Extend Partition Wizard path.
-- `vhd.recovered-partition-restore` - Recovered partition write-back candidate restore from offset, size, and GPT type ID.
-- `vhd.empty-style-conversion` - Empty data disk GPT/MBR conversion.
-- `vhd.clear-disk-wipe` - Clear-level non-system disk wipe.
-- `vhd.image-clone` - Offline VHD image clone and sentinel verification.
-- `vhd.image-restore` - Offline VHD image restore and overwrite verification.
-- `vhd.partition-clone-region` - Partition clone to raw target region with signature and outside-marker verification.
+The VHD matrix covers Windows-supported destructive data-disk flows without touching existing
+disks. Its scenario IDs and names live in `certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json`
+and are listed, with their current acceptance, in the generated Current Certification State block.
 
 Each scenario produces `Passed`, `Failed`, or `Skipped` evidence in `partition-manager-certification-report.json`.
 
@@ -1020,4 +1089,4 @@ notes and UI copy must keep these evidence scopes distinct:
 - The verifier script enforces those boundaries when strict release evidence is required.
 - Release readiness runs the certification-matrix integrity guard, syntax-checks the strict VHD and strict hardware orchestrators, then runs the harness in plan-only mode, creates an external-evidence JSON scaffold plus human lab checklist plus per-gate lab package from the same matrix, writes and verifies the read-only VHD preflight report, verifies the checklist and lab package, verifies both report shape and manifest shape, writes a certification-status summary, writes and verifies JSON/Markdown certification-gap reports, writes and verifies a hashed certification-artifact bundle, and runs the non-destructive certification-tool self-test, so certification schema drift fails without touching disks.
 - Certification scenario IDs, evidence keys, and safety contracts must stay in `certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json`; update the matrix and self-test together when adding or changing a certification gate.
-- Release readiness runs the release-claim guard after generating certification status, so documentation wording remains tied to the current `CodeCompleteOnly`, `VhdDataDiskCertified`, `HardwareCertified`, or `FailedEvidence` state.
+- Release readiness runs `scripts/check_partition_manager_release_claims.ps1` against the status it generated, so a release cannot proceed while the generated Current Certification State block disagrees with the computed `CodeCompleteOnly`, `VhdDataDiskCertified`, `HardwareCertified`, or `FailedEvidence` level.

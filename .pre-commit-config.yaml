@@ -201,7 +201,8 @@ repos:
 
       # -------------------------------------------------------------------
       # Partition Manager / Apple filesystem certification JSON integrity. Each runs
-      # only when one of the files it reads is staged.
+      # only when one of the files it reads is staged. None of them reads documentation:
+      # the certification document's status block is generated from this JSON (T3 check below).
       # -------------------------------------------------------------------
       - id: partition-cert-matrix-integrity
         name: "Partition Manager certification matrix integrity"
@@ -210,7 +211,7 @@ repos:
           -File scripts/check_partition_manager_certification_matrix_integrity.ps1
         language: system
         pass_filenames: false
-        files: ^(certification/|docs/PARTITION_MANAGER_CERTIFICATION\.md$|scripts/(check_partition_manager_certification_matrix_integrity|run_partition_manager_destructive_certification|new_partition_manager_external_evidence_manifest|verify_partition_manager_certification|get_partition_manager_certification_status|test_partition_manager_certification_tools|check_partition_manager_external_checklist|check_partition_manager_external_lab_package|update_partition_manager_external_manifest_from_reports|run_partition_manager_hardware_certification_strict)\.ps1$)
+        files: ^(certification/|scripts/(check_partition_manager_certification_matrix_integrity|run_partition_manager_destructive_certification|new_partition_manager_external_evidence_manifest|verify_partition_manager_certification|get_partition_manager_certification_status|test_partition_manager_certification_tools|check_partition_manager_external_checklist|check_partition_manager_external_lab_package|update_partition_manager_external_manifest_from_reports|run_partition_manager_hardware_certification_strict)\.ps1$)
 
       - id: apple-filesystem-capability-matrix
         name: "Apple filesystem capability matrix"
@@ -219,7 +220,7 @@ repos:
           -File scripts/check_apple_filesystem_capability_matrix.ps1
         language: system
         pass_filenames: false
-        files: ^(certification/|docs/PARTITION_MANAGER_CERTIFICATION\.md$|docs/RELEASE_READINESS\.md$|docs/archive/APFS_HFS_FULL_DRIVER_WRITE_PLAN\.md$|scripts/check_apple_filesystem_capability_matrix\.ps1$)
+        files: ^(certification/|scripts/check_apple_filesystem_capability_matrix\.ps1$)
 
       - id: partition-feature-matrix
         name: "Partition Manager feature matrix"
@@ -237,7 +238,7 @@ repos:
           -File scripts/check_partition_manager_commercial_gate_matrix.ps1
         language: system
         pass_filenames: false
-        files: ^(certification/|README\.md$|CHANGELOG\.md$|docs/PARTITION_MANAGER_CERTIFICATION\.md$|docs/archive/PARTITION_MANAGER_PANEL_PLAN\.md$|src/core/partition_script_builder\.cpp$|src/gui/partition_manager_panel\.cpp$|tests/unit/test_partition_manager_(core|panel)\.cpp$|scripts/check_partition_manager_commercial_gate_matrix\.ps1$)
+        files: ^(certification/|src/core/(partition_script_builder|partition_safety_validator)\.cpp$|src/gui/partition_manager_panel\.cpp$|tests/unit/test_partition_manager_(core|panel)\.cpp$|scripts/check_partition_manager_commercial_gate_matrix\.ps1$)
 
       # =====================================================================
       # T1p -- pre-push
@@ -413,10 +414,12 @@ repos:
       # T3 -- local twins of the CI steps that run on a version tag.
       # =====================================================================
 
-      # T3: release-facing docs must match the computed certification level.
+      # T3: the generated Current Certification State block in
+      # docs/PARTITION_MANAGER_CERTIFICATION.md is current for the computed claim level.
+      # Regenerate it with: scripts/check_partition_manager_release_claims.ps1 -Update
       - id: partition-release-claims
-        name: "Partition Manager release-claims consistency"
-        description: "Release-facing docs must match the declared certification level"
+        name: "Partition Manager generated certification state is current"
+        description: "The generated status block matches the claim level computed from certification JSON"
         entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
           -File scripts/check_partition_manager_release_claims.ps1
         language: system

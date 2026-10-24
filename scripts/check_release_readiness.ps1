@@ -128,6 +128,7 @@ try {
             "scripts/launch_partition_manager_physical_hfs_file_apply_validation_local.ps1",
             "scripts/run_partition_manager_physical_hfs_file_apply_validation.ps1",
             "scripts/check_partition_manager_release_claims.ps1",
+            "scripts/check_apple_filesystem_capability_matrix.ps1",
             "scripts/check_powershell_syntax.ps1",
             "scripts/check_logged_message_boxes.ps1",
             "scripts/run_lizard.py",
@@ -202,6 +203,7 @@ try {
     $syntaxFiles += "scripts/launch_partition_manager_physical_hfs_file_apply_validation_local.ps1"
     $syntaxFiles += "scripts/run_partition_manager_physical_hfs_file_apply_validation.ps1"
     $syntaxFiles += "scripts/check_partition_manager_release_claims.ps1"
+    $syntaxFiles += "scripts/check_apple_filesystem_capability_matrix.ps1"
     $syntaxFiles += "scripts/partition_manager_storage.ps1"
     $syntaxFiles += "scripts/run_partition_manager_allocate_free_space_external_gate.ps1"
     $syntaxFiles += "scripts/run_partition_manager_bitlocker_mutation_external_gate.ps1"
@@ -393,6 +395,14 @@ try {
     Invoke-ReleaseReadinessScript -Name "scripts/check_partition_manager_certification_bundle.ps1" -Body {
         & scripts/check_partition_manager_certification_bundle.ps1 `
             -BundlePath $partitionBundlePath
+    }
+    # The generated Current Certification State block renders the status computed above plus
+    # both certification matrices, so validate the Apple matrix JSON first, then require the
+    # block in docs/PARTITION_MANAGER_CERTIFICATION.md to equal its rendering of this status.
+    # The block is the only certification status a document carries (owner ruling 2026-10-24);
+    # release prose is no longer pattern-matched.
+    Invoke-ReleaseReadinessScript -Name "scripts/check_apple_filesystem_capability_matrix.ps1" -Body {
+        & scripts/check_apple_filesystem_capability_matrix.ps1
     }
     Invoke-ReleaseReadinessScript -Name "scripts/check_partition_manager_release_claims.ps1" -Body {
         & scripts/check_partition_manager_release_claims.ps1 `

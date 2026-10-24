@@ -265,6 +265,7 @@ pre-commit run --hook-stage manual test-skip-audit --all-files
 pre-commit run --hook-stage manual windows-runtime-dependencies --all-files
 
 # T3 (release bytes): package, smoke, readiness, signing, certification evidence
+pre-commit run --hook-stage manual partition-release-claims --all-files
 pre-commit run --hook-stage manual release-readiness --all-files
 pre-commit run --hook-stage manual portable-release-smoke --all-files
 pre-commit run --hook-stage manual portable-e2e-smoke --all-files

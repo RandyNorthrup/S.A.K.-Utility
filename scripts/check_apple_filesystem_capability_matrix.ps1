@@ -5,10 +5,10 @@
 .DESCRIPTION
     R5-IDX-7 found several prose copies of the HFS+/APFS capability list drifting in both
     directions. This gate makes certification/APPLE_FILESYSTEM_CAPABILITY_MATRIX.json the
-    status owner, validates every expected row and its evidence contract, and requires every
-    release-facing claim document to cite it. It deliberately does not require ignored local
-    artifact paths to exist on a clean runner; the evidence identifiers are historical records,
-    while their status and shape are checked here.
+    status owner and validates every expected row and its evidence contract. It reads only the
+    JSON. It deliberately does not require ignored local artifact paths to exist on a clean
+    runner; the evidence identifiers are historical records, while their status and shape are
+    checked here.
 #>
 
 [CmdletBinding()]
@@ -96,39 +96,14 @@ foreach ($id in $expectedTrackIds) {
     Assert-CertifiedRecord $matches[0] "Track gate $id"
 }
 
+# The owner document is provenance (the archived plan that holds the history), not a status
+# copy. Status is rendered from this JSON into the generated block in
+# docs/PARTITION_MANAGER_CERTIFICATION.md by check_partition_manager_release_claims.ps1; no
+# prose is parsed here (owner ruling 2026-10-24 retired the doc-citation and doc-row checks).
 $ownerDocument = [string]$matrix.owner_document
 Assert-Condition ($ownerDocument -eq "docs/archive/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md") `
     "Apple capability owner_document must be docs/archive/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md."
-$claimDocuments = @($matrix.claim_documents | ForEach-Object { [string]$_ })
-Assert-Condition ($claimDocuments.Count -eq 3) "Apple capability matrix must name three claim documents."
-Assert-Condition (($claimDocuments | Sort-Object -Unique).Count -eq $claimDocuments.Count) `
-    "Apple capability matrix claim_documents contains duplicates."
-Assert-Condition ($claimDocuments -contains $ownerDocument) `
-    "Apple capability claim_documents must include the owner document."
 
-foreach ($relative in $claimDocuments) {
-    $path = Join-Path $ProjectRoot $relative
-    Assert-Condition (Test-Path -LiteralPath $path -PathType Leaf) `
-        "Apple capability claim document is missing: $relative"
-    $text = Get-Content -LiteralPath $path -Raw
-    Assert-Condition ($text.Contains($matrixRelative)) `
-        "$relative must cite $matrixRelative."
-}
-
-$ownerText = Get-Content -LiteralPath (Join-Path $ProjectRoot $ownerDocument) -Raw
-foreach ($capability in $capabilities) {
-    $id = [string]$capability.id
-    $row = @($ownerText -split "`r?`n" | Where-Object { $_.StartsWith("| $id |") })
-    Assert-Condition ($row.Count -eq 1) "Owner document must contain exactly one table row for $id."
-    if ($capability.status -eq "certified") {
-        Assert-Condition ($row[0].Contains("CERTIFIED")) `
-            "Owner document row $id must mirror matrix status certified."
-    } else {
-        Assert-Condition ($row[0].Contains("Out of scope") -and $row[0].Contains("fail closed")) `
-            "Owner document row $id must mirror the out-of-scope fail-closed design decision."
-    }
-}
-
-Write-Host ("Apple filesystem capability matrix passed: {0} capabilities, {1} track gates, {2} claim documents." -f `
-    $capabilities.Count, $trackGates.Count, $claimDocuments.Count)
+Write-Host ("Apple filesystem capability matrix passed: {0} capabilities, {1} track gates." -f `
+    $capabilities.Count, $trackGates.Count)
 exit 0

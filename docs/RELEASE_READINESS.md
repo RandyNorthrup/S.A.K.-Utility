@@ -59,8 +59,9 @@ keeps their history.
   off. If a user's machine can hold that file the same way, a settings save fails visibly
   rather than silently, but it fails.
 - One shared core library so first-party sources compile once instead of once per test target.
-- Certification status block in `docs/PARTITION_MANAGER_CERTIFICATION.md` generated from the
-  certification JSON; retire the regex-over-prose claim gates.
+- Done 2026-10-24: the Current Certification State block in `docs/PARTITION_MANAGER_CERTIFICATION.md`
+  is generated from the computed claim level and both certification matrices, the T3 check fails
+  when it is stale, and the regex-over-prose claim checks are retired.
 - `vcpkg.json` with a pinned baseline and a CI cache key that tracks it; one clang-format major
   version locally and in CI.
 - Bounded retention for certifier test run folders (they once held over 1 TB under

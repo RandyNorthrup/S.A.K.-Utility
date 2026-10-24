@@ -1,6 +1,5 @@
 import ast
 import json
-import re
 import shutil
 import subprocess
 import tempfile
@@ -15,20 +14,15 @@ MATRIX = Path("certification/APPLE_FILESYSTEM_CAPABILITY_MATRIX.json")
 COMMERCIAL_MATRIX = Path("certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json")
 LIVE_PRODUCTION_AUDIT = Path("docs/PRODUCTION_GRADE_AUDIT.md")
 ARCHIVED_PRODUCTION_AUDIT = Path("docs/archive/PRODUCTION_GRADE_AUDIT.md")
-CLAIM_DOCS = (
-    Path("docs/archive/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md"),
-    Path("docs/PARTITION_MANAGER_CERTIFICATION.md"),
-    Path("docs/RELEASE_READINESS.md"),
-)
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
+# Code, UI, tests and the matrix only. No documentation is copied: both gates must pass in a
+# fixture root that holds no prose, which is the proof that neither reads it (owner ruling
+# 2026-10-24 retired the doc-citation and doc-wording checks).
 COMMERCIAL_FIXTURE_FILES = (
     COMMERCIAL_MATRIX,
     Path("src/gui/partition_manager_panel.cpp"),
     Path("src/core/partition_script_builder.cpp"),
-    Path("docs/archive/PARTITION_MANAGER_PANEL_PLAN.md"),
-    Path("docs/PARTITION_MANAGER_CERTIFICATION.md"),
-    Path("README.md"),
-    Path("CHANGELOG.md"),
+    Path("src/core/partition_safety_validator.cpp"),
     Path("tests/unit/test_partition_manager_panel.cpp"),
     Path("tests/unit/test_partition_manager_core.cpp"),
 )
@@ -70,7 +64,7 @@ class AppleFilesystemCapabilityMatrixTests(unittest.TestCase):
             self.fail("PowerShell is required for the Apple capability matrix test")
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
-        for relative in (MATRIX, *CLAIM_DOCS):
+        for relative in (MATRIX,):
             destination = self.root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(PROJECT_ROOT / relative, destination)
@@ -127,7 +121,7 @@ class AppleFilesystemCapabilityMatrixTests(unittest.TestCase):
     def test_live_shape_passes(self):
         result = self.run_gate()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertIn("17 capabilities, 2 track gates, 3 claim documents", result.stdout)
+        self.assertIn("17 capabilities, 2 track gates.", result.stdout)
 
     def test_missing_capability_fails(self):
         matrix = self.read_matrix()
@@ -139,22 +133,6 @@ class AppleFilesystemCapabilityMatrixTests(unittest.TestCase):
         matrix = self.read_matrix()
         next(row for row in matrix["capabilities"] if row["id"] == "H-a")["evidence_refs"] = []
         self.write_matrix(matrix)
-        self.assertNotEqual(self.run_gate().returncode, 0)
-
-    def test_owner_document_status_drift_fails(self):
-        path = self.root / CLAIM_DOCS[0]
-        text = path.read_text(encoding="utf-8")
-        row = next(line for line in text.splitlines() if line.startswith("| H-a |"))
-        self.assertIn("CERTIFIED", row)
-        path.write_text(text.replace(row, row.replace("CERTIFIED", "BROKEN", 1)), encoding="utf-8")
-        self.assertNotEqual(self.run_gate().returncode, 0)
-
-    def test_claim_document_without_matrix_citation_fails(self):
-        path = self.root / CLAIM_DOCS[-1]
-        text = path.read_text(encoding="utf-8")
-        citation = "certification/APPLE_FILESYSTEM_CAPABILITY_MATRIX.json"
-        self.assertIn(citation, text)
-        path.write_text(text.replace(citation, "certification/missing.json"), encoding="utf-8")
         self.assertNotEqual(self.run_gate().returncode, 0)
 
     def test_fusion_cannot_be_flipped_to_certified_without_scope_change(self):
@@ -170,10 +148,6 @@ class AppleFilesystemCapabilityMatrixTests(unittest.TestCase):
         self.assertFalse((PROJECT_ROOT / LIVE_PRODUCTION_AUDIT).exists())
         self.assertTrue((PROJECT_ROOT / ARCHIVED_PRODUCTION_AUDIT).is_file())
 
-        matrix = json.loads((PROJECT_ROOT / MATRIX).read_text(encoding="utf-8"))
-        self.assertNotIn(LIVE_PRODUCTION_AUDIT.as_posix(), matrix["claim_documents"])
-        self.assertNotIn(ARCHIVED_PRODUCTION_AUDIT.as_posix(), matrix["claim_documents"])
-
         for script in (
             Path("scripts/check_partition_manager_release_claims.ps1"),
             Path("scripts/check_partition_manager_commercial_gate_matrix.ps1"),
@@ -181,53 +155,33 @@ class AppleFilesystemCapabilityMatrixTests(unittest.TestCase):
             text = (PROJECT_ROOT / script).read_text(encoding="utf-8")
             self.assertNotIn("PRODUCTION_GRADE_AUDIT.md", text)
 
-    def test_commercial_gate_uses_current_release_claims_after_audit_archive(self):
-        changelog = self.root / "CHANGELOG.md"
-        text = (PROJECT_ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-        changelog.write_text(text.replace("dynamic-to-basic conversion", "removed claim"),
-                             encoding="utf-8")
-        result = self.run_commercial_gate()
-        self.assertNotEqual(result.returncode, 0)
-        diagnostic = result.stdout + result.stderr
-        self.assertIn("Release-facing certification boundary", diagnostic)
-        self.assertIn("dynamic-to-basic", diagnostic)
-        self.assertIn("CHANGELOG.md", diagnostic)
-
     def test_current_commercial_mapping_does_not_require_a_hardware_promotion_claim(self):
         result = self.run_commercial_gate()
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("feature groups mapped to", result.stdout)
 
-    def test_commercial_gate_requires_hardware_wipe_scope_after_audit_archive(self):
-        certification = self.root / "docs" / "PARTITION_MANAGER_CERTIFICATION.md"
-        text = (PROJECT_ROOT / certification.relative_to(self.root)).read_text(encoding="utf-8")
-        certification.parent.mkdir(parents=True, exist_ok=True)
-        scope = "Non-system hardware wipe on disposable physical disk"
-        self.assertEqual(text.count(scope), 1)
-        certification.write_text(
-            text.replace(scope, "removed hardware scope"),
-            encoding="utf-8",
-        )
+    def test_commercial_gate_requires_hardware_wipe_execution_code(self):
+        self.run_commercial_gate()  # stage the fixture copies
+        builder = self.root / "src" / "core" / "partition_script_builder.cpp"
+        text = builder.read_text(encoding="utf-8")
+        pattern = "Clear-Disk -Number %1 -RemoveData -RemoveOEM"
+        self.assertIn(pattern, text)
+        builder.write_text(text.replace(pattern, "removed wipe engine"), encoding="utf-8")
         result = self.run_commercial_gate()
         self.assertNotEqual(result.returncode, 0)
         diagnostic = result.stdout + result.stderr
         self.assertIn("Physical hardware wipe", diagnostic)
-        # Both PowerShell hosts wrap error records at different word boundaries.
-        # Require every expected word in order, allowing only layout between them.
-        self.assertRegex(diagnostic, r"\s+(?:\|\s*)?".join(map(re.escape, scope.split())))
-        self.assertIn("PARTITION_MANAGER_CERTIFICATION.md", diagnostic)
+        self.assertIn("partition_script_builder.cpp", diagnostic)
 
-    def test_commercial_gate_requires_hardware_wipe_evidence_id_in_document(self):
-        certification = self.root / "docs" / "PARTITION_MANAGER_CERTIFICATION.md"
-        text = (PROJECT_ROOT / certification.relative_to(self.root)).read_text(encoding="utf-8")
-        evidence_id = "external.hardware-wipe"
-        self.assertGreater(text.count(evidence_id), 0)
-        certification.write_text(text.replace(evidence_id, "removed.hardware-wipe"), encoding="utf-8")
+    def test_commercial_gate_requires_removable_disk_guard(self):
+        self.run_commercial_gate()
+        validator = self.root / "src" / "core" / "partition_safety_validator.cpp"
+        text = validator.read_text(encoding="utf-8")
+        self.assertIn("disk.is_removable", text)
+        validator.write_text(text.replace("disk.is_removable", "disk.removed_guard"), encoding="utf-8")
         result = self.run_commercial_gate()
         self.assertNotEqual(result.returncode, 0)
-        diagnostic = result.stdout + result.stderr
-        self.assertIn("Physical hardware wipe", diagnostic)
-        self.assertIn(evidence_id, diagnostic)
+        self.assertIn("USB removable destructive proof", result.stdout + result.stderr)
 
 
 if __name__ == "__main__":

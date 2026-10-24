@@ -1127,48 +1127,84 @@ function New-ReleaseClaimFixtureStatus {
     }
 }
 
+# The document skeleton every case starts from: the heading, an EMPTY generated block, and
+# history prose. The checker must fill the block only from the status, and a check against an
+# un-generated block must fail as stale.
+$Script:ReleaseClaimBegin = '<!-- BEGIN GENERATED certification-state: do not edit by hand. Regenerate with ' +
+    'scripts/check_partition_manager_release_claims.ps1 -Update -->'
+$Script:ReleaseClaimEnd = '<!-- END GENERATED certification-state -->'
+
 function New-ReleaseClaimFixtureDocument {
-    param([object]$Status)
-    $vhdIds = if (@($Status.vhd_data_disk.incomplete_ids).Count -eq 0) { 'none' } else { @($Status.vhd_data_disk.incomplete_ids) -join ', ' }
-    $externalIds = if (@($Status.external_gates.incomplete_ids).Count -eq 0) { 'none' } else { @($Status.external_gates.incomplete_ids) -join ', ' }
-    $lines = @(
-        '# Partition Manager Certification', '## Current Certification State',
-        ('Current claim level: `' + $Status.claim_level + '`.'),
-        "Accepted VHD evidence: $($Status.vhd_data_disk.passed)/$($Status.vhd_data_disk.required).",
-        "Accepted external evidence: $($Status.external_gates.passed)/$($Status.external_gates.required).",
-        "Incomplete VHD scenarios: $vhdIds.", "Incomplete external gates: $externalIds."
-    )
-    if ($Status.claim_level -cne 'HardwareCertified') {
-        $lines += 'destructive certification remains partial.'
-        if ($vhdIds -cne 'none') { $lines += 'VHD evidence is incomplete.' }
-        if ($externalIds -cne 'none') { $lines += 'VM/hardware/lab evidence is incomplete.' }
-        if ($Status.claim_level -ceq 'FailedEvidence') { $lines += 'evidence verification failed.' }
-        $lines += 'Do not mark the Partition Manager destructive paths fully certified until those reports exist.'
-    }
-    $lines += @('### Historical June 2026 checkpoints',
-        'Historical claim level: `CodeCompleteOnly`; destructive certification remains partial in that historical record.')
-    return $lines -join [Environment]::NewLine
+    return (@('# Partition Manager Certification', '', '## Current Certification State', '',
+        $Script:ReleaseClaimBegin, $Script:ReleaseClaimEnd, '',
+        'Narrative history; no gate parses this paragraph.', '',
+        '### Historical June 2026 checkpoints',
+        'Historical claim level: `CodeCompleteOnly`; destructive certification remains partial in that historical record.'
+    ) -join "`n") + "`n"
+}
+
+function Invoke-ReleaseClaimChecker {
+    param([string]$Fixture, [string]$StatusPath, [switch]$Update)
+    $hostPath = (Get-Process -Id $PID).Path
+    $arguments = @('-NoProfile', '-NonInteractive', '-File',
+        (Join-Path $Fixture 'scripts/check_partition_manager_release_claims.ps1'), '-StatusPath', $StatusPath)
+    if ($Update) { $arguments += '-Update' }
+    return Invoke-CapturedProcess -FilePath $hostPath -Arguments $arguments -TimeoutSeconds 30
+}
+
+function Get-ReleaseClaimBlock {
+    param([string]$Text)
+    $begin = $Text.IndexOf($Script:ReleaseClaimBegin, [StringComparison]::Ordinal)
+    $end = $Text.IndexOf($Script:ReleaseClaimEnd, [StringComparison]::Ordinal)
+    Assert-Condition ($begin -ge 0 -and $end -gt $begin) 'Release-claim fixture lost its generated markers'
+    return $Text.Substring($begin, $end - $begin)
 }
 
 function Invoke-ReleaseClaimFixture {
     param([string]$Fixture, [hashtable]$Case)
     $statusPath = Join-Path $Fixture 'status.json'
+    $documentPath = Join-Path $Fixture 'docs/PARTITION_MANAGER_CERTIFICATION.md'
     [IO.File]::WriteAllText($statusPath, ($Case.status | ConvertTo-Json -Depth 8))
-    [IO.File]::WriteAllText((Join-Path $Fixture 'docs/PARTITION_MANAGER_CERTIFICATION.md'), $Case.document)
-    $readme = if ($Case.ContainsKey('readme')) { $Case.readme } else { 'Synthetic release-claim fixture.' }
-    [IO.File]::WriteAllText((Join-Path $Fixture 'README.md'), $readme)
-    $hostPath = (Get-Process -Id $PID).Path
-    $result = Invoke-CapturedProcess -FilePath $hostPath -Arguments @(
-        '-NoProfile', '-NonInteractive', '-File',
-        (Join-Path $Fixture 'scripts/check_partition_manager_release_claims.ps1'), '-StatusPath', $statusPath
-    ) -TimeoutSeconds 30
+    $document = if ($Case.ContainsKey('document')) { $Case.document } else { New-ReleaseClaimFixtureDocument }
+    [IO.File]::WriteAllText($documentPath, $document)
+    if ($Case.ContainsKey('generate')) {
+        [IO.File]::WriteAllText($statusPath, ($Case.generate | ConvertTo-Json -Depth 8))
+        $generated = Invoke-ReleaseClaimChecker $Fixture $statusPath -Update
+        Assert-Condition (-not $generated.timed_out -and $generated.exit_code -eq 0) (
+            "Release-claim fixture could not generate its block: $($Case.name): $($generated.stdout)$($generated.stderr)")
+        [IO.File]::WriteAllText($statusPath, ($Case.status | ConvertTo-Json -Depth 8))
+    }
+    if ($Case.ContainsKey('tamper')) {
+        $text = [IO.File]::ReadAllText($documentPath)
+        Assert-Condition ($text.Contains($Case.tamper[0])) "Release-claim tamper target missing: $($Case.name)"
+        [IO.File]::WriteAllText($documentPath, $text.Replace($Case.tamper[0], $Case.tamper[1]))
+    }
+    $before = [IO.File]::ReadAllText($documentPath)
+    $result = Invoke-ReleaseClaimChecker $Fixture $statusPath -Update:($Case.ContainsKey('update'))
     $output = $result.stdout + $result.stderr
+    $after = [IO.File]::ReadAllText($documentPath)
     if ($Case.ContainsKey('error')) {
         Assert-Condition (-not $result.timed_out -and $result.exit_code -ne 0 -and $output.Contains($Case.error)) (
             "Release-claim negative fixture failed: $($Case.name): $output")
+        Assert-Condition ($after -ceq $before) "Refused release-claim run changed the document: $($Case.name)"
     } else {
         Assert-Condition (-not $result.timed_out -and $result.exit_code -eq 0) (
             "Release-claim positive fixture failed: $($Case.name): $output")
+        $block = Get-ReleaseClaimBlock $after
+        foreach ($phrase in @(if ($Case.ContainsKey('contains')) { $Case['contains'] })) {
+            Assert-Condition ($block.Contains($phrase)) "Generated block missing '$phrase': $($Case.name)"
+        }
+        foreach ($phrase in @(if ($Case.ContainsKey('absent')) { $Case['absent'] })) {
+            Assert-Condition (-not $block.Contains($phrase)) "Generated block must not contain '$phrase': $($Case.name)"
+        }
+        $outsideBefore = $before.Replace((Get-ReleaseClaimBlock $before), '')
+        $outsideAfter = $after.Replace($block, '')
+        Assert-Condition ($outsideAfter -ceq $outsideBefore) "Release-claim update changed prose outside the block: $($Case.name)"
+        if ($Case.ContainsKey('update')) {
+            $check = Invoke-ReleaseClaimChecker $Fixture $statusPath
+            Assert-Condition (-not $check.timed_out -and $check.exit_code -eq 0) (
+                "Freshly generated block did not pass its own check: $($Case.name): $($check.stdout)$($check.stderr)")
+        }
     }
     Write-Host "PASS release-claim state: $($Case.name)"
 }
@@ -1177,27 +1213,25 @@ function Test-ReleaseClaimCurrentState {
     param([string]$CheckerText = '', [string]$CaseName = '')
     . (Join-Path $ProjectRoot 'scripts/process_capture.ps1')
     $fixture = Join-Path $Script:RunRoot ('release-claims-' + [guid]::NewGuid().ToString('N'))
-    foreach ($directory in @('scripts', 'certification', 'docs/archive')) {
+    foreach ($directory in @('scripts', 'certification', 'docs')) {
         New-Item -ItemType Directory -Path (Join-Path $fixture $directory) -ErrorAction Stop | Out-Null
     }
     if ([string]::IsNullOrEmpty($CheckerText)) {
         $CheckerText = Get-Content -LiteralPath (Join-Path $ProjectRoot 'scripts/check_partition_manager_release_claims.ps1') -Raw
     }
     [IO.File]::WriteAllText((Join-Path $fixture 'scripts/check_partition_manager_release_claims.ps1'), $CheckerText)
-    Copy-Item -LiteralPath (Join-Path $ProjectRoot 'certification/PARTITION_MANAGER_CERTIFICATION_MATRIX.json') -Destination (Join-Path $fixture 'certification')
-    foreach ($relative in @('CHANGELOG.md', 'docs/archive/PARTITION_MANAGER_PANEL_PLAN.md', 'docs/RELEASE_READINESS.md')) {
-        [IO.File]::WriteAllText((Join-Path $fixture $relative), 'Synthetic release-claim fixture.')
+    foreach ($matrixName in @('PARTITION_MANAGER_CERTIFICATION_MATRIX.json', 'APPLE_FILESYSTEM_CAPABILITY_MATRIX.json')) {
+        Copy-Item -LiteralPath (Join-Path $ProjectRoot "certification/$matrixName") -Destination (Join-Path $fixture 'certification')
     }
+    $restore = $CertificationMatrix.vhd_scenarios | Where-Object { $_.id -eq 'vhd.image-restore' }
+    $restoreNo = '| `vhd.image-restore` | ' + $restore.name + ' | no |'
+    $restoreYes = '| `vhd.image-restore` | ' + $restore.name + ' | yes |'
+    $refusal = 'Do not mark the Partition Manager destructive paths fully certified until those reports exist.'
     $partial = New-ReleaseClaimFixtureStatus 'CodeCompleteOnly' @('vhd.image-restore')
     $external = New-ReleaseClaimFixtureStatus 'VhdDataDiskCertified' @() @('external.hardware-wipe')
     $both = New-ReleaseClaimFixtureStatus 'CodeCompleteOnly' @('vhd.image-restore') @('external.hardware-wipe')
     $hardware = New-ReleaseClaimFixtureStatus 'HardwareCertified'
     $failed = New-ReleaseClaimFixtureStatus 'FailedEvidence' @('vhd.image-restore')
-    $partialDoc = New-ReleaseClaimFixtureDocument $partial
-    $externalDoc = New-ReleaseClaimFixtureDocument $external
-    $hardwareDoc = New-ReleaseClaimFixtureDocument $hardware
-    $counter = "Accepted VHD evidence: $($partial.vhd_data_disk.passed)/$($partial.vhd_data_disk.required)."
-    $refusal = 'Do not mark the Partition Manager destructive paths fully certified until those reports exist.'
     $badCounts = $partial | ConvertTo-Json -Depth 8 | ConvertFrom-Json
     $badCounts.vhd_data_disk.required = 0
     $badType = $partial | ConvertTo-Json -Depth 8 | ConvertFrom-Json
@@ -1211,49 +1245,71 @@ function Test-ReleaseClaimCurrentState {
     $badIds.vhd_data_disk.incomplete_ids = $null
     $badSchema = $partial | ConvertTo-Json -Depth 8 | ConvertFrom-Json
     $badSchema.schema_version = '1'
+    $unknownLevel = New-ReleaseClaimFixtureStatus 'Certified' @('vhd.image-restore')
     $unknown = New-ReleaseClaimFixtureStatus 'CodeCompleteOnly' @('vhd.unknown-case')
     $duplicate = New-ReleaseClaimFixtureStatus 'CodeCompleteOnly' @('vhd.image-restore', 'vhd.image-restore')
     $forgedHardware = New-ReleaseClaimFixtureStatus 'HardwareCertified' @('vhd.image-restore')
+    $forgedVhd = New-ReleaseClaimFixtureStatus 'VhdDataDiskCertified' @('vhd.image-restore') @('external.hardware-wipe')
+    $skeleton = New-ReleaseClaimFixtureDocument
     $cases = @(
-        @{ name = 'one VHD gap with all external accepted'; status = $partial; document = $partialDoc },
-        @{ name = 'missing external gate only'; status = $external; document = $externalDoc },
-        @{ name = 'VHD and external gaps'; status = $both; document = (New-ReleaseClaimFixtureDocument $both) },
-        @{ name = 'missing VHD-only caveat'; status = $partial; document = $partialDoc.Replace('VHD evidence is incomplete.', ''); error = 'caveat missing from current state' },
-        @{ name = 'missing external-only caveat'; status = $external; document = $externalDoc.Replace('VM/hardware/lab evidence is incomplete.', ''); error = 'caveat missing from current state' },
-        @{ name = 'stale VHD caveat after VHD passed'; status = $external; document = $externalDoc.Replace('### Historical', "VHD evidence is incomplete.`n### Historical"); error = 'Stale Partition Manager certification blocker in current state' },
-        @{ name = 'stale external caveat after external passed'; status = $partial; document = $partialDoc.Replace('### Historical', "VM/hardware/lab evidence is incomplete.`n### Historical"); error = 'Stale Partition Manager certification blocker in current state' },
-        @{ name = 'hardware accepted with historical partial caveat'; status = $hardware; document = $hardwareDoc },
-        @{ name = 'failed evidence retains refusal'; status = $failed; document = (New-ReleaseClaimFixtureDocument $failed) },
-        @{ name = 'completed external falsely incomplete'; status = $partial; document = $partialDoc.Replace('Incomplete external gates: none.', 'Incomplete external gates: external.hardware-wipe.'); error = 'incomplete-ID set mismatch' },
-        @{ name = 'completed external has stale current prose'; status = $partial; document = $partialDoc.Replace('### Historical', "External VM/hardware/lab gates remain incomplete.`n### Historical"); error = 'Stale Partition Manager certification blocker in current state' },
-        @{ name = 'missing external falsely complete'; status = $external; document = $externalDoc.Replace('Incomplete external gates: external.hardware-wipe.', 'Incomplete external gates: none.'); error = 'incomplete-ID set mismatch' },
-        @{ name = 'wrong current incomplete ID'; status = $partial; document = $partialDoc.Replace('Incomplete VHD scenarios: vhd.image-restore.', 'Incomplete VHD scenarios: vhd.not-the-gap.'); error = 'incomplete-ID set mismatch' },
-        @{ name = 'current counter wrong but historical correct'; status = $partial; document = ($partialDoc.Replace($counter, 'Accepted VHD evidence: 0/12.') + "`n" + $counter); error = "state mismatch for 'Accepted VHD evidence'" },
-        @{ name = 'historical counter cannot replace current'; status = $partial; document = ($partialDoc.Replace($counter, '') + "`n" + $counter); error = "requires exactly one 'Accepted VHD evidence'" },
-        @{ name = 'duplicate current counter'; status = $partial; document = $partialDoc.Replace('### Historical', ($counter + "`n### Historical")); error = "requires exactly one 'Accepted VHD evidence'" },
-        @{ name = 'historical partial cannot replace current'; status = $partial; document = ($partialDoc.Replace('destructive certification remains partial.', '') + "`ndestructive certification remains partial."); error = 'caveat missing from current state' },
-        @{ name = 'historical refusal cannot replace current'; status = $partial; document = ($partialDoc.Replace($refusal, '') + "`n" + $refusal); error = 'caveat missing from current state' },
-        @{ name = 'hardware has stale current blocker'; status = $hardware; document = $hardwareDoc.Replace('### Historical', "destructive certification remains partial.`n### Historical"); error = 'Stale Partition Manager certification blocker in current state' },
-        @{ name = 'unknown incomplete ID'; status = $unknown; document = (New-ReleaseClaimFixtureDocument $unknown); error = 'unknown or duplicate incomplete ID' },
-        @{ name = 'duplicate incomplete ID'; status = $duplicate; document = (New-ReleaseClaimFixtureDocument $duplicate); error = 'unknown or duplicate incomplete ID' },
-        @{ name = 'zero required count'; status = $badCounts; document = $partialDoc; error = 'counts do not match the certification matrix' },
-        @{ name = 'count must be integer'; status = $badType; document = $partialDoc; error = 'required must be a nonnegative integer' },
-        @{ name = 'forged matrix denominator'; status = $forgedCount; document = (New-ReleaseClaimFixtureDocument $forgedCount); error = 'counts do not match the certification matrix' },
-        @{ name = 'inconsistent passed and incomplete sum'; status = $badSum; document = (New-ReleaseClaimFixtureDocument $badSum); error = 'passed plus incomplete does not equal required' },
-        @{ name = 'missing incomplete array'; status = $badIds; document = $partialDoc; error = 'incomplete_ids must be an array' },
-        @{ name = 'wrong status schema'; status = $badSchema; document = $partialDoc; error = 'Unsupported Partition Manager certification status schema_version' },
-        @{ name = 'hardware claim has a VHD gap'; status = $forgedHardware; document = (New-ReleaseClaimFixtureDocument $forgedHardware); error = 'claim level contradicts its incomplete evidence sets' },
-        @{ name = 'current claim does not match status'; status = $partial; document = $partialDoc.Replace('Current claim level: `CodeCompleteOnly`.', 'Current claim level: `VhdDataDiskCertified`.'); error = "state mismatch for 'Current claim level'" },
-        @{ name = 'broad unsupported claims still rejected'; status = $partial; document = $partialDoc; readme = 'Partition Manager is fully certified.'; error = 'Unsupported Partition Manager certification claim' },
-        @{ name = 'missing current-state heading'; status = $partial; document = $partialDoc.Replace('## Current Certification State', '## Historical Only'); error = 'Expected one Current Certification State heading' },
-        @{ name = 'duplicate current-state heading'; status = $partial; document = ($partialDoc + "`n## Current Certification State"); error = 'Expected one Current Certification State heading' }
+        @{ name = 'generate one VHD gap'; status = $partial; update = $true
+           contains = @('Current claim level: `CodeCompleteOnly`.', "Accepted VHD evidence: $($ExpectedVhdScenarioIds.Count - 1)/$($ExpectedVhdScenarioIds.Count).", $restoreNo,
+               'remains partial because VHD evidence is incomplete.', $refusal, '| `A-i` | APFS |')
+           absent = @($restoreYes, 'VM/hardware/lab evidence is incomplete') },
+        @{ name = 'generate external gap only'; status = $external; update = $true
+           contains = @('Current claim level: `VhdDataDiskCertified`.', $restoreYes,
+               '| `external.hardware-wipe` | Non-system hardware wipe on disposable physical disk | no |',
+               'remains partial because VM/hardware/lab evidence is incomplete.', $refusal)
+           absent = @('VHD evidence is incomplete') },
+        @{ name = 'generate VHD and external gaps'; status = $both; update = $true
+           contains = @('because VHD evidence is incomplete and VM/hardware/lab evidence is incomplete.', $refusal) },
+        @{ name = 'generate hardware certified'; status = $hardware; update = $true
+           contains = @('Current claim level: `HardwareCertified`.', 'Incomplete VHD scenarios: none.',
+               'Incomplete external gates: none.')
+           absent = @(' | no |', 'remains partial', $refusal) },
+        @{ name = 'generate failed evidence'; status = $failed; update = $true
+           contains = @('Current claim level: `FailedEvidence`.', 'because evidence verification failed and VHD evidence is incomplete.', $refusal) },
+        @{ name = 'regenerate over a stale block'; status = $partial; generate = $hardware; update = $true
+           contains = @('Current claim level: `CodeCompleteOnly`.', $restoreNo); absent = @('`HardwareCertified`') },
+        @{ name = 'current block passes check'; status = $partial; generate = $partial },
+        @{ name = 'never generated block is stale'; status = $partial; document = $skeleton; error = 'is stale' },
+        @{ name = 'block from another status is stale'; status = $partial; generate = $hardware; error = 'is stale' },
+        @{ name = 'hand-raised claim level is stale'; status = $partial; generate = $partial
+           tamper = @('Current claim level: `CodeCompleteOnly`.', 'Current claim level: `HardwareCertified`.'); error = 'is stale' },
+        @{ name = 'hand-accepted scenario is stale'; status = $partial; generate = $partial
+           tamper = @($restoreNo, $restoreYes); error = 'is stale' },
+        @{ name = 'dropped refusal is stale'; status = $partial; generate = $partial
+           tamper = @($refusal, ''); error = 'is stale' },
+        @{ name = 'missing markers'; status = $partial; update = $true
+           document = $skeleton.Replace($Script:ReleaseClaimBegin + "`n", ''); error = 'Expected exactly one BEGIN and one END' },
+        @{ name = 'duplicate begin marker'; status = $partial
+           document = $skeleton.Replace($Script:ReleaseClaimEnd, $Script:ReleaseClaimBegin + "`n" + $Script:ReleaseClaimEnd); error = 'Expected exactly one BEGIN and one END' },
+        @{ name = 'markers outside current section'; status = $partial; update = $true
+           document = $skeleton.Replace($Script:ReleaseClaimBegin + "`n" + $Script:ReleaseClaimEnd + "`n", '') + $Script:ReleaseClaimBegin + "`n" + $Script:ReleaseClaimEnd + "`n"
+           error = 'must sit inside the Current Certification State section' },
+        @{ name = 'missing current-state heading'; status = $partial; update = $true
+           document = $skeleton.Replace('## Current Certification State', '## Historical Only'); error = 'Expected one Current Certification State heading' },
+        @{ name = 'duplicate current-state heading'; status = $partial
+           document = $skeleton + "`n## Current Certification State`n"; error = 'Expected one Current Certification State heading' },
+        @{ name = 'unknown claim level'; status = $unknownLevel; update = $true; error = 'unrecognized claim_level' },
+        @{ name = 'unknown incomplete ID'; status = $unknown; update = $true; error = 'unknown or duplicate incomplete ID' },
+        @{ name = 'duplicate incomplete ID'; status = $duplicate; update = $true; error = 'unknown or duplicate incomplete ID' },
+        @{ name = 'zero required count'; status = $badCounts; update = $true; error = 'counts do not match the certification matrix' },
+        @{ name = 'count must be integer'; status = $badType; update = $true; error = 'required must be a nonnegative integer' },
+        @{ name = 'forged matrix denominator'; status = $forgedCount; update = $true; error = 'counts do not match the certification matrix' },
+        @{ name = 'inconsistent passed and incomplete sum'; status = $badSum; update = $true; error = 'passed plus incomplete does not equal required' },
+        @{ name = 'missing incomplete array'; status = $badIds; update = $true; error = 'incomplete_ids must be an array' },
+        @{ name = 'wrong status schema'; status = $badSchema; update = $true; error = 'Unsupported Partition Manager certification status schema_version' },
+        @{ name = 'hardware claim has a VHD gap'; status = $forgedHardware; update = $true; error = 'claim level contradicts its incomplete evidence sets' },
+        @{ name = 'VHD claim has a VHD gap'; status = $forgedVhd; update = $true; error = 'claim level contradicts its incomplete evidence sets' },
+        @{ name = 'invalid status refused in check mode'; status = $forgedHardware; generate = $partial; error = 'claim level contradicts its incomplete evidence sets' }
     )
     if ($CaseName -ne '') {
         $cases = @($cases | Where-Object { $_.name -ceq $CaseName })
         Assert-Condition ($cases.Count -eq 1) "Unknown release-claim fixture: $CaseName"
     }
     foreach ($case in $cases) { Invoke-ReleaseClaimFixture $fixture $case }
-    Write-Host "PASS release-claim current-state fixtures: $($cases.Count) cases"
+    Write-Host "PASS release-claim generated-block fixtures: $($cases.Count) cases"
 }
 
 function Get-ReleaseEvidenceSelectorText {

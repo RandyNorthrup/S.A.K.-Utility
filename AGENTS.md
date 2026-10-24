@@ -154,7 +154,7 @@ tier as proof of a wider one.
 | T1 | pre-commit, changed files only | under 60 s | hygiene, format, lizard, cppcheck, staged secret scan, ASCII, blocking patterns, test registration, claim/manifest checks when their inputs change |
 | T1p | pre-push | ~1 min | full-history secret scan |
 | T2 | CI on every push to `dev` and every PR | ~25 min | build, CTest in parallel over the `product`, `release-tooling`, `tooling` and `cert` labels, whole-tree style gates, licenses, startup budget, accessibility, skip audit, runtime DLLs |
-| T3 | CI on a version tag only | -- | package, smoke, end-to-end, readiness, sign, verify, publish, certification evidence checks |
+| T3 | CI on a version tag only | -- | package, smoke, end-to-end, readiness, sign, verify, publish, certification evidence checks (including the generated certification-state block) |
 | T4 | nightly and manual | -- | ASan, coverage, whole-tree cppcheck and dead code, clang-tidy, mutation, and the `tooling-extended`, `mutation`, `coverage`, `tidy`, `cert-tooling` and `fuzz-extended` CTest labels |
 
 CTest labels are set in one block at the end of `tests/CMakeLists.txt`; `tests/README.md` lists
