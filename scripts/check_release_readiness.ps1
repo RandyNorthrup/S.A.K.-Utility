@@ -122,6 +122,7 @@ try {
             "scripts/check_partition_manager_feature_matrix.ps1",
             "scripts/check_partition_filesystem_tool_manifest.ps1",
             "scripts/test_partition_filesystem_probe_certifier.ps1",
+            "scripts/run_folder_retention.ps1",
             "scripts/run_partition_manager_hfsprogs_image_validation.ps1",
             "scripts/launch_partition_manager_physical_hfsprogs_validation_local.ps1",
             "scripts/run_partition_manager_physical_hfsprogs_validation.ps1",
@@ -197,6 +198,7 @@ try {
     $syntaxFiles += "scripts/check_partition_manager_feature_matrix.ps1"
     $syntaxFiles += "scripts/check_partition_filesystem_tool_manifest.ps1"
     $syntaxFiles += "scripts/test_partition_filesystem_probe_certifier.ps1"
+    $syntaxFiles += "scripts/run_folder_retention.ps1"
     $syntaxFiles += "scripts/run_partition_manager_hfsprogs_image_validation.ps1"
     $syntaxFiles += "scripts/launch_partition_manager_physical_hfsprogs_validation_local.ps1"
     $syntaxFiles += "scripts/run_partition_manager_physical_hfsprogs_validation.ps1"

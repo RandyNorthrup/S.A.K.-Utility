@@ -270,6 +270,11 @@ $Script:Certifier = (Resolve-Path -LiteralPath $CertifierPath -ErrorAction Stop)
 if (-not [System.IO.Path]::IsPathRooted($OutputRoot)) {
     $OutputRoot = Join-Path $ProjectRoot $OutputRoot
 }
+# Bounded retention: a passing run removes its own case folder and each run first caps the
+# folders earlier failed runs left behind. See scripts/run_folder_retention.ps1.
+. (Join-Path $PSScriptRoot "run_folder_retention.ps1")
+$runFolderPattern = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+$null = Limit-RetainedTestRunFolders -OutputRoot $OutputRoot -NamePattern $runFolderPattern
 $Script:RunId = [guid]::NewGuid().ToString("D")
 $Script:CaseRoot = Join-Path ([System.IO.Path]::GetFullPath($OutputRoot)) $Script:RunId
 New-Item -ItemType Directory -Path $Script:CaseRoot -ErrorAction Stop | Out-Null
@@ -287,4 +292,5 @@ $sourceUnchanged = (Get-FileHash -LiteralPath $Script:SourcePath -Algorithm SHA2
 $targetUnchanged = (Get-FileHash -LiteralPath $Script:TargetPath -Algorithm SHA256).Hash -ceq $targetHash
 Assert-Contract $sourceUnchanged "Source ordinary file changed during rejected requests"
 Assert-Contract $targetUnchanged "Target ordinary file changed during rejected requests"
+Remove-TestRunFolder -RunFolder $Script:CaseRoot -OutputRoot $OutputRoot -NamePattern $runFolderPattern
 Write-Output "Partition controller live-certifier non-destructive contracts passed."

@@ -64,8 +64,9 @@ keeps their history.
   when it is stale, and the regex-over-prose claim checks are retired.
 - `vcpkg.json` with a pinned baseline and a CI cache key that tracks it; one clang-format major
   version locally and in CI.
-- Bounded retention for certifier test run folders (they once held over 1 TB under
-  `build/test_results`).
+- Done 2026-10-24: certifier and writer-CLI script tests delete their run folder when they pass,
+  keep failures for diagnosis, and cap leftover failed runs at the newest three
+  (`scripts/run_folder_retention.ps1`). They once held over 1 TB under `build/test_results`.
 - Refresh `THIRD_PARTY_LICENSES.md` against what actually ships (Mesa opengl32sw, D3Dcompiler,
   MSVC runtime, 7-Zip, cygwin1.dll and others are missing; Qt section names 6.5).
 

@@ -2044,6 +2044,7 @@ function Write-ExternalEvidenceReports {
     }
 }
 
+$Script:RunPassed = $false
 Push-Location $ProjectRoot
 try {
     $resolvedOutputRoot = if ([System.IO.Path]::IsPathRooted($OutputRoot)) {
@@ -2052,24 +2053,35 @@ try {
     else {
         Join-Path $ProjectRoot $OutputRoot
     }
+    # Bounded retention: a passing run removes its own folder; each run first caps the folders
+    # earlier failed runs left behind. The name stays run-<timestamp>: fixture paths under it
+    # already sit near MAX_PATH (a .NET Framework converter fixture's .exe.config crossed 260
+    # characters when a GUID suffix was tried). Without -Force, a second run started in the
+    # same second fails closed instead of sharing, and later deleting, this run's folder.
+    . (Join-Path $PSScriptRoot "run_folder_retention.ps1")
+    $runFolderPattern = '^run-\d{8}-\d{6}$'
+    $null = Limit-RetainedTestRunFolders -OutputRoot $resolvedOutputRoot -NamePattern $runFolderPattern
     $Script:RunRoot = Join-Path $resolvedOutputRoot ("run-" + (Get-Date -Format "yyyyMMdd-HHmmss"))
-    New-Item -ItemType Directory -Path $Script:RunRoot -Force | Out-Null
+    New-Item -ItemType Directory -Path $Script:RunRoot -ErrorAction Stop | Out-Null
 
+    # The exit worker is a child whose expected outcome is a failure exit; its parent owns and
+    # removes the enclosing run folder, so the worker never marks its own run as passed.
     if ($FatConversionExitWorker) { Invoke-FatConversionExitWorker $FatConversionScriptDirectory; return }
-    if ($FatConversionOnly) { Test-FatConversion $FatConversionScriptDirectory $FatConversionCase; return }
-    if ($ReleaseEvidenceSelectionOnly) { Test-ReleaseEvidenceSelection $ReleaseEvidenceScriptDirectory $ReleaseEvidenceCase; return }
-    if ($ReleaseClaimsOnly) { Test-ReleaseClaimCurrentState; Test-ReleaseEvidenceSelection; return }
+    if ($FatConversionOnly) { Test-FatConversion $FatConversionScriptDirectory $FatConversionCase; $Script:RunPassed = $true; return }
+    if ($ReleaseEvidenceSelectionOnly) { Test-ReleaseEvidenceSelection $ReleaseEvidenceScriptDirectory $ReleaseEvidenceCase; $Script:RunPassed = $true; return }
+    if ($ReleaseClaimsOnly) { Test-ReleaseClaimCurrentState; Test-ReleaseEvidenceSelection; $Script:RunPassed = $true; return }
     Test-CertificationReportSelection
     if ($ReportSelectionOnly) {
         Write-Host "Partition Manager report-selection tests passed."
+        $Script:RunPassed = $true
         return
     }
     Test-CertificationEvidenceReferences
-    if ($EvidenceReferencesOnly) { return }
+    if ($EvidenceReferencesOnly) { $Script:RunPassed = $true; return }
     Initialize-SyntheticControllerEvidence
-    if ($EvidenceValuesOnly) { Test-CertificationAllowedValueArrays; return }
+    if ($EvidenceValuesOnly) { Test-CertificationAllowedValueArrays; $Script:RunPassed = $true; return }
     Test-ControllerEvidenceConsumers
-    if ($ControllerEvidenceOnly) { return }
+    if ($ControllerEvidenceOnly) { $Script:RunPassed = $true; return }
     Test-CertificationAllowedValueArrays
     Test-ReleaseClaimCurrentState
     Test-ReleaseEvidenceSelection
@@ -2503,7 +2515,12 @@ try {
     }
 
     Write-Host "Partition Manager certification tool self-test passed: $Script:RunRoot"
+    $Script:RunPassed = $true
 }
 finally {
     Pop-Location
+    if ($Script:RunPassed) {
+        Remove-TestRunFolder -RunFolder $Script:RunRoot -OutputRoot $resolvedOutputRoot -NamePattern $runFolderPattern
+        Write-Host "Removed the passing run folder $Script:RunRoot"
+    }
 }

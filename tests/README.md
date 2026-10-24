@@ -41,7 +41,7 @@ Every registered test carries exactly one tier label (set in the label block at 
 |---|---|---|
 | `product` | T2 | Native QtTest suites (the default) and the product scripts: browser extension, pack/register, the Create Image lock rows, the APFS/HFS writer CLIs |
 | `release-tooling` | T2 | Startup budget and runtime-DLL audit regressions |
-| `tooling` | T2 | Core process-capture contract, lizard JS baseline, cppcheck Qt-slot classifier |
+| `tooling` | T2 | Core process-capture contract, lizard JS baseline, cppcheck Qt-slot classifier, run-folder retention fences |
 | `cert` | T2 | Apple filesystem capability matrix gate (JSON only) |
 | `tooling-extended` | T4 | Process-capture ownership/deadline/output/stdin/environment scopes, false-green harness, portable staging and archive recovery |
 | `mutation` | T4 | Mutation runner regressions |
@@ -79,6 +79,11 @@ ctest --test-dir build -C Release -N -L product
 
 Image tests need a disk with room for sparse multi-gigabyte images: point `TEMP`, `TMP` and
 `SAK_TEST_IMAGE_SCRATCH_ROOT` at it for the one command rather than persistently.
+
+The certifier and writer-CLI script tests (APFS/HFS writer CLIs, filesystem probe certifier,
+certification tools, live certifier) delete their run folder under `build/.../test_results` when
+they pass and keep a failed run for diagnosis; each run first caps leftover failed runs at the
+newest three (`scripts/run_folder_retention.ps1`). Those folders once held over 1 TB.
 
 ### Custom Targets
 

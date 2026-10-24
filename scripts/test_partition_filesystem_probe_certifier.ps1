@@ -313,7 +313,12 @@ try {
     }
     # Created without -Force: destructive-write fixtures go in a directory this run owns.
     # A pre-existing (or substituted) run root fails closed instead of being reused.
-    $runRoot = Join-Path $resolvedOutputRoot `
+    # Bounded retention: a passing run removes its own folder (about 0.7 GB of fixtures) and each
+# run first caps the folders earlier failed runs left behind. See run_folder_retention.ps1.
+. (Join-Path $PSScriptRoot "run_folder_retention.ps1")
+$runFolderPattern = '^run-\d{8}-\d{6}-[0-9a-f]{32}$'
+$null = Limit-RetainedTestRunFolders -OutputRoot $resolvedOutputRoot -NamePattern $runFolderPattern
+$runRoot = Join-Path $resolvedOutputRoot `
         ("run-" + (Get-Date -Format "yyyyMMdd-HHmmss") + "-" + [guid]::NewGuid().ToString("N"))
     New-Item -ItemType Directory -Path $runRoot | Out-Null
 
@@ -723,7 +728,8 @@ try {
     Assert-ReportText $apfsFormatOverwriteReport.status "Failed" "APFS format overwrite status mismatch"
     Assert-Condition -Condition ((@($apfsFormatOverwriteReport.blockers) -join "`n").Contains("overwrite")) -Message "APFS format overwrite blocker missing"
 
-    Write-Host "partition_filesystem_probe_certifier self-test passed: $runRoot"
+    Remove-TestRunFolder -RunFolder $runRoot -OutputRoot $resolvedOutputRoot -NamePattern $runFolderPattern
+    Write-Host "partition_filesystem_probe_certifier self-test passed; removed its run folder $runRoot"
     $global:LASTEXITCODE = 0
 }
 finally {

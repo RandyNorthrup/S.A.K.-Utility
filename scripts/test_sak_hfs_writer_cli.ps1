@@ -72,6 +72,11 @@ if (-not (Test-Path -LiteralPath $CertifierPath -PathType Leaf)) {
     Fail "certifier not found: $CertifierPath"
 }
 
+# Bounded retention: a passing run removes its own folder and each run first caps the folders
+# earlier failed runs left behind. See scripts/run_folder_retention.ps1.
+. (Join-Path $PSScriptRoot "run_folder_retention.ps1")
+$runFolderPattern = '^run-[0-9a-f]{32}$'
+$null = Limit-RetainedTestRunFolders -OutputRoot $OutputRoot -NamePattern $runFolderPattern
 $runRoot = Join-Path $OutputRoot ("run-" + [guid]::NewGuid().ToString("N"))
 New-Item -ItemType Directory -Force -Path $runRoot | Out-Null
 
@@ -1771,4 +1776,5 @@ if ($deleteFolderTreeListReport.status -ne "Passed" -or $deletedFolderEntry.Coun
     Fail "folder-tree deleted folder still present in root listing"
 }
 
-Write-Host "sak_hfs_writer_cli self-test passed: $runRoot"
+Remove-TestRunFolder -RunFolder $runRoot -OutputRoot $OutputRoot -NamePattern $runFolderPattern
+Write-Host "sak_hfs_writer_cli self-test passed; removed its run folder $runRoot"

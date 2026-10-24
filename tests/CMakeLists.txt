@@ -8112,6 +8112,19 @@ if(PLATFORM_WINDOWS)
                      -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_windows_runtime_dependencies.ps1")
     set_tests_properties(test_windows_runtime_dependencies PROPERTIES TIMEOUT 120)
 
+    # scripts/run_folder_retention.ps1 deletes the run folders of passing certifier and CLI
+    # image tests (they once held over 1 TB under build/test_results). It deletes directories,
+    # so its fences are tested under both hosts: they delete through different .NET runtimes.
+    add_test(NAME test_run_folder_retention
+             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_run_folder_retention.ps1")
+    add_test(NAME test_run_folder_retention_windows_powershell
+             COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
+                     "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_run_folder_retention.ps1")
+    set_tests_properties(test_run_folder_retention test_run_folder_retention_windows_powershell
+                         PROPERTIES TIMEOUT 60)
+
     add_test(NAME test_stage_portable_release
              COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
                      -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_stage_portable_release.ps1"
@@ -8238,7 +8251,8 @@ set(_sak_labels_product
 set(_sak_labels_release_tooling test_startup_budget test_windows_runtime_dependencies)
 set(_sak_labels_tooling
     test_process_capture test_process_capture_windows_powershell
-    test_run_lizard_js_baseline test_cppcheck_qt_slot_classifier)
+    test_run_lizard_js_baseline test_cppcheck_qt_slot_classifier
+    test_run_folder_retention test_run_folder_retention_windows_powershell)
 set(_sak_labels_cert test_apple_filesystem_capability_matrix)
 set(_sak_labels_tooling_extended
     test_process_capture_ownership test_process_capture_ownership_windows_powershell
