@@ -4,7 +4,72 @@ Current HFS+/APFS driver capability status is owned by
 `certification/APPLE_FILESYSTEM_CAPABILITY_MATRIX.json`. Historical milestone text below is not a
 second status owner; release-facing Apple filesystem claims must mirror the gated matrix.
 
-## Current gate boundary: Wave 68 source candidate (2026-09-25)
+## Release bar (owner ruling 2026-10-24)
+
+The next release ships when every box below is checked on the release bytes. This replaces the R5
+definition of done (G10), whose open-ended items ("zero findings anywhere", "no surviving mutant
+anywhere", full review-ledger coverage) could never close.
+
+- [ ] CI (tier T2, see AGENTS.md) green on `main` for the release commit.
+- [ ] Startup does not freeze the GUI: the window stays responsive while fonts load, including on
+      a machine with thousands of installed fonts; stock Windows 11 VM cold start within budget.
+- [ ] Clean-package smoke and startup end-to-end smoke pass (tier T3).
+- [ ] Shipped binaries are Authenticode-signed, and the Azure signing credential is confirmed valid.
+- [ ] Windows 11 VM smoke passes on the release bytes.
+- [ ] No known crash, data-loss or unpatched-security item remains in the list below.
+- [x] Hardware-only claims (partition external gates, Apple kernel, Windows 10) are labeled
+      uncertified by the computed claim level in `certification/`.
+
+DESIGN DECISION (owner 2026-10-24): Windows 10 rig runs, the 18 external partition hardware gates,
+Apple kernel/hardware certification, review-ledger coverage, mutation surface and clang-tidy naming
+debt are not release requirements. Their claims stay labeled uncertified; the archived R5 document
+keeps their history.
+
+### Open crash, data-loss and security items (must be empty to release)
+
+1. Startup GUI freeze: a cold DirectWrite font census blocks the GUI thread on machines with many
+   installed fonts (`src/gui/main_window.cpp` createStatusBar, `src/main.cpp` warmup). Detail:
+   `docs/GUI_STARTUP_FIELD_NOTES.md`.
+2. `ProcessRunner::finishContainedOrFailFast` (`src/core/process_runner.cpp` ~189) calls qFatal on
+   a cleanup deadline during a tool run -- the same crash shape fixed for MCP in a8b64bbd. Apply
+   the same report-and-contain treatment through `sak::ContainedProcessQuarantine`.
+3. Other fail-fast teardown paths to classify as true invariant or load-dependent:
+   `~WindowsProcessJob` (`src/core/windows_process_job.cpp` ~381-402), `WorkerBase::stopAndJoin`
+   (`src/core/worker_base.cpp` ~46), AI panel destruction (`src/gui/ai_assistant_panel.cpp`
+   ~3866, ~3892).
+4. Dependency security updates (verify each advisory ID at its source before acting): Qt 6.10.3
+   (6.10 support ended 2026-10-07; JSON-parsing advisories), iPerf3 3.21 (server-side
+   use-after-free; the app runs iperf3 as a server), Chocolatey 2.7.2's bundled 7-Zip, zlib 1.3.1,
+   liblzma 5.8.2, and the hfsprogs OpenSSL 3.6 build (end of life 2026-11-01).
+5. Downloaded third-party binaries without a hash pin: iperf3, smartmontools, and the Trusted
+   Signing client library.
+6. 78 unverified findings (18 HIGH) in 14 review briefs under `docs/review_briefs/` that no ledger
+   unit binds. Triage each against current code; two sampled HIGH/MEDIUM findings were already
+   fixed.
+
+### Open release infrastructure
+
+- Tiered gates (T1-T4) with CI on every push to `dev`, CTest labels, resource locks and parallel
+  runs; retire the meta-gates on the approved list.
+- One shared core library so first-party sources compile once instead of once per test target.
+- Certification status block in `docs/PARTITION_MANAGER_CERTIFICATION.md` generated from the
+  certification JSON; retire the regex-over-prose claim gates.
+- `vcpkg.json` with a pinned baseline and a CI cache key that tracks it; one clang-format major
+  version locally and in CI.
+- Bounded retention for certifier test run folders (they once held over 1 TB under
+  `build/test_results`).
+- Refresh `THIRD_PARTY_LICENSES.md` against what actually ships (Mesa opengl32sw, D3Dcompiler,
+  MSVC runtime, 7-Zip, cygwin1.dll and others are missing; Qt section names 6.5).
+
+## Current gate boundary: Wave 69 (2026-10-24)
+
+Commits 6e71d676 (held waves 32-68), a8b64bbd (MCP containment), 7567e23f (test environment
+fixes) and ac21ea2d (secret-scan tool resolution) were pushed to `origin/dev`. Gate on the final
+tree: all-target Release build exit 0, 249/249 native CTests (build/wave69-full-ctest.stdout.log)
+and 51/51 script CTests after the script fixes (build/wave69c-script-ctest.stdout.log). No
+package, VM, accessibility or signing gate has run on these bytes.
+
+## Previous gate boundary: Wave 68 source candidate (2026-09-25)
 
 W67c is the last complete local gate: Release build and 300/300 CTests passed,
 but its fresh native package smoke timed out. Wave 68 has only targeted app

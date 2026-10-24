@@ -22,6 +22,23 @@ rather than the product, and it deliberately contains no credentials (those live
 These are owner rulings. They override convenience, and they override an agent's own judgement
 about what is "obviously fine".
 
+**Owner rulings, 2026-10-24 -- these win where older text below disagrees.**
+
+- **The release bar is the ship bar** in [docs/RELEASE_READINESS.md](docs/RELEASE_READINESS.md):
+  CI green on `main`, no startup freeze, clean-package smoke, signed, Windows 11 VM smoke, and no
+  known crash, data-loss or unpatched-security item. Hardware-only claims stay labeled uncertified.
+  Open-ended programs (zero findings anywhere, no surviving mutant anywhere, full review-ledger
+  coverage) are not release requirements. The R5 campaign document is archived.
+- **Gates are tiered** (see "The gate" below). A gate exists to catch product risk. A check whose
+  only subject is another gate, a ledger, or a doc's wording is not added; propose it to the owner
+  first.
+- **Fail closed does not mean crash.** When cleanup of a contained child cannot be proven, report
+  the error and hand the owner to `sak::ContainedProcessQuarantine`; kill-on-close Job ownership
+  still guarantees the child cannot outlive the app. Keep qFatal for true invariants only
+  (a programming error), never for a deadline that load can exceed.
+- **"Do the optionals" means product optionals.** An optional that reduces product risk is done.
+  Process and bookkeeping optionals are proposed, not assumed.
+
 **Make a proper decision about it.** Keep or remove is a real decision, and it has to be made on
 evidence rather than on whichever is easier at that moment. Deleting something to make a problem
 go away is one failure; carrying dead weight because a rule said "never delete" is the same
@@ -129,9 +146,22 @@ nobody trusts.
 
 ## The gate
 
-Every commit that touches code must pass the full Release gate first: a complete build AND the
-complete CTest suite, with **zero** failures. Not the affected target -- the whole suite. A fix
-that changes a message another subsystem asserts on is not proved by its own file's tests.
+Gates are tiered (owner ruling 2026-10-24). Each tier states its scope; never cite a narrower
+tier as proof of a wider one.
+
+| Tier | Runs | Budget | Holds |
+|---|---|---|---|
+| T1 | pre-commit, changed files only | under 60 s | hygiene, format, lizard, cppcheck, staged secret scan, ASCII, blocking patterns, test registration, claim/manifest checks when their inputs change |
+| T1p | pre-push | ~1 min | full-history secret scan |
+| T2 | CI on every push to `dev` and every PR | ~25 min | build, CTest in parallel (excluding the cert/meta/mutation/coverage labels), whole-tree style gates, licenses, startup budget, accessibility, skip audit, runtime DLLs |
+| T3 | CI on a version tag only | -- | package, smoke, end-to-end, readiness, sign, verify, publish, certification evidence checks |
+| T4 | nightly and manual | -- | ASan, coverage, whole-tree cppcheck and dead code, clang-tidy, mutation, cert tooling tests |
+
+Before a local commit that touches code: T1 hooks, a build, and the tests your change can reach
+(`ctest -L <label>` or `-R`). A fix that changes a message another subsystem asserts on is not
+proved by its own file's tests -- search for the message and run those too. The full suite runs
+in T2 on every push; a red T2 is fixed before anything else lands on `dev`. Nothing merges to
+`main` without a green T2.
 
 Capture the build exit code in its own statement and read it before believing any test result:
 
@@ -188,13 +218,13 @@ Every one of these has happened here.
 | Empty dependency root becomes a plausible absolute path | Fresh-clone rehearsal used `$env:VCPKG_ROOT/scripts/...`; empty env produced `/scripts/buildsystems/vcpkg.cmake`, then build ran after failed configure and added noise | Resolve explicit/env/existing roots first, verify toolchain file, and never run build after configure failure. Registered path test proves auto-resolve and invalid-explicit refusal |
 | Search tool skips gitignored paths | `Grep` (and other repo-aware search) honours .gitignore, and `artifacts/` IS gitignored -- so a hunt for a certification value reports "appears in no artifact" having never opened the evidence directory. The same shape hid a live guard: grepping one function name and not finding it read as "no such guard exists" when the guard was three functions away under another name | For anything under `artifacts/`, `build*/`, `temp/` or any other ignored path, use a plain `grep`/`rg` that does not respect gitignore. And before concluding something is ABSENT, prove the search would have found it -- search for a string you know is there |
 | .NET ignores the shell cwd | `[System.IO.File]::ReadAllBytes("docs/x.md")` resolves against the PROCESS cwd and can throw while a relative `Get-Content` succeeds -- a null result then reads as "0 problems found" | Absolute paths with .NET APIs, and assert the byte count actually read |
-| Gate wired where it never runs | A step sits in `.github/workflows/`, reads as enforcement in every review, and has never executed -- this workflow has not run for 776+ commits (an owner cost decision), so its whole-tree cppcheck step was enforcing nothing while 84 findings accumulated | Before citing a gate as enforcement, establish that it has RUN. A CI-only gate on a repo whose CI is off is a comment. Give every gate a local manual-stage twin |
+| Gate wired where it never runs | A step sits in `.github/workflows/`, reads as enforcement in every review, and has never executed -- this workflow has not run for 776+ commits (an owner cost decision), so its whole-tree cppcheck step was enforcing nothing while 84 findings accumulated | Before citing a gate as enforcement, establish that it has RUN. A CI-only gate on a repo whose CI is off is a comment. CI triggers on every push to `dev` since 2026-10-24; check the run, not the workflow file |
 | Changed-files scope read as whole-tree | The cppcheck pre-commit hook checks the files YOUR commit touched -- correct for a commit hook, and no evidence at all for "clean project-wide". The findings that accumulate are invisible until someone edits that file, then block THEIR commit | State a gate's SCOPE next to its claim. `scripts/cppcheck_whole_project_gate.ps1` is the whole-tree twin |
 | Analyzer degrades silently | cppcheck drops to "Active checkers: 4/186" on an unparseable macro, finds nothing, and exits 0 -- 65 of 238 test files were once unanalyzed while the gate printed PASSED | Assert the tool's own self-report, not just its finding count. The gate fails under 170/186 |
 | Dead-code checker is disabled | `--enable=all` sounds complete, but global `unusedFunction` suppression plus cppcheck `-j` without a build directory disables the check while the run still passes | Use `scripts/check_dead_code.ps1`: single-process unusedFunction, planted dead probe, and exact-reference intersection. Raw Qt/header findings are not deletion evidence |
 | Baseline shrink checked only whole-tree | The JS lizard ratchet promised a fixed function's row must be deleted, but pre-commit passes filenames and stale-row checks ran only with no filenames -- so the normal hook could leave stale debt forever. A `./path` spelling also missed the baseline key | Canonicalize every path relative to the repo and check stale rows for every baseline file present in the explicit scan. Registered Python tests pin scoped pruning and missing-path refusal |
 | Hook filters out the language it claims to gate | `run_lizard.py` and CI analyzed JavaScript, but the pre-commit hook declared only C/C++ types and extensions, so a changed `background.js` printed `Skipped` and ran nothing | Include every claimed language in both `types_or` and `files`; structurally test the hook section, then invoke the hook on a real file and require `Passed`, not `Skipped` |
-| Gate parity exists only in prose | R5 said every pre-commit gate had a CI twin, while test registration and the real tool preflight were absent and eight generic hooks had no CI route | `scripts/check_gate_parity.ps1` derives custom hooks from live config, verifies direct/indirect CI routes, generic-hook wrapper coverage, and full-history gitleaks; registered tests remove each route and require red |
+| Gate parity exists only in prose | R5 said every pre-commit gate had a CI twin, while test registration and the real tool preflight were absent and eight generic hooks had no CI route | The tier table under "The gate" is the contract. A changed-files T1 check names its whole-tree T2 or T4 twin in the same table; a separate parity checker was retired 2026-10-24 as a gate that only checked gates |
 | Build tree mistaken for package tree | Portable smoke correctly rejected `build/Release` because it contains mutable `data/temp`; manual hook pointed at build output instead of clean extracted archive | Stage/archive first, then run package gates against `build/Release/clean-smoke-extract`; parity proves route exists, rehearsal proves route executes |
 | Redirected Start-Process loses the exit code | Windows PowerShell 5.1 can leave `.ExitCode` null after `Start-Process -PassThru` with redirected output, even after both WaitForExit forms and Refresh; a successful accessibility audit then false-reds as "code unknown" | Use `scripts/process_capture.ps1`: ProcessStartInfo plus asynchronous stdout/stderr drain, bounded wait, and captured integer exit code. Its registered test runs the exit/pipe/timeout contract |
 | Concurrent analyzer redirects share one file | `pre-commit run --all-files` may split one hook into parallel processes. `run_cppcheck.ps1` once redirected every process to `build/cppcheck_errors.txt`, so they truncated each other's diagnostics, emitted NUL-corrupted output, and hid the real findings behind unexplained exit 1 failures. The dead-code wrapper had the same defect in its generated suppression/findings files and failed with `Stream was not readable` | Both cppcheck hooks are `require_serial: true`, and every default/generated capture is PID-local in the system temp directory. Explicit `-ErrorsFile` paths remain available for callers that deliberately retain separate passes |
@@ -209,13 +239,13 @@ Status belongs in exactly one place, and that place is versioned.
 
 - Item status and remediation history: the tracking doc under `docs/`.
 - What landed: `git log`.
-- Registered test count and coverage claims: `tests/README.md` (a pre-commit gate verifies it
-  against the real CTest registration -- a README once hid nine dead test files by asserting
-  coverage that did not exist).
-- Certification claims for the partition tools: the matrix under `certification/`, which is
-  machine-readable data rather than prose, plus the gated docs that cite it. This tool writes
-  to raw disks; an uncertified operation appearing as certified is a data-destruction risk,
-  not a documentation problem.
+- Registered tests: the CTest registration itself (`ctest -N`). The test-registration hook
+  refuses a test source with no registered test -- a README once hid nine dead test files by
+  asserting coverage that did not exist. Docs describe tests; they do not carry counts.
+- Certification claims for the partition tools: the JSON under `certification/` and the claim
+  level computed from it are the only truth. Doc status blocks are generated from that JSON,
+  never hand-written. This tool writes to raw disks; an uncertified operation appearing as
+  certified is a data-destruction risk, not a documentation problem.
 - Any version number: the file that owns it (e.g. `browser/extension/manifest.json`).
 
 **`docs/` has three buckets, and which one a file sits in IS its status.** A plan in the wrong
