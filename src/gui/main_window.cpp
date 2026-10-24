@@ -45,7 +45,6 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFileInfo>
-#include <QFontDatabase>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QIcon>
@@ -545,19 +544,6 @@ void MainWindow::setupUi() {
 }
 
 void MainWindow::createStatusBar() {
-    QElapsedTimer font_timer;
-    font_timer.start();
-    if (isStartupSmokeMode()) {
-        logInfo("MainWindow startup: entering font database query");
-        logger::instance().flush();
-    }
-    const auto font_family_count = QFontDatabase::families().size();
-    logInfo("MainWindow startup: font database ready ({} families) after {} ms",
-            font_family_count,
-            font_timer.elapsed());
-    if (isStartupSmokeMode()) {
-        logger::instance().flush();
-    }
     QElapsedTimer status_timer;
     status_timer.start();
     if (isStartupSmokeMode()) {

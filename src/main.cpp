@@ -26,11 +26,10 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QElapsedTimer>
+#include <QEventLoop>
 #include <QFile>
 #include <QFileInfo>
-#include <QFont>
 #include <QFontDatabase>
-#include <QFontMetrics>
 #include <QHeaderView>
 #include <QIcon>
 #include <QLineEdit>
@@ -46,6 +45,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
@@ -64,6 +64,8 @@ namespace {
 constexpr int kAccessibilityParentDepthLimit = 5;
 constexpr int kAccessibilityOutputWriteFailureExitCode = 3;
 constexpr int kAccessibilityMissingNamesExitCode = 2;
+// How often the GUI thread re-checks the background font warmup while it keeps pumping.
+constexpr int kFontWarmupHeartbeatMs = 50;
 
 struct RuntimeOptions {
     bool accessibility_audit{false};
@@ -295,8 +297,19 @@ int runAccessibilityAudit(sak::MainWindow& main_window) {
     return 0;
 }
 
-// Keep the owned warmup and synthetic alias match until a native comparison
-// verifies a replacement across the complete startup and teardown path.
+// Qt's DirectWrite font database walks every installed family on first use. With thousands of
+// installed fonts that is seconds warm and tens of seconds cold. The walk runs here, off the GUI
+// thread, and waitForFontDatabaseWarmup() keeps the GUI pumping until it finishes, so no window
+// is ever frozen behind it. Measured 2026-10-24 on a 2491-family machine: the GUI-thread block
+// went from 5.8-10.8 s to under 0.15 s. A former synthetic missing-family match (to pre-pay
+// Qt's alias walk) cost 1.3-1.5 s per launch and bought nothing: every UI font list names an
+// installed family first, so no lookup misses -- do not reintroduce it.
+struct FontWarmupResult {
+    std::atomic<bool> done{false};
+    std::atomic<qsizetype> family_count{0};
+    std::atomic<qint64> census_ms{0};
+};
+FontWarmupResult g_font_warmup;
 std::thread g_font_warmup_thread;
 
 void joinFontDatabaseWarmup() {
@@ -307,9 +320,49 @@ void joinFontDatabaseWarmup() {
 
 void startFontDatabaseWarmup() {
     g_font_warmup_thread = std::thread([]() {
-        QFontDatabase::families();
-        QFontMetrics(QFont(QStringLiteral("sak-alias-warmup-probe"))).height();
+        QElapsedTimer timer;
+        timer.start();
+        g_font_warmup.family_count.store(QFontDatabase::families().size(),
+                                         std::memory_order_relaxed);
+        g_font_warmup.census_ms.store(timer.elapsed(), std::memory_order_relaxed);
+        g_font_warmup.done.store(true, std::memory_order_release);
     });
+}
+
+/// @brief Keep the GUI thread responsive until the background font warmup finishes.
+// SAK-ALLOW-BLOCKING: deliberately unbounded. No window can be built before Qt's font database
+// exists, and a deadline would only move the same wait onto a frozen GUI thread.
+void waitForFontDatabaseWarmup() {
+    QElapsedTimer waited;
+    waited.start();
+    qint64 longest_gap_ms = 0;
+    if (!g_font_warmup.done.load(std::memory_order_acquire)) {
+        // SAK-ALLOW-BLOCKING: runs once during startup, before the main window exists, so no
+        // application state can be re-entered. User input is excluded; only paint, timer and
+        // system messages are pumped so the splash repaints and Windows never marks the app
+        // "Not Responding". The alternative -- constructing widgets now -- blocks the GUI
+        // thread on the font database lock the warmup thread holds.
+        QEventLoop loop;
+        QTimer heartbeat;
+        QElapsedTimer gap;
+        heartbeat.setInterval(kFontWarmupHeartbeatMs);
+        QObject::connect(&heartbeat, &QTimer::timeout, &loop, [&loop, &gap, &longest_gap_ms]() {
+            longest_gap_ms = std::max(longest_gap_ms, gap.restart());
+            if (g_font_warmup.done.load(std::memory_order_acquire)) {
+                loop.quit();
+            }
+        });
+        gap.start();
+        heartbeat.start();
+        loop.exec(QEventLoop::ExcludeUserInputEvents);
+    }
+    sak::logInfo(
+        "Font database warmup: {} families in {} ms; GUI waited {} ms, longest event-loop gap {} "
+        "ms",
+        static_cast<qint64>(g_font_warmup.family_count.load(std::memory_order_relaxed)),
+        g_font_warmup.census_ms.load(std::memory_order_relaxed),
+        waited.elapsed(),
+        longest_gap_ms);
 }
 
 /// @brief Configure the caller-owned Qt application and apply theming.
@@ -474,6 +527,11 @@ int showMainWindow(QApplication& app,
     auto splash = createSplashIfRequested(show_splash);
     if (accessibility_audit) {
         writeAccessibilityAuditStatus(QStringLiteral("splash-ready"));
+    }
+    // SAK-ALLOW-BLOCKING: responsive wait (it pumps events); see waitForFontDatabaseWarmup.
+    waitForFontDatabaseWarmup();
+    if (startup_smoke_test) {
+        sak::logger::instance().flush();
     }
 
     sak::logInfo("Creating main window...");

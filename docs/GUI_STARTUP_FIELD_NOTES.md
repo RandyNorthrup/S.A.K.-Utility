@@ -7,19 +7,45 @@ The fixes themselves live in code, each with its rationale in a comment next to 
 does not repeat them -- it points at them and records what a code comment has no room for: the
 false trails, the measurements that mislead, and the technique.
 
+## Startup freeze: resolved 2026-10-24
+
+The 6-50 s startup freeze was caused by two app-added font calls, not by Qt alone:
+
+- `MainWindow::createStatusBar` called `QFontDatabase::families()` on the GUI thread only to
+  log a family count. It blocked on the font database lock while the background warmup thread
+  held it for the full census of every installed family.
+- The warmup thread then requested a nonexistent family (`sak-alias-warmup-probe`) to force
+  Qt's second full walk, the alias table, holding the lock for another 1.3-1.5 s. The status
+  bar's first widgets waited behind it.
+
+The fix (`startFontDatabaseWarmup` / `waitForFontDatabaseWarmup` in `src/main.cpp`): the warmup
+runs only the census and raises a done flag; `showMainWindow` keeps the GUI thread pumping (user
+input excluded) over the image-only splash until it finishes. Both app-added calls are gone.
+
+Same-machine A/B on a workstation with 4062 font files / 2491 families, fresh-copy native smoke,
+3 runs per arm: GUI blocked in main-window construction went from 5.8-10.8 s to 67-128 ms; the
+font wait became 0.8-1.8 s with event-loop gaps under 80 ms; wall time to ready went from
+8.1-16.7 s to 3.6-7.9 s. With the probe removed, no alias walk appeared later on the GUI thread
+(per-tab build times matched the probe arm): every UI font list names an installed family first,
+and Qt stops at the first family that exists, so generic names such as `sans-serif` are never
+looked up. Do not reintroduce a missing-family probe or a GUI-thread census.
+
+What made this hard to find, for the next investigation of this kind: the slow call migrated
+between widgets because the GUI thread was waiting on a lock another thread held, so every
+probe on the GUI side blamed whatever font operation happened to come first. The sections below
+record that history; their recommendations about the warmup and census are superseded.
+
 ## Measure startup; never reason about it
 
 Every startup phase logs its own elapsed milliseconds. `showMainWindow` in `src/main.cpp` times
-main-window construction and show; `MainWindow::setupUi` in `src/gui/main_window.cpp` times
-setupUi, window-state load, status bar, log window, panels, lazy-tab placeholders, help and
-about. Read the newest log under `sak::app_paths::logsDirectory()` (portable `data/logs` beside
-the exe when that is writable).
+the font wait and main-window construction and show; `MainWindow::setupUi` in
+`src/gui/main_window.cpp` times setupUi, window-state load, status bar, log window, panels,
+lazy-tab placeholders, help and about. Read the newest log under
+`sak::app_paths::logsDirectory()` (portable `data/logs` beside the exe when that is writable).
 
-`MainWindow::createStatusBar` reports the family count and how long its forced
-query waited for the font database. This is the first explicit startup family
-query, so it exposes the long native stall. The W51 experiment removed the
-query and eager warmup, but was reverted after inconclusive whole-startup
-comparison; those logs are historical, not the current implementation.
+The font wait logs one line: `Font database warmup: N families in X ms; GUI waited Y ms,
+longest event-loop gap Z ms`. A large Y with a small Z is healthy (slow fonts, responsive GUI); a
+large Z means something blocked the GUI thread during startup.
 
 **Offscreen timing is not desktop timing.** `QT_QPA_PLATFORM=offscreen` takes a different font
 path, and the desktop-only font cost never reproduced headless. `scripts/check_startup_budget.ps1`
