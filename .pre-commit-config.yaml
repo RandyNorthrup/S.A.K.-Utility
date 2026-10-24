@@ -21,6 +21,11 @@
 default_language_version:
   python: python3
 
+# T1 runs at commit time only. Without this, every hook with no `stages:` line also runs in
+# every other installed hook type, so the pre-push hook re-ran all of T1 over the pushed range
+# before the history scan (measured 118 s on 2026-10-24 instead of the scan's ~30 s).
+default_stages: [pre-commit]
+
 # Fail fast: stop on first hook failure.
 fail_fast: true
 
@@ -29,23 +34,33 @@ repos:
   # T1: standard pre-commit hooks (fast, universal checks). Whole-tree twin:
   # scripts/check_repository_hygiene.ps1 in T2.
   # =========================================================================
+  # Each carries stages: [pre-commit] explicitly because the upstream manifest declares its
+  # own stages (including pre-push) for several of them, which default_stages cannot override.
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
       - id: trailing-whitespace
         args: [--markdown-linebreak-ext=md]
+        stages: [pre-commit]
       - id: end-of-file-fixer
+        stages: [pre-commit]
       - id: check-yaml
+        stages: [pre-commit]
       - id: check-json
+        stages: [pre-commit]
       - id: check-toml
+        stages: [pre-commit]
       - id: check-added-large-files
         # The portable release vendors sizable helper tools (Chocolatey, aria2, the
         # UUP media tools) so GitHub builds do not depend on external machines. Keep
         # this cap generous for those intentional release assets rather than bypassing
         # hooks. (Only newly ADDED files are checked; existing bundles are grandfathered.)
         args: [--maxkb=51200]
+        stages: [pre-commit]
       - id: check-merge-conflict
+        stages: [pre-commit]
       - id: check-case-conflict
+        stages: [pre-commit]
 
   - repo: local
     hooks:
