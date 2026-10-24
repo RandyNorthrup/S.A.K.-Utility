@@ -533,6 +533,42 @@ set(SAK_FOUNDATION_SOURCES
     include/sak/worker_base.h
 )
 
+# Filesystem drivers (APFS, HFS+, ext), raw device and image I/O, the filesystem detector, and the
+# stream decompressors. Qt Core plus the codec libraries, so the two writer CLIs that ship beside
+# the app link the same drivers the app runs and nothing above them. The Partition Manager's
+# planner, executor and controller use ProcessRunner, Qt Concurrent and the elevation broker, and
+# the controller carries the panel test hooks, so they stay in sak_core.
+set(SAK_PARTITION_FS_SOURCES
+    src/core/apfs_crypto.cpp
+    src/core/apfs_keybag.cpp
+    src/core/partition_apfs_file_system_reader.cpp
+    src/core/partition_apfs_writer.cpp
+    src/core/partition_ext_file_system_reader.cpp
+    src/core/partition_hfs_file_system_reader.cpp
+    src/core/partition_hfs_file_system_writer.cpp
+    src/core/partition_raw_device_io.cpp
+    src/core/partition_file_system_detector.cpp
+    src/core/streaming_decompressor.cpp
+    src/core/gzip_decompressor.cpp
+    src/core/bzip2_decompressor.cpp
+    src/core/xz_decompressor.cpp
+    src/core/decompressor_factory.cpp
+    include/sak/apfs_crypto.h
+    include/sak/apfs_keybag.h
+    include/sak/partition_apfs_file_system_reader.h
+    include/sak/partition_apfs_writer.h
+    include/sak/partition_ext_file_system_reader.h
+    include/sak/partition_hfs_file_system_reader.h
+    include/sak/partition_hfs_internal.h
+    include/sak/partition_raw_device_io.h
+    include/sak/partition_file_system_detector.h
+    include/sak/streaming_decompressor.h
+    include/sak/gzip_decompressor.h
+    include/sak/bzip2_decompressor.h
+    include/sak/xz_decompressor.h
+    include/sak/decompressor_factory.h
+)
+
 # Core utility modules
 set(CORE_SOURCES
     src/core/crash_reporter.cpp
@@ -568,11 +604,6 @@ set(CORE_SOURCES
     src/core/windows_usb_creator.cpp
     src/core/windows_usb_creator_extract.cpp
     src/core/drive_unmounter.cpp
-    src/core/streaming_decompressor.cpp
-    src/core/gzip_decompressor.cpp
-    src/core/bzip2_decompressor.cpp
-    src/core/xz_decompressor.cpp
-    src/core/decompressor_factory.cpp
     src/core/quick_action.cpp
     src/core/quick_action_controller.cpp
     src/core/app_action_registry.cpp
@@ -610,16 +641,7 @@ set(CORE_SOURCES
     src/gui/file_explorer_properties_dialog.cpp
     include/sak/file_explorer_properties_dialog.h
     src/core/file_management_file_system.cpp
-    src/core/apfs_crypto.cpp
-    src/core/apfs_keybag.cpp
-    src/core/partition_apfs_file_system_reader.cpp
-    src/core/partition_apfs_writer.cpp
-    src/core/partition_ext_file_system_reader.cpp
-    src/core/partition_hfs_file_system_reader.cpp
-    src/core/partition_hfs_file_system_writer.cpp
-    src/core/partition_raw_device_io.cpp
     src/core/partition_manager_types.cpp
-    src/core/partition_file_system_detector.cpp
     src/core/partition_file_system_registry.cpp
     src/core/partition_file_system_tool_manifest.cpp
     src/core/partition_file_system_tool_runner.cpp
@@ -663,11 +685,6 @@ set(CORE_SOURCES
     include/sak/linux_iso_downloader.h
     include/sak/windows_usb_creator.h
     include/sak/drive_unmounter.h
-    include/sak/streaming_decompressor.h
-    include/sak/gzip_decompressor.h
-    include/sak/bzip2_decompressor.h
-    include/sak/xz_decompressor.h
-    include/sak/decompressor_factory.h
     include/sak/chocolatey_manager.h
     include/sak/vulnerability_scanner.h
     include/sak/package_matcher.h
@@ -706,14 +723,7 @@ set(CORE_SOURCES
     include/sak/file_explorer_session_store.h
     include/sak/file_explorer_tag_store.h
     include/sak/file_management_file_system.h
-    include/sak/partition_apfs_file_system_reader.h
-    include/sak/partition_apfs_writer.h
-    include/sak/partition_ext_file_system_reader.h
-    include/sak/partition_hfs_file_system_reader.h
-    include/sak/partition_hfs_internal.h
-    include/sak/partition_raw_device_io.h
     include/sak/partition_manager_types.h
-    include/sak/partition_file_system_detector.h
     include/sak/partition_file_system_registry.h
     include/sak/partition_file_system_tool_manifest.h
     include/sak/partition_file_system_tool_runner.h
@@ -1286,6 +1296,19 @@ target_link_libraries(sak_foundation
         sak_windows_process_job
 )
 
+sak_add_product_library(sak_partition_fs ${SAK_PARTITION_FS_SOURCES})
+target_link_libraries(sak_partition_fs
+    PUBLIC
+        sak_foundation
+        Qt6::Core
+        # The gzip, bzip2 and xz decompressor headers include their codec's own header.
+        ZLIB::ZLIB
+        BZip2::BZip2
+        LibLZMA::LibLZMA
+    PRIVATE
+        sak_lzfse
+)
+
 # ============================================================================
 # Executable Target
 # ============================================================================
@@ -1365,6 +1388,7 @@ target_link_libraries(sak_utility PRIVATE
     BZip2::BZip2
     LibLZMA::LibLZMA
     sak_lzfse
+    sak_partition_fs
     sak_foundation
     ${PLATFORM_LIBS}
 )
@@ -1391,18 +1415,6 @@ target_include_directories(sak_utility PRIVATE
 
 add_executable(sak_apfs_writer_cli
     src/tools/sak_apfs_writer_cli.cpp
-    src/core/apfs_crypto.cpp
-    src/core/apfs_keybag.cpp
-    src/core/partition_apfs_file_system_reader.cpp
-    src/core/partition_apfs_writer.cpp
-    src/core/partition_file_system_detector.cpp
-    src/core/partition_raw_device_io.cpp
-    include/sak/apfs_crypto.h
-    include/sak/apfs_keybag.h
-    include/sak/partition_apfs_writer.h
-    include/sak/partition_apfs_file_system_reader.h
-    include/sak/partition_file_system_detector.h
-    include/sak/partition_raw_device_io.h
 )
 
 set_target_properties(sak_apfs_writer_cli PROPERTIES
@@ -1417,7 +1429,7 @@ target_include_directories(sak_apfs_writer_cli PRIVATE
 
 target_link_libraries(sak_apfs_writer_cli PRIVATE
     Qt6::Core
-    sak_lzfse
+    sak_partition_fs
     ${PLATFORM_LIBS}
 )
 
@@ -1435,12 +1447,6 @@ add_dependencies(sak_utility sak_apfs_writer_cli)
 
 add_executable(sak_hfs_writer_cli
     src/tools/sak_hfs_writer_cli.cpp
-    src/core/partition_hfs_file_system_reader.cpp
-    src/core/partition_hfs_file_system_writer.cpp
-    src/core/partition_raw_device_io.cpp
-    include/sak/partition_hfs_file_system_reader.h
-    include/sak/partition_hfs_internal.h
-    include/sak/partition_raw_device_io.h
 )
 
 set_target_properties(sak_hfs_writer_cli PROPERTIES
@@ -1455,7 +1461,7 @@ target_include_directories(sak_hfs_writer_cli PRIVATE
 
 target_link_libraries(sak_hfs_writer_cli PRIVATE
     Qt6::Core
-    sak_lzfse
+    sak_partition_fs
     ${PLATFORM_LIBS}
 )
 

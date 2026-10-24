@@ -413,10 +413,8 @@ message(STATUS "Added five Create Image source-lock runtime tests")
 # test_partition_manager_controller - async preflight/apply/verification state machine
 add_executable(test_partition_manager_controller
     unit/test_partition_manager_controller.cpp
-    ../src/core/partition_raw_device_io.cpp
     ../src/core/partition_manager_controller.cpp
     ../src/core/partition_manager_types.cpp
-    ../src/core/partition_file_system_detector.cpp
     ../src/core/partition_file_system_registry.cpp
     ../src/core/partition_file_system_tool_manifest.cpp
     ../src/core/partition_file_system_tool_runner.cpp
@@ -429,11 +427,9 @@ add_executable(test_partition_manager_controller
     ../include/sak/partition_manager_controller.h
     ../include/sak/partition_executor.h
     ../include/sak/partition_manager_types.h
-    ../include/sak/partition_file_system_detector.h
     ../include/sak/partition_file_system_registry.h
     ../include/sak/partition_file_system_tool_manifest.h
     ../include/sak/partition_file_system_tool_runner.h
-    ../include/sak/partition_raw_device_io.h
     ../include/sak/elevation_broker.h
     ../include/sak/storage_inventory_worker.h
     ../include/sak/partition_safety_validator.h
@@ -445,6 +441,7 @@ set_target_properties(test_partition_manager_controller PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_partition_manager_controller PRIVATE
+    sak_partition_fs
     sak_foundation
     Qt6::Core Qt6::Concurrent Qt6::Test ZLIB::ZLIB sak_lzfse ${PLATFORM_LIBS}
 )
@@ -739,17 +736,8 @@ add_executable(test_partition_manager_panel
     ../src/gui/follow_scroll_controller.cpp
     ../src/gui/ribbon_tool_button.cpp
     ../src/core/file_recovery_engine.cpp
-    ../src/core/apfs_crypto.cpp
-    ../src/core/apfs_keybag.cpp
-    ../src/core/partition_apfs_file_system_reader.cpp
-    ../src/core/partition_apfs_writer.cpp
-    ../src/core/partition_ext_file_system_reader.cpp
-    ../src/core/partition_hfs_file_system_reader.cpp
-    ../src/core/partition_hfs_file_system_writer.cpp
-    ../src/core/partition_raw_device_io.cpp
     ../src/core/partition_manager_controller.cpp
     ../src/core/partition_manager_types.cpp
-    ../src/core/partition_file_system_detector.cpp
     ../src/core/partition_file_system_registry.cpp
     ../src/core/partition_file_system_tool_manifest.cpp
     ../src/core/partition_file_system_tool_runner.cpp
@@ -765,12 +753,6 @@ add_executable(test_partition_manager_panel
     ../resources/icons.qrc
     ../include/sak/partition_manager_panel.h
     ../include/sak/file_recovery_engine.h
-    ../include/sak/partition_apfs_file_system_reader.h
-    ../include/sak/partition_apfs_writer.h
-    ../include/sak/partition_ext_file_system_reader.h
-    ../include/sak/partition_hfs_file_system_reader.h
-    ../include/sak/partition_raw_device_io.h
-    ../include/sak/partition_file_system_detector.h
     ../include/sak/partition_file_system_registry.h
     ../include/sak/partition_file_system_tool_manifest.h
     ../include/sak/partition_file_system_tool_runner.h
@@ -787,6 +769,7 @@ set_target_properties(test_partition_manager_panel PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_partition_manager_panel PRIVATE
+    sak_partition_fs
     sak_foundation
     Qt6::Core Qt6::Concurrent Qt6::Widgets Qt6::Test sak_lzfse ${PLATFORM_LIBS}
 )
@@ -1257,21 +1240,13 @@ message(STATUS "Added unit test: test_input_validator")
 # test_decompressor_factory - format detection, isCompressed, factory create
 add_executable(test_decompressor_factory
     unit/test_decompressor_factory.cpp
-    ../src/core/decompressor_factory.cpp
-    ../src/core/streaming_decompressor.cpp
-    ../src/core/gzip_decompressor.cpp
-    ../src/core/bzip2_decompressor.cpp
-    ../src/core/xz_decompressor.cpp
-    ../include/sak/streaming_decompressor.h
-    ../include/sak/gzip_decompressor.h
-    ../include/sak/bzip2_decompressor.h
-    ../include/sak/xz_decompressor.h
 )
 set_target_properties(test_decompressor_factory PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_decompressor_factory PRIVATE
+    sak_partition_fs
     sak_foundation
     Qt6::Core Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
 )
@@ -1583,15 +1558,6 @@ add_executable(test_file_management_explorer_panel
     ../src/core/drive_unmounter.cpp
     ../include/sak/drive_unmounter.h
     ../src/core/advanced_search_worker.cpp
-    ../src/core/apfs_crypto.cpp
-    ../src/core/apfs_keybag.cpp
-    ../src/core/partition_apfs_file_system_reader.cpp
-    ../src/core/partition_apfs_writer.cpp
-    ../src/core/partition_ext_file_system_reader.cpp
-    ../src/core/partition_hfs_file_system_reader.cpp
-    ../src/core/partition_hfs_file_system_writer.cpp
-    ../src/core/partition_raw_device_io.cpp
-    ../src/core/partition_file_system_detector.cpp
     ../src/core/partition_file_system_registry.cpp
     ../src/core/partition_manager_types.cpp
     ../src/core/storage_inventory_worker.cpp
@@ -1631,6 +1597,7 @@ set_target_properties(test_file_management_explorer_panel PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_file_management_explorer_panel PRIVATE
+    sak_partition_fs
     sak_foundation
     Qt6::Core Qt6::CorePrivate Qt6::Concurrent Qt6::Widgets Qt6::Test ZLIB::ZLIB sak_lzfse
     ${PLATFORM_LIBS}
@@ -1651,23 +1618,8 @@ message(STATUS "Added unit test: test_file_management_explorer_panel")
 add_executable(test_file_management_file_system
     unit/test_file_management_file_system.cpp
     ../src/core/file_management_file_system.cpp
-    ../src/core/apfs_crypto.cpp
-    ../src/core/apfs_keybag.cpp
-    ../src/core/partition_apfs_file_system_reader.cpp
-    ../src/core/partition_apfs_writer.cpp
-    ../src/core/partition_ext_file_system_reader.cpp
-    ../src/core/partition_hfs_file_system_reader.cpp
-    ../src/core/partition_hfs_file_system_writer.cpp
-    ../src/core/partition_raw_device_io.cpp
-    ../src/core/partition_file_system_detector.cpp
     ../src/core/partition_file_system_registry.cpp
     ../include/sak/file_management_file_system.h
-    ../include/sak/partition_apfs_file_system_reader.h
-    ../include/sak/partition_apfs_writer.h
-    ../include/sak/partition_ext_file_system_reader.h
-    ../include/sak/partition_hfs_file_system_reader.h
-    ../include/sak/partition_raw_device_io.h
-    ../include/sak/partition_file_system_detector.h
     ../include/sak/partition_file_system_registry.h
 )
 set_target_properties(test_file_management_file_system PROPERTIES
@@ -1675,6 +1627,7 @@ set_target_properties(test_file_management_file_system PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_file_management_file_system PRIVATE
+    sak_partition_fs
     sak_foundation
     Qt6::Core Qt6::Test ZLIB::ZLIB sak_lzfse ${PLATFORM_LIBS}
 )
@@ -1938,8 +1891,6 @@ if(SAK_ENABLE_AI_ASSISTANT)
         # (names + security type only, no key material) + honesty channel are covered by the shape.
         ${CMAKE_SOURCE_DIR}/src/core/wifi_profile_scanner.cpp
         ${CMAKE_SOURCE_DIR}/src/core/storage_inventory_worker.cpp
-        ${CMAKE_SOURCE_DIR}/src/core/partition_file_system_detector.cpp
-        ${CMAKE_SOURCE_DIR}/src/core/partition_raw_device_io.cpp
         # W2e partition.preview_operation: the planner + safety validator + type
         # helpers are driven directly (pure, no disk I/O); no controller/executor.
         ${CMAKE_SOURCE_DIR}/src/core/partition_operation_planner.cpp
@@ -1957,11 +1908,6 @@ if(SAK_ENABLE_AI_ASSISTANT)
         ${CMAKE_SOURCE_DIR}/src/core/elevation_broker.cpp
         ${CMAKE_SOURCE_DIR}/src/core/vulnerability_scanner.cpp
         ${CMAKE_SOURCE_DIR}/src/core/image_source.cpp
-        ${CMAKE_SOURCE_DIR}/src/core/decompressor_factory.cpp
-        ${CMAKE_SOURCE_DIR}/src/core/streaming_decompressor.cpp
-        ${CMAKE_SOURCE_DIR}/src/core/gzip_decompressor.cpp
-        ${CMAKE_SOURCE_DIR}/src/core/bzip2_decompressor.cpp
-        ${CMAKE_SOURCE_DIR}/src/core/xz_decompressor.cpp
         # W1b async read-only op: the search ENGINE (worker) is driven directly, so
         # the controller/regex-library/config-manager are intentionally not linked.
         ${CMAKE_SOURCE_DIR}/src/core/advanced_search_worker.cpp
@@ -2100,10 +2046,6 @@ if(SAK_ENABLE_AI_ASSISTANT)
         ${CMAKE_SOURCE_DIR}/include/sak/actions/backup_bitlocker_keys_action.h
         ${CMAKE_SOURCE_DIR}/include/sak/storage_inventory_worker.h
         ${CMAKE_SOURCE_DIR}/include/sak/image_source.h
-        ${CMAKE_SOURCE_DIR}/include/sak/streaming_decompressor.h
-        ${CMAKE_SOURCE_DIR}/include/sak/gzip_decompressor.h
-        ${CMAKE_SOURCE_DIR}/include/sak/bzip2_decompressor.h
-        ${CMAKE_SOURCE_DIR}/include/sak/xz_decompressor.h
         ${CMAKE_SOURCE_DIR}/include/sak/advanced_search_worker.h
         ${CMAKE_SOURCE_DIR}/include/sak/hardware_inventory_scanner.h
         ${CMAKE_SOURCE_DIR}/include/sak/smart_disk_analyzer.h
@@ -2152,6 +2094,7 @@ if(SAK_ENABLE_AI_ASSISTANT)
     target_compile_definitions(test_ai_assistant_panel_tool_dispatch PRIVATE
         SAK_WIN_REGISTRY_TESTS)
     target_link_libraries(test_ai_assistant_panel_tool_dispatch PRIVATE
+        sak_partition_fs
         sak_foundation
         Qt6::Core Qt6::CorePrivate Qt6::Widgets Qt6::Concurrent Qt6::Network Qt6::Xml
         Qt6::Test Threads::Threads ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA sak_lzfse
@@ -2403,15 +2346,6 @@ message(STATUS "Added unit test: test_fuzz_pst_structure")
 # Mirrors test_streaming_decompressor's link set.
 add_executable(test_fuzz_decompressor
     unit/test_fuzz_decompressor.cpp
-    ../src/core/streaming_decompressor.cpp
-    ../src/core/decompressor_factory.cpp
-    ../src/core/gzip_decompressor.cpp
-    ../src/core/bzip2_decompressor.cpp
-    ../src/core/xz_decompressor.cpp
-    ../include/sak/streaming_decompressor.h
-    ../include/sak/gzip_decompressor.h
-    ../include/sak/bzip2_decompressor.h
-    ../include/sak/xz_decompressor.h
     fuzz/fuzz_harness.h
 )
 set_target_properties(test_fuzz_decompressor PROPERTIES
@@ -2419,6 +2353,7 @@ set_target_properties(test_fuzz_decompressor PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_fuzz_decompressor PRIVATE
+    sak_partition_fs
     sak_foundation
     Qt6::Core Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
 )
@@ -2555,10 +2490,6 @@ message(STATUS "Added unit test: test_fuzz_iso_analyzer")
 # shared ext image builder in tests/support/ext_fixture.h.
 add_executable(test_fuzz_ext_reader
     unit/test_fuzz_ext_reader.cpp
-    ../src/core/partition_ext_file_system_reader.cpp
-    ../src/core/partition_raw_device_io.cpp
-    ../include/sak/partition_ext_file_system_reader.h
-    ../include/sak/partition_raw_device_io.h
     ../include/sak/partition_export_containment.h
     support/byte_writer.h
     support/ext_fixture.h
@@ -2569,6 +2500,7 @@ set_target_properties(test_fuzz_ext_reader PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_fuzz_ext_reader PRIVATE
+    sak_partition_fs
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_fuzz_ext_reader PRIVATE
@@ -2584,10 +2516,6 @@ message(STATUS "Added unit test: test_fuzz_ext_reader")
 # no crash/hang across the three call shapes, determinism (pure function), and non-empty family.
 add_executable(test_fuzz_fs_detector
     unit/test_fuzz_fs_detector.cpp
-    ../src/core/partition_file_system_detector.cpp
-    ../src/core/partition_raw_device_io.cpp
-    ../include/sak/partition_file_system_detector.h
-    ../include/sak/partition_raw_device_io.h
     support/byte_writer.h
     fuzz/fuzz_harness.h
 )
@@ -2596,6 +2524,7 @@ set_target_properties(test_fuzz_fs_detector PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_fuzz_fs_detector PRIVATE
+    sak_partition_fs
     Qt6::Core Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_fuzz_fs_detector PRIVATE
@@ -2637,12 +2566,7 @@ message(STATUS "Added unit test: test_fuzz_install_script")
 # HFS image builder in tests/support/hfs_fixture.h.
 add_executable(test_fuzz_hfs_reader
     unit/test_fuzz_hfs_reader.cpp
-    ../src/core/partition_hfs_file_system_reader.cpp
-    ../src/core/partition_raw_device_io.cpp
-    ../include/sak/partition_hfs_file_system_reader.h
-    ../include/sak/partition_raw_device_io.h
     ../include/sak/partition_export_containment.h
-    ../include/sak/partition_hfs_internal.h
     support/byte_writer.h
     support/hfs_fixture.h
     fuzz/fuzz_harness.h
@@ -2652,6 +2576,7 @@ set_target_properties(test_fuzz_hfs_reader PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_fuzz_hfs_reader PRIVATE
+    sak_partition_fs
     Qt6::Core Qt6::Test sak_lzfse ${PLATFORM_LIBS}
 )
 target_include_directories(test_fuzz_hfs_reader PRIVATE
@@ -2669,15 +2594,6 @@ message(STATUS "Added unit test: test_fuzz_hfs_reader")
 # fail-closed-with-a-blocker, bounded listings, and bounded reads.
 add_executable(test_fuzz_apfs_reader
     unit/test_fuzz_apfs_reader.cpp
-    ../src/core/partition_apfs_file_system_reader.cpp
-    ../src/core/partition_apfs_writer.cpp
-    ../src/core/apfs_crypto.cpp
-    ../src/core/apfs_keybag.cpp
-    ../src/core/partition_file_system_detector.cpp
-    ../src/core/partition_raw_device_io.cpp
-    ../include/sak/partition_apfs_file_system_reader.h
-    ../include/sak/partition_apfs_writer.h
-    ../include/sak/partition_raw_device_io.h
     ../include/sak/partition_export_containment.h
     fuzz/fuzz_harness.h
 )
@@ -2686,6 +2602,7 @@ set_target_properties(test_fuzz_apfs_reader PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_fuzz_apfs_reader PRIVATE
+    sak_partition_fs
     Qt6::Core Qt6::Test sak_lzfse ${PLATFORM_LIBS}
 )
 target_include_directories(test_fuzz_apfs_reader PRIVATE
@@ -4268,21 +4185,13 @@ message(STATUS "Added unit test: test_elevation_hardening")
 # test_streaming_decompressor - gzip/bzip2/xz lifecycle, byte tracking
 add_executable(test_streaming_decompressor
     unit/test_streaming_decompressor.cpp
-    ../src/core/streaming_decompressor.cpp
-    ../src/core/decompressor_factory.cpp
-    ../src/core/gzip_decompressor.cpp
-    ../src/core/bzip2_decompressor.cpp
-    ../src/core/xz_decompressor.cpp
-    ../include/sak/streaming_decompressor.h
-    ../include/sak/gzip_decompressor.h
-    ../include/sak/bzip2_decompressor.h
-    ../include/sak/xz_decompressor.h
 )
 set_target_properties(test_streaming_decompressor PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_streaming_decompressor PRIVATE
+    sak_partition_fs
     sak_foundation
     Qt6::Core Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
 )
@@ -4949,11 +4858,6 @@ add_executable(test_image_flasher_panel
     ../src/core/image_source.cpp
     ../src/core/drive_unmounter.cpp
     ../src/core/drive_scanner.cpp
-    ../src/core/streaming_decompressor.cpp
-    ../src/core/decompressor_factory.cpp
-    ../src/core/gzip_decompressor.cpp
-    ../src/core/bzip2_decompressor.cpp
-    ../src/core/xz_decompressor.cpp
     ../src/core/keep_awake.cpp
     ../src/core/iso_analyzer.cpp
     ../src/core/config_manager.cpp
@@ -4979,10 +4883,6 @@ add_executable(test_image_flasher_panel
     ../include/sak/image_source.h
     ../include/sak/drive_unmounter.h
     ../include/sak/drive_scanner.h
-    ../include/sak/streaming_decompressor.h
-    ../include/sak/gzip_decompressor.h
-    ../include/sak/bzip2_decompressor.h
-    ../include/sak/xz_decompressor.h
     ../include/sak/uup_dump_api.h
     ../include/sak/linux_distro_catalog.h
     ../include/sak/iso_analyzer.h
@@ -4998,6 +4898,7 @@ set_target_properties(test_image_flasher_panel PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_image_flasher_panel PRIVATE
+    sak_partition_fs
     sak_foundation
     Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Test
     ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
@@ -5105,25 +5006,10 @@ message(STATUS "Added unit test: test_user_data_manager")
 add_executable(test_duplicate_finder_worker
     unit/test_duplicate_finder_worker.cpp
     ../src/core/file_management_file_system.cpp
-    ../src/core/apfs_crypto.cpp
-    ../src/core/apfs_keybag.cpp
-    ../src/core/partition_apfs_file_system_reader.cpp
-    ../src/core/partition_apfs_writer.cpp
-    ../src/core/partition_ext_file_system_reader.cpp
-    ../src/core/partition_hfs_file_system_reader.cpp
-    ../src/core/partition_hfs_file_system_writer.cpp
-    ../src/core/partition_raw_device_io.cpp
-    ../src/core/partition_file_system_detector.cpp
     ../src/core/partition_file_system_registry.cpp
     ../src/threading/duplicate_finder_worker.cpp
     ../include/sak/file_management_file_system.h
     ../include/sak/duplicate_finder_worker.h
-    ../include/sak/partition_apfs_file_system_reader.h
-    ../include/sak/partition_apfs_writer.h
-    ../include/sak/partition_ext_file_system_reader.h
-    ../include/sak/partition_hfs_file_system_reader.h
-    ../include/sak/partition_raw_device_io.h
-    ../include/sak/partition_file_system_detector.h
     ../include/sak/partition_file_system_registry.h
 )
 set_target_properties(test_duplicate_finder_worker PROPERTIES
@@ -5131,6 +5017,7 @@ set_target_properties(test_duplicate_finder_worker PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_duplicate_finder_worker PRIVATE
+    sak_partition_fs
     sak_foundation
     Qt6::Core Qt6::Test Qt6::Concurrent ZLIB::ZLIB sak_lzfse ${PLATFORM_LIBS}
 )
@@ -5281,19 +5168,9 @@ add_executable(test_flash_worker
     ../src/core/drive_scanner.cpp
     ../include/sak/drive_scanner.h
     ../src/core/image_source.cpp
-    ../src/core/streaming_decompressor.cpp
-    ../src/core/decompressor_factory.cpp
-    ../src/core/gzip_decompressor.cpp
-    ../src/core/bzip2_decompressor.cpp
-    ../src/core/xz_decompressor.cpp
     ../src/core/keep_awake.cpp
     ../include/sak/flash_worker.h
     ../include/sak/image_source.h
-    ../include/sak/streaming_decompressor.h
-    ../include/sak/decompressor_factory.h
-    ../include/sak/gzip_decompressor.h
-    ../include/sak/bzip2_decompressor.h
-    ../include/sak/xz_decompressor.h
     ../include/sak/keep_awake.h
 )
 set_target_properties(test_flash_worker PROPERTIES
@@ -5301,6 +5178,7 @@ set_target_properties(test_flash_worker PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_flash_worker PRIVATE
+    sak_partition_fs
     sak_foundation
     Qt6::Core Qt6::Concurrent Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
 )
@@ -5462,15 +5340,6 @@ add_executable(test_flash_coordinator
     ../src/core/drive_scanner.cpp
     ../include/sak/drive_scanner.h
     ../src/core/input_validator.cpp
-    ../src/core/streaming_decompressor.cpp
-    ../include/sak/streaming_decompressor.h
-    ../src/core/decompressor_factory.cpp
-    ../src/core/gzip_decompressor.cpp
-    ../include/sak/gzip_decompressor.h
-    ../src/core/bzip2_decompressor.cpp
-    ../include/sak/bzip2_decompressor.h
-    ../src/core/xz_decompressor.cpp
-    ../include/sak/xz_decompressor.h
     ../src/core/keep_awake.cpp
     ../include/sak/keep_awake.h
 )
@@ -5479,6 +5348,7 @@ set_target_properties(test_flash_coordinator PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_flash_coordinator PRIVATE
+    sak_partition_fs
     sak_foundation
     Qt6::Core Qt6::Concurrent Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
 )
@@ -5671,25 +5541,10 @@ message(STATUS "Added unit test: test_regex_pattern_library")
 add_executable(test_advanced_search_worker
     unit/test_advanced_search_worker.cpp
     ../src/core/file_management_file_system.cpp
-    ../src/core/apfs_crypto.cpp
-    ../src/core/apfs_keybag.cpp
-    ../src/core/partition_apfs_file_system_reader.cpp
-    ../src/core/partition_apfs_writer.cpp
-    ../src/core/partition_ext_file_system_reader.cpp
-    ../src/core/partition_hfs_file_system_reader.cpp
-    ../src/core/partition_hfs_file_system_writer.cpp
-    ../src/core/partition_raw_device_io.cpp
-    ../src/core/partition_file_system_detector.cpp
     ../src/core/partition_file_system_registry.cpp
     ../src/core/advanced_search_worker.cpp
     ../include/sak/file_management_file_system.h
     ../include/sak/advanced_search_worker.h
-    ../include/sak/partition_apfs_file_system_reader.h
-    ../include/sak/partition_apfs_writer.h
-    ../include/sak/partition_ext_file_system_reader.h
-    ../include/sak/partition_hfs_file_system_reader.h
-    ../include/sak/partition_raw_device_io.h
-    ../include/sak/partition_file_system_detector.h
     ../include/sak/partition_file_system_registry.h
 )
 set_target_properties(test_advanced_search_worker PROPERTIES
@@ -5697,6 +5552,7 @@ set_target_properties(test_advanced_search_worker PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_advanced_search_worker PRIVATE
+    sak_partition_fs
     sak_foundation
     Qt6::Core Qt6::Gui Qt6::Test ZLIB::ZLIB sak_lzfse
 )
@@ -5712,15 +5568,6 @@ message(STATUS "Added unit test: test_advanced_search_worker")
 add_executable(test_advanced_search_controller
     unit/test_advanced_search_controller.cpp
     ../src/core/file_management_file_system.cpp
-    ../src/core/apfs_crypto.cpp
-    ../src/core/apfs_keybag.cpp
-    ../src/core/partition_apfs_file_system_reader.cpp
-    ../src/core/partition_apfs_writer.cpp
-    ../src/core/partition_ext_file_system_reader.cpp
-    ../src/core/partition_hfs_file_system_reader.cpp
-    ../src/core/partition_hfs_file_system_writer.cpp
-    ../src/core/partition_raw_device_io.cpp
-    ../src/core/partition_file_system_detector.cpp
     ../src/core/partition_file_system_registry.cpp
     ../src/core/advanced_search_controller.cpp
     ../src/core/advanced_search_worker.cpp
@@ -5729,12 +5576,6 @@ add_executable(test_advanced_search_controller
     ../include/sak/file_management_file_system.h
     ../include/sak/advanced_search_controller.h
     ../include/sak/advanced_search_worker.h
-    ../include/sak/partition_apfs_file_system_reader.h
-    ../include/sak/partition_apfs_writer.h
-    ../include/sak/partition_ext_file_system_reader.h
-    ../include/sak/partition_hfs_file_system_reader.h
-    ../include/sak/partition_raw_device_io.h
-    ../include/sak/partition_file_system_detector.h
     ../include/sak/partition_file_system_registry.h
     ../include/sak/regex_pattern_library.h
     ../include/sak/config_manager.h
@@ -5744,6 +5585,7 @@ set_target_properties(test_advanced_search_controller PROPERTIES
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_advanced_search_controller PRIVATE
+    sak_partition_fs
     sak_foundation
     Qt6::Core Qt6::Gui Qt6::Test ZLIB::ZLIB sak_lzfse
 )
@@ -6491,22 +6333,14 @@ message(STATUS "Added unit test: test_drive_unmounter")
 add_executable(test_image_source
     unit/test_image_source.cpp
     ../src/core/image_source.cpp
-    ../src/core/decompressor_factory.cpp
-    ../src/core/streaming_decompressor.cpp
-    ../src/core/gzip_decompressor.cpp
-    ../src/core/bzip2_decompressor.cpp
-    ../src/core/xz_decompressor.cpp
     ../include/sak/image_source.h
-    ../include/sak/streaming_decompressor.h
-    ../include/sak/gzip_decompressor.h
-    ../include/sak/bzip2_decompressor.h
-    ../include/sak/xz_decompressor.h
 )
 set_target_properties(test_image_source PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
 )
 target_link_libraries(test_image_source PRIVATE
+    sak_partition_fs
     sak_foundation
     Qt6::Core Qt6::Test ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
 )
