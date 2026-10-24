@@ -27,9 +27,9 @@ keeps their history.
 
 ### Open crash, data-loss and security items (must be empty to release)
 
-1. Startup GUI freeze: a cold DirectWrite font census blocks the GUI thread on machines with many
-   installed fonts (`src/gui/main_window.cpp` createStatusBar, `src/main.cpp` warmup). Detail:
-   `docs/GUI_STARTUP_FIELD_NOTES.md`.
+1. Startup GUI freeze: FIXED locally 2026-10-24 (GUI block 5.8-10.8 s -> under 0.15 s on a
+   2491-family machine; see `docs/GUI_STARTUP_FIELD_NOTES.md`). Still to prove on release bytes:
+   the stock Windows 11 VM run and the package smoke.
 2. `ProcessRunner::finishContainedOrFailFast` (`src/core/process_runner.cpp` ~189) calls qFatal on
    a cleanup deadline during a tool run -- the same crash shape fixed for MCP in a8b64bbd. Apply
    the same report-and-contain treatment through `sak::ContainedProcessQuarantine`.
@@ -46,6 +46,53 @@ keeps their history.
 6. 78 unverified findings (18 HIGH) in 14 review briefs under `docs/review_briefs/` that no ledger
    unit binds. Triage each against current code; two sampled HIGH/MEDIUM findings were already
    fixed.
+7. Real defects found by the 2026-10-24 behavior audit:
+   - `ProcessRunner` kills descendants still alive about 1 s after the root exits and marks the
+     run failed, so NSIS uninstallers (which relaunch from %TEMP%) and Chocolatey installs that
+     leave an updater running are reported as failed (`process_runner.cpp` ~96, ~135-147).
+   - A second uninstall within 24 h is refused: Windows' once-per-day restore-point limit is
+     treated as a failure (`restore_point_manager.cpp` ~87, ~118).
+   - The AI session list goes empty above 512 session folders (`ai_conversation_store.cpp` ~49).
+   - The default backup path stores BitLocker recovery keys on the volume they unlock.
+   - Closing the app with work running never asks: a USB write is cancelled silently, worker
+     threads can be `terminate()`d, and the AI panel can freeze 30 s then qFatal.
+   - The iperf3 server and its inbound firewall rule leak after a crash (launched outside the
+     kill-on-close Job).
+   - The settings-screenshot action force-kills the user's own Settings windows.
+
+### Behavior audit 2026-10-24 -- owner decisions
+
+A read-only audit looked for code that makes the app behave unlike a normal Windows tool, or
+that exists for reasons that no longer apply. Owner decisions (2026-10-24):
+
+- Approved as a class: remove dead code, dialogs and config keys; non-Windows `#else` branches;
+  duplicate implementations (three zip paths, four NuGet feed clients, two Generate Report
+  features, two Qt deploy routes, three quick-action controllers); package files nothing loads
+  (`UUPDownload.exe`, Mesa `opengl32sw.dll`, `D3Dcompiler_47.dll`, unused Qt plugins and CRT
+  DLLs, dev scripts, Chocolatey dev state, `portable.ini`); the ignored AI policy staging;
+  test-only hooks in release builds; env-var escape hatches. Each is proved unused first.
+- Approved UI changes: ask before exit when work is running and cancel it cooperatively; theme
+  follows Windows with one saved Light/Dark/System setting (the per-panel Dark switches go);
+  1px borders replace the app-wide drop-shadow effect. The default tab is unchanged.
+- Approved disk-tool changes: rename features to what they do (e.g. "Surface Test" is a
+  filesystem check, "SSD Secure Erase" is TRIM plus overwrite) and run read-only checks
+  immediately; one elevated helper per session instead of a UAC prompt per operation; remove the
+  USB maker's bcdboot step and duplicate "set active" and wait for the volume instead of fixed
+  sleeps; remove the internal certification checklist from the Secure Erase dialog.
+- Approved AI changes: no live token-count POSTs while typing (show the last response's usage);
+  least-privilege default access mode ("Chat and Research"); the tool circuit breaker is
+  per-session in memory instead of persisted for 24 h.
+- Decided (owner delegated): keep `sak_app_action` (the core AppActionRegistry seam the GUI and
+  assistant share) and retire the AI-only manifest path `app_run_action` and
+  `resources/ai/app_manifests`, moving any action the registry lacks into it.
+- Behavior fixes needing no decision: poll sensors only while their tab is visible; drive
+  rescans on device-change notifications instead of a 5 s timer; program sizes from the
+  registry's EstimatedSize; WiFi, restore-point and AI session-list work off the GUI thread;
+  incremental transcript and log-window updates; settings in the portable INI, never the
+  registry; TEMP redirected only for the children that need it; one data root with no silent
+  `%LOCALAPPDATA%` fallback; log pruning at startup; a declined UAC prompt is not an error;
+  smoke and audit modes run the same startup work users get; info-level startup breadcrumbs
+  move to debug.
 
 ### Open release infrastructure
 

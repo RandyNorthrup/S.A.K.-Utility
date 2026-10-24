@@ -38,6 +38,15 @@ about what is "obviously fine".
   (a programming error), never for a deadline that load can exceed.
 - **"Do the optionals" means product optionals.** An optional that reduces product risk is done.
   Process and bookkeeping optionals are proposed, not assumed.
+- **The app behaves like a normal, well-built Windows tool -- nothing weird, nothing extra.**
+  Diagnostic probes, experiments, measurement-only calls, test hooks and escape hatches do not
+  live in production paths; when an investigation adds one, the same change that concludes the
+  investigation removes it. Smoke and audit modes run the startup work users get, never a
+  shortcut. No background work the user did not ask for (polling a hidden tab, rescanning on a
+  timer, network calls while typing). A portable app keeps its state in its own folder, not the
+  registry. Reference case: two font calls added to diagnose a slow startup became the 6-50 s
+  startup freeze (`docs/GUI_STARTUP_FIELD_NOTES.md`). The 2026-10-24 behavior-audit decisions are
+  in `docs/RELEASE_READINESS.md`.
 
 **Make a proper decision about it.** Keep or remove is a real decision, and it has to be made on
 evidence rather than on whichever is easier at that moment. Deleting something to make a problem
