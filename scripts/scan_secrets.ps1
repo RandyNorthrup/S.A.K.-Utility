@@ -112,7 +112,9 @@ if ($SkipExternalTools) {
     exit 0
 }
 
-$gitleaks = Get-Command gitleaks -CommandType Application -ErrorAction SilentlyContinue
+# -TotalCount 1: a tool reachable through two PATH entries (e.g. a hardlink plus its install
+# directory) otherwise yields an array, whose .Source joins both paths into one bogus command.
+$gitleaks = Get-Command gitleaks -CommandType Application -TotalCount 1 -ErrorAction SilentlyContinue
 if ($gitleaks) {
     & $gitleaks.Source detect --source . --config .gitleaks.toml --redact --verbose
     if ($LASTEXITCODE -ne 0) {
@@ -126,7 +128,7 @@ if ($gitleaks) {
     exit 1
 }
 
-$trufflehog = Get-Command trufflehog -CommandType Application -ErrorAction SilentlyContinue
+$trufflehog = Get-Command trufflehog -CommandType Application -TotalCount 1 -ErrorAction SilentlyContinue
 if ($trufflehog) {
     # "file://." and NOT "file://$ProjectRoot". trufflehog mangles a Windows ABSOLUTE path in
     # every other form: backslashes get percent-encoded into an ssh:// URI with a bogus
