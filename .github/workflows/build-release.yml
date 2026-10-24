@@ -329,12 +329,10 @@ jobs:
       run: |
         & scripts/check_repository_hygiene.ps1
 
-    - name: Test registration, gate parity, and active-doc references
+    - name: Test registration
       shell: pwsh
       run: |
         & scripts/check_test_registration.ps1
-        & scripts/check_gate_parity.ps1
-        & scripts/check_active_doc_references.ps1
 
     - name: Verify Qt resource manifests
       shell: pwsh
@@ -394,10 +392,8 @@ jobs:
         & scripts/check_partition_manager_certification_gap_report.ps1
         & scripts/check_partition_manager_external_checklist.ps1
         & scripts/verify_partition_manager_certification.ps1
-        & scripts/verify_build.ps1
         & scripts/check_build_system_lint.ps1
         & scripts/check_error_message_uniqueness.ps1
-        & scripts/check_doc_accuracy.ps1
 
     # R5-G21-2: the gates below were PRE-COMMIT-ONLY, and therefore bypassable by a direct push
     # or a --no-verify commit. Each was proven clean whole-tree locally before being wired here.

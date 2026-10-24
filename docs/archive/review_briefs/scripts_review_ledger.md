@@ -30,7 +30,7 @@ is the historical Wave 31 checkpoint; it predates the integrity and CMake-covera
 
 Integrated local gate 2026-09-04: Release build exit 0; CTest 276/276 passed in 1052.17 seconds
 (`build/wave31-full-ctest-final.xml`). Runtime skip audit passed with 27 reviewed skips. Remaining
-work and certification boundaries are tracked in docs/CODEX_REVIEW_5_REMEDIATION.md.
+work and certification boundaries are tracked in docs/archive/CODEX_REVIEW_5_REMEDIATION.md.
 These follow-up changes still require a new integrated gate.
 
 ## Full-file integrity follow-up
@@ -102,7 +102,7 @@ Full-file follow-up found no further issue in the ledger and its test suite. Exa
 At this earlier checkpoint, a new integrated gate and explicit live migration were still required.
 Both are now satisfied as recorded below. The remaining archival support is a distinct lifecycle
 change; broader campaign and external certification boundaries remain in
-docs/CODEX_REVIEW_5_REMEDIATION.md.
+docs/archive/CODEX_REVIEW_5_REMEDIATION.md.
 
 ## Explicit archival of bound implementation briefs
 

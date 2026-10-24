@@ -78,13 +78,13 @@ still fails. Font warmup/census removal and a narrower alias-only removal
 were both restored under the owner's keep-only-if-verified condition. A
 targeted Release app rebuild passed for restored source, but no complete
 source gate followed. Current-binary package, accessibility, Windows 11 VM,
-Windows 10, hardware, security and signing gates remain open. R5 owns item
-status; `docs/GUI_STARTUP_FIELD_NOTES.md` owns the timing detail. Future
+Windows 10, hardware, security and signing gates remain open. The archived R5
+document holds item history; `docs/GUI_STARTUP_FIELD_NOTES.md` owns the timing detail. Future
 plans under `docs/future/` remain parked.
 
 ## Historical package/VM proof: Wave 44 (2026-09-23)
 
-The live R5 tracking document owns item status. Wave 44 passed a full
+The archived R5 document holds item history. Wave 44 passed a full
 VS2022 Release build and all 287 registered CTests. Fresh portable ZIP staging,
 static/runtime dependency checks, native Windows startup from staged and
 extracted folders, and exact 159-file ZIP/extract hash comparison passed. On

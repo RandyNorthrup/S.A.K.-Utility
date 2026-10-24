@@ -2,122 +2,31 @@
 
 ## Overview
 
-Comprehensive test suite for SAK Utility using the **Qt Test** framework with **300 registered CTest tests** across **250 C++ test source files** plus script-backed helper tests. Tests cover AI assistant clients, chat-title generation, workflow orchestration, tool execution, cancellation, run state, trace storage, core utilities, security, elevation (tier classification, IPC protocol, task dispatcher, mixed-tier operations, UX, hardening), diagnostics, partition management, ISO pipelines, deployment, email inspection, splash sizing, partition filesystem probe certification, and quick action validation.
+The suite uses the **Qt Test** framework for native tests, plus PowerShell, Python and node script
+tests that CTest registers and runs the same way. Tests cover AI assistant clients, chat-title
+generation, workflow orchestration, tool execution, cancellation, run state, trace storage, core
+utilities, security, elevation (tier classification, IPC protocol, task dispatcher, mixed-tier
+operations, UX, hardening), diagnostics, partition management, ISO pipelines, deployment, email
+inspection, splash sizing, partition filesystem probe certification, and quick action validation.
+
+This README describes tests; it does not count them. The CTest registration is the only count
+(`ctest -N`), and the `test-registration` hook refuses a test source that nothing registers.
 
 ## Structure
 
 ```
 tests/
-+-- unit/                                  # Unit tests (247 C++ files, including actions/)
-|   +-- actions/                           # Quick action validation tests
-|   |   +-- test_action_factory.cpp
-|   |   +-- test_all_actions_metadata.cpp
-|   +-- test_active_connections_monitor.cpp
-|   +-- test_advanced_search_controller.cpp
-|   +-- test_advanced_search_types.cpp
-|   +-- test_advanced_search_worker.cpp
-|   +-- test_advanced_uninstall_controller.cpp
-|   +-- test_advanced_uninstall_types.cpp
-|   +-- test_app_installation_worker.cpp
-|   +-- test_app_scanner.cpp
-|   +-- test_bandwidth_tester.cpp
-|   +-- test_bundled_tools_manager.cpp
-|   +-- test_chocolatey_manager.cpp
-|   +-- test_cleanup_worker.cpp
-|   +-- test_config_manager.cpp
-|   +-- test_connectivity_tester.cpp
-|   +-- test_cpu_benchmark_worker.cpp
-|   +-- test_decompressor_factory.cpp
-|   +-- test_diagnostic_controller.cpp
-|   +-- test_diagnostic_report_generator.cpp
-|   +-- test_diagnostic_types.cpp
-|   +-- test_disk_benchmark_worker.cpp
-|   +-- test_dns_diagnostic_tool.cpp
-|   +-- test_drive_scanner.cpp
-|   +-- test_drive_unmounter.cpp
-|   +-- test_duplicate_finder_worker.cpp
-|   +-- test_elevation_manager.cpp
-|   +-- test_email_export_worker.cpp
-|   +-- test_email_profile_manager.cpp
-|   +-- test_email_report_generator.cpp
-|   +-- test_email_search_worker.cpp
-|   +-- test_email_types.cpp
-|   +-- test_encryption.cpp
-|   +-- test_error_codes.cpp
-|   +-- test_ethernet_config_manager.cpp
-|   +-- test_file_hash.cpp
-|   +-- test_file_scanner.cpp
-|   +-- test_firewall_rule_auditor.cpp
-|   +-- test_flash_coordinator.cpp
-|   +-- test_flash_types.cpp
-|   +-- test_flash_worker.cpp
-|   +-- test_format_utils.cpp
-|   +-- test_hardware_inventory_scanner.cpp
-|   +-- test_image_source.cpp
-|   +-- test_input_validator.cpp
-|   +-- test_install_script_parser.cpp
-|   +-- test_keep_awake.cpp
-|   +-- test_leftover_scanner.cpp
-|   +-- test_linux_distro_catalog.cpp
-|   +-- test_linux_iso_downloader.cpp
-|   +-- test_logger.cpp
-|   +-- test_mbox_parser.cpp
-|   +-- test_memory_benchmark_worker.cpp
-|   +-- test_migration_report.cpp
-|   +-- test_network_adapter_admin.cpp
-|   +-- test_windows_path_policy.cpp
-|   +-- test_csv_escape.cpp
-|   +-- test_network_adapter_inspector.cpp
-|   +-- test_network_diagnostic_controller.cpp
-|   +-- test_network_diagnostic_report.cpp
-|   +-- test_network_diagnostic_types.cpp
-|   +-- test_network_diagnostic_utils.cpp
-|   +-- test_network_share_browser.cpp
-|   +-- test_nuget_dependency_resolver.cpp
-|   +-- test_nuget_version_range.cpp
-|   +-- test_organizer_worker.cpp
-|   +-- test_package_list_manager.cpp
-|   +-- test_package_matcher.cpp
-|   +-- test_path_utils.cpp
-|   +-- test_permission_manager.cpp
-|   +-- test_port_scanner.cpp
-|   +-- test_process_runner.cpp
-|   +-- test_program_enumerator.cpp
-|   +-- test_pst_parser.cpp
-|   +-- test_quick_action.cpp
-|   +-- test_quick_action_controller.cpp
-|   +-- test_quick_action_result_io.cpp
-|   +-- test_regex_pattern_library.cpp
-|   +-- test_registry_snapshot_engine.cpp
-|   +-- test_resource_soak.cpp
-|   +-- test_restore_point_manager.cpp
-|   +-- test_script_rewriter.cpp
-|   +-- test_secure_memory.cpp
-|   +-- test_smart_disk_analyzer.cpp
-|   +-- test_smart_file_filter.cpp
-|   +-- test_streaming_decompressor.cpp
-|   +-- test_stress_test_worker.cpp
-|   +-- test_thermal_monitor.cpp
-|   +-- test_uninstall_worker.cpp
-|   +-- test_user_data_manager.cpp
-|   +-- test_user_profile_backup_worker.cpp
-|   +-- test_user_profile_restore_worker.cpp
-|   +-- test_user_profile_types.cpp
-|   +-- test_uup_dump_api.cpp
-|   +-- test_uup_iso_builder.cpp
-|   +-- test_wifi_analyzer.cpp
-|   +-- test_wifi_profile_scanner.cpp
-|   +-- test_windows_iso_downloader.cpp
-|   +-- test_windows_process_job.cpp
-|   +-- test_windows_usb_creator.cpp
-|   +-- test_windows_user_scanner.cpp
-|   +-- test_worker_base.cpp
-+-- integration/                           # End-to-end workflow tests (3 files)
-|   +-- test_offline_package_builder.cpp
-|   +-- test_ost_integration.cpp
-|   +-- test_uup_conversion_pipeline.cpp
-+-- CMakeLists.txt                         # Test build configuration
-+-- README.md                              # This file
++-- unit/            # Unit tests, one test_<component>.cpp per component
+|   +-- actions/     # Quick action validation tests
++-- integration/     # End-to-end workflow tests
++-- fuzz/            # Shared fuzz harness used by the test_fuzz_* suites
++-- certification/   # Certifier helpers driven by script tests and VM/hardware runs
++-- fixtures/        # Static fixtures and compressed foreign Apple images
++-- support/         # Shared fixture builders (byte writers, HFS/ext/MCP fixtures)
++-- stubs/           # Link stubs for narrowly scoped test targets
++-- tsan/            # Separate ThreadSanitizer build for portable threaded units (WSL clang)
++-- CMakeLists.txt   # Test build configuration and CTest registration
++-- README.md        # This file
 ```
 
 ## Running Tests
@@ -441,7 +350,7 @@ stay read-only with exact blockers.
 
 ### Mutation Runner Regression Tests
 
-`test_mutation_runner` registers the Python runner tests with CTest. Eighty-four cases exercise
+`test_mutation_runner` registers the Python runner tests with CTest. Its cases exercise
 assertion kills, survivor refusal, compilation and restoration failure, missing/empty test
 reports, real CTest timeout, Windows child-tree cleanup, unconfirmed termination refusal, and
 retention of fresh Qt assertion logs, exclusive admission, process-instance binding, job-contained
@@ -456,22 +365,7 @@ waits for those exact objects to signal; an accounting count of zero alone is
 not treated as descendant-exit proof. Negative tests cover incomplete member
 lists, foreign process binding, unsignaled members and failed enumeration.
 
-`test_review_ledger` has 77 cases covering source-language/CMake enumeration, live filtered hashes
-despite hidden Git index flags, source/brief byte binding, safe admission before writes, strict
-selection arguments, explicit all-or-nothing legacy evidence migration, and metadata-only archival
-of exact owner-moved briefs. Archive cases cover path-sensitive filters, raw-byte/state pinning,
-complete-set rechecks, duplicate keys, stale/malformed manifests, junction escapes, missing old
-directories, atomic failure and append-only history across repeated review/archive cycles.
-Generated/resource paths remain outside the declared source rules; newly enumerated units start pending.
-The fixture builds one clean committed Git template, then copies it and refreshes
-its index stat cache per case. Each test still mutates an isolated repository;
-the template avoids repeating Git init/config/commit for all 77 cases.
-
-`test_doc_accuracy` exercises matching claims and README-only, R5-only, and combined failures on
-both Windows PowerShell 5.1 and PowerShell 7. Its four cases require the correction footer to name
-the actual failing document, not direct an R5 tally repair to the test README.
-
-`test_source_fingerprint` runs real Windows VS2022 CMake configure/build fixtures. Twelve cases
+`test_source_fingerprint` runs real Windows VS2022 CMake configure/build fixtures. Its cases
 verify path/content binding, deterministic duplicate handling, header-triggered regeneration,
 rename invalidation, and refusal of missing, empty or out-of-root inputs. Certification source
 stamps must change before a helper rebuild when its declared inputs change. Native archive/object
@@ -555,8 +449,7 @@ QCOMPARE(spy.count(), 1);
 `QSKIP` is reserved for real environment or certification interlocks, never an unsupported
 application-platform branch. `tests/skip_site_inventory.txt` holds every static site by file and
 exact count, while `tests/skip_baseline.txt` holds the functions that skipped in the latest full
-run. The W66 audit found 22 static sites across 7 files and 25 reviewed
-runtime skips, with none stale. Check
+run. Check
 dormant/static coverage with
 `powershell scripts/check_test_skips.ps1 -StaticOnly`; the full skip audit also requires fresh
 per-test logs from complete CTest. It reads CTest's JSON registration to require every current Qt
@@ -564,21 +457,17 @@ log and exclude stale logs from removed tests, so a stale success cannot inflate
 missing current log cannot disappear from the audit.
 
 PowerShell gate regressions run under both PowerShell 7 and Windows PowerShell 5.1. The
-false-green command harness has separate Portable and Ledger CTests per host,
-each with its own unchanged 60-second limit. Together they cover analyzer and
-ledger exit propagation plus working-tree review
-hashes, live ledger refresh, exact-blob mark binding, same-status-row target mutation, missing
-targets, clean-index/dirty-only hash batching, PowerShell launcher resolution, standard-input
-delivery, and bounded review timeouts. Process capture tests independently pin output, error,
-exit-code, standard-input, simultaneous large input/output pipes, and timeout behavior.
+false-green command harness runs once per host and covers fixture ownership, inherited execution
+policy, secret-scan token boundaries, wrapped-target registration, portable smoke contracts,
+standalone analyzer exit propagation, and the skip audit's stale/missing log handling. Process
+capture tests independently pin output, error, exit-code, standard-input, simultaneous large
+input/output pipes, and timeout behavior.
 Portable staging and archive-recovery fixtures are separate CTests. The
 archive scope hard-kills isolated child publishers at publication boundaries,
 tests prior/candidate pair reconciliation and tamper refusal, and keeps its
 own 180-second limit; the staging scope retains its 240-second limit.
-
 ---
 
-**Test Framework:** Qt Test
-**Registered Tests:** 300 (CTest)
-**Test Files:** 250 C++ test source files plus script-backed helper tests
+**Test Framework:** Qt Test, plus PowerShell, Python and node script tests registered in CTest
+**Registered Tests:** `ctest --test-dir <build> -C Release -N` (the registration is the only count)
 **Platform:** Windows 10/11

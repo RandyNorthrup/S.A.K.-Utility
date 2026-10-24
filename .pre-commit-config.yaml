@@ -1,21 +1,33 @@
 # =============================================================================
 # S.A.K. Utility - Pre-commit Hook Configuration
-# Strictest settings: every check must pass, zero tolerance for violations.
+#
+# Gates are tiered (AGENTS.md "The gate", owner ruling 2026-10-24). This file holds:
+#
+#   T1   commit stage, changed files only, budget under 60 s. Every hook below with no
+#        `stages:` line. A hook whose input is a fixed set of files declares that set in
+#        `files:` so it runs only when one of them is staged.
+#   T1p  pre-push: the full-history secret scan.
+#   T2/T3/T4 local twins: `stages: [manual]`. Each is the local route to the CI step of the
+#        tier named in its comment. They never run on commit. Run one with
+#          pre-commit run --hook-stage manual <id> --all-files
+#
+# A T1 hook proves its own changed-files scope and nothing wider. The whole-tree twin of a
+# changed-files check is the T2 or T4 step named beside it.
 #
 # Install:  pre-commit install --install-hooks
-# Run all:  pre-commit run --all-files
-# Update:   pre-commit autoupdate
+#           pre-commit install --hook-type pre-push
 # =============================================================================
 
 default_language_version:
   python: python3
 
-# Fail fast: stop on first hook failure (strictest)
+# Fail fast: stop on first hook failure.
 fail_fast: true
 
 repos:
   # =========================================================================
-  # Standard pre-commit hooks (fast, universal checks)
+  # T1: standard pre-commit hooks (fast, universal checks). Whole-tree twin:
+  # scripts/check_repository_hygiene.ps1 in T2.
   # =========================================================================
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
@@ -35,111 +47,20 @@ repos:
       - id: check-merge-conflict
       - id: check-case-conflict
 
-  # =========================================================================
-  # Local hooks - security and C++ static analysis (strictest settings)
-  # =========================================================================
   - repo: local
     hooks:
-      # -------------------------------------------------------------------
-      # 0. Toolchain preflight - a gate that cannot run is not a gate.
-      #    Runs first so a missing tool fails immediately and explicitly
-      #    instead of being discovered by accident later.
-      # -------------------------------------------------------------------
-      - id: tool-preflight
-        name: "Quality-gate toolchain preflight"
-        description: "Assert every required gate tool is installed; record versions"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_tool_preflight.ps1
-        language: system
-        pass_filenames: false
-        always_run: true
+      # =====================================================================
+      # T1 -- commit stage
+      # =====================================================================
 
       # -------------------------------------------------------------------
-      # 0b. Test registration - an assertion is only evidence once it runs.
-      #     Nine test files (about 89 assertions) existed, were documented in
-      #     tests/README.md, and had no CMake target, so they had never
-      #     compiled or executed - while earlier remediation campaigns cited
-      #     assertions inside them as proof that findings were fixed. This
-      #     gate makes that state unreachable, in both directions: a source
-      #     that nothing builds, and a target that ctest never runs.
-      # -------------------------------------------------------------------
-      - id: test-registration
-        name: "Test registration structure (target + ctest entry per test)"
-        description: "Static CMakeLists cross-check: every test source has an add_executable and
-          every target an add_test. This does NOT compile or run anything -- the authoritative
-          build+ctest gate is CI (a full build failure fails the job). Do not read a green here
-          as proof the tree builds."
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_test_registration.ps1
-        language: system
-        pass_filenames: false
-        always_run: true
-
-      # -------------------------------------------------------------------
-      # 0c. Gate parity - pre-commit claims must have a CI route.
-      # -------------------------------------------------------------------
-      - id: gate-parity
-        name: "Pre-commit to CI gate parity"
-        description: "Reject custom/generic/secret pre-commit gates with no CI twin"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_gate_parity.ps1
-        language: system
-        pass_filenames: false
-        always_run: true
-
-      # -------------------------------------------------------------------
-      # 0d. Active-doc references - status buckets must not hide broken paths.
-      # -------------------------------------------------------------------
-      - id: active-doc-references
-        name: "Tracked active-document local references"
-        description: "Reject missing, untracked, escaping, or case-mismatched local doc targets"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_active_doc_references.ps1
-        language: system
-        pass_filenames: false
-        always_run: true
-
-      # -------------------------------------------------------------------
-      # 0e. Mutation-catalog coverage ratchet (R5-G18-1) - fast integrity.
-      #     The per-catalog mutation harness proves a catalog's mutations are
-      #     all detected; this gate keeps the SET honest between full runs. It
-      #     asserts every catalog's find-string still occurs exactly once in the
-      #     current source (a refactor that moves the mutated text turns the
-      #     mutation into a silent no-op) and that the on-disk catalog set equals
-      #     MANIFEST.txt (a deleted catalog silently drops coverage; an added one
-      #     must be registered). Static only -- reads sources + JSON, builds
-      #     nothing. The slow build+mutate pass is on-demand:
-      #       python scripts/run_all_mutation_catalogs.py
-      # -------------------------------------------------------------------
-      - id: mutation-catalog-integrity
-        name: "Mutation-catalog coverage ratchet (integrity)"
-        description: "Every catalog find-string is unique + the catalog set matches MANIFEST.txt"
-        entry: python scripts/run_all_mutation_catalogs.py --validate
-        language: system
-        pass_filenames: false
-        always_run: true
-
-      # -------------------------------------------------------------------
-      # 1. Secret/path scan - no key-shaped literals or developer paths
-      # -------------------------------------------------------------------
-      - id: secret-path-scan
-        name: "Secret/path scan"
-        description: "Reject key-shaped literals and hardcoded developer-machine paths"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/scan_secrets.ps1 -SkipExternalTools
-        language: system
-        pass_filenames: false
-
-      # -------------------------------------------------------------------
-      # 1a. Gitleaks over STAGED content, at commit time.
-      #     The hook above runs with -SkipExternalTools: regex and path rules
-      #     only, no gitleaks. Gitleaks itself ran solely at pre-push, and a
-      #     push scans HISTORY -- so by the time it fired, the secret was
-      #     already in a commit and could only be removed by rewriting every
-      #     commit after it. That is exactly how four findings reached this
-      #     repository's history. Scanning the staged diff catches a secret in
-      #     the one window where refusing it is still cheap: before it becomes
-      #     a commit. The pre-push full-history scan stays as the backstop.
+      # Gitleaks over STAGED content, at commit time.
+      #     Gitleaks once ran solely at pre-push, and a push scans HISTORY -- so by the
+      #     time it fired, the secret was already in a commit and could only be removed by
+      #     rewriting every commit after it. That is exactly how four findings reached this
+      #     repository's history. Scanning the staged diff catches a secret in the one
+      #     window where refusing it is still cheap: before it becomes a commit. The
+      #     pre-push full-history scan (T1p, below) stays as the backstop.
       # -------------------------------------------------------------------
       - id: gitleaks-staged
         name: "Gitleaks (staged changes)"
@@ -150,18 +71,28 @@ repos:
         always_run: true
 
       # -------------------------------------------------------------------
-      # 2. Qt resource manifest check - every qrc file path must exist
+      # Test registration - an assertion is only evidence once it runs.
+      #     Nine test files (about 89 assertions) existed, were documented in
+      #     tests/README.md, and had no CMake target, so they had never compiled or
+      #     executed - while earlier remediation campaigns cited assertions inside them as
+      #     proof that findings were fixed. This gate makes that state unreachable, in both
+      #     directions: a source that nothing builds, and a target that ctest never runs.
+      #     Static only; it compiles and runs nothing. Runs when a test source, a test
+      #     script or a CMake file is staged.
       # -------------------------------------------------------------------
-      - id: qrc-resource-check
-        name: "Qt resource manifest check"
-        description: "Reject .qrc manifests that reference missing files"
+      - id: test-registration
+        name: "Test registration structure (target + ctest entry per test)"
+        description: "Static CMakeLists cross-check: every test source has an add_executable and
+          every target an add_test. This does NOT compile or run anything -- the authoritative
+          build+ctest gate is T2 CI. Do not read a green here as proof the tree builds."
         entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_qrc_resources.ps1
+          -File scripts/check_test_registration.ps1
         language: system
         pass_filenames: false
+        files: ^(tests/|scripts/test_[^/]*\.ps1$|scripts/check_test_registration\.ps1$)|(^|/)CMakeLists\.txt$|\.cmake$
 
       # -------------------------------------------------------------------
-      # 3. PowerShell syntax - parse scripts without executing them
+      # PowerShell syntax - parse changed scripts without executing them.
       # -------------------------------------------------------------------
       - id: powershell-syntax
         name: "PowerShell syntax check"
@@ -172,7 +103,8 @@ repos:
         files: \.ps1$
 
       # -------------------------------------------------------------------
-      # 4. clang-format - zero formatting deviations allowed
+      # clang-format - zero formatting deviations on changed C/C++ files.
+      #     Whole-tree twin: T2 "Formatting (clang-format, whole first-party tree)".
       # -------------------------------------------------------------------
       - id: clang-format
         name: "clang-format (strict)"
@@ -189,8 +121,8 @@ repos:
         exclude: (third_party|3rdparty|external|_archived)/
 
       # -------------------------------------------------------------------
-      # 5. Lizard - cyclomatic complexity and function metrics
-      #    CCN <= 10, length <= 70, params <= 5
+      # Lizard - cyclomatic complexity and function metrics on changed files.
+      #     CCN <= 10, length <= 70, params <= 5. Whole-tree twin: T2 lizard step.
       # -------------------------------------------------------------------
       - id: lizard-complexity
         name: "Lizard complexity (strict)"
@@ -202,18 +134,19 @@ repos:
         exclude: (third_party|3rdparty|external|_archived)/
 
       # -------------------------------------------------------------------
-      # 6. cppcheck - deep static analysis
-      #    All checks, exhaustive level, inconclusive, C++23
+      # cppcheck - deep static analysis of the CHANGED files.
+      #     All checks, exhaustive level, inconclusive, C++23. Whole-tree twin: T4
+      #     cppcheck-whole-project (manual hook below).
       #
-      #    NO trailing -Files. `-File script.ps1 -Files a.cpp b.cpp` binds ONLY
-      #    a.cpp and silently drops the rest, so this hook analyzed ONE FILE per
-      #    invocation while printing PASSED -- a large part of why 84
-      #    whole-project findings accumulated under a gate advertised as
-      #    "cppcheck on changed files". The script now collects the bare paths
-      #    via ValueFromRemainingArguments; see its parameter-block note.
+      #     NO trailing -Files. `-File script.ps1 -Files a.cpp b.cpp` binds ONLY
+      #     a.cpp and silently drops the rest, so this hook analyzed ONE FILE per
+      #     invocation while printing PASSED -- a large part of why 84
+      #     whole-project findings accumulated under a gate advertised as
+      #     "cppcheck on changed files". The script now collects the bare paths
+      #     via ValueFromRemainingArguments; see its parameter-block note.
       # -------------------------------------------------------------------
       - id: cppcheck
-        name: "cppcheck (exhaustive)"
+        name: "cppcheck (exhaustive, changed files)"
         description: "Static analysis: all checks enabled, exhaustive depth, C++23"
         entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
           -File scripts/run_cppcheck.ps1
@@ -224,172 +157,9 @@ repos:
         require_serial: true
 
       # -------------------------------------------------------------------
-      # 6a. High-confidence dead-code gate -- R5-G10-6.
-      #     cppcheck's raw unusedFunction stream is noisy under Qt/meta-object
-      #     dispatch and public headers. This gate rejects only source definitions
-      #     whose exact identifier occurs nowhere else in src/include/tests. It
-      #     plants an unused probe on every run so a disabled checker cannot pass.
-      # -------------------------------------------------------------------
-      - id: dead-code
-        name: "Dead first-party source function check"
-        description: "Reject cppcheck unusedFunction definitions with no declaration or caller"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_dead_code.ps1
-        language: system
-        types_or: [c++]
-        files: ^src/.*\.cpp$
-        exclude: (third_party|3rdparty|external|_archived)/
-        require_serial: true
-
-      # -------------------------------------------------------------------
-      # 6a1. clang-tidy naming health/regression gate (MANUAL stage)
-      #     Non-core stays at zero. Core is analyzed completely with zero processing/compiler
-      #     errors; its measured debt is allowed only outside the machine-readable clean-TU
-      #     ratchet. The two healthy passes need reconstructed compile databases and are too slow
-      #     for every commit, so this is manual-stage -- CI runs it on every build.
-      #     Check locally with:
-      #       pre-commit run --hook-stage manual clang-tidy-naming --all-files
-      # -------------------------------------------------------------------
-      - id: clang-tidy-naming
-        name: "clang-tidy naming health + zero-debt ratchet"
-        description: "Non-core stays clean; core analysis stays healthy and cleaned TUs stay zero"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/clang_tidy_naming_gate.ps1
-        language: system
-        pass_filenames: false
-        always_run: true
-        stages: [manual]
-
-      # -------------------------------------------------------------------
-      # 6a2. cppcheck WHOLE-PROJECT gate (MANUAL stage) -- R5-G10-3.
-      #     Hook 6 above runs cppcheck on the CHANGED files of the commit,
-      #     which is the right shape for a commit hook and the wrong shape for
-      #     the claim "cppcheck clean project-wide": a finding in a file nobody
-      #     has touched is invisible until somebody touches it, and then it
-      #     blocks THEIR commit for a defect they did not introduce. Measured
-      #     2026-08-30, 84 such findings sat in the tree while every commit
-      #     passed. This gate walks src/ and include/ whole and fails on any
-      #     finding, and then runs a second pass with unmatchedSuppression
-      #     enabled to catch inline // cppcheck-suppress comments that have
-      #     gone dead (it found two on its first run, in test_secure_memory).
-      #
-      #     Manual-stage, like the clang-tidy naming gate: two exhaustive
-      #     cppcheck passes take minutes, too slow for every commit. CI runs it
-      #     on every build. Check locally with:
-      #       pre-commit run --hook-stage manual cppcheck-whole-project --all-files
-      # -------------------------------------------------------------------
-      - id: cppcheck-whole-project
-        name: "cppcheck whole-project gate (+ stale-suppression reveal)"
-        description: "Zero findings across src/ and include/; no dead inline suppressions"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/cppcheck_whole_project_gate.ps1
-        language: system
-        pass_filenames: false
-        always_run: true
-        stages: [manual]
-
-      # Build-dependent CI gate. Manual stage gives it a local route after Release build;
-      # normal pre-commit cannot assume a current executable exists.
-      - id: startup-budget
-        name: "Startup performance budget (built Release app)"
-        description: "Run real --smoke-test startup under the CI wall-clock budget"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_startup_budget.ps1
-        language: system
-        pass_filenames: false
-        stages: [manual]
-
-      - id: accessibility-runtime
-        name: "Accessibility runtime audit (built Release app)"
-        description: "Run explicit-accessor audit against the real built application"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_accessibility_patterns.ps1
-        language: system
-        pass_filenames: false
-        stages: [manual]
-
-      - id: test-skip-audit
-        name: "CTest skip-log audit"
-        description: "Reject unreviewed, stale, or missing QtTest result logs after full CTest"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_test_skips.ps1
-        language: system
-        pass_filenames: false
-        stages: [manual]
-
-      - id: build-verification
-        name: "Full build-output verification"
-        description: "Run the same build/configuration verification used by CI"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/verify_build.ps1
-        language: system
-        pass_filenames: false
-        stages: [manual]
-
-      - id: coverage-measurement
-        name: "RelWithDebInfo line coverage measurement"
-        description: "Run OpenCppCoverage over registered tests after coverage build"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/run_coverage.ps1
-          -TestRegex ^test_(pst_parser|fuzz_pst_parser|mbox_parser|fuzz_mbox_headers|fuzz_mbox_transfer_decoder|iso_analyzer|fuzz_iso_analyzer|ai_tool_policy|fuzz_command_classifier|fuzz_email_sanitizer|fuzz_mcp_framing|crash_reporter|encryption|input_validator|path_utils|email_types)$
-          -OutDir build/coverage
-        language: system
-        pass_filenames: false
-        stages: [manual]
-
-      - id: release-readiness
-        name: "Release readiness against staged Release tree"
-        description: "Run aggregate release gates against clean extracted portable package"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_release_readiness.ps1
-          -PackageRoot build/Release/clean-smoke-extract
-        language: system
-        pass_filenames: false
-        stages: [manual]
-
-      - id: portable-release-smoke
-        name: "Portable release static smoke"
-        description: "Verify required packaged files and reject leaked mutable state"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/verify_portable_release_smoke.ps1
-          -PackageRoot build/Release/clean-smoke-extract
-          -RepoRoot .
-        language: system
-        pass_filenames: false
-        stages: [manual]
-
-      - id: portable-e2e-smoke
-        name: "Portable release startup E2E smoke"
-        description: "Boot real packaged application and verify clean portable behavior"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/run_portable_e2e_smoke.ps1
-          -PackageRoot build/Release/clean-smoke-extract
-        language: system
-        pass_filenames: false
-        stages: [manual]
-
-      - id: windows-runtime-dependencies
-        name: "Windows runtime dependency audit"
-        description: "Verify every non-system imported DLL is present in build/Release"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/verify_windows_runtime_dependencies.ps1 -RootDir build/Release
-        language: system
-        pass_filenames: false
-        stages: [manual]
-
-      - id: signed-release-verification
-        name: "Signed release signatures and readiness"
-        description: "Resolve current VERSION package and require signatures plus signed readiness"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/verify_signed_release.ps1
-        language: system
-        pass_filenames: false
-        stages: [manual]
-
-      # -------------------------------------------------------------------
-      # 6b. Nested event loops and unbounded blocking waits
-      #     Debt reached zero, so this one is now wired. Every gated site
-      #     carries a SAK-ALLOW-BLOCKING justification; see the script header.
+      # Nested event loops and unbounded blocking waits. Every gated site carries a
+      # SAK-ALLOW-BLOCKING justification; see the script header. The script scans the
+      # whole C++ tree in about a second, so it runs whenever any C++ file is staged.
       # -------------------------------------------------------------------
       - id: blocking-patterns
         name: "Nested event loop / unbounded wait check"
@@ -398,227 +168,15 @@ repos:
           -File scripts/check_blocking_patterns.ps1
         language: system
         pass_filenames: false
+        files: \.(c|cpp|h|hpp|cxx|cc|hxx)$|^scripts/check_blocking_patterns\.ps1$
 
       # -------------------------------------------------------------------
-      # 6c. GUI style tokens - raw color literals must live in theme constants
-      #     Debt reached zero (the one residual was a QColor::rgba() method
-      #     call read into a pixmap cache key, not a raw token; the matcher now
-      #     excludes method/static calls), so this one is wired.
-      # -------------------------------------------------------------------
-      - id: gui-style-tokens
-        name: "GUI style token check"
-        description: "Raw color literals must live in the theme/style constant headers"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_gui_style_tokens.ps1
-        language: system
-        pass_filenames: false
-
-      # -------------------------------------------------------------------
-      # 6d. GUI magic numbers - layout/sizing calls must use named metrics
-      #     Debt reached zero (the residual 18 raw literals were folded into
-      #     the sak::ui margin/spacing tokens and per-file Files-xaml metric
-      #     constants), so this one is wired.
-      # -------------------------------------------------------------------
-      - id: gui-magic-numbers
-        name: "GUI magic-number check"
-        description: "Layout/sizing calls must reference named metric constants"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_gui_magic_numbers.ps1
-        language: system
-        pass_filenames: false
-
-      # -------------------------------------------------------------------
-      # 6e. GUI stylesheet literals - raw QSS/CSS must live in a style header
-      #     Debt reached zero (the 70 explorer QSS templates moved into
-      #     include/sak/file_explorer_style_constants.h and the rich-text
-      #     wrapper into rich_text_constants.h; two prose false positives were
-      #     removed by requiring a real semicolon-terminated declaration), so
-      #     this one is wired.
-      # -------------------------------------------------------------------
-      - id: gui-stylesheet-literals
-        name: "GUI stylesheet literal check"
-        description: "Raw QSS/CSS style literals must live in a style-constants header"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_gui_stylesheet_literals.ps1
-        language: system
-        pass_filenames: false
-
-      # -------------------------------------------------------------------
-      # 6f. Magic numbers - bare numeric literals must be named constexpr
-      #     Debt reached zero: every literal outside the -1/0/1 sentinels was
-      #     named across the tree (the on-disk-format and crypto modules stay
-      #     exempt in the script, where hand-naming byte offsets is high-risk
-      #     churn against certified output), so this one is wired.
-      # -------------------------------------------------------------------
-      - id: magic-numbers
-        name: "Magic-number check"
-        description: "Bare numeric literals must be named constexpr constants"
-        entry: python scripts/check_magic_numbers.py
-        language: system
-        pass_filenames: false
-
-      # -------------------------------------------------------------------
-      # All GUI/style/magic-number debt gates are now wired above. Any new
-      # gate script added later that reports debt should follow the same
-      # pattern: fix the debt to zero, then list the hook here.
-      # -------------------------------------------------------------------
-
-      # -------------------------------------------------------------------
-      # 7. Logged message boxes - user-facing dialogs must also be logged
-      # -------------------------------------------------------------------
-      - id: logged-message-boxes
-        name: "Logged message box check"
-        description: "Every user-facing message box must also write a log record"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_logged_message_boxes.ps1
-        language: system
-        pass_filenames: false
-
-      # -------------------------------------------------------------------
-      # 8. Partition filesystem tool manifest integrity
-      # -------------------------------------------------------------------
-      - id: partition-fs-tool-manifest
-        name: "Partition filesystem tool manifest check"
-        description: "Reject a filesystem tool manifest that does not match the code"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_partition_filesystem_tool_manifest.ps1
-        language: system
-        pass_filenames: false
-
-      # Build-system lint (G23-9): a real if(CMAKE_BUILD_TYPE STREQUAL ...) guard is
-      # DEAD under the Visual Studio multi-config generator (one such guard had
-      # silently disabled AddressSanitizer project-wide). Fail if one reappears.
-      - id: build-system-lint
-        name: "Build-system lint (no dead CMAKE_BUILD_TYPE guards)"
-        description: "Reject a dead config-guard that is inert under the multi-config generator"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_build_system_lint.ps1
-        language: system
-        pass_filenames: false
-
-      # G23-12: no "unknown error" literals; no NEW duplicate error message across two
-      # distinct sink sites (legacy duplicates grandfathered in a committed baseline).
-      - id: error-message-uniqueness
-        name: "Error-message uniqueness"
-        description: "No 'unknown error' literals; no NEW duplicate error messages (baseline-gated)"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_error_message_uniqueness.ps1
-        language: system
-        pass_filenames: false
-
-      # G23-8: any factual claim in tests/README.md (test counts / names / coverage) must
-      # match the real ctest registration and test_*.cpp files -- this is how nine dead
-      # test files once stayed hidden behind a README that asserted coverage that did not exist.
-      - id: doc-accuracy
-        name: "Doc-accuracy gate (tests/README.md vs real ctest list)"
-        description: "Machine-verify the test-count/coverage claims in tests/README.md against reality"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_doc_accuracy.ps1
-        language: system
-        pass_filenames: false
-
-      # -------------------------------------------------------------------
-      # 8b. Partition Manager certification / release-claim integrity gates.
-      #     These verify that the documented certification matrices, release
-      #     claims, feature/commercial matrices and external checklist stay
-      #     consistent with the code and with each other. Fast static checks
-      #     (docs + source grep + a stored certification report); wired now
-      #     that all pass. Build-requiring gates (accessibility runtime audit,
-      #     verify_build) run in CI, not here.
-      # -------------------------------------------------------------------
-      - id: partition-release-claims
-        name: "Partition Manager release-claims consistency"
-        description: "Release-facing docs must match the declared certification level"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_partition_manager_release_claims.ps1
-        language: system
-        pass_filenames: false
-
-      - id: partition-feature-matrix
-        name: "Partition Manager feature matrix"
-        description: "Every feature group maps to real code + certification IDs"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_partition_manager_feature_matrix.ps1
-        language: system
-        pass_filenames: false
-
-      - id: partition-cert-matrix-integrity
-        name: "Partition Manager certification matrix integrity"
-        description: "VHD scenarios and external gates in the matrix are internally consistent"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_partition_manager_certification_matrix_integrity.ps1
-        language: system
-        pass_filenames: false
-
-      - id: apple-filesystem-capability-matrix
-        name: "Apple filesystem capability matrix"
-        description: "HFS+/APFS capability claims match machine-readable status and evidence contracts"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_apple_filesystem_capability_matrix.ps1
-        language: system
-        pass_filenames: false
-
-      - id: partition-commercial-gate-matrix
-        name: "Partition Manager commercial gate matrix"
-        description: "Each commercial gate has its required code/UI/test/cert evidence"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_partition_manager_commercial_gate_matrix.ps1
-        language: system
-        pass_filenames: false
-
-      - id: partition-cert-gap-report
-        name: "Partition Manager certification gap report"
-        description: "Incomplete certification gates are enumerated and consistent"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_partition_manager_certification_gap_report.ps1
-        language: system
-        pass_filenames: false
-
-      - id: partition-external-checklist
-        name: "Partition Manager external checklist"
-        description: "External VM/hardware/lab gates match the certification matrix"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_partition_manager_external_checklist.ps1
-        language: system
-        pass_filenames: false
-
-      # Manual (release tier, owner 2026-10-24): it binds the stored VM report to the local
-      # certifier binary and source manifest, so it cannot pass on any commit after a bound
-      # source changes until a VM recertification. Run it on release bytes:
-      #       pre-commit run --hook-stage manual partition-cert-verification
-      - id: partition-cert-verification
-        name: "Partition Manager certification verification"
-        description: "The stored strict-VHD certification report matches the matrix"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/verify_partition_manager_certification.ps1
-          -CertificationRoot artifacts/partition-manager-certification/vhd-strict
-        language: system
-        pass_filenames: false
-        stages: [manual]
-
-      # -------------------------------------------------------------------
-      # 9. Third-party licenses (previously CI-only)
-      # -------------------------------------------------------------------
-      - id: third-party-licenses
-        name: "Third-party license check"
-        description: "Every bundled third-party component must carry its license"
-        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
-          -File scripts/check_third_party_licenses.ps1
-        language: system
-        pass_filenames: false
-
-      # -------------------------------------------------------------------
-      # 10. ASCII-only text - no byte above 0x7F, no UTF-8 BOM. Sources and
-      #     docs are plain 7-bit ASCII; non-ASCII here has repeatedly been
-      #     silent damage (a double-encoded em dash that sat in a comment for
-      #     months, mojibake test data) rather than typography. See the
-      #     scripts/check_ascii_only.ps1 header for the rule and the \u-escape
-      #     escape hatch for a codepoint that must reach a user. Wired now that
-      #     the whole tree is clean (1582 files pass as of 2026-08-30; the
-      #     comment said 1467, measured when the gate was first wired -- the
-      #     figure is informational, the gate counts for itself); the script self-excludes
-      #     binary extensions and vendored/evidence trees, and pre-commit passes
-      #     only the changed files.
+      # ASCII-only text - no byte above 0x7F, no UTF-8 BOM, in changed files. Sources
+      # and docs are plain 7-bit ASCII; non-ASCII here has repeatedly been silent damage
+      # (a double-encoded em dash that sat in a comment for months, mojibake test data)
+      # rather than typography. See the scripts/check_ascii_only.ps1 header for the rule
+      # and the \u-escape escape hatch for a codepoint that must reach a user. The script
+      # self-excludes binary extensions and vendored/evidence trees.
       # -------------------------------------------------------------------
       - id: ascii-only
         name: "ASCII-only text (no byte > 0x7F, no BOM)"
@@ -629,21 +187,75 @@ repos:
         exclude: (tools/chocolatey|tools/uup|tools/iperf3|tools/smartmontools|artifacts)/
 
       # -------------------------------------------------------------------
-      # 11. FULL-HISTORY secret scan, at PUSH time. This is the only gate that
-      #     runs at the moment a secret actually becomes exposed.
+      # Partition filesystem tool manifest integrity. Runs when the bundled tool tree
+      # or the checker changes.
+      # -------------------------------------------------------------------
+      - id: partition-fs-tool-manifest
+        name: "Partition filesystem tool manifest check"
+        description: "Reject a filesystem tool manifest that does not match the bundled tools"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_partition_filesystem_tool_manifest.ps1
+        language: system
+        pass_filenames: false
+        files: ^(tools/filesystem/|scripts/check_partition_filesystem_tool_manifest\.ps1$)
+
+      # -------------------------------------------------------------------
+      # Partition Manager / Apple filesystem certification JSON integrity. Each runs
+      # only when one of the files it reads is staged.
+      # -------------------------------------------------------------------
+      - id: partition-cert-matrix-integrity
+        name: "Partition Manager certification matrix integrity"
+        description: "VHD scenarios and external gates in the matrix are internally consistent"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_partition_manager_certification_matrix_integrity.ps1
+        language: system
+        pass_filenames: false
+        files: ^(certification/|docs/PARTITION_MANAGER_CERTIFICATION\.md$|scripts/(check_partition_manager_certification_matrix_integrity|run_partition_manager_destructive_certification|new_partition_manager_external_evidence_manifest|verify_partition_manager_certification|get_partition_manager_certification_status|test_partition_manager_certification_tools|check_partition_manager_external_checklist|check_partition_manager_external_lab_package|update_partition_manager_external_manifest_from_reports|run_partition_manager_hardware_certification_strict)\.ps1$)
+
+      - id: apple-filesystem-capability-matrix
+        name: "Apple filesystem capability matrix"
+        description: "HFS+/APFS capability claims match machine-readable status and evidence contracts"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_apple_filesystem_capability_matrix.ps1
+        language: system
+        pass_filenames: false
+        files: ^(certification/|docs/PARTITION_MANAGER_CERTIFICATION\.md$|docs/RELEASE_READINESS\.md$|docs/archive/APFS_HFS_FULL_DRIVER_WRITE_PLAN\.md$|scripts/check_apple_filesystem_capability_matrix\.ps1$)
+
+      - id: partition-feature-matrix
+        name: "Partition Manager feature matrix"
+        description: "Every feature group maps to real code + certification IDs"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_partition_manager_feature_matrix.ps1
+        language: system
+        pass_filenames: false
+        files: ^(certification/|include/sak/partition_manager_types\.h$|src/core/(file_recovery_engine|partition_script_builder)\.cpp$|src/gui/partition_manager_panel\.cpp$|tests/unit/test_partition_manager_(core|panel)\.cpp$|scripts/(check_partition_manager_feature_matrix|check_partition_manager_certification_bundle|check_partition_manager_certification_gap_report|check_partition_manager_external_lab_package|check_partition_manager_vhd_preflight_report|check_release_readiness|get_partition_manager_certification_status|new_partition_manager_certification_bundle|new_partition_manager_certification_gap_report|new_partition_manager_external_evidence_manifest|run_partition_manager_hardware_certification_strict|run_partition_manager_vhd_certification_strict|test_partition_manager_vhd_preflight|update_partition_manager_external_manifest_from_reports|verify_partition_manager_certification)\.ps1$)
+
+      - id: partition-commercial-gate-matrix
+        name: "Partition Manager commercial gate matrix"
+        description: "Each commercial gate has its required code/UI/test/cert evidence"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_partition_manager_commercial_gate_matrix.ps1
+        language: system
+        pass_filenames: false
+        files: ^(certification/|README\.md$|CHANGELOG\.md$|docs/PARTITION_MANAGER_CERTIFICATION\.md$|docs/archive/PARTITION_MANAGER_PANEL_PLAN\.md$|src/core/partition_script_builder\.cpp$|src/gui/partition_manager_panel\.cpp$|tests/unit/test_partition_manager_(core|panel)\.cpp$|scripts/check_partition_manager_commercial_gate_matrix\.ps1$)
+
+      # =====================================================================
+      # T1p -- pre-push
+      # =====================================================================
+
+      # -------------------------------------------------------------------
+      # FULL-HISTORY secret scan, at PUSH time. This is the only gate that runs at the
+      # moment a secret actually becomes exposed.
       #
-      #     A push uploads HISTORY, not the working tree, so redacting a file
-      #     does nothing about the blob already in an earlier commit. The
-      #     regex scan above runs -SkipExternalTools; the separate gitleaks-staged
-      #     hook checks the staged diff before it enters history. The historical
-      #     cert-rig credential has one owner-authorized fingerprint exception,
-      #     documented as accepted risk under R5-IDX-20 and RELEASE_READINESS.md.
-      #     It is not an unresolved push blocker or permission for new exceptions.
+      #     A push uploads HISTORY, not the working tree, so redacting a file does nothing
+      #     about the blob already in an earlier commit. The gitleaks-staged hook checks the
+      #     staged diff before it enters history. The historical cert-rig credential has one
+      #     owner-authorized fingerprint exception, documented as accepted risk under
+      #     R5-IDX-20 and RELEASE_READINESS.md. It is not an unresolved push blocker or
+      #     permission for new exceptions.
       #
-      #     Until this hook existed, NOTHING ran at push time and the blocker
-      #     was enforced only by a human remembering to read a document. It
-      #     fails closed: if gitleaks is missing, scan_secrets.ps1 errors rather
-      #     than reporting a pass it did not perform.
+      #     It fails closed: if gitleaks is missing, scan_secrets.ps1 errors rather than
+      #     reporting a pass it did not perform.
       #
       #     Install it (pre-commit install only wires pre-commit by default):
       #         pre-commit install --hook-type pre-push
@@ -657,3 +269,310 @@ repos:
         stages: [pre-push]
         pass_filenames: false
         always_run: true
+
+      # =====================================================================
+      # T2 -- local twins of the CI steps that run on every push to dev and every PR.
+      # Manual stage: pre-commit run --hook-stage manual <id> --all-files
+      # =====================================================================
+
+      # T2: regex secret and developer-path scan over the current tree.
+      - id: secret-path-scan
+        name: "Secret/path scan"
+        description: "Reject key-shaped literals and hardcoded developer-machine paths"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/scan_secrets.ps1 -SkipExternalTools
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      # T2: raw color literals must live in theme constants (whole tree).
+      - id: gui-style-tokens
+        name: "GUI style token check"
+        description: "Raw color literals must live in the theme/style constant headers"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_gui_style_tokens.ps1
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      # T2: layout/sizing calls must use named metrics (whole tree).
+      - id: gui-magic-numbers
+        name: "GUI magic-number check"
+        description: "Layout/sizing calls must reference named metric constants"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_gui_magic_numbers.ps1
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      # T2: raw QSS/CSS must live in a style header (whole tree).
+      - id: gui-stylesheet-literals
+        name: "GUI stylesheet literal check"
+        description: "Raw QSS/CSS style literals must live in a style-constants header"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_gui_stylesheet_literals.ps1
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      # T2: bare numeric literals must be named constexpr (whole tree). The on-disk-format
+      # and crypto modules stay exempt in the script, where hand-naming byte offsets is
+      # high-risk churn against certified output.
+      - id: magic-numbers
+        name: "Magic-number check"
+        description: "Bare numeric literals must be named constexpr constants"
+        entry: python scripts/check_magic_numbers.py
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      # T2: every user-facing message box must also write a log record (whole tree).
+      - id: logged-message-boxes
+        name: "Logged message box check"
+        description: "Every user-facing message box must also write a log record"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_logged_message_boxes.ps1
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      # T2: build-system lint (G23-9). A real if(CMAKE_BUILD_TYPE STREQUAL ...) guard is
+      # DEAD under the Visual Studio multi-config generator (one such guard had silently
+      # disabled AddressSanitizer project-wide). Fail if one reappears.
+      - id: build-system-lint
+        name: "Build-system lint (no dead CMAKE_BUILD_TYPE guards)"
+        description: "Reject a dead config-guard that is inert under the multi-config generator"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_build_system_lint.ps1
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      # T2: no "unknown error" literals; no NEW duplicate error message across two distinct
+      # sink sites (legacy duplicates grandfathered in a committed baseline). G23-12.
+      - id: error-message-uniqueness
+        name: "Error-message uniqueness"
+        description: "No 'unknown error' literals; no NEW duplicate error messages (baseline-gated)"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_error_message_uniqueness.ps1
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      # T2: every bundled third-party component must carry its license.
+      - id: third-party-licenses
+        name: "Third-party license check"
+        description: "Every bundled third-party component must carry its license"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_third_party_licenses.ps1
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      # T2: real --smoke-test startup of the built Release app under the CI budget.
+      - id: startup-budget
+        name: "Startup performance budget (built Release app)"
+        description: "Run real --smoke-test startup under the CI wall-clock budget"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_startup_budget.ps1
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      # T2: explicit-accessor audit against the real built application.
+      - id: accessibility-runtime
+        name: "Accessibility runtime audit (built Release app)"
+        description: "Run explicit-accessor audit against the real built application"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_accessibility_patterns.ps1
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      # T2: unreviewed, stale or missing QtTest skip logs after a full CTest run.
+      - id: test-skip-audit
+        name: "CTest skip-log audit"
+        description: "Reject unreviewed, stale, or missing QtTest result logs after full CTest"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_test_skips.ps1
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      # T2: every non-system imported DLL is present in build/Release.
+      - id: windows-runtime-dependencies
+        name: "Windows runtime dependency audit"
+        description: "Verify every non-system imported DLL is present in build/Release"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/verify_windows_runtime_dependencies.ps1 -RootDir build/Release
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      # =====================================================================
+      # T3 -- local twins of the CI steps that run on a version tag.
+      # =====================================================================
+
+      # T3: release-facing docs must match the computed certification level.
+      - id: partition-release-claims
+        name: "Partition Manager release-claims consistency"
+        description: "Release-facing docs must match the declared certification level"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_partition_manager_release_claims.ps1
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      # T3: incomplete certification gates are enumerated and consistent.
+      - id: partition-cert-gap-report
+        name: "Partition Manager certification gap report"
+        description: "Incomplete certification gates are enumerated and consistent"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_partition_manager_certification_gap_report.ps1
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      # T3: external VM/hardware/lab gates match the certification matrix.
+      - id: partition-external-checklist
+        name: "Partition Manager external checklist"
+        description: "External VM/hardware/lab gates match the certification matrix"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_partition_manager_external_checklist.ps1
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      # T3: binds the stored VM report to the local certifier binary and source manifest, so
+      # it cannot pass on any commit after a bound source changes until a VM
+      # recertification. Run it on release bytes.
+      - id: partition-cert-verification
+        name: "Partition Manager certification verification"
+        description: "The stored strict-VHD certification report matches the matrix"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/verify_partition_manager_certification.ps1
+          -CertificationRoot artifacts/partition-manager-certification/vhd-strict
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      # T3: aggregate release gates against the clean extracted portable package.
+      - id: release-readiness
+        name: "Release readiness against staged Release tree"
+        description: "Run aggregate release gates against clean extracted portable package"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_release_readiness.ps1
+          -PackageRoot build/Release/clean-smoke-extract
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      # T3: required packaged files present, no leaked mutable state.
+      - id: portable-release-smoke
+        name: "Portable release static smoke"
+        description: "Verify required packaged files and reject leaked mutable state"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/verify_portable_release_smoke.ps1
+          -PackageRoot build/Release/clean-smoke-extract
+          -RepoRoot .
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      # T3: boot the real packaged application and verify clean portable behavior.
+      - id: portable-e2e-smoke
+        name: "Portable release startup E2E smoke"
+        description: "Boot real packaged application and verify clean portable behavior"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/run_portable_e2e_smoke.ps1
+          -PackageRoot build/Release/clean-smoke-extract
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      # T3: resolve the current VERSION package and require signatures plus signed readiness.
+      - id: signed-release-verification
+        name: "Signed release signatures and readiness"
+        description: "Resolve current VERSION package and require signatures plus signed readiness"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/verify_signed_release.ps1
+        language: system
+        pass_filenames: false
+        stages: [manual]
+
+      # =====================================================================
+      # T4 -- local twins of the nightly/manual CI steps.
+      # =====================================================================
+
+      # T4: cppcheck WHOLE-PROJECT gate (R5-G10-3), the twin of the changed-files T1 hook.
+      #     A finding in a file nobody has touched is invisible to the T1 hook until somebody
+      #     touches it, and then it blocks THEIR commit for a defect they did not introduce.
+      #     This walks src/ and include/ whole, then runs a second pass with
+      #     unmatchedSuppression enabled to catch inline // cppcheck-suppress comments that
+      #     have gone dead (it found two on its first run, in test_secure_memory).
+      - id: cppcheck-whole-project
+        name: "cppcheck whole-project gate (+ stale-suppression reveal)"
+        description: "Zero findings across src/ and include/; no dead inline suppressions"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/cppcheck_whole_project_gate.ps1
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [manual]
+
+      # T4: high-confidence dead-code gate (R5-G10-6). cppcheck's raw unusedFunction stream
+      #     is noisy under Qt/meta-object dispatch and public headers. This rejects only
+      #     source definitions whose exact identifier occurs nowhere else in
+      #     src/include/tests, and plants an unused probe on every run so a disabled checker
+      #     cannot pass.
+      - id: dead-code
+        name: "Dead first-party source function check"
+        description: "Reject cppcheck unusedFunction definitions with no declaration or caller"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/check_dead_code.ps1
+        language: system
+        types_or: [c++]
+        files: ^src/.*\.cpp$
+        exclude: (third_party|3rdparty|external|_archived)/
+        require_serial: true
+        stages: [manual]
+
+      # T4: clang-tidy naming health/regression gate. Non-core stays at zero. Core is analyzed
+      #     completely with zero processing/compiler errors; its measured debt is allowed only
+      #     outside the machine-readable clean-TU ratchet. Needs reconstructed compile
+      #     databases.
+      - id: clang-tidy-naming
+        name: "clang-tidy naming health + zero-debt ratchet"
+        description: "Non-core stays clean; core analysis stays healthy and cleaned TUs stay zero"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/clang_tidy_naming_gate.ps1
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [manual]
+
+      # T4: mutation-catalog coverage ratchet (R5-G18-1). Every catalog find-string still
+      #     occurs exactly once in the current source (a refactor that moves the mutated text
+      #     turns the mutation into a silent no-op) and the on-disk catalog set equals
+      #     MANIFEST.txt. Static only. The slow build+mutate pass is
+      #       python scripts/run_all_mutation_catalogs.py
+      - id: mutation-catalog-integrity
+        name: "Mutation-catalog coverage ratchet (integrity)"
+        description: "Every catalog find-string is unique + the catalog set matches MANIFEST.txt"
+        entry: python scripts/run_all_mutation_catalogs.py --validate
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [manual]
+
+      # T4: RelWithDebInfo line coverage over the curated test set after a coverage build.
+      - id: coverage-measurement
+        name: "RelWithDebInfo line coverage measurement"
+        description: "Run OpenCppCoverage over registered tests after coverage build"
+        entry: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass
+          -File scripts/run_coverage.ps1
+          -TestRegex ^test_(pst_parser|fuzz_pst_parser|mbox_parser|fuzz_mbox_headers|fuzz_mbox_transfer_decoder|iso_analyzer|fuzz_iso_analyzer|ai_tool_policy|fuzz_command_classifier|fuzz_email_sanitizer|fuzz_mcp_framing|crash_reporter|encryption|input_validator|path_utils|email_types)$
+          -OutDir build/coverage
+        language: system
+        pass_filenames: false
+        stages: [manual]

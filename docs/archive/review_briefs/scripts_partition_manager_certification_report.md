@@ -49,4 +49,4 @@ Bounded final review found no further issue in this selection seam. Shared helpe
 `e532a88a90914f558cd75c2fbe5361460c155218`.
 The later full integration gate satisfies the former integration requirement. This fixture proof
 does not certify the application's disk operations or external hardware. Current boundaries remain
-in [R5](../../CODEX_REVIEW_5_REMEDIATION.md).
+in [R5](../CODEX_REVIEW_5_REMEDIATION.md).

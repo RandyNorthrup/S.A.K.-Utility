@@ -111,7 +111,7 @@ void FileScannerTests::scan_emptyDirectory() {
     // passed only while they happened to run BEFORE this one: scan_normalDirectory's
     // directories_found == 4 becomes 5 the moment this function has run, and typeFilter_dirsOnly
     // was already carrying a partial workaround for exactly that. The flake-soak isolation sweep
-    // (scripts/run_flake_soak.py, R5-G18-8) caught the surviving half -- typeFilter_dirsOnly
+    // (R5-G18-8, harness since retired) caught the surviving half -- typeFilter_dirsOnly
     // passed inside the binary and FAILED alone.
     QTemporaryDir emptyDir;
     QVERIFY(emptyDir.isValid());

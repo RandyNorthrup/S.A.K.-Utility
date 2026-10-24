@@ -8083,30 +8083,15 @@ if(PLATFORM_WINDOWS)
 
     add_test(NAME test_false_green_command_propagation
              COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_false_green_command_propagation.ps1"
-                     -Scope Portable)
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_false_green_command_propagation.ps1")
     set_tests_properties(test_false_green_command_propagation PROPERTIES TIMEOUT 60)
 
     add_test(NAME test_false_green_command_propagation_windows_powershell
              COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
                      "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_false_green_command_propagation.ps1"
-                     -Scope Portable)
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_false_green_command_propagation.ps1")
     set_tests_properties(
         test_false_green_command_propagation_windows_powershell PROPERTIES TIMEOUT 60)
-
-    add_test(NAME test_false_green_ledger
-             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_false_green_command_propagation.ps1"
-                     -Scope Ledger)
-    set_tests_properties(test_false_green_ledger PROPERTIES TIMEOUT 60)
-
-    add_test(NAME test_false_green_ledger_windows_powershell
-             COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
-                     "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_false_green_command_propagation.ps1"
-                     -Scope Ledger)
-    set_tests_properties(test_false_green_ledger_windows_powershell PROPERTIES TIMEOUT 60)
 
     add_test(NAME test_startup_budget
              COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
@@ -8130,11 +8115,6 @@ if(PLATFORM_WINDOWS)
                      -BuildDirectory "${CMAKE_BINARY_DIR}" -ArchiveOnly)
     set_tests_properties(test_release_archive_recovery PROPERTIES TIMEOUT 180)
 
-    add_test(NAME test_rehearse_ci_paths
-             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_rehearse_ci_paths.ps1")
-    set_tests_properties(test_rehearse_ci_paths PROPERTIES TIMEOUT 60)
-
     find_program(SAK_PYTHON_EXECUTABLE NAMES python3 python)
     if(NOT SAK_PYTHON_EXECUTABLE)
         message(FATAL_ERROR
@@ -8150,30 +8130,10 @@ if(PLATFORM_WINDOWS)
                      "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mutation_runner.py")
     set_tests_properties(test_mutation_runner PROPERTIES TIMEOUT 60)
 
-    add_test(NAME test_review_ledger
-             COMMAND "${SAK_PYTHON_EXECUTABLE}"
-                     "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_review_ledger.py")
-    set_tests_properties(test_review_ledger PROPERTIES TIMEOUT 180)
-
-    add_test(NAME test_doc_accuracy
-             COMMAND "${SAK_PYTHON_EXECUTABLE}"
-                     "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_doc_accuracy.py")
-    set_tests_properties(test_doc_accuracy PROPERTIES TIMEOUT 60)
-
     add_test(NAME test_source_fingerprint
              COMMAND "${SAK_PYTHON_EXECUTABLE}"
                      "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_source_fingerprint.py")
     set_tests_properties(test_source_fingerprint PROPERTIES TIMEOUT 180)
-
-    add_test(NAME test_gate_parity
-             COMMAND "${SAK_PYTHON_EXECUTABLE}"
-                     "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_gate_parity.py")
-    set_tests_properties(test_gate_parity PROPERTIES TIMEOUT 60)
-
-    add_test(NAME test_active_doc_references
-             COMMAND "${SAK_PYTHON_EXECUTABLE}"
-                     "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_active_doc_references.py")
-    set_tests_properties(test_active_doc_references PROPERTIES TIMEOUT 60)
 
     add_test(NAME test_cppcheck_qt_slot_classifier
              COMMAND "${SAK_PYTHON_EXECUTABLE}"

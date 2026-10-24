@@ -4,7 +4,7 @@
 /// @file fuzz_harness.h
 /// @brief Deterministic, MSVC-native mutation-fuzz core for first-party parsers.
 ///
-/// The campaign's measured gap (docs/CODEX_REVIEW_5_REMEDIATION.md, G14) is that
+/// The campaign's measured gap (docs/archive/CODEX_REVIEW_5_REMEDIATION.md, G14) was that
 /// every parser here consumes attacker-supplied bytes and none is fuzzed, while
 /// the toolchain has no libFuzzer/AFL on MSVC. This header is the reusable answer:
 /// a seed corpus is expanded by byte mutations under a fixed-seed splitmix64 PRNG,

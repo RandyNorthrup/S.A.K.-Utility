@@ -28,7 +28,7 @@ FormatStyle: file
 # google, hicpp, misc, modernize, performance, portability, readability.
 #
 # Each '-check' exclusion below carries its justification here in the config (R5-G21-3),
-# grouped by WHY it is off. All are tracked in docs/CODEX_REVIEW_5_REMEDIATION.md (R5-G2).
+# grouped by WHY it is off. History: docs/archive/CODEX_REVIEW_5_REMEDIATION.md (R5-G2).
 #
 # RESTORE-PENDING BUG CLASSES (re-enable as their debt is paid; highest priority -- these
 # hid real defects in the raw-filesystem parsers):

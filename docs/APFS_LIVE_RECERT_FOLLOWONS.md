@@ -2,7 +2,7 @@
 
 Origin: the 2026-08-10 live re-certification of the R5 APFS-writer residual campaign
 (waves A-G) against GENUINE Apple containers on the macOS VM (10.10.11.102, macOS 26.6,
-apfs_kext 2811.160.7). That re-cert is recorded in docs/CODEX_REVIEW_5_REMEDIATION.md
+apfs_kext 2811.160.7). That re-cert is recorded in docs/archive/CODEX_REVIEW_5_REMEDIATION.md
 ("Fix wave 3 -> LIVE RE-CERT DONE") and the campaign scratchpad apfs_deferred_residuals.md.
 
 Verdict of the re-cert: no wave A-G fail-closed guard false-rejects genuine Apple metadata
@@ -242,8 +242,8 @@ the rest is a debt-reduction + test-infra program (multi-session, much of it cos
       function suppressions live (four inconclusive by-value parameter findings), so those two are
       restored with the single-integer calling-convention reason. `cppcheck_suppressions.txt` holds
       six file entries, not the 26 recorded here. See R5-IDX-3 in
-      docs/CODEX_REVIEW_5_REMEDIATION.md for the method, the measurement holes, and the whole-project
-      gate gap it exposed.
+      docs/archive/CODEX_REVIEW_5_REMEDIATION.md for the method, the measurement holes, and the
+      whole-project gate gap it exposed.
 - [ ] Test-infra program (each a dedicated effort): G14 coverage ledger, G18 mutation
       testing, fuzz harnesses, fault injection, G20/G21 remaining gate wiring.
       PROGRESS 2026-08-31: WS3c's six manual red drills are now two registered mutation catalogs.

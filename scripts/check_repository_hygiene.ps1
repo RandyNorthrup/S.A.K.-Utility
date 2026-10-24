@@ -10,8 +10,9 @@
     tree so a direct push or skipped local hook cannot bypass whitespace, syntax, conflict,
     filename-case, or large-file checks.
 
-    Every hook id is fixed below and is also verified by check_gate_parity.ps1. A missing
-    Python/pre-commit installation or any non-zero hook result fails closed.
+    Every hook id is fixed below and must match the T1 standard hooks in
+    .pre-commit-config.yaml. A missing Python/pre-commit installation or any non-zero hook
+    result fails closed.
 #>
 
 [CmdletBinding(PositionalBinding = $false)]

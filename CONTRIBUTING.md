@@ -228,51 +228,54 @@ auto* widget = new QWidget(this);  // 'this' manages lifetime
 
 ### Code Quality Rules
 
-The first four rows below are NOT aspirational: each is a pre-commit hook that rejects the commit. The full table, with the hook that enforces each rule, is in [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md).
+The tool rows below are NOT aspirational. Each names its tier (see [AGENTS.md](AGENTS.md), "The gate"): T1 is a pre-commit hook that rejects the commit, T2 runs whole-tree in CI on every push to `dev`, T4 runs nightly or on demand. The full table, with the hook that enforces each rule, is in [docs/CODING_STANDARDS.md](docs/CODING_STANDARDS.md).
 
 | Rule | Target | Enforced By |
 |---|---|---|
-| Function length | <=70 lines in C++ and JavaScript | `lizard-complexity` hook -- BLOCKING |
-| Cyclomatic complexity | CCN <=10 in C++ and JavaScript | `lizard-complexity` hook -- BLOCKING |
-| Magic numbers | Named `constexpr` constants | `magic-numbers` hook -- BLOCKING |
-| Line length | <=100 columns | `.clang-format` hook -- BLOCKING |
-| Dead source functions | No unique unreferenced definition in `src/*.cpp` | `dead-code` hook -- BLOCKING; whole-tree in CI |
-| Gate parity | Every pre-commit gate has a CI route | `gate-parity` hook -- BLOCKING; regression-tested indirect and secret-scan routes |
-| Naming | Case conventions (snake_case locals, `k` prefix for constants, `m_` members) | `readability-identifier-naming`, run in CI on every build. NOT enforced: "no abbreviations, no single-letter vars" -- `readability-identifier-length` is deliberately disabled (`.clang-tidy:142`, reason at line 102: it flags idiomatic `i`, `x`, `id`), so short names are a review convention, not a gate |
+| Function length | <=70 lines in C++ and JavaScript | `lizard-complexity` -- T1 changed files, T2 whole tree |
+| Cyclomatic complexity | CCN <=10 in C++ and JavaScript | `lizard-complexity` -- T1 changed files, T2 whole tree |
+| Magic numbers | Named `constexpr` constants | `magic-numbers` -- T2 whole tree |
+| Line length | <=100 columns | `clang-format` -- T1 changed files, T2 whole tree |
+| Dead source functions | No unique unreferenced definition in `src/*.cpp` | `dead-code` -- T4 whole tree |
+| Naming | Case conventions (snake_case locals, `k` prefix for constants, `m_` members) | `readability-identifier-naming` via `clang-tidy-naming` -- T4. NOT enforced: "no abbreviations, no single-letter vars" -- `readability-identifier-length` is deliberately disabled (`.clang-tidy:142`, reason at line 102: it flags idiomatic `i`, `x`, `id`), so short names are a review convention, not a gate |
 | Nesting depth | <=3 levels | Code review (Lizard measures complexity, not nesting depth) |
 | Assertions | Meaningful preconditions/postconditions | Code review |
 | `catch(...)` | Should have explanatory comment | Code review |
 
 **Pre-submit checklist**:
 ```powershell
-# Verify formatting
-clang-format --dry-run -Werror <changed-files>
+# T1 runs on every commit by itself (changed files only, under 60 s).
 
-# Run pre-commit hooks (format, complexity, cppcheck)
-pre-commit run --all-files
+# The T2 twins of the CI push gates (whole tree; run before pushing a wide change)
+pre-commit run --hook-stage manual secret-path-scan --all-files
+pre-commit run --hook-stage manual magic-numbers --all-files
+pre-commit run --hook-stage manual gui-style-tokens --all-files
+pre-commit run --hook-stage manual gui-magic-numbers --all-files
+pre-commit run --hook-stage manual gui-stylesheet-literals --all-files
+pre-commit run --hook-stage manual logged-message-boxes --all-files
+pre-commit run --hook-stage manual build-system-lint --all-files
+pre-commit run --hook-stage manual error-message-uniqueness --all-files
+pre-commit run --hook-stage manual third-party-licenses --all-files
+powershell scripts/check_repository_hygiene.ps1
 
-# The two slowest gates are MANUAL-stage and are NOT run by the line above.
-# Each takes minutes (a full clang-tidy sweep; two exhaustive cppcheck passes),
-# which is why they are not on every commit -- CI runs them on every build.
-pre-commit run --hook-stage manual clang-tidy-naming --all-files
-pre-commit run --hook-stage manual cppcheck-whole-project --all-files
+# T2 checks that need a current Release build
 pre-commit run --hook-stage manual startup-budget --all-files
 pre-commit run --hook-stage manual accessibility-runtime --all-files
 pre-commit run --hook-stage manual test-skip-audit --all-files
-pre-commit run --hook-stage manual build-verification --all-files
-pre-commit run --hook-stage manual coverage-measurement --all-files
+pre-commit run --hook-stage manual windows-runtime-dependencies --all-files
+
+# T3 (release bytes): package, smoke, readiness, signing, certification evidence
 pre-commit run --hook-stage manual release-readiness --all-files
 pre-commit run --hook-stage manual portable-release-smoke --all-files
 pre-commit run --hook-stage manual portable-e2e-smoke --all-files
-pre-commit run --hook-stage manual windows-runtime-dependencies --all-files
 pre-commit run --hook-stage manual signed-release-verification --all-files
 
-# Whole-tree high-confidence unused-function scan (CI runs this too)
-powershell scripts/check_dead_code.ps1
-
-# Pre-commit-to-CI route audit plus generic whole-tree hygiene
-powershell scripts/check_gate_parity.ps1
-powershell scripts/check_repository_hygiene.ps1
+# T4 (minutes each): whole-tree cppcheck, dead code, clang-tidy, mutation, coverage
+pre-commit run --hook-stage manual cppcheck-whole-project --all-files
+pre-commit run --hook-stage manual dead-code --all-files
+pre-commit run --hook-stage manual clang-tidy-naming --all-files
+pre-commit run --hook-stage manual mutation-catalog-integrity --all-files
+pre-commit run --hook-stage manual coverage-measurement --all-files
 ```
 
 `cppcheck-whole-project` is the one that catches what the per-commit `cppcheck` hook

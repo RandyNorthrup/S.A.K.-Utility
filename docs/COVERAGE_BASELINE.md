@@ -233,4 +233,4 @@ CURATED CORE SET, not the full suite; raising specific reachable numbers is trac
 own increments (e.g. R5-G14-5 adds page-trailer-valid PST store seeds so pst_parser.cpp
 executes its deep BTree/LTP layers). The dispositions of R5-G14-16a (enforce 100% line) and
 R5-G14-16d (wire a blocking gate) are recorded against those items in
-docs/CODEX_REVIEW_5_REMEDIATION.md.
+docs/archive/CODEX_REVIEW_5_REMEDIATION.md.

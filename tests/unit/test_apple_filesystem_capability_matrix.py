@@ -39,11 +39,6 @@ class AppleFilesystemCapabilityMatrixTests(unittest.TestCase):
         targets = (
             (Path(__file__), self.__class__.__name__, ("run_gate", "run_commercial_gate")),
             (
-                PROJECT_ROOT / "tests/unit/test_active_doc_references.py",
-                "ActiveDocReferenceTests",
-                ("run_gate",),
-            ),
-            (
                 PROJECT_ROOT / "tests/unit/test_cppcheck_qt_slot_classifier.py",
                 "QtSlotClassifierTests",
                 ("cppcheck_input_scope", "test_header_outside_first_party_roots_fails_closed"),

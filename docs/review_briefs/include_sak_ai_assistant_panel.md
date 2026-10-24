@@ -35,7 +35,7 @@ source hash matched its pre-mutation value and the marker cleared. Final CTest X
 
 Integrated local gate 2026-09-04: Release build exit 0; CTest 276/276 passed in 1052.17 seconds
 (`build/wave31-full-ctest-final.xml`). Runtime skip audit passed with 27 reviewed skips. Remaining
-work and certification boundaries are tracked in [R5](../CODEX_REVIEW_5_REMEDIATION.md).
+work and certification boundaries are tracked in [R5](../archive/CODEX_REVIEW_5_REMEDIATION.md).
 
 - [ ] [LOW] The Windows separator-aware naming reveal finds 115 private-field naming violations
   in this header. The existing header filter concealed them from the configured gate. Functional

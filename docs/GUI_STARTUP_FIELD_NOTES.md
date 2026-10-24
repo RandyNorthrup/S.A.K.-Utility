@@ -245,7 +245,7 @@ mutant must compile under `/W4 /WX` and fail its own runtime assertion; compile 
 coverage credit. Separate lexer-based checks reject Qt use in each fatal helper and missing catches.
 The live source is never planted with a mutant. These checks augment the existing complete Release,
 CTest, real-app startup, accessibility and native-package gates; they do not replace those gates.
-The current evidence and remaining release status belong to `CODEX_REVIEW_5_REMEDIATION.md`.
+Remaining release status belongs to `RELEASE_READINESS.md`; the archived R5 campaign history is `archive/CODEX_REVIEW_5_REMEDIATION.md`.
 
 ## Disproven -- do not re-chase
 

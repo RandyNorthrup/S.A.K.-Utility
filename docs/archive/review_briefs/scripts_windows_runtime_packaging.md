@@ -520,4 +520,4 @@ host-dependent dot/underscore sorting. Both original preparations were retained.
 reader and explicit ordinal ordering passed the real 196-entry tree on both Windows shells,
 plus independent member/type/hash/attribute refusal controls, before fresh package execution.
 No failed native run was hidden by a warm retry. See the exact receipts and remaining broader
-work in [R5](../../CODEX_REVIEW_5_REMEDIATION.md).
+work in [R5](../CODEX_REVIEW_5_REMEDIATION.md).

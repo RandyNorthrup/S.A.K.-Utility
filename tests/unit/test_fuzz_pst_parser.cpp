@@ -165,7 +165,7 @@ std::vector<QByteArray> pstCorpus() {
         // readHeapOnNode, and the folder-tree walk on an accepted file. Mutations of it exercise
         // the SUCCESS-then-corrupt branches of every integrity gate (header CRC, page trailer,
         // block trailer, HN/BTH bounds), the LTP/messaging accept path the reject-only seeds
-        // never touched (see docs/CODEX_REVIEW_5_REMEDIATION.md, R5-G14-5).
+        // never touched (see docs/archive/CODEX_REVIEW_5_REMEDIATION.md, R5-G14-5).
         sak::pst_fixture::buildOpenableUnicodeStore(),
         // A FOLDERED store: the root folder's hierarchy Table Context lists one child folder, so
         // the unmutated seed additionally drives the TC/row-matrix accept path (readTableContext,

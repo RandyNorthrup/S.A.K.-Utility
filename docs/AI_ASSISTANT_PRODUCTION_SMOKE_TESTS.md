@@ -88,8 +88,8 @@ Latest host-side package/live harness pass:
 It covered targeted AI CTest, live OpenAI plain response and function tool-loop,
 portable startup smoke, runtime accessibility audit, and the smoke checklist.
 That same 2026-06-04 pass also completed a full Release build and full CTest run,
-136/136 on the day. The current registered count lives in `tests/README.md`, where a
-pre-commit gate holds it to the real CTest registration.
+136/136 on the day. The current registered count is the CTest registration itself
+(`ctest -N`); no document carries it.
 The current workflow runner uses a per-subagent OpenAI model-client factory and
 a conservative three-subagent production cap, so workflow-declared read-only
 delegates can run in parallel without sharing one Responses client instance.

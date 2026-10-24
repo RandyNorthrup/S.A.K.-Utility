@@ -19,7 +19,8 @@
 // Under a loaded full-suite run it measured 8000-10550 ms on this machine against QTest's 5000 ms
 // QTRY default, so the whole suite failed the gate while the scanner was working correctly --
 // QtTest's own message even reports how long would have sufficed. That is a LOAD-dependent test
-// failure, the exact class scripts/run_flake_soak.py exists to find (R5-G18-8).
+// failure, the exact class the flake-soak harness was built to find (R5-G18-8; harness retired
+// 2026-10-24 once CTest ran in parallel with resource locks, which exercises the same load).
 //
 // Bounded generously rather than removed: a scan that never completes must still fail, so this
 // is a longer deadline, not an unbounded wait.

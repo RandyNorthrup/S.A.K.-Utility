@@ -54,22 +54,23 @@ The hard gates are **zero build warnings, zero build errors, and all tests passi
 
 ### Quality Rules and What Enforces Each
 
-BLOCKING rows are pre-commit hooks: the commit is rejected. Review rows are not checked by
-any tool, so they hold only if a human notices.
+Each tool row names its tier (AGENTS.md "The gate"): T1 rejects the commit and checks only the
+files it changed; T2 runs whole-tree in CI on every push to `dev`; T4 runs nightly or on demand.
+Each T2/T4 row has a manual-stage hook as its local twin. Review rows are not checked by any
+tool, so they hold only if a human notices.
 
 | Guideline | Target | Enforced by |
 |---|---|---|
-| Function body length | <=70 lines in C++ and JavaScript | `lizard-complexity` -- BLOCKING (`MAX_FUNC_LENGTH` in `scripts/run_lizard.py`) |
-| Cyclomatic complexity | CCN <=10 in C++ and JavaScript | `lizard-complexity` -- BLOCKING (`MAX_CCN`) |
-| Magic numbers | Named `constexpr` constants | `magic-numbers` -- BLOCKING (`scripts/check_magic_numbers.py`); `0`, `1`, `-1` stay bare |
-| Line length | <=100 columns | `clang-format` -- BLOCKING |
-| Single-letter variables | Avoid, except tiny lambda predicates | `readability-identifier-naming`, run in CI on every build |
-| cppcheck findings | Zero across `src/`, `include/`, and `tests/` | `cppcheck` -- BLOCKING on the files YOUR commit changed; `cppcheck-whole-project` (manual stage + CI) -- BLOCKING whole-tree |
-| Dead source functions | Zero high-confidence unreferenced definitions in `src/*.cpp` | `dead-code` -- BLOCKING on changed source files; `scripts/check_dead_code.ps1` in CI -- BLOCKING whole-tree |
-| Dead analysis suppressions | A `// cppcheck-suppress` must actually suppress something | `cppcheck-whole-project` reveal pass -- BLOCKING (`scripts/cppcheck_whole_project_gate.ps1`) |
-| Local/CI gate parity | Every custom/generic local gate has a CI route; every CI grading script has a local/manual route | `gate-parity` -- BLOCKING (`scripts/check_gate_parity.ps1`) |
-| Dead application-platform branches | Zero in audited Windows-only product modules | `build-system-lint` -- BLOCKING (`scripts/check_build_system_lint.ps1`) |
-| Cold startup performance | <=15 seconds through real `--smoke-test` initialization | `startup-budget` -- MANUAL after Release build; CI -- BLOCKING |
+| Function body length | <=70 lines in C++ and JavaScript | `lizard-complexity` -- T1 changed files, T2 whole tree (`MAX_FUNC_LENGTH` in `scripts/run_lizard.py`) |
+| Cyclomatic complexity | CCN <=10 in C++ and JavaScript | `lizard-complexity` -- T1 changed files, T2 whole tree (`MAX_CCN`) |
+| Magic numbers | Named `constexpr` constants | `magic-numbers` -- T2 whole tree (`scripts/check_magic_numbers.py`); `0`, `1`, `-1` stay bare |
+| Line length | <=100 columns | `clang-format` -- T1 changed files, T2 whole tree |
+| Single-letter variables | Avoid, except tiny lambda predicates | `readability-identifier-naming` via `clang-tidy-naming` -- T4 |
+| cppcheck findings | Zero across `src/`, `include/`, and `tests/` | `cppcheck` -- T1 on the files YOUR commit changed; `cppcheck-whole-project` -- T4 whole tree |
+| Dead source functions | Zero high-confidence unreferenced definitions in `src/*.cpp` | `dead-code` (`scripts/check_dead_code.ps1`) -- T4 whole tree |
+| Dead analysis suppressions | A `// cppcheck-suppress` must actually suppress something | `cppcheck-whole-project` reveal pass -- T4 (`scripts/cppcheck_whole_project_gate.ps1`) |
+| Dead application-platform branches | Zero in audited Windows-only product modules | `build-system-lint` -- T2 (`scripts/check_build_system_lint.ps1`) |
+| Cold startup performance | <=15 seconds through real `--smoke-test` initialization | `startup-budget` -- T2 after the Release build |
 | Nesting depth | <=3 levels | Review -- lizard measures complexity, not nesting depth |
 | Assertions | Meaningful preconditions/postconditions | Review -- every assertion should catch a real bug |
 | `catch(...)` | Should have explanatory comment | Review -- only the logger is exempt |
@@ -263,9 +264,9 @@ These are the **hard requirements**. Every PR must pass these gates:
 - [ ] **Pass all tests** (100% pass rate) -- non-negotiable
 - [ ] Include tests for new features
 
-Function length, complexity, magic numbers and line length are each enforced by a
-pre-commit hook that rejects the commit. The quality table near the top of this file
-says which rules block and which rely on review.
+Function length, complexity and line length are enforced by T1 pre-commit hooks on the files a
+commit changes, and by T2 CI over the whole tree; magic numbers are T2. The quality table near
+the top of this file says which tier enforces each rule and which rely on review.
 
 ---
 

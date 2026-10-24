@@ -36,7 +36,7 @@ reports. Bounded final review found no remaining issue in this delta.
 This remains scoped runner evidence. Integrated local gate 2026-09-04: Release build exit 0;
 CTest 276/276 passed in 1052.17 seconds (`build/wave31-full-ctest-final.xml`). Runtime skip audit
 passed with 27 reviewed skips. Remaining work and certification boundaries are tracked in
-[R5](../../CODEX_REVIEW_5_REMEDIATION.md). The subsequent recovery delta is recorded below.
+[R5](../CODEX_REVIEW_5_REMEDIATION.md). The subsequent recovery delta is recorded below.
 
 Full-file follow-up on 2026-09-04 found two separate recovery gaps outside that executed-command
 delta. Both were reproduced through the existing test fixture, with REPO_ROOT, sentinel and

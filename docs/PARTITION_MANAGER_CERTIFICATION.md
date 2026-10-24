@@ -75,7 +75,7 @@ evidence must be explicitly supplied and verified; no historical record has been
 relabeled. Native online partition/DASD capture, opaque or foreign source modes, current external
 hardware proof and whole-application E2E certification remain open. VHD proof does not establish
 whole-application certification or a complete release handoff.
-The active repair and proof ledger is [R5](CODEX_REVIEW_5_REMEDIATION.md).
+The R5 repair and proof history is archived in [R5](archive/CODEX_REVIEW_5_REMEDIATION.md).
 Do not mark the Partition Manager destructive paths fully certified until those reports exist.
 
 The June checkpoints below are historical evidence, not a current certification claim. Their
