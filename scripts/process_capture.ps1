@@ -401,6 +401,22 @@ function Set-CaptureEnvironmentOverrides([Diagnostics.ProcessStartInfo]$StartInf
     }
 }
 
+function Start-CaptureProcess($Process) {
+    # .NET Framework (Windows PowerShell 5.1) builds StandardInput from Console.InputEncoding
+    # and enables AutoFlush inside Start(), which writes that encoding's preamble at once.
+    # Under a UTF-8 console (chcp 65001) the encoding carries a byte-order mark, so an empty
+    # input reached the child as three BOM bytes. Start with the same code page minus its
+    # preamble; assigning an equal code page leaves the console itself unchanged. Untyped
+    # parameter: fixtures override Start() on the PSObject and must keep that override.
+    $inputEncoding = [Console]::InputEncoding
+    if ($inputEncoding.GetPreamble().Length -eq 0) { return $Process.Start() }
+    if ($inputEncoding -isnot [Text.UTF8Encoding]) {
+        throw "Console input encoding carries an unsupported preamble: $($inputEncoding.WebName)"
+    }
+    [Console]::InputEncoding = [Text.UTF8Encoding]::new($false)
+    try { return $Process.Start() } finally { [Console]::InputEncoding = $inputEncoding }
+}
+
 function Invoke-CapturedProcess {
     [CmdletBinding()]
     param(
@@ -448,7 +464,7 @@ function Invoke-CapturedProcess {
     $result = $null
     $started = $false
     try {
-        if (-not $process.Start()) { throw "Process did not start: $FilePath" }
+        if (-not (Start-CaptureProcess $process)) { throw "Process did not start: $FilePath" }
         $started = $true
         $watch.Restart()
         $stdoutWorker = $ioType::Read($process.StandardOutput, $MaxOutputCharacters, 'stdout')

@@ -56,6 +56,20 @@ function Assert-CaptureFixtureBinding([Diagnostics.Process]$Process, $Binding, [
     )
 }
 
+function Resolve-FixturePython {
+    # Fixtures bind the launched process's PID/generation, so they need the interpreter that
+    # actually runs. A venv python.exe on Windows is a launcher stub that starts the base
+    # interpreter as a CHILD; launching the stub binds a different process than the one that
+    # writes the receipt. Ask the first python.exe on PATH which base interpreter it runs.
+    if ($PythonPath -ne '') { return (Resolve-Path -LiteralPath $PythonPath -ErrorAction Stop).Path }
+    $launcher = (Get-Command python.exe -CommandType Application -TotalCount 1 -ErrorAction Stop).Source
+    $base = & $launcher -I -c "import sys; print(getattr(sys, '_base_executable', '') or sys.executable)"
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($base)) {
+        throw "Could not resolve the base Python interpreter behind $launcher"
+    }
+    return (Resolve-Path -LiteralPath $base.Trim() -ErrorAction Stop).Path
+}
+
 function Get-CaptureFunctionScriptBlock([string]$Name, [string]$Path) {
     $tokens = $null
     $parseErrors = $null
@@ -202,7 +216,7 @@ function Test-CaptureIoDeadline([string]$Mode, [string]$ShellPath) {
     $base = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')
     $root = Join-Path $base ('sak-capture-deadline-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $root -ErrorAction Stop | Out-Null
-    $python = (Get-Command python.exe -CommandType Application -TotalCount 1 -ErrorAction Stop).Source
+    $python = Resolve-FixturePython
     $worker = [Diagnostics.Process]::new()
     $worker.StartInfo = [Diagnostics.ProcessStartInfo]::new()
     $worker.StartInfo.FileName = $ShellPath
@@ -351,7 +365,7 @@ function Test-CaptureOutputCase($Case) {
     $base = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\')
     $root = Join-Path $base ('sak-capture-output-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $root -ErrorAction Stop | Out-Null
-    $python = (Get-Command python.exe -CommandType Application -TotalCount 1 -ErrorAction Stop).Source
+    $python = Resolve-FixturePython
     $state = @{ held=@{}; bindings=@{}; watch=$null; io=@(); stages=@(); utility_io=@() }
     # Bound only the fixture receipt handshake. Python startup and host scanning can exceed
     # two seconds before it writes parent.json; production capture deadlines are unchanged.
