@@ -3,9 +3,10 @@
     Runs clang-format with repository defaults.
 
 .DESCRIPTION
-    Locates clang-format from PATH, a local virtual environment, standalone LLVM,
-    or Visual Studio's bundled LLVM tools. This avoids hardcoding one Visual
-    Studio edition in pre-commit while keeping formatting strict.
+    Locates clang-format from the repository .venv (the version pinned in
+    requirements-gates.txt), then PATH, standalone LLVM, or Visual Studio's bundled
+    LLVM tools. This avoids hardcoding one Visual Studio edition in pre-commit while
+    keeping formatting strict.
 #>
 
 # PositionalBinding=$false + ValueFromRemainingArguments: `-File run_clang_format.ps1 -Check
@@ -36,13 +37,20 @@ if ($args.Count -gt 0) {
 }
 
 function Find-ClangFormat {
+    # The pinned wheel (requirements-gates.txt) in the repository .venv comes first, so a
+    # different LLVM on PATH cannot change what "formatted" means on this machine. CI has no
+    # .venv and installs the same pin onto PATH.
+    $venvClangFormat = Join-Path $ProjectRoot ".venv\Scripts\clang-format.exe"
+    if (Test-Path -LiteralPath $venvClangFormat -PathType Leaf) {
+        return $venvClangFormat
+    }
+
     $fromPath = Get-Command clang-format.exe -ErrorAction SilentlyContinue
     if ($fromPath) {
         return $fromPath.Source
     }
 
     $candidatePaths = @(
-        (Join-Path $ProjectRoot ".venv\Scripts\clang-format.exe"),
         "$env:ProgramFiles\LLVM\bin\clang-format.exe",
         "${env:ProgramFiles(x86)}\LLVM\bin\clang-format.exe"
     )

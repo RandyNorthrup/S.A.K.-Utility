@@ -8,7 +8,7 @@
 [![C++23](https://img.shields.io/badge/C%2B%2B-23-blue.svg)](https://isocpp.org/)
 [![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
-[![Build](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/build-release.yml/badge.svg)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions)
+[![CI](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/badge/Version-0.9.2.0-orange.svg)](VERSION)
 [![Tests](https://img.shields.io/badge/Tests-257%20passing-brightgreen.svg)](tests/)
 

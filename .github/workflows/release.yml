@@ -1,0 +1,365 @@
+name: Release (T3)
+
+# Tier T3 (AGENTS.md, "The gate"): a version tag, or a manual dry run. Build, package, smoke the
+# clean package, run release readiness and the certification evidence checks, sign, verify,
+# and publish. T2 (ci.yml) must already be green on main for the release commit; this workflow
+# does not repeat the T2 test run.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+# A run that is publishing a release must never be killed halfway through.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  GITLEAKS_VERSION: '8.30.1'
+  GITLEAKS_SHA256: 'd29144deff3a68aa93ced33dddf84b7fdc26070add4aa0f4513094c8332afc4e'
+  TRUFFLEHOG_VERSION: '3.95.3'
+  TRUFFLEHOG_SHA256: 'd13aa1c4e3654d873fb929ecd1215608dfcac2e83d60b86b510d34a7183cc34d'
+
+jobs:
+  release:
+    name: Build, package, sign and publish
+    # Pinned to windows-2022 (Visual Studio 2022 / v17). windows-latest is VS 2026 only, which
+    # the "Visual Studio 17 2022" generator and the Qt win64_msvc2022_64 libraries cannot use.
+    runs-on: windows-2022
+    timeout-minutes: 180
+    permissions:
+      contents: write
+      id-token: write
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+      with:
+        fetch-depth: 0
+
+    - name: Read version
+      id: version
+      shell: pwsh
+      run: |
+        $ver = (Get-Content VERSION -Raw).Trim()
+        Write-Host "Detected version: $ver"
+        "APP_VERSION=$ver" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+        "version=$ver" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+
+    - name: Toolchain
+      uses: ./.github/actions/windows-build-env
+
+    # Release readiness runs the full secret scan (scripts/scan_secrets.ps1 without
+    # -SkipExternalTools), which fails closed without both external scanners.
+    - name: Install gitleaks and trufflehog
+      shell: pwsh
+      run: |
+        function Get-Pinned([string]$Url, [string]$Sha256, [string]$Name) {
+          $file = Join-Path $env:RUNNER_TEMP $Name
+          Invoke-WebRequest -Uri $Url -OutFile $file
+          $hash = (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()
+          if ($hash -ne $Sha256) { throw "$Name hash $hash does not match the pin" }
+          return $file
+        }
+        $tools = Join-Path $env:RUNNER_TEMP "secret-scanners"
+        New-Item -ItemType Directory -Force -Path $tools | Out-Null
+
+        $gl = Get-Pinned "https://github.com/gitleaks/gitleaks/releases/download/v$env:GITLEAKS_VERSION/gitleaks_$($env:GITLEAKS_VERSION)_windows_x64.zip" $env:GITLEAKS_SHA256 "gitleaks.zip"
+        Expand-Archive -LiteralPath $gl -DestinationPath $tools -Force
+
+        $th = Get-Pinned "https://github.com/trufflesecurity/trufflehog/releases/download/v$env:TRUFFLEHOG_VERSION/trufflehog_$($env:TRUFFLEHOG_VERSION)_windows_amd64.tar.gz" $env:TRUFFLEHOG_SHA256 "trufflehog.tar.gz"
+        tar -xzf $th -C $tools trufflehog.exe
+        if ($LASTEXITCODE -ne 0) { throw "tar exited $LASTEXITCODE extracting trufflehog" }
+
+        $tools | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+        & (Join-Path $tools gitleaks.exe) version
+        & (Join-Path $tools trufflehog.exe) --version
+
+    # The package ships these tools. Each script is idempotent and skips a tool already present
+    # in the checkout. (The old workflow also restored tools/uup/uupmc from an actions cache
+    # keyed only on the bundle script. Those files are tracked, so a restore could overwrite a
+    # newer checkout with stale bytes; the cache is gone.)
+    - name: Bundle smartmontools
+      shell: pwsh
+      run: '& scripts/bundle_smartmontools.ps1'
+
+    - name: Bundle UUP tools (aria2c + verify uupmc)
+      shell: pwsh
+      run: '& scripts/bundle_uup_tools.ps1'
+
+    - name: Bundle iPerf3
+      shell: pwsh
+      run: '& scripts/bundle_iperf3.ps1'
+
+    - name: Partition filesystem tool manifest
+      shell: pwsh
+      run: '& scripts/check_partition_filesystem_tool_manifest.ps1'
+
+    - name: Configure
+      shell: pwsh
+      run: |
+        cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+          -DCMAKE_PREFIX_PATH="$env:QT_ROOT_DIR" `
+          -DVCPKG_APPLOCAL_DEPS=OFF `
+          -DVCPKG_TARGET_TRIPLET="$env:VCPKG_TRIPLET" `
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+          -DSAK_PYTHON_EXECUTABLE="$env:pythonLocation\python.exe"
+        $configureExit = $LASTEXITCODE
+        "CONFIGURE EXIT: $configureExit"
+        exit $configureExit
+
+    # Every target: release readiness runs the certifier and HFS tool self-tests, which need the
+    # certifier executables, not only the app.
+    - name: Build
+      shell: pwsh
+      run: |
+        cmake --build build --config Release --parallel
+        $buildExit = $LASTEXITCODE
+        "BUILD EXIT: $buildExit"
+        exit $buildExit
+
+    - name: Bundle vcpkg runtime DLLs
+      working-directory: build/Release
+      shell: pwsh
+      run: '& ../../scripts/bundle_vcpkg_runtime.ps1 -DestinationPath .'
+
+    - name: Verify build output
+      working-directory: build/Release
+      shell: pwsh
+      run: |
+        Write-Host "=== Build Output Verification ==="
+
+        if (!(Test-Path "sak_utility.exe")) { Write-Error "FATAL: sak_utility.exe not found"; exit 1 }
+        Write-Host "OK  sak_utility.exe"
+
+        # Splash screen (copied by CMake POST_BUILD)
+        if (!(Test-Path "sak_splash.png")) { Write-Error "FATAL: sak_splash.png not found - CMake POST_BUILD copy failed"; exit 1 }
+        Write-Host "OK  sak_splash.png"
+
+        if (!(Test-Path "icon.ico")) { Write-Warning "icon.ico not found (non-fatal, embedded in exe via .rc)" } else { Write-Host "OK  icon.ico" }
+
+        # Qt plugin directories (deployed by windeployqt POST_BUILD)
+        foreach ($dir in @("platforms", "styles", "imageformats", "iconengines", "tls")) {
+          if (!(Test-Path $dir)) { Write-Error "FATAL: Qt plugin directory '$dir' not found - windeployqt may have failed"; exit 1 }
+          $count = (Get-ChildItem $dir -Filter "*.dll" | Measure-Object).Count
+          Write-Host "OK  $dir/ ($count plugins)"
+        }
+
+        foreach ($dll in @("Qt6Core.dll", "Qt6Gui.dll", "Qt6Widgets.dll", "Qt6Network.dll", "Qt6Concurrent.dll", "Qt6Xml.dll")) {
+          if (!(Test-Path $dll)) { Write-Error "FATAL: $dll not found"; exit 1 }
+          Write-Host "OK  $dll"
+        }
+
+        foreach ($dll in @("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll", "concrt140.dll")) {
+          if (!(Test-Path $dll)) { Write-Warning "$dll not found (may cause runtime failures)" } else { Write-Host "OK  $dll" }
+        }
+
+        if (!(Test-Path "tools")) { Write-Warning "tools/ directory not found" } else { Write-Host "OK  tools/" }
+
+        if (!(Test-Path "tools/smartmontools/smartctl.exe")) {
+          Write-Warning "tools/smartmontools/smartctl.exe not found - SMART diagnostics unavailable"
+        } else {
+          $smartVer = & .\tools\smartmontools\smartctl.exe --version 2>&1 | Select-Object -First 1
+          Write-Host "OK  tools/smartmontools/smartctl.exe ($smartVer)"
+        }
+
+        if (!(Test-Path "tools/uup/aria2c.exe")) { Write-Error "FATAL: tools/uup/aria2c.exe not found - ISO downloads will be broken"; exit 1 }
+        $aria2Ver = & .\tools\uup\aria2c.exe --version 2>&1 | Select-Object -First 1
+        Write-Host "OK  tools/uup/aria2c.exe ($aria2Ver)"
+
+        if (!(Test-Path "tools/uup/uupmc/UUPMediaConverter.exe")) { Write-Error "FATAL: tools/uup/uupmc/UUPMediaConverter.exe not found - UUP conversion will be broken"; exit 1 }
+        Write-Host "OK  tools/uup/uupmc/UUPMediaConverter.exe"
+        if (!(Test-Path "tools/uup/uupmc/UUPDownload.exe")) { Write-Error "FATAL: tools/uup/uupmc/UUPDownload.exe not found - UUP downloads will be broken"; exit 1 }
+        Write-Host "OK  tools/uup/uupmc/UUPDownload.exe"
+
+        if (!(Test-Path "tools/iperf3/iperf3.exe")) { Write-Warning "tools/iperf3/iperf3.exe not found - LAN bandwidth testing unavailable" } else { Write-Host "OK  tools/iperf3/iperf3.exe" }
+
+        # Win32 desktop/browser automation is the app binary's built-in MCP server, not a
+        # separately bundled executable.
+        if (Test-Path "tools/mcp/_build") { Write-Error "FATAL: tools/mcp/_build leaked into release output"; exit 1 }
+
+        foreach ($f in @("data/ai/providers/providers.json", "data/ai/app_manifests/superantispyware.json", "data/ai/app_manifests/windows_sfc.json")) {
+          if (!(Test-Path $f)) { Write-Error "FATAL: $f not found"; exit 1 }
+        }
+        if (Get-ChildItem "data/ai/providers" -Recurse -Filter "*.local.json" -ErrorAction SilentlyContinue) {
+          Write-Error "FATAL: local provider config present in CI build output"; exit 1
+        }
+
+        # Imported non-system DLLs must exist in the build output.
+        & ../../scripts/verify_windows_runtime_dependencies.ps1 -RootDir . -PrimaryExe "sak_utility.exe"
+        if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+        Write-Host "=== Verification complete ==="
+
+    # One script per step: a second call in the same step would overwrite the first one's exit
+    # code, so a failed staging could be reported green by a successful archive call.
+    - name: Stage portable release
+      shell: pwsh
+      run: '& scripts/stage_portable_release.ps1 -BuildDir "build/Release" -PackageName "SAK-Utility-v$env:APP_VERSION"'
+
+    - name: Create release archive
+      shell: pwsh
+      run: '& scripts/create_release_archive.ps1 -BuildDir "build/Release" -PackageName "SAK-Utility-v$env:APP_VERSION"'
+
+    - name: Smoke test clean portable package
+      working-directory: build/Release
+      shell: pwsh
+      run: |
+        $pkgName = "SAK-Utility-v$env:APP_VERSION"
+        $zipName = "$pkgName-Windows-x64.zip"
+        $extract = Join-Path (Get-Location) "clean-smoke-extract"
+        Remove-Item -Recurse -Force $extract -ErrorAction SilentlyContinue
+        New-Item -ItemType Directory -Force -Path $extract | Out-Null
+        Expand-Archive -LiteralPath $zipName -DestinationPath $extract -Force
+        & "../../scripts/verify_portable_release_smoke.ps1" -PackageRoot $extract -RepoRoot (Resolve-Path "../..").Path
+
+    - name: Startup E2E smoke from clean extracted package
+      shell: pwsh
+      run: '& scripts/run_portable_e2e_smoke.ps1 -PackageRoot "build/Release/clean-smoke-extract"'
+
+    - name: Release readiness gate from clean extracted package
+      shell: pwsh
+      run: |
+        $pkgName = "SAK-Utility-v$env:APP_VERSION"
+        $zipName = "$pkgName-Windows-x64.zip"
+        $extract = "build/Release/clean-readiness-extract"
+        Remove-Item -Recurse -Force $extract -ErrorAction SilentlyContinue
+        New-Item -ItemType Directory -Force -Path $extract | Out-Null
+        Expand-Archive -LiteralPath "build/Release/$zipName" -DestinationPath $extract -Force
+        & scripts/check_release_readiness.ps1 -PackageRoot $extract
+
+    # The generated Current Certification State block in docs/PARTITION_MANAGER_CERTIFICATION.md
+    # must match the claim level computed from the committed certification evidence. A clean
+    # clone carries less evidence than a certification workstation, so this is T3, not T2.
+    - name: Partition Manager certification state block is current
+      shell: pwsh
+      run: '& scripts/check_partition_manager_release_claims.ps1'
+
+    - name: Create signing catalog
+      working-directory: build/Release
+      shell: pwsh
+      run: |
+        $pkgName = "SAK-Utility-v$env:APP_VERSION"
+        & "../../scripts/create_signing_catalog.ps1" -RootDir $pkgName -OutputPath "$pkgName/signing-catalog.txt"
+
+    - name: Sign packaged binaries
+      uses: azure/artifact-signing-action@v2
+      with:
+        azure-tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+        azure-client-id: ${{ secrets.AZURE_CLIENT_ID }}
+        azure-client-secret: ${{ secrets.AZURE_CLIENT_SECRET }}
+        endpoint: https://wus.codesigning.azure.net/
+        signing-account-name: scnetsolutions
+        certificate-profile-name: SAKUtility
+        files-catalog: build/Release/SAK-Utility-v${{ steps.version.outputs.version }}/signing-catalog.txt
+        file-digest: SHA256
+        timestamp-rfc3161: http://timestamp.acs.microsoft.com
+        timestamp-digest: SHA256
+        timeout: 900
+        batch-size: 0
+
+    - name: Verify packaged signatures
+      shell: pwsh
+      run: '& scripts/verify_authenticode_signatures.ps1 -RootDir "build/Release/SAK-Utility-v${{ steps.version.outputs.version }}"'
+
+    - name: Signed release readiness gate
+      shell: pwsh
+      run: |
+        & scripts/check_release_readiness.ps1 `
+          -PackageRoot "build/Release/SAK-Utility-v${{ steps.version.outputs.version }}" `
+          -RequireSignedPackage
+
+    - name: Rebuild signed release archive
+      working-directory: build/Release
+      shell: pwsh
+      run: |
+        $pkgName = "SAK-Utility-v$env:APP_VERSION"
+        & "../../scripts/create_release_archive.ps1" -BuildDir . -PackageName $pkgName -CleanMutableRuntimeData
+
+    - name: Create stable download alias
+      if: startsWith(github.ref, 'refs/tags/v')
+      shell: pwsh
+      run: |
+        # Permanent direct-download asset for the sakutility.com download button:
+        #   https://github.com/<owner>/<repo>/releases/latest/download/SAK-Utility-Windows-x64.zip
+        # Byte-identical copy of the versioned zip, so the contained signed exe has the same hash
+        # and SmartScreen verdict. Reputation accrues to the signing publisher, not the file name.
+        $versionedZip = "build/Release/SAK-Utility-v${{ steps.version.outputs.version }}-Windows-x64.zip"
+        $stableZip = "build/Release/SAK-Utility-Windows-x64.zip"
+        Copy-Item -LiteralPath $versionedZip -Destination $stableZip -Force
+        $stableHash = (Get-FileHash -LiteralPath $stableZip -Algorithm SHA256).Hash
+        Add-Content -LiteralPath "build/Release/SHA256SUMS.txt" -Value "SAK-Utility-Windows-x64.zip:  $stableHash"
+
+    - name: Upload ZIP artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: SAK-Utility-v${{ steps.version.outputs.version }}-Windows-x64
+        path: build/Release/SAK-Utility-v${{ steps.version.outputs.version }}/*
+        retention-days: 90
+
+    - name: Create release
+      if: startsWith(github.ref, 'refs/tags/v')
+      uses: softprops/action-gh-release@v3
+      with:
+        files: |
+          build/Release/SAK-Utility-Windows-x64.zip
+          build/Release/SHA256SUMS.txt
+        body: |
+          # S.A.K. Utility v${{ steps.version.outputs.version }}
+
+          **Swiss Army Knife Utility** - a portable Windows toolkit for PC technicians, IT pros, and sysadmins. Release artifacts are installer-free ZIP packages that include the app, Qt runtime files, plugins, and bundled technician tools.
+
+          ### AI Assistant
+          Codex-style technician chat workspace with prompt/result transcript, custom chat sessions, prompt history, context chips, Markdown instruction attachments, token usage status, and generated reports. Uses a user-supplied OpenAI API key stored encrypted under the portable app data directory.
+
+          **Local PC actions** - PowerShell, cmd.exe, direct process launch, screenshots, HTTPS downloads, SAK package manager actions, and SAK offline downloader actions. Risky or destructive operations use approval gates and restore-point prompts when rollback may be needed.
+
+          **Multi-agent workflows** - Overseer-led workflow execution with specialized subagents, shared session memory, phase progress, cancellation, recovery policy, verification, cleanup, artifacts, and human handoff. Built-in workflows cover full PC health checks, drive diagnostics, Windows Update repair, network repair, BSOD investigation, printer troubleshooting, startup performance triage, malware and virus removal, bloatware/adware cleanup, clean uninstall, app install, offline installer download, offline deployment bundles, technician tool-assisted tasks, and service reports.
+
+          ### Backup and Restore
+          Step-by-step user profile backup and restore wizards. Smart category filtering (Documents, Desktop, AppData, browser profiles, etc.), AES-256 encryption, NTFS permission and timestamp preservation, and compressed ZIP output. Integrated quick tools: Screenshot Settings capture and BitLocker Key Backup.
+
+          ### Application Management
+          **App Installation** - Scan installed programs on the current machine, match them to Chocolatey packages, and bulk-install on a new PC with a single click. Export/import application lists as JSON. Offline deployment supports Chocolatey bundle and direct installer modes.
+          **Advanced Uninstall** - Deep application removal for Win32, UWP, and provisioned apps. Three-level leftover scanner (safe/moderate/advanced), registry snapshot engine for pre/post uninstall diffs, batch uninstall queue, and Recycle Bin support with locked-file reboot scheduling.
+          **Vulnerability Scanner** - Installed-app and package checks against CISA KEV, NVD, GitHub Security Advisories, and OSV with CSV/JSON export.
+
+          ### Benchmark and Diagnostics
+          **Diagnostics** - SMART disk health analysis, system info collection, and HTML/JSON/CSV report export with technician metadata.
+          **Benchmarks** - CPU, disk (sequential and random I/O), and memory throughput benchmarks. Stress testing with thermal monitoring, configurable duration, and per-core thread control.
+
+          ### Image Flasher
+          Flash ISO/IMG files to USB drives with partition-level writing. Built-in Windows ISO downloader (via UUP Dump API with UUP-to-ISO conversion pipeline) and Linux distro catalog with direct download links.
+
+          ### File Management
+          **File Organizer** - Sort files into folders by extension using customizable category rules. Collision handling (skip, rename, overwrite), undo support, and dry-run preview.
+          **Duplicate Finder** - Parallel file hashing (MD5/SHA-256) with size pre-filter. Group duplicates by hash, select which to keep, and delete or move the rest.
+          **Advanced Search** - Grep-style content search with regex, glob filters, and file metadata constraints (size, date, attributes). Binary/hex mode, archive search (ZIP/EPUB/DOCX/XLSX), preview pane with match highlighting, and search history.
+
+          ### Network Management
+          **Network Diagnostics** - 10-tool suite: Ping, Traceroute, MTR, DNS Lookup, Port Scanner, Bandwidth (iPerf3 + HTTP), WiFi Analyzer, Active Connections, Firewall Auditor, and Network Share Browser. HTML and JSON report generation.
+          **Network Adapters** - Adapter inspector with full IPv4/IPv6 config, DHCP, DNS, driver info, and traffic stats. Ethernet settings backup/restore to portable JSON for cross-machine portability.
+          **WiFi Manager** - WiFi credential manager with QR code generation for phone/tablet connection. Batch QR export (PNG/PDF/JPG/BMP), Windows `.cmd` script generation, macOS `.mobileconfig` profile export, and Windows known-profile scanning.
+
+          ### Email Tools
+          **Email Inspector** - Browse, search, checkbox-select, and export data from Outlook PST/OST and MBOX archives - no Outlook or MAPI required. Folder tree navigation, sortable item list, HTML/plain-text preview, MAPI property inspector, selected-message export to HTML/TXT/EML/PDF with attachment preservation, contacts dialog with VCF/CSV export, calendar dialog (month/week/day views) with ICS/CSV export, and checkbox-backed attachments browser with batch extraction. Full-text search across subjects, bodies, senders, recipients, and attachment names. Email profile manager with orphaned file discovery.
+          **OST Converter** - Multi-threaded bulk OST/PST conversion to 8 output formats (PST, EML, MSG, MBOX, DBX, HTML, PDF, IMAP Upload) with deleted item recovery, PST splitting, IMAP cloud upload, and advanced filtering.
+
+          ### Modern UI and Release Quality
+          Windows 11-style responsive Qt UI with light/dark themes, themed selector icons, explicit action-button hover states, and raw style literals centralized behind release-gated constants. Release gates cover tests, accessibility, style constants, magic numbers, complexity, secrets, license audits, package smoke, and signed artifact verification.
+
+          ### Settings
+          Per-panel settings - each panel provides its own configuration (backup location, uninstall defaults, scan levels, flash options, etc.).
+
+          ---
+
+          Portable ZIP. Open source. No telemetry.
+
+          **Requirements:** Windows 10/11 x64 - Runs as standard user; elevates per-task via UAC when needed
+
+          See the [README](https://github.com/${{ github.repository }}/blob/main/README.md) for detailed documentation and screenshots.
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

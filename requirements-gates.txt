@@ -1,0 +1,13 @@
+# Pinned Python-distributed gate tools. CI installs exactly this file, and a local .venv
+# should too, so a formatter or complexity gate cannot pass on one machine and fail on the
+# other because two different versions disagree:
+#
+#   .venv\Scripts\python -m pip install -r requirements-gates.txt
+#
+# scripts/run_clang_format.ps1 and scripts/run_lizard.py prefer .venv\Scripts over PATH, so
+# once this is installed the pinned clang-format wins over any LLVM install on PATH.
+# Change a version here, in one commit, together with any reformatting it causes.
+clang-format==22.1.1
+# 1.24.0 or newer: 1.21.2 stopped reporting functions partway through a file (R5-IDX-21).
+lizard==1.24.0
+pre-commit==4.5.1
