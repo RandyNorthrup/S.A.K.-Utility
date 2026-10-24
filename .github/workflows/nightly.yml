@@ -20,8 +20,6 @@ concurrency:
 
 env:
   T4_LABELS: '^(tooling-extended|mutation|coverage|tidy|cert-tooling|fuzz-extended)$'
-  CPPCHECK_VERSION: '2.20.0'
-  CPPCHECK_SHA256: 'bb1132bca1bca857a6ce3f04605698f002196070a947cae7015eeddc3c00f449'
   # clang-tidy comes from Program Files\LLVM (scripts/run_clang_tidy.ps1). The image ships an
   # older LLVM; install the version developers run so the naming gate parses the same way.
   LLVM_VERSION: '22.1.1'
@@ -42,6 +40,8 @@ jobs:
 
     - name: Toolchain
       uses: ./.github/actions/windows-build-env
+      with:
+        cppcheck: 'true'
 
     - name: Configure
       shell: pwsh
@@ -73,10 +73,19 @@ jobs:
         "BUILD EXIT: $buildExit"
         exit $buildExit
 
+    # The suites run as a standard user; a hosted runner is an elevated administrator. See the
+    # matching step in ci.yml and scripts/invoke_unelevated.ps1.
+    - name: Grant the standard-user token access to the workspace
+      shell: pwsh
+      run: |
+        $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        icacls $env:GITHUB_WORKSPACE /grant "*${sid}:(OI)(CI)F" /T /C /Q
+        exit $LASTEXITCODE
     - name: Test (T4 labels)
       shell: pwsh
       run: |
-        ctest --test-dir build -C Release -j $env:NUMBER_OF_PROCESSORS --output-on-failure --no-tests=error -L $env:T4_LABELS
+        & scripts/invoke_unelevated.ps1 -FilePath ctest -- --test-dir build -C Release `
+          -j $env:NUMBER_OF_PROCESSORS --output-on-failure --no-tests=error -L $env:T4_LABELS
         $ctestExit = $LASTEXITCODE
         "CTEST EXIT: $ctestExit"
         exit $ctestExit
@@ -106,20 +115,8 @@ jobs:
 
     - name: Toolchain
       uses: ./.github/actions/windows-build-env
-
-    - name: Install cppcheck
-      shell: pwsh
-      run: |
-        $msi = Join-Path $env:RUNNER_TEMP "cppcheck.msi"
-        Invoke-WebRequest -Uri "https://github.com/danmar/cppcheck/releases/download/$env:CPPCHECK_VERSION/cppcheck-$env:CPPCHECK_VERSION-x64-Setup.msi" -OutFile $msi
-        $hash = (Get-FileHash -LiteralPath $msi -Algorithm SHA256).Hash.ToLowerInvariant()
-        if ($hash -ne $env:CPPCHECK_SHA256) { throw "cppcheck installer hash $hash does not match the pin" }
-        $p = Start-Process msiexec.exe -ArgumentList @('/i', $msi, '/qn', '/norestart') -Wait -PassThru
-        if ($p.ExitCode -ne 0) { throw "cppcheck install exited $($p.ExitCode)" }
-        "$env:ProgramFiles\Cppcheck" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
-        $version = (& "$env:ProgramFiles\Cppcheck\cppcheck.exe" --version) -join ' '
-        Write-Host $version
-        if ($version -notmatch "Cppcheck $([regex]::Escape($env:CPPCHECK_VERSION))(\s|$)") { throw "cppcheck is not $env:CPPCHECK_VERSION" }
+      with:
+        cppcheck: 'true'
 
     - name: Install LLVM
       shell: pwsh
@@ -223,11 +220,19 @@ jobs:
         "BUILD EXIT: $buildExit"
         exit $buildExit
 
+    # The suites run as a standard user; a hosted runner is an elevated administrator. See the
+    # matching step in ci.yml and scripts/invoke_unelevated.ps1.
+    - name: Grant the standard-user token access to the workspace
+      shell: pwsh
+      run: |
+        $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        icacls $env:GITHUB_WORKSPACE /grant "*${sid}:(OI)(CI)F" /T /C /Q
+        exit $LASTEXITCODE
     - name: Test (Debug, ASan, native suites)
       shell: pwsh
       run: |
-        ctest --test-dir build-debug -C Debug -j $env:NUMBER_OF_PROCESSORS --output-on-failure --no-tests=error `
-          -L '^(product|fuzz-extended)$'
+        & scripts/invoke_unelevated.ps1 -FilePath ctest -- --test-dir build-debug -C Debug `
+          -j $env:NUMBER_OF_PROCESSORS --output-on-failure --no-tests=error -L '^(product|fuzz-extended)$'
         $ctestExit = $LASTEXITCODE
         "CTEST EXIT: $ctestExit"
         exit $ctestExit
