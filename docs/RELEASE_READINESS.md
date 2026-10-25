@@ -103,6 +103,38 @@ keeps their history.
   Cancel it and exit?"), then cancels cooperatively with progress and proceeds once it has
   stopped (`sak::RunningOperations`, `sak::RunningWorkExitGuard`). e0a5b3ef
 
+### AI package (2026-10-25, owner-approved)
+
+Done:
+
+- No live token-count POSTs: the context readout shows the last response's input-token usage;
+  `countInputTokens` and the 700 ms typing timer are gone. 1d4574d8
+- Least-privilege default access mode (Chat and Research). No access mode is persisted, so there
+  is no saved preference to honour. 1d4574d8
+- Generate System Report runs as a read-only assistant action (no approval or lease):
+  `QuickAction::isReadOnly`. dd4802a5
+
+Open (not started in this pass; each is its own change):
+
+- Tool circuit breaker per session in memory: drop the 24 h persisted ledger and its file I/O
+  (`ai_tool_health_ledger`, roughly half its source and most of its tests).
+- Session picker: write has_prompt/title/updated into each session manifest once and list
+  manifests only, off the GUI thread (today every transcript.jsonl is re-parsed on the GUI thread
+  at startup and after each turn).
+- Session listing above 512 folders: list the newest N with a bounded retention policy.
+- Transcript view: append incrementally instead of rebuilding every bubble.
+- Trace streams: drop turn_replay.jsonl and trace.jsonl unless something reads or exports them;
+  keep the activity log.
+- Retire `app_run_action`: move windows_sfc, windows_defender and superantispyware into the
+  AppActionRegistry, then remove the manifests, their CMake staging, the release-archive
+  requirement, `SAK_AI_POLICY_DISK_OVERRIDE` and the provider-registry mtime cache.
+- Lifecycle leftovers: app actions honour Stop; AI tool handlers on shared state; the
+  Cancelling label after a PowerShell Stop (all listed under open item 7).
+- Accessibility-audit early return in the AI panel constructor; `*ForTesting` hooks in
+  production AI headers compiled into test builds only.
+- Execution broker: one timeout timer instead of a 200 ms poll; reap the elevated Win32 MCP child
+  after idle.
+
 ### Behavior audit 2026-10-24 -- owner decisions
 
 A read-only audit looked for code that makes the app behave unlike a normal Windows tool, or
