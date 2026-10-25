@@ -130,6 +130,16 @@ public:
     virtual bool requiresAdmin() const = 0;
 
     /**
+     * @brief Whether running the action leaves the machine as it found it
+     *
+     * A read-only action only reads system state and writes its own output (a report into
+     * the caller's output folder). The assistant runs it without the per-action approval and
+     * lease a system change needs. Defaults to false: an action has to state that it changes
+     * nothing.
+     */
+    virtual bool isReadOnly() const { return false; }
+
+    /**
      * @brief Get current status
      * @return Current action status
      */

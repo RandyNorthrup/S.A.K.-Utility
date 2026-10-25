@@ -35,6 +35,8 @@ public:
     QIcon icon() const override { return QIcon(); }
     ActionCategory category() const override { return ActionCategory::Troubleshooting; }
     bool requiresAdmin() const override { return false; }
+    // Reads inventory and writes only its own report file: no system change to approve.
+    bool isReadOnly() const override { return true; }
 
     void scan() override;
     void execute() override;

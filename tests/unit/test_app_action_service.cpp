@@ -1,6 +1,7 @@
 // Copyright (c) 2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+#include "sak/actions/generate_system_report_action.h"
 #include "sak/app_action_registry.h"
 #include "sak/app_action_service.h"
 #include "sak/quick_action.h"
@@ -68,14 +69,18 @@ namespace {
 // path can be tested deterministically without a teardown race.
 class ProbeAction : public QuickAction {
 public:
-    explicit ProbeAction(QString name, bool succeed = true, bool admin = false)
-        : m_name(std::move(name)), m_succeed(succeed), m_admin(admin) {}
+    explicit ProbeAction(QString name,
+                         bool succeed = true,
+                         bool admin = false,
+                         bool read_only = false)
+        : m_name(std::move(name)), m_succeed(succeed), m_admin(admin), m_read_only(read_only) {}
 
     QString name() const override { return m_name; }
     QString description() const override { return QStringLiteral("probe action"); }
     ActionCategory category() const override { return ActionCategory::Maintenance; }
     QIcon icon() const override { return {}; }
     bool requiresAdmin() const override { return m_admin; }
+    bool isReadOnly() const override { return m_read_only; }
 
     void release() { m_released.store(true); }
 
@@ -100,6 +105,7 @@ private:
     QString m_name;
     bool m_succeed;
     bool m_admin;
+    bool m_read_only;
     std::atomic_bool m_released{false};
 };
 
@@ -115,6 +121,7 @@ private Q_SLOTS:
     void runQuickActionSync_timesOutWhenActionStalls();
     void resultFromExecution_mapsFieldsIntoData();
     void registerQuickActionsInto_buildsSluggedDescriptorsWithAdminFlags();
+    void registerQuickActionsInto_readOnlyActionNeedsNoApproval();
 
     void asyncInvocation_deliversCompletion();
     void asyncInvocation_deliversFailure();
@@ -260,6 +267,25 @@ void AppActionServiceTests::registerQuickActionsInto_buildsSluggedDescriptorsWit
     QVERIFY(!power->destructive);
 }
 
+// Generate System Report only reads and writes its own report, so it must not reach the assistant
+// as a mutating action (which forces an approval and a lease); everything else still does.
+void AppActionServiceTests::registerQuickActionsInto_readOnlyActionNeedsNoApproval() {
+    QVERIFY(sak::GenerateSystemReportAction(QString()).isReadOnly());
+    QuickActionController controller;
+    controller.registerAction(std::make_unique<ProbeAction>(
+        QStringLiteral("Read Only Probe"), true, /*admin=*/false, /*read_only=*/true));
+    controller.registerAction(std::make_unique<ProbeAction>(QStringLiteral("Changing Probe")));
+    AppActionRegistry registry;
+    QCOMPARE(registerQuickActionsInto(controller, registry), 2);
+    const auto reading = registry.descriptor(QStringLiteral("action.read_only_probe"));
+    QVERIFY(reading.has_value());
+    QVERIFY(reading->read_only);
+    QVERIFY(!reading->mutating);
+    const auto changing = registry.descriptor(QStringLiteral("action.changing_probe"));
+    QVERIFY(changing.has_value());
+    QVERIFY(!changing->read_only);
+    QVERIFY(changing->mutating);
+}
 void AppActionServiceTests::asyncInvocation_deliversCompletion() {
     FakeAsyncOp op;
     AsyncActionInvocation inv(5000);
