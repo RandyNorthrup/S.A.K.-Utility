@@ -149,8 +149,10 @@ that exists for reasons that no longer apply. Owner decisions (2026-10-24):
   `PartitionManagerController::runReadOnlyOperation`, which refuses anything the planner does
   not classify read-only. Found and fixed on the way: a non-Windows "check" (the bundled tool's
   repair) was classified read-only and shown as "Read-only" in the Apply review.
-  Open decision: for a single partition, Check File System (`Repair-Volume -Scan`) and Scan File
-  Systems (`chkdsk /scan`) run the same online scan; merging them is a UI decision.
+  Decided (owner 2026-10-25), DONE (d7a8c134): Scan File Systems is disk-level only (ribbon
+  enabled for a disk; disk menu only; the script builder refuses a partition target), and Check
+  File System is the per-partition scan. Both stay read-only and immediate. The unallocated
+  menu's Scan File Systems, which could only fail for want of a drive letter, is gone.
 - DONE (6942b5b6): the erase dialog no longer shows the certification lab's checklist or its
   Copy button; the non-Windows metadata "check" is labelled as last-disk-scan results (re-running
   needs the raw access only the elevated scan has, so it is not re-run from the dialog).
@@ -191,11 +193,46 @@ that exists for reasons that no longer apply. Owner decisions (2026-10-24):
   repair, which need a file. Moving the zero-skip copy into C++ with a free-space check, and
   retiring or rerouting the `Hfs*` script path, changes a raw write-back on real partitions; it
   cannot be proved safe with image-only tests in this change, so it was left fail-closed as is.
-- OPEN (found 2026-10-25): `test_startup_budget` and `test_windows_runtime_dependencies`
-  hard-code `build\Release\sak_utility.exe` instead of taking the configured target, so in a
-  tree configured anywhere else they test whatever binary happens to sit in `build\Release`
-  (a stale-binary trap) or fail with "input missing". CI configures `build` and is unaffected.
-  Fix: pass `$<TARGET_FILE:sak_utility>` from the CTest registration.
+- FIXED (dcc0c67c; found 2026-10-25): `test_startup_budget` and
+  `test_windows_runtime_dependencies` hard-coded `build\Release\sak_utility.exe`, so in a tree
+  configured anywhere else they tested whatever binary sat in `build\Release` (a stale-binary
+  trap) or failed with "input missing". The CTest registrations now pass
+  `$<TARGET_FILE:sak_utility>` (and its directory as the release dir), and
+  `scripts/assert_built_target.ps1` refuses an empty, missing, out-of-tree or stale target (older
+  than the newest `sak_*.lib` beside it); `test_assert_built_target` pins each refusal.
+  `scripts/check_startup_budget.ps1` run by hand still defaults to `build\Release`.
+
+#### Behavior package status (2026-10-25)
+
+- DONE (4947cf97): the thermal readout polls only while the Diagnostics panel is shown
+  (start on show, stop on hide) at its own `kThermalReadoutPollIntervalMs` (5 s; it borrowed the
+  2 s peer-discovery constant), the query runs on a pool thread, a missing sensor is warned about
+  once (again only if it changes), a failing query once until it succeeds, and the smoke/audit
+  skip is gone (`test_diagnostic_benchmark_panel`, `test_thermal_monitor`). Kept the PowerShell
+  seam rather than in-process WMI: one of the three sources is `nvidia-smi`, and the reliability
+  counters come from Storage cmdlets, so WMI in-process would cover only the CPU zone.
+- DONE (334f0463): the program list no longer walks install folders (Win32 or UWP); it shows
+  the registry's EstimatedSize (0 = unknown). Program Properties has an Install Folder Size row
+  with a Measure button that walks that one folder on a pool thread, cancelled when the dialog
+  closes, and cached per folder for the session (`test_program_enumerator`,
+  `test_advanced_uninstall_panel`).
+- DONE (8c5da388): the continuous WiFi scan's first scan runs on the controller's worker thread
+  (it ran synchronously on the GUI thread inside `startContinuousScan`), and the Network panel's
+  adapter scan runs in smoke and audit modes too, still off-thread
+  (`test_network_diagnostic_controller`, `test_network_diagnostic_panel`).
+- DONE (4cfc4f7c): the detachable log window stays on the screen's work area when opened beside
+  a maximized main window, opens without activating (no `activateWindow`/`raise`), is not
+  rebuilt on tab switches while hidden (refilled once on show, in one edit block), and the
+  uncalled capped `appendLog()` is deleted (`test_detachable_log_window`). The MainWindow wiring
+  (`onTabChanged` calling `replaceLog`) is by review: no test constructs MainWindow.
+- DONE (e77adb72): one info-level startup line, `Main window displayed - application ready in N
+  ms` (from process creation); main's construct/show/font timings and the Organizer, App
+  Installation and Diagnostics panel construction breadcrumbs are debug, and the 7-line banner
+  is one version line. `test_startup_budget` checks the real app's log. NOT done:
+  `MainWindow::setupUi`'s phase lines in `src/gui/main_window.cpp` stay info (another lane was
+  editing that file).
+- FOUND, not changed: `AppInstallationPanel` still skips its connections and Chocolatey
+  initialization under the accessibility audit, the same kind of mode skip removed elsewhere.
 
 ### Open release infrastructure
 
