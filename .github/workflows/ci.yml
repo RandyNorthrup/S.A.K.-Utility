@@ -214,15 +214,22 @@ jobs:
         "BUILD EXIT: $buildExit"
         exit $buildExit
 
-    # The app and its suite run as a standard user; a hosted runner is an elevated administrator.
-    # Everything that runs the built binaries goes through scripts/invoke_unelevated.ps1, which
-    # gives it a standard-user token and refuses to run if that token is still elevated. That
-    # token needs explicit write access to the tree the elevated steps created.
-    - name: Grant the standard-user token access to the workspace
+    # The app and its suite run as a standard user on stock Windows; a hosted runner is an
+    # elevated administrator with Developer Mode switched on (runner-images
+    # Configure-DeveloperMode.ps1). Everything that runs the built binaries goes through
+    # scripts/invoke_unelevated.ps1, which gives it a standard-user token and refuses to run if
+    # that token is still an enabled Administrators member; that token needs explicit write access
+    # to the tree the elevated steps created. Developer Mode goes back to the stock default (off),
+    # because it lets a standard user create symlinks, which changes what the suite can run
+    # (tests/skip_baseline.txt records the stock behavior).
+    - name: Match a stock standard-user environment
       id: grant
       if: ${{ !cancelled() && steps.build.outcome == 'success' }}
       shell: pwsh
       run: |
+        whoami /user
+        Set-ItemProperty -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock `
+          -Name AllowDevelopmentWithoutDevLicense -Value 0 -Type DWord
         $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
         $sw = [Diagnostics.Stopwatch]::StartNew()
         icacls $env:GITHUB_WORKSPACE /grant "*${sid}:(OI)(CI)F" /T /C /Q
