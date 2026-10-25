@@ -30,23 +30,16 @@ keeps their history.
 1. Startup GUI freeze: FIXED locally 2026-10-24 (GUI block 5.8-10.8 s -> under 0.15 s on a
    2491-family machine; see `docs/GUI_STARTUP_FIELD_NOTES.md`). Still to prove on release bytes:
    the stock Windows 11 VM run and the package smoke.
-2. `ProcessRunner::finishContainedOrFailFast` (`src/core/process_runner.cpp` ~189) calls qFatal on
-   a cleanup deadline during a tool run -- the same crash shape fixed for MCP in a8b64bbd. Apply
-   the same report-and-contain treatment through `sak::ContainedProcessQuarantine`.
-3. Other fail-fast teardown paths to classify as true invariant or load-dependent:
-   `~WindowsProcessJob` (`src/core/windows_process_job.cpp` ~381-402), `WorkerBase::stopAndJoin`
-   (`src/core/worker_base.cpp` ~46), AI panel destruction (`src/gui/ai_assistant_panel.cpp`
-   ~3866, ~3892).
-4. Dependency security updates (verify each advisory ID at its source before acting): Qt 6.10.3
+2. Dependency security updates (verify each advisory ID at its source before acting): Qt 6.10.3
    (6.10 support ended 2026-10-07; JSON-parsing advisories), iPerf3 3.21 (server-side
    use-after-free; the app runs iperf3 as a server), Chocolatey 2.7.2's bundled 7-Zip, zlib 1.3.1,
    liblzma 5.8.2, and the hfsprogs OpenSSL 3.6 build (end of life 2026-11-01).
-5. Downloaded third-party binaries without a hash pin: iperf3, smartmontools, and the Trusted
+3. Downloaded third-party binaries without a hash pin: iperf3, smartmontools, and the Trusted
    Signing client library.
-6. 78 unverified findings (18 HIGH) in 14 review briefs under `docs/review_briefs/` that no ledger
+4. 78 unverified findings (18 HIGH) in 14 review briefs under `docs/review_briefs/` that no ledger
    unit binds. Triage each against current code; two sampled HIGH/MEDIUM findings were already
    fixed.
-7. Real defects found by the 2026-10-24 behavior audit:
+5. Real defects found by the 2026-10-24 behavior audit:
    - `ProcessRunner` kills descendants still alive about 1 s after the root exits and marks the
      run failed, so NSIS uninstallers (which relaunch from %TEMP%) and Chocolatey installs that
      leave an updater running are reported as failed (`process_runner.cpp` ~96, ~135-147).
@@ -54,12 +47,10 @@ keeps their history.
      treated as a failure (`restore_point_manager.cpp` ~87, ~118).
    - The AI session list goes empty above 512 session folders (`ai_conversation_store.cpp` ~49).
    - The default backup path stores BitLocker recovery keys on the volume they unlock.
-   - Closing the app with work running never asks: a USB write is cancelled silently, worker
-     threads can be `terminate()`d, and the AI panel can freeze 30 s then qFatal.
    - The iperf3 server and its inbound firewall rule leak after a crash (launched outside the
      kill-on-close Job).
    - The settings-screenshot action force-kills the user's own Settings windows.
-8. FIXED 2026-10-25: defects the first T2 CI runs found, each reproducing in a fresh Git for
+6. FIXED 2026-10-25: defects the first T2 CI runs found, each reproducing in a fresh Git for
    Windows clone (default `core.autocrlf=true`), which is also how CI checks out and builds:
    - Built-in AI workflows and skills did not load from a CRLF checkout: `loadResourceFile`
      (`src/ai/ai_store_file_loader.cpp`) read in `QIODevice::Text` mode, which drops every CR,
@@ -72,6 +63,45 @@ keeps their history.
    - `test_browser_bridge_security` searched the DACL's SDDL for the user's SID string, which
      SDDL writes as `LA` for the built-in Administrator (a hosted runner's account); it now
      compares the user ACE in SDDL's own form (`security_userTrusteeMatchesSddlAliases`).
+7. Left open by the lifecycle package (2026-10-25), each with why:
+   - Unbounded GUI-thread joins outside that package's list remain, each needing its own owner
+     custody: `network_diagnostic_controller.cpp` (~238, ~1305), the QuickActionController
+     completion joins (~501/~540; load-bearing, after the action's own completion signal), the AI
+     panel's network, command and offline thread joins, AppInstallationPanel's search futures,
+     DiagnosticController's scan futures, and the stack-thread joins in
+     `advanced_search_controller`, `port_scanner` and `network_transfer_runner`.
+   - Assistant app actions (`sak_app_action`) do not observe Stop: `AsyncActionInvocation` has no
+     cancel hook, so a Stop during e.g. `uninstall_program` parks the run in Cancelling until the
+     action's own ceiling (up to 22 min). Exit waits the same way, with progress shown.
+   - The AI tool handlers still reach panel state through `this`. Teardown is safe because
+     `AiAssistantPanel::release` keeps the whole panel alive until they drain; moving the handlers
+     onto shared state is open.
+   - A Stop during a `run_powershell` command leaves the run status at Cancelling after the
+     command finishes: `onBrokerFinished`/`onRequestFinished` do not settle a pending stop (only
+     the async-runner drain does). Cosmetic; found during the package.
+   - The exit prompt's per-panel registrations are covered by review, not by a test each; the
+     registry, the prompt and the main window's use of it are tested.
+
+### Fixed by the lifecycle package (2026-10-25)
+
+- ProcessRunner's unproved Job cleanup is report + contain (the run fails with the diagnostic,
+  the process and armed Job go to `sak::ContainedProcessQuarantine`) instead of qFatal.
+  `~WindowsProcessJob` logs and closes (kill-on-close) on live members or a failed query; the
+  installed-launch-hook and CreateProcess-modifier checks stay fatal as programming-error
+  invariants. bc578b0c
+- Worker teardown never terminates: `sak::ThreadCustody`, `WorkerBase::release` and
+  `sak::WorkerPtr` retain an overrunning worker (signals severed) until it finishes. The
+  unbounded GUI waits in the profile backup/restore workers, QuickActionController teardown and
+  the Image Flasher USB thread are gone, and the assistant's uninstall/cleanup drivers lost their
+  `terminate()`. A running worker destroyed directly past its bound is the remaining invariant.
+  2e0d3a43
+- AI panel: in-flight Win32 MCP calls are cancellable (Job terminate, prompt return), the async
+  tool work holds the dispatcher and MCP pool by shared ownership, and teardown with live work is
+  report + contain through `AiAssistantPanel::release` instead of a 30 s freeze and qFatal.
+  f5ff2283
+- Closing the window or Run as Admin with work running asks first ("<operation> is running.
+  Cancel it and exit?"), then cancels cooperatively with progress and proceeds once it has
+  stopped (`sak::RunningOperations`, `sak::RunningWorkExitGuard`). e0a5b3ef
 
 ### Behavior audit 2026-10-24 -- owner decisions
 
@@ -139,7 +169,7 @@ that exists for reasons that no longer apply. Owner decisions (2026-10-24):
   it to use) and sets "active" once, at partition creation; fixed sleeps are replaced by a
   bounded wait (60 s) for the new partition's volume and the drive letter, failing with an error
   that names the disk. It still extracts with the 7z.exe inside the bundled portable Chocolatey
-  (`tools/chocolatey/tools/7z.exe`), whose advisories are tracked in item 4 above.
+  (`tools/chocolatey/tools/7z.exe`), whose advisories are tracked in item 2 above.
 - DONE (4bd3468c): the drive scanner has no 5 s timer; it rescans on disk and volume
   device-interface arrival/removal (`GUID_DEVINTERFACE_DISK`, `GUID_DEVINTERFACE_VOLUME`) through
   a 750 ms single-shot debounce, and re-runs once if a change lands mid-scan. Smoke and audit
