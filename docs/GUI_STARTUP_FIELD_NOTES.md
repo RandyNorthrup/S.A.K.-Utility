@@ -43,6 +43,13 @@ the font wait and main-window construction and show; `MainWindow::setupUi` in
 lazy-tab placeholders, help and about. Read the newest log under
 `sak::app_paths::logsDirectory()` (portable `data/logs` beside the exe when that is writable).
 
+Since 2026-10-25 the default (info) level carries one startup line, `Main window displayed -
+application ready in N ms` (`initialized` in headless smoke runs), measured from process
+creation. The phase timings -- font wait, main-window construct/show, per-panel construction --
+are debug level and need a build that lowers the logger level (`logger::setLevel`) to appear.
+`test_startup_budget` pins this on the real app. `MainWindow::setupUi`'s own phase lines are still
+info level; they move in a later change.
+
 The font wait logs one line: `Font database warmup: N families in X ms; GUI waited Y ms,
 longest event-loop gap Z ms`. A large Y with a small Z is healthy (slow fonts, responsive GUI); a
 large Z means something blocked the GUI thread during startup.

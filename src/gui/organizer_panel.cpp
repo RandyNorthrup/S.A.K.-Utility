@@ -195,33 +195,22 @@ DedupSettingsWidgets addDedupSettingsRows(QFormLayout* layout,
 }  // namespace
 
 OrganizerPanel::OrganizerPanel(QWidget* parent) : QWidget(parent), m_worker(nullptr) {
+    // Startup phase timings are debug-level breadcrumbs: the one info startup line is main's
+    // "application ready in N ms".
     QElapsedTimer startup_timer;
     startup_timer.start();
-    const bool startup_smoke =
-        QCoreApplication::instance()->property("sakStartupSmokeTest").toBool();
     setupUi();
-    if (startup_smoke) {
-        logInfo("OrganizerPanel startup: setupUi took {} ms", startup_timer.restart());
-        logger::instance().flush();
-    }
+    logDebug("OrganizerPanel startup: setupUi took {} ms", startup_timer.restart());
     refreshMountedFileSystemTargets();
-    if (startup_smoke) {
-        logInfo("OrganizerPanel startup: mounted target refresh took {} ms",
-                startup_timer.restart());
-        logger::instance().flush();
-    }
+    logDebug("OrganizerPanel startup: mounted target refresh took {} ms", startup_timer.restart());
     setupDefaultCategories();
-    if (startup_smoke) {
-        logInfo("OrganizerPanel startup: default categories took {} ms", startup_timer.elapsed());
-        logger::instance().flush();
-    }
+    logDebug("OrganizerPanel startup: default categories took {} ms", startup_timer.elapsed());
     // An organize run moves files; closing mid-run asks first and stops it at a file boundary.
     RunningOperations::add(
         this,
         tr("File organization"),
         [this]() { return m_worker && m_worker->isRunning(); },
         [this]() { onCancelClicked(); });
-    logInfo("OrganizerPanel initialized");
 }
 
 OrganizerPanel::~OrganizerPanel() {

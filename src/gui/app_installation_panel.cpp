@@ -67,31 +67,30 @@ AppInstallationPanel::AppInstallationPanel(QWidget* parent)
     , m_choco_manager(std::make_shared<ChocolateyManager>())
     , m_worker(std::make_shared<AppInstallationWorker>(m_choco_manager))
     , m_offline_worker(std::make_unique<OfflineDeploymentWorker>()) {
-    sak::logInfo("[AppInstallationPanel] constructing");
-    sak::logInfo("[AppInstallationPanel] setupUi start");
+    // Construction breadcrumbs are debug-level; the one info startup line is main's
+    // "application ready in N ms".
+    sak::logDebug("[AppInstallationPanel] constructing");
     setupUi();
-    sak::logInfo("[AppInstallationPanel] setupUi complete");
+    sak::logDebug("[AppInstallationPanel] setupUi complete");
     if (qApp->property("sakAccessibilityAudit").toBool()) {
-        sak::logInfo(
+        sak::logDebug(
             "[AppInstallationPanel] Accessibility audit: connections and external init skipped");
         return;
     }
-    sak::logInfo("[AppInstallationPanel] setupConnections start");
     setupConnections();
-    sak::logInfo("[AppInstallationPanel] setupConnections complete");
+    sak::logDebug("[AppInstallationPanel] setupConnections complete");
 
     // Initialize Chocolatey on startup
     const QString choco_path = QApplication::applicationDirPath() + "/tools/chocolatey";
-    sak::logInfo("[AppInstallationPanel] Initializing Chocolatey from: {}",
-                 choco_path.toStdString());
+    sak::logDebug("[AppInstallationPanel] Initializing Chocolatey from: {}",
+                  choco_path.toStdString());
     const bool init_success = m_choco_manager->initialize(choco_path);
-    sak::logInfo("[AppInstallationPanel] Chocolatey initialize returned");
     if (!init_success) {
         sak::logWarning("[AppInstallationPanel] Chocolatey initialization failed");
         Q_EMIT logOutput(QString("WARNING: Chocolatey initialization failed"));
         Q_EMIT logOutput("Package installation will not be available.");
     } else {
-        sak::logInfo("[AppInstallationPanel] Chocolatey initialized successfully");
+        sak::logDebug("[AppInstallationPanel] Chocolatey initialized successfully");
         Q_EMIT logOutput("Chocolatey initialized successfully");
         Q_EMIT logOutput("Use the search bar to find packages or select a category.");
     }
@@ -106,7 +105,7 @@ AppInstallationPanel::AppInstallationPanel(QWidget* parent)
         tr("Offline package operation"),
         [this]() { return m_offline_worker && m_offline_worker->isRunning(); },
         [this]() { onCancelOfflineOperation(); });
-    sak::logInfo("[AppInstallationPanel] constructed");
+    sak::logDebug("[AppInstallationPanel] constructed");
 }
 
 AppInstallationPanel::~AppInstallationPanel() {

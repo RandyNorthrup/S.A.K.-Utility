@@ -143,13 +143,34 @@ void prepareMainWindowForStartup(sak::MainWindow& main_window, bool headless_smo
     main_window.show();
 }
 
+/// Milliseconds since this process was created (0 if Windows cannot say).
+qint64 msSinceProcessStart() {
+    FILETIME created{};
+    FILETIME exited{};
+    FILETIME kernel{};
+    FILETIME user{};
+    if (::GetProcessTimes(::GetCurrentProcess(), &created, &exited, &kernel, &user) == 0) {
+        return 0;
+    }
+    FILETIME now{};
+    ::GetSystemTimeAsFileTime(&now);
+    const auto ticks = [](const FILETIME& time) {
+        return (static_cast<qint64>(time.dwHighDateTime) << 32) |
+               static_cast<qint64>(time.dwLowDateTime);
+    };
+    constexpr qint64 kFileTimeTicksPerMs = 10'000;
+    return (std::max)(qint64{0}, (ticks(now) - ticks(created)) / kFileTimeTicksPerMs);
+}
+
+// The one info-level startup line. The phase timings that used to fill the log at info on every
+// launch (main window construct and show, font warmup, per-panel setup) are debug now.
 void logMainWindowReady(bool headless_smoke_test) {
     if (headless_smoke_test) {
-        sak::logInfo("Main window initialized - application ready");
+        sak::logInfo("Main window initialized - application ready in {} ms", msSinceProcessStart());
         return;
     }
 
-    sak::logInfo("Main window displayed - application ready");
+    sak::logInfo("Main window displayed - application ready in {} ms", msSinceProcessStart());
 }
 
 QString accessibilityAuditOutputPath() {
@@ -356,7 +377,7 @@ void waitForFontDatabaseWarmup() {
         heartbeat.start();
         loop.exec(QEventLoop::ExcludeUserInputEvents);
     }
-    sak::logInfo(
+    sak::logDebug(
         "Font database warmup: {} families in {} ms; GUI waited {} ms, longest event-loop gap {} "
         "ms",
         static_cast<qint64>(g_font_warmup.family_count.load(std::memory_order_relaxed)),
@@ -419,15 +440,12 @@ void configurePortableRuntimeDirs() {
     qputenv("TEMP", native_temp);
 }
 
-/// @brief Log startup banner with version and platform info.
+/// @brief Log which build is starting: one line, so a support log still names the version.
 void logStartupBanner() {
-    sak::logInfo("===========================================");
-    sak::logInfo("SAK Utility Starting");
-    sak::logInfo("Version: {}", sak::get_version());
-    sak::logInfo("C++ Standard: C++{}", __cplusplus);
-    sak::logInfo("Platform: Windows");
-    sak::logInfo("Qt Version: {}", QT_VERSION_STR);
-    sak::logInfo("===========================================");
+    sak::logInfo("SAK Utility {} starting (Qt {}, C++{}, Windows)",
+                 sak::get_version(),
+                 QT_VERSION_STR,
+                 __cplusplus);
 }
 
 /// @brief Show splash screen and launch the main window.
@@ -534,7 +552,7 @@ int showMainWindow(QApplication& app,
         sak::logger::instance().flush();
     }
 
-    sak::logInfo("Creating main window...");
+    sak::logDebug("Creating main window...");
     if (startup_smoke_test) {
         sak::logger::instance().flush();
     }
@@ -544,7 +562,7 @@ int showMainWindow(QApplication& app,
     QElapsedTimer window_timer;
     window_timer.start();
     sak::MainWindow main_window;
-    sak::logInfo("Main window constructed in {} ms", window_timer.restart());
+    sak::logDebug("Main window constructed in {} ms", window_timer.restart());
     if (startup_smoke_test) {
         sak::logger::instance().flush();
     }
@@ -553,7 +571,7 @@ int showMainWindow(QApplication& app,
     }
     const bool headless_smoke_test = app.property("sakStartupSmokeHeadless").toBool();
     prepareMainWindowForStartup(main_window, headless_smoke_test);
-    sak::logInfo("Main window show took {} ms", window_timer.elapsed());
+    sak::logDebug("Main window show took {} ms", window_timer.elapsed());
 
     if (accessibility_audit) {
         return runAccessibilityAuditHeadless(app, main_window);

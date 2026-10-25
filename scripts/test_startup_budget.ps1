@@ -614,6 +614,13 @@ if ($red.timed_out -or $red.exit_code -eq 0 -or $red.stderr -notmatch 'Startup b
         "exit=$($red.exit_code), timed_out=$($red.timed_out), stderr=$($red.stderr)")
 }
 
+$logDirectory = Join-Path (Split-Path -Parent $exe) 'data\logs'
+function Get-StartupLogNames {
+    if (-not (Test-Path -LiteralPath $logDirectory -PathType Container)) { return @() }
+    return @(Get-ChildItem -LiteralPath $logDirectory -Filter '*.log' -File | ForEach-Object Name)
+}
+$logsBeforeGreen = [Collections.Generic.HashSet[string]]::new([string[]](Get-StartupLogNames))
+
 $green = Invoke-CapturedProcess -FilePath $hostPath -Arguments @(
     "-NoProfile",
     "-NonInteractive",
@@ -632,5 +639,39 @@ if ($green.timed_out -or $green.exit_code -ne 0 -or
         "timed_out=$($green.timed_out), stdout=$($green.stdout), stderr=$($green.stderr)")
 }
 
-Write-Host "Startup budget regression test passed: capture seam pinned, 1 ms red, real app green."
+# Startup log noise: the real app's log carries one info-level startup line ("application ready
+# in N ms"). Phase breadcrumbs -- main window construct/show timings, the font warmup and the
+# per-panel construction steps -- are debug and absent at the default level. MainWindow's own
+# setupUi phase lines are not covered here yet (src/gui/main_window.cpp was being changed by
+# another lane when this landed).
+$runLogs = @(Get-StartupLogNames | Where-Object { -not $logsBeforeGreen.Contains($_) } |
+    ForEach-Object { Join-Path $logDirectory $_ } |
+    Where-Object { (Get-Content -LiteralPath $_ -Raw) -match 'Startup smoke CI headless mode active' })
+if ($runLogs.Count -ne 1) {
+    throw "Startup log check needs exactly one new smoke-run log in ${logDirectory}; found $($runLogs.Count)."
+}
+$runLog = Get-Content -LiteralPath $runLogs[0] -Raw
+$ready = [regex]::Matches($runLog, '(?m)Main window (?:displayed|initialized) - application ready in \d+ ms\s*$')
+if ($ready.Count -ne 1) {
+    throw "Startup log must carry exactly one 'application ready in N ms' line; found $($ready.Count) in $($runLogs[0])."
+}
+$breadcrumbs = @(
+    'Creating main window',
+    'Main window constructed in',
+    'Main window show took',
+    'Font database warmup',
+    'OrganizerPanel startup:',
+    'OrganizerPanel initialized',
+    '[AppInstallationPanel]',
+    'DiagnosticBenchmarkPanel startup:',
+    '==========================================='
+)
+$noisy = @($breadcrumbs | Where-Object { $runLog.Contains($_) })
+if ($noisy.Count -gt 0) {
+    throw ("Startup breadcrumbs reached the default-level log (they belong at debug): " +
+        ($noisy -join '; ') + " in $($runLogs[0])")
+}
+
+Write-Host ("Startup budget regression test passed: capture seam pinned, 1 ms red, real app green, " +
+    "one info-level startup line.")
 exit 0
