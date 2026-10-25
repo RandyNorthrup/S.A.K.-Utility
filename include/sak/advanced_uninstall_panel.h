@@ -10,6 +10,7 @@
 #include "sak/advanced_uninstall_types.h"
 
 #include <QComboBox>
+#include <QHash>
 #include <QLabel>
 #include <QLineEdit>
 #include <QPushButton>
@@ -26,6 +27,7 @@ class QRadioButton;
 class QListWidget;
 class QFormLayout;
 class QDialogButtonBox;
+class AdvancedUninstallPanelTests;
 
 namespace sak {
 
@@ -44,6 +46,7 @@ class LogToggleSwitch;
 /// uninstall, restore point creation, and multi-level leftover scanning.
 class AdvancedUninstallPanel : public QWidget {
     Q_OBJECT
+    friend class ::AdvancedUninstallPanelTests;  // drives the install-folder size row directly
 
 public:
     explicit AdvancedUninstallPanel(QWidget* parent = nullptr);
@@ -156,6 +159,11 @@ private:
     void populateProgramPropertiesForm(const ProgramInfo& program,
                                        QWidget* scroll_widget,
                                        QFormLayout* form_layout) const;
+    /// @brief "Install Folder Size" row with a Measure button: the folder is walked only when
+    ///        asked, off the GUI thread, and the result is cached for the session.
+    void addInstallFolderSizeRow(const ProgramInfo& program,
+                                 QDialog* dialog,
+                                 QFormLayout* form_layout);
 
     QCheckBox* addSettingsSelectionGroup(QDialog* dialog, QVBoxLayout* layout) const;
     QCheckBox* addSettingsDeletionGroup(QDialog* dialog, QVBoxLayout* layout) const;
@@ -194,6 +202,8 @@ private:
 
     // -- Controller --
     std::unique_ptr<AdvancedUninstallController> m_controller;
+    /// Install-folder sizes measured on demand this session, keyed by normalized path.
+    QHash<QString, qint64> m_install_folder_bytes;
 
     // -- Toolbar Widgets --
     QLineEdit* m_search_edit{nullptr};

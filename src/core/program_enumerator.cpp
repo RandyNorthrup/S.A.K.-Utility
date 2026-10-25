@@ -281,11 +281,11 @@ bool ProgramEnumerator::enrichWithIconsAndSizes(QVector<ProgramInfo>& programs) 
 
         resolveProgramIcon(prog, locationIsLocal);
 
-        if (locationIsLocal && QDir(prog.installLocation).exists()) {
-            prog.actualSizeBytes = calculateDirSize(prog.installLocation);
-        } else if (prog.estimatedSizeKB > 0) {
-            prog.actualSizeBytes = prog.estimatedSizeKB * kBytesPerKB;
-        }
+        // The size is what the installer recorded (EstimatedSize). Enumeration does not walk the
+        // install folder: walking every program's tree on each list refresh -- including the one
+        // after every uninstall -- took minutes on a full machine for a figure nothing displayed.
+        // A folder is measured only on demand, for one selected program (measureFolderBytes).
+        prog.actualSizeBytes = prog.estimatedSizeKB > 0 ? prog.estimatedSizeKB * kBytesPerKB : 0;
     }
     return true;
 }
@@ -385,7 +385,12 @@ void ProgramEnumerator::markBloatware(QVector<ProgramInfo>& programs) const {
     }
 }
 
-qint64 ProgramEnumerator::calculateDirSize(const QString& path) {
+bool ProgramEnumerator::isLocalInstallFolder(const QString& path) {
+    return !path.trimmed().isEmpty() && !isRemoteOrDevicePath(path.trimmed());
+}
+
+qint64 ProgramEnumerator::measureFolderBytes(const QString& path,
+                                             const std::function<bool()>& should_cancel) {
     if (path.isEmpty()) {
         // Fail closed: an empty path must size NOTHING. QDirIterator("") walks the CURRENT working
         // directory, so without this a program with an empty installLocation would report the CWD's
@@ -403,7 +408,7 @@ qint64 ProgramEnumerator::calculateDirSize(const QString& path) {
                     QDir::Files | QDir::Hidden | QDir::NoSymLinks,
                     QDirIterator::Subdirectories);
     while (it.hasNext()) {
-        if (m_cancelRequested.load(std::memory_order_acquire)) {
+        if (should_cancel && should_cancel()) {
             break;  // honor cancellation instead of walking an arbitrarily large/deep tree
         }
         it.next();
@@ -660,10 +665,8 @@ void ProgramEnumerator::parseUwpPackage(const QJsonObject& obj, QVector<ProgramI
     prog.displayVersion = obj["Version"].toString();
     prog.installLocation = obj["InstallLocation"].toString();
     prog.source = ProgramInfo::Source::UWP;
-
-    if (!prog.installLocation.isEmpty() && QDir(prog.installLocation).exists()) {
-        prog.actualSizeBytes = calculateDirSize(prog.installLocation);
-    }
+    // No folder walk here either: Store packages record no EstimatedSize, so their size stays
+    // unknown until measured on demand.
 
     if (!prog.displayName.isEmpty()) {
         results.append(prog);

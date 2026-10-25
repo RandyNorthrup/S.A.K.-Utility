@@ -23,9 +23,9 @@ private Q_SLOTS:
     void construction_default();
     void construction_nonCopyable();
     void programs_emptyInitially();
-    void calculateDirSize_emptyPath();
-    void calculateDirSize_nonExistent();
-    void calculateDirSize_realDirectory();
+    void measureFolderBytes_emptyPath();
+    void measureFolderBytes_nonExistent();
+    void measureFolderBytes_realDirectory();
     void detectOrphaned_emptyList();
     void detectOrphaned_missingInstallLocation();
     void detectOrphaned_existingInstallLocation();
@@ -38,6 +38,7 @@ private Q_SLOTS:
     void markBloatware_normalProgramNotBloatware();
     void programInfo_defaults();
     void cancelAndReset();
+    void enumerationUsesEstimatedSizeWithoutWalkingFolders();
     void enumerateAll_cancelledBeforeStart();
     void extractIcon_honorsExplicitIndex();
 };
@@ -67,19 +68,20 @@ void TestProgramEnumerator::programs_emptyInitially() {
     QVERIFY(programs.isEmpty());
 }
 
-void TestProgramEnumerator::calculateDirSize_emptyPath() {
+void TestProgramEnumerator::measureFolderBytes_emptyPath() {
     ProgramEnumerator enumerator;
-    const auto size = enumerator.calculateDirSize(QString());
+    const auto size = ProgramEnumerator::measureFolderBytes(QString());
     QCOMPARE(size, 0);
 }
 
-void TestProgramEnumerator::calculateDirSize_nonExistent() {
+void TestProgramEnumerator::measureFolderBytes_nonExistent() {
     ProgramEnumerator enumerator;
-    const auto size = enumerator.calculateDirSize(QStringLiteral("C:\\NonExistent_Path_12345"));
+    const auto size =
+        ProgramEnumerator::measureFolderBytes(QStringLiteral("C:\\NonExistent_Path_12345"));
     QCOMPARE(size, 0);
 }
 
-void TestProgramEnumerator::calculateDirSize_realDirectory() {
+void TestProgramEnumerator::measureFolderBytes_realDirectory() {
     QTemporaryDir temp_dir;
     QVERIFY(temp_dir.isValid());
 
@@ -92,7 +94,7 @@ void TestProgramEnumerator::calculateDirSize_realDirectory() {
         file.close();
     }
 
-    // NESTED, not flat. calculateDirSize walks with QDirIterator::Subdirectories, and a flat
+    // NESTED, not flat. measureFolderBytes walks with QDirIterator::Subdirectories, and a flat
     // fixture cannot distinguish a recursive walk from a non-recursive one -- there is nothing
     // nested to miss. Recursion is the whole point: every real install tree is nested, and losing
     // it silently under-reports disk usage for every program in the panel and every
@@ -109,16 +111,14 @@ void TestProgramEnumerator::calculateDirSize_realDirectory() {
         file.close();
     }
 
-    ProgramEnumerator enumerator;
-    const qint64 size = enumerator.calculateDirSize(temp_dir.path());
+    const qint64 size = ProgramEnumerator::measureFolderBytes(temp_dir.path());
     QCOMPARE(size, static_cast<qint64>((kFileCount + kNestedFiles) * kBytesPerFile));
 
-    // The cancel flag has a cheap public observable, and cancelAndReset() could not reach it: a
-    // cancelled walk sizes nothing, and a reset one sizes the whole tree again.
-    enumerator.requestCancel();
-    QCOMPARE(enumerator.calculateDirSize(temp_dir.path()), static_cast<qint64>(0));
-    enumerator.resetCancel();
-    QCOMPARE(enumerator.calculateDirSize(temp_dir.path()),
+    // The caller's cancel check is honoured (Program Properties cancels when its dialog closes):
+    // a cancelled walk sizes nothing, and an uncancelled one sizes the whole tree again.
+    QCOMPARE(ProgramEnumerator::measureFolderBytes(temp_dir.path(), [] { return true; }),
+             static_cast<qint64>(0));
+    QCOMPARE(ProgramEnumerator::measureFolderBytes(temp_dir.path(), [] { return false; }),
              static_cast<qint64>((kFileCount + kNestedFiles) * kBytesPerFile));
 }
 
@@ -451,15 +451,48 @@ void TestProgramEnumerator::cancelAndReset() {
     file.write(QByteArray(64, 'A'));
     file.close();
 
+    // The walk is measured on demand now (measureFolderBytes) and honors its own cancel check.
+    QCOMPARE(ProgramEnumerator::measureFolderBytes(temp_dir.path(), {}), static_cast<qint64>(64));
+    QCOMPARE(ProgramEnumerator::measureFolderBytes(temp_dir.path(), [] { return true; }),
+             static_cast<qint64>(0));
+
+    // The enumerator's own flag is observed through the enrichment pass it gates.
     ProgramEnumerator enumerator;
-    QCOMPARE(enumerator.calculateDirSize(temp_dir.path()), static_cast<qint64>(64));
+    QVector<ProgramInfo> programs(1);
     enumerator.requestCancel();
-    QVERIFY2(enumerator.calculateDirSize(temp_dir.path()) == 0,
-             "requestCancel() must stop the directory walk");
+    QVERIFY2(!enumerator.enrichWithIconsAndSizes(programs),
+             "requestCancel() must stop the enrichment pass");
     enumerator.resetCancel();
-    QVERIFY2(enumerator.calculateDirSize(temp_dir.path()) == 64,
-             "resetCancel() must let the walk run again");
+    QVERIFY2(enumerator.enrichWithIconsAndSizes(programs),
+             "resetCancel() must let the pass run again");
     QVERIFY(enumerator.programs().isEmpty());
+}
+
+// Enumeration used to walk every program's install folder to fill actualSizeBytes -- minutes on a
+// full machine, repeated after every uninstall -- for a number no list displayed. It now takes
+// the installer's EstimatedSize; a folder is measured only on demand for one program.
+void TestProgramEnumerator::enumerationUsesEstimatedSizeWithoutWalkingFolders() {
+    QTemporaryDir temp_dir;
+    QVERIFY(temp_dir.isValid());
+    QFile file(QDir(temp_dir.path()).filePath(QStringLiteral("payload.bin")));
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    file.write(QByteArray(64 * 1024, 'P'));
+    file.close();
+
+    QVector<ProgramInfo> programs(2);
+    programs[0].installLocation = temp_dir.path();
+    programs[0].estimatedSizeKB = 2;
+    programs[1].installLocation = temp_dir.path();
+    programs[1].estimatedSizeKB = 0;
+    ProgramEnumerator enumerator;
+    QVERIFY(enumerator.enrichWithIconsAndSizes(programs));
+    // The recorded estimate, not the 64 KiB actually in the folder...
+    QCOMPARE(programs[0].actualSizeBytes, static_cast<qint64>(2 * 1024));
+    // ...and unknown stays unknown rather than triggering a walk.
+    QCOMPARE(programs[1].actualSizeBytes, static_cast<qint64>(0));
+    // The on-demand measurement still sees the real contents.
+    QCOMPARE(ProgramEnumerator::measureFolderBytes(temp_dir.path()),
+             static_cast<qint64>(64 * 1024));
 }
 
 void TestProgramEnumerator::enumerateAll_cancelledBeforeStart() {

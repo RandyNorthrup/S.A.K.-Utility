@@ -13,6 +13,7 @@
 #include <QVector>
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <type_traits>
 
@@ -78,10 +79,18 @@ public:
     /// @brief Mark known bloatware using pattern database
     void markBloatware(QVector<ProgramInfo>& programs) const;
 
-    /// @brief Calculate actual disk usage for a program's install directory
-    // Non-static: the directory walk honors m_cancelRequested so a hostile/deep install
-    // tree cannot make it run unbounded.
-    [[nodiscard]] qint64 calculateDirSize(const QString& path);
+    /// @brief Bytes under @p path, measured on demand for one selected program.
+    /// Enumeration never calls this; the list shows the registry EstimatedSize. Refuses (0) an
+    /// empty path and a remote/device path, skips symlinks, saturates instead of overflowing,
+    /// and stops early when @p should_cancel returns true. Static and thread-safe, so a panel
+    /// can run it off the GUI thread.
+    [[nodiscard]] static qint64 measureFolderBytes(const QString& path,
+                                                   const std::function<bool()>& should_cancel = {});
+
+    /// @brief True when @p path names a local folder measureFolderBytes would walk: not empty
+    ///        and not a remote (UNC) or device path. Touches nothing on disk, so it is safe to
+    ///        ask about an attacker-writable Uninstall value before offering a measurement.
+    [[nodiscard]] static bool isLocalInstallFolder(const QString& path);
 
 Q_SIGNALS:
     void enumerationStarted();

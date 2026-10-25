@@ -40,7 +40,9 @@ struct ProgramInfo {
 
     // Metadata
     qint64 estimatedSizeKB = 0;  ///< From registry EstimatedSize
-    qint64 actualSizeBytes = 0;  ///< Calculated disk usage
+    /// Size in bytes as the installer recorded it (registry EstimatedSize); 0 when it recorded
+    /// none. Enumeration never walks the install folder -- see measureFolderBytes.
+    qint64 actualSizeBytes = 0;
 
     // Classification
     enum class Source {

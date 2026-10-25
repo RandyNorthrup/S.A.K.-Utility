@@ -9,6 +9,7 @@
 #include "sak/advanced_uninstall_panel.h"
 #include "sak/layout_constants.h"
 #include "sak/message_box_helpers.h"
+#include "sak/program_enumerator.h"
 #include "sak/restore_point_manager.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
@@ -16,8 +17,10 @@
 #include <QCheckBox>
 #include <QDialog>
 #include <QDialogButtonBox>
+#include <QDir>
 #include <QFont>
 #include <QFormLayout>
+#include <QFutureWatcher>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
@@ -29,7 +32,11 @@
 #include <QRadioButton>
 #include <QScrollArea>
 #include <QTableWidget>
+#include <QtConcurrent>
 #include <QVBoxLayout>
+
+#include <atomic>
+#include <memory>
 
 namespace {
 
@@ -542,6 +549,63 @@ void AdvancedUninstallPanel::populateProgramPropertiesForm(const ProgramInfo& pr
     add_row(tr("Package Full Name"), program.packageFullName);
 }
 
+void AdvancedUninstallPanel::addInstallFolderSizeRow(const ProgramInfo& program,
+                                                     QDialog* dialog,
+                                                     QFormLayout* form_layout) {
+    // The program list shows the installer's EstimatedSize; walking the folder is something the
+    // user asks for, for this one program. Never offered for a remote or device location.
+    const QString location = program.installLocation.trimmed();
+    if (!ProgramEnumerator::isLocalInstallFolder(location)) {
+        return;
+    }
+    const QString key = QDir::cleanPath(location).toLower();
+    auto* row = new QWidget(dialog);
+    auto* row_layout = new QHBoxLayout(row);
+    row_layout->setContentsMargins(0, 0, 0, 0);
+    auto* value = new QLabel(row);
+    auto* measure = new QPushButton(row);
+    measure->setAccessibleName(tr("Measure install folder size"));
+    row_layout->addWidget(value, 1);
+    row_layout->addWidget(measure);
+    const auto cached = m_install_folder_bytes.constFind(key);
+    if (cached == m_install_folder_bytes.cend()) {
+        value->setText(tr("Not measured"));
+    } else {
+        value->setText(*cached > 0 ? formatSize(*cached) : tr("Empty"));
+    }
+    measure->setText(cached != m_install_folder_bytes.cend() ? tr("Measure Again") : tr("Measure"));
+
+    // Closing the dialog stops a walk still in progress.
+    auto cancelled = std::make_shared<std::atomic_bool>(false);
+    connect(dialog, &QObject::destroyed, [cancelled]() { cancelled->store(true); });
+    connect(measure,
+            &QPushButton::clicked,
+            dialog,
+            [this, dialog, value, measure, location, key, cancelled]() {
+                measure->setEnabled(false);
+                value->setText(tr("Measuring..."));
+                auto* watcher = new QFutureWatcher<qint64>(dialog);
+                connect(watcher,
+                        &QFutureWatcher<qint64>::finished,
+                        dialog,
+                        [this, watcher, value, measure, key]() {
+                            const qint64 bytes = watcher->result();
+                            watcher->deleteLater();
+                            m_install_folder_bytes.insert(key, bytes);
+                            value->setText(bytes > 0 ? formatSize(bytes) : tr("Empty"));
+                            measure->setText(tr("Measure Again"));
+                            measure->setEnabled(true);
+                        });
+                watcher->setFuture(QtConcurrent::run([location, cancelled]() {
+                    return ProgramEnumerator::measureFolderBytes(location, [cancelled]() {
+                        return cancelled->load();
+                    });
+                }));
+            });
+    form_layout->addRow(new QLabel(QString("<b>%1:</b>").arg(tr("Install Folder Size")), dialog),
+                        row);
+}
+
 void AdvancedUninstallPanel::showProgramProperties(const ProgramInfo& program) {
     QDialog dialog(this);
     dialog.setWindowTitle(tr("Program Properties -- %1").arg(program.displayName));
@@ -560,6 +624,7 @@ void AdvancedUninstallPanel::showProgramProperties(const ProgramInfo& program) {
     scroll_area->setWidget(scroll_widget);
 
     populateProgramPropertiesForm(program, scroll_widget, form_layout);
+    addInstallFolderSizeRow(program, &dialog, form_layout);
 
     layout->addWidget(scroll_area, 1);
 
