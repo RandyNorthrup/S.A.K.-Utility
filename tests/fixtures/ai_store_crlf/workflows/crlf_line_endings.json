@@ -1,0 +1,23 @@
+{
+    "schema_version": 1,
+    "id": "crlf_line_endings",
+    "title": "CRLF Line Endings",
+    "role": "PC Technician",
+    "category": "Diagnostics",
+    "description": "Fixture workflow whose resource bytes keep CRLF line endings.",
+    "starter_prompt": "Do the fixture workflow.",
+    "phases": [
+        {
+            "id": "plan",
+            "type": "overseer",
+            "prompt": "Plan the work.",
+            "completion": "Plan complete.",
+            "arguments": {
+                "command": "Write-Output test"
+            }
+        }
+    ],
+    "acceptance_criteria": [
+        "Workflow parses."
+    ]
+}

@@ -10,6 +10,7 @@
 #include "sak/ai/ai_skill_store.h"
 
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QProcess>
@@ -365,6 +366,30 @@ private Q_SLOTS:
         QCOMPARE(store.skillById(QStringLiteral("package-selection"))->body,
                  QStringLiteral("# X\nuser body"));
         QCOMPARE(store.skillById(QStringLiteral("package-selection"))->title, QStringLiteral("X"));
+    }
+
+    // A CRLF checkout (Git for Windows' default, and how CI builds) embeds CRLF resources. The
+    // resource loader opened them in text mode, which drops every CR, and then required the
+    // bytes read to equal QFile::size(), so every built-in skill of a CI-built release failed to
+    // load. The fixture keeps CRLF on every checkout (.gitattributes eol=crlf); the first check
+    // proves it, so this cannot pass vacuously on an LF working tree.
+    void store_loadsCrlfResource() {
+        QFile raw(QStringLiteral(":/ai_store_crlf/skills/crlf-line-endings.md"));
+        QVERIFY(raw.open(QIODevice::ReadOnly));
+        QVERIFY2(raw.readAll().contains("\r\n"), "fixture resource lost its CRLF line endings");
+
+        SkillStore store;
+        QStringList errors;
+        QVERIFY2(store.loadDirectory(QStringLiteral(":/ai_store_crlf/skills"), &errors),
+                 qPrintable(errors.join(QStringLiteral("; "))));
+        QVERIFY2(errors.isEmpty(), qPrintable(errors.join(QStringLiteral("; "))));
+        QCOMPARE(store.size(), 1);
+        const Skill* skill = store.skillById(QStringLiteral("crlf-line-endings"));
+        QVERIFY(skill != nullptr);
+        QCOMPARE(skill->description,
+                 QStringLiteral("Fixture skill whose resource bytes keep CRLF line endings."));
+        QCOMPARE(skill->title, QStringLiteral("CRLF Line Endings"));
+        QCOMPARE(skill->body, QStringLiteral("# CRLF Line Endings\n\nLine one.\nLine two."));
     }
 
     // The bundled built-in skills load from the Qt resource and every one is valid.

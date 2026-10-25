@@ -23,6 +23,7 @@ private Q_SLOTS:
     void parseValidWorkflow();
     void rejectInvalidWorkflow();
     void loadBuiltInWorkflows();
+    void loadCrlfResourceWorkflow();
     void userDirectoryOverridesBuiltInWorkflow();
     void rejectUnknownPhaseType();
     void earlierInvalidFileDoesNotRejectLaterValidOne();
@@ -170,6 +171,29 @@ void AiWorkflowStoreTests::rejectInvalidWorkflow() {
         QCOMPARE(errors.size(), 1);
         QCOMPARE(errors.at(0), QString::fromLatin1(test_case.expected_error));
     }
+}
+
+// A CRLF checkout (Git for Windows' default, and how CI builds) embeds CRLF resources. The
+// resource loader opened them in text mode, which drops every CR, and then required the bytes
+// read to equal QFile::size(), so every built-in workflow of a CI-built release failed to load.
+// The fixture keeps CRLF on every checkout (.gitattributes eol=crlf); the first check proves it,
+// so this cannot pass vacuously on an LF working tree.
+void AiWorkflowStoreTests::loadCrlfResourceWorkflow() {
+    QFile raw(QStringLiteral(":/ai_store_crlf/workflows/crlf_line_endings.json"));
+    QVERIFY(raw.open(QIODevice::ReadOnly));
+    QVERIFY2(raw.readAll().contains("\r\n"), "fixture resource lost its CRLF line endings");
+
+    sak::ai::WorkflowStore store;
+    QStringList errors;
+    QVERIFY2(store.loadDirectory(QStringLiteral(":/ai_store_crlf/workflows"), &errors),
+             qPrintable(errors.join(QStringLiteral("; "))));
+    QVERIFY2(errors.isEmpty(), qPrintable(errors.join(QStringLiteral("; "))));
+    QCOMPARE(store.workflows().size(), 1);
+    const auto* workflow = store.workflowById(QStringLiteral("crlf_line_endings"));
+    QVERIFY(workflow != nullptr);
+    QCOMPARE(workflow->title, QStringLiteral("CRLF Line Endings"));
+    QCOMPARE(workflow->description,
+             QStringLiteral("Fixture workflow whose resource bytes keep CRLF line endings."));
 }
 
 void AiWorkflowStoreTests::loadBuiltInWorkflows() {

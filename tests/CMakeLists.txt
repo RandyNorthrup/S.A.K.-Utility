@@ -2869,6 +2869,7 @@ message(STATUS "Added unit test: test_ai_tool_policy")
 add_executable(test_ai_skill_store
     unit/test_ai_skill_store.cpp
     ${CMAKE_SOURCE_DIR}/resources/ai.qrc
+    fixtures/ai_store_crlf/ai_store_crlf.qrc
 )
 set_target_properties(test_ai_skill_store PROPERTIES
     AUTOMOC ON
@@ -3137,6 +3138,7 @@ message(STATUS "Added unit test: test_ai_orchestrator")
 add_executable(test_ai_workflow_store
     unit/test_ai_workflow_store.cpp
     ../resources/ai.qrc
+    fixtures/ai_store_crlf/ai_store_crlf.qrc
 )
 set_target_properties(test_ai_workflow_store PROPERTIES
     AUTOMOC ON
