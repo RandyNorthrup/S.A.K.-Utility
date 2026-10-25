@@ -96,6 +96,22 @@ public:
     /// @brief Shut down the helper process gracefully
     void shutdown();
 
+    /// @brief The one broker -- and so the one elevated helper -- Partition Manager's disk
+    ///        scans, apply preflight/verification scans and queued operations share for the
+    ///        whole session. Each of them used to construct its own broker and so launch its
+    ///        own helper: one UAC prompt per scan and per operation. The helper still exits
+    ///        after its idle timeout (kHelperTimeoutMs); the next task then starts a new one.
+    ///        Thread-safe; created on first use and shut down with the application.
+    [[nodiscard]] static std::shared_ptr<ElevationBroker> sessionBroker();
+
+    /// @brief Whether an already-connected helper may carry the next task.
+    /// @param helper_alive The launched helper process has not exited.
+    /// @param idle_ms Time since the last message exchanged with it.
+    /// @return true only when it is alive AND comfortably inside its idle timeout. A helper
+    ///         about to time out could exit with the request unread, so it is shut down and
+    ///         replaced instead of being handed a (possibly destructive) task. Pure; testable.
+    [[nodiscard]] static bool helperReusable(bool helper_alive, qint64 idle_ms);
+
 Q_SIGNALS:
     /// @brief Progress update from the elevated helper
     void progressUpdated(int percent, const QString& status);
@@ -155,6 +171,15 @@ private:
     /// @brief Set the current task id under m_task_state_mutex
     void setCurrentTaskId(const QString& id);
 
+    /// @brief Record that a message just crossed the pipe (resets the idle clock).
+    void noteHelperActivity();
+
+    /// @brief Milliseconds since the last message crossed the pipe.
+    [[nodiscard]] qint64 helperIdleMs() const;
+
+    /// @brief Shut a connected helper down when it cannot safely take the next task.
+    void retireStaleHelper();
+
     QString m_pipe_name;
     QString m_current_task_id;
     mutable std::mutex m_task_state_mutex;
@@ -178,6 +203,8 @@ private:
     // and tear the handle mid-call. The atomic does NOT replace that mutex.
     std::atomic<HANDLE> m_pipe_handle{INVALID_HANDLE_VALUE};
     HANDLE m_helper_process{nullptr};
+    /// Monotonic milliseconds of the last message sent to or read from the helper.
+    std::atomic<qint64> m_last_activity_ms{0};
 };
 
 }  // namespace sak

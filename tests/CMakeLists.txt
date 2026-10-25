@@ -31,6 +31,23 @@ set(SAK_MAIN_OUTPUT_DIR "${CMAKE_BINARY_DIR}/Release")
 # and test_partition_manager_panel build the controller (and the panel) with
 # SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS, which adds members to those classes, so they cannot
 # take the library's unhooked objects for them.
+# Test-only seams in the partition/filesystem engine (the *ForTesting entry points, the
+# generated-image readers, the raw-target predicate and the executor's broker observer) are
+# compiled only under SAK_PARTITION_FS_TEST_HOOKS, so the product libraries -- and every shipped
+# binary -- do not contain them. A test that drives one compiles the hooked file itself, with the
+# definition. Each hook is a static function, so the hooked and product objects agree on every
+# class layout, and the hooked object defines every symbol the library's would, so the library's
+# copy is never pulled into that link.
+set(SAK_PARTITION_FS_TEST_HOOK_SOURCES_APFS_WRITER
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/partition_apfs_writer.cpp"
+)
+set(SAK_PARTITION_FS_TEST_HOOK_SOURCES
+    ${SAK_PARTITION_FS_TEST_HOOK_SOURCES_APFS_WRITER}
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/partition_apfs_file_system_reader.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/partition_ext_file_system_reader.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/partition_hfs_file_system_reader.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/partition_executor.cpp"
+)
 set(SAK_PROCESS_RUNNER_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/process_runner.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/process_runner.h"
@@ -297,6 +314,9 @@ set(SAK_PARTITION_CORE_RUNTIME_SOURCES
 # test_partition_manager_core - inventory parsing, safety, scripts, queue
 add_executable(test_partition_manager_core
     unit/test_partition_manager_core.cpp
+    # Hooked builds of the files whose test-only seams this suite drives (see the note at
+    # SAK_PARTITION_FS_TEST_HOOK_SOURCES).
+    ${SAK_PARTITION_FS_TEST_HOOK_SOURCES}
 )
 set_target_properties(test_partition_manager_core PROPERTIES
     AUTOMOC ON
@@ -310,6 +330,7 @@ target_include_directories(test_partition_manager_core PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
 target_compile_definitions(test_partition_manager_core PRIVATE
+    SAK_PARTITION_FS_TEST_HOOKS QT_NO_KEYWORDS
     SAK_TEST_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
 )
 add_test(NAME test_partition_manager_core COMMAND test_partition_manager_core

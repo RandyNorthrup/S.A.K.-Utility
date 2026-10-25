@@ -26,6 +26,13 @@ namespace {
 constexpr int kDefaultPartitionTaskTimeoutSeconds = 1800;
 constexpr int kMaxPartitionTaskOutputBytes = 1024 * 1024;
 
+#ifdef SAK_PARTITION_FS_TEST_HOOKS
+std::function<void(const std::shared_ptr<ElevationBroker>&)>& brokerRegisteredObserver() {
+    static std::function<void(const std::shared_ptr<ElevationBroker>&)> observer;
+    return observer;
+}
+#endif
+
 // Resolve a non-empty failure reason for a failed elevated operation:
 // structured helper error -> structured data error -> script stderr -> exit code.
 QString resolveElevatedFailureMessage(const QString& helperError,
@@ -241,14 +248,22 @@ PartitionExecutionStep PartitionExecutor::executeElevatedScript(const PartitionO
         step.error_message = credentials.error();
         return step;
     }
-    const auto broker = std::make_shared<ElevationBroker>();
-    connect(
+    // The session's one helper: every queued operation (and every inventory scan) uses it, so
+    // a batch costs one UAC prompt instead of one per operation. Its progress connection is
+    // per operation and is dropped again below, since the broker outlives this executor.
+    const auto broker = ElevationBroker::sessionBroker();
+    const QMetaObject::Connection progress = connect(
         broker.get(), &ElevationBroker::progressUpdated, this, &PartitionExecutor::progressUpdated);
-    const auto clear_broker = qScopeGuard([this, broker]() { clearActiveBroker(broker); });
+    const auto clear_broker = qScopeGuard([this, broker, progress]() {
+        QObject::disconnect(progress);
+        clearActiveBroker(broker);
+    });
     setActiveBroker(broker);
-    if (m_active_broker_registered_for_testing) {
-        m_active_broker_registered_for_testing(broker);
+#ifdef SAK_PARTITION_FS_TEST_HOOKS
+    if (const auto& observer = brokerRegisteredObserver()) {
+        observer(broker);
     }
+#endif
     if (m_cancelled.load(std::memory_order_relaxed)) {
         // A cancel that raced in before the broker was registered would have found
         // m_active_broker null and been unable to stop this task. Now that the broker is
@@ -313,6 +328,13 @@ PartitionExecutionStep PartitionExecutor::executeLocalScript(const PartitionOper
     }
     return step;
 }
+
+#ifdef SAK_PARTITION_FS_TEST_HOOKS
+void PartitionExecutor::setBrokerRegisteredObserverForTesting(
+    std::function<void(const std::shared_ptr<ElevationBroker>&)> observer) {
+    brokerRegisteredObserver() = std::move(observer);
+}
+#endif
 
 void PartitionExecutor::setActiveBroker(std::shared_ptr<ElevationBroker> broker) {
     const std::lock_guard<std::mutex> lock(m_active_broker_mutex);

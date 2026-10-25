@@ -180,6 +180,8 @@ private Q_SLOTS:
     void identity_clientImageRejectsDifferentExecutable();
     void identity_serverPidFailsClosedOnInvalidHelper();
     void identity_serverImageFailsClosedOnEmpty();
+    void session_oneBrokerForTheWholeSession();
+    void session_helperReusedOnlyWellInsideItsIdleTimeout();
 };
 
 // ============================================================================
@@ -698,6 +700,45 @@ void TestElevationHardening::identity_serverImageFailsClosedOnEmpty() {
                                               QStringLiteral("c:\\app\\SAK_ELEVATED_HELPER.EXE")));
     QVERIFY(!sak::ElevationBroker::imagePathsMatch(
         QStringLiteral("C:\\App\\sak_elevated_helper.exe"), QStringLiteral("C:\\App\\other.exe")));
+}
+
+// Partition Manager's scans and operations each built their own broker, so every scan and every
+// operation launched its own helper behind its own UAC prompt. They now share one per session,
+// whichever thread asks first.
+void TestElevationHardening::session_oneBrokerForTheWholeSession() {
+    const auto first = sak::ElevationBroker::sessionBroker();
+    QVERIFY(first);
+    std::shared_ptr<sak::ElevationBroker> from_worker;
+    QThread* worker =
+        QThread::create([&from_worker]() { from_worker = sak::ElevationBroker::sessionBroker(); });
+    worker->start();
+    QVERIFY(worker->wait(sak::kPipeConnectTimeoutMs));
+    delete worker;
+    QCOMPARE(from_worker.get(), first.get());
+    QCOMPARE(sak::ElevationBroker::sessionBroker().get(), first.get());
+    // It belongs to the application thread, which tears it down at exit.
+    QCOMPARE(first->thread(), QCoreApplication::instance()->thread());
+}
+
+// A shared helper is reused only while it is alive and well inside its idle timeout. One close
+// to timing out could exit with the next (possibly destructive) request unread, so it is
+// retired and a new helper started instead.
+void TestElevationHardening::session_helperReusedOnlyWellInsideItsIdleTimeout() {
+    QVERIFY(sak::ElevationBroker::helperReusable(true, 0));
+    QVERIFY(sak::ElevationBroker::helperReusable(true, sak::kHelperTimeoutMs / 2));
+    QVERIFY(!sak::ElevationBroker::helperReusable(false, 0));
+    QVERIFY(!sak::ElevationBroker::helperReusable(true, sak::kHelperTimeoutMs));
+    QVERIFY(!sak::ElevationBroker::helperReusable(true, sak::kHelperTimeoutMs - 1));
+    QVERIFY(!sak::ElevationBroker::helperReusable(true, -1));
+    // The boundary sits a fixed margin before the helper's own timeout.
+    qint64 last_reusable = -1;
+    for (qint64 idle = 0; idle <= sak::kHelperTimeoutMs; idle += 1000) {
+        if (sak::ElevationBroker::helperReusable(true, idle)) {
+            last_reusable = idle;
+        }
+    }
+    QVERIFY(last_reusable > 0);
+    QVERIFY(last_reusable < sak::kHelperTimeoutMs - 1000);
 }
 
 QTEST_MAIN(TestElevationHardening)

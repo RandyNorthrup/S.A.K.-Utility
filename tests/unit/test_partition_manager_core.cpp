@@ -8444,13 +8444,22 @@ void PartitionManagerCoreTests::partitionExecutor_honorsPreDispatchCancel() {
 }
 
 void PartitionManagerCoreTests::partitionExecutor_exceptionClearsOwnedBroker() {
+    // Every elevated operation goes through the session's ONE broker, so a batch raises one UAC
+    // prompt rather than one per operation. Each executeElevatedScript used to construct its
+    // own broker (and so launch its own helper). The registration hook throws before anything
+    // is sent, so no helper is launched here.
     PartitionExecutor executor;
-    QPointer<ElevationBroker> observed_broker;
-    executor.m_active_broker_registered_for_testing =
-        [&observed_broker](const std::shared_ptr<ElevationBroker>& broker) {
-            observed_broker = broker.get();
+    QSignalSpy relayed(&executor, &PartitionExecutor::progressUpdated);
+    QVector<ElevationBroker*> observed;
+    const auto resetObserver =
+        qScopeGuard([]() { PartitionExecutor::setBrokerRegisteredObserverForTesting({}); });
+    PartitionExecutor::setBrokerRegisteredObserverForTesting(
+        [&observed](const std::shared_ptr<ElevationBroker>& broker) {
+            observed.append(broker.get());
+            // The helper's progress reaches the executor while its task runs.
+            Q_EMIT broker->progressUpdated(1, QStringLiteral("during task"));
             throw std::runtime_error("post-registration lifetime drill");
-        };
+        });
 
     PartitionOperation operation;
     operation.id = QStringLiteral("owned-broker-drill");
@@ -8458,17 +8467,28 @@ void PartitionManagerCoreTests::partitionExecutor_exceptionClearsOwnedBroker() {
     PartitionScript script;
     script.script = QStringLiteral("Write-Output 'not reached'");
 
-    bool threw = false;
-    try {
-        std::ignore = executor.executeElevatedScript(operation, script);
-    } catch (const std::runtime_error& error) {
-        QCOMPARE(QString::fromUtf8(error.what()),
-                 QStringLiteral("post-registration lifetime drill"));
-        threw = true;
+    for (int run = 0; run < 2; ++run) {
+        bool threw = false;
+        try {
+            std::ignore = executor.executeElevatedScript(operation, script);
+        } catch (const std::runtime_error& error) {
+            QCOMPARE(QString::fromUtf8(error.what()),
+                     QStringLiteral("post-registration lifetime drill"));
+            threw = true;
+        }
+        QVERIFY(threw);
+        // The executor drops its reference on every exit path, exceptions included...
+        QVERIFY(executor.m_active_broker == nullptr);
     }
-    QVERIFY(threw);
-    QVERIFY(executor.m_active_broker == nullptr);
-    QVERIFY(observed_broker.isNull());
+    // ...but the broker it used is the session broker, the same one both times.
+    QCOMPARE(observed.size(), 2);
+    QCOMPARE(observed.at(0), observed.at(1));
+    QCOMPARE(observed.at(0), ElevationBroker::sessionBroker().get());
+    // Its progress connection is per operation: live during each task (one relay each), gone
+    // after, so a long-lived broker does not keep feeding finished operations.
+    QCOMPARE(relayed.count(), 2);
+    Q_EMIT ElevationBroker::sessionBroker()->progressUpdated(2, QStringLiteral("after"));
+    QCOMPARE(relayed.count(), 2);
     executor.cancel();
 }
 

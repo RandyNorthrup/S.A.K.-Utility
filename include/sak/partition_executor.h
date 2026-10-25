@@ -33,6 +33,14 @@ public:
                                                    bool use_elevation);
     void cancel();
 
+#ifdef SAK_PARTITION_FS_TEST_HOOKS
+    /// @brief Test-only: called with each broker right after an elevated operation registers
+    ///        it, before anything is sent. Static so the class layout is the same in test and
+    ///        product builds. Compiled only into tests that define SAK_PARTITION_FS_TEST_HOOKS.
+    static void setBrokerRegisteredObserverForTesting(
+        std::function<void(const std::shared_ptr<ElevationBroker>&)> observer);
+#endif
+
 Q_SIGNALS:
     void progressUpdated(int percent, const QString& status);
     void logMessage(const QString& message);
@@ -44,8 +52,6 @@ private:
     std::atomic_bool m_cancelled{false};
     mutable std::mutex m_active_broker_mutex;
     std::shared_ptr<ElevationBroker> m_active_broker;
-    std::function<void(const std::shared_ptr<ElevationBroker>&)>
-        m_active_broker_registered_for_testing;
 
     [[nodiscard]] PartitionExecutionStep executeOperation(const PartitionOperation& operation,
                                                           bool dry_run,

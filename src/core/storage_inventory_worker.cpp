@@ -442,12 +442,14 @@ void applyRawFileSystemDetection(PartitionInventory* inventory,
         return;
     }
 
-    std::unique_ptr<ElevationBroker> elevatedBroker;
-    // When elevation is not permitted the broker is never created: the raw probe
+    std::shared_ptr<ElevationBroker> elevatedBroker;
+    // When elevation is not permitted the broker is never taken: the raw probe
     // still runs both local (unprivileged) reads, but the elevated fallback is a
     // cheap no-op ("broker unavailable"), so a foreign partition whose local read
     // is denied keeps an empty file_system + a warning instead of triggering a
-    // UAC prompt / elevated helper.
+    // UAC prompt / elevated helper. When it is permitted, the probe uses the
+    // session's shared helper (ElevationBroker::sessionBroker), so a refresh, an
+    // apply preflight and its verification scan do not each raise a UAC prompt.
     bool elevatedProbeUnavailable = false;
     for (auto& disk : inventory->disks) {
         for (auto& partition : disk.partitions) {
@@ -456,7 +458,7 @@ void applyRawFileSystemDetection(PartitionInventory* inventory,
                 return;
             }
             if (allow_elevation && !elevatedBroker && needsRawFileSystemDetection(partition)) {
-                elevatedBroker = std::make_unique<ElevationBroker>();
+                elevatedBroker = ElevationBroker::sessionBroker();
             }
             const RawProbeContext context{.broker = elevatedBroker.get(),
                                           .elevated_probe_unavailable = &elevatedProbeUnavailable,

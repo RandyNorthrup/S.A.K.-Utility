@@ -14,6 +14,8 @@
 #include <QFileInfo>
 #include <QThread>
 
+#include <chrono>
+
 #include <windows.h>
 
 #include <shellapi.h>
@@ -23,6 +25,39 @@ namespace sak {
 
 namespace {
 constexpr int kHelperExitWaitMs = kTimerStatusBriefMs;
+// A reused helper must have at least this long left before its idle timeout, so the request
+// sent next is read long before the helper could decide the client went away.
+constexpr qint64 kHelperReuseMarginMs = 30'000;
+
+qint64 monotonicMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
+
+// The session broker lives behind a heap pointer that is never freed, so neither it nor its
+// lock is torn down by static destruction while a worker could still reach it. The broker
+// itself is shut down by a Qt post routine, while the logger and Qt are still alive.
+std::mutex& sessionBrokerMutex() {
+    static auto* mutex = new std::mutex();
+    return *mutex;
+}
+
+std::shared_ptr<ElevationBroker>& sessionBrokerSlot() {
+    static auto* slot = new std::shared_ptr<ElevationBroker>();
+    return *slot;
+}
+
+void shutdownSessionBroker() {
+    std::shared_ptr<ElevationBroker> broker;
+    {
+        const std::lock_guard<std::mutex> lock(sessionBrokerMutex());
+        broker = std::move(sessionBrokerSlot());
+    }
+    if (broker) {
+        broker->shutdown();
+    }
+}
 
 // Resolve the full image path of a process by PID via PROCESS_QUERY_LIMITED_INFORMATION.
 // Returns an empty string on any failure so callers fail closed.
@@ -62,6 +97,45 @@ bool ElevationBroker::isConnected() const {
     return m_pipe_handle.load(std::memory_order_acquire) != INVALID_HANDLE_VALUE;
 }
 
+std::shared_ptr<ElevationBroker> ElevationBroker::sessionBroker() {
+    const std::lock_guard<std::mutex> lock(sessionBrokerMutex());
+    auto& slot = sessionBrokerSlot();
+    if (!slot) {
+        slot = std::make_shared<ElevationBroker>();
+        if (auto* app = QCoreApplication::instance()) {
+            // First use is usually on a worker thread; give the broker the application
+            // thread's affinity so the post-routine teardown runs on the thread that owns it.
+            slot->moveToThread(app->thread());
+            qAddPostRoutine(&shutdownSessionBroker);
+        }
+    }
+    return slot;
+}
+
+bool ElevationBroker::helperReusable(bool helper_alive, qint64 idle_ms) {
+    return helper_alive && idle_ms >= 0 && idle_ms < kHelperTimeoutMs - kHelperReuseMarginMs;
+}
+
+void ElevationBroker::noteHelperActivity() {
+    m_last_activity_ms.store(monotonicMs(), std::memory_order_release);
+}
+
+qint64 ElevationBroker::helperIdleMs() const {
+    return monotonicMs() - m_last_activity_ms.load(std::memory_order_acquire);
+}
+
+void ElevationBroker::retireStaleHelper() {
+    if (!isConnected() || helperReusable(isHelperAlive(), helperIdleMs())) {
+        return;
+    }
+    // Sending a task to a helper that has exited, or is about to exit on its idle timeout,
+    // fails at best and at worst is read by nobody after a destructive step was requested.
+    // Retire it and let ensureConnected() start a fresh one (one new UAC prompt).
+    sak::logInfo("ElevationBroker: retiring helper idle for {} ms; starting a new one",
+                 helperIdleMs());
+    shutdown();
+}
+
 auto ElevationBroker::executeTask(const QString& task_id,
                                   const QString&,
                                   const QJsonObject& payload)
@@ -89,6 +163,7 @@ auto ElevationBroker::executeTask(const QString& task_id,
         ~FlightGuard() { flag->store(false, std::memory_order_release); }
     } flight_guard{&m_task_in_flight};
 
+    retireStaleHelper();
     if (!isConnected()) {
         auto conn = ensureConnected();
         if (!conn) {
@@ -416,7 +491,11 @@ bool ElevationBroker::sendRaw(const QByteArray& data) {
     BOOL const ok = WriteFile(
         handle, data.constData(), static_cast<DWORD>(data.size()), &bytes_written, nullptr);
 
-    return (ok != 0) && static_cast<int>(bytes_written) == data.size();
+    const bool sent = (ok != 0) && static_cast<int>(bytes_written) == data.size();
+    if (sent) {
+        noteHelperActivity();
+    }
+    return sent;
 }
 
 auto ElevationBroker::readMessage() -> std::expected<PipeMessage, sak::error_code> {
@@ -453,6 +532,7 @@ auto ElevationBroker::readMessage() -> std::expected<PipeMessage, sak::error_cod
         }
     }
 
+    noteHelperActivity();
     return parsePayload(type, payload);
 }
 
