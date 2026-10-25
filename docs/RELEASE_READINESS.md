@@ -59,23 +59,19 @@ keeps their history.
    - The iperf3 server and its inbound firewall rule leak after a crash (launched outside the
      kill-on-close Job).
    - The settings-screenshot action force-kills the user's own Settings windows.
-8. Real defects found by the first T2 CI runs (2026-10-24). Each reproduces in a fresh Git for
+8. FIXED 2026-10-25: defects the first T2 CI runs found, each reproducing in a fresh Git for
    Windows clone (default `core.autocrlf=true`), which is also how CI checks out and builds:
-   - Built-in AI workflows and skills do not load from a CRLF checkout.
-     `loadResourceFile` (`src/ai/ai_store_file_loader.cpp` ~157-176) opens the resource with
-     `QIODevice::Text`, which drops every CR, then requires the bytes read to equal
-     `QFile::size()`. Every embedded `.json`/`.md` with CRLF fails ("Resource workflow read was
-     incomplete"), so a release built on CI would ship with no built-in workflows or skills.
-     Red: `test_ai_workflow_store`, `test_ai_skill_store`. The main checkout passes only because
-     those resource files happen to be LF in its working tree.
-   - `test_partition_manager_panel::controllerWatcherLifetimeBlocksInteraction` reads
-     `src/core/partition_manager_controller.cpp` in binary mode and searches for a literal
-     `"||\n    "`, which a CRLF checkout never contains (test defect).
-   - `test_browser_bridge_security::security_daclIsCurrentUserOnlyWithMediumLabel` checks that the
-     DACL's SDDL contains the user's SID string. SDDL writes the built-in Administrator account
-     (RID 500, which a hosted runner's `runneradmin` is) as `LA`, so the check fails for that
-     account although the DACL is correct (test defect; the permission-manager suite already
-     compares through the descriptor's own `O:` text instead).
+   - Built-in AI workflows and skills did not load from a CRLF checkout: `loadResourceFile`
+     (`src/ai/ai_store_file_loader.cpp`) read in `QIODevice::Text` mode, which drops every CR,
+     then required the bytes read to equal `QFile::size()`, so a CI-built release would have
+     shipped with no built-in workflows or skills. It now reads binary; CRLF fixtures pin it
+     (`test_ai_skill_store::store_loadsCrlfResource`,
+     `test_ai_workflow_store::loadCrlfResourceWorkflow`).
+   - `test_partition_manager_panel` matched source text containing `"\n"` against raw bytes;
+     its source reads now fold CRLF (`sourceTextReadIgnoresLineEndings`).
+   - `test_browser_bridge_security` searched the DACL's SDDL for the user's SID string, which
+     SDDL writes as `LA` for the built-in Administrator (a hosted runner's account); it now
+     compares the user ACE in SDDL's own form (`security_userTrusteeMatchesSddlAliases`).
 
 ### Behavior audit 2026-10-24 -- owner decisions
 
