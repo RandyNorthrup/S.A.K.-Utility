@@ -10,8 +10,10 @@
 #include <atomic>
 #include <expected>
 #include <functional>
+#include <memory>
 #include <stop_token>
 #include <type_traits>
+#include <utility>
 
 /**
  * @brief Base class for worker threads
@@ -59,6 +61,24 @@ public:
      * @return True if worker is executing
      */
     [[nodiscard]] bool isExecuting() const noexcept;
+
+    /**
+     * @brief Stop and destroy a worker its owner no longer needs, without ever terminating it.
+     *
+     * A worker that is not running is destroyed at once. A running one is asked to stop and given
+     * @p stop_wait_ms. If it is still running after that, the overrun is reported and the
+     * worker -- which owns everything its execute() uses -- goes to sak::ThreadCustody, which
+     * destroys it on the application thread once it finishes. Its signals are disconnected first,
+     * so a retained worker can no longer reach the owner that gave it up. Call it on the thread the
+     * worker object belongs to. Owners hold workers in sak::WorkerPtr, which routes every
+     * destruction through here.
+     *
+     * @return true when the worker was destroyed, false when it was retained in custody.
+     */
+    static bool release(std::unique_ptr<WorkerBase> worker, int stop_wait_ms) noexcept;
+
+    /// release() with the standard stop deadline, sak::kTimeoutThreadShutdownMs.
+    static bool release(std::unique_ptr<WorkerBase> worker) noexcept;
 
 Q_SIGNALS:
     /**
@@ -111,6 +131,12 @@ protected:
      * i.e. AFTER the derived members are gone, so relying on it alone leaves a
      * still-running execute() touching freed derived state (use-after-free). This
      * helper lets each derived dtor join the thread while its state is still alive.
+     *
+     * The join is cooperative and bounded by kTimeoutThreadShutdownMs, and never
+     * terminates the thread. A destructor cannot keep its own object alive, so an
+     * owner whose worker may outlive that bound releases it through release()
+     * (sak::WorkerPtr does so on its own); a running worker that is destroyed
+     * directly past the bound is a programming error and stops the process.
      */
     void stopAndJoin() noexcept;
 
@@ -141,6 +167,37 @@ private:
     std::atomic<bool> m_stop_requested{false};
     std::atomic<bool> m_is_running{false};
 };
+
+namespace sak {
+
+/// unique_ptr deleter that destroys a worker through WorkerBase::release(): a worker still
+/// running past its stop deadline goes to custody instead of being destroyed underneath itself.
+struct WorkerReleaser {
+    void operator()(WorkerBase* worker) const noexcept {
+        WorkerBase::release(std::unique_ptr<WorkerBase>(worker));
+    }
+};
+
+/// Owning pointer for a worker thread. Resetting it, replacing it or destroying its owner never
+/// terminates the thread and never waits past the worker's stop deadline.
+template <typename Worker>
+using WorkerPtr = std::unique_ptr<Worker, WorkerReleaser>;
+
+/// make_unique for WorkerPtr.
+template <typename Worker, typename... Args>
+[[nodiscard]] WorkerPtr<Worker> makeWorker(Args&&... args) {
+    static_assert(std::is_base_of_v<WorkerBase, Worker>, "makeWorker owns WorkerBase workers.");
+    return WorkerPtr<Worker>(new Worker(std::forward<Args>(args)...));
+}
+
+/// Releases @p worker now through WorkerBase::release() with an owner-chosen stop deadline,
+/// leaving @p worker empty. Returns false when the worker was retained in custody.
+template <typename Worker>
+bool releaseWorker(WorkerPtr<Worker>& worker, int stop_wait_ms) noexcept {
+    return WorkerBase::release(std::unique_ptr<WorkerBase>(worker.release()), stop_wait_ms);
+}
+
+}  // namespace sak
 
 // -- Compile-Time Invariants --------------------------------------------------
 

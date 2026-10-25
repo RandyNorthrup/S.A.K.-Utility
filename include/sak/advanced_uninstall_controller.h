@@ -7,6 +7,7 @@
 #pragma once
 
 #include "sak/advanced_uninstall_types.h"
+#include "sak/worker_base.h"
 
 #include <QObject>
 #include <QString>
@@ -404,8 +405,8 @@ private:
 
     // Workers
     std::unique_ptr<ProgramEnumerator> m_enumerator;
-    std::unique_ptr<UninstallWorker> m_uninstallWorker;
-    std::unique_ptr<CleanupWorker> m_cleanupWorker;
+    WorkerPtr<UninstallWorker> m_uninstallWorker;
+    WorkerPtr<CleanupWorker> m_cleanupWorker;
     std::unique_ptr<RestorePointManager> m_restoreManager;
     QThread* m_enumThread = nullptr;
 

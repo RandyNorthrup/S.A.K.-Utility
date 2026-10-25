@@ -189,6 +189,10 @@ private Q_SLOTS:
     void onExecutionComplete();
 
 private:
+    /// Destruction-only: joins @p thread within its bound, or reports the overrun and hands the
+    /// thread, the @p action it runs and the elevated @p broker it uses to ThreadCustody.
+    void retireThreadOnDestroy(QThread*& thread, QuickAction* action, ElevationBroker* broker);
+
     /**
      * @brief Execute an action via admin elevation
      * @param action Action to execute

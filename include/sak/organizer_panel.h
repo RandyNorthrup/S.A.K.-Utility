@@ -165,7 +165,7 @@ private:
     // Shared
     LogToggleSwitch* m_logToggle{nullptr};
 
-    std::unique_ptr<OrganizerWorker> m_worker;
+    WorkerPtr<OrganizerWorker> m_worker;
     bool m_operation_running{false};
 
     // Duplicate detection widgets
@@ -184,7 +184,7 @@ private:
     QCheckBox* m_dedup_parallel_hashing{nullptr};
     QSpinBox* m_dedup_thread_count{nullptr};
 
-    std::unique_ptr<DuplicateFinderWorker> m_dedup_worker;
+    WorkerPtr<DuplicateFinderWorker> m_dedup_worker;
     bool m_dedup_running{false};
     QVector<FileManagementTarget> m_file_system_targets;
 };

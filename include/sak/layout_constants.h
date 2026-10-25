@@ -91,7 +91,6 @@ constexpr int kTimeoutSmartQueryMs = 5000;         ///< SMART disk query
 constexpr int kTimeoutWifiProfileMs = 1000;        ///< Individual netsh profile query
 constexpr int kTimeoutChocoDefaultSec = 300;       ///< Default Chocolatey timeout (seconds)
 constexpr int kTimeoutThreadShutdownMs = 15'000;   ///< Worker thread graceful shutdown
-constexpr int kTimeoutThreadTerminateMs = 5000;    ///< Worker thread force-terminate wait
 constexpr int kTimeoutWorkerResetMs = 3000;        ///< Worker thread reset (resetWorker)
 
 // ============================================================================

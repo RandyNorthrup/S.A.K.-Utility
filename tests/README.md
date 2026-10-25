@@ -150,7 +150,7 @@ and termination-utility setup handshakes; neither changes production deadlines.
 | test_resource_soak | `process_runner` | Long-session handle/GDI/USER/memory-growth soak over the real launchers |
 | test_error_codes | `error_codes` | Error code enum values, category strings, display messages |
 | test_input_validator | `input_validator` | Path, IP, port, Chocolatey name, and URL validation |
-| test_worker_base | `worker_base` | Thread lifecycle, bounded readiness before cancellation, derived-member-safe destructor joins, progress signals |
+| test_worker_base | `worker_base`, `thread_custody` | Thread lifecycle, bounded readiness before cancellation, derived-member-safe destructor joins, progress signals; a worker or plain QThread that overruns its stop deadline is retained in custody (signals severed, never terminated) and destroyed once it runs to completion; a running worker destroyed directly stops the process (child probe) instead of being terminated |
 | test_format_utils | `format_utils` | Number/size/duration formatting helpers |
 | test_bundled_tools_manager | `bundled_tools_manager` | Tool detection, path resolution, version checks |
 | test_keep_awake | `keep_awake` | System sleep prevention, cleanup on destruction |
@@ -380,7 +380,7 @@ stay read-only with exact blockers.
 | test_action_factory | `quick_action` | Action creation completeness, metadata validity (name, description, category), initial state, no duplicates, all categories populated |
 | test_all_actions_metadata | `quick_action` | Validates every registered action has complete metadata |
 | test_quick_action | `quick_action` | Base action interface, state transitions |
-| test_quick_action_controller | `quick_action_controller` | Action execution, progress, cancellation |
+| test_quick_action_controller | `quick_action_controller` | Action execution, progress, cancellation, and teardown during a stuck scan retaining the thread and its action in custody instead of blocking |
 | test_quick_action_result_io | `quick_action_result_io` | Result serialization, history persistence |
 
 ### Integration Tests

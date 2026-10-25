@@ -11,6 +11,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/quick_action_result_io.h"
+#include "sak/thread_custody.h"
 
 #include <QCoreApplication>
 #include <QDateTime>
@@ -20,14 +21,32 @@
 #include <QJsonObject>
 #include <QTextStream>
 
+#include <algorithm>
 #include <array>
+#include <memory>
 #include <ranges>
+#include <utility>
 
 namespace sak {
 
 namespace {
 constexpr int kThreadShutdownWaitMs = 10'000;
-}
+
+// What an elevated execution thread hands back. Shared between the thread, which writes it
+// before quitting, and the controller's finished() handler, which reads it afterwards.
+struct ElevatedExecutionOutcome {
+    QuickAction::ExecutionResult result;
+    QuickAction::ActionStatus status{QuickAction::ActionStatus::Failed};
+};
+
+// Everything a still-running action thread uses once its controller is gone. Members are
+// destroyed in reverse order, so the thread object (finished by then) goes last.
+struct RetainedActionRun {
+    std::unique_ptr<QThread> thread;
+    std::unique_ptr<QuickAction> action;
+    std::unique_ptr<ElevationBroker> broker;
+};
+}  // namespace
 
 namespace {
 constexpr int kElevationRequestProgress = 5;
@@ -146,28 +165,50 @@ QuickActionController::~QuickActionController() {
         m_broker->cancelCurrentTask();
     }
 
-    // Join before freeing. The owned QuickActions (m_actions) are destroyed right
-    // after this dtor body, so a thread still running scan()/execute() would use
-    // freed state. Block until the thread actually stops, then delete it directly
-    // (deleteLater would never fire -- the event loop does not run during teardown).
-    auto cleanupThread = [](QThread*& thread) {
-        if (!thread) {
-            return;
-        }
-        thread->quit();
-        if (!thread->wait(kThreadShutdownWaitMs)) {
-            sak::logError("QuickAction thread slow to stop; blocking until joined");
-            // SAK-ALLOW-BLOCKING: `delete thread` follows and the owned QuickActions are freed
-            // right after this dtor body, so a thread still in scan()/execute() would use freed
-            // state. The bounded wait above already gave up once; the escalation is logged.
-            thread->wait();
-        }
-        delete thread;
-        thread = nullptr;
-    };
+    // Join before freeing. The owned QuickActions (m_actions) are destroyed right after this
+    // dtor body, so a thread still running scan()/execute() would use freed state. Each thread
+    // gets a bounded join; one that overruns is never terminated and never waited on without
+    // bound -- it is reported and retained, together with the action and broker it uses, until
+    // it finishes.
+    retireThreadOnDestroy(m_scan_thread, m_current_scan_action, nullptr);
+    retireThreadOnDestroy(m_execution_thread, m_current_execution_action, m_broker);
+}
 
-    cleanupThread(m_scan_thread);
-    cleanupThread(m_execution_thread);
+void QuickActionController::retireThreadOnDestroy(QThread*& thread,
+                                                  QuickAction* action,
+                                                  ElevationBroker* broker) {
+    QThread* const running = std::exchange(thread, nullptr);
+    if (running == nullptr) {
+        return;
+    }
+    running->quit();
+    if (running->wait(kThreadShutdownWaitMs)) {
+        delete running;  // deleteLater would never fire: no event loop runs during teardown.
+        return;
+    }
+    auto retained = std::make_shared<RetainedActionRun>();
+    running->setParent(nullptr);
+    retained->thread.reset(running);
+    if (action != nullptr) {
+        const auto owned = std::ranges::find_if(m_actions, [action](const auto& candidate) {
+            return candidate.get() == action;
+        });
+        if (owned != m_actions.end()) {
+            retained->action = std::move(*owned);
+            m_actions.erase(owned);
+        }
+    }
+    if (broker != nullptr && broker == m_broker) {
+        broker->setParent(nullptr);
+        retained->broker.reset(broker);
+        m_broker = nullptr;
+    }
+    ThreadCustody::retain(
+        running,
+        retained,
+        QStringLiteral("QuickAction thread for '%1' still running %2 ms after its stop request")
+            .arg(action != nullptr ? action->name() : QStringLiteral("unknown"))
+            .arg(kThreadShutdownWaitMs));
 }
 
 void QuickActionController::setLoggingEnabled(bool enabled) {
@@ -404,25 +445,24 @@ void QuickActionController::executeElevatedAction(QuickAction* action, const QSt
     auto* thread = m_execution_thread;
     auto* context = new QObject();
     context->moveToThread(thread);
+    // The thread touches only the broker and this shared outcome, never the controller: a
+    // controller torn down mid-task can then retain the broker and thread in custody without
+    // leaving the thread a dangling `this`. The outcome comes back through the thread's own
+    // finished(), whose connection to this controller dies with it.
+    auto outcome = std::make_shared<ElevatedExecutionOutcome>();
     connect(thread,
             &QThread::started,
             context,
-            [this, thread, context, action, action_name, task_id, payload]() {
-                QuickAction::ExecutionResult result;
-                QuickAction::ActionStatus status = QuickAction::ActionStatus::Failed;
-                result = makeElevatedActionResult(
-                    m_broker->executeTask(task_id, action_name, payload), status);
-
-                QMetaObject::invokeMethod(
-                    this,
-                    [this, action, result, status]() {
-                        action->applyExecutionResult(result, status);
-                        onExecutionComplete();
-                    },
-                    Qt::QueuedConnection);
+            [broker = m_broker, outcome, thread, context, action_name, task_id, payload]() {
+                outcome->result = makeElevatedActionResult(
+                    broker->executeTask(task_id, action_name, payload), outcome->status);
                 context->deleteLater();
                 thread->quit();
             });
+    connect(thread, &QThread::finished, this, [this, action, outcome]() {
+        action->applyExecutionResult(outcome->result, outcome->status);
+        onExecutionComplete();
+    });
     thread->start();
 }
 

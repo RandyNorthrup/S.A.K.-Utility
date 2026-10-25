@@ -5,6 +5,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/style_constants.h"
+#include "sak/thread_custody.h"
 #include "sak/user_profile_backup_wizard.h"
 #include "sak/user_profile_backup_worker.h"
 #include "sak/user_profile_progress.h"
@@ -17,9 +18,15 @@
 #include <QSaveFile>
 #include <QVBoxLayout>
 
+#include <memory>
+
 namespace sak {
 
 namespace {
+
+// How long closing the page waits for a cancelled backup to reach its next file boundary before
+// handing the still-copying worker to thread custody.
+constexpr int kWorkerReleaseMs = 5000;
 
 // Write JSON to `path` atomically: QSaveFile stages a temp file and only renames
 // it into place on commit(), so a short or interrupted write never leaves a
@@ -60,6 +67,30 @@ UserProfileBackupExecutePage::UserProfileBackupExecutePage(BackupManifest& manif
     setSubTitle(tr("Backup in progress..."));
 
     setupUi();
+}
+
+UserProfileBackupExecutePage::~UserProfileBackupExecutePage() {
+    // The worker is this page's child, so ~QObject would destroy it while a copy is running. A
+    // large in-flight copy cannot observe cancellation, so release it instead: joined within the
+    // bound, or reported and retained until that copy finishes. Never terminated, never an
+    // unbounded wait on the GUI thread.
+    if (m_worker != nullptr) {
+        UserProfileBackupWorker* const worker = m_worker;
+        m_worker = nullptr;
+        ThreadCustody::release(
+            std::unique_ptr<QThread>(worker), [worker]() { worker->cancel(); }, kWorkerReleaseMs);
+    }
+}
+
+bool UserProfileBackupExecutePage::isBackupRunning() const {
+    return m_worker != nullptr && m_worker->isRunning();
+}
+
+void UserProfileBackupExecutePage::cancelBackup() {
+    if (isBackupRunning()) {
+        m_worker->cancel();
+        appendLog(tr("[WARNING] Cancelling backup..."));
+    }
 }
 
 void UserProfileBackupExecutePage::setupUi() {
@@ -376,6 +407,7 @@ bool UserProfileBackupExecutePage::saveAppDataSourcesToBackup(
 void UserProfileBackupExecutePage::connectAndStartBackupWorker(SmartFilter smart_filter,
                                                                PermissionMode permission_mode) {
     auto* worker = new UserProfileBackupWorker(this);
+    m_worker = worker;
 
     connect(worker,
             &UserProfileBackupWorker::overallProgress,

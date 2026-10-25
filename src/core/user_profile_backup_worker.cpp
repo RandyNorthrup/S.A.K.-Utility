@@ -5,6 +5,7 @@
 
 #include "sak/elevation_manager.h"
 #include "sak/layout_constants.h"
+#include "sak/thread_custody.h"
 
 #include <QDateTime>
 #include <QDir>
@@ -184,14 +185,10 @@ UserProfileBackupWorker::UserProfileBackupWorker(QObject* parent)
 UserProfileBackupWorker::~UserProfileBackupWorker() {
     if (isRunning()) {
         cancel();
-        // Never let ~QThread run on a live thread: if an in-flight copy of a
-        // large/stalled file outlasts the grace period, block until it finishes.
-        if (!wait(kTimeoutThreadTerminateMs)) {
-            // SAK-ALLOW-BLOCKING: the bounded wait above already gave up once. Destroying a
-            // running QThread aborts the process, and terminate() during a file copy can
-            // leave a half-written file in the backup, so blocking is the safer end state.
-            wait();
-        }
+        // Never let ~QThread run on a live thread, never terminate a file copy, and never block
+        // without bound: an in-flight copy of a large file can outlast any grace period, so the
+        // owning page releases a running worker into ThreadCustody instead of destroying it.
+        ThreadCustody::joinOrFailInDestructor(*this, kTimeoutThreadShutdownMs);
     }
     delete m_fileFilter;
     delete m_permissionManager;

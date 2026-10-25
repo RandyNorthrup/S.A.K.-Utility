@@ -519,6 +519,7 @@ set(SAK_FOUNDATION_SOURCES
     src/core/bundled_tools_manager.cpp
     src/core/user_profile_types.cpp
     src/threading/worker_base.cpp
+    src/threading/thread_custody.cpp
     include/sak/logger.h
     include/sak/app_paths.h
     include/sak/path_utils.h
@@ -532,6 +533,7 @@ set(SAK_FOUNDATION_SOURCES
     include/sak/bundled_tools_manager.h
     include/sak/user_profile_types.h
     include/sak/worker_base.h
+    include/sak/thread_custody.h
 )
 
 # Filesystem drivers (APFS, HFS+, ext), raw device and image I/O, the filesystem detector, and the

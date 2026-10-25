@@ -87,7 +87,7 @@ void AdvancedSearchController::startSearch(const SearchConfig& config) {
                                         kBytesPerMB;
     }
 
-    m_worker = std::make_unique<AdvancedSearchWorker>(effectiveConfig);
+    m_worker = makeWorker<AdvancedSearchWorker>(effectiveConfig);
 
     // Connect worker signals, tagged with the generation of this search so that
     // any queued signal from a superseded worker is dropped rather than allowed
@@ -117,25 +117,10 @@ void AdvancedSearchController::cleanupWorker() {
         // ignored by their guards, then disconnect to stop further emissions.
         ++m_worker_generation;
         m_worker->disconnect(this);
-        if (m_worker->isRunning()) {
-            m_worker->requestStop();
-            if (!m_worker->wait(kWorkerStopTimeoutMs)) {
-                // Fail closed: never reset() a still-running worker -- destroying a running
-                // QThread aborts the process. Block until the cooperative stop is honored. The
-                // worker checks its stop flag between files, so this returns once the in-flight
-                // file finishes rather than proceeding to tear down a live thread.
-                logError(
-                    "AdvancedSearchController: worker did not stop within 5s; "
-                    "waiting for clean teardown before reset");
-                // SAK-ALLOW-BLOCKING: destroying a still-running QThread aborts the whole
-                // process, so reset() below MUST NOT run until the worker thread has actually
-                // exited. requestStop() was already sent and the worker honors it between
-                // files, so this unbounded wait resolves once the in-flight file finishes; it
-                // is a mandatory teardown barrier, not an event-loop stall.
-                m_worker->wait();
-            }
-        }
-        m_worker.reset();
+        // Never destroy a still-running worker and never block without bound: release() joins
+        // within the stop deadline, or reports the overrun and retains the worker until its
+        // in-flight file finishes (the worker checks its stop flag between files).
+        releaseWorker(m_worker, kWorkerStopTimeoutMs);
     }
 }
 

@@ -353,9 +353,17 @@ class UserProfileRestoreExecutePage : public QWizardPage {
 
 public:
     explicit UserProfileRestoreExecutePage(QWidget* parent = nullptr);
+    ~UserProfileRestoreExecutePage() override;
+    UserProfileRestoreExecutePage(const UserProfileRestoreExecutePage&) = delete;
+    UserProfileRestoreExecutePage& operator=(const UserProfileRestoreExecutePage&) = delete;
+    UserProfileRestoreExecutePage(UserProfileRestoreExecutePage&&) = delete;
+    UserProfileRestoreExecutePage& operator=(UserProfileRestoreExecutePage&&) = delete;
 
     void initializePage() override;
     bool isComplete() const override;
+
+    /// True while the restore worker this page started is still running.
+    [[nodiscard]] bool isRestoreRunning() const;
 
 private:
     void setupUi();
@@ -371,7 +379,8 @@ private:
     QPushButton* m_cancelButton;
     QPushButton* m_viewLogButton;
 
-    UserProfileRestoreWorker* m_worker;
+    // Child of this page while it runs; deleted (and nulled) once it reports completion.
+    QPointer<UserProfileRestoreWorker> m_worker;
     bool m_restoreComplete;
     bool m_restoreSuccess;
     qint64 m_lastProcessedBytes{0};

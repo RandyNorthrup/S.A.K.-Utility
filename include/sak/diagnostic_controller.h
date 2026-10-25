@@ -8,6 +8,7 @@
 
 #include "sak/diagnostic_types.h"
 #include "sak/layout_constants.h"
+#include "sak/worker_base.h"
 
 #include <QFuture>
 #include <QObject>
@@ -308,10 +309,10 @@ private:
     // Workers (created on-demand)
     std::unique_ptr<HardwareInventoryScanner> m_hardware_scanner;
     std::unique_ptr<SmartDiskAnalyzer> m_smart_analyzer;
-    std::unique_ptr<CpuBenchmarkWorker> m_cpu_benchmark;
-    std::unique_ptr<DiskBenchmarkWorker> m_disk_benchmark;
-    std::unique_ptr<MemoryBenchmarkWorker> m_memory_benchmark;
-    std::unique_ptr<StressTestWorker> m_stress_test;
+    WorkerPtr<CpuBenchmarkWorker> m_cpu_benchmark;
+    WorkerPtr<DiskBenchmarkWorker> m_disk_benchmark;
+    WorkerPtr<MemoryBenchmarkWorker> m_memory_benchmark;
+    WorkerPtr<StressTestWorker> m_stress_test;
     std::unique_ptr<ThermalMonitor> m_thermal_monitor;
     std::unique_ptr<DiagnosticReportGenerator> m_report_generator;
 

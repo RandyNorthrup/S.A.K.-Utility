@@ -1268,9 +1268,10 @@ AppActionResult organizeDirectory(const QJsonObject& args) {
 
     // Drive the worker (a QThread) directly through the async->sync bridge, like the
     // read-only search. Declared before the invocation so it is destroyed LAST: on a
-    // timeout its ~WorkerBase requests stop and joins the thread after run() returns,
-    // so a still-running organize is reaped, never leaked into a destroyed context.
-    OrganizerWorker worker(config);
+    // timeout its WorkerPtr requests stop and joins the thread after run() returns (or
+    // reports an overrun and retains it until it finishes), never into a destroyed context.
+    const sak::WorkerPtr<OrganizerWorker> owned_worker = sak::makeWorker<OrganizerWorker>(config);
+    OrganizerWorker& worker = *owned_worker;
     AsyncActionInvocation inv;
     QObject::connect(&worker, &WorkerBase::finished, inv.context(), [&inv, &worker, target]() {
         const int moved = worker.movedCount();
@@ -1910,9 +1911,10 @@ AppActionResult applyResultFromExecution(const PartitionExecutionResult& result,
 // Validate the op against the safety validator, then run it on a WORKER THREAD via the
 // AsyncActionInvocation bridge (the certified flash-path lifetime). Running the blocking,
 // possibly-ELEVATED PartitionExecutor off the tool worker thread keeps it cancellable
-// (worker.cancelExecution -> PartitionExecutor::cancel) and bounds teardown (the
-// PartitionApplyWorker destructor cooperatively cancels then wait/terminate-joins). A dry
-// run performs no I/O and never elevates; use_elevation is true only for a real apply.
+// (worker.cancelExecution -> PartitionExecutor::cancel) and bounds teardown (its WorkerPtr
+// joins within the stop deadline or retains the worker until it finishes; it is never
+// terminated). A dry run performs no I/O and never elevates; use_elevation is true only for a
+// real apply.
 AppActionResult runApplyOperation(const ParsedPartitionOp& parsed,
                                   const QJsonObject& args,
                                   const PartitionApplyResolution& target,
@@ -1942,9 +1944,9 @@ AppActionResult runApplyOperation(const ParsedPartitionOp& parsed,
     // is dropped rather than delivered to a dangling bridge.
     const PartitionOperationType type = parsed.type;
     const QString description = target.description;
-    PartitionApplyWorker worker(QVector<PartitionOperation>{op},
-                                dry_run,
-                                /*use_elevation=*/!dry_run);
+    const sak::WorkerPtr<PartitionApplyWorker> owned_worker = sak::makeWorker<PartitionApplyWorker>(
+        QVector<PartitionOperation>{op}, dry_run, /*use_elevation=*/!dry_run);
+    PartitionApplyWorker& worker = *owned_worker;
     AsyncActionInvocation inv(kApplyTimeoutMs);
     QObject::connect(&worker,
                      &WorkerBase::finished,
@@ -1966,7 +1968,7 @@ AppActionResult runApplyOperation(const ParsedPartitionOp& parsed,
     // Accepted (matches the organizer/search worker path): a launch failure needs thread
     // exhaustion and merely delays the failure result rather than misreporting it.
     const AppActionResult result = inv.run([&worker]() { worker.start(); });
-    worker.cancelExecution();  // cooperative cancel on timeout/teardown before the dtor joins
+    worker.cancelExecution();  // cooperative cancel on timeout/teardown before the release joins
     return result;
 }
 
@@ -2068,9 +2070,9 @@ QJsonObject uninstallProgramParamsSchema(const QString& name_description) {
 // map the terminal signal to a tool result. uninstallComplete carries a result code (Success for
 // the Standard/UWP paths this drives; Skipped for ForcedUninstall), so the ok==Success branch is
 // real handling, not dead code; a failed removal returns unexpected -> WorkerBase::failed; a stop
-// -> cancelled. The worker is FULLY JOINED before return: the explicit requestStop + bounded wait +
-// terminate fallback below reaps the thread, and ~UninstallWorker itself calls stopAndJoin() (it is
-// NOT =default) while its members are still alive, so there is no base-runs-too-late UAF.
+// -> cancelled. The caller owns the worker through a WorkerPtr: after the stop request below, that
+// owner joins it within the stop deadline, or reports the overrun and retains it until it finishes.
+// It is never terminated mid-uninstall.
 AppActionResult driveUninstallWorker(UninstallWorker& worker, const QString& name, int timeout_ms) {
     AsyncActionInvocation inv(timeout_ms);
     QObject::connect(&worker,
@@ -2102,10 +2104,6 @@ AppActionResult driveUninstallWorker(UninstallWorker& worker, const QString& nam
 
     const AppActionResult result = inv.run([&worker]() { worker.start(); });
     worker.requestStop();
-    if (!worker.wait(sak::kTimeoutThreadShutdownMs)) {
-        worker.terminate();
-        worker.wait(sak::kTimeoutThreadTerminateMs);
-    }
     return result;
 }
 
@@ -2205,8 +2203,9 @@ AppActionResult uninstallUwpApp(const QJsonObject& args) {
     // UwpRemove mode: Remove-AppxPackage / -Provisioned is silent, bounded (60s), cancellable,
     // and early-returns BEFORE the leftover scan, so this ONLY removes the package (no cleanup).
     // createRestorePoint false: a Store app is reinstallable and a restore point needs admin.
-    UninstallWorker worker(program, UninstallWorker::Mode::UwpRemove, ScanLevel::Safe, false);
-    return driveUninstallWorker(worker, name, kUwpUninstallTimeoutMs);
+    const sak::WorkerPtr<UninstallWorker> worker = sak::makeWorker<UninstallWorker>(
+        program, UninstallWorker::Mode::UwpRemove, ScanLevel::Safe, false);
+    return driveUninstallWorker(*worker, name, kUwpUninstallTimeoutMs);
 }
 
 AppActionResult uninstallWin32Program(const QJsonObject& args) {
@@ -2230,9 +2229,10 @@ AppActionResult uninstallWin32Program(const QJsonObject& args) {
     // service completes the removal; (c) exit code 3010 (reboot-required) is reported as success
     // without a reboot notice (the worker does not surface nativeExitCode). Interactive hang and
     // wrong-program/system-component removal are PREVENTED (resolve refuses them up front).
-    UninstallWorker worker(program, UninstallWorker::Mode::Standard, ScanLevel::Safe, false);
-    worker.setHeadlessSilent(true);
-    return driveUninstallWorker(worker, name, kWin32UninstallTimeoutMs);
+    const sak::WorkerPtr<UninstallWorker> worker = sak::makeWorker<UninstallWorker>(
+        program, UninstallWorker::Mode::Standard, ScanLevel::Safe, false);
+    worker->setHeadlessSilent(true);
+    return driveUninstallWorker(*worker, name, kWin32UninstallTimeoutMs);
 }
 
 using AddMutatingActionFn = std::function<void(const AppActionDescriptor&, AppActionInvoke)>;
@@ -2357,12 +2357,15 @@ AppActionResult buildCleanupResult(int items_total, const CleanupTally& tally) {
 // Drive a prepared CleanupWorker to completion, accumulating its per-item/error/summary signals,
 // and map the terminal signal to a tool result. The worker continues past
 // individual failures (an un-elevated sc/schtasks/netsh call fails honestly -> counted failed,
-// ok=false), so success means EVERY item deleted. Fully joined before return (requestStop +
-// wait/terminate), like driveUninstallWorker, so a timeout cannot outlive the worker's stack.
+// ok=false), so success means EVERY item deleted. Like driveUninstallWorker, the WorkerPtr owner
+// joins it after the stop request (or retains an overrun until it finishes), so a timeout can never
+// destroy a running worker; it is never terminated mid-delete.
 AppActionResult runCleanupWorker(const QVector<LeftoverItem>& items, bool use_recycle_bin) {
     // worker declared BEFORE inv so it is destroyed AFTER inv: a late finished() on teardown then
     // hits an already-gone context and is dropped rather than delivered to a dangling bridge.
-    CleanupWorker worker(items, use_recycle_bin);
+    const sak::WorkerPtr<CleanupWorker> owned_worker =
+        sak::makeWorker<CleanupWorker>(items, use_recycle_bin);
+    CleanupWorker& worker = *owned_worker;
     // The recycle choice is a RECOVERABILITY contract and this path has no human reviewing each
     // item, so a recycle failure must leave the item in place (reported failed) instead of
     // escalating to a permanent delete. Stated explicitly here, not left to the worker default.
@@ -2418,10 +2421,6 @@ AppActionResult runCleanupWorker(const QVector<LeftoverItem>& items, bool use_re
 
     const AppActionResult result = inv.run([&worker]() { worker.start(); });
     worker.requestStop();
-    if (!worker.wait(sak::kTimeoutThreadShutdownMs)) {
-        worker.terminate();
-        worker.wait(sak::kTimeoutThreadTerminateMs);
-    }
     return result;
 }
 

@@ -39,30 +39,20 @@ constexpr int kRecoveredSizeDisplayPrecision = 1;
 // has fully returned, so setState(Idle) can let the next op reassign the unique_ptr
 // while the thread is still live -- destroying it triggers the fatal "QThread:
 // Destroyed while thread is still running" abort. This cooperatively stops the
-// thread and, if it refuses within the bound, DETACHES it (bounded leak, self-deletes
-// when it finally exits) instead of force-terminating and destroying it.
+// thread and, if it refuses within the bound, hands it to the shared worker custody (reported,
+// destroyed once it finally exits) instead of force-terminating and destroying it.
 template <typename WorkerT>
-void retireWorker(std::unique_ptr<WorkerT>& worker, const QObject* owner) {
+void retireWorker(WorkerPtr<WorkerT>& worker, const QObject* owner) {
     if (!worker) {
         return;
     }
-    if (worker->isExecuting() || worker->isRunning()) {
-        worker->requestStop();
-        if (!worker->wait(kThreadWaitMs)) {
-            WorkerT* stale = worker.release();
-            stale->setParent(nullptr);
-            // Sever every signal back to the controller BEFORE letting go. A detached worker
-            // outlives the operation that created it, and its late uninstallComplete / failed /
-            // cancelled / cleanupComplete carries no run identity -- the controller would apply
-            // it to whatever runs NEXT, mis-marking a queued program, re-emitting a stale report
-            // or forcing the live run to Idle. Severing first also means the deleteLater wiring
-            // below is the only connection that survives.
-            QObject::disconnect(stale, nullptr, owner, nullptr);
-            QObject::connect(stale, &QThread::finished, stale, &QObject::deleteLater);
-            return;
-        }
-    }
-    worker.reset();
+    // Sever every signal back to the controller BEFORE letting go. A retained worker outlives
+    // the operation that created it, and its late uninstallComplete / failed / cancelled /
+    // cleanupComplete carries no run identity -- the controller would apply it to whatever runs
+    // NEXT, mis-marking a queued program, re-emitting a stale report or forcing the live run to
+    // Idle.
+    QObject::disconnect(worker.get(), nullptr, owner, nullptr);
+    releaseWorker(worker, kThreadWaitMs);
 }
 
 // Read a persisted boolean preference fail-closed. QVariant::toBool() coerces ANY non-empty,
@@ -302,7 +292,7 @@ void AdvancedUninstallController::uninstallProgram(const ProgramInfo& program,
     // unique_ptr is overwritten (B10-09).
     const int generation = ++m_uninstallGeneration;
     retireWorker(m_uninstallWorker, this);
-    m_uninstallWorker = std::make_unique<UninstallWorker>(
+    m_uninstallWorker = makeWorker<UninstallWorker>(
         program, uninstallModeForProgram(program), scan_level, create_restore_point, this);
     connectUninstallWorkerSignals(true, generation);
 
@@ -339,7 +329,7 @@ void AdvancedUninstallController::forceUninstall(const ProgramInfo& program,
 
     const int generation = ++m_uninstallGeneration;
     retireWorker(m_uninstallWorker, this);
-    m_uninstallWorker = std::make_unique<UninstallWorker>(
+    m_uninstallWorker = makeWorker<UninstallWorker>(
         program, UninstallWorker::Mode::ForcedUninstall, scan_level, create_restore_point, this);
 
     connectUninstallWorkerSignals(false, generation);
@@ -377,7 +367,7 @@ void AdvancedUninstallController::removeRegistryEntry(const ProgramInfo& program
     m_currentAutoCleanSafe = false;
     const int generation = ++m_uninstallGeneration;
     retireWorker(m_uninstallWorker, this);
-    m_uninstallWorker = std::make_unique<UninstallWorker>(
+    m_uninstallWorker = makeWorker<UninstallWorker>(
         program, UninstallWorker::Mode::RegistryOnly, ScanLevel::Safe, false, this);
 
     connectUninstallWorkerSignals(false, generation);
@@ -492,7 +482,7 @@ void AdvancedUninstallController::startCleanupWorker(const QVector<LeftoverItem>
 
     const int generation = ++m_cleanupGeneration;
     retireWorker(m_cleanupWorker, this);
-    m_cleanupWorker = std::make_unique<CleanupWorker>(screened_items, use_recycle_bin, this);
+    m_cleanupWorker = makeWorker<CleanupWorker>(screened_items, use_recycle_bin, this);
     m_cleanupWorker->setRequireRecoverable(require_recoverable);
     connectCleanupWorkerSignals(m_cleanupWorker.get(), screened_items, generation);
     m_cleanupWorker->start();
@@ -1535,7 +1525,7 @@ void AdvancedUninstallController::processNextQueueItem() {
     setState(State::Uninstalling);
     const int generation = ++m_uninstallGeneration;
     retireWorker(m_uninstallWorker, this);
-    m_uninstallWorker = std::make_unique<UninstallWorker>(
+    m_uninstallWorker = makeWorker<UninstallWorker>(
         qi.program, uninstallModeForProgram(qi.program), qi.scanLevel, false, this);
     connectUninstallWorkerSignals(true, generation);
 

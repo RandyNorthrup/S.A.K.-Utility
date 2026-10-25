@@ -13,6 +13,7 @@
 #include "sak/permission_manager.h"
 #include "sak/process_runner.h"
 #include "sak/smart_file_filter.h"
+#include "sak/thread_custody.h"
 #include "sak/windows_user_scanner.h"
 
 #include <QCryptographicHash>
@@ -265,15 +266,10 @@ UserProfileRestoreWorker::UserProfileRestoreWorker(QObject* parent)
 UserProfileRestoreWorker::~UserProfileRestoreWorker() {
     if (isRunning()) {
         cancel();
-        // A large in-flight QFile::copy cannot observe cancellation, so the
-        // bounded wait can time out. Block until the thread has fully exited
-        // rather than destroying a running QThread (which aborts the process).
-        if (!wait(kTimeoutThreadTerminateMs)) {
-            // SAK-ALLOW-BLOCKING: the bounded wait above already gave up once. Destroying a
-            // running QThread aborts the process, and terminate() during a restore copy can
-            // leave a half-written file on the target profile, so blocking is safer.
-            wait();
-        }
+        // A large in-flight QFile::copy cannot observe cancellation, so any bounded wait can time
+        // out. The owning page therefore releases a running worker into ThreadCustody instead of
+        // destroying it; this join only settles a worker that is already stopping.
+        ThreadCustody::joinOrFailInDestructor(*this, kTimeoutThreadShutdownMs);
     }
     delete m_fileFilter;
     delete m_permissionManager;

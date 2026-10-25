@@ -1434,9 +1434,10 @@ AppActionResult searchFiles(const QJsonObject& args) {
     // user's on-disk search history, which would (a) be a write from a "read-only"
     // op and (b) race the unlocked ConfigManager singleton off the GUI thread. The
     // worker touches neither. It runs on its own thread and posts results back,
-    // drained by the local event loop; the worker (destroyed last) stops+joins its
-    // thread on teardown, so a timed-out search is reaped, never leaked.
-    AdvancedSearchWorker worker(config);
+    // drained by the local event loop; its WorkerPtr (destroyed last) joins it on teardown or
+    // retains an overrun until it ends, so a timed-out search is reaped, never terminated.
+    const auto owned_worker = sak::makeWorker<AdvancedSearchWorker>(config);
+    AdvancedSearchWorker& worker = *owned_worker;
     AsyncActionInvocation inv;
     auto matches = std::make_shared<QVector<SearchMatch>>();
     auto file_count = std::make_shared<int>(0);
@@ -1597,8 +1598,11 @@ AppActionResult findDuplicates(const QJsonObject& args) {
     // Drive the WORKER directly (not a controller) via the async->sync bridge, exactly like
     // search.find_in_files: the worker runs on its own thread, hashing bounded by kDupScanTimeoutMs
     // and cooperatively cancellable (checkStop). Declared before the invocation so it is destroyed
-    // LAST -- on a timeout ~WorkerBase stops+joins its thread, reaping a still-running scan.
-    DuplicateFinderWorker worker(config);
+    // LAST -- on a timeout its WorkerPtr stops and joins the thread (or retains an overrun until
+    // it finishes), reaping a still-running scan.
+    const sak::WorkerPtr<DuplicateFinderWorker> owned_worker =
+        sak::makeWorker<DuplicateFinderWorker>(config);
+    DuplicateFinderWorker& worker = *owned_worker;
     AsyncActionInvocation inv(kDupScanTimeoutMs);
     QObject::connect(&worker, &WorkerBase::finished, inv.context(), [&inv, &worker]() {
         int total_dupes = 0;
@@ -1735,9 +1739,11 @@ AppActionResult previewOrganize(const QJsonObject& args) {
     config.max_preview_files = kMaxPreviewPlannedFiles;  // bound peak memory on a huge directory
 
     // Drive the WORKER directly via the async->sync bridge, like organize_directory but in preview
-    // mode. Declared before the invocation so it is destroyed LAST: on a timeout ~WorkerBase stops
-    // and joins the thread after run() returns, so a still-running scan is reaped, never leaked.
-    OrganizerWorker worker(config);
+    // mode. Declared before the invocation so it is destroyed LAST: on a timeout its WorkerPtr
+    // stops and joins the thread after run() returns (or retains an overrun until it finishes), so
+    // a still-running scan is reaped, never leaked.
+    const sak::WorkerPtr<OrganizerWorker> owned_worker = sak::makeWorker<OrganizerWorker>(config);
+    OrganizerWorker& worker = *owned_worker;
     AsyncActionInvocation inv(kOrganizePreviewTimeoutMs);
     QObject::connect(&worker, &WorkerBase::finished, inv.context(), [&inv, &worker, target]() {
         const bool truncated = worker.planTruncated();
@@ -4509,7 +4515,9 @@ AppActionResult pingHost(const QJsonObject& args) {
                                 {"interval_ms", kPingIntervalMinMs, kPingIntervalMaxMs}})) {
         return *error;
     }
-    NetworkProbeWorker worker(pingConfigFromArgs(target, args));
+    const sak::WorkerPtr<NetworkProbeWorker> owned_worker =
+        sak::makeWorker<NetworkProbeWorker>(pingConfigFromArgs(target, args));
+    NetworkProbeWorker& worker = *owned_worker;
     return driveNetworkProbe(worker, [&worker, target]() {
         const PingResult& r = worker.pingResult();
         // QString::arg is not printf: it does not collapse "%%". "%4% loss" fills %4 with
@@ -4536,7 +4544,9 @@ AppActionResult tracerouteHost(const QJsonObject& args) {
                                 {"probes_per_hop", kTracerouteProbesMin, kTracerouteProbesMax}})) {
         return *error;
     }
-    NetworkProbeWorker worker(tracerouteConfigFromArgs(target, args));
+    const sak::WorkerPtr<NetworkProbeWorker> owned_worker =
+        sak::makeWorker<NetworkProbeWorker>(tracerouteConfigFromArgs(target, args));
+    NetworkProbeWorker& worker = *owned_worker;
     return driveNetworkProbe(worker, [&worker, target]() {
         const TracerouteResult& r = worker.tracerouteResult();
         const QString message =
@@ -4560,7 +4570,9 @@ AppActionResult mtrHost(const QJsonObject& args) {
                                 {"interval_ms", kMtrIntervalMinMs, kMtrIntervalMaxMs}})) {
         return *error;
     }
-    NetworkProbeWorker worker(mtrConfigFromArgs(target, args));
+    const sak::WorkerPtr<NetworkProbeWorker> owned_worker =
+        sak::makeWorker<NetworkProbeWorker>(mtrConfigFromArgs(target, args));
+    NetworkProbeWorker& worker = *owned_worker;
     return driveNetworkProbe(worker, [&worker, target]() {
         const MtrResult& r = worker.mtrResult();
         // A resolvable target where NO hop at any TTL ever answers (offline, ICMP-filtered,
@@ -4611,7 +4623,9 @@ AppActionResult portScan(const QJsonObject& args) {
     if (const std::optional<AppActionResult> error = collectScanPorts(args, ports)) {
         return *error;
     }
-    NetworkProbeWorker worker(scanConfigFromArgs(target, std::move(ports), args));
+    const sak::WorkerPtr<NetworkProbeWorker> owned_worker =
+        sak::makeWorker<NetworkProbeWorker>(scanConfigFromArgs(target, std::move(ports), args));
+    NetworkProbeWorker& worker = *owned_worker;
     return driveNetworkProbe(worker, [&worker, target]() {
         const QVector<PortScanResult>& r = worker.portScanResult();
         int open = 0;

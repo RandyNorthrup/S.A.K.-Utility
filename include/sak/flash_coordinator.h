@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/layout_constants.h"
+#include "sak/worker_base.h"
 
 #include "drive_scanner.h"
 #include "image_source.h"
@@ -428,7 +429,7 @@ private:
     /// and empties it, so a caller can hand over a run's workers BEFORE emitting its
     /// terminal signals -- a handler that starts the next run then cannot have the new
     /// run's workers torn down underneath it. MUST be called with m_mutex released.
-    void retireWorkers(std::vector<std::unique_ptr<FlashWorker>>& workers);
+    void retireWorkers(std::vector<sak::WorkerPtr<FlashWorker>>& workers);
     /// Start as many queued workers as the concurrent-write ceiling currently
     /// allows. Called once the workers are built and again each time one finishes.
     /// Starts nothing once the run has been cancelled or has left Flashing/Verifying,
@@ -455,7 +456,7 @@ private:
     void onWorkerFailedFor(const FlashWorker* worker, const QString& error);
 
     std::unique_ptr<ImageSource> m_imageSource;
-    std::vector<std::unique_ptr<FlashWorker>> m_workers;
+    std::vector<sak::WorkerPtr<FlashWorker>> m_workers;
 
     mutable QMutex m_mutex;                  ///< Guards m_state, m_progress, m_result
     sak::FlashState m_state;                 // Protected by m_mutex

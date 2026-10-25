@@ -10,9 +10,12 @@
 #include "sak/logger.h"
 #include "sak/ost_conversion_worker.h"
 #include "sak/ost_converter_constants.h"
+#include "sak/thread_custody.h"
 
 #include <QFileInfo>
 #include <QThread>
+
+#include <memory>
 
 namespace sak {
 
@@ -385,19 +388,28 @@ void OstConverterController::disposeWorker(ActiveWorker& aw) {
     // returns promptly and this graceful wait succeeds. We deliberately do NOT call terminate():
     // forcibly killing a thread mid-PST-write can corrupt the output file and leave internal locks
     // held. If the thread still has not stopped after the full budget (e.g. blocked in a stuck
-    // syscall), defer deletion to its own finished signal rather than deleting -- or force-killing
-    // -- a live QThread. Worst case the thread runs to natural completion and self-deletes; that is
-    // a bounded leak, strictly safer than a terminate() that risks data corruption or a crash.
+    // syscall), it goes to the shared thread custody rather than being deleted -- or force-killed
+    // -- while live: reported, and destroyed with its worker once it runs to completion.
     const int stop_budget_ms = ost::kTimeoutThreadShutdownMs + ost::kTimeoutThreadTerminateMs;
     if (aw.thread->wait(stop_budget_ms)) {
         delete aw.worker;
         delete aw.thread;
     } else {
-        logWarning(
-            "OST Converter: worker thread did not stop; deferring cleanup to its finished "
-            "signal (no forced terminate)");
-        connect(aw.thread, &QThread::finished, aw.worker, &QObject::deleteLater);
-        connect(aw.thread, &QThread::finished, aw.thread, &QObject::deleteLater);
+        // A retained conversion's late signals carry no batch identity; they must not reach the
+        // batch that runs next.
+        disconnect(aw.worker, nullptr, this, nullptr);
+        struct RetainedConversion {
+            std::unique_ptr<QThread> thread;
+            std::unique_ptr<OstConversionWorker> worker;  // Destroyed first, after the thread.
+        };
+        auto retained = std::make_shared<RetainedConversion>();
+        retained->thread.reset(aw.thread);
+        retained->worker.reset(aw.worker);
+        ThreadCustody::retain(aw.thread,
+                              retained,
+                              QStringLiteral("OST conversion still running %1 ms after its "
+                                             "cancel request")
+                                  .arg(stop_budget_ms));
     }
     aw.worker = nullptr;
     aw.thread = nullptr;

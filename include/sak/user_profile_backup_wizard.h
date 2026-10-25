@@ -13,6 +13,7 @@
 #include <QFutureWatcher>
 #include <QLabel>
 #include <QLineEdit>
+#include <QPointer>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QSpinBox>
@@ -28,6 +29,8 @@
 class QVBoxLayout;
 
 namespace sak {
+
+class UserProfileBackupWorker;
 
 /**
  * @brief Wizard for backing up Windows user profiles
@@ -432,6 +435,16 @@ public:
                                           const QVector<UserProfile>& users,
                                           const QString& destination_path,
                                           QWidget* parent = nullptr);
+    ~UserProfileBackupExecutePage() override;
+    UserProfileBackupExecutePage(const UserProfileBackupExecutePage&) = delete;
+    UserProfileBackupExecutePage& operator=(const UserProfileBackupExecutePage&) = delete;
+    UserProfileBackupExecutePage(UserProfileBackupExecutePage&&) = delete;
+    UserProfileBackupExecutePage& operator=(UserProfileBackupExecutePage&&) = delete;
+
+    /// True while the backup worker this page started is still running.
+    [[nodiscard]] bool isBackupRunning() const;
+    /// Cooperatively cancels a running backup; the worker stops at its next file boundary.
+    void cancelBackup();
 
     void initializePage() override;
     bool isComplete() const override;
@@ -492,6 +505,9 @@ private:
     QLabel* m_currentUserLabel{nullptr};
     QTextEdit* m_logEdit{nullptr};
     QPushButton* m_startButton{nullptr};
+
+    // Child of this page while it runs; deleted (and nulled) once it reports completion.
+    QPointer<UserProfileBackupWorker> m_worker;
 
     bool m_started{false};
     bool m_completed{false};

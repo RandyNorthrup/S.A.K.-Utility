@@ -4,6 +4,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/style_constants.h"
+#include "sak/thread_custody.h"
 #include "sak/user_profile_progress.h"
 #include "sak/user_profile_restore_wizard.h"
 #include "sak/user_profile_restore_worker.h"
@@ -20,7 +21,17 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include <memory>
+
 namespace sak {
+
+namespace {
+
+// How long closing the page waits for a cancelled restore to reach its next file boundary before
+// handing the still-copying worker to thread custody.
+constexpr int kWorkerReleaseMs = 5000;
+
+}  // namespace
 
 // ============================================================================
 // Page 6: Execute Restore
@@ -32,6 +43,22 @@ UserProfileRestoreExecutePage::UserProfileRestoreExecutePage(QWidget* parent)
     setSubTitle(tr("Restoring user profile data..."));
 
     setupUi();
+}
+
+UserProfileRestoreExecutePage::~UserProfileRestoreExecutePage() {
+    // The worker is this page's child, so ~QObject would destroy it mid-restore. A large in-flight
+    // copy cannot observe cancellation, so release it instead: joined within the bound, or
+    // reported and retained until that copy finishes. Never terminated, never an unbounded wait.
+    if (m_worker != nullptr) {
+        UserProfileRestoreWorker* const worker = m_worker;
+        m_worker = nullptr;
+        ThreadCustody::release(
+            std::unique_ptr<QThread>(worker), [worker]() { worker->cancel(); }, kWorkerReleaseMs);
+    }
+}
+
+bool UserProfileRestoreExecutePage::isRestoreRunning() const {
+    return m_worker != nullptr && m_worker->isRunning();
 }
 
 void UserProfileRestoreExecutePage::setupUi() {

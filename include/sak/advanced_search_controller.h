@@ -12,6 +12,7 @@
 
 #include "sak/advanced_search_types.h"
 #include "sak/regex_pattern_library.h"
+#include "sak/worker_base.h"
 
 #include <QObject>
 #include <QStringList>
@@ -151,7 +152,7 @@ private:
     void connectWorkerSignals(AdvancedSearchWorker* worker, quint64 generation);
 
     State m_state = State::Idle;
-    std::unique_ptr<AdvancedSearchWorker> m_worker;
+    WorkerPtr<AdvancedSearchWorker> m_worker;
     quint64 m_worker_generation = 0;
     std::unique_ptr<RegexPatternLibrary> m_pattern_library;
 

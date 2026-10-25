@@ -26,6 +26,7 @@
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
 #include "sak/style_constants.h"
+#include "sak/thread_custody.h"
 #include "sak/view_empty_state.h"
 #include "sak/widget_helpers.h"
 #include "sak/windows_iso_download_dialog.h"
@@ -49,6 +50,8 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <memory>
+#include <utility>
 
 namespace sak {
 
@@ -64,6 +67,9 @@ constexpr int kImageFlasherStatusTimeoutMs = kTimerStatusDefaultMs;
 // How long the flash-finished toast stays up, and how long the tray icon that
 // carries it is kept alive before being hidden again.
 constexpr int kNotificationTimeoutMs = 10'000;
+// How long closing the panel waits for a cancelled Windows USB creation to reach a cancel point
+// before handing its still-writing thread to custody.
+constexpr int kWindowsUsbStopWaitMs = kTimeoutThreadShutdownMs;
 
 // Stable identity signature for a physical drive. Binds the selection to the concrete device so a
 // mid-flow swap (same PhysicalDriveN number, different hardware) or disk-number reuse is detected.
@@ -154,21 +160,42 @@ ImageFlasherPanel::ImageFlasherPanel(QWidget* parent)
 
 ImageFlasherPanel::~ImageFlasherPanel() {
     m_driveScanner->stop();
-    // A Windows USB creation may still be running on its worker thread (a child
-    // of this panel). Destroying a running QThread aborts the process, so cancel
-    // the creator -- it polls an atomic flag -- and wait for the worker to
-    // unwind before the QObject child teardown deletes the thread.
-    if ((m_windowsUsbThread != nullptr) && m_windowsUsbThread->isRunning()) {
-        if (m_windowsUsbCreator != nullptr) {
-            m_windowsUsbCreator->cancel();
-        }
-        m_windowsUsbThread->quit();
-        // SAK-ALLOW-BLOCKING: the creator polls the cancel atomic set above, and destroying a
-        // running QThread aborts the process. Deliberately NOT bounded: the fallback to a
-        // bounded wait is terminate(), and killing a thread mid raw-disk-write is worse than
-        // a slow exit.
-        m_windowsUsbThread->wait();
+    retireWindowsUsbCreationOnDestroy();
+}
+
+void ImageFlasherPanel::retireWindowsUsbCreationOnDestroy() {
+    // A Windows USB creation may still be running on its worker thread (a child of this panel).
+    // Destroying a running QThread aborts the process and terminate() would kill it mid raw-disk
+    // write, so cancel the creator -- it polls an atomic flag -- and give it a bounded join.
+    QThread* const thread = std::exchange(m_windowsUsbThread, nullptr);
+    WindowsUSBCreator* const creator = std::exchange(m_windowsUsbCreator, nullptr);
+    if (thread == nullptr || !thread->isRunning()) {
+        return;
     }
+    if (creator != nullptr) {
+        creator->cancel();
+    }
+    thread->quit();
+    if (thread->wait(kWindowsUsbStopWaitMs)) {
+        return;  // Finished: the QObject child teardown deletes it.
+    }
+    // Still inside a write that has not reached a cancel point: report it and retain the thread
+    // and creator until the write ends, instead of an unbounded wait on the GUI thread. Custody
+    // destroys both, so the finished() deleteLater wiring must not also delete them.
+    QObject::disconnect(thread, &QThread::finished, nullptr, nullptr);
+    thread->setParent(nullptr);
+    struct RetainedUsbCreation {
+        std::unique_ptr<QThread> thread;
+        std::unique_ptr<WindowsUSBCreator> creator;  // Destroyed first, once the thread is done.
+    };
+    auto retained = std::make_shared<RetainedUsbCreation>();
+    retained->thread.reset(thread);
+    retained->creator.reset(creator);
+    ThreadCustody::retain(thread,
+                          retained,
+                          QStringLiteral("Windows USB creation still running %1 ms after its "
+                                         "cancel request")
+                              .arg(kWindowsUsbStopWaitMs));
 }
 
 void ImageFlasherPanel::setupUi() {

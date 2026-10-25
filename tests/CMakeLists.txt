@@ -601,6 +601,7 @@ add_executable(file_management_live_certifier
     ../src/core/partition_raw_device_io.cpp
     ../src/threading/duplicate_finder_worker.cpp
     ../src/threading/worker_base.cpp
+    ../src/threading/thread_custody.cpp
     ../include/sak/advanced_search_worker.h
     ../include/sak/duplicate_finder_worker.h
     ../include/sak/file_hash.h
@@ -636,6 +637,7 @@ if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/certification/flash_live_certif
         ../src/core/drive_scanner.cpp
         ../include/sak/drive_scanner.h
         ../src/threading/worker_base.cpp
+        ../src/threading/thread_custody.cpp
         ../src/core/image_source.cpp
         ../src/core/decompressor_factory.cpp
         ../src/core/streaming_decompressor.cpp

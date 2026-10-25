@@ -503,7 +503,7 @@ bool FlashCoordinator::buildWorkerQueue(const QString& imagePath, const QStringL
                 workerSource = std::make_unique<FileImageSource>(imagePath);
             }
 
-            auto worker = std::make_unique<FlashWorker>(std::move(workerSource), drive);
+            auto worker = sak::makeWorker<FlashWorker>(std::move(workerSource), drive);
             worker->setVerificationEnabled(m_verificationEnabled);
             worker->setBufferSize(m_bufferSize);
             worker->setValidationMode(m_validationMode);
@@ -700,7 +700,7 @@ bool FlashCoordinator::beginFlashClaim() {
     // shared counters, target list and dedup set out from under those live writers and
     // let their late terminal signals be counted against the new run. Fail closed until
     // the previous run's threads are actually gone.
-    if (std::ranges::any_of(m_workers, [](const std::unique_ptr<FlashWorker>& worker) {
+    if (std::ranges::any_of(m_workers, [](const sak::WorkerPtr<FlashWorker>& worker) {
             return worker && worker->isRunning();
         })) {
         return false;
@@ -1069,7 +1069,7 @@ void FlashCoordinator::emitTerminalOutcome(sak::FlashState state,
     // anything. A direct-connected stateChanged/flashCompleted handler is allowed to
     // start the next run, and a teardown running afterwards against the member would
     // stop and destroy the NEW run's workers and close its image instead of ours.
-    std::vector<std::unique_ptr<FlashWorker>> finished;
+    std::vector<sak::WorkerPtr<FlashWorker>> finished;
     {
         const QMutexLocker locker(&m_mutex);
         finished.swap(m_workers);
@@ -1480,7 +1480,7 @@ void FlashCoordinator::updateProgress() {
 void FlashCoordinator::finalizeResultMetrics() {
     // m_mutex is already held by the caller (the finalize branch of a worker handler).
     qint64 total_bytes = 0;
-    for (const std::unique_ptr<FlashWorker>& worker : m_workers) {
+    for (const sak::WorkerPtr<FlashWorker>& worker : m_workers) {
         if (worker) {
             total_bytes += worker->bytesWritten();
         }
@@ -1496,7 +1496,7 @@ void FlashCoordinator::finalizeResultMetrics() {
 void FlashCoordinator::cleanupWorkers() {
     // m_imageSource may legitimately be null (called from the dtor when no flash ran, and after a
     // reset); releaseImageSource() handles it. No entry assert.
-    std::vector<std::unique_ptr<FlashWorker>> workers;
+    std::vector<sak::WorkerPtr<FlashWorker>> workers;
     {
         const QMutexLocker locker(&m_mutex);
         workers.swap(m_workers);
@@ -1508,43 +1508,29 @@ void FlashCoordinator::cleanupWorkers() {
     releaseImageSource();
 }
 
-void FlashCoordinator::retireWorkers(std::vector<std::unique_ptr<FlashWorker>>& workers) {
-    // Wait for all workers to finish with cooperative stop
-    for (auto& worker : workers) {
-        if (!worker->isRunning()) {
-            continue;
+void FlashCoordinator::retireWorkers(std::vector<sak::WorkerPtr<FlashWorker>>& workers) {
+    // Ask every writer to stop first so they wind down together, not one deadline after another.
+    for (const auto& worker : workers) {
+        if (worker && worker->isRunning()) {
+            sak::logInfo("Requesting worker thread to stop...");
+            worker->requestStop();
         }
-        sak::logInfo("Requesting worker thread to stop...");
-        worker->requestStop();
-
-        if (worker->wait(kWorkerShutdownTimeoutMs)) {
-            sak::logInfo("Worker thread stopped gracefully");
-            continue;
-        }
-
-        // Refuse-to-stop (wedged in a long WriteFile). Do NOT destroy it here:
-        // ~FlashWorker would terminate() a live raw-disk write -> corrupted media
-        // and a leaked handle. Detach it as a bounded, intentional leak so it
-        // finishes its current write and self-cleans, instead of being killed
-        // mid-write.
-        sak::logError(
-            "Worker thread did not stop within 15s -- detaching "
-            "to avoid terminating a live disk write");
-        // Self-delete once the wedged write finally finishes, so a repeated wedge
-        // does not leak a QThread + FlashWorker each time. Connect BEFORE releasing
-        // ownership; QThread::finished fires on every exit path once run() returns,
-        // and the queued deleteLater reclaims the detached worker on the owning
-        // thread's event loop.
-        FlashWorker* detached = worker.get();
-        // Sever every signal back to the coordinator BEFORE letting go. A detached
-        // worker outlives this run, and its eventual terminal signal would be counted
-        // against the NEXT run -- whose startFlash cleared the dedup set -- corrupting
-        // that run's drive counters and possibly finalizing it early.
-        disconnect(detached, nullptr, this, nullptr);
-        connect(detached, &QThread::finished, detached, &QObject::deleteLater);
-        detached->setParent(nullptr);
-        static_cast<void>(worker.release());
     }
-
+    for (auto& worker : workers) {
+        if (!worker) {
+            continue;
+        }
+        // Sever every signal back to the coordinator BEFORE letting go. A worker that
+        // outlives this run would have its eventual terminal signal counted against the
+        // NEXT run -- whose startFlash cleared the dedup set -- corrupting that run's
+        // drive counters and possibly finalizing it early.
+        disconnect(worker.get(), nullptr, this, nullptr);
+        // A writer wedged in a long WriteFile is never terminated (a killed raw-disk
+        // write corrupts the media and leaks the handle): release() reports it and
+        // retains it until its current write finishes, then destroys it.
+        if (sak::releaseWorker(worker, kWorkerShutdownTimeoutMs)) {
+            sak::logInfo("Worker thread stopped gracefully");
+        }
+    }
     workers.clear();
 }

@@ -8,10 +8,10 @@
 
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/thread_custody.h"
 
 #include <QtGlobal>
 
-#include <cstdlib>
 #include <stdexcept>
 
 WorkerBase::WorkerBase(QObject* parent) : QThread(parent) {}
@@ -28,23 +28,30 @@ void WorkerBase::stopAndJoin() noexcept {
         return;
     }
     requestStop();
-    if (wait(sak::kTimeoutThreadShutdownMs)) {
-        return;
-    }
-    // Cooperative stop failed. terminate() is a last resort (it can corrupt the
-    // worker's own state), but a still-live thread about to run execute() into
-    // freed members is worse. If even the post-terminate join fails the thread
-    // is genuinely still running -- there is no safe way to proceed past this
-    // point, so abort loudly rather than silently returning into a
-    // use-after-free that would corrupt memory unpredictably.
-    sak::logError("Worker thread did not stop within 15s -- forcing termination");
-    terminate();
-    if (!wait(sak::kTimeoutThreadTerminateMs)) {
-        sak::logError(
-            "Worker thread did not terminate after 5s -- aborting to avoid "
-            "use-after-free on freed worker state");
-        std::abort();
-    }
+    // terminate() is never used: it kills the thread wherever it is -- mid-write, holding a lock
+    // -- which is how a half-written backup or a corrupted USB stick happens. An owner whose
+    // worker can outlive this bound hands it to release() (sak::WorkerPtr does that by itself),
+    // which retains it instead of destroying it; only a direct destruction can overrun here.
+    sak::ThreadCustody::joinOrFailInDestructor(*this, sak::kTimeoutThreadShutdownMs);
+}
+
+bool WorkerBase::release(std::unique_ptr<WorkerBase> worker) noexcept {
+    return release(std::move(worker), sak::kTimeoutThreadShutdownMs);
+}
+
+bool WorkerBase::release(std::unique_ptr<WorkerBase> worker, int stop_wait_ms) noexcept {
+    // Report + contain (owner decision 2026-10-24) instead of the destructor's old terminate():
+    // a worker that outlives its stop deadline is retained, with everything it owns, until it
+    // finishes. One implementation serves WorkerBase and plain QThread workers alike.
+    WorkerBase* const raw = worker.get();
+    return sak::ThreadCustody::release(
+        std::move(worker),
+        [raw]() {
+            if (raw != nullptr) {
+                raw->requestStop();
+            }
+        },
+        stop_wait_ms);
 }
 
 void WorkerBase::requestStop() noexcept {

@@ -5,18 +5,71 @@
 /// @brief Unit tests for WorkerBase thread lifecycle, exception safety, and cancellation
 
 #include "sak/error_codes.h"
+#include "sak/layout_constants.h"
+#include "sak/thread_custody.h"
 #include "sak/worker_base.h"
 
+#include <QCoreApplication>
+#include <QElapsedTimer>
+#include <QPointer>
+#include <QProcess>
 #include <QtTest/QtTest>
 
 #include <atomic>
+#include <memory>
 #include <stdexcept>
 
-// Comfortably above the ~10ms cooperative shutdown and far below the 15s wait that precedes
-// terminate(), so the two paths are unambiguously separated.
+#include <windows.h>
+
+// Comfortably above the ~10ms cooperative shutdown and far below the 15s stop deadline, so the
+// cooperative path and the deadline are unambiguously separated.
 constexpr qint64 kCooperativeShutdownBudgetMs = 5000;
 constexpr int kWorkerStartTimeoutMs = 5000;
 constexpr unsigned long kWorkerStopPollMs = 10;
+// Short owner-chosen stop deadline for the custody tests, so they do not wait out 15 s.
+constexpr int kShortStopDeadlineMs = 200;
+// Bound for custody to reap a released thread after it is allowed to finish.
+constexpr int kCustodyReapTimeoutMs = 5000;
+constexpr auto kChildSwitch = "--worker-base-child";
+constexpr int kChildUnexpectedReturn = 71;
+
+/// Facts a stubborn worker reports about itself, shared so they outlive the worker.
+struct StubbornFacts {
+    std::atomic<bool> may_finish{false};
+    std::atomic<bool> entered{false};
+    std::atomic<bool> stop_seen{false};
+    std::atomic<bool> completed{false};
+    std::atomic<bool> destroyed{false};
+};
+
+/// @brief Worker that sees its stop request but cannot act on it until the test lets it -- the
+///        shape of a copy or raw-disk write that only checks for cancellation between blocks.
+class StubbornWorker : public WorkerBase {
+    Q_OBJECT
+public:
+    explicit StubbornWorker(std::shared_ptr<StubbornFacts> facts) : m_facts(std::move(facts)) {}
+    ~StubbornWorker() override {
+        stopAndJoin();
+        m_facts->destroyed.store(true, std::memory_order_release);
+    }
+
+protected:
+    auto execute() -> std::expected<void, sak::error_code> override {
+        m_facts->entered.store(true, std::memory_order_release);
+        while (!m_facts->may_finish.load(std::memory_order_acquire)) {
+            if (stopRequested()) {
+                m_facts->stop_seen.store(true, std::memory_order_release);
+            }
+            QThread::msleep(kWorkerStopPollMs);
+        }
+        // Reached only by running to completion: a terminated thread never gets here.
+        m_facts->completed.store(true, std::memory_order_release);
+        return {};
+    }
+
+private:
+    std::shared_ptr<StubbornFacts> m_facts;
+};
 
 // ============================================================================
 // Test Worker Implementations
@@ -180,6 +233,14 @@ private Q_SLOTS:
     void progressGuardRefusesNonsenseValues();
     void isExecutingFlag();
     void destructorStopsThread();
+    void releaseRetainsOverrunningWorkerUntilItFinishes();
+    void releaseDestroysAStoppingWorkerAtOnce();
+    void workerPtrResetReleasesThroughCustody();
+    void threadCustodyReleasesAPlainQThread();
+    void directDestructionPastDeadlineStopsInsteadOfTerminating();
+
+public:
+    static int runChild(const QString& mode);
 };
 
 void WorkerBaseTests::successfulExecution() {
@@ -415,5 +476,166 @@ void WorkerBaseTests::destructorStopsThread() {
                             .arg(timer.elapsed())));
 }
 
-QTEST_MAIN(WorkerBaseTests)
+namespace {
+
+bool waitForEntry(const StubbornFacts& facts) {
+    QElapsedTimer timer;
+    timer.start();
+    while (!facts.entered.load(std::memory_order_acquire)) {
+        if (timer.elapsed() > kWorkerStartTimeoutMs) {
+            return false;
+        }
+        QThread::msleep(kWorkerStopPollMs);
+    }
+    return true;
+}
+
+}  // namespace
+
+// A worker that cannot honour its stop request inside the deadline used to be terminate()d by its
+// destructor -- killing it mid-write. release() must instead report it, keep the worker (and so
+// every member execute() touches) alive, and destroy it only once it has run to completion.
+void WorkerBaseTests::releaseRetainsOverrunningWorkerUntilItFinishes() {
+    auto facts = std::make_shared<StubbornFacts>();
+    auto worker = std::make_unique<StubbornWorker>(facts);
+    QObject receiver;
+    int cancelled_delivered = 0;
+    QObject::connect(worker.get(), &WorkerBase::cancelled, &receiver, [&cancelled_delivered]() {
+        ++cancelled_delivered;
+    });
+    worker->start();
+    QVERIFY(waitForEntry(*facts));
+    const int custody_before = sak::ThreadCustody::retainedCount();
+
+    QElapsedTimer timer;
+    timer.start();
+    const bool destroyed = WorkerBase::release(std::move(worker), kShortStopDeadlineMs);
+    QVERIFY2(!destroyed, "a worker still running past its stop deadline must be retained");
+    QVERIFY2(timer.elapsed() < kCooperativeShutdownBudgetMs,
+             "release must not wait past the owner's stop deadline");
+    QVERIFY(facts->stop_seen.load(std::memory_order_acquire));
+    QVERIFY(!facts->destroyed.load(std::memory_order_acquire));
+    QCOMPARE(sak::ThreadCustody::retainedCount(), custody_before + 1);
+    QVERIFY(sak::ThreadCustody::retainedReasons().constLast().startsWith(
+        QStringLiteral("StubbornWorker still running %1 ms").arg(kShortStopDeadlineMs)));
+
+    facts->may_finish.store(true, std::memory_order_release);
+    QTRY_VERIFY_WITH_TIMEOUT(facts->destroyed.load(std::memory_order_acquire),
+                             kCustodyReapTimeoutMs);
+    QVERIFY2(facts->completed.load(std::memory_order_acquire),
+             "the retained worker must run to completion, not be terminated");
+    QCOMPARE(sak::ThreadCustody::retainedCount(), custody_before);
+    // The owner gave it up: its terminal signal must not reach the old owner's receivers.
+    QCOMPARE(cancelled_delivered, 0);
+}
+
+void WorkerBaseTests::releaseDestroysAStoppingWorkerAtOnce() {
+    const int custody_before = sak::ThreadCustody::retainedCount();
+    auto worker = std::make_unique<CancellableWorker>();
+    QPointer<CancellableWorker> observer(worker.get());
+    worker->start();
+    QTRY_VERIFY_WITH_TIMEOUT(worker->isExecuting(), kWorkerStartTimeoutMs);
+    QVERIFY(WorkerBase::release(std::move(worker), sak::kTimeoutThreadShutdownMs));
+    QVERIFY(observer.isNull());
+    QCOMPARE(sak::ThreadCustody::retainedCount(), custody_before);
+}
+
+void WorkerBaseTests::workerPtrResetReleasesThroughCustody() {
+    auto facts = std::make_shared<StubbornFacts>();
+    sak::WorkerPtr<StubbornWorker> worker = sak::makeWorker<StubbornWorker>(facts);
+    worker->start();
+    QVERIFY(waitForEntry(*facts));
+    const int custody_before = sak::ThreadCustody::retainedCount();
+    QVERIFY(!sak::releaseWorker(worker, kShortStopDeadlineMs));
+    QVERIFY(!worker);
+    QCOMPARE(sak::ThreadCustody::retainedCount(), custody_before + 1);
+    facts->may_finish.store(true, std::memory_order_release);
+    QTRY_VERIFY_WITH_TIMEOUT(facts->destroyed.load(std::memory_order_acquire),
+                             kCustodyReapTimeoutMs);
+    QVERIFY(facts->completed.load(std::memory_order_acquire));
+    QCOMPARE(sak::ThreadCustody::retainedCount(), custody_before);
+}
+
+// The plain-QThread workers (profile backup/restore) take the same path.
+void WorkerBaseTests::threadCustodyReleasesAPlainQThread() {
+    auto facts = std::make_shared<StubbornFacts>();
+    std::unique_ptr<QThread> thread(QThread::create([facts]() {
+        facts->entered.store(true, std::memory_order_release);
+        while (!facts->may_finish.load(std::memory_order_acquire)) {
+            QThread::msleep(kWorkerStopPollMs);
+        }
+        facts->completed.store(true, std::memory_order_release);
+    }));
+    QPointer<QThread> observer(thread.get());
+    thread->start();
+    QVERIFY(waitForEntry(*facts));
+    const int custody_before = sak::ThreadCustody::retainedCount();
+    bool stop_requested = false;
+    QVERIFY(!sak::ThreadCustody::release(
+        std::move(thread), [&stop_requested]() { stop_requested = true; }, kShortStopDeadlineMs));
+    QVERIFY(stop_requested);
+    QVERIFY(!observer.isNull());
+    QCOMPARE(sak::ThreadCustody::retainedCount(), custody_before + 1);
+    facts->may_finish.store(true, std::memory_order_release);
+    QTRY_VERIFY_WITH_TIMEOUT(observer.isNull(), kCustodyReapTimeoutMs);
+    QVERIFY(facts->completed.load(std::memory_order_acquire));
+    QCOMPARE(sak::ThreadCustody::retainedCount(), custody_before);
+}
+
+// Destroying a still-running worker directly (bypassing release) has no safe outcome: the old
+// code terminate()d it, which kills a write in progress. It must now stop the process with the
+// invariant's message instead -- observed in a child so the test runner survives.
+void WorkerBaseTests::directDestructionPastDeadlineStopsInsteadOfTerminating() {
+    QProcess child;
+    QProcessEnvironment environment = QProcessEnvironment::systemEnvironment();
+    environment.insert(QStringLiteral("QT_FORCE_STDERR_LOGGING"), QStringLiteral("1"));
+    child.setProcessEnvironment(environment);
+    child.start(QCoreApplication::applicationFilePath(),
+                {QString::fromLatin1(kChildSwitch), QStringLiteral("direct-destruction")});
+    QVERIFY(child.waitForStarted(kWorkerStartTimeoutMs));
+    const int lifetime_ms = sak::kTimeoutThreadShutdownMs + kCustodyReapTimeoutMs;
+    const bool finished = child.waitForFinished(lifetime_ms);
+    if (!finished) {
+        child.kill();
+        QVERIFY(child.waitForFinished(kWorkerStartTimeoutMs));
+    }
+    QVERIFY2(finished, "the direct-destruction probe outlived its bound");
+    QVERIFY2(child.exitStatus() == QProcess::CrashExit,
+             qPrintable(QStringLiteral("probe exited normally with %1: the running worker was "
+                                       "destroyed without stopping the process")
+                            .arg(child.exitCode())));
+    const QString error = QString::fromUtf8(child.readAllStandardError());
+    QVERIFY2(error.contains(QStringLiteral("StubbornWorker destroyed while its thread still runs")),
+             qPrintable(error));
+}
+
+int WorkerBaseTests::runChild(const QString& mode) {
+    if (mode != QLatin1String("direct-destruction")) {
+        return kChildUnexpectedReturn;
+    }
+    // The expected outcome is a fatal stop; keep Windows' fault UI out of the suite.
+    ::SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
+    auto facts = std::make_shared<StubbornFacts>();
+    {
+        StubbornWorker worker(facts);
+        worker.start();
+        if (!waitForEntry(*facts)) {
+            facts->may_finish.store(true, std::memory_order_release);
+            return kChildUnexpectedReturn;
+        }
+    }  // Destroyed directly while it cannot stop: must not return.
+    return kChildUnexpectedReturn;
+}
+
+int main(int argc, char* argv[]) {
+    QCoreApplication application(argc, argv);
+    const QStringList arguments = QCoreApplication::arguments();
+    constexpr int kChildArgumentCount = 3;
+    if (arguments.size() == kChildArgumentCount && arguments.at(1) == QLatin1String(kChildSwitch)) {
+        return WorkerBaseTests::runChild(arguments.at(2));
+    }
+    WorkerBaseTests tests;
+    return QTest::qExec(&tests, argc, argv);
+}
+
 #include "test_worker_base.moc"

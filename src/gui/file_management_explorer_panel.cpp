@@ -558,59 +558,29 @@ FileManagementExplorerPanel::~FileManagementExplorerPanel() {
     // gone. The detached QtConcurrent task holds its own token copy and simply discards its
     // result; requesting stop lets it return promptly instead of hashing to completion.
     m_hashStopSource.request_stop();
+    // Destruction is the one place these child QThreads must be settled: ~QObject would otherwise
+    // destroy a live thread with the panel (a copy/move or archive write aborted mid-flight, and a
+    // Qt fatal "destroyed while still running"). Interactive search stops go through the
+    // non-blocking stopExplorerSearch instead. Every stop is requested first so the workers wind
+    // down together, then each is released through the one shared custody path: joined within the
+    // bounded wait, or reported and retained until it finishes -- never terminated.
+    constexpr int kWorkerJoinMs = 5000;
+    QList<WorkerBase*> workers = m_active_io_workers.values();
     if (m_search_worker != nullptr) {
-        // Destruction is the one place a join is required: a running child
-        // QThread must not be destroyed with the panel. Interactive stops go
-        // through the non-blocking stopExplorerSearch instead.
-        m_search_worker->requestStop();
-        constexpr int kSearchWorkerJoinMs = 5000;
-        if (!m_search_worker->wait(kSearchWorkerJoinMs)) {
-            // Refuses to stop within the bounded join (e.g. blocked in a slow
-            // network-path enumeration that does not poll requestStop in time):
-            // detach exactly like the IO-worker path below so ~QObject cannot
-            // destroy a live QThread and qFatal-abort the process. Sever the
-            // panel-targeted finish handlers and wire a self-owned deleteLater so
-            // the orphaned thread still frees itself once it exits.
-            AdvancedSearchWorker* worker = m_search_worker;
-            disconnect(worker, nullptr, this, nullptr);
-            worker->setParent(nullptr);
-            QObject::connect(worker, &QThread::finished, worker, &QObject::deleteLater);
-            // Race: it may have finished between the wait() timeout and the
-            // connect above, so its finished signal already fired and will not
-            // replay -- delete it directly then.
-            if (worker->isFinished()) {
-                worker->deleteLater();
-            }
-        }
+        workers.append(m_search_worker);
         m_search_worker = nullptr;
     }
-    // Same for the MUTATING copy/move + archive workers: a running child QThread must be joined (or
-    // detached) before ~QObject destroys it, else the write is aborted mid-flight and Qt fatally
-    // reports "QThread destroyed while thread is still running". requestStop() is cooperative (the
-    // workers poll it), so this does not freeze teardown; a worker that refuses to stop within the
-    // bounded wait is detached (parent cleared -> intentional bounded leak) so it self-cleans via
-    // its own deleteLater instead of being destroyed alive.
-    constexpr int kIoWorkerJoinMs = 5000;
-    for (WorkerBase* worker : std::as_const(m_active_io_workers)) {
-        if (worker == nullptr) {
-            continue;
-        }
-        worker->requestStop();
-        if (!worker->wait(kIoWorkerJoinMs)) {
-            // Refuses to stop: detach so ~QObject cannot destroy a live QThread. Its finish->
-            // deleteLater connection had THIS panel as receiver and is severed here, so wire a
-            // self-owned deleteLater (receiver = the worker) so the detached thread still frees
-            // itself once it finishes instead of leaking permanently.
-            worker->setParent(nullptr);
-            QObject::connect(worker, &QThread::finished, worker, &QObject::deleteLater);
-            // Race: the worker may have finished between the wait() timeout and the connect above,
-            // so its finished signal already fired and will not replay -- delete it directly then.
-            if (worker->isFinished()) {
-                worker->deleteLater();
-            }
+    m_active_io_workers.clear();
+    for (WorkerBase* worker : std::as_const(workers)) {
+        if (worker != nullptr) {
+            worker->requestStop();
         }
     }
-    m_active_io_workers.clear();
+    for (WorkerBase* worker : std::as_const(workers)) {
+        if (worker != nullptr) {
+            WorkerBase::release(std::unique_ptr<WorkerBase>(worker), kWorkerJoinMs);
+        }
+    }
     saveTabSession();
 }
 

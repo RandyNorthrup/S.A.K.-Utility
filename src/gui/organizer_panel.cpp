@@ -218,18 +218,13 @@ OrganizerPanel::OrganizerPanel(QWidget* parent) : QWidget(parent), m_worker(null
 }
 
 OrganizerPanel::~OrganizerPanel() {
+    // Ask both to stop now so they wind down together; destroying the WorkerPtr members then
+    // joins each within its stop deadline, or reports it and retains it until it finishes.
     if (m_worker) {
         m_worker->requestStop();
-        if (!m_worker->wait(kOrganizerWorkerStopTimeoutMs)) {
-            logError("OrganizerWorker did not stop within 15s \u2014 potential resource leak");
-        }
     }
     if (m_dedup_worker) {
         m_dedup_worker->requestStop();
-        if (!m_dedup_worker->wait(kOrganizerWorkerStopTimeoutMs)) {
-            logError(
-                "DuplicateFinderWorker did not stop within 15s \u2014 potential resource leak");
-        }
     }
     logInfo("OrganizerPanel destroyed");
 }
@@ -1015,7 +1010,7 @@ void OrganizerPanel::connectDedupWorkerSignals() {
 }
 
 void OrganizerPanel::startOrganizerWorker(const OrganizerWorker::Config& config) {
-    m_worker = std::make_unique<OrganizerWorker>(config, this);
+    m_worker = makeWorker<OrganizerWorker>(config, this);
     connectOrganizerWorkerSignals();
 
     setOperationRunning(true);
@@ -1488,7 +1483,7 @@ void OrganizerPanel::onDedupScanClicked() {
     config.parallel_hashing = m_dedup_parallel_hashing->isChecked();
     config.hash_thread_count = m_dedup_thread_count->value();
 
-    m_dedup_worker = std::make_unique<DuplicateFinderWorker>(config, this);
+    m_dedup_worker = makeWorker<DuplicateFinderWorker>(config, this);
 
     connectDedupWorkerSignals();
 
