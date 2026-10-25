@@ -377,6 +377,8 @@ python_archive/**/*.egg-info/
 !resources/ai/providers/*.json
 !resources/icons/files/manifest.json
 !resources/ai/app_manifests/*.json
+# CRLF fixture for the AI store resource loader regression tests.
+!tests/fixtures/ai_store_crlf/workflows/*.json
 # Browser-control extension + native-host manifests are hand-written source.
 !browser/extension/*.json
 !browser/native-host/*.json

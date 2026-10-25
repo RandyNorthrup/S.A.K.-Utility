@@ -154,7 +154,11 @@ bool loadResourceFile(const QString& path,
                       const StoreFileConsumer& consume,
                       QStringList* errors) {
     QFile file(path);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    // Binary, like the native-path read: the completeness check below compares the bytes read
+    // with QFile::size(), and text mode drops every CR, so a resource embedded from a CRLF
+    // checkout (Git for Windows' default, and how CI builds) always read as "incomplete". The
+    // consumers normalize line endings themselves (Skill::fromMarkdown; JSON ignores CR).
+    if (!file.open(QIODevice::ReadOnly)) {
         appendError(errors, QStringLiteral("%1: %2").arg(path, file.errorString()));
         return false;
     }

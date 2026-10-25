@@ -10,3 +10,7 @@ tools/filesystem/** -text
 # core.autocrlf rewriting any byte breaks the signature and Chrome rejects the install,
 # so the CRX must be treated as binary on every checkout.
 browser/dist/*.crx binary
+
+# The AI store loader must read a CRLF resource as it reads an LF one; these fixtures keep CRLF on
+# every checkout so the regression tests cannot pass on an LF working tree.
+tests/fixtures/ai_store_crlf/** text eol=crlf
