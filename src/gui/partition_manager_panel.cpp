@@ -9029,12 +9029,14 @@ PartitionManagerPanel::maintenanceOperationActionSpecs() const {
                            &PartitionManagerPanel::onWipeSelected,
                            {.target_kinds =
                                 actionTargetKindList({kActionTargetDisk, kActionTargetPartition})}),
+            // Disk-level only (owner decision 2026-10-25): one partition's scan is Check File
+            // System, so a partition selection offers that action and not two names for it.
             makeActionSpec(tr("Scan File Systems"),
                            kIconSurface,
-                           tr("Scan for file-system errors without repairing (runs immediately, "
-                              "not added to the queue)"),
+                           tr("Scan every volume on the selected disk for file-system errors "
+                              "without repairing (runs immediately, not added to the queue)"),
                            &PartitionManagerPanel::onSurfaceTest,
-                           {.target_kinds = actionTargetKindList({kActionTargetAny})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetDisk})}),
             makeActionSpec(tr("Disk Benchmark"),
                            kIconSurface,
                            tr("Open Benchmark and Diagnostics"),
@@ -10041,10 +10043,6 @@ void PartitionManagerPanel::addUnallocatedContextMenuActions(QMenu& menu) {
                           .disabled_reason =
                               tr("Recover files from an image or raw volume/device path.")},
                          [this]() { onDataRecovery(); });
-    addContextMenuAction(menu,
-                         this,
-                         {.text = tr("Scan File Systems"), .icon_path = kIconSurface},
-                         [this]() { onSurfaceTest(); });
     menu.addSeparator();
 }
 
@@ -10198,10 +10196,8 @@ void PartitionManagerPanel::addPartitionMaintenanceContextMenuActions(
                          this,
                          {.text = tr("Wipe Partition / Free Space"), .icon_path = kIconWipe},
                          [this]() { onWipeSelected(); });
-    addContextMenuAction(menu,
-                         this,
-                         {.text = tr("Scan File Systems"), .icon_path = kIconSurface},
-                         [this]() { onSurfaceTest(); });
+    // No Scan File Systems here: it is disk-level; this menu's Check File System scans one
+    // partition.
     addContextMenuAction(menu,
                          this,
                          {.text = tr("Disk Benchmark"), .icon_path = kIconSurface},
@@ -10858,6 +10854,15 @@ void PartitionManagerPanel::onApfsContainerAction() {
 }
 
 void PartitionManagerPanel::onSurfaceTest() {
+    // Disk-level only; the ribbon and menus offer it for a disk. A stale or scripted call with a
+    // partition selected is pointed at the per-partition action instead.
+    const auto target = selectedTarget();
+    if (target && target->kind != PartitionTargetKind::Disk) {
+        Q_EMIT statusMessage(tr("Scan File Systems scans a whole disk; use Check File System "
+                                "for one partition"),
+                             sak::kTimerStatusDefaultMs);
+        return;
+    }
     runReadOnlyOperation(PartitionOperationType::SurfaceTest);
 }
 

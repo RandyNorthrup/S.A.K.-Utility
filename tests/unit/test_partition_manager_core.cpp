@@ -18302,6 +18302,15 @@ void verifyScanIsNamedForWhatItDoes(const PartitionTarget& partitionTarget,
     QCOMPARE(surface.preview,
              QStringLiteral(
                  "Read reliability counters and scan file systems on Disk 7 (read-only)"));
+    // Scan File Systems is disk-level only (owner decision 2026-10-25). It used to also take a
+    // partition and run chkdsk /scan on it -- the same thing Check File System does, under a
+    // second name. A partition target is now refused; Check File System is the per-partition scan.
+    const PartitionScript partitionSurface = PartitionScriptBuilder().buildScript(
+        PartitionOperationPlanner::makeOperation(PartitionOperationType::SurfaceTest,
+                                                 partitionTarget));
+    QVERIFY2(!partitionSurface.valid(), qPrintable(partitionSurface.script));
+    QVERIFY(partitionSurface.blockers.join(QLatin1Char('\n'))
+                .contains(QStringLiteral("Check File System")));
     QCOMPARE(toDisplayString(PartitionOperationType::SurfaceTest),
              QStringLiteral("Scan File Systems"));
     QCOMPARE(toDisplayString(PartitionOperationType::OptimizeSsd),

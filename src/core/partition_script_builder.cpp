@@ -5140,39 +5140,30 @@ PartitionScript PartitionScriptBuilder::buildSurfaceTestScript(
     const PartitionOperation& operation) const {
     PartitionScript out;
     // Named for what runs: the storage reliability counters plus a read-only file-system scan of
-    // each lettered volume. Nothing here reads the disk surface sector by sector.
-    if (operation.target.kind == PartitionTargetKind::Disk) {
-        out.preview =
-            QStringLiteral("Read reliability counters and scan file systems on Disk %1 (read-only)")
-                .arg(operation.target.disk_number.value());
-        out.script =
-            commonHeader(out.preview) +
-            QStringLiteral(
-                "$disk = Get-Disk -Number %1 -ErrorAction Stop\n"
-                "$physical = Get-PhysicalDisk -ErrorAction Stop | Where-Object { "
-                "$_.DeviceId -eq $disk.Number } | Select-Object -First 1\n"
-                "if (-not $physical) { throw 'Storage reliability target mapping unavailable' }\n"
-                "$reliability = $physical | Get-StorageReliabilityCounter -ErrorAction Stop\n"
-                "if ($null -eq $reliability) { throw 'Storage reliability query returned no data' "
-                "}\n"
-                "$reliability | Format-List | Out-String | Write-Output\n"
-                "Get-Partition -DiskNumber %1 | Where-Object DriveLetter | ForEach-Object {\n"
-                "  Write-Output \"Scanning volume $($_.DriveLetter):\"\n"
-                "  Repair-Volume -DriveLetter $_.DriveLetter -Scan -Verbose\n"
-                "}\n")
-                .arg(operation.target.disk_number.value());
-        out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
-        return out;
+    // each lettered volume. Nothing here reads the disk surface sector by sector. Disk-level
+    // only (owner decision 2026-10-25): scanning one partition is Check File System.
+    if (operation.target.kind != PartitionTargetKind::Disk) {
+        return invalidScript(QStringLiteral(
+            "Scan File Systems needs a disk target; use Check File System for one partition"));
     }
-
-    const QString letter = operation.target.drive_letter.left(1);
-    if (!isValidDriveLetter(letter)) {
-        return invalidScript(QStringLiteral("File-system scan requires a drive letter"));
-    }
-    out.preview = QStringLiteral("Scan file system on %1: (read-only)").arg(letter.toUpper());
+    out.preview =
+        QStringLiteral("Read reliability counters and scan file systems on Disk %1 (read-only)")
+            .arg(operation.target.disk_number.value());
     out.script =
         commonHeader(out.preview) +
-        QStringLiteral("chkdsk.exe %1: /scan /perf\nexit $LASTEXITCODE\n").arg(letter.toUpper());
+        QStringLiteral(
+            "$disk = Get-Disk -Number %1 -ErrorAction Stop\n"
+            "$physical = Get-PhysicalDisk -ErrorAction Stop | Where-Object { "
+            "$_.DeviceId -eq $disk.Number } | Select-Object -First 1\n"
+            "if (-not $physical) { throw 'Storage reliability target mapping unavailable' }\n"
+            "$reliability = $physical | Get-StorageReliabilityCounter -ErrorAction Stop\n"
+            "if ($null -eq $reliability) { throw 'Storage reliability query returned no data' }\n"
+            "$reliability | Format-List | Out-String | Write-Output\n"
+            "Get-Partition -DiskNumber %1 | Where-Object DriveLetter | ForEach-Object {\n"
+            "  Write-Output \"Scanning volume $($_.DriveLetter):\"\n"
+            "  Repair-Volume -DriveLetter $_.DriveLetter -Scan -Verbose\n"
+            "}\n")
+            .arg(operation.target.disk_number.value());
     out.timeout_seconds = kPartitionLongTaskTimeoutSeconds;
     return out;
 }

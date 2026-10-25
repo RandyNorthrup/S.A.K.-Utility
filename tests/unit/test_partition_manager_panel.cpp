@@ -125,6 +125,7 @@ private Q_SLOTS:
     void diskDefragShowsOptimizeDialog();
     void ssdSecureEraseShowsQueueDialog();
     void readOnlyScansRunNowWithoutQueueing();
+    void scanFileSystemsIsDiskLevelOnly();
     void spaceAnalyzerExposesCommercialViews();
     void changeClusterSizeQueuesVerifiedReformatOperation();
     void allocateFreeSpaceQueuesAdjacentDonorOperation();
@@ -2977,7 +2978,8 @@ void PartitionManagerPanelTests::propertiesActionIsFirstClass() {
              "TRIM must be named for what it does");
     QVERIFY2(hasActionButton(buttons,
                              QStringLiteral("Scan File Systems"),
-                             QStringLiteral("Scan for file-system errors without repairing (runs "
+                             QStringLiteral("Scan every volume on the selected disk for "
+                                            "file-system errors without repairing (runs "
                                             "immediately, not added to the queue)")),
              "The file-system scan must be named for what it does");
 }
@@ -3367,9 +3369,12 @@ void PartitionManagerPanelTests::readOnlyScansRunNowWithoutQueueing() {
     auto* table = panel.findChild<QTableWidget*>();
     QVERIFY2(table != nullptr, "Partition table should exist");
     int expected_runs = 0;
-    for (const QString& name :
-         {QStringLiteral("Check File System"), QStringLiteral("Scan File Systems")}) {
-        table->selectRow(1);
+    // Check File System scans the selected partition (row 1); Scan File Systems is disk-level
+    // and runs on the disk row (row 0).
+    const QList<QPair<QString, int>> scans{{QStringLiteral("Check File System"), 1},
+                                           {QStringLiteral("Scan File Systems"), 0}};
+    for (const auto& [name, row] : scans) {
+        table->selectRow(row);
         auto* button = findToolButtonByName(&panel, name);
         QVERIFY2(button != nullptr, qPrintable(name));
         QTRY_VERIFY2(button->isEnabled(), qPrintable(name));
@@ -3384,6 +3389,57 @@ void PartitionManagerPanelTests::readOnlyScansRunNowWithoutQueueing() {
     QCOMPARE(executed->types,
              QVector<sak::PartitionOperationType>({sak::PartitionOperationType::CheckFileSystem,
                                                    sak::PartitionOperationType::SurfaceTest}));
+}
+
+// Owner decision 2026-10-25: Scan File Systems is a disk-level action and Check File System is
+// the per-partition one. A partition used to offer both (two names for one chkdsk /scan), and an
+// unallocated region offered a scan that could only fail for want of a drive letter.
+void PartitionManagerPanelTests::scanFileSystemsIsDiskLevelOnly() {
+    sak::PartitionManagerPanel panel;
+    panel.setTestInventoryForReview(unallocatedAllocateInventoryFixture());
+    panel.resize(900, 640);
+    panel.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&panel));
+    QApplication::processEvents();
+    const QString scan = QStringLiteral("Scan File Systems");
+    const QString check = QStringLiteral("Check File System");
+
+    auto* disk_tile = panel.findChild<QWidget*>(QStringLiteral("partitionDiskMapDiskTile"));
+    QVERIFY2(disk_tile != nullptr, "Disk-map disk tile should exist");
+    QVERIFY2(contextMenuActionTexts(disk_tile).contains(scan), "the disk menu scans the disk");
+    auto* scan_button = findToolButtonByName(&panel, scan);
+    QVERIFY2(scan_button != nullptr, "Scan File Systems stays on the ribbon");
+    QTRY_VERIFY2(scan_button->isEnabled(), "a selected disk can be scanned");
+
+    // Opening a segment's menu selects it, which rebuilds the disk map: look each segment up
+    // again by position instead of holding pointers across the rebuild.
+    const auto segmentAt = [&panel](qsizetype index) -> QWidget* {
+        const auto segments =
+            panel.findChildren<QWidget*>(QStringLiteral("partitionDiskMapSegment"));
+        return index < segments.size() ? segments.at(index) : nullptr;
+    };
+    const qsizetype segment_count =
+        panel.findChildren<QWidget*>(QStringLiteral("partitionDiskMapSegment")).size();
+    int partition_menus = 0;
+    int unallocated_menus = 0;
+    for (qsizetype index = 0; index < segment_count; ++index) {
+        QWidget* segment = segmentAt(index);
+        QVERIFY(segment != nullptr);
+        const QString name = segment->accessibleName();
+        const bool unallocated = segment->property("colorRole").toString() ==
+                                 QStringLiteral("Unallocated");
+        const QStringList actions = contextMenuActionTexts(segment);
+        QVERIFY2(!actions.contains(scan), qPrintable(name));
+        QTRY_VERIFY2(!findToolButtonByName(&panel, scan)->isEnabled(), qPrintable(name));
+        if (unallocated) {
+            ++unallocated_menus;
+        } else {
+            QVERIFY2(actions.contains(check), qPrintable(name));
+            ++partition_menus;
+        }
+    }
+    QVERIFY(partition_menus > 0);
+    QVERIFY(unallocated_menus > 0);
 }
 
 void PartitionManagerPanelTests::spaceAnalyzerExposesCommercialViews() {
