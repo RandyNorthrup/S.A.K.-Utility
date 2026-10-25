@@ -3322,11 +3322,14 @@ PartitionInventory singleDataDiskInventory(bool dynamicDisk = false) {
 }
 
 void PartitionManagerCoreTests::initTestCase() {
-    // The filesystem tool manifest resolves from the trusted executable directory in
-    // production; the source-tree (CWD) fallback is gated behind this developer opt-in so an
-    // attacker-writable CWD cannot supply elevated tools. The test tree relies on that
-    // fallback, so opt in explicitly here.
-    qputenv("SAK_DEV_SOURCE_TREE", "1");
+    // The filesystem tool manifest resolves ONLY from the trusted executable directory. The
+    // build copies the tools bundle beside this test executable, exactly as it does for the
+    // app, so the suite needs no source-tree override -- and there is none to opt into.
+    const QString manifest = PartitionFileSystemToolManifest::resolveRuntimeManifestPath();
+    QCOMPARE(manifest,
+             PartitionFileSystemToolManifest::defaultRuntimeManifestPath(
+                 QCoreApplication::applicationDirPath()));
+    QVERIFY2(QFileInfo::exists(manifest), qPrintable(manifest));
 }
 
 void PartitionManagerCoreTests::fileSystemDetector_detectsRawSignatures() {

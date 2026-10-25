@@ -80,6 +80,14 @@ public:
     [[nodiscard]] SmartReport parseAndAssessForTesting(const QByteArray& json_data,
                                                        uint32_t disk_number);
 
+    /// @brief The one place smartctl.exe is looked for under a bundled tools root.
+    /// @param tools_root The application's bundled `tools` directory.
+    /// @return `<tools_root>/smartmontools/smartctl.exe` when it is a regular file, else empty.
+    /// @note There is no second location: the bundle script and the configure check put
+    ///       smartctl in `smartmontools/` and nowhere else, so any other copy is not the one the
+    ///       build verified. The Diagnostic panel and the assistant's workflow check both use it.
+    [[nodiscard]] static QString bundledSmartctlPath(const QString& tools_root);
+
 Q_SIGNALS:
     /// @brief Emitted when analysis begins
     void analysisStarted();

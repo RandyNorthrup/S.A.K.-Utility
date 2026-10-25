@@ -44,7 +44,7 @@ public:
     // Resolve the elevated-tool manifest (root of trust) from the trusted application
     // directory only; never from a current-working-directory path an attacker could plant.
     // Returns an empty string when there is no trusted anchor, which makes the tool runner
-    // fail closed. See the definition for the SAK_DEV_SOURCE_TREE developer opt-in.
+    // fail closed. There is no environment-variable or source-tree override.
     [[nodiscard]] static QString resolveRuntimeManifestPath();
     [[nodiscard]] static PartitionFileSystemToolManifestResult validateManifestFile(
         const QString& manifest_path, const QString& tools_root);

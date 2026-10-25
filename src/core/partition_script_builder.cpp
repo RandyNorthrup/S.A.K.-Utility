@@ -1616,8 +1616,8 @@ QString hfsFileMutationInvoke(const PartitionOperation& operation,
 
 QString runtimeFilesystemManifestPath() {
     // Root of trust for the elevated filesystem tools: resolve only from the trusted
-    // application directory (with the SAK_DEV_SOURCE_TREE developer opt-in), never a
-    // CWD-relative manifest an attacker could plant. Shared with the controller.
+    // application directory, never a CWD-relative manifest an attacker could plant.
+    // Shared with the controller.
     return PartitionFileSystemToolManifest::resolveRuntimeManifestPath();
 }
 

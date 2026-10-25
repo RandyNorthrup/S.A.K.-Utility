@@ -23,6 +23,7 @@ private Q_SLOTS:
 
     // smartctl availability
     void isSmartctlAvailable_isStableAndSideEffectFree();
+    void bundledSmartctlPath_onlyTheSmartmontoolsFolder();
 
     // Parse output tests (using known JSON structures)
     void parseOutput_validSataJson();
@@ -97,6 +98,31 @@ void SmartDiskAnalyzerTests::isSmartctlAvailable_isStableAndSideEffectFree() {
     const bool available = analyzer.isSmartctlAvailable();
     QCOMPARE(analyzer.isSmartctlAvailable(), available);
     QVERIFY(analyzer.reports().isEmpty());
+}
+
+// The bundle script and the configure check place smartctl in tools/smartmontools only. A copy
+// anywhere else (the old tools/generic fallback) is not the binary the build verified, so it must
+// never be found -- and a directory named smartctl.exe is not a runnable tool either.
+void SmartDiskAnalyzerTests::bundledSmartctlPath_onlyTheSmartmontoolsFolder() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QDir tools(root.path());
+    QVERIFY(tools.mkpath(QStringLiteral("generic")));
+    QFile stray(tools.filePath(QStringLiteral("generic/smartctl.exe")));
+    QVERIFY(stray.open(QIODevice::WriteOnly));
+    stray.close();
+    QCOMPARE(sak::SmartDiskAnalyzer::bundledSmartctlPath(root.path()), QString());
+    QCOMPARE(sak::SmartDiskAnalyzer::bundledSmartctlPath(QString()), QString());
+
+    QVERIFY(tools.mkpath(QStringLiteral("smartmontools/smartctl.exe")));
+    QCOMPARE(sak::SmartDiskAnalyzer::bundledSmartctlPath(root.path()), QString());
+    QVERIFY(tools.rmdir(QStringLiteral("smartmontools/smartctl.exe")));
+
+    const QString bundled = tools.filePath(QStringLiteral("smartmontools/smartctl.exe"));
+    QFile real(bundled);
+    QVERIFY(real.open(QIODevice::WriteOnly));
+    real.close();
+    QCOMPARE(sak::SmartDiskAnalyzer::bundledSmartctlPath(root.path()), bundled);
 }
 
 // ============================================================================

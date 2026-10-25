@@ -24,31 +24,6 @@ namespace {
 constexpr int kManifestSchemaVersion = 1;
 constexpr qsizetype kSha256HexLength = 64;
 constexpr auto kRuntimeManifestRelativePath = "tools/filesystem/manifest.json";
-constexpr int kRuntimeManifestSourceFallbackDepth = 3;
-
-// The bundled manifest inside a developer's SOURCE checkout, resolved by walking up from the
-// current working directory. This trusts the CWD, so it is ONLY consulted behind the explicit
-// SAK_DEV_SOURCE_TREE opt-in (see resolveRuntimeManifestPath) and never for a shipped build.
-// A candidate must look like this repo (a top-level CMakeLists.txt plus a known source file)
-// before its manifest is accepted, so an unrelated planted directory is rejected.
-QString sourceTreeManifestFromCwd() {
-    QDir sourceCandidate = QDir::current();
-    for (int depth = 0; depth < kRuntimeManifestSourceFallbackDepth; ++depth) {
-        const QString sourceManifest =
-            sourceCandidate.filePath(QString::fromLatin1(kRuntimeManifestRelativePath));
-        const bool looksLikeSourceTree =
-            QFileInfo::exists(sourceCandidate.filePath(QStringLiteral("CMakeLists.txt"))) &&
-            QFileInfo::exists(sourceCandidate.filePath(
-                QStringLiteral("src/core/partition_file_system_tool_manifest.cpp")));
-        if (looksLikeSourceTree && QFileInfo::exists(sourceManifest)) {
-            return sourceManifest;
-        }
-        if (!sourceCandidate.cdUp()) {
-            break;
-        }
-    }
-    return {};
-}
 
 QString objectString(const QJsonObject& object, const QString& key) {
     return object.value(key).toString().trimmed();
@@ -288,25 +263,14 @@ QString PartitionFileSystemToolManifest::resolveRuntimeManifestPath() {
     // never trusted for a shipped build: an attacker who launches the app from a user-writable
     // folder (a portable extract, a downloads dir) could otherwise plant both the manifest and
     // the "approved" tool binaries it points at and gain elevated code execution.
+    //
+    // There is no other source, not even behind an environment variable: the build copies the
+    // tools bundle (manifest included) beside every executable it produces, tests included, so a
+    // developer checkout needs no escape hatch. A missing app-dir manifest makes
+    // validateManifestFile report it missing. When the app dir is unknown (no QCoreApplication)
+    // the path is empty, so there is no trusted anchor and the tool runner blocks.
     const QString appDir = QCoreApplication::applicationDirPath();
-    const QString appManifest = appDir.trimmed().isEmpty() ? QString()
-                                                           : defaultRuntimeManifestPath(appDir);
-    if (!appManifest.isEmpty() && QFileInfo::exists(appManifest)) {
-        return appManifest;
-    }
-    // Developer convenience only, behind an explicit opt-in: allow running against the bundled
-    // manifest in a recognized source checkout. Never reached for a shipped build.
-    if (qEnvironmentVariableIsSet("SAK_DEV_SOURCE_TREE")) {
-        const QString sourceManifest = sourceTreeManifestFromCwd();
-        if (!sourceManifest.isEmpty()) {
-            return sourceManifest;
-        }
-    }
-    // Fail closed on the trusted app-dir path (its absence makes validateManifestFile report a
-    // missing manifest) rather than a CWD-relative path an attacker could populate. When the
-    // app-dir is unknown (no QCoreApplication) appManifest is empty, so there is no trusted
-    // anchor and the tool runner blocks -- never a CWD fallback.
-    return appManifest;
+    return appDir.trimmed().isEmpty() ? QString() : defaultRuntimeManifestPath(appDir);
 }
 
 PartitionFileSystemToolManifestResult PartitionFileSystemToolManifest::validateManifestFile(

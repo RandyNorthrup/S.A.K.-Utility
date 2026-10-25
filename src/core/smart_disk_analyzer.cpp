@@ -11,6 +11,8 @@
 #include "sak/logger.h"
 #include "sak/process_runner.h"
 
+#include <QDir>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -187,21 +189,21 @@ bool SmartDiskAnalyzer::isSmartctlAvailable() const {
 // Private Implementation
 // ============================================================================
 
+QString SmartDiskAnalyzer::bundledSmartctlPath(const QString& tools_root) {
+    if (tools_root.trimmed().isEmpty()) {
+        return {};
+    }
+    const QString path = QDir(tools_root).filePath(QStringLiteral("smartmontools/smartctl.exe"));
+    const QFileInfo info(path);
+    return info.exists() && info.isFile() ? path : QString();
+}
+
 QString SmartDiskAnalyzer::resolveSmartctlPath() {
-    auto& tools = BundledToolsManager::instance();
-
-    // Try the dedicated smartmontools category first
-    if (tools.toolExists("smartmontools", "smartctl.exe")) {
-        return tools.toolPath("smartmontools", "smartctl.exe");
+    const QString path = bundledSmartctlPath(BundledToolsManager::instance().toolsPath());
+    if (path.isEmpty()) {
+        logWarning("smartctl.exe not found in bundled tools (tools/smartmontools)");
     }
-
-    // Fallback: look in generic tools directory
-    if (tools.toolExists("generic", "smartctl.exe")) {
-        return tools.toolPath("generic", "smartctl.exe");
-    }
-
-    logWarning("smartctl.exe not found in bundled tools");
-    return {};
+    return path;
 }
 
 QByteArray SmartDiskAnalyzer::runSmartctl(uint32_t disk_number) {

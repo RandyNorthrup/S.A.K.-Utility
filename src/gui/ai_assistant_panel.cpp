@@ -61,6 +61,7 @@
 #include "sak/report_style_constants.h"
 #include "sak/rich_text_safety.h"
 #include "sak/secure_memory.h"
+#include "sak/smart_disk_analyzer.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
 #include "sak/windows_path_policy.h"
@@ -1124,8 +1125,9 @@ ai::SoftwareAvailabilityResolution bundledWorkflowToolAvailable(const QString& i
                isRegularFile(tools.filePath(QStringLiteral("chocolatey/bin/choco.exe")));
     }
     if (id == QLatin1String("smartctl")) {
-        return isRegularFile(tools.filePath(QStringLiteral("smartmontools/smartctl.exe"))) ||
-               isRegularFile(tools.filePath(QStringLiteral("generic/smartctl.exe")));
+        // The same single location the SMART analyzer runs it from; a workflow that reports
+        // smartctl available must be one the Diagnostic panel can actually launch.
+        return !SmartDiskAnalyzer::bundledSmartctlPath(tools.path()).isEmpty();
     }
     if (id == QLatin1String("report_button")) {
         return true;
