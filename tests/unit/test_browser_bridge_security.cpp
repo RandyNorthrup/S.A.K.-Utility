@@ -32,6 +32,55 @@ QString descriptorToSddl(PSECURITY_DESCRIPTOR descriptor) {
     return result;
 }
 
+// The trustee text SDDL writes for this SID. Well-known accounts render as an alias rather than
+// as their S-1-... string -- the built-in Administrator (RID 500, which a hosted CI runner's
+// account is) renders as "LA" -- so a DACL assertion has to compare in the same form.
+QString sddlTrusteeFor(const QString& sid) {
+    PSECURITY_DESCRIPTOR owner_only = nullptr;
+    const QString owner_sddl = QStringLiteral("O:") + sid;
+    if (ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            reinterpret_cast<LPCWSTR>(owner_sddl.utf16()), SDDL_REVISION_1, &owner_only, nullptr) ==
+        FALSE) {
+        return {};
+    }
+    LPWSTR rendered = nullptr;
+    QString result;
+    if (ConvertSecurityDescriptorToStringSecurityDescriptorW(
+            owner_only, SDDL_REVISION_1, OWNER_SECURITY_INFORMATION, &rendered, nullptr) != FALSE) {
+        result = QString::fromWCharArray(rendered);
+        LocalFree(rendered);
+    }
+    LocalFree(owner_only);
+    return result.startsWith(QStringLiteral("O:")) ? result.mid(2) : QString();
+}
+
+// This machine's built-in Administrator account SID: the local account domain SID plus RID 500.
+QString builtInAdministratorSid() {
+    wchar_t computer[MAX_COMPUTERNAME_LENGTH + 1] = {};
+    DWORD computer_length = MAX_COMPUTERNAME_LENGTH + 1;
+    if (GetComputerNameW(computer, &computer_length) == FALSE) {
+        return {};
+    }
+    BYTE domain_sid[SECURITY_MAX_SID_SIZE] = {};
+    DWORD domain_sid_size = sizeof(domain_sid);
+    wchar_t domain[MAX_COMPUTERNAME_LENGTH + 1] = {};
+    DWORD domain_length = MAX_COMPUTERNAME_LENGTH + 1;
+    SID_NAME_USE use{};
+    if (LookupAccountNameW(
+            nullptr, computer, domain_sid, &domain_sid_size, domain, &domain_length, &use) ==
+            FALSE ||
+        use != SidTypeDomain) {
+        return {};
+    }
+    LPWSTR text = nullptr;
+    if (ConvertSidToStringSidW(domain_sid, &text) == FALSE) {
+        return {};
+    }
+    const QString result = QString::fromWCharArray(text) + QStringLiteral("-500");
+    LocalFree(text);
+    return result;
+}
+
 }  // namespace
 
 class BrowserBridgeSecurityTests : public QObject {
@@ -47,7 +96,32 @@ private Q_SLOTS:
     void rendezvous_overCapFileFailsClosed();    // R5-G10-9
     void rendezvous_malformedJsonFailsClosed();  // R5-G10-9
     void security_daclIsCurrentUserOnlyWithMediumLabel();
+    void security_userTrusteeMatchesSddlAliases();
 };
+
+// The DACL assertion above once searched the SDDL for the user's S-1-... string, which fails for
+// the built-in Administrator (a hosted CI runner's account) because SDDL writes that SID as "LA".
+// Pin the comparison form on every machine with this machine's RID-500 SID, SYSTEM, and an
+// ordinary account SID that has no alias.
+void BrowserBridgeSecurityTests::security_userTrusteeMatchesSddlAliases() {
+    const QString administrator = builtInAdministratorSid();
+    QVERIFY2(administrator.startsWith(QStringLiteral("S-1-5-21-")), qPrintable(administrator));
+    QCOMPARE(sddlTrusteeFor(administrator), QStringLiteral("LA"));
+    QCOMPARE(sddlTrusteeFor(QStringLiteral("S-1-5-18")), QStringLiteral("SY"));
+    const QString ordinary = QStringLiteral("S-1-5-21-1111111111-2222222222-3333333333-1001");
+    QCOMPARE(sddlTrusteeFor(ordinary), ordinary);
+
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    const QString dacl = QStringLiteral("D:P(A;;GA;;;%1)(A;;GA;;;SY)").arg(administrator);
+    QVERIFY(ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                reinterpret_cast<LPCWSTR>(dacl.utf16()), SDDL_REVISION_1, &descriptor, nullptr) !=
+            FALSE);
+    const QString rendered = descriptorToSddl(descriptor);
+    LocalFree(descriptor);
+    QVERIFY2(!rendered.contains(administrator), qPrintable(rendered));
+    QVERIFY2(rendered.contains(QStringLiteral("(A;;GA;;;%1)").arg(sddlTrusteeFor(administrator))),
+             qPrintable(rendered));
+}
 
 void BrowserBridgeSecurityTests::currentUserSid_isAWellFormedUserSid() {
     QString error;
@@ -189,9 +263,12 @@ void BrowserBridgeSecurityTests::security_daclIsCurrentUserOnlyWithMediumLabel()
     // The fixed SYSTEM ACE (SY/GA are OS-invariant abbreviations); dropping it survives every
     // other check here, so pin its presence explicitly.
     QVERIFY(sddl.contains(QStringLiteral("(A;;GA;;;SY)")));  // SYSTEM full-access ACE present
-    QVERIFY(sddl.contains(sid));                             // current user is granted
-    QVERIFY(sddl.contains(QStringLiteral("NR")));            // NO_READ_UP mandatory-label bit
-    QVERIFY(sddl.contains(QStringLiteral("NW")));            // NO_WRITE_UP mandatory-label bit
+    // The current user's full-access ACE, in the form SDDL writes that SID (see sddlTrusteeFor).
+    const QString user_trustee = sddlTrusteeFor(sid);
+    QVERIFY2(!user_trustee.isEmpty(), qPrintable(sid));
+    QVERIFY2(sddl.contains(QStringLiteral("(A;;GA;;;%1)").arg(user_trustee)), qPrintable(sddl));
+    QVERIFY(sddl.contains(QStringLiteral("NR")));  // NO_READ_UP mandatory-label bit
+    QVERIFY(sddl.contains(QStringLiteral("NW")));  // NO_WRITE_UP mandatory-label bit
     // No BUILTIN\Users, Everyone, or Authenticated Users (well-knowns render as SDDL
     // abbreviations BU / WD / AU, not raw SIDs).
     QVERIFY(!sddl.contains(QStringLiteral(";BU)")));
