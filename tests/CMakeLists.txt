@@ -6230,15 +6230,26 @@ if(PLATFORM_WINDOWS)
     set_tests_properties(
         test_false_green_command_propagation_windows_powershell PROPERTIES TIMEOUT 60)
 
+    # Both run the application THIS build produced, passed from the target, never a path under
+    # build\Release that may hold some other build's binary; scripts/assert_built_target.ps1
+    # refuses a missing, misplaced or stale target.
     add_test(NAME test_startup_budget
              COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_startup_budget.ps1")
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_startup_budget.ps1"
+                     -ExePath "$<TARGET_FILE:sak_utility>")
     set_tests_properties(test_startup_budget PROPERTIES TIMEOUT 180)
 
     add_test(NAME test_windows_runtime_dependencies
              COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_windows_runtime_dependencies.ps1")
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_windows_runtime_dependencies.ps1"
+                     -ExePath "$<TARGET_FILE:sak_utility>"
+                     -ReleaseDir "$<TARGET_FILE_DIR:sak_utility>")
     set_tests_properties(test_windows_runtime_dependencies PROPERTIES TIMEOUT 120)
+
+    add_test(NAME test_assert_built_target
+             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_assert_built_target.ps1")
+    set_tests_properties(test_assert_built_target PROPERTIES TIMEOUT 60)
 
     # scripts/run_folder_retention.ps1 deletes the run folders of passing certifier and CLI
     # image tests (they once held over 1 TB under build/test_results). It deletes directories,
@@ -6380,7 +6391,7 @@ set(_sak_labels_product
     test_partition_image_volume_lock_offline_selected_partition)
 set(_sak_labels_release_tooling test_startup_budget test_windows_runtime_dependencies)
 set(_sak_labels_tooling
-    test_process_capture test_process_capture_windows_powershell
+    test_process_capture test_process_capture_windows_powershell test_assert_built_target
     test_run_lizard_js_baseline test_cppcheck_qt_slot_classifier
     test_run_folder_retention test_run_folder_retention_windows_powershell)
 set(_sak_labels_cert test_apple_filesystem_capability_matrix)

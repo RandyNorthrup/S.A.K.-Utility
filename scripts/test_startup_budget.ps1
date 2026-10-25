@@ -7,7 +7,10 @@ param(
     [switch]$FatalRuntimeOnly,
     [switch]$FatalMutationDrill,
     [ValidateSet('All', 'Startup', 'Accessibility')]
-    [string]$TeardownBranch = 'All'
+    [string]$TeardownBranch = 'All',
+    # The application the configured build produced ($<TARGET_FILE:sak_utility>). Required for
+    # the real-app gates; there is no default path, so the test can only run the binary just built.
+    [string]$ExePath = ''
 )
 
 $ErrorActionPreference = "Stop"
@@ -575,9 +578,10 @@ if ($FatalRuntimeOnly) { exit 0 }
 
 $gate = Join-Path $ProjectRoot "scripts\check_startup_budget.ps1"
 $capture = Join-Path $ProjectRoot "scripts\process_capture.ps1"
-$exe = Join-Path $ProjectRoot "build\Release\sak_utility.exe"
+. (Join-Path $ProjectRoot "scripts\assert_built_target.ps1")
+$exe = Assert-FreshBuiltTarget -Path $ExePath
 
-foreach ($required in @($gate, $capture, $exe)) {
+foreach ($required in @($gate, $capture)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
         throw "Startup-budget regression test input missing: $required"
     }

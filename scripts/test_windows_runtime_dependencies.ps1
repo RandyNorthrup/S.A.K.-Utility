@@ -1,10 +1,20 @@
 # Copyright (c) 2026 Randy Northrup. All rights reserved.
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
+[CmdletBinding(PositionalBinding = $false)]
+param(
+    # The application the configured build produced ($<TARGET_FILE:sak_utility>) and its
+    # directory ($<TARGET_FILE_DIR:sak_utility>). No default: the test runs the binary just built.
+    [string]$ExePath = '',
+    [string]$ReleaseDir = ''
+)
+
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 $verifier = Join-Path $ProjectRoot "scripts\verify_windows_runtime_dependencies.ps1"
-$releaseRoot = Join-Path $ProjectRoot "build\Release"
+. (Join-Path $ProjectRoot "scripts\assert_built_target.ps1")
+$exePath = Assert-FreshBuiltTarget -Path $ExePath -ReleaseDir $ReleaseDir
+$releaseRoot = Split-Path -Parent $exePath
 
 function Assert-RuntimeContract {
     param([bool]$Condition, [string]$Message)
@@ -116,7 +126,7 @@ function Test-RuntimePackageContracts {
     Assert-RuntimeContract ($errorMessage.Contains("app-local Windows system DLL")) "Strict package mode did not refuse OS shim"
 }
 
-foreach ($required in @($verifier, (Join-Path $releaseRoot "sak_utility.exe"))) {
+foreach ($required in @($verifier)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) {
         throw "Runtime-dependency regression test input missing: $required"
     }
