@@ -10,12 +10,16 @@
     as an elevated administrator, so the same assertions fail there for a reason that has
     nothing to do with the code. This wrapper gives the command the token a standard user gets.
 
-    The token comes from the SAFER "Normal User" level (the level behind runas /trustlevel:0x20000):
-    BUILTIN\Administrators becomes deny-only and the administrator privileges are removed. Its
-    integrity level is then lowered to Medium. Before launching anything the wrapper checks the
-    token itself and refuses to run if it is still an enabled member of Administrators (the
-    membership the product's own elevation check reads), so a failed de-elevation cannot pass as
-    an unelevated run.
+    The token is filtered the way UAC filters an administrator's token for a standard-user
+    session: CreateRestrictedToken with LUA_TOKEN, BUILTIN\Administrators and "Local account and
+    member of Administrators group" deny-only, every privilege a standard user lacks deleted,
+    Medium integrity, and the user as the default owner of new objects. (The SAFER "Normal User"
+    level, runas /trustlevel:0x20000, was tried first; under it, on a hosted runner,
+    test_process_runner's PowerShell child printed nothing inside its 5-second window and
+    test_drive_scanner found no drives, neither of which happens elevated.) Before
+    launching anything the wrapper checks the token itself and refuses to run if it is still an
+    enabled member of Administrators (the membership the product's own elevation check reads), so
+    a failed de-elevation cannot pass as an unelevated run.
 
     The child inherits this process's environment, working directory and standard handles, and
     its exit code is returned as this script's exit code.
@@ -72,31 +76,50 @@ function ConvertTo-WindowsArgument([string]$Value) {
 $commandLine = (@($exe) + @($ArgumentList) | ForEach-Object { ConvertTo-WindowsArgument $_ }) -join ' '
 
 if (-not ('SakUnelevated' -as [type])) {
-    Add-Type -TypeDefinition @'
+    Add-Type -TypeDefinition @"
 using System;
+using System.Collections.Generic;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
 
 public static class SakUnelevated {
-    const uint SaferScopeIdUser = 2;
-    const uint SaferLevelIdNormalUser = 0x20000;
-    const uint SaferLevelOpen = 1;
+    const uint TokenAllAccess = 0xF01FF;
+    const uint LuaToken = 0x4;
+    const int TokenPrivilegesClass = 3;
+    const int TokenOwnerClass = 4;
     const int TokenElevationClass = 20;
     const int TokenIntegrityLevelClass = 25;
+    const int TokenUserClass = 1;
     const uint SeGroupIntegrity = 0x20;
     const int StartfUseStdHandles = 0x100;
     const uint HandleFlagInherit = 1;
     const uint Infinite = 0xFFFFFFFF;
-    const uint TokenQuery = 0x0008;
-    const uint TokenDuplicate = 0x0002;
     const int SecurityImpersonation = 2;
+
+    // The privileges Windows leaves in a standard user's (UAC-filtered) token.
+    static readonly HashSet<string> StandardPrivileges = new HashSet<string>(StringComparer.OrdinalIgnoreCase) {
+        "SeChangeNotifyPrivilege", "SeShutdownPrivilege", "SeUndockPrivilege",
+        "SeIncreaseWorkingSetPrivilege", "SeTimeZonePrivilege" };
+
+    // BUILTIN\Administrators and "Local account and member of Administrators group", the two
+    // groups UAC makes deny-only.
+    static readonly string[] AdminSids = { "S-1-5-32-544", "S-1-5-114" };
 
     [StructLayout(LayoutKind.Sequential)]
     struct SidAndAttributes { public IntPtr Sid; public uint Attributes; }
 
     [StructLayout(LayoutKind.Sequential)]
+    struct Luid { public uint Low; public int High; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct LuidAndAttributes { public Luid Luid; public uint Attributes; }
+
+    [StructLayout(LayoutKind.Sequential)]
     struct TokenMandatoryLabel { public SidAndAttributes Label; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct TokenOwner { public IntPtr Owner; }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     struct StartupInfo {
@@ -110,19 +133,24 @@ public static class SakUnelevated {
     struct ProcessInformation { public IntPtr hProcess, hThread; public int dwProcessId, dwThreadId; }
 
     [DllImport("advapi32.dll", SetLastError = true)]
-    static extern bool SaferCreateLevel(uint scope, uint level, uint flags, out IntPtr handle, IntPtr reserved);
+    static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+    [DllImport("kernel32.dll")]
+    static extern IntPtr GetCurrentProcess();
     [DllImport("advapi32.dll", SetLastError = true)]
-    static extern bool SaferComputeTokenFromLevel(IntPtr level, IntPtr inToken, out IntPtr outToken, uint flags, IntPtr reserved);
-    [DllImport("advapi32.dll", SetLastError = true)]
-    static extern bool SaferCloseLevel(IntPtr level);
+    static extern bool CreateRestrictedToken(IntPtr existing, uint flags, uint disableCount, SidAndAttributes[] sidsToDisable,
+        uint deleteCount, LuidAndAttributes[] privilegesToDelete, uint restrictCount, IntPtr sidsToRestrict, out IntPtr newToken);
     [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     static extern bool ConvertStringSidToSid(string sid, out IntPtr psid);
     [DllImport("advapi32.dll", SetLastError = true)]
     static extern int GetLengthSid(IntPtr psid);
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern bool LookupPrivilegeName(string system, ref Luid luid, StringBuilder name, ref int length);
     [DllImport("advapi32.dll", SetLastError = true)]
     static extern bool SetTokenInformation(IntPtr token, int infoClass, ref TokenMandatoryLabel info, int length);
+    [DllImport("advapi32.dll", SetLastError = true, EntryPoint = "SetTokenInformation")]
+    static extern bool SetTokenOwner(IntPtr token, int infoClass, ref TokenOwner info, int length);
     [DllImport("advapi32.dll", SetLastError = true)]
-    static extern bool GetTokenInformation(IntPtr token, int infoClass, out int info, int length, out int returned);
+    static extern bool GetTokenInformation(IntPtr token, int infoClass, IntPtr info, int length, out int returned);
     [DllImport("advapi32.dll", SetLastError = true)]
     static extern bool DuplicateToken(IntPtr token, int level, out IntPtr duplicate);
     [DllImport("advapi32.dll", SetLastError = true)]
@@ -144,6 +172,11 @@ public static class SakUnelevated {
     [DllImport("kernel32.dll")]
     static extern IntPtr LocalFree(IntPtr memory);
 
+    public static int TokenElevation;
+    public static string RemovedPrivileges = "";
+
+    static Exception Fail(string api) { return new Win32Exception(Marshal.GetLastWin32Error(), api); }
+
     static IntPtr InheritableStd(int which) {
         IntPtr handle = GetStdHandle(which);
         if (handle != IntPtr.Zero && handle != new IntPtr(-1)) {
@@ -152,53 +185,93 @@ public static class SakUnelevated {
         return handle;
     }
 
-    static IntPtr StandardUserToken() {
-        IntPtr level;
-        if (!SaferCreateLevel(SaferScopeIdUser, SaferLevelIdNormalUser, SaferLevelOpen, out level, IntPtr.Zero))
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "SaferCreateLevel");
-        IntPtr token;
-        try {
-            if (!SaferComputeTokenFromLevel(level, IntPtr.Zero, out token, 0, IntPtr.Zero))
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "SaferComputeTokenFromLevel");
-        } finally {
-            SaferCloseLevel(level);
+    static IntPtr ReadTokenInformation(IntPtr token, int infoClass) {
+        int needed;
+        GetTokenInformation(token, infoClass, IntPtr.Zero, 0, out needed);
+        IntPtr buffer = Marshal.AllocHGlobal(Math.Max(needed, 4));
+        if (!GetTokenInformation(token, infoClass, buffer, needed, out needed)) {
+            Marshal.FreeHGlobal(buffer);
+            throw Fail("GetTokenInformation(" + infoClass + ")");
         }
-        IntPtr medium;
-        if (!ConvertStringSidToSid("S-1-16-8192", out medium))
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "ConvertStringSidToSid");
+        return buffer;
+    }
+
+    static LuidAndAttributes[] AdministratorPrivileges(IntPtr token, List<string> removed) {
+        IntPtr buffer = ReadTokenInformation(token, TokenPrivilegesClass);
         try {
+            int count = Marshal.ReadInt32(buffer);
+            int size = Marshal.SizeOf(typeof(LuidAndAttributes));
+            var delete = new List<LuidAndAttributes>();
+            for (int i = 0; i < count; i++) {
+                var entry = (LuidAndAttributes)Marshal.PtrToStructure(buffer + 4 + i * size, typeof(LuidAndAttributes));
+                var name = new StringBuilder(64);
+                int length = name.Capacity;
+                Luid luid = entry.Luid;
+                if (!LookupPrivilegeName(null, ref luid, name, ref length)) throw Fail("LookupPrivilegeName");
+                if (!StandardPrivileges.Contains(name.ToString())) { delete.Add(entry); removed.Add(name.ToString()); }
+            }
+            return delete.ToArray();
+        } finally {
+            Marshal.FreeHGlobal(buffer);
+        }
+    }
+
+    // A filtered token built the way UAC builds a standard user's: LUA_TOKEN, the administrator
+    // groups deny-only, every privilege a standard user lacks deleted, Medium integrity, and the
+    // user (not Administrators) as the default owner of new objects.
+    static IntPtr StandardUserToken() {
+        IntPtr process;
+        if (!OpenProcessToken(GetCurrentProcess(), TokenAllAccess, out process)) throw Fail("OpenProcessToken");
+        var sids = new List<SidAndAttributes>();
+        IntPtr medium = IntPtr.Zero;
+        IntPtr userBuffer = IntPtr.Zero;
+        try {
+            foreach (string text in AdminSids) {
+                IntPtr sid;
+                if (!ConvertStringSidToSid(text, out sid)) throw Fail("ConvertStringSidToSid");
+                sids.Add(new SidAndAttributes { Sid = sid, Attributes = 0 });
+            }
+            var removed = new List<string>();
+            LuidAndAttributes[] privileges = AdministratorPrivileges(process, removed);
+            RemovedPrivileges = string.Join(",", removed);
+            IntPtr token;
+            if (!CreateRestrictedToken(process, LuaToken, (uint)sids.Count, sids.ToArray(),
+                    (uint)privileges.Length, privileges, 0, IntPtr.Zero, out token)) throw Fail("CreateRestrictedToken");
+
+            if (!ConvertStringSidToSid("S-1-16-8192", out medium)) throw Fail("ConvertStringSidToSid");
             var label = new TokenMandatoryLabel();
             label.Label.Sid = medium;
             label.Label.Attributes = SeGroupIntegrity;
-            int size = Marshal.SizeOf(typeof(TokenMandatoryLabel)) + GetLengthSid(medium);
-            if (!SetTokenInformation(token, TokenIntegrityLevelClass, ref label, size))
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "SetTokenInformation(IntegrityLevel)");
+            if (!SetTokenInformation(token, TokenIntegrityLevelClass, ref label,
+                    Marshal.SizeOf(typeof(TokenMandatoryLabel)) + GetLengthSid(medium))) throw Fail("SetTokenInformation(IntegrityLevel)");
+
+            userBuffer = ReadTokenInformation(token, TokenUserClass);
+            var owner = new TokenOwner { Owner = Marshal.ReadIntPtr(userBuffer) };
+            if (!SetTokenOwner(token, TokenOwnerClass, ref owner, Marshal.SizeOf(typeof(TokenOwner)))) throw Fail("SetTokenInformation(Owner)");
+            return token;
         } finally {
-            LocalFree(medium);
+            foreach (var sid in sids) LocalFree(sid.Sid);
+            if (medium != IntPtr.Zero) LocalFree(medium);
+            if (userBuffer != IntPtr.Zero) Marshal.FreeHGlobal(userBuffer);
+            CloseHandle(process);
         }
-        return token;
     }
 
     // Fail closed: the token must not carry an enabled BUILTIN\Administrators group, which is
     // exactly what the product's own elevation test (ElevationManager::isElevated,
-    // CheckTokenMembership) reads. TokenElevation is reported but not required: with UAC
-    // disabled, as on a hosted runner, Windows still reports a filtered admin token elevated.
-    public static int TokenElevation;
+    // CheckTokenMembership) reads. TokenElevation is reported, not required: with UAC disabled,
+    // as on a hosted runner, Windows can still report a filtered admin token as elevated.
     static void RequireUnelevated(IntPtr token) {
-        int elevated, returned;
-        if (!GetTokenInformation(token, TokenElevationClass, out elevated, 4, out returned))
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "GetTokenInformation(TokenElevation)");
-        TokenElevation = elevated;
+        IntPtr elevation = ReadTokenInformation(token, TokenElevationClass);
+        TokenElevation = Marshal.ReadInt32(elevation);
+        Marshal.FreeHGlobal(elevation);
         IntPtr impersonation;
-        if (!DuplicateToken(token, SecurityImpersonation, out impersonation))
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "DuplicateToken");
+        if (!DuplicateToken(token, SecurityImpersonation, out impersonation)) throw Fail("DuplicateToken");
         IntPtr admins;
-        if (!ConvertStringSidToSid("S-1-5-32-544", out admins))
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "ConvertStringSidToSid");
+        if (!ConvertStringSidToSid("S-1-5-32-544", out admins)) throw Fail("ConvertStringSidToSid");
         try {
             bool member;
-            if (!CheckTokenMembership(impersonation, admins, out member))
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "CheckTokenMembership");
+            if (!CheckTokenMembership(impersonation, admins, out member)) throw Fail("CheckTokenMembership");
             if (member) throw new InvalidOperationException("The standard-user token is still an enabled member of Administrators.");
         } finally {
             LocalFree(admins);
@@ -218,13 +291,11 @@ public static class SakUnelevated {
             startup.hStdError = InheritableStd(-12);
             ProcessInformation info;
             if (!CreateProcessAsUser(token, null, new StringBuilder(commandLine), IntPtr.Zero, IntPtr.Zero,
-                    true, 0, IntPtr.Zero, workingDirectory, ref startup, out info))
-                throw new Win32Exception(Marshal.GetLastWin32Error(), "CreateProcessAsUser");
+                    true, 0, IntPtr.Zero, workingDirectory, ref startup, out info)) throw Fail("CreateProcessAsUser");
             try {
                 WaitForSingleObject(info.hProcess, Infinite);
                 uint exitCode;
-                if (!GetExitCodeProcess(info.hProcess, out exitCode))
-                    throw new Win32Exception(Marshal.GetLastWin32Error(), "GetExitCodeProcess");
+                if (!GetExitCodeProcess(info.hProcess, out exitCode)) throw Fail("GetExitCodeProcess");
                 return unchecked((int)exitCode);
             } finally {
                 CloseHandle(info.hThread);
@@ -235,10 +306,10 @@ public static class SakUnelevated {
         }
     }
 }
-'@
+"@
 }
 
-Write-Host "Running unelevated (SAFER Normal User, Medium integrity): $commandLine"
+Write-Host "Running unelevated (UAC-style filtered token, Medium integrity): $commandLine"
 $exitCode = [SakUnelevated]::Run($commandLine, $WorkingDirectory)
-Write-Host "Unelevated command exited $exitCode (Administrators deny-only; TokenElevation=$([SakUnelevated]::TokenElevation))"
+Write-Host "Unelevated command exited $exitCode (Administrators deny-only; TokenElevation=$([SakUnelevated]::TokenElevation); removed privileges: $([SakUnelevated]::RemovedPrivileges))"
 exit $exitCode
