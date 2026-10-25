@@ -13,8 +13,9 @@
     The token comes from the SAFER "Normal User" level (the level behind runas /trustlevel:0x20000):
     BUILTIN\Administrators becomes deny-only and the administrator privileges are removed. Its
     integrity level is then lowered to Medium. Before launching anything the wrapper checks the
-    token itself and refuses to run if it still reports elevation or still carries an enabled
-    Administrators group, so a failed de-elevation cannot pass as an unelevated run.
+    token itself and refuses to run if it is still an enabled member of Administrators (the
+    membership the product's own elevation check reads), so a failed de-elevation cannot pass as
+    an unelevated run.
 
     The child inherits this process's environment, working directory and standard handles, and
     its exit code is returned as this script's exit code.
@@ -178,13 +179,16 @@ public static class SakUnelevated {
         return token;
     }
 
-    // Fail closed: the token must not report elevation and must not carry an enabled
-    // BUILTIN\Administrators group, or the "unelevated" run would be a relabelled admin run.
+    // Fail closed: the token must not carry an enabled BUILTIN\Administrators group, which is
+    // exactly what the product's own elevation test (ElevationManager::isElevated,
+    // CheckTokenMembership) reads. TokenElevation is reported but not required: with UAC
+    // disabled, as on a hosted runner, Windows still reports a filtered admin token elevated.
+    public static int TokenElevation;
     static void RequireUnelevated(IntPtr token) {
         int elevated, returned;
         if (!GetTokenInformation(token, TokenElevationClass, out elevated, 4, out returned))
             throw new Win32Exception(Marshal.GetLastWin32Error(), "GetTokenInformation(TokenElevation)");
-        if (elevated != 0) throw new InvalidOperationException("The standard-user token still reports elevation.");
+        TokenElevation = elevated;
         IntPtr impersonation;
         if (!DuplicateToken(token, SecurityImpersonation, out impersonation))
             throw new Win32Exception(Marshal.GetLastWin32Error(), "DuplicateToken");
@@ -236,4 +240,5 @@ public static class SakUnelevated {
 
 Write-Host "Running unelevated (SAFER Normal User, Medium integrity): $commandLine"
 $exitCode = [SakUnelevated]::Run($commandLine, $WorkingDirectory)
+Write-Host "Unelevated command exited $exitCode (Administrators deny-only; TokenElevation=$([SakUnelevated]::TokenElevation))"
 exit $exitCode

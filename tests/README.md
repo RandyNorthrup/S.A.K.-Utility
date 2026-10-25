@@ -77,6 +77,13 @@ ctest --test-dir build -C Release -R "test_encryption"
 ctest --test-dir build -C Release -N -L product
 ```
 
+Run the suite from a standard (non-elevated) shell. The app runs as a standard user and elevates
+per task, and several suites assert exactly that (an ordinary PowerShell child is not elevated, a
+new file belongs to the user rather than `BUILTIN\Administrators`, the AI policy sees an
+unelevated host). CI runners are elevated, so CI runs CTest through
+`scripts/invoke_unelevated.ps1`, which gives the command a standard-user token; use it the same
+way from an elevated shell.
+
 Image tests need a disk with room for sparse multi-gigabyte images: point `TEMP`, `TMP` and
 `SAK_TEST_IMAGE_SCRATCH_ROOT` at it for the one command rather than persistently.
 
