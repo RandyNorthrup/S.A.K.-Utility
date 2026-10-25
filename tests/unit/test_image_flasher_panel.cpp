@@ -34,10 +34,13 @@ using namespace sak;
 namespace {
 
 constexpr int kModalPollIntervalMs = 50;
+// A real, read-only enumeration of this host's disks; it has measured 8-10 s under a loaded
+// parallel suite (see test_drive_scanner), so the bound is generous but finite.
+constexpr int kStartupScanTimeoutMs = 30'000;
 
 /// A device path plus the identity signature the panel stores alongside it. The
-/// panel builds these from DriveScanner results; the scanner is deliberately not
-/// running here, so the row is placed directly.
+/// panel builds these from DriveScanner results; the tests place this row directly once the
+/// real start-up scan has landed.
 constexpr auto kFakeDevicePath = "\\\\.\\PhysicalDrive99";
 
 /// The Step 1 -> Step 2 navigation button. Every assertion in this file watched the Flash
@@ -63,7 +66,7 @@ private Q_SLOTS:
     void init();
     void cleanup();
 
-    void smokeModeDoesNotStartHardwareScanner();
+    void smokeAndAuditModesRunTheStartupScanUsersGet();
     void flashIsDisabledWithNothingSelected();
     void flashStaysDisabledWithADriveButNoImage();
     void flashEnablesOnlyWithBothAnImageAndADrive();
@@ -88,10 +91,9 @@ private:
 };
 
 void ImageFlasherPanelTests::initTestCase() {
-    // The panel starts a DriveScanner thread unless this property is set. The
-    // tests place their own row in the list, so a live scan would only race it.
-    QCoreApplication::instance()->setProperty("sakAccessibilityAudit", true);
-    QCoreApplication::instance()->setProperty("sakStartupSmokeTest", false);
+    // The panel always starts its DriveScanner -- smoke and audit modes included -- so tests
+    // that place their own row wait for that read-only start-up scan to land first (see
+    // selectOneDrive). With no periodic rescan, nothing else repopulates the list afterwards.
     QVERIFY2(QFile::exists(QStringLiteral(":/icons/icons/panel_image_flasher.svg")),
              "Image Flasher panel test must link its production icon resources");
     QVERIFY(m_dir.isValid());
@@ -103,8 +105,8 @@ void ImageFlasherPanelTests::init() {
 
 void ImageFlasherPanelTests::cleanup() {
     m_panel.reset();
-    QCoreApplication::instance()->setProperty("sakAccessibilityAudit", true);
-    QCoreApplication::instance()->setProperty("sakStartupSmokeTest", false);
+    QCoreApplication::instance()->setProperty("sakAccessibilityAudit", QVariant());
+    QCoreApplication::instance()->setProperty("sakStartupSmokeTest", QVariant());
 }
 
 QPushButton* ImageFlasherPanelTests::flashButton() const {
@@ -128,8 +130,16 @@ QListWidget* ImageFlasherPanelTests::driveList() const {
 }
 
 void ImageFlasherPanelTests::selectOneDrive() {
+    // Let the panel's real start-up scan land before planting a row: its result rebuilds the
+    // list, which would otherwise wipe the row (and its selection) mid-test.
+    auto* scanner = m_panel->findChild<DriveScanner*>();
+    QVERIFY(scanner);
+    QTRY_VERIFY_WITH_TIMEOUT(!scanner->isScanning(), kStartupScanTimeoutMs);
     QListWidget* list = driveList();
     QVERIFY(list);
+    // Drop the host's real drives the scan listed: the only selectable row in this suite is the
+    // fake one below, so no test can ever arm a flash at a real disk.
+    list->clear();
     auto* item = new QListWidgetItem(QStringLiteral("Test Drive - 8 GB (%1)").arg(kFakeDevicePath),
                                      list);
     item->setData(Qt::UserRole, QString::fromLatin1(kFakeDevicePath));
@@ -166,18 +176,24 @@ QString ImageFlasherPanelTests::writeImage(const QString& name, const QByteArray
 // Flash button gating
 // ============================================================================
 
-void ImageFlasherPanelTests::smokeModeDoesNotStartHardwareScanner() {
-    m_panel.reset();
-    QCoreApplication::instance()->setProperty("sakAccessibilityAudit", false);
-    QCoreApplication::instance()->setProperty("sakStartupSmokeTest", true);
-    m_panel = std::make_unique<ImageFlasherPanel>();
+// Smoke and audit modes exist to exercise the start-up work users get. They used to skip the
+// drive scanner, so neither gate ever ran it -- and the scanner then rescanned every 5 s.
+void ImageFlasherPanelTests::smokeAndAuditModesRunTheStartupScanUsersGet() {
+    for (const char* mode : {"sakStartupSmokeTest", "sakAccessibilityAudit"}) {
+        m_panel.reset();
+        QCoreApplication::instance()->setProperty("sakAccessibilityAudit", QVariant());
+        QCoreApplication::instance()->setProperty("sakStartupSmokeTest", QVariant());
+        QCoreApplication::instance()->setProperty(mode, true);
+        m_panel = std::make_unique<ImageFlasherPanel>();
 
-    auto* scanner = m_panel->findChild<DriveScanner*>();
-    QVERIFY(scanner);
-    auto* refresh_timer = scanner->findChild<QTimer*>();
-    QVERIFY(refresh_timer);
-    QVERIFY2(!refresh_timer->isActive(),
-             "non-interactive startup smoke must not begin a host drive scan");
+        auto* scanner = m_panel->findChild<DriveScanner*>();
+        QVERIFY2(scanner, mode);
+        // Every Windows host has at least its system disk, so a scan that ran finds one.
+        QTRY_VERIFY2_WITH_TIMEOUT(!scanner->getDrives().isEmpty(), mode, kStartupScanTimeoutMs);
+        for (const auto* timer : scanner->findChildren<QTimer*>()) {
+            QVERIFY2(!timer->isActive() || timer->isSingleShot(), mode);
+        }
+    }
 }
 
 void ImageFlasherPanelTests::flashIsDisabledWithNothingSelected() {

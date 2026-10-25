@@ -144,12 +144,10 @@ ImageFlasherPanel::ImageFlasherPanel(QWidget* parent)
             this,
             &ImageFlasherPanel::onWindowsISODownloaded);
 
-    const bool non_interactive_gate =
-        QCoreApplication::instance()->property("sakAccessibilityAudit").toBool() ||
-        QCoreApplication::instance()->property("sakStartupSmokeTest").toBool();
-    if (!non_interactive_gate) {
-        m_driveScanner->start();
-    }
+    // Started in every mode. Startup smoke and the accessibility audit exist to exercise the
+    // start-up work users get, so they must not skip it. The scan is read-only and, with no
+    // periodic timer, runs once here and then only when a disk or volume arrives or leaves.
+    m_driveScanner->start();
 
     logInfo("Image Flasher Panel initialized");
 }

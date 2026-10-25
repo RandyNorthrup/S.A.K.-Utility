@@ -14,6 +14,8 @@
 
 #include <windows.h>
 
+#include <dbt.h>
+
 namespace sak {
 
 /**
@@ -95,8 +97,13 @@ enum class VolumePathQuery {
  * - Volume mount point detection
  * - Read-only/write-protection detection
  *
- * Thread-Safety: NOT thread-safe. Instance state (m_drives, the timer, the
- * notification window/handle, and the s_instance singleton) is mutated only on
+ * Rescans are driven by the disk and volume device-interface arrival/removal notifications
+ * Windows sends (GUID_DEVINTERFACE_DISK, GUID_DEVINTERFACE_VOLUME), coalesced by a short
+ * single-shot debounce. There is no periodic rescan: nothing touches the disks while nothing
+ * changes.
+ *
+ * Thread-Safety: NOT thread-safe. Instance state (m_drives, the debounce timer, the
+ * notification window/handles, and the s_instance singleton) is mutated only on
  * the owning (GUI) thread -- construct, start/stop, and query from that thread.
  * The one exception is the static enumerateDrivesOnce(), which touches no instance
  * state and is safe to call from a worker thread. Signals are emitted on the
@@ -172,13 +179,16 @@ public:
      */
     void refresh();
 
+    /// @brief True while an enumeration is running on the worker thread.
+    [[nodiscard]] bool isScanning() const noexcept { return m_isScanning.load(); }
+
     /**
      * @brief Enumerate all physical drives once, synchronously, with no monitor.
      *
      * A self-contained one-shot enumeration for headless/read-only callers (e.g. the
      * AI assistant's imaging.list_drives). Constructs NO DriveScanner instance, so it
      * never touches the s_instance singleton, the hot-plug notification window, or the
-     * refresh timer -- it is safe to call while a GUI DriveScanner is live and from a
+     * rescan debounce -- it is safe to call while a GUI DriveScanner is live and from a
      * worker thread. Shares the exact per-drive query path used by the GUI scan.
      * @param enumeration_ok Set true when the OS physical-drive device list was read
      *        successfully; false when that query failed, or when a per-drive query failed
@@ -209,11 +219,17 @@ Q_SIGNALS:
     void drivesUpdated(const QList<sak::DriveInfo>& drives);
 
 private Q_SLOTS:
-    void onRefreshTimer();
     void onScanFinished();
 
 private:
     void scanDrives();
+    /// @brief (Re)arm the single-shot debounce: a burst of device notifications (one plug-in
+    ///        raises several) becomes one rescan once they stop.
+    void scheduleRescan();
+    /// @brief Whether a WM_DEVICECHANGE should trigger a rescan: a disk or volume device
+    ///        interface arrived or was removed, or a volume broadcast. Pure; tested offscreen.
+    [[nodiscard]] static bool deviceChangeRequestsRescan(WPARAM event_type,
+                                                         const DEV_BROADCAST_HDR* header);
     /// @brief Diff a fresh scan against the cached list and emit changes (UI thread).
     /// @param enumeration_ok False when the scan was not authoritative (partial/probe-only); a
     ///        non-authoritative scan never detaches cached drives -- see drivesDetached().
@@ -316,10 +332,15 @@ private:
     static LRESULT CALLBACK deviceChangeWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
     QList<sak::DriveInfo> m_drives;
-    QTimer* m_refreshTimer;
+    QTimer* m_rescanDebounce;
     HWND m_notificationWindow;
-    HDEVNOTIFY m_deviceNotify;
+    HDEVNOTIFY m_diskNotify;
+    HDEVNOTIFY m_volumeNotify;
     std::atomic<bool> m_isScanning;
+    /// A device change arrived while a scan was running; scan again when it lands so the
+    /// change is never lost behind the in-flight enumeration.
+    bool m_rescanPending{false};
+    bool m_monitoring{false};
     QFutureWatcher<sak::DriveScanResult> m_scanWatcher;
 
     static DriveScanner* s_instance;  // For static callback

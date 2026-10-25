@@ -235,8 +235,8 @@ and termination-utility setup handshakes; neither changes production deadlines.
 | test_linux_distro_catalog | `linux_distro_catalog` | Required distro metadata, URL patterns, version detection |
 | test_uup_dump_api | `uup_dump_api` | UUP Dump API parsing, edition/language selection |
 | test_uup_iso_builder | `uup_iso_builder` | UUP-to-ISO conversion, converter process management |
-| test_drive_scanner | `drive_scanner` | Physical drive enumeration, USB detection, formatting info |
-| test_image_flasher_panel | `ImageFlasherPanel` | Real panel Flash-button gating, rejected-image state, startup-smoke scanner isolation, and linked production SVG resources; no raw-disk write |
+| test_drive_scanner | `drive_scanner` | Physical drive enumeration, USB detection, formatting info, disk/volume device-notification rescans with a debounce and no periodic timer |
+| test_image_flasher_panel | `ImageFlasherPanel` | Real panel Flash-button gating, rejected-image state, smoke and audit modes running the same start-up drive scan users get, and linked production SVG resources; no raw-disk write |
 | test_drive_unmounter | `drive_unmounter` | Volume unmount, lock/unlock |
 | test_flash_types | `flash_types` | Flash operation data structures |
 | test_flash_worker | `flash_worker` | Raw sector write, verification, decompression |

@@ -16,6 +16,7 @@
 
 #include <cfgmgr32.h>
 #include <dbt.h>
+#include <initguid.h>  // defines (selectany) the GUID_DEVINTERFACE_* used below
 #include <ntddscsi.h>
 #include <setupapi.h>
 #include <winioctl.h>
@@ -23,6 +24,9 @@
 #pragma comment(lib, "setupapi.lib")
 
 namespace {
+// Coalesces the burst of notifications one plug-in raises (disk interface, then each volume)
+// into one rescan, and lets the new volumes finish mounting before they are read.
+constexpr int kDeviceChangeDebounceMs = 750;
 constexpr int kDosDeviceInitialBufferChars = 32'768;
 constexpr int kDosDeviceQueryAttempts = 3;
 constexpr int kDosDeviceBufferGrowthFactor = 2;
@@ -129,16 +133,19 @@ DriveScanner* DriveScanner::s_instance = nullptr;
 
 DriveScanner::DriveScanner(QObject* parent)
     : QObject(parent)
-    , m_refreshTimer(new QTimer(this))
+    , m_rescanDebounce(new QTimer(this))
     , m_notificationWindow(nullptr)
-    , m_deviceNotify(nullptr)
+    , m_diskNotify(nullptr)
+    , m_volumeNotify(nullptr)
     , m_isScanning(false) {
     Q_ASSERT_X(s_instance == nullptr, "DriveScanner", "Only one DriveScanner instance is allowed");
     s_instance = this;
 
-    // Refresh every 5 seconds as fallback
-    m_refreshTimer->setInterval(sak::kTimerRefreshMs);
-    connect(m_refreshTimer, &QTimer::timeout, this, &DriveScanner::onRefreshTimer);
+    // No periodic rescan. A device notification arms this single-shot debounce, and the scan
+    // runs once the burst of notifications for one plug-in or removal has settled.
+    m_rescanDebounce->setSingleShot(true);
+    m_rescanDebounce->setInterval(kDeviceChangeDebounceMs);
+    connect(m_rescanDebounce, &QTimer::timeout, this, &DriveScanner::scanDrives);
     connect(&m_scanWatcher,
             &QFutureWatcher<sak::DriveScanResult>::finished,
             this,
@@ -151,24 +158,23 @@ DriveScanner::~DriveScanner() {
 }
 
 void DriveScanner::start() {
-    // The constructor creates m_refreshTimer (new QTimer(this)) and nothing ever reassigns it.
-    Q_ASSERT(m_refreshTimer);
+    // The constructor creates m_rescanDebounce (new QTimer(this)) and nothing reassigns it.
+    Q_ASSERT(m_rescanDebounce);
     sak::logInfo("Starting drive scanner");
+    m_monitoring = true;
 
-    // Initial scan
-    scanDrives();
-
-    // Register for device notifications
+    // Register first, then scan, so a device that arrives during the initial enumeration
+    // still raises a notification that is acted on.
     registerDeviceNotification();
-
-    // Start refresh timer
-    m_refreshTimer->start();
+    scanDrives();
 }
 
 void DriveScanner::stop() {
     sak::logInfo("Stopping drive scanner");
 
-    m_refreshTimer->stop();
+    m_monitoring = false;
+    m_rescanPending = false;
+    m_rescanDebounce->stop();
     // Block until any in-flight worker scan finishes so its lambda does not
     // touch this object after destruction.
     if (m_scanWatcher.isRunning()) {
@@ -210,14 +216,37 @@ bool DriveScanner::isSystemDrive(const QString& devicePath) const {
     return info.isValid() && info.isSystem;
 }
 
-void DriveScanner::onRefreshTimer() {
-    scanDrives();
+void DriveScanner::scheduleRescan() {
+    if (!m_monitoring) {
+        return;
+    }
+    m_rescanDebounce->start();  // restarts a pending debounce: one rescan per burst
+}
+
+bool DriveScanner::deviceChangeRequestsRescan(WPARAM event_type, const DEV_BROADCAST_HDR* header) {
+    if (header == nullptr ||
+        (event_type != DBT_DEVICEARRIVAL && event_type != DBT_DEVICEREMOVECOMPLETE)) {
+        return false;
+    }
+    if (header->dbch_devicetype == DBT_DEVTYP_VOLUME) {
+        return true;
+    }
+    if (header->dbch_devicetype != DBT_DEVTYP_DEVICEINTERFACE ||
+        header->dbch_size < sizeof(DEV_BROADCAST_DEVICEINTERFACE_W)) {
+        return false;
+    }
+    const auto* iface = reinterpret_cast<const DEV_BROADCAST_DEVICEINTERFACE_W*>(header);
+    return IsEqualGUID(iface->dbcc_classguid, GUID_DEVINTERFACE_DISK) ||
+           IsEqualGUID(iface->dbcc_classguid, GUID_DEVINTERFACE_VOLUME);
 }
 
 void DriveScanner::scanDrives() {
     bool expected = false;
     if (!m_isScanning.compare_exchange_strong(expected, true)) {
-        return;  // A scan is already in flight.
+        // A scan is already in flight. Its result may predate this request, so run once more
+        // when it lands rather than dropping the change.
+        m_rescanPending = m_monitoring;
+        return;
     }
     // Enumerate/query drives off the UI thread; each drive query issues blocking
     // Win32 IOCTLs, so doing this inline would freeze the interface. Shares the exact
@@ -251,6 +280,10 @@ void DriveScanner::onScanFinished() {
     const sak::DriveScanResult result = m_scanWatcher.result();
     applyDriveScan(result.drives, result.enumeration_ok);
     m_isScanning = false;
+    if (m_rescanPending && m_monitoring) {
+        m_rescanPending = false;
+        scanDrives();
+    }
 }
 
 QList<sak::DriveInfo> DriveScanner::drivesDetached(const QList<sak::DriveInfo>& current,
@@ -940,20 +973,14 @@ LRESULT CALLBACK DriveScanner::deviceChangeWndProc(HWND hwnd,
     if (msg != WM_DEVICECHANGE) {
         return DefWindowProcW(hwnd, msg, wParam, lParam);
     }
-    if (wParam != DBT_DEVICEARRIVAL && wParam != DBT_DEVICEREMOVECOMPLETE) {
-        return TRUE;
-    }
     const auto* pHdr = reinterpret_cast<const DEV_BROADCAST_HDR*>(lParam);
-    if ((pHdr != nullptr) && pHdr->dbch_devicetype == DBT_DEVTYP_VOLUME &&
-        (DriveScanner::s_instance != nullptr)) {
-        // Functor overload, NOT the string one. scanDrives() is a plain private member -- not a
-        // slot and not Q_INVOKABLE -- so invokeMethod("scanDrives") found no such method: it
-        // logged a warning and did nothing, and hot-plug arrival/removal never rescanned. The
-        // functor form is resolved by the compiler, so a method that is not invokable is a build
-        // error here rather than a silent no-op at runtime.
+    if (deviceChangeRequestsRescan(wParam, pHdr) && (DriveScanner::s_instance != nullptr)) {
+        // Functor overload, NOT the string one: scheduleRescan() is a plain private member, so
+        // invokeMethod("...") would find no such method and silently do nothing. The functor
+        // form makes a non-invokable target a build error instead.
         auto* const scanner = DriveScanner::s_instance;
         QMetaObject::invokeMethod(
-            scanner, [scanner]() { scanner->scanDrives(); }, Qt::QueuedConnection);
+            scanner, [scanner]() { scanner->scheduleRescan(); }, Qt::QueuedConnection);
     }
     return TRUE;
 }
@@ -990,28 +1017,42 @@ void DriveScanner::registerDeviceNotification() {
         return;
     }
 
-    DEV_BROADCAST_DEVICEINTERFACE_W notificationFilter = {};
-    notificationFilter.dbcc_size = sizeof(notificationFilter);
-    notificationFilter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
+    // A message-only window receives no broadcast (DBT_DEVTYP_VOLUME) messages, so the
+    // scanner subscribes to exactly the two interface classes whose arrival or removal changes
+    // what it reports: disks (a drive plugged in or pulled) and volumes (a drive's partitions
+    // mounting after a flash or format). Every other device class is ignored at the source.
+    const auto registerClass = [this](const GUID& interface_class) -> HDEVNOTIFY {
+        DEV_BROADCAST_DEVICEINTERFACE_W filter = {};
+        filter.dbcc_size = sizeof(filter);
+        filter.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
+        filter.dbcc_classguid = interface_class;
+        return RegisterDeviceNotificationW(m_notificationWindow,
+                                           &filter,
+                                           DEVICE_NOTIFY_WINDOW_HANDLE);
+    };
+    m_diskNotify = registerClass(GUID_DEVINTERFACE_DISK);
+    m_volumeNotify = registerClass(GUID_DEVINTERFACE_VOLUME);
 
-    m_deviceNotify = RegisterDeviceNotificationW(m_notificationWindow,
-                                                 &notificationFilter,
-                                                 DEVICE_NOTIFY_WINDOW_HANDLE |
-                                                     DEVICE_NOTIFY_ALL_INTERFACE_CLASSES);
-
-    if (m_deviceNotify == nullptr) {
-        sak::logError("Failed to register device notification");
-        DestroyWindow(m_notificationWindow);
-        m_notificationWindow = nullptr;
+    if (m_diskNotify == nullptr || m_volumeNotify == nullptr) {
+        // Without both subscriptions hot-plug changes would go unseen, and there is no timer to
+        // paper over that: report it and release whatever registered rather than pretend to be
+        // monitoring. The list stays what the start-up scan found; a flash still re-verifies
+        // the target drive's identity against a fresh read before writing.
+        sak::logError("Failed to register disk/volume device notifications: {}", GetLastError());
+        unregisterDeviceNotification();
     } else {
-        sak::logDebug("DriveScanner", "Device notification registered successfully");
+        sak::logDebug("DriveScanner", "Disk and volume device notifications registered");
     }
 }
 
 void DriveScanner::unregisterDeviceNotification() {
-    if (m_deviceNotify != nullptr) {
-        UnregisterDeviceNotification(m_deviceNotify);
-        m_deviceNotify = nullptr;
+    if (m_diskNotify != nullptr) {
+        UnregisterDeviceNotification(m_diskNotify);
+        m_diskNotify = nullptr;
+    }
+    if (m_volumeNotify != nullptr) {
+        UnregisterDeviceNotification(m_volumeNotify);
+        m_volumeNotify = nullptr;
     }
 
     if (m_notificationWindow != nullptr) {

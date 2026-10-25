@@ -48,6 +48,11 @@ private Q_SLOTS:
     // Start/Stop
     void startStop_lifecycle();
 
+    // Rescans come from disk/volume device notifications, debounced -- never from a timer
+    void deviceChange_diskAndVolumeInterfacesRequestRescan();
+    void deviceChange_otherEventsAndClassesAreIgnored();
+    void deviceChange_burstCoalescesIntoOneDebouncedRescan();
+
     // getDriveInfo
     void getDriveInfo_nonExistentDrive();
 
@@ -298,30 +303,121 @@ void DriveScannerTests::refresh_doubleCallStillCompletes() {
 
 void DriveScannerTests::startStop_lifecycle() {
     DriveScanner scanner;
-    QVERIFY(!scanner.m_refreshTimer->isActive());  // idle until start()
+    QVERIFY(!scanner.m_rescanDebounce->isActive());  // idle until a device change
     scanner.start();
-    // start() kicks an initial scan before arming the refresh timer, so monitoring really
-    // is live once this lands.
+    // start() runs the initial scan, so the cache fills once it lands.
     QTRY_VERIFY_WITH_TIMEOUT(!scanner.getDrives().isEmpty(), kDriveEnumerationTimeoutMs);
-    // The cache alone did not prove monitoring is LIVE: the fallback refresh timer must be armed,
-    // otherwise start() is a one-shot scan and no drive ever hot-plugs in again.
-    QVERIFY(scanner.m_refreshTimer->isActive());
+    // Monitoring is LIVE through the disk and volume device-interface subscriptions -- the
+    // cache alone does not prove that, a one-shot scan would fill it too.
+    QVERIFY(scanner.m_notificationWindow != nullptr);
+    QVERIFY(scanner.m_diskNotify != nullptr);
+    QVERIFY(scanner.m_volumeNotify != nullptr);
+    // ...and nothing rescans on a schedule. The old 5 s refresh timer re-enumerated every disk
+    // forever while the panel merely existed; no repeating timer may come back.
+    for (const auto* timer : scanner.findChildren<QTimer*>()) {
+        QVERIFY2(!timer->isActive() || timer->isSingleShot(),
+                 "a periodic drive rescan timer is running");
+    }
 
     scanner.stop();
     // stop() joins the in-flight worker scan and DROPS the cache: a stopped scanner must
     // never keep handing out a drive list it is no longer refreshing.
     QVERIFY(scanner.getDrives().isEmpty());
-    // ...and it disarms the timer, so nothing repopulates the cache it just dropped.
-    QVERIFY(!scanner.m_refreshTimer->isActive());
+    // ...and it drops the subscriptions, so nothing repopulates the cache it just dropped.
+    QVERIFY(scanner.m_diskNotify == nullptr);
+    QVERIFY(scanner.m_volumeNotify == nullptr);
+    QVERIFY(!scanner.m_rescanDebounce->isActive());
     scanner.start();
-    // start() kicks an initial scan before arming the refresh timer, so monitoring really
-    // is live once this lands.
     QTRY_VERIFY_WITH_TIMEOUT(!scanner.getDrives().isEmpty(), kDriveEnumerationTimeoutMs);
 
     scanner.stop();
     // stop() joins the in-flight worker scan and DROPS the cache: a stopped scanner must
     // never keep handing out a drive list it is no longer refreshing.
     QVERIFY(scanner.getDrives().isEmpty());
+}
+
+// ============================================================================
+// Device-change notifications
+// ============================================================================
+
+namespace {
+// {53F56307-B6BF-11D0-94F2-00A0C91EFB8B}, {53F5630D-...}: the disk and volume device-interface
+// classes, spelled out here so the test does not depend on how the SDK header exports them.
+constexpr GUID kDiskInterface = {
+    0x53'f5'63'07, 0xb6bf, 0x11d0, {0x94, 0xf2, 0x00, 0xa0, 0xc9, 0x1e, 0xfb, 0x8b}};
+constexpr GUID kVolumeInterface = {
+    0x53'f5'63'0d, 0xb6bf, 0x11d0, {0x94, 0xf2, 0x00, 0xa0, 0xc9, 0x1e, 0xfb, 0x8b}};
+// GUID_DEVINTERFACE_USB_DEVICE: a USB device that is not (yet) a disk.
+constexpr GUID kUsbDeviceInterface = {
+    0xa5'dc'bf'10, 0x6530, 0x11d2, {0x90, 0x1f, 0x00, 0xc0, 0x4f, 0xb9, 0x51, 0xed}};
+
+DEV_BROADCAST_DEVICEINTERFACE_W interfaceBroadcast(const GUID& interface_class) {
+    DEV_BROADCAST_DEVICEINTERFACE_W broadcast = {};
+    broadcast.dbcc_size = sizeof(broadcast);
+    broadcast.dbcc_devicetype = DBT_DEVTYP_DEVICEINTERFACE;
+    broadcast.dbcc_classguid = interface_class;
+    return broadcast;
+}
+
+const DEV_BROADCAST_HDR* header(const DEV_BROADCAST_DEVICEINTERFACE_W& broadcast) {
+    return reinterpret_cast<const DEV_BROADCAST_HDR*>(&broadcast);
+}
+}  // namespace
+
+void DriveScannerTests::deviceChange_diskAndVolumeInterfacesRequestRescan() {
+    for (const GUID& interface_class : {kDiskInterface, kVolumeInterface}) {
+        const auto broadcast = interfaceBroadcast(interface_class);
+        QVERIFY(DriveScanner::deviceChangeRequestsRescan(DBT_DEVICEARRIVAL, header(broadcast)));
+        QVERIFY(
+            DriveScanner::deviceChangeRequestsRescan(DBT_DEVICEREMOVECOMPLETE, header(broadcast)));
+    }
+    DEV_BROADCAST_VOLUME volume = {};
+    volume.dbcv_size = sizeof(volume);
+    volume.dbcv_devicetype = DBT_DEVTYP_VOLUME;
+    QVERIFY(DriveScanner::deviceChangeRequestsRescan(
+        DBT_DEVICEARRIVAL, reinterpret_cast<const DEV_BROADCAST_HDR*>(&volume)));
+}
+
+void DriveScannerTests::deviceChange_otherEventsAndClassesAreIgnored() {
+    const auto disk = interfaceBroadcast(kDiskInterface);
+    // Query/pending events and the generic "devnodes changed" ping do not mean a disk changed.
+    QVERIFY(!DriveScanner::deviceChangeRequestsRescan(DBT_DEVNODES_CHANGED, header(disk)));
+    QVERIFY(!DriveScanner::deviceChangeRequestsRescan(DBT_DEVICEQUERYREMOVE, header(disk)));
+    QVERIFY(!DriveScanner::deviceChangeRequestsRescan(DBT_DEVICEREMOVEPENDING, header(disk)));
+    QVERIFY(!DriveScanner::deviceChangeRequestsRescan(DBT_DEVICEARRIVAL, nullptr));
+    const auto usb = interfaceBroadcast(kUsbDeviceInterface);
+    QVERIFY(!DriveScanner::deviceChangeRequestsRescan(DBT_DEVICEARRIVAL, header(usb)));
+    // A header too short to carry a class GUID is not read past its end.
+    auto truncated = interfaceBroadcast(kDiskInterface);
+    truncated.dbcc_size = sizeof(DEV_BROADCAST_HDR);
+    QVERIFY(!DriveScanner::deviceChangeRequestsRescan(DBT_DEVICEARRIVAL, header(truncated)));
+}
+
+void DriveScannerTests::deviceChange_burstCoalescesIntoOneDebouncedRescan() {
+    DriveScanner scanner;
+    // Not monitoring yet: a stray notification must not start disk I/O.
+    scanner.scheduleRescan();
+    QVERIFY(!scanner.m_rescanDebounce->isActive());
+
+    scanner.start();
+    QTRY_VERIFY_WITH_TIMEOUT(!scanner.isScanning(), kDriveEnumerationTimeoutMs);
+    // One plug-in raises several notifications (the disk interface, then each volume). They
+    // arm ONE single-shot debounce; nothing scans until the burst has gone quiet.
+    constexpr int kNotificationBurst = 4;
+    for (int notification = 0; notification < kNotificationBurst; ++notification) {
+        scanner.scheduleRescan();
+        QVERIFY(!scanner.isScanning());
+    }
+    QVERIFY(scanner.m_rescanDebounce->isActive());
+    QVERIFY(scanner.m_rescanDebounce->isSingleShot());
+    QTRY_VERIFY_WITH_TIMEOUT(scanner.isScanning() || !scanner.m_rescanDebounce->isActive(),
+                             kDriveEnumerationTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(!scanner.isScanning(), kDriveEnumerationTimeoutMs);
+    QVERIFY(!scanner.m_rescanDebounce->isActive());
+    QVERIFY(!scanner.getDrives().isEmpty());
+    scanner.stop();
+    scanner.scheduleRescan();
+    QVERIFY(!scanner.m_rescanDebounce->isActive());
 }
 
 // ============================================================================
