@@ -66,6 +66,16 @@ public Q_SLOTS:
                     bool use_elevation = true);
     void cancel();
     void runReadOnlyFileSystemCheck(const QString& file_system, const QString& target_path);
+    /// @brief Run one read-only operation now instead of queueing it for Apply.
+    /// A scan changes nothing on the disk, so making the user queue it and then press Apply is
+    /// ceremony. Only operations the planner classifies as read-only are accepted, after the
+    /// same safety validation a queued operation gets; anything else is refused and never runs.
+    /// The queue is left untouched and no preflight/verification inventory scan runs. The result
+    /// arrives through executionFinished like an applied batch.
+    /// @return true when the run was started.
+    bool runReadOnlyOperation(PartitionOperationType type,
+                              const PartitionTarget& target,
+                              const QJsonObject& payload = {});
 
 #ifdef SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS
     void setTestInventory(const PartitionInventory& inventory);
@@ -99,6 +109,9 @@ private:
         bool dry_run{false};
         bool use_elevation{true};
         PartitionQueueReviewToken reviewed;
+        // A single read-only operation run outside the queue: nothing on disk changes, so its
+        // result is published without a verification scan and the queue is not discarded.
+        bool read_only_immediate{false};
     };
 
     PartitionOperationPlanner m_planner;

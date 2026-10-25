@@ -55,6 +55,8 @@
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <utility>
 
@@ -122,6 +124,7 @@ private Q_SLOTS:
     void manageBitLockerShowsStatusDialog();
     void diskDefragShowsOptimizeDialog();
     void ssdSecureEraseShowsQueueDialog();
+    void readOnlyScansRunNowWithoutQueueing();
     void spaceAnalyzerExposesCommercialViews();
     void changeClusterSizeQueuesVerifiedReformatOperation();
     void allocateFreeSpaceQueuesAdjacentDonorOperation();
@@ -261,6 +264,37 @@ QToolButton* findToolButtonByName(QWidget* root, const QString& name) {
         return button->accessibleName() == name;
     });
     return it == buttons.cend() ? nullptr : *it;
+}
+
+// The certification lab's evidence checklist and its Copy button were internal process text
+// shown to people erasing a drive. Neither may come back: the rows are exactly what a user needs
+// to decide, and no button copies anything.
+void verifyEraseDialogShowsNoInternalChecklist(QDialog* dialog, QTableWidget* status) {
+    QStringList row_names;
+    for (int row = 0; row < status->rowCount(); ++row) {
+        row_names.append(status->item(row, 0) ? status->item(row, 0)->text() : QString());
+    }
+    QCOMPARE(row_names,
+             QStringList({QStringLiteral("Target disk"),
+                          QStringLiteral("Model"),
+                          QStringLiteral("Serial number"),
+                          QStringLiteral("Bus type"),
+                          QStringLiteral("Media type"),
+                          QStringLiteral("Device class"),
+                          QStringLiteral("Erase status"),
+                          QStringLiteral("Erase method")}));
+    QStringList button_texts;
+    for (const auto* push : dialog->findChildren<QPushButton*>()) {
+        button_texts.append(push->text());
+    }
+    QVERIFY2(std::ranges::none_of(button_texts,
+                                  [](const QString& text) {
+                                      return text.contains(QStringLiteral("Copy"),
+                                                           Qt::CaseInsensitive) ||
+                                             text.contains(QStringLiteral("Checklist"),
+                                                           Qt::CaseInsensitive);
+                                  }),
+             qPrintable(button_texts.join(QStringLiteral(", "))));
 }
 
 QString propertyTableValue(QTableWidget* table, const QString& propertyName) {
@@ -927,8 +961,15 @@ void verifyMetadataCheckDialog(QToolButton* button, const QString& expectedFindi
         auto* properties =
             dialog->findChild<QTableWidget*>(QStringLiteral("partitionPropertiesTable"));
         QVERIFY2(properties != nullptr, "Metadata check table should exist");
+        // The dialog shows the verdict the last disk scan computed; it does not re-read the
+        // disk, so it must say so rather than present itself as a fresh check.
         QCOMPARE(propertyTableValue(properties, QStringLiteral("Check type")),
-                 QStringLiteral("Original read-only metadata consistency check"));
+                 QStringLiteral("Metadata sanity results from the last disk scan"));
+        QCOMPARE(propertyTableValue(properties, QStringLiteral("Re-run")),
+                 QStringLiteral(
+                     "Refresh Disks re-reads the metadata and recomputes these results"));
+        QVERIFY2(dialog->windowTitle().endsWith(QStringLiteral("Metadata (Last Disk Scan)")),
+                 qPrintable(dialog->windowTitle()));
         QCOMPARE(propertyTableValue(properties, QStringLiteral("Result")),
                  QStringLiteral("No sanity warnings"));
         // The findings cell is the check's ENTIRE verdict list. A contains() on the
@@ -1463,11 +1504,11 @@ QVector<ExpectedMetadataAction> expectedMetadataActions() {
              QStringLiteral("Confirm primary logical backup and restore"),
              QStringLiteral("Convert Primary/Logical - Disk 0 Partition 1"),
              QStringLiteral("Back up, rebuild MBR primary/logical layout, restore, and verify")},
-            {QStringLiteral("Change Serial Number"),
-             QStringLiteral("Change Serial Number"),
+            {QStringLiteral("Reformat for New Serial Number"),
+             QStringLiteral("Reformat for New Serial Number"),
              QStringLiteral("Volume serial backup directory"),
              QStringLiteral("Confirm volume serial backup and restore"),
-             QStringLiteral("Change Volume Serial Number - Disk 0 Partition 1"),
+             QStringLiteral("Reformat for New Volume Serial - Disk 0 Partition 1"),
              QStringLiteral("Back up, reformat to regenerate volume serial, restore, and verify")},
             {QStringLiteral("Convert Dynamic Disk to Basic"),
              QStringLiteral("Convert Dynamic Disk to Basic"),
@@ -2917,9 +2958,28 @@ void PartitionManagerPanelTests::propertiesActionIsFirstClass() {
                                             "Optimize Drives")),
              "Disk Defrag should show in-app guidance before Windows Optimize Drives");
     QVERIFY2(hasActionButton(buttons,
-                             QStringLiteral("SSD Secure Erase"),
-                             QStringLiteral("Queue SSD/NVMe ReTrim plus clear-level wipe")),
-             "SSD Secure Erase should expose a queued ReTrim and wipe path");
+                             QStringLiteral("Erase SSD (TRIM + Overwrite)"),
+                             QStringLiteral("Queue SSD/NVMe ReTrim plus full-disk overwrite")),
+             "SSD erase should expose a queued ReTrim and overwrite path");
+    // Each name says what the action does. These three names promised something the code never
+    // did: an alignment pass (it TRIMs one volume), a surface read (it scans file systems), and an
+    // ATA/NVMe sanitize (it TRIMs and overwrites). None may come back.
+    for (const QString& misleading : {QStringLiteral("Partition Alignment"),
+                                      QStringLiteral("Surface Test"),
+                                      QStringLiteral("SSD Secure Erase"),
+                                      QStringLiteral("Change Serial Number")}) {
+        QVERIFY2(findToolButtonByName(&panel, misleading) == nullptr, qPrintable(misleading));
+    }
+    QVERIFY2(hasActionButton(buttons,
+                             QStringLiteral("TRIM SSD Volume"),
+                             QStringLiteral("Send TRIM for the selected volume "
+                                            "(Optimize-Volume -ReTrim)")),
+             "TRIM must be named for what it does");
+    QVERIFY2(hasActionButton(buttons,
+                             QStringLiteral("Scan File Systems"),
+                             QStringLiteral("Scan for file-system errors without repairing (runs "
+                                            "immediately, not added to the queue)")),
+             "The file-system scan must be named for what it does");
 }
 
 void PartitionManagerPanelTests::propertiesDialogShowsRawFilesystemMetadata() {
@@ -2991,8 +3051,8 @@ void PartitionManagerPanelTests::propertiesAndInspectShowRawFilesystemSanityNote
     // The tooltip is built by .arg(file_system) from one shared template, so the two fragments
     // held even if the WRONG filesystem name was interpolated into an XFS partition's action.
     QCOMPARE(checkButton->toolTip(),
-             QStringLiteral("Run original read-only XFS metadata consistency check from captured "
-                            "probe data"));
+             QStringLiteral("Show the XFS metadata sanity results from the last disk scan "
+                            "(Refresh Disks re-runs the scan)"));
     verifyMetadataCheckDialog(checkButton,
                               QStringLiteral("Metadata sanity: XFS superblock geometry is "
                                              "internally consistent"));
@@ -3011,8 +3071,8 @@ void PartitionManagerPanelTests::propertiesAndInspectShowRawFilesystemSanityNote
     QVERIFY2(apfsCheck != nullptr, "APFS non-native filesystem check action should exist");
     QVERIFY(apfsCheck->isEnabled());
     QCOMPARE(apfsCheck->toolTip(),
-             QStringLiteral("Run original read-only APFS metadata consistency check from captured "
-                            "probe data"));
+             QStringLiteral("Show the APFS metadata sanity results from the last disk scan "
+                            "(Refresh Disks re-runs the scan)"));
     verifyMetadataCheckDialog(apfsCheck,
                               QStringLiteral("Metadata sanity: APFS container block geometry is "
                                              "internally consistent"));
@@ -3215,51 +3275,115 @@ void PartitionManagerPanelTests::ssdSecureEraseShowsQueueDialog() {
     QVERIFY2(table != nullptr, "Partition table should exist");
     table->selectRow(0);
 
-    auto* button = findToolButtonByName(&panel, QStringLiteral("SSD Secure Erase"));
-    QVERIFY2(button != nullptr, "SSD Secure Erase action should exist");
+    auto* button = findToolButtonByName(&panel, QStringLiteral("Erase SSD (TRIM + Overwrite)"));
+    QVERIFY2(button != nullptr, "SSD erase action should exist");
 
     bool inspected = false;
     const ScopedModalInspection inspection([&]() {
         auto* dialog = qobject_cast<QDialog*>(QApplication::activeModalWidget());
         const auto reject_on_return = rejectDialogOnReturn(dialog);
-        QVERIFY2(dialog != nullptr, "SSD Secure Erase dialog should open");
+        QVERIFY2(dialog != nullptr, "SSD erase dialog should open");
         QCOMPARE(dialog->objectName(), QStringLiteral("partitionSecureEraseDialog"));
-        QCOMPARE(dialog->accessibleName(), QStringLiteral("SSD Secure Erase readiness"));
+        QCOMPARE(dialog->windowTitle(), QStringLiteral("Erase SSD (TRIM + Overwrite)"));
+        QCOMPARE(dialog->accessibleName(), QStringLiteral("Erase SSD readiness"));
 
         auto* status =
             dialog->findChild<QTableWidget*>(QStringLiteral("partitionSecureEraseStatusTable"));
-        QVERIFY2(status != nullptr, "SSD Secure Erase readiness table should exist");
-        QCOMPARE(status->accessibleName(), QStringLiteral("SSD Secure Erase readiness table"));
+        QVERIFY2(status != nullptr, "SSD erase readiness table should exist");
+        QCOMPARE(status->accessibleName(), QStringLiteral("Erase SSD readiness table"));
+        QCOMPARE(propertyTableValue(status, QStringLiteral("Model")),
+                 QStringLiteral("Fixture NVMe"));
+        QCOMPARE(propertyTableValue(status, QStringLiteral("Serial number")),
+                 QStringLiteral("SER123"));
         QCOMPARE(propertyTableValue(status, QStringLiteral("Device class")),
                  QStringLiteral("NVMe SSD"));
         // "Ready" is a substring of the NOT-ready gate texts too, so it could not distinguish
         // a permitted erase from a refused one; pin the whole gate sentence.
-        QCOMPARE(propertyTableValue(status, QStringLiteral("Secure erase status")),
+        QCOMPARE(propertyTableValue(status, QStringLiteral("Erase status")),
                  QStringLiteral("Ready: queue ReTrim plus clear-level wipe through Apply"));
-        QCOMPARE(propertyTableValue(status, QStringLiteral("In-app ATA/NVMe purge")),
-                 QStringLiteral("Uses Windows ReTrim followed by clear-level disk wipe"));
-        // The checklist is the evidence record for an IRREVERSIBLE purge. One contains() left
-        // the target-identity line (disk number, model, serial -- the proof the right device
-        // was wiped) and every other step unasserted.
-        QCOMPARE(propertyTableValue(status, QStringLiteral("Evidence checklist")),
-                 QStringLiteral(
-                     "Target identity: Disk 0, model Fixture NVMe, serial SER123\n"
-                     "Disposable non-system SSD/NVMe media only\n"
-                     "Record bus type, firmware, SMART health, and wear before erase\n"
-                     "Verify vendor ATA Secure Erase or NVMe Format/Sanitize support externally\n"
-                     "Show purge warning and typed operator confirmation in evidence\n"
-                     "Capture before/after layout and post-erase readback proof\n"
-                     "Attach evidence to external.ssd-retrim or hardware wipe certification"));
-        QVERIFY(findAccessibleWidget<QPushButton>(
-                    dialog, QStringLiteral("Copy SSD Secure Erase evidence checklist")) != nullptr);
-        QVERIFY(findAccessibleWidget<QPushButton>(
-                    dialog, QStringLiteral("Queue SSD Secure Erase")) != nullptr);
+        // The method row is the honest description of an irreversible action: it must say what
+        // runs AND what it is not, because "secure erase" reads as a firmware sanitize.
+        QCOMPARE(propertyTableValue(status, QStringLiteral("Erase method")),
+                 QStringLiteral("Windows ReTrim, then a full overwrite of the whole disk. This is "
+                                "not an ATA Secure Erase or NVMe Sanitize/Format command."));
+        verifyEraseDialogShowsNoInternalChecklist(dialog, status);
+        QVERIFY(findAccessibleWidget<QPushButton>(dialog, QStringLiteral("Queue SSD erase")) !=
+                nullptr);
         inspected = true;
         dialog->reject();
     });
 
     button->click();
     QVERIFY(inspected);
+}
+
+// A scan changes nothing on the disk, so "Check File System" and "Scan File Systems" run the
+// moment they are clicked. They used to land in the Apply queue and wait for Apply and its review
+// dialog like a destructive operation.
+void PartitionManagerPanelTests::readOnlyScansRunNowWithoutQueueing() {
+    sak::PartitionManagerPanel panel;
+    auto inventory = applyReviewInventoryFixture();
+    inventory.disks[0].unique_id = QStringLiteral("panel-scan-disk");
+    panel.setTestInventoryForReview(inventory);
+    struct Executed {
+        std::mutex mutex;
+        QVector<sak::PartitionOperationType> types;
+        int count{0};
+    };
+    const auto executed = std::make_shared<Executed>();
+    panel.setTestApplyExecutorForReview([executed](const QVector<sak::PartitionOperation>& ops,
+                                                   bool dry_run,
+                                                   bool,
+                                                   const sak::CancelCheck&) {
+        const std::lock_guard<std::mutex> lock(executed->mutex);
+        for (const auto& op : ops) {
+            executed->types.append(op.type);
+        }
+        ++executed->count;
+        sak::PartitionExecutionResult result;
+        result.success = true;
+        result.dry_run = dry_run;
+        result.message = QStringLiteral("scan complete");
+        return result;
+    });
+    const auto executionCount = [executed]() {
+        const std::lock_guard<std::mutex> lock(executed->mutex);
+        return executed->count;
+    };
+    // The finished run reports through an information box; accept each one as it opens. The
+    // controller leaves its running state only after that box closes, so the count is also
+    // what tells the loop below the run is completely over.
+    int results_shown = 0;
+    QTimer closer;
+    closer.setInterval(1);
+    QObject::connect(&closer, &QTimer::timeout, [&results_shown]() {
+        if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+            ++results_shown;
+            box->accept();
+        }
+    });
+    closer.start();
+
+    auto* table = panel.findChild<QTableWidget*>();
+    QVERIFY2(table != nullptr, "Partition table should exist");
+    int expected_runs = 0;
+    for (const QString& name :
+         {QStringLiteral("Check File System"), QStringLiteral("Scan File Systems")}) {
+        table->selectRow(1);
+        auto* button = findToolButtonByName(&panel, name);
+        QVERIFY2(button != nullptr, qPrintable(name));
+        QTRY_VERIFY2(button->isEnabled(), qPrintable(name));
+        button->click();
+        ++expected_runs;
+        QTRY_COMPARE(executionCount(), expected_runs);
+        QTRY_COMPARE(results_shown, expected_runs);
+        QCoreApplication::processEvents();
+        QVERIFY2(panel.testQueuedOperationsForReview().isEmpty(), qPrintable(name));
+    }
+    const std::lock_guard<std::mutex> lock(executed->mutex);
+    QCOMPARE(executed->types,
+             QVector<sak::PartitionOperationType>({sak::PartitionOperationType::CheckFileSystem,
+                                                   sak::PartitionOperationType::SurfaceTest}));
 }
 
 void PartitionManagerPanelTests::spaceAnalyzerExposesCommercialViews() {

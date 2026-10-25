@@ -129,6 +129,8 @@ private Q_SLOTS:
     void rawPayloadTargetSwapBlocksApply();
     void missingStableDiskIdentityBlocksPreflight();
     void dryRunUsesFreshInventoryAndKeepsQueueDirty();
+    void readOnlyOperationRunsNowOutsideTheQueue();
+    void readOnlyRunRefusesMutatingOperations();
     void realApplyTransitionsAndCleansBeforeSignals();
     void failedVerificationRetainsQueueAndDowngradesReport();
     void inventoryRefreshCanBeCancelled();
@@ -468,6 +470,85 @@ void PartitionManagerControllerTests::dryRunUsesFreshInventoryAndKeepsQueueDirty
     QVERIFY(delivered->dry_run);
     QCOMPARE(controller.state(), sak::PartitionManagerState::QueueDirty);
     QVERIFY(!controller.queue().isEmpty());
+}
+
+// A scan changes nothing, so it runs the moment it is asked for: no queue entry, no Apply, no
+// preflight or verification inventory scan -- exactly one elevated execution of one operation.
+void PartitionManagerControllerTests::readOnlyOperationRunsNowOutsideTheQueue() {
+    sak::PartitionManagerController controller;
+    std::atomic_int scans{0};
+    std::atomic_int executions{0};
+    std::optional<sak::PartitionExecutionResult> delivered;
+    QVector<sak::PartitionOperation> executed;
+    bool executed_dry_run = true;
+    bool executed_elevated = false;
+    controller.setTestInventory(healthyInventory());
+    controller.setInventoryScannerForTesting([&scans](const sak::CancelCheck&) {
+        ++scans;
+        return inventoryResult(healthyInventory());
+    });
+    controller.setApplyExecutorForTesting(
+        [&executions, &executed, &executed_dry_run, &executed_elevated](
+            const QVector<sak::PartitionOperation>& operations,
+            bool dry_run,
+            bool use_elevation,
+            const sak::CancelCheck&) {
+            executed = operations;
+            executed_dry_run = dry_run;
+            executed_elevated = use_elevation;
+            ++executions;
+            return successfulResult(dry_run);
+        });
+    connect(&controller,
+            &sak::PartitionManagerController::executionFinished,
+            this,
+            [&delivered](const auto& result) { delivered = result; });
+
+    QVERIFY(controller.runReadOnlyOperation(sak::PartitionOperationType::SurfaceTest,
+                                            testDiskTarget()));
+    QVERIFY(waitUntil([&delivered]() { return delivered.has_value(); }));
+    QVERIFY(delivered->success);
+    QCOMPARE(executions.load(), 1);
+    QCOMPARE(executed.size(), 1);
+    QCOMPARE(executed.constFirst().type, sak::PartitionOperationType::SurfaceTest);
+    QCOMPARE(executed.constFirst().risk, sak::OperationRisk::ReadOnly);
+    QVERIFY(!executed_dry_run);
+    QVERIFY(executed_elevated);
+    QCOMPARE(scans.load(), 0);
+    QVERIFY(controller.queue().isEmpty());
+    QVERIFY(waitUntil([&controller]() { return !controller.interactionBlocked(); }));
+}
+
+// The run-now path is for scans only. Anything that changes the disk is refused outright -- it
+// never reaches the executor -- and must go through the queue, its review and Apply.
+void PartitionManagerControllerTests::readOnlyRunRefusesMutatingOperations() {
+    sak::PartitionManagerController controller;
+    std::atomic_int executions{0};
+    controller.setTestInventory(healthyInventory());
+    controller.setApplyExecutorForTesting([&executions](const QVector<sak::PartitionOperation>&,
+                                                        bool dry_run,
+                                                        bool,
+                                                        const sak::CancelCheck&) {
+        ++executions;
+        return successfulResult(dry_run);
+    });
+    QVERIFY(!controller.runReadOnlyOperation(sak::PartitionOperationType::InitializeDisk,
+                                             testDiskTarget(),
+                                             {{QStringLiteral("target_style"),
+                                               QStringLiteral("GPT")}}));
+    QVERIFY(!controller.runReadOnlyOperation(sak::PartitionOperationType::WipeDisk,
+                                             testDiskTarget(),
+                                             {{QStringLiteral("target_wipe_confirmed"), true}}));
+    // A non-Windows "check" is the bundled tool's repair; the type alone must not admit it.
+    QVERIFY(!controller.runReadOnlyOperation(sak::PartitionOperationType::CheckFileSystem,
+                                             testDiskTarget(),
+                                             {{QStringLiteral("non_native_file_system_tool"), true},
+                                              {QStringLiteral("file_system"),
+                                               QStringLiteral("ext4")}}));
+    QCoreApplication::processEvents();
+    QCOMPARE(executions.load(), 0);
+    QVERIFY(!controller.interactionBlocked());
+    QVERIFY(controller.queue().isEmpty());
 }
 
 void PartitionManagerControllerTests::realApplyTransitionsAndCleansBeforeSignals() {

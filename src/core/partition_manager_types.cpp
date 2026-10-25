@@ -21,7 +21,9 @@ QStringList corePartitionOperationNames() {
         QStringLiteral("Set Drive Letter"),
         QStringLiteral("Set Partition Label"),
         QStringLiteral("Check File System"),
-        QStringLiteral("Surface Test"),
+        // Display names say what the operation does; the enum values (the stable IDs) keep their
+        // historical names. SurfaceTest scans file systems -- it never read the disk surface.
+        QStringLiteral("Scan File Systems"),
         QStringLiteral("Partition Recovery Scan"),
         QStringLiteral("Restore Recovered Partition"),
         QStringLiteral("Hide/Unhide Partition"),
@@ -48,7 +50,7 @@ QStringList advancedPartitionOperationNames() {
         QStringLiteral("Restore Image"),
         QStringLiteral("Migrate OS"),
         QStringLiteral("Repair Boot"),
-        QStringLiteral("Optimize SSD"),
+        QStringLiteral("TRIM SSD Volume"),
         QStringLiteral("Defrag Volume"),
         QStringLiteral("BitLocker Unlock"),
         QStringLiteral("BitLocker Suspend"),
@@ -58,7 +60,7 @@ QStringList advancedPartitionOperationNames() {
         QStringLiteral("Wipe Free Space"),
         QStringLiteral("Move Partition"),
         QStringLiteral("Convert Primary/Logical"),
-        QStringLiteral("Change Volume Serial Number"),
+        QStringLiteral("Reformat for New Volume Serial"),
         QStringLiteral("Convert Dynamic Disk to Basic"),
     };
 }

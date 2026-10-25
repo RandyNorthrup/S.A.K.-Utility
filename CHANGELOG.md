@@ -8,6 +8,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **Partition Manager names say what each disk tool does** - "Surface Test" is now "Scan File
+  Systems" (it reads reliability counters and scans file systems; it never read the disk
+  surface), "Partition Alignment" is "TRIM SSD Volume" (it runs Optimize-Volume -ReTrim on one
+  volume), "SSD Secure Erase" is "Erase SSD (TRIM + Overwrite)" (it is not an ATA/NVMe sanitize),
+  and "Change Serial Number" is "Reformat for New Serial Number". Check File System and Scan File
+  Systems run immediately instead of waiting in the Apply queue. The erase dialog no longer shows
+  the certification lab's evidence checklist or its Copy button, and the non-Windows metadata
+  check says its results come from the last disk scan. A non-Windows file-system repair is no
+  longer labelled "Read-only" in the Apply review.
+
 - **R5 Wave 31 local integration passed** - Partition operations now bind reviewed source and raw
   target identities, validate atomic Quick Partition batches against projected layouts, and use a
   locked Restore Image source handle. AI workflow recovery now authenticates and binds snapshots

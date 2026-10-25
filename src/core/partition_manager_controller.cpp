@@ -337,6 +337,44 @@ bool PartitionManagerController::applyQueue(const PartitionQueueReviewToken& rev
     return true;
 }
 
+bool PartitionManagerController::runReadOnlyOperation(PartitionOperationType type,
+                                                      const PartitionTarget& target,
+                                                      const QJsonObject& payload) {
+    if (interactionBlocked()) {
+        Q_EMIT statusMessage(QStringLiteral("Wait for the active operation before starting a "
+                                            "read-only check"),
+                             sak::kTimerStatusDefaultMs);
+        return false;
+    }
+    auto operation = PartitionOperationPlanner::makeOperation(type, target, payload);
+    if (operation.risk != OperationRisk::ReadOnly) {
+        // Fail closed: the immediate path exists only for scans. A mutating operation must go
+        // through the queue, its review dialog and the Apply preflight.
+        logError("Partition Manager refused to run '{}' immediately: it is not read-only",
+                 toDisplayString(type).toStdString());
+        Q_EMIT statusMessage(QStringLiteral("%1 changes the disk and must be queued and applied")
+                                 .arg(toDisplayString(type)),
+                             sak::kTimerStatusDefaultMs);
+        return false;
+    }
+    bindDiskIdentity(m_inventory, &operation);
+    const auto preview = m_planner.previewOperation(m_inventory, operation);
+    if (!preview.canApply() || preview.operations.isEmpty()) {
+        Q_EMIT statusMessage(QStringLiteral("%1 blocked: %2")
+                                 .arg(toDisplayString(type),
+                                      preview.blockers.join(QStringLiteral("; "))),
+                             sak::kTimerStatusDefaultMs);
+        return false;
+    }
+    m_apply_before_inventory = m_inventory;
+    startApplyExecution(preview.operations,
+                        PendingApplyRequest{.dry_run = false,
+                                            .use_elevation = true,
+                                            .reviewed = {},
+                                            .read_only_immediate = true});
+    return true;
+}
+
 bool PartitionManagerController::rejectQueueMutationIfBusy() {
     if (!interactionBlocked()) {
         return false;
@@ -732,7 +770,7 @@ void PartitionManagerController::finishApplyExecution(
     const auto request = *m_active_apply_request;
     result.dry_run = request.dry_run;
 
-    if (request.dry_run) {
+    if (request.dry_run || request.read_only_immediate) {
         const auto terminal_state = publishExecutionResult(std::move(result),
                                                            m_apply_before_inventory);
         QObject::disconnect(watcher, nullptr, this, nullptr);

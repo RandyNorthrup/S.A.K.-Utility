@@ -63,6 +63,9 @@ public:
     // Puts the controller into a running-operation state so a test can assert that the
     // wizard entry points refuse to mutate the queue an executor is consuming.
     void setTestApplyStateForReview(PartitionManagerState state);
+    // Replaces the executor so a test can observe what a run-now scan executes without
+    // launching the elevated helper.
+    void setTestApplyExecutorForReview(PartitionManagerController::ApplyExecutor executor);
 #endif
 
 Q_SIGNALS:
@@ -246,6 +249,8 @@ private:
     void updateActionState();
     void updateRefreshButtonState();
     void updateDetails();
+    // Runs a read-only scan of the selected target now, outside the Apply queue.
+    void runReadOnlyOperation(PartitionOperationType type);
     void queueOperation(PartitionOperationType type, const QJsonObject& payload = {});
     // Binds an explicit, already-confirmed target instead of re-reading the live selection, so a
     // mid-modal reselection cannot retarget a destructive operation confirmed against another row.

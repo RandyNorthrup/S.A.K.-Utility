@@ -155,7 +155,7 @@ $gates = @(
         name = "Volume serial-number change"
         ids = @("external.volume-serial-number")
         evidence = @(
-            @{ path = $uiPath; patterns = @("Change Serial Number", "onChangeVolumeSerialNumber", "Volume serial backup directory") },
+            @{ path = $uiPath; patterns = @("Reformat for New Serial Number", "onChangeVolumeSerialNumber", "Volume serial backup directory") },
             @{ path = $scriptBuilderPath; patterns = @("buildChangeVolumeSerialNumberScript", "Get-SakVolumeSerial", 'Format-Volume -DriveLetter $drive') },
             @{ path = $coreTestPath; patterns = @("ChangeVolumeSerialNumber", "Volume serial changed") },
             @{ path = $panelTestPath; patterns = @("formerCommercialCompatibilityActionsQueueDirectEngines", "Volume serial backup directory") }
@@ -183,7 +183,7 @@ $gates = @(
         name = "SSD ReTrim and purge warning"
         ids = @("external.ssd-retrim")
         evidence = @(
-            @{ path = $uiPath; patterns = @("Attach evidence to external.ssd-retrim", "Optimize-Volume") }
+            @{ path = $uiPath; patterns = @("TRIM SSD Volume", "Optimize-Volume") }
         )
     },
     @{

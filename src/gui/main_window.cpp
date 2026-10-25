@@ -156,7 +156,7 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
     <ul>
         <li><b>Disk Workspace</b> &mdash; Lazy storage inventory, proportional disk map, partition table, right-click actions, pending queue, dry run, and before/after Apply review</li>
         <li><b>Queued Operations</b> &mdash; Create, delete, format, resize, move start, merge, split, clone, image, restore, label, drive-letter, type ID, active flag, hide/unhide, wipe, initialize, delete-all, and boot repair flows</li>
-        <li><b>Commercial-Parity Utilities</b> &mdash; Quick Partition, Extend Partition Wizard, Allocate Free Space, Allocate Free Space To, Space Analyzer, Disk Benchmark, BitLocker status, Disk Defrag, SSD Secure Erase, Data Recovery, OS migration, and Make Bootable Media</li>
+        <li><b>Commercial-Parity Utilities</b> &mdash; Quick Partition, Extend Partition Wizard, Allocate Free Space, Allocate Free Space To, Space Analyzer, Disk Benchmark, BitLocker status, Disk Defrag, SSD erase (TRIM + overwrite), Data Recovery, OS migration, and Make Bootable Media</li>
         <li><b>Destructive Safety</b> &mdash; Off-volume backup, typed confirmations, system/boot/removable/media guards, script preview, elevated execution, restore verification, SHA-256 manifest comparison, and repair scans where mutation requires rebuild</li>
         <li><b>Certification Evidence</b> &mdash; Disposable-VHD proof and imported external VM/hardware/lab evidence are checked by release-readiness harnesses before hardware-certified release claims are accepted</li>
     </ul>

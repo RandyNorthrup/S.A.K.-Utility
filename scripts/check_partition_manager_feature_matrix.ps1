@@ -264,7 +264,7 @@ $features = @(
             @{
                 kind = "UI action"
                 path = "src\gui\partition_manager_panel.cpp"
-                patterns = @("Quick Partition", "Data Recovery", "raw volume/device path", "FileRecoveryEngine::scanOfflineImage", "Allocate Free Space", "Allocate Free Space To", "Back up adjacent donor", "MovePartition", "Space Analyzer", "Largest Files", "File Types", "Copy Path", "Disk Benchmark", "Manage BitLocker", "BitLocker status table", "Copy BitLocker commands", "Disk Defrag", "Disk optimization status table", "Copy Optimize commands", "SSD Secure Erase", "SSD Secure Erase readiness table", "Queue SSD Secure Erase", "Make Bootable Media")
+                patterns = @("Quick Partition", "Data Recovery", "raw volume/device path", "FileRecoveryEngine::scanOfflineImage", "Allocate Free Space", "Allocate Free Space To", "Back up adjacent donor", "MovePartition", "Space Analyzer", "Largest Files", "File Types", "Copy Path", "Disk Benchmark", "Manage BitLocker", "BitLocker status table", "Copy BitLocker commands", "Disk Defrag", "Disk optimization status table", "Copy Optimize commands", "Erase SSD (TRIM + Overwrite)", "Erase SSD readiness table", "Queue SSD erase", "Make Bootable Media")
             },
             @{
                 kind = "data recovery engine"
@@ -274,7 +274,7 @@ $features = @(
             @{
                 kind = "panel test"
                 path = "tests\unit\test_partition_manager_panel.cpp"
-                patterns = @("Quick Partition", "Data Recovery", "image and raw path recovery", "allocateFreeSpaceQueuesAdjacentDonorOperation", "unallocatedAllocateFreeSpaceQueuesAdjacentEngines", "formerCommercialCompatibilityActionsQueueDirectEngines", "Allocate free space amount", "Space Analyzer", "Largest Files", "File Types", "Copy Path", "Disk Benchmark", "Manage BitLocker", "manageBitLockerShowsStatusDialog", "Disk Defrag", "diskDefragShowsOptimizeDialog", "SSD Secure Erase", "ssdSecureEraseShowsQueueDialog", "Make Bootable Media")
+                patterns = @("Quick Partition", "Data Recovery", "image and raw path recovery", "allocateFreeSpaceQueuesAdjacentDonorOperation", "unallocatedAllocateFreeSpaceQueuesAdjacentEngines", "formerCommercialCompatibilityActionsQueueDirectEngines", "Allocate free space amount", "Space Analyzer", "Largest Files", "File Types", "Copy Path", "Disk Benchmark", "Manage BitLocker", "manageBitLockerShowsStatusDialog", "Disk Defrag", "diskDefragShowsOptimizeDialog", "Erase SSD (TRIM + Overwrite)", "ssdSecureEraseShowsQueueDialog", "Make Bootable Media")
             },
             @{
                 kind = "core test"

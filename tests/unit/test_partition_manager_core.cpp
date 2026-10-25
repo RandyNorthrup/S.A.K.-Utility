@@ -3160,6 +3160,13 @@ void verifyApfsEncryptedFormatScripts(const PartitionScriptBuilder* builder,
 }
 
 void verifyExtRepairScript(const PartitionScriptBuilder* builder, const PartitionTarget& target) {
+    // The non-Windows "check" queues the bundled tool's REPAIR. It rewrites metadata, so it must
+    // never be classified read-only: that label is what the Apply review shows, and it is what
+    // admits an operation to the run-now path that skips the queue.
+    QCOMPARE(PartitionOperationPlanner::makeOperation(
+                 PartitionOperationType::CheckFileSystem, target, baseExtToolPayload())
+                 .risk,
+             OperationRisk::Destructive);
     const auto repair = builder->buildScript(PartitionOperationPlanner::makeOperation(
         PartitionOperationType::CheckFileSystem, target, baseExtToolPayload()));
     QVERIFY2(repair.valid(), qPrintable(repair.blockers.join(QStringLiteral("; "))));
@@ -18311,6 +18318,31 @@ void verifyAdvancedScriptFailureReporting(const PartitionScript& hidden,
 
 }  // namespace
 
+namespace {
+
+// The scans are named for what runs: reliability counters plus a read-only scan of each volume.
+// Nothing reads the disk surface, so the old "surface test" name was a false description. A
+// Windows file-system check is a scan (read-only), unlike the non-Windows repair queued under the
+// same operation type.
+void verifyScanIsNamedForWhatItDoes(const PartitionTarget& partitionTarget,
+                                    const PartitionScript& surface) {
+    QCOMPARE(PartitionOperationPlanner::makeOperation(PartitionOperationType::CheckFileSystem,
+                                                      partitionTarget)
+                 .risk,
+             OperationRisk::ReadOnly);
+    QCOMPARE(surface.preview,
+             QStringLiteral(
+                 "Read reliability counters and scan file systems on Disk 7 (read-only)"));
+    QCOMPARE(toDisplayString(PartitionOperationType::SurfaceTest),
+             QStringLiteral("Scan File Systems"));
+    QCOMPARE(toDisplayString(PartitionOperationType::OptimizeSsd),
+             QStringLiteral("TRIM SSD Volume"));
+    QCOMPARE(toDisplayString(PartitionOperationType::ChangeVolumeSerialNumber),
+             QStringLiteral("Reformat for New Volume Serial"));
+}
+
+}  // namespace
+
 void PartitionManagerCoreTests::scriptBuilder_buildsAdvancedParityScripts() {
     PartitionTarget partitionTarget;
     partitionTarget.kind = PartitionTargetKind::Partition;
@@ -18369,6 +18401,7 @@ void PartitionManagerCoreTests::scriptBuilder_buildsAdvancedParityScripts() {
         PartitionOperationPlanner::makeOperation(PartitionOperationType::SurfaceTest, diskTarget));
     QVERIFY(surface.valid());
     QVERIFY(surface.script.contains(QStringLiteral("Get-StorageReliabilityCounter")));
+    verifyScanIsNamedForWhatItDoes(partitionTarget, surface);
     verifyAdvancedScriptFailureReporting(hidden, surface);
 
     auto recovery = builder.buildScript(PartitionOperationPlanner::makeOperation(

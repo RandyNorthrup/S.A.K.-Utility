@@ -5139,9 +5139,12 @@ PartitionScript PartitionScriptBuilder::buildExternalFileSystemToolScript(
 PartitionScript PartitionScriptBuilder::buildSurfaceTestScript(
     const PartitionOperation& operation) const {
     PartitionScript out;
+    // Named for what runs: the storage reliability counters plus a read-only file-system scan of
+    // each lettered volume. Nothing here reads the disk surface sector by sector.
     if (operation.target.kind == PartitionTargetKind::Disk) {
-        out.preview = QStringLiteral("Run read-only surface and health test for Disk %1")
-                          .arg(operation.target.disk_number.value());
+        out.preview =
+            QStringLiteral("Read reliability counters and scan file systems on Disk %1 (read-only)")
+                .arg(operation.target.disk_number.value());
         out.script =
             commonHeader(out.preview) +
             QStringLiteral(
@@ -5164,9 +5167,9 @@ PartitionScript PartitionScriptBuilder::buildSurfaceTestScript(
 
     const QString letter = operation.target.drive_letter.left(1);
     if (!isValidDriveLetter(letter)) {
-        return invalidScript(QStringLiteral("Partition surface test requires a drive letter"));
+        return invalidScript(QStringLiteral("File-system scan requires a drive letter"));
     }
-    out.preview = QStringLiteral("Run online surface test on %1:").arg(letter.toUpper());
+    out.preview = QStringLiteral("Scan file system on %1: (read-only)").arg(letter.toUpper());
     out.script =
         commonHeader(out.preview) +
         QStringLiteral("chkdsk.exe %1: /scan /perf\nexit $LASTEXITCODE\n").arg(letter.toUpper());

@@ -806,9 +806,14 @@ bool fillInternalMetadataCheckState(NonNativeFilesystemCheckState* state) {
     }
     state->enabled = true;
     state->internal_metadata_check = true;
-    state->reason =
-        QObject::tr("Run original read-only %1 metadata consistency check from captured probe data")
-            .arg(state->file_system);
+    // This does not re-read the disk: it shows the sanity verdict the last disk scan computed
+    // from the probe it captured. Re-reading needs raw access the GUI may not have (the scan
+    // goes through the elevated helper), so the label says where the data came from instead of
+    // implying a fresh check. Refresh Disks re-runs it.
+    state->reason = QObject::tr(
+                        "Show the %1 metadata sanity results from the last disk scan "
+                        "(Refresh Disks re-runs the scan)")
+                        .arg(state->file_system);
     return true;
 }
 
@@ -6089,13 +6094,18 @@ void showMetadataConsistencyDialog(QWidget* parent, const NonNativeFilesystemChe
     addProperty(&rows, QObject::tr("Raw target path"), state.target_path);
     addProperty(&rows,
                 QObject::tr("Check type"),
-                QObject::tr("Original read-only metadata consistency check"));
+                QObject::tr("Metadata sanity results from the last disk scan"));
+    addProperty(&rows,
+                QObject::tr("Re-run"),
+                QObject::tr("Refresh Disks re-reads the metadata and recomputes these results"));
     addProperty(&rows,
                 QObject::tr("Result"),
                 warning ? QObject::tr("Warnings found") : QObject::tr("No sanity warnings"));
     addProperty(&rows, QObject::tr("Findings"), findings.join('\n'));
     addProperty(&rows, QObject::tr("Read-only metadata"), state.metadata_details.join('\n'));
-    showPropertiesDialog(parent, QObject::tr("Check %1 Metadata").arg(state.file_system), rows);
+    showPropertiesDialog(parent,
+                         QObject::tr("%1 Metadata (Last Disk Scan)").arg(state.file_system),
+                         rows);
 }
 
 QString hfsConsistencyResultText(const PartitionHfsConsistencyCheckResult& result) {
@@ -7344,10 +7354,10 @@ QString secureEraseDeviceClass(const PartitionDiskInfo* disk) {
 
 QString secureEraseGateText(const PartitionDiskInfo* disk) {
     if (disk == nullptr) {
-        return QObject::tr("Select a disk to review SSD Secure Erase readiness");
+        return QObject::tr("Select a disk to review SSD erase readiness");
     }
     if (disk->is_system) {
-        return QObject::tr("Blocked: current system disk secure erase is not allowed");
+        return QObject::tr("Blocked: the current system disk cannot be erased");
     }
     if (!diskLooksSecureEraseCapable(disk)) {
         return QObject::tr("Blocked: selected disk is not reported as SSD/NVMe");
@@ -7360,22 +7370,10 @@ bool canQueueSsdSecureErase(const PartitionDiskInfo* disk) {
            !disk->is_boot && !disk->is_read_only && !disk->is_dynamic && !disk->is_storage_spaces;
 }
 
-QStringList secureEraseChecklist(const PartitionDiskInfo* disk) {
-    const QString disk_text = (disk != nullptr) ? QObject::tr("Disk %1, model %2, serial %3")
-                                                      .arg(disk->disk_number.value())
-                                                      .arg(propertyValue(disk->model))
-                                                      .arg(propertyValue(disk->serial_number))
-                                                : QObject::tr("No disk selected");
-    return {QObject::tr("Target identity: %1").arg(disk_text),
-            QObject::tr("Disposable non-system SSD/NVMe media only"),
-            QObject::tr("Record bus type, firmware, SMART health, and wear before erase"),
-            QObject::tr(
-                "Verify vendor ATA Secure Erase or NVMe Format/Sanitize support externally"),
-            QObject::tr("Show purge warning and typed operator confirmation in evidence"),
-            QObject::tr("Capture before/after layout and post-erase readback proof"),
-            QObject::tr("Attach evidence to external.ssd-retrim or hardware wipe certification")};
-}
-
+// The dialog shows what the user needs to decide: which disk, what it is, whether it can be
+// erased, and exactly what the erase does. It used to carry the certification lab's evidence
+// checklist (and a button to copy it) -- internal process text with no meaning to someone erasing
+// a drive. That checklist belongs to the external.ssd-secure-erase gate, not the product.
 QVector<PropertyRow> secureEraseRows(const PartitionDiskInfo* disk) {
     QVector<PropertyRow> rows;
     addProperty(&rows,
@@ -7388,22 +7386,19 @@ QVector<PropertyRow> secureEraseRows(const PartitionDiskInfo* disk) {
     addProperty(&rows, QObject::tr("Bus type"), (disk != nullptr) ? disk->bus_type : QString());
     addProperty(&rows, QObject::tr("Media type"), (disk != nullptr) ? disk->media_type : QString());
     addProperty(&rows, QObject::tr("Device class"), secureEraseDeviceClass(disk));
-    addProperty(&rows, QObject::tr("Secure erase status"), secureEraseGateText(disk));
+    addProperty(&rows, QObject::tr("Erase status"), secureEraseGateText(disk));
     addProperty(&rows,
-                QObject::tr("In-app ATA/NVMe purge"),
-                QObject::tr("Uses Windows ReTrim followed by clear-level disk wipe"));
-    addProperty(&rows, QObject::tr("Evidence checklist"), secureEraseChecklist(disk).join('\n'));
+                QObject::tr("Erase method"),
+                QObject::tr("Windows ReTrim, then a full overwrite of the whole disk. This is not "
+                            "an ATA Secure Erase or NVMe Sanitize/Format command."));
     return rows;
 }
 
-bool showSecureEraseDialog(QWidget* parent,
-                           const QVector<PropertyRow>& rows,
-                           const QStringList& checklist,
-                           bool can_queue) {
+bool showSecureEraseDialog(QWidget* parent, const QVector<PropertyRow>& rows, bool can_queue) {
     QDialog dialog(parent);
     dialog.setObjectName(QStringLiteral("partitionSecureEraseDialog"));
-    dialog.setWindowTitle(QObject::tr("SSD Secure Erase"));
-    dialog.setAccessibleName(QObject::tr("SSD Secure Erase readiness"));
+    dialog.setWindowTitle(QObject::tr("Erase SSD (TRIM + Overwrite)"));
+    dialog.setAccessibleName(QObject::tr("Erase SSD readiness"));
     dialog.setMinimumSize(kSecureEraseDialogMinWidth, kSecureEraseDialogMinHeight);
 
     auto* layout = new QVBoxLayout(&dialog);
@@ -7412,20 +7407,14 @@ bool showSecureEraseDialog(QWidget* parent,
 
     auto* table = createPropertiesTable(&dialog, rows);
     table->setObjectName(QStringLiteral("partitionSecureEraseStatusTable"));
-    table->setAccessibleName(QObject::tr("SSD Secure Erase readiness table"));
+    table->setAccessibleName(QObject::tr("Erase SSD readiness table"));
     layout->addWidget(table);
 
     auto* buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
-    auto* copy_button = buttons->addButton(QObject::tr("Copy Evidence Checklist"),
-                                           QDialogButtonBox::ActionRole);
-    copy_button->setAccessibleName(QObject::tr("Copy SSD Secure Erase evidence checklist"));
-    auto* queue_button = buttons->addButton(QObject::tr("Queue ReTrim + Wipe"),
+    auto* queue_button = buttons->addButton(QObject::tr("Queue ReTrim + Overwrite"),
                                             QDialogButtonBox::AcceptRole);
-    queue_button->setAccessibleName(QObject::tr("Queue SSD Secure Erase"));
+    queue_button->setAccessibleName(QObject::tr("Queue SSD erase"));
     queue_button->setEnabled(can_queue);
-    QObject::connect(copy_button, &QPushButton::clicked, [checklist]() {
-        QApplication::clipboard()->setText(checklist.join('\n'));
-    });
     QObject::connect(queue_button, &QPushButton::clicked, &dialog, &QDialog::accept);
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     layout->addWidget(buttons);
@@ -8648,6 +8637,11 @@ bool PartitionManagerPanel::showApplyReviewDialogForTest() {
 void PartitionManagerPanel::setTestApplyStateForReview(PartitionManagerState state) {
     m_controller->setTestState(state);
 }
+
+void PartitionManagerPanel::setTestApplyExecutorForReview(
+    PartitionManagerController::ApplyExecutor executor) {
+    m_controller->setApplyExecutorForTesting(std::move(executor));
+}
 #endif
 
 void PartitionManagerPanel::setupUi() {
@@ -8944,7 +8938,8 @@ QVector<PartitionManagerPanel::ActionLinkSpec> PartitionManagerPanel::nativeFile
                             .change_label = true}),
             makeActionSpec(tr("Check File System"),
                            kIconSurface,
-                           tr("Scan file system"),
+                           tr("Scan the file system for errors without repairing (runs "
+                              "immediately, not added to the queue)"),
                            &PartitionManagerPanel::onCheckFileSystem,
                            {.target_kinds = actionTargetKindList({kActionTargetPartition}),
                             .requires_drive_letter = true,
@@ -9006,21 +9001,25 @@ PartitionManagerPanel::filesystemOperationActionSpecs() const {
 
 QVector<PartitionManagerPanel::ActionLinkSpec>
 PartitionManagerPanel::maintenanceOperationActionSpecs() const {
-    return {makeActionSpec(tr("Partition Alignment"),
+    // Each name says what the action does. "Partition Alignment" ran Optimize-Volume -ReTrim on
+    // one volume and aligned nothing; "Surface Test" never read the disk surface, it scans file
+    // systems; "SSD Secure Erase" is a ReTrim plus a full overwrite, not an ATA/NVMe sanitize.
+    return {makeActionSpec(tr("TRIM SSD Volume"),
                            kIconAlign,
-                           tr("Run SSD optimization"),
+                           tr("Send TRIM for the selected volume (Optimize-Volume -ReTrim)"),
                            &PartitionManagerPanel::onOptimizeSsd,
-                           {.target_kinds =
-                                actionTargetKindList({kActionTargetDisk, kActionTargetPartition})}),
+                           {.target_kinds = actionTargetKindList({kActionTargetPartition}),
+                            .requires_drive_letter = true}),
             makeActionSpec(tr("Wipe Partition"),
                            kIconWipe,
                            tr("Wipe selected target"),
                            &PartitionManagerPanel::onWipeSelected,
                            {.target_kinds =
                                 actionTargetKindList({kActionTargetDisk, kActionTargetPartition})}),
-            makeActionSpec(tr("Surface Test"),
+            makeActionSpec(tr("Scan File Systems"),
                            kIconSurface,
-                           tr("Run read-only surface test"),
+                           tr("Scan for file-system errors without repairing (runs immediately, "
+                              "not added to the queue)"),
                            &PartitionManagerPanel::onSurfaceTest,
                            {.target_kinds = actionTargetKindList({kActionTargetAny})}),
             makeActionSpec(tr("Disk Benchmark"),
@@ -9041,9 +9040,9 @@ PartitionManagerPanel::maintenanceOperationActionSpecs() const {
                            {.target_kinds =
                                 actionTargetKindList({kActionTargetDisk, kActionTargetPartition}),
                             .requires_drive_letter = true}),
-            makeActionSpec(tr("SSD Secure Erase"),
+            makeActionSpec(tr("Erase SSD (TRIM + Overwrite)"),
                            kIconWipe,
-                           tr("Queue SSD/NVMe ReTrim plus clear-level wipe"),
+                           tr("Queue SSD/NVMe ReTrim plus full-disk overwrite"),
                            &PartitionManagerPanel::onSsdSecureErase,
                            {.target_kinds = actionTargetKindList({kActionTargetDisk})}),
             makeActionSpec(tr("Manage BitLocker"),
@@ -9081,7 +9080,7 @@ QVector<PartitionManagerPanel::ActionLinkSpec> PartitionManagerPanel::advancedOp
                            tr("Back up, rebuild MBR primary/logical layout, restore, and verify"),
                            &PartitionManagerPanel::onConvertPrimaryLogical,
                            {.target_kinds = actionTargetKindList({kActionTargetPartition})}),
-            makeActionSpec(tr("Change Serial Number"),
+            makeActionSpec(tr("Reformat for New Serial Number"),
                            kIconProperties,
                            tr("Back up, reformat to regenerate volume serial, restore, and verify"),
                            &PartitionManagerPanel::onChangeVolumeSerialNumber,
@@ -10031,7 +10030,7 @@ void PartitionManagerPanel::addUnallocatedContextMenuActions(QMenu& menu) {
                          [this]() { onDataRecovery(); });
     addContextMenuAction(menu,
                          this,
-                         {.text = tr("Surface Test"), .icon_path = kIconSurface},
+                         {.text = tr("Scan File Systems"), .icon_path = kIconSurface},
                          [this]() { onSurfaceTest(); });
     menu.addSeparator();
 }
@@ -10179,7 +10178,8 @@ void PartitionManagerPanel::addPartitionMaintenanceContextMenuActions(
     QMenu& menu, const PartitionInfoEx* partition) {
     addContextMenuAction(menu,
                          this,
-                         {.text = tr("Align Partition"), .icon_path = kIconAlign},
+                         partitionContextActionSpec(
+                             tr("TRIM SSD Volume"), kIconAlign, partition, driveLetterPolicy()),
                          [this]() { onOptimizeSsd(); });
     addContextMenuAction(menu,
                          this,
@@ -10187,7 +10187,7 @@ void PartitionManagerPanel::addPartitionMaintenanceContextMenuActions(
                          [this]() { onWipeSelected(); });
     addContextMenuAction(menu,
                          this,
-                         {.text = tr("Surface Test"), .icon_path = kIconSurface},
+                         {.text = tr("Scan File Systems"), .icon_path = kIconSurface},
                          [this]() { onSurfaceTest(); });
     addContextMenuAction(menu,
                          this,
@@ -10226,7 +10226,8 @@ void PartitionManagerPanel::addPartitionAdvancedContextMenuActions(QMenu& menu) 
                          [this]() { onConvertPrimaryLogical(); });
     addContextMenuAction(menu,
                          this,
-                         {.text = tr("Change Serial Number"), .icon_path = kIconProperties},
+                         {.text = tr("Reformat for New Serial Number"),
+                          .icon_path = kIconProperties},
                          [this]() { onChangeVolumeSerialNumber(); });
 }
 
@@ -10262,12 +10263,10 @@ void PartitionManagerPanel::addDiskContextMenuActions(QMenu& menu) {
     addContextMenuAction(menu, this, {tr("Rebuild MBR / Boot Repair"), kIconSurface}, [this]() {
         onRepairBoot();
     });
-    addContextMenuAction(menu,
-                         this,
-                         {tr("Align All Partitions / SSD Optimize"), kIconAlign},
-                         [this]() { onOptimizeSsd(); });
+    // No TRIM entry here: TRIM acts on one mounted volume, so on a disk row it could only ever
+    // refuse. The partition menu and the ribbon carry it.
     addContextMenuAction(menu, this, {tr("Wipe Disk"), kIconWipe}, [this]() { onWipeSelected(); });
-    addContextMenuAction(menu, this, {tr("SSD Secure Erase"), kIconWipe}, [this]() {
+    addContextMenuAction(menu, this, {tr("Erase SSD (TRIM + Overwrite)"), kIconWipe}, [this]() {
         onSsdSecureErase();
     });
     addContextMenuAction(menu, this, {tr("Initialize to MBR/GPT"), kIconDisk}, [this]() {
@@ -10279,7 +10278,7 @@ void PartitionManagerPanel::addDiskContextMenuActions(QMenu& menu) {
     addContextMenuAction(menu, this, {tr("Convert Dynamic Disk to Basic"), kIconConvert}, [this]() {
         onConvertDynamicDiskToBasic();
     });
-    addContextMenuAction(menu, this, {tr("Disk Surface Test"), kIconSurface}, [this]() {
+    addContextMenuAction(menu, this, {tr("Scan File Systems"), kIconSurface}, [this]() {
         onSurfaceTest();
     });
     addContextMenuAction(menu, this, {tr("Disk Benchmark"), kIconSurface}, [this]() {
@@ -10495,7 +10494,7 @@ void PartitionManagerPanel::onCheckFileSystem() {
         showWarningLogged(this, tr("Check File System"), availability.reason);
         return;
     }
-    queueOperation(PartitionOperationType::CheckFileSystem);
+    runReadOnlyOperation(PartitionOperationType::CheckFileSystem);
 }
 
 void PartitionManagerPanel::onInspectNonNativeFileSystem() {
@@ -10555,9 +10554,10 @@ struct NonNativeCheckAction {
 
 static QString metadataConsistencyStatusText(const NonNativeFilesystemCheckState& state) {
     if (hasMetadataSanityWarnings(state.metadata_details)) {
-        return QObject::tr("Reviewed %1 metadata check warnings").arg(state.file_system);
+        return QObject::tr("Reviewed %1 metadata warnings from the last disk scan")
+            .arg(state.file_system);
     }
-    return QObject::tr("Reviewed %1 metadata consistency").arg(state.file_system);
+    return QObject::tr("Reviewed %1 metadata from the last disk scan").arg(state.file_system);
 }
 
 static void showMetadataConsistencyWithStatus(QWidget* parent,
@@ -10845,7 +10845,21 @@ void PartitionManagerPanel::onApfsContainerAction() {
 }
 
 void PartitionManagerPanel::onSurfaceTest() {
-    queueOperation(PartitionOperationType::SurfaceTest);
+    runReadOnlyOperation(PartitionOperationType::SurfaceTest);
+}
+
+void PartitionManagerPanel::runReadOnlyOperation(PartitionOperationType type) {
+    // A scan changes nothing, so it runs now rather than waiting in the Apply queue behind a
+    // review dialog. The controller re-checks that the type is read-only and refuses otherwise.
+    if (queueMutationBlockedByRunningOperation()) {
+        return;
+    }
+    const auto target = selectedTarget();
+    if (!target) {
+        Q_EMIT statusMessage(tr("Select a target first"), sak::kTimerStatusDefaultMs);
+        return;
+    }
+    m_controller->runReadOnlyOperation(type, *target);
 }
 
 void PartitionManagerPanel::onSpaceAnalyzer() {
@@ -11024,11 +11038,10 @@ void PartitionManagerPanel::onSsdSecureErase() {
     const auto selection = copyPartitionSelection(selectedDisk(), selectedPartition());
     const auto* disk = optionalValuePointer(selection.disk);
     const QString expected_layout_hash = m_controller->inventory().layout_hash;
-    const QStringList checklist = secureEraseChecklist(disk);
     const bool queue_requested =
-        showSecureEraseDialog(this, secureEraseRows(disk), checklist, canQueueSsdSecureErase(disk));
+        showSecureEraseDialog(this, secureEraseRows(disk), canQueueSsdSecureErase(disk));
     if (!queue_requested) {
-        Q_EMIT statusMessage(tr("Reviewed SSD Secure Erase readiness"), sak::kTimerStatusDefaultMs);
+        Q_EMIT statusMessage(tr("Reviewed SSD erase readiness"), sak::kTimerStatusDefaultMs);
         return;
     }
     if (!selected || selected->kind != PartitionTargetKind::Disk || disk == nullptr) {
@@ -11038,7 +11051,7 @@ void PartitionManagerPanel::onSsdSecureErase() {
     const QString expected = QStringLiteral("ERASE DISK %1").arg(disk->disk_number.value());
     bool ok = false;
     const QString typed = QInputDialog::getText(this,
-                                                tr("SSD Secure Erase"),
+                                                tr("Erase SSD (TRIM + Overwrite)"),
                                                 tr("Type %1 to queue:").arg(expected),
                                                 QLineEdit::Normal,
                                                 QString(),
@@ -11046,7 +11059,7 @@ void PartitionManagerPanel::onSsdSecureErase() {
                               .trimmed()
                               .toUpper();
     if (!ok || typed != expected) {
-        Q_EMIT statusMessage(tr("SSD Secure Erase queue cancelled"), sak::kTimerStatusDefaultMs);
+        Q_EMIT statusMessage(tr("SSD erase queue cancelled"), sak::kTimerStatusDefaultMs);
         return;
     }
 
@@ -11412,7 +11425,7 @@ void PartitionManagerPanel::onChangeVolumeSerialNumber() {
     if (!target || (partition_ptr == nullptr) || !partition_ptr->volume ||
         partition_ptr->volume->drive_letter.isEmpty()) {
         showWarningLogged(this,
-                          tr("Change Serial Number"),
+                          tr("Reformat for New Serial Number"),
                           tr("Select a mounted data partition before changing its serial number."));
         return;
     }
@@ -11421,7 +11434,7 @@ void PartitionManagerPanel::onChangeVolumeSerialNumber() {
     const PartitionInfoEx partition = *partition_ptr;
     const QString expected_layout_hash = m_controller->inventory().layout_hash;
     PartitionOperationDialog dialog(
-        tr("Change Serial Number"),
+        tr("Reformat for New Serial Number"),
         targetIdentityText(target, selectedDisk(), &partition),
         tr("Backs up the volume, reformats it to regenerate the file-system serial number, "
            "restores files, compares SHA-256 manifests, and repair-scans."),
@@ -11454,7 +11467,7 @@ void PartitionManagerPanel::onChangeVolumeSerialNumber() {
         QDir::toNativeSeparators(widgets.backup_directory->text().trimmed());
     if (!backupRestoreControlsAreValid(widgets, partition)) {
         showWarningLogged(this,
-                          tr("Change Serial Number"),
+                          tr("Reformat for New Serial Number"),
                           tr("Backup and confirmation are no longer valid; nothing was queued."));
         return;
     }
@@ -12521,7 +12534,7 @@ void PartitionManagerPanel::onOptimizeSsd() {
     const QString mount_point = optimizeMountPoint(volume);
     if (mount_point.isEmpty()) {
         showWarningLogged(this,
-                          tr("Align All Partitions / SSD Optimize"),
+                          tr("TRIM SSD Volume"),
                           tr("Select a mounted volume before queueing SSD ReTrim."));
         return;
     }
