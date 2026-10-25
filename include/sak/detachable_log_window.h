@@ -3,6 +3,9 @@
 
 #pragma once
 
+#include <QMargins>
+#include <QRect>
+#include <QStringList>
 #include <QTextEdit>
 #include <QWidget>
 
@@ -28,8 +31,11 @@ public:
     explicit DetachableLogWindow(const QString& title, QWidget* parent = nullptr);
     ~DetachableLogWindow() override;
 
-    /** Append a timestamped log entry. */
-    void appendLog(const QString& message);
+    /// Replace the shown log with @p lines (one panel's backing store). Does nothing while the
+    /// window is hidden and returns false: whoever shows it refills it then (MainWindow does on
+    /// visibilityChanged). Rebuilding a 5000-line document on every tab switch while nobody
+    /// could see it was pure GUI-thread work. One edit block per refill.
+    bool replaceLog(const QStringList& lines);
 
     /** Clear the log. */
     void clearLog();
@@ -43,6 +49,18 @@ public:
 
     /** Re-snap to main window (called when main window moves/resizes). */
     void repositionIfAnchored();
+
+    /// Where the anchored window goes: its frame against the main window's right edge and top,
+    /// its content as tall as the main window's, but the whole frame (content plus
+    /// @p log_frame) always inside @p available (the screen's work area). Beside a maximized
+    /// main window there is no room on the right, so it overlaps the right edge instead of
+    /// opening off-screen. topLeft() is the frame position for move(); size() is the content
+    /// size for resize(). Pure; tested offscreen.
+    [[nodiscard]] static QRect anchoredGeometry(const QRect& main_frame,
+                                                const QRect& main_geometry,
+                                                int log_width,
+                                                const QMargins& log_frame,
+                                                const QRect& available);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;

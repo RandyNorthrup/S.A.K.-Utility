@@ -4010,6 +4010,28 @@ add_test(NAME test_diagnostic_benchmark_panel COMMAND test_diagnostic_benchmark_
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_diagnostic_benchmark_panel")
 
+# test_detachable_log_window - the log window opens on-screen beside a maximized main window,
+# opens without taking focus, and is not rebuilt while hidden. Runs offscreen.
+add_executable(test_detachable_log_window
+    unit/test_detachable_log_window.cpp
+)
+set_target_properties(test_detachable_log_window PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_detachable_log_window PRIVATE
+    sak_gui sak_core sak_partition_fs sak_foundation
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Test
+    ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
+)
+target_include_directories(test_detachable_log_window PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_detachable_log_window COMMAND test_detachable_log_window
+         -o "${TEST_OUTPUT_DIR}/test_detachable_log_window.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_detachable_log_window")
+
 # test_advanced_uninstall_panel - a program's install-folder size is measured only on demand,
 # off the GUI thread, and cached; the program list shows the registry's EstimatedSize. Offscreen.
 add_executable(test_advanced_uninstall_panel

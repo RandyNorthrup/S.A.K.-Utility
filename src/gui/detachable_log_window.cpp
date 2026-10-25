@@ -41,10 +41,8 @@ constexpr int kToggleLabelGap = 6;
 constexpr int kToggleLabelTrailingPadding = 14;
 
 // Bound log retention: attacker/tool output is untrusted and can be arbitrarily
-// large. Keep only the newest kMaxLogBlocks lines, and truncate any single line to
-// kMaxLogMessageChars so one pathological message cannot exhaust memory.
+// large. Keep only the newest kMaxLogBlocks lines.
 constexpr int kMaxLogBlocks = 5000;
-constexpr int kMaxLogMessageChars = 16'384;
 
 QFont toggleLabelFont(QFont font) {
     font.setPointSize(ui::kFontSizeNote);
@@ -67,6 +65,7 @@ int toggleSwitchWidth(const QString& label, const QFont& font) {
 DetachableLogWindow::DetachableLogWindow(const QString& title, QWidget* parent)
     : QWidget(parent, Qt::Tool) {
     setWindowTitle(title);
+    setAttribute(Qt::WA_ShowWithoutActivating);
     setMinimumSize(sak::kDetachLogMinW, sak::kDetachLogMinH);
     resize(sak::kDetachLogInitW, sak::kDetachLogInitH);
 
@@ -114,29 +113,34 @@ DetachableLogWindow::DetachableLogWindow(const QString& title, QWidget* parent)
 
 DetachableLogWindow::~DetachableLogWindow() = default;
 
-void DetachableLogWindow::appendLog(const QString& message) {
-    // Bound a single line so one pathological message (huge tool/scan/command output)
-    // cannot blow up the document; the block cap in the constructor bounds accumulation.
-    QString bounded = message;
-    if (bounded.size() > kMaxLogMessageChars) {
-        bounded = bounded.left(kMaxLogMessageChars) + QStringLiteral(" [truncated]");
+bool DetachableLogWindow::replaceLog(const QStringList& lines) {
+    if (!isVisible()) {
+        return false;
     }
-    const QString timestamp = QDateTime::currentDateTime().toString("[HH:mm:ss] ");
-    const int previous_value =
-        (m_logScrollController != nullptr) ? m_logScrollController->scrollValue() : 0;
-    const bool follow_newest = (m_logScrollController == nullptr) ||
-                               m_logScrollController->shouldFollowNewestForAppend();
-    // QTextEdit::append() promotes anything that looks like markup to rich text, and log lines
-    // carry file paths, program names, command output and AI text; wrap so they read literally.
-    m_logEdit->append(sak::ui::asLiteralRichText(timestamp + bounded));
-    if (m_logScrollController == nullptr) {
-        return;
+    // One edit block and no repaints while the document is rebuilt: a full panel log is up to
+    // 5000 lines, and per-line append() relaid the document out each time.
+    m_logEdit->setUpdatesEnabled(false);
+    m_logEdit->clear();
+    QTextCursor cursor(m_logEdit->document());
+    cursor.beginEditBlock();
+    for (const QString& line : lines) {
+        // Panel log lines carry paths, program names and command output; insert them as
+        // literal text so nothing in them is rendered as markup.
+        // A message's own newlines stay line breaks inside its block (as append() of literal
+        // rich text renders them), so the kMaxLogBlocks cap still counts messages.
+        if (!cursor.atStart()) {
+            cursor.insertBlock();
+        }
+        QString text = line;
+        text.replace(QLatin1Char('\n'), QChar::LineSeparator);
+        cursor.insertText(text);
     }
-    if (follow_newest) {
+    cursor.endEditBlock();
+    m_logEdit->setUpdatesEnabled(true);
+    if (m_logScrollController != nullptr) {
         m_logScrollController->scrollToBottomLater();
-    } else {
-        m_logScrollController->restoreScrollPositionLater(previous_value);
     }
+    return true;
 }
 
 void DetachableLogWindow::clearLog() {
@@ -149,10 +153,12 @@ void DetachableLogWindow::clearLog() {
 void DetachableLogWindow::setLogVisible(bool visible) {
     if (visible) {
         m_anchored = true;  // Always snap on toggle-open
+        // Opening the log must not take focus away from the window the user is typing in:
+        // WA_ShowWithoutActivating (constructor) shows it on top without activating it, and
+        // neither raise() nor activateWindow() is called -- an owned tool window already sits
+        // above its owner.
         show();
         snapToMainWindow();
-        raise();
-        activateWindow();
     } else {
         hide();
     }
@@ -220,17 +226,54 @@ void DetachableLogWindow::snapToMainWindow() {
 
     m_programmaticMove = true;
 
-    const QRect main_frame = main_win->frameGeometry();
-    const QRect main_geo = main_win->geometry();
-    const int log_width = width();
-
-    // Snap to right edge of main window, match content height so frames align
-    const int frame_top_offset = main_geo.top() - main_frame.top();
-    move(main_frame.right() + 1, main_geo.top() - frame_top_offset);
-    resize(log_width, main_geo.height());
+    const QScreen* screen = main_win->screen();
+    const QRect available = (screen != nullptr) ? screen->availableGeometry() : QRect();
+    const QRect own_frame = frameGeometry();
+    const QRect own_content = geometry();
+    const QMargins log_frame(own_content.left() - own_frame.left(),
+                             own_content.top() - own_frame.top(),
+                             own_frame.right() - own_content.right(),
+                             own_frame.bottom() - own_content.bottom());
+    const QRect target = anchoredGeometry(
+        main_win->frameGeometry(), main_win->geometry(), width(), log_frame, available);
+    move(target.topLeft());
+    resize(target.size());
 
     m_anchored = true;
     m_programmaticMove = false;
+}
+
+QRect DetachableLogWindow::anchoredGeometry(const QRect& main_frame,
+                                            const QRect& main_geometry,
+                                            int log_width,
+                                            const QMargins& log_frame,
+                                            const QRect& available) {
+    // Snap the frame to the right edge and top of the main window, content as tall as its.
+    const int frame_w = log_frame.left() + log_frame.right();
+    const int frame_h = log_frame.top() + log_frame.bottom();
+    QRect frame(main_frame.right() + 1,
+                main_frame.top(),
+                log_width + frame_w,
+                main_geometry.height() + frame_h);
+    if (available.isValid()) {
+        // Keep the whole frame on the work area. A maximized main window leaves no room on its
+        // right, so the log overlaps its right edge rather than opening off-screen.
+        frame.setWidth((std::min)(frame.width(), available.width()));
+        frame.setHeight((std::min)(frame.height(), available.height()));
+        if (frame.right() > available.right()) {
+            frame.moveRight(available.right());
+        }
+        if (frame.left() < available.left()) {
+            frame.moveLeft(available.left());
+        }
+        if (frame.bottom() > available.bottom()) {
+            frame.moveBottom(available.bottom());
+        }
+        if (frame.top() < available.top()) {
+            frame.moveTop(available.top());
+        }
+    }
+    return {frame.topLeft(), QSize(frame.width() - frame_w, frame.height() - frame_h)};
 }
 
 QWidget* DetachableLogWindow::findMainWindow() const {

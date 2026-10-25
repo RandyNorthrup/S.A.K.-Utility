@@ -1868,13 +1868,9 @@ void MainWindow::onTabChanged(int index) {
         return;
     }
 
-    // Replace log content with the active panel's accumulated log
-    m_logWindow->logTextEdit()->clear();
-    if (m_panelLogs.contains(index)) {
-        for (const auto& line : m_panelLogs[index]) {
-            m_logWindow->logTextEdit()->append(sak::ui::asLiteralRichText(line));
-        }
-    }
+    // Show the active panel's accumulated log. A hidden log window is left alone; it is refilled
+    // when it is shown (visibilityChanged, setupLogRouting).
+    m_logWindow->replaceLog(m_panelLogs.value(index));
 }
 
 void MainWindow::createKeyboardShortcuts() {
