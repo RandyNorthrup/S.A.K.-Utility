@@ -3,6 +3,7 @@
 
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/running_operations.h"
 #include "sak/style_constants.h"
 #include "sak/thread_custody.h"
 #include "sak/user_profile_progress.h"
@@ -43,6 +44,11 @@ UserProfileRestoreExecutePage::UserProfileRestoreExecutePage(QWidget* parent)
     setSubTitle(tr("Restoring user profile data..."));
 
     setupUi();
+    RunningOperations::add(
+        this,
+        tr("Profile restore"),
+        [this]() { return isRestoreRunning(); },
+        [this]() { onCancelRestore(); });
 }
 
 UserProfileRestoreExecutePage::~UserProfileRestoreExecutePage() {

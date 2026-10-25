@@ -689,6 +689,13 @@ bool FlashCoordinator::isFlashing() const {
     return isActiveFlashState(m_state);
 }
 
+bool FlashCoordinator::hasRunningWriters() const {
+    const QMutexLocker locker(&m_mutex);
+    return std::ranges::any_of(m_workers, [](const sak::WorkerPtr<FlashWorker>& worker) {
+        return worker && worker->isRunning();
+    });
+}
+
 bool FlashCoordinator::beginFlashClaim() {
     const QMutexLocker locker(&m_mutex);
     if (isActiveFlashState(m_state)) {

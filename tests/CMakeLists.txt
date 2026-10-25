@@ -1393,6 +1393,32 @@ set_tests_properties(test_file_management_explorer_panel PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 message(STATUS "Added unit test: test_file_management_explorer_panel")
 
+# test_running_work_exit_guard - ask before exit / Run as Admin while work runs, then cancel
+add_executable(test_running_work_exit_guard
+    unit/test_running_work_exit_guard.cpp
+    ../resources/icons.qrc
+)
+set_target_properties(test_running_work_exit_guard PROPERTIES
+    AUTOMOC ON
+    AUTORCC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_running_work_exit_guard PRIVATE
+    sak_gui sak_ai_core sak_win32mcp sak_core sak_partition_fs sak_foundation
+    Qt6::Core Qt6::Widgets Qt6::Test
+    ${PLATFORM_LIBS}
+)
+target_include_directories(test_running_work_exit_guard PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_running_work_exit_guard COMMAND test_running_work_exit_guard
+         -o "${TEST_OUTPUT_DIR}/test_running_work_exit_guard.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+# GUI suite on the offscreen platform; the main window case answers its prompt itself.
+set_tests_properties(test_running_work_exit_guard PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+message(STATUS "Added unit test: test_running_work_exit_guard")
+
 # test_file_management_file_system - File Management target bridge
 add_executable(test_file_management_file_system
     unit/test_file_management_file_system.cpp
@@ -6394,6 +6420,7 @@ set(_sak_lock_portable_data_root
     test_advanced_search_controller test_advanced_uninstall_controller
     test_ai_assistant_panel_tool_dispatch test_app_action_service test_quick_action_controller
     test_image_flasher_panel test_network_diagnostic_controller test_partition_manager_panel
+    test_running_work_exit_guard
     test_startup_budget test_stage_portable_release test_release_archive_recovery)
 set(_sak_lock_system_clipboard test_ai_transcript_view test_win32_mcp_server)
 set(_sak_lock_desktop_session test_win32_mcp_server test_follow_scroll_controller)

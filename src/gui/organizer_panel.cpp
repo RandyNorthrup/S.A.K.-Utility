@@ -14,6 +14,7 @@
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
 #include "sak/organizer_worker.h"
+#include "sak/running_operations.h"
 #include "sak/storage_inventory_worker.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
@@ -214,6 +215,12 @@ OrganizerPanel::OrganizerPanel(QWidget* parent) : QWidget(parent), m_worker(null
         logInfo("OrganizerPanel startup: default categories took {} ms", startup_timer.elapsed());
         logger::instance().flush();
     }
+    // An organize run moves files; closing mid-run asks first and stops it at a file boundary.
+    RunningOperations::add(
+        this,
+        tr("File organization"),
+        [this]() { return m_worker && m_worker->isRunning(); },
+        [this]() { onCancelClicked(); });
     logInfo("OrganizerPanel initialized");
 }
 

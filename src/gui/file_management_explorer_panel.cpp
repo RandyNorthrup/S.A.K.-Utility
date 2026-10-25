@@ -31,6 +31,7 @@
 #include "sak/widget_helpers.h"
 // sak::isSafeChildName -- the shared rule for a name that must land as a single child of the
 // browsed directory. This panel used to carry a weaker copy that let "..", "." and ':' through.
+#include "sak/running_operations.h"
 #include "sak/windows_path_policy.h"
 
 #include <QAbstractItemView>
@@ -551,6 +552,23 @@ FileManagementExplorerPanel::FileManagementExplorerPanel(
     // the user first touches a header or the sort flyout.
     applySortOrder(FileExplorerItemModel::NameColumn, Qt::AscendingOrder);
     setTargets(std::move(initial_targets));
+    // Copy/move and archive workers write files; closing mid-operation asks first, then stops
+    // each at its next item boundary.
+    RunningOperations::add(
+        this,
+        tr("File copy or move"),
+        [this]() {
+            return std::ranges::any_of(m_active_io_workers, [](const WorkerBase* worker) {
+                return worker != nullptr && worker->isRunning();
+            });
+        },
+        [this]() {
+            for (WorkerBase* worker : std::as_const(m_active_io_workers)) {
+                if (worker != nullptr) {
+                    worker->requestStop();
+                }
+            }
+        });
 }
 
 FileManagementExplorerPanel::~FileManagementExplorerPanel() {

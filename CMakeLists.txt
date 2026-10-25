@@ -611,6 +611,7 @@ set(SAK_CORE_SOURCES
     src/core/drive_unmounter.cpp
     src/core/quick_action.cpp
     src/core/quick_action_controller.cpp
+    src/core/running_operations.cpp
     src/core/app_action_registry.cpp
     src/core/app_action_bridge.cpp
     src/core/app_action_service.cpp
@@ -859,6 +860,7 @@ set(SAK_CORE_SOURCES
     # Quick-action framework and the network transfer runner
     include/sak/quick_action.h
     include/sak/quick_action_controller.h
+    include/sak/running_operations.h
     src/core/quick_action_result_io.cpp
     include/sak/quick_action_result_io.h
     src/core/network_transfer_runner.cpp
@@ -882,6 +884,7 @@ set(SAK_THREADING_SOURCES
 # GUI: the main window, panels, dialogs, wizards, widgets and theme (Qt Widgets).
 set(SAK_GUI_SOURCES
     src/gui/main_window.cpp
+    src/gui/running_work_exit_guard.cpp
     src/gui/view_empty_state.cpp
     include/sak/view_empty_state.h
     src/gui/file_explorer_properties_dialog.cpp
@@ -904,6 +907,7 @@ set(SAK_GUI_SOURCES
     src/gui/file_management_explorer_panel.cpp
     src/gui/log_viewer.cpp
     include/sak/main_window.h
+    include/sak/running_work_exit_guard.h
     include/sak/user_migration_panel.h
     include/sak/organizer_panel.h
     include/sak/file_explorer_sidebar.h

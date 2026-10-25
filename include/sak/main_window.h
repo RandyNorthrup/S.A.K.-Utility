@@ -40,6 +40,7 @@ class NetworkDiagnosticPanel;
 class EmailInspectorPanel;
 class OstConverterWidget;
 class VulnerabilityPanel;
+class RunningWorkExitGuard;
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
 class AiAssistantPanel;
 #endif
@@ -113,6 +114,9 @@ private:
      * @brief Create the elevation indicator and Run-as-Admin status widgets
      */
     void createElevationStatusWidgets();
+
+    /// @brief Relaunch elevated and close this instance (only once nothing is running).
+    void restartElevated();
 
     /**
      * @brief Create feature panels
@@ -304,6 +308,9 @@ private:
 #endif
     QWidget* m_elevation_label{nullptr};
     QProgressBar* m_progress_bar{nullptr};
+
+    // Asks before closing or relaunching while long work runs (child of this window).
+    RunningWorkExitGuard* m_exit_guard{nullptr};
 
     // Shared log window
     DetachableLogWindow* m_logWindow{nullptr};

@@ -14,6 +14,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/quick_action_controller.h"
+#include "sak/running_operations.h"
 #include "sak/style_constants.h"
 #include "sak/user_data_manager.h"
 #include "sak/user_profile_backup_wizard.h"
@@ -299,6 +300,11 @@ void UserMigrationPanel::createQuickActions() {
 
     m_action_controller = new QuickActionController(this);
     m_action_controller->setBackupLocation(backup_path);
+    RunningOperations::add(
+        this,
+        tr("Quick action"),
+        [this]() { return m_action_controller->isExecuting(); },
+        [this]() { m_action_controller->cancelCurrentAction(); });
 
     m_action_controller->registerAction(std::make_unique<ScreenshotSettingsAction>(backup_path));
     m_action_controller->registerAction(std::make_unique<BackupBitlockerKeysAction>(backup_path));

@@ -4,6 +4,7 @@
 #include "sak/backup_destination_guard.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/running_operations.h"
 #include "sak/style_constants.h"
 #include "sak/thread_custody.h"
 #include "sak/user_profile_backup_wizard.h"
@@ -67,6 +68,11 @@ UserProfileBackupExecutePage::UserProfileBackupExecutePage(BackupManifest& manif
     setSubTitle(tr("Backup in progress..."));
 
     setupUi();
+    RunningOperations::add(
+        this,
+        tr("Profile backup"),
+        [this]() { return isBackupRunning(); },
+        [this]() { cancelBackup(); });
 }
 
 UserProfileBackupExecutePage::~UserProfileBackupExecutePage() {

@@ -26,6 +26,7 @@
 #include "sak/ost_converter_widget.h"
 #include "sak/partition_manager_panel.h"
 #include "sak/rich_text_safety.h"
+#include "sak/running_work_exit_guard.h"
 #include "sak/style_constants.h"
 #include "sak/user_migration_panel.h"
 #include "sak/version.h"
@@ -496,6 +497,7 @@ MainWindow::~MainWindow() {
 
 void MainWindow::setupUi() {
     setWindowTitle("S.A.K. Utility - Swiss Army Knife Utility");
+    m_exit_guard = new RunningWorkExitGuard(this);
     setMinimumSize(sak::kMainWindowMinW, sak::kMainWindowMinH);
     resize(sak::kMainWindowInitW, sak::kMainWindowInitH);
 
@@ -648,21 +650,30 @@ void MainWindow::createElevationStatusWidgets() {
         elevate_btn->setCursor(Qt::PointingHandCursor);
         elevate_btn->setStyleSheet(sak::ui::compactLinkButtonStyle());
         connect(elevate_btn, &QPushButton::clicked, this, [this]() {
-            auto result = ElevationManager::restartElevated();
-            if (result) {
-                QCoreApplication::quit();
-            } else {
-                sak::logError("Failed to restart elevated from status bar: {}",
-                              to_string(result.error()));
-                sak::showCriticalLogged(this,
-                                        tr("Elevation Failed"),
-                                        tr("Failed to restart with administrator privileges.\n\n"
-                                           "Try right-clicking the application and selecting "
-                                           "\"Run as administrator\"."));
+            // Relaunching ends this instance, so it asks first about running work exactly as
+            // closing does, and relaunches only once that work has stopped.
+            if (m_exit_guard->proceedNowOrAfterCancelling(
+                    RunningWorkExitGuard::Intent::RestartElevated,
+                    [this]() { restartElevated(); })) {
+                restartElevated();
             }
         });
         statusBar()->addPermanentWidget(elevate_btn);
     }
+}
+
+void MainWindow::restartElevated() {
+    auto result = ElevationManager::restartElevated();
+    if (result) {
+        QCoreApplication::quit();
+        return;
+    }
+    sak::logError("Failed to restart elevated from status bar: {}", to_string(result.error()));
+    sak::showCriticalLogged(this,
+                            tr("Elevation Failed"),
+                            tr("Failed to restart with administrator privileges.\n\n"
+                               "Try right-clicking the application and selecting "
+                               "\"Run as administrator\"."));
 }
 
 void MainWindow::createPanels() {
@@ -1954,6 +1965,13 @@ void MainWindow::saveWindowState() {
 
 void MainWindow::closeEvent(QCloseEvent* event) {
     Q_ASSERT(event);
+    // With long work running, ask first; on the go-ahead the guard cancels it cooperatively
+    // and closes the window once it has stopped (owner decision 2026-10-24).
+    if (m_exit_guard != nullptr && !m_exit_guard->proceedNowOrAfterCancelling(
+                                       RunningWorkExitGuard::Intent::Exit, [this]() { close(); })) {
+        event->ignore();
+        return;
+    }
     event->accept();
 }
 

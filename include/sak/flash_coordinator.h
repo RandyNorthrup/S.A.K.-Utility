@@ -201,6 +201,11 @@ public:
      */
     [[nodiscard]] bool isFlashing() const;
 
+    /// @brief True while any writer thread of the current run is still running. A cancelled
+    ///        run stops reporting isFlashing() at once, while its writers may still be finishing
+    ///        their current block; this is the question "has the disk write actually stopped?".
+    [[nodiscard]] bool hasRunningWriters() const;
+
     /**
      * @brief Get current state
      * @return Current FlashState

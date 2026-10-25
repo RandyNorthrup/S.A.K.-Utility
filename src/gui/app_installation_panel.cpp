@@ -16,6 +16,7 @@
 #include "sak/migration_report.h"
 #include "sak/offline_deployment_worker.h"
 #include "sak/package_list_manager.h"
+#include "sak/running_operations.h"
 #include "sak/style_constants.h"
 #include "sak/view_empty_state.h"
 #include "sak/widget_helpers.h"
@@ -94,6 +95,17 @@ AppInstallationPanel::AppInstallationPanel(QWidget* parent)
         Q_EMIT logOutput("Chocolatey initialized successfully");
         Q_EMIT logOutput("Use the search bar to find packages or select a category.");
     }
+    // Closing the app mid-install asks first and cancels through the same handlers as Cancel.
+    RunningOperations::add(
+        this,
+        tr("App installation"),
+        [this]() { return m_worker && m_worker->isRunning(); },
+        [this]() { onCancelInstall(); });
+    RunningOperations::add(
+        this,
+        tr("Offline package operation"),
+        [this]() { return m_offline_worker && m_offline_worker->isRunning(); },
+        [this]() { onCancelOfflineOperation(); });
     sak::logInfo("[AppInstallationPanel] constructed");
 }
 

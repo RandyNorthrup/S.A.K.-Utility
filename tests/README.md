@@ -155,6 +155,7 @@ and termination-utility setup handshakes; neither changes production deadlines.
 | test_error_codes | `error_codes` | Error code enum values, category strings, display messages |
 | test_input_validator | `input_validator` | Path, IP, port, Chocolatey name, and URL validation |
 | test_worker_base | `worker_base`, `thread_custody` | Thread lifecycle, bounded readiness before cancellation, derived-member-safe destructor joins, progress signals; a worker or plain QThread that overruns its stop deadline is retained in custody (signals severed, never terminated) and destroyed once it runs to completion; a running worker destroyed directly stops the process (child probe) instead of being terminated |
+| test_running_work_exit_guard | `running_operations`, `RunningWorkExitGuard`, `MainWindow` | Closing or relaunching as administrator with registered work running asks first; declining leaves it running; going ahead cancels it, shows progress and proceeds only once it has stopped; a registration ends with its owner; the main window's close consults the guard |
 | test_format_utils | `format_utils` | Number/size/duration formatting helpers |
 | test_bundled_tools_manager | `bundled_tools_manager` | Tool detection, path resolution, version checks |
 | test_keep_awake | `keep_awake` | System sleep prevention, cleanup on destruction |

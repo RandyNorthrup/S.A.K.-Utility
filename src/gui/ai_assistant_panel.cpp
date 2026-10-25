@@ -60,6 +60,7 @@
 #include "sak/process_runner.h"
 #include "sak/report_style_constants.h"
 #include "sak/rich_text_safety.h"
+#include "sak/running_operations.h"
 #include "sak/secure_memory.h"
 #include "sak/smart_disk_analyzer.h"
 #include "sak/style_constants.h"
@@ -3677,6 +3678,16 @@ AiAssistantPanel::AiAssistantPanel(QWidget* parent)
             &ai::AiAsyncToolRunner::drained,
             this,
             &AiAssistantPanel::onAsyncToolDrained);
+    // A tool call or workflow may be changing the machine; closing asks first, then Stops it.
+    RunningOperations::add(
+        this,
+        tr("AI tool call"),
+        [this]() {
+            return hasLiveBackgroundWork() ||
+                   (m_executionBroker && m_executionBroker->isRunning()) ||
+                   (m_offlineWorker && m_offlineWorker->isRunning());
+        },
+        [this]() { onStopClicked(); });
     logAiStartupPhase(&phase_timer, "broker and signal wiring");
     m_taskStatus = tr("Idle");
     if (initializeAccessibilityAuditUi()) {

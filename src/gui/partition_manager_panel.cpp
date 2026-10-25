@@ -30,6 +30,7 @@
 #include "sak/process_runner.h"
 #include "sak/ribbon_tool_button.h"
 #include "sak/rich_text_safety.h"
+#include "sak/running_operations.h"
 #include "sak/style_constants.h"
 #include "sak/view_empty_state.h"
 #include "sak/widget_helpers.h"
@@ -8491,6 +8492,18 @@ PartitionManagerPanel::PartitionManagerPanel(QWidget* parent)
     connectController();
     updateRefreshButtonState();
     updateActionState();
+    // Closing the app mid-apply asks first and cancels through the controller.
+    RunningOperations::add(
+        this,
+        tr("Partition changes"),
+        [this]() {
+            const PartitionManagerState state = m_controller->state();
+            return state == PartitionManagerState::PreflightRunning ||
+                   state == PartitionManagerState::AwaitingElevation ||
+                   state == PartitionManagerState::Applying ||
+                   state == PartitionManagerState::Verifying;
+        },
+        [this]() { m_controller->cancel(); });
 }
 
 #ifdef SAK_PARTITION_MANAGER_PANEL_TEST_HOOKS

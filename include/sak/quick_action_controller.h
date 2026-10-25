@@ -86,6 +86,9 @@ public:
      */
     std::vector<QuickAction*> getActionsByCategory(QuickAction::ActionCategory category) const;
 
+    /// @brief True while an action is executing (from start until its completion is handled).
+    [[nodiscard]] bool isExecuting() const { return m_current_execution_action != nullptr; }
+
     /**
      * @brief Check if admin privileges are available
      * @return True if running as administrator

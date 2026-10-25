@@ -17,6 +17,7 @@
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
 #include "sak/quick_action_controller.h"
+#include "sak/running_operations.h"
 #include "sak/style_constants.h"
 #include "sak/view_empty_state.h"
 #include "sak/widget_helpers.h"
@@ -1105,6 +1106,11 @@ void DiagnosticBenchmarkPanel::createQuickActions() {
 
     m_qa_controller = new QuickActionController(this);
     m_qa_controller->setBackupLocation(backup_path);
+    RunningOperations::add(
+        this,
+        tr("Quick action"),
+        [this]() { return m_qa_controller->isExecuting(); },
+        [this]() { m_qa_controller->cancelCurrentAction(); });
 
     m_qa_controller->registerAction(std::make_unique<OptimizePowerSettingsAction>());
     m_qa_controller->registerAction(std::make_unique<VerifySystemFilesAction>());

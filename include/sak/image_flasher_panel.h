@@ -217,6 +217,8 @@ private:
     /// Destruction-only: cancels a running Windows USB creation and joins its thread within a
     /// bound, or reports the overrun and hands the thread and creator to ThreadCustody.
     void retireWindowsUsbCreationOnDestroy();
+    /// Exit-flow cancel: signals both writers to stop, without the Cancel button's prompt.
+    void cancelWritesForExit();
     /** @brief Parse disk number from PhysicalDrive device path; returns empty on failure */
     QString parseDiskNumberFromDevicePath(const QString& device_path);
     /** @brief Find the display text for a drive by matching its device path in the list widget */

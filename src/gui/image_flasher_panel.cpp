@@ -25,6 +25,7 @@
 #include "sak/linux_iso_downloader.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
+#include "sak/running_operations.h"
 #include "sak/style_constants.h"
 #include "sak/thread_custody.h"
 #include "sak/view_empty_state.h"
@@ -155,7 +156,27 @@ ImageFlasherPanel::ImageFlasherPanel(QWidget* parent)
     // periodic timer, runs once here and then only when a disk or volume arrives or leaves.
     m_driveScanner->start();
 
+    // Closing the app mid-write used to cancel it silently. It now asks first, then cancels
+    // both writers without this panel's own confirmation, and waits until they have stopped --
+    // not just until the run reports cancelled, since a writer can still be finishing a block.
+    RunningOperations::add(
+        this,
+        tr("USB write"),
+        [this]() {
+            return m_flashCoordinator->isFlashing() || m_flashCoordinator->hasRunningWriters() ||
+                   (m_windowsUsbThread != nullptr && m_windowsUsbThread->isRunning());
+        },
+        [this]() { cancelWritesForExit(); });
+
     logInfo("Image Flasher Panel initialized");
+}
+
+void ImageFlasherPanel::cancelWritesForExit() {
+    logWarning("Image Flasher: cancelling the running write so the application can close");
+    if (m_windowsUsbCreator != nullptr) {
+        m_windowsUsbCreator->cancel();
+    }
+    m_flashCoordinator->cancel();
 }
 
 ImageFlasherPanel::~ImageFlasherPanel() {

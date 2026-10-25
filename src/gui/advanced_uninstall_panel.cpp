@@ -15,6 +15,7 @@
 #include "sak/message_box_helpers.h"
 #include "sak/restore_point_manager.h"
 #include "sak/rich_text_safety.h"
+#include "sak/running_operations.h"
 #include "sak/style_constants.h"
 #include "sak/view_empty_state.h"
 #include "sak/widget_helpers.h"
@@ -400,6 +401,16 @@ AdvancedUninstallPanel::AdvancedUninstallPanel(QWidget* parent)
     connectUninstallSignals();
     connectCleanupSignals();
     connectStatusSignals();
+    // Uninstalling and leftover cleanup change the machine; closing asks first and cancels.
+    RunningOperations::add(
+        this,
+        tr("Program uninstall"),
+        [this]() {
+            const AdvancedUninstallController::State state = m_controller->currentState();
+            return state == AdvancedUninstallController::State::Uninstalling ||
+                   state == AdvancedUninstallController::State::Cleaning;
+        },
+        [this]() { m_controller->cancelOperation(); });
 
     logMessage("Advanced Uninstall panel initialized.");
 }
