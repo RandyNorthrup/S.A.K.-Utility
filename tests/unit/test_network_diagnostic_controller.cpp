@@ -25,6 +25,7 @@ private Q_SLOTS:
     void generateReport_unknownFormat_failsClosed();
     void runLanTransferTest_durationOverMax_failsClosed();
     void runLanTransferTest_blockSizeOverMax_failsClosed();
+    void continuousWiFiScan_firstScanRunsOffTheGuiThread();
 };
 
 void TestNetworkDiagnosticController::construction_default() {
@@ -105,6 +106,21 @@ void TestNetworkDiagnosticController::runLanTransferTest_blockSizeOverMax_failsC
 
     QCOMPARE(failed.count(), 1);
     QVERIFY(!controller.hasActiveOperations());
+}
+
+// The continuous scan's first pass is a full WlanScan plus a wait for the driver to signal
+// completion. It ran inline in startContinuousWiFiScan -- on the GUI thread -- so its result was
+// already delivered when the call returned. It now runs on the worker like scanWiFi(), so the
+// result arrives later, through the event loop.
+void TestNetworkDiagnosticController::continuousWiFiScan_firstScanRunsOffTheGuiThread() {
+    sak::NetworkDiagnosticController controller;
+    QSignalSpy scans(&controller, &sak::NetworkDiagnosticController::wifiScanComplete);
+    QVERIFY(scans.isValid());
+    constexpr int kLongIntervalMs = 600'000;
+    controller.startContinuousWiFiScan(kLongIntervalMs);
+    QCOMPARE(scans.count(), 0);
+    QTRY_VERIFY_WITH_TIMEOUT(scans.count() >= 1, 60'000);
+    controller.stopContinuousWiFiScan();
 }
 
 QTEST_MAIN(TestNetworkDiagnosticController)

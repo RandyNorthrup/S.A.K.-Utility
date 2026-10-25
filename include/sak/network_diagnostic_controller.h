@@ -255,6 +255,8 @@ private:
     std::unique_ptr<PortScanner> m_portScanner;
     std::unique_ptr<BandwidthTester> m_bandwidthTester;
     std::unique_ptr<WiFiAnalyzer> m_wifiAnalyzer;
+    int m_continuousWiFiIntervalMs{0};
+    bool m_continuousWiFiRequested{false};  ///< cleared by stop; read when the first scan lands
     std::unique_ptr<ActiveConnectionsMonitor> m_connectionMonitor;
     std::unique_ptr<FirewallRuleAuditor> m_firewallAuditor;
     std::unique_ptr<NetworkShareBrowser> m_shareBrowser;
@@ -285,7 +287,13 @@ private:
     void addOperation(State op);
     void removeOperation(State op);
     bool isWorkerGroupBusy(State op) const;
-    void runOnThread(std::function<void()> work, State operationState);
+    /// Runs @p work on a fresh worker thread; @p afterFinished (optional) runs on this thread once
+    /// the worker has finished and the operation has been removed.
+    void runOnThread(std::function<void()> work,
+                     State operationState,
+                     std::function<void()> afterFinished = {});
+    /// Starts the periodic WiFi refresh after the continuous scan's first (worker) scan.
+    void beginContinuousWiFiRefresh();
     void cleanupThread(State op);
     void cleanupAllThreads();
     void connectWorkerSignals();

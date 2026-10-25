@@ -663,9 +663,10 @@ void WiFiAnalyzer::startContinuousScan(int intervalMs) {
         Q_EMIT channelUtilizationUpdated(channels);
     });
     m_scanTimer->start(intervalMs);
-
-    // Perform initial scan immediately
-    scan();
+    // No initial scan here. The first scan triggers a fresh WlanScan and waits for its
+    // completion notification, which must not run on the GUI thread; the caller runs it on a
+    // worker first (NetworkDiagnosticController::startContinuousWiFiScan) and only then starts
+    // this cached-list refresh, so the two never write m_lastScan at the same time.
 }
 
 void WiFiAnalyzer::stopContinuousScan() {

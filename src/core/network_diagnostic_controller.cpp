@@ -179,7 +179,9 @@ bool NetworkDiagnosticController::isWorkerGroupBusy(State op) const {
     }
 }
 
-void NetworkDiagnosticController::runOnThread(std::function<void()> work, State operationState) {
+void NetworkDiagnosticController::runOnThread(std::function<void()> work,
+                                              State operationState,
+                                              std::function<void()> afterFinished) {
     if (isWorkerGroupBusy(operationState)) {
         Q_EMIT errorOccurred(QStringLiteral("That operation is already in progress"));
         return;
@@ -209,9 +211,12 @@ void NetworkDiagnosticController::runOnThread(std::function<void()> work, State 
         thread->quit();  // Exit event loop so thread finishes
     });
 
-    // Auto-cleanup when thread finishes
-    QObject::connect(thread, &QThread::finished, this, [this, operationState]() {
+    // Auto-cleanup when thread finishes, then the caller's continuation (on this thread).
+    QObject::connect(thread, &QThread::finished, this, [this, operationState, afterFinished]() {
         removeOperation(operationState);
+        if (afterFinished) {
+            afterFinished();
+        }
     });
 
     thread->start();
@@ -849,13 +854,29 @@ void NetworkDiagnosticController::startContinuousWiFiScan(int intervalMs) {
         Q_EMIT errorOccurred(QStringLiteral("A WiFi scan is already in progress"));
         return;
     }
-    addOperation(State::ScanningWiFi);
     Q_EMIT logOutput(
         QStringLiteral("Starting continuous WiFi scan (interval: %1 ms)").arg(intervalMs));
-    m_wifiAnalyzer->startContinuousScan(intervalMs);
+    // The first scan is a full WlanScan plus a wait for the driver's completion notification, so
+    // it runs on the worker exactly like a one-off scanWiFi(); it used to run inline here, on the
+    // GUI thread. The periodic refresh (a quick cached-list read) starts only once it has landed,
+    // so the worker and the GUI-thread timer never touch the analyzer at the same time.
+    m_continuousWiFiIntervalMs = intervalMs;
+    m_continuousWiFiRequested = true;
+    runOnThread([this]() { m_wifiAnalyzer->scan(); },
+                State::ScanningWiFi,
+                [this]() { beginContinuousWiFiRefresh(); });
+}
+
+void NetworkDiagnosticController::beginContinuousWiFiRefresh() {
+    if (!m_continuousWiFiRequested) {
+        return;  // stopped while the first scan was still running
+    }
+    addOperation(State::ScanningWiFi);
+    m_wifiAnalyzer->startContinuousScan(m_continuousWiFiIntervalMs);
 }
 
 void NetworkDiagnosticController::stopContinuousWiFiScan() {
+    m_continuousWiFiRequested = false;
     m_wifiAnalyzer->stopContinuousScan();
     removeOperation(State::ScanningWiFi);
     Q_EMIT logOutput(QStringLiteral("Continuous WiFi scan stopped"));
