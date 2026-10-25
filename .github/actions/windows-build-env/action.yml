@@ -103,6 +103,9 @@ runs:
     if: ${{ inputs.build-tools == 'true' }}
     uses: jurplel/install-qt-action@v4
     with:
+      # Left on, the action runs its own setup-python ('>=3.14.0', so 3.15 today), which
+      # replaces pythonLocation and puts an interpreter without the pinned tools first on PATH.
+      setup-python: 'false'
       version: ${{ inputs.qt-version }}
       host: 'windows'
       target: 'desktop'
