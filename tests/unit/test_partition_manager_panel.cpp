@@ -134,6 +134,7 @@ private Q_SLOTS:
     void quickPartitionBatchHonorsCapacityAtomically();
     void wizardEntryPointsRespectRunningOperationGuard() const;
     void controllerWatcherLifetimeBlocksInteraction();
+    void sourceTextReadIgnoresLineEndings();
     void inventoryStateIsHonestAboutFailedPartitionEnumeration();
 
 private:
@@ -205,13 +206,23 @@ void failAndCloseUnexpectedInteraction(const char* reason) {
     }
 }
 
-QString readRepoSource(const QString& relative_path) {
-    const QDir repo_root(QStringLiteral(SAK_REPO_ROOT));
-    QFile file(repo_root.filePath(relative_path));
+// Source text with CRLF folded to LF. The source assertions in this suite spell a line break as
+// "\n", and a Git for Windows checkout (the default autocrlf=true, and CI) has CRLF while an
+// editor-written working copy may have LF, so a raw read made those assertions depend on how the
+// file was last written rather than on what it says.
+QString readSourceText(const QString& path) {
+    QFile file(path);
     if (!file.open(QIODevice::ReadOnly)) {
         return {};
     }
-    return QString::fromUtf8(file.readAll());
+    QString text = QString::fromUtf8(file.readAll());
+    text.replace(QStringLiteral("\r\n"), QStringLiteral("\n"));
+    return text;
+}
+
+QString readRepoSource(const QString& relative_path) {
+    const QDir repo_root(QStringLiteral(SAK_REPO_ROOT));
+    return readSourceText(repo_root.filePath(relative_path));
 }
 
 struct CreateDialogInspection {
@@ -3733,6 +3744,26 @@ void PartitionManagerPanelTests::wizardEntryPointsRespectRunningOperationGuard()
                                  unallocatedAllocateInventoryFixture(),
                                  0,
                                  sak::PartitionManagerState::RefreshingInventory);
+}
+
+// readRepoSource feeds every source assertion here, so pin that it reads CRLF and LF text alike
+// on any checkout: a CRLF source failed controllerWatcherLifetimeBlocksInteraction on CI while an
+// LF working copy passed it.
+void PartitionManagerPanelTests::sourceTextReadIgnoresLineEndings() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString crlf_path = dir.filePath(QStringLiteral("crlf.cpp"));
+    const QString lf_path = dir.filePath(QStringLiteral("lf.cpp"));
+    QFile crlf(crlf_path);
+    QVERIFY(crlf.open(QIODevice::WriteOnly));
+    QCOMPARE(crlf.write("a ||\r\n    b;\r\n"), qint64(14));
+    crlf.close();
+    QFile lf(lf_path);
+    QVERIFY(lf.open(QIODevice::WriteOnly));
+    QCOMPARE(lf.write("a ||\n    b;\n"), qint64(12));
+    lf.close();
+    QCOMPARE(readSourceText(crlf_path), QStringLiteral("a ||\n    b;\n"));
+    QCOMPARE(readSourceText(lf_path), QStringLiteral("a ||\n    b;\n"));
 }
 
 void PartitionManagerPanelTests::controllerWatcherLifetimeBlocksInteraction() {
