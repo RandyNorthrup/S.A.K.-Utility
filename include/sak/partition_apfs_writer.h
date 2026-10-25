@@ -38,10 +38,14 @@ enum class PartitionApfsWriteOperation {
 };
 
 struct PartitionApfsWriteOptions {
-    bool enable_experimental_writer{false};
+    /// The single switch that lets this call mutate anything. It replaced three attestations
+    /// (an "experimental writer" enable, a destructive-certification flag and a raw-media
+    /// hardware-certification flag) that every caller set together, so none of them ever
+    /// refused a write on its own. A caller sets it from whether the target may be mutated.
+    bool writable{false};
+    /// Raw-device opt-in at the options level: a raw commit also needs the request's
+    /// allow_raw_device_target, an explicit target confirmation and a raw-device path.
     bool image_only{true};
-    bool destructive_certification_evidence{false};
-    bool raw_media_hardware_certification_evidence{false};
     bool allow_encrypted_or_protected_volume{false};
     bool allow_compressed_file_mutation{false};
     bool allow_snapshots{false};
@@ -54,7 +58,6 @@ struct PartitionApfsWritePreflight {
     bool allowed{false};
     QStringList blockers;
     QStringList warnings;
-    QStringList required_evidence;
 };
 
 struct PartitionApfsImageMutationStep {
@@ -79,25 +82,6 @@ struct PartitionApfsImageMutationPlan {
     QVector<PartitionApfsImageMutationStep> steps;
     QStringList post_apply_verification;
     QStringList execution_blockers;
-};
-
-struct PartitionApfsWriterExecutionEvidence {
-    QString evidence_id;
-    QString operation;
-    QString target_path;
-    bool structure_mapping_verified{false};
-    bool object_checksum_vectors_verified{false};
-    bool source_image_hash_verified{false};
-    bool scratch_image_hash_verified{false};
-    bool copy_on_write_checkpoint_verified{false};
-    bool object_map_update_verified{false};
-    bool space_manager_accounting_verified{false};
-    bool fsck_validation_verified{false};
-    bool target_readback_verified{false};
-    bool crash_replay_verified{false};
-    bool rollback_boundary_verified{false};
-    bool hardware_raw_media_verified{false};
-    QStringList artifacts;
 };
 
 struct PartitionApfsImageBuildResult {
@@ -788,6 +772,10 @@ public:
     [[nodiscard]] static std::optional<uint64_t> computeObjectChecksum(
         const QByteArray& object_bytes);
     [[nodiscard]] static bool stampObjectChecksum(QByteArray* object_bytes);
+#ifdef SAK_PARTITION_FS_TEST_HOOKS
+    // Test-only diagnostic entry points and guard seams (this block and the two below). No
+    // product code calls them; they are compiled only into test targets that define
+    // SAK_PARTITION_FS_TEST_HOOKS, so the shipped binaries do not carry them.
     /// @brief Build the file-system B-tree node blocks for @p file_names (empty
     ///        root files) - a single ROOT|LEAF node, or an internal root over
     ///        leaf nodes when they overflow (A2 multi-leaf fs-tree). Leaf oids
@@ -846,7 +834,9 @@ public:
     ///        set (e.g. a dangling child pointer).
     [[nodiscard]] static QVector<QPair<quint64, quint64>> readExtentRefTreeBlocksForTesting(
         const QVector<QByteArray>& node_blocks, uint32_t block_size);
+#endif  // SAK_PARTITION_FS_TEST_HOOKS
     [[nodiscard]] static bool verifyObjectChecksum(const QByteArray& object_bytes);
+#ifdef SAK_PARTITION_FS_TEST_HOOKS
     /// @brief True when a free-queue run {paddr, length} sits entirely inside a container of
     ///        @p block_count blocks AND is no longer than one commit can legitimately free
     ///        contiguously. A corrupt on-disk record would otherwise expand into a
@@ -978,7 +968,7 @@ public:
     [[nodiscard]] static bool foreignIpBlockIsLiveMetadataForTesting(const QString& image_path,
                                                                      quint64 block,
                                                                      QStringList* blockers);
-    [[nodiscard]] static QStringList enterpriseCertificationRequirements();
+#endif  // SAK_PARTITION_FS_TEST_HOOKS
     [[nodiscard]] static PartitionApfsWritePreflight preflightExistingContainer(
         const PartitionFileSystemDetection& detection,
         PartitionApfsWriteOperation operation,
@@ -1124,6 +1114,7 @@ public:
     ///        with a true in-place copy-on-write checkpoint commit (destructive, gated).
     [[nodiscard]] static PartitionApfsImageCheckpointCommitResult commitRawSnapshotRevert(
         const PartitionApfsRawSnapshotRevertCommitRequest& request);
+#ifdef SAK_PARTITION_FS_TEST_HOOKS
     /// @brief Test-only seam: override the predicate that classifies a path as an
     ///        acceptable raw-device commit target, so unit tests can drive the production
     ///        @c commitRaw* orchestration against a temporary file while every other
@@ -1132,6 +1123,7 @@ public:
     ///        the production rule (@c isWindowsRawDevicePath). Never call from production code.
     static void setRawDeviceTargetPredicateForTesting(
         std::function<bool(const QString&)> predicate);
+#endif  // SAK_PARTITION_FS_TEST_HOOKS
     /// @brief True when @p path is currently accepted as a raw-device commit target:
     ///        the production Windows raw-device rule, or whatever the test seam
     ///        predicate accepts while installed. Callers building @c commitRaw*
@@ -1144,9 +1136,6 @@ public:
         const PartitionApfsRawVolumeLabelRequest& request);
     [[nodiscard]] static PartitionApfsRawRepairResult repairRawObjectChecksums(
         const PartitionApfsRawRepairRequest& request);
-    [[nodiscard]] static PartitionApfsWritePreflight validateImageOnlyExecutionEvidence(
-        const PartitionApfsImageMutationPlan& plan,
-        const PartitionApfsWriterExecutionEvidence& evidence);
 };
 
 }  // namespace sak

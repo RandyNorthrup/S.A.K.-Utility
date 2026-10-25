@@ -186,16 +186,12 @@ QString displayPath(const QString& path) {
 }
 
 sak::PartitionApfsWriteOptions apfsRawWriteOptions(const FileManagementTarget& target) {
-    // The certified writer's enable + destructive/hardware certification-evidence
-    // attestations are derived from the target actually being writable, so a
-    // read-only / non-writable target makes the engine fail closed with its own
-    // certification blockers rather than mutating the medium (B8-04).
-    const bool writable = FileManagementFileSystemBridge::targetPermitsMutation(target);
+    // The writer's one enable switch is derived from the target actually being writable, so a
+    // read-only / non-writable target makes the engine fail closed with its own blocker rather
+    // than mutating the medium (B8-04). Raw opt-in and confirmation are set per request.
     sak::PartitionApfsWriteOptions options;
-    options.enable_experimental_writer = writable;
+    options.writable = FileManagementFileSystemBridge::targetPermitsMutation(target);
     options.image_only = false;
-    options.destructive_certification_evidence = writable;
-    options.raw_media_hardware_certification_evidence = writable;
     // No artificial payload cap: the APFS write is bounded only by the container's free
     // space (the multi-chunk allocator fails closed when it will not fit). 0 = unbounded.
     options.max_payload_bytes = 0;

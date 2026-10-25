@@ -53,8 +53,7 @@ constexpr qsizetype kHeaderWindowBytes = 2 * 1024 *
 // certified image-only options used by the partition writer tests).
 sak::PartitionApfsWriteOptions imageOnlyWriterOptions() {
     sak::PartitionApfsWriteOptions options;
-    options.enable_experimental_writer = true;
-    options.destructive_certification_evidence = true;
+    options.writable = true;
     options.allow_encrypted_or_protected_volume = true;
     options.allow_compressed_file_mutation = true;
     options.allow_snapshots = true;

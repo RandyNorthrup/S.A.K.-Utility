@@ -7064,8 +7064,7 @@ void PartitionManagerCoreTests::apfsWriter_geometryChunkCountDoesNotOverflowNear
 
 PartitionApfsWriteOptions certifiedApfsImageOnlyOptions() {
     PartitionApfsWriteOptions options;
-    options.enable_experimental_writer = true;
-    options.destructive_certification_evidence = true;
+    options.writable = true;
     options.allow_encrypted_or_protected_volume = true;
     options.allow_compressed_file_mutation = true;
     options.allow_snapshots = true;
@@ -7075,12 +7074,11 @@ PartitionApfsWriteOptions certifiedApfsImageOnlyOptions() {
     return options;
 }
 
-// Options for the on-hardware raw commit path: non-image-only with raw-media hardware
-// certification evidence (the production commitRaw* family requires both).
+// Options for the on-hardware raw commit path: writable and non-image-only (the production
+// commitRaw* family also requires allow_raw_device_target and an explicit confirmation).
 PartitionApfsWriteOptions certifiedApfsRawCommitOptions() {
     PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
     options.image_only = false;
-    options.raw_media_hardware_certification_evidence = true;
     options.evidence_id = QStringLiteral("external.apfs-raw-commit-fixture");
     return options;
 }
@@ -7252,12 +7250,11 @@ void verifyApfsWriterBlockedByDefault(const PartitionFileSystemDetection& detect
         detection, PartitionApfsWriteOperation::CreateFile, defaults);
     QVERIFY(!blocked.allowed);
     const QString blockers = blocked.blockers.join(QStringLiteral("; "));
-    QVERIFY(blockers.contains(QStringLiteral("disabled")));
-    QVERIFY(blockers.contains(QStringLiteral("certification evidence")));
+    // Default options are not writable: the one enable switch refuses before anything else.
+    QVERIFY(blockers.contains(QStringLiteral("APFS writes are not enabled for this target")));
+    QVERIFY(blockers.contains(QStringLiteral("evidence ID")));
     QVERIFY(blockers.contains(QStringLiteral("checkpoint")));
     QVERIFY(blockers.contains(QStringLiteral("multi-volume")));
-    QVERIFY(blocked.required_evidence.join(' ').contains(QStringLiteral("Object-map")));
-    QVERIFY(blocked.required_evidence.join(' ').contains(QStringLiteral("Crash-interruption")));
 }
 
 void verifyApfsImageOnlyPlanShape(const PartitionApfsImageMutationPlan& plan) {
@@ -7295,61 +7292,7 @@ void verifyApfsImageOnlyPlanShape(const PartitionApfsImageMutationPlan& plan) {
             return step.required_evidence.contains(QStringLiteral("target-readback")) &&
                    step.name == QStringLiteral("post-verify");
         }));
-    QVERIFY(plan.preflight.required_evidence.join(' ').contains(QStringLiteral("hash-chain")));
-    QVERIFY(
-        plan.preflight.required_evidence.join(' ').contains(QStringLiteral("Rollback-boundary")));
     QVERIFY(plan.post_apply_verification.join(' ').contains(QStringLiteral("checksum")));
-}
-
-void verifyApfsImageOnlyExecutionEvidenceGate(const PartitionApfsImageMutationPlan& plan) {
-    PartitionApfsWriterExecutionEvidence missingEvidence;
-    missingEvidence.evidence_id = plan.evidence_id;
-    missingEvidence.operation = plan.operation;
-    missingEvidence.target_path = plan.target_path;
-    const auto missingEvidenceGate =
-        PartitionApfsWriter::validateImageOnlyExecutionEvidence(plan, missingEvidence);
-    QVERIFY(!missingEvidenceGate.allowed);
-    QVERIFY(missingEvidenceGate.blockers.join(' ').contains(QStringLiteral("checksum evidence")));
-    QVERIFY(missingEvidenceGate.blockers.join(' ').contains(QStringLiteral("source image hash")));
-    QVERIFY(missingEvidenceGate.blockers.join(' ').contains(QStringLiteral("target read-back")));
-    QVERIFY(missingEvidenceGate.blockers.join(' ').contains(QStringLiteral("rollback-boundary")));
-    QVERIFY(missingEvidenceGate.blockers.join(' ').contains(QStringLiteral("artifact paths")));
-
-    PartitionApfsWriterExecutionEvidence imageEvidence;
-    imageEvidence.evidence_id = plan.evidence_id;
-    imageEvidence.operation = plan.operation;
-    imageEvidence.target_path = plan.target_path;
-    imageEvidence.structure_mapping_verified = true;
-    imageEvidence.object_checksum_vectors_verified = true;
-    imageEvidence.source_image_hash_verified = true;
-    imageEvidence.scratch_image_hash_verified = true;
-    imageEvidence.copy_on_write_checkpoint_verified = true;
-    imageEvidence.object_map_update_verified = true;
-    imageEvidence.space_manager_accounting_verified = true;
-    imageEvidence.fsck_validation_verified = true;
-    imageEvidence.target_readback_verified = true;
-    imageEvidence.crash_replay_verified = true;
-    imageEvidence.rollback_boundary_verified = true;
-    imageEvidence.artifacts = {QStringLiteral("artifacts/apfs-image-writer/report.json")};
-    const auto imageEvidenceGate =
-        PartitionApfsWriter::validateImageOnlyExecutionEvidence(plan, imageEvidence);
-    QVERIFY2(imageEvidenceGate.allowed,
-             qPrintable(imageEvidenceGate.blockers.join(QStringLiteral("; "))));
-    QVERIFY(imageEvidenceGate.warnings.join(' ').contains(QStringLiteral("raw-media")));
-
-    PartitionApfsWriterExecutionEvidence unsafeArtifactEvidence = imageEvidence;
-    unsafeArtifactEvidence.artifacts = {QStringLiteral("../report.json")};
-    const auto unsafeArtifactGate =
-        PartitionApfsWriter::validateImageOnlyExecutionEvidence(plan, unsafeArtifactEvidence);
-    QVERIFY(!unsafeArtifactGate.allowed);
-    QVERIFY(unsafeArtifactGate.blockers.join(' ').contains(QStringLiteral("artifact path")));
-
-    PartitionApfsWriterExecutionEvidence mismatchEvidence = imageEvidence;
-    mismatchEvidence.target_path = QStringLiteral("/Users/Test/other-file.txt");
-    const auto mismatchGate =
-        PartitionApfsWriter::validateImageOnlyExecutionEvidence(plan, mismatchEvidence);
-    QVERIFY(!mismatchGate.allowed);
-    QVERIFY(mismatchGate.blockers.join(' ').contains(QStringLiteral("target path")));
 }
 
 void verifyApfsFormatPlanShapes(const PartitionApfsWriteOptions& options) {
@@ -7377,7 +7320,6 @@ void verifyApfsFormatPlanShapes(const PartitionApfsWriteOptions& options) {
                         }));
     QVERIFY(formatPlan.post_apply_verification.join(' ').contains(
         QStringLiteral("empty root directory")));
-    verifyApfsImageOnlyExecutionEvidenceGate(formatPlan);
 
     const auto tinyFormatPlan = PartitionApfsWriter::planImageOnlyFormat(
         8ULL * 1024ULL * 1024ULL, 4096, QStringLiteral("SAK APFS"), options);
@@ -7408,7 +7350,6 @@ void verifyApfsContainerMutationPlanShapes(const PartitionFileSystemDetection& d
                             return step.name == QStringLiteral("repaired-checkpoint-commit") &&
                                    step.requires_checkpoint;
                         }));
-    verifyApfsImageOnlyExecutionEvidenceGate(repairPlan);
 
     const auto resizePlan = PartitionApfsWriter::planImageOnlyMutation(
         detection, PartitionApfsWriteOperation::ResizeContainer, options, {});
@@ -7558,7 +7499,6 @@ void verifyApfsRawFileOpGuards(const QString& imagePath,
                                const PartitionApfsWriteOptions& generatedOnlyOptions) {
     PartitionApfsWriteOptions certifiedRaw = generatedOnlyOptions;
     certifiedRaw.image_only = false;
-    certifiedRaw.raw_media_hardware_certification_evidence = true;
     const auto rawWriteNonRawBlocked = PartitionApfsWriter::commitRawFileWrite(
         {.target_path = imagePath,
          .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
@@ -7691,7 +7631,8 @@ void verifyApfsRawTargetGuardPhase(QTemporaryDir& temp,
          .volume_name = QStringLiteral("SAK Empty"),
          .options = defaults});
     QVERIFY(!defaultsBlocked.ok);
-    QVERIFY(defaultsBlocked.blockers.join(' ').contains(QStringLiteral("disabled")));
+    QVERIFY(defaultsBlocked.blockers.join(' ').contains(
+        QStringLiteral("APFS writes are not enabled for this target")));
 }
 
 QByteArray apfsImageOnlySeedData() {
@@ -8409,7 +8350,6 @@ void PartitionManagerCoreTests::apfsWriter_preflightFailsClosedUntilCertified() 
                                                    certifiedImageOnly,
                                                    QStringLiteral("Users/Test/new-file.txt"));
     verifyApfsImageOnlyPlanShape(plan);
-    verifyApfsImageOnlyExecutionEvidenceGate(plan);
     verifyApfsWholeContainerPlanShapes(*detection, certifiedImageOnly);
     verifyApfsImageOnlyFormatBuild(certifiedImageOnly);
 
@@ -8421,11 +8361,20 @@ void PartitionManagerCoreTests::apfsWriter_preflightFailsClosedUntilCertified() 
     QVERIFY(!traversalPlan.buildable);
     QVERIFY(traversalPlan.preflight.blockers.join(' ').contains(QStringLiteral("traversal")));
 
-    certifiedImageOnly.image_only = false;
-    const auto rawMediaBlocked = PartitionApfsWriter::preflightExistingContainer(
+    // ONE switch decides whether the writer may mutate. It replaced three attestations every
+    // caller set together (so none refused a write alone): with every other option certified,
+    // clearing it alone must still refuse -- and setting it is what admits the write.
+    PartitionApfsWriteOptions notWritable = certifiedImageOnly;
+    notWritable.writable = false;
+    const auto refused = PartitionApfsWriter::preflightExistingContainer(
+        *detection, PartitionApfsWriteOperation::CreateFile, notWritable);
+    QVERIFY(!refused.allowed);
+    QCOMPARE(refused.blockers,
+             QStringList{QStringLiteral("APFS writes are not enabled for this target; nothing was "
+                                        "changed")});
+    const auto admitted = PartitionApfsWriter::preflightExistingContainer(
         *detection, PartitionApfsWriteOperation::CreateFile, certifiedImageOnly);
-    QVERIFY(!rawMediaBlocked.allowed);
-    QVERIFY(rawMediaBlocked.blockers.join(' ').contains(QStringLiteral("Raw APFS media writes")));
+    QVERIFY2(admitted.allowed, qPrintable(admitted.blockers.join(QStringLiteral("; "))));
 }
 
 void PartitionManagerCoreTests::partitionExecutor_honorsPreDispatchCancel() {

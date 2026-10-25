@@ -1390,6 +1390,12 @@ message(STATUS "Added unit test: test_file_management_explorer_panel")
 # test_file_management_file_system - File Management target bridge
 add_executable(test_file_management_file_system
     unit/test_file_management_file_system.cpp
+    # Hooked build of the APFS writer: the suite drives its raw-commit path against a temporary
+    # file through setRawDeviceTargetPredicateForTesting, which the product library omits.
+    ${SAK_PARTITION_FS_TEST_HOOK_SOURCES_APFS_WRITER}
+)
+target_compile_definitions(test_file_management_file_system PRIVATE
+    SAK_PARTITION_FS_TEST_HOOKS QT_NO_KEYWORDS
 )
 set_target_properties(test_file_management_file_system PROPERTIES
     AUTOMOC ON
@@ -6034,6 +6040,17 @@ if(PLATFORM_WINDOWS)
                      -RunGuardDrills)
     set_tests_properties(test_partition_manager_controller_restore_routing PROPERTIES TIMEOUT 60)
 
+    # Owner ruling 2026-10-24: no test hooks or escape hatches in production. The release libraries
+    # and the application are scanned for the partition/filesystem test seams (compiled only under
+    # SAK_PARTITION_FS_TEST_HOOKS) and for the retired SAK_DEV_SOURCE_TREE override.
+    add_test(NAME test_release_binary_test_hooks
+             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_SOURCE_DIR}/scripts/test_release_binary_test_hooks.ps1"
+                     -PartitionFsLibrary "$<TARGET_FILE:sak_partition_fs>"
+                     -CoreLibrary "$<TARGET_FILE:sak_core>"
+                     -ApplicationExe "$<TARGET_FILE:sak_utility>")
+    set_tests_properties(test_release_binary_test_hooks PROPERTIES TIMEOUT 120)
+
     foreach(_sak_ps_test test_pack_extension test_register_native_host)
         add_test(NAME ${_sak_ps_test}
                  COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
@@ -6323,7 +6340,7 @@ set(_sak_label_lists
 # Product scripts and the per-row registrations of one native executable.
 set(_sak_labels_product
     test_browser_extension_pure test_pack_extension test_register_native_host
-    test_sak_apfs_writer_cli test_sak_hfs_writer_cli
+    test_sak_apfs_writer_cli test_sak_hfs_writer_cli test_release_binary_test_hooks
     test_partition_image_volume_lock_whole_disk
     test_partition_image_volume_lock_selected_partition
     test_partition_image_volume_lock_selected_mbr_unpinned_guid

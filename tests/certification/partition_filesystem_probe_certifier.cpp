@@ -1970,9 +1970,8 @@ int runHfsWriterFixtureCertifier(const Config& config) {
 
 sak::PartitionApfsWriteOptions apfsCertifierWriteOptions() {
     sak::PartitionApfsWriteOptions options;
-    options.enable_experimental_writer = true;
+    options.writable = true;
     options.image_only = true;
-    options.destructive_certification_evidence = true;
     options.allow_encrypted_or_protected_volume = true;
     options.allow_compressed_file_mutation = true;
     options.allow_snapshots = true;
@@ -2188,7 +2187,8 @@ sak::PartitionApfsWriteOptions apfsExistingFormatOptions(const Config& config) {
     auto options = apfsCertifierWriteOptions();
     if (config.apfsFormatAllowRawTarget) {
         options.image_only = false;
-        options.raw_media_hardware_certification_evidence = config.apfsFormatRawHardwareProof;
+        // A raw target is written only when the operator supplied the hardware-proof flag.
+        options.writable = config.apfsFormatRawHardwareProof;
         options.evidence_id = QStringLiteral("certifier.apfs-raw-existing-format");
     }
     return options;
@@ -2198,8 +2198,8 @@ sak::PartitionApfsWriteOptions apfsRawMutationOptions(const Config& config,
                                                       const QString& evidenceId) {
     auto options = apfsCertifierWriteOptions();
     options.image_only = false;
-    options.raw_media_hardware_certification_evidence = config.apfsWriteRawHardwareProof ||
-                                                        config.apfsRepairRawHardwareProof;
+    // A raw target is written only when the operator supplied a hardware-proof flag.
+    options.writable = config.apfsWriteRawHardwareProof || config.apfsRepairRawHardwareProof;
     options.evidence_id = evidenceId;
     return options;
 }

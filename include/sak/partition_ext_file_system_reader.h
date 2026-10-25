@@ -79,6 +79,8 @@ public:
         const QString& output_directory,
         const PartitionExtDirectoryExportOptions& options);
 
+#ifdef SAK_PARTITION_FS_TEST_HOOKS
+    // Test-only: compiled only into test targets that define SAK_PARTITION_FS_TEST_HOOKS.
     /// @brief True when @p child resolves (junctions/symlinks followed) to a real path at or
     ///        under the canonical @p canonical_root. Pure seam for the export junction/symlink
     ///        TOCTOU guard, matching the APFS and HFS+ readers.
@@ -89,6 +91,7 @@ public:
     /// shared helper directly. ext was the copy with no seam and no coverage (R5-P4-44).
     [[nodiscard]] static bool exportPathWithinRootForTesting(const QString& canonical_root,
                                                              const QString& child);
+#endif  // SAK_PARTITION_FS_TEST_HOOKS
 };
 
 }  // namespace sak

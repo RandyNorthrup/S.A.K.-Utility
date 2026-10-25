@@ -20780,136 +20780,13 @@ bool repairGeneratedApfsObjectChecksumBlocks(QIODevice* image,
     return true;
 }
 
-[[nodiscard]] QString normalizedEvidenceArtifactPath(QString path) {
-    path = path.trimmed();
-    path.replace(QLatin1Char('\\'), QLatin1Char('/'));
-    while (path.contains(QStringLiteral("//"))) {
-        path.replace(QStringLiteral("//"), QStringLiteral("/"));
-    }
-    return path;
-}
-
-[[nodiscard]] bool isUnsafeEvidenceArtifactPath(const QString& path) {
-    if (path.isEmpty()) {
-        return true;
-    }
-    if (path.startsWith(QLatin1Char('/')) || path.startsWith(QStringLiteral("//"))) {
-        return true;
-    }
-    if (path.size() > 1 && path.at(1) == QLatin1Char(':')) {
-        return true;
-    }
-    if (!path.startsWith(QStringLiteral("artifacts/"), Qt::CaseInsensitive)) {
-        return true;
-    }
-    return containsUnsafePathSegment(path);
-}
-
-struct ApfsEvidenceDescription {
-    QLatin1StringView id;
-    QLatin1StringView message;
-};
-
-constexpr std::array<ApfsEvidenceDescription, 11> kEvidenceDescriptions{{
-    {kEvidenceStructureMapping, QLatin1StringView("APFS structure mapping evidence is missing")},
-    {kEvidenceObjectChecksumVectors, QLatin1StringView("APFS object checksum evidence is missing")},
-    {kEvidenceSourceImageHash, QLatin1StringView("APFS source image hash evidence is missing")},
-    {kEvidenceScratchImageHash,
-     QLatin1StringView("APFS scratch image hash-chain evidence is missing")},
-    {kEvidenceCopyOnWriteCheckpoint,
-     QLatin1StringView("APFS copy-on-write checkpoint evidence is missing")},
-    {kEvidenceObjectMapUpdate, QLatin1StringView("APFS object-map update evidence is missing")},
-    {kEvidenceSpaceManagerAccounting,
-     QLatin1StringView("APFS space-manager accounting evidence is missing")},
-    {kEvidenceFsckValidation,
-     QLatin1StringView("APFS fsck_apfs/diskutil validation evidence is missing")},
-    {kEvidenceTargetReadback, QLatin1StringView("APFS target read-back evidence is missing")},
-    {kEvidenceCrashReplay, QLatin1StringView("APFS crash-replay evidence is missing")},
-    {kEvidenceRollbackBoundary, QLatin1StringView("APFS rollback-boundary evidence is missing")},
-}};
-
-[[nodiscard]] QString evidenceRequirementDescription(const QString& requirement) {
-    for (const auto& description : kEvidenceDescriptions) {
-        if (requirement == description.id) {
-            return QString(description.message);
-        }
-    }
-    return QStringLiteral("APFS execution evidence requirement is missing: %1").arg(requirement);
-}
-
-[[nodiscard]] QStringList planRequiredEvidenceIds(const PartitionApfsImageMutationPlan& plan) {
-    QStringList required;
-    for (const auto& step : plan.steps) {
-        for (const auto& requirement : step.required_evidence) {
-            if (!required.contains(requirement)) {
-                required.append(requirement);
-            }
-        }
-    }
-    if (required.isEmpty()) {
-        required = {QString(kEvidenceStructureMapping),
-                    QString(kEvidenceObjectChecksumVectors),
-                    QString(kEvidenceSourceImageHash),
-                    QString(kEvidenceScratchImageHash),
-                    QString(kEvidenceCopyOnWriteCheckpoint),
-                    QString(kEvidenceObjectMapUpdate),
-                    QString(kEvidenceSpaceManagerAccounting),
-                    QString(kEvidenceFsckValidation),
-                    QString(kEvidenceTargetReadback),
-                    QString(kEvidenceCrashReplay),
-                    QString(kEvidenceRollbackBoundary)};
-    }
-    return required;
-}
-
-struct ApfsEvidenceFlag {
-    QLatin1StringView id;
-    bool PartitionApfsWriterExecutionEvidence::* member{nullptr};
-};
-
-constexpr std::array<ApfsEvidenceFlag, 11> kEvidenceFlags{{
-    {kEvidenceStructureMapping, &PartitionApfsWriterExecutionEvidence::structure_mapping_verified},
-    {kEvidenceObjectChecksumVectors,
-     &PartitionApfsWriterExecutionEvidence::object_checksum_vectors_verified},
-    {kEvidenceSourceImageHash, &PartitionApfsWriterExecutionEvidence::source_image_hash_verified},
-    {kEvidenceScratchImageHash, &PartitionApfsWriterExecutionEvidence::scratch_image_hash_verified},
-    {kEvidenceCopyOnWriteCheckpoint,
-     &PartitionApfsWriterExecutionEvidence::copy_on_write_checkpoint_verified},
-    {kEvidenceObjectMapUpdate, &PartitionApfsWriterExecutionEvidence::object_map_update_verified},
-    {kEvidenceSpaceManagerAccounting,
-     &PartitionApfsWriterExecutionEvidence::space_manager_accounting_verified},
-    {kEvidenceFsckValidation, &PartitionApfsWriterExecutionEvidence::fsck_validation_verified},
-    {kEvidenceTargetReadback, &PartitionApfsWriterExecutionEvidence::target_readback_verified},
-    {kEvidenceCrashReplay, &PartitionApfsWriterExecutionEvidence::crash_replay_verified},
-    {kEvidenceRollbackBoundary, &PartitionApfsWriterExecutionEvidence::rollback_boundary_verified},
-}};
-
-[[nodiscard]] QStringList verifiedEvidenceIds(
-    const PartitionApfsWriterExecutionEvidence& evidence) {
-    QStringList verified;
-    for (const auto& flag : kEvidenceFlags) {
-        if (evidence.*(flag.member)) {
-            verified.append(flag.id);
-        }
-    }
-    return verified;
-}
-
 void appendAlwaysRequiredApfsWriterBlockers(const PartitionApfsWriteOptions& options,
                                             PartitionApfsWritePreflight* result) {
-    if (!options.enable_experimental_writer) {
-        result->blockers.append(QStringLiteral(
-            "APFS writer engine is disabled until transaction-safe implementation proof passes"));
-    }
-    if (!options.image_only) {
-        if (!options.raw_media_hardware_certification_evidence) {
-            result->blockers.append(QStringLiteral(
-                "Raw APFS media writes require separate hardware certification before exposure"));
-        }
-    }
-    if (!options.destructive_certification_evidence) {
-        result->blockers.append(QStringLiteral(
-            "APFS mutation requires destructive image and hardware certification evidence"));
+    // One switch. The raw-device opt-in (image_only plus the request's allow_raw_device_target),
+    // the explicit target confirmation and the evidence ID are separate gates and stay so.
+    if (!options.writable) {
+        result->blockers.append(
+            QStringLiteral("APFS writes are not enabled for this target; nothing was changed"));
     }
     if (options.evidence_id.trimmed().isEmpty()) {
         result->blockers.append(
@@ -21019,7 +20896,6 @@ PartitionApfsWritePreflight preflightNewContainerFormat(uint64_t target_containe
                                                         const QString& volume_name,
                                                         const PartitionApfsWriteOptions& options) {
     PartitionApfsWritePreflight result;
-    result.required_evidence = PartitionApfsWriter::enterpriseCertificationRequirements();
     result.warnings.append(
         QStringLiteral("APFS format is limited to S.A.K. generated single-volume containers with "
                        "4096-byte blocks"));
@@ -21362,48 +21238,6 @@ QVector<PartitionApfsImageMutationStep> imageOnlyMutationSteps(
     return fileMutationSteps(operation);
 }
 
-void appendMissingExecutionEvidenceBlockers(const PartitionApfsImageMutationPlan& plan,
-                                            const PartitionApfsWriterExecutionEvidence& evidence,
-                                            PartitionApfsWritePreflight* result) {
-    const QStringList required = planRequiredEvidenceIds(plan);
-    const QStringList verified = verifiedEvidenceIds(evidence);
-    for (const auto& requirement : required) {
-        if (!verified.contains(requirement)) {
-            result->blockers.append(evidenceRequirementDescription(requirement));
-        }
-    }
-    if (evidence.artifacts.isEmpty()) {
-        result->blockers.append(QStringLiteral("APFS execution evidence requires artifact paths"));
-    }
-    for (const auto& artifact : evidence.artifacts) {
-        if (isUnsafeEvidenceArtifactPath(normalizedEvidenceArtifactPath(artifact))) {
-            result->blockers.append(
-                QStringLiteral("APFS execution evidence artifact path must be relative under "
-                               "artifacts/ and traversal-free"));
-            break;
-        }
-    }
-}
-
-void appendPlanEvidenceMismatchBlockers(const PartitionApfsImageMutationPlan& plan,
-                                        const PartitionApfsWriterExecutionEvidence& evidence,
-                                        PartitionApfsWritePreflight* result) {
-    if (!plan.buildable) {
-        result->blockers.append(QStringLiteral("APFS mutation plan is not buildable"));
-    }
-    if (plan.evidence_id != evidence.evidence_id.trimmed()) {
-        result->blockers.append(QStringLiteral("APFS execution evidence ID does not match plan"));
-    }
-    if (plan.operation != evidence.operation.trimmed()) {
-        result->blockers.append(
-            QStringLiteral("APFS execution evidence operation does not match plan"));
-    }
-    if (plan.target_path != normalizedApfsTargetPath(evidence.target_path)) {
-        result->blockers.append(
-            QStringLiteral("APFS execution evidence target path does not match plan"));
-    }
-}
-
 QStringList imageOnlyExecutionBlockers() {
     return {
         QStringLiteral(
@@ -21539,6 +21373,10 @@ bool PartitionApfsWriter::verifyObjectChecksum(const QByteArray& object_bytes) {
     return qFromLittleEndian<uint64_t>(stored) == *checksum;
 }
 
+#ifdef SAK_PARTITION_FS_TEST_HOOKS
+// Test-only entry points into internal guards and generated-image readers. They exist so the
+// unit suite can drive a guard or inspect a generated container directly; no product code calls
+// them, so they are compiled only into the test targets that define this macro.
 bool PartitionApfsWriter::freeQueueRunInBoundsForTesting(quint64 paddr,
                                                          quint64 length,
                                                          quint64 block_count) {
@@ -21587,26 +21425,13 @@ bool PartitionApfsWriter::treeCollectAdmitsDirectoryForTesting(quint64 directory
     return enterCollectedDirectory(sink, QStringLiteral("/"), directory_id, depth);
 }
 
-QStringList PartitionApfsWriter::enterpriseCertificationRequirements() {
-    return {QStringLiteral("Apple APFS Reference structure mapping for every mutated object"),
-            QStringLiteral("Object checksum generation and verification"),
-            QStringLiteral("Source-image and scratch-image hash-chain proof"),
-            QStringLiteral("Copy-on-write checkpoint transaction generation"),
-            QStringLiteral("Object-map update and rollback proof"),
-            QStringLiteral("Space-manager allocation/free counter proof"),
-            QStringLiteral("Single-volume image mutation proof with fsck_apfs/diskutil validation"),
-            QStringLiteral("Target read-back size/hash proof through the S.A.K. APFS reader"),
-            QStringLiteral("Crash-interruption replay proof at each transaction boundary"),
-            QStringLiteral("Rollback-boundary proof for failed or interrupted writes"),
-            QStringLiteral("Hardware proof on disposable APFS media before raw-device exposure")};
-}
+#endif  // SAK_PARTITION_FS_TEST_HOOKS
 
 PartitionApfsWritePreflight PartitionApfsWriter::preflightExistingContainer(
     const PartitionFileSystemDetection& detection,
     PartitionApfsWriteOperation operation,
     const PartitionApfsWriteOptions& options) {
     PartitionApfsWritePreflight result;
-    result.required_evidence = enterpriseCertificationRequirements();
     result.warnings.append(
         QStringLiteral("APFS mutation remains limited to certified generated/minimal layouts; "
                        "arbitrary Apple APFS mutation stays blocked"));
@@ -23437,12 +23262,13 @@ struct RawTargetMutationBlockersContext {
     QLatin1StringView purpose;
 };
 
+#ifdef SAK_PARTITION_FS_TEST_HOOKS
 // Test-only seam (installed via PartitionApfsWriter::setRawDeviceTargetPredicateForTesting):
 // when set, this predicate replaces isWindowsRawDevicePath for classifying a raw-device
 // commit target, so unit tests can drive the production commitRaw* orchestration against a
 // temporary file while every other production guard (explicit confirmation, raw opt-in,
-// non-image-only options, size alignment, APFS detection) still runs unchanged. Null in
-// production, where the real Windows raw-device rule is the sole classifier.
+// non-image-only options, size alignment, APFS detection) still runs unchanged. It does not
+// exist in the product: there the Windows raw-device rule is the only classifier.
 static std::function<bool(const QString&)>& rawDeviceTargetPredicate() {
     static std::function<bool(const QString&)> predicate;
     return predicate;
@@ -23452,6 +23278,11 @@ static bool rawTargetPathAccepted(const QString& path) {
     const auto& predicate = rawDeviceTargetPredicate();
     return predicate ? predicate(path) : isWindowsRawDevicePath(path);
 }
+#else
+static bool rawTargetPathAccepted(const QString& path) {
+    return isWindowsRawDevicePath(path);
+}
+#endif
 
 static void appendRawTargetMutationBlockers(const RawTargetMutationBlockersContext& context,
                                             QStringList* blockers) {
@@ -25168,10 +24999,13 @@ static std::unique_ptr<QIODevice> openRawInPlaceCommitTarget(
     return target;
 }
 
+#ifdef SAK_PARTITION_FS_TEST_HOOKS
 void PartitionApfsWriter::setRawDeviceTargetPredicateForTesting(
     std::function<bool(const QString&)> predicate) {
     rawDeviceTargetPredicate() = std::move(predicate);
 }
+
+#endif  // SAK_PARTITION_FS_TEST_HOOKS
 
 bool PartitionApfsWriter::acceptsRawDeviceTargetPath(const QString& path) {
     return rawTargetPathAccepted(path);
@@ -26172,22 +26006,10 @@ PartitionApfsImageCheckpointCommitResult PartitionApfsWriter::commitRawSnapshotR
     return result;
 }
 
-PartitionApfsWritePreflight PartitionApfsWriter::validateImageOnlyExecutionEvidence(
-    const PartitionApfsImageMutationPlan& plan,
-    const PartitionApfsWriterExecutionEvidence& evidence) {
-    PartitionApfsWritePreflight result;
-    result.required_evidence = enterpriseCertificationRequirements();
-    appendPlanEvidenceMismatchBlockers(plan, evidence, &result);
-    appendMissingExecutionEvidenceBlockers(plan, evidence, &result);
-    if (!evidence.hardware_raw_media_verified) {
-        result.warnings.append(
-            QStringLiteral("APFS image-only evidence is not raw-media certification; raw helper "
-                           "execution still requires separate hardware evidence"));
-    }
-    result.allowed = result.blockers.isEmpty();
-    return result;
-}
-
+#ifdef SAK_PARTITION_FS_TEST_HOOKS
+// Test-only entry points into internal guards and generated-image readers. They exist so the
+// unit suite can drive a guard or inspect a generated container directly; no product code calls
+// them, so they are compiled only into the test targets that define this macro.
 QVector<QByteArray> PartitionApfsWriter::buildFsTreeNodeBlocks(uint32_t block_size,
                                                                const QStringList& file_names,
                                                                uint64_t first_leaf_oid,
@@ -26609,5 +26431,7 @@ bool PartitionApfsWriter::foreignIpBlockIsLiveMetadataForTesting(const QString& 
     }
     return foreignLiveIpMetadataBlocks(ctx, blockers).contains(block);
 }
+
+#endif  // SAK_PARTITION_FS_TEST_HOOKS
 
 }  // namespace sak

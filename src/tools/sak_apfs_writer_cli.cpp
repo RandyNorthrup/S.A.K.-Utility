@@ -128,12 +128,10 @@ std::optional<QByteArray> readPayloadFile(const QString& path, QString* error) {
 
 sak::PartitionApfsWriteOptions imageWriteOptions(const QString& evidence_id) {
     sak::PartitionApfsWriteOptions options;
-    options.enable_experimental_writer = true;
+    // This tool exists to perform the write it was invoked for. What still gates a raw target
+    // is per command: --allow-raw-target, --confirm-target and a raw-device path.
+    options.writable = true;
     options.image_only = true;
-    // By design for this tool tier: sak_apfs_writer_cli is the manual, elevated certifier
-    // whose sole purpose is to drive certified writes, so it asserts the engine's
-    // destructive/hardware evidence gate itself (see review finding 4).
-    options.destructive_certification_evidence = true;
     options.max_payload_bytes = kDefaultApfsMaxPayloadBytes;
     options.evidence_id = evidence_id;
     return options;
@@ -142,7 +140,6 @@ sak::PartitionApfsWriteOptions imageWriteOptions(const QString& evidence_id) {
 sak::PartitionApfsWriteOptions rawWriteOptions(const QString& evidence_id) {
     auto options = imageWriteOptions(evidence_id);
     options.image_only = false;
-    options.raw_media_hardware_certification_evidence = true;
     return options;
 }
 

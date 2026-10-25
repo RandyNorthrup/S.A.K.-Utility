@@ -473,9 +473,11 @@ PartitionHfsDirectoryExportResult PartitionHfsFileSystemReader::exportDirectoryF
         .run(source_path, root.absolutePath());
 }
 
+#ifdef SAK_PARTITION_FS_TEST_HOOKS
 bool PartitionHfsFileSystemReader::exportPathWithinRootForTesting(const QString& canonical_root,
                                                                   const QString& child) {
     return pathWithinRoot(canonical_root, child);
 }
+#endif  // SAK_PARTITION_FS_TEST_HOOKS
 
 }  // namespace sak

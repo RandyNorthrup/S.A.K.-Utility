@@ -39,7 +39,7 @@ Every registered test carries exactly one tier label (set in the label block at 
 
 | Label | Tier | What it holds |
 |---|---|---|
-| `product` | T2 | Native QtTest suites (the default) and the product scripts: browser extension, pack/register, the Create Image lock rows, the APFS/HFS writer CLIs |
+| `product` | T2 | Native QtTest suites (the default) and the product scripts: browser extension, pack/register, the Create Image lock rows, the APFS/HFS writer CLIs, the release-binary scan for partition/filesystem test hooks and the retired SAK_DEV_SOURCE_TREE override |
 | `release-tooling` | T2 | Startup budget and runtime-DLL audit regressions |
 | `tooling` | T2 | Core process-capture contract, lizard JS baseline, cppcheck Qt-slot classifier, run-folder retention fences |
 | `cert` | T2 | Apple filesystem capability matrix gate (JSON only) |
@@ -474,7 +474,7 @@ Product code comes from the static product libraries the root `CMakeLists.txt` d
 test target lists only its own test sources, fixtures and fakes. Do not add a `src/` file to a test
 target: a new product source goes into its library's list and reaches every test from there. The
 exceptions are a target that must compile a product file with a test-only definition that changes
-a class (the two Partition Manager hook tests), and the certification helpers, which compile their
+a class (the two Partition Manager hook tests), the two suites that drive partition/filesystem test seams compiled only under `SAK_PARTITION_FS_TEST_HOOKS` (`test_partition_manager_core` and `test_file_management_file_system`; see `SAK_PARTITION_FS_TEST_HOOK_SOURCES`), and the certification helpers, which compile their
 sources directly so their embedded source fingerprint covers every object they contain.
 
 ## Best Practices
