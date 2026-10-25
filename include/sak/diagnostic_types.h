@@ -367,6 +367,12 @@ struct StressTestResult {
 // Thermal Monitoring Types
 // ============================================================================
 
+/// @brief How often the visible thermal readout re-queries the sensors. Each poll launches one
+///        PowerShell process (WMI ACPI zone, nvidia-smi, storage reliability counters), so it is
+///        deliberately slow for a glanceable readout, and it only runs while the readout is shown.
+///        Its own constant: it used to borrow the peer-discovery broadcast interval (2 s).
+inline constexpr int kThermalReadoutPollIntervalMs = 5000;
+
 /// @brief Single thermal sensor reading
 struct ThermalReading {
     QString component;  ///< "CPU Package" / "GPU" / "Disk 0"

@@ -55,7 +55,6 @@ constexpr int kDiagnosticLabelColumnWidth = 100;
 constexpr int kDiagnosticValueColumnWidth = 60;
 constexpr int kBenchmarkDriveComboMinWidth = 300;
 constexpr int kReportNotesMaxHeight = 60;
-constexpr int kThermalMonitorIntervalMs = sak::kTimerBroadcastMs;
 constexpr int kCpuScoreMax = 3000;
 constexpr int kBenchmarkScoreMax = 2000;
 constexpr int kFontWeightSemibold = 600;
@@ -71,13 +70,10 @@ constexpr int kDiskThermalMaxC = 70;
 constexpr ushort kSuitePendingSymbol = 0x23F3;
 constexpr int kProgressMaximum = 100;
 
+// Debug-level phase timing, the same in every run mode: it was a smoke-only info line with a
+// flush, added while hunting the startup freeze.
 void logDiagnosticStartupPhase(QElapsedTimer* timer, const char* phase) {
-    const auto elapsed_ms = timer->restart();
-    if (!qApp->property("sakStartupSmokeTest").toBool()) {
-        return;
-    }
-    logInfo("DiagnosticBenchmarkPanel startup: {} took {} ms", phase, elapsed_ms);
-    logger::instance().flush();
+    logDebug("DiagnosticBenchmarkPanel startup: {} took {} ms", phase, timer->restart());
 }
 
 }  // namespace
@@ -88,25 +84,26 @@ void logDiagnosticStartupPhase(QElapsedTimer* timer, const char* phase) {
 
 DiagnosticBenchmarkPanel::DiagnosticBenchmarkPanel(QWidget* parent)
     : QWidget(parent), m_controller(std::make_unique<DiagnosticController>(this)) {
-    logInfo("DiagnosticBenchmarkPanel: constructing");
-    logInfo("DiagnosticBenchmarkPanel: setupUi start");
+    logDebug("DiagnosticBenchmarkPanel: constructing");
     setupUi();
-    logInfo("DiagnosticBenchmarkPanel: setupUi complete");
-    logInfo("DiagnosticBenchmarkPanel: connectController start");
     connectController();
-    logInfo("DiagnosticBenchmarkPanel: connectController complete");
-    logInfo("DiagnosticBenchmarkPanel: createQuickActions start");
     createQuickActions();
-    logInfo("DiagnosticBenchmarkPanel: createQuickActions complete");
+    // No thermal polling here: it starts when the panel is shown and stops when it is hidden
+    // (showEvent/hideEvent), in every run mode. It used to start at construction and poll every
+    // 2 s until exit, hidden or not -- except under smoke and audit, which therefore never ran it.
+    logDebug("DiagnosticBenchmarkPanel: constructed");
+}
 
-    // Non-interactive gates construct the panel but must not start hardware polling.
-    const bool non_interactive_gate = qApp->property("sakAccessibilityAudit").toBool() ||
-                                      qApp->property("sakStartupSmokeTest").toBool();
-    if (!non_interactive_gate) {
-        logInfo("DiagnosticBenchmarkPanel: startThermalMonitoring start");
-        m_controller->startThermalMonitoring(kThermalMonitorIntervalMs);
-    }
-    logInfo("DiagnosticBenchmarkPanel: constructed");
+void DiagnosticBenchmarkPanel::showEvent(QShowEvent* event) {
+    QWidget::showEvent(event);
+    // The readout is on screen: poll (off-thread) at the readout cadence.
+    m_controller->startThermalMonitoring(kThermalReadoutPollIntervalMs);
+}
+
+void DiagnosticBenchmarkPanel::hideEvent(QHideEvent* event) {
+    QWidget::hideEvent(event);
+    // Another tab, a minimized window or teardown: nobody is reading the sensors.
+    m_controller->stopThermalMonitoring();
 }
 
 DiagnosticBenchmarkPanel::~DiagnosticBenchmarkPanel() {

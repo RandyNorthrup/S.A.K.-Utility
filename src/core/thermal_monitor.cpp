@@ -45,13 +45,20 @@ constexpr double kMaxPlausibleCelsius = 150.0;
     return std::ranges::all_of(device_id, [](const QChar ch) { return ch.isDigit(); });
 }
 
-void logSensorStatuses(const QString& output) {
+[[nodiscard]] QStringList sensorStatusLines(const QString& output) {
+    QStringList statuses;
     const auto lines = output.split('\n', Qt::SkipEmptyParts);
     for (const QString& line : lines) {
         const QString status = line.trimmed();
-        if (!status.startsWith(QLatin1String(kSensorStatusPrefix))) {
-            continue;
+        if (status.startsWith(QLatin1String(kSensorStatusPrefix))) {
+            statuses.append(status);
         }
+    }
+    return statuses;
+}
+
+void logSensorStatuses(const QStringList& statuses) {
+    for (const QString& status : statuses) {
         logWarning("Thermal sensor {}", status.toStdString());
     }
 }
@@ -184,13 +191,34 @@ QVector<ThermalReading> ThermalMonitor::pollOnce() {
 }
 
 QVector<ThermalReading> ThermalMonitor::pollOnce(bool& query_ok) {
-    query_ok = false;
+    // One-shot callers get every unavailable-sensor status logged for this one query.
+    ThermalPollResult result = querySensors();
+    logSensorStatuses(result.sensor_statuses);
+    query_ok = result.query_ok;
+    return std::move(result.readings);
+}
+
+QStringList ThermalMonitor::newSensorStatuses(const QStringList& statuses,
+                                              QSet<QString>* already_logged) {
+    Q_ASSERT(already_logged != nullptr);
+    QStringList fresh;
+    for (const QString& status : statuses) {
+        if (!already_logged->contains(status)) {
+            already_logged->insert(status);
+            fresh.append(status);
+        }
+    }
+    return fresh;
+}
+
+ThermalPollResult ThermalMonitor::querySensors() {
+    ThermalPollResult poll;
     // System32-qualified interpreter, never a bare "powershell.exe": the poll can run
     // from an elevated session, so a PATH/CWD-planted powershell must not satisfy it.
     // Unresolvable -> FAILED query (query_ok stays false).
     const QString powershell = sak::systemPowerShellPath();
     if (powershell.isEmpty()) {
-        return {};
+        return poll;
     }
     const auto result = sak::runProcess(powershell,
                                         {QStringLiteral("-NoProfile"),
@@ -204,14 +232,15 @@ QVector<ThermalReading> ThermalMonitor::pollOnce(bool& query_ok) {
                 ? QStringLiteral("exit=%1 timeout=%2").arg(result.exit_code).arg(result.timed_out)
                 : result.std_err.trimmed();
         logWarning("Thermal sensor query failed: {}", detail.toStdString());
-        return {};  // query FAILED (non-zero exit / timeout) -> query_ok stays false
+        return poll;  // query FAILED (non-zero exit / timeout) -> query_ok stays false
     }
 
-    logSensorStatuses(result.std_out);
     // The script runs to completion and emits key=value lines only for available sensors; an
     // empty parse is a genuine "no readable sensors", not a failure.
-    query_ok = true;
-    return parseThermalOutput(result.std_out);
+    poll.sensor_statuses = sensorStatusLines(result.std_out);
+    poll.query_ok = true;
+    poll.readings = parseThermalOutput(result.std_out);
+    return poll;
 }
 
 // ============================================================================
@@ -229,14 +258,7 @@ void ThermalMonitor::onTimerTick() {
     // The bool& overload is taken deliberately: a FAILED query (unresolvable interpreter,
     // non-zero exit, timeout) also yields an empty vector, so without this the periodic path
     // would report a sensor failure as a normal "no readable sensors" tick and say nothing.
-    m_poll_watcher.setFuture(QtConcurrent::run([] {
-        bool query_ok = false;
-        QVector<ThermalReading> readings = ThermalMonitor::pollOnce(query_ok);
-        if (!query_ok) {
-            logWarning("Thermal sensor query FAILED; this poll reports no readings");
-        }
-        return readings;
-    }));
+    m_poll_watcher.setFuture(QtConcurrent::run([] { return ThermalMonitor::querySensors(); }));
 }
 
 void ThermalMonitor::onPollComplete() {
@@ -246,7 +268,16 @@ void ThermalMonitor::onPollComplete() {
     if (!m_active) {
         return;
     }
-    processReadings(m_poll_watcher.result());
+    const ThermalPollResult poll = m_poll_watcher.result();
+    // A sensor that is not there stays not there: say so once, not on every poll.
+    logSensorStatuses(newSensorStatuses(poll.sensor_statuses, &m_logged_sensor_statuses));
+    if (!poll.query_ok && !m_query_failure_logged) {
+        logWarning("Thermal sensor query FAILED; polls report no readings until it succeeds");
+        m_query_failure_logged = true;
+    } else if (poll.query_ok) {
+        m_query_failure_logged = false;
+    }
+    processReadings(poll.readings);
     m_timer.start(m_interval_ms);
 }
 

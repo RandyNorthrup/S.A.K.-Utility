@@ -19,7 +19,7 @@
 
 namespace sak {
 
-inline constexpr int kDefaultThermalMonitoringIntervalMs = kTimerBroadcastMs;
+inline constexpr int kDefaultThermalMonitoringIntervalMs = kThermalReadoutPollIntervalMs;
 
 // Forward declarations
 class HardwareInventoryScanner;

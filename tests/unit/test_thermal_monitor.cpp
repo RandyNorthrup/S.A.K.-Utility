@@ -4,15 +4,19 @@
 /// @file test_thermal_monitor.cpp
 /// @brief Unit tests for ThermalMonitor timer behavior and polling
 
+#include "sak/logger.h"
 #include "sak/process_runner.h"
 #include "sak/thermal_monitor.h"
 
+#include <QFile>
 #include <QScopeGuard>
 #include <QSemaphore>
+#include <QTemporaryDir>
 #include <QThread>
 #include <QtTest/QtTest>
 
 #include <atomic>
+#include <filesystem>
 #include <optional>
 
 using namespace sak;
@@ -37,6 +41,12 @@ private Q_SLOTS:
     void sensorScriptSurfacesUnavailableQueries();
     void singleShotTimerBehavior();
     void clampPollInterval_flooring();
+    void missingSensorIsLoggedOnce();
+    void missingSensorWarnsOnceAcrossPolls();
+
+private:
+    // Outlives every test: the logger keeps writing into it once initialized.
+    QTemporaryDir m_log_dir;
 };
 
 void ThermalMonitorTests::sensorScriptSurfacesUnavailableQueries() {
@@ -78,7 +88,7 @@ void ThermalMonitorTests::startStop() {
                      &monitor,
                      [&updates](const QVector<sak::ThermalReading>&) { ++updates; });
     QSignalSpy finished_spy(&monitor.m_poll_watcher,
-                            &QFutureWatcher<QVector<ThermalReading>>::finished);
+                            &QFutureWatcher<sak::ThermalPollResult>::finished);
     QVERIFY(finished_spy.isValid());
 
     monitor.start(500);  // 500ms interval
@@ -189,13 +199,13 @@ void ThermalMonitorTests::clampPollInterval_flooring() {
     // Every assertion below is written RELATIVE to the symbol, so changing the floor's
     // magnitude keeps them all true while the anti-busy-spin guarantee moves. Pin the value.
     QCOMPARE(sak::kMinThermalPollIntervalMs, 250);
-    // Sibling constant: the DEFAULT cadence (thermal_monitor.h:19) is an alias of
-    // kTimerBroadcastMs, a constant owned by peer discovery (layout_constants.h:54).
-    // Retuning that unrelated timer silently retunes start()'s documented 2000ms default
-    // and every assertion in this file stays green. Pin the value, and pin that the default
-    // sits ABOVE the floor rather than being silently clamped up to it.
-    QCOMPARE(sak::kDefaultThermalPollIntervalMs, 2000);
-    QCOMPARE(ThermalMonitor::clampPollIntervalMs(sak::kDefaultThermalPollIntervalMs), 2000);
+    // The DEFAULT cadence has its own constant (it used to borrow the peer-discovery broadcast
+    // interval, 2 s). Each poll launches a PowerShell process, so a glanceable readout polls
+    // no faster than every 5 s. Pin the value and pin that it sits ABOVE the floor.
+    QCOMPARE(sak::kDefaultThermalPollIntervalMs, sak::kThermalReadoutPollIntervalMs);
+    QCOMPARE(sak::kThermalReadoutPollIntervalMs, 5000);
+    QCOMPARE(ThermalMonitor::clampPollIntervalMs(sak::kDefaultThermalPollIntervalMs),
+             sak::kThermalReadoutPollIntervalMs);
     QCOMPARE(ThermalMonitor::clampPollIntervalMs(1000), 1000);
     QCOMPARE(ThermalMonitor::clampPollIntervalMs(sak::kMinThermalPollIntervalMs),
              sak::kMinThermalPollIntervalMs);
@@ -210,6 +220,53 @@ void ThermalMonitorTests::clampPollInterval_flooring() {
     QCOMPARE(ThermalMonitor::clampPollIntervalMs(251), 251);
     QCOMPARE(ThermalMonitor::clampPollIntervalMs(0), sak::kMinThermalPollIntervalMs);
     QCOMPARE(ThermalMonitor::clampPollIntervalMs(-5), sak::kMinThermalPollIntervalMs);
+}
+
+// A sensor that is not there reports the same status line on every poll. The monitor used to
+// log a warning per missing sensor per poll -- every 2 s for the life of the app. Each distinct
+// status is now logged once; a new status (another sensor, another reason) still is.
+void ThermalMonitorTests::missingSensorIsLoggedOnce() {
+    QSet<QString> logged;
+    const QStringList first = {QStringLiteral("status_gpu=unavailable:command_not_supported"),
+                               QStringLiteral("status_disk=unavailable:no_devices")};
+    QCOMPARE(ThermalMonitor::newSensorStatuses(first, &logged), first);
+    QCOMPARE(ThermalMonitor::newSensorStatuses(first, &logged), QStringList());
+    const QStringList changed = {QStringLiteral("status_gpu=unavailable:command_not_supported"),
+                                 QStringLiteral("status_cpu=unavailable:no_reading")};
+    QCOMPARE(ThermalMonitor::newSensorStatuses(changed, &logged),
+             QStringList{QStringLiteral("status_cpu=unavailable:no_reading")});
+    QCOMPARE(logged.size(), 3);
+}
+
+// The same, end to end: several real poll cycles that each report the missing GPU leave one
+// warning in the application log, not one per poll.
+void ThermalMonitorTests::missingSensorWarnsOnceAcrossPolls() {
+    QVERIFY(m_log_dir.isValid());
+    auto& log = logger::instance();
+    QVERIFY(log.initialize(std::filesystem::path(m_log_dir.path().toStdWString()), "thermal")
+                .has_value());
+    const QString missing = QStringLiteral("status_gpu=unavailable:command_not_supported");
+    std::atomic<int> queries{0};
+    ScopedProcessFaultInjector injector(
+        [&](const QString&, const QStringList&) -> std::optional<ProcessResult> {
+            queries.fetch_add(1);
+            ProcessResult result = successfulSensorQuery();
+            result.std_out += QStringLiteral("\n") + missing;
+            return result;
+        });
+
+    ThermalMonitor monitor;
+    QSignalSpy readings_spy(&monitor, &ThermalMonitor::readingsUpdated);
+    monitor.start(kMinThermalPollIntervalMs);
+    QTRY_VERIFY_WITH_TIMEOUT(readings_spy.count() >= 3, 10'000);
+    monitor.stop();
+    log.flush();
+
+    QFile file(QString::fromStdWString(log.getLogFile().wstring()));
+    QVERIFY2(file.open(QIODevice::ReadOnly), qPrintable(file.fileName()));
+    const QString text = QString::fromUtf8(file.readAll());
+    QVERIFY2(queries.load() >= 3, "three polls ran");
+    QCOMPARE(text.count(missing), 1);
 }
 
 QTEST_MAIN(ThermalMonitorTests)

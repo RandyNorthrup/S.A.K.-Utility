@@ -68,6 +68,11 @@ Q_SIGNALS:
     void progressUpdate(int current, int maximum);
     void logOutput(const QString& message);
 
+protected:
+    /// Thermal polling runs only while the readout can be seen.
+    void showEvent(QShowEvent* event) override;
+    void hideEvent(QHideEvent* event) override;
+
 private Q_SLOTS:
     // -- Hardware Inventory --------------------------------------
     void onRescanHardwareClicked();

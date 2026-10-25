@@ -11,6 +11,8 @@
 
 #include <QFutureWatcher>
 #include <QObject>
+#include <QSet>
+#include <QStringList>
 #include <QTimer>
 #include <QVector>
 
@@ -18,7 +20,15 @@ class ThermalMonitorTests;
 
 namespace sak {
 
-inline constexpr int kDefaultThermalPollIntervalMs = kTimerBroadcastMs;
+inline constexpr int kDefaultThermalPollIntervalMs = kThermalReadoutPollIntervalMs;
+
+/// @brief One periodic poll's outcome, carried from the pool thread back to the monitor.
+struct ThermalPollResult {
+    QVector<ThermalReading> readings;
+    /// "status_<sensor>=unavailable:<reason>" lines for sensors the script could not read.
+    QStringList sensor_statuses;
+    bool query_ok{false};
+};
 
 /// @brief Floor for the poll interval. A zero interval makes QTimer fire
 ///        continuously (busy-spinning the sensor query); a negative interval is
@@ -40,7 +50,7 @@ inline constexpr int kMinThermalPollIntervalMs = 250;
 /// @code
 ///   ThermalMonitor monitor;
 ///   connect(&monitor, &ThermalMonitor::readingsUpdated, this, &Panel::onTemps);
-///   monitor.start(2000); // poll every 2 seconds
+///   monitor.start(); // kDefaultThermalPollIntervalMs
 ///   // ...
 ///   monitor.stop();
 /// @endcode
@@ -62,7 +72,7 @@ public:
     ThermalMonitor& operator=(ThermalMonitor&&) = delete;
 
     /// @brief Start periodic temperature polling
-    /// @param interval_ms Poll interval in milliseconds (default: 2000). Values
+    /// @param interval_ms Poll interval in milliseconds (default: 5000). Values
     ///        <= 0 are clamped up to kMinThermalPollIntervalMs.
     void start(int interval_ms = kDefaultThermalPollIntervalMs);
 
@@ -96,6 +106,12 @@ public:
     /// @note Shared utility -- also used by StressTestWorker
     [[nodiscard]] static double queryCpuTemperature();
 
+    /// @brief The sensor statuses in @p statuses not yet in @p already_logged, recorded there.
+    /// A missing sensor reports the same status on every poll; the periodic monitor logs each
+    /// distinct status once instead of a warning per sensor every few seconds. Pure; testable.
+    [[nodiscard]] static QStringList newSensorStatuses(const QStringList& statuses,
+                                                       QSet<QString>* already_logged);
+
 Q_SIGNALS:
     /// @brief Emitted at each poll interval with current readings
     /// @param readings Current temperature for all detected sensors
@@ -120,6 +136,11 @@ private:
     /// @return PowerShell script string
     [[nodiscard]] static QString buildCombinedThermalScript();
 
+    /// @brief One synchronous sensor query: readings, the unavailable-sensor status lines, and
+    ///        whether the query process itself succeeded. Logs nothing about sensors; callers
+    ///        decide (the periodic monitor de-duplicates, one-shot pollOnce logs them).
+    [[nodiscard]] static ThermalPollResult querySensors();
+
     /// @brief Parse key=value output from the combined thermal script
     /// @param output Raw stdout from PowerShell
     /// @return Parsed thermal readings
@@ -134,8 +155,10 @@ private:
     void processReadings(const QVector<ThermalReading>& readings);
 
     QTimer m_timer;
-    QFutureWatcher<QVector<ThermalReading>> m_poll_watcher;
-    int m_interval_ms{sak::kTimerBroadcastMs};  ///< Configured poll interval
+    QFutureWatcher<ThermalPollResult> m_poll_watcher;
+    int m_interval_ms{kDefaultThermalPollIntervalMs};  ///< Configured poll interval
+    QSet<QString> m_logged_sensor_statuses;            ///< Statuses already logged once
+    bool m_query_failure_logged{false};                ///< Logged until a query succeeds
     bool m_active{
         false};  ///< true between start() and stop(); gates timer re-arm in onPollComplete
 

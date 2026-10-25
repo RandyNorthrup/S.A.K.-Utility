@@ -3985,6 +3985,31 @@ set_tests_properties(test_image_flasher_panel PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 message(STATUS "Added unit test: test_image_flasher_panel")
 
+# test_diagnostic_benchmark_panel - the thermal readout polls only while the panel is shown,
+# in every run mode (smoke and audit no longer skip it). Runs offscreen; each show launches one
+# real, read-only sensor query.
+add_executable(test_diagnostic_benchmark_panel
+    unit/test_diagnostic_benchmark_panel.cpp
+    ../resources/icons.qrc
+)
+set_target_properties(test_diagnostic_benchmark_panel PROPERTIES
+    AUTOMOC ON
+    AUTORCC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_diagnostic_benchmark_panel PRIVATE
+    sak_gui sak_core sak_partition_fs sak_foundation
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Test
+    ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
+)
+target_include_directories(test_diagnostic_benchmark_panel PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_diagnostic_benchmark_panel COMMAND test_diagnostic_benchmark_panel
+         -o "${TEST_OUTPUT_DIR}/test_diagnostic_benchmark_panel.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_diagnostic_benchmark_panel")
+
 # test_flasher_policy - pure decisions behind the Image Flasher settings:
 # the large-drive warning threshold and the concurrent-write ceiling.
 add_executable(test_flasher_policy
@@ -6432,6 +6457,7 @@ set(_sak_lock_portable_data_root
     test_ai_assistant_panel_tool_dispatch test_app_action_service test_quick_action_controller
     test_image_flasher_panel test_network_diagnostic_controller test_partition_manager_panel
     test_running_work_exit_guard
+    test_diagnostic_benchmark_panel
     test_startup_budget test_stage_portable_release test_release_archive_recovery)
 set(_sak_lock_system_clipboard test_ai_transcript_view test_win32_mcp_server)
 set(_sak_lock_desktop_session test_win32_mcp_server test_follow_scroll_controller)
