@@ -107,6 +107,66 @@ that exists for reasons that no longer apply. Owner decisions (2026-10-24):
   smoke and audit modes run the same startup work users get; info-level startup breadcrumbs
   move to debug.
 
+#### Disk-tool package status (2026-10-24)
+
+- DONE (6942b5b6): honest names. "Surface Test" is "Scan File Systems", "Partition Alignment" /
+  "Align All Partitions" is "TRIM SSD Volume" (the disk-row entry, which could only refuse, is
+  gone), "SSD Secure Erase" is "Erase SSD (TRIM + Overwrite)" with a method row saying it is not
+  an ATA/NVMe sanitize, "Change Serial Number" is "Reformat for New Serial Number". Enum IDs and
+  the certification matrix are unchanged: the matrix name of `external.ssd-secure-erase` is bound
+  by its imported evidence report (`gate_name`), so renaming it would break that evidence.
+  Check File System and Scan File Systems run immediately through
+  `PartitionManagerController::runReadOnlyOperation`, which refuses anything the planner does
+  not classify read-only. Found and fixed on the way: a non-Windows "check" (the bundled tool's
+  repair) was classified read-only and shown as "Read-only" in the Apply review.
+  Open decision: for a single partition, Check File System (`Repair-Volume -Scan`) and Scan File
+  Systems (`chkdsk /scan`) run the same online scan; merging them is a UI decision.
+- DONE (6942b5b6): the erase dialog no longer shows the certification lab's checklist or its
+  Copy button; the non-Windows metadata "check" is labelled as last-disk-scan results (re-running
+  needs the raw access only the elevated scan has, so it is not re-run from the dialog).
+- DONE (799fe10d): one elevated helper per session for Partition Manager's scans, apply
+  preflight/verification scans and queued operations (`ElevationBroker::sessionBroker`; other
+  inventory callers -- File Management, Organizer, Advanced Search -- share it too). A helper
+  near its 5-minute idle timeout is retired before a task is sent, never handed one. Still per
+  feature: the AI panel and quick actions each keep one long-lived broker. Not changed, with
+  reasons: the Image Flasher writes raw disks in-process and so requires the whole app elevated
+  (restart-as-admin gate); SMART runs smartctl unelevated and reports "re-run with administrator
+  privileges". Routing either through the helper needs a new privileged helper task (raw image
+  streaming, smartctl execution), which is new attack surface, not a straightforward change.
+  Live UAC-count proof needs an interactive VM run; CTest covers the reuse policy and the
+  executor wiring (the inventory worker's switch to the session broker is by review).
+- DONE (8f7875ef): the USB maker has no bcdboot step (install media has no Windows directory for
+  it to use) and sets "active" once, at partition creation; fixed sleeps are replaced by a
+  bounded wait (60 s) for the new partition's volume and the drive letter, failing with an error
+  that names the disk. It still extracts with the 7z.exe inside the bundled portable Chocolatey
+  (`tools/chocolatey/tools/7z.exe`), whose advisories are tracked in item 4 above.
+- DONE (4bd3468c): the drive scanner has no 5 s timer; it rescans on disk and volume
+  device-interface arrival/removal (`GUID_DEVINTERFACE_DISK`, `GUID_DEVINTERFACE_VOLUME`) through
+  a 750 ms single-shot debounce, and re-runs once if a change lands mid-scan. Smoke and audit
+  modes now start it.
+- DONE (780e67a7): the APFS writer's three always-set attestations are one `writable` flag;
+  raw opt-in, target confirmation and the evidence ID still gate. The test-only execution-
+  evidence validator and the unread `required_evidence` prose are deleted.
+- DONE (780e67a7): partition/filesystem test hooks compile only under
+  `SAK_PARTITION_FS_TEST_HOOKS`; `test_release_binary_test_hooks` scans the release libraries and
+  the exe. Other `*ForTesting` functions outside the partition/filesystem headers (path_utils,
+  permission_manager, process_runner, smart_disk_analyzer, app_readonly_actions, AI panel) are
+  not in this package and remain.
+- DONE (92ffd385): `SAK_DEV_SOURCE_TREE` and the smartctl `tools/generic` fallback are gone
+  (the assistant's workflow check used the same fallback; it now asks the analyzer).
+- OPEN: HFS+ partition edits through Partition Manager still stage the whole partition in
+  %TEMP%. The per-file HFS+ edit dialogs already moved to File Management, which writes the raw
+  partition directly; the Partition Manager `Hfs*` operation types are reached only through the
+  queue API, and the staging path is also what runs bundled `newfs_hfs`/`fsck_hfs` format and
+  repair, which need a file. Moving the zero-skip copy into C++ with a free-space check, and
+  retiring or rerouting the `Hfs*` script path, changes a raw write-back on real partitions; it
+  cannot be proved safe with image-only tests in this change, so it was left fail-closed as is.
+- OPEN (found 2026-10-25): `test_startup_budget` and `test_windows_runtime_dependencies`
+  hard-code `build\Release\sak_utility.exe` instead of taking the configured target, so in a
+  tree configured anywhere else they test whatever binary happens to sit in `build\Release`
+  (a stale-binary trap) or fail with "input missing". CI configures `build` and is unaffected.
+  Fix: pass `$<TARGET_FILE:sak_utility>` from the CTest registration.
+
 ### Open release infrastructure
 
 - Tiered gates: the local tiers (T1 commit hooks, T1p pre-push, manual-stage T2-T4 twins), the
