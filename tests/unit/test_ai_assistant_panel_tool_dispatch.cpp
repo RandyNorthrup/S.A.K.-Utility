@@ -21,6 +21,7 @@
 #include "sak/ai/ai_run_state_store.h"
 #include "sak/ai/ai_skill.h"
 #include "sak/ai/ai_skill_store.h"
+#include "sak/ai/ai_token_usage_tracker.h"
 #include "sak/ai/ai_tool_dispatcher.h"
 #include "sak/ai/ai_tool_health_ledger.h"
 #include "sak/ai/ai_tool_loop_detector.h"
@@ -454,6 +455,37 @@ private Q_SLOTS:
         gate.release();
         QTRY_VERIFY_WITH_TIMEOUT(observer.isNull(), 5000);
         QVERIFY(handler_returned.load());
+    }
+
+    // A fresh panel starts with least privilege: local execution is opt-in.
+    void defaultAccessModeIsChatAndResearch() {
+        AiAssistantPanel panel;
+        QCOMPARE(panel.currentAccessMode(), ai::AiAccessMode::ChatAndResearch);
+    }
+
+    // Typing used to POST the whole prompt to /v1/responses/input_tokens after every pause. The
+    // readout now comes only from the last response's own usage: typing changes nothing, and a
+    // response's input-token usage is what it shows.
+    void contextReadoutUsesLastResponseNotTypingCounts() {
+        constexpr int kOldDebounceWithMarginMs = 900;
+        constexpr qint64 kResponseInputTokens = 4321;
+        AiAssistantPanel panel;
+        panel.m_apiKey = QStringLiteral("test-key-") + QString(32, QLatin1Char('x'));
+        QVERIFY(panel.m_messageEdit != nullptr);
+        QVERIFY(panel.m_contextWindowLabel != nullptr);
+        panel.m_messageEdit->setPlainText(QStringLiteral("draft that must not be sent anywhere"));
+        QTest::qWait(kOldDebounceWithMarginMs);
+        QCOMPARE(panel.exactContextUsageTokens(), qint64{-1});
+        QVERIFY2(!panel.m_contextWindowLabel->text().contains(QStringLiteral("counting")),
+                 qPrintable(panel.m_contextWindowLabel->text()));
+
+        ai::TokenUsage usage;
+        usage.input_tokens = kResponseInputTokens;
+        panel.m_tokenTracker->addTurn(usage);
+        panel.updateTokenLabels();
+        QCOMPARE(panel.exactContextUsageTokens(), kResponseInputTokens);
+        QVERIFY2(panel.m_contextWindowLabel->text().contains(QStringLiteral("last response")),
+                 qPrintable(panel.m_contextWindowLabel->text()));
     }
 
     // The Win32 MCP call polls this check; Stop must flip it so the call kills its server and

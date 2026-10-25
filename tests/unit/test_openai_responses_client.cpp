@@ -27,8 +27,6 @@ private Q_SLOTS:
     void parseResponseObject_apiError_reportsMessage();
     void parseResponseObject_incompleteStatusReportsError();
     void parseResponseObject_failedStatusReportsError();
-    void parseInputTokenCountObject_extractsExactCount();
-    void parseInputTokenCountObject_rejectsOutOfRange();
     void parseModelsList_extractsIds();
     void redactSecrets_redactsOpenAiAndBearerTokens();
     void redactSecrets_redactsGitHubAndCloudTokens();
@@ -51,7 +49,6 @@ private Q_SLOTS:
     void buildPayload_packageToolWarnsAgainstScanInstalls();
     void buildPayload_appActionDescriptionMatchesRiskPolicy();
     void realModelSmokeTest_optIn();
-    void realInputTokenCountSmokeTest_optIn();
     void realModelToolLoopSmokeTest_optIn();
 };
 
@@ -281,50 +278,6 @@ private:
     return result;
 }
 
-[[nodiscard]] qint64 runSmokeInputTokenCount(sak::ai::OpenAIResponsesClient& client,
-                                             const QString& api_key,
-                                             const QString& model,
-                                             QString* failure) {
-    qint64 input_tokens = -1;
-    QEventLoop loop;
-    QTimer timeout;
-    timeout.setSingleShot(true);
-    QObject::connect(&timeout, &QTimer::timeout, &loop, [&]() {
-        *failure = QStringLiteral("Timed out waiting for OpenAI input token count");
-        loop.quit();
-    });
-    QObject::connect(&client,
-                     &sak::ai::OpenAIResponsesClient::inputTokenCountReady,
-                     &loop,
-                     [&](const QString& request_id, qint64 tokens) {
-                         if (request_id == QLatin1String("live_input_token_smoke")) {
-                             input_tokens = tokens;
-                             loop.quit();
-                         }
-                     });
-    QObject::connect(&client,
-                     &sak::ai::OpenAIResponsesClient::inputTokenCountFailed,
-                     &loop,
-                     [&](const QString& request_id, const QString& error_message) {
-                         if (request_id == QLatin1String("live_input_token_smoke")) {
-                             *failure = sak::ai::CredentialStore::redactSecrets(error_message);
-                             loop.quit();
-                         }
-                     });
-
-    sak::ai::OpenAIResponseRequest request;
-    request.api_key = api_key;
-    request.model = model;
-    request.instructions = QStringLiteral(
-        "This is a S.A.K. Utility live input-token smoke test. Do not execute tools.");
-    request.input = QStringLiteral("Count this exact Responses API input token payload.");
-    request.safety_identifier = QStringLiteral("sak-live-input-token-smoke");
-    timeout.start(120'000);
-    client.countInputTokens(request, QStringLiteral("live_input_token_smoke"));
-    loop.exec();
-    return input_tokens;
-}
-
 [[nodiscard]] sak::ai::OpenAIResponseResult runSmokeToolCall(sak::ai::OpenAIResponsesClient& client,
                                                              const QString& api_key,
                                                              const QString& model,
@@ -538,18 +491,6 @@ void OpenAIResponsesClientTests::parseResponseObject_failedStatusReportsError() 
     QVERIFY(result.output_text.isEmpty());
 }
 
-void OpenAIResponsesClientTests::parseInputTokenCountObject_rejectsOutOfRange() {
-    // A value beyond qint64 range would be UB to cast; it must be rejected, not truncated.
-    const QByteArray json = R"({"input_tokens": 1e30})";
-
-    QString error;
-    const qint64 tokens = sak::ai::OpenAIResponsesClient::parseInputTokenCountObject(json, &error);
-
-    QCOMPARE(tokens, qint64{-1});
-    // The reason is the range rejection specifically, not a parse or missing-field error.
-    QCOMPARE(error, QStringLiteral("OpenAI input token count was out of range"));
-}
-
 void OpenAIResponsesClientTests::parseResponseObject_extractsUrlCitations() {
     const QByteArray json = R"({
       "id": "resp_cite",
@@ -605,19 +546,6 @@ void OpenAIResponsesClientTests::parseResponseObject_apiError_reportsMessage() {
     QVERIFY(result.output_text.isEmpty());
     // Both API fields are rendered into one message in a fixed "type: message" shape.
     QCOMPARE(error, QStringLiteral("invalid_request_error: Bad key"));
-}
-
-void OpenAIResponsesClientTests::parseInputTokenCountObject_extractsExactCount() {
-    const QByteArray json = R"({
-      "object": "response.input_tokens",
-      "input_tokens": 12345
-    })";
-
-    QString error;
-    const qint64 tokens = sak::ai::OpenAIResponsesClient::parseInputTokenCountObject(json, &error);
-
-    QVERIFY2(error.isEmpty(), qPrintable(error));
-    QCOMPARE(tokens, qint64{12'345});
 }
 
 void OpenAIResponsesClientTests::parseModelsList_extractsIds() {
@@ -884,12 +812,6 @@ void OpenAIResponsesClientTests::rejectsMalformedUntrustedInputMessages() {
     QCOMPARE(failed_spy.first().at(0).toString(),
              QStringLiteral("OpenAI untrusted input message 0 has an unsupported role"));
     QVERIFY(!client.isBusy());
-    QSignalSpy count_failed_spy(&client, &sak::ai::OpenAIResponsesClient::inputTokenCountFailed);
-    client.countInputTokens(request, QStringLiteral("invalid_role"));
-    QCOMPARE(count_failed_spy.count(), 1);
-    QCOMPARE(count_failed_spy.first().at(0).toString(), QStringLiteral("invalid_role"));
-    QCOMPARE(count_failed_spy.first().at(1).toString(),
-             QStringLiteral("OpenAI untrusted input message 0 has an unsupported role"));
 
     request.untrusted_input_messages = {
         {sak::ai::OpenAIInputMessageRole::User, QStringLiteral("  \n\t ")},
@@ -911,12 +833,6 @@ void OpenAIResponsesClientTests::rejectsUpstreamValidationError() {
     QCOMPARE(failed_spy.count(), 1);
     QCOMPARE(failed_spy.first().at(0).toString(), request.validation_error);
     QVERIFY(!client.isBusy());
-
-    QSignalSpy count_failed_spy(&client, &sak::ai::OpenAIResponsesClient::inputTokenCountFailed);
-    client.countInputTokens(request, QStringLiteral("invalid_access_mode"));
-    QCOMPARE(count_failed_spy.count(), 1);
-    QCOMPARE(count_failed_spy.first().at(0).toString(), QStringLiteral("invalid_access_mode"));
-    QCOMPARE(count_failed_spy.first().at(1).toString(), request.validation_error);
 }
 
 void OpenAIResponsesClientTests::liveResponseReadyReadOverflowAborts() {
@@ -1147,42 +1063,6 @@ void OpenAIResponsesClientTests::realModelSmokeTest_optIn() {
              qPrintable(QStringLiteral("Unexpected smoke response from %1: %2")
                             .arg(model, result.output_text.left(500))));
     QVERIFY2(result.usage.total_tokens > 0, "Live response did not include token usage.");
-}
-
-void OpenAIResponsesClientTests::realInputTokenCountSmokeTest_optIn() {
-    if (qEnvironmentVariable("SAK_AI_REAL_MODEL_TEST").trimmed() != QLatin1String("1") &&
-        qEnvironmentVariable("SAK_RUN_OPENAI_LIVE_TESTS").trimmed() != QLatin1String("1")) {
-        QSKIP("Set SAK_AI_REAL_MODEL_TEST=1 to run the live OpenAI input-token smoke test.");
-    }
-
-    QString api_key = firstEnvironmentValue(
-        {QStringLiteral("OPENAI_API_KEY"), QStringLiteral("SAK_OPENAI_API_KEY")});
-    if (api_key.isEmpty()) {
-        QString credential_error;
-        api_key = sak::ai::CredentialStore().loadApiKey(&credential_error).trimmed();
-        QVERIFY2(!api_key.isEmpty(),
-                 qPrintable(QStringLiteral("Live OpenAI test was explicitly requested, but no API "
-                                           "key was found: %1")
-                                .arg(credential_error)));
-    }
-    QVERIFY2(sak::ai::OpenAIResponsesClient::hasUsableApiKey(api_key),
-             "OpenAI API key is present but not usable.");
-
-    sak::ai::OpenAIResponsesClient model_client;
-    QString failure;
-    const QStringList models = listModelsForSmoke(model_client, api_key, &failure);
-    QVERIFY2(failure.isEmpty(), qPrintable(failure));
-    const QString model = pickSmokeTestModel(models);
-    QVERIFY2(!model.isEmpty(), "No chat-capable GPT model found for smoke token-count test.");
-
-    sak::ai::OpenAIResponsesClient count_client;
-    failure.clear();
-    const qint64 input_tokens = runSmokeInputTokenCount(count_client, api_key, model, &failure);
-    QVERIFY2(failure.isEmpty(), qPrintable(failure));
-    QVERIFY2(
-        input_tokens > 0,
-        qPrintable(
-            QStringLiteral("Live input token count from %1 was %2").arg(model).arg(input_tokens)));
 }
 
 void OpenAIResponsesClientTests::realModelToolLoopSmokeTest_optIn() {

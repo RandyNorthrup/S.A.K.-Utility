@@ -301,7 +301,6 @@ void wipeWorkflowResumePlaintext(QByteArray* plaintext) {
         g_workflow_resume_plaintext_wipe_observer(*plaintext);
     }
 }
-constexpr int kContextTokenDebounceMs = 700;
 constexpr qint64 kDefaultContextWindowTokens = 128'000;
 constexpr qint64 kGptFiveFrontierContextWindowTokens = 1'050'000;
 constexpr qint64 kGptFourOneContextWindowTokens = 1'047'576;
@@ -4334,7 +4333,6 @@ void AiAssistantPanel::setupContextPaneAgentSection(QVBoxLayout* layout, QWidget
     m_modelCombo->setToolTip(tr("Choose the OpenAI model for this session"));
     setAccessible(m_modelCombo, tr("AI model"), tr("OpenAI model for the active session"));
     connect(m_modelCombo, &QComboBox::currentTextChanged, this, [this]() {
-        scheduleContextTokenRefresh();
         updateRunTelemetryLabels();
     });
     layout->addWidget(m_modelCombo);
@@ -4485,7 +4483,10 @@ void AiAssistantPanel::setupContextPaneAccessSection(QVBoxLayout* layout, QWidge
                                static_cast<int>(ai::AiAccessMode::AssistedFullAccess));
     m_accessModeCombo->addItem(tr("Unattended Full Access"),
                                static_cast<int>(ai::AiAccessMode::UnattendedFullAccess));
-    m_accessModeCombo->setCurrentIndex(1);
+    // Least privilege by default (owner decision 2026-10-24): local execution is something the
+    // user turns on, not something a fresh panel starts with. No access mode is persisted, so
+    // there is no saved choice for this default to override.
+    m_accessModeCombo->setCurrentIndex(0);
     m_accessModeCombo->setToolTip(
         tr("Choose whether the assistant may use local PC execution tools"));
     setAccessible(m_accessModeCombo,
@@ -4687,7 +4688,6 @@ void AiAssistantPanel::setupComposerInput(QVBoxLayout* layout, QWidget* composer
     setAccessible(m_messageEdit, tr("AI message input"));
     connect(m_messageEdit, &QPlainTextEdit::textChanged, this, [this]() {
         updateCredentialControls();
-        scheduleContextTokenRefresh();
         updateRunTelemetryLabels();
     });
     layout->addWidget(m_messageEdit);
@@ -4810,7 +4810,6 @@ void AiAssistantPanel::connectAiClient() {
     connectExecutionBrokerSignals();
     connectElevationBrokerSignals();
     ensureActivityTimer();
-    ensureContextTokenTimer();
 }
 
 void AiAssistantPanel::connectOpenAiClientSignals() {
@@ -4832,14 +4831,6 @@ void AiAssistantPanel::connectOpenAiClientSignals() {
             &ai::OpenAIResponsesClient::modelsReady,
             this,
             &AiAssistantPanel::onModelsReady);
-    connect(m_client.get(),
-            &ai::OpenAIResponsesClient::inputTokenCountReady,
-            this,
-            &AiAssistantPanel::onInputTokenCountReady);
-    connect(m_client.get(),
-            &ai::OpenAIResponsesClient::inputTokenCountFailed,
-            this,
-            &AiAssistantPanel::onInputTokenCountFailed);
     connect(m_client.get(),
             &ai::OpenAIResponsesClient::requestFailed,
             this,
@@ -4928,7 +4919,6 @@ void AiAssistantPanel::loadRememberedApiKey() {
                         QString(QChar(kStatusMarkerSuccess)),
                         sak::ui::kStatusColorSuccess);
         appendLocalEvent(tr("Remembered OpenAI key loaded from encrypted app credential file"));
-        scheduleContextTokenRefresh();
     } else if (!error.isEmpty()) {
         setApiKeyStatus(tr("Credential load failed"),
                         sak::ui::kStatusColorError,
@@ -5078,56 +5068,24 @@ bool AiAssistantPanel::currentContextWindowIsDocumented() const {
                                                                     : QString{});
 }
 
-void AiAssistantPanel::ensureContextTokenTimer() {
-    if (m_contextTokenTimer != nullptr) {
+// The context readout reports what the last response actually consumed, as OpenAI counted it in
+// that response's own usage block. It used to POST the whole prompt -- draft text and every
+// attachment re-encoded -- to /v1/responses/input_tokens after each 700 ms typing pause and at
+// launch with a remembered key: network calls while typing that the user never asked for
+// (owner decision 2026-10-24).
+void AiAssistantPanel::applyLastResponseContextUsage() {
+    if (!m_tokenTracker || m_tokenTracker->lastTurn().input_tokens <= 0) {
         return;
     }
-    m_contextTokenTimer = new QTimer(this);
-    m_contextTokenTimer->setSingleShot(true);
-    m_contextTokenTimer->setInterval(kContextTokenDebounceMs);
-    connect(
-        m_contextTokenTimer, &QTimer::timeout, this, &AiAssistantPanel::refreshContextTokenCount);
-}
-
-void AiAssistantPanel::scheduleContextTokenRefresh() {
-    if (m_contextWindowLabel == nullptr) {
-        return;
-    }
-    ensureContextTokenTimer();
-    if (!ai::OpenAIResponsesClient::hasUsableApiKey(apiKey())) {
-        resetContextTokenCount(tr("key needed"));
-        return;
-    }
-    if ((m_modelCombo == nullptr) || m_modelCombo->currentText().trimmed().isEmpty()) {
-        resetContextTokenCount(tr("model needed"));
-        return;
-    }
-    m_contextTokenStatus = tr("counting");
+    m_contextInputTokens = m_tokenTracker->lastTurn().input_tokens;
+    m_contextTokenStatus = tr("last response");
     updateRunTelemetryLabels();
-    m_contextTokenTimer->start();
-}
-
-void AiAssistantPanel::refreshContextTokenCount() {
-    if (!m_client || !ai::OpenAIResponsesClient::hasUsableApiKey(apiKey()) ||
-        (m_modelCombo == nullptr)) {
-        resetContextTokenCount(tr("key needed"));
-        return;
-    }
-    ai::OpenAIResponseRequest request = buildChatRequest(messageText());
-    request.function_outputs.clear();
-    m_contextTokenRequestId = QStringLiteral("ctx_%1").arg(m_nextContextTokenRequestSequence++);
-    m_contextTokenStatus = tr("counting");
-    updateRunTelemetryLabels();
-    m_client->countInputTokens(request, m_contextTokenRequestId);
+    notifyContextPressureIfCrossed();
 }
 
 void AiAssistantPanel::resetContextTokenCount(const QString& status) {
     m_contextInputTokens = -1;
-    m_contextTokenRequestId.clear();
     m_contextTokenStatus = status;
-    if (m_contextTokenTimer != nullptr) {
-        m_contextTokenTimer->stop();
-    }
     updateRunTelemetryLabels();
 }
 
@@ -5141,8 +5099,9 @@ QString AiAssistantPanel::contextWindowStatusText() const {
     const QString limit_text = documented_limit ? compactTokenCount(limit) : tr("unknown");
     const qint64 used = exactContextUsageTokens();
     if (used >= 0) {
-        return documented_limit ? tr("%1/%2 exact").arg(compactTokenCount(used), limit_text)
-                                : tr("%1/%2 input exact").arg(compactTokenCount(used), limit_text);
+        return documented_limit
+                   ? tr("%1/%2 last response").arg(compactTokenCount(used), limit_text)
+                   : tr("%1/%2 input, last response").arg(compactTokenCount(used), limit_text);
     }
     const QString status = m_contextTokenStatus.trimmed().isEmpty() ? tr("pending")
                                                                     : m_contextTokenStatus;
@@ -5194,10 +5153,9 @@ void AiAssistantPanel::updateContextWindowUsageLabel() {
             documented_limit ? tr(" Consider compacting or starting a fresh chat near 80%.")
                              : tr(" Select a documented OpenAI model to show the exact window.");
         m_contextWindowLabel->setToolTip(
-            tr("Exact input context usage: %1 of %2 tokens for %3. Count comes from OpenAI "
-               "/v1/responses/input_tokens using the same model-visible Responses payload, "
-               "including current draft, instructions, tools, previous response chain, and "
-               "attached context.%4")
+            tr("Input context of the last response: %1 of %2 tokens for %3, as OpenAI counted "
+               "it for that response (instructions, tools, previous response chain and attached "
+               "context). The next request also carries whatever is typed and attached now.%4")
                 .arg(usage.isEmpty() ? tr("pending") : usage,
                      limit_text,
                      (m_modelCombo != nullptr) ? m_modelCombo->currentText().trimmed()
@@ -5210,7 +5168,7 @@ void AiAssistantPanel::updateContextWindowUsageLabel() {
 
 void AiAssistantPanel::updateTokenLabels() {
     Q_ASSERT(m_tokenTracker);
-    scheduleContextTokenRefresh();
+    applyLastResponseContextUsage();
     updateRunTelemetryLabels();
     emitStatusDetails();
 }
@@ -9245,7 +9203,6 @@ void AiAssistantPanel::refreshContextList() {
     if (m_clearContextButton != nullptr) {
         m_clearContextButton->setEnabled(!m_contextItems.isEmpty());
     }
-    scheduleContextTokenRefresh();
     updateRunTelemetryLabels();
 }
 
@@ -12687,7 +12644,7 @@ void AiAssistantPanel::onSessionSelected(int index) {
     loadRunStateSnapshotForSession();
     traceAiEvent(QStringLiteral("session"), QStringLiteral("session"), QStringLiteral("opened"));
     loadSessionTranscript(session_id);
-    scheduleContextTokenRefresh();
+    resetContextTokenCount(tr("after next response"));
     appendLocalEvent(tr("Opened AI session: %1").arg(session_id));
 }
 
@@ -12759,8 +12716,9 @@ void AiAssistantPanel::onNewSessionClicked() {
     m_runToken = {};
     m_runState = {};
     m_taskStatus = tr("Idle");
-    resetContextTokenCount(ai::OpenAIResponsesClient::hasUsableApiKey(apiKey()) ? tr("pending")
-                                                                                : tr("key needed"));
+    resetContextTokenCount(ai::OpenAIResponsesClient::hasUsableApiKey(apiKey())
+                               ? tr("after next response")
+                               : tr("key needed"));
     if (m_tokenTracker) {
         m_tokenTracker->reset();
         updateTokenLabels();
@@ -12849,7 +12807,7 @@ void AiAssistantPanel::onLoadApiKeyClicked() {
     }
 
     m_apiKey = key;
-    resetContextTokenCount(tr("counting"));
+    resetContextTokenCount(tr("after next response"));
     setApiKeyStatus(tr("Key loaded; testing"),
                     sak::ui::kStatusColorWarning,
                     QStringLiteral("..."),
@@ -13518,33 +13476,6 @@ void AiAssistantPanel::notifyContextPressureIfCrossed() {
                   .arg(percent)
                   .arg(used, limit);
     appendLocalEvent(message);
-}
-
-void AiAssistantPanel::onInputTokenCountReady(const QString& request_id, qint64 input_tokens) {
-    if (request_id != m_contextTokenRequestId) {
-        return;
-    }
-    m_contextInputTokens = input_tokens;
-    m_contextTokenStatus = tr("exact");
-    m_contextTokenRequestId.clear();
-    updateRunTelemetryLabels();
-    notifyContextPressureIfCrossed();
-    emitStatusDetails();
-}
-
-void AiAssistantPanel::onInputTokenCountFailed(const QString& request_id,
-                                               const QString& error_message) {
-    if (request_id != m_contextTokenRequestId) {
-        return;
-    }
-    m_contextInputTokens = -1;
-    m_contextTokenStatus = tr("unavailable");
-    m_contextTokenRequestId.clear();
-    updateRunTelemetryLabels();
-    emitStatusDetails();
-    appendLocalEvent(
-        tr("OpenAI context token count unavailable: %1")
-            .arg(ai::CredentialStore::redactSecrets(error_message).left(kMetadataPreviewMaxChars)));
 }
 
 void AiAssistantPanel::onRequestFailed(const QString& error_message) {

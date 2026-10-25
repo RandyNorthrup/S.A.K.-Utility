@@ -167,8 +167,6 @@ private Q_SLOTS:
     void onRequestFinished();
     void onResponseReady(const sak::ai::OpenAIResponseResult& result);
     void onModelsReady(const QStringList& model_ids);
-    void onInputTokenCountReady(const QString& request_id, qint64 input_tokens);
-    void onInputTokenCountFailed(const QString& request_id, const QString& error_message);
     void onRequestFailed(const QString& error_message);
     // The async built-in tool runner's pool task left the pool (attached OR detached).
     // A job detached by Stop emits nothing else, so this is what lets a cancelled-but-
@@ -301,10 +299,9 @@ private:
     void updateRunTelemetryLabels();
     void updateAgentActivityLabel();
     void updateContextWindowUsageLabel();
-    void ensureContextTokenTimer();
-    void scheduleContextTokenRefresh();
-    void refreshContextTokenCount();
     void resetContextTokenCount(const QString& status);
+    /// Shows the input tokens the last response consumed (no request of its own).
+    void applyLastResponseContextUsage();
     [[nodiscard]] qint64 exactContextUsageTokens() const;
     [[nodiscard]] qint64 currentContextWindowTokens() const;
     [[nodiscard]] bool currentContextWindowIsDocumented() const;
@@ -1114,14 +1111,11 @@ private:
     // thread, so a teardown that started on the GUI thread is visible to them.
     std::atomic<bool> m_shuttingDown{false};
     QTimer* m_activityTimer{nullptr};
-    QTimer* m_contextTokenTimer{nullptr};
-    QString m_contextTokenRequestId;
     QString m_contextTokenStatus;
     qint64 m_contextInputTokens{-1};
     // Last context-pressure band reported to the transcript: 0 normal, 1 warning
     // (>=80%), 2 critical (>=95%). Prevents re-warning every telemetry refresh.
     int m_contextPressureLevel{0};
-    int m_nextContextTokenRequestSequence{1};
     QString m_currentCommandId;
     QString m_currentCommandLeaseId;
     QString m_currentCommandPreview;

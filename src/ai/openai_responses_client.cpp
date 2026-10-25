@@ -911,7 +911,6 @@ OpenAIResponsesClient::OpenAIResponsesClient(QObject* parent) : QObject(parent) 
 
 OpenAIResponsesClient::~OpenAIResponsesClient() {
     cancel();
-    cancelInputTokenCount();
 }
 
 void OpenAIResponsesClient::createResponse(const OpenAIResponseRequest& request) {
@@ -942,46 +941,6 @@ void OpenAIResponsesClient::createResponse(const OpenAIResponseRequest& request)
     const QByteArray payload = buildResponsePayload(request);
     auto* reply = m_network_manager.post(network_request, payload);
     attachCreateReply(reply, kMaxResponseBodyBytes);
-}
-
-void OpenAIResponsesClient::countInputTokens(const OpenAIResponseRequest& request,
-                                             const QString& request_id) {
-    if (!hasUsableApiKey(request.api_key)) {
-        Q_EMIT inputTokenCountFailed(request_id,
-                                     QStringLiteral("OpenAI API key is missing or too short"));
-        return;
-    }
-    if (request.model.trimmed().isEmpty()) {
-        Q_EMIT inputTokenCountFailed(request_id, QStringLiteral("OpenAI model is empty"));
-        return;
-    }
-    const QString input_message_error = untrustedInputMessageError(request);
-    if (!input_message_error.isEmpty()) {
-        Q_EMIT inputTokenCountFailed(request_id, input_message_error);
-        return;
-    }
-
-    cancelInputTokenCount();
-    auto network_request = buildRequest(QStringLiteral("/v1/responses/input_tokens"),
-                                        request.api_key);
-    auto count_request = request;
-    count_request.safety_identifier.clear();
-    // Strip generation-only policy fields the count does not depend on: truncation is
-    // applied server-side during generation, and prompt_cache_key only affects cache
-    // routing. Keeping the /v1/responses/input_tokens payload minimal avoids any
-    // endpoint field-compat risk for what is purely a telemetry count.
-    count_request.truncation.clear();
-    count_request.prompt_cache_key.clear();
-    const QByteArray payload = buildResponsePayload(count_request);
-    auto* reply = m_network_manager.post(network_request, payload);
-    m_input_tokens_reply = reply;
-
-    connect(reply, &QNetworkReply::finished, this, [this, reply, request_id]() {
-        handleInputTokenCountFinished(reply, request_id);
-    });
-    watchReplyBody(reply,
-                   kMaxResponseBodyBytes,
-                   QStringLiteral("OpenAI input-token body exceeds the size limit"));
 }
 
 void OpenAIResponsesClient::listModels(const QString& api_key) {
@@ -1190,39 +1149,6 @@ QString OpenAIResponsesClient::extractApiError(const QByteArray& data) {
     return describeApiErrorObject(error);
 }
 
-qint64 OpenAIResponsesClient::parseInputTokenCountObject(const QByteArray& data,
-                                                         QString* error_message) {
-    if (error_message != nullptr) {
-        error_message->clear();
-    }
-    const auto root = responseRootObject(data, error_message);
-    if (!root.has_value()) {
-        return -1;
-    }
-    const auto value = root->value(QStringLiteral("input_tokens"));
-    if (!value.isDouble()) {
-        if (error_message != nullptr) {
-            *error_message = QStringLiteral("OpenAI input token count missing input_tokens");
-        }
-        return -1;
-    }
-    // Guard the double->qint64 cast: a non-finite or out-of-range magnitude is UB to cast.
-    const double raw = value.toDouble();
-    if (!std::isfinite(raw) || raw < 0.0) {
-        if (error_message != nullptr) {
-            *error_message = QStringLiteral("OpenAI input token count was negative or non-finite");
-        }
-        return -1;
-    }
-    if (raw >= static_cast<double>(std::numeric_limits<qint64>::max())) {
-        if (error_message != nullptr) {
-            *error_message = QStringLiteral("OpenAI input token count was out of range");
-        }
-        return -1;
-    }
-    return static_cast<qint64>(raw);
-}
-
 bool OpenAIResponsesClient::hasUsableApiKey(const QString& api_key) noexcept {
     return api_key.trimmed().size() >= kMinimumOpenAiApiKeyLength;
 }
@@ -1398,48 +1324,6 @@ void OpenAIResponsesClient::handleModelsFinished(QNetworkReply* reply) {
 
     Q_EMIT modelsReady(models);
     Q_EMIT requestFinished();
-}
-
-void OpenAIResponsesClient::handleInputTokenCountFinished(QNetworkReply* reply,
-                                                          const QString& request_id) {
-    if (m_input_tokens_reply == reply) {
-        m_input_tokens_reply = nullptr;
-    }
-    reply->deleteLater();
-
-    const auto body =
-        readBoundedReplyBody(reply,
-                             kMaxResponseBodyBytes,
-                             QStringLiteral("OpenAI input-token body exceeds the size limit"));
-    if (!body) {
-        Q_EMIT inputTokenCountFailed(request_id, body.error());
-        return;
-    }
-    if (reply->error() != QNetworkReply::NoError) {
-        const QString api_error = extractApiError(*body);
-        Q_EMIT inputTokenCountFailed(request_id,
-                                     firstNonEmptyError(api_error, reply->errorString()));
-        return;
-    }
-
-    QString parse_error;
-    const qint64 tokens = parseInputTokenCountObject(*body, &parse_error);
-    if (!parse_error.isEmpty()) {
-        Q_EMIT inputTokenCountFailed(request_id, parse_error);
-        return;
-    }
-    Q_EMIT inputTokenCountReady(request_id, tokens);
-}
-
-void OpenAIResponsesClient::cancelInputTokenCount() {
-    if (m_input_tokens_reply == nullptr) {
-        return;
-    }
-    auto* reply = m_input_tokens_reply;
-    m_input_tokens_reply = nullptr;
-    reply->disconnect(this);
-    reply->abort();
-    reply->deleteLater();
 }
 
 }  // namespace sak::ai

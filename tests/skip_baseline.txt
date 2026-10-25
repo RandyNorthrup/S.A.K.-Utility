@@ -49,7 +49,6 @@ test_ai_assistant_panel_tool_dispatch::sak::AiAssistantPanelToolDispatchTest::sy
 # ---------------------------------------------------------------------------
 test_offline_package_builder::TestOfflinePackageBuilder::testBuildOfficePcBundle = Live Chocolatey package/CDN integration; SAK_RUN_LIVE_PACKAGE_TESTS=1 opts in, then every failure hard-fails.
 test_openai_responses_client::OpenAIResponsesClientTests::realModelSmokeTest_optIn = Bills a real OpenAI request. SAK_AI_REAL_MODEL_TEST=1 opts in; after opt-in, missing credentials or API failures fail.
-test_openai_responses_client::OpenAIResponsesClientTests::realInputTokenCountSmokeTest_optIn = Bills a real OpenAI request. SAK_AI_REAL_MODEL_TEST=1 opts in; after opt-in, missing credentials or API failures fail.
 test_openai_responses_client::OpenAIResponsesClientTests::realModelToolLoopSmokeTest_optIn = Bills several real OpenAI requests. SAK_AI_REAL_MODEL_TEST=1 opts in; after opt-in, missing credentials or API failures fail.
 test_linux_iso_downloader::LinuxISODownloaderTests::testGitHubVersionCheck_Network = Live GitHub API check; SAK_RUN_LIVE_LINUX_ISO_TESTS=1 opts in, then timeout/API failure hard-fails.
 test_linux_iso_downloader::LinuxISODownloaderTests::testDirectUrlReachable_Ubuntu = Live Ubuntu CDN reachability check; SAK_RUN_LIVE_LINUX_ISO_TESTS=1 opts in, then timeout/status failure hard-fails.
