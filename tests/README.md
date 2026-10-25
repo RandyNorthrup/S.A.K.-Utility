@@ -145,8 +145,8 @@ and termination-utility setup handshakes; neither changes production deadlines.
 | test_config_manager | `config_manager` | Get/set values, persistence, portable mode, type conversions |
 | test_file_scanner | `file_scanner` | Recursive scan, extension/size/date filters, cancellation, controlled junction-cycle fixtures, and injected canonical-resolution failure |
 | test_file_hash | `file_hash` | MD5/SHA-256 hashing, large-file streaming, hash comparison |
-| test_process_runner | `process_runner` | Process execution, stdout/stderr capture, timeout, exit codes, held-generation Job cleanup on cancellation, timeout, normal-exit survivors and callback exceptions, detached-tool fault injection, and five GUI detached-launch failure guards |
-| test_windows_process_job | `windows_process_job` | Native preparation failures, startup modifier preservation, real child/descendant containment, retained handles after cleanup failures, and isolated fail-closed destruction |
+| test_process_runner | `process_runner` | Process execution, stdout/stderr capture, timeout, exit codes, held-generation Job cleanup on cancellation, timeout, normal-exit survivors and callback exceptions, unprovable cleanup reported as a failed run with the live process and armed Job in custody, detached-tool fault injection, and five GUI detached-launch failure guards |
+| test_windows_process_job | `windows_process_job` | Native preparation failures (including a refused close after one), startup modifier preservation, real child/descendant containment, retained handles after cleanup failures, and isolated destruction of an unproved Job that reports and closes it, kill-on-close ending a live member, without crashing |
 | test_resource_soak | `process_runner` | Long-session handle/GDI/USER/memory-growth soak over the real launchers |
 | test_error_codes | `error_codes` | Error code enum values, category strings, display messages |
 | test_input_validator | `input_validator` | Path, IP, port, Chocolatey name, and URL validation |

@@ -3,9 +3,13 @@
 
 #include "sak/process_runner.h"
 
+#include "sak/contained_process_quarantine.h"
 #include "sak/layout_constants.h"
+#include "sak/logger.h"
+#include "sak/process_runner_containment.h"
 #include "sak/windows_process_job.h"
 
+#include <QCoreApplication>
 #include <QDeadlineTimer>
 #include <QDir>
 #include <QElapsedTimer>
@@ -159,6 +163,19 @@ std::expected<void, QString> waitForPrimaryExit(QProcess* proc, const QDeadlineT
     return {};
 }
 
+std::expected<void, QString> closeEmptiedJob(WindowsProcessJob& job,
+                                             const QDeadlineTimer& deadline) {
+    const auto empty = waitForEmptyJob(job, deadline);
+    if (!empty) {
+        return std::unexpected(empty.error());
+    }
+    if (!*empty) {
+        return std::unexpected(
+            QStringLiteral("Process Job still has active members at cleanup deadline"));
+    }
+    return job.closeEmpty();
+}
+
 std::expected<bool, QString> finishContainedProcess(QProcess* proc,
                                                     WindowsProcessJob& job,
                                                     bool terminate_now) {
@@ -171,27 +188,66 @@ std::expected<bool, QString> finishContainedProcess(QProcess* proc,
     if (!primary) {
         return std::unexpected(primary.error());
     }
-    const auto empty = waitForEmptyJob(job, deadline);
-    if (!empty) {
-        return std::unexpected(empty.error());
-    }
-    if (!*empty) {
-        return std::unexpected(
-            QStringLiteral("Process Job still has active members at cleanup deadline"));
-    }
-    const auto closed = job.closeEmpty();
+    const auto closed = closeEmptiedJob(job, deadline);
     if (!closed) {
         return std::unexpected(closed.error());
     }
     return *forced_descendants;
 }
 
-bool finishContainedOrFailFast(QProcess* proc, WindowsProcessJob& job, bool terminate_now) {
-    const auto finished = finishContainedProcess(proc, job, terminate_now);
-    if (!finished) {
-        qFatal("ProcessRunner refused unproved Job cleanup: %s", qPrintable(finished.error()));
+// Custody adapter for a run whose cleanup could not be proved. A retry needs only the Job: an
+// empty Job means the primary has exited too, so the QProcess is never driven from a retrying
+// thread. The QProcess was moved to the application thread when custody took it, and is destroyed
+// there, so it is never deleted underneath that thread's event delivery.
+class RetainedProcessRun final : public ContainedProcessQuarantine::Owner {
+public:
+    explicit RetainedProcessRun(ContainedProcessRun run) : m_run(std::move(run)) {}
+
+    RetainedProcessRun(const RetainedProcessRun&) = delete;
+    RetainedProcessRun& operator=(const RetainedProcessRun&) = delete;
+    RetainedProcessRun(RetainedProcessRun&&) = delete;
+    RetainedProcessRun& operator=(RetainedProcessRun&&) = delete;
+
+    ~RetainedProcessRun() override {
+        if (!m_run.process) {
+            return;
+        }
+        if (m_run.process->thread() != QThread::currentThread()) {
+            m_run.process.release()->deleteLater();
+            return;
+        }
+        // Destroyed only after the Job proved empty, so the primary has exited and this bounded
+        // wait returns at once; it lets QProcess record that exit instead of destroying itself as
+        // a "still running" process.
+        if (m_run.process->state() != QProcess::NotRunning &&
+            !m_run.process->waitForFinished(sak::kTimeoutProcessTerminateMs)) {
+            logError("ProcessRunner custody released a QProcess that did not report its exit");
+        }
     }
-    return *finished;
+
+    [[nodiscard]] std::expected<void, QString> retryCleanup() override {
+        const auto terminated = settleContainedDescendants(*m_run.job, true);
+        if (!terminated) {
+            return std::unexpected(terminated.error());
+        }
+        return closeEmptiedJob(*m_run.job,
+                               QDeadlineTimer(sak::kTimeoutProcessTerminateMs, Qt::PreciseTimer));
+    }
+
+private:
+    ContainedProcessRun m_run;
+};
+
+void retainUnprovenRun(ContainedProcessRun& run, const QString& error) {
+    // QProcess::moveToThread must run on the QProcess's own thread, which is this one.
+    const QCoreApplication* const application = QCoreApplication::instance();
+    if (run.process && application != nullptr && run.process->thread() != application->thread()) {
+        run.process->moveToThread(application->thread());
+    }
+    ContainedProcessQuarantine::retain(
+        std::make_unique<RetainedProcessRun>(std::move(run)),
+        QStringLiteral("ProcessRunner could not prove Job cleanup: %1").arg(error));
+    run = {};
 }
 
 std::expected<void, QString> startProcess(const ProcessRunRequest& request,
@@ -254,25 +310,28 @@ bool pollContainedProcess(const ProcessRunRequest& request, QProcess* proc, Proc
 }
 
 ProcessResult completeStartedRun(const ProcessRunRequest& request,
-                                 QProcess* proc,
-                                 WindowsProcessJob& job,
+                                 ContainedProcessRun& run,
                                  ProcessResult result) {
+    // Valid only until a settle step hands the run to custody; every use below is gated on that.
+    QProcess* const proc = run.process.get();
     bool containment_closed = false;
     try {
         if (request.on_started) {
             request.on_started(proc->processId());
         }
         if (pollContainedProcess(request, proc, &result)) {
-            finishContainedOrFailFast(proc, job, true);
             containment_closed = true;
-            drainProcessOutput(proc, &result, request.on_output);
+            if (settleContainedProcessRun(run, true, &result).has_value()) {
+                drainProcessOutput(proc, &result, request.on_output);
+            }
             return result;
         }
         result.exit_code = proc->exitCode();
         result.exit_status = static_cast<int>(proc->exitStatus());
-        const bool forced_descendants = finishContainedOrFailFast(proc, job, false);
         containment_closed = true;
-        if (forced_descendants) {
+        const std::optional<bool> forced_descendants =
+            settleContainedProcessRun(run, false, &result);
+        if (forced_descendants.value_or(false)) {
             appendProcessFailure(&result,
                                  QStringLiteral(
                                      "Contained process descendants remained after primary exit"));
@@ -282,13 +341,13 @@ ProcessResult completeStartedRun(const ProcessRunRequest& request,
             &result,
             QStringLiteral("Process callback failed: %1").arg(QString::fromUtf8(error.what())));
         if (!containment_closed) {
-            finishContainedOrFailFast(proc, job, true);
+            (void)settleContainedProcessRun(run, true, &result);
         }
     } catch (...) {
         appendProcessFailure(&result,
                              QStringLiteral("Process callback failed with an unknown exception"));
         if (!containment_closed) {
-            finishContainedOrFailFast(proc, job, true);
+            (void)settleContainedProcessRun(run, true, &result);
         }
     }
     return result;
@@ -310,7 +369,6 @@ ProcessResult runProcessInternal(const ProcessRunRequest& request) {
         return result;
     }
 
-    QProcess proc;
     auto created_job = WindowsProcessJob::create();
     if (!created_job) {
         appendProcessFailure(
@@ -318,17 +376,37 @@ ProcessResult runProcessInternal(const ProcessRunRequest& request) {
             QStringLiteral("Failed to prepare contained process: %1").arg(created_job.error()));
         return result;
     }
-    auto job = std::move(*created_job);
-    const auto started = startProcess(request, &proc, *job);
+    // Heap-owned so an unproven cleanup can transfer the live QProcess and its Job to custody
+    // instead of destroying them here.
+    ContainedProcessRun run{.process = std::make_unique<QProcess>(),
+                            .job = std::move(*created_job)};
+    const auto started = startProcess(request, run.process.get(), *run.job);
     if (!started) {
         appendProcessFailure(&result, started.error());
-        finishContainedOrFailFast(&proc, *job, true);
+        (void)settleContainedProcessRun(run, true, &result);
         return result;
     }
-    return completeStartedRun(request, &proc, *job, std::move(result));
+    return completeStartedRun(request, run, std::move(result));
 }
 
 }  // namespace
+
+std::optional<bool> settleContainedProcessRun(ContainedProcessRun& run,
+                                              bool terminate_now,
+                                              ProcessResult* result) {
+    Q_ASSERT(run.process && run.job && result != nullptr);
+    const auto finished = finishContainedProcess(run.process.get(), *run.job, terminate_now);
+    if (finished) {
+        return *finished;
+    }
+    // Report + contain (owner decision 2026-10-24). This was a qFatal, so a child that merely
+    // outlived the cleanup deadline under machine load took the whole application down mid-run.
+    appendProcessFailure(
+        result,
+        QStringLiteral("Contained process cleanup could not be proved: %1").arg(finished.error()));
+    retainUnprovenRun(run, finished.error());
+    return std::nullopt;
+}
 
 bool appendCappedOutput(QString& target, const QString& chunk, qsizetype cap) {
     if (chunk.isEmpty()) {

@@ -4,7 +4,9 @@
 /// @file test_process_runner.cpp
 /// @brief Unit tests for process execution utilities
 
+#include "sak/contained_process_quarantine.h"
 #include "sak/process_runner.h"
+#include "sak/process_runner_containment.h"
 #include "sak/windows_process_job.h"
 
 #include "../support/ai_mcp_native_fixture.h"
@@ -16,6 +18,8 @@
 #include <QRegularExpression>
 #include <QtTest/QtTest>
 
+#include <atomic>
+#include <memory>
 #include <optional>
 #include <stdexcept>
 #include <utility>
@@ -36,6 +40,7 @@ private Q_SLOTS:
     void runProcess_outputCallbackExceptionStillCleansJob();
     void runProcess_cancellation();
     void runProcess_cancellationKillsChild();
+    void unprovedCleanupIsReportedAndRetained();
 
     // runPowerShell
     void runPowerShell_simpleScript();
@@ -822,6 +827,66 @@ void ProcessRunnerTests::processFaultInjector_scopeRestoresRealLaunch() {
         });
     const auto passed = sak::runProcess("cmd.exe", {"/C", "exit /b 5"}, 10'000);
     QCOMPARE(passed.exit_code, 5);
+}
+
+// A Job whose cleanup cannot be proved -- here its accounting query fails, as it can under real
+// faults -- used to qFatal the whole application from inside a tool run. It must instead come back
+// as a failed result with the live process and its armed Job in custody, and a later retry that
+// can see the Job must still kill the child and prove the cleanup.
+void ProcessRunnerTests::unprovedCleanupIsReportedAndRetained() {
+    auto fail_query = std::make_shared<std::atomic_bool>(false);
+    auto api = sak::WindowsProcessJob::nativeApi();
+    const auto query = api.query_information;
+    api.query_information =
+        [fail_query,
+         query](HANDLE job, JOBOBJECTINFOCLASS kind, LPVOID info, DWORD size, LPDWORD returned) {
+            if (fail_query->load()) {
+                ::SetLastError(ERROR_ACCESS_DENIED);
+                return FALSE;
+            }
+            return query(job, kind, info, size, returned);
+        };
+    auto created = sak::WindowsProcessJob::createWithApi(std::move(api));
+    QVERIFY2(created.has_value(), qPrintable(sak::testfixtures::mcp::failureDiagnostic(created)));
+    sak::ContainedProcessRun run{.process = std::make_unique<QProcess>(),
+                                 .job = std::move(*created)};
+    QVERIFY(run.job->installOn(*run.process).has_value());
+    run.process->start(sak::systemPowerShellPath(),
+                       {QStringLiteral("-NoProfile"),
+                        QStringLiteral("-NonInteractive"),
+                        QStringLiteral("-Command"),
+                        QStringLiteral("Start-Sleep -Seconds 30")});
+    const bool started = run.process->waitForStarted(10'000);
+    QVERIFY(run.job->completeLaunch(*run.process, started).has_value());
+    QVERIFY(started);
+    auto child = Generation::observe(run.process->processId());
+    QVERIFY2(child.has_value(), qPrintable(sak::testfixtures::mcp::failureDiagnostic(child)));
+
+    const int custody_before = sak::ContainedProcessQuarantine::retainedCount();
+    sak::ProcessResult result;
+    result.exit_code = 0;
+    fail_query->store(true);
+    const std::optional<bool> settled = sak::settleContainedProcessRun(run, true, &result);
+    fail_query->store(false);
+
+    QVERIFY(!settled.has_value());
+    QVERIFY(!run.process && !run.job);
+    QCOMPARE(result.exit_code, -1);
+    QVERIFY2(result.std_err.contains(
+                 QStringLiteral("Contained process cleanup could not be proved: Query Windows "
+                                "process Job accounting failed")),
+             qPrintable(result.std_err));
+    QCOMPARE(sak::ContainedProcessQuarantine::retainedCount(), custody_before + 1);
+    QVERIFY(sak::ContainedProcessQuarantine::retainedReasons().constLast().startsWith(
+        QStringLiteral("ProcessRunner could not prove Job cleanup: ")));
+    const auto alive = child->isAlive();
+    QVERIFY(alive.has_value() && *alive);
+
+    const auto released = sak::testfixtures::mcp::releaseCustodyTo(custody_before);
+    QVERIFY2(released.has_value(), qPrintable(sak::testfixtures::mcp::failureDiagnostic(released)));
+    const auto stopped = child->waitForExit();
+    QVERIFY2(stopped.has_value(), qPrintable(sak::testfixtures::mcp::failureDiagnostic(stopped)));
+    QCOMPARE(*stopped, sak::kWindowsProcessJobFailureExitCode);
 }
 
 QTEST_GUILESS_MAIN(ProcessRunnerTests)

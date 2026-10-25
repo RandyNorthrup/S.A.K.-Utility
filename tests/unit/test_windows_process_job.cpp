@@ -20,6 +20,7 @@
 #include <array>
 #include <limits>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 
@@ -42,6 +43,7 @@ constexpr int kWatchdogExit = 93;
 constexpr int kWatchdogProbeLifetimeMs = 500;
 constexpr int kFixtureFailureExit = 94;
 constexpr int kUnexpectedDestructorReturn = 95;
+constexpr int kDestructorClosedExit = 96;
 constexpr DWORD kInjectedError = ERROR_ACCESS_DENIED;
 constexpr UINT kExpectedTerminationExit = 197;
 constexpr WORD kStartupReservedBytes = 7;
@@ -150,6 +152,7 @@ struct ApiObservation {
     bool fail_query{false};
     bool fail_terminate{false};
     bool fail_close{false};
+    int failing_closes{0};  // Refuses this many closes, then lets later ones through.
     int creations{0};
     int closures{0};
     int attribute_deletions{0};
@@ -367,8 +370,9 @@ private Q_SLOTS:
     void queryFailureRetainsHandle();
     void terminateFailureRetainsHandle();
     void closeFailureRetainsHandle();
-    void destructorRefusesUnprovedCleanup_data();
-    void destructorRefusesUnprovedCleanup();
+    void destructorClosesUnprovedJob_data();
+    void destructorClosesUnprovedJob();
+    void preparationAndCloseFailureIsReported();
 
 private:
     using Api = Job::Api;
@@ -467,6 +471,10 @@ WindowsProcessJobTests::Api WindowsProcessJobTests::observedApi(
     };
     const auto close = api.close_handle;
     api.close_handle = [state, close](HANDLE handle) {
+        if (state->failing_closes > 0) {
+            --state->failing_closes;
+            return injectFailure();
+        }
         if (state->fail_close) {
             return injectFailure();
         }
@@ -1080,10 +1088,32 @@ void WindowsProcessJobTests::closeFailureRetainsHandle() {
     QVERIFY(job.m_job == nullptr);
 }
 
+namespace {
+
+// True when the observed process stops within kProcessWaitMs. The leaf fixture lives for
+// kChildLifetimeMs, which is longer, so only a real kill satisfies this.
+bool stopsBeforeOwnLifetime(const Generation& generation) {
+    QElapsedTimer timer;
+    timer.start();
+    while (timer.elapsed() < kProcessWaitMs) {
+        const auto alive = generation.isAlive();
+        if (!alive) {
+            return false;
+        }
+        if (!*alive) {
+            return true;
+        }
+        QThread::msleep(kPollMs);
+    }
+    return false;
+}
+
+}  // namespace
+
 int WindowsProcessJobTests::runDestructorChild(const QString& mode) {
     OwnedChildDeadline deadline(kChildLifetimeMs, kWatchdogExit);
-    // This subprocess deliberately exercises qFatal. Prevent Windows fault UI,
-    // while retaining qFatal stderr diagnostics and the real abnormal exit.
+    // A regression back to fail-fast destruction must show up as this probe crashing, not as a
+    // Windows fault dialog that stalls the suite.
     ::SetErrorMode(SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX);
     auto state = std::make_shared<ApiObservation>();
     auto created = Job::createWithApi(observedApi(state));
@@ -1091,36 +1121,41 @@ int WindowsProcessJobTests::runDestructorChild(const QString& mode) {
         return kFixtureFailureExit;
     }
     QProcess process;
+    std::optional<Generation> member;
     if (mode == QLatin1String("destructor-active")) {
-        const auto launched = launch(**created, process, QStringLiteral("leaf"));
-        if (!launched) {
+        if (!launch(**created, process, QStringLiteral("leaf"))) {
             cleanOwned(**created, &process);
             return kFixtureFailureExit;
         }
+        auto observed = Generation::observe(process.processId());
+        if (!observed) {
+            cleanOwned(**created, &process);
+            return kFixtureFailureExit;
+        }
+        member.emplace(std::move(*observed));
     } else {
         state->fail_query = true;
     }
-    created->reset();  // Must fail-fast before an unproved owner is destroyed.
-    return kUnexpectedDestructorReturn;
+    // Unproved cleanup: the destructor reports it and closes the kill-on-close handle.
+    created->reset();
+    if (state->closures != 1) {
+        return kFixtureFailureExit;
+    }
+    if (member && !stopsBeforeOwnLifetime(*member)) {
+        return kFixtureFailureExit;
+    }
+    return kDestructorClosedExit;
 }
 
-void WindowsProcessJobTests::destructorRefusesUnprovedCleanup_data() {
+void WindowsProcessJobTests::destructorClosesUnprovedJob_data() {
     QTest::addColumn<QString>("mode");
-    QTest::addColumn<QString>("diagnostic");
-    QTest::newRow("query-failure") << QStringLiteral("destructor-query")
-                                   << QStringLiteral("Query Windows process Job accounting failed");
-    QTest::newRow("active-member")
-        << QStringLiteral("destructor-active")
-        << QStringLiteral("Windows process Job destroyed with 1 active processes");
+    QTest::newRow("query-failure") << QStringLiteral("destructor-query");
+    QTest::newRow("active-member") << QStringLiteral("destructor-active");
 }
 
-void WindowsProcessJobTests::destructorRefusesUnprovedCleanup() {
+void WindowsProcessJobTests::destructorClosesUnprovedJob() {
     QFETCH(QString, mode);
-    QFETCH(QString, diagnostic);
     QProcess process;
-    QProcessEnvironment child_environment = QProcessEnvironment::systemEnvironment();
-    child_environment.insert(QStringLiteral("QT_FORCE_STDERR_LOGGING"), QStringLiteral("1"));
-    process.setProcessEnvironment(child_environment);
     process.start(QCoreApplication::applicationFilePath(),
                   {QString::fromLatin1(kChildSwitch), mode});
     QVERIFY(process.waitForStarted(kProcessWaitMs));
@@ -1130,11 +1165,26 @@ void WindowsProcessJobTests::destructorRefusesUnprovedCleanup() {
         QVERIFY(process.waitForFinished(kProcessWaitMs));
     }
     QVERIFY2(finished, "Owned destructor probe exceeded independent lifetime");
-    QCOMPARE(process.exitStatus(), QProcess::CrashExit);
-    QVERIFY(process.exitCode() != kFixtureFailureExit &&
-            process.exitCode() != kUnexpectedDestructorReturn);
-    const QString error = QString::fromUtf8(process.readAllStandardError());
-    QVERIFY2(error.contains(diagnostic), qPrintable(error));
+    QVERIFY2(process.exitStatus() == QProcess::NormalExit,
+             "destroying a Job whose cleanup is unproved must not crash the application");
+    QCOMPARE(process.exitCode(), kDestructorClosedExit);
+}
+
+void WindowsProcessJobTests::preparationAndCloseFailureIsReported() {
+    auto state = std::make_shared<ApiObservation>();
+    state->preparation = PrepFault::Limits;
+    state->failing_closes = 1;
+    const auto created = Job::createWithApi(observedApi(state));
+    QVERIFY(!created);
+    const QString limits = QStringLiteral(
+                               "Set Windows process Job kill-on-close limit failed "
+                               "(err=%1)")
+                               .arg(kInjectedError);
+    const QString close =
+        QStringLiteral("Close empty Windows process Job failed (err=%1)").arg(kInjectedError);
+    QCOMPARE(created.error(), limits + QStringLiteral("; ") + close);
+    // The refused handle was closed by the owner's destructor once the native close worked again.
+    QCOMPARE(state->closures, 1);
 }
 
 int main(int argc, char* argv[]) {

@@ -51,6 +51,10 @@ set(SAK_PARTITION_FS_TEST_HOOK_SOURCES
 set(SAK_PROCESS_RUNNER_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/process_runner.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/process_runner.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/process_runner_containment.h"
+    # ProcessRunner hands a run whose Job cleanup it cannot prove to this custody.
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/contained_process_quarantine.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/contained_process_quarantine.h"
 )
 set(SAK_WINDOWS_PROCESS_JOB_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/windows_process_job.cpp"

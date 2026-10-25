@@ -525,6 +525,7 @@ set(SAK_FOUNDATION_SOURCES
     include/sak/secure_memory.h
     include/sak/file_hash.h
     include/sak/process_runner.h
+    include/sak/process_runner_containment.h
     include/sak/windows_process_job.h
     include/sak/contained_process_quarantine.h
     include/sak/elevation_manager.h

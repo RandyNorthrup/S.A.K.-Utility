@@ -3,6 +3,8 @@
 
 #include "sak/windows_process_job.h"
 
+#include "sak/logger.h"
+
 #include <QtGlobal>
 
 #include <cstring>
@@ -95,9 +97,11 @@ std::expected<std::unique_ptr<WindowsProcessJob>, QString> WindowsProcessJob::cr
     const QString preparation_error = prepared.error();
     owner->destroyLaunchAttributes();
     if (owner->m_job != nullptr) {
+        // No process was ever launched into this Job, so a refused close leaves only a handle
+        // that the OS reclaims at exit; report both failures instead of crashing.
         const auto closed = owner->checkedClose();
         if (!closed) {
-            owner->failFast(preparation_error + QStringLiteral("; ") + closed.error());
+            return std::unexpected(preparation_error + QStringLiteral("; ") + closed.error());
         }
     }
     return std::unexpected(preparation_error);
@@ -379,25 +383,39 @@ void WindowsProcessJob::destroyLaunchAttributes() noexcept {
 }
 
 WindowsProcessJob::~WindowsProcessJob() {
+    // Invariant, not a cleanup outcome: the installed modifier captures this object, so a QProcess
+    // still holding it would call into freed memory on its next start(). Every owner pairs
+    // installOn() with completeLaunch() before it can let the Job go.
     if (m_installed_process != nullptr) {
         failFast(QStringLiteral("Windows process Job destroyed with launch hook installed"));
     }
+    destroyLaunchAttributes();
     if (m_job == nullptr) {
-        destroyLaunchAttributes();
         return;
     }
+    // Report, then close (owner decision 2026-10-24). Every Job is created with
+    // JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, so closing this last handle terminates any member that is
+    // still alive: closing is the safe outcome even when cleanup was never proved. These used to be
+    // qFatal, which turned a member that outlived a deadline -- or one failed query -- into a
+    // crash.
     const auto observed = accounting();
     if (!observed) {
-        failFast(observed.error());
+        logError(
+            "Windows process Job destroyed without a membership proof ({}); closing it so "
+            "kill-on-close ends any remaining member",
+            observed.error().toStdString());
+    } else if (observed->active_processes != 0) {
+        logError(
+            "Windows process Job destroyed with {} active processes; closing it so "
+            "kill-on-close ends them",
+            observed->active_processes);
     }
-    if (observed->active_processes != 0) {
-        failFast(QStringLiteral("Windows process Job destroyed with %1 active processes")
-                     .arg(observed->active_processes));
-    }
-    destroyLaunchAttributes();
     const auto closed = checkedClose();
     if (!closed) {
-        failFast(closed.error());
+        // Nothing further can be done with a handle CloseHandle refused; the OS closes it, and
+        // fires kill-on-close, when this process exits.
+        logError("Windows process Job handle could not be closed at destruction: {}",
+                 closed.error().toStdString());
     }
 }
 

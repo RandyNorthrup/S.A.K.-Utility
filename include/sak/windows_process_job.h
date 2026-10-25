@@ -26,6 +26,7 @@
 class WindowsProcessJobTests;
 class AiMcpStdioSessionTests;
 class AiMcpSessionPoolTests;
+class ProcessRunnerTests;
 
 namespace sak {
 
@@ -94,6 +95,7 @@ private:
     friend class ::WindowsProcessJobTests;
     friend class ::AiMcpStdioSessionTests;
     friend class ::AiMcpSessionPoolTests;
+    friend class ::ProcessRunnerTests;
 
     explicit WindowsProcessJob(Api api);
     [[nodiscard]] static Api nativeApi();
