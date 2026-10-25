@@ -24,6 +24,9 @@ param(
     [string]$PasswordFile = "",
     [string]$SharedFolderName = "sakrepo",
     [string]$SharedFolderPath = "",
+    # Where the VM folder and its disks are created. Disk images belong on a storage drive, not
+    # the OS drive (owner instruction 2026-09-24); empty keeps VirtualBox's per-user default.
+    [string]$BaseFolder = "",
     [int]$MemoryMb = 8192,
     [int]$CpuCount = 4,
     [int]$SystemDiskMb = 81920,
@@ -302,7 +305,11 @@ if ((Test-VmExists -MachineName $VmName)) {
     Remove-ExistingVm -MachineName $VmName
 }
 
-$baseFolder = Join-Path $env:USERPROFILE "VirtualBox VMs"
+$baseFolder = if ($BaseFolder) {
+    [System.IO.Path]::GetFullPath($BaseFolder)
+} else {
+    Join-Path $env:USERPROFILE "VirtualBox VMs"
+}
 $vmFolder = Join-Path $baseFolder $VmName
 New-Item -ItemType Directory -Path $vmFolder -Force | Out-Null
 
