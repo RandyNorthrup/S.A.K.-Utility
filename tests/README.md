@@ -454,12 +454,21 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_my_component.cpp")
     add_executable(test_my_component unit/test_my_component.cpp)
     set_target_properties(test_my_component PROPERTIES AUTOMOC ON)
     target_link_libraries(test_my_component PRIVATE
+        sak_core           # the product library that holds the code under test
         Qt6::Test Qt6::Core
         # ... add modules your test needs
     )
     add_test(NAME test_my_component COMMAND test_my_component)
 endif()
 ```
+
+Product code comes from the static product libraries the root `CMakeLists.txt` declares
+(`sak_foundation`, `sak_partition_fs`, `sak_core`, `sak_win32mcp`, `sak_ai_core`, `sak_gui`), so a
+test target lists only its own test sources, fixtures and fakes. Do not add a `src/` file to a test
+target: a new product source goes into its library's list and reaches every test from there. The
+exceptions are a target that must compile a product file with a test-only definition that changes
+a class (the two Partition Manager hook tests), and the certification helpers, which compile their
+sources directly so their embedded source fingerprint covers every object they contain.
 
 ## Best Practices
 

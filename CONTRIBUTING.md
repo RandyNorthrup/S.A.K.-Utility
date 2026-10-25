@@ -293,11 +293,13 @@ firing, and will keep silencing it after the next edit to that line makes it fir
 # Use modern CMake (3.28+)
 cmake_minimum_required(VERSION 3.28 FATAL_ERROR)
 
-# Group related files
-set(CORE_SOURCES
+# Product sources belong to the product library that owns them, compiled once and
+# linked by the app, the helpers and the tests (never listed on a test target)
+set(SAK_CORE_SOURCES
     src/core/file1.cpp
     src/core/file2.cpp
 )
+sak_add_product_library(sak_core ${SAK_CORE_SOURCES})
 
 # Use target-based approach
 target_include_directories(target_name

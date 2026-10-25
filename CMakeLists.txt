@@ -569,8 +569,10 @@ set(SAK_PARTITION_FS_SOURCES
     include/sak/decompressor_factory.h
 )
 
-# Core utility modules
-set(CORE_SOURCES
+# Core: the headless product logic every feature runs -- scanners, workers, controllers, the
+# Partition Manager pipeline, email, deployment, network diagnostics, the app-action surface and
+# the quick actions. No Qt Widgets: what a panel shows is in sak_gui, what it does is here.
+set(SAK_CORE_SOURCES
     src/core/crash_reporter.cpp
     src/core/file_scanner.cpp
     src/core/config_manager.cpp
@@ -638,8 +640,6 @@ set(CORE_SOURCES
     src/core/file_explorer_tag_store.cpp
     src/core/file_explorer_archive_service.cpp
     include/sak/file_explorer_archive_service.h
-    src/gui/file_explorer_properties_dialog.cpp
-    include/sak/file_explorer_properties_dialog.h
     src/core/file_management_file_system.cpp
     src/core/partition_manager_types.cpp
     src/core/partition_file_system_registry.cpp
@@ -671,7 +671,6 @@ set(CORE_SOURCES
     include/sak/aligned_buffer.h
     include/sak/format_utils.h
     include/sak/widget_helpers.h
-    include/sak/view_empty_state.h
     include/sak/config_manager.h
     include/sak/app_scanner.h
     include/sak/drive_scanner.h
@@ -854,10 +853,17 @@ set(CORE_SOURCES
     include/sak/package_internalization_engine.h
     include/sak/offline_deployment_worker.h
     include/sak/package_list_manager.h
+    # Quick-action framework and the network transfer runner
+    include/sak/quick_action.h
+    include/sak/quick_action_controller.h
+    src/core/quick_action_result_io.cpp
+    include/sak/quick_action_result_io.h
+    src/core/network_transfer_runner.cpp
+    include/sak/network_transfer_runner.h
 )
 
-# Threading infrastructure
-set(THREADING_SOURCES
+# Threading infrastructure (part of sak_core)
+set(SAK_THREADING_SOURCES
     src/threading/organizer_worker.cpp
     src/threading/duplicate_finder_worker.cpp
     src/threading/flash_worker.cpp
@@ -870,10 +876,15 @@ set(THREADING_SOURCES
     include/sak/network_probe_worker.h
 )
 
-# GUI sources
-set(GUI_SOURCES
+# GUI: the main window, panels, dialogs, wizards, widgets and theme (Qt Widgets).
+set(SAK_GUI_SOURCES
     src/gui/main_window.cpp
     src/gui/view_empty_state.cpp
+    include/sak/view_empty_state.h
+    src/gui/file_explorer_properties_dialog.cpp
+    include/sak/file_explorer_properties_dialog.h
+    src/gui/ai_transcript_view.cpp
+    include/sak/ai_transcript_view.h
     src/gui/user_migration_panel.cpp
     src/gui/organizer_panel.cpp
     src/gui/file_explorer_sidebar.cpp
@@ -945,12 +956,6 @@ set(GUI_SOURCES
     include/sak/windows11_theme.h
     src/gui/splash_screen.cpp
     include/sak/splash_screen.h
-    include/sak/quick_action.h
-    include/sak/quick_action_controller.h
-    src/core/quick_action_result_io.cpp
-    include/sak/quick_action_result_io.h
-    src/core/network_transfer_runner.cpp
-    include/sak/network_transfer_runner.h
     src/gui/diagnostic_benchmark_panel.cpp
     src/gui/diagnostic_benchmark_panel_slots.cpp
     include/sak/diagnostic_benchmark_panel.h
@@ -986,119 +991,123 @@ set(GUI_SOURCES
     include/sak/ost_converter_widget.h
 )
 
-set(AI_SOURCES)
+# AI assistant core: orchestration, providers, tool policy and dispatch, MCP sessions, stores.
+# Always built: the AI unit tests are not conditional on SAK_ENABLE_AI_ASSISTANT. Without the
+# assistant panel nothing in the application references it, so none of it is linked in.
+set(SAK_AI_CORE_SOURCES
+    src/ai/ai_app_action_planner.cpp
+    src/ai/ai_credential_store.cpp
+    src/ai/ai_secret_redaction.cpp
+    src/ai/ai_cancellation_token.cpp
+    src/ai/ai_command_guard.cpp
+    src/ai/ai_command_tool_planner.cpp
+    src/ai/ai_chat_title.cpp
+    src/ai/ai_conversation_store.cpp
+    src/ai/ai_execution_broker.cpp
+    src/ai/ai_human_gate.cpp
+    src/ai/ai_human_gate_store.cpp
+    src/ai/ai_lease_manager.cpp
+    src/ai/ai_mcp_http_client.cpp
+    src/ai/ai_mcp_session_pool.cpp
+    src/ai/ai_mcp_stdio_session.cpp
+    src/ai/ai_openai_model_client.cpp
+    src/ai/ai_orchestrator.cpp
+    src/ai/ai_offline_downloader_tool_runner.cpp
+    src/ai/ai_package_tool_planner.cpp
+    src/ai/ai_package_selection.cpp
+    src/ai/ai_paths.cpp
+    src/ai/ai_prompt_assembler.cpp
+    src/ai/ai_provider_gateway.cpp
+    src/ai/ai_provider_gateway_authorization.cpp
+    src/ai/ai_provider_gateway_tool_runner.cpp
+    src/ai/ai_provider_registry.cpp
+    src/ai/ai_win32_gui_runner.cpp
+    src/ai/ai_recovery_policy.cpp
+    src/ai/ai_async_tool_runner.cpp
+    src/ai/ai_skill.cpp
+    src/ai/ai_skill_store.cpp
+    src/ai/ai_store_file_loader.cpp
+    src/ai/ai_run_state.cpp
+    src/ai/ai_run_state_store.cpp
+    src/ai/ai_subagent_runner.cpp
+    src/ai/ai_subagent_tool_executor.cpp
+    src/ai/ai_token_usage_tracker.cpp
+    src/ai/ai_tool_call_router.cpp
+    src/ai/ai_tool_dispatcher.cpp
+    src/ai/ai_tool_health_ledger.cpp
+    src/ai/ai_tool_loop_detector.cpp
+    src/ai/ai_tool_policy.cpp
+    src/ai/ai_tool_result_recorder.cpp
+    src/ai/ai_tool_turn.cpp
+    src/ai/ai_trace_store.cpp
+    src/ai/ai_workflow_powershell_tool_runner.cpp
+    src/ai/ai_workflow_clarifier.cpp
+    src/ai/ai_workflow_placeholders.cpp
+    src/ai/ai_workflow_store.cpp
+    src/ai/ai_workflow_template.cpp
+    src/ai/openai_responses_client.cpp
+    include/sak/ai/ai_app_action_planner.h
+    include/sak/ai/ai_async_tool_runner.h
+    include/sak/ai/ai_credential_store.h
+    include/sak/ai/ai_cancellation_token.h
+    include/sak/ai/ai_command_guard.h
+    include/sak/ai/ai_command_tool_planner.h
+    include/sak/ai/ai_chat_title.h
+    include/sak/ai/ai_conversation_store.h
+    include/sak/ai/ai_execution_broker.h
+    include/sak/ai/ai_human_gate.h
+    include/sak/ai/ai_human_gate_store.h
+    include/sak/ai/ai_lease_manager.h
+    include/sak/ai/ai_mcp_http_client.h
+    include/sak/ai/ai_mcp_jsonrpc.h
+    include/sak/ai/ai_mcp_session_pool.h
+    include/sak/ai/ai_mcp_stdio_session.h
+    include/sak/ai/ai_openai_model_client.h
+    include/sak/ai/ai_orchestrator.h
+    include/sak/ai/ai_offline_downloader_tool_runner.h
+    include/sak/ai/ai_package_tool_planner.h
+    include/sak/ai/ai_package_selection.h
+    include/sak/ai/ai_paths.h
+    include/sak/ai/ai_prompt_assembler.h
+    include/sak/ai/ai_provider_gateway.h
+    include/sak/ai/ai_provider_gateway_tool_runner.h
+    include/sak/ai/ai_provider_registry.h
+    include/sak/ai/ai_recovery_policy.h
+    include/sak/ai/ai_skill.h
+    include/sak/ai/ai_skill_store.h
+    include/sak/ai/ai_store_file_loader.h
+    include/sak/ai/ai_run_state.h
+    include/sak/ai/ai_run_state_store.h
+    include/sak/ai/ai_subagent_runner.h
+    include/sak/ai/ai_subagent_tool_executor.h
+    include/sak/ai/ai_tool_loop_detector.h
+    include/sak/ai/ai_token_usage_tracker.h
+    include/sak/ai/ai_tool_call_router.h
+    include/sak/ai/ai_tool_dispatcher.h
+    include/sak/ai/ai_tool_error.h
+    include/sak/ai/ai_tool_health_ledger.h
+    include/sak/ai/ai_tool_policy.h
+    include/sak/ai/ai_tool_result_recorder.h
+    include/sak/ai/ai_tool_turn.h
+    include/sak/ai/ai_trace_store.h
+    include/sak/ai/ai_workflow_placeholders.h
+    include/sak/ai/ai_workflow_powershell_tool_runner.h
+    include/sak/ai/ai_workflow_store.h
+    include/sak/ai/ai_workflow_template.h
+    include/sak/ai/openai_response_types.h
+    include/sak/ai/openai_responses_client.h
+)
+
 if(SAK_ENABLE_AI_ASSISTANT)
-    list(APPEND AI_SOURCES
-        src/ai/ai_app_action_planner.cpp
-        src/ai/ai_credential_store.cpp
-        src/ai/ai_secret_redaction.cpp
-        src/ai/ai_cancellation_token.cpp
-        src/ai/ai_command_guard.cpp
-        src/ai/ai_command_tool_planner.cpp
-        src/ai/ai_chat_title.cpp
-        src/ai/ai_conversation_store.cpp
-        src/ai/ai_execution_broker.cpp
-        src/ai/ai_human_gate.cpp
-        src/ai/ai_human_gate_store.cpp
-        src/ai/ai_lease_manager.cpp
-        src/ai/ai_mcp_http_client.cpp
-        src/ai/ai_mcp_session_pool.cpp
-        src/ai/ai_mcp_stdio_session.cpp
-        src/ai/ai_openai_model_client.cpp
-        src/ai/ai_orchestrator.cpp
-        src/ai/ai_offline_downloader_tool_runner.cpp
-        src/ai/ai_package_tool_planner.cpp
-        src/ai/ai_package_selection.cpp
-        src/ai/ai_paths.cpp
-        src/ai/ai_prompt_assembler.cpp
-        src/ai/ai_provider_gateway.cpp
-        src/ai/ai_provider_gateway_authorization.cpp
-        src/ai/ai_provider_gateway_tool_runner.cpp
-        src/ai/ai_provider_registry.cpp
-        src/ai/ai_win32_gui_runner.cpp
-        src/ai/ai_recovery_policy.cpp
-        src/ai/ai_async_tool_runner.cpp
-        src/ai/ai_skill.cpp
-        src/ai/ai_skill_store.cpp
-        src/ai/ai_store_file_loader.cpp
-        src/ai/ai_run_state.cpp
-        src/ai/ai_run_state_store.cpp
-        src/ai/ai_subagent_runner.cpp
-        src/ai/ai_subagent_tool_executor.cpp
-        src/ai/ai_token_usage_tracker.cpp
-        src/ai/ai_tool_call_router.cpp
-        src/ai/ai_tool_dispatcher.cpp
-        src/ai/ai_tool_health_ledger.cpp
-        src/ai/ai_tool_loop_detector.cpp
-        src/ai/ai_tool_policy.cpp
-        src/ai/ai_tool_result_recorder.cpp
-        src/ai/ai_tool_turn.cpp
-        src/ai/ai_trace_store.cpp
-        src/ai/ai_workflow_powershell_tool_runner.cpp
-        src/ai/ai_workflow_clarifier.cpp
-        src/ai/ai_workflow_placeholders.cpp
-        src/ai/ai_workflow_store.cpp
-        src/ai/ai_workflow_template.cpp
-        src/ai/openai_responses_client.cpp
-        src/gui/ai_transcript_view.cpp
-        include/sak/ai/ai_app_action_planner.h
-        include/sak/ai/ai_async_tool_runner.h
-        include/sak/ai/ai_credential_store.h
-        include/sak/ai/ai_cancellation_token.h
-        include/sak/ai/ai_command_guard.h
-        include/sak/ai/ai_command_tool_planner.h
-        include/sak/ai/ai_chat_title.h
-        include/sak/ai/ai_conversation_store.h
-        include/sak/ai/ai_execution_broker.h
-        include/sak/ai/ai_human_gate.h
-        include/sak/ai/ai_human_gate_store.h
-        include/sak/ai/ai_lease_manager.h
-        include/sak/ai/ai_mcp_http_client.h
-        include/sak/ai/ai_mcp_jsonrpc.h
-        include/sak/ai/ai_mcp_session_pool.h
-        include/sak/ai/ai_mcp_stdio_session.h
-        include/sak/ai/ai_openai_model_client.h
-        include/sak/ai/ai_orchestrator.h
-        include/sak/ai/ai_offline_downloader_tool_runner.h
-        include/sak/ai/ai_package_tool_planner.h
-        include/sak/ai/ai_package_selection.h
-        include/sak/ai/ai_paths.h
-        include/sak/ai/ai_prompt_assembler.h
-        include/sak/ai/ai_provider_gateway.h
-        include/sak/ai/ai_provider_gateway_tool_runner.h
-        include/sak/ai/ai_provider_registry.h
-        include/sak/ai/ai_recovery_policy.h
-        include/sak/ai/ai_skill.h
-        include/sak/ai/ai_skill_store.h
-        include/sak/ai/ai_store_file_loader.h
-        include/sak/ai/ai_run_state.h
-        include/sak/ai/ai_run_state_store.h
-        include/sak/ai/ai_subagent_runner.h
-        include/sak/ai/ai_subagent_tool_executor.h
-        include/sak/ai/ai_tool_loop_detector.h
-        include/sak/ai/ai_token_usage_tracker.h
-        include/sak/ai/ai_tool_call_router.h
-        include/sak/ai/ai_tool_dispatcher.h
-        include/sak/ai/ai_tool_error.h
-        include/sak/ai/ai_tool_health_ledger.h
-        include/sak/ai/ai_tool_policy.h
-        include/sak/ai/ai_tool_result_recorder.h
-        include/sak/ai/ai_tool_turn.h
-        include/sak/ai/ai_trace_store.h
-        include/sak/ai/ai_workflow_placeholders.h
-        include/sak/ai/ai_workflow_powershell_tool_runner.h
-        include/sak/ai/ai_workflow_store.h
-        include/sak/ai/ai_workflow_template.h
-        include/sak/ai/openai_response_types.h
-        include/sak/ai/openai_responses_client.h
+    list(APPEND SAK_GUI_SOURCES
         src/gui/ai_assistant_panel.cpp
         include/sak/ai_assistant_panel.h
-        include/sak/ai_transcript_view.h
     )
 endif()
 
-# Quick Actions
-set(QUICK_ACTIONS_SOURCES
+# Quick actions (part of sak_core: the app-action service seeds them and the elevated helper runs
+# four of them, neither through a widget)
+set(SAK_QUICK_ACTIONS_SOURCES
     # System Optimization
     src/actions/optimize_power_settings_action.cpp
 
@@ -1124,6 +1133,44 @@ set(QUICK_ACTIONS_SOURCES
     include/sak/actions/backup_bitlocker_keys_action.h
 )
 
+# Win32 MCP server and Chrome browser-control host. They are folded into the application binary
+# instead of a second exe: main() dispatches to the helper modes (env var / chrome-extension
+# origin) before any GUI init. Raw Win32 and the Chrome DevTools Protocol. The browser-extension
+# installer drives the assistant panel's Install/Uninstall button in-process.
+set(SAK_WIN32MCP_SOURCES
+    src/win32mcp/win32_mcp_entry.cpp
+    src/win32mcp/win32_mcp_dispatch.cpp
+    src/win32mcp/win32_mcp_tools.cpp
+    src/win32mcp/win32_mcp_desktop.cpp
+    src/win32mcp/win32_mcp_dialog_choice.cpp
+    src/win32mcp/win32_mcp_uia_ref.cpp
+    src/win32mcp/win32_mcp_capture.cpp
+    src/win32mcp/win32_mcp_geometry.cpp
+    src/win32mcp/win32_mcp_ocr.cpp
+    src/win32mcp/win32_mcp_text_match.cpp
+    src/win32mcp/win32_mcp_json_clamp.cpp
+    src/win32mcp/win32_mcp_watch.cpp
+    src/win32mcp/win32_mcp_fingerprint.cpp
+    src/win32mcp/win32_mcp_input.cpp
+    src/win32mcp/win32_mcp_input_plan.cpp
+    src/win32mcp/win32_mcp_key_chord.cpp
+    src/win32mcp/browser_contract.cpp
+    src/win32mcp/browser_bridge.cpp
+    src/win32mcp/browser_bridge_security.cpp
+    src/win32mcp/browser_bridge_pipe.cpp
+    src/win32mcp/browser_bridge_relay.cpp
+    src/win32mcp/browser_control.cpp
+    src/win32mcp/native_messaging.cpp
+    src/win32mcp/browser_extension_installer.cpp
+    include/sak/win32mcp/win32_mcp_entry.h
+    include/sak/win32mcp/win32_mcp_desktop.h
+    include/sak/win32mcp/win32_mcp_capture.h
+    include/sak/win32mcp/win32_mcp_ocr.h
+    include/sak/win32mcp/win32_mcp_watch.h
+    include/sak/win32mcp/win32_mcp_input.h
+    include/sak/win32mcp/browser_extension_installer.h
+)
+
 # Main entry point
 set(MAIN_SOURCE src/main.cpp)
 
@@ -1147,17 +1194,6 @@ list(APPEND RESOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons.qrc")
 if(SAK_ENABLE_AI_ASSISTANT)
     list(APPEND RESOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/resources/ai.qrc")
 endif()
-
-# Combine all sources
-set(ALL_SOURCES
-    ${CORE_SOURCES}
-    ${THREADING_SOURCES}
-    ${GUI_SOURCES}
-    ${AI_SOURCES}
-    ${QUICK_ACTIONS_SOURCES}
-    ${MAIN_SOURCE}
-    ${RESOURCE_FILES}
-)
 
 # ============================================================================
 # Build-integrated static analysis -- configure BEFORE any target is created.
@@ -1309,58 +1345,79 @@ target_link_libraries(sak_partition_fs
         sak_lzfse
 )
 
+sak_add_product_library(sak_core
+    ${SAK_CORE_SOURCES}
+    ${SAK_THREADING_SOURCES}
+    ${SAK_QUICK_ACTIONS_SOURCES}
+)
+target_link_libraries(sak_core
+    PUBLIC
+        sak_partition_fs
+        sak_foundation
+        Qt6::Core
+        Qt6::Gui
+        Qt6::Concurrent
+        Qt6::Network
+        Qt6::Xml
+        Threads::Threads
+    PRIVATE
+        # QZipReader/QZipWriter (explorer zip compress/extract) live in QtCore's
+        # private headers; no third-party archive library is vendored for this.
+        Qt6::CorePrivate
+)
+
+sak_add_product_library(sak_win32mcp ${SAK_WIN32MCP_SOURCES})
+target_link_libraries(sak_win32mcp
+    PUBLIC
+        Qt6::Core
+        Qt6::Gui
+        ${PLATFORM_LIBS}
+    PRIVATE
+        # shcore: GetDpiForMonitor (per-monitor DPI in list_monitors). gdi32/user32: screen
+        # capture (BitBlt/PrintWindow/CreateDIBSection) in the desktop-control tools.
+        # runtimeobject: WinRT activation (RoGetActivationFactory) for the Windows.Media.Ocr tools.
+        shcore
+        gdi32
+        user32
+        runtimeobject
+)
+
+sak_add_product_library(sak_ai_core ${SAK_AI_CORE_SOURCES})
+target_link_libraries(sak_ai_core
+    PUBLIC
+        sak_core
+        Qt6::Core
+        Qt6::Concurrent
+        Qt6::Network
+    PRIVATE
+        # The MCP stdio session reads QProcess's private state through QtCore's private headers.
+        Qt6::CorePrivate
+)
+
+sak_add_product_library(sak_gui ${SAK_GUI_SOURCES})
+target_link_libraries(sak_gui
+    PUBLIC
+        sak_ai_core
+        sak_win32mcp
+        sak_core
+        Qt6::Widgets
+)
+# main_window.h lays the window out differently with and without the assistant, so every
+# translation unit that includes it has to see the same value: PUBLIC, not PRIVATE.
+target_compile_definitions(sak_gui PUBLIC
+    SAK_ENABLE_AI_ASSISTANT=$<BOOL:${SAK_ENABLE_AI_ASSISTANT}>
+)
+target_include_directories(sak_gui PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/qrcodegen
+)
+
 # ============================================================================
 # Executable Target
 # ============================================================================
 
-add_executable(sak_utility ${ALL_SOURCES})
-
-# Browser-extension installer: drives the panel's Install/Uninstall button in-process.
-target_sources(sak_utility PRIVATE
-    src/win32mcp/browser_extension_installer.cpp
-    include/sak/win32mcp/browser_extension_installer.h
-)
-
-# The win32 MCP server + Chrome browser-control host are folded into this one app binary
-# instead of a second exe: main() dispatches to the helper modes (env var / chrome-extension
-# origin) before any GUI init. Windows-only (raw Win32 + Chrome DevTools Protocol).
-if(PLATFORM_WINDOWS)
-    target_sources(sak_utility PRIVATE
-        src/win32mcp/win32_mcp_entry.cpp
-        src/win32mcp/win32_mcp_dispatch.cpp
-        src/win32mcp/win32_mcp_tools.cpp
-        src/win32mcp/win32_mcp_desktop.cpp
-        src/win32mcp/win32_mcp_dialog_choice.cpp
-        src/win32mcp/win32_mcp_uia_ref.cpp
-        src/win32mcp/win32_mcp_capture.cpp
-        src/win32mcp/win32_mcp_geometry.cpp
-        src/win32mcp/win32_mcp_ocr.cpp
-        src/win32mcp/win32_mcp_text_match.cpp
-        src/win32mcp/win32_mcp_json_clamp.cpp
-        src/win32mcp/win32_mcp_watch.cpp
-        src/win32mcp/win32_mcp_fingerprint.cpp
-        src/win32mcp/win32_mcp_input.cpp
-        src/win32mcp/win32_mcp_input_plan.cpp
-        src/win32mcp/win32_mcp_key_chord.cpp
-        src/win32mcp/browser_contract.cpp
-        src/win32mcp/browser_bridge.cpp
-        src/win32mcp/browser_bridge_security.cpp
-        src/win32mcp/browser_bridge_pipe.cpp
-        src/win32mcp/browser_bridge_relay.cpp
-        src/win32mcp/browser_control.cpp
-        src/win32mcp/native_messaging.cpp
-        include/sak/win32mcp/win32_mcp_entry.h
-        include/sak/win32mcp/win32_mcp_desktop.h
-        include/sak/win32mcp/win32_mcp_capture.h
-        include/sak/win32mcp/win32_mcp_ocr.h
-        include/sak/win32mcp/win32_mcp_watch.h
-        include/sak/win32mcp/win32_mcp_input.h
-    )
-    # shcore: GetDpiForMonitor (per-monitor DPI in list_monitors). gdi32/user32: screen capture
-    # (BitBlt/PrintWindow/CreateDIBSection) in the desktop-control tools. runtimeobject: WinRT
-    # activation (RoGetActivationFactory) for the Windows.Media.Ocr OCR tools.
-    target_link_libraries(sak_utility PRIVATE shcore gdi32 user32 runtimeobject)
-endif()
+# The application is its entry point and its resources; everything else is linked from the
+# product libraries above.
+add_executable(sak_utility ${MAIN_SOURCE} ${RESOURCE_FILES})
 
 # Enable Qt MOC, UIC, and RCC
 set_target_properties(sak_utility PROPERTIES
@@ -1369,27 +1426,16 @@ set_target_properties(sak_utility PROPERTIES
     AUTORCC ON
 )
 
-target_compile_definitions(sak_utility PRIVATE
-    SAK_ENABLE_AI_ASSISTANT=$<BOOL:${SAK_ENABLE_AI_ASSISTANT}>
-)
-
 # Link libraries
 target_link_libraries(sak_utility PRIVATE
-    Qt6::Core
-    # QZipReader/QZipWriter (explorer zip compress/extract) live in QtCore's
-    # private headers; no third-party archive library is vendored for this.
-    Qt6::CorePrivate
-    Qt6::Widgets
-    Qt6::Concurrent
-    Qt6::Network
-    Qt6::Xml
-    Threads::Threads
-    ZLIB::ZLIB
-    BZip2::BZip2
-    LibLZMA::LibLZMA
-    sak_lzfse
+    sak_gui
+    sak_ai_core
+    sak_win32mcp
+    sak_core
     sak_partition_fs
     sak_foundation
+    Qt6::Core
+    Qt6::Widgets
     ${PLATFORM_LIBS}
 )
 
@@ -1406,7 +1452,6 @@ target_link_libraries(sak_utility PRIVATE
 target_include_directories(sak_utility PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
     ${CMAKE_CURRENT_BINARY_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/src/third_party/qrcodegen
 )
 
 # ============================================================================
@@ -1486,26 +1531,10 @@ add_dependencies(sak_utility sak_hfs_writer_cli)
 # ============================================================================
 
 if(PLATFORM_WINDOWS)
-    # Helper sources: action implementations + IPC layer + entry point
+    # Helper entry point; the IPC layer, the task dispatcher and the four elevated actions it
+    # runs come from sak_core.
     set(HELPER_SOURCES
         src/elevated/elevated_helper_main.cpp
-        src/core/elevated_pipe_server.cpp
-        src/core/elevated_task_dispatcher.cpp
-        src/core/quick_action.cpp
-        src/core/permission_manager.cpp
-        src/actions/verify_system_files_action.cpp
-        src/actions/check_disk_errors_action.cpp
-        src/actions/reset_network_action.cpp
-        src/actions/backup_bitlocker_keys_action.cpp
-        include/sak/elevated_pipe_protocol.h
-        include/sak/elevated_pipe_server.h
-        include/sak/elevated_task_dispatcher.h
-        include/sak/permission_manager.h
-        include/sak/quick_action.h
-        include/sak/actions/verify_system_files_action.h
-        include/sak/actions/check_disk_errors_action.h
-        include/sak/actions/reset_network_action.h
-        include/sak/actions/backup_bitlocker_keys_action.h
     )
 
     # Resource file for embedding the requireAdministrator manifest
@@ -1538,6 +1567,7 @@ if(PLATFORM_WINDOWS)
     target_link_libraries(sak_elevated_helper PRIVATE
         Qt6::Core
         Qt6::Gui
+        sak_core
         sak_foundation
         Threads::Threads
         ${PLATFORM_LIBS}
