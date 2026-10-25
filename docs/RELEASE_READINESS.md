@@ -59,6 +59,23 @@ keeps their history.
    - The iperf3 server and its inbound firewall rule leak after a crash (launched outside the
      kill-on-close Job).
    - The settings-screenshot action force-kills the user's own Settings windows.
+8. Real defects found by the first T2 CI runs (2026-10-24). Each reproduces in a fresh Git for
+   Windows clone (default `core.autocrlf=true`), which is also how CI checks out and builds:
+   - Built-in AI workflows and skills do not load from a CRLF checkout.
+     `loadResourceFile` (`src/ai/ai_store_file_loader.cpp` ~157-176) opens the resource with
+     `QIODevice::Text`, which drops every CR, then requires the bytes read to equal
+     `QFile::size()`. Every embedded `.json`/`.md` with CRLF fails ("Resource workflow read was
+     incomplete"), so a release built on CI would ship with no built-in workflows or skills.
+     Red: `test_ai_workflow_store`, `test_ai_skill_store`. The main checkout passes only because
+     those resource files happen to be LF in its working tree.
+   - `test_partition_manager_panel::controllerWatcherLifetimeBlocksInteraction` reads
+     `src/core/partition_manager_controller.cpp` in binary mode and searches for a literal
+     `"||\n    "`, which a CRLF checkout never contains (test defect).
+   - `test_browser_bridge_security::security_daclIsCurrentUserOnlyWithMediumLabel` checks that the
+     DACL's SDDL contains the user's SID string. SDDL writes the built-in Administrator account
+     (RID 500, which a hosted runner's `runneradmin` is) as `LA`, so the check fails for that
+     account although the DACL is correct (test defect; the permission-manager suite already
+     compares through the descriptor's own `O:` text instead).
 
 ### Behavior audit 2026-10-24 -- owner decisions
 
@@ -98,7 +115,10 @@ that exists for reasons that no longer apply. Owner decisions (2026-10-24):
 
 - Tiered gates: the local tiers (T1 commit hooks, T1p pre-push, manual-stage T2-T4 twins), the
   meta-gate retirements, CTest labels, resource locks and parallel runs are in place
-  (2026-10-24). Open: rewrite the CI workflows to run T2 on every push to `dev` by label.
+  (2026-10-24). Done 2026-10-24: `.github/workflows/ci.yml` runs T2 on every push to `dev` and
+  `main` and every PR (sharded build, anchored label selection); `release.yml` is T3 on tags;
+  `nightly.yml` is T4. Open: `release.yml` and `nightly.yml` can be dispatched only from the
+  default branch, so neither has run yet.
 - Intermittent, cause unidentified: once in a `-j 8` full suite (2026-10-24)
   `test_advanced_uninstall_controller` failed because `ConfigManager::sync` got a settings access
   error on the shared `data/config/Utility.ini`, at the serial tail with no other CTest test
@@ -109,8 +129,10 @@ that exists for reasons that no longer apply. Owner decisions (2026-10-24):
 - Done 2026-10-24: the Current Certification State block in `docs/PARTITION_MANAGER_CERTIFICATION.md`
   is generated from the computed claim level and both certification matrices, the T3 check fails
   when it is stale, and the regex-over-prose claim checks are retired.
-- `vcpkg.json` with a pinned baseline and a CI cache key that tracks it; one clang-format major
-  version locally and in CI.
+- `vcpkg.json` with a pinned baseline. (Done 2026-10-24: the CI vcpkg cache key tracks the
+  runner image, its vcpkg commit, the triplet and the port list with no catch-all restore key;
+  clang-format is pinned to one version, 22.1.1, in `requirements-gates.txt` for CI and the local
+  `.venv`.)
 - Done 2026-10-24: certifier and writer-CLI script tests delete their run folder when they pass,
   keep failures for diagnosis, and cap leftover failed runs at the newest three
   (`scripts/run_folder_retention.ps1`). They once held over 1 TB under `build/test_results`.

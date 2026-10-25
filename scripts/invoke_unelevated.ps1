@@ -90,6 +90,7 @@ public static class SakUnelevated {
     const int TokenPrivilegesClass = 3;
     const int TokenOwnerClass = 4;
     const int TokenDefaultDaclClass = 6;
+    const int TokenStatisticsClass = 10;
     const int TokenElevationClass = 20;
     const int TokenIntegrityLevelClass = 25;
     const int TokenUserClass = 1;
@@ -125,6 +126,20 @@ public static class SakUnelevated {
 
     [StructLayout(LayoutKind.Sequential)]
     struct TokenDefaultDacl { public IntPtr DefaultDacl; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct UnicodeString { public ushort Length; public ushort MaximumLength; public IntPtr Buffer; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct ObjectAttributes {
+        public int Length; public IntPtr RootDirectory; public IntPtr ObjectName; public uint Attributes;
+        public IntPtr SecurityDescriptor; public IntPtr SecurityQualityOfService;
+    }
+
+    [DllImport("ntdll.dll")]
+    static extern int NtOpenDirectoryObject(out IntPtr handle, uint access, ref ObjectAttributes attributes);
+    [DllImport("advapi32.dll")]
+    static extern uint SetSecurityInfo(IntPtr handle, int objectType, uint securityInfo, IntPtr owner, IntPtr group, IntPtr dacl, IntPtr sacl);
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     struct StartupInfo {
@@ -186,6 +201,8 @@ public static class SakUnelevated {
     static extern IntPtr LocalFree(IntPtr memory);
 
     public static int TokenElevation;
+    public static string DosDevicesDirectory = "";
+    static string UserSid = "";
     public static string RemovedPrivileges = "";
 
     static Exception Fail(string api) { return new Win32Exception(Marshal.GetLastWin32Error(), api); }
@@ -271,6 +288,7 @@ public static class SakUnelevated {
             if (!ConvertSidToStringSid(userSid, out userText)) throw Fail("ConvertSidToStringSid");
             string user = Marshal.PtrToStringUni(userText);
             LocalFree(userText);
+            UserSid = user;
             IntPtr descriptor;
             uint descriptorSize;
             if (!ConvertStringSecurityDescriptorToSecurityDescriptor("D:(A;;GA;;;" + user + ")(A;;GA;;;SY)", 1,
@@ -317,10 +335,63 @@ public static class SakUnelevated {
         }
     }
 
-    public static int Run(string commandLine, string workingDirectory) {
+    static IntPtr DaclFromSddl(string sddl, out IntPtr descriptor) {
+        uint size;
+        if (!ConvertStringSecurityDescriptorToSecurityDescriptor(sddl, 1, out descriptor, out size))
+            throw Fail("ConvertStringSecurityDescriptorToSecurityDescriptor");
+        bool present, defaulted;
+        IntPtr dacl;
+        if (!GetSecurityDescriptorDacl(descriptor, out present, out dacl, out defaulted) || !present)
+            throw Fail("GetSecurityDescriptorDacl");
+        return dacl;
+    }
+
+    // The filtered token keeps this process's logon session, and that session's DOS-device
+    // directory (\Sessions\0\DosDevices\<logon id>) was created by the elevated token for
+    // Administrators and SYSTEM. A standard user's own session directory belongs to that user;
+    // without the same here, QueryDosDevice fails with access denied and the physical-drive
+    // enumeration finds nothing. Grant the user, keeping SYSTEM and Administrators.
+    static void GrantLogonSessionDosDevices() {
+        IntPtr process;
+        if (!OpenProcessToken(GetCurrentProcess(), 0x0008, out process)) throw Fail("OpenProcessToken");
+        IntPtr stats;
+        try { stats = ReadTokenInformation(process, TokenStatisticsClass); } finally { CloseHandle(process); }
+        uint low = (uint)Marshal.ReadInt32(stats, 8);
+        int high = Marshal.ReadInt32(stats, 12);
+        Marshal.FreeHGlobal(stats);
+        string path = string.Format("\\Sessions\\0\\DosDevices\\{0:x8}-{1:x8}", high, low);
+        DosDevicesDirectory = path;
+        var name = new UnicodeString {
+            Length = (ushort)(path.Length * 2), MaximumLength = (ushort)(path.Length * 2 + 2),
+            Buffer = Marshal.StringToHGlobalUni(path) };
+        IntPtr namePtr = Marshal.AllocHGlobal(Marshal.SizeOf(typeof(UnicodeString)));
+        IntPtr descriptor = IntPtr.Zero;
+        try {
+            Marshal.StructureToPtr(name, namePtr, false);
+            var attributes = new ObjectAttributes {
+                Length = Marshal.SizeOf(typeof(ObjectAttributes)), ObjectName = namePtr, Attributes = 0x40 };
+            IntPtr directory;
+            int status = NtOpenDirectoryObject(out directory, 0x20000 | 0x40000, ref attributes);
+            if (status != 0) throw new InvalidOperationException(string.Format("NtOpenDirectoryObject({0}) failed: 0x{1:x8}", path, status));
+            try {
+                IntPtr dacl = DaclFromSddl("D:(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;" + UserSid + ")", out descriptor);
+                uint result = SetSecurityInfo(directory, 6, 4, IntPtr.Zero, IntPtr.Zero, dacl, IntPtr.Zero);
+                if (result != 0) throw new Win32Exception((int)result, "SetSecurityInfo(" + path + ")");
+            } finally {
+                CloseHandle(directory);
+            }
+        } finally {
+            if (descriptor != IntPtr.Zero) LocalFree(descriptor);
+            Marshal.FreeHGlobal(name.Buffer);
+            Marshal.FreeHGlobal(namePtr);
+        }
+    }
+
+    public static int Run(string commandLine, string workingDirectory, bool grantDosDevices) {
         IntPtr token = StandardUserToken();
         try {
             RequireUnelevated(token);
+            if (grantDosDevices) GrantLogonSessionDosDevices();
             var startup = new StartupInfo();
             startup.cb = Marshal.SizeOf(typeof(StartupInfo));
             startup.dwFlags = StartfUseStdHandles;
@@ -348,6 +419,11 @@ public static class SakUnelevated {
 }
 
 Write-Host "Running unelevated (UAC-style filtered token, Medium integrity): $commandLine"
-$exitCode = [SakUnelevated]::Run($commandLine, $WorkingDirectory)
+# Only an elevated caller shares its logon session with a filtered child it could not have
+# created any other way; an already-unelevated caller's session directory is already its own.
+$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+    [Security.Principal.WindowsBuiltInRole]::Administrator)
+$exitCode = [SakUnelevated]::Run($commandLine, $WorkingDirectory, $isAdmin)
+if ($isAdmin) { Write-Host "Granted the user the logon session's DOS-device directory $([SakUnelevated]::DosDevicesDirectory)" }
 Write-Host "Unelevated command exited $exitCode (Administrators deny-only; TokenElevation=$([SakUnelevated]::TokenElevation); removed privileges: $([SakUnelevated]::RemovedPrivileges))"
 exit $exitCode
