@@ -9,6 +9,7 @@
 #include <QString>
 
 #include <atomic>
+#include <functional>
 
 namespace sak {
 struct ProcessResult;
@@ -26,12 +27,17 @@ struct ProcessResult;
  * as NTFS, unlike raw disk imaging which would result in a UDF filesystem.
  *
  * Process:
- * 1. Format USB drive as NTFS (using diskpart)
- * 2. Extract ISO contents directly using 7z (no mounting required)
- * 3. Verify extraction integrity (file sizes and critical files)
- * 4. Configure boot files (using bcdboot if available)
- * 5. Set bootable flag (using diskpart active command)
- * 6. Final comprehensive verification
+ * 1. Clean the disk, create one active MBR primary partition, format it NTFS (diskpart)
+ * 2. Extract ISO contents directly using 7z (no mounting required) and verify them
+ * 3. Final comprehensive verification, including that partition 1 is active
+ *
+ * The media boots from the boot files the ISO itself carries (bootmgr, boot\BCD, efi\).
+ * There is no bcdboot step: bcdboot needs a Windows directory as its source and install
+ * media has none, so it could only fail or write the wrong thing. The legacy "active" flag is
+ * set once, when the partition is created, and verified at the end.
+ *
+ * The extraction uses the 7z.exe that ships inside the bundled portable Chocolatey
+ * (tools/chocolatey/tools/7z.exe); its security posture is tracked with Chocolatey's.
  */
 class WindowsUSBCreator : public QObject {
     Q_OBJECT
@@ -40,10 +46,22 @@ public:
     explicit WindowsUSBCreator(QObject* parent = nullptr);
     ~WindowsUSBCreator();
 
-    /// @brief True iff a bcdboot run should be treated as a success. Pure;
-    ///        unit-testable. A timeout, cancellation, or non-zero exit is a
-    ///        failure -- boot support must NOT be certified in those cases.
-    [[nodiscard]] static bool bcdbootReportsSuccess(bool timedOut, bool cancelled, int exitCode);
+    /// @brief How a bounded wait for Windows to surface a new partition/volume ended.
+    enum class VolumeWaitOutcome {
+        Ready,     ///< The probe reported the volume present
+        TimedOut,  ///< The deadline passed first; the caller fails closed
+        Cancelled  ///< The user cancelled while waiting
+    };
+
+    /// @brief Wait until @p probe reports the volume present, at most @p timeout_ms.
+    /// Windows surfaces a freshly created partition, its volume and its drive letter
+    /// asynchronously. This returns the moment @p probe succeeds instead of sleeping a fixed
+    /// time and hoping, and gives up at the deadline so the caller can fail with a clear
+    /// error. @p probe runs first, before any sleep. Pure apart from the sleeps; testable.
+    [[nodiscard]] static VolumeWaitOutcome waitForVolume(const std::function<bool()>& probe,
+                                                         const std::function<bool()>& cancelled,
+                                                         int timeout_ms,
+                                                         int poll_interval_ms);
 
     /// @brief True iff diskpart stdout contains a known hard-failure marker.
     ///        diskpart frequently exits 0 even when an individual command failed,
@@ -168,8 +186,13 @@ private:
     /// unrelated volume. Fails closed on any mismatch or query failure.
     bool verifyDriveLetterMapsToTarget(const QString& driveLetter);
 
-    /// @brief Configure boot files and set bootable flag (Steps 3-4)
-    bool configureBootAndVerify(const QString& diskNumber, const QString& driveLetter);
+    /// @brief Wait (bounded) for partition 1 of @p diskNumber to have a volume Windows can
+    /// format. Fails closed with m_lastError set on timeout or cancel.
+    bool waitForNewPartitionVolume(const QString& diskNumber);
+
+    /// @brief Wait (bounded) for the formatted volume's drive letter. Empty on timeout or
+    /// cancel, with m_lastError naming the disk and the bound.
+    QString waitForFormattedDriveLetter(const QString& diskNumber);
 
     /**
      * @brief Format drive as NTFS using diskpart
@@ -285,34 +308,11 @@ private:
     void copyISO_setVolumeLabel(const QString& cleanDest);
 
     /**
-     * @brief Configure boot files using bcdboot
-     * @param driveLetter Target drive letter (single letter, e.g., "E")
-     * @return true only if boot files were actually configured; false (with
-     *         m_lastError set) if bcdboot is unavailable or does not succeed --
-     *         boot support must be gated on bcdboot, not merely file presence.
-     */
-    bool makeBootable(const QString& driveLetter);
-
-    /// @brief Execute the bcdboot process to configure boot files (BIOS + UEFI)
-    /// @return true only when bcdboot completes successfully; false otherwise
-    bool runBcdboot(const QString& bcdbootPath, const QString& cleanDrive);
-
-    /// @brief Resolve a runnable bcdboot.exe. SECURITY: only ever the host's
-    ///        Authenticode-signed %SystemRoot%\\System32 copy -- NEVER a copy
-    ///        extracted from the (untrusted) ISO/media, which could be an
-    ///        attacker-planted binary. Empty if it cannot be resolved (e.g.
-    ///        %SystemRoot% unset), whereupon the caller fails closed.
-    [[nodiscard]] static QString resolveBcdbootPath();
-
-    /**
      * @brief Verify that the bootable flag is set on the partition
      * @param driveLetter Drive letter to verify
      * @return true if bootable flag is confirmed
      */
     bool verifyBootableFlag(const QString& driveLetter);
-
-    /// @brief Set the active/bootable flag on partition 1 and verify
-    bool setAndVerifyBootFlag(const QString& diskNumber, const QString& driveLetter);
 
     /// @brief Run diskpart to check if the partition on the given disk is active/bootable
     bool checkPartitionActive(const QString& diskNumber);
@@ -339,7 +339,7 @@ private:
     /// (positive) ISO size. A non-positive expected size fails closed.
     bool criticalFileOnDiskMatches(const QPair<QString, qint64>& fileInfo, const QString& destPath);
 
-    /// @brief Run Step 5, the sole path to a verified success: announce, then
+    /// @brief Run Step 3, the sole path to a verified success: announce, then
     /// verify via finalVerification(), reporting through failed() and failing
     /// closed on any verification failure.
     bool runFinalVerification(const QString& driveLetter);

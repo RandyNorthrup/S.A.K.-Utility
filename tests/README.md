@@ -242,7 +242,7 @@ and termination-utility setup handshakes; neither changes production deadlines.
 | test_flash_worker | `flash_worker` | Raw sector write, verification, decompression |
 | test_flash_coordinator | `flash_coordinator` | Multi-drive flash orchestration |
 | test_image_source | `image_source` | Image file detection, format identification |
-| test_windows_usb_creator | `windows_usb_creator` | NTFS format, ISO extraction, boot sector |
+| test_windows_usb_creator | `windows_usb_creator` | NTFS format, ISO extraction, boot flag set once, no bcdboot step, bounded wait for the new volume instead of fixed sleeps |
 | test_streaming_decompressor | `streaming_decompressor` | Streaming gzip/bzip2/xz decompression, error handling |
 | test_decompressor_factory | `decompressor_factory` | Format detection, correct decompressor selection |
 | test_wifi_profile_scanner | `wifi_profile_scanner` | WLANProfile parsing (security type, hidden flag, plaintext key only when `protected` is false), and the refusal to retain XML alongside plaintext keys |

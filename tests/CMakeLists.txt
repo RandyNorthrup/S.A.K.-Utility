@@ -4884,7 +4884,8 @@ foreach(_sak_source_root_test IN ITEMS
         test_uup_dump_api
         test_cleanup_worker
         test_advanced_uninstall_controller
-        test_browser_extension_installer)
+        test_browser_extension_installer
+        test_windows_usb_creator)
     target_compile_definitions(${_sak_source_root_test} PRIVATE
         SAK_REPO_ROOT="${CMAKE_SOURCE_DIR}")
 endforeach()

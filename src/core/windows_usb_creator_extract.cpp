@@ -437,9 +437,8 @@ bool WindowsUSBCreator::copyISO_logExtractionResult(const sak::ProcessResult& re
 bool WindowsUSBCreator::copyISO_verifyDestination(const QString& cleanDest) {
     // copyISOContents only calls this with the "X:\" path copyISO_normalizeDestination built.
     Q_ASSERT(!cleanDest.isEmpty());
-    // Wait a moment for filesystem to settle after extraction
-    sak::logInfo("Waiting for filesystem to settle after extraction...");
-    QThread::msleep(sak::kTimerServiceDelayMs);
+    // No settle delay: 7z has exited, so every file it wrote is closed and visible through the
+    // file system. A fixed sleep here proved nothing and only lengthened every run.
 
     // Verify critical Windows files were extracted to the destination
     sak::logInfo(QString("Verifying critical files exist at: %1").arg(cleanDest).toStdString());
@@ -606,104 +605,13 @@ void WindowsUSBCreator::copyISO_setVolumeLabel(const QString& cleanDest) {
     }
 }
 
-bool WindowsUSBCreator::makeBootable(const QString& driveLetter) {
-    sak::logInfo(QString("Configuring boot files on %1").arg(driveLetter).toStdString());
-
-    // Normalize drive letter to single character
-    QString cleanDrive = driveLetter.trimmed();
-    if (cleanDrive.endsWith(":")) {
-        cleanDrive = cleanDrive.left(1);
-    }
-    cleanDrive.remove("\\");
-    cleanDrive.remove("/");
-
-    // Validate we have a single letter
-    if (cleanDrive.length() != 1 || !cleanDrive[0].isLetter()) {
-        setError(
-            QString("Invalid drive letter format for boot configuration: '%1'").arg(driveLetter));
-        sak::logError(m_lastError.toStdString());
-        return false;
-    }
-
-    cleanDrive = cleanDrive.toUpper();
-
-    // SECURITY: resolve bcdboot ONLY to the host's Authenticode-signed System32
-    // copy -- never a copy extracted from the (untrusted) ISO, which could be an
-    // attacker-planted binary that would then run elevated. If the host copy
-    // cannot be resolved we must NOT certify the media bootable.
-    const QString bcdbootPath = resolveBcdbootPath();
-    if (bcdbootPath.isEmpty()) {
-        const QString err = "Host System32 bcdboot.exe not found -- cannot configure boot files";
-        setError(err);
-        sak::logError(err.toStdString());
-        return false;
-    }
-
-    sak::logInfo(QString("Configuring boot environment using bcdboot from %1")
-                     .arg(bcdbootPath)
-                     .toStdString());
-
-    return runBcdboot(bcdbootPath, cleanDrive);
-}
-
-QString WindowsUSBCreator::resolveBcdbootPath() {
-    // ONLY the host's %SystemRoot%\System32 bcdboot.exe (Authenticode-signed,
-    // present on every running Windows). A media-sourced copy is NEVER trusted or
-    // executed. %SystemRoot% is resolved with no C:\Windows fallback: fail closed.
-    return system32ExePath(QStringLiteral("bcdboot.exe"));
-}
-
-bool WindowsUSBCreator::bcdbootReportsSuccess(bool timedOut, bool cancelled, int exitCode) {
-    return !timedOut && !cancelled && exitCode == 0;
-}
-
-bool WindowsUSBCreator::runBcdboot(const QString& bcdbootPath, const QString& cleanDrive) {
-    // makeBootable is the only caller: it returns false when resolveBcdbootPath() is empty
-    // and rejects any cleanDrive that is not a single letter before reaching this call.
-    Q_ASSERT(!bcdbootPath.isEmpty());
-    Q_ASSERT(!cleanDrive.isEmpty());
-    // KNOWN LIMITATIONS (tracked; see Codex-review-3 findings 4 and 5 -- fixing
-    // either is a design change beyond this file, so they are NOT silently masked
-    // here; the run is still gated on bcdboot's real exit below):
-    //  - #5: bcdboot's positional <source> must be a Windows directory (e.g.
-    //    X:\Windows). Install media has no \Windows tree, so a drive-root source
-    //    can make bcdboot error; a correct fix must supply a valid Windows source
-    //    (or drop bcdboot in favour of the ISO's own already-extracted BCD).
-    //  - #4: the media is NTFS with no FAT32 ESP / UEFI:NTFS shim, so /f ALL's UEFI
-    //    files may be unreadable by firmware that cannot boot NTFS. A universal fix
-    //    needs a FAT32 ESP or bundled UEFI:NTFS loader (Rufus-style).
-    QStringList args;
-    args << QString("%1:\\").arg(cleanDrive);
-    args << "/s" << QString("%1:").arg(cleanDrive);
-    // /f ALL writes BOTH BIOS and UEFI boot files; the previous "BIOS" only
-    // configured legacy boot yet the media was reported UEFI-bootable.
-    args << "/f" << "ALL";
-
-    const auto bcdboot_result = sak::runProcess(
-        bcdbootPath, args, sak::kTimeoutProcessLongMs, [this]() { return m_cancelled.load(); });
-
-    if (!bcdboot_result.std_out.isEmpty()) {
-        sak::logInfo(QString("bcdboot output: %1").arg(bcdboot_result.std_out).toStdString());
-    }
-
-    // Gate boot certification on bcdboot actually succeeding. A timeout,
-    // cancellation, or non-zero exit means the boot config did NOT complete.
-    if (!bcdbootReportsSuccess(
-            bcdboot_result.timed_out, bcdboot_result.cancelled, bcdboot_result.exit_code)) {
-        const QString err =
-            QString("bcdboot did not complete (timed_out=%1, cancelled=%2, exit=%3): %4")
-                .arg(bcdboot_result.timed_out)
-                .arg(bcdboot_result.cancelled)
-                .arg(bcdboot_result.exit_code)
-                .arg(bcdboot_result.std_err.trimmed());
-        setError(err);
-        sak::logError(err.toStdString());
-        return false;
-    }
-
-    sak::logInfo("Boot configuration completed successfully");
-    return true;
-}
+// There is no boot-file step. bcdboot needs a Windows directory as its source, and install
+// media has none, so running it against the media root could only fail or write the wrong
+// thing (Codex review 3, finding 5). The extracted ISO already carries the boot files it was
+// built with (bootmgr, boot\BCD, efi\), which is what makes it bootable; the partition was
+// made active when it was created. The remaining limit is unchanged and stays recorded: the
+// media is NTFS with no FAT32 ESP or UEFI:NTFS loader, so firmware that cannot read NTFS will
+// not UEFI-boot it (Codex review 3, finding 4).
 
 bool WindowsUSBCreator::checkPartitionActive(const QString& diskNumber) {
     // Integer-validate before interpolating into the diskpart script (same class of

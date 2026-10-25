@@ -13,6 +13,7 @@
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QMutexLocker>
@@ -27,14 +28,16 @@
 namespace {
 
 constexpr int kFormatVerificationProgress = 5;
-constexpr int kDriveRecognitionWaitIterations = 30;
-constexpr int kDriveRecognitionProgressSpan = 5;
 constexpr int kNtfsVerificationProgress = 10;
 constexpr int kExtractionPreparationProgress = 13;
 constexpr int kExtractionVerifiedProgress = 60;
-constexpr int kBootConfigurationStartProgress = 62;
-constexpr int kBootConfigurationCompleteProgress = 70;
-constexpr int kBootFlagVerifiedProgress = 85;
+
+// Upper bound for Windows to surface a new partition's volume or its drive letter. A healthy
+// USB stick does this in a second or two; a slow hub can take several. Past this the media is
+// not coming up and the run fails with an error that says so, instead of a fixed sleep that
+// either wastes seconds on fast hardware or gives up too early on slow hardware.
+constexpr int kVolumeAppearTimeoutMs = 60'000;
+constexpr int kVolumeAppearPollMs = sak::kTimerPollingFastMs;
 
 // Require the target disk to be at least this multiple of the ISO size BEFORE any
 // destructive clean, matching the post-format workspace check so an undersized
@@ -92,16 +95,10 @@ bool WindowsUSBCreator::createBootableUSB(const QString& isoPath, const QString&
         return false;
     }
 
-    // ==================== STEPS 3-4: BOOT CONFIGURATION ====================
-    if (!configureBootAndVerify(diskNumber, driveLetter)) {
-        return false;
-    }
+    // No boot-configuration step: the extracted ISO already carries its own boot files, and the
+    // partition was made active when it was created. Final verification proves both.
 
-    if (cancellationRequested()) {
-        return false;
-    }
-
-    // ==================== STEP 5: FINAL VERIFICATION ====================
+    // ==================== STEP 3: FINAL VERIFICATION ====================
     if (!runFinalVerification(driveLetter)) {
         return false;
     }
@@ -137,14 +134,94 @@ bool WindowsUSBCreator::cancellationRequested() {
     return false;
 }
 
+WindowsUSBCreator::VolumeWaitOutcome WindowsUSBCreator::waitForVolume(
+    const std::function<bool()>& probe,
+    const std::function<bool()>& cancelled,
+    int timeout_ms,
+    int poll_interval_ms) {
+    Q_ASSERT(probe);
+    Q_ASSERT(timeout_ms >= 0);
+    Q_ASSERT(poll_interval_ms > 0);
+    QElapsedTimer elapsed;
+    elapsed.start();
+    while (true) {
+        if (cancelled && cancelled()) {
+            return VolumeWaitOutcome::Cancelled;
+        }
+        if (probe()) {
+            return VolumeWaitOutcome::Ready;
+        }
+        if (elapsed.elapsed() >= timeout_ms) {
+            return VolumeWaitOutcome::TimedOut;
+        }
+        QThread::msleep(static_cast<unsigned long>(poll_interval_ms));
+    }
+}
+
+bool WindowsUSBCreator::waitForNewPartitionVolume(const QString& diskNumber) {
+    // diskNumber is the ^\d{1,3}$ value validateUSBInputs accepted.
+    const QString probeCmd =
+        QString(
+            "$p = Get-Partition -DiskNumber %1 -PartitionNumber 1 -ErrorAction Stop; "
+            "if ($null -eq ($p | Get-Volume -ErrorAction Stop)) { exit 1 }")
+            .arg(diskNumber);
+    const auto outcome = waitForVolume(
+        [this, &probeCmd]() {
+            return sak::runPowerShell(probeCmd,
+                                      sak::kTimeoutProcessShortMs,
+                                      true,
+                                      false,
+                                      [this]() { return m_cancelled.load(); })
+                .succeeded();
+        },
+        [this]() { return m_cancelled.load(); },
+        kVolumeAppearTimeoutMs,
+        kVolumeAppearPollMs);
+    if (outcome == VolumeWaitOutcome::Ready) {
+        return true;
+    }
+    setError(outcome == VolumeWaitOutcome::Cancelled
+                 ? QStringLiteral("Operation cancelled")
+                 : QString("Windows did not surface the new partition's volume on disk %1 within "
+                           "%2 seconds; nothing was formatted")
+                       .arg(diskNumber)
+                       .arg(kVolumeAppearTimeoutMs / sak::kMillisecondsPerSecond));
+    sak::logError(lastError().toStdString());
+    return false;
+}
+
+QString WindowsUSBCreator::waitForFormattedDriveLetter(const QString& diskNumber) {
+    QString driveLetter;
+    const auto outcome = waitForVolume(
+        [this, &driveLetter]() {
+            driveLetter = getDriveLetterFromDiskNumber();
+            return !driveLetter.isEmpty();
+        },
+        [this]() { return m_cancelled.load(); },
+        kVolumeAppearTimeoutMs,
+        kVolumeAppearPollMs);
+    if (outcome == VolumeWaitOutcome::Ready) {
+        return driveLetter;
+    }
+    setError(outcome == VolumeWaitOutcome::Cancelled
+                 ? QStringLiteral("Operation cancelled")
+                 : QString("STEP 1 VERIFICATION FAILED: No drive letter appeared for disk %1 "
+                           "within %2 seconds after format (last error: %3)")
+                       .arg(diskNumber)
+                       .arg(kVolumeAppearTimeoutMs / sak::kMillisecondsPerSecond)
+                       .arg(lastError()));
+    sak::logError(lastError().toStdString());
+    return {};
+}
+
 bool WindowsUSBCreator::runFinalVerification(const QString& driveLetter) {
-    // STEP 5, the sole path to a verified success. finalVerification() emits
+    // STEP 3, the sole path to a verified success. finalVerification() emits
     // completed() on success; on failure report through failed() and fail closed.
-    Q_EMIT statusChanged("Step 5/5: Running final comprehensive verification...");
-    sak::logInfo("STEP 5: Final comprehensive verification...");
+    Q_EMIT statusChanged("Step 3/3: Running final comprehensive verification...");
+    sak::logInfo("STEP 3: Final comprehensive verification...");
 
     if (!finalVerification(driveLetter)) {
-        sak::logError("STEP 5 VERIFICATION FAILED");
+        sak::logError("STEP 3 VERIFICATION FAILED");
         Q_EMIT failed(lastError());
         return false;
     }
@@ -348,15 +425,15 @@ bool WindowsUSBCreator::reverifyTargetDiskIdentity(const QString& diskNumber) {
 QString WindowsUSBCreator::system32ExePath(const QString& exeName) {
     // Resolve under the REAL system directory reported by GetSystemDirectoryW
     // (sak::system32Path), NEVER the %SystemRoot% environment variable: a poisoned
-    // environment on an elevated launch must not be able to redirect diskpart.exe or
-    // bcdboot.exe to an attacker-planted copy. Fail closed (empty) if the system
+    // environment on an elevated launch must not be able to redirect diskpart.exe to an
+    // attacker-planted copy. Fail closed (empty) if the system
     // directory cannot be resolved -- never guess a default C:\Windows.
     const QString path = sak::system32Path(exeName);
     if (path.isEmpty()) {
         return {};
     }
     // Fail closed unless this is a real, existing regular file -- never a symlink/reparse point
-    // that could redirect an elevated diskpart.exe/bcdboot.exe launch to attacker-planted code.
+    // that could redirect an elevated diskpart.exe launch to attacker-planted code.
     const QFileInfo info(path);
     if (!info.exists() || !info.isFile() || info.isSymLink()) {
         return {};
@@ -452,7 +529,7 @@ QString WindowsUSBCreator::formatAndVerifyDrive(const QString& diskNumber) {
     // against ^\d{1,3}$.
     Q_ASSERT(!diskNumber.isEmpty());
     Q_EMIT progressUpdated(0);
-    Q_EMIT statusChanged("Step 1/5: Formatting drive as NTFS...");
+    Q_EMIT statusChanged("Step 1/3: Formatting drive as NTFS...");
     sak::logInfo("STEP 1: Formatting disk...");
 
     if (!formatDriveNTFS(diskNumber)) {
@@ -461,27 +538,13 @@ QString WindowsUSBCreator::formatAndVerifyDrive(const QString& diskNumber) {
         return {};
     }
 
-    // VERIFY Step 1: Wait for partition and get drive letter
+    // VERIFY Step 1: wait (bounded) for the formatted volume's drive letter
     Q_EMIT progressUpdated(kFormatVerificationProgress);
-    Q_EMIT statusChanged("Waiting for partition to be recognized...");
+    Q_EMIT statusChanged("Waiting for Windows to mount the formatted drive...");
     sak::logInfo("STEP 1: Verifying format and getting drive letter...");
 
-    // Wait with progress updates
-    for (int i = 0; i < kDriveRecognitionWaitIterations; ++i) {
-        QThread::msleep(sak::kTimerPollingFastMs);
-        Q_EMIT progressUpdated(kFormatVerificationProgress + (i * kDriveRecognitionProgressSpan /
-                                                              kDriveRecognitionWaitIterations));
-        if (m_cancelled) {
-            break;
-        }
-    }
-
-    QString driveLetter = getDriveLetterFromDiskNumber();
+    const QString driveLetter = waitForFormattedDriveLetter(diskNumber);
     if (driveLetter.isEmpty()) {
-        setError(QString("STEP 1 VERIFICATION FAILED: No drive letter found for disk %1 after "
-                         "format")
-                     .arg(diskNumber));
-        sak::logError(lastError().toStdString());
         Q_EMIT failed(lastError());
         return {};
     }
@@ -593,7 +656,7 @@ bool WindowsUSBCreator::extractAndVerifyFiles(const QString& isoPath, const QStr
         Q_EMIT failed(lastError());
         return false;
     }
-    Q_EMIT statusChanged("Step 2/5: Extracting Windows installation files...");
+    Q_EMIT statusChanged("Step 2/3: Extracting Windows installation files...");
     sak::logInfo("STEP 2: Extracting ISO contents...");
 
     if (!copyISOContents(isoPath, driveLetter)) {
@@ -604,7 +667,7 @@ bool WindowsUSBCreator::extractAndVerifyFiles(const QString& isoPath, const QStr
 
     // VERIFY Step 2: Check critical files exist
     sak::logInfo("STEP 2: Verifying extraction...");
-    Q_EMIT statusChanged("Step 2/5: Verifying extracted files...");
+    Q_EMIT statusChanged("Step 2/3: Verifying extracted files...");
 
     const QString basePath = driveLetter + ":\\";
     const QStringList criticalFiles = {"setup.exe", "sources\\boot.wim", "bootmgr"};
@@ -643,74 +706,6 @@ bool WindowsUSBCreator::extractAndVerifyFiles(const QString& isoPath, const QStr
     return true;
 }
 
-bool WindowsUSBCreator::setAndVerifyBootFlag(const QString& diskNumber,
-                                             const QString& driveLetter) {
-    Q_EMIT statusChanged("Step 4/5: Setting bootable flag...");
-    sak::logInfo("STEP 4: Setting bootable flag...");
-
-    const QString diskpartScript = QString(
-                                       "select disk %1\n"
-                                       "select partition 1\n"
-                                       "active\n")
-                                       .arg(diskNumber);
-
-    QString output;
-    if (!runDiskpartScript(diskpartScript, sak::kTimeoutProcessLongMs, output)) {
-        setError("STEP 4 FAILED: " + lastError());
-        sak::logError(lastError().toStdString());
-        Q_EMIT failed(lastError());
-        return false;
-    }
-
-    sak::logInfo("STEP 4: Verifying bootable flag...");
-    Q_EMIT statusChanged("Step 4/5: Verifying bootable flag...");
-
-    if (!verifyBootableFlag(driveLetter)) {
-        setError("STEP 4 VERIFICATION FAILED: " + lastError());
-        sak::logError(lastError().toStdString());
-        Q_EMIT failed(lastError());
-        return false;
-    }
-
-    sak::logInfo("[x] STEP 4 VERIFIED: Bootable flag is set (Active)");
-    Q_EMIT progressUpdated(kBootFlagVerifiedProgress);
-    return true;
-}
-
-bool WindowsUSBCreator::configureBootAndVerify(const QString& diskNumber,
-                                               const QString& driveLetter) {
-    // TOCTOU guard: bcdboot writes boot files to driveLetter. Re-pin the letter to the
-    // original target disk before that write so a hot-plug that reassigned the letter
-    // between extraction and here cannot redirect boot configuration onto an unrelated
-    // volume. Fails closed on any mismatch or query failure.
-    if (!verifyDriveLetterMapsToTarget(driveLetter)) {
-        Q_EMIT failed(lastError());
-        return false;
-    }
-    // ==================== STEP 3: MAKE BOOTABLE ====================
-    Q_EMIT progressUpdated(kBootConfigurationStartProgress);
-    Q_EMIT statusChanged("Step 3/5: Making drive bootable...");
-    sak::logInfo("STEP 3: Making drive bootable...");
-
-    if (!makeBootable(driveLetter)) {
-        sak::logError("STEP 3 FAILED: Could not configure boot files");
-        Q_EMIT failed(lastError());
-        return false;
-    }
-
-    sak::logInfo("[x] STEP 3 COMPLETED: Boot configuration done");
-    Q_EMIT progressUpdated(kBootConfigurationCompleteProgress);
-
-    if (m_cancelled) {
-        setError("Operation cancelled");
-        Q_EMIT failed(lastError());
-        return false;
-    }
-
-    // ==================== STEP 4: SET BOOT FLAG ====================
-    return setAndVerifyBootFlag(diskNumber, driveLetter);
-}
-
 void WindowsUSBCreator::cancel() {
     m_cancelled = true;
     sak::logInfo("Windows USB creation cancelled");
@@ -737,6 +732,8 @@ bool WindowsUSBCreator::cleanAndPartitionDisk(const QString& diskNumber) {
         return false;
     }
 
+    // The one and only place the legacy-BIOS "active" flag is set; final verification
+    // checks it. A second diskpart run to set it again after extraction did nothing new.
     const QString diskpartScript = QString(
                                        "select disk %1\n"
                                        "clean\n"
@@ -771,9 +768,12 @@ bool WindowsUSBCreator::formatPartitionNTFS(const QString& diskNumber) {
     if (!reverifyTargetDiskIdentity(diskNumber)) {
         return false;
     }
-    sak::logInfo("Waiting for Windows to recognize partition...");
+    sak::logInfo("Waiting for Windows to surface the new partition's volume...");
+    Q_EMIT statusChanged("Waiting for Windows to recognize the new partition...");
+    if (!waitForNewPartitionVolume(diskNumber)) {
+        return false;
+    }
     Q_EMIT statusChanged("Formatting partition as NTFS...");
-    QThread::msleep(sak::kTimerStatusMessageMs);
 
     const QString formatScript = QString(
                                      "select disk %1\n"
@@ -789,11 +789,8 @@ bool WindowsUSBCreator::formatPartitionNTFS(const QString& diskNumber) {
         return false;
     }
     sak::logInfo(QString("Format output:\n%1").arg(formatOutput).toStdString());
-
-    // Wait for format to complete
-    sak::logInfo("Waiting for format to settle...");
-    QThread::msleep(sak::kTimerStatusMessageMs);
-
+    // diskpart's format is synchronous: it has finished when the process exits. The caller
+    // then waits (bounded) for the drive letter, which is what actually takes time to appear.
     return true;
 }
 

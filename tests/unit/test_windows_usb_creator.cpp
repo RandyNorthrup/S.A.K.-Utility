@@ -16,6 +16,7 @@
 #include "sak/windows_usb_creator.h"
 
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -56,8 +57,13 @@ private Q_SLOTS:
     void sanitizeVolumeLabel_keepsLegitimateLabel();
     void sanitizeVolumeLabel_capsLength();
 
-    // ---- bcdboot success gating (B10-22) ----
-    void bcdbootReportsSuccess_onlyCleanZeroExit();
+    // ---- Bounded wait for Windows to surface the new volume (no fixed sleeps) ----
+    void waitForVolume_returnsAsSoonAsTheVolumeAppears();
+    void waitForVolume_readyProbeDoesNotSleep();
+    void waitForVolume_timesOutFailClosed();
+    void waitForVolume_honoursCancel();
+    // ---- No bcdboot step, one "active", no fixed sleeps ----
+    void bootSetupHasNoBcdbootStepOrDuplicateActiveOrFixedSleep();
 
     // ---- diskpart 0-exit-but-failed detection (CR3-9) ----
     void diskpartOutputIsError_detectsFailureMarkers();
@@ -294,18 +300,92 @@ void WindowsUSBCreatorTests::sanitizeVolumeLabel_capsLength() {
 }
 
 // ===========================================================================
-// bcdboot success gating (B10-22)
+// Bounded wait for the new volume. The creator used fixed sleeps (3 s before the
+// format, 3 s after it, 3 s of polling for the letter, 2 s after extraction):
+// wasted time on fast media and a premature failure on slow media.
 // ===========================================================================
 
-void WindowsUSBCreatorTests::bcdbootReportsSuccess_onlyCleanZeroExit() {
-    // Only a clean, non-cancelled, exit-0 run counts as bootable.
-    QVERIFY(WindowsUSBCreator::bcdbootReportsSuccess(false, false, 0));
-    // A timeout, cancellation, or any non-zero exit is a failure (must not
-    // certify the media bootable).
-    QVERIFY(!WindowsUSBCreator::bcdbootReportsSuccess(true, false, 0));
-    QVERIFY(!WindowsUSBCreator::bcdbootReportsSuccess(false, true, 0));
-    QVERIFY(!WindowsUSBCreator::bcdbootReportsSuccess(false, false, 1));
-    QVERIFY(!WindowsUSBCreator::bcdbootReportsSuccess(false, false, -1));
+namespace {
+constexpr int kFastPollMs = 1;
+constexpr int kLongPollMs = 60'000;
+constexpr int kShortTimeoutMs = 50;
+constexpr int kNeverTimeoutMs = 600'000;
+constexpr int kSlowBoundMs = 5000;
+constexpr int kProbesUntilReady = 3;
+}  // namespace
+
+void WindowsUSBCreatorTests::waitForVolume_returnsAsSoonAsTheVolumeAppears() {
+    int probes = 0;
+    const auto outcome =
+        WindowsUSBCreator::waitForVolume([&probes]() { return ++probes >= kProbesUntilReady; },
+                                         []() { return false; },
+                                         kNeverTimeoutMs,
+                                         kFastPollMs);
+    QCOMPARE(outcome, WindowsUSBCreator::VolumeWaitOutcome::Ready);
+    QCOMPARE(probes, kProbesUntilReady);
+}
+
+void WindowsUSBCreatorTests::waitForVolume_readyProbeDoesNotSleep() {
+    // The probe runs before any sleep: a volume that is already there costs no wait at all,
+    // even with a one-minute poll interval.
+    QElapsedTimer timer;
+    timer.start();
+    const auto outcome = WindowsUSBCreator::waitForVolume(
+        []() { return true; }, []() { return false; }, kNeverTimeoutMs, kLongPollMs);
+    QCOMPARE(outcome, WindowsUSBCreator::VolumeWaitOutcome::Ready);
+    QVERIFY2(timer.elapsed() < kSlowBoundMs, qPrintable(QString::number(timer.elapsed())));
+}
+
+void WindowsUSBCreatorTests::waitForVolume_timesOutFailClosed() {
+    int probes = 0;
+    QElapsedTimer timer;
+    timer.start();
+    const auto outcome = WindowsUSBCreator::waitForVolume(
+        [&probes]() {
+            ++probes;
+            return false;
+        },
+        []() { return false; },
+        kShortTimeoutMs,
+        kFastPollMs);
+    QCOMPARE(outcome, WindowsUSBCreator::VolumeWaitOutcome::TimedOut);
+    QVERIFY(timer.elapsed() >= kShortTimeoutMs);
+    QVERIFY2(timer.elapsed() < kSlowBoundMs, qPrintable(QString::number(timer.elapsed())));
+    QVERIFY(probes > 1);
+}
+
+void WindowsUSBCreatorTests::waitForVolume_honoursCancel() {
+    int probes = 0;
+    const auto outcome = WindowsUSBCreator::waitForVolume(
+        [&probes]() {
+            ++probes;
+            return true;
+        },
+        []() { return true; },
+        kNeverTimeoutMs,
+        kFastPollMs);
+    QCOMPARE(outcome, WindowsUSBCreator::VolumeWaitOutcome::Cancelled);
+    QCOMPARE(probes, 0);
+}
+
+// The USB maker ran bcdboot against the install media root -- its own comment recorded that
+// bcdboot needs a Windows directory and install media has none -- then set the partition
+// "active" a second time after extraction, padded with fixed sleeps. The media boots from the
+// ISO's own boot files and the flag is set once at partition creation and verified at the end.
+void WindowsUSBCreatorTests::bootSetupHasNoBcdbootStepOrDuplicateActiveOrFixedSleep() {
+    const QDir repo(QStringLiteral(SAK_REPO_ROOT));
+    QString source;
+    for (const QString& relative : {QStringLiteral("src/core/windows_usb_creator.cpp"),
+                                    QStringLiteral("src/core/windows_usb_creator_extract.cpp")}) {
+        QFile file(repo.filePath(relative));
+        QVERIFY2(file.open(QIODevice::ReadOnly), qPrintable(relative));
+        source += QString::fromUtf8(file.readAll());
+    }
+    QVERIFY2(source.size() > 0, "creator sources were not read");
+    QVERIFY(!source.contains(QStringLiteral("QStringLiteral(\"bcdboot.exe\")")));
+    QVERIFY(!source.contains(QStringLiteral("runBcdboot")));
+    QCOMPARE(source.count(QStringLiteral("\"active\\n\"")), 1);
+    QVERIFY(!source.contains(QStringLiteral("QThread::msleep(sak::kTimer")));
 }
 
 // ===========================================================================
