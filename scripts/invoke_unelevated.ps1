@@ -13,7 +13,8 @@
     The token is filtered the way UAC filters an administrator's token for a standard-user
     session: CreateRestrictedToken with LUA_TOKEN, BUILTIN\Administrators and "Local account and
     member of Administrators group" deny-only, every privilege a standard user lacks deleted,
-    Medium integrity, and the user as the default owner of new objects. (The SAFER "Normal User"
+    Medium integrity, the user as the default owner of new objects, and a default DACL that
+    grants the user and SYSTEM. (The SAFER "Normal User"
     level, runas /trustlevel:0x20000, was tried first; under it, on a hosted runner,
     test_process_runner's PowerShell child printed nothing inside its 5-second window and
     test_drive_scanner found no drives, neither of which happens elevated.) Before
@@ -88,6 +89,7 @@ public static class SakUnelevated {
     const uint LuaToken = 0x4;
     const int TokenPrivilegesClass = 3;
     const int TokenOwnerClass = 4;
+    const int TokenDefaultDaclClass = 6;
     const int TokenElevationClass = 20;
     const int TokenIntegrityLevelClass = 25;
     const int TokenUserClass = 1;
@@ -121,6 +123,9 @@ public static class SakUnelevated {
     [StructLayout(LayoutKind.Sequential)]
     struct TokenOwner { public IntPtr Owner; }
 
+    [StructLayout(LayoutKind.Sequential)]
+    struct TokenDefaultDacl { public IntPtr DefaultDacl; }
+
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     struct StartupInfo {
         public int cb; public string lpReserved; public string lpDesktop; public string lpTitle;
@@ -149,6 +154,14 @@ public static class SakUnelevated {
     static extern bool SetTokenInformation(IntPtr token, int infoClass, ref TokenMandatoryLabel info, int length);
     [DllImport("advapi32.dll", SetLastError = true, EntryPoint = "SetTokenInformation")]
     static extern bool SetTokenOwner(IntPtr token, int infoClass, ref TokenOwner info, int length);
+    [DllImport("advapi32.dll", SetLastError = true, EntryPoint = "SetTokenInformation")]
+    static extern bool SetTokenDefaultDacl(IntPtr token, int infoClass, ref TokenDefaultDacl info, int length);
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern bool ConvertSidToStringSid(IntPtr sid, out IntPtr text);
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    static extern bool ConvertStringSecurityDescriptorToSecurityDescriptor(string sddl, uint revision, out IntPtr descriptor, out uint size);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    static extern bool GetSecurityDescriptorDacl(IntPtr descriptor, out bool present, out IntPtr dacl, out bool defaulted);
     [DllImport("advapi32.dll", SetLastError = true)]
     static extern bool GetTokenInformation(IntPtr token, int infoClass, IntPtr info, int length, out int returned);
     [DllImport("advapi32.dll", SetLastError = true)]
@@ -217,8 +230,8 @@ public static class SakUnelevated {
     }
 
     // A filtered token built the way UAC builds a standard user's: LUA_TOKEN, the administrator
-    // groups deny-only, every privilege a standard user lacks deleted, Medium integrity, and the
-    // user (not Administrators) as the default owner of new objects.
+    // groups deny-only, every privilege a standard user lacks deleted, Medium integrity, the user
+    // (not Administrators) as the default owner of new objects, and a default DACL for the user.
     static IntPtr StandardUserToken() {
         IntPtr process;
         if (!OpenProcessToken(GetCurrentProcess(), TokenAllAccess, out process)) throw Fail("OpenProcessToken");
@@ -246,8 +259,33 @@ public static class SakUnelevated {
                     Marshal.SizeOf(typeof(TokenMandatoryLabel)) + GetLengthSid(medium))) throw Fail("SetTokenInformation(IntegrityLevel)");
 
             userBuffer = ReadTokenInformation(token, TokenUserClass);
-            var owner = new TokenOwner { Owner = Marshal.ReadIntPtr(userBuffer) };
+            IntPtr userSid = Marshal.ReadIntPtr(userBuffer);
+            var owner = new TokenOwner { Owner = userSid };
             if (!SetTokenOwner(token, TokenOwnerClass, ref owner, Marshal.SizeOf(typeof(TokenOwner)))) throw Fail("SetTokenInformation(Owner)");
+
+            // An elevated token's default DACL grants Administrators and SYSTEM only. Once
+            // Administrators is deny-only, every process, thread and pipe the child creates
+            // would be inaccessible to the child itself (CTest then cannot start a single test),
+            // so give it the standard user's default: the user and SYSTEM.
+            IntPtr userText;
+            if (!ConvertSidToStringSid(userSid, out userText)) throw Fail("ConvertSidToStringSid");
+            string user = Marshal.PtrToStringUni(userText);
+            LocalFree(userText);
+            IntPtr descriptor;
+            uint descriptorSize;
+            if (!ConvertStringSecurityDescriptorToSecurityDescriptor("D:(A;;GA;;;" + user + ")(A;;GA;;;SY)", 1,
+                    out descriptor, out descriptorSize)) throw Fail("ConvertStringSecurityDescriptorToSecurityDescriptor");
+            try {
+                bool present, defaulted;
+                IntPtr dacl;
+                if (!GetSecurityDescriptorDacl(descriptor, out present, out dacl, out defaulted) || !present)
+                    throw Fail("GetSecurityDescriptorDacl");
+                var defaultDacl = new TokenDefaultDacl { DefaultDacl = dacl };
+                if (!SetTokenDefaultDacl(token, TokenDefaultDaclClass, ref defaultDacl, Marshal.SizeOf(typeof(TokenDefaultDacl))))
+                    throw Fail("SetTokenInformation(DefaultDacl)");
+            } finally {
+                LocalFree(descriptor);
+            }
             return token;
         } finally {
             foreach (var sid in sids) LocalFree(sid.Sid);
