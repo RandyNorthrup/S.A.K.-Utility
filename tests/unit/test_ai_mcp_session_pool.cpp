@@ -11,6 +11,7 @@
 #include <QCoreApplication>
 #include <QDeadlineTimer>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -119,10 +120,14 @@ void handleFakeRequest(QTextStream& output,
         return;
     }
     if (method == QLatin1String("tools/call")) {
-        if (request.value(QStringLiteral("params"))
-                .toObject()
-                .value(QStringLiteral("name"))
-                .toString() == QLatin1String("process-id")) {
+        const QString tool = request.value(QStringLiteral("params"))
+                                 .toObject()
+                                 .value(QStringLiteral("name"))
+                                 .toString();
+        if (tool == QLatin1String("hang")) {
+            return;  // Accepted and never answered: a tool stuck on the desktop or network.
+        }
+        if (tool == QLatin1String("process-id")) {
             const QJsonObject block{{QStringLiteral("type"), QStringLiteral("text")},
                                     {QStringLiteral("text"),
                                      QString::number(QCoreApplication::applicationPid())}};
@@ -310,6 +315,7 @@ private Q_SLOTS:
     void inheritedEnvironmentRejectedBeforePoolUse();
     void emptySuccessIsDistinctFromFailure();
     void transportFailureDropsSessionBeforeRetry();
+    void cancelledCallKillsServerAndNextCallReopens();
     void listFailureDropsSessionBeforeRetry();
     void missingCommandFailsCleanlyAndCloses();
     void builtInMcpReuseAndPolicyIsolation();
@@ -579,6 +585,48 @@ void AiMcpSessionPoolTests::transportFailureDropsSessionBeforeRetry() {
     const QJsonObject result = retry_result->value(QStringLiteral("result")).toObject();
     QVERIFY(result.value(QStringLiteral("content")).isArray());
     QVERIFY(result.value(QStringLiteral("content")).toArray().isEmpty());
+    QCOMPARE(pool.pooledSlotCount(), 1);
+    QVERIFY(pool.closeAll().has_value());
+}
+
+// The pool is what the assistant's Win32 MCP calls go through, so it must honour the request's
+// cancel check: the stuck call returns at once, its server dies, and the slot reopens cleanly.
+void AiMcpSessionPoolTests::cancelledCallKillsServerAndNextCallReopens() {
+    constexpr int kCancelAfterMs = 300;
+    QTemporaryDir temporary_dir;
+    QVERIFY(temporary_dir.isValid());
+    sak::ai::AiMcpSessionPool pool;
+    auto request = fakePoolRequest(QStringLiteral("empty-success"),
+                                   temporary_dir.filePath(QStringLiteral("unused.marker")));
+    auto server = observeFakeProcess(pool, request);
+    QVERIFY2(server.has_value(), qPrintable(failureDiagnostic(server)));
+
+    std::atomic_bool cancel{false};
+    std::jthread canceller([&cancel]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(kCancelAfterMs));
+        cancel.store(true);
+    });
+    auto hanging = request;
+    hanging.tool_name = QStringLiteral("hang");
+    hanging.should_cancel = [&cancel]() {
+        return cancel.load();
+    };
+    QElapsedTimer timer;
+    timer.start();
+    const auto called = pool.callTool(hanging);
+    const qint64 elapsed = timer.elapsed();
+
+    QVERIFY(!called.has_value());
+    QCOMPARE(called.error(), QStringLiteral("MCP tool call cancelled"));
+    QVERIFY2(elapsed < native_mcp::kRequestTimeoutMs / 2,
+             qPrintable(QStringLiteral("cancelled call took %1 ms").arg(elapsed)));
+    const auto exited = server->waitForExit();
+    QVERIFY2(exited.has_value(), qPrintable(failureDiagnostic(exited)));
+    QCOMPARE(*exited, DWORD{sak::kWindowsProcessJobFailureExitCode});
+
+    // The cancelled session was dropped after checked cleanup, so the same key opens a new server.
+    auto replacement = observeFakeProcess(pool, request);
+    QVERIFY2(replacement.has_value(), qPrintable(failureDiagnostic(replacement)));
     QCOMPARE(pool.pooledSlotCount(), 1);
     QVERIFY(pool.closeAll().has_value());
 }

@@ -6,6 +6,7 @@
 #include "sak/ai/ai_mcp_jsonrpc.h"
 #include "sak/contained_process_quarantine.h"
 #include "sak/layout_constants.h"
+#include "sak/logger.h"
 #include "sak/windows_process_job.h"
 
 #include <QDeadlineTimer>
@@ -42,6 +43,8 @@ constexpr int kMaxToolsListPages = 128;
 constexpr qsizetype kMaxDiscoveredTools = 4096;
 constexpr int kProcessCleanupTimeoutMs = 5000;
 constexpr qint64 kProcessCleanupPollMs = 25;
+// How often a caller blocked in a cancellable tools/call checks its cancel request.
+constexpr int kCancelPollMs = 50;
 
 class BoundedPipeDevice final : public QIODevice {
 public:
@@ -368,6 +371,22 @@ public:
         return stopProcess(deadline);
     }
 
+    // The ONE member called from the caller's thread, while this worker is blocked inside a
+    // request on its own. TerminateJobObject on a live Job handle is safe from any thread, and
+    // m_job cannot change during a request (only stopProcess, on this worker, resets it). Killing
+    // the family ends the worker's waitForReadyRead, so the request returns at once.
+    void terminateForCancellation() {
+        m_open_state->store(false, std::memory_order_release);
+        if (!m_job) {
+            return;
+        }
+        const auto terminated = m_job->terminate();
+        if (!terminated) {
+            sak::logError("Cancelled MCP tool call could not terminate its server: {}",
+                          terminated.error().toStdString());
+        }
+    }
+
 private:
     std::expected<int, QString> nextId() {
         if (m_next_id == std::numeric_limits<int>::max()) {
@@ -679,23 +698,66 @@ std::expected<QVector<AiMcpToolDescriptor>, QString> AiMcpStdioSession::listTool
     return result;
 }
 
-std::expected<QJsonObject, QString> AiMcpStdioSession::callTool(const QString& tool_name,
-                                                                const QJsonObject& arguments) {
+std::expected<QJsonObject, QString> AiMcpStdioSession::callTool(
+    const QString& tool_name, const QJsonObject& arguments, const AiMcpCancelCheck& should_cancel) {
     if (!isOpen() || (m_worker == nullptr)) {
         return std::unexpected(QStringLiteral("MCP session is not open"));
     }
-    std::expected<QJsonObject, QString> result;
-    const bool invoked = QMetaObject::invokeMethod(
-        m_worker,
-        [this, &tool_name, &arguments, &result]() {
-            result = m_worker->doCallTool(tool_name, arguments);
+    // Shared, not on this stack: an Abandoned call returns while the worker still runs it.
+    auto result = std::make_shared<std::expected<QJsonObject, QString>>(
+        std::unexpected(QStringLiteral("MCP tools/call did not complete")));
+    const auto dispatched = dispatchCancellable(
+        [result, tool_name, arguments](Worker& worker) {
+            *result = worker.doCallTool(tool_name, arguments);
         },
-        Qt::BlockingQueuedConnection);
-    if (!invoked) {
+        should_cancel);
+    switch (dispatched) {
+    case CancellableDispatch::NotDispatched:
         return std::unexpected(
             QStringLiteral("Could not dispatch tools/call to the MCP session worker"));
+    case CancellableDispatch::Cancelled:
+    case CancellableDispatch::Abandoned:
+        return std::unexpected(QStringLiteral("MCP tool call cancelled"));
+    case CancellableDispatch::Completed:
+        break;
     }
-    return result;
+    return *result;
+}
+
+AiMcpStdioSession::CancellableDispatch AiMcpStdioSession::dispatchCancellable(
+    const std::function<void(Worker&)>& work, const AiMcpCancelCheck& should_cancel) {
+    Worker* const worker = m_worker;
+    if (!should_cancel) {
+        // No cancellation requested: the original blocking call, unchanged.
+        const bool invoked = QMetaObject::invokeMethod(
+            worker, [worker, &work]() { work(*worker); }, Qt::BlockingQueuedConnection);
+        return invoked ? CancellableDispatch::Completed : CancellableDispatch::NotDispatched;
+    }
+    auto done = std::make_shared<QSemaphore>();
+    const bool invoked = QMetaObject::invokeMethod(
+        worker,
+        [worker, work, done]() {
+            work(*worker);
+            done->release();
+        },
+        Qt::QueuedConnection);
+    if (!invoked) {
+        return CancellableDispatch::NotDispatched;
+    }
+    // Without cancellation this waits exactly as long as the blocking call did: the request's
+    // own deadline bounds the worker. Once cancelled, the killed server ends the worker's wait,
+    // and the cleanup bound stops this thread waiting on a worker that is somehow still busy.
+    std::optional<QDeadlineTimer> cancelled_at;
+    while (!done->tryAcquire(1, kCancelPollMs)) {
+        if (!cancelled_at && should_cancel()) {
+            cancelled_at.emplace(kProcessCleanupTimeoutMs, Qt::PreciseTimer);
+            worker->terminateForCancellation();
+        }
+        if (cancelled_at && cancelled_at->hasExpired()) {
+            return CancellableDispatch::Abandoned;
+        }
+    }
+    return cancelled_at ? CancellableDispatch::Cancelled : CancellableDispatch::Completed;
 }
 
 std::expected<void, QString> AiMcpStdioSession::close() {

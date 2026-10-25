@@ -84,6 +84,7 @@ class AiToolHealthLedger;
 class AiLeaseManager;
 class AiAsyncToolRunner;
 struct AiPromptAssembly;
+struct AiProviderGatewayToolCallbacks;
 enum class AiAccessMode;
 }  // namespace ai
 
@@ -108,6 +109,22 @@ class AiAssistantPanel : public QWidget {
 public:
     explicit AiAssistantPanel(QWidget* parent = nullptr);
     ~AiAssistantPanel() override;
+
+    /// @brief Tears down a panel its owner no longer needs without crashing on live work.
+    ///
+    /// Cancels the run and every local operation, then gives the async tool worker and any
+    /// workflow run a bounded drain. Drained, the panel is destroyed here. Still running past
+    /// the bound, the overrun is reported and the panel is kept alive -- hidden and unparented,
+    /// because those workers still reach it -- and deletes itself once they stop (owner decision
+    /// 2026-10-24, "report + contain"; this was a qFatal). The owner hands a panel here instead
+    /// of deleting it.
+    static void release(std::unique_ptr<AiAssistantPanel> panel);
+
+    /// @brief release() with an owner-chosen drain deadline instead of the standard 30 s.
+    static void release(std::unique_ptr<AiAssistantPanel> panel, int drain_deadline_ms);
+
+    /// @brief True while the async tool worker or a workflow run is still executing.
+    [[nodiscard]] bool hasLiveBackgroundWork() const;
 
     AiAssistantPanel(const AiAssistantPanel&) = delete;
     AiAssistantPanel& operator=(const AiAssistantPanel&) = delete;
@@ -373,12 +390,15 @@ private:
                                                  const ai::AiToolCallRequest& policy_request,
                                                  const QJsonObject& args);
     void finishAsyncBuiltInToolCall(const QJsonObject& bundle);
-    // Destructor helpers: stop any running local work, then wait out the async
-    // tool worker and the workflow run (both may deref the panel from a worker
+    // Teardown helpers (destructor and release()): stop any running local work, then wait out
+    // the async tool worker and the workflow run (both may deref the panel from a worker
     // thread) before members are destroyed.
     void cancelRunningWorkOnDestroy();
-    void drainAndStopAsyncTool();
-    void drainWorkflowRun();
+    void stopBackgroundWorkForTeardown();
+    [[nodiscard]] bool pumpUntilBackgroundWorkStops(int deadline_ms) const;
+    void deleteOnceBackgroundWorkStops();
+    /// The cancel check a Win32 MCP call polls: true once Stop or teardown cancelled the run.
+    [[nodiscard]] std::function<bool()> toolCallCancelCheck() const;
     // Pure result-shaping shared by the sync and async built-in paths (safe to
     // call off the GUI thread: no widget or shared-state access).
     [[nodiscard]] static QJsonObject buildBuiltInToolMetadata(
@@ -523,6 +543,9 @@ private:
                                                 QObject* worker);
     [[nodiscard]] QJsonObject runPackageManagerTool(const QJsonObject& args);
     [[nodiscard]] QJsonObject runProviderGatewayTool(const QJsonObject& args);
+    /// The panel-side hooks a provider-gateway call uses (confirmation, restore point, command
+    /// execution and recording); split out of runProviderGatewayTool.
+    [[nodiscard]] ai::AiProviderGatewayToolCallbacks providerGatewayCallbacks();
     [[nodiscard]] QJsonObject runSessionSearchTool(const QJsonObject& args) const;
     // sak_skill handler: operation "list" returns the skill catalog, "load"
     // returns the full guidance body for a skill_id. Read-only resource lookup.
@@ -1012,11 +1035,14 @@ private:
     std::unique_ptr<ai::AiRunStateStore> m_runStateStore;
     std::unique_ptr<ai::AiLeaseManager> m_leaseManager;
     std::unique_ptr<ai::AiToolHealthLedger> m_toolHealthLedger;
-    std::unique_ptr<ai::AiToolDispatcher> m_toolDispatcher;
+    // Shared, not owned outright: the async tool work holds its own reference while it runs,
+    // so a dispatch in flight never outlives the dispatcher it is executing in.
+    std::shared_ptr<ai::AiToolDispatcher> m_toolDispatcher;
     std::unique_ptr<ai::AiAsyncToolRunner> m_asyncToolRunner;
-    // Persistent MCP stdio sessions, reused across provider-gateway win32 MCP tool
-    // calls. Closed (worker threads joined) when the panel is destroyed.
-    ai::AiMcpSessionPool m_mcpSessionPool;
+    // Persistent MCP stdio sessions, reused across provider-gateway win32 MCP tool calls. An
+    // in-flight gateway call holds its own reference, so destroying the panel can never destroy
+    // the pool underneath that call; the last owner closes it (worker threads joined).
+    std::shared_ptr<ai::AiMcpSessionPool> m_mcpSessionPool;
     // NOTE: there is deliberately no separate "async tool in flight" flag. The runner
     // itself is the single authority (isRunning()); a mirror flag went stale the moment
     // Stop detached the job and made the panel report idle while the work still ran.
@@ -1079,7 +1105,7 @@ private:
     QString m_workflowDetailsCurrentId;
     QFutureWatcher<ai::AiOrchestratorResult>* m_workflowRunWatcher{nullptr};
     bool m_workflowRunActive{false};
-    // Set at the very start of teardown (before drainWorkflowRun pumps the event
+    // Set at the very start of teardown (before the background-work drain pumps the event
     // loop). A workflow worker that is blocked marshaling a per-phase approval
     // modal onto the GUI thread would otherwise have that modal shown by the drain
     // pump and block on exec() forever -- there is no user to answer during

@@ -9,6 +9,9 @@
 #include <QProcessEnvironment>
 #include <QString>
 
+#include <functional>
+#include <utility>
+
 namespace sak::ai {
 
 inline constexpr int kDefaultProviderGatewayTimeoutMs = 20'000;
@@ -37,6 +40,12 @@ public:
     /// Inject the required persistent MCP session pool. Missing wiring makes Win32 MCP calls fail
     /// closed. Not owned; must outlive this gateway.
     void setMcpSessionPool(AiMcpSessionPool* pool) { m_mcp_pool = pool; }
+
+    /// Cancellation for the Win32 MCP calls this gateway makes: polled while a call is in flight,
+    /// and when it turns true the MCP server is terminated and the call returns promptly.
+    void setCancelCheck(std::function<bool()> should_cancel) {
+        m_should_cancel = std::move(should_cancel);
+    }
 
     [[nodiscard]] QJsonObject providers(QString* error_message = nullptr) const;
     [[nodiscard]] QJsonObject providerStatuses(QString* error_message = nullptr) const;
@@ -95,6 +104,7 @@ public:
 private:
     AiProviderRegistry m_registry;
     AiMcpSessionPool* m_mcp_pool{nullptr};  // not owned; see setMcpSessionPool
+    std::function<bool()> m_should_cancel;  // see setCancelCheck
 };
 
 }  // namespace sak::ai

@@ -41,7 +41,9 @@ public:
     /// the persistent session and are not re-synthesized. On error returns a non-empty diagnostic.
     /// A transport/session error drops the session only after checked cleanup. If cleanup fails,
     /// ownership is retained and subsequent pool admissions are refused until closeAll succeeds.
-    /// Pre-session validation and capacity refusals leave existing sessions intact.
+    /// Pre-session validation and capacity refusals leave existing sessions intact. A call that
+    /// request.should_cancel cancels terminates that session's server and drops the session the
+    /// same way, so the next call opens a fresh one.
     [[nodiscard]] std::expected<QJsonObject, QString> callTool(
         const AiMcpStdioCallRequest& request);
 

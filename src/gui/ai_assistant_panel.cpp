@@ -3655,8 +3655,9 @@ AiAssistantPanel::AiAssistantPanel(QWidget* parent)
     , m_runStateStore(std::make_unique<ai::AiRunStateStore>())
     , m_leaseManager(std::make_unique<ai::AiLeaseManager>())
     , m_toolHealthLedger(std::make_unique<ai::AiToolHealthLedger>())
-    , m_toolDispatcher(std::make_unique<ai::AiToolDispatcher>())
+    , m_toolDispatcher(std::make_shared<ai::AiToolDispatcher>())
     , m_asyncToolRunner(std::make_unique<ai::AiAsyncToolRunner>(this))
+    , m_mcpSessionPool(std::make_shared<ai::AiMcpSessionPool>())
     , m_workflowStore(std::make_unique<ai::WorkflowStore>())
     , m_skillStore(std::make_unique<ai::SkillStore>())
     , m_chocoManager(std::make_unique<ChocolateyManager>(this))
@@ -3826,13 +3827,13 @@ void AiAssistantPanel::cancelRunningWorkOnDestroy() {
     }
 }
 
-// Pump the GUI event loop while @p running is true, bounded by kAsyncDrainDeadlineMs
-// so a pathological non-terminating worker can never hang teardown forever. The
-// caller MUST hard-cancel the inner op first (so the worker unwinds well within the
-// deadline); this only pumps its marshaled UI calls to completion. Returns true if
-// the worker stopped, false if the deadline forced abandonment.
-static bool pumpEventsUntilStopped(const std::function<bool()>& running) {
-    const QDeadlineTimer deadline(kAsyncDrainDeadlineMs);
+// Pump the GUI event loop while @p running is true, bounded by @p deadline_ms so a
+// pathological non-terminating worker can never hang teardown forever. The caller MUST
+// hard-cancel the inner op first (so the worker unwinds well within the deadline); this
+// only pumps its marshaled UI calls to completion. Returns true if the worker stopped,
+// false if the deadline ran out first.
+static bool pumpEventsUntilStopped(const std::function<bool()>& running, int deadline_ms) {
+    const QDeadlineTimer deadline(deadline_ms);
     while (running()) {
         if (deadline.hasExpired()) {
             return false;
@@ -3846,69 +3847,112 @@ static bool pumpEventsUntilStopped(const std::function<bool()>& running) {
     return true;
 }
 
-void AiAssistantPanel::drainAndStopAsyncTool() {
-    // Drop the in-flight async built-in tool result so it cannot resume a
-    // half-destroyed panel, and abort its download via the shared token.
+bool AiAssistantPanel::hasLiveBackgroundWork() const {
+    return (m_asyncToolRunner && m_asyncToolRunner->isRunning()) ||
+           (m_workflowRunWatcher != nullptr && m_workflowRunWatcher->isRunning());
+}
+
+void AiAssistantPanel::stopBackgroundWorkForTeardown() {
+    cancelRunningWorkOnDestroy();
+    // Drop the in-flight async built-in tool result so it cannot resume a half-destroyed panel,
+    // and abort its work via the shared token -- which also cancels an in-flight Win32 MCP call,
+    // killing that server so the worker returns at once.
     if (m_activeToolRunToken.isValid()) {
         m_activeToolRunToken.cancel(QStringLiteral("panel_destroyed"));
     }
-    if (!m_asyncToolRunner) {
-        return;
+    if (m_asyncToolRunner) {
+        m_asyncToolRunner->detach();
     }
-    m_asyncToolRunner->detach();
-    // The worker captured `this` and returns promptly now its inner op is
-    // cancelled; pump the event loop while it drains so its marshaled UI calls
-    // complete instead of dead-locking the runner's join in member destruction.
-    // Bounded so a wedged worker cannot hang the destructor indefinitely.
-    if (!pumpEventsUntilStopped([this]() { return m_asyncToolRunner->isRunning(); })) {
-        // Fail closed. The worker captured `this`, so continuing into member destruction
-        // while it still runs is a use-after-free inside an elevated process -- logging
-        // and abandoning it would only hide that. There is no safe way to proceed, so
-        // stop deterministically with the real reason.
-        qFatal(
-            "AiAssistantPanel: async tool runner did not drain within %d ms after cancel; "
-            "refusing to destroy the panel underneath a live worker",
-            kAsyncDrainDeadlineMs);
+    // Detach the workflow watcher so onWorkflowRunFinished does not fire mid-teardown. The run
+    // token was cancelled above, so the orchestrator unwinds promptly.
+    if (m_workflowRunWatcher != nullptr) {
+        m_workflowRunWatcher->disconnect(this);
     }
 }
 
-void AiAssistantPanel::drainWorkflowRun() {
-    if (m_workflowRunWatcher == nullptr) {
+bool AiAssistantPanel::pumpUntilBackgroundWorkStops(int deadline_ms) const {
+    // Both workers may still marshal UI calls back to this thread; pumping lets those complete
+    // instead of dead-locking the drain. Bounded so a wedged worker cannot hang teardown.
+    return pumpEventsUntilStopped([this]() { return hasLiveBackgroundWork(); }, deadline_ms);
+}
+
+void AiAssistantPanel::deleteOnceBackgroundWorkStops() {
+    const auto delete_if_idle = [this]() {
+        if (!hasLiveBackgroundWork()) {
+            deleteLater();
+        }
+    };
+    if (m_asyncToolRunner) {
+        connect(m_asyncToolRunner.get(), &ai::AiAsyncToolRunner::drained, this, delete_if_idle);
+    }
+    if (m_workflowRunWatcher != nullptr) {
+        connect(m_workflowRunWatcher, &QFutureWatcherBase::finished, this, delete_if_idle);
+    }
+    // The work may have stopped between the drain's last look and these connections.
+    QTimer::singleShot(0, this, delete_if_idle);
+}
+
+void AiAssistantPanel::release(std::unique_ptr<AiAssistantPanel> panel) {
+    release(std::move(panel), kAsyncDrainDeadlineMs);
+}
+
+void AiAssistantPanel::release(std::unique_ptr<AiAssistantPanel> panel, int drain_deadline_ms) {
+    if (!panel) {
         return;
     }
-    // Detach first so onWorkflowRunFinished does not fire mid-teardown. The run
-    // token was cancelled by cancelRunningWorkOnDestroy, so the orchestrator
-    // unwinds promptly; the workflow worker dereferences the panel (runToolPhase
-    // -> dispatchWorkflowToolPhase), so it MUST finish before members are
-    // destroyed. Pump the event loop while it drains so any self-marshaled GUI
-    // call from the worker completes instead of dead-locking the join.
-    m_workflowRunWatcher->disconnect(this);
-    // Bounded (kAsyncDrainDeadlineMs): the run token was already cancelled, so the
-    // worker unwinds well within it; the deadline only prevents a wedged workflow
-    // worker from hanging teardown forever.
-    if (!pumpEventsUntilStopped([this]() { return m_workflowRunWatcher->isRunning(); })) {
-        // Fail closed: the workflow worker dereferences this panel (runToolPhase ->
-        // dispatchWorkflowToolPhase), so abandoning it here and destroying the members it
-        // is still using is a use-after-free in an elevated process. Stop deterministically
-        // instead of logging and continuing.
-        qFatal(
-            "AiAssistantPanel: workflow run did not drain within %d ms after cancel; refusing "
-            "to destroy the panel underneath a live worker",
-            kAsyncDrainDeadlineMs);
+    // Mark teardown BEFORE draining: the drain pumps the event loop, and a worker blocked
+    // marshaling a per-phase approval modal must be declined (not shown) so the pump never
+    // blocks on a modal exec() with no user.
+    panel->m_shuttingDown = true;
+    panel->stopBackgroundWorkForTeardown();
+    if (panel->pumpUntilBackgroundWorkStops(drain_deadline_ms)) {
+        return;  // Destroyed here; its destructor finds nothing left running.
     }
-    m_workflowRunWatcher->deleteLater();
-    m_workflowRunWatcher = nullptr;
+    // Report + contain (owner decision 2026-10-24). This was a qFatal: closing during a stuck
+    // tool call froze for the drain deadline and then crashed. The workers still reach this
+    // panel, so it is neither destroyed nor abandoned: it is kept, hidden and unparented, and
+    // deletes itself once they stop.
+    logError(
+        "AI Assistant work did not stop within {} ms of its cancellation; keeping the panel "
+        "alive, hidden, until it does",
+        drain_deadline_ms);
+    AiAssistantPanel* const retained = panel.release();
+    retained->hide();
+    retained->setParent(nullptr);
+    retained->deleteOnceBackgroundWorkStops();
 }
 
 AiAssistantPanel::~AiAssistantPanel() {
-    // Mark teardown BEFORE draining: drainWorkflowRun pumps the event loop, and a
-    // worker blocked marshaling a per-phase approval modal must be declined (not
-    // shown) so the drain pump never blocks on a modal exec() with no user.
+    // Mark teardown BEFORE draining (see release()).
     m_shuttingDown = true;
-    cancelRunningWorkOnDestroy();
-    drainAndStopAsyncTool();
-    drainWorkflowRun();
+    stopBackgroundWorkForTeardown();
+    if (!pumpUntilBackgroundWorkStops(kAsyncDrainDeadlineMs)) {
+        // Invariant, not a deadline outcome: an owner hands a panel that may still be working
+        // to release(), which keeps it alive instead of destroying it, and a retained panel
+        // deletes itself only once its workers stopped. Reaching this means a panel with live
+        // workers was destroyed directly; those workers dereference this object, so continuing
+        // into member destruction would be a use-after-free in a possibly elevated process.
+        qFatal(
+            "AiAssistantPanel destroyed while its workers still run %d ms after cancellation; "
+            "release it through AiAssistantPanel::release so it is retained instead",
+            kAsyncDrainDeadlineMs);
+    }
+    if (m_workflowRunWatcher != nullptr) {
+        m_workflowRunWatcher->deleteLater();
+        m_workflowRunWatcher = nullptr;
+    }
     releaseCurrentCommandLease();
+}
+
+std::function<bool()> AiAssistantPanel::toolCallCancelCheck() const {
+    // Copies share the token state, so the check stays valid off the GUI thread and after a
+    // later run replaces these members: Stop cancels both, teardown cancels both.
+    const ai::CancellationToken tool_token = m_activeToolRunToken;
+    const ai::CancellationToken run_token = m_runToken;
+    return [tool_token, run_token]() {
+        return (tool_token.isValid() && tool_token.isCancellationRequested()) ||
+               (run_token.isValid() && run_token.isCancellationRequested());
+    };
 }
 
 QString AiAssistantPanel::statusDetails() const {
@@ -6036,12 +6080,22 @@ bool AiAssistantPanel::startAsyncBuiltInToolCall(const PendingToolCallContext& c
     // process. Tool handlers here run downloads, package operations and provider calls, so a
     // throw is entirely possible. Convert it into the ordinary failed-tool-call shape the
     // panel already understands, at the one place that knows the call_id and name.
-    auto work = [this, policy, policy_request, args, base_metadata, call_id, name]() {
+    //
+    // The work holds the dispatcher by shared ownership, not through `this`: everything it
+    // touches directly stays alive for as long as it runs. (The registered handlers still reach
+    // panel state, which is why teardown goes through release().)
+    auto work = [dispatcher = m_toolDispatcher,
+                 policy,
+                 policy_request,
+                 args,
+                 base_metadata,
+                 call_id,
+                 name]() {
         QJsonObject bundle;
         bundle[QStringLiteral("call_id")] = call_id;
         bundle[QStringLiteral("name")] = name;
         try {
-            const auto outcome = m_toolDispatcher->dispatch(policy, policy_request, args);
+            const auto outcome = dispatcher->dispatch(policy, policy_request, args);
             bundle[QStringLiteral("output")] =
                 QString::fromUtf8(QJsonDocument(outcome.result).toJson(QJsonDocument::Compact));
             bundle[QStringLiteral("result")] = outcome.result;
@@ -7274,9 +7328,14 @@ QJsonObject AiAssistantPanel::runPackageManagerTool(const QJsonObject& args) {
 QJsonObject AiAssistantPanel::runProviderGatewayTool(const QJsonObject& args) {
     ai::AiProviderGateway gateway;
     // Reuse persistent MCP server processes across win32 MCP tool calls instead of
-    // respawning one per call. The pool outlives this per-call gateway (panel
-    // member) and is thread-safe, so the provider-gateway worker thread may use it.
-    gateway.setMcpSessionPool(&m_mcpSessionPool);
+    // respawning one per call. The pool is thread-safe, so the provider-gateway worker thread
+    // may use it, and this call holds its own reference so the pool outlives the call even if
+    // the panel is torn down meanwhile.
+    const std::shared_ptr<ai::AiMcpSessionPool> mcp_pool = m_mcpSessionPool;
+    gateway.setMcpSessionPool(mcp_pool.get());
+    // Stop and teardown cancel the run token; an in-flight MCP call then kills its server and
+    // returns at once instead of holding the run in Cancelling for its whole timeout.
+    gateway.setCancelCheck(toolCallCancelCheck());
     // One snapshot for the whole call: reading the mode twice can mix two different
     // modes into one access decision if it changes between the reads.
     const ai::AiAccessMode mode = currentAccessMode();
@@ -7289,7 +7348,18 @@ QJsonObject AiAssistantPanel::runProviderGatewayTool(const QJsonObject& args) {
     } else if (mode == ai::AiAccessMode::UnattendedFullAccess) {
         access = ai::AiProviderGatewayToolAccess::UnattendedFullAccess;
     }
+    return ai::AiProviderGatewayToolRunner::run(
+        args,
+        &gateway,
+        access,
+        providerGatewayCallbacks(),
+        ai::AiProviderGatewayToolOptions{.default_output_bytes = static_cast<int>(
+                                             kDefaultOutputCapKb * sak::kBytesPerKB),
+                                         .min_output_bytes = static_cast<int>(sak::kBytesPerKB),
+                                         .max_output_bytes = kToolOutputMaxBytes});
+}
 
+ai::AiProviderGatewayToolCallbacks AiAssistantPanel::providerGatewayCallbacks() {
     ai::AiProviderGatewayToolCallbacks callbacks;
     callbacks.confirm = [this](const QString& title, const QString& preview, bool risky) {
         return confirmCommandWithUser(title, preview, risky);
@@ -7329,16 +7399,7 @@ QJsonObject AiAssistantPanel::runProviderGatewayTool(const QJsonObject& args) {
         [this](const QString& role, const QString& title, const QString& body) {
             appendSessionMemory(role, title, body);
         };
-
-    return ai::AiProviderGatewayToolRunner::run(
-        args,
-        &gateway,
-        access,
-        callbacks,
-        ai::AiProviderGatewayToolOptions{.default_output_bytes = static_cast<int>(
-                                             kDefaultOutputCapKb * sak::kBytesPerKB),
-                                         .min_output_bytes = static_cast<int>(sak::kBytesPerKB),
-                                         .max_output_bytes = kToolOutputMaxBytes});
+    return callbacks;
 }
 
 QJsonObject AiAssistantPanel::runSessionSearchTool(const QJsonObject& args) const {
@@ -10748,7 +10809,7 @@ public:
         // (PowerShell/package/offline) does not freeze the GUI (P10-04). The
         // handlers marshal their own GUI/store touchpoints back to the GUI thread
         // (runOnGuiThread), and the panel destructor joins this run before members
-        // are destroyed (drainWorkflowRun), so dereferencing the panel is safe.
+        // are destroyed (or release() retains the panel), so dereferencing it is safe.
         return panel->dispatchWorkflowToolPhase(phase, policy, context);
     }
 

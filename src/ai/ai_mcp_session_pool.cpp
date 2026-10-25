@@ -228,7 +228,8 @@ std::expected<QJsonObject, QString> AiMcpSessionPool::callTool(
         return std::unexpected(open_result.error());
     }
 
-    const auto call_result = entry->session->callTool(request.tool_name, request.arguments);
+    const auto call_result =
+        entry->session->callTool(request.tool_name, request.arguments, request.should_cancel);
     if (!call_result) {
         return std::unexpected(closeAfterFailure(*entry, call_result.error()));
     }

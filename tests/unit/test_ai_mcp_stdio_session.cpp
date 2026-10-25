@@ -359,10 +359,22 @@ QJsonObject fakeToolCallResult(const QString& mode, const QJsonObject& request) 
                                 {QStringLiteral("text"), QStringLiteral("call-ok")}}}}};
 }
 
+// A tools/call the server accepts and never answers -- a tool stuck on the desktop or the network.
+bool isFakeHangingCall(const QJsonObject& request) {
+    return request.value(QStringLiteral("method")).toString() == QLatin1String("tools/call") &&
+           request.value(QStringLiteral("params"))
+                   .toObject()
+                   .value(QStringLiteral("name"))
+                   .toString() == QLatin1String("hang");
+}
+
 bool serveFakeToolRequest(QTextStream& output, const QJsonObject& request, const QString& mode) {
     const int id = request.value(QStringLiteral("id")).toInt();
     if (mode == QLatin1String("exit-before-response")) {
         return false;
+    }
+    if (isFakeHangingCall(request)) {
+        return true;  // Keep serving; this one request simply never gets a reply.
     }
     if (writeFakeFailure(output, id, mode)) {
         return true;
@@ -761,6 +773,8 @@ private Q_SLOTS:
     void controllerLifetime();
     void resettingStarterRestoresRealStartup();
     void isOpenClearsAfterServerExit();
+    void cancelledCallTerminatesServerPromptly();
+    void uncancelledCallStillCompletes();
     void builtInMcpPersistentSession();
 };
 
@@ -2073,6 +2087,58 @@ void AiMcpStdioSessionTests::isOpenClearsAfterServerExit() {
     const auto opened = openFakeSession(&session, QStringLiteral("exit-after-handshake"));
     QVERIFY2(opened.has_value(), qPrintable(failureDiagnostic(opened)));
     QTRY_VERIFY_WITH_TIMEOUT(!session.isOpen(), kFakeRequestTimeoutMs);
+    QVERIFY(session.close().has_value());
+}
+
+// A tool call stuck on the server used to hold its caller -- and so the AI panel's Stop and its
+// teardown -- for the whole request timeout. Cancelling it must kill the server's process family
+// through its Job and return at once, leaving the session closed rather than mid-request.
+void AiMcpStdioSessionTests::cancelledCallTerminatesServerPromptly() {
+    constexpr int kCancelAfterMs = 300;
+    sak::ai::AiMcpStdioSession session;
+    const auto opened = openFakeSession(&session, QStringLiteral("paginate"));
+    QVERIFY2(opened.has_value(), qPrintable(failureDiagnostic(opened)));
+    const auto reported = session.callTool(QStringLiteral("process-id"), {});
+    QVERIFY2(reported.has_value(), qPrintable(failureDiagnostic(reported)));
+    const auto pid = native_mcp::fakeProcessId(*reported);
+    QVERIFY2(pid.has_value(), qPrintable(failureDiagnostic(pid)));
+    auto server = native_mcp::ProcessGeneration::observe(*pid);
+    QVERIFY2(server.has_value(), qPrintable(failureDiagnostic(server)));
+
+    std::atomic_bool cancel{false};
+    std::jthread canceller([&cancel]() {
+        std::this_thread::sleep_for(std::chrono::milliseconds(kCancelAfterMs));
+        cancel.store(true);
+    });
+    QElapsedTimer timer;
+    timer.start();
+    const auto called =
+        session.callTool(QStringLiteral("hang"), {}, [&cancel]() { return cancel.load(); });
+    const qint64 elapsed = timer.elapsed();
+
+    QVERIFY(!called.has_value());
+    QCOMPARE(called.error(), QStringLiteral("MCP tool call cancelled"));
+    QVERIFY2(elapsed < kFakeRequestTimeoutMs / 2,
+             qPrintable(QStringLiteral("cancelled call took %1 ms; the request timeout is %2 ms")
+                            .arg(elapsed)
+                            .arg(kFakeRequestTimeoutMs)));
+    const auto exited = server->waitForExit();
+    QVERIFY2(exited.has_value(), qPrintable(failureDiagnostic(exited)));
+    QCOMPARE(*exited, DWORD{sak::kWindowsProcessJobFailureExitCode});
+    QVERIFY(!session.isOpen());
+    const auto closed = session.close();
+    QVERIFY2(closed.has_value(), qPrintable(failureDiagnostic(closed)));
+}
+
+// A cancel check that never fires must not change a call: it still gets its real answer.
+void AiMcpStdioSessionTests::uncancelledCallStillCompletes() {
+    sak::ai::AiMcpStdioSession session;
+    const auto opened = openFakeSession(&session, QStringLiteral("paginate"));
+    QVERIFY2(opened.has_value(), qPrintable(failureDiagnostic(opened)));
+    const auto called = session.callTool(QStringLiteral("fixture"), {}, []() { return false; });
+    QVERIFY2(called.has_value(), qPrintable(failureDiagnostic(called)));
+    QVERIFY(called->value(QStringLiteral("content")).isArray());
+    QVERIFY(session.isOpen());
     QVERIFY(session.close().has_value());
 }
 

@@ -31,6 +31,12 @@ class WindowsProcessJob;
 /// many tools/call requests over the same stdin/stdout pipe.
 namespace sak::ai {
 
+/// Polled from the calling thread while a tools/call is in flight. Returning true cancels the
+/// call: the server's whole process family is terminated through its kill-on-close Job, so the
+/// call returns promptly instead of running out its timeout, and a tool still executing on the
+/// server cannot finish after its caller gave up on it.
+using AiMcpCancelCheck = std::function<bool()>;
+
 /// One pooled MCP stdio tool-call request.
 struct AiMcpStdioCallRequest {
     QString command;
@@ -38,6 +44,8 @@ struct AiMcpStdioCallRequest {
     QJsonObject arguments;
     QProcessEnvironment environment;
     int timeout_ms{0};
+    /// Optional; applies to tools/call. Must be safe to call from the calling thread.
+    AiMcpCancelCheck should_cancel;
 };
 
 /// One tool advertised by an MCP server's tools/list response.
@@ -104,9 +112,13 @@ public:
     [[nodiscard]] std::expected<QVector<AiMcpToolDescriptor>, QString> listTools();
 
     /// Sends tools/call and returns the raw JSON-RPC result object (the caller reads
-    /// result.content), or a diagnostic on failure.
-    [[nodiscard]] std::expected<QJsonObject, QString> callTool(const QString& tool_name,
-                                                               const QJsonObject& arguments);
+    /// result.content), or a diagnostic on failure. When @p should_cancel turns true while the
+    /// call is in flight, the server's process family is terminated through its Job and the call
+    /// returns "MCP tool call cancelled"; the session is then no longer open.
+    [[nodiscard]] std::expected<QJsonObject, QString> callTool(
+        const QString& tool_name,
+        const QJsonObject& arguments,
+        const AiMcpCancelCheck& should_cancel = {});
 
     /// Stops the contained process family and joins the worker only after observed cleanup.
     /// Failure retains ownership and refuses further requests; a later close may retry cleanup.
@@ -127,6 +139,18 @@ private:
 
     class Worker;
     struct PendingCleanup;
+    enum class CancellableDispatch {
+        NotDispatched,  ///< The worker's event loop refused the call.
+        Completed,      ///< The work ran to its own result.
+        Cancelled,      ///< Cancelled; the work returned after its Job was terminated.
+        Abandoned,      ///< Cancelled, and the work had not returned within the cleanup bound.
+    };
+    /// Runs @p work on the worker thread and waits for it on this thread, polling
+    /// @p should_cancel; on cancellation the server's Job is terminated from here, which ends the
+    /// worker's blocking wait. @p work must keep its own result in shared storage, because an
+    /// Abandoned call returns while it is still running.
+    [[nodiscard]] CancellableDispatch dispatchCancellable(const std::function<void(Worker&)>& work,
+                                                          const AiMcpCancelCheck& should_cancel);
     using JobFactory =
         std::function<std::expected<std::unique_ptr<sak::WindowsProcessJob>, QString>()>;
     [[nodiscard]] std::expected<void, QString> startWorker();

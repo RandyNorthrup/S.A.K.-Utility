@@ -49,6 +49,7 @@
 #include <QJsonDocument>
 #include <QLabel>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QProcess>
 #include <QPushButton>
 #include <QScopeGuard>
@@ -65,6 +66,7 @@
 
 #include <atomic>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <thread>
 
@@ -415,6 +417,54 @@ private Q_SLOTS:
         // use-after-free, on a later run, on a different machine. Requiring the handler to have
         // RETURNED before reset() completes pins the wait itself (R5-G18-4).
         QVERIFY(handler_returned.load());
+    }
+
+    // A tool that will not stop used to freeze teardown for 30 s and then qFatal. release()
+    // must instead report it and keep the panel -- which the worker still dereferences --
+    // alive, hidden and unparented, then delete it once the worker finally returns.
+    void releaseRetainsPanelWhileStuckToolRuns() {
+        constexpr int kShortDrainMs = 200;
+        auto panel = std::make_unique<AiAssistantPanel>();
+        QWidget host;
+        panel->setParent(&host);
+        std::atomic<bool> entered{false};
+        std::atomic<bool> handler_returned{false};
+        QSemaphore gate;
+        panel->m_toolDispatcher->registerHandler(
+            QStringLiteral("download_file"),
+            [&entered, &handler_returned, &gate](const QJsonObject&,
+                                                 const ai::AiToolPolicyDecision&) {
+                entered = true;
+                gate.acquire();  // Ignores cancellation, like a tool stuck in a native call.
+                handler_returned = true;
+                return QJsonObject{{QStringLiteral("success"), true}};
+            });
+        allowLocalToolsAndValidRun(*panel);
+        panel->beginToolTurn(downloadResponse());
+        QTRY_VERIFY_WITH_TIMEOUT(entered.load(), 5000);
+
+        QPointer<AiAssistantPanel> observer(panel.get());
+        AiAssistantPanel::release(std::move(panel), kShortDrainMs);
+        QVERIFY2(!observer.isNull(),
+                 "a panel whose worker still runs must be retained, not destroyed under it");
+        QVERIFY(observer->parent() == nullptr);
+        QVERIFY(observer->isHidden());
+        QVERIFY(!handler_returned.load());
+
+        gate.release();
+        QTRY_VERIFY_WITH_TIMEOUT(observer.isNull(), 5000);
+        QVERIFY(handler_returned.load());
+    }
+
+    // The Win32 MCP call polls this check; Stop must flip it so the call kills its server and
+    // returns instead of holding the run in Cancelling until the call's own timeout.
+    void stopFlipsToolCallCancelCheck() {
+        AiAssistantPanel panel;
+        allowLocalToolsAndValidRun(panel);
+        const std::function<bool()> cancelled = panel.toolCallCancelCheck();
+        QVERIFY(!cancelled());
+        panel.onStopClicked();
+        QVERIFY(cancelled());
     }
 
     // Offline install_bundle with a wrong-typed 'packed_only' (a JSON number, which
@@ -7789,7 +7839,7 @@ private Q_SLOTS:
     // Teardown safety: once shutdown has begun, the per-phase modal gates must
     // decline immediately WITHOUT showing a modal. Otherwise a workflow worker
     // blocked marshaling an approval onto the GUI thread would have that modal
-    // shown by drainWorkflowRun's event-loop pump and block on exec() forever
+    // shown by the teardown drain's event-loop pump and block on exec() forever
     // (no user answers during teardown). The approval hook stands in for the
     // modal, so a zero hook count proves no modal was ever opened.
     void shutdownDeclinesPerPhaseModalWithoutShowingIt() {

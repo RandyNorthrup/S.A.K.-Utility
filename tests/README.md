@@ -123,7 +123,11 @@ process reuse and read-only/full-policy isolation without driving the desktop, c
 registry or network. Full application and live browser/desktop behavior remain separate E2E scope.
 Pool cleanup regressions use owned fake servers, held process-generation handles and per-instance
 native faults to check combined error reporting, retained ownership, blocked replacement, partial
-cleanup and explicit recovery. The shared Windows Job suite covers startup attributes, real
+cleanup and explicit recovery. A fake tool that never answers proves a cancelled tools/call kills
+its server through the Job and returns well inside the request timeout, at both session and pool
+level, and that the pool then reopens the slot. The AI panel dispatch suite covers the panel side:
+Stop flips the cancel check those calls poll, and releasing a panel whose tool will not stop
+keeps it alive, hidden and unparented, until the tool returns. The shared Windows Job suite covers startup attributes, real
 descendant containment and cleanup-failure ownership under a 60-second CTest deadline. Explicit
 fake-child modes use an independent 10-second lifetime guard, including while blocked on stdin.
 The shared `process_capture.ps1` self-test runs core, ownership, deadline,

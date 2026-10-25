@@ -486,6 +486,12 @@ MainWindow::~MainWindow() {
     if (!isAccessibilityAuditMode()) {
         saveWindowState();
     }
+#if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
+    // The assistant's background workers dereference the panel. release() destroys it once
+    // they have stopped, or reports an overrun and keeps it alive until they do -- never a
+    // destruction underneath a live worker.
+    AiAssistantPanel::release(std::move(m_ai_assistant_panel));
+#endif
 }
 
 void MainWindow::setupUi() {

@@ -1012,7 +1012,8 @@ QJsonObject AiProviderGateway::callWin32Mcp(const Win32McpCallPlan& plan,
         .tool_name = plan.tool_name,
         .arguments = plan.tool_arguments,
         .environment = environment,
-        .timeout_ms = plan.timeout_ms};
+        .timeout_ms = plan.timeout_ms,
+        .should_cancel = m_should_cancel};
     // A persistent pool is required: silently switching transports changes lifecycle,
     // process-reuse and failure semantics. Missing wiring fails closed.
     if (m_mcp_pool == nullptr) {
