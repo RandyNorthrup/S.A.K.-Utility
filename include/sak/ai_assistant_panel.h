@@ -256,11 +256,9 @@ private:
     // Collects (never swallows) the skill-catalog load errors so the caller can show
     // them once the panel UI exists.
     void loadSkillDefaults(QStringList* skill_errors);
-    [[nodiscard]] QString initializeToolHealthLedger();
     void initializeStandardPanel(bool workflows_loaded,
                                  const QStringList& workflow_errors,
-                                 const QStringList& skill_errors,
-                                 const QString& health_ledger_error);
+                                 const QStringList& skill_errors);
     void initializePackageManager();
     void setupContextPaneSessionSection(QVBoxLayout* layout, QWidget* pane);
     void setupContextPaneAgentSection(QVBoxLayout* layout, QWidget* pane);
@@ -452,6 +450,10 @@ private:
     // Only executor health counts: a timeout or launch failure is a failure; a
     // command that ran to any exit code is a success; a user cancel is ignored.
     void recordCommandHealth(const ai::AiCommandResult& result);
+    // Forget the circuit breaker's records when a chat session starts or is opened.
+    void resetToolHealthForSession();
+    // A new chat starts with no tool counts, loop history or tripped breakers.
+    void resetToolCountersForNewChat();
     [[nodiscard]] static QString commandHealthKey(const QString& tool_name);
     void startCommandToolCall(const PendingToolCallContext& context,
                               const ai::AiCommandToolPlan& plan);

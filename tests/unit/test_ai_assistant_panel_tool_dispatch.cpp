@@ -31,6 +31,7 @@
 #include "sak/ai_assistant_panel.h"
 #include "sak/app_action_service.h"
 #include "sak/app_mutating_actions.h"
+#include "sak/app_paths.h"
 #include "sak/app_readonly_actions.h"
 #include "sak/deleted_item_scanner.h"
 #include "sak/flash_coordinator.h"
@@ -46,6 +47,7 @@
 #include <QDialog>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QLabel>
@@ -7926,7 +7928,6 @@ private Q_SLOTS:
     // instead of launching into a known-bad executor.
     void healthCircuitBreakerSuppressesCommandTool() {
         AiAssistantPanel panel;
-        resetHealthLedger(panel);
         const QString key = AiAssistantPanel::commandHealthKey(QStringLiteral("run_powershell"));
         panel.m_currentCommandHealthKey = key;
 
@@ -7959,7 +7960,6 @@ private Q_SLOTS:
     // itself exited nonzero -- that must not trip the breaker.
     void nonZeroExitKeepsCommandToolHealthy() {
         AiAssistantPanel panel;
-        resetHealthLedger(panel);
         const QString key = AiAssistantPanel::commandHealthKey(QStringLiteral("run_cmd"));
         panel.m_currentCommandHealthKey = key;
 
@@ -7975,7 +7975,6 @@ private Q_SLOTS:
     // A user Stop is not an executor-health signal; cancels never trip the breaker.
     void cancelledCommandDoesNotTripBreaker() {
         AiAssistantPanel panel;
-        resetHealthLedger(panel);
         const QString key = AiAssistantPanel::commandHealthKey(QStringLiteral("run_cmd"));
         panel.m_currentCommandHealthKey = key;
 
@@ -7986,6 +7985,31 @@ private Q_SLOTS:
             panel.recordCommandHealth(cancelled);
         }
         QVERIFY(panel.m_toolHealthLedger->check(key).available);
+    }
+
+    // The breaker is per chat session and in memory only (owner ruling 2026-10-24): a tool
+    // tripped in one chat is available again in a new one, and tripping it writes nothing
+    // under the data root (the old 24 h ledger file is gone).
+    void newChatSessionResetsHealthCircuitBreaker() {
+        const QString ledger_file =
+            QDir(sak::app_paths::dataRoot()).filePath(QStringLiteral("ai/tool_health_ledger.json"));
+        QFile::remove(ledger_file);
+        AiAssistantPanel panel;
+        const QString key = AiAssistantPanel::commandHealthKey(QStringLiteral("run_powershell"));
+        panel.m_currentCommandHealthKey = key;
+        ai::AiCommandResult timed_out;
+        timed_out.started = true;
+        timed_out.timed_out = true;
+        for (int i = 0; i < 3; ++i) {
+            panel.recordCommandHealth(timed_out);
+        }
+        QVERIFY(!panel.m_toolHealthLedger->check(key).available);
+        QVERIFY(!QFileInfo::exists(ledger_file));
+
+        panel.onNewSessionClicked();
+
+        QVERIFY(panel.m_toolHealthLedger->check(key).available);
+        QCOMPARE(panel.m_toolHealthLedger->size(), 0);
     }
 
     // Wave 3: the sak_skill tool lists the catalog (no bodies), loads a full body
@@ -8377,13 +8401,6 @@ private:
             response.function_calls.append(call);
         }
         return response;
-    }
-
-    // Give the panel a fresh, non-persistent health ledger so a prior run's
-    // persisted circuit state (test-mode data dir) cannot leak into these breaker
-    // assertions. applyCommandHealthGate/recordCommandHealth use m_toolHealthLedger.
-    static void resetHealthLedger(AiAssistantPanel& panel) {
-        panel.m_toolHealthLedger = std::make_unique<ai::AiToolHealthLedger>();
     }
 
     // Unattended Full Access (combo index 2) -- the mode where risky commands run

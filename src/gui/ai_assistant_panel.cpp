@@ -248,7 +248,6 @@ constexpr double kReadableDurationMillisecondsPerSecondF = 1000.0;
 constexpr int kReadableComboDefaultContentsLength = 24;
 constexpr int kReadableComboDefaultPopupMinWidth = 420;
 constexpr int kReadableComboMaxVisibleItems = 18;
-constexpr int kToolHealthLedgerRetentionHours = 24;
 constexpr int kSessionComboContentsLength = 26;
 constexpr int kSessionComboPopupMinWidth = 440;
 constexpr int kReasoningComboContentsLength = 14;
@@ -3700,11 +3699,9 @@ AiAssistantPanel::AiAssistantPanel(QWidget* parent)
     QStringList skill_errors;
     loadSkillDefaults(&skill_errors);
     logAiStartupPhase(&phase_timer, "skill defaults");
-    const QString health_ledger_error = initializeToolHealthLedger();
-    logAiStartupPhase(&phase_timer, "tool health ledger");
     registerToolDispatcherHandlers();
     logAiStartupPhase(&phase_timer, "tool dispatcher handlers");
-    initializeStandardPanel(workflows_loaded, workflow_errors, skill_errors, health_ledger_error);
+    initializeStandardPanel(workflows_loaded, workflow_errors, skill_errors);
     logAiStartupPhase(&phase_timer, "standard panel");
     initializePackageManager();
     logAiStartupPhase(&phase_timer, "package manager");
@@ -3761,21 +3758,9 @@ void AiAssistantPanel::loadSkillDefaults(QStringList* skill_errors) {
     }
 }
 
-QString AiAssistantPanel::initializeToolHealthLedger() {
-    QString health_ledger_error;
-    if (m_toolHealthLedger) {
-        const QString path =
-            QDir(sak::app_paths::dataRoot()).filePath(QStringLiteral("ai/tool_health_ledger.json"));
-        m_toolHealthLedger->setPersistencePath(path, kToolHealthLedgerRetentionHours);
-        (void)m_toolHealthLedger->load(&health_ledger_error);
-    }
-    return health_ledger_error;
-}
-
 void AiAssistantPanel::initializeStandardPanel(bool workflows_loaded,
                                                const QStringList& workflow_errors,
-                                               const QStringList& skill_errors,
-                                               const QString& health_ledger_error) {
+                                               const QStringList& skill_errors) {
     QElapsedTimer phase_timer;
     phase_timer.start();
     setupUi();
@@ -3798,9 +3783,6 @@ void AiAssistantPanel::initializeStandardPanel(bool workflows_loaded,
     refreshTraceStoreForSession();
     logAiStartupPhase(&phase_timer, "trace store");
     appendLocalEvent(tr("AI Assistant panel initialized"));
-    if (!health_ledger_error.isEmpty()) {
-        appendLocalEvent(tr("AI tool health ledger load failed: %1").arg(health_ledger_error));
-    }
     if (!workflows_loaded) {
         appendLocalEvent(tr("AI workflow catalog loaded with errors"));
     }
@@ -6352,6 +6334,23 @@ bool AiAssistantPanel::dispatchCommandToolCall(const PendingToolCallContext& con
     }
     startCommandToolCall(context, plan);
     return true;
+}
+
+void AiAssistantPanel::resetToolCountersForNewChat() {
+    m_toolCallsThisSession = 0;
+    m_toolTurnIterations = 0;
+    m_toolNamesThisMessage.clear();
+    m_toolFailureClassesThisMessage.clear();
+    m_toolLoopDetector.reset();
+    resetToolHealthForSession();
+}
+
+void AiAssistantPanel::resetToolHealthForSession() {
+    // The circuit breaker is per chat session (owner ruling 2026-10-24): a tool that
+    // tripped it in the previous session starts this one available again.
+    if (m_toolHealthLedger) {
+        m_toolHealthLedger->reset();
+    }
 }
 
 QString AiAssistantPanel::commandHealthKey(const QString& tool_name) {
@@ -12632,6 +12631,7 @@ void AiAssistantPanel::onSessionSelected(int index) {
     m_workflowPhaseHistory.clear();
     clearWorkflowProgressUi();
     m_restorePointOfferedThisSession = false;
+    resetToolHealthForSession();
     m_previousResponseId.clear();
     m_contextPressureLevel = 0;
     if (m_tokenTracker) {
@@ -12708,11 +12708,7 @@ void AiAssistantPanel::onNewSessionClicked() {
     m_resumedApprovedToolCallIds.clear();
     m_resumedRestoreToolCallIds.clear();
     m_citations.clear();
-    m_toolCallsThisSession = 0;
-    m_toolTurnIterations = 0;
-    m_toolNamesThisMessage.clear();
-    m_toolFailureClassesThisMessage.clear();
-    m_toolLoopDetector.reset();
+    resetToolCountersForNewChat();
     m_runToken = {};
     m_runState = {};
     m_taskStatus = tr("Idle");
