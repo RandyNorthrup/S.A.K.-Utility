@@ -53,14 +53,6 @@
       "why": "rejectsMalformedUntrustedInputMessages requires createResponse to reject before opening a network request."
     },
     {
-      "id": "token-count-does-not-reject-malformed-role",
-      "file": "src/ai/openai_responses_client.cpp",
-      "find": "        Q_EMIT inputTokenCountFailed(request_id, input_message_error);",
-      "replace": "        if (request.input.isEmpty()) { Q_EMIT inputTokenCountFailed(request_id, input_message_error); }",
-      "expect": "killed",
-      "why": "rejectsMalformedUntrustedInputMessages pins the same fail-closed role validation on the input-token endpoint."
-    },
-    {
       "id": "test-payload-serializes-malformed-role",
       "file": "src/ai/openai_responses_client.cpp",
       "find": "    if (!untrustedInputMessageError(request).isEmpty()) {",

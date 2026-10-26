@@ -63,8 +63,8 @@
     {
       "id": "dry-run-enters-live-verification",
       "file": "src/core/partition_manager_controller.cpp",
-      "find": "if (request.dry_run) {\n        const auto terminal_state",
-      "replace": "if (!request.dry_run) {\n        const auto terminal_state",
+      "find": "if (request.dry_run || request.read_only_immediate) {\n        const auto terminal_state",
+      "replace": "if (request.read_only_immediate) {\n        const auto terminal_state",
       "expect": "killed",
       "why": "dryRunUsesFreshInventoryAndKeepsQueueDirty requires one preflight scan and no post-mutation scan for a non-mutating run."
     },
