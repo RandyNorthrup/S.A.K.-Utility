@@ -45,7 +45,8 @@ keeps their history.
      leave an updater running are reported as failed (`process_runner.cpp` ~96, ~135-147).
    - A second uninstall within 24 h is refused: Windows' once-per-day restore-point limit is
      treated as a failure (`restore_point_manager.cpp` ~87, ~118).
-   - The AI session list goes empty above 512 session folders (`ai_conversation_store.cpp` ~49).
+   - FIXED (550766d0): the AI session list went empty above 512 session folders. It now lists the
+     512 most recently active and a retention policy keeps the newest 500 (AI package below).
    - The default backup path stores BitLocker recovery keys on the volume they unlock.
    - The iperf3 server and its inbound firewall rule leak after a crash (launched outside the
      kill-on-close Job).
@@ -76,9 +77,8 @@ keeps their history.
    - The AI tool handlers still reach panel state through `this`. Teardown is safe because
      `AiAssistantPanel::release` keeps the whole panel alive until they drain; moving the handlers
      onto shared state is open.
-   - A Stop during a `run_powershell` command leaves the run status at Cancelling after the
-     command finishes: `onBrokerFinished`/`onRequestFinished` do not settle a pending stop (only
-     the async-runner drain does). Cosmetic; found during the package.
+   - FIXED (c507b338): a Stop during a `run_powershell` command left the run at Cancelling after
+     the command finished; `onBrokerFinished`/`onRequestFinished` now settle a pending stop.
    - The exit prompt's per-panel registrations are covered by review, not by a test each; the
      registry, the prompt and the main window's use of it are tested.
 
@@ -113,27 +113,58 @@ Done:
   is no saved preference to honour. 1d4574d8
 - Generate System Report runs as a read-only assistant action (no approval or lease):
   `QuickAction::isReadOnly`. dd4802a5
+- Tool circuit breaker is per chat session, in memory: the 24 h ledger file, its pinned-handle
+  file I/O, its three file hooks and the persistence-only tests are gone; a new or opened chat
+  resets it (`resetToolHealthForSession`). An old `ai/tool_health_ledger.json` left in a data
+  folder is no longer read. 6a0a9e8a
+- Execution broker: one single-shot deadline timer armed with the remaining timeout replaces the
+  200 ms re-armed poll. Pooled MCP servers (the full-access Win32 MCP child included) are closed
+  after 5 minutes unused (`kAiMcpSessionIdleReap`): a single-shot reap armed after each
+  provider-gateway call runs off the GUI thread, skips in-flight calls, and hands a session whose
+  cleanup cannot be proved to `sak::ContainedProcessQuarantine` (no qFatal, admissions not
+  blocked). c7402083
+- Trace streams: nothing in the tree read or exported `trace.jsonl` or `turn_replay.jsonl` (only
+  the manual QA runbook mentioned them; it now points at the activity log), so they are no longer
+  written. `activity.jsonl` is the one AI audit stream. 7bedf152
+- Transcript view: appending a message, expanding one and changing the activity line touch only
+  that row; only a loaded transcript is rendered in one pass. Starting a new chat now clears the
+  old bubbles at once (they used to stay until the next message). c97c0c3d
+- Session picker: each manifest records `has_prompt` (set when a user prompt is appended; a
+  legacy manifest is answered from its transcript once and the flag written back), the picker
+  lists manifests only on the thread pool, and the listing loads the 512 most recently active
+  folders (`kAiSessionListLimit`; up to 65,536 enumerated) instead of failing above 512.
+  Retention (documented default `kAiSessionRetentionCount` = 500): starting a chat deletes
+  store-created session folders beyond the newest 500 -- at most 8 per start
+  (`kAiSessionPrunePerStartLimit`, least recently active first, so a store far over the limit
+  never freezes the window) -- never the current one and never a folder the store did not
+  create. 550766d0
+- The accessibility audit builds the real AI panel; the constructor's audit early return is gone.
+  2f451519
+- A Stop during a PowerShell command settles to Cancelled when the command ends. c507b338
 
-Open (not started in this pass; each is its own change):
+Open, each with why:
 
-- Tool circuit breaker per session in memory: drop the 24 h persisted ledger and its file I/O
-  (`ai_tool_health_ledger`, roughly half its source and most of its tests).
-- Session picker: write has_prompt/title/updated into each session manifest once and list
-  manifests only, off the GUI thread (today every transcript.jsonl is re-parsed on the GUI thread
-  at startup and after each turn).
-- Session listing above 512 folders: list the newest N with a bounded retention policy.
-- Transcript view: append incrementally instead of rebuilding every bubble.
-- Trace streams: drop turn_replay.jsonl and trace.jsonl unless something reads or exports them;
-  keep the activity log.
-- Retire `app_run_action`: move windows_sfc, windows_defender and superantispyware into the
-  AppActionRegistry, then remove the manifests, their CMake staging, the release-archive
-  requirement, `SAK_AI_POLICY_DISK_OVERRIDE` and the provider-registry mtime cache.
-- Lifecycle leftovers: app actions honour Stop; AI tool handlers on shared state; the
-  Cancelling label after a PowerShell Stop (all listed under open item 7).
-- Accessibility-audit early return in the AI panel constructor; `*ForTesting` hooks in
-  production AI headers compiled into test builds only.
-- Execution broker: one timeout timer instead of a 200 ms poll; reap the elevated Win32 MCP child
-  after idle.
+- Retire `app_run_action` (not started; owner decision recorded): the registry has
+  `action.verify_system_files` (30 min ceiling vs the manifest's 7200 s, still to reconcile), but
+  has no Microsoft Defender action at all, so quick/full scan and signature update need new
+  registry actions with an elevation route (the manifest path ran them through the elevated
+  PowerShell runner; an in-process registry action needs the app elevated or an elevated-helper
+  task). SUPERAntiSpyware has no CLI: its manifest is a Win32 desktop-control recipe driven by the
+  AI step runner, so moving it means an AI-layer registration over that runner or dropping it --
+  a decision, not a move. Then remove `app_run_action`/`app_run_action_plan`/`app_manifest` from the
+  gateway, tool runner, policy, tool schema and planner, the manifests and their qrc/CMake
+  staging, `stage_portable_release.ps1`, `verify_portable_release_smoke.ps1` and
+  `create_release_archive.ps1` requirements, `SAK_AI_POLICY_DISK_OVERRIDE` and the mtime cache.
+- Assistant app actions do not observe Stop (open item 7): `AsyncActionInvocation` and the
+  registry thunk carry no cancel hook, so each async action needs its own cancel route.
+- AI tool handlers still reach panel state through `this` (open item 7); teardown stays safe via
+  `AiAssistantPanel::release`.
+- `*ForTesting` hooks in production AI headers (conversation/skill/workflow store file hooks,
+  credential-store wipe observers, the MCP/model-client thread starters, the panel's workflow
+  wipe observer and approval-prompt hook) are still compiled into the libraries. Moving them
+  behind a test-only define means compiling each hooked AI source into its tests as
+  `SAK_PARTITION_FS_TEST_HOOK_SOURCES` does, and extending `test_release_binary_test_hooks` to
+  `sak_ai_core.lib` and `sak_gui.lib`.
 
 ### Behavior audit 2026-10-24 -- owner decisions
 
