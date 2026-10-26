@@ -252,7 +252,6 @@ private:
     QWidget* createConversationPane();
     void createStatusStrip(QVBoxLayout* root_layout);
     void configureExecutionBrokers();
-    [[nodiscard]] bool initializeAccessibilityAuditUi();
     [[nodiscard]] bool loadWorkflowDefaults(QStringList* workflow_errors);
     // Collects (never swallows) the skill-catalog load errors so the caller can show
     // them once the panel UI exists.

@@ -8079,6 +8079,23 @@ private Q_SLOTS:
         QTRY_VERIFY(!panel.m_sessionListWatcher->isRunning());
     }
 
+    // Smoke and audit modes run the startup work users get (owner ruling 2026-10-24). The audit
+    // used to get a bare UI from an early return: no workflows, skills or tool handlers.
+    void accessibilityAuditBuildsTheRealPanel() {
+        qApp->setProperty("sakAccessibilityAudit", true);
+        const auto restore =
+            qScopeGuard([]() { qApp->setProperty("sakAccessibilityAudit", QVariant()); });
+        AiAssistantPanel audited;
+        qApp->setProperty("sakAccessibilityAudit", QVariant());
+        AiAssistantPanel normal;
+        QVERIFY(normal.m_toolDispatcher->handlerCount() > 0);
+        QCOMPARE(audited.m_toolDispatcher->handlerCount(), normal.m_toolDispatcher->handlerCount());
+        QCOMPARE(audited.m_workflowStore->workflows().size(),
+                 normal.m_workflowStore->workflows().size());
+        QVERIFY(!audited.m_workflowStore->workflows().isEmpty());
+        QCOMPARE(audited.m_skillStore->size(), normal.m_skillStore->size());
+    }
+
     // Wave 3: the sak_skill tool lists the catalog (no bodies), loads a full body
     // on demand by id, and reports an error for an unknown id.
     void skillToolListsLoadsAndRejectsUnknown() {

@@ -3687,11 +3687,10 @@ AiAssistantPanel::AiAssistantPanel(QWidget* parent)
         },
         [this]() { onStopClicked(); });
     logAiStartupPhase(&phase_timer, "broker and signal wiring");
+    // The accessibility audit builds this same panel: it used to return here with a bare UI
+    // (no workflows, skills, tool handlers, session list or package manager), so the audit
+    // inspected a panel no user ever sees.
     m_taskStatus = tr("Idle");
-    if (initializeAccessibilityAuditUi()) {
-        return;
-    }
-    logAiStartupPhase(&phase_timer, "accessibility mode check");
 
     QStringList workflow_errors;
     const bool workflows_loaded = loadWorkflowDefaults(&workflow_errors);
@@ -3716,20 +3715,6 @@ void AiAssistantPanel::configureExecutionBrokers() {
             m_elevationBroker->cancelCurrentTask();
         }
     });
-}
-
-bool AiAssistantPanel::initializeAccessibilityAuditUi() {
-    const bool accessibility_audit = qApp->property("sakAccessibilityAudit").toBool();
-    if (!accessibility_audit) {
-        return false;
-    }
-    setupUi();
-    connectAiClient();
-    updateCredentialControls();
-    updateTokenLabels();
-    updateAccessStatus();
-    logInfo("AiAssistantPanel initialized");
-    return true;
 }
 
 bool AiAssistantPanel::loadWorkflowDefaults(QStringList* workflow_errors) {
