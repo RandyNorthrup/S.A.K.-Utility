@@ -272,13 +272,18 @@ auto UninstallWorker::runRestorePointPhase(UninstallReport& report)
         return {};
     }
     reportProgress(0, sak::kPercentMax, "Creating system restore point...");
-    if (!createRestorePoint()) {
+    const RestorePointManager::Outcome outcome = createRestorePoint();
+    if (!outcome.usable()) {
         // FAIL CLOSED: the user asked for a rollback point before this (potentially destructive)
-        // uninstall. If it cannot be created, refuse rather than run with no way back.
+        // uninstall. If there is none -- not created, and no recent one to reuse -- refuse rather
+        // than run with no way back.
+        reportProgress(0, sak::kPercentMax, outcome.message);
         return std::unexpected(sak::error_code::execution_failed);
     }
     report.restorePointCreated = true;
-    report.restorePointName = QString("SAK: Before uninstall %1").arg(m_program.displayName);
+    report.restorePointName = outcome.kind == RestorePointManager::Outcome::Kind::ReusedRecent
+                                  ? outcome.message
+                                  : QString("SAK: Before uninstall %1").arg(m_program.displayName);
     Q_EMIT restorePointCreated(report.restorePointName);
     return {};
 }
@@ -372,11 +377,11 @@ auto UninstallWorker::execute() -> std::expected<void, sak::error_code> {
     return runLeftoverPhase(report);
 }
 
-bool UninstallWorker::createRestorePoint() {
+RestorePointManager::Outcome UninstallWorker::createRestorePoint() {
     RestorePointManager mgr;
     const QString desc = QString("SAK: Before uninstall %1")
                              .arg(m_program.displayName.left(kRestorePointProgramNameMaxChars));
-    return mgr.createRestorePoint(desc);
+    return mgr.ensureRestorePoint(desc);
 }
 
 bool UninstallWorker::captureRegistrySnapshot() {

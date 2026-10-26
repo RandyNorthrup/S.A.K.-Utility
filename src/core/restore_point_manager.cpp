@@ -106,22 +106,29 @@ QString checkpointErrorDetail(const sak::ProcessResult& result) {
 /// swallowed the error) is never reported as a created restore point. Downstream destructive work
 /// asks this question before it starts, so it must fail closed. Every failure reason is non-empty,
 /// so the empty string is unambiguously the success answer.
+/// @brief True when the checkpoint was refused by Windows' creation-frequency limit (by default
+/// one restore point per 1440 minutes), rather than failing.
+bool hitCreationFrequencyLimit(const sak::ProcessResult& result) {
+    if (result.timed_out || result.exit_code == 0) {
+        return false;
+    }
+    const QString err = checkpointErrorDetail(result);
+    return err.contains("frequency", Qt::CaseInsensitive) ||
+           err.contains("1440", Qt::CaseInsensitive);
+}
+
 QString checkpointFailureReason(const sak::ProcessResult& result) {
     if (result.timed_out) {
         return QStringLiteral("Timeout creating restore point (exceeded 2 minutes).");
     }
 
     if (result.exit_code != 0) {
-        const QString err = checkpointErrorDetail(result);
-
-        // Check for throttle (Windows only allows one per 24h in some configs)
-        if (err.contains("frequency", Qt::CaseInsensitive) ||
-            err.contains("1440", Qt::CaseInsensitive)) {
+        if (hitCreationFrequencyLimit(result)) {
             return QStringLiteral(
                 "Windows limits restore point creation to once per 24 hours. "
                 "A recent restore point already exists.");
         }
-        return QString("Failed to create restore point: %1").arg(err);
+        return QString("Failed to create restore point: %1").arg(checkpointErrorDetail(result));
     }
 
     if (!result.std_out.contains(QStringLiteral("SUCCESS"))) {
@@ -190,6 +197,73 @@ bool RestorePointManager::createRestorePoint(const QString& description) {
 
     Q_EMIT restorePointCreated(safe_desc);
     return true;
+}
+
+namespace {
+constexpr qint64 kCreationFrequencyWindowSecs = 24LL * 60 * 60;
+}  // namespace
+
+RestorePointManager::Outcome RestorePointManager::outcomeOfCheckpoint(
+    const ProcessResult& checkpoint,
+    const std::function<QVector<QPair<QDateTime, QString>>(bool&)>& list_points,
+    const QDateTime& now) {
+    const QString failure = checkpointFailureReason(checkpoint);
+    if (failure.isEmpty()) {
+        return {.kind = Outcome::Kind::Created,
+                .message = QStringLiteral("Restore point created.")};
+    }
+    if (!hitCreationFrequencyLimit(checkpoint)) {
+        return {.kind = Outcome::Kind::Failed, .message = failure};
+    }
+    // Windows refused a NEW point because it made one recently. That recent point is a rollback
+    // point from before this change, so it is the one to use -- if it really is there.
+    bool query_ok = false;
+    const auto points = list_points ? list_points(query_ok) : QVector<QPair<QDateTime, QString>>{};
+    if (!query_ok) {
+        return {.kind = Outcome::Kind::Failed,
+                .message = failure +
+                           QStringLiteral(" The existing restore points could not be read, so "
+                                          "none can be confirmed for reuse.")};
+    }
+    for (const auto& [created, description] : points) {
+        const qint64 age_secs = created.secsTo(now);
+        if (age_secs >= 0 && age_secs <= kCreationFrequencyWindowSecs) {
+            return {.kind = Outcome::Kind::ReusedRecent,
+                    .message =
+                        QStringLiteral("Windows creates at most one restore point per 24 hours, so "
+                                       "the restore point from %1 (\"%2\") is being reused.")
+                            .arg(created.toLocalTime().toString(QStringLiteral("yyyy-MM-dd HH:mm")))
+                            .arg(description)};
+        }
+    }
+    return {.kind = Outcome::Kind::Failed,
+            .message = failure + QStringLiteral(" No restore point from the last 24 hours was "
+                                                "found to reuse.")};
+}
+
+RestorePointManager::Outcome RestorePointManager::ensureRestorePoint(const QString& description) {
+    const QString refusal = restorePointPreflightRefusal(description, isElevated());
+    if (!refusal.isEmpty()) {
+        return {.kind = Outcome::Kind::Failed, .message = refusal};
+    }
+    const QString powershell = sak::systemPowerShellPath();
+    if (powershell.isEmpty()) {
+        return {.kind = Outcome::Kind::Failed,
+                .message = QStringLiteral("Cannot resolve the System32 PowerShell path; refusing "
+                                          "to create a restore point.")};
+    }
+    QString safe_desc = description.left(kMaxDescriptionLength);
+    safe_desc.replace("'", "''");
+    const auto checkpoint = sak::runProcess(powershell,
+                                            {QStringLiteral("-NoProfile"),
+                                             QStringLiteral("-NonInteractive"),
+                                             QStringLiteral("-Command"),
+                                             buildCheckpointScript(safe_desc)},
+                                            kCreateTimeoutMs);
+    return outcomeOfCheckpoint(
+        checkpoint,
+        [this](bool& query_ok) { return listRestorePoints(query_ok); },
+        QDateTime::currentDateTime());
 }
 
 namespace {

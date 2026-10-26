@@ -15,7 +15,9 @@
 #include "sak/restore_point_manager.h"
 #include "sak/uninstall_worker.h"
 
+#include <QFutureWatcher>
 #include <QMetaType>
+#include <QtConcurrent/QtConcurrentRun>
 #include <QThread>
 #include <QTimer>
 #include <QVariant>
@@ -127,7 +129,10 @@ bool recordCleanupSuccess(UninstallReport& report, LeftoverItem::Type type) {
 AdvancedUninstallController::AdvancedUninstallController(QObject* parent)
     : QObject(parent)
     , m_enumerator(std::make_unique<ProgramEnumerator>())
-    , m_restoreManager(std::make_unique<RestorePointManager>(this)) {
+    , m_batchRestorePointMaker([](const QString& description) {
+        RestorePointManager manager;  // created on the pool thread that blocks on it
+        return manager.ensureRestorePoint(description);
+    }) {
     // Register custom types for cross-thread signal delivery
     qRegisterMetaType<sak::ProgramInfo>("sak::ProgramInfo");
     qRegisterMetaType<sak::LeftoverItem>("sak::LeftoverItem");
@@ -800,6 +805,11 @@ void AdvancedUninstallController::cancelOperation() {
     if (m_cleanupWorker && (m_cleanupWorker->isExecuting() || m_cleanupWorker->isRunning())) {
         m_cleanupWorker->requestStop();
     }
+    if (m_batchRestorePointPending) {
+        // The restore point cannot be interrupted mid-checkpoint; the batch stops once it lands.
+        m_batchCancelledBeforeStart = true;
+        Q_EMIT statusMessage("Cancelling batch uninstall after the restore point...", 0);
+    }
 }
 
 // -- Batch Uninstall ---------------------------------------------------------
@@ -912,26 +922,58 @@ bool AdvancedUninstallController::startBatchUninstall(bool create_restore_point)
     m_pendingBatchSucceeded = 0;
     m_pendingBatchFailed = 0;
 
-    // Create a single restore point for the entire batch. FAIL CLOSED: if the user asked for a
-    // rollback point and it cannot be created, abort the (potentially destructive) batch rather
-    // than proceed with no way back.
-    if (create_restore_point) {
-        const QString desc =
-            QString("SAK: Before batch uninstall (%1 programs)").arg(m_queue.size());
-        const bool restore_point_created = m_restoreManager->createRestorePoint(desc);
-        if (!restore_point_created) {
-            setState(State::Idle);
-            Q_EMIT statusMessage("Cannot create system restore point; batch uninstall aborted.",
-                                 kStatusTimeoutLongMs);
-            Q_EMIT batchFailed(
-                QStringLiteral("Required system restore point could not be created."));
-            return false;
-        }
-        Q_EMIT restorePointCreated(desc);
+    if (!create_restore_point) {
+        processNextQueueItem();
+        return true;
     }
 
-    processNextQueueItem();
+    // One restore point for the whole batch, made on a pool thread: Checkpoint-Computer can take
+    // up to two minutes, which used to freeze the window. The batch starts when it lands.
+    const QString desc = QString("SAK: Before batch uninstall (%1 programs)").arg(m_queue.size());
+    m_batchRestorePointPending = true;
+    m_batchCancelledBeforeStart = false;
+    Q_EMIT statusMessage(QStringLiteral("Creating system restore point..."), 0);
+    auto* watcher = new QFutureWatcher<RestorePointManager::Outcome>(this);
+    connect(watcher,
+            &QFutureWatcher<RestorePointManager::Outcome>::finished,
+            this,
+            [this, watcher, desc]() {
+                const RestorePointManager::Outcome outcome = watcher->result();
+                watcher->deleteLater();
+                continueBatchAfterRestorePoint(outcome, desc);
+            });
+    watcher->setFuture(
+        QtConcurrent::run([maker = m_batchRestorePointMaker, desc]() { return maker(desc); }));
     return true;
+}
+
+void AdvancedUninstallController::continueBatchAfterRestorePoint(
+    const RestorePointManager::Outcome& outcome, const QString& desc) {
+    m_batchRestorePointPending = false;
+    if (m_batchCancelledBeforeStart) {
+        m_batchCancelledBeforeStart = false;
+        setState(State::Idle);
+        Q_EMIT statusMessage("Batch uninstall cancelled.", kStatusTimeoutLongMs);
+        Q_EMIT batchFailed(QStringLiteral("Batch uninstall cancelled before it started."));
+        return;
+    }
+    // FAIL CLOSED: the user asked for a rollback point. With none -- not created, and no recent
+    // one to reuse -- abort the (potentially destructive) batch rather than run with no way back.
+    if (!outcome.usable()) {
+        setState(State::Idle);
+        Q_EMIT statusMessage("Cannot create system restore point; batch uninstall aborted.",
+                             kStatusTimeoutLongMs);
+        Q_EMIT batchFailed(QStringLiteral("Required system restore point could not be created: %1")
+                               .arg(outcome.message));
+        return;
+    }
+    if (outcome.kind == RestorePointManager::Outcome::Kind::Created) {
+        Q_EMIT restorePointCreated(desc);
+    } else {
+        // Reused: the message names the restore point in use and why no new one was made.
+        Q_EMIT restorePointCreated(outcome.message);
+    }
+    processNextQueueItem();
 }
 
 // -- Settings ----------------------------------------------------------------

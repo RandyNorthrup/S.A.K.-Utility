@@ -7,6 +7,7 @@
 #pragma once
 
 #include "sak/advanced_uninstall_types.h"
+#include "sak/restore_point_manager.h"
 #include "sak/worker_base.h"
 
 #include <QSet>
@@ -127,7 +128,8 @@ private:
     std::atomic<bool> m_headlessSilent{false};
 
     // Pipeline stages
-    [[nodiscard]] bool createRestorePoint();
+    /// Created, a reused restore point from the last 24 h, or why neither is available.
+    [[nodiscard]] RestorePointManager::Outcome createRestorePoint();
     [[nodiscard]] bool captureRegistrySnapshot();
     [[nodiscard]] bool runNativeUninstaller(int& exitCode);
     /// @param reliabilityOut Records whether each Advanced (system-object/registry) leftover

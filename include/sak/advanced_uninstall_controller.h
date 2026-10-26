@@ -7,6 +7,7 @@
 #pragma once
 
 #include "sak/advanced_uninstall_types.h"
+#include "sak/restore_point_manager.h"
 #include "sak/worker_base.h"
 
 #include <QObject>
@@ -14,6 +15,7 @@
 #include <QThread>
 #include <QVector>
 
+#include <functional>
 #include <memory>
 #include <type_traits>
 
@@ -24,7 +26,7 @@ namespace sak {
 class ProgramEnumerator;
 class UninstallWorker;
 class CleanupWorker;
-class RestorePointManager;
+
 
 /// @brief Orchestrates the uninstall pipeline and manages application state
 ///
@@ -121,8 +123,10 @@ public:
     [[nodiscard]] bool clearQueue();
 
     /// @brief Start processing the batch queue.
-    /// @return true once the first queued worker is started; false when validation or required
-    ///         restore-point creation refuses the batch. Restore failure also emits batchFailed.
+    /// @return true once the batch is under way; false when validation refuses it. With
+    ///         @p create_restore_point the restore point is made off the GUI thread first (a
+    ///         recent one Windows will not replace is reused and announced); if there is none the
+    ///         batch stops with batchFailed.
     [[nodiscard]] bool startBatchUninstall(bool create_restore_point);
 
     // -- Settings --
@@ -393,6 +397,9 @@ private:
 
     /// @brief Process next item in batch queue
     void processNextQueueItem();
+    /// The batch's restore point is settled (made off the GUI thread): start the queue or stop.
+    void continueBatchAfterRestorePoint(const RestorePointManager::Outcome& outcome,
+                                        const QString& desc);
 
     State m_state = State::Idle;
 
@@ -407,7 +414,6 @@ private:
     std::unique_ptr<ProgramEnumerator> m_enumerator;
     WorkerPtr<UninstallWorker> m_uninstallWorker;
     WorkerPtr<CleanupWorker> m_cleanupWorker;
-    std::unique_ptr<RestorePointManager> m_restoreManager;
     QThread* m_enumThread = nullptr;
 
     // Data
@@ -433,6 +439,10 @@ private:
     int m_pendingCleanupRefused = 0;
 
     bool m_batchCompletionPending = false;
+    /// Makes the batch's restore point; runs on a pool thread (a real one blocks up to 2 min).
+    std::function<RestorePointManager::Outcome(const QString&)> m_batchRestorePointMaker;
+    bool m_batchRestorePointPending = false;
+    bool m_batchCancelledBeforeStart = false;
     int m_pendingBatchSucceeded = 0;
     int m_pendingBatchFailed = 0;
 

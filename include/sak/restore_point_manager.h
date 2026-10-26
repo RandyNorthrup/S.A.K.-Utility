@@ -12,9 +12,12 @@
 #include <QString>
 #include <QVector>
 
+#include <functional>
 #include <type_traits>
 
 namespace sak {
+
+struct ProcessResult;
 
 /// @brief Manages Windows System Restore points via PowerShell
 ///
@@ -49,6 +52,31 @@ public:
     /// @param description Description for the restore point (max 64 chars)
     /// @return true if created successfully
     [[nodiscard]] bool createRestorePoint(const QString& description);
+
+    /// @brief What a "make sure there is a rollback point" request came to.
+    struct Outcome {
+        enum class Kind {
+            Created,
+            ReusedRecent,
+            Failed
+        };
+        Kind kind{Kind::Failed};
+        QString message;  ///< What to tell the user (why it failed, or which point is reused).
+        [[nodiscard]] bool usable() const noexcept { return kind != Kind::Failed; }
+    };
+
+    /// @brief Create a restore point, or -- when Windows' once-per-24-hours limit refuses a new
+    /// one -- accept the restore point it already made within the last 24 hours, and say so.
+    /// The second uninstall of a day used to be refused outright. Blocking (PowerShell, up to
+    /// 2 min): call it off the GUI thread.
+    [[nodiscard]] Outcome ensureRestorePoint(const QString& description);
+
+    /// @brief Pure: the Outcome of a checkpoint run. @p list_points is consulted only when the
+    /// run hit the 24 h limit; a restore point no older than 24 h at @p now is then reused.
+    [[nodiscard]] static Outcome outcomeOfCheckpoint(
+        const ProcessResult& checkpoint,
+        const std::function<QVector<QPair<QDateTime, QString>>(bool&)>& list_points,
+        const QDateTime& now);
 
     /// @brief The operator-facing reason createRestorePoint refuses BEFORE it does any elevated
     /// work, or an empty string to proceed. Pure and side-effect-free -- elevation is passed in,

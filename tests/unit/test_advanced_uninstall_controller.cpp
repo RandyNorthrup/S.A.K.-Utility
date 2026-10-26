@@ -13,8 +13,11 @@
 
 #include <QDir>
 #include <QFile>
+#include <QSemaphore>
 #include <QSignalSpy>
 #include <QtTest/QtTest>
+
+#include <atomic>
 
 using sak::AdvancedUninstallController;
 using sak::ProgramInfo;
@@ -92,6 +95,8 @@ private Q_SLOTS:
     void batchCompletion_waitsForCleanupAndCarriesResult();
     void batchWorker_usesCompleteSignalSet();
     void batchCancel_emitsCancelledQueueStatus();
+    void batchRestorePoint_isMadeOffTheGuiThread();
+    void batchRestorePoint_cancelWhilePendingStopsTheBatch();
     void registryOnly_connectsCancellation();
     void enumThreadFailedJoin_detachesSafely();
     void obsoleteHelpersAndMembers_areAbsent();
@@ -1496,7 +1501,10 @@ void AdvancedUninstallControllerTests::obsoleteHelpersAndMembers_areAbsent() {
     QVERIFY(header.contains(QStringLiteral("m_enumGeneration")));
     QVERIFY(header.contains(QStringLiteral("m_uninstallWorker")));
     QVERIFY(header.contains(QStringLiteral("m_cleanupWorker")));
-    QVERIFY(header.contains(QStringLiteral("m_restoreManager")));
+    // The batch restore point is made by m_batchRestorePointMaker on a pool thread now; the
+    // GUI-thread m_restoreManager it replaced is gone.
+    QVERIFY(header.contains(QStringLiteral("m_batchRestorePointMaker")));
+    QVERIFY(!header.contains(QStringLiteral("m_restoreManager")));
 }
 
 void AdvancedUninstallControllerTests::obsoleteControllerApis_areAbsent() {
@@ -1643,6 +1651,55 @@ void AdvancedUninstallControllerTests::silentMsiCommand_namesMsiexecByAbsoluteSy
     QCOMPARE(cmd.mid(end_quote + 1),
              QStringLiteral(" /x {12345678-90AB-CDEF-1234-567890ABCDEF} /qn /norestart"));
     QVERIFY(sak::UninstallWorker::uninstallProgramPathTrusted(cmd.mid(1, end_quote - 1)));
+}
+
+// The batch's restore point (Checkpoint-Computer, up to two minutes) was made synchronously inside
+// startBatchUninstall, on the GUI thread. It now runs on a pool thread and the batch continues
+// when it lands; with none available the batch still stops (fail closed).
+void AdvancedUninstallControllerTests::batchRestorePoint_isMadeOffTheGuiThread() {
+    AdvancedUninstallController ctrl;
+    ProgramInfo program;
+    program.displayName = QStringLiteral("Queued App");
+    QVERIFY(ctrl.addToQueue(program, ScanLevel::Safe, false));
+    std::atomic<QThread*> maker_thread{nullptr};
+    ctrl.m_batchRestorePointMaker = [&maker_thread](const QString&) {
+        maker_thread.store(QThread::currentThread());
+        return sak::RestorePointManager::Outcome{
+            .kind = sak::RestorePointManager::Outcome::Kind::Failed,
+            .message = QStringLiteral("fixture: none")};
+    };
+    QSignalSpy failedSpy(&ctrl, &AdvancedUninstallController::batchFailed);
+
+    QVERIFY(ctrl.startBatchUninstall(true));
+    QTRY_COMPARE(failedSpy.count(), 1);
+    QVERIFY(maker_thread.load() != nullptr);
+    QVERIFY2(maker_thread.load() != QThread::currentThread(),
+             "the restore point must not be made on the GUI thread");
+    QVERIFY(failedSpy.at(0).at(0).toString().contains(QStringLiteral("fixture: none")));
+    QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Idle);
+}
+
+void AdvancedUninstallControllerTests::batchRestorePoint_cancelWhilePendingStopsTheBatch() {
+    AdvancedUninstallController ctrl;
+    ProgramInfo program;
+    program.displayName = QStringLiteral("Queued App");
+    QVERIFY(ctrl.addToQueue(program, ScanLevel::Safe, false));
+    QSemaphore release;
+    ctrl.m_batchRestorePointMaker = [&release](const QString&) {
+        release.acquire();
+        return sak::RestorePointManager::Outcome{
+            .kind = sak::RestorePointManager::Outcome::Kind::Created, .message = {}};
+    };
+    QSignalSpy failedSpy(&ctrl, &AdvancedUninstallController::batchFailed);
+    QSignalSpy createdSpy(&ctrl, &AdvancedUninstallController::restorePointCreated);
+
+    QVERIFY(ctrl.startBatchUninstall(true));
+    QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Uninstalling);
+    ctrl.cancelOperation();
+    release.release();
+    QTRY_COMPARE(failedSpy.count(), 1);
+    QCOMPARE(createdSpy.count(), 0);
+    QCOMPARE(ctrl.currentState(), AdvancedUninstallController::State::Idle);
 }
 
 QTEST_GUILESS_MAIN(AdvancedUninstallControllerTests)

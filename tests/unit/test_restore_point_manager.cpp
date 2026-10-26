@@ -5,6 +5,7 @@
 /// @brief Unit tests for RestorePointManager
 
 #include "sak/elevation_manager.h"
+#include "sak/process_runner.h"
 #include "sak/restore_point_manager.h"
 
 #include <QSignalSpy>
@@ -23,6 +24,8 @@ private Q_SLOTS:
     void restoreEnabledFromProbe_failsClosed();
     void createRestorePointPreflight_failsClosedWithoutAdmin();  // R5-G23-4 no-admin
     void listRestorePoints_doesNotCrash();
+    void dailyLimitReusesARecentRestorePoint();
+    void dailyLimitWithoutARecentPointStillFails();
 };
 
 void TestRestorePointManager::construction_default() {
@@ -128,6 +131,80 @@ void TestRestorePointManager::listRestorePoints_doesNotCrash() {
         QVERIFY(datetime.isValid());
         QVERIFY(!description.isEmpty());
     }
+}
+
+namespace {
+ProcessResult checkpointRun(int exit_code, const QString& out, const QString& err) {
+    ProcessResult result;
+    result.exit_code = exit_code;
+    result.std_out = out;
+    result.std_err = err;
+    return result;
+}
+
+const QString kDailyLimitWarning = QStringLiteral(
+    "A new system restore point cannot be created because one has already been created within the "
+    "past 1440 minutes.");
+}  // namespace
+
+// The second uninstall of a day was refused: Windows will not make a second restore point within
+// 24 hours, and that refusal was treated as "no restore point". The one it made earlier is a
+// rollback point from before this change, so it is reused -- and the user is told which.
+void TestRestorePointManager::dailyLimitReusesARecentRestorePoint() {
+    const QDateTime now = QDateTime::currentDateTime();
+    int queries = 0;
+    const auto recent = [&](bool& ok) {
+        ++queries;
+        ok = true;
+        return QVector<QPair<QDateTime, QString>>{
+            {now.addSecs(-3 * 3600), QStringLiteral("SAK: Before uninstall Foo")},
+            {now.addDays(-9), QStringLiteral("Windows Update")}};
+    };
+    const auto outcome = RestorePointManager::outcomeOfCheckpoint(
+        checkpointRun(1, {}, kDailyLimitWarning), recent, now);
+    QCOMPARE(outcome.kind, RestorePointManager::Outcome::Kind::ReusedRecent);
+    QVERIFY(outcome.usable());
+    QVERIFY2(outcome.message.contains(QStringLiteral("SAK: Before uninstall Foo")),
+             qPrintable(outcome.message));
+    QCOMPARE(queries, 1);
+
+    // A real creation is a creation, and never consults the list.
+    const auto created = RestorePointManager::outcomeOfCheckpoint(
+        checkpointRun(0, QStringLiteral("SUCCESS"), {}), recent, now);
+    QCOMPARE(created.kind, RestorePointManager::Outcome::Kind::Created);
+    QCOMPARE(queries, 1);
+}
+
+void TestRestorePointManager::dailyLimitWithoutARecentPointStillFails() {
+    const QDateTime now = QDateTime::currentDateTime();
+    const auto old_only = [&](bool& ok) {
+        ok = true;
+        return QVector<QPair<QDateTime, QString>>{{now.addDays(-2), QStringLiteral("Old")}};
+    };
+    QCOMPARE(RestorePointManager::outcomeOfCheckpoint(
+                 checkpointRun(1, {}, kDailyLimitWarning), old_only, now)
+                 .kind,
+             RestorePointManager::Outcome::Kind::Failed);
+    const auto unreadable = [](bool& ok) {
+        ok = false;
+        return QVector<QPair<QDateTime, QString>>{};
+    };
+    QCOMPARE(RestorePointManager::outcomeOfCheckpoint(
+                 checkpointRun(1, {}, kDailyLimitWarning), unreadable, now)
+                 .kind,
+             RestorePointManager::Outcome::Kind::Failed);
+    // Any other failure is a failure; the list is not even read.
+    bool listed = false;
+    const auto tracking = [&](bool& ok) {
+        listed = true;
+        ok = true;
+        return QVector<QPair<QDateTime, QString>>{{now, QStringLiteral("Just now")}};
+    };
+    QCOMPARE(RestorePointManager::outcomeOfCheckpoint(
+                 checkpointRun(1, {}, QStringLiteral("Access denied")), tracking, now)
+                 .kind,
+             RestorePointManager::Outcome::Kind::Failed);
+    QVERIFY(!listed);
 }
 
 QTEST_MAIN(TestRestorePointManager)
