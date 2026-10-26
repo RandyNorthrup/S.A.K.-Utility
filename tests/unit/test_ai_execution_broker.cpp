@@ -11,6 +11,7 @@
 #include <QJsonParseError>
 #include <QSignalSpy>
 #include <QStringList>
+#include <QTimer>
 #include <QtTest/QtTest>
 
 Q_DECLARE_METATYPE(sak::ai::AiCommandResult)
@@ -25,6 +26,7 @@ private Q_SLOTS:
     void runPowerShell_rejectsElevatedWithoutRunner();
     void runPowerShell_usesElevatedRunnerWhenRequested();
     void runPowerShell_cancelsRunningProcess();
+    void runPowerShell_timesOutOnOneDeadlineTimer();
     void runPowerShell_rejectsConcurrentStarts();
     void elevatedCancel_isInvokedWhenCancelCalledDuringElevatedRun();
     void startCmd_capturesStdoutFromCmd();
@@ -200,6 +202,41 @@ void AiExecutionBrokerTests::runPowerShell_cancelsRunningProcess() {
     QVERIFY(result.cancelled);
     QCOMPARE(result.error_message, QStringLiteral("Command cancelled"));
     QVERIFY(!result.timed_out);
+    QVERIFY(!broker.isRunning());
+}
+
+// The timeout is one single-shot timer armed for what is left of the run's limit, not a
+// 200 ms poll re-armed for the life of the command: while the child runs the broker owns
+// exactly one active timer, it fires the timeout on time, and nothing stays armed after.
+void AiExecutionBrokerTests::runPowerShell_timesOutOnOneDeadlineTimer() {
+    sak::ai::ExecutionBroker broker;
+    QSignalSpy started_spy(&broker, &sak::ai::ExecutionBroker::started);
+    QSignalSpy finished_spy(&broker, &sak::ai::ExecutionBroker::finished);
+
+    sak::ai::AiCommandRequest request;
+    request.command = QStringLiteral("Start-Sleep -Seconds 60");
+    request.timeout_seconds = sak::ai::kAiCommandMinTimeoutSeconds;
+    const int timeout_ms = request.timeout_seconds * 1000;
+
+    QVERIFY(broker.startPowerShell(request, QStringLiteral("cmd_deadline")));
+    QVERIFY(QTest::qWaitFor([&started_spy]() { return started_spy.count() > 0; }, 20'000));
+    const auto timers = broker.findChildren<QTimer*>();
+    QCOMPARE(timers.size(), 1);
+    QTimer* deadline = timers.first();
+    QVERIFY(deadline->isActive());
+    QVERIFY(deadline->isSingleShot());
+    QVERIFY(deadline->remainingTime() <= timeout_ms);
+    QVERIFY(deadline->remainingTime() > 0);
+
+    QVERIFY(waitForFinish(finished_spy, 30'000));
+    const auto result = resultFromSpy(finished_spy);
+    QVERIFY(result.started);
+    QVERIFY(result.timed_out);
+    QVERIFY(!result.cancelled);
+    QCOMPARE(result.error_message, QStringLiteral("Command timed out"));
+    QVERIFY2(result.duration_ms >= timeout_ms - 100,
+             qPrintable(QString::number(result.duration_ms)));
+    QVERIFY(!deadline->isActive());
     QVERIFY(!broker.isRunning());
 }
 

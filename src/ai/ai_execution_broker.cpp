@@ -31,7 +31,6 @@ namespace sak::ai {
 
 namespace {
 
-constexpr int kTimeoutTickMs = 200;
 // The domain now lives in the header (kAiCommandMinTimeoutSeconds /
 // kAiCommandMaxTimeoutSeconds) so the planner cannot promise a timeout this clamp would
 // silently cut. Aliased here to keep the call sites below reading naturally.
@@ -217,7 +216,15 @@ QString AiCommandResult::toJsonString() const {
     return QString::fromUtf8(QJsonDocument(toJson()).toJson(QJsonDocument::Compact));
 }
 
-ExecutionBroker::ExecutionBroker(QObject* parent) : QObject(parent) {}
+ExecutionBroker::ExecutionBroker(QObject* parent) : QObject(parent), m_deadline_timer(this) {
+    // One single-shot timer armed for the run's remaining time when the child starts, and
+    // stopped when the run settles -- not a 200 ms poll that wakes the GUI thread five
+    // times a second for the whole life of every command.
+    m_deadline_timer.setObjectName(QStringLiteral("commandDeadlineTimer"));
+    m_deadline_timer.setSingleShot(true);
+    m_deadline_timer.setTimerType(Qt::CoarseTimer);
+    connect(&m_deadline_timer, &QTimer::timeout, this, &ExecutionBroker::onDeadlineReached);
+}
 
 ExecutionBroker::~ExecutionBroker() {
     if (m_process) {
@@ -790,7 +797,9 @@ void ExecutionBroker::connectProcessSignals() {
             return;
         }
         if (m_timeout_ms > 0) {
-            QTimer::singleShot(kTimeoutTickMs, this, &ExecutionBroker::onTimeoutTick);
+            // The clock started at launch, so the deadline is what is LEFT of the timeout.
+            m_deadline_timer.start(static_cast<int>(
+                std::max<qint64>(0, static_cast<qint64>(m_timeout_ms) - m_timer.elapsed())));
         }
     });
     connect(m_process.get(), &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
@@ -952,18 +961,14 @@ void ExecutionBroker::completeAsTimedOut() {
     completeWith(std::move(result));
 }
 
-void ExecutionBroker::onTimeoutTick() {
+void ExecutionBroker::onDeadlineReached() {
     if (!m_running || m_finished_emitted || !m_process) {
         return;
     }
     if (m_process->state() == QProcess::NotRunning) {
         return;
     }
-    if (m_timeout_ms > 0 && m_timer.elapsed() >= m_timeout_ms) {
-        completeAsTimedOut();
-        return;
-    }
-    QTimer::singleShot(kTimeoutTickMs, this, &ExecutionBroker::onTimeoutTick);
+    completeAsTimedOut();
 }
 
 void ExecutionBroker::completeWith(AiCommandResult result) {
@@ -972,6 +977,7 @@ void ExecutionBroker::completeWith(AiCommandResult result) {
     }
     m_finished_emitted = true;
     m_running = false;
+    m_deadline_timer.stop();
     const QString id = m_command_id;
     if (m_process) {
         m_process->disconnect(this);

@@ -68,6 +68,7 @@
 #include <QUuid>
 
 #include <atomic>
+#include <chrono>
 #include <cstring>
 #include <functional>
 #include <memory>
@@ -8010,6 +8011,20 @@ private Q_SLOTS:
 
         QVERIFY(panel.m_toolHealthLedger->check(key).available);
         QCOMPARE(panel.m_toolHealthLedger->size(), 0);
+    }
+
+    // A pooled MCP server (the full-access win32 MCP child included) used to live until the app
+    // exited. A provider-gateway call now arms one single-shot idle reap on the GUI thread.
+    void providerGatewayCallArmsMcpIdleReap() {
+        AiAssistantPanel panel;
+        QVERIFY(panel.findChild<QTimer*>(QStringLiteral("mcpIdleReapTimer")) == nullptr);
+        (void)panel.runProviderGatewayTool(QJsonObject{});
+        QTRY_VERIFY(panel.findChild<QTimer*>(QStringLiteral("mcpIdleReapTimer")) != nullptr);
+        auto* timer = panel.findChild<QTimer*>(QStringLiteral("mcpIdleReapTimer"));
+        QVERIFY(timer->isActive());
+        QVERIFY(timer->isSingleShot());
+        QCOMPARE(std::chrono::milliseconds(timer->interval()),
+                 std::chrono::duration_cast<std::chrono::milliseconds>(ai::kAiMcpSessionIdleReap));
     }
 
     // Wave 3: the sak_skill tool lists the catalog (no bodies), loads a full body

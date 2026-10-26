@@ -11,6 +11,7 @@
 #include <QVector>
 
 #include <atomic>
+#include <chrono>
 #include <expected>
 #include <functional>
 #include <map>
@@ -26,6 +27,11 @@ class AiMcpSessionPoolTests;
 /// rejected because their effective variables can change without changing a cache key; callers
 /// must provide an explicit environment snapshot.
 namespace sak::ai {
+
+/// How long a pooled MCP server may sit unused before the panel's idle reap closes it. Matches
+/// the elevated helper's five-minute idle retirement: long enough that a technician's run of
+/// tool calls reuses one server, short enough that a full-access child does not linger.
+inline constexpr std::chrono::minutes kAiMcpSessionIdleReap{5};
 
 class AiMcpSessionPool {
 public:
@@ -62,6 +68,16 @@ public:
     /// terminating the application. Destroying a pool that is still in use remains fatal.
     [[nodiscard]] std::expected<void, QString> closeAll();
 
+    /// Closes every pooled session that is not in use and has finished no call or listing for
+    /// at least @p idle_for, and drops its slot; returns how many sessions are STILL open after
+    /// the pass (a caller re-arms its idle timer while that is non-zero). A server -- the
+    /// full-access win32 MCP child included -- otherwise lives until the app exits. Never blocks
+    /// on an in-flight call. A session whose close cannot be proved is logged and handed to
+    /// sak::ContainedProcessQuarantine, whose kill-on-close Job stays armed: an idle reap reports
+    /// and contains, it never crashes and never blocks later admissions. Does nothing while an
+    /// unresolved closeAll() failure owns recovery.
+    int reapIdleSessions(std::chrono::milliseconds idle_for);
+
     /// Number of pooled session SLOTS currently held -- including a slot whose session already
     /// failed or was closed and is waiting to be reopened or reclaimed. This is deliberately NOT
     /// a count of live sessions, and is named for what it returns: it was called
@@ -83,6 +99,8 @@ private:
         // A caller that grabbed the shared handle just before closeAll() must NOT reopen a fresh
         // session on it afterwards -- that would spawn a process after the pool reported closed.
         bool detached{false};
+        // When the last call or listing on this entry finished (written under mutex).
+        std::chrono::steady_clock::time_point last_used{std::chrono::steady_clock::now()};
     };
 
     // Returns a shared handle so an in-flight caller keeps its Entry (and its
@@ -98,6 +116,8 @@ private:
     [[nodiscard]] std::expected<void, QString> ensureSessionOpen(
         Entry& entry, const AiMcpStdioCallRequest& request);
     void releaseIfClosed(Entry& entry);
+    // Close one idle entry's session (entry.mutex and m_mutex held) so its slot can be dropped.
+    static void reapEntry(Entry& entry, const QDeadlineTimer& deadline);
     [[nodiscard]] QString closeAfterFailure(Entry& entry, const QString& primary_error);
     [[nodiscard]] std::expected<void, QString> closeAllWithDeadline(const QDeadlineTimer& deadline);
     // Destruction-only: moves every session closeAll() could not prove clean into custody.

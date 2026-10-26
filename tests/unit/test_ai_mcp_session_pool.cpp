@@ -17,6 +17,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMutexLocker>
 #include <QProcessEnvironment>
 #include <QScopeGuard>
 #include <QTemporaryDir>
@@ -326,6 +327,9 @@ private Q_SLOTS:
     void closeAllHonorsContendedLockDeadline();
     void destructionQuarantinesUnprovenCleanup_data();
     void destructionQuarantinesUnprovenCleanup();
+    void idleReapClosesOnlyIdleSessions();
+    void idleReapSkipsAnInFlightCall();
+    void idleReapQuarantinesUnprovenCleanup();
 
 private:
     static std::unique_ptr<sak::ai::AiMcpStdioSession> observedSession(
@@ -945,6 +949,96 @@ void AiMcpSessionPoolTests::destructionQuarantinesUnprovenCleanup() {
     const auto exited = generation->waitForExit();
     QVERIFY2(exited.has_value(), qPrintable(failureDiagnostic(exited)));
     QCOMPARE(*exited, DWORD{sak::kWindowsProcessJobFailureExitCode});
+}
+
+// A pooled server used to live until the app exited. An idle reap closes a session nobody has
+// used for the idle period, leaves a recently used one alone, and the next call reopens.
+void AiMcpSessionPoolTests::idleReapClosesOnlyIdleSessions() {
+    QTemporaryDir temporary_dir;
+    QVERIFY(temporary_dir.isValid());
+    sak::ai::AiMcpSessionPool pool;
+    const auto request = fakePoolRequest(QStringLiteral("empty-success"),
+                                         temporary_dir.filePath(QStringLiteral("idle.marker")));
+    auto generation = observeFakeProcess(pool, request);
+    QVERIFY2(generation.has_value(), qPrintable(failureDiagnostic(generation)));
+    QCOMPARE(pool.pooledSlotCount(), 1);
+
+    QCOMPARE(pool.reapIdleSessions(std::chrono::hours(1)), 1);
+    QCOMPARE(pool.pooledSlotCount(), 1);
+    const auto still_alive = generation->isAlive();
+    QVERIFY2(still_alive.has_value(), qPrintable(failureDiagnostic(still_alive)));
+    QVERIFY(*still_alive);
+
+    QCOMPARE(pool.reapIdleSessions(std::chrono::milliseconds(0)), 0);
+    QCOMPARE(pool.pooledSlotCount(), 0);
+    const auto exited = generation->waitForExit();
+    QVERIFY2(exited.has_value(), qPrintable(failureDiagnostic(exited)));
+
+    QVERIFY(pool.callTool(request).has_value());
+    QCOMPARE(pool.pooledSlotCount(), 1);
+    QVERIFY(pool.closeAll().has_value());
+}
+
+// A reap never waits on, or tears down, a session a call is using right now.
+void AiMcpSessionPoolTests::idleReapSkipsAnInFlightCall() {
+    QTemporaryDir temporary_dir;
+    QVERIFY(temporary_dir.isValid());
+    sak::ai::AiMcpSessionPool pool;
+    const auto request = fakePoolRequest(QStringLiteral("empty-success"),
+                                         temporary_dir.filePath(QStringLiteral("busy.marker")));
+    QVERIFY(pool.callTool(request).has_value());
+    const auto entry = pool.m_sessions.at(pool.sessionKeyForTesting(request));
+    {
+        const QMutexLocker in_flight(&entry->mutex);
+        QCOMPARE(pool.reapIdleSessions(std::chrono::milliseconds(0)), 1);
+        QCOMPARE(pool.pooledSlotCount(), 1);
+    }
+    QVERIFY(entry->session && entry->session->isOpen());
+    QCOMPARE(pool.reapIdleSessions(std::chrono::milliseconds(0)), 0);
+    QCOMPARE(pool.pooledSlotCount(), 0);
+}
+
+// Fail closed does not mean crash: an idle session whose cleanup cannot be proved goes to
+// custody with its Job armed, its slot is freed, and later admissions are not blocked.
+void AiMcpSessionPoolTests::idleReapQuarantinesUnprovenCleanup() {
+    QTemporaryDir temporary_dir;
+    QVERIFY(temporary_dir.isValid());
+    const auto observed = std::make_shared<PoolCleanupObservation>();
+    const int custody_before = sak::ContainedProcessQuarantine::retainedCount();
+    sak::ai::AiMcpSessionPool pool;
+    const auto recover = qScopeGuard([&]() {
+        observed->fail_termination.store(false);
+        if (!native_mcp::releaseCustodyTo(custody_before)) {
+            qFatal("Custody fixture could not release its reaped MCP session");
+        }
+    });
+    pool.m_session_factory = [observed]() {
+        return observedSession(observed);
+    };
+    const auto request = fakePoolRequest(QStringLiteral("empty-success"),
+                                         temporary_dir.filePath(QStringLiteral("reap.marker")));
+    auto generation = observeFakeProcess(pool, request);
+    QVERIFY2(generation.has_value(), qPrintable(failureDiagnostic(generation)));
+    observed->fail_termination.store(true);
+
+    QCOMPARE(pool.reapIdleSessions(std::chrono::milliseconds(0)), 0);
+
+    QCOMPARE(pool.pooledSlotCount(), 0);
+    QCOMPARE(sak::ContainedProcessQuarantine::retainedCount(), custody_before + 1);
+    const QString reason = sak::ContainedProcessQuarantine::retainedReasons().constLast();
+    QVERIFY2(reason.startsWith(QStringLiteral("MCP idle reap could not prove cleanup: ")),
+             qPrintable(reason));
+    const auto alive = generation->isAlive();
+    QVERIFY2(alive.has_value(), qPrintable(failureDiagnostic(alive)));
+    QVERIFY(*alive);
+    observed->fail_termination.store(false);
+    QVERIFY(pool.callTool(request).has_value());
+    QCOMPARE(pool.pooledSlotCount(), 1);
+    QVERIFY(pool.closeAll().has_value());
+    const auto released = native_mcp::releaseCustodyTo(custody_before);
+    QVERIFY2(released.has_value(), qPrintable(failureDiagnostic(released)));
+    const auto exited = generation->waitForExit();
+    QVERIFY2(exited.has_value(), qPrintable(failureDiagnostic(exited)));
 }
 
 void AiMcpSessionPoolTests::missingCommandFailsCleanlyAndCloses() {

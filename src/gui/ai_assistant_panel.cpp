@@ -7316,7 +7316,7 @@ QJsonObject AiAssistantPanel::runProviderGatewayTool(const QJsonObject& args) {
     } else if (mode == ai::AiAccessMode::UnattendedFullAccess) {
         access = ai::AiProviderGatewayToolAccess::UnattendedFullAccess;
     }
-    return ai::AiProviderGatewayToolRunner::run(
+    QJsonObject result = ai::AiProviderGatewayToolRunner::run(
         args,
         &gateway,
         access,
@@ -7325,6 +7325,42 @@ QJsonObject AiAssistantPanel::runProviderGatewayTool(const QJsonObject& args) {
                                              kDefaultOutputCapKb * sak::kBytesPerKB),
                                          .min_output_bytes = static_cast<int>(sak::kBytesPerKB),
                                          .max_output_bytes = kToolOutputMaxBytes});
+    // This may run on the tool worker thread; the timer lives on the GUI thread.
+    QMetaObject::invokeMethod(this, &AiAssistantPanel::armMcpIdleReap, Qt::QueuedConnection);
+    return result;
+}
+
+void AiAssistantPanel::armMcpIdleReap() {
+    if (m_mcpIdleReapTimer == nullptr) {
+        m_mcpIdleReapTimer = new QTimer(this);
+        m_mcpIdleReapTimer->setObjectName(QStringLiteral("mcpIdleReapTimer"));
+        m_mcpIdleReapTimer->setSingleShot(true);
+        // Precise: a coarse timer may fire up to 5% early, before the sessions it is for have
+        // been idle the full period, and the reap would then skip them for another period.
+        m_mcpIdleReapTimer->setTimerType(Qt::PreciseTimer);
+        connect(m_mcpIdleReapTimer, &QTimer::timeout, this, &AiAssistantPanel::reapIdleMcpSessions);
+    }
+    m_mcpIdleReapTimer->start(
+        std::chrono::duration_cast<std::chrono::milliseconds>(ai::kAiMcpSessionIdleReap));
+}
+
+void AiAssistantPanel::reapIdleMcpSessions() {
+    if (!m_mcpSessionPool ||
+        (m_mcpIdleReapWatcher != nullptr && m_mcpIdleReapWatcher->isRunning())) {
+        return;  // A reap already in flight re-arms when it finishes.
+    }
+    if (m_mcpIdleReapWatcher == nullptr) {
+        m_mcpIdleReapWatcher = new QFutureWatcher<int>(this);
+        connect(m_mcpIdleReapWatcher, &QFutureWatcher<int>::finished, this, [this]() {
+            if (m_mcpIdleReapWatcher->result() > 0) {
+                armMcpIdleReap();
+            }
+        });
+    }
+    // The task holds the pool by shared ownership and never touches the panel, so a panel torn
+    // down meanwhile leaves it finishing safely on its own.
+    m_mcpIdleReapWatcher->setFuture(QtConcurrent::run(
+        [pool = m_mcpSessionPool]() { return pool->reapIdleSessions(ai::kAiMcpSessionIdleReap); }));
 }
 
 ai::AiProviderGatewayToolCallbacks AiAssistantPanel::providerGatewayCallbacks() {

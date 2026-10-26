@@ -542,6 +542,13 @@ private:
                                                 QObject* worker);
     [[nodiscard]] QJsonObject runPackageManagerTool(const QJsonObject& args);
     [[nodiscard]] QJsonObject runProviderGatewayTool(const QJsonObject& args);
+    /// (Re)arms the single-shot idle reap after a provider-gateway call, so a pooled MCP server
+    /// (the full-access win32 MCP child included) closes once unused for kAiMcpSessionIdleReap
+    /// instead of living until the app exits. GUI thread.
+    void armMcpIdleReap();
+    /// Runs the pool's idle reap off the GUI thread (closing can take the pool's cleanup
+    /// deadline) and re-arms while sessions remain open.
+    void reapIdleMcpSessions();
     /// The panel-side hooks a provider-gateway call uses (confirmation, restore point, command
     /// execution and recording); split out of runProviderGatewayTool.
     [[nodiscard]] ai::AiProviderGatewayToolCallbacks providerGatewayCallbacks();
@@ -1042,6 +1049,8 @@ private:
     // in-flight gateway call holds its own reference, so destroying the panel can never destroy
     // the pool underneath that call; the last owner closes it (worker threads joined).
     std::shared_ptr<ai::AiMcpSessionPool> m_mcpSessionPool;
+    QTimer* m_mcpIdleReapTimer{nullptr};
+    QFutureWatcher<int>* m_mcpIdleReapWatcher{nullptr};
     // NOTE: there is deliberately no separate "async tool in flight" flag. The runner
     // itself is the single authority (isRunning()); a mirror flag went stale the moment
     // Stop detached the job and made the panel report idle while the work still ran.

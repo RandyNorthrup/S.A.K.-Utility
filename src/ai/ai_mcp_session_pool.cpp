@@ -3,8 +3,11 @@
 
 #include "sak/ai/ai_mcp_session_pool.h"
 
+#include "sak/logger.h"
+
 #include <QCryptographicHash>
 #include <QDeadlineTimer>
+#include <QScopeGuard>
 #include <QStringList>
 
 #include <algorithm>
@@ -222,6 +225,8 @@ std::expected<QJsonObject, QString> AiMcpSessionPool::callTool(
     }
     const std::shared_ptr<Entry>& entry = *entry_result;
     const QMutexLocker call_lock(&entry->mutex);
+    const auto mark_used =
+        qScopeGuard([&entry]() { entry->last_used = std::chrono::steady_clock::now(); });
 
     const auto open_result = ensureSessionOpen(*entry, request);
     if (!open_result) {
@@ -255,6 +260,8 @@ std::expected<QVector<AiMcpToolDescriptor>, QString> AiMcpSessionPool::listTools
     }
     const std::shared_ptr<Entry>& entry = *entry_result;
     const QMutexLocker call_lock(&entry->mutex);
+    const auto mark_used =
+        qScopeGuard([&entry]() { entry->last_used = std::chrono::steady_clock::now(); });
 
     const auto open_result = ensureSessionOpen(*entry, request);
     if (!open_result) {
@@ -311,6 +318,55 @@ std::expected<void, QString> AiMcpSessionPool::closeAllWithDeadline(
         return std::unexpected(errors.join(QStringLiteral("; ")));
     }
     return {};
+}
+
+void AiMcpSessionPool::reapEntry(Entry& entry, const QDeadlineTimer& deadline) {
+    // Detach first, as closeAll does: a caller that took this handle before the slot is
+    // dropped must not reopen a process on it afterwards.
+    entry.detached = true;
+    if (!entry.session) {
+        return;  // Already-dead slot: nothing to close, just reclaim it.
+    }
+    const auto closed = entry.session->closeWithDeadline(deadline);
+    if (!closed) {
+        // Report + contain (owner ruling 2026-10-24): the unproven session keeps its armed
+        // kill-on-close Job in process-lifetime custody, and the slot is free for a fresh one.
+        const QString reason =
+            QStringLiteral("MCP idle reap could not prove cleanup: %1").arg(closed.error());
+        sak::logWarning(reason.toStdString());
+        AiMcpStdioSession::quarantine(std::move(entry.session), reason);
+    }
+    entry.session.reset();
+}
+
+int AiMcpSessionPool::reapIdleSessions(std::chrono::milliseconds idle_for) {
+    const auto now = std::chrono::steady_clock::now();
+    const QMutexLocker lock(&m_mutex);
+    if (m_cleanup_blocked.load(std::memory_order_acquire)) {
+        return 0;  // closeAll() owns recovery of the retained sessions.
+    }
+    // One cleanup deadline for the whole pass, as closeAll() uses, so a reap holds m_mutex for
+    // at most that long however many sessions it closes.
+    const QDeadlineTimer deadline(kPoolCleanupTimeoutMs);
+    int still_open = 0;
+    for (auto iterator = m_sessions.begin(); iterator != m_sessions.end();) {
+        const auto entry = iterator->second;
+        // tryLock: an in-flight call owns this entry; never wait on it while holding m_mutex.
+        const std::unique_lock<QMutex> entry_lock(entry->mutex, std::try_to_lock);
+        if (!entry_lock.owns_lock()) {
+            ++still_open;  // Busy, so open; its call finishing makes it idle again later.
+            ++iterator;
+            continue;
+        }
+        if (now - entry->last_used < idle_for) {
+            still_open += entry->session ? 1 : 0;
+            ++iterator;
+            continue;
+        }
+        reapEntry(*entry, deadline);
+        iterator = m_sessions.erase(iterator);
+    }
+    return still_open;
 }
 
 int AiMcpSessionPool::pooledSlotCount() const {

@@ -11,6 +11,7 @@
 #include <QObject>
 #include <QString>
 #include <QStringList>
+#include <QTimer>
 
 #include <functional>
 #include <memory>
@@ -212,7 +213,7 @@ private:
     void onProcessFinished(int exit_code, int exit_status);
     void onProcessError(int error);
     void completeAsTimedOut();
-    void onTimeoutTick();
+    void onDeadlineReached();
     void appendCapped(QString& target, const QString& chunk);
 
     ElevatedRunner m_elevated_runner;
@@ -226,6 +227,9 @@ private:
     int m_max_output_bytes{kAiCommandDefaultMaxOutputBytes};
     int m_timeout_ms{0};
     QElapsedTimer m_timer;
+    /// Single-shot, armed when the child starts with what is left of m_timeout_ms and
+    /// stopped when the run settles. A child of this broker, so it dies with it.
+    QTimer m_deadline_timer;
     QString m_stdout_buffer;
     QString m_stderr_buffer;
     /// Bytes dropped from the head of the rolling buffers, so a capped run is never
