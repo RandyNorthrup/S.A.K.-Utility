@@ -347,6 +347,23 @@ void UserMigrationPanel::createQuickActions() {
 
 void UserMigrationPanel::onQuickActionClicked(QuickAction* action) {
     Q_ASSERT(action);
+    if (auto* bitlocker = qobject_cast<BackupBitlockerKeysAction*>(action)) {
+        // Recovery keys are asked a destination every time: the default (C:/SAK_Backups) is
+        // usually on the very volume they unlock. The action refuses any folder on a BitLocker
+        // volume whose key it is backing up.
+        const QString destination = QFileDialog::getExistingDirectory(
+            this,
+            tr("Choose where to save the BitLocker recovery keys (use another drive, such as a "
+               "USB drive)"),
+            QString(),
+            QFileDialog::ShowDirsOnly);
+        if (destination.isEmpty()) {
+            appendLog(tr("BitLocker key backup cancelled: no destination was chosen"));
+            return;
+        }
+        bitlocker->setBackupLocation(destination);
+        m_action_controller->setBackupLocation(destination);  // the elevated run's payload
+    }
     appendLog(QString("Executing: %1").arg(action->name()));
     Q_EMIT statusMessage(QString("Running: %1...").arg(action->name()), sak::kTimerStatusMessageMs);
     m_action_progress_bar->setValue(0);

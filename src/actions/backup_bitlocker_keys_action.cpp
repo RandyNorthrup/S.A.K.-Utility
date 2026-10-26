@@ -845,6 +845,33 @@ bool BackupBitlockerKeysAction::executeSaveKeyFiles(const QDateTime& start_time,
     return secureBackupDirectory(start_time, backup_dir_path, permissions_set);
 }
 
+QString BackupBitlockerKeysAction::sameVolumeRefusal(const QString& location,
+                                                     const QVector<VolumeInfo>& volumes) {
+    // Keys stored on the volume they unlock are lost exactly when they are needed: a locked
+    // volume locks its own recovery key in with it. The default location (C:/SAK_Backups) is on
+    // the system drive, which is usually the most important BitLocker volume of all.
+    constexpr qsizetype kDriveLetterPrefixLength = 2;  // "C:"
+    const QString canonical = QDir::cleanPath(location);
+    if (canonical.size() < kDriveLetterPrefixLength ||
+        canonical.at(kDriveLetterPrefixLength - 1) != QLatin1Char(':')) {
+        return {};
+    }
+    const QChar letter = canonical.at(0).toUpper();
+    for (const VolumeInfo& volume : volumes) {
+        if (volume.drive_letter.isEmpty() || volume.drive_letter.at(0).toUpper() != letter ||
+            !volumeHasRecoveryPassword(volume.key_protectors)) {
+            continue;
+        }
+        return QStringLiteral(
+                   "The backup location %1 is on BitLocker volume %2:, whose recovery key is in "
+                   "this backup. If that volume is ever locked, its key would be locked with it. "
+                   "Choose a folder on another drive, such as a USB drive.")
+            .arg(QDir::toNativeSeparators(canonical))
+            .arg(letter);
+    }
+    return {};
+}
+
 QString BackupBitlockerKeysAction::screenBackupLocation(const QString& raw_location,
                                                         QString& refusal) {
     if (raw_location.trimmed().isEmpty()) {
@@ -899,6 +926,11 @@ bool BackupBitlockerKeysAction::createBackupDirectory(const QDateTime& start_tim
     const QString location = screenBackupLocation(m_backup_location, refusal);
     if (location.isEmpty()) {
         emitFailedResult("Refused the BitLocker backup location", refusal, start_time);
+        return false;
+    }
+    const QString same_volume = sameVolumeRefusal(location, m_volumes);
+    if (!same_volume.isEmpty()) {
+        emitFailedResult("Refused the BitLocker backup location", same_volume, start_time);
         return false;
     }
 

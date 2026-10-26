@@ -25,6 +25,7 @@ class BackupBitlockerKeysActionTests : public QObject {
     using KeyProtectorInfo = BackupBitlockerKeysAction::KeyProtectorInfo;
 
 private Q_SLOTS:
+    void sameVolumeRefusal_keepsKeysOffTheVolumesTheyUnlock();
     // B6-05: gate requires a recovery password, not merely any protector.
     void evaluateKeyGate_requiresRecoveryPassword();
     // B6-03: backup dir names are unique and well-formed.
@@ -572,6 +573,27 @@ void BackupBitlockerKeysActionTests::formatters_mapKnownCodes() {
     QCOMPARE(Action::formatProtectorType(-1), QStringLiteral("Unknown (-1)"));
     QCOMPARE(Action::formatEncryptionMethod(999), QStringLiteral("Unknown (999)"));
     QCOMPARE(Action::formatVolumeType(42), QStringLiteral("Unknown (42)"));
+}
+
+// Recovery keys defaulted to C:/SAK_Backups -- usually the volume they unlock, so a locked volume
+// would lock its own key in with it. A destination on a BitLocker volume whose key is in this
+// backup is refused; another drive, or a volume with no recovery password here, is fine.
+void BackupBitlockerKeysActionTests::sameVolumeRefusal_keepsKeysOffTheVolumesTheyUnlock() {
+    KeyProtectorInfo password;
+    password.recovery_password =
+        QStringLiteral("111111-222222-333333-444444-555555-666666-777777-888888");
+    BackupBitlockerKeysAction::VolumeInfo system;
+    system.drive_letter = QStringLiteral("C:");
+    system.key_protectors = {password};
+    BackupBitlockerKeysAction::VolumeInfo data_without_password;
+    data_without_password.drive_letter = QStringLiteral("D:");
+    const QVector<BackupBitlockerKeysAction::VolumeInfo> volumes{system, data_without_password};
+
+    const QString refused = Action::sameVolumeRefusal(QStringLiteral("C:/SAK_Backups"), volumes);
+    QVERIFY2(refused.contains(QStringLiteral("C:")), qPrintable(refused));
+    QVERIFY(!Action::sameVolumeRefusal(QStringLiteral("c:/Keys/archive"), volumes).isEmpty());
+    QVERIFY(Action::sameVolumeRefusal(QStringLiteral("E:/keys"), volumes).isEmpty());
+    QVERIFY(Action::sameVolumeRefusal(QStringLiteral("D:/keys"), volumes).isEmpty());
 }
 
 QTEST_GUILESS_MAIN(BackupBitlockerKeysActionTests)

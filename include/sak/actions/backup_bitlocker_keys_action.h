@@ -241,6 +241,12 @@ private:
     [[nodiscard]] static QString screenBackupLocation(const QString& raw_location,
                                                       QString& refusal);
 
+    /// @brief Why @p location must not hold this backup (empty when it may): it is on a volume in
+    ///        @p volumes whose recovery key is being backed up -- the key would sit on the very
+    ///        volume it unlocks. Pure; drive-letter comparison only.
+    [[nodiscard]] static QString sameVolumeRefusal(const QString& location,
+                                                   const QVector<VolumeInfo>& volumes);
+
     /// @brief Create a fresh, uniquely named backup directory (fail closed on
     /// any collision so a prior backup is never reopened and truncated).
     bool createBackupDirectory(const QDateTime& start_time, QString& backup_dir_path);
