@@ -10,6 +10,7 @@
 #include "sak/logger.h"
 #include "sak/network_transfer_runner.h"
 #include "sak/process_runner.h"
+#include "sak/windows_process_job.h"
 
 #include <QCoreApplication>
 #include <QDir>
@@ -18,17 +19,43 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
+#include <QRegularExpression>
 #include <QTimer>
 #include <QUuid>
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <memory>
 #include <thread>
 
+#include <windows.h>
+
 namespace sak {
 
 namespace {
+
+/// A rule name led by this process's ID, so a later start can tell a crashed owner's rule.
+QString ownedFirewallRuleName(uint16_t port) {
+    return BandwidthTester::composeFirewallRuleName(
+        port,
+        QStringLiteral("%1-%2")
+            .arg(QCoreApplication::applicationPid())
+            .arg(QUuid::createUuid().toString(QUuid::Id128)));
+}
+
+/// Keeps the iPerf3 server's kill-on-close Job alive exactly as long as its QProcess (its parent).
+class ServerJobHolder final : public QObject {
+public:
+    ServerJobHolder(std::unique_ptr<WindowsProcessJob> job, QObject* parent)
+        : QObject(parent), m_job(std::move(job)) {
+        setObjectName(QStringLiteral("iperf3ServerJob"));
+    }
+
+private:
+    std::unique_ptr<WindowsProcessJob> m_job;
+};
+
 constexpr int kProcessTimeout = 120'000;      // 2 minutes max for iPerf3
 constexpr int kServerStartTimeout = 3000;
 constexpr int kSpeedTestDurationMs = 10'000;  // 10 seconds
@@ -286,15 +313,30 @@ void BandwidthTester::startIperfServer(uint16_t port) {
         return;
     }
 
-    // Unique per-instance rule name: two concurrent servers must not share one, or
-    // one stopping would tear down the other's still-needed inbound rule.
-    m_firewallRuleName = composeFirewallRuleName(port, QUuid::createUuid().toString(QUuid::Id128));
+    // The server runs inside a kill-on-close Job: if this app crashes, closing the Job ends the
+    // server too, instead of leaving it listening (and its inbound rule allowing) for good.
+    auto created_job = WindowsProcessJob::create();
+    if (!created_job) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Cannot contain the iPerf3 server: %1").arg(created_job.error()));
+        return;
+    }
+    std::unique_ptr<WindowsProcessJob> job = std::move(*created_job);
+
+    // A crash before this change (or of an older build) left its rule behind; sweep those first.
+    removeStaleFirewallRules();
+
+    // Unique per-instance rule name: two concurrent servers must not share one, or one stopping
+    // would tear down the other's still-needed inbound rule. The token leads with this process's
+    // ID so a later start can tell a crashed owner's rule from a live one's.
+    m_firewallRuleName = ownedFirewallRuleName(port);
     createFirewallRule(m_firewallRuleName, port);
     const QString ruleName = m_firewallRuleName;
 
     m_serverProcess = new QProcess(this);
-    m_serverProcess->setProgram(m_iperf3Path);
-    m_serverProcess->setArguments({
+    QProcess* const server = m_serverProcess;  // a FailedToStart handler nulls the member
+    server->setProgram(m_iperf3Path);
+    server->setArguments({
         QStringLiteral("-s"),
         QStringLiteral("-p"),
         QString::number(port),
@@ -303,7 +345,25 @@ void BandwidthTester::startIperfServer(uint16_t port) {
     });
 
     connectServerProcessSignals(ruleName, port);
-    m_serverProcess->start();
+    if (const auto installed = job->installOn(*server); !installed) {
+        Q_EMIT errorOccurred(
+            QStringLiteral("Cannot contain the iPerf3 server: %1").arg(installed.error()));
+        m_serverProcess = nullptr;
+        server->deleteLater();
+        removeFirewallRule(ruleName);
+        return;
+    }
+    server->start();
+    const bool started = server->waitForStarted(sak::kTimeoutProcessStartMs);
+    if (const auto completed = job->completeLaunch(*server, started); !completed) {
+        // Fail closed: a server the Job did not capture must not keep running.
+        Q_EMIT errorOccurred(
+            QStringLiteral("iPerf3 server was not contained: %1").arg(completed.error()));
+        server->kill();
+    }
+    // The Job lives exactly as long as the server's QProcess: ~QProcess stops and reaps the
+    // server first, then this child closes the emptied Job.
+    new ServerJobHolder(std::move(job), server);
 }
 
 void BandwidthTester::connectServerProcessSignals(const QString& ruleName, uint16_t port) {
@@ -625,6 +685,92 @@ void BandwidthTester::runHttpSpeedTest() {
 
 QString BandwidthTester::composeFirewallRuleName(uint16_t port, const QString& uniqueToken) {
     return QStringLiteral("SAK_Utility_iPerf3_%1_%2").arg(port).arg(uniqueToken);
+}
+
+QStringList BandwidthTester::staleFirewallRules(const QStringList& rule_names,
+                                                qint64 own_pid,
+                                                const std::function<bool(qint64)>& sak_alive) {
+    static const QRegularExpression rule_pattern(
+        QStringLiteral("^SAK_Utility_iPerf3_\\d+_(?:(\\d+)-)?[0-9A-Za-z]+$"));
+    QStringList stale;
+    for (const QString& name : rule_names) {
+        const auto match = rule_pattern.match(name.trimmed());
+        if (!match.hasMatch()) {
+            continue;  // not one of ours: never touched
+        }
+        if (match.capturedLength(1) == 0) {
+            stale.append(name.trimmed());  // predates the owner ID; no live owner can claim it
+            continue;
+        }
+        const qint64 owner = match.captured(1).toLongLong();
+        if (owner == own_pid || (sak_alive && sak_alive(owner))) {
+            continue;
+        }
+        stale.append(name.trimmed());
+    }
+    return stale;
+}
+
+namespace {
+/// True when @p pid is a running process with the same image name as this application.
+bool isLiveSakProcess(qint64 pid) {
+    HANDLE process =
+        ::OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
+    if (process == nullptr) {
+        return false;
+    }
+    std::array<wchar_t, MAX_PATH> image{};
+    DWORD length = static_cast<DWORD>(image.size());
+    DWORD exit_code = 0;
+    const bool running = ::GetExitCodeProcess(process, &exit_code) != 0 &&
+                         exit_code == STILL_ACTIVE &&
+                         ::QueryFullProcessImageNameW(process, 0, image.data(), &length) != 0;
+    ::CloseHandle(process);
+    if (!running) {
+        return false;
+    }
+    const QString name = QFileInfo(QString::fromWCharArray(image.data(), length)).fileName();
+    return name.compare(QFileInfo(QCoreApplication::applicationFilePath()).fileName(),
+                        Qt::CaseInsensitive) == 0;
+}
+}  // namespace
+
+void BandwidthTester::removeStaleFirewallRules() {
+    const QString powershell = sak::systemPowerShellPath();
+    if (powershell.isEmpty()) {
+        return;
+    }
+    auto* lister = new QProcess(this);
+    connect(lister,
+            QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
+            this,
+            [this, lister](int exit_code, QProcess::ExitStatus) {
+                const QStringList names = QString::fromUtf8(lister->readAllStandardOutput())
+                                              .split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+                lister->deleteLater();
+                if (exit_code != 0) {
+                    return;  // could not list; leave every rule alone
+                }
+                const QStringList stale =
+                    staleFirewallRules(names, QCoreApplication::applicationPid(), isLiveSakProcess);
+                for (const QString& rule : stale) {
+                    sak::logInfo("Removing iPerf3 firewall rule left by an earlier run: {}",
+                                 rule.toStdString());
+                    removeFirewallRule(rule);
+                }
+            });
+    connect(lister, &QProcess::errorOccurred, lister, [lister](QProcess::ProcessError error) {
+        if (error == QProcess::FailedToStart) {
+            lister->deleteLater();
+        }
+    });
+    lister->start(powershell,
+                  {QStringLiteral("-NoProfile"),
+                   QStringLiteral("-NonInteractive"),
+                   QStringLiteral("-Command"),
+                   // A wildcard that matches nothing is not an error: an empty list, exit 0.
+                   QStringLiteral("Get-NetFirewallRule -DisplayName 'SAK_Utility_iPerf3_*' | "
+                                  "ForEach-Object DisplayName")});
 }
 
 QString BandwidthTester::composeNetshPath(const QString& systemRoot) {

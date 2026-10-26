@@ -8,9 +8,13 @@
 #include "sak/network_diagnostic_types.h"
 #include "sak/network_transfer_runner.h"
 
+#include <QProcess>
+#include <QSignalSpy>
 #include <QtTest/QtTest>
 
 #include <algorithm>
+
+#include <windows.h>
 
 using namespace sak;
 
@@ -27,6 +31,8 @@ private Q_SLOTS:
     void stopServer_withoutStart();
     void isIperf3Available_matchesBundledToolOnDisk();
     void bandwidthTestResult_defaults();
+    void staleFirewallRules_onlyThoseNoLiveSakOwns();
+    void iperfServer_runsInsideAKillOnCloseJob();
 
     // -- composeFirewallRuleName (per-instance uniqueness, B9-16) --
     void firewallRuleName_containsPortAndToken();
@@ -308,6 +314,71 @@ void TestBandwidthTester::networkTransfer_rejectsNegativeTimeout() {
     QVERIFY(!result.success);
     QCOMPARE(result.error_message, QStringLiteral("Invalid timeout_ms: must be positive"));
     QCOMPARE(result.elapsed_ms, 0LL);
+}
+
+// A crash left the iPerf3 server's inbound allow rule behind for good. Rule names now carry the
+// owner's process ID, and a server start sweeps rules whose owner is gone -- never its own, never
+// a live SAK's, never a rule that is not ours.
+void TestBandwidthTester::staleFirewallRules_onlyThoseNoLiveSakOwns() {
+    const QStringList names{
+        QStringLiteral("SAK_Utility_iPerf3_5201_100-0123456789abcdef0123456789abcdef"),  // own
+        QStringLiteral("SAK_Utility_iPerf3_5201_200-0123456789abcdef0123456789abcdef"),  // live
+        QStringLiteral("SAK_Utility_iPerf3_5201_300-0123456789abcdef0123456789abcdef"),  // gone
+        QStringLiteral("SAK_Utility_iPerf3_5201_0123456789abcdef0123456789abcdef"),  // pre-owner
+        QStringLiteral("Some Other App iPerf3 rule"),
+        QStringLiteral("SAK_Utility_iPerf3_5201_300-x; netsh delete")};
+    const auto alive = [](qint64 pid) {
+        return pid == 200;
+    };
+    QCOMPARE(BandwidthTester::staleFirewallRules(names, 100, alive),
+             QStringList({names.at(2), names.at(3)}));
+}
+
+// The server used to be a plain QProcess outside any Job, so a crash of this app left iperf3
+// listening. It now starts inside a kill-on-close Job.
+void TestBandwidthTester::iperfServer_runsInsideAKillOnCloseJob() {
+    BandwidthTester tester;
+    if (!tester.isIperf3Available()) {
+        // No bundled tool, no server to contain: starting must refuse out loud instead.
+        QSignalSpy errors(&tester, &BandwidthTester::errorOccurred);
+        tester.startIperfServer(52'917);
+        QCOMPARE(errors.count(), 1);
+        QVERIFY(!tester.isServerRunning());
+        return;
+    }
+    QSignalSpy started(&tester, &BandwidthTester::serverStarted);
+    tester.startIperfServer(52'917);
+    QTRY_COMPARE_WITH_TIMEOUT(started.count(), 1, 10'000);
+    QProcess* server = nullptr;  // netsh and the rule sweep are QProcess children too
+    for (auto* child : tester.findChildren<QProcess*>()) {
+        if (child->program().endsWith(QStringLiteral("iperf3.exe"), Qt::CaseInsensitive)) {
+            server = child;
+        }
+    }
+    QVERIFY(server != nullptr);
+    // The server's QProcess owns the Job that contains it (and so outlives it by nothing).
+    QVERIFY2(server->findChild<QObject*>(QStringLiteral("iperf3ServerJob")) != nullptr,
+             "the iPerf3 server must be launched inside its own Job");
+    BOOL self_in_job = FALSE;
+    QVERIFY(IsProcessInJob(GetCurrentProcess(), nullptr, &self_in_job));
+    if (self_in_job) {
+        // Under CTest this process is itself in a Job, so the OS-level membership check below
+        // would pass for any child; the ownership check above is what holds here.
+        tester.stopIperfServer();
+        QTRY_VERIFY_WITH_TIMEOUT(!tester.isServerRunning(), 10'000);
+        return;
+    }
+    const qint64 pid = server->processId();
+    QVERIFY(pid > 0);
+    HANDLE handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, static_cast<DWORD>(pid));
+    QVERIFY(handle != nullptr);
+    BOOL in_job = FALSE;
+    const BOOL queried = IsProcessInJob(handle, nullptr, &in_job);
+    CloseHandle(handle);
+    QVERIFY(queried);
+    QVERIFY2(in_job, "the iPerf3 server must run inside a Job");
+    tester.stopIperfServer();
+    QTRY_VERIFY_WITH_TIMEOUT(!tester.isServerRunning(), 10'000);
 }
 
 QTEST_MAIN(TestBandwidthTester)

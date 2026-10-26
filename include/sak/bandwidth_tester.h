@@ -86,6 +86,17 @@ public:
     /// bare "netsh" that a PATH/CWD-planted binary could hijack. Pure and testable.
     [[nodiscard]] static QString composeNetshPath(const QString& systemRoot);
 
+    /// @brief The SAK iPerf3 inbound rules in @p rule_names that no running SAK owns.
+    ///
+    /// A rule name carries its owner's process ID (composeFirewallRuleName with a "<pid>-<uuid>"
+    /// token). A crash used to leave the server and its inbound allow rule behind for good; the
+    /// next server start now deletes rules whose owner is gone (or that predate the owner ID).
+    /// Never names a rule of @p own_pid or of a live SAK (@p sak_alive). Pure; testable.
+    [[nodiscard]] static QStringList staleFirewallRules(
+        const QStringList& rule_names,
+        qint64 own_pid,
+        const std::function<bool(qint64)>& sak_alive);
+
     void cancel();
 
 Q_SIGNALS:
@@ -118,6 +129,8 @@ private:
     void createFirewallRule(const QString& ruleName, uint16_t port);
     void removeFirewallRule(const QString& ruleName);
     void executeFirewallDelete(const QString& ruleName);
+    /// Starts an asynchronous sweep that deletes rules a crashed earlier server left behind.
+    void removeStaleFirewallRules();
     [[nodiscard]] static QString resolveNetshPath();
 };
 
