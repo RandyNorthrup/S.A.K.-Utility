@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/ai/ai_cancellation_token.h"
+#include "sak/ai/ai_conversation_store.h"
 #include "sak/ai/ai_execution_broker.h"
 #include "sak/ai/ai_mcp_session_pool.h"
 #include "sak/ai/ai_orchestrator.h"
@@ -327,7 +328,15 @@ private:
     [[nodiscard]] int contextChipWidth(const QString& chip_text, int max_chip_width) const;
     void addContextListItem(int index, int max_chip_width);
     [[nodiscard]] ContextChipPalette contextChipPalette(ContextItem::Type type) const;
+    /// Lists the sessions OFF the GUI thread (manifests only) and fills the combo when the
+    /// listing lands. A request while one is in flight runs once more after it.
     void reloadSessionPicker();
+    struct SessionListing {
+        QVector<ai::AiSessionInfo> sessions;
+        QString error;
+    };
+    void applySessionListing();
+    void populateSessionPicker(const SessionListing& listing);
     void startNewPersistentSession(const QString& title);
     [[nodiscard]] bool ensurePersistentSession(const QString& title);
     [[nodiscard]] QString workflowTitleForChatRename(const QString& workflow_id) const;
@@ -1033,7 +1042,8 @@ private:
 
     std::unique_ptr<ai::OpenAIResponsesClient> m_client;
     std::unique_ptr<ai::CredentialStore> m_credentialStore;
-    std::unique_ptr<ai::ConversationStore> m_conversationStore;
+    // Shared so a session listing running on the thread pool keeps the store alive.
+    std::shared_ptr<ai::ConversationStore> m_conversationStore;
     std::unique_ptr<ElevationBroker> m_elevationBroker;
     std::unique_ptr<ai::ExecutionBroker> m_executionBroker;
     std::unique_ptr<ai::AiHumanGateStore> m_humanGateStore;
@@ -1093,6 +1103,8 @@ private:
     ai::CancellationToken m_runToken;
     ai::AiRunState m_runState;
     bool m_loadingSessionPicker{false};
+    QFutureWatcher<SessionListing>* m_sessionListWatcher{nullptr};
+    bool m_sessionListReloadQueued{false};
     bool m_restorePointOfferedThisSession{false};
     QStringList m_promptHistory;
     int m_promptHistoryIndex{-1};

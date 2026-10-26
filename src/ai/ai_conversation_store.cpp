@@ -6,6 +6,9 @@
 #include "sak/ai/ai_credential_store.h"
 #include "sak/ai/ai_paths.h"
 #include "sak/ai/ai_secret_redaction.h"
+#include "sak/app_action_guards.h"
+#include "sak/cleanup_worker.h"
+#include "sak/logger.h"
 #include "sak/windows_reserved_names.h"
 
 #include <QDir>
@@ -20,6 +23,7 @@
 #include <QUuid>
 
 #include <algorithm>
+#include <limits>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -46,7 +50,9 @@ constexpr qint64 kMaxSearchAggregateBytes = 128LL * 1024LL * 1024LL;
 constexpr int kMaxSearchSessionsScanned = 250;
 constexpr int kMaxSessionSearchResults = 100;
 constexpr qint64 kMaxManifestBytes = 64LL * 1024LL;
-constexpr int kMaxSessionDirectories = 512;
+// Folders enumerated to find the most recently active kAiSessionListLimit. The retention policy
+// keeps a store far below this; past it the listing refuses rather than enumerate without bound.
+constexpr int kMaxEnumeratedSessionDirectories = 65'536;
 constexpr qsizetype kFallbackTitleMaxChars = 80;
 constexpr qsizetype kOneLineMaxChars = 160;
 constexpr qsizetype kDefaultSearchSnippetMaxChars = 220;
@@ -289,7 +295,8 @@ detail::StoreChildFileLoadPolicy manifestLoadPolicy() {
             .child_type_name = QStringLiteral("session"),
             .file_name = QString::fromLatin1(kManifestFile),
             .max_file_bytes = kMaxManifestBytes,
-            .max_child_directories = kMaxSessionDirectories};
+            .max_child_directories = kAiSessionListLimit,
+            .max_enumerated_child_directories = kMaxEnumeratedSessionDirectories};
 }
 
 detail::StoreFileLoadHooks manifestLoadHooks() {
@@ -300,10 +307,29 @@ detail::StoreFileLoadHooks manifestLoadHooks() {
             .before_leaf_publish = {}};
 }
 
-std::optional<AiSessionInfo> parseManifestBytes(const QString& directory_name,
-                                                const QString& session_path,
-                                                const QByteArray& bytes,
-                                                QStringList* errors) {
+struct ParsedManifest {
+    AiSessionInfo info;
+    bool has_prompt_recorded{false};  // false: a manifest from before has_prompt existed
+};
+
+/// The optional has_prompt field: absent (a legacy manifest) or a boolean. Anything else is a
+/// malformed manifest, refused rather than read as "no prompt".
+bool manifestPromptFieldValid(const QJsonObject& object,
+                              const QString& session_path,
+                              QStringList* errors) {
+    const QJsonValue prompt_value = object.value(QStringLiteral("has_prompt"));
+    if (prompt_value.isUndefined() || prompt_value.isBool()) {
+        return true;
+    }
+    errors->append(
+        QStringLiteral("AI session manifest has_prompt is not a boolean: %1").arg(session_path));
+    return false;
+}
+
+std::optional<ParsedManifest> parseManifestBytes(const QString& directory_name,
+                                                 const QString& session_path,
+                                                 const QByteArray& bytes,
+                                                 QStringList* errors) {
     QJsonParseError parse_error{};
     const QJsonDocument document = QJsonDocument::fromJson(bytes, &parse_error);
     if (parse_error.error != QJsonParseError::NoError || !document.isObject()) {
@@ -333,11 +359,56 @@ std::optional<AiSessionInfo> parseManifestBytes(const QString& directory_name,
             QStringLiteral("AI session manifest timestamps are invalid: %1").arg(session_path));
         return std::nullopt;
     }
-    return AiSessionInfo{.id = id,
-                         .title = title,
-                         .path = session_path,
-                         .created_at = created,
-                         .updated_at = updated};
+    if (!manifestPromptFieldValid(object, session_path, errors)) {
+        return std::nullopt;
+    }
+    const QJsonValue prompt_value = object.value(QStringLiteral("has_prompt"));
+    return ParsedManifest{.info = AiSessionInfo{.id = id,
+                                                .title = title,
+                                                .path = session_path,
+                                                .created_at = created,
+                                                .updated_at = updated,
+                                                .has_prompt = prompt_value.toBool(false)},
+                          .has_prompt_recorded = prompt_value.isBool()};
+}
+
+QByteArray manifestJson(const AiSessionInfo& session) {
+    QJsonObject root;
+    root[QStringLiteral("id")] = session.id;
+    root[QStringLiteral("title")] = session.title;
+    root[QStringLiteral("created_at")] = session.created_at.toString(Qt::ISODateWithMs);
+    root[QStringLiteral("updated_at")] = session.updated_at.toString(Qt::ISODateWithMs);
+    root[QStringLiteral("has_prompt")] = session.has_prompt;
+    return QJsonDocument(root).toJson(QJsonDocument::Indented);
+}
+
+/// A folder this store created: ai_<yyyyMMddHHmmss UTC>_<8 hex>. Retention touches nothing else.
+bool isStoreCreatedSessionName(const QString& name) {
+    static const QRegularExpression kSessionName(QStringLiteral("^ai_[0-9]{14}_[0-9a-f]{8}$"));
+    return kSessionName.match(name).hasMatch();
+}
+
+/// The store-created session folders beyond the newest @p keep, least recently active last
+/// in the listing (a folder's last-write time moves on every manifest write). @p current_id is
+/// never among them.
+QStringList sessionFoldersBeyondRetention(const QString& root_dir,
+                                          int keep,
+                                          const QString& current_id) {
+    const QFileInfoList folders = QDir(root_dir).entryInfoList(
+        QDir::Dirs | QDir::NoDotAndDotDot | QDir::NoSymLinks, QDir::Time);
+    QStringList beyond;
+    int retained = 0;
+    for (const QFileInfo& folder : folders) {
+        if (!isStoreCreatedSessionName(folder.fileName()) || folder.isJunction()) {
+            continue;
+        }
+        if (retained < keep || folder.fileName() == current_id) {
+            ++retained;
+            continue;
+        }
+        beyond.append(folder.absoluteFilePath());
+    }
+    return beyond;
 }
 
 bool ensureDirectory(const QString& path, QString* error_message, const QString& failure_prefix) {
@@ -888,30 +959,47 @@ bool ConversationStore::ensureRoot(QString* error_message) const {
     return false;
 }
 
-QVector<AiSessionInfo> ConversationStore::listSessions(QString* error_message) const {
-    QVector<AiSessionInfo> sessions;
-    QStringList errors;
-    const auto consume = [&sessions, &errors](const QString& directory_name,
+namespace {
+
+/// Every listed manifest, most recently active first; legacy (no has_prompt) entries flagged.
+std::optional<std::vector<ParsedManifest>> listManifests(const QString& root_dir,
+                                                         QStringList* errors) {
+    std::vector<ParsedManifest> manifests;
+    const auto consume = [&manifests, errors](const QString& directory_name,
                                               const QString& session_path,
                                               const QByteArray& bytes) {
-        const auto info = parseManifestBytes(directory_name, session_path, bytes, &errors);
-        if (!info) {
+        auto parsed = parseManifestBytes(directory_name, session_path, bytes, errors);
+        if (!parsed) {
             return false;
         }
-        sessions.append(*info);
+        manifests.push_back(std::move(*parsed));
         return true;
     };
     const detail::StoreChildFileLoadOptions options{.policy = manifestLoadPolicy(),
                                                     .hooks = manifestLoadHooks(),
                                                     .consume = consume};
-    if (!detail::loadStoreChildDirectoryFiles(m_root_dir, options, &errors)) {
-        sessions.clear();
+    if (!detail::loadStoreChildDirectoryFiles(root_dir, options, errors)) {
+        return std::nullopt;
+    }
+    std::ranges::sort(manifests, [](const auto& lhs, const auto& rhs) {
+        return lhs.info.updated_at > rhs.info.updated_at;
+    });
+    return manifests;
+}
+
+}  // namespace
+
+QVector<AiSessionInfo> ConversationStore::listSessions(QString* error_message) const {
+    QVector<AiSessionInfo> sessions;
+    QStringList errors;
+    const auto manifests = listManifests(m_root_dir, &errors);
+    if (!manifests) {
         setError(error_message, errors.join(QStringLiteral("; ")));
         return sessions;
     }
-    std::ranges::sort(sessions, [](const auto& lhs, const auto& rhs) {
-        return lhs.updated_at > rhs.updated_at;
-    });
+    for (const auto& manifest : *manifests) {
+        sessions.append(manifest.info);
+    }
     if (error_message != nullptr) {
         error_message->clear();
     }
@@ -920,16 +1008,118 @@ QVector<AiSessionInfo> ConversationStore::listSessions(QString* error_message) c
 
 QVector<AiSessionInfo> ConversationStore::listPromptedSessions(QString* error_message) const {
     QVector<AiSessionInfo> sessions;
-    const QVector<AiSessionInfo> listed = listSessions(error_message);
-    if (error_message != nullptr && !error_message->isEmpty()) {
+    QStringList errors;
+    const auto manifests = listManifests(m_root_dir, &errors);
+    if (!manifests) {
+        setError(error_message, errors.join(QStringLiteral("; ")));
         return sessions;
     }
-    for (const auto& session : listed) {
-        if (sessionHasUserPrompt(session.path)) {
+    QStringList backfill_errors;
+    for (const auto& manifest : *manifests) {
+        AiSessionInfo session = manifest.info;
+        if (!manifest.has_prompt_recorded) {
+            // Written before has_prompt existed: answer from the transcript this once, then
+            // record it so the next listing reads the manifest alone.
+            session.has_prompt = sessionHasUserPrompt(session.path);
+            QString backfill_error;
+            if (!backfillPromptFlag(session, &backfill_error)) {
+                backfill_errors.append(backfill_error);
+            }
+        }
+        if (session.has_prompt) {
             sessions.append(session);
         }
     }
+    if (!backfill_errors.isEmpty()) {
+        // The listing itself is complete; a manifest that could not be updated is re-read
+        // from its transcript next time. Report it rather than drop it.
+        sak::logWarning("AI session manifest backfill failed: {}",
+                        backfill_errors.join(QStringLiteral("; ")).toStdString());
+    }
+    if (error_message != nullptr) {
+        error_message->clear();
+    }
     return sessions;
+}
+
+bool ConversationStore::backfillPromptFlag(const AiSessionInfo& session,
+                                           QString* error_message) const {
+    // The open session's manifest belongs to writeManifest (openSession already recorded the
+    // flag for it); every other session's manifest is written here, under the store's lock.
+    const QWriteLocker locker(&m_lock);
+    if (session.id == m_current_session.id) {
+        return true;
+    }
+    const QString manifest_path = QDir(session.path).filePath(QString::fromLatin1(kManifestFile));
+    if (sak::pathReparseUnsafe(manifest_path)) {
+        setError(error_message,
+                 QStringLiteral("Refusing manifest backfill through a reparse point: %1")
+                     .arg(manifest_path));
+        return false;
+    }
+    QSaveFile file(manifest_path);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        setError(error_message,
+                 QStringLiteral("Could not write manifest %1: %2")
+                     .arg(manifest_path, file.errorString()));
+        return false;
+    }
+    file.write(manifestJson(session));
+    if (!file.commit()) {
+        setError(error_message,
+                 QStringLiteral("Could not commit manifest %1: %2")
+                     .arg(manifest_path, file.errorString()));
+        return false;
+    }
+    return true;
+}
+
+int ConversationStore::pruneSessionsBeyondRetention(int keep, QString* error_message) const {
+    QString current_id;
+    {
+        const QReadLocker locker(&m_lock);
+        current_id = m_current_session.id;
+    }
+    return pruneSessionFolders(keep, current_id, std::numeric_limits<int>::max(), error_message);
+}
+
+int ConversationStore::pruneSessionFolders(int keep,
+                                           const QString& current_id,
+                                           int max_removals,
+                                           QString* error_message) const {
+    if (error_message != nullptr) {
+        error_message->clear();
+    }
+    if (keep < 1 || m_root_dir.isEmpty() || sak::pathReparseUnsafe(m_root_dir)) {
+        setError(error_message,
+                 QStringLiteral("AI session retention refused for root: %1").arg(m_root_dir));
+        return 0;
+    }
+    int removed = 0;
+    QStringList failures;
+    QStringList beyond = sessionFoldersBeyondRetention(m_root_dir, keep, current_id);
+    // The listing is newest first, so the least recently active are at the end: remove those.
+    if (beyond.size() > max_removals) {
+        beyond = beyond.mid(beyond.size() - max_removals);
+    }
+    for (const QString& folder : beyond) {
+        if (CleanupWorker::deleteFolderTreeVerified(folder)) {
+            ++removed;
+        } else {
+            failures.append(folder);
+        }
+    }
+    if (removed > 0) {
+        sak::logInfo("AI session retention removed {} session(s) beyond the newest {}",
+                     removed,
+                     keep);
+    }
+    if (!failures.isEmpty()) {
+        setError(error_message,
+                 QStringLiteral("AI session retention could not remove: %1")
+                     .arg(failures.join(QStringLiteral("; "))));
+    }
+    return removed;
 }
 
 QStringList ConversationStore::loadTranscriptLines(const QString& session_id,
@@ -1071,11 +1261,23 @@ bool ConversationStore::startSession(const QString& title, QString* error_messag
     m_current_session.path = path;
     m_current_session.created_at = QDateTime::currentDateTimeUtc();
     m_current_session.updated_at = m_current_session.created_at;
+    m_current_session.has_prompt = false;  // never the previous session's flag
     if (!writeManifest(error_message)) {
-        m_current_session = previous;  // never present a session that is not on disk
+        m_current_session = previous;      // never present a session that is not on disk
         return false;
     }
     clearArtifactDirectoryPins();
+    QString retention_error;
+    // The write lock is held here, so the id is passed in: the public entry point's read lock
+    // on the same QReadWriteLock would wait on this thread's own write lock forever.
+    (void)pruneSessionFolders(kAiSessionRetentionCount,
+                              m_current_session.id,
+                              kAiSessionPrunePerStartLimit,
+                              &retention_error);
+    if (!retention_error.isEmpty()) {
+        // The new session exists; an old one that could not be removed is retried next time.
+        sak::logWarning("{}", retention_error.toStdString());
+    }
     return true;
 }
 
@@ -1089,7 +1291,7 @@ bool ConversationStore::openSession(const QString& session_id, QString* error_me
         return false;
     }
     QStringList errors;
-    std::optional<AiSessionInfo> info;
+    std::optional<ParsedManifest> info;
     const auto consume = [&info, &errors](const QString& directory_name,
                                           const QString& session_path,
                                           const QByteArray& bytes) {
@@ -1113,7 +1315,17 @@ bool ConversationStore::openSession(const QString& session_id, QString* error_me
         return false;
     }
     clearArtifactDirectoryPins();
-    m_current_session = *info;
+    m_current_session = info->info;
+    if (!info->has_prompt_recorded) {
+        // A manifest from before has_prompt existed: answer it from the transcript once and
+        // record it, so the session picker never needs this transcript again.
+        m_current_session.has_prompt = sessionHasUserPrompt(m_current_session.path);
+        QString backfill_error;
+        if (!writeManifest(&backfill_error)) {
+            sak::logWarning("AI session manifest backfill failed: {}",
+                            backfill_error.toStdString());
+        }
+    }
     return true;
 }
 
@@ -1235,6 +1447,7 @@ bool ConversationStore::appendTranscript(const QString& role,
         return false;
     }
     m_current_session.updated_at = QDateTime::currentDateTimeUtc();
+    m_current_session.has_prompt = m_current_session.has_prompt || transcriptLineIsUserPrompt(obj);
     return writeManifest(error_message);
 }
 
@@ -1570,12 +1783,6 @@ bool ConversationStore::writeManifest(QString* error_message) const {
         return false;
     }
 
-    QJsonObject root;
-    root[QStringLiteral("id")] = m_current_session.id;
-    root[QStringLiteral("title")] = m_current_session.title;
-    root[QStringLiteral("created_at")] = m_current_session.created_at.toString(Qt::ISODateWithMs);
-    root[QStringLiteral("updated_at")] = m_current_session.updated_at.toString(Qt::ISODateWithMs);
-
     const QString manifest_path =
         QDir(currentSessionPath()).filePath(QString::fromLatin1(kManifestFile));
     if (g_before_manifest_write_hook) {
@@ -1588,7 +1795,7 @@ bool ConversationStore::writeManifest(QString* error_message) const {
         }
         return false;
     }
-    file.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
+    file.write(manifestJson(m_current_session));
     if (!file.commit()) {
         if (error_message != nullptr) {
             *error_message =

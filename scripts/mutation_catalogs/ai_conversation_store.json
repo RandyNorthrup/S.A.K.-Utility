@@ -61,12 +61,12 @@
       "why": "malformed transcript load, latest-response, and search tests require invalid JSON to return no partial data with an exact error."
     },
     {
-      "id": "session-directory-cap-off-by-one",
+      "id": "session-list-keeps-least-recently-active",
       "file": "src/ai/ai_store_file_loader.cpp",
-      "find": "    if (result->names.size() >= policy.max_child_directories) {",
-      "replace": "    if (result->names.size() > policy.max_child_directories) {",
+      "find": "        return children->last_write_times.at(lhs) > children->last_write_times.at(rhs);",
+      "replace": "        return children->last_write_times.at(lhs) < children->last_write_times.at(rhs);",
       "expect": "killed",
-      "why": "listSessions_capsDirectChildEnumerationWithoutPartialResults creates exactly one legitimate session plus 512 filler directories and requires the 513th direct child to refuse the entire listing."
+      "why": "listSessions_listsMostRecentlyActiveAboveTheListLimit creates 512 older filler folders before the live session and requires the 512 most recently written children, which include the live session, to be the ones listed."
     },
     {
       "id": "session-manifest-byte-cap-doubled",

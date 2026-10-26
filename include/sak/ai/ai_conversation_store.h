@@ -25,12 +25,31 @@ namespace sak::ai {
 
 inline constexpr int kDefaultMemoryTextMaxChars = 16'000;
 
+/// The session picker lists at most this many sessions: the most recently active ones (by the
+/// session folder's last-write time, which every manifest write moves). More folders than this
+/// no longer empties the list.
+inline constexpr int kAiSessionListLimit = 512;
+
+/// Retention policy (documented default): when a new chat session is started, sessions beyond
+/// the newest kAiSessionRetentionCount (least recently active first) are deleted with their
+/// transcripts and artifacts. The session being started and the one open are never deleted,
+/// and only folders this store created (named ai_<UTC timestamp>_<8 hex>) are touched.
+inline constexpr int kAiSessionRetentionCount = 500;
+/// Starting a chat runs on the GUI thread, so one start removes at most this many old folders;
+/// a store far over the limit converges over later starts instead of freezing the window once.
+inline constexpr int kAiSessionPrunePerStartLimit = 8;
+static_assert(kAiSessionRetentionCount <= kAiSessionListLimit,
+              "retained sessions must all be listable");
+
 struct AiSessionInfo {
     QString id;
     QString title;
     QString path;
     QDateTime created_at;
     QDateTime updated_at;
+    /// Whether the transcript holds a user prompt. Kept in the manifest so the session picker
+    /// reads manifests only and never re-parses a transcript.
+    bool has_prompt{false};
 };
 
 struct AiSessionSearchResult {
@@ -55,8 +74,15 @@ public:
 
     [[nodiscard]] bool ensureRoot(QString* error_message = nullptr) const;
     [[nodiscard]] QVector<AiSessionInfo> listSessions(QString* error_message = nullptr) const;
+    /// Sessions whose transcript holds a user prompt, from the manifests alone. A manifest
+    /// written before has_prompt existed is answered from its transcript once and then has the
+    /// field written back, so later listings never parse it again.
     [[nodiscard]] QVector<AiSessionInfo> listPromptedSessions(
         QString* error_message = nullptr) const;
+    /// Applies the retention policy (kAiSessionRetentionCount); startSession runs it. Returns
+    /// how many session folders were removed; failures are reported, never fatal.
+    int pruneSessionsBeyondRetention(int keep = kAiSessionRetentionCount,
+                                     QString* error_message = nullptr) const;
     [[nodiscard]] QStringList loadTranscriptLines(const QString& session_id,
                                                   QString* error_message = nullptr) const;
     [[nodiscard]] QString latestAssistantResponseId(const QString& session_id,
@@ -138,6 +164,14 @@ private:
     [[nodiscard]] QString sessionPath(const QString& session_id) const;
     [[nodiscard]] QString currentSessionPath() const;
     [[nodiscard]] bool writeManifest(QString* error_message = nullptr) const;
+    /// Retention core; @p current_id is never removed. Takes no lock on m_lock.
+    int pruneSessionFolders(int keep,
+                            const QString& current_id,
+                            int max_removals,
+                            QString* error_message) const;
+    /// Backfills has_prompt into a legacy manifest that lacks it.
+    [[nodiscard]] bool backfillPromptFlag(const AiSessionInfo& session,
+                                          QString* error_message) const;
     [[nodiscard]] bool appendJsonLine(const QString& filename,
                                       QJsonObject object,
                                       QString* error_message = nullptr) const;

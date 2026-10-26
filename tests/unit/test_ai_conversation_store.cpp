@@ -25,7 +25,8 @@ private Q_SLOTS:
     void cleanup();
     void startSession_writesManifestAndListsSession();
     void openSession_refusesSessionDirectoryJunction();
-    void listSessions_capsDirectChildEnumerationWithoutPartialResults();
+    void listSessions_listsMostRecentlyActiveAboveTheListLimit();
+    void childLoader_keepsNewestAndRefusesPastTheEnumerationCeiling();
     void listSessions_rejectsOversizedManifestWithoutPartialResults();
     void openSession_rejectsManifestIdThatDiffersFromDirectory();
     void openSession_refusesManifestParentSwap();
@@ -35,6 +36,12 @@ private Q_SLOTS:
     void latestAssistantResponseId_returnsLastAssistantMetadata();
     void latestAssistantResponseId_rejectsMalformedTranscript();
     void listPromptedSessions_filtersUnpromptedSessions();
+    void listPromptedSessions_readsManifestsNotTranscripts();
+    void listPromptedSessions_backfillsALegacyManifestOnce();
+    void openSession_recordsPromptFlagForALegacyManifest();
+    void pruneSessionsBeyondRetention_removesLeastRecentlyActive();
+    void startSession_appliesTheRetentionDefault();
+    void startSession_boundsTheRemovalsPerStart();
     void clearCurrentSession_preventsAccidentalWrites();
     void writeUsage_persistsUsageJson();
     void writeUsage_requiresActiveSession();
@@ -227,24 +234,67 @@ void AiConversationStoreTests::openSession_refusesSessionDirectoryJunction() {
     QVERIFY(store.currentSessionId().isEmpty());
 }
 
-void AiConversationStoreTests::listSessions_capsDirectChildEnumerationWithoutPartialResults() {
+// Above 512 session folders the whole listing used to fail and the picker went empty. Now the
+// most recently active 512 are listed: older folders (here 512 fillers, created first) drop out
+// and the session in use is still there.
+void AiConversationStoreTests::listSessions_listsMostRecentlyActiveAboveTheListLimit() {
     QTemporaryDir root;
     QVERIFY(root.isValid());
-    sak::ai::ConversationStore store(root.path());
-    QString error;
-    QVERIFY(store.startSession(QStringLiteral("Legitimate"), &error));
     for (int index = 0; index < kSessionDirectoryCap; ++index) {
         const QString filler = QDir(root.path()).filePath(QStringLiteral("filler_%1").arg(index));
         QVERIFY2(QDir().mkpath(filler), qPrintable(filler));
     }
+    sak::ai::ConversationStore store(root.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Legitimate"), &error));
 
     const auto sessions = store.listSessions(&error);
 
-    QVERIFY(sessions.isEmpty());
-    QCOMPARE(error,
-             QStringLiteral("AI session root has more than %1 session directories: %2")
-                 .arg(kSessionDirectoryCap)
-                 .arg(root.path()));
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(sessions.size(), 1);
+    QCOMPARE(sessions.first().id, store.currentSessionId());
+    QCOMPARE(sak::ai::kAiSessionListLimit, kSessionDirectoryCap);
+}
+
+// The loader under the session list, with a small policy: it loads only the most recently
+// written max_child_directories children, and past max_enumerated_child_directories it still
+// refuses the whole enumeration with no partial results.
+void AiConversationStoreTests::childLoader_keepsNewestAndRefusesPastTheEnumerationCeiling() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    for (const QString& name :
+         {QStringLiteral("old"), QStringLiteral("mid"), QStringLiteral("new")}) {
+        const QString child = QDir(root.path()).filePath(name);
+        QVERIFY(QDir().mkpath(child));
+        QVERIFY(writeBytes(QDir(child).filePath(QStringLiteral("record.json")), name.toUtf8()));
+        QTest::qWait(20);  // distinct folder write times
+    }
+    QStringList loaded;
+    const sak::ai::detail::StoreChildFileLoadOptions options{
+        .policy = {.store_name = QStringLiteral("Test"),
+                   .child_type_name = QStringLiteral("record"),
+                   .file_name = QStringLiteral("record.json"),
+                   .max_file_bytes = 1024,
+                   .max_child_directories = 2,
+                   .max_enumerated_child_directories = 3},
+        .hooks = {},
+        .consume = [&loaded](const QString& directory, const QString&, const QByteArray&) {
+            loaded.append(directory);
+            return true;
+        }};
+    QStringList errors;
+    QVERIFY2(sak::ai::detail::loadStoreChildDirectoryFiles(root.path(), options, &errors),
+             qPrintable(errors.join(QStringLiteral("; "))));
+    loaded.sort();
+    QCOMPARE(loaded, (QStringList{QStringLiteral("mid"), QStringLiteral("new")}));
+
+    QVERIFY(QDir().mkpath(QDir(root.path()).filePath(QStringLiteral("fourth"))));
+    loaded.clear();
+    errors.clear();
+    QVERIFY(!sak::ai::detail::loadStoreChildDirectoryFiles(root.path(), options, &errors));
+    QVERIFY(loaded.isEmpty());
+    QCOMPARE(errors.join(QStringLiteral("; ")),
+             QStringLiteral("Test root has more than 3 record directories: %1").arg(root.path()));
 }
 
 void AiConversationStoreTests::listSessions_rejectsOversizedManifestWithoutPartialResults() {
@@ -505,6 +555,161 @@ void AiConversationStoreTests::listPromptedSessions_filtersUnpromptedSessions() 
     QVERIFY(std::any_of(with_api_role.cbegin(), with_api_role.cend(), [&](const auto& session) {
         return session.id == prompted_id;
     }));
+}
+
+// The picker used to re-parse every transcript.jsonl (up to 32 MiB each) to find the prompted
+// sessions. The manifest now records has_prompt, so the listing never opens a transcript: a
+// prompted session whose transcript is gone is still listed from its manifest.
+void AiConversationStoreTests::listPromptedSessions_readsManifestsNotTranscripts() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Prompted"), &error));
+    const QString prompted_id = store.currentSessionId();
+    const QString prompted_path = store.currentSessionInfo().path;
+    QVERIFY(store.appendTranscript(QStringLiteral("You"), QStringLiteral("run scan"), {}, &error));
+    QVERIFY(store.startSession(QStringLiteral("Other"), &error));
+
+    QFile manifest(QDir(prompted_path).filePath(QStringLiteral("manifest.json")));
+    QVERIFY(manifest.open(QIODevice::ReadOnly));
+    QCOMPARE(
+        QJsonDocument::fromJson(manifest.readAll()).object().value(QStringLiteral("has_prompt")),
+        QJsonValue(true));
+    manifest.close();
+    QVERIFY(QFile::remove(QDir(prompted_path).filePath(QStringLiteral("transcript.jsonl"))));
+
+    const auto sessions = store.listPromptedSessions(&error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(sessions.size(), 1);
+    QCOMPARE(sessions.first().id, prompted_id);
+    QVERIFY(sessions.first().has_prompt);
+}
+
+// A manifest written before has_prompt existed is answered from its transcript ONCE, and the
+// flag is written back so the next listing reads the manifest alone.
+void AiConversationStoreTests::listPromptedSessions_backfillsALegacyManifestOnce() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString id = QStringLiteral("ai_20260101000000_0123abcd");
+    const QString path = QDir(temp.path()).filePath(id);
+    QVERIFY(QDir().mkpath(path));
+    QVERIFY(writeBytes(QDir(path).filePath(QStringLiteral("manifest.json")),
+                       manifestBytes(id, QStringLiteral("Legacy"))));
+    const QByteArray line =
+        QJsonDocument(QJsonObject{{QStringLiteral("schema_version"), 1},
+                                  {QStringLiteral("role"), QStringLiteral("You")},
+                                  {QStringLiteral("text"), QStringLiteral("old prompt")}})
+            .toJson(QJsonDocument::Compact) +
+        '\n';
+    QVERIFY(writeBytes(QDir(path).filePath(QStringLiteral("transcript.jsonl")), line));
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+
+    const auto first = store.listPromptedSessions(&error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(first.size(), 1);
+    QFile manifest(QDir(path).filePath(QStringLiteral("manifest.json")));
+    QVERIFY(manifest.open(QIODevice::ReadOnly));
+    const QJsonObject written = QJsonDocument::fromJson(manifest.readAll()).object();
+    manifest.close();
+    QCOMPARE(written.value(QStringLiteral("has_prompt")), QJsonValue(true));
+    QCOMPARE(written.value(QStringLiteral("title")).toString(), QStringLiteral("Legacy"));
+
+    QVERIFY(QFile::remove(QDir(path).filePath(QStringLiteral("transcript.jsonl"))));
+    const auto second = store.listPromptedSessions(&error);
+    QCOMPARE(second.size(), 1);
+    QCOMPARE(second.first().id, id);
+}
+
+void AiConversationStoreTests::openSession_recordsPromptFlagForALegacyManifest() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString id = QStringLiteral("ai_20260101000000_4567cdef");
+    const QString path = QDir(temp.path()).filePath(id);
+    QVERIFY(QDir().mkpath(path));
+    QVERIFY(writeBytes(QDir(path).filePath(QStringLiteral("manifest.json")),
+                       manifestBytes(id, QStringLiteral("Legacy"))));
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY2(store.openSession(id, &error), qPrintable(error));
+    QFile manifest(QDir(path).filePath(QStringLiteral("manifest.json")));
+    QVERIFY(manifest.open(QIODevice::ReadOnly));
+    QCOMPARE(
+        QJsonDocument::fromJson(manifest.readAll()).object().value(QStringLiteral("has_prompt")),
+        QJsonValue(false));
+}
+
+// Retention: beyond the newest N (least recently active first) store-created session folders
+// are removed; the open session and folders the store did not create are never touched.
+void AiConversationStoreTests::pruneSessionsBeyondRetention_removesLeastRecentlyActive() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QStringList ids;
+    for (int index = 0; index < 4; ++index) {
+        QVERIFY(store.startSession(QStringLiteral("Session %1").arg(index), &error));
+        ids.append(store.currentSessionId());
+        QTest::qWait(20);  // distinct folder write times
+    }
+    const QString foreign = QDir(temp.path()).filePath(QStringLiteral("not_a_session"));
+    QVERIFY(QDir().mkpath(foreign));
+
+    QCOMPARE(store.pruneSessionsBeyondRetention(2, &error), 2);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+
+    QVERIFY(!QFileInfo::exists(QDir(temp.path()).filePath(ids.at(0))));
+    QVERIFY(!QFileInfo::exists(QDir(temp.path()).filePath(ids.at(1))));
+    QVERIFY(QFileInfo::exists(QDir(temp.path()).filePath(ids.at(2))));
+    QVERIFY(QFileInfo::exists(QDir(temp.path()).filePath(ids.at(3))));
+    QVERIFY(QFileInfo::exists(foreign));
+    QCOMPARE(store.currentSessionId(), ids.at(3));
+}
+
+// The documented default (kAiSessionRetentionCount) is what startSession applies.
+void AiConversationStoreTests::startSession_appliesTheRetentionDefault() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    for (int index = 0; index < sak::ai::kAiSessionRetentionCount; ++index) {
+        const QString name = QStringLiteral("ai_20250101%1_%2")
+                                 .arg(index, 6, 10, QLatin1Char('0'))
+                                 .arg(static_cast<uint>(index), 8, 16, QLatin1Char('0'));
+        QVERIFY(QDir().mkpath(QDir(temp.path()).filePath(name)));
+    }
+    const QString oldest = QDir(temp.path()).filePath(QStringLiteral("ai_20250101000000_00000000"));
+    QVERIFY(QFileInfo::exists(oldest));
+    QTest::qWait(20);
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Newest"), &error));
+    const QStringList remaining =
+        QDir(temp.path()).entryList({QStringLiteral("ai_*")}, QDir::Dirs | QDir::NoDotAndDotDot);
+    QCOMPARE(remaining.size(), sak::ai::kAiSessionRetentionCount);
+    QVERIFY(remaining.contains(store.currentSessionId()));
+}
+
+// Starting a chat runs on the GUI thread: a store far over the retention count loses at most
+// kAiSessionPrunePerStartLimit folders per start (the least recently active), not all at once.
+void AiConversationStoreTests::startSession_boundsTheRemovalsPerStart() {
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    constexpr int kOver = 20;
+    const int existing = sak::ai::kAiSessionRetentionCount + kOver;
+    for (int index = 0; index < existing; ++index) {
+        const QString name = QStringLiteral("ai_20250101%1_%2")
+                                 .arg(index, 6, 10, QLatin1Char('0'))
+                                 .arg(static_cast<uint>(index), 8, 16, QLatin1Char('0'));
+        QVERIFY(QDir().mkpath(QDir(temp.path()).filePath(name)));
+    }
+    QTest::qWait(20);
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Newest"), &error));
+    const QStringList remaining =
+        QDir(temp.path()).entryList({QStringLiteral("ai_*")}, QDir::Dirs | QDir::NoDotAndDotDot);
+    QCOMPARE(remaining.size(), existing + 1 - sak::ai::kAiSessionPrunePerStartLimit);
+    QVERIFY(remaining.contains(store.currentSessionId()));
 }
 
 void AiConversationStoreTests::clearCurrentSession_preventsAccidentalWrites() {

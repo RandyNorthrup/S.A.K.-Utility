@@ -480,7 +480,9 @@ bool validChildPolicy(const StoreChildFileLoadPolicy& policy, QStringList* error
     const QString file_leaf = QFileInfo(policy.file_name).fileName();
     if (!policy.store_name.isEmpty() && !policy.child_type_name.isEmpty() &&
         !policy.file_name.isEmpty() && file_leaf == policy.file_name && policy.max_file_bytes > 0 &&
-        policy.max_file_bytes <= kMaxReadFileBytes && policy.max_child_directories > 0) {
+        policy.max_file_bytes <= kMaxReadFileBytes && policy.max_child_directories > 0 &&
+        (policy.max_enumerated_child_directories == 0 ||
+         policy.max_enumerated_child_directories >= policy.max_child_directories)) {
         return true;
     }
     appendError(errors, QStringLiteral("Invalid AI child-store file-load policy"));
@@ -609,8 +611,37 @@ OpenedChildDirectory openPinnedChildDirectory(const ChildDirectoryOpenRequest& r
 
 struct NativeChildDirectories {
     QStringList names;
+    QVector<quint64> last_write_times;  // Parallel to names: each child's ftLastWriteTime.
     bool capped{false};
 };
+
+int childEnumerationLimit(const StoreChildFileLoadPolicy& policy) {
+    return policy.max_enumerated_child_directories > 0 ? policy.max_enumerated_child_directories
+                                                       : policy.max_child_directories;
+}
+
+/// Keep only the @p keep most recently written children, newest first. A no-op when there
+/// are no more than that.
+void keepMostRecentlyWritten(NativeChildDirectories* children, int keep) {
+    if (children->names.size() <= keep) {
+        return;
+    }
+    QVector<qsizetype> order(children->names.size());
+    for (qsizetype index = 0; index < order.size(); ++index) {
+        order[index] = index;
+    }
+    std::ranges::stable_sort(order, [children](qsizetype lhs, qsizetype rhs) {
+        return children->last_write_times.at(lhs) > children->last_write_times.at(rhs);
+    });
+    QStringList kept;
+    QVector<quint64> kept_times;
+    for (qsizetype index = 0; index < keep; ++index) {
+        kept.append(children->names.at(order.at(index)));
+        kept_times.append(children->last_write_times.at(order.at(index)));
+    }
+    children->names = std::move(kept);
+    children->last_write_times = std::move(kept_times);
+}
 
 bool collectChildDirectoryName(const WIN32_FIND_DATAW& data,
                                const StoreChildFileLoadPolicy& policy,
@@ -620,11 +651,15 @@ bool collectChildDirectoryName(const WIN32_FIND_DATAW& data,
         name == QLatin1String("..")) {
         return true;
     }
-    if (result->names.size() >= policy.max_child_directories) {
+    if (result->names.size() >= childEnumerationLimit(policy)) {
         result->capped = true;
         return false;
     }
     result->names.append(name);
+    ULARGE_INTEGER last_write{};
+    last_write.LowPart = data.ftLastWriteTime.dwLowDateTime;
+    last_write.HighPart = data.ftLastWriteTime.dwHighDateTime;
+    result->last_write_times.append(last_write.QuadPart);
     return true;
 }
 
@@ -692,7 +727,6 @@ std::optional<NativeChildDirectories> enumerateNativeChildDirectories(
             return std::nullopt;
         }
     }
-    std::sort(result.names.begin(), result.names.end());
     return result;
 }
 
@@ -819,7 +853,7 @@ void appendChildDirectoryCapError(const QString& root_directory,
     appendError(errors,
                 QStringLiteral("%1 root has more than %2 %3 directories: %4")
                     .arg(policy.store_name)
-                    .arg(policy.max_child_directories)
+                    .arg(childEnumerationLimit(policy))
                     .arg(policy.child_type_name)
                     .arg(root_directory));
 }
@@ -1074,8 +1108,7 @@ bool loadStoreChildDirectoryFiles(const QString& root_directory,
     if (root.result != StoreChildFileLoadResult::Loaded || !root.handle) {
         return false;
     }
-    const auto children =
-        enumerateNativeChildDirectories(root.handle->get(), options.policy, errors);
+    auto children = enumerateNativeChildDirectories(root.handle->get(), options.policy, errors);
     if (!children) {
         return false;
     }
@@ -1083,8 +1116,11 @@ bool loadStoreChildDirectoryFiles(const QString& root_directory,
         appendChildDirectoryCapError(root_directory, options.policy, errors);
         return false;
     }
+    keepMostRecentlyWritten(&*children, options.policy.max_child_directories);
+    QStringList names = children->names;
+    std::sort(names.begin(), names.end());
     const ChildFileLoadContext context{root.handle->get(), root_directory, options, errors};
-    for (const QString& child_name : children->names) {
+    for (const QString& child_name : names) {
         const StoreChildFileLoadResult loaded = loadNamedChildFile(context, child_name);
         if (loaded == StoreChildFileLoadResult::Missing) {
             continue;

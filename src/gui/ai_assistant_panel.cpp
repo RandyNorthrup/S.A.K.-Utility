@@ -9283,15 +9283,45 @@ void AiAssistantPanel::reloadSessionPicker() {
     if ((m_sessionCombo == nullptr) || !m_conversationStore) {
         return;
     }
+    if (m_sessionListWatcher != nullptr && m_sessionListWatcher->isRunning()) {
+        m_sessionListReloadQueued = true;
+        return;
+    }
+    if (m_sessionListWatcher == nullptr) {
+        m_sessionListWatcher = new QFutureWatcher<SessionListing>(this);
+        connect(m_sessionListWatcher,
+                &QFutureWatcher<SessionListing>::finished,
+                this,
+                &AiAssistantPanel::applySessionListing);
+    }
+    // The listing reads every session manifest; it runs on the thread pool, which holds the
+    // store by shared ownership and never touches the panel.
+    m_sessionListWatcher->setFuture(QtConcurrent::run([store = m_conversationStore]() {
+        SessionListing listing;
+        listing.sessions = store->listPromptedSessions(&listing.error);
+        return listing;
+    }));
+}
 
+void AiAssistantPanel::applySessionListing() {
+    populateSessionPicker(m_sessionListWatcher->result());
+    if (m_sessionListReloadQueued) {
+        m_sessionListReloadQueued = false;
+        reloadSessionPicker();
+    }
+}
+
+void AiAssistantPanel::populateSessionPicker(const SessionListing& listing) {
+    if ((m_sessionCombo == nullptr) || !m_conversationStore) {
+        return;
+    }
     const QString current_id = m_conversationStore->currentSessionId();
     m_loadingSessionPicker = true;
     m_sessionCombo->clear();
-    QString session_list_error;
-    const auto sessions = m_conversationStore->listPromptedSessions(&session_list_error);
-    if (!session_list_error.isEmpty()) {
-        appendLocalEvent(tr("AI session list unavailable: %1").arg(session_list_error));
+    if (!listing.error.isEmpty()) {
+        appendLocalEvent(tr("AI session list unavailable: %1").arg(listing.error));
     }
+    const auto& sessions = listing.sessions;
     int selected_index = -1;
     if (current_id.isEmpty()) {
         const QString draft_title =

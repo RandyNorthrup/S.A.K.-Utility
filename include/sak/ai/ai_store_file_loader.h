@@ -49,7 +49,13 @@ struct StoreChildFileLoadPolicy {
     QString child_type_name;
     QString file_name;
     qint64 max_file_bytes{0};
+    /// How many children are loaded. With max_enumerated_child_directories unset, more
+    /// children than this refuses the whole enumeration.
     int max_child_directories{0};
+    /// When set (it must be >= max_child_directories), up to this many children are
+    /// enumerated and only the max_child_directories most recently written ones (by the child
+    /// directory's last-write time) are loaded; more than this many still refuses.
+    int max_enumerated_child_directories{0};
 };
 
 enum class StoreChildFileLoadResult {

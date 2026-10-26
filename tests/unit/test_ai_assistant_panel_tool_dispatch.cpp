@@ -8049,6 +8049,36 @@ private Q_SLOTS:
         QCOMPARE(activities.first().kind, QStringLiteral("tool_call"));
     }
 
+    // The session picker used to read every manifest and re-parse every transcript on the GUI
+    // thread, at startup and after every turn. It now lists manifests on the thread pool and
+    // fills the combo when the listing lands.
+    void sessionPickerListsSessionsOffTheGuiThread() {
+        QTemporaryDir root;
+        QVERIFY(root.isValid());
+        AiAssistantPanel panel;
+        QVERIFY(panel.m_sessionCombo != nullptr);
+        QTRY_VERIFY(panel.m_sessionListWatcher == nullptr ||
+                    !panel.m_sessionListWatcher->isRunning());
+        panel.m_conversationStore = std::make_shared<ai::ConversationStore>(root.path());
+        QString error;
+        QVERIFY(panel.m_conversationStore->startSession(QStringLiteral("Listed chat"), &error));
+        QVERIFY(panel.m_conversationStore->appendTranscript(
+            QStringLiteral("You"), QStringLiteral("run scan"), {}, &error));
+
+        std::atomic<QThread*> reader{nullptr};
+        ai::ConversationStore::setBeforeManifestFileReadHookForTesting(
+            [&reader](const QString&) { reader.store(QThread::currentThread()); });
+        const auto unhook = qScopeGuard(
+            []() { ai::ConversationStore::setBeforeManifestFileReadHookForTesting({}); });
+
+        panel.reloadSessionPicker();
+        QTRY_VERIFY(reader.load() != nullptr);
+        QVERIFY(reader.load() != QThread::currentThread());
+        QTRY_COMPARE(panel.m_sessionCombo->count(), 1);
+        QVERIFY(panel.m_sessionCombo->itemText(0).startsWith(QStringLiteral("Listed chat")));
+        QTRY_VERIFY(!panel.m_sessionListWatcher->isRunning());
+    }
+
     // Wave 3: the sak_skill tool lists the catalog (no bodies), loads a full body
     // on demand by id, and reports an error for an unknown id.
     void skillToolListsLoadsAndRejectsUnknown() {
