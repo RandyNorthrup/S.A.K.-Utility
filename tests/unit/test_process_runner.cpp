@@ -41,6 +41,10 @@ private Q_SLOTS:
     void runProcess_cancellation();
     void runProcess_cancellationKillsChild();
     void unprovedCleanupIsReportedAndRetained();
+    void waitForJobEmpty_letsTheRelaunchedChildFinish();
+    void waitForJobEmpty_reportsAndStopsAFamilyThatOutlivesTheWait();
+    void waitForJobEmpty_cancelStopsTheFamily();
+    void installersAndUninstallersWaitForTheirFamily();
 
     // runPowerShell
     void runPowerShell_simpleScript();
@@ -80,13 +84,39 @@ QString readRepoSource(const QString& relative_path) {
     return QString::fromUtf8(file.readAll());
 }
 
-QString sleepingChildScript(const QString& parent_tail) {
+QString sleepingChildScript(const QString& parent_tail, int child_seconds = 30) {
     return QStringLiteral(
                "$child = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') "
                "-WindowStyle Hidden -ArgumentList @('-NoProfile','-NonInteractive',"
-               "'-Command','Start-Sleep -Seconds 30') -PassThru; "
+               "'-Command','Start-Sleep -Seconds %2') -PassThru; "
                "Write-Output ('CHILD_PID=' + $child.Id); %1")
-        .arg(parent_tail);
+        .arg(parent_tail)
+        .arg(child_seconds);
+}
+
+void captureChildGeneration(const QString& chunk,
+                            bool is_stderr,
+                            QString* transcript,
+                            std::optional<Generation>* generation,
+                            QString* error);
+
+/// A program that starts a child which outlives it by @p child_seconds, then exits 0 at once --
+/// the shape of an NSIS uninstaller relaunching itself from %TEMP%.
+sak::ProcessStreamingRequest relaunchingProgram(int child_seconds,
+                                                QString* transcript,
+                                                std::optional<Generation>* child,
+                                                QString* error) {
+    sak::ProcessStreamingRequest request;
+    request.program = sak::systemPowerShellPath();
+    request.args = {QStringLiteral("-NoProfile"),
+                    QStringLiteral("-NonInteractive"),
+                    QStringLiteral("-Command"),
+                    sleepingChildScript(QStringLiteral("exit 0"), child_seconds)};
+    request.timeout_ms = 60'000;
+    request.on_output = [transcript, child, error](const QString& chunk, bool is_stderr) {
+        captureChildGeneration(chunk, is_stderr, transcript, child, error);
+    };
+    return request;
 }
 
 void captureChildGeneration(const QString& chunk,
@@ -238,6 +268,74 @@ void ProcessRunnerTests::runProcess_primaryExitWithLiveDescendantFailsAndCleansJ
              qPrintable(result.std_err));
     QVERIFY(!result.completedSuccessfully());
     const auto stopped = child_generation->waitForExit();
+    QVERIFY2(stopped.has_value(), qPrintable(sak::testfixtures::mcp::failureDiagnostic(stopped)));
+    QCOMPARE(*stopped, sak::kWindowsProcessJobFailureExitCode);
+}
+
+// An NSIS uninstaller copies itself to %TEMP%, relaunches and exits at once; the run used to stop
+// that relaunched child about 1 s later and report the uninstall failed. Under WaitForJobEmpty
+// the child finishes its work and the run reports the program's own exit code.
+void ProcessRunnerTests::waitForJobEmpty_letsTheRelaunchedChildFinish() {
+    QString transcript;
+    QString error;
+    std::optional<Generation> child;
+    auto request = relaunchingProgram(3, &transcript, &child, &error);
+    request.options = {.child_policy = sak::ChildProcessPolicy::WaitForJobEmpty,
+                       .job_wait_ms = 60'000};
+
+    const auto result = sak::runProcessStreaming(request);
+    QVERIFY2(child.has_value(), qPrintable(error.isEmpty() ? transcript : error));
+    QVERIFY2(result.completedSuccessfully(), qPrintable(result.std_err));
+    QVERIFY(!result.descendants_stopped);
+    QCOMPARE(result.exit_code, 0);
+    const auto exited = child->waitForExit();
+    QVERIFY2(exited.has_value(), qPrintable(sak::testfixtures::mcp::failureDiagnostic(exited)));
+    QCOMPARE(*exited, 0);  // it finished on its own, it was not stopped by the Job
+}
+
+// The wait is bounded, and running out of it is said out loud: the family is stopped (nothing
+// outlives the Job) and descendants_stopped plus std_err report it, with the root's exit code.
+void ProcessRunnerTests::waitForJobEmpty_reportsAndStopsAFamilyThatOutlivesTheWait() {
+    QString transcript;
+    QString error;
+    std::optional<Generation> child;
+    auto request = relaunchingProgram(30, &transcript, &child, &error);
+    request.options = {.child_policy = sak::ChildProcessPolicy::WaitForJobEmpty,
+                       .job_wait_ms = 2000};
+
+    const auto result = sak::runProcessStreaming(request);
+    QVERIFY2(child.has_value(), qPrintable(error.isEmpty() ? transcript : error));
+    QVERIFY(result.descendants_stopped);
+    QVERIFY(!result.cancelled);
+    QCOMPARE(result.exit_code, 0);
+    QVERIFY2(result.std_err.contains(QStringLiteral("still running")), qPrintable(result.std_err));
+    const auto stopped = child->waitForExit();
+    QVERIFY2(stopped.has_value(), qPrintable(sak::testfixtures::mcp::failureDiagnostic(stopped)));
+    QCOMPARE(*stopped, sak::kWindowsProcessJobFailureExitCode);
+}
+
+void ProcessRunnerTests::waitForJobEmpty_cancelStopsTheFamily() {
+    QString transcript;
+    QString error;
+    std::optional<Generation> child;
+    auto request = relaunchingProgram(30, &transcript, &child, &error);
+    request.options = {.child_policy = sak::ChildProcessPolicy::WaitForJobEmpty,
+                       .job_wait_ms = 120'000};
+    QElapsedTimer clock;
+    clock.start();
+    // Cancel a couple of seconds in: by then the program has exited and the run is waiting on
+    // the family.
+    request.should_cancel = [&clock, &child]() {
+        return child.has_value() && clock.elapsed() > 4000;
+    };
+
+    const auto result = sak::runProcessStreaming(request);
+    QVERIFY2(child.has_value(), qPrintable(error.isEmpty() ? transcript : error));
+    QVERIFY(result.cancelled);
+    QVERIFY(!result.descendants_stopped);
+    QVERIFY(!result.completedSuccessfully());
+    QVERIFY2(clock.elapsed() < 60'000, "cancel must cut the family wait short");
+    const auto stopped = child->waitForExit();
     QVERIFY2(stopped.has_value(), qPrintable(sak::testfixtures::mcp::failureDiagnostic(stopped)));
     QCOMPARE(*stopped, sak::kWindowsProcessJobFailureExitCode);
 }
@@ -887,6 +985,26 @@ void ProcessRunnerTests::unprovedCleanupIsReportedAndRetained() {
     const auto stopped = child->waitForExit();
     QVERIFY2(stopped.has_value(), qPrintable(sak::testfixtures::mcp::failureDiagnostic(stopped)));
     QCOMPARE(*stopped, sak::kWindowsProcessJobFailureExitCode);
+}
+
+// The callers whose programs hand their work to a relaunched child: the native uninstaller and
+// Chocolatey install / uninstall / upgrade (and the offline installer) must ask for the family
+// wait, or the 1 s kill-and-fail comes back for exactly the programs it broke.
+void ProcessRunnerTests::installersAndUninstallersWaitForTheirFamily() {
+    const QString uninstall = readRepoSource(QStringLiteral("src/core/uninstall_worker.cpp"));
+    const qsizetype native =
+        uninstall.indexOf(QStringLiteral("bool UninstallWorker::runNativeUninstaller"));
+    QVERIFY(native >= 0);
+    const QString native_body =
+        uninstall.mid(native, uninstall.indexOf(QStringLiteral("\n}"), native) - native);
+    QVERIFY(native_body.contains(QStringLiteral("ChildProcessPolicy::WaitForJobEmpty")));
+    QVERIFY(native_body.contains(QStringLiteral("descendants_stopped")));
+    const QString choco = readRepoSource(QStringLiteral("src/core/chocolatey_manager.cpp"));
+    QCOMPARE(choco.count(QStringLiteral("packageFamilyOptions())")),
+             3);  // install, uninstall, upgrade
+    const QString offline =
+        readRepoSource(QStringLiteral("src/core/offline_deployment_worker.cpp"));
+    QVERIFY(offline.contains(QStringLiteral("request.options = packageFamilyOptions()")));
 }
 
 QTEST_GUILESS_MAIN(ProcessRunnerTests)

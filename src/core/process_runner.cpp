@@ -68,6 +68,7 @@ struct ProcessRunRequest {
     CancelCheck should_cancel;
     ProcessOutputCallback on_output;
     ProcessStartedCallback on_started;
+    ProcessRunOptions options{};
 };
 
 void appendOutput(ProcessResult* result,
@@ -98,6 +99,7 @@ void drainProcessOutput(QProcess* proc,
 
 constexpr qint64 kProcessJobPollMs = 25;
 constexpr int kNormalDescendantGraceMs = 1000;
+constexpr int kMillisecondsPerSecond = 1000;
 
 void appendProcessFailure(ProcessResult* result, const QString& detail) {
     if (!result->std_err.isEmpty()) {
@@ -107,8 +109,32 @@ void appendProcessFailure(ProcessResult* result, const QString& detail) {
     result->exit_code = -1;
 }
 
+/// How long a run's family may outlive its program, and what can cut that wait short.
+struct DescendantWait {
+    int wait_ms{kNormalDescendantGraceMs};
+    CancelCheck should_cancel;
+};
+
+DescendantWait descendantWaitFor(const ProcessRunOptions& options, const CancelCheck& cancel) {
+    if (options.child_policy == ChildProcessPolicy::WaitForJobEmpty) {
+        return {.wait_ms = std::max(options.job_wait_ms, kNormalDescendantGraceMs),
+                .should_cancel = cancel};
+    }
+    return {};
+}
+
+enum class DescendantOutcome {
+    Finished,
+    Stopped,
+    Cancelled
+};
+
+/// True once the Job is empty; false at @p deadline or as soon as @p should_cancel fires (then
+/// *@p cancelled is set).
 std::expected<bool, QString> waitForEmptyJob(const WindowsProcessJob& job,
-                                             const QDeadlineTimer& deadline) {
+                                             const QDeadlineTimer& deadline,
+                                             const CancelCheck& should_cancel = {},
+                                             bool* cancelled = nullptr) {
     for (;;) {
         const auto observed = job.accounting();
         if (!observed) {
@@ -116,6 +142,12 @@ std::expected<bool, QString> waitForEmptyJob(const WindowsProcessJob& job,
         }
         if (observed->active_processes == 0) {
             return true;
+        }
+        if (should_cancel && should_cancel()) {
+            if (cancelled != nullptr) {
+                *cancelled = true;
+            }
+            return false;
         }
         const qint64 remaining = deadline.remainingTime();
         if (remaining <= 0) {
@@ -125,30 +157,44 @@ std::expected<bool, QString> waitForEmptyJob(const WindowsProcessJob& job,
     }
 }
 
-std::expected<bool, QString> settleContainedDescendants(WindowsProcessJob& job,
-                                                        bool terminate_now) {
-    bool forced_descendants = terminate_now;
-    if (!terminate_now) {
-        const QDeadlineTimer grace(kNormalDescendantGraceMs, Qt::PreciseTimer);
-        const auto settled = waitForEmptyJob(job, grace);
-        if (!settled) {
-            return std::unexpected(settled.error());
-        }
-        forced_descendants = !*settled;
+std::expected<void, QString> terminateActiveMembers(WindowsProcessJob& job) {
+    const auto active = job.accounting();
+    if (!active) {
+        return std::unexpected(active.error());
     }
-    if (forced_descendants) {
-        const auto active = job.accounting();
-        if (!active) {
-            return std::unexpected(active.error());
-        }
-        if (active->active_processes != 0) {
-            const auto terminated = job.terminate();
-            if (!terminated) {
-                return std::unexpected(terminated.error());
-            }
+    if (active->active_processes != 0) {
+        const auto terminated = job.terminate();
+        if (!terminated) {
+            return std::unexpected(terminated.error());
         }
     }
-    return !terminate_now && forced_descendants;
+    return {};
+}
+
+std::expected<DescendantOutcome, QString> settleContainedDescendants(WindowsProcessJob& job,
+                                                                     bool terminate_now,
+                                                                     const DescendantWait& wait) {
+    if (terminate_now) {
+        const auto terminated = terminateActiveMembers(job);
+        if (!terminated) {
+            return std::unexpected(terminated.error());
+        }
+        return DescendantOutcome::Finished;
+    }
+    bool cancelled = false;
+    const QDeadlineTimer grace(wait.wait_ms, Qt::PreciseTimer);
+    const auto settled = waitForEmptyJob(job, grace, wait.should_cancel, &cancelled);
+    if (!settled) {
+        return std::unexpected(settled.error());
+    }
+    if (*settled) {
+        return DescendantOutcome::Finished;
+    }
+    const auto terminated = terminateActiveMembers(job);
+    if (!terminated) {
+        return std::unexpected(terminated.error());
+    }
+    return cancelled ? DescendantOutcome::Cancelled : DescendantOutcome::Stopped;
 }
 
 std::expected<void, QString> waitForPrimaryExit(QProcess* proc, const QDeadlineTimer& deadline) {
@@ -176,14 +222,17 @@ std::expected<void, QString> closeEmptiedJob(WindowsProcessJob& job,
     return job.closeEmpty();
 }
 
-std::expected<bool, QString> finishContainedProcess(QProcess* proc,
-                                                    WindowsProcessJob& job,
-                                                    bool terminate_now) {
-    const QDeadlineTimer deadline(sak::kTimeoutProcessTerminateMs, Qt::PreciseTimer);
-    const auto forced_descendants = settleContainedDescendants(job, terminate_now);
+std::expected<DescendantOutcome, QString> finishContainedProcess(QProcess* proc,
+                                                                 WindowsProcessJob& job,
+                                                                 bool terminate_now,
+                                                                 const DescendantWait& wait) {
+    const auto forced_descendants = settleContainedDescendants(job, terminate_now, wait);
     if (!forced_descendants) {
         return std::unexpected(forced_descendants.error());
     }
+    // The cleanup deadline starts once the family is settled: a WaitForJobEmpty run may have
+    // waited minutes for it, legitimately.
+    const QDeadlineTimer deadline(sak::kTimeoutProcessTerminateMs, Qt::PreciseTimer);
     const auto primary = waitForPrimaryExit(proc, deadline);
     if (!primary) {
         return std::unexpected(primary.error());
@@ -226,7 +275,7 @@ public:
     }
 
     [[nodiscard]] std::expected<void, QString> retryCleanup() override {
-        const auto terminated = settleContainedDescendants(*m_run.job, true);
+        const auto terminated = settleContainedDescendants(*m_run.job, true, {});
         if (!terminated) {
             return std::unexpected(terminated.error());
         }
@@ -309,6 +358,29 @@ bool pollContainedProcess(const ProcessRunRequest& request, QProcess* proc, Proc
     }
 }
 
+/// The program exited and members of its family were still running when the wait for them ended.
+void reportStoppedDescendants(const ProcessRunOptions& options, ProcessResult* result) {
+    if (options.child_policy != ChildProcessPolicy::WaitForJobEmpty) {
+        appendProcessFailure(
+            result, QStringLiteral("Contained process descendants remained after primary exit"));
+        return;
+    }
+    if (result->cancelled) {
+        return;  // the caller asked; cancelled already says why the family was stopped
+    }
+    // Keep the root's exit code: the caller knows whether an unfinished family means failure (an
+    // NSIS uninstaller's real work runs in it) or not (an installer's leftover updater).
+    result->descendants_stopped = true;
+    if (!result->std_err.isEmpty()) {
+        result->std_err += QLatin1Char('\n');
+    }
+    result->std_err +=
+        QStringLiteral(
+            "Processes the program started were still running %1 s after it "
+            "exited; they were stopped.")
+            .arg(std::max(options.job_wait_ms, kNormalDescendantGraceMs) / kMillisecondsPerSecond);
+}
+
 ProcessResult completeStartedRun(const ProcessRunRequest& request,
                                  ContainedProcessRun& run,
                                  ProcessResult result) {
@@ -330,11 +402,9 @@ ProcessResult completeStartedRun(const ProcessRunRequest& request,
         result.exit_status = static_cast<int>(proc->exitStatus());
         containment_closed = true;
         const std::optional<bool> forced_descendants =
-            settleContainedProcessRun(run, false, &result);
+            settleContainedProcessRun(run, false, &result, request.options, request.should_cancel);
         if (forced_descendants.value_or(false)) {
-            appendProcessFailure(&result,
-                                 QStringLiteral(
-                                     "Contained process descendants remained after primary exit"));
+            reportStoppedDescendants(request.options, &result);
         }
     } catch (const std::exception& error) {
         appendProcessFailure(
@@ -393,11 +463,17 @@ ProcessResult runProcessInternal(const ProcessRunRequest& request) {
 
 std::optional<bool> settleContainedProcessRun(ContainedProcessRun& run,
                                               bool terminate_now,
-                                              ProcessResult* result) {
+                                              ProcessResult* result,
+                                              const ProcessRunOptions& options,
+                                              const CancelCheck& should_cancel) {
     Q_ASSERT(run.process && run.job && result != nullptr);
-    const auto finished = finishContainedProcess(run.process.get(), *run.job, terminate_now);
+    const auto finished = finishContainedProcess(
+        run.process.get(), *run.job, terminate_now, descendantWaitFor(options, should_cancel));
     if (finished) {
-        return *finished;
+        if (*finished == DescendantOutcome::Cancelled) {
+            result->cancelled = true;
+        }
+        return *finished != DescendantOutcome::Finished;
     }
     // Report + contain (owner decision 2026-10-24). This was a qFatal, so a child that merely
     // outlived the cleanup deadline under machine load took the whole application down mid-run.
@@ -427,7 +503,8 @@ bool appendCappedOutput(QString& target, const QString& chunk, qsizetype cap) {
 ProcessResult runProcess(const QString& program,
                          const QStringList& args,
                          int timeout_ms,
-                         const CancelCheck& should_cancel) {
+                         const CancelCheck& should_cancel,
+                         const ProcessRunOptions& options) {
     return runProcessInternal({
         .program = program,
         .args = args,
@@ -435,6 +512,7 @@ ProcessResult runProcess(const QString& program,
         .should_cancel = should_cancel,
         .on_output = {},
         .on_started = {},
+        .options = options,
     });
 }
 
@@ -639,9 +717,11 @@ ProcessResult runProcessStreaming(const ProcessStreamingRequest& request) {
         .program = request.program,
         .args = request.args,
         .timeout_ms = request.timeout_ms,
+        .environment = request.environment ? &*request.environment : nullptr,
         .should_cancel = request.should_cancel,
         .on_output = request.on_output,
         .on_started = request.on_started,
+        .options = request.options,
     });
 }
 

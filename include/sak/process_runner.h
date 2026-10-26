@@ -29,6 +29,11 @@ struct ProcessResult {
     ///        output was dropped from std_out/std_err (memory-exhaustion guard).
     bool output_truncated{false};
 
+    /// @brief ChildProcessPolicy::WaitForJobEmpty only: processes the program started were still
+    ///        running when the bounded wait ran out, so the Job stopped them. std_err says so. The
+    ///        exit code stays the root's; the caller decides what an unfinished family means.
+    bool descendants_stopped{false};
+
     /// @brief Check if the process completed successfully (no timeout, a normal
     ///        (non-crash) exit, and exit code 0).
     /// @note Does NOT consider cancellation -- see completedSuccessfully(). A crash
@@ -62,6 +67,25 @@ using CancelCheck = std::function<bool()>;
 using ProcessOutputCallback = std::function<void(const QString& chunk, bool is_stderr)>;
 using ProcessStartedCallback = std::function<void(qint64 process_id)>;
 
+/// What a run does with processes the program leaves behind in its kill-on-close Job when it
+/// exits. Either way nothing outlives the run: the Job is always emptied before it closes.
+enum class ChildProcessPolicy {
+    /// About 1 s for the family to finish, then it is stopped and the run fails. Right for tools
+    /// whose children are an implementation detail.
+    KillOnRootExit,
+    /// Wait, up to ProcessRunOptions::job_wait_ms and cancellable, for every process in the Job.
+    /// Installers and uninstallers: NSIS uninstallers copy themselves to %TEMP%, relaunch and exit
+    /// at once, and a Chocolatey package can leave its installer finishing. On timeout the family
+    /// is stopped and ProcessResult::descendants_stopped says so -- never a silent kill-and-fail.
+    WaitForJobEmpty,
+};
+
+struct ProcessRunOptions {
+    ChildProcessPolicy child_policy{ChildProcessPolicy::KillOnRootExit};
+    /// WaitForJobEmpty: how long the family may run on after the program itself exits (> 0).
+    int job_wait_ms{0};
+};
+
 struct ProcessStreamingRequest {
     QString program;
     QStringList args;
@@ -69,12 +93,16 @@ struct ProcessStreamingRequest {
     ProcessOutputCallback on_output;
     ProcessStartedCallback on_started;
     CancelCheck should_cancel;
+    ProcessRunOptions options{};
+    /// The child's environment; unset = this process's.
+    std::optional<QProcessEnvironment> environment{};
 };
 
 [[nodiscard]] ProcessResult runProcess(const QString& program,
                                        const QStringList& args,
                                        int timeout_ms,
-                                       const CancelCheck& should_cancel = {});
+                                       const CancelCheck& should_cancel = {},
+                                       const ProcessRunOptions& options = {});
 [[nodiscard]] ProcessResult runProcessWithEnvironment(const QString& program,
                                                       const QStringList& args,
                                                       int timeout_ms,

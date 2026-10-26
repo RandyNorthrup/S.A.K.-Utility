@@ -37,6 +37,10 @@ constexpr int kUwpRemovalTimeoutMs = 60'000;
 // the run forever (the GUI path waits indefinitely because a human is watching). Generous so a
 // legitimately long silent uninstall of a large product is not killed mid-removal.
 constexpr int kHeadlessUninstallTimeoutMs = 20 * 60 * 1000;
+// Interactive: how long a relaunched uninstaller (NSIS runs its UI from a %TEMP% copy after the
+// program we started exits) may keep the user's attention before the run gives up and says so.
+constexpr int kInteractiveUninstallFamilyWaitMs = 60 * 60 * 1000;
+constexpr int kMsPerMinute = 60 * 1000;
 constexpr int kMsiRebootRequiredCode = 3010;
 constexpr int kQuotedCaptureGroup = 1;
 constexpr int kUnquotedCaptureGroup = 2;
@@ -450,10 +454,30 @@ bool UninstallWorker::runNativeUninstaller(int& exitCode) {
         return false;
     }
 
-    const auto result =
-        sak::runProcess(program, parsed.args, timeout_ms, [this]() { return stopRequested(); });
+    // Wait for the uninstaller's whole process family, not just the program we started: an NSIS
+    // uninstaller copies itself to %TEMP%, relaunches from there and exits at once, so its real
+    // work -- and, interactively, its whole UI -- runs in a descendant. The wait is bounded and
+    // cancellable; running out of it is reported, never a silent kill-and-fail.
+    const sak::ProcessRunOptions family{.child_policy = sak::ChildProcessPolicy::WaitForJobEmpty,
+                                        .job_wait_ms = m_headlessSilent
+                                                           ? kHeadlessUninstallTimeoutMs
+                                                           : kInteractiveUninstallFamilyWaitMs};
+    const auto result = sak::runProcess(
+        program, parsed.args, timeout_ms, [this]() { return stopRequested(); }, family);
 
     exitCode = result.exit_code;
+    if (result.descendants_stopped) {
+        const QString detail =
+            QStringLiteral(
+                "Part of the uninstaller for %1 was still running %2 minutes after "
+                "its launcher exited, so it was stopped. The program may be only "
+                "partly removed.")
+                .arg(m_program.displayName)
+                .arg(family.job_wait_ms / kMsPerMinute);
+        sak::logWarning("{}", detail.toStdString());
+        reportProgress(kProgressNativeUninstaller, sak::kPercentMax, detail);
+        return false;
+    }
     return nativeUninstallSucceeded(result.exit_status, result.exit_code, result.cancelled);
 }
 

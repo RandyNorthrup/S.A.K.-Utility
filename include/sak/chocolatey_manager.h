@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "sak/process_runner.h"
+
 #include <QMap>
 #include <QObject>
 #include <QString>
@@ -157,7 +159,9 @@ Q_SIGNALS:
 
 private:
     // Execution helpers
-    Result executeChoco(const QStringList& args, int timeout_ms = 0);
+    Result executeChoco(const QStringList& args,
+                        int timeout_ms = 0,
+                        const sak::ProcessRunOptions& options = {});
     QStringList buildInstallArgs(const InstallConfig& config) const;
     bool parseExitCode(int exit_code) const;
 

@@ -4,6 +4,7 @@
 #include "sak/chocolatey_manager.h"
 
 #include "sak/action_constants.h"
+#include "sak/app_paths.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/process_runner.h"
@@ -45,6 +46,24 @@ constexpr int kOutdatedRecordMinimumParts = 3;
 constexpr int kExitRebootInitiated = 1641;
 constexpr int kMaxPackageNameLength = 100;
 constexpr int kMaxVersionLength = 50;
+// How long a package's own processes may run on after choco.exe exits (an installer finishing,
+// an updater it started) before they are stopped and the run says so.
+constexpr int kPackageFamilyWaitMs = 5 * 60 * 1000;
+
+/// choco.exe itself finished, so its exit code still decides success; the processes the package
+/// left running were stopped after the wait (std_err says so), and that is reported, not hidden.
+void logStoppedPackageProcesses(const QStringList& args) {
+    sak::logWarning(
+        "[ChocolateyManager] '{}': processes the package started were still "
+        "running after the wait and were stopped",
+        args.join(QLatin1Char(' ')).toStdString());
+}
+
+/// install / uninstall / upgrade wait for the package's whole process family, bounded.
+sak::ProcessRunOptions packageFamilyOptions() {
+    return {.child_policy = sak::ChildProcessPolicy::WaitForJobEmpty,
+            .job_wait_ms = kPackageFamilyWaitMs};
+}
 
 // Official Chocolatey community feed. Pinned as the install --source for an
 // official (allow_unofficial=false) install so a rogue source entry in the
@@ -389,7 +408,7 @@ ChocolateyManager::Result ChocolateyManager::installPackage(const InstallConfig&
 
     const QStringList args = buildInstallArgs(config);
     const int timeout_ms = computeTimeoutMs(config.timeout_seconds, m_default_timeout_seconds);
-    Result result = executeChoco(args, timeout_ms);
+    Result result = executeChoco(args, timeout_ms, packageFamilyOptions());
 
     if (result.success) {
         const QString ver = config.version_locked ? config.version : "latest";
@@ -426,7 +445,7 @@ ChocolateyManager::Result ChocolateyManager::uninstallPackage(const QString& pac
         args << "-y";
     }
 
-    return executeChoco(args);
+    return executeChoco(args, 0, packageFamilyOptions());
 }
 
 ChocolateyManager::Result ChocolateyManager::upgradePackage(const QString& package_name,
@@ -451,7 +470,7 @@ ChocolateyManager::Result ChocolateyManager::upgradePackage(const QString& packa
         args << "-y";
     }
 
-    return executeChoco(args);
+    return executeChoco(args, 0, packageFamilyOptions());
 }
 
 ChocolateyManager::Result ChocolateyManager::searchPackage(const QString& query, int max_results) {
@@ -686,7 +705,9 @@ bool ChocolateyManager::getAutoConfirm() const {
     return m_auto_confirm;
 }
 
-ChocolateyManager::Result ChocolateyManager::executeChoco(const QStringList& args, int timeout_ms) {
+ChocolateyManager::Result ChocolateyManager::executeChoco(const QStringList& args,
+                                                          int timeout_ms,
+                                                          const sak::ProcessRunOptions& options) {
     if (args.isEmpty()) {
         return {.success = false,
                 .output = "",
@@ -704,15 +725,22 @@ ChocolateyManager::Result ChocolateyManager::executeChoco(const QStringList& arg
                 .exit_code = -1};
     }
     // Set up environment
-    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    // A portable temp for this child only (the app itself keeps the normal %TEMP%).
+    QProcessEnvironment env =
+        sak::app_paths::withSessionTemp(QProcessEnvironment::systemEnvironment());
     env.insert("ChocolateyInstall", m_choco_dir);
 
     // Build command
     const QString program = m_choco_path;
     const int effective_timeout_ms =
         timeout_ms > 0 ? timeout_ms : sak::kChocoTimeoutExtendedSec * kMillisecondsPerSecond;
-    const auto process_result =
-        sak::runProcessWithEnvironment(program, args, effective_timeout_ms, env);
+    sak::ProcessStreamingRequest request;
+    request.program = program;
+    request.args = args;
+    request.timeout_ms = effective_timeout_ms;
+    request.options = options;
+    request.environment = env;
+    const auto process_result = sak::runProcessStreaming(request);
 
     if (process_result.timed_out) {
         return {
@@ -723,6 +751,9 @@ ChocolateyManager::Result ChocolateyManager::executeChoco(const QStringList& arg
     const QString stdout_output = process_result.std_out;
     const QString stderr_output = process_result.std_err;
     const QString combined_output = stdout_output + "\n" + stderr_output;
+    if (process_result.descendants_stopped) {
+        logStoppedPackageProcesses(args);
+    }
 
     const int exit_code = process_result.exit_code;
     const bool success = parseExitCode(exit_code);

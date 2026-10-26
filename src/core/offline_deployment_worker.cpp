@@ -6,6 +6,7 @@
 
 #include "sak/offline_deployment_worker.h"
 
+#include "sak/app_paths.h"
 #include "sak/bundled_tools_manager.h"
 #include "sak/logger.h"
 #include "sak/network_transfer_runner.h"
@@ -118,6 +119,15 @@ DeploymentManifest makeManifestHeader(const QString& output_dir,
 }
 
 /// @brief Honest one-line outcome for a finished choco install attempt.
+/// A package installer's own processes (a finishing installer, an updater it started) may run
+/// on for this long after choco.exe exits before they are stopped and the outcome says so.
+constexpr int kPackageFamilyWaitMs = 5 * 60 * 1000;
+
+ProcessRunOptions packageFamilyOptions() {
+    return {.child_policy = ChildProcessPolicy::WaitForJobEmpty,
+            .job_wait_ms = kPackageFamilyWaitMs};
+}
+
 QString installOutcomeText(const ProcessResult& process, bool success) {
     if (process.cancelled) {
         return QStringLiteral("Installation cancelled");
@@ -126,7 +136,10 @@ QString installOutcomeText(const ProcessResult& process, bool success) {
         return QStringLiteral("Installation timed out");
     }
     if (success) {
-        return QStringLiteral("Installed");
+        // The package's own leftover processes were stopped after the bounded wait: say so.
+        return process.descendants_stopped
+                   ? QStringLiteral("Installed; processes it left running were stopped")
+                   : QStringLiteral("Installed");
     }
     return (process.std_out.isEmpty() ? process.std_err : process.std_out)
         .left(kInstallErrorPreviewChars);
@@ -1431,14 +1444,21 @@ bool OfflineDeploymentWorker::installBundlePackage(const DeploymentManifestEntry
     // choco would fall back to %ProgramData%\chocolatey -- i.e. try to install
     // onto the target machine's system location, which a portable tool must not
     // do (and which does not exist on a clean target).
-    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    // A portable temp for this child only (the app itself keeps the normal %TEMP%).
+    QProcessEnvironment env =
+        sak::app_paths::withSessionTemp(QProcessEnvironment::systemEnvironment());
     env.insert(QStringLiteral("ChocolateyInstall"), QFileInfo(choco_exe).absolutePath());
 
-    const auto process = runProcessWithEnvironment(choco_exe,
-                                                   chocoInstallArgs(entry, install_ctx),
-                                                   offline::kInstallTimeoutPerPackageMs,
-                                                   env,
-                                                   [this]() { return m_cancelled.load(); });
+    ProcessStreamingRequest request;
+    request.program = choco_exe;
+    request.args = chocoInstallArgs(entry, install_ctx);
+    request.timeout_ms = offline::kInstallTimeoutPerPackageMs;
+    request.should_cancel = [this]() {
+        return m_cancelled.load();
+    };
+    request.options = packageFamilyOptions();
+    request.environment = env;
+    const auto process = runProcessStreaming(request);
 
     const bool success = !process.timed_out && !process.cancelled &&
                          isSuccessInstallExitCode(process.exit_code);
