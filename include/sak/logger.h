@@ -129,6 +129,20 @@ public:
     [[nodiscard]] static std::size_t bytesToCommit(bool stream_good,
                                                    std::size_t entry_size) noexcept;
 
+    /// @brief One existing session log, as initialize() sees it when deciding what to prune.
+    struct SessionLogFile {
+        std::filesystem::path path;
+        std::filesystem::file_time_type modified{};
+        std::uintmax_t size_bytes{0};
+    };
+
+    /// @brief Which of @p logs to delete so that, with the session about to start, at most
+    ///        @p keep_newest logs remain and the kept ones total at most @p max_total_bytes.
+    ///        The newest are kept. Rotation only ran when ONE session passed 10 MB, so the logs
+    ///        folder used to gain a file per launch forever. Pure; unit tested.
+    [[nodiscard]] static std::vector<std::filesystem::path> sessionLogsToPrune(
+        std::vector<SessionLogFile> logs, std::size_t keep_newest, std::uintmax_t max_total_bytes);
+
     // Prevent copying and moving
     logger(const logger&) = delete;
     logger& operator=(const logger&) = delete;
@@ -184,6 +198,11 @@ private:
 
     static constexpr std::size_t MAX_LOG_SIZE = 10'000'000;  ///< 10MB max log size
     static constexpr std::size_t MAX_LOG_FILES = 5;          ///< Keep last 5 log files
+    static constexpr std::size_t kMaxSessionLogs = 30;       ///< Session logs kept at startup
+    static constexpr std::uintmax_t kMaxSessionLogBytes = 200ULL * 1024 * 1024;  ///< ...and bytes
+
+    /// @brief Delete old session logs (sessionLogsToPrune) before a new session opens its log.
+    void pruneSessionLogs() const noexcept;
 };
 
 /// @brief Log a debug message

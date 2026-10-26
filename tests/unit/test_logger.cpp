@@ -17,6 +17,7 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -63,6 +64,9 @@ private Q_SLOTS:
 
     // Fail closed: a failed file write must not advance the rotation counter.
     void bytesToCommit_zeroOnStreamFailure();
+
+    void sessionLogsToPrune_keepsTheNewestWithinCountAndSize();
+    void initializePrunesOldSessionLogs();
 
 private:
     /// @brief Reads all content from the singleton log file
@@ -554,6 +558,53 @@ void LoggerTests::bytesToCommit_zeroOnStreamFailure() {
     QCOMPARE(sak::logger::bytesToCommit(true, 128), std::size_t{128});
     QCOMPARE(sak::logger::bytesToCommit(false, 128), std::size_t{0});
     QCOMPARE(sak::logger::bytesToCommit(true, 0), std::size_t{0});
+}
+
+// The logs folder gained a file per launch forever: rotation only ran when one session passed
+// 10 MB. initialize() now keeps the newest sessions within a count and a total size.
+void LoggerTests::sessionLogsToPrune_keepsTheNewestWithinCountAndSize() {
+    using File = sak::logger::SessionLogFile;
+    const auto at = [](int minutes) {
+        return std::filesystem::file_time_type::clock::now() - std::chrono::minutes(minutes);
+    };
+    std::vector<File> logs{{.path = "old.log", .modified = at(30), .size_bytes = 10},
+                           {.path = "newest.log", .modified = at(1), .size_bytes = 10},
+                           {.path = "middle.log", .modified = at(10), .size_bytes = 10}};
+    // Room for 2 existing (3 minus the session starting): the oldest goes.
+    QVERIFY(sak::logger::sessionLogsToPrune(logs, 3, 1000) ==
+            std::vector<std::filesystem::path>{"old.log"});
+    // The size cap prunes too: only the newest fits in 15 bytes.
+    QVERIFY(sak::logger::sessionLogsToPrune(logs, 30, 15) ==
+            (std::vector<std::filesystem::path>{"middle.log", "old.log"}));
+}
+
+void LoggerTests::initializePrunesOldSessionLogs() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const std::filesystem::path root(dir.path().toStdWString());
+    constexpr int kOldSessions = 45;
+    for (int i = 0; i < kOldSessions; ++i) {
+        const auto file = root / ("prunecheck_2020-01-01_00-00-" + std::to_string(i) + ".log");
+        std::ofstream(file) << "old session " << i << '\n';
+        std::filesystem::last_write_time(file,
+                                         std::filesystem::file_time_type::clock::now() -
+                                             std::chrono::hours(kOldSessions - i));
+    }
+    auto& log = sak::logger::instance();
+    QVERIFY(log.initialize(root, "prunecheck").has_value());
+    log.flush();
+    int remaining = 0;
+    bool newest_old_kept = false;
+    for (const auto& entry : std::filesystem::directory_iterator(root)) {
+        if (entry.path().extension() == ".log") {
+            ++remaining;
+            newest_old_kept = newest_old_kept || entry.path().filename() ==
+                                                     "prunecheck_2020-01-01_00-00-" +
+                                                         std::to_string(kOldSessions - 1) + ".log";
+        }
+    }
+    QVERIFY2(remaining <= 30, qPrintable(QString::number(remaining)));
+    QVERIFY(newest_old_kept);
 }
 
 QTEST_GUILESS_MAIN(LoggerTests)

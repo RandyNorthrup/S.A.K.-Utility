@@ -109,6 +109,9 @@ auto logger::initialize(const std::filesystem::path& log_dir, std::string_view p
         m_log_dir = log_dir;
         m_prefix = prefix;
 
+        // A log per launch, forever: prune old sessions before this one adds its file.
+        pruneSessionLogs();
+
         // Generate log file path with timestamp
         auto timestamp = std::format("{:%Y-%m-%d_%H-%M-%S}", std::chrono::system_clock::now());
         m_log_file = m_log_dir / std::format("{}_{}.log", m_prefix, timestamp);
@@ -387,6 +390,50 @@ void logger::rotateLog() noexcept {
     }
 }
 
+std::vector<std::filesystem::path> logger::sessionLogsToPrune(std::vector<SessionLogFile> logs,
+                                                              std::size_t keep_newest,
+                                                              std::uintmax_t max_total_bytes) {
+    std::ranges::sort(logs, [](const SessionLogFile& a, const SessionLogFile& b) {
+        return a.modified > b.modified;  // newest first
+    });
+    // One slot is the session about to start.
+    const std::size_t keep_existing = keep_newest > 0 ? keep_newest - 1 : 0;
+    std::vector<std::filesystem::path> prune;
+    std::size_t kept = 0;
+    std::uintmax_t kept_bytes = 0;
+    for (const SessionLogFile& entry : logs) {
+        if (kept < keep_existing && kept_bytes + entry.size_bytes <= max_total_bytes) {
+            ++kept;
+            kept_bytes += entry.size_bytes;
+        } else {
+            prune.push_back(entry.path);
+        }
+    }
+    return prune;
+}
+
+void logger::pruneSessionLogs() const noexcept {
+    // Called under m_mutex from initialize(): report problems on stderr, never through log().
+    try {
+        std::vector<SessionLogFile> logs;
+        for (const auto& path : collectRotationCandidates()) {
+            std::error_code ec;
+            const auto modified = std::filesystem::last_write_time(path, ec);
+            const auto size = std::filesystem::file_size(path, ec);
+            if (!ec) {
+                logs.push_back({.path = path, .modified = modified, .size_bytes = size});
+            }
+        }
+        for (const auto& path : sessionLogsToPrune(logs, kMaxSessionLogs, kMaxSessionLogBytes)) {
+            std::error_code ec;
+            std::filesystem::remove(path, ec);  // a log another instance holds open stays
+        }
+    } catch (const std::exception& e) {
+        (void)std::fprintf(stderr, "SAK Logger: pruning old session logs failed: %s\n", e.what());
+    } catch (...) {
+        (void)std::fprintf(stderr, "SAK Logger: pruning old session logs failed\n");
+    }
+}
 std::vector<std::filesystem::path> logger::collectRotationCandidates() const {
     std::vector<std::filesystem::path> log_files;
     for (const auto& entry : std::filesystem::directory_iterator(m_log_dir)) {
