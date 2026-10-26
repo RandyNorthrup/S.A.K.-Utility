@@ -44,6 +44,13 @@ public:
      */
     static auto restartElevated(bool wait_for_exit = false) -> std::expected<void, sak::error_code>;
 
+    /// @brief Whether a failed restartElevated() deserves an error dialog. Declining the UAC
+    ///        prompt (ERROR_CANCELLED -> operation_cancelled) is the user's answer, not a
+    ///        failure: it used to raise "Elevation Failed".
+    [[nodiscard]] static bool restartFailureNeedsNotice(sak::error_code error) noexcept {
+        return error != sak::error_code::operation_cancelled;
+    }
+
     /**
      * @brief Execute command with administrator privileges
      * @param executable Path to executable

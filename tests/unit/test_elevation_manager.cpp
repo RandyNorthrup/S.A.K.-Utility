@@ -22,6 +22,7 @@ class ElevationManagerTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void declinedUacPromptIsNotAFailureNotice();
     // isElevated
     void isElevated_returnsConsistently();
 
@@ -122,6 +123,14 @@ void ElevationManagerTests::errorMessage_operationCancelled() {
 // errorMessage_accessDenied was removed here: it called getElevationErrorMessage(5) exactly
 // like errorMessage_knownCode above and asserted only length() > 5, a strictly weaker claim
 // about the same input. The surviving test now pins the message contents instead.
+
+// Declining the UAC prompt from "Run as Administrator" showed "Elevation Failed". It is the
+// user's answer, so the app just keeps running; a real failure still gets its dialog.
+void ElevationManagerTests::declinedUacPromptIsNotAFailureNotice() {
+    QVERIFY(
+        !sak::ElevationManager::restartFailureNeedsNotice(sak::error_code::operation_cancelled));
+    QVERIFY(sak::ElevationManager::restartFailureNeedsNotice(sak::error_code::elevation_failed));
+}
 
 QTEST_GUILESS_MAIN(ElevationManagerTests)
 #include "test_elevation_manager.moc"

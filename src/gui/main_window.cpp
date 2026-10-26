@@ -668,6 +668,9 @@ void MainWindow::restartElevated() {
         QCoreApplication::quit();
         return;
     }
+    if (!ElevationManager::restartFailureNeedsNotice(result.error())) {
+        return;  // the user declined the UAC prompt: keep running as is, no error
+    }
     sak::logError("Failed to restart elevated from status bar: {}", to_string(result.error()));
     sak::showCriticalLogged(this,
                             tr("Elevation Failed"),
