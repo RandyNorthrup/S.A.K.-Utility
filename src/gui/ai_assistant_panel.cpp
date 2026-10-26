@@ -11990,7 +11990,7 @@ void AiAssistantPanel::traceAiEvent(const QString& kind,
         return;
     }
 
-    appendTraceEventRecord(run_id, kind, name, status, metadata);
+    appendTraceActivityRecord(run_id, kind, name, status, metadata);
 }
 
 QString AiAssistantPanel::currentTraceRunId() const {
@@ -12003,51 +12003,21 @@ QString AiAssistantPanel::currentTraceRunId() const {
     return m_conversationStore ? m_conversationStore->currentSessionId() : QString();
 }
 
-void AiAssistantPanel::appendTraceEventRecord(const QString& run_id,
-                                              const QString& kind,
-                                              const QString& name,
-                                              const QString& status,
-                                              const QJsonObject& metadata) {
-    QString error;
-    const auto event = ai::TraceStore::event({.run_id = run_id,
-                                              .kind = kind,
-                                              .name = name,
-                                              .status = status,
-                                              .metadata = metadata,
-                                              .parent_span_id = QString()});
-    if (!m_traceStore->appendEvent(event, &error) && !error.isEmpty()) {
-        Q_EMIT logOutput(
-            ai::CredentialStore::redactSecrets(tr("AI trace write failed: %1").arg(error)));
-    }
-    appendTraceActivityRecord(event);
-    QJsonObject replay_metadata = metadata;
-    replay_metadata[QStringLiteral("trace_kind")] = kind;
-    replay_metadata[QStringLiteral("trace_name")] = name;
-    if (kind == QLatin1String("tool_call")) {
-        replay_metadata[QStringLiteral("tool_name")] = name;
-    }
-    error.clear();
-    if (!m_traceStore->appendReplayEvent(
-            run_id, QStringLiteral("%1:%2").arg(kind, name), status, replay_metadata, &error) &&
-        !error.isEmpty()) {
-        Q_EMIT logOutput(
-            ai::CredentialStore::redactSecrets(tr("AI replay trace write failed: %1").arg(error)));
-    }
-}
-
-void AiAssistantPanel::appendTraceActivityRecord(const ai::AiTraceEvent& event) {
+void AiAssistantPanel::appendTraceActivityRecord(const QString& run_id,
+                                                 const QString& kind,
+                                                 const QString& name,
+                                                 const QString& status,
+                                                 const QJsonObject& metadata) {
     const QString session_id = m_conversationStore ? m_conversationStore->currentSessionId()
                                                    : QString();
-    auto activity = ai::TraceStore::activityEvent(
-        {.session_id = session_id,
-         .run_id = event.run_id,
-         .kind = event.kind,
-         .state = activityStateFromTrace(event.kind, event.status),
-         .summary = activitySummaryFromTrace(event.name, event.status, event.metadata),
-         .metadata = event.metadata});
-    activity.token_usage = event.token_usage;
+    const auto activity =
+        ai::TraceStore::activityEvent({.session_id = session_id,
+                                       .run_id = run_id,
+                                       .kind = kind,
+                                       .state = activityStateFromTrace(kind, status),
+                                       .summary = activitySummaryFromTrace(name, status, metadata),
+                                       .metadata = metadata});
     QString error;
-    error.clear();
     if (!m_traceStore->appendActivityEvent(activity, &error) && !error.isEmpty()) {
         Q_EMIT logOutput(
             ai::CredentialStore::redactSecrets(tr("AI activity write failed: %1").arg(error)));

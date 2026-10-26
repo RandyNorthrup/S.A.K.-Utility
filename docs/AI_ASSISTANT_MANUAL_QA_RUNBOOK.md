@@ -62,8 +62,8 @@ Expected:
   addresses.
 - Chips fit and remove cleanly.
 - Artifacts are stored under a folder named after the chat session.
-- `memory.md`, `activity.jsonl`, `trace.jsonl`, and `run_state.json` update.
-- `turn_replay.jsonl` updates with compact run/tool replay records.
+- `memory.md`, `activity.jsonl`, and `run_state.json` update. `activity.jsonl` is the
+  one AI audit stream (no `trace.jsonl` or `turn_replay.jsonl` is written).
 
 ## Pass 2: Local Diagnostic Toolings
 
@@ -225,10 +225,9 @@ Expected:
 
 After any AI run, inspect session files:
 
-- `turn_replay.jsonl` contains compact records with `run_id`, `event_type`,
-  `status`, prompt hash, model when known, tool name when known, and metadata.
-- `trace.jsonl` remains the full trace; `turn_replay.jsonl` is the replayable
-  summary used for QA reproduction.
+- `activity.jsonl` contains one record per run/tool event with `run_id`, `kind`,
+  `state`, `summary`, tool name when known, and redacted metadata (prompt hash and
+  model when known); use it for QA reproduction.
 
 Prompt:
 
@@ -378,7 +377,7 @@ Expected:
 - Ambiguous mutation asks for clarification or enters a human gate.
 - Scanner/install flow checks existing install/app capability first and does
   not install without explicit user approval.
-- `trace.jsonl` and `activity.jsonl` record the denial, gate, or clarification.
+- `activity.jsonl` records the denial, gate, or clarification.
 
 ## Defect Notes
 

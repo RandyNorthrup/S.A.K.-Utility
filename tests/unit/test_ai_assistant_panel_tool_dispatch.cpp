@@ -8027,6 +8027,28 @@ private Q_SLOTS:
                  std::chrono::duration_cast<std::chrono::milliseconds>(ai::kAiMcpSessionIdleReap));
     }
 
+    // A traced AI event is written once, to the session's activity log -- the stream the panel
+    // reads back. trace.jsonl and turn_replay.jsonl were written beside it and read by nothing.
+    void traceEventWritesOnlyTheActivityLog() {
+        QTemporaryDir session_dir;
+        QVERIFY(session_dir.isValid());
+        AiAssistantPanel panel;
+        panel.m_traceStore->setSessionDirectory(session_dir.path());
+        panel.m_currentRunId = QStringLiteral("run_activity_only");
+        panel.traceAiEvent(QStringLiteral("tool_call"),
+                           QStringLiteral("run_powershell"),
+                           QStringLiteral("completed"),
+                           QJsonObject{{QStringLiteral("model"), QStringLiteral("gpt-5.5")}});
+        QCOMPARE(QDir(session_dir.path()).entryList(QDir::Files),
+                 (QStringList{QStringLiteral("activity.jsonl")}));
+        QString error;
+        const auto activities = panel.m_traceStore->loadActivityEvents(&error);
+        QVERIFY2(error.isEmpty(), qPrintable(error));
+        QCOMPARE(activities.size(), 1);
+        QCOMPARE(activities.first().run_id, QStringLiteral("run_activity_only"));
+        QCOMPARE(activities.first().kind, QStringLiteral("tool_call"));
+    }
+
     // Wave 3: the sak_skill tool lists the catalog (no bodies), loads a full body
     // on demand by id, and reports an error for an unknown id.
     void skillToolListsLoadsAndRejectsUnknown() {

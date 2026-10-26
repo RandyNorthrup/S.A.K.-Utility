@@ -23,19 +23,18 @@ namespace sak::ai {
 
 namespace {
 
-constexpr auto kTraceFile = "trace.jsonl";
+// The activity log is the one AI audit stream: the panel reads it back (run details, the
+// session report, the timeline). trace.jsonl and turn_replay.jsonl were written alongside it
+// on every event and read by nothing, so they are gone.
 constexpr auto kActivityFile = "activity.jsonl";
-constexpr auto kReplayFile = "turn_replay.jsonl";
 constexpr int kTraceSchemaVersion = 1;
-constexpr qint64 kMaxTraceJsonlBytes = 32LL * 1024LL * 1024LL;
 constexpr qint64 kMaxActivityJsonlBytes = 32LL * 1024LL * 1024LL;
-constexpr qint64 kMaxReplayJsonlBytes = 20LL * 1024LL * 1024LL;
 // When a JSONL stream reaches its cap it is rolled (path -> path.1 -> path.2 ...)
 // rather than dropped, so the audit trail never silently stops. The ring is
 // bounded, so total on-disk size stays at about cap * (kMaxRolledJsonlFiles + 1).
 constexpr int kMaxRolledJsonlFiles = 3;
-constexpr qsizetype kMaxReplayMetadataStringChars = 4096;
-constexpr qint64 kMaxReplayMetadataBytes = 64LL * 1024LL;
+constexpr qsizetype kMaxMetadataStringChars = 4096;
+constexpr qint64 kMaxMetadataBytes = 64LL * 1024LL;
 constexpr int kMaxRedactedArrayItems = 200;
 constexpr int kMaxRedactedObjectMembers = 200;
 constexpr int kMaxJsonRedactionDepth = 8;
@@ -58,18 +57,6 @@ QString jsonlPath(const QString& session_directory, const char* file_name) {
 
 QDateTime parseDate(const QJsonObject& obj, const QString& key) {
     return QDateTime::fromString(obj.value(key).toString(), Qt::ISODateWithMs);
-}
-
-// A JSON number can be non-finite or outside qint64 range; casting such a double straight to
-// qint64 is undefined behavior. Clamp to a valid, non-negative range and fail safe.
-qint64 safeDurationMs(const QJsonValue& value) {
-    const double raw = value.toDouble(0.0);
-    if (!std::isfinite(raw) || raw <= 0.0) {
-        return 0;
-    }
-    constexpr double kMaxSafeDuration = 9.0e18;  // < INT64_MAX and exactly representable
-    return raw >= kMaxSafeDuration ? static_cast<qint64>(kMaxSafeDuration)
-                                   : static_cast<qint64>(raw);
 }
 
 QJsonObject tokenUsageToJson(const TokenUsage& usage) {
@@ -153,8 +140,8 @@ QJsonArray redactArray(const QJsonArray& array, const QString& key, int depth) {
 
 QString redactString(QString text) {
     text = CredentialStore::redactSecrets(std::move(text));
-    if (text.size() > kMaxReplayMetadataStringChars) {
-        text = text.left(kMaxReplayMetadataStringChars) + QStringLiteral("...[truncated]");
+    if (text.size() > kMaxMetadataStringChars) {
+        text = text.left(kMaxMetadataStringChars) + QStringLiteral("...[truncated]");
     }
     return text;
 }
@@ -178,10 +165,10 @@ QJsonValue redactAndCapJson(const QJsonValue& value, const QString& key, int dep
     return value;
 }
 
-QJsonObject redactedReplayMetadata(const QJsonObject& metadata) {
+QJsonObject redactedMetadata(const QJsonObject& metadata) {
     QJsonObject redacted = redactAndCapJson(metadata).toObject();
     const QByteArray compact = QJsonDocument(redacted).toJson(QJsonDocument::Compact);
-    if (compact.size() <= kMaxReplayMetadataBytes) {
+    if (compact.size() <= kMaxMetadataBytes) {
         return redacted;
     }
 
@@ -189,18 +176,8 @@ QJsonObject redactedReplayMetadata(const QJsonObject& metadata) {
     capped[QStringLiteral("truncated")] = true;
     capped[QStringLiteral("original_size_bytes")] = compact.size();
     capped[QStringLiteral("preview")] =
-        CredentialStore::redactSecrets(QString::fromUtf8(compact.left(kMaxReplayMetadataBytes)));
+        CredentialStore::redactSecrets(QString::fromUtf8(compact.left(kMaxMetadataBytes)));
     return capped;
-}
-
-qint64 jsonlSizeCapForLabel(const QString& label) {
-    if (label == QLatin1String("turn replay")) {
-        return kMaxReplayJsonlBytes;
-    }
-    if (label == QLatin1String("activity")) {
-        return kMaxActivityJsonlBytes;
-    }
-    return kMaxTraceJsonlBytes;
 }
 
 bool failWithError(QString* error_message, const QString& message) {
@@ -291,7 +268,7 @@ bool appendJsonLine(const QString& path,
             error_message,
             QStringLiteral("Could not create %1 directory: %2").arg(label, info.absolutePath()));
     }
-    const qint64 cap = cap_override > 0 ? cap_override : jsonlSizeCapForLabel(label);
+    const qint64 cap = cap_override > 0 ? cap_override : kMaxActivityJsonlBytes;
     const QByteArray payload = QJsonDocument(object).toJson(QJsonDocument::Compact) + '\n';
     const QString payload_error = appendPayloadError(payload, label, cap);
     if (!payload_error.isEmpty()) {
@@ -470,43 +447,6 @@ QVector<Event> loadJsonLines(const QString& path,
 
 }  // namespace
 
-QJsonObject AiTraceEvent::toJson() const {
-    QJsonObject obj;
-    obj[QStringLiteral("schema_version")] = kTraceSchemaVersion;
-    obj[QStringLiteral("timestamp")] = (timestamp_utc.isValid() ? timestamp_utc
-                                                                : QDateTime::currentDateTimeUtc())
-                                           .toString(Qt::ISODateWithMs);
-    obj[QStringLiteral("run_id")] = run_id;
-    obj[QStringLiteral("parent_span_id")] = parent_span_id;
-    obj[QStringLiteral("span_id")] = span_id;
-    obj[QStringLiteral("kind")] = kind;
-    obj[QStringLiteral("name")] = name;
-    obj[QStringLiteral("status")] = status;
-    obj[QStringLiteral("duration_ms")] = static_cast<double>(duration_ms);
-    obj[QStringLiteral("token_usage")] = tokenUsageToJson(token_usage);
-    // Redact here too: trace.jsonl must share the same secret-redaction guarantee
-    // as turn_replay.jsonl, or workflow input values / command previews containing
-    // passwords, bearer tokens or API keys are persisted in cleartext.
-    obj[QStringLiteral("metadata")] = redactedReplayMetadata(metadata);
-    return obj;
-}
-
-AiTraceEvent AiTraceEvent::fromJson(const QJsonObject& object) {
-    AiTraceEvent event;
-    event.timestamp_utc = parseDate(object, QStringLiteral("timestamp"));
-    event.run_id = object.value(QStringLiteral("run_id")).toString();
-    event.parent_span_id = object.value(QStringLiteral("parent_span_id")).toString();
-    event.span_id = object.value(QStringLiteral("span_id")).toString();
-    event.kind = object.value(QStringLiteral("kind")).toString();
-    event.name = object.value(QStringLiteral("name")).toString();
-    event.status = object.value(QStringLiteral("status")).toString();
-    event.duration_ms = safeDurationMs(object.value(QStringLiteral("duration_ms")));
-    event.token_usage =
-        TokenUsageTracker::fromJson(object.value(QStringLiteral("token_usage")).toObject());
-    event.metadata = object.value(QStringLiteral("metadata")).toObject();
-    return event;
-}
-
 QJsonObject AiActivityEvent::toJson() const {
     QJsonObject obj;
     obj[QStringLiteral("schema_version")] = kTraceSchemaVersion;
@@ -533,8 +473,9 @@ QJsonObject AiActivityEvent::toJson() const {
     obj[QStringLiteral("question_for_human")] = redactString(question_for_human);
     obj[QStringLiteral("recovery_action")] = redactString(recovery_action);
     obj[QStringLiteral("error")] = redactString(error);
-    // Same redaction as trace.jsonl / turn_replay.jsonl (see AiTraceEvent::toJson).
-    obj[QStringLiteral("metadata")] = redactedReplayMetadata(metadata);
+    // Workflow input values and command previews can carry passwords, bearer tokens or API
+    // keys; they are redacted and size-capped before they reach the audit line.
+    obj[QStringLiteral("metadata")] = redactedMetadata(metadata);
     return obj;
 }
 
@@ -587,58 +528,9 @@ QString TraceStore::sessionDirectory() const {
     return m_session_dir;
 }
 
-QString TraceStore::tracePath() const {
-    const QMutexLocker locker(&m_io_mutex);
-    return jsonlPath(m_session_dir, kTraceFile);
-}
-
 QString TraceStore::activityPath() const {
     const QMutexLocker locker(&m_io_mutex);
     return jsonlPath(m_session_dir, kActivityFile);
-}
-
-QString TraceStore::replayPath() const {
-    const QMutexLocker locker(&m_io_mutex);
-    return jsonlPath(m_session_dir, kReplayFile);
-}
-
-bool TraceStore::appendEvent(AiTraceEvent event, QString* error_message) const {
-    const QMutexLocker locker(&m_io_mutex);
-    if (m_session_dir.isEmpty()) {
-        if (error_message != nullptr) {
-            *error_message = QStringLiteral("Trace session directory is empty");
-        }
-        return false;
-    }
-    if (!QDir().mkpath(m_session_dir)) {
-        if (error_message != nullptr) {
-            *error_message =
-                QStringLiteral("Could not create trace directory: %1").arg(m_session_dir);
-        }
-        return false;
-    }
-    if (!event.timestamp_utc.isValid()) {
-        event.timestamp_utc = QDateTime::currentDateTimeUtc();
-    }
-    if (event.span_id.isEmpty()) {
-        event.span_id = QStringLiteral("span_%1").arg(
-            QUuid::createUuid().toString(QUuid::WithoutBraces).left(kTraceIdSuffixChars));
-    }
-
-    return appendJsonLine(jsonlPath(m_session_dir, kTraceFile),
-                          event.toJson(),
-                          QStringLiteral("trace"),
-                          m_max_jsonl_bytes,
-                          error_message);
-}
-
-QVector<AiTraceEvent> TraceStore::loadEvents(QString* error_message) const {
-    const QMutexLocker locker(&m_io_mutex);
-    return loadJsonLines<AiTraceEvent>(
-        jsonlPath(m_session_dir, kTraceFile),
-        QStringLiteral("Trace"),
-        [](const QJsonObject& object) { return AiTraceEvent::fromJson(object); },
-        error_message);
 }
 
 bool TraceStore::appendActivityEvent(AiActivityEvent event, QString* error_message) const {
@@ -670,57 +562,6 @@ QVector<AiActivityEvent> TraceStore::loadActivityEvents(QString* error_message) 
         QStringLiteral("Activity"),
         [](const QJsonObject& object) { return AiActivityEvent::fromJson(object); },
         error_message);
-}
-
-bool TraceStore::appendReplayEvent(const QString& run_id,
-                                   const QString& event_type,
-                                   const QString& status,
-                                   QJsonObject metadata,
-                                   QString* error_message) const {
-    const QMutexLocker locker(&m_io_mutex);
-    if (m_session_dir.isEmpty()) {
-        if (error_message != nullptr) {
-            *error_message = QStringLiteral("Trace session directory is empty");
-        }
-        return false;
-    }
-    QJsonObject object;
-    object[QStringLiteral("schema_version")] = kTraceSchemaVersion;
-    object[QStringLiteral("timestamp")] = nowIso();
-    object[QStringLiteral("run_id")] = run_id;
-    object[QStringLiteral("event_type")] = event_type;
-    object[QStringLiteral("status")] = status;
-    const QString prompt_hash = metadata.value(QStringLiteral("prompt_sha256")).toString();
-    if (!prompt_hash.isEmpty()) {
-        object[QStringLiteral("prompt_sha256")] = prompt_hash;
-        metadata.remove(QStringLiteral("prompt_sha256"));
-    }
-    const QString model = metadata.value(QStringLiteral("model")).toString();
-    if (!model.isEmpty()) {
-        object[QStringLiteral("model")] = model;
-    }
-    const QString tool_name = metadata.value(QStringLiteral("tool_name")).toString();
-    if (!tool_name.isEmpty()) {
-        object[QStringLiteral("tool_name")] = tool_name;
-    }
-    object[QStringLiteral("metadata")] = redactedReplayMetadata(metadata);
-    return appendJsonLine(jsonlPath(m_session_dir, kReplayFile),
-                          object,
-                          QStringLiteral("turn replay"),
-                          m_max_jsonl_bytes,
-                          error_message);
-}
-
-AiTraceEvent TraceStore::event(const AiTraceEventSeed& seed) {
-    AiTraceEvent event;
-    event.timestamp_utc = QDateTime::fromString(nowIso(), Qt::ISODateWithMs);
-    event.run_id = seed.run_id;
-    event.parent_span_id = seed.parent_span_id;
-    event.kind = seed.kind;
-    event.name = seed.name;
-    event.status = seed.status;
-    event.metadata = seed.metadata;
-    return event;
 }
 
 AiActivityEvent TraceStore::activityEvent(const AiActivityEventSeed& seed) {

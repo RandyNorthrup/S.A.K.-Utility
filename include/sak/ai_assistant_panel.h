@@ -698,12 +698,13 @@ private:
                       const QString& status,
                       const QJsonObject& metadata = {});
     [[nodiscard]] QString currentTraceRunId() const;
-    void appendTraceEventRecord(const QString& run_id,
-                                const QString& kind,
-                                const QString& name,
-                                const QString& status,
-                                const QJsonObject& metadata);
-    void appendTraceActivityRecord(const ai::AiTraceEvent& event);
+    /// Writes one event to the session's activity log -- the AI audit stream the panel reads
+    /// back. (trace.jsonl and turn_replay.jsonl were written beside it and read by nothing.)
+    void appendTraceActivityRecord(const QString& run_id,
+                                   const QString& kind,
+                                   const QString& name,
+                                   const QString& status,
+                                   const QJsonObject& metadata);
     void finishAiRunTrace(const QString& status, const QJsonObject& metadata = {});
     void emitStatusDetails();
     void saveRunStateSnapshot();

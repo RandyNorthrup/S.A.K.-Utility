@@ -14,22 +14,6 @@
 
 namespace sak::ai {
 
-struct AiTraceEvent {
-    QDateTime timestamp_utc;
-    QString run_id;
-    QString parent_span_id;
-    QString span_id;
-    QString kind;
-    QString name;
-    QString status;
-    qint64 duration_ms{0};
-    TokenUsage token_usage;
-    QJsonObject metadata;
-
-    [[nodiscard]] QJsonObject toJson() const;
-    [[nodiscard]] static AiTraceEvent fromJson(const QJsonObject& object);
-};
-
 struct AiActivityEvent {
     QDateTime timestamp_utc;
     QString session_id;
@@ -55,15 +39,6 @@ struct AiActivityEvent {
     [[nodiscard]] static AiActivityEvent fromJson(const QJsonObject& object);
 };
 
-struct AiTraceEventSeed {
-    QString run_id;
-    QString kind;
-    QString name;
-    QString status;
-    QJsonObject metadata;
-    QString parent_span_id;
-};
-
 struct AiActivityEventSeed {
     QString session_id;
     QString run_id;
@@ -73,7 +48,8 @@ struct AiActivityEventSeed {
     QJsonObject metadata;
 };
 
-/// @brief Persists AI run trace events as JSONL inside an AI session folder.
+/// @brief Persists the AI activity log (activity.jsonl) inside an AI session folder. It is the
+/// one AI audit stream: run details, the session report and the timeline read it back.
 class TraceStore {
 public:
     explicit TraceStore(QString session_dir = {});
@@ -86,27 +62,15 @@ public:
     // also lets tests exercise rotation without writing tens of megabytes.
     void setMaxJsonlBytes(qint64 max_bytes);
     [[nodiscard]] qint64 maxJsonlBytes() const;
-    [[nodiscard]] QString tracePath() const;
     [[nodiscard]] QString activityPath() const;
-    [[nodiscard]] QString replayPath() const;
 
-    /// Rolls before the serialized record would cross either the stream or line-size cap.
-    [[nodiscard]] bool appendEvent(AiTraceEvent event, QString* error_message = nullptr) const;
-    /// Returns no events and sets error_message when any record is incomplete or invalid.
-    [[nodiscard]] QVector<AiTraceEvent> loadEvents(QString* error_message = nullptr) const;
     /// Rolls before the serialized record would cross either the stream or line-size cap.
     [[nodiscard]] bool appendActivityEvent(AiActivityEvent event,
                                            QString* error_message = nullptr) const;
     /// Returns no events and sets error_message when any record is incomplete or invalid.
     [[nodiscard]] QVector<AiActivityEvent> loadActivityEvents(
         QString* error_message = nullptr) const;
-    [[nodiscard]] bool appendReplayEvent(const QString& run_id,
-                                         const QString& event_type,
-                                         const QString& status,
-                                         QJsonObject metadata = {},
-                                         QString* error_message = nullptr) const;
 
-    [[nodiscard]] static AiTraceEvent event(const AiTraceEventSeed& seed);
     [[nodiscard]] static AiActivityEvent activityEvent(const AiActivityEventSeed& seed);
 
 private:

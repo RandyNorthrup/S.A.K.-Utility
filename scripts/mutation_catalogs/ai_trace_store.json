@@ -18,7 +18,7 @@
       "find": "    if (payload.size() > cap) {",
       "replace": "    if (payload.size() < 0 && cap < 0) {",
       "expect": "killed",
-      "why": "appendEvent_rejectsRecordLargerThanFileCap requires an individual record larger than the configured stream cap to be refused."
+      "why": "appendActivityEvent_rejectsRecordLargerThanFileCap requires an individual record larger than the configured stream cap to be refused."
     },
     {
       "id": "rotation-waits-until-already-full",
@@ -26,7 +26,7 @@
       "find": "    const bool would_exceed_cap = current_size > cap - payload.size();",
       "replace": "    const bool would_exceed_cap = current_size >= cap;",
       "expect": "killed",
-      "why": "appendEvent_rotatesBeforeWriteWouldExceedCap requires rotation before the projected append crosses the cap."
+      "why": "appendActivityEvent_rotatesBeforeWriteWouldExceedCap requires rotation before the projected append crosses the cap."
     },
     {
       "id": "truncated-final-line-accepted",
@@ -34,7 +34,7 @@
       "find": "    if (!raw_line.endsWith('\\n')) {",
       "replace": "    if (raw_line.isEmpty()) {",
       "expect": "killed",
-      "why": "trace and activity truncated-line tests require a missing final newline to invalidate the whole load."
+      "why": "activity truncated-line tests require a missing final newline to invalidate the whole load."
     },
     {
       "id": "line-error-returns-partial-events",
@@ -50,7 +50,7 @@
       "find": "        if (parse_error.error != QJsonParseError::NoError || !document.isObject()) {",
       "replace": "        if (parse_error.error == QJsonParseError::NoError && !document.isObject()) {",
       "expect": "killed",
-      "why": "trace and activity malformed-line tests require invalid JSON to fail the whole audit load."
+      "why": "activity malformed-line tests require invalid JSON to fail the whole audit load."
     },
     {
       "id": "unsupported-schema-is-accepted",
@@ -58,7 +58,7 @@
       "find": "        if (!schema_error.isEmpty()) {",
       "replace": "        if (schema_error.isEmpty() && schema_error.size() < 0) {",
       "expect": "killed",
-      "why": "trace and activity schema tests require every loaded record to carry the exact supported schema version."
+      "why": "activity schema tests require every loaded record to carry the exact supported schema version."
     }
   ]
 }
