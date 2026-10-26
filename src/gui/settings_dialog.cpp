@@ -17,7 +17,6 @@
 #include <QLabel>
 #include <QMessageBox>
 #include <QPushButton>
-#include <QSettings>
 #include <QVBoxLayout>
 
 namespace sak {
@@ -242,15 +241,18 @@ void SettingsDialog::loadSettings() {
 
     // Quick Actions
     {
-        const QSettings qa_settings("SAK", "QuickActions");
+        // In the portable config (ConfigManager); the QuickActions values used to live in a
+        // registry-backed QSettings under HKEY_CURRENT_USER.
         m_quickActionsBackupLocation->setText(
-            qa_settings.value("backup_location", "C:\\SAK_Backups").toString());
+            config.getValue("quick_actions/backup_location", "C:\\SAK_Backups").toString());
         m_quickActionsConfirm->setChecked(
-            qa_settings.value("confirm_before_execute", true).toBool());
+            config.getValue("quick_actions/confirm_before_execute", true).toBool());
         m_quickActionsNotifications->setChecked(
-            qa_settings.value("show_notifications", true).toBool());
-        m_quickActionsLogging->setChecked(qa_settings.value("enable_logging", true).toBool());
-        m_quickActionsCompress->setChecked(qa_settings.value("compress_backups", true).toBool());
+            config.getValue("quick_actions/show_notifications", true).toBool());
+        m_quickActionsLogging->setChecked(
+            config.getValue("quick_actions/enable_logging", true).toBool());
+        m_quickActionsCompress->setChecked(
+            config.getValue("quick_actions/compress_backups", true).toBool());
     }
 
     m_settingsModified = false;
@@ -269,12 +271,12 @@ void SettingsDialog::saveSettings() {
 
     // Quick Actions
     {
-        QSettings qa_settings("SAK", "QuickActions");
-        qa_settings.setValue("backup_location", m_quickActionsBackupLocation->text());
-        qa_settings.setValue("confirm_before_execute", m_quickActionsConfirm->isChecked());
-        qa_settings.setValue("show_notifications", m_quickActionsNotifications->isChecked());
-        qa_settings.setValue("enable_logging", m_quickActionsLogging->isChecked());
-        qa_settings.setValue("compress_backups", m_quickActionsCompress->isChecked());
+        config.setValue("quick_actions/backup_location", m_quickActionsBackupLocation->text());
+        config.setValue("quick_actions/confirm_before_execute", m_quickActionsConfirm->isChecked());
+        config.setValue("quick_actions/show_notifications",
+                        m_quickActionsNotifications->isChecked());
+        config.setValue("quick_actions/enable_logging", m_quickActionsLogging->isChecked());
+        config.setValue("quick_actions/compress_backups", m_quickActionsCompress->isChecked());
     }
 
     // Sync to disk

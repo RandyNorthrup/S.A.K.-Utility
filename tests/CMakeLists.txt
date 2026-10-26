@@ -1160,6 +1160,7 @@ target_include_directories(test_config_manager PRIVATE
 add_test(NAME test_config_manager COMMAND test_config_manager
          -o "${TEST_OUTPUT_DIR}/test_config_manager.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+target_compile_definitions(test_config_manager PRIVATE SAK_REPO_ROOT="${CMAKE_SOURCE_DIR}")
 message(STATUS "Added unit test: test_config_manager")
 
 # test_config_schema_versioning - R5-G23-5: persisted schema_version; current
@@ -6529,6 +6530,7 @@ set(_sak_lock_portable_data_root
     test_image_flasher_panel test_network_diagnostic_controller test_partition_manager_panel
     test_running_work_exit_guard
     test_diagnostic_benchmark_panel test_advanced_uninstall_panel test_network_diagnostic_panel
+    test_file_management_explorer_panel
     test_startup_budget test_stage_portable_release test_release_archive_recovery)
 set(_sak_lock_system_clipboard test_ai_transcript_view test_win32_mcp_server)
 set(_sak_lock_desktop_session test_win32_mcp_server test_follow_scroll_controller)

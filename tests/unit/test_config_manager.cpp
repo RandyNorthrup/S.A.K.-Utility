@@ -6,9 +6,14 @@
 
 #include "sak/app_paths.h"
 #include "sak/config_manager.h"
+#include "sak/portable_settings.h"
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QDirIterator>
+#include <QFile>
+#include <QProcessEnvironment>
+#include <QRegularExpression>
 #include <QSignalSpy>
 #include <QtTest/QtTest>
 #include <QVariant>
@@ -17,6 +22,10 @@ class ConfigManagerTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void portableSettingsLiveInTheDataFolder();
+    void noSourceWritesSettingsToTheRegistry();
+    void dataRootHasNoSilentFallback();
+    void childTempIsPerSessionAndNotProcessWide();
     void cleanup();
 
     // Singleton
@@ -412,6 +421,101 @@ void ConfigManagerTests::describeSettingsStatus_mapsErrors() {
         sak::ConfigManager::describeSettingsStatus(static_cast<QSettings::Status>(3));
     QVERIFY(!unknown_status.isEmpty());
     QCOMPARE(unknown_status, QStringLiteral("unknown settings error"));
+}
+
+// A default-constructed QSettings writes HKEY_CURRENT_USER. UI state now goes to an INI file in
+// the portable data folder, beside (not inside) the ConfigManager store.
+void ConfigManagerTests::portableSettingsLiveInTheDataFolder() {
+    const sak::PortableSettings settings;
+    QCOMPARE(settings.format(), QSettings::IniFormat);
+    QCOMPARE(QDir::cleanPath(settings.fileName()),
+             QDir::cleanPath(sak::app_paths::uiStateFilePath()));
+    QVERIFY(QDir::cleanPath(settings.fileName())
+                .startsWith(QDir::cleanPath(sak::app_paths::dataRoot()) + QLatin1Char('/')));
+    QVERIFY(QDir::cleanPath(settings.fileName()) !=
+            QDir::cleanPath(sak::app_paths::configFilePath()));
+}
+
+void ConfigManagerTests::noSourceWritesSettingsToTheRegistry() {
+    // "QSettings name;" (default format = registry) and QSettings("Org", "App") (always native,
+    // i.e. registry). Reading another program's registry key by explicit path stays allowed.
+    const QRegularExpression bare(QStringLiteral("\\bQSettings\\s+\\w+\\s*;"));
+    const QRegularExpression org_app(
+        QStringLiteral("\\bQSettings\\s+\\w+\\s*\\(\\s*\"[^\"]*\"\\s*,"));
+    QStringList offenders;
+    QDirIterator it(QStringLiteral(SAK_REPO_ROOT "/src"),
+                    {QStringLiteral("*.cpp"), QStringLiteral("*.h")},
+                    QDir::Files,
+                    QDirIterator::Subdirectories);
+    while (it.hasNext()) {
+        const QString path = it.next();
+        QFile file(path);
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QString text = QString::fromUtf8(file.readAll());
+        if (bare.match(text).hasMatch() || org_app.match(text).hasMatch()) {
+            offenders.append(path);
+        }
+    }
+    QVERIFY2(offenders.isEmpty(), qPrintable(offenders.join(QLatin1Char('\n'))));
+}
+
+// The data root used to fall back silently to %LOCALAPPDATA% when data/ beside the exe was not
+// writable, so a "portable" tool left its settings and logs on the host without saying so.
+void ConfigManagerTests::dataRootHasNoSilentFallback() {
+    const auto writable = [](const QString&) {
+        return true;
+    };
+    const auto unwritable = [](const QString&) {
+        return false;
+    };
+    const QString app = QStringLiteral("D:/Tools/SAK");
+    const QString per_user = QStringLiteral("E:/PerUserData/SAK");
+    const auto portable = sak::app_paths::decideDataRoot(false, app, per_user, writable);
+    QVERIFY(portable.has_value());
+    QCOMPARE(QDir::cleanPath(*portable), QStringLiteral("D:/Tools/SAK/data"));
+    const auto refused = sak::app_paths::decideDataRoot(false, app, per_user, unwritable);
+    QVERIFY2(!refused.has_value(), "an unwritable portable folder must not fall back");
+    QVERIFY(refused.error().contains(QStringLiteral("not writable")));
+    const auto packaged = sak::app_paths::decideDataRoot(true, app, per_user, unwritable);
+    QVERIFY(packaged.has_value());
+    QCOMPARE(*packaged, per_user);
+    // Decided once: the same answer every time.
+    QCOMPARE(sak::app_paths::dataRoot(), sak::app_paths::dataRoot());
+}
+
+// TMP/TEMP were pointed at data/temp for the whole process. Now only the children that need a
+// portable temp get one, in this session's own folder, and leftovers of dead sessions are found.
+void ConfigManagerTests::childTempIsPerSessionAndNotProcessWide() {
+    const QProcessEnvironment child =
+        sak::app_paths::withSessionTemp(QProcessEnvironment::systemEnvironment());
+    const QString session = QDir::cleanPath(sak::app_paths::sessionTempDirectory());
+    QCOMPARE(QDir::cleanPath(QDir::fromNativeSeparators(child.value(QStringLiteral("TEMP")))),
+             session);
+    QCOMPARE(QDir::cleanPath(QDir::fromNativeSeparators(child.value(QStringLiteral("TMP")))),
+             session);
+    QVERIFY(
+        session.startsWith(QDir::cleanPath(sak::app_paths::tempDirectory()) + QLatin1Char('/')));
+    QVERIFY(QDir::cleanPath(qEnvironmentVariable("TEMP")) != session);
+    sak::app_paths::removeSessionTempDirectory();
+    QVERIFY(!QDir(session).exists());
+
+    const auto alive = [](qint64 pid) {
+        return pid == 200;
+    };
+    QCOMPARE(sak::app_paths::staleSessionTempDirectories({QStringLiteral("session-100"),
+                                                          QStringLiteral("session-200"),
+                                                          QStringLiteral("session-300"),
+                                                          QStringLiteral("uup-build"),
+                                                          QStringLiteral("session-x")},
+                                                         100,
+                                                         alive),
+             QStringList{QStringLiteral("session-300")});
+
+    QFile main_source(QStringLiteral(SAK_REPO_ROOT "/src/main.cpp"));
+    QVERIFY(main_source.open(QIODevice::ReadOnly));
+    const QString text = QString::fromUtf8(main_source.readAll());
+    QVERIFY2(!text.contains(QStringLiteral("qputenv(\"TMP\"")), "main must not redirect TMP");
+    QVERIFY2(!text.contains(QStringLiteral("qputenv(\"TEMP\"")), "main must not redirect TEMP");
 }
 
 QTEST_GUILESS_MAIN(ConfigManagerTests)

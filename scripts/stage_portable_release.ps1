@@ -259,7 +259,6 @@ Copy-RequiredFile (Join-Path $repoRootPath "README.md") $packageRoot
 Copy-RequiredFile (Join-Path $repoRootPath "LICENSE") $packageRoot
 Copy-OptionalFile (Join-Path $repoRootPath "CONTRIBUTING.md") $packageRoot
 Copy-RequiredFile (Join-Path $repoRootPath "THIRD_PARTY_LICENSES.md") $packageRoot
-New-Item -ItemType File -Path (Join-Path $packageRoot "portable.ini") -Force | Out-Null
 
 foreach ($relativePath in @("data/ai_sessions", "data/temp", "data/logs", "_logs")) {
     Remove-PathIfExists (Join-Path $packageRoot $relativePath) "Container"

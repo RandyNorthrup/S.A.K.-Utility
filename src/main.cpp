@@ -429,15 +429,27 @@ bool initializeLogger() {
     return true;
 }
 
-void configurePortableRuntimeDirs() {
-    const QString temp_dir = sak::app_paths::tempDirectory();
-    if (!sak::app_paths::ensureDirectory(temp_dir)) {
-        std::cerr << "Warning: failed to create portable temp directory: " << temp_dir.toStdString()
-                  << '\n';
+/// Decide where data lives (once, no fallback) and tidy this app's own temp leftovers.
+/// Returns false -- after telling the user why -- when there is no usable data folder.
+bool configurePortableRuntimeDirs(const RuntimeOptions& options) {
+    const auto data_root = sak::app_paths::initializeDataRoot();
+    if (!data_root) {
+        std::cerr << "Fatal: " << data_root.error().toStdString() << '\n';
+        if (!options.startup_smoke_test && !options.accessibility_audit) {
+            sak::showCriticalLogged(nullptr,
+                                    QStringLiteral("S.A.K. Utility -- data folder"),
+                                    data_root.error());
+        }
+        return false;
     }
-    const QByteArray native_temp = QDir::toNativeSeparators(temp_dir).toLocal8Bit();
-    qputenv("TMP", native_temp);
-    qputenv("TEMP", native_temp);
+    // TMP/TEMP are no longer redirected for the whole process: children that need a portable
+    // temp (the bundled Chocolatey) get data/temp/session-<pid> through app_paths::withSessionTemp,
+    // which is removed at exit; folders a crashed run left behind are removed here.
+    sak::app_paths::removeStaleSessionTempDirectories();
+    QObject::connect(qApp, &QCoreApplication::aboutToQuit, []() {
+        sak::app_paths::removeSessionTempDirectory();
+    });
+    return true;
 }
 
 /// @brief Log which build is starting: one line, so a support log still names the version.
@@ -614,7 +626,9 @@ int runApplication(int argc, char* argv[]) {
         writeAccessibilityAuditStatus(QStringLiteral("app-initialized"));
     }
 
-    configurePortableRuntimeDirs();
+    if (!configurePortableRuntimeDirs(options)) {
+        return 1;
+    }
     if (options.accessibility_audit) {
         writeAccessibilityAuditStatus(QStringLiteral("runtime-dirs-configured"));
     }

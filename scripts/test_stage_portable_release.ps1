@@ -1423,6 +1423,10 @@ try {
             throw "Portable stage omitted required regression artifact: $relative"
         }
     }
+    # Nothing reads portable.ini (portable mode is the writable data/ folder beside the exe); it
+    # was staged into every package anyway.
+    Assert-StageContract (-not (Test-Path -LiteralPath (Join-Path $stagePackageRoot 'portable.ini'))) `
+        "Portable stage shipped the unused portable.ini"
     $chocolateyLogs = Join-Path $stagePackageRoot 'tools/chocolatey/logs'
     Assert-StageContract ((Test-Path -LiteralPath $chocolateyLogs -PathType Container) -and
         @(Get-ChildItem -LiteralPath $chocolateyLogs -Force -ErrorAction Stop).Count -eq 0) `

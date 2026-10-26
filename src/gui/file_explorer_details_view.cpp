@@ -4,6 +4,7 @@
 #include "sak/file_explorer_details_view.h"
 
 #include "sak/file_explorer_item_model.h"
+#include "sak/portable_settings.h"
 #include "sak/widget_helpers.h"
 
 #include <QAbstractItemView>
@@ -147,7 +148,7 @@ void FileExplorerDetailsView::saveColumnState() const {
     if (model() == nullptr) {
         return;
     }
-    QSettings settings;
+    PortableSettings settings;
     settings.beginGroup(QString::fromLatin1(kExplorerDetailsViewGroup));
     settings.setValue(QString::fromLatin1(kHeaderStateKey), horizontalHeader()->saveState());
     QVariantList widths;
@@ -163,7 +164,7 @@ void FileExplorerDetailsView::restoreColumnState() {
     if (model() == nullptr) {
         return;
     }
-    QSettings settings;
+    PortableSettings settings;
     settings.beginGroup(QString::fromLatin1(kExplorerDetailsViewGroup));
     const QByteArray state = settings.value(QString::fromLatin1(kHeaderStateKey)).toByteArray();
     const QVariantList widths = settings.value(QString::fromLatin1(kColumnWidthsKey)).toList();

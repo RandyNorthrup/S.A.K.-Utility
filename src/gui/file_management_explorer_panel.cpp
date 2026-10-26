@@ -23,6 +23,7 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
+#include "sak/portable_settings.h"
 #include "sak/process_runner.h"
 #include "sak/recycle_bin.h"
 #include "sak/rich_text_safety.h"
@@ -1640,7 +1641,7 @@ bool FileManagementExplorerPanel::handleViewportMousePress(QAbstractItemView* vi
 }
 
 bool FileManagementExplorerPanel::doubleClickToGoUpEnabled() const {
-    QSettings settings;
+    PortableSettings settings;
     settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
     return settings.value(QString::fromLatin1(kDoubleClickToGoUpKey), true).toBool();
 }
@@ -1709,7 +1710,7 @@ void FileManagementExplorerPanel::showExplorerSettings() {
 }
 
 bool FileManagementExplorerPanel::statusCenterDuringOperationsOnly() const {
-    QSettings settings;
+    PortableSettings settings;
     settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
     return settings.value(QString::fromLatin1(kStatusCenterVisibilityKey), 0).toInt() == 1;
 }
@@ -1720,7 +1721,7 @@ void FileManagementExplorerPanel::applyExplorerSettings(const bool checkboxes,
                                                         const bool flatten,
                                                         const int status_center_visibility) {
     setShowCheckboxes(checkboxes);
-    QSettings settings;
+    PortableSettings settings;
     settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
     settings.setValue(QString::fromLatin1(kDoubleClickToGoUpKey), double_click_up);
     settings.setValue(QString::fromLatin1(kShowFilterHeaderKey), filter_header);
@@ -2159,7 +2160,7 @@ void FileManagementExplorerPanel::appendStaleFavoriteRow(const QString& target_i
 }
 
 bool FileManagementExplorerPanel::sidebarSectionVisible(const QString& section_id) const {
-    QSettings settings;
+    PortableSettings settings;
     settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
     settings.beginGroup(QStringLiteral("SidebarSections"));
     const bool visible = settings.value(section_id, true).toBool();
@@ -2170,7 +2171,7 @@ bool FileManagementExplorerPanel::sidebarSectionVisible(const QString& section_i
 
 void FileManagementExplorerPanel::setSidebarSectionVisible(const QString& section_id,
                                                            const bool visible) {
-    QSettings settings;
+    PortableSettings settings;
     settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
     settings.beginGroup(QStringLiteral("SidebarSections"));
     settings.setValue(section_id, visible);
@@ -2294,7 +2295,7 @@ void FileManagementExplorerPanel::setSidebarCompact(const bool compact) {
         return;
     }
     m_sidebar->setCompact(compact);
-    QSettings settings;
+    PortableSettings settings;
     settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
     settings.setValue(QString::fromLatin1(kSidebarCompactKey), compact);
     settings.endGroup();
@@ -2342,7 +2343,7 @@ void FileManagementExplorerPanel::rememberRecentTarget(const QString& target_id)
 }
 
 void FileManagementExplorerPanel::loadSidebarState() {
-    QSettings settings;
+    PortableSettings settings;
     settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
     m_favorite_target_ids =
         settings.value(QString::fromLatin1(kFavoriteTargetIdsKey)).toStringList();
@@ -2357,7 +2358,7 @@ void FileManagementExplorerPanel::loadSidebarState() {
 }
 
 void FileManagementExplorerPanel::saveSidebarState() const {
-    QSettings settings;
+    PortableSettings settings;
     settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
     settings.setValue(QString::fromLatin1(kFavoriteTargetIdsKey), m_favorite_target_ids);
     settings.setValue(QString::fromLatin1(kRecentTargetIdsKey), m_recent_target_ids);
@@ -2407,7 +2408,7 @@ void FileManagementExplorerPanel::loadViewSettingsForCurrentLocation() {
     if (m_pane_state.location.isEmpty()) {
         return;
     }
-    QSettings settings;
+    PortableSettings settings;
     settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
     settings.beginGroup(locationViewSettingsGroup(m_pane_state.location));
     if (settings.contains(QString::fromLatin1(kViewModeKey))) {
@@ -2457,7 +2458,7 @@ void FileManagementExplorerPanel::saveViewSettings() const {
     if (m_pane_state.location.isEmpty()) {
         return;
     }
-    QSettings settings;
+    PortableSettings settings;
     settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
     settings.beginGroup(locationViewSettingsGroup(m_pane_state.location));
     settings.setValue(QString::fromLatin1(kViewModeKey), viewModeName(m_pane_state.view.mode));
@@ -4953,7 +4954,7 @@ FileExplorerCommandContext FileManagementExplorerPanel::commandContext() const {
 
 bool FileManagementExplorerPanel::selectionHasTags(const FileExplorerSelection& selection) const {
     const QString target_id = FileExplorerTargetId::fromTarget(currentTarget()).value;
-    QSettings settings;
+    PortableSettings settings;
     return std::ranges::any_of(selection.entries, [&](const FileManagementEntry& entry) {
         return !FileExplorerTagStore::tagsFor(
                     settings, QString::fromLatin1(kTagStoreGroup), target_id, entry.path)
@@ -5505,13 +5506,13 @@ QStringList FileManagementExplorerPanel::tagsForSelectedItem() const {
     if (target_id.isEmpty()) {
         return {};
     }
-    QSettings settings;
+    PortableSettings settings;
     return FileExplorerTagStore::tagsFor(
         settings, QString::fromLatin1(kTagStoreGroup), target_id, selection.entries.first().path);
 }
 
 QStringList FileManagementExplorerPanel::allKnownTags() const {
-    QSettings settings;
+    PortableSettings settings;
     return FileExplorerTagStore::allTags(settings, QString::fromLatin1(kTagStoreGroup));
 }
 
@@ -5526,7 +5527,7 @@ void FileManagementExplorerPanel::installTagProvider(FileExplorerItemModel* mode
         if (target_id.isEmpty() || path.trimmed().isEmpty()) {
             return {};
         }
-        QSettings settings;
+        PortableSettings settings;
         return FileExplorerTagStore::tagsFor(
             settings, QString::fromLatin1(kTagStoreGroup), target_id, path);
     });
@@ -5572,7 +5573,7 @@ void FileManagementExplorerPanel::applyTagFilter(const QString& tag) {
         return;
     }
     const QString target_id = FileExplorerTargetId::fromTarget(currentTarget()).value;
-    QSettings settings;
+    PortableSettings settings;
     const auto items =
         FileExplorerTagStore::itemsWithTag(settings, QString::fromLatin1(kTagStoreGroup), tag);
     QSet<QString> paths;
@@ -5618,7 +5619,7 @@ void FileManagementExplorerPanel::editSelectedItemTags() {
         return;
     }
     const QStringList tags = entered.split(QLatin1Char(','), Qt::SkipEmptyParts);
-    QSettings settings;
+    PortableSettings settings;
     FileExplorerTagStore::setTags(
         settings, QString::fromLatin1(kTagStoreGroup), target_id, path, tags);
     updateDetailsPane();
@@ -5638,7 +5639,7 @@ void FileManagementExplorerPanel::removeTagsFromSelection() {
     if (selection.isEmpty() || target_id.isEmpty()) {
         return;
     }
-    QSettings settings;
+    PortableSettings settings;
     for (const FileManagementEntry& entry : selection.entries) {
         FileExplorerTagStore::setTags(
             settings, QString::fromLatin1(kTagStoreGroup), target_id, entry.path, {});
@@ -6114,7 +6115,7 @@ void FileManagementExplorerPanel::toggleFileExtensions() {
 }
 
 bool FileManagementExplorerPanel::showCheckboxesEnabled() const {
-    QSettings settings;
+    PortableSettings settings;
     settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
     // Files FoldersSettingsService.ShowCheckboxesWhenSelectingItems: default on.
     const bool enabled = settings.value(QString::fromLatin1(kShowCheckboxesKey), true).toBool();
@@ -6123,7 +6124,7 @@ bool FileManagementExplorerPanel::showCheckboxesEnabled() const {
 }
 
 void FileManagementExplorerPanel::setShowCheckboxes(const bool enabled) {
-    QSettings settings;
+    PortableSettings settings;
     settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
     settings.setValue(QString::fromLatin1(kShowCheckboxesKey), enabled);
     settings.endGroup();
@@ -6160,7 +6161,7 @@ void FileManagementExplorerPanel::toggleSelectionForPath(FileExplorerPane* pane,
 }
 
 bool FileManagementExplorerPanel::showFlattenOptionsEnabled() const {
-    QSettings settings;
+    PortableSettings settings;
     settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
     // Files GeneralSettingsService.ShowFlattenOptions: experimental, default off.
     const bool enabled = settings.value(QString::fromLatin1(kShowFlattenKey), false).toBool();
@@ -6342,7 +6343,7 @@ void FileManagementExplorerPanel::buildFilterHeader(QVBoxLayout* layout) {
 }
 
 bool FileManagementExplorerPanel::showFilterHeaderEnabled() const {
-    QSettings settings;
+    PortableSettings settings;
     settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
     // Files GeneralSettingsService.ShowFilterHeader: default off.
     const bool enabled = settings.value(QString::fromLatin1(kShowFilterHeaderKey), false).toBool();
@@ -6354,7 +6355,7 @@ void FileManagementExplorerPanel::toggleFilterHeader() {
     // Files ToggleFilterHeaderAction (Ctrl+Shift+F): flip the setting; the
     // shown box takes focus.
     const bool enabled = !showFilterHeaderEnabled();
-    QSettings settings;
+    PortableSettings settings;
     settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
     settings.setValue(QString::fromLatin1(kShowFilterHeaderKey), enabled);
     settings.endGroup();
@@ -6383,7 +6384,7 @@ void FileManagementExplorerPanel::applyFilterHeaderText(const QString& text) {
 }
 
 QStringList FileManagementExplorerPanel::searchHistory() const {
-    QSettings settings;
+    PortableSettings settings;
     settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
     const QStringList history = settings.value(QLatin1String(kSearchHistoryKey)).toStringList();
     settings.endGroup();
@@ -6401,7 +6402,7 @@ void FileManagementExplorerPanel::rememberSearchQuery(const QString& query) {
     while (history.size() > kMaxSearchHistoryEntries) {
         history.removeLast();
     }
-    QSettings settings;
+    PortableSettings settings;
     settings.beginGroup(QString::fromLatin1(kExplorerSettingsGroup));
     settings.setValue(QLatin1String(kSearchHistoryKey), history);
     settings.endGroup();
@@ -7541,7 +7542,7 @@ void FileManagementExplorerPanel::saveTabSession() const {
     }
     session.active_index = m_active_tab;
 
-    QSettings settings;
+    PortableSettings settings;
     const QString group = QString::fromLatin1(kTabSessionGroup);
     // Only a genuinely-navigated session is worth persisting; a lone empty tab
     // clears any stale saved session instead of pinning "New Tab" forever.
@@ -7579,7 +7580,7 @@ void FileManagementExplorerPanel::restoreTabSession() {
     if (!m_tab_session_persistence || (m_tab_bar == nullptr)) {
         return;
     }
-    QSettings settings;
+    PortableSettings settings;
     const FileExplorerTabSession session =
         FileExplorerSessionStore::load(settings, QString::fromLatin1(kTabSessionGroup));
     if (session.tabs.isEmpty()) {
@@ -8343,7 +8344,7 @@ void FileManagementExplorerPanel::addTagsSubmenu(QMenu* menu,
     tags_menu->setObjectName(QStringLiteral("fileExplorerTagsSubmenu"));
     const FileExplorerSelection selection = context.pane.selection;
     const QString target_id = FileExplorerTargetId::fromTarget(currentTarget()).value;
-    QSettings settings;
+    PortableSettings settings;
     const QStringList known_tags = allKnownTags();
     // The tag store is user-writable and uncapped. Read each selected entry's tags
     // ONCE (not once per tag x entry, which is a quadratic settings walk on the
@@ -8396,7 +8397,7 @@ void FileManagementExplorerPanel::toggleTagOnSelection(const QString& tag, const
     if (selection.isEmpty() || target_id.isEmpty()) {
         return;
     }
-    QSettings settings;
+    PortableSettings settings;
     for (const FileManagementEntry& entry : selection.entries) {
         QStringList tags = FileExplorerTagStore::tagsFor(
             settings, QString::fromLatin1(kTagStoreGroup), target_id, entry.path);
@@ -8685,7 +8686,7 @@ void FileManagementExplorerPanel::applyDroppedTag(const QString& tag, const QMim
     for (const PasteItem& raw_item : sources.raw_items) {
         paths.append(raw_item.path);
     }
-    QSettings settings;
+    PortableSettings settings;
     int tagged = 0;
     for (const QString& path : paths) {
         QStringList tags = FileExplorerTagStore::tagsFor(

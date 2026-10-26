@@ -19,6 +19,7 @@
 #include "sak/file_explorer_tag_store.h"
 #include "sak/file_explorer_transfer_worker.h"
 #include "sak/file_management_explorer_panel.h"
+#include "sak/portable_settings.h"
 #include "sak/rich_text_safety.h"
 
 #include <QAbstractItemView>
@@ -201,7 +202,7 @@ bool triggerContextSubmenuAction(QWidget* target,
 }
 
 void resetExplorerPanelSettings() {
-    QSettings settings;
+    sak::PortableSettings settings;
     settings.beginGroup(QStringLiteral("FileManagementExplorer"));
     settings.remove(QString());
     settings.endGroup();
@@ -727,7 +728,7 @@ void switchThroughViewModesAndVerifyVisibility(const sak::FileExplorerPane* pane
 }
 
 void verifyPersistedAdaptiveViewMode() {
-    QSettings savedModeSettings;
+    sak::PortableSettings savedModeSettings;
     savedModeSettings.beginGroup(QStringLiteral("FileManagementExplorer"));
     savedModeSettings.beginGroup(QStringLiteral("View"));
     const QStringList locationGroups = savedModeSettings.childGroups();
@@ -876,7 +877,7 @@ private Q_SLOTS:
         QVERIFY(deterministicSecondLocalRoot().isValid());
         // The info pane persists its selected tab; a stale Preview choice from
         // an earlier run would hide the details scroller mid-suite.
-        QSettings settings;
+        sak::PortableSettings settings;
         settings.remove(QStringLiteral("FileManagementExplorer/InfoPane"));
     }
 
@@ -1043,7 +1044,7 @@ private Q_SLOTS:
     void detailsViewFirstRunShowsFilesStyleColumnSet() {
         // No saved header state: the details view hides the power columns and
         // keeps the Files-style default set visible.
-        QSettings settings;
+        sak::PortableSettings settings;
         settings.beginGroup(QStringLiteral("FileExplorerDetailsView"));
         settings.remove(QString());
         settings.endGroup();
@@ -1136,7 +1137,7 @@ private Q_SLOTS:
                 return false;
             }(),
             "search results did not land in the listing");
-        QSettings settings;
+        sak::PortableSettings settings;
         settings.beginGroup(QStringLiteral("FileManagementExplorer"));
         QVERIFY(settings.value(QStringLiteral("SearchHistory"))
                     .toStringList()
@@ -1631,7 +1632,7 @@ private Q_SLOTS:
 
         // The grouping preference persists per-location under the Files
         // setting name.
-        QSettings settings;
+        sak::PortableSettings settings;
         settings.beginGroup(QStringLiteral("FileManagementExplorer"));
         settings.beginGroup(QStringLiteral("View"));
         bool found = false;
@@ -1844,7 +1845,7 @@ private Q_SLOTS:
         QVERIFY(writeText(root.filePath(QStringLiteral("flatten_me/sub/deep/leaf.txt"))));
         {
             // Files ShowFlattenOptions (experimental, default off): opt in.
-            QSettings settings;
+            sak::PortableSettings settings;
             settings.beginGroup(QStringLiteral("FileManagementExplorer"));
             settings.setValue(QStringLiteral("ShowFlattenOptions"), true);
             settings.endGroup();
@@ -2014,7 +2015,7 @@ private Q_SLOTS:
         // Applied live and persisted under the Files setting names.
         QTRY_VERIFY(!pane->itemModel()->checkboxesVisible());
         QTRY_VERIFY(filterHeader->isVisible());
-        QSettings settings;
+        sak::PortableSettings settings;
         settings.beginGroup(QStringLiteral("FileManagementExplorer"));
         QVERIFY(!settings.value(QStringLiteral("ShowCheckboxesWhenSelectingItems"), true).toBool());
         QVERIFY(settings.value(QStringLiteral("ShowFilterHeader"), false).toBool());
@@ -2037,7 +2038,7 @@ private Q_SLOTS:
             QVERIFY(file.write("tag payload") > 0);
         }
         {
-            QSettings settings;
+            sak::PortableSettings settings;
             settings.beginGroup(QStringLiteral("FileManagementExplorer"));
             settings.setValue(QStringLiteral("FavoriteTargetIds"),
                               QStringList{mounted.at(0).id, mounted.at(1).id});
@@ -2117,7 +2118,7 @@ private Q_SLOTS:
                         Qt::NoModifier);
         QVERIFY(QApplication::sendEvent(targetList->viewport(), &drop));
 
-        QSettings settings;
+        sak::PortableSettings settings;
         const QString tagged_path =
             QDir::fromNativeSeparators(QDir(dir_path).filePath(QStringLiteral("tagme.txt")));
         // The entry is new for this run and carried no prior tags, so the drop leaves exactly
@@ -2157,7 +2158,7 @@ private Q_SLOTS:
         QDropEvent drop(drop_pos, Qt::MoveAction, &favorite_mime, Qt::NoButton, Qt::NoModifier);
         QVERIFY(QApplication::sendEvent(targetList->viewport(), &drop));
 
-        QSettings settings;
+        sak::PortableSettings settings;
         settings.beginGroup(QStringLiteral("FileManagementExplorer"));
         const QStringList order =
             settings.value(QStringLiteral("FavoriteTargetIds")).toStringList();
@@ -3314,7 +3315,7 @@ private Q_SLOTS:
     }
 
     void sidebarCompactRailAndReorderDialogFollowFiles() {
-        QSettings settings;
+        sak::PortableSettings settings;
         settings.beginGroup(QStringLiteral("FileManagementExplorer"));
         settings.setValue(QStringLiteral("FavoriteTargetIds"),
                           QStringList{QStringLiteral("disk:98:partition:8"),
@@ -3353,7 +3354,7 @@ private Q_SLOTS:
         bool dialog_driven = false;
         driveReorderFavoritesDialog(list, &dialog_driven);
         QVERIFY2(dialog_driven, "reorder dialog was not driven");
-        QSettings after;
+        sak::PortableSettings after;
         after.beginGroup(QStringLiteral("FileManagementExplorer"));
         QCOMPARE(after.value(QStringLiteral("FavoriteTargetIds")).toStringList(),
                  (QStringList{QStringLiteral("disk:97:partition:7"),
@@ -3787,7 +3788,7 @@ private Q_SLOTS:
     void detailsColumnResizePersists() {
         QCoreApplication::setOrganizationName(QStringLiteral("SAKUtilityTests"));
         QCoreApplication::setApplicationName(QStringLiteral("FileExplorerPanelTests"));
-        QSettings settings;
+        sak::PortableSettings settings;
         settings.beginGroup(QStringLiteral("FileExplorerDetailsView"));
         settings.remove(QString());
         settings.endGroup();
@@ -3810,7 +3811,7 @@ private Q_SLOTS:
             QCOMPARE(view.columnWidth(sak::FileExplorerItemModel::NameColumn), 321);
             view.saveColumnState();
         }
-        QSettings savedSettings;
+        sak::PortableSettings savedSettings;
         savedSettings.beginGroup(QStringLiteral("FileExplorerDetailsView"));
         const QVariantList savedWidths =
             savedSettings.value(QStringLiteral("ColumnWidths")).toList();
@@ -4556,7 +4557,7 @@ private Q_SLOTS:
         // Toggling again hides the row; the persisted setting flips too.
         QTest::keyClick(&panel, Qt::Key_F, Qt::ControlModifier | Qt::ShiftModifier);
         QTRY_VERIFY(!header->isVisible());
-        QSettings settings;
+        sak::PortableSettings settings;
         settings.beginGroup(QStringLiteral("FileManagementExplorer"));
         QVERIFY(!settings.value(QStringLiteral("ShowFilterHeader"), false).toBool());
         settings.endGroup();
@@ -4896,7 +4897,7 @@ private Q_SLOTS:
         // Seed a favorite id that cannot resolve to any connected target, then verify
         // the sidebar keeps it as a disabled, warning-marked "offline" row instead of
         // dropping it silently.
-        QSettings settings;
+        sak::PortableSettings settings;
         settings.beginGroup(QStringLiteral("FileManagementExplorer"));
         const QStringList previous =
             settings.value(QStringLiteral("FavoriteTargetIds")).toStringList();
@@ -4934,7 +4935,7 @@ private Q_SLOTS:
     void staleFavoriteContextMenuRemovesThePin() {
         // An offline favorite has no connected target, but the pin itself must stay
         // removable through its own context menu (the only defect-free removal path).
-        QSettings settings;
+        sak::PortableSettings settings;
         settings.beginGroup(QStringLiteral("FileManagementExplorer"));
         const QStringList previous =
             settings.value(QStringLiteral("FavoriteTargetIds")).toStringList();
@@ -4995,7 +4996,7 @@ private Q_SLOTS:
     void sidebarRebuildKeepsCurrentFolder() {
         // Sidebar rebuilds (tag edits, favorite reorder, clear-recent) re-select the
         // active target; that reselect must not reset navigation back to the root.
-        QSettings settings;
+        sak::PortableSettings settings;
         settings.beginGroup(QStringLiteral("FileManagementExplorer"));
         const QStringList previous_favorites =
             settings.value(QStringLiteral("FavoriteTargetIds")).toStringList();
@@ -5064,7 +5065,7 @@ private Q_SLOTS:
     void dualPaneSurvivesTabSessionRoundTrip() {
         // Dual-pane arrangement is part of the tab session: enabling the split, saving
         // the session (panel destruction), and restoring must bring the split back.
-        QSettings settings;
+        sak::PortableSettings settings;
         settings.beginGroup(QStringLiteral("FileManagementExplorer/TabSession"));
         settings.remove(QString());
         settings.endGroup();
@@ -5118,7 +5119,7 @@ private Q_SLOTS:
     void favoritesAndRecentPersistAcrossConstruction() {
         // Favorites and recent target ids saved to QSettings are re-read on the next
         // panel construction and rendered as sidebar rows (persistence round trip).
-        QSettings settings;
+        sak::PortableSettings settings;
         settings.beginGroup(QStringLiteral("FileManagementExplorer"));
         const QStringList prevFav =
             settings.value(QStringLiteral("FavoriteTargetIds")).toStringList();
@@ -5287,7 +5288,7 @@ private Q_SLOTS:
         // Files Omnibar search mode: empty query lists the recent searches;
         // typed text debounces into live file suggestions; Enter on a file
         // suggestion navigates to it.
-        QSettings settings;
+        sak::PortableSettings settings;
         settings.beginGroup(QStringLiteral("FileManagementExplorer"));
         settings.setValue(QStringLiteral("SearchHistory"),
                           QStringList{QStringLiteral("prior-query")});

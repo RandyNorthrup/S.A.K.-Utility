@@ -12,6 +12,7 @@
 #include "sak/message_box_helpers.h"
 #include "sak/ost_converter_constants.h"
 #include "sak/ost_converter_controller.h"
+#include "sak/portable_settings.h"
 #include "sak/style_constants.h"
 #include "sak/widget_helpers.h"
 
@@ -704,7 +705,7 @@ QString OstConverterWidget::statusLabel(OstConversionJob::Status status) {
 }
 
 void OstConverterWidget::loadSettings() {
-    QSettings settings;
+    PortableSettings settings;
     settings.beginGroup(QStringLiteral("OstConverter"));
 
     m_output_dir_edit->setText(settings.value(QStringLiteral("lastOutputDir")).toString());
@@ -747,7 +748,7 @@ void OstConverterWidget::loadSettings() {
 }
 
 void OstConverterWidget::saveSettings() {
-    QSettings settings;
+    PortableSettings settings;
     settings.beginGroup(QStringLiteral("OstConverter"));
 
     settings.setValue(QStringLiteral("lastOutputDir"), m_output_dir_edit->text());

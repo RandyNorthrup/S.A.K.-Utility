@@ -4,6 +4,7 @@
 #include "sak/file_explorer_details_pane.h"
 
 #include "sak/layout_constants.h"
+#include "sak/portable_settings.h"
 #include "sak/style_constants.h"
 
 #include <QButtonGroup>
@@ -49,7 +50,7 @@ FileExplorerDetailsPane::FileExplorerDetailsPane(QWidget* parent) : QWidget(pare
     m_body_layout->addWidget(m_details_scroll, kInfoPaneDetailsStretch);
     root->addLayout(m_body_layout, 1);
 
-    const QSettings settings;
+    const PortableSettings settings;
     const QString saved =
         settings.value(QLatin1String(kInfoPaneSelectedTabKey), QLatin1String(kInfoPaneTabDetails))
             .toString();
@@ -167,7 +168,7 @@ void FileExplorerDetailsPane::applySelectedTab(const bool details, const bool pe
     // properties scroller below it (InfoPane.xaml SelectedTab states).
     m_details_scroll->setVisible(details);
     if (persist) {
-        QSettings settings;
+        PortableSettings settings;
         settings.setValue(QLatin1String(kInfoPaneSelectedTabKey),
                           QLatin1String(details ? kInfoPaneTabDetails : kInfoPaneTabPreview));
     }
