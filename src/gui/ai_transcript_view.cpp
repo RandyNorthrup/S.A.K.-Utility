@@ -15,6 +15,7 @@
 #include <QIcon>
 #include <QLabel>
 #include <QPushButton>
+#include <QResizeEvent>
 #include <QScrollArea>
 #include <QSize>
 #include <QSizePolicy>
@@ -154,7 +155,20 @@ bool AiTranscriptView::appendMessage(const QString& role, const QString& text, b
     message.text = body;
     message.expanded = expanded;
     m_messages.append(message);
-    renderMessages(true);
+    if (!m_rowsInSync || m_layout == nullptr) {
+        renderMessages(true);
+        return true;
+    }
+    // Only the new bubble is built; it goes after the existing rows, above the activity row
+    // and the trailing stretch.
+    const bool follow_newest = shouldFollowNewest(true);
+    Message& added = m_messages.last();
+    added.row = createTranscriptRow(added, transcriptBubbleMaxWidth());
+    m_layout->insertWidget(static_cast<int>(m_messages.size()) - 1, added.row);
+    if (follow_newest) {
+        scrollToBottomLater();
+    }
+    updateJumpToNewestButton();
     return true;
 }
 
@@ -195,15 +209,14 @@ bool AiTranscriptView::appendLoadedLine(const QString& line) {
     message.text = body;
     message.expanded = false;
     m_messages.append(message);
+    m_rowsInSync = false;
     return true;
 }
 
-void AiTranscriptView::clearMessages(bool render) {
+void AiTranscriptView::clearMessages() {
     m_messages.clear();
     m_messageSequence = 0;
-    if (render) {
-        renderMessages(false);
-    }
+    renderMessages(false);
 }
 
 void AiTranscriptView::setActivityText(const QString& text) {
@@ -211,10 +224,23 @@ void AiTranscriptView::setActivityText(const QString& text) {
     const bool text_changed = m_activityText != next_text;
     m_activityText = next_text;
     m_activityStep = 0;
-    if (text_changed || (m_activityLabel == nullptr && !m_activityText.isEmpty())) {
-        renderMessages(true);
+    if (!m_rowsInSync) {
+        if (text_changed) {
+            renderMessages(true);
+        }
+        return;
+    }
+    if (m_activityText.isEmpty()) {
+        removeActivityRow();
+        return;
+    }
+    if (m_activityLabel == nullptr) {
+        insertActivityRow(transcriptBubbleMaxWidth());
     }
     applyActivityFrame();
+    if (text_changed && shouldFollowNewest(true)) {
+        scrollToBottomLater();
+    }
 }
 
 void AiTranscriptView::updateActivityFrame() {
@@ -222,13 +248,58 @@ void AiTranscriptView::updateActivityFrame() {
         return;
     }
     if (m_activityLabel == nullptr) {
-        renderMessages(true);
+        if (m_rowsInSync) {
+            insertActivityRow(transcriptBubbleMaxWidth());
+        } else {
+            renderMessages(true);
+        }
     }
     if (m_activityLabel == nullptr) {
         return;
     }
     applyActivityFrame();
     scrollToBottomLater();
+}
+
+void AiTranscriptView::insertActivityRow(int bubble_max_width) {
+    if (m_layout == nullptr) {
+        return;
+    }
+    m_activityRow = createActivityRow(bubble_max_width);
+    // Above the trailing stretch, which is always the layout's last item.
+    m_layout->insertWidget(m_layout->count() - 1, m_activityRow);
+}
+
+void AiTranscriptView::removeActivityRow() {
+    if (m_activityRow == nullptr || m_layout == nullptr) {
+        return;
+    }
+    m_layout->removeWidget(m_activityRow);
+    m_activityRow->deleteLater();
+    m_activityRow = nullptr;
+    m_activityLabel = nullptr;
+}
+
+void AiTranscriptView::resizeEvent(QResizeEvent* event) {
+    QWidget::resizeEvent(event);
+    // Bubbles are built at the width current then; keep them at the same share of the
+    // viewport when it changes, as a full rebuild would.
+    applyBubbleWidths();
+}
+
+void AiTranscriptView::applyBubbleWidths() {
+    if (m_content == nullptr) {
+        return;
+    }
+    const int bubble_max_width = transcriptBubbleMaxWidth();
+    for (QFrame* bubble : m_content->findChildren<QFrame*>()) {
+        const QString name = bubble->objectName();
+        if (name == QLatin1String("aiTranscriptActivityBubble")) {
+            bubble->setMaximumWidth(qMin(bubble_max_width, sak::kDialogWidthLarge));
+        } else if (name.startsWith(QLatin1String("aiTranscriptBubble"))) {
+            bubble->setMaximumWidth(bubble_max_width);
+        }
+    }
 }
 
 void AiTranscriptView::scrollToBottomLater(bool force) {
@@ -276,6 +347,7 @@ void AiTranscriptView::renderMessages(bool scroll_to_bottom) {
 
     clearLayout();
     appendRenderedRows(transcriptBubbleMaxWidth());
+    m_rowsInSync = true;
     restoreRenderScroll(follow_newest, previous_scroll_value);
     updateJumpToNewestButton();
 }
@@ -293,11 +365,13 @@ int AiTranscriptView::transcriptBubbleMaxWidth() const {
 }
 
 void AiTranscriptView::appendRenderedRows(int bubble_max_width) {
-    for (const auto& message : m_messages) {
-        m_layout->addWidget(createTranscriptRow(message, bubble_max_width));
+    for (auto& message : m_messages) {
+        message.row = createTranscriptRow(message, bubble_max_width);
+        m_layout->addWidget(message.row);
     }
     if (!m_activityText.isEmpty()) {
-        m_layout->addWidget(createActivityRow(bubble_max_width));
+        m_activityRow = createActivityRow(bubble_max_width);
+        m_layout->addWidget(m_activityRow);
         applyActivityFrame();
     }
     m_layout->addStretch();
@@ -501,11 +575,23 @@ void AiTranscriptView::copyMessageToClipboard(const Message& message, QPushButto
 
 void AiTranscriptView::toggleMessageExpanded(const QString& message_id) {
     for (auto& item : m_messages) {
-        if (item.id == message_id) {
-            item.expanded = !item.expanded;
+        if (item.id != message_id) {
+            continue;
+        }
+        item.expanded = !item.expanded;
+        if (!m_rowsInSync || item.row == nullptr || m_layout == nullptr) {
             renderMessages(false);
             return;
         }
+        // Rebuild this one bubble in place and keep the reader where they were.
+        const int previous_scroll_value =
+            (m_scrollController != nullptr) ? m_scrollController->scrollValue() : 0;
+        QWidget* replacement = createTranscriptRow(item, transcriptBubbleMaxWidth());
+        delete m_layout->replaceWidget(item.row, replacement);
+        item.row->deleteLater();
+        item.row = replacement;
+        restoreScrollPositionLater(previous_scroll_value);
+        return;
     }
 }
 
@@ -514,6 +600,10 @@ void AiTranscriptView::clearLayout() {
         return;
     }
     m_activityLabel = nullptr;
+    m_activityRow = nullptr;
+    for (auto& message : m_messages) {
+        message.row = nullptr;
+    }
     while (QLayoutItem* item = m_layout->takeAt(0)) {
         if (QWidget* widget = item->widget()) {
             widget->deleteLater();

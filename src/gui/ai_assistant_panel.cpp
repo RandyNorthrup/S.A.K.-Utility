@@ -9395,7 +9395,7 @@ void AiAssistantPanel::loadSessionTranscript(const QString& session_id) {
     QString error;
     const QStringList lines = m_conversationStore->loadTranscriptLines(session_id, &error);
     m_citations.clear();
-    m_transcriptView->clearMessages(false);
+    m_transcriptView->clearMessages();
     for (const auto& line : lines) {
         appendLoadedTranscriptLine(line);
     }
@@ -12729,7 +12729,7 @@ void AiAssistantPanel::onNewSessionClicked() {
         m_messageEdit->clear();
     }
     if (m_transcriptView != nullptr) {
-        m_transcriptView->clearMessages(false);
+        m_transcriptView->clearMessages();
     }
     m_contextItems.clear();
     refreshContextList();

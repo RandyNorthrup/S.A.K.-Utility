@@ -12,6 +12,7 @@
 
 class QLabel;
 class QFrame;
+class QResizeEvent;
 class QHBoxLayout;
 class QPushButton;
 class QScrollArea;
@@ -22,6 +23,10 @@ namespace sak {
 class FollowScrollController;
 
 /// @brief Self-contained transcript renderer for the AI Assistant chat surface.
+///
+/// Appending a message, expanding one, or changing the activity line touches only the row
+/// concerned. Only renderMessages() (after a session's transcript is loaded line by line)
+/// rebuilds every bubble.
 class AiTranscriptView : public QWidget {
 public:
     using TextRedactor = std::function<QString(const QString&)>;
@@ -38,8 +43,11 @@ public:
     [[nodiscard]] bool appendMessage(const QString& role,
                                      const QString& text,
                                      bool expanded = false);
+    /// Queues a line from a loaded transcript without building its bubble; call
+    /// renderMessages() once the whole transcript is in.
     [[nodiscard]] bool appendLoadedLine(const QString& line);
-    void clearMessages(bool render = true);
+    /// Removes every message and its bubble at once.
+    void clearMessages();
     [[nodiscard]] int messageCount() const noexcept { return m_messages.size(); }
 
     void setActivityText(const QString& text);
@@ -53,12 +61,16 @@ public:
     void jumpToNewest();
     void renderMessages(bool scroll_to_bottom = true);
 
+protected:
+    void resizeEvent(QResizeEvent* event) override;
+
 private:
     struct Message {
         QString id;
         QString role;
         QString text;
         bool expanded{false};
+        QWidget* row{nullptr};  // Its row in m_layout; null until built.
     };
 
     [[nodiscard]] QString redactedText(const QString& text) const;
@@ -82,6 +94,9 @@ private:
     [[nodiscard]] bool shouldFollowNewest(bool scroll_to_bottom) const;
     [[nodiscard]] int transcriptBubbleMaxWidth() const;
     void appendRenderedRows(int bubble_max_width);
+    void insertActivityRow(int bubble_max_width);
+    void removeActivityRow();
+    void applyBubbleWidths();
     void restoreRenderScroll(bool follow_newest, int previous_scroll_value);
     void copyMessageToClipboard(const Message& message, QPushButton* button);
     void toggleMessageExpanded(const QString& message_id);
@@ -94,7 +109,10 @@ private:
     FollowScrollController* m_scrollController{nullptr};
     QPushButton* m_jumpToNewestButton{nullptr};
     QLabel* m_activityLabel{nullptr};
+    QWidget* m_activityRow{nullptr};
     QVector<Message> m_messages;
+    /// False while loaded lines are queued without bubbles: the next change rebuilds.
+    bool m_rowsInSync{true};
     TextRedactor m_redactor;
     QString m_activityText;
     int m_messageSequence{0};
