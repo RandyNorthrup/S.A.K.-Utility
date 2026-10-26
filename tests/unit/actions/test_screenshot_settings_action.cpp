@@ -29,6 +29,8 @@ class ScreenshotSettingsActionTests : public QObject {
     using CaptureContext = ScreenshotSettingsAction::CaptureContext;
 
 private Q_SLOTS:
+    void windowToClose_neverTheUsersOwnSettingsWindow();
+    void settingsWindowIsFoundAndWaitedForWithoutTasklistOrKills();
     void reportPathLine_onlyAdvertisesWrittenReport();
     void buildScreenshotReportText_containsPagesAndSections();
     void buildScreenshotReportText_omitsFailedSectionOnCleanRun();
@@ -371,6 +373,41 @@ void ScreenshotSettingsActionTests::captureWindowToPng_failsClosedWhenMarshalled
              "a worker-thread capture must return the GUI-side grab result, not merely that "
              "the invocation was delivered");
     QVERIFY(!QFileInfo::exists(path));
+}
+
+// The action used to force-kill every SystemSettings.exe by name -- including a Settings window
+// the user had open. Settings is single-instance, so a window that was already open is theirs:
+// it is never closed. Only a window this run brought up is asked to close (WM_CLOSE).
+void ScreenshotSettingsActionTests::windowToClose_neverTheUsersOwnSettingsWindow() {
+    constexpr quintptr kUsers = 0x1234;
+    constexpr quintptr kOurs = 0x5678;
+    QCOMPARE(Action::windowToClose(kUsers, kUsers), quintptr{0});
+    QCOMPARE(Action::windowToClose(0, kOurs), kOurs);
+    QCOMPARE(Action::windowToClose(kUsers, kOurs), kOurs);
+    QCOMPARE(Action::windowToClose(0, 0), quintptr{0});
+}
+
+// Detection is EnumWindows over visible top-level windows, waits are for state (window present
+// and answering), and nothing is force-killed: no taskkill, no tasklist per page, no fixed sleeps.
+void ScreenshotSettingsActionTests::settingsWindowIsFoundAndWaitedForWithoutTasklistOrKills() {
+    QFile file(QDir(QStringLiteral(SAK_REPO_ROOT))
+                   .filePath(QStringLiteral("src/actions/screenshot_settings_action.cpp")));
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    const QString source = QString::fromUtf8(file.readAll());
+    for (const QString& gone : {QStringLiteral("taskkill"),
+                                QStringLiteral("tasklist"),
+                                QStringLiteral("/IM"),
+                                QStringLiteral("kSettingsCaptureInitialWaitMs"),
+                                QStringLiteral("kTimerRetryBaseMs")}) {
+        QVERIFY2(!source.contains(gone), qPrintable(gone));
+    }
+    for (const QString& present :
+         {QStringLiteral("EnumWindows"),
+          QStringLiteral("WM_CLOSE"),
+          QStringLiteral("SendMessageTimeoutW"),
+          QStringLiteral("windowToClose(m_settings_window_before_launch")}) {
+        QVERIFY2(source.contains(present), qPrintable(present));
+    }
 }
 
 QTEST_GUILESS_MAIN(ScreenshotSettingsActionTests)

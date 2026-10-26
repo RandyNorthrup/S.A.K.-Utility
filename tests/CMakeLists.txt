@@ -3874,6 +3874,8 @@ add_test(NAME test_screenshot_settings_action
          -o "${TEST_OUTPUT_DIR}/test_screenshot_settings_action.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 
+target_compile_definitions(test_screenshot_settings_action PRIVATE
+    SAK_REPO_ROOT="${CMAKE_SOURCE_DIR}")
 message(STATUS "Added unit test: test_screenshot_settings_action")
 
 # test_optimize_power_settings_action -- B6-18 pure seam (already-optimized is

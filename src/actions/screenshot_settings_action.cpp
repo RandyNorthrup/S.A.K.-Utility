@@ -13,6 +13,7 @@
 
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QDeadlineTimer>
 #include <QDir>
 #include <QFileInfo>
 #include <QGuiApplication>
@@ -29,19 +30,15 @@ namespace sak {
 namespace {
 constexpr int kSettingsCaptureFirstAttempt = 1;
 constexpr int kSettingsCaptureMaxAttempts = 3;
-constexpr int kSettingsCaptureInitialWaitMs = kTimerStatusBriefMs;
-constexpr int kSettingsCaptureRetryWaitMs = kTimerProgressPollMs;
+// How long a Settings page may take to come up and answer, how often to look, and how long one
+// "are you responsive" probe may block.
+constexpr int kSettingsWindowWaitMs = 15'000;
+constexpr int kSettingsPollMs = 100;
+constexpr UINT kSettingsResponsiveTimeoutMs = 2000;
+constexpr int kSettingsCloseWaitMs = 5000;
+constexpr int kMsPerSecond = 1000;
 constexpr int kScreenshotReportFieldWidth = 61;
 
-// PID of the SystemSettings.exe window most recently matched by captureSettingsWindow, so
-// closeSettingsApp() can terminate exactly that instance by PID instead of every
-// SystemSettings.exe by image name (which would also close an unrelated Settings window the
-// user had open). 0 means "no instance tracked" -> fall back to the image-name kill.
-// thread_local: each ScreenshotSettingsAction runs its whole capture loop on its own worker
-// thread, so concurrent actions never share this value. Set at the start of each
-// captureSettingsWindow lookup and consumed (reset to 0) by closeSettingsApp() so a later
-// call can never target a now-dead (or OS-reused) PID.
-thread_local DWORD g_captured_settings_pid = 0;
 }  // namespace
 
 ScreenshotSettingsAction::ScreenshotSettingsAction(const QString& output_location, QObject* parent)
@@ -126,14 +123,15 @@ void ScreenshotSettingsAction::execute() {
                         output_dir.absolutePath().toStdString());
     }
 
-    // Capture all settings pages
+    // A Settings window open now is the user's: navigated (single-instance), never closed.
+    m_settings_window_before_launch = findSettingsWindow();
     QMap<QString, QString> settings_pages = buildSettingsPageMap();
     CaptureResult capture;
     int processed = 0;
 
     for (auto it = settings_pages.begin(); it != settings_pages.end(); ++it) {
         if (isCancelled()) {
-            closeSettingsApp();
+            closeSettingsWindowWeOpened();
             emitCancelledResult("Settings screenshots cancelled", start_time);
             return;
         }
@@ -151,6 +149,7 @@ void ScreenshotSettingsAction::execute() {
         }
         processed++;
     }
+    closeSettingsWindowWeOpened();
 
     Q_EMIT executionProgress("Generating report...", progress::kStep95);
     const bool report_written =
@@ -235,42 +234,8 @@ QMap<QString, QString> ScreenshotSettingsAction::buildSettingsPageMap() {
             {"gaming", "Gaming_Settings"}};
 }
 
-void ScreenshotSettingsAction::closeSettingsApp() {
-    // System32-qualify taskkill.exe: a bare name resolves through the CreateProcess
-    // search order (current directory and PATH ahead of System32), so a planted
-    // taskkill.exe would run instead. Fail closed if the path cannot be resolved.
-    const QString taskkill = sak::system32Path(QStringLiteral("taskkill.exe"));
-    if (taskkill.isEmpty()) {
-        Q_EMIT logMessage(
-            QStringLiteral("Settings close skipped: cannot resolve System32 taskkill.exe path"));
-        return;
-    }
-    // Prefer terminating the exact SystemSettings.exe instance we captured, tracked by PID,
-    // rather than every SystemSettings.exe by image name. The /IM form is used only when no
-    // specific instance was tracked (a cancel, or a not-running retry where we never matched a
-    // Settings window) -- best-effort cleanup of anything we launched, not an error-silencing
-    // fallback. Consume the tracked PID so a subsequent call cannot target a now-dead PID.
-    const DWORD tracked_pid = g_captured_settings_pid;
-    g_captured_settings_pid = 0;
-    QStringList kill_args;
-    if (tracked_pid != 0) {
-        kill_args << "/PID" << QString::number(tracked_pid) << "/F";
-    } else {
-        kill_args << "/IM" << "SystemSettings.exe" << "/F";
-    }
-    const ProcessResult close_proc = runProcess(taskkill, kill_args, sak::kTimeoutProcessMediumMs);
-    if (!close_proc.succeeded()) {
-        Q_EMIT logMessage("Settings close warning: " + close_proc.std_err.trimmed());
-    }
-}
-
-bool ScreenshotSettingsAction::captureSettingsWindow(const QDir& output_dir,
-                                                     const QString& page_name,
-                                                     const QString& timestamp) {
-    // Clear any PID tracked by a previous lookup so a stale (possibly OS-reused) PID cannot be
-    // targeted by closeSettingsApp() if this lookup finds no Settings window.
-    g_captured_settings_pid = 0;
-    // Find the Settings window by enumerating top-level windows
+WId ScreenshotSettingsAction::findSettingsWindow() {
+    // Detect Settings by its visible top-level window, not by launching a process listing per page.
     HWND settings_hwnd = nullptr;
     EnumWindows(
         [](HWND hwnd, LPARAM lparam) -> BOOL {
@@ -303,26 +268,78 @@ bool ScreenshotSettingsAction::captureSettingsWindow(const QDir& output_dir,
             return TRUE;
         },
         reinterpret_cast<LPARAM>(&settings_hwnd));
+    return reinterpret_cast<WId>(settings_hwnd);
+}
 
-    if (settings_hwnd == nullptr) {
+quintptr ScreenshotSettingsAction::windowToClose(quintptr window_before_launch,
+                                                 quintptr settings_window) {
+    // Settings is single-instance: ms-settings: navigates a window the user already had open
+    // rather than opening a new one. That window is theirs -- never close it.
+    if (settings_window == 0 || settings_window == window_before_launch) {
+        return 0;
+    }
+    return settings_window;
+}
+
+WId ScreenshotSettingsAction::findRespondingSettingsWindow() {
+    // Wait for state, not for a fixed time: the window exists, is visible, and its UI thread
+    // answers (it has processed the navigation message that opened this page).
+    QDeadlineTimer deadline(kSettingsWindowWaitMs);
+    for (;;) {
+        if (isCancelled()) {
+            return 0;
+        }
+        const auto hwnd = reinterpret_cast<HWND>(findSettingsWindow());
+        DWORD_PTR ignored = 0;
+        if (hwnd != nullptr && SendMessageTimeoutW(hwnd,
+                                                   WM_NULL,
+                                                   0,
+                                                   0,
+                                                   SMTO_ABORTIFHUNG | SMTO_BLOCK,
+                                                   kSettingsResponsiveTimeoutMs,
+                                                   &ignored) != 0) {
+            return reinterpret_cast<WId>(hwnd);
+        }
+        if (deadline.hasExpired()) {
+            return 0;
+        }
+        QThread::msleep(kSettingsPollMs);
+    }
+}
+
+void ScreenshotSettingsAction::closeSettingsWindowWeOpened() {
+    const auto hwnd = reinterpret_cast<HWND>(
+        windowToClose(m_settings_window_before_launch, findSettingsWindow()));
+    if (hwnd == nullptr) {
+        return;
+    }
+    // Ask the one window this action opened to close (WM_CLOSE), as its own close button would;
+    // nothing is force-killed. Then wait for it to go, bounded.
+    PostMessageW(hwnd, WM_CLOSE, 0, 0);
+    QDeadlineTimer deadline(kSettingsCloseWaitMs);
+    while (IsWindow(hwnd) && !deadline.hasExpired()) {
+        QThread::msleep(kSettingsPollMs);
+    }
+    if (IsWindow(hwnd)) {
+        Q_EMIT logMessage(QStringLiteral("Settings window did not close within %1 s; left open")
+                              .arg(kSettingsCloseWaitMs / kMsPerSecond));
+    }
+}
+
+bool ScreenshotSettingsAction::captureSettingsWindow(WId settings_window,
+                                                     const QDir& output_dir,
+                                                     const QString& page_name,
+                                                     const QString& timestamp) {
+    if (settings_window == 0) {
         // Refuse to capture an arbitrary foreground window -- the caller
         // asked for Settings, not "whatever happens to be on top".
         sak::logWarning("ScreenshotSettingsAction: Settings window not found for page {}",
                         page_name.toStdString());
         return false;
     }
-
-    // Track the matched SystemSettings.exe instance by the owning PID of the window we are about
-    // to capture, so closeSettingsApp() closes exactly this window rather than every
-    // SystemSettings.exe. The launch goes through explorer/ms-settings, which hands off to a
-    // single-instance Settings process, so explorer's own PID is not this window's owner -- take
-    // the owner PID from the matched window itself. If the window vanished (returns 0) the tracker
-    // stays 0 and closeSettingsApp() cleans up by image name instead.
-    GetWindowThreadProcessId(settings_hwnd, &g_captured_settings_pid);
-
     const QString filepath = output_dir.filePath(QString("%1_%2.png").arg(page_name, timestamp));
     // grabWindow must run on the GUI thread; execute() runs on the worker thread, so marshal it.
-    return captureWindowToPng(reinterpret_cast<WId>(settings_hwnd), filepath);
+    return captureWindowToPng(settings_window, filepath);
 }
 
 bool ScreenshotSettingsAction::captureSettingsPage(const QString& ms_uri,
@@ -340,24 +357,13 @@ bool ScreenshotSettingsAction::captureSettingsPage(const QString& ms_uri,
                                            {QString("ms-settings:%1").arg(ms_uri)})) {
             return false;
         }
-
-        const int wait_time =
-            kSettingsCaptureInitialWaitMs +
-            ((attempt - kSettingsCaptureFirstAttempt) * kSettingsCaptureRetryWaitMs);
-        QThread::msleep(wait_time);
-
-        if (!isProcessRunning("SystemSettings.exe")) {
-            closeSettingsApp();
-            QThread::msleep(sak::kTimerRetryBaseMs);
-            continue;
-        }
-
-        const bool captured = captureSettingsWindow(output_dir, page_name, timestamp);
-        closeSettingsApp();
-        QThread::msleep(sak::kTimerRetryBaseMs);
-
-        if (captured) {
+        // The same window is reused page after page; it is closed once, when the run ends.
+        if (captureSettingsWindow(
+                findRespondingSettingsWindow(), output_dir, page_name, timestamp)) {
             return true;
+        }
+        if (isCancelled()) {
+            return false;
         }
     }
     return false;
@@ -496,38 +502,6 @@ int ScreenshotSettingsAction::countMonitorsOnGui() {
     }
 
     return count;
-}
-
-// Helper method: Check if a process is currently running
-bool ScreenshotSettingsAction::isProcessRunning(const QString& process_name) {
-    if (process_name.isEmpty()) {
-        sak::logWarning("isProcessRunning: empty process_name");
-        return false;
-    }
-    // System32-qualify tasklist.exe so a CWD/PATH-planted tasklist.exe cannot be run
-    // in its place. Fail closed (treat as not running) if the path cannot be resolved.
-    const QString tasklist = sak::system32Path(QStringLiteral("tasklist.exe"));
-    if (tasklist.isEmpty()) {
-        sak::logWarning("isProcessRunning: cannot resolve System32 tasklist.exe path");
-        return false;
-    }
-    const auto result = sak::runProcess(tasklist,
-                                        {QStringLiteral("/FI"),
-                                         QStringLiteral("IMAGENAME eq %1").arg(process_name)},
-                                        sak::kTimerServiceDelayMs);
-    if (result.timed_out) {
-        sak::logWarning("tasklist timed out checking for process: {}", process_name.toStdString());
-        return false;
-    }
-
-    if (result.exit_code != 0) {
-        sak::logDebug("tasklist returned exit code {} for process: {}",
-                      result.exit_code,
-                      process_name.toStdString());
-        return false;
-    }
-
-    return result.std_out.contains(process_name, Qt::CaseInsensitive);
 }
 
 }  // namespace sak

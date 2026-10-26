@@ -39,6 +39,8 @@ public:
 
 private:
     QString m_output_location;
+    /// The Settings window that was open before this run (the user's), or 0. Never closed.
+    WId m_settings_window_before_launch{0};
 
     /// @brief Result of capturing all settings pages
     struct CaptureResult {
@@ -53,7 +55,6 @@ private:
     ///        (QGuiApplication::screens()/QScreen access is GUI-thread-affine);
     ///        detectMonitorCount() marshals it there from the worker thread.
     static int countMonitorsOnGui();
-    bool isProcessRunning(const QString& process_name);
     /// @brief Grab @p window (0 = whole primary screen) and save it as PNG to @p filepath.
     ///        MUST run on the GUI thread (QScreen::grabWindow has GUI-thread affinity). Returns
     ///        false on no primary screen, a null grab, or a failed save.
@@ -68,10 +69,18 @@ private:
                              const QString& page_name,
                              const QString& output_dir_path,
                              const QString& timestamp);
-    /// @brief Kill SystemSettings.exe and log any warning
-    void closeSettingsApp();
-    /// @brief Capture only the Settings window (not entire screen)
-    bool captureSettingsWindow(const QDir& output_dir,
+    /// @brief The visible SystemSettings.exe top-level window, found by EnumWindows, or 0.
+    static WId findSettingsWindow();
+    /// @brief Poll (bounded, cancellable) until a Settings window exists and answers messages.
+    WId findRespondingSettingsWindow();
+    /// @brief Pure: the window this run may close -- @p settings_window, unless it is the one
+    ///        that was already open before the run (@p window_before_launch), or none.
+    static quintptr windowToClose(quintptr window_before_launch, quintptr settings_window);
+    /// @brief WM_CLOSE to the Settings window this run opened (never the user's), then wait.
+    void closeSettingsWindowWeOpened();
+    /// @brief Capture only the Settings window @p settings_window (not entire screen)
+    bool captureSettingsWindow(WId settings_window,
+                               const QDir& output_dir,
                                const QString& page_name,
                                const QString& timestamp);
     /// @brief Write the screenshot report to disk.
