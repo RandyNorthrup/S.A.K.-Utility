@@ -13093,6 +13093,17 @@ void AiAssistantPanel::finalizeStopRequest() {
     }
 }
 
+void AiAssistantPanel::settlePendingStop() {
+    // A Stop that found work still running parked the run in Cancelling. Whichever completion
+    // ends the last of that work -- the async tool drain, the broker's command, the model
+    // request -- settles it to Cancelled; without this a Stop during a PowerShell command
+    // left the run showing Cancelling after the command had ended.
+    if (m_shuttingDown || m_runState.status != ai::AiRunStatus::Cancelling || isAiBusy()) {
+        return;
+    }
+    finalizeStopRequest();
+}
+
 void AiAssistantPanel::onAsyncToolDrained() {
     // The async tool runner's pool task has left the pool. When Stop detached a blocking
     // built-in, isAiBusy() has been true ever since (the mutation was still executing) and
@@ -13100,10 +13111,7 @@ void AiAssistantPanel::onAsyncToolDrained() {
     // event. Re-run the stop finalization so the run reaches Cancelled and any prompt the
     // user queued during the cancel is dispatched. An attached job needs nothing here --
     // finishAsyncBuiltInToolCall already continued the tool turn.
-    if (m_shuttingDown || m_runState.status != ai::AiRunStatus::Cancelling) {
-        return;
-    }
-    finalizeStopRequest();
+    settlePendingStop();
 }
 
 void AiAssistantPanel::onBrokerStarted(const QString& command_id) {
@@ -13175,7 +13183,9 @@ void AiAssistantPanel::onBrokerFinished(const QString& command_id,
     m_currentCommandPreview.clear();
 
     if (!m_toolTurn.active()) {
-        if (!isAiBusy()) {
+        if (m_runState.status == ai::AiRunStatus::Cancelling) {
+            settlePendingStop();
+        } else if (!isAiBusy()) {
             setUiBusy(false);
             dispatchQueuedPromptIfIdle();
         }
@@ -13275,6 +13285,8 @@ void AiAssistantPanel::onRequestFinished() {
         if (m_toolTurn.active()) {
             setActivityIndicator(tr("Using tools"), true);
         }
+    } else if (m_runState.status == ai::AiRunStatus::Cancelling) {
+        settlePendingStop();
     } else {
         setUiBusy(false);
         dispatchQueuedPromptIfIdle();

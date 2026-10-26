@@ -8096,6 +8096,26 @@ private Q_SLOTS:
         QCOMPARE(audited.m_skillStore->size(), normal.m_skillStore->size());
     }
 
+    // A Stop during a run_powershell command parks the run in Cancelling (the command is still
+    // being killed). The command finishing must settle it to Cancelled; it used to stay at
+    // Cancelling because only the async-runner drain settled a pending stop.
+    void stopDuringPowerShellCommandSettlesToCancelled() {
+        AiAssistantPanel panel;
+        ai::AiCommandRequest request;
+        request.command = QStringLiteral("Start-Sleep -Seconds 30");
+        request.timeout_seconds = 60;
+        panel.m_runState.status = ai::AiRunStatus::Running;
+        QVERIFY(panel.m_executionBroker->startPowerShell(request, QStringLiteral("cmd_stop")));
+        QTRY_VERIFY(panel.m_executionBroker->isRunning());
+
+        panel.onStopClicked();
+        QCOMPARE(panel.m_runState.status, ai::AiRunStatus::Cancelling);
+
+        QTRY_VERIFY_WITH_TIMEOUT(!panel.m_executionBroker->isRunning(), 20'000);
+        QTRY_COMPARE(panel.m_runState.status, ai::AiRunStatus::Cancelled);
+        QCOMPARE(panel.m_taskStatus, AiAssistantPanel::tr("Cancelled"));
+    }
+
     // Wave 3: the sak_skill tool lists the catalog (no bodies), loads a full body
     // on demand by id, and reports an error for an unknown id.
     void skillToolListsLoadsAndRejectsUnknown() {

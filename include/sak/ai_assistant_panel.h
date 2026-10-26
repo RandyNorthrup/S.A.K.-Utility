@@ -173,6 +173,8 @@ private Q_SLOTS:
     // A job detached by Stop emits nothing else, so this is what lets a cancelled-but-
     // still-executing mutation finish the stop instead of parking the run in Cancelling.
     void onAsyncToolDrained();
+    /// Settles a run parked in Cancelling to Cancelled once nothing is still running.
+    void settlePendingStop();
     void onBrokerStarted(const QString& command_id);
     void onBrokerStdoutChunk(const QString& command_id, const QString& chunk);
     void onBrokerStderrChunk(const QString& command_id, const QString& chunk);
