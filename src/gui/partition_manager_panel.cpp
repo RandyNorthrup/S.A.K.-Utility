@@ -10639,7 +10639,7 @@ struct ApfsContainerActionDialogWidgets {
 };
 
 struct ApfsContainerActionRequest {
-    PartitionOperationType type;
+    PartitionOperationType type{};
     QString name;
 };
 

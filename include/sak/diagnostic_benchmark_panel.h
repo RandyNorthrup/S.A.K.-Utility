@@ -120,8 +120,8 @@ private Q_SLOTS:
     // -- Quick Actions --------------------------------------------
     void onQuickActionClicked(QuickAction* action);
     void onQuickActionProgress(QuickAction* action, const QString& message, int progress);
-    void onQuickActionComplete(QuickAction* action);
-    void onQuickActionError(QuickAction* action, const QString& error_message);
+    void onQuickActionComplete(const QuickAction* action);
+    void onQuickActionError(const QuickAction* action, const QString& error_message);
 
 private:
     static constexpr int kSuiteStepCount = 7;

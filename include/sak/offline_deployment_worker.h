@@ -70,9 +70,9 @@ struct DeploymentManifest {
 
 /// @brief Per-package install strategy, derived from the manifest's payload mode.
 struct BundleInstallContext {
-    QString source;            ///< local packages dir (Bundle) or feed URL (List)
-    bool ignore_dependencies;  ///< Bundle: true -- we install every closure member ourselves
-    bool verify_local;         ///< Bundle: verify the local .nupkg before handing it to choco
+    QString source;              ///< local packages dir (Bundle) or feed URL (List)
+    bool ignore_dependencies{};  ///< Bundle: true -- we install every closure member ourselves
+    bool verify_local{};         ///< Bundle: verify the local .nupkg before handing it to choco
 };
 
 /// @brief One installer to fetch in the direct-download path: its URL plus the

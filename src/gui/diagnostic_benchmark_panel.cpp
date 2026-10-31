@@ -1187,7 +1187,7 @@ void DiagnosticBenchmarkPanel::onQuickActionProgress(QuickAction*,
     m_qa_progress_bar->setValue(progress);
 }
 
-void DiagnosticBenchmarkPanel::onQuickActionComplete(QuickAction* action) {
+void DiagnosticBenchmarkPanel::onQuickActionComplete(const QuickAction* action) {
     // The quick action has finished either way; clear the busy flag and re-enable the
     // controls it was excluding (still gated by any other in-flight operation's flag).
     m_qa_running = false;
@@ -1209,7 +1209,7 @@ void DiagnosticBenchmarkPanel::onQuickActionComplete(QuickAction* action) {
     Q_EMIT statusMessage(status, sak::kTimerStatusDefaultMs);
 }
 
-void DiagnosticBenchmarkPanel::onQuickActionError(QuickAction* action,
+void DiagnosticBenchmarkPanel::onQuickActionError(const QuickAction* action,
                                                   const QString& error_message) {
     // The quick action has terminated; clear the busy flag and restore the controls.
     m_qa_running = false;

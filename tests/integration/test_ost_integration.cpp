@@ -70,7 +70,7 @@ static void verifySingleItemExports(PstParser& parser, uint64_t item_id) {
     QVERIFY2(temp_dir.isValid(), "Temporary export directory should be valid");
 
     struct ExportSmokeCase {
-        sak::ExportFormat format;
+        sak::ExportFormat format{};
         QString suffix;
     };
     const QVector<ExportSmokeCase> cases = {

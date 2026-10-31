@@ -253,7 +253,7 @@ QString offlineInstallerTitle(const QString& text) {
 QString domainTitle(const QString& text) {
     const QString lower = text.toLower();
     struct DomainRule {
-        const char* m_title;
+        const char* m_title{};
         std::initializer_list<const char*> m_terms;
     };
     const std::array<DomainRule, 9> rules = {{

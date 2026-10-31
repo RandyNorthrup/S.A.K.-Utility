@@ -608,9 +608,9 @@ void NetworkDiagnosticReportGenerator::populateRootJson(QJsonObject& root) const
 void NetworkDiagnosticReportGenerator::appendHtmlSections(QString& html) const {
     using Builder = QString (NetworkDiagnosticReportGenerator::*)() const;
     struct SectionBuilder {
-        Section section;
-        Builder builder;
-        const char* name;
+        Section section{};
+        Builder builder{};
+        const char* name{};
     };
     static const SectionBuilder kBuilders[] = {
         {Section::AdapterConfig,
@@ -658,9 +658,9 @@ void NetworkDiagnosticReportGenerator::appendJsonSections(QJsonObject& root) con
     // it -- as a "drop unused parameter names" tidy-up would -- silently re-breaks the gate.
     using Appender = void (NetworkDiagnosticReportGenerator::*)(QJsonObject& root) const;
     struct SectionAppender {
-        Section section;
-        Appender appender;
-        const char* name;
+        Section section{};
+        Appender appender{};
+        const char* name{};
     };
     static const SectionAppender kAppenders[] = {
         {Section::AdapterConfig,

@@ -957,8 +957,8 @@ inline constexpr CssColorAlias kCssColorAliases[] = {
 };
 
 struct HtmlPaletteAlias {
-    const char* token;
-    QPalette::ColorRole role;
+    const char* token{};
+    QPalette::ColorRole role{};
 };
 
 inline constexpr HtmlPaletteAlias kHtmlPaletteAliases[] = {

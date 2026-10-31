@@ -209,7 +209,7 @@ void UserProfileBackupExecutePage::onStartBackup() {
     connectAndStartBackupWorker(smart_filter, permission_mode);
 }
 
-bool UserProfileBackupExecutePage::saveAllSidecars(UserProfileBackupWizard* wiz) {
+bool UserProfileBackupExecutePage::saveAllSidecars(const UserProfileBackupWizard* wiz) {
     // Every sidecar is attempted (left operand runs first) so all failures are
     // logged, but any single failure makes the whole set fail.
     bool ok = saveInstalledAppsToBackup(wiz->installedApps());
@@ -222,7 +222,8 @@ bool UserProfileBackupExecutePage::saveAllSidecars(UserProfileBackupWizard* wiz)
     return ok;
 }
 
-void UserProfileBackupExecutePage::recordNetworkSelectionsInManifest(UserProfileBackupWizard* wiz) {
+void UserProfileBackupExecutePage::recordNetworkSelectionsInManifest(
+    const UserProfileBackupWizard* wiz) {
     m_manifest.wifi_profiles.clear();
     for (const auto& profile : wiz->wifiProfiles()) {
         if (profile.selected) {

@@ -46,7 +46,7 @@ constexpr int kFirstPrintableAscii = 0x20;  // bytes below space are C0 controls
 
 /// @brief Manifest-facing view of an engine OfflineReadiness classification.
 struct OfflineReadinessInfo {
-    bool ready;
+    bool ready{};
     QString note;
 };
 

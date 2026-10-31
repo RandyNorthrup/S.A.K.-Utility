@@ -144,7 +144,7 @@ enum class error_code {
 };
 
 struct ErrorCodeMessage {
-    error_code code;
+    error_code code{};
     std::string_view text;
 };
 

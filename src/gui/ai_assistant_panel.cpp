@@ -3294,9 +3294,10 @@ struct ManagedActionOutputRequest {
     ai::ConversationStore* store;
     QString staging_root;
     QString subdir;
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
     const QHash<QString, QString>& published;
     QString original;
-    QString* error_message;
+    QString* error_message{};
 };
 
 QString managedActionOutputPath(const ManagedActionOutputRequest& request) {
@@ -11533,7 +11534,7 @@ ai::SoftwareAvailabilityResolution AiAssistantPanel::workflowRequirementAvailabl
     return probeWorkflowRequirement(requirement);
 }
 
-QJsonObject AiAssistantPanel::runWorkflowOverseerPhase(ai::AiSubagentRunner* runner,
+QJsonObject AiAssistantPanel::runWorkflowOverseerPhase(const ai::AiSubagentRunner* runner,
                                                        const WorkflowRunLaunch& launch,
                                                        const ai::WorkflowPhase& phase,
                                                        const ai::AiWorkflowPhaseContext& context,

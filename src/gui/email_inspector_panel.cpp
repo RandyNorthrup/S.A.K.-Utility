@@ -1130,7 +1130,7 @@ void EmailInspectorPanel::onFolderTreeContextMenu(const QPoint& pos) {
     QMenu* all_menu = menu.addMenu(tr("Export ALL Mail Folders as"));
     struct AllExportChoice {
         QString label;
-        sak::ExportFormat format;
+        sak::ExportFormat format{};
     };
     const QVector<AllExportChoice> all_choices{
         {.label = tr("EML..."), .format = sak::ExportFormat::Eml},

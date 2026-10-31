@@ -59,9 +59,9 @@ constexpr int kSortUnknown = 9999;
 // Files GroupingHelper sizeGroups table: strict greater-than thresholds
 // evaluated largest-first; the header shows the bucket name and byte range.
 struct SizeBucket {
-    quint64 threshold;
-    const char* name;
-    const char* range;
+    quint64 threshold{};
+    const char* name{};
+    const char* range{};
 };
 // The thresholds are decimal (SI) byte counts, so the range labels use decimal
 // units (GB/MB/KB) to match -- previously they read GiB/MiB/KiB, which name the

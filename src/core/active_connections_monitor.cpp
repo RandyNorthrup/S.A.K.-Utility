@@ -49,8 +49,8 @@ constexpr int kMaxHostnameLen = 256;
 
 [[nodiscard]] QString tcpStateToString(DWORD state) {
     struct StateEntry {
-        DWORD code;
-        const char* name;
+        DWORD code{};
+        const char* name{};
     };
     static constexpr StateEntry kStates[] = {
         {.code = MIB_TCP_STATE_CLOSED, .name = "CLOSED"},

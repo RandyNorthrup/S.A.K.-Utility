@@ -127,7 +127,7 @@ void ApfsFreeQueueGuardTests::acceptsTheRecordsARealCommitProduces() {
 void ApfsFreeQueueGuardTests::refusesRunsOverEachReservedRegion() {
     struct Probe {
         FreeQueueRun run;
-        const char* queue;
+        const char* queue{};
         QVector<ReservedRegion> regions;
         QString expectRegion;
     };

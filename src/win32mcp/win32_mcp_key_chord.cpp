@@ -40,8 +40,8 @@ WORD modifierVk(const QString& name) {
 
 WORD namedKeyVk(const QString& low) {
     static const struct {
-        const char* m_name;
-        WORD m_vk;
+        const char* m_name{};
+        WORD m_vk{};
     } kKeys[] = {
         {.m_name = "enter", .m_vk = VK_RETURN},   {.m_name = "return", .m_vk = VK_RETURN},
         {.m_name = "tab", .m_vk = VK_TAB},        {.m_name = "escape", .m_vk = VK_ESCAPE},

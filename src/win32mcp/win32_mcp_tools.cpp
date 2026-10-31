@@ -538,7 +538,7 @@ ToolResult invokeTool(const QString& name, const QJsonObject& arguments) {
     using Handler = ToolResult (*)(const QJsonObject&);
     struct Entry {
         QLatin1String m_name;
-        Handler m_fn;
+        Handler m_fn{};
     };
     static const Entry kHandlers[] = {
         {.m_name = QLatin1String("health_check"), .m_fn = toolHealthCheck},

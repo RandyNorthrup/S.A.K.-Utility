@@ -719,8 +719,8 @@ inline QByteArray buildHnidCellTcBlock(uint64_t file_offset, uint64_t bid, uint3
 // One variable-type PC record: a property id + type whose value is stored (via an HNID) in the
 // heap.
 struct PcRecord {
-    uint16_t prop_id;
-    uint16_t prop_type;
+    uint16_t prop_id{};
+    uint16_t prop_type{};
     QByteArray value;
 };
 

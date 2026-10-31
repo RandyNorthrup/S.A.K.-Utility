@@ -8449,9 +8449,9 @@ private:
     // Members are const-references to the caller's live values: no copies, byte-identical behavior.
     struct HfsAllocatedForkWriteTarget {
         const HfsCatalogRecord& record;
-        HfsForkSelector selector;
+        HfsForkSelector selector{};
         const HfsForkData& fork;
-        uint8_t forkType;
+        uint8_t forkType{};
     };
 
     // Writes the new fork payload into the file's existing allocation (data, then stale-tail

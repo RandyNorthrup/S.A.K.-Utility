@@ -68,16 +68,16 @@ private:
     // One row of the exhaustive recycle-decision property test. Nested inside the test class
     // because RecycleOutcome is private to CleanupWorker and only this class is its friend.
     struct RecycleDecisionRow {
-        bool useRecycle;
-        bool requireRecov;
-        bool recoverAllowed;
-        bool redirectSafe;
-        bool recycleSucceeds;
-        CleanupWorker::RecycleOutcome outcome;
-        bool fallback;
-        int recoverCalls;
-        int redirectCalls;
-        int doRecycleCalls;
+        bool useRecycle{};
+        bool requireRecov{};
+        bool recoverAllowed{};
+        bool redirectSafe{};
+        bool recycleSucceeds{};
+        CleanupWorker::RecycleOutcome outcome{};
+        bool fallback{};
+        int recoverCalls{};
+        int redirectCalls{};
+        int doRecycleCalls{};
         QByteArray tag;
     };
     // Which of the three probes decideRecycle is expected to have run for this row, and whether

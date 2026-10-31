@@ -18,9 +18,9 @@ using sak::win32mcp::parseKeyChord;
 namespace {
 
 struct Parsed {
-    bool ok;
+    bool ok{};
     QVector<unsigned short> modifiers;
-    unsigned short main_key;
+    unsigned short main_key{};
 };
 
 Parsed parse(const QString& chord) {

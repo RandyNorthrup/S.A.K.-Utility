@@ -109,8 +109,8 @@ enum class FeatureId : uint16_t {
 
 /// @brief Metadata about a feature's elevation requirement
 struct FeatureElevation {
-    FeatureId id;
-    ElevationTier tier;
+    FeatureId id{};
+    ElevationTier tier{};
     std::string_view name;
     std::string_view reason;  ///< Why elevation is needed (empty for Standard)
 };

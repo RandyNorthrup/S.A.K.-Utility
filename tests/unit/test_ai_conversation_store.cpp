@@ -145,11 +145,16 @@ void verifyWriterHalfBuiltARealCorpus(const sak::ai::ConversationStore& store,
 // request would score exactly like a healthy one when the results are discarded.
 struct ContentionReaderContext {
     sak::ai::ConversationStore& store;
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
     const QString& session_id;
-    int iterations;
+    int iterations{};
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
     std::atomic<bool>& torn_read;
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
     std::atomic<bool>& bad_artifact_read;
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
     const QString& expected_root;
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
     const QString& expected_artifact;
 };
 

@@ -1142,7 +1142,7 @@ bool PackageInternalizationEngine::cleanNugetArtifacts(const QString& extract_di
 
     QDir rels_dir(extract_dir + "/_rels");
     if (rels_dir.exists()) {
-        ok = rels_dir.removeRecursively() && ok;
+        ok = rels_dir.removeRecursively();
     }
 
     const QString content_types = extract_dir + "/[Content_Types].xml";

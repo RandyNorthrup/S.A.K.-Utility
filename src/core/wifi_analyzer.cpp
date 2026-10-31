@@ -270,8 +270,8 @@ void appendBssNetworks(const WLAN_BSS_LIST& bssList, QVector<WiFiNetworkInfo>& n
 }
 
 struct AuthEntry {
-    DOT11_AUTH_ALGORITHM algo;
-    const char* label;
+    DOT11_AUTH_ALGORITHM algo{};
+    const char* label{};
 };
 
 static constexpr AuthEntry kAuthTable[] = {
@@ -298,9 +298,9 @@ QString mapAuthAlgorithm(DOT11_AUTH_ALGORITHM algo) {
 }
 
 struct CipherEntry {
-    DOT11_CIPHER_ALGORITHM algo;
-    const char* label;
-    bool secure;
+    DOT11_CIPHER_ALGORITHM algo{};
+    const char* label{};
+    bool secure{};
 };
 
 static constexpr CipherEntry kCipherTable[] = {

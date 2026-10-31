@@ -587,7 +587,7 @@ void appendOcrTools(QJsonArray& tools) {
 
 struct OcrHandler {
     QLatin1String m_name;
-    ToolResult (*m_fn)(const QJsonObject&);
+    ToolResult (*m_fn)(const QJsonObject&) = nullptr;
 };
 
 const OcrHandler kOcrHandlers[] = {

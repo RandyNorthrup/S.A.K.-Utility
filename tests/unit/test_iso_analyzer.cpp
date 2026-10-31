@@ -522,7 +522,7 @@ void IsoAnalyzerTests::syntheticIsosClassifyByContentMatrix() {
         QString file_name;
         SyntheticIsoSpec spec;
         QString expected_family;
-        bool expected_windows;
+        bool expected_windows{};
     };
     const std::array<ClassificationCase, 2> cases = {
         ClassificationCase{QStringLiteral("neutral-a.iso"),

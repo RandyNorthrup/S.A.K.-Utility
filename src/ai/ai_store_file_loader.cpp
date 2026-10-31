@@ -369,8 +369,9 @@ bool fileParentMatchesDirectory(HANDLE file_handle, HANDLE directory_handle) {
 struct StoreLoadContext {
     const StoreFileLoadPolicy& policy;
     const StoreFileLoadHooks& hooks;
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
     const StoreFileConsumer& consume;
-    QStringList* errors;
+    QStringList* errors{};
 };
 
 bool loadNativeFile(HANDLE directory_handle,
@@ -543,9 +544,9 @@ struct ChildDirectoryOpenRequest {
     HANDLE parent_handle;
     QString child_name;
     QString store_name;
-    bool prevent_rename;
+    bool prevent_rename{};
     const StoreFileLoadHooks& hooks;
-    QStringList* errors;
+    QStringList* errors{};
 };
 
 OpenedChildDirectory childDirectoryOpenFailure(const ChildDirectoryOpenRequest& request,
@@ -666,7 +667,7 @@ bool collectChildDirectoryName(const WIN32_FIND_DATAW& data,
 struct ChildEnumerationContext {
     QString root_path;
     const StoreChildFileLoadPolicy& policy;
-    QStringList* errors;
+    QStringList* errors{};
 };
 
 bool childEnumerationAdvanced(HANDLE find_handle,
@@ -745,7 +746,7 @@ struct PinnedChildFileRequest {
     QString display_child_path;
     QString child_name;
     const StoreChildFileLoadOptions& options;
-    QStringList* errors;
+    QStringList* errors{};
 };
 
 StoreChildFileLoadResult loadPinnedChildFile(const PinnedChildFileRequest& request) {
@@ -814,7 +815,7 @@ struct ChildFileLoadContext {
     HANDLE root_handle;
     QString root_directory;
     const StoreChildFileLoadOptions& options;
-    QStringList* errors;
+    QStringList* errors{};
 };
 
 StoreChildFileLoadResult loadNamedChildFile(const ChildFileLoadContext& context,
@@ -889,12 +890,13 @@ bool createOptionalPinnedChild(const QString& path, bool required, QStringList* 
 }
 
 struct PinWalkContext {
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
     const QStringList& components;
-    int required_component_count;
+    int required_component_count{};
     const StoreFileLoadHooks& hooks;
-    QStringList* errors;
-    NativeDirectoryPinState* state;
-    QString* final_path;
+    QStringList* errors{};
+    NativeDirectoryPinState* state{};
+    QString* final_path{};
 };
 
 bool pinDirectoryComponent(PinWalkContext& context, int index) {
@@ -1038,7 +1040,7 @@ struct AtomicPublishRequest {
     QString filename;
     QString target_path;
     const StoreFileLoadHooks& hooks;
-    QString* error_message;
+    QString* error_message{};
 };
 
 bool publishAtomicStoreFile(const AtomicPublishRequest& request) {

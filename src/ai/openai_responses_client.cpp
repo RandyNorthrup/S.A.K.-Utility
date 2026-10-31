@@ -1208,7 +1208,7 @@ void OpenAIResponsesClient::setCurrentReply(QNetworkReply* reply) {
     m_current_reply = reply;
 }
 
-void OpenAIResponsesClient::clearCurrentReply(QNetworkReply* reply) {
+void OpenAIResponsesClient::clearCurrentReply(const QNetworkReply* reply) {
     if (m_current_reply == reply) {
         m_current_reply = nullptr;
     }

@@ -108,8 +108,8 @@ namespace {
 
 WORD mapRecordType(const QString& recordType) {
     struct TypeMapping {
-        const char* name;
-        WORD type;
+        const char* name{};
+        WORD type{};
     };
     static constexpr TypeMapping kTypes[] = {
         {.name = "AAAA", .type = DNS_TYPE_AAAA},

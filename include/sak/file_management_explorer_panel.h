@@ -224,7 +224,7 @@ private:
     void connectPaneSignals(FileExplorerPane* pane, int pane_index);
     /// The per-view wiring (double-click, context menu, and the viewport/view
     /// event filters) connectPaneSignals installs for each item view in a pane.
-    void connectPaneViewSignals(FileExplorerPane* pane, int pane_index);
+    void connectPaneViewSignals(const FileExplorerPane* pane, int pane_index);
     void installCommandShortcuts();
     void setTargets(QVector<FileManagementTarget> targets);
     void appendTarget(const FileManagementTarget& target);
@@ -487,7 +487,7 @@ private:
     /// starts the transfer worker (Files FilesystemHelpers + StatusCenter).
     void startTransferWorker(const FileExplorerTransferRequest& request,
                              const TransferCompletion& completion);
-    void finishTransferWorker(FileExplorerTransferWorker* worker,
+    void finishTransferWorker(const FileExplorerTransferWorker* worker,
                               FileExplorerStatusCenterItem* card,
                               const TransferCompletion& completion);
     [[nodiscard]] FileExplorerStatusCardRequest terminalTransferCard(
@@ -496,7 +496,7 @@ private:
         bool canceled) const;
     void recordTransferHistory(const FileExplorerTransferWorker* worker,
                                const TransferCompletion& completion);
-    void applyTransferSideEffects(FileExplorerTransferWorker* worker,
+    void applyTransferSideEffects(const FileExplorerTransferWorker* worker,
                                   const TransferCompletion& completion,
                                   int written);
     /// Copy Out / Export Folder: one item to a picked host destination on the
@@ -528,7 +528,7 @@ private:
     /// Files ShowCheckboxesWhenSelectingItems: selection checkboxes.
     [[nodiscard]] bool showCheckboxesEnabled() const;
     void setShowCheckboxes(bool enabled);
-    void toggleSelectionForPath(FileExplorerPane* pane, const QString& path, bool checked);
+    void toggleSelectionForPath(const FileExplorerPane* pane, const QString& path, bool checked);
     /// Files ShowFlattenOptions gate and the recursive flatten walk.
     [[nodiscard]] bool showFlattenOptionsEnabled() const;
     /// Files Settings page subset (Ctrl+, and the sidebar gear).
@@ -686,7 +686,7 @@ private:
         const FileExplorerArchiveRequest& request, FileExplorerReturnResult result);
     void startArchiveWorker(const FileExplorerArchiveRequest& request,
                             const QString& failure_title);
-    void finishArchiveWorker(FileExplorerArchiveWorker* worker,
+    void finishArchiveWorker(const FileExplorerArchiveWorker* worker,
                              FileExplorerStatusCenterItem* card,
                              const QString& failure_title);
     void addArchiveSubmenus(QMenu* menu, const FileExplorerCommandContext& context);

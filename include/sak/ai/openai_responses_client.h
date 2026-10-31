@@ -58,7 +58,7 @@ private:
     [[nodiscard]] QByteArray buildResponsePayload(const OpenAIResponseRequest& request) const;
     void attachCreateReply(QNetworkReply* reply, qint64 max_bytes);
     void setCurrentReply(QNetworkReply* reply);
-    void clearCurrentReply(QNetworkReply* reply);
+    void clearCurrentReply(const QNetworkReply* reply);
     void watchReplyBody(QNetworkReply* reply, qint64 max_bytes, const QString& limit_error);
     [[nodiscard]] static std::expected<QByteArray, QString> readBoundedReplyBody(
         QNetworkReply* reply, qint64 max_bytes, const QString& limit_error);

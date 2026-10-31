@@ -32,10 +32,10 @@ struct Size {
 
 // The GDI objects backing one capture, torn down together in freeSurface.
 struct Surface {
-    HDC m_screen;
-    HDC m_mem_dc;
-    HBITMAP m_dib;
-    void* m_bits;
+    HDC m_screen{};
+    HDC m_mem_dc{};
+    HBITMAP m_dib{};
+    void* m_bits{};
 };
 
 // A 32bpp top-down DIB: each pixel occupies 4 bytes (BGRX/BGRA).

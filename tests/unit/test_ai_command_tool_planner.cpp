@@ -426,7 +426,7 @@ struct PreconditionCase {
     QString label;
     QString tool;
     QJsonObject args;
-    int max_output_bytes;
+    int max_output_bytes{};
     QString expected;
 };
 

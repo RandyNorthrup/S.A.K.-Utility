@@ -1432,7 +1432,7 @@ constexpr int kDirectoryExportMaxEntriesPerDirectory = 10'000;
 
 struct DirectoryExportContext {
     const FileManagementTarget& target;
-    uint64_t max_file_bytes;
+    uint64_t max_file_bytes{};
     FileManagementDirectoryExportResult& result;
     const FileManagementTransferObserver& observer;
 };

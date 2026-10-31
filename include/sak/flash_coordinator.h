@@ -51,14 +51,14 @@ enum class FlashState {
  * @brief Progress information for flash operation
  */
 struct FlashProgress {
-    FlashState state;
-    double percentage;         // Overall progress 0-100
-    qint64 bytesWritten;       // Total bytes written across all drives
-    qint64 totalBytes;         // Total bytes to write
-    double speedMBps;          // Current write speed in MB/s
-    int activeDrives;          // Number of drives currently being written
-    int failedDrives;          // Number of drives that failed
-    int completedDrives;       // Number of drives completed
+    FlashState state{};
+    double percentage{};       // Overall progress 0-100
+    qint64 bytesWritten{};     // Total bytes written across all drives
+    qint64 totalBytes{};       // Total bytes to write
+    double speedMBps{};        // Current write speed in MB/s
+    int activeDrives{};        // Number of drives currently being written
+    int failedDrives{};        // Number of drives that failed
+    int completedDrives{};     // Number of drives completed
     QString currentOperation;  // Human-readable description
 
     double getOverallProgress() const {

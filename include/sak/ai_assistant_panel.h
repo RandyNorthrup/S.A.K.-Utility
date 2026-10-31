@@ -939,7 +939,7 @@ private:
     [[nodiscard]] static ai::SoftwareAvailabilityResolution workflowRequirementAvailable(
         const ai::WorkflowRequirement& requirement);
     [[nodiscard]] static QJsonObject runWorkflowOverseerPhase(
-        ai::AiSubagentRunner* runner,
+        const ai::AiSubagentRunner* runner,
         const WorkflowRunLaunch& launch,
         const ai::WorkflowPhase& phase,
         const ai::AiWorkflowPhaseContext& context,

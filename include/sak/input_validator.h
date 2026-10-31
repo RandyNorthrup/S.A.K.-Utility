@@ -29,8 +29,8 @@ constexpr std::size_t kDefaultStringMaxLength = 1024;
 
 /// @brief Input validation result with detailed error information
 struct validation_result {
-    bool is_valid;
-    error_code error;
+    bool is_valid{};
+    error_code error{};
     std::string error_message;
 
     explicit operator bool() const noexcept { return is_valid; }

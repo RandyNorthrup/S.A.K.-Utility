@@ -472,13 +472,13 @@ private:
     /// @brief Report a pre-start failure, re-enable retry, leave page incomplete
     void failBackupPreflight(const QString& message);
     /// @brief Write every metadata sidecar; false if any write fails
-    bool saveAllSidecars(UserProfileBackupWizard* wiz);
+    bool saveAllSidecars(const UserProfileBackupWizard* wiz);
 
     /// @brief Mirror the SELECTED WiFi/Ethernet/AppData selections into the manifest
     ///        so they are covered by the manifest's SHA-256 digest. The standalone
     ///        *.json sidecars are written for inspection but are NOT integrity
     ///        protected, so restore trusts only these manifest-embedded copies.
-    void recordNetworkSelectionsInManifest(UserProfileBackupWizard* wiz);
+    void recordNetworkSelectionsInManifest(const UserProfileBackupWizard* wiz);
 
     /// @brief Save installed apps list to backup directory; false on write failure
     bool saveInstalledAppsToBackup(const QVector<InstalledAppInfo>& installed_apps);

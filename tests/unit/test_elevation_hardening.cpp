@@ -28,7 +28,7 @@ namespace {
 // The exact justification each Elevated/Mixed feature shows the user when it asks for
 // administrator rights. Kept at file scope so the test body stays short.
 struct ExpectedReason {
-    sak::FeatureId id;
+    sak::FeatureId id{};
     std::string_view reason;
 };
 

@@ -1406,7 +1406,8 @@ void FileManagementExplorerPanel::installSelectionCheckboxes(FileExplorerPane* p
             });
 }
 
-void FileManagementExplorerPanel::connectPaneViewSignals(FileExplorerPane* pane, int pane_index) {
+void FileManagementExplorerPanel::connectPaneViewSignals(const FileExplorerPane* pane,
+                                                         int pane_index) {
     for (auto* view : pane->itemViews()) {
         if (view == nullptr) {
             continue;
@@ -3816,7 +3817,7 @@ void FileManagementExplorerPanel::startTransferWorker(const FileExplorerTransfer
     worker->start();
 }
 
-void FileManagementExplorerPanel::finishTransferWorker(FileExplorerTransferWorker* worker,
+void FileManagementExplorerPanel::finishTransferWorker(const FileExplorerTransferWorker* worker,
                                                        FileExplorerStatusCenterItem* card,
                                                        const TransferCompletion& completion) {
     const bool canceled = worker->stopRequested();
@@ -3885,7 +3886,7 @@ void FileManagementExplorerPanel::recordTransferHistory(const FileExplorerTransf
                   std::move(journal));
 }
 
-void FileManagementExplorerPanel::applyTransferSideEffects(FileExplorerTransferWorker* worker,
+void FileManagementExplorerPanel::applyTransferSideEffects(const FileExplorerTransferWorker* worker,
                                                            const TransferCompletion& completion,
                                                            const int written) {
     if (completion.record_history && written > 0) {
@@ -5976,7 +5977,7 @@ void FileManagementExplorerPanel::startArchiveWorker(const FileExplorerArchiveRe
     worker->start();
 }
 
-void FileManagementExplorerPanel::finishArchiveWorker(FileExplorerArchiveWorker* worker,
+void FileManagementExplorerPanel::finishArchiveWorker(const FileExplorerArchiveWorker* worker,
                                                       FileExplorerStatusCenterItem* card,
                                                       const QString& failure_title) {
     const FileExplorerArchiveRequest& request = worker->request();
@@ -6139,14 +6140,14 @@ void FileManagementExplorerPanel::setShowCheckboxes(const bool enabled) {
 
 // Checkbox click for @p path: (de)select that row in the pane, matching the
 // Files selection checkbox.
-void FileManagementExplorerPanel::toggleSelectionForPath(FileExplorerPane* pane,
+void FileManagementExplorerPanel::toggleSelectionForPath(const FileExplorerPane* pane,
                                                          const QString& path,
                                                          const bool checked) {
     if ((pane == nullptr) || (pane->groupProxyModel() == nullptr) ||
         (pane->sharedSelectionModel() == nullptr)) {
         return;
     }
-    auto* view_model = pane->groupProxyModel();
+    const auto* view_model = pane->groupProxyModel();
     for (int row = 0; row < view_model->rowCount(); ++row) {
         if (!pane->hasViewEntry(row) || pane->entryAtViewRow(row).path != path) {
             continue;

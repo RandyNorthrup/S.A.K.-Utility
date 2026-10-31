@@ -386,7 +386,9 @@ struct HfsAttributeRecord {
 };
 
 struct HfsAttributeLeafContext {
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
     const QByteArray& node;
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
     const QVector<qsizetype>& offsets;
     uint16_t node_size{0};
     uint32_t node_number{0};

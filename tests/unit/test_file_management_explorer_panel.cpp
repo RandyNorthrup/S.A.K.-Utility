@@ -546,12 +546,12 @@ void buildSafetyPaneCases(const QDir& root, QVector<SafetyPaneCase>* cases) {
     constexpr qint64 kCertifiedApfsBytes = 64LL * 1024LL * 1024LL;
     constexpr qint64 kTokenImageBytes = 4096;
     struct Seed {
-        const char* file_name;
-        qint64 size;
-        const char* file_system;
-        bool write_enabled;
-        bool readable;
-        const char* note_fragment;
+        const char* file_name{};
+        qint64 size{};
+        const char* file_system{};
+        bool write_enabled{};
+        bool readable{};
+        const char* note_fragment{};
     };
     const std::array<Seed, 6> seeds{{
         {"lane-ext4.img",
@@ -1616,7 +1616,7 @@ private Q_SLOTS:
     }
 
     void verifyGroupedSelectionPersistenceAndReset(sak::FileManagementExplorerPanel& panel,
-                                                   sak::FileExplorerPane* pane,
+                                                   const sak::FileExplorerPane* pane,
                                                    QTableView* table) {
         // Select-all collects only real items, never the header rows.
         table->selectAll();
@@ -4720,7 +4720,7 @@ private Q_SLOTS:
 
     // The pane that is not @p pane_a, once the split exists.
     static sak::FileExplorerPane* otherPane(sak::FileManagementExplorerPanel& panel,
-                                            sak::FileExplorerPane* pane_a) {
+                                            const sak::FileExplorerPane* pane_a) {
         for (auto* pane : panel.findChildren<sak::FileExplorerPane*>()) {
             if (pane != pane_a) {
                 return pane;
@@ -4827,8 +4827,8 @@ private Q_SLOTS:
     // New Folder must land under whichever pane is active, and clicking into the
     // other pane must move activation there and drop the selection left behind.
     void verifyNewFolderFollowsTheActivePane(sak::FileManagementExplorerPanel& panel,
-                                             sak::FileExplorerPane* pane_a,
-                                             sak::FileExplorerPane* pane_b,
+                                             const sak::FileExplorerPane* pane_a,
+                                             const sak::FileExplorerPane* pane_b,
                                              QLineEdit* pathEdit,
                                              const QDir& root) {
         const QString in_sub = root.filePath(QStringLiteral("sub/New Folder"));
@@ -4876,7 +4876,7 @@ private Q_SLOTS:
     // press below the last row changes no selection, so without the press-time
     // activation the pane the user just clicked into stays inactive and the next
     // command silently runs against the other pane's folder.
-    void verifyEmptySpacePressActivatesPane(sak::FileExplorerPane* pane_b,
+    void verifyEmptySpacePressActivatesPane(const sak::FileExplorerPane* pane_b,
                                             QLineEdit* pathEdit,
                                             const QString& sub_path) {
         auto* view_b = pane_b->tableView();
@@ -5951,8 +5951,8 @@ private Q_SLOTS:
 
     void statusCenterTerminalProgressHeadersDropLivePercentage() {
         struct TerminalCase {
-            sak::FileExplorerReturnResult result;
-            sak::FileExplorerStatusItemKind kind;
+            sak::FileExplorerReturnResult result{};
+            sak::FileExplorerStatusItemKind kind{};
             QString header;
         };
         const std::array cases{

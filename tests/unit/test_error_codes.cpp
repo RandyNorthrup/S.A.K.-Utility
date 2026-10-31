@@ -25,7 +25,7 @@ private Q_SLOTS:
 // error_codes.h), NOT a read of the production table, so a message typo or a code
 // accidentally mapped to another code's text fails this test instead of silently passing.
 struct ErrorCodeExpectation {
-    sak::error_code code;
+    sak::error_code code{};
     std::string_view expected;
 };
 

@@ -69,9 +69,12 @@ private:
     };
 
     struct PlainTextWriteRequest {
+        // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
         const sak::PstItemDetail& item;
+        // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
         const QString& output_dir;
         int index{0};
+        // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
         const QVector<QPair<QString, QByteArray>>& attachment_data;
         bool save_attachments{false};
         bool flatten_attachments{true};

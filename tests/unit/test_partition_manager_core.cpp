@@ -4289,10 +4289,10 @@ void PartitionManagerCoreTests::hfsFileSystemWriter_growsForksWithAllocationBitm
 namespace {
 
 struct HfsCompressedReadBackCase {
-    const char* imageName;
-    uint32_t type;
+    const char* imageName{};
+    uint32_t type{};
     QByteArray content;
-    qsizetype readCap;
+    qsizetype readCap{};
     QString expectedWarning;
 };
 
@@ -5140,9 +5140,9 @@ struct HfsJournalReplayCase {
     QByteArray dirty;
     QByteArray expectedBytes;
     QByteArray newContent;
-    qsizetype journalBase;
-    const char* dirtyName;
-    const char* tamperedName;
+    qsizetype journalBase{};
+    const char* dirtyName{};
+    const char* tamperedName{};
 };
 
 void verifyHfsJournalReplayAndTamper(QTemporaryDir& temp,
@@ -17629,7 +17629,7 @@ namespace {
 // One script-builder expectation: the operation to plan plus the substrings that
 // must appear (`present`) and must not appear (`absent`) in the built script.
 struct ScriptContainsCase {
-    PartitionOperationType type;
+    PartitionOperationType type{};
     QJsonObject payload;
     QStringList present;
     QStringList absent = {};

@@ -125,9 +125,9 @@ void BackupFileCodecTests::roundTrip_data() {
     // Every combination of the two transforms, across sizes that straddle the 1 MiB
     // chunk and the 16-byte cipher block.
     const struct {
-        const char* label;
-        qsizetype size;
-        bool compressible;
+        const char* label{};
+        qsizetype size{};
+        bool compressible{};
     } payloads[] = {
         {"empty", 0, true},
         {"one byte", 1, true},

@@ -152,7 +152,7 @@ void FollowScrollController::finishSecondDeferredScroll(bool force) {
     setAutoScroll(true);
 }
 
-bool FollowScrollController::ownsScrollEvent(QObject* watched, bool* scrollbar_event) const {
+bool FollowScrollController::ownsScrollEvent(const QObject* watched, bool* scrollbar_event) const {
     if (!m_scrollArea || (watched == nullptr)) {
         return false;
     }

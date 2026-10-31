@@ -398,7 +398,7 @@ private:
 
     struct HitRect {
         QRect rect;
-        uint64_t node_id;
+        uint64_t node_id{};
     };
 
     QDate m_date = QDate::currentDate();
@@ -772,7 +772,7 @@ private:
 
     struct HitRect {
         QRect rect;
-        uint64_t node_id;
+        uint64_t node_id{};
     };
 
     bool m_week_mode{true};

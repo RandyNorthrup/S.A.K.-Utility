@@ -154,7 +154,7 @@ void TestActionFactory::testAllCategoriesValid() {
     // routine maintenance in every surface that lists it.
     struct Expected {
         QString name;
-        QuickAction::ActionCategory category;
+        QuickAction::ActionCategory category{};
     };
     const std::vector<Expected> expected = {
         {QStringLiteral("BitLocker Key Backup"), QuickAction::ActionCategory::EmergencyRecovery},
@@ -180,7 +180,7 @@ void TestActionFactory::testRequiresAdminIsBool() {
     // launched elevated at all.
     struct Expected {
         QString name;
-        bool requires_admin;
+        bool requires_admin{};
     };
     const std::vector<Expected> expected = {
         {QStringLiteral("BitLocker Key Backup"), true},

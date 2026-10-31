@@ -1062,7 +1062,7 @@ bool UserProfileBackupInstalledAppsPage::isComplete() const {
 }
 
 struct AppCategoryRule {
-    const char* category;
+    const char* category{};
     std::initializer_list<const char*> keywords;
 };
 

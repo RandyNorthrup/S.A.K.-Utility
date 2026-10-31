@@ -618,7 +618,9 @@ Sample buildMutationSample(const QString& filePath, const QByteArray& payload) {
 struct MutationStepContext {
     const sak::FileManagementTarget& target;
     const Config& config;
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
     QJsonArray& steps;
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
     const std::function<void(bool)>& accumulate;
 };
 

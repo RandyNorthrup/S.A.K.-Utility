@@ -517,7 +517,7 @@ void appendInputTools(QJsonArray& tools) {
 
 struct InputHandler {
     QLatin1String m_name;
-    ToolResult (*m_fn)(const QJsonObject&);
+    ToolResult (*m_fn)(const QJsonObject&) = nullptr;
 };
 
 const InputHandler kInputHandlers[] = {

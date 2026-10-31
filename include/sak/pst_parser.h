@@ -319,6 +319,7 @@ private:
     /// malformed input.
     struct DataTreeGuard {
         int depth = 0;
+        // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
         QSet<uint64_t>& visited;
     };
 

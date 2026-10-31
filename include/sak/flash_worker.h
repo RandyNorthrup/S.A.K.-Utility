@@ -291,10 +291,10 @@ private:
     sak::ValidationResult verifySample();
     /// @brief Configuration for sample block verification
     struct VerifyBlocksConfig {
-        int num_samples;
-        qint64 block_size;
-        qint64 total_blocks;
-        qint64 sample_size;
+        int num_samples{};
+        qint64 block_size{};
+        qint64 total_blocks{};
+        qint64 sample_size{};
     };
 
     /// @brief Verify individual sample blocks against the target device

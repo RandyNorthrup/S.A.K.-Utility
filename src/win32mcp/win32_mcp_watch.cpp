@@ -122,7 +122,7 @@ QHash<QString, WindowBaseline> g_baselines;
 
 struct ExistState {
     QString m_needle_lower;
-    bool m_found;
+    bool m_found{};
 };
 
 BOOL CALLBACK existProc(HWND hwnd, LPARAM param) {
@@ -382,7 +382,7 @@ void appendWaitTools(QJsonArray& tools) {
 
 struct WatchHandler {
     QLatin1String m_name;
-    ToolResult (*m_fn)(const QJsonObject&);
+    ToolResult (*m_fn)(const QJsonObject&) = nullptr;
 };
 
 const WatchHandler kWatchHandlers[] = {

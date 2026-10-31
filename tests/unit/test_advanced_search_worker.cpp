@@ -1378,9 +1378,9 @@ void AdvancedSearchWorkerTests::progress_emitsProgressSignal() {
 namespace {
 
 struct MalformedFixture {
-    const char* name;
+    const char* name{};
     QByteArray bytes;
-    bool image;  // true -> image-metadata search, false -> file-metadata
+    bool image{};  // true -> image-metadata search, false -> file-metadata
 };
 
 // Each fixture carries an on-disk length/offset field with the high bit set;

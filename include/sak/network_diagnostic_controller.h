@@ -326,10 +326,10 @@ private:
     /// Transfer result data for finalization
     struct LanTransferData {
         QString target_addr;
-        uint16_t port;
-        qint64 total_sent;
-        qint64 elapsed_ms;
-        double peak_mbps;
+        uint16_t port{};
+        qint64 total_sent{};
+        qint64 elapsed_ms{};
+        double peak_mbps{};
         QVector<double> speed_samples;
     };
 

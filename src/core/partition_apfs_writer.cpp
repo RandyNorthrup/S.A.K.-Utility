@@ -1695,9 +1695,9 @@ QByteArray fsKey(uint64_t objectId,
 // private ids, timestamps, link/child count, mode, plus extended fields -- a
 // NAME xfield on every inode and a 40-byte DSTREAM xfield on regular files.
 struct ApfsInodeParams {
-    uint64_t parentId;
-    uint64_t privateId;
-    uint16_t mode;
+    uint64_t parentId{};
+    uint64_t privateId{};
+    uint16_t mode{};
     QString name;
     uint64_t sizeBytes = 0;
     int32_t childOrLinkCount = 1;
@@ -4257,11 +4257,11 @@ QByteArray buildIpBitmapBlock(uint32_t blockSize, uint64_t usedBlocks) {
 }
 
 struct ApfsSpacemanParams {
-    uint32_t blockSize;
-    uint64_t blockCount;
-    uint64_t reservedBlocks;
-    uint64_t xid;
-    bool genesis;
+    uint32_t blockSize{};
+    uint64_t blockCount{};
+    uint64_t reservedBlocks{};
+    uint64_t xid{};
+    bool genesis{};
     // Live chunk-info-block addresses this checkpoint's spaceman publishes in its
     // cib-address array (offset 2568). Single-CIB containers pass one address;
     // multi-CIB (>126 chunks, cab_count 0) pass cib_count addresses. cibAddrs.size()
@@ -4580,20 +4580,20 @@ QByteArray buildSpacemanBlock(const ApfsSpacemanParams& params, QStringList* blo
 }
 
 struct ApfsChunkInfoParams {
-    uint32_t blockSize;
-    uint64_t blockCount;
-    uint64_t reservedBlocks;
-    uint64_t xid;
-    uint64_t selfBlock;
-    uint64_t bitmapBlock;
+    uint32_t blockSize{};
+    uint64_t blockCount{};
+    uint64_t reservedBlocks{};
+    uint64_t xid{};
+    uint64_t selfBlock{};
+    uint64_t bitmapBlock{};
     // The chunk range [chunkStart, chunkStart + chunkSpan) this chunk-info block
     // covers. Single-CIB containers pass the whole device (start 0, span =
     // chunk_count); multi-CIB split the device across cib_count blocks of up to
     // chunks_per_cib (126) chunks each. cibIndex is the block's position in the
     // spaceman cib-address array (apfsck checks cib_index matches).
-    uint64_t chunkStart;
-    uint64_t chunkSpan;
-    uint64_t cibIndex;
+    uint64_t chunkStart{};
+    uint64_t chunkSpan{};
+    uint64_t cibIndex{};
     // Metadata-overflow: how many chunks the reserved prefix (reservedBlocks)
     // spans, and the immutable per-chunk bitmaps for chunks 1..M-1 (chunk 0 uses
     // bitmapBlock). For the common case M == 1 (metadata fits chunk 0) these are
@@ -4726,10 +4726,10 @@ QByteArray buildChunkBitmapBlock(uint32_t blockSize, uint64_t reservedBlocks) {
 }
 
 struct ApfsCibAddrParams {
-    uint32_t blockSize;
-    uint64_t selfBlock;
-    uint64_t xid;
-    uint32_t cabIndex;
+    uint32_t blockSize{};
+    uint64_t selfBlock{};
+    uint64_t xid{};
+    uint32_t cabIndex{};
     QVector<uint64_t> cibAddrs;  // cib block numbers (ghost or live variant for cib 0)
 };
 
@@ -18504,9 +18504,11 @@ struct ApfsDeleteLayout {
 
 struct ApfsDeleteLayoutInput {
     const ApfsFsCommitContext& ctx;
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
     const QVector<ApfsRootFilePayload>& remaining;
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
     const QVector<ApfsRootDirectoryPayload>& directories;
-    uint64_t targetBlocks;  // deleted file's block count (0 = empty / hard-link name delete)
+    uint64_t targetBlocks{};  // deleted file's block count (0 = empty / hard-link name delete)
     // Diverge: size the extent-ref reservation from this delta record count instead of the full
     // remaining-file set (the live tree is a delta over the snapshots, not every live file). -1 =
     // the certified non-snapshot path (rebuild from `remaining`).
@@ -18753,6 +18755,7 @@ struct RenameEntryContext {
     const ApfsRenameListInput& in;
     uint64_t destParent{0};
     uint64_t sourceFileId{0};
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
     const QHash<uint64_t, uint64_t>& owners;
 };
 
@@ -20009,7 +20012,9 @@ bool nameExistsInParent(const QVector<ApfsRootFilePayload>& files,
 // A nested file-insert parent query: the already-collected live tree, the "/a/b" parent path,
 // the new file name, and the commit label used in blocker messages.
 struct ApfsNestedInsertParent {
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
     const QVector<ApfsRootFilePayload>& files;
+    // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
     const QVector<ApfsRootDirectoryPayload>& directories;
     QString parentPath;
     QString fileName;
@@ -22081,14 +22086,14 @@ static void appendSpacemanContinuationBlocks(QVector<ApfsImageBlock>* blocks,
 }
 
 struct ApfsInternalPoolBlocksParams {
-    QVector<ApfsImageBlock>* blocks;
+    QVector<ApfsImageBlock>* blocks{};
     const PartitionApfsImageFormatRequest& request;
-    uint64_t blockCount;
-    uint64_t chunkCount;
+    uint64_t blockCount{};
+    uint64_t chunkCount{};
     const ApfsMultiCibLayout& mcib;
-    uint64_t ghostReserved;
-    uint64_t reservedSeed;
-    uint64_t seedData;
+    uint64_t ghostReserved{};
+    uint64_t reservedSeed{};
+    uint64_t seedData{};
 };
 
 // Emits the internal-pool chunk-info blocks (genesis/live cib 0 + immutable cibs),

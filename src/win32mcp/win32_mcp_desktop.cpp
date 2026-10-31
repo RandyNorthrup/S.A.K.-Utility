@@ -1125,7 +1125,7 @@ void appendCaptureTools(QJsonArray& tools) {
 
 struct DesktopHandler {
     QLatin1String m_name;
-    ToolResult (*m_fn)(const QJsonObject&);
+    ToolResult (*m_fn)(const QJsonObject&) = nullptr;
 };
 
 const DesktopHandler kDesktopHandlers[] = {
