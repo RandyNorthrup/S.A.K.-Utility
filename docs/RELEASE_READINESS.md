@@ -392,11 +392,10 @@ that exists for reasons that no longer apply. Owner decisions (2026-10-24):
 - DONE (e77adb72): one info-level startup line, `Main window displayed - application ready in N
   ms` (from process creation); main's construct/show/font timings and the Organizer, App
   Installation and Diagnostics panel construction breadcrumbs are debug, and the 7-line banner
-  is one version line. `test_startup_budget` checks the real app's log. NOT done:
-  `MainWindow::setupUi`'s phase lines in `src/gui/main_window.cpp` stay info (another lane was
-  editing that file).
-- FOUND, not changed: `AppInstallationPanel` still skips its connections and Chocolatey
-  initialization under the accessibility audit, the same kind of mode skip removed elsewhere.
+  is one version line. `test_startup_budget` checks the real app's log. `MainWindow::setupUi`'s
+  phase lines followed in ecaf2b99 (UI package status below).
+- DONE (76167775): `AppInstallationPanel` no longer skips its connections and Chocolatey
+  initialization under the accessibility audit (UI package status below).
 
 #### Portable and lifecycle package status (2026-10-25)
 
@@ -415,6 +414,64 @@ that exists for reasons that no longer apply. Owner decisions (2026-10-24):
   "Elevation Failed". The decision function is tested; the MainWindow call site is by review.
 - Fixes for the 2026-10-24 audit defects above: 76ca7a52, 4e47cf6c, 04109495, 4f3af0fc,
   c4edbb04.
+
+#### UI package status (2026-10-31)
+
+- DONE (c2a22e87): the theme follows Windows. One saved setting, `ui/theme` in ConfigManager's
+  portable `data/config/Utility.ini` (`system`, `light` or `dark`; unset or unreadable means
+  System), chosen from the status bar's Theme button (a System / Light / Dark menu). System follows
+  the Windows app theme live through `QStyleHints::colorSchemeChanged`; Light and Dark are requested
+  from Qt (`QStyleHints::setColorScheme`), so the title bar follows too. The Dark switch that
+  `MainWindow` added beside every panel's Log switch is gone; it was never saved, so there were no
+  keys to remove. Every built tab renders in both themes: inline styles name colours through
+  `palette()`, painted colours come from the palette at paint time, and the status and note tints
+  have dark counterparts. A review of every tab and inner tab in both themes (45 each) found two
+  light-only colours, both fixed: the dark palette's Dark role, which the File Explorer uses for its
+  secondary text, was a surface shade; and the disabled-button fill was an opaque light slate.
+  `test_app_theme` switches the real window live, checks no widget keeps a colour of the other theme
+  in its own style sheet, checks muted text and disabled buttons in each theme, and can save every
+  tab as PNG for review.
+- DONE (ac7640a4): 1px borders replace the app-wide drop shadow. The application filter that put a
+  `QGraphicsDropShadowEffect` on group boxes, cards and rounded filled widgets (the whole File
+  Explorer matched) and the InfoButton popup's own effect are gone; every surface they decorated
+  already draws a 1px token border (`test_app_theme`).
+- DONE (51daad6b): shortcuts and the wheel. The Ctrl+Shift+1 collision was one of five: the main
+  window's application-wide Ctrl+1..9, Ctrl+Shift+1, Ctrl+Tab and Ctrl+Shift+Tab were each also a
+  File Explorer binding, so with focus in the explorer Qt fired neither. A window shortcut now steps
+  aside while the focused panel binds the same sequence. There was no application-wide wheel filter:
+  the main tab bar switched panels on the wheel and the AI panel kept a per-widget copy for seven
+  controls. One policy (`sak::ui::installWheelPolicy`) replaces both: the wheel never moves focus,
+  an unfocused combo/spin box/slider passes the wheel to the view it sits in, a tab bar never
+  switches on the wheel (`test_window_input`).
+- DONE (ecaf2b99): `MainWindow::setupUi`'s phase lines, the per-panel "creating"/"initialized"
+  lines, the lazy-tab build times and the smoke-only breadcrumbs (MainWindow and AI Assistant) are
+  debug. The one info line is `Main window displayed - application ready in N ms`; the smoke-only
+  `MainWindow startup: all tool panels materialized` stays info because the portable e2e smoke
+  requires it. `test_startup_budget` refuses each breadcrumb in the real app's log.
+- DONE (76167775): `AppInstallationPanel` runs its connections and Chocolatey initialization in
+  every mode, and so do the remaining audit-only skips (MainWindow's window-state load/save and
+  tab-bar wiring, the OST Converter's settings). `test_app_installation_panel`; the accessibility
+  audit passes.
+- DONE (b051f99c): one instance per data folder (`sak::SingleInstanceGuard`). A second launch on the
+  same data folder asks the running instance to restore and come to the foreground, and exits 0; a
+  copy in another folder runs side by side. Two session-local named objects named after the data
+  folder's final path (junctions and case resolved, SHA-256): a mutex the instance owns, and an
+  auto-reset event a second launch sets. Both carry a same-user DACL with a Medium no-write-up
+  label, so an elevated instance and an unelevated launch can open each other's objects. Elevation
+  handoff: Run as Admin (and the elevation gate) relaunches `sak_utility.exe` through
+  `ShellExecuteEx` "runas" with the current arguments plus `--elevated-relaunch`, then quits. The
+  relaunch waits up to 60 s on the mutex instead of signalling; the old instance never releases it,
+  so ownership passes only when that process has ended -- after ConfigManager's settings are written
+  in static destruction -- and the administrator copy never reads `Utility.ini` while the old one
+  writes it. A declined UAC prompt leaves the old instance running and still owning the mutex. The
+  elevated helper (`sak_elevated_helper.exe`) and the win32 MCP / browser-host modes of
+  `sak_utility.exe` (which return before any of this) are not guarded. A user's own "Run as
+  administrator" while an unelevated instance runs is a second launch: it brings that window
+  forward, whose Run as Admin button does the handoff. `test_single_instance_guard`,
+  `test_single_instance_app` (the real app: a second launch exits 0 and says so; an
+  `--elevated-relaunch` launch waits for the first instance and then starts); the UAC path itself
+  needs an interactive run.
+
 ### Open release infrastructure
 
 - Tiered gates: the local tiers (T1 commit hooks, T1p pre-push, manual-stage T2-T4 twins), the
@@ -435,6 +492,15 @@ that exists for reasons that no longer apply. Owner decisions (2026-10-24):
   instances at once (there is no single-instance guard), or CTest suites sharing
   `build/Release/data`. Every suite found writing there is in the `portable_data_root` lock;
   `test_file_management_explorer_panel` joined it when it started writing `ui_state.ini`.
+  2026-10-31 (b051f99c): the app-instance route is closed. A second launch on one data folder no
+  longer starts a second instance, and Run as Admin no longer overlaps the closing instance (which
+  could still be saving its window state to `Utility.ini` while the elevated copy started and read
+  it): the elevated copy waits until the old process has exited. What remains is the CTest route:
+  the test executables are not the app, take no instance claim, and share `build/Release/data` with
+  any app started from that folder during a run -- the `portable_data_root` lock orders the suites
+  among themselves, not against a developer's running app. Whether such an app was behind the one
+  2026-10-24 failure cannot be established now; the item stays open until it recurs with a cause or
+  a run of full suites shows it gone.
 - One shared core library so first-party sources compile once instead of once per test target.
 - Done 2026-10-24: the Current Certification State block in `docs/PARTITION_MANAGER_CERTIFICATION.md`
   is generated from the computed claim level and both certification matrices, the T3 check fails

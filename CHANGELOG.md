@@ -8,6 +8,28 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **The theme follows Windows** - One setting, Light / Dark / System, in the status bar's Theme
+  button, saved in the portable `data/config/Utility.ini` and set to System on first run. System
+  follows the Windows app theme while S.A.K. runs, title bar included. The Dark switch that sat
+  beside every panel's Log switch is gone.
+
+- **Borders instead of drop shadows** - Group boxes, cards and the (i) popups are outlined by
+  1px borders; the drop shadow the app added to every group box, card and rounded panel is gone.
+
+- **Shortcuts work inside the File Explorer** - Its own Ctrl+1..9, Ctrl+Tab, Ctrl+Shift+Tab and
+  Ctrl+Shift+1 (Details view) did nothing because the main window bound the same keys; inside
+  the explorer its keys act, everywhere else the main window's do.
+
+- **The mouse wheel works like Windows** - The wheel scrolls the page under the pointer: a combo
+  box, spin box or slider without focus no longer swallows it and changes its value, a tab bar
+  no longer switches tabs, and the wheel never moves keyboard focus.
+
+- **One S.A.K. Utility per folder** - Starting S.A.K. Utility while it is already running from
+  the same folder brings the open window to the front instead of starting a second copy that
+  shares its settings and data. Copies in different folders still run side by side, and Run as
+  Admin still relaunches elevated: the administrator copy waits for the one that started it to
+  close.
+
 - **Windows ISO build messages match the converter** - The patched UUP converter never
   provisions AppX packages, so S.A.K. no longer blames AppX provisioning when it asks for
   Administrator or offers AppX workarounds when a conversion fails. It still needs
