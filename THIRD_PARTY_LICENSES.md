@@ -320,7 +320,7 @@ Utility", CDIMAGE 2.53m, "Copyright (C) Microsoft Corporation, 1993-2007",
 comment "For Microsoft internal use only". It carries no Authenticode
 signature, and no license from Microsoft accompanies it, so its redistribution
 terms are unclear. It is the intellectual property of Microsoft Corporation.
-Whether to keep shipping it is an open owner decision (see
+Shipping it is a recorded owner decision and accepted risk (2026-10-31; see
 `docs/RELEASE_READINESS.md`).
 
 ---

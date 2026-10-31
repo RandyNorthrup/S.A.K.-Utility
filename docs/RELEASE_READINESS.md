@@ -64,10 +64,10 @@ keeps their history.
    links zlib 1.3.2, c-ares 1.34.9, Expat 2.9.0, SQLite 3.54.1 and libssh2 1.11.1 (WinCNG)
    statically, keeps Windows TLS and the Windows certificate store, and imports only Windows DLLs;
    it verified a GitHub download and refused expired, wrong-host, self-signed and untrusted-root
-   certificates. Open owner decision: the converter writes the ISO with the `cdimage.exe`
-   upstream carries, Microsoft's unsigned CDIMAGE 2.53m marked "For Microsoft internal use only",
-   which comes with no license, so its redistribution terms are unclear
-   (`THIRD_PARTY_LICENSES.md`).
+   certificates. Owner decision 2026-10-31, accepted risk: keep shipping the `cdimage.exe`
+   upstream carries (Microsoft's unsigned CDIMAGE 2.53m marked "For Microsoft internal use only",
+   no license, so its redistribution terms are unclear; `THIRD_PARTY_LICENSES.md`) rather than
+   depend on the Windows ADK's `oscdimg.exe`.
 3. FIXED 2026-10-30: downloaded third-party binaries without a hash pin. iperf3 and
    smartmontools are pinned (the bundled smartctl.exe is byte-identical to the one in the
    pinned, SignPath-signed 7.5 installer), and `scripts/sign-exe.ps1` pins
