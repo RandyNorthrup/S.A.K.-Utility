@@ -43,7 +43,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v7
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
     - name: Toolchain
       uses: ./.github/actions/windows-build-env
@@ -52,7 +52,7 @@ jobs:
 
     - name: Cache pre-commit environments
       id: setup
-      uses: actions/cache@v6
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
       with:
         path: ~\.cache\pre-commit
         key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml', 'requirements-gates.txt') }}
@@ -172,7 +172,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v7
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
     - name: Toolchain
       uses: ./.github/actions/windows-build-env
@@ -279,7 +279,7 @@ jobs:
 
     - name: Upload test logs
       if: ${{ !cancelled() && steps.plan.outcome == 'success' }}
-      uses: actions/upload-artifact@v7
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
       with:
         name: t2-shard-${{ matrix.shard }}
         path: |
@@ -305,11 +305,11 @@ jobs:
     # The audit also runs when a shard's tests failed, so one run reports every problem.
     - name: Checkout code
       if: ${{ needs.build-test.result == 'success' || needs.build-test.result == 'failure' }}
-      uses: actions/checkout@v7
+      uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
 
     - name: Download shard logs
       if: ${{ needs.build-test.result == 'success' || needs.build-test.result == 'failure' }}
-      uses: actions/download-artifact@v8
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333  # v8.0.2
       with:
         pattern: t2-shard-*
         path: shards

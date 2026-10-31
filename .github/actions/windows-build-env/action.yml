@@ -42,7 +42,7 @@ runs:
   using: composite
   steps:
   - name: Set up Python
-    uses: actions/setup-python@v7
+    uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0  # v7.1.0
     with:
       python-version: ${{ inputs.python-version }}
       cache: pip
@@ -101,7 +101,7 @@ runs:
 
   - name: Install Qt
     if: ${{ inputs.build-tools == 'true' }}
-    uses: jurplel/install-qt-action@v4
+    uses: jurplel/install-qt-action@b344308e4483fc892e0d27b3cd1b173ebdd95f06  # v4.5.0
     with:
       # Left on, the action runs its own setup-python ('>=3.14.0', so 3.15 today), which
       # replaces pythonLocation and puts an interpreter without the pinned tools first on PATH.
@@ -114,7 +114,7 @@ runs:
 
   - name: Set up MSBuild
     if: ${{ inputs.build-tools == 'true' }}
-    uses: microsoft/setup-msbuild@v3
+    uses: microsoft/setup-msbuild@30375c66a4eea26614e0d39710365f22f8b0af57  # v3.0.0
     with:
       vs-version: '[17.0,18.0)'
 
@@ -147,7 +147,7 @@ runs:
 
   - name: Cache vcpkg binaries
     if: ${{ inputs.build-tools == 'true' }}
-    uses: actions/cache@v6
+    uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9  # v6.1.0
     with:
       path: ${{ steps.vcpkg.outputs.dir }}
       key: ${{ steps.vcpkg.outputs.key }}
