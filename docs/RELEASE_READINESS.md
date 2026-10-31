@@ -73,9 +73,15 @@ keeps their history.
    pinned, SignPath-signed 7.5 installer), and `scripts/sign-exe.ps1` pins
    Microsoft.ArtifactSigning.Client 1.0.146 (successor of the unlisted Trusted Signing client)
    by its nuget.org SHA-512 and checks the dlib's Authenticode signature before signtool loads it.
-4. 78 unverified findings (18 HIGH) in 14 review briefs under `docs/review_briefs/` that no ledger
-   unit binds. Triage each against current code; two sampled HIGH/MEDIUM findings were already
-   fixed.
+4. Review briefs TRIAGED 2026-10-31 (`docs/review_briefs/TRIAGE_2026-10-31.md`): all 140
+   findings in the 38 brief files checked against dev 0b501108. 106 fixed, 12 gone with the code
+   they described, 4 not a bug, 1 needs a runtime check, 17 still open (2 HIGH: a UNC path with a
+   space leaking into saved chat titles, and a custom "High Performance" plan chosen over the
+   built-in one), plus 9 new defects the briefs missed (2 HIGH: AI command tools join their
+   kill-on-close Job only after launch, and the redaction misses `access_token=`,
+   `client_secret=`, `AWS_SECRET_ACCESS_KEY=` and JSON `Authorization`/`Cookie` keys). Open: the
+   fix packages listed at the top of the triage. PANEL-6 (116 nonconforming member names in the
+   AI panel) is naming debt, which the owner ruled is not a release requirement.
 5. Real defects found by the 2026-10-24 behavior audit:
    - FIXED (76ca7a52): `ProcessRunner` killed descendants still alive about 1 s after the root
      exited and marked the run failed, so NSIS uninstallers (which relaunch from %TEMP%) and
