@@ -12,11 +12,16 @@ Source inputs:
 - `hfsprogs_540.1.linux3-6.debian.tar.xz`
 - `hfsprogs-540.1.linux3-sak-msys.patch`
 
+The S.A.K. patch adds MSYS stand-ins for `<sys/sysctl.h>`, `<linux/sysctl.h>`
+and the `<sys/ioctl.h>` request macros, and `include/sak_sha1.h`. `newfs_hfs`
+uses SHA-1 only to hash local entropy into the new volume's identifier, so the
+patch points `makehfs.c` at that header and drops `-lcrypto`: the bundle has no
+OpenSSL runtime to keep patched or to reach end of life.
+
 Build environment:
 
 - MSYS2 base under `tools/filesystem/_build/msys64`
 - MSYS GCC 15.2.0
-- OpenSSL 3.6.2 headers/runtime from MSYS2
 - libutil-linux-devel headers for UUID support
 
 Build commands:
@@ -28,7 +33,12 @@ tar -xf ../hfsprogs_540.1.linux3-6.debian.tar.xz
 for p in $(cat debian/patches/series); do patch -N -p1 < debian/patches/$p || true; done
 patch -p1 < ../hfsprogs-540.1.linux3-sak-msys.patch
 make CC=gcc
+objdump -p newfs_hfs.tproj/newfs_hfs.exe | grep 'DLL Name'   # msys-2.0.dll and KERNEL32.dll only
 ```
+
+The builds are not bit-reproducible (the PE header carries a link timestamp).
+`newfs_hfs.exe` was rebuilt 2026-10-30 to drop OpenSSL; `fsck_hfs.exe`, whose
+sources the patch does not touch, is the earlier build.
 
 Image-level smoke proof:
 
@@ -39,5 +49,5 @@ truncate -s 64M /tmp/sak-hfsprogs-smoke.img
 partition_filesystem_probe_certifier.exe --input temp/sak-hfsprogs-smoke.img --output temp/sak-hfsprogs-smoke.probe.json --expect HFS+ --hfs-check
 ```
 
-The same image-level proof also passed with a native Windows path under
-`temp/sak-hfsprogs-nativepath.img`.
+The same image-level proof also passed with the bundled executables run from
+`tools/filesystem/hfsprogs` against a native Windows path.

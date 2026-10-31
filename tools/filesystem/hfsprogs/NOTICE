@@ -6,13 +6,15 @@ This S.A.K. bundle includes the original upstream source archive, Debian patch
 archive, and a small S.A.K. MSYS portability patch. The bundled executables are
 external tools invoked as separate processes.
 
-Runtime DLLs:
+The S.A.K. patch adds `include/sak_sha1.h`, a self-contained SHA-1 written for
+S.A.K. and released into the public domain, which `newfs_hfs` uses in place of
+OpenSSL to hash the new volume's identifier.
+
+Runtime DLL:
 
 - `msys-2.0.dll` from the MSYS2 runtime, derived from Cygwin.
-- `msys-crypto-3.dll` from the MSYS2 OpenSSL package.
 
 Runtime license files are shipped next to the binaries:
 
 - `CYGWIN_LICENSE`
 - `CYGWIN_COPYING`
-- `OPENSSL_LICENSE.txt`

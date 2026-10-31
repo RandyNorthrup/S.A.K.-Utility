@@ -32,8 +32,11 @@ keeps their history.
    the stock Windows 11 VM run and the package smoke.
 2. Dependency security updates (verify each advisory ID at its source before acting): Qt 6.10.3
    (6.10 support ended 2026-10-07; JSON-parsing advisories), iPerf3 3.21 (server-side
-   use-after-free; the app runs iperf3 as a server), Chocolatey 2.7.2's bundled 7-Zip, zlib 1.3.1,
-   liblzma 5.8.2, and the hfsprogs OpenSSL 3.6 build (end of life 2026-11-01).
+   use-after-free; the app runs iperf3 as a server), Chocolatey 2.7.2's bundled 7-Zip, zlib 1.3.1
+   and liblzma 5.8.2. FIXED 2026-10-30: the hfsprogs OpenSSL 3.6 runtime (end of life
+   2026-11-01) is gone -- `newfs_hfs` used it only for SHA-1 over volume-ID entropy, now a
+   public-domain header in the S.A.K. patch (which also had malformed hunks and could not
+   reproduce the build); `msys-crypto-3.dll` (5.4 MB) left the package.
 3. Downloaded third-party binaries without a hash pin: iperf3, smartmontools, and the Trusted
    Signing client library.
 4. 78 unverified findings (18 HIGH) in 14 review briefs under `docs/review_briefs/` that no ledger

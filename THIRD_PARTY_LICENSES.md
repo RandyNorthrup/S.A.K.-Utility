@@ -125,7 +125,7 @@ required and there is no charge to use it.
 
 ## Partition filesystem tools
 
-**License:** GPL-2.0-only for the approved e2fsprogs bundle; APSL-2.0; GPL-3.0-or-later; Apache-2.0 for `newfs_hfs`; APSL-2.0; GPL-3.0-or-later for `fsck_hfs`
+**License:** GPL-2.0-only for the approved e2fsprogs bundle; APSL-2.0; GPL-3.0-or-later for `newfs_hfs` and `fsck_hfs`
 **Version:** e2fsprogs 1.47.4; hfsprogs 540.1.linux3-6+sak-msys
 **Website:** https://www.kernel.org/pub/linux/kernel/people/tytso/e2fsprogs/ and https://packages.debian.org/source/sid/hfsprogs
 **Used for:** Manifest-gated ext2/ext3/ext4 read-only checks plus approved
@@ -150,7 +150,6 @@ archive with the local MinGW patch stored beside them:
 - `tools/filesystem/hfsprogs/newfs_hfs.exe`
 - `tools/filesystem/hfsprogs/fsck_hfs.exe`
 - `tools/filesystem/hfsprogs/msys-2.0.dll`
-- `tools/filesystem/hfsprogs/msys-crypto-3.dll`
 - `tools/filesystem/hfsprogs/hfsprogs_540.1.linux3.orig.tar.gz`
 - `tools/filesystem/hfsprogs/hfsprogs_540.1.linux3-6.debian.tar.xz`
 - `tools/filesystem/hfsprogs/hfsprogs-540.1.linux3-sak-msys.patch`
@@ -158,14 +157,14 @@ archive with the local MinGW patch stored beside them:
 - `tools/filesystem/hfsprogs/BUILD-NOTES.md`
 - `tools/filesystem/hfsprogs/CYGWIN_LICENSE`
 - `tools/filesystem/hfsprogs/CYGWIN_COPYING`
-- `tools/filesystem/hfsprogs/OPENSSL_LICENSE.txt`
 
 As required by GPLv2, the complete source archive, local patch, upstream notice,
 and build notes are bundled with the e2fsprogs executables. The hfsprogs bundle
 ships the Debian source package, Debian patch archive, local Windows portability
-patch, runtime DLL license texts, and OpenSSL license text for the crypto runtime
-dependency used by `newfs_hfs`. User-visible ext format, repair, resize, Linux
-swap format, and HFS+/HFSX format/repair workflows route through the same
+patch, and runtime DLL license texts; the patch's public-domain SHA-1 header
+replaces OpenSSL, so `newfs_hfs` has no crypto runtime dependency. User-visible
+ext format, repair, resize, Linux swap format, and HFS+/HFSX format/repair
+workflows route through the same
 Partition Manager queue/apply, safety, manifest/hash, and confirmation model.
 XFS and Btrfs writes, and any additional non-native write path that would need a
 THIRD-PARTY tool, remain blocked until that tool has source, license, upstream

@@ -1,5 +1,6 @@
 diff --git a/include/linux/sysctl.h b/include/linux/sysctl.h
 new file mode 100644
+index 0000000..e0d1e62
 --- /dev/null
 +++ b/include/linux/sysctl.h
 @@ -0,0 +1,6 @@
@@ -9,11 +10,147 @@ new file mode 100644
 +#include "../sys/sysctl.h"
 +
 +#endif
+diff --git a/include/sak_sha1.h b/include/sak_sha1.h
+new file mode 100644
+index 0000000..41a7275
+--- /dev/null
++++ b/include/sak_sha1.h
+@@ -0,0 +1,129 @@
++/*
++ * sak_sha1.h - SHA-1 (FIPS 180-4) for newfs_hfs, S.A.K. build.
++ *
++ * newfs_hfs only hashes local entropy into the new volume's identifier, so a
++ * self-contained SHA-1 replaces the OpenSSL runtime the tool otherwise needs.
++ * The OpenSSL-compatible names keep makehfs.c unchanged beyond its include.
++ *
++ * Written for S.A.K. Utility; released into the public domain.
++ */
++#ifndef SAK_SHA1_H
++#define SAK_SHA1_H
++
++#include <stddef.h>
++#include <stdint.h>
++#include <string.h>
++
++#define SHA_DIGEST_LENGTH 20
++
++typedef struct {
++	uint32_t h[5];
++	uint64_t length;
++	unsigned char block[64];
++	size_t used;
++} SHA_CTX;
++
++static inline uint32_t sak_sha1_rol(uint32_t value, int bits)
++{
++	return (value << bits) | (value >> (32 - bits));
++}
++
++static inline void sak_sha1_block(SHA_CTX *ctx, const unsigned char *p)
++{
++	uint32_t w[80];
++	uint32_t a, b, c, d, e, f, k, t;
++	int i;
++
++	for (i = 0; i < 16; i++)
++		w[i] = ((uint32_t)p[4 * i] << 24) | ((uint32_t)p[4 * i + 1] << 16) |
++		       ((uint32_t)p[4 * i + 2] << 8) | (uint32_t)p[4 * i + 3];
++	for (i = 16; i < 80; i++)
++		w[i] = sak_sha1_rol(w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16], 1);
++
++	a = ctx->h[0];
++	b = ctx->h[1];
++	c = ctx->h[2];
++	d = ctx->h[3];
++	e = ctx->h[4];
++	for (i = 0; i < 80; i++) {
++		if (i < 20) {
++			f = (b & c) | (~b & d);
++			k = 0x5A827999;
++		} else if (i < 40) {
++			f = b ^ c ^ d;
++			k = 0x6ED9EBA1;
++		} else if (i < 60) {
++			f = (b & c) | (b & d) | (c & d);
++			k = 0x8F1BBCDC;
++		} else {
++			f = b ^ c ^ d;
++			k = 0xCA62C1D6;
++		}
++		t = sak_sha1_rol(a, 5) + f + e + k + w[i];
++		e = d;
++		d = c;
++		c = sak_sha1_rol(b, 30);
++		b = a;
++		a = t;
++	}
++	ctx->h[0] += a;
++	ctx->h[1] += b;
++	ctx->h[2] += c;
++	ctx->h[3] += d;
++	ctx->h[4] += e;
++}
++
++static inline int SHA1_Init(SHA_CTX *ctx)
++{
++	ctx->h[0] = 0x67452301;
++	ctx->h[1] = 0xEFCDAB89;
++	ctx->h[2] = 0x98BADCFE;
++	ctx->h[3] = 0x10325476;
++	ctx->h[4] = 0xC3D2E1F0;
++	ctx->length = 0;
++	ctx->used = 0;
++	return 1;
++}
++
++static inline int SHA1_Update(SHA_CTX *ctx, const void *data, size_t len)
++{
++	const unsigned char *p = (const unsigned char *)data;
++
++	ctx->length += len;
++	while (len > 0) {
++		size_t take = sizeof(ctx->block) - ctx->used;
++
++		if (take > len)
++			take = len;
++		memcpy(ctx->block + ctx->used, p, take);
++		ctx->used += take;
++		p += take;
++		len -= take;
++		if (ctx->used == sizeof(ctx->block)) {
++			sak_sha1_block(ctx, ctx->block);
++			ctx->used = 0;
++		}
++	}
++	return 1;
++}
++
++static inline int SHA1_Final(unsigned char *md, SHA_CTX *ctx)
++{
++	const uint64_t bits = ctx->length * 8;
++	const unsigned char pad = 0x80;
++	const unsigned char zero = 0;
++	unsigned char trailer[8];
++	int i;
++
++	SHA1_Update(ctx, &pad, 1);
++	while (ctx->used != 56)
++		SHA1_Update(ctx, &zero, 1);
++	for (i = 0; i < 8; i++)
++		trailer[i] = (unsigned char)(bits >> (56 - 8 * i));
++	SHA1_Update(ctx, trailer, sizeof(trailer));
++	for (i = 0; i < SHA_DIGEST_LENGTH; i++)
++		md[i] = (unsigned char)(ctx->h[i / 4] >> (24 - 8 * (i % 4)));
++	return 1;
++}
++
++#endif /* SAK_SHA1_H */
 diff --git a/include/sys/ioctl.h b/include/sys/ioctl.h
 new file mode 100644
+index 0000000..8d922cb
 --- /dev/null
 +++ b/include/sys/ioctl.h
-@@ -0,0 +1,20 @@
+@@ -0,0 +1,17 @@
 +#ifndef SAK_HFSPROGS_SYS_IOCTL_H
 +#define SAK_HFSPROGS_SYS_IOCTL_H
 +
@@ -33,9 +170,10 @@ new file mode 100644
 +#endif
 diff --git a/include/sys/sysctl.h b/include/sys/sysctl.h
 new file mode 100644
+index 0000000..a997df1
 --- /dev/null
 +++ b/include/sys/sysctl.h
-@@ -0,0 +1,31 @@
+@@ -0,0 +1,32 @@
 +#ifndef SAK_HFSPROGS_SYS_SYSCTL_H
 +#define SAK_HFSPROGS_SYS_SYSCTL_H
 +
@@ -68,3 +206,29 @@ new file mode 100644
 +}
 +
 +#endif
+diff --git a/newfs_hfs.tproj/Makefile.lnx b/newfs_hfs.tproj/Makefile.lnx
+index 190c2de..91c539f 100644
+--- a/newfs_hfs.tproj/Makefile.lnx
++++ b/newfs_hfs.tproj/Makefile.lnx
+@@ -4,7 +4,7 @@ OFILES = $(CFILES:.c=.o)
+ all: newfs_hfs
+ 
+ newfs_hfs: $(OFILES)
+-	${CC} ${CFLAGS} ${LDFLAGS} -o newfs_hfs ${OFILES} -lcrypto
++	${CC} ${CFLAGS} ${LDFLAGS} -o newfs_hfs ${OFILES}
+ 
+ clean:
+ 	$(RM) newfs_hfs $(OFILES)
+diff --git a/newfs_hfs.tproj/makehfs.c b/newfs_hfs.tproj/makehfs.c
+index c1aeca0..7eb7a8f 100644
+--- a/newfs_hfs.tproj/makehfs.c
++++ b/newfs_hfs.tproj/makehfs.c
+@@ -76,7 +76,7 @@
+ 
+ extern Boolean _CFStringGetFileSystemRepresentation(CFStringRef string, UInt8 *buffer, CFIndex maxBufLen);
+ #else
+-#include <openssl/sha.h>
++#include "sak_sha1.h"
+ #endif
+ 
+ #include <hfs/hfs_format.h>
