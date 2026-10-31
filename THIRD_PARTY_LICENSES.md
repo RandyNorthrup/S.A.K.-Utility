@@ -427,7 +427,7 @@ OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 ## Chocolatey
 
 **License:** Apache License 2.0
-**Version:** 2.7.2
+**Version:** 2.7.5
 **Website:** https://chocolatey.org/
 **Used for:** Embedded portable package manager for application migration
 **Bundled at:** `tools/chocolatey/choco.exe`, `tools/chocolatey/bin/choco.exe`

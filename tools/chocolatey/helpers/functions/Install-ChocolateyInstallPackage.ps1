@@ -352,7 +352,7 @@ Pro / Business supports a single, ubiquitous install directory option.
             (($msiArgs, $additionalInstallArgs) | Where-Object { $_ }) -join " "
         }
         else {
-            (($msiArgs, $silentArgs, $additionalInstallArgs) | Where-Object { $_ }) -join " "
+            (($msiArgs, $silentArgs, $additionalInstallArgs) | Where-Object { $_ }) -join " " 
         }
 
         $env:ChocolateyExitCode = Start-ChocolateyProcessAsAdmin "$msiArgs" "$($env:SystemRoot)\System32\msiexec.exe" -validExitCodes $validExitCodes -workingDirectory $workingDirectory
@@ -364,7 +364,7 @@ Pro / Business supports a single, ubiquitous install directory option.
             $additionalInstallArgs
         }
         else {
-            (($silentArgs, $additionalInstallArgs) | Where-Object { $_ }) -join " "
+            (($silentArgs, $additionalInstallArgs) | Where-Object { $_ }) -join " " 
         }
         $env:ChocolateyExitCode = Start-ChocolateyProcessAsAdmin "$exeArgs" $fileFullPath -validExitCodes $validExitCodes -workingDirectory $workingDirectory
     }

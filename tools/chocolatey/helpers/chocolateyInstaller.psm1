@@ -52,7 +52,7 @@ $currentAssemblies = [System.AppDomain]::CurrentDomain.GetAssemblies()
 $chocolateyCmdlets = @{}
 
 $dllPath = "$helpersPath\Chocolatey.PowerShell.dll"
-if (Test-Path $dllPath) {
+if (Test-Path $dllPath) { 
     # Try to import from already-loaded assembly, otherwise fallback to importing from dll
     $cmdletsAssembly = $currentAssemblies |
         Where-Object { $_.GetName().Name -eq 'Chocolatey.PowerShell' } |
@@ -115,7 +115,7 @@ if (Test-Path $extensionsPath) {
 
             # Store commands from licensed module, stripping any 'Cmdlet' suffix from the command name
             $chocolateyCmdlets.Licensed = @( (Get-Module chocolatey.licensed).ExportedCmdlets.Keys | ForEach-Object { $_ -replace "Cmdlet$" } )
-
+            
             Write-Debug "Cmdlets exported from chocolatey.licensed"
             $chocolateyCmdlets.Licensed | Write-Debug
         }

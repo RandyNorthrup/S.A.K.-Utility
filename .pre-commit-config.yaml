@@ -39,12 +39,15 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
+      # Vendored tool bundles stay byte-identical to their upstream release (Chocolatey's
+      # helper scripts are Authenticode signed), and a unified diff's blank context line is
+      # a single space; rewriting either corrupts it.
       - id: trailing-whitespace
         args: [--markdown-linebreak-ext=md]
-        # A unified diff's blank context line is a single space; stripping it breaks the patch.
-        exclude: \.patch$
+        exclude: ^tools/(chocolatey|uup|iperf3|smartmontools)/|\.patch$
         stages: [pre-commit]
       - id: end-of-file-fixer
+        exclude: ^tools/(chocolatey|uup|iperf3|smartmontools)/|\.patch$
         stages: [pre-commit]
       - id: check-yaml
         stages: [pre-commit]

@@ -31,8 +31,10 @@ keeps their history.
    2491-family machine; see `docs/GUI_STARTUP_FIELD_NOTES.md`). Still to prove on release bytes:
    the stock Windows 11 VM run and the package smoke.
 2. Dependency security updates (verify each advisory ID at its source before acting): Qt 6.10.3
-   (6.10 support ended 2026-10-07; JSON-parsing advisories), Chocolatey 2.7.2's bundled 7-Zip,
-   zlib 1.3.1 and liblzma 5.8.2. FIXED 2026-10-30: the hfsprogs OpenSSL 3.6 runtime (end of
+   (6.10 support ended 2026-10-07; JSON-parsing advisories), zlib 1.3.1 and liblzma 5.8.2.
+   FIXED 2026-10-30: Chocolatey 2.7.2 -> 2.7.5 (2.7.4: security log4net 3.3.1 and 7-Zip 26.02;
+   2.7.5: 7-Zip 26.05), from the community nupkg whose SHA-512 matches the feed. FIXED
+   2026-10-30: the hfsprogs OpenSSL 3.6 runtime (end of
    life 2026-11-01) is gone -- `newfs_hfs` used it only for SHA-1 over volume-ID entropy, now a
    public-domain header in the S.A.K. patch (which also had malformed hunks and could not
    reproduce the build); `msys-crypto-3.dll` (5.4 MB) left the package. FIXED 2026-10-30:
