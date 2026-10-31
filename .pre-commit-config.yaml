@@ -37,7 +37,7 @@ repos:
   # Each carries stages: [pre-commit] explicitly because the upstream manifest declares its
   # own stages (including pre-push) for several of them, which default_stages cannot override.
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       # Vendored tool bundles stay byte-identical to their upstream release (Chocolatey's
       # helper scripts are Authenticode signed), and a unified diff's blank context line is

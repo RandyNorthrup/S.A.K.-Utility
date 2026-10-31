@@ -62,6 +62,24 @@ class JavascriptBaselineTests(unittest.TestCase):
         self.assertIn("refusing to certify a partial scan", str(raised.exception))
 
     def test_javascript_parse_desync_is_rejected(self) -> None:
+        # The guard must catch any merged span, whatever lizard bug produces it, so the
+        # report is simulated: lizard claims the first function runs through the second.
+        source = "function first() {\n  return 1;\n}\nfunction second() {\n  return 2;\n}\n"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "merged.js"
+            path.write_text(source, encoding="utf-8")
+            spans = {str(path.resolve()).lower(): [("first", 1, 6)]}
+            output = io.StringIO()
+            with mock.patch.object(RUN_LIZARD, "reported_spans", return_value=spans), \
+                    contextlib.redirect_stdout(output):
+                status = RUN_LIZARD.check_javascript_parse_desync([str(path)])
+        self.assertEqual(status, 1)
+        self.assertIn("functions UNMEASURED", output.getvalue())
+
+    def test_regex_literal_parses_without_desync(self) -> None:
+        # lizard 1.24.0 lost its place after a regex literal containing quotes and slashes and
+        # merged every following function; the pinned lizard (1.24.3) parses it. A regression
+        # in a future pin shows up here before it hides real functions from the gate.
         source = """function downloadOptions(rawArgs) {
   const args = rawArgs || {};
   const url = args.url ? String(args.url) : "";
@@ -93,8 +111,7 @@ async function handleHttpAuth() { return true; }
             output = io.StringIO()
             with contextlib.redirect_stdout(output):
                 status = RUN_LIZARD.check_javascript_parse_desync([str(path)])
-        self.assertEqual(status, 1)
-        self.assertIn("functions UNMEASURED", output.getvalue())
+        self.assertEqual(status, 0, output.getvalue())
 
     def test_precommit_lizard_hook_includes_javascript(self) -> None:
         config = (PROJECT_ROOT / ".pre-commit-config.yaml").read_text(encoding="utf-8")
