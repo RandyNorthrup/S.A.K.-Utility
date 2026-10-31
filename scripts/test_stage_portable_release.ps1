@@ -800,6 +800,8 @@ function Test-ReleaseArchiveCrashRefusal {
         foreach ($clean in @($false, $true)) {
             $fixture = New-ArchiveContractFixture $Root
             $crashes = Join-Path $fixture.package "data/crashes"
+            # The package ships no data folder; the app creates it on first run, crashes included.
+            New-Item -ItemType Directory -Path (Split-Path -Parent $crashes) -Force | Out-Null
             if ($shape -eq "file") { [IO.File]::WriteAllText($crashes, "retained-crash-file") }
             else {
                 New-Item -ItemType Directory -Path $crashes | Out-Null
