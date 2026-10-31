@@ -67,10 +67,10 @@
 #include <QToolButton>
 #include <QUrl>
 #include <QVBoxLayout>
-#include <QWheelEvent>
 
 #include <array>
 #include <stdexcept>
+#include <utility>
 
 namespace sak {
 
@@ -458,6 +458,42 @@ QTextBrowser* createHtmlBrowser(QWidget* parent, const char* html, const QString
     return browser;
 }
 
+bool sequenceLiveOnWidget(const QWidget* owner,
+                          const QWidget* focus,
+                          const QKeySequence& sequence) {
+    const auto shortcuts = owner->findChildren<QShortcut*>(Qt::FindDirectChildrenOnly);
+    for (const QShortcut* shortcut : shortcuts) {
+        const bool live = shortcut->context() == Qt::WidgetWithChildrenShortcut ||
+                          (shortcut->context() == Qt::WidgetShortcut && owner == focus);
+        if (live && shortcut->isEnabled() && shortcut->keys().contains(sequence)) {
+            return true;
+        }
+    }
+    const auto actions = owner->actions();
+    for (const QAction* action : actions) {
+        const bool live = action->shortcutContext() == Qt::WidgetWithChildrenShortcut ||
+                          (action->shortcutContext() == Qt::WidgetShortcut && owner == focus);
+        if (live && action->isEnabled() && action->shortcuts().contains(sequence)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/// True when @p focus or a widget between it and @p window binds @p sequence itself, with a
+/// context that is live for that focus -- a panel's own shortcut, which then wins.
+bool focusedPanelOwnsSequence(const QWidget* focus,
+                              const QWidget* window,
+                              const QKeySequence& sequence) {
+    for (const QWidget* owner = focus; owner != nullptr && owner != window;
+         owner = owner->parentWidget()) {
+        if (sequenceLiveOnWidget(owner, focus, sequence)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 QWidget* addEmptyPanelTab(QTabWidget* tabs, const QString& title) {
     auto* shell = new QWidget(tabs);
     auto* layout = new QVBoxLayout(shell);
@@ -482,6 +518,9 @@ MainWindow::~MainWindow() {
     // Must be first: stops the tab-change status-bar handlers from running while
     // the window is being destroyed (they would dereference freed tool panels).
     m_shutting_down = true;
+    // Child widgets are destroyed after this window's members; focus moving while they go must
+    // not reach m_window_shortcuts.
+    disconnect(m_focus_connection);
     saveWindowState();
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
     // The assistant's background workers dereference the panel. release() destroys it once
@@ -540,9 +579,6 @@ void MainWindow::setupUi() {
         updateAiStatusBarVisibility();
 #endif
     });
-
-    // Enable mouse-wheel tab switching on the tab bar
-    m_tab_widget->tabBar()->installEventFilter(this);
 
     updateStatus("Ready", 0);
 }
@@ -1876,25 +1912,47 @@ void MainWindow::onTabChanged(int index) {
 void MainWindow::createKeyboardShortcuts() {
     Q_ASSERT(m_logWindow);
     Q_ASSERT(m_tab_widget);
+    createTabNavigationShortcuts();
+
+    // Ctrl+Shift+L: Toggle log panel visibility. Plain Ctrl+L belongs to the
+    // File Explorer omnibar (Files EditPathAction).
+    connect(addWindowShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+L"))),
+            &QShortcut::activated,
+            this,
+            [this]() {
+                if (m_logWindow) {
+                    m_logWindow->setLogVisible(!m_logWindow->isLogVisible());
+                }
+            });
+
+    // A panel's own shortcut wins while focus is inside that panel. The File Explorer binds
+    // Ctrl+1..9, Ctrl+Tab and Ctrl+Shift+Tab to its own tabs and Ctrl+Shift+1..6 to its layouts
+    // (the Files bindings). Two enabled shortcuts on one sequence are ambiguous to Qt, which
+    // then fires neither, so each window shortcut steps aside while the focused panel binds
+    // the same sequence and comes back when focus leaves it.
+    m_focus_connection =
+        connect(qApp, &QApplication::focusChanged, this, [this](QWidget*, QWidget* now) {
+            yieldShortcutsToFocusedPanel(now);
+        });
+}
+
+void MainWindow::createTabNavigationShortcuts() {
     const int tab_count = m_tab_widget->count();
 
     // Tab navigation: Ctrl+1..9 switches to tab index 0..8
     for (int i = 0; i < qMin(tab_count, kDirectTabShortcutCount); ++i) {
-        auto* shortcut = new QShortcut(QKeySequence(Qt::CTRL | static_cast<Qt::Key>(Qt::Key_1 + i)),
-                                       this);
-        shortcut->setContext(Qt::ApplicationShortcut);
-        connect(shortcut, &QShortcut::activated, this, [this, i]() {
-            m_tab_widget->setCurrentIndex(i);
-        });
+        connect(addWindowShortcut(QKeySequence(Qt::CTRL | static_cast<Qt::Key>(Qt::Key_1 + i))),
+                &QShortcut::activated,
+                this,
+                [this, i]() { m_tab_widget->setCurrentIndex(i); });
     }
 
     // Ctrl+0: switches to tab index 9 (10th tab) -- browser convention
     if (tab_count > kTenthTabIndex) {
-        auto* tab10 = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_0), this);
-        tab10->setContext(Qt::ApplicationShortcut);
-        connect(tab10, &QShortcut::activated, this, [this]() {
-            m_tab_widget->setCurrentIndex(kTenthTabIndex);
-        });
+        connect(addWindowShortcut(QKeySequence(Qt::CTRL | Qt::Key_0)),
+                &QShortcut::activated,
+                this,
+                [this]() { m_tab_widget->setCurrentIndex(kTenthTabIndex); });
     }
 
     // Ctrl+Shift+1..5: switches to tab index 10..14 (tabs beyond 10)
@@ -1903,41 +1961,36 @@ void MainWindow::createKeyboardShortcuts() {
         if (tab_idx >= tab_count) {
             break;
         }
-        auto* shortcut = new QShortcut(
-            QKeySequence(Qt::CTRL | Qt::SHIFT | static_cast<Qt::Key>(Qt::Key_1 + i)), this);
-        shortcut->setContext(Qt::ApplicationShortcut);
-        connect(shortcut, &QShortcut::activated, this, [this, tab_idx]() {
-            m_tab_widget->setCurrentIndex(tab_idx);
-        });
+        connect(addWindowShortcut(
+                    QKeySequence(Qt::CTRL | Qt::SHIFT | static_cast<Qt::Key>(Qt::Key_1 + i))),
+                &QShortcut::activated,
+                this,
+                [this, tab_idx]() { m_tab_widget->setCurrentIndex(tab_idx); });
     }
 
     // Ctrl+Tab / Ctrl+Shift+Tab: cycle through tabs
-    auto* next_tab = new QShortcut(QKeySequence(Qt::CTRL | Qt::Key_Tab), this);
-    next_tab->setContext(Qt::ApplicationShortcut);
-    connect(next_tab, &QShortcut::activated, this, [this]() {
-        const int next = (m_tab_widget->currentIndex() + 1) % m_tab_widget->count();
-        m_tab_widget->setCurrentIndex(next);
-    });
+    connect(addWindowShortcut(QKeySequence(Qt::CTRL | Qt::Key_Tab)),
+            &QShortcut::activated,
+            this,
+            [this]() {
+                const int next = (m_tab_widget->currentIndex() + 1) % m_tab_widget->count();
+                m_tab_widget->setCurrentIndex(next);
+            });
+    connect(addWindowShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Tab)),
+            &QShortcut::activated,
+            this,
+            [this]() {
+                const int prev = (m_tab_widget->currentIndex() - 1 + m_tab_widget->count()) %
+                                 m_tab_widget->count();
+                m_tab_widget->setCurrentIndex(prev);
+            });
+}
 
-    auto* prev_tab = new QShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Tab), this);
-    prev_tab->setContext(Qt::ApplicationShortcut);
-    connect(prev_tab, &QShortcut::activated, this, [this]() {
-        const int prev = (m_tab_widget->currentIndex() - 1 + m_tab_widget->count()) %
-                         m_tab_widget->count();
-        m_tab_widget->setCurrentIndex(prev);
-    });
-
-    // Ctrl+Shift+L: Toggle log panel visibility. Plain Ctrl+L belongs to the
-    // File Explorer omnibar (Files EditPathAction); an application-wide
-    // Ctrl+L here made the two ambiguous whenever the explorer had focus and
-    // Qt then fired neither shortcut.
-    auto* toggle_log = new QShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+L")), this);
-    toggle_log->setContext(Qt::ApplicationShortcut);
-    connect(toggle_log, &QShortcut::activated, this, [this]() {
-        if (m_logWindow) {
-            m_logWindow->setLogVisible(!m_logWindow->isLogVisible());
-        }
-    });
+QShortcut* MainWindow::addWindowShortcut(const QKeySequence& sequence) {
+    auto* shortcut = new QShortcut(sequence, this);
+    shortcut->setContext(Qt::ApplicationShortcut);
+    m_window_shortcuts.append(shortcut);
+    return shortcut;
 }
 
 void MainWindow::loadWindowState() {
@@ -2045,25 +2098,10 @@ void MainWindow::applyTabBarChevrons() {
     }
 }
 
-bool MainWindow::eventFilter(QObject* obj, QEvent* event) {
-    if (obj == m_tab_widget->tabBar() && event->type() == QEvent::Wheel) {
-        auto* wheel = static_cast<QWheelEvent*>(event);
-        const int raw_y = wheel->angleDelta().y();
-        const int raw_x = wheel->angleDelta().x();
-        const int delta = raw_y != 0 ? raw_y : raw_x;
-        if (delta == 0) {
-            return QMainWindow::eventFilter(obj, event);
-        }
-        const int current = m_tab_widget->currentIndex();
-        const int count = m_tab_widget->count();
-        // Scroll up/right = previous tab, scroll down/left = next tab
-        const int next = delta > 0 ? qMax(0, current - 1) : qMin(count - 1, current + 1);
-        if (next != current) {
-            m_tab_widget->setCurrentIndex(next);
-        }
-        return true;
+void MainWindow::yieldShortcutsToFocusedPanel(const QWidget* focus) {
+    for (QShortcut* shortcut : std::as_const(m_window_shortcuts)) {
+        shortcut->setEnabled(!focusedPanelOwnsSequence(focus, this, shortcut->key()));
     }
-    return QMainWindow::eventFilter(obj, event);
 }
 
 }  // namespace sak

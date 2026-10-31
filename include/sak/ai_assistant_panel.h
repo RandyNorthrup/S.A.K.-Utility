@@ -370,7 +370,6 @@ private:
     void dispatchQueuedPromptIfIdle();
     [[nodiscard]] QString apiKey() const;
     [[nodiscard]] QString messageText() const;
-    [[nodiscard]] bool filterWheelEvent(QObject* watched, QEvent* event);
     [[nodiscard]] bool filterMessageEditKeyPress(QEvent* event);
     [[nodiscard]] bool handleComposerKeyAction(int action);
     [[nodiscard]] bool handleComposerHistoryKeyAction(int action);

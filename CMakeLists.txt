@@ -965,6 +965,8 @@ set(SAK_GUI_SOURCES
     include/sak/follow_scroll_controller.h
     src/gui/windows11_theme.cpp
     include/sak/windows11_theme.h
+    src/gui/wheel_policy.cpp
+    include/sak/wheel_policy.h
     src/gui/splash_screen.cpp
     include/sak/splash_screen.h
     src/gui/diagnostic_benchmark_panel.cpp

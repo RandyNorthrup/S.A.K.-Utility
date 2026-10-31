@@ -68,7 +68,6 @@
 #include "sak/windows_path_policy.h"
 
 #include <QAbstractItemView>
-#include <QAbstractScrollArea>
 #include <QApplication>
 #include <QBuffer>
 #include <QComboBox>
@@ -141,7 +140,6 @@
 #include <QUuid>
 #include <QVariantMap>
 #include <QVBoxLayout>
-#include <QWheelEvent>
 
 #include <algorithm>
 #include <atomic>
@@ -171,7 +169,6 @@ namespace {
 constexpr int kDefaultOutputCapKb = 256;
 constexpr qint64 kContextMaxFileBytes = 50LL * sak::kBytesPerMB;
 constexpr qint64 kContextTextPreviewBytes = 512LL * sak::kBytesPerKB;
-constexpr const char* kWheelRequiresFocusProperty = "sakWheelRequiresFocus";
 constexpr int kApprovalDialogWidth = 760;
 constexpr int kApprovalDialogHeight = 520;
 constexpr int kApprovalDialogMinWidth = 620;
@@ -3550,55 +3547,6 @@ QScrollArea* createScrollArea(QWidget* parent, QWidget* content) {
     return scroll;
 }
 
-bool widgetOwnsFocus(const QWidget* widget) {
-    if (widget == nullptr) {
-        return false;
-    }
-    const QWidget* focus_widget = QApplication::focusWidget();
-    return widget->hasFocus() || ((focus_widget != nullptr) && widget->isAncestorOf(focus_widget));
-}
-
-bool forwardWheelToAncestorScrollArea(QWidget* widget, QEvent* event) {
-    if ((widget == nullptr) || (event == nullptr) || event->type() != QEvent::Wheel) {
-        return false;
-    }
-    auto* wheel_event = static_cast<QWheelEvent*>(event);
-    QWidget* parent = widget->parentWidget();
-    while (parent != nullptr) {
-        if (auto* scroll_area = qobject_cast<QAbstractScrollArea*>(parent)) {
-            QWidget* viewport = scroll_area->viewport();
-            if (viewport == nullptr) {
-                return false;
-            }
-            const QPointF viewport_pos =
-                viewport->mapFromGlobal(wheel_event->globalPosition().toPoint());
-            QWheelEvent forwarded(viewport_pos,
-                                  wheel_event->globalPosition(),
-                                  wheel_event->pixelDelta(),
-                                  wheel_event->angleDelta(),
-                                  wheel_event->buttons(),
-                                  wheel_event->modifiers(),
-                                  wheel_event->phase(),
-                                  wheel_event->inverted(),
-                                  wheel_event->source(),
-                                  wheel_event->pointingDevice());
-            QCoreApplication::sendEvent(viewport, &forwarded);
-            return true;
-        }
-        parent = parent->parentWidget();
-    }
-    return false;
-}
-
-void requireFocusForWheel(QWidget* widget, QObject* owner) {
-    if ((widget == nullptr) || (owner == nullptr)) {
-        return;
-    }
-    widget->setFocusPolicy(Qt::StrongFocus);
-    widget->setProperty(kWheelRequiresFocusProperty, true);
-    widget->installEventFilter(owner);
-}
-
 void configureReadableCombo(QComboBox* combo,
                             int minimum_contents_length = kReadableComboDefaultContentsLength,
                             int popup_min_width = kReadableComboDefaultPopupMinWidth) {
@@ -3977,22 +3925,6 @@ QString AiAssistantPanel::statusDetails() const {
         .arg(m_runState.completed_subagents);
 }
 
-bool AiAssistantPanel::filterWheelEvent(QObject* watched, QEvent* event) {
-    if (event->type() != QEvent::Wheel || watched == nullptr ||
-        !watched->property(kWheelRequiresFocusProperty).toBool()) {
-        return false;
-    }
-    auto* widget = qobject_cast<QWidget*>(watched);
-    if (widget == nullptr || widgetOwnsFocus(widget)) {
-        return false;
-    }
-    if (forwardWheelToAncestorScrollArea(widget, event)) {
-        return true;
-    }
-    event->ignore();
-    return true;
-}
-
 bool AiAssistantPanel::filterMessageEditKeyPress(QEvent* event) {
     if (event->type() != QEvent::KeyPress) {
         return false;
@@ -4030,10 +3962,6 @@ bool AiAssistantPanel::handleComposerHistoryKeyAction(int action) {
 }
 
 bool AiAssistantPanel::eventFilter(QObject* watched, QEvent* event) {
-    if (filterWheelEvent(watched, event)) {
-        return true;
-    }
-
     if (watched == m_messageEdit) {
         if (filterMessageEditKeyPress(event)) {
             return true;
@@ -4244,7 +4172,6 @@ void AiAssistantPanel::setupContextPaneSessionSection(QVBoxLayout* layout, QWidg
 
     m_sessionCombo = new QComboBox(pane);
     configureReadableCombo(m_sessionCombo, kSessionComboContentsLength, kSessionComboPopupMinWidth);
-    requireFocusForWheel(m_sessionCombo, this);
     m_sessionCombo->setToolTip(tr("Switch between saved AI chat sessions"));
     setAccessible(m_sessionCombo, tr("AI session"), tr("Open or switch AI chat session"));
     connect(m_sessionCombo,
@@ -4299,7 +4226,6 @@ void AiAssistantPanel::setupContextPaneAgentSection(QVBoxLayout* layout, QWidget
     layout->addWidget(makeFieldLabel(pane, tr("Model")));
     m_modelCombo = new QComboBox(pane);
     configureReadableCombo(m_modelCombo);
-    requireFocusForWheel(m_modelCombo, this);
     // Restricted to the supported GPT-5.6 line (sol/terra/luna); non-editable so
     // no other model can be typed. The API-fetched list is filtered to match in
     // onModelsReady().
@@ -4322,7 +4248,6 @@ void AiAssistantPanel::setupContextPaneAgentSection(QVBoxLayout* layout, QWidget
     configureReadableCombo(m_reasoningEffortCombo,
                            kReasoningComboContentsLength,
                            kReasoningComboPopupMinWidth);
-    requireFocusForWheel(m_reasoningEffortCombo, this);
     m_reasoningEffortCombo->addItems({tr("Low"), tr("Medium"), tr("High")});
     m_reasoningEffortCombo->setCurrentIndex(1);
     m_reasoningEffortCombo->setToolTip(tr("Set reasoning effort for supported OpenAI models"));
@@ -4338,7 +4263,6 @@ void AiAssistantPanel::setupContextPaneWorkflowPicker(QVBoxLayout* layout, QWidg
     configureReadableCombo(m_promptTemplateCombo,
                            kWorkflowComboContentsLength,
                            kWorkflowComboPopupMinWidth);
-    requireFocusForWheel(m_promptTemplateCombo, this);
     m_promptTemplateCombo->setToolTip(
         tr("Choose a multi-step workflow. The list shows category, job name, and phase count."));
     setAccessible(m_promptTemplateCombo,
@@ -4439,7 +4363,6 @@ void AiAssistantPanel::setupContextPaneWorkflowDetails(QVBoxLayout* layout, QWid
     m_workflowDetailsBody->setMaximumHeight(kWorkflowDetailsMaxHeight);
     m_workflowDetailsBody->setStyleSheet(sak::ui::aiWorkflowDetailsBodyStyle());
     setAccessible(m_workflowDetailsBody, tr("Workflow details preview"));
-    requireFocusForWheel(m_workflowDetailsBody, this);
     details_layout->addWidget(m_workflowDetailsBody);
     layout->addWidget(m_workflowDetailsPanel);
 }
@@ -4451,7 +4374,6 @@ void AiAssistantPanel::setupContextPaneAccessSection(QVBoxLayout* layout, QWidge
     layout->addWidget(makeFieldLabel(pane, tr("Local tool access")));
     m_accessModeCombo = new QComboBox(pane);
     configureReadableCombo(m_accessModeCombo);
-    requireFocusForWheel(m_accessModeCombo, this);
     m_accessModeCombo->addItem(tr("Chat and Research"),
                                static_cast<int>(ai::AiAccessMode::ChatAndResearch));
     m_accessModeCombo->addItem(tr("Assisted Full Access"),
@@ -4685,7 +4607,6 @@ void AiAssistantPanel::setupComposerContextList(QVBoxLayout* layout, QWidget* co
     m_contextList->setSpacing(sak::ui::kSpacingTight);
     m_contextList->setStyleSheet(sak::ui::aiContextChipsListStyle());
     setAccessible(m_contextList, tr("AI context attachments"));
-    requireFocusForWheel(m_contextList, this);
     m_contextList->hide();
     layout->addWidget(m_contextList);
 }

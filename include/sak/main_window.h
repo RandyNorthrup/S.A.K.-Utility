@@ -18,6 +18,8 @@
 
 class QFrame;
 class QHBoxLayout;
+class QKeySequence;
+class QShortcut;
 
 // Forward declarations for feature panels (in global namespace)
 // -- none needed; all panels now in sak::
@@ -214,6 +216,13 @@ private:
     void updateAiStatusBarVisibility();
 #endif
 
+    /// @brief Create an application-wide window shortcut and remember it for yielding.
+    QShortcut* addWindowShortcut(const QKeySequence& sequence);
+
+    /// @brief Disable each window shortcut whose sequence the focused panel binds itself, and
+    ///        re-enable the rest, so a panel's own shortcut wins while focus is inside it.
+    void yieldShortcutsToFocusedPanel(const QWidget* focus);
+
     /// @brief Add a synchronized dark-mode toggle immediately after a panel log toggle.
     void attachThemeToggleToLogToggle(LogToggleSwitch* log_toggle);
 
@@ -227,6 +236,9 @@ private:
      * @brief Create keyboard shortcuts for accessibility
      */
     void createKeyboardShortcuts();
+
+    /// @brief Ctrl+1..9, Ctrl+0, Ctrl+Shift+1..5 and Ctrl+(Shift+)Tab for the main tabs.
+    void createTabNavigationShortcuts();
 
     /**
      * @brief Load window state from settings
@@ -252,7 +264,6 @@ protected:
     void moveEvent(QMoveEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void showEvent(QShowEvent* event) override;
-    bool eventFilter(QObject* obj, QEvent* event) override;
 
 private:
     /// @brief A tool tab that constructs its panel(s) lazily on first activation.
@@ -311,6 +322,11 @@ private:
 
     // Asks before closing or relaunching while long work runs (child of this window).
     RunningWorkExitGuard* m_exit_guard{nullptr};
+
+    // Application-wide shortcuts (tab navigation, log toggle) and the focus tracking that
+    // makes each one step aside while the focused panel binds the same sequence.
+    QList<QShortcut*> m_window_shortcuts;
+    QMetaObject::Connection m_focus_connection;
 
     // Shared log window
     DetachableLogWindow* m_logWindow{nullptr};

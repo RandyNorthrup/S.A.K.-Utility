@@ -13,6 +13,7 @@
 #include "sak/message_box_helpers.h"
 #include "sak/splash_screen.h"
 #include "sak/version.h"
+#include "sak/wheel_policy.h"
 #include "sak/win32mcp/win32_mcp_entry.h"
 #include "sak/windows11_theme.h"
 
@@ -404,6 +405,7 @@ void initializeApp(QApplication& app, const RuntimeOptions& options) {
         app.setWindowIcon(QIcon(icon_path));
     }
 
+    sak::ui::installWheelPolicy(app);
     sak::ui::applyWindows11Theme(app);
     if (!options.accessibility_audit) {
         sak::ui::installThemePolishHelper(app);
