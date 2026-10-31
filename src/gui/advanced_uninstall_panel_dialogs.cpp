@@ -561,7 +561,8 @@ void AdvancedUninstallPanel::addInstallFolderSizeRow(const ProgramInfo& program,
     const QString key = QDir::cleanPath(location).toLower();
     auto* row = new QWidget(dialog);
     auto* row_layout = new QHBoxLayout(row);
-    row_layout->setContentsMargins(0, 0, 0, 0);
+    row_layout->setContentsMargins(
+        sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone, sak::ui::kMarginNone);
     auto* value = new QLabel(row);
     auto* measure = new QPushButton(row);
     measure->setAccessibleName(tr("Measure install folder size"));
