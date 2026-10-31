@@ -3643,7 +3643,7 @@ void logAiStartupPhase(QElapsedTimer* timer, const char* phase) {
     if (!qApp->property("sakStartupSmokeTest").toBool()) {
         return;
     }
-    logInfo("AiAssistantPanel startup: {} took {} ms", phase, timer->restart());
+    logDebug("AiAssistantPanel startup: {} took {} ms", phase, timer->restart());
     logger::instance().flush();
 }
 
@@ -3712,7 +3712,7 @@ AiAssistantPanel::AiAssistantPanel(QWidget* parent)
     logAiStartupPhase(&phase_timer, "standard panel");
     initializePackageManager();
     logAiStartupPhase(&phase_timer, "package manager");
-    logInfo("AiAssistantPanel initialized");
+    logDebug("AiAssistantPanel initialized");
 }
 
 void AiAssistantPanel::configureExecutionBrokers() {

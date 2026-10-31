@@ -343,7 +343,7 @@ void logLazyTabTransition(int slot, const char* step, QElapsedTimer* timer) {
     if (!isStartupSmokeMode()) {
         return;
     }
-    logInfo("MainWindow startup: lazy slot {} {} took {} ms", slot, step, elapsed_ms);
+    logDebug("MainWindow startup: lazy slot {} {} took {} ms", slot, step, elapsed_ms);
     logger::instance().flush();
 }
 
@@ -473,10 +473,10 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     QElapsedTimer startup_timer;
     startup_timer.start();
     setupUi();
-    logInfo("MainWindow startup: setupUi took {} ms", startup_timer.restart());
+    logDebug("MainWindow startup: setupUi took {} ms", startup_timer.restart());
     if (!isAccessibilityAuditMode()) {
         loadWindowState();
-        logInfo("MainWindow startup: loadWindowState took {} ms", startup_timer.elapsed());
+        logDebug("MainWindow startup: loadWindowState took {} ms", startup_timer.elapsed());
     }
 }
 
@@ -516,19 +516,20 @@ void MainWindow::setupUi() {
            "or Ctrl+Tab / Ctrl+Shift+Tab to cycle."));
     setCentralWidget(m_tab_widget);
 
-    // Create UI elements. Phase timing goes to the log so a slow launch on a
-    // real desktop can be attributed to a specific phase after the fact.
+    // Create UI elements. Phase timings are debug-level: a build that lowers the logger level
+    // can attribute a slow launch to a phase, and the default log keeps the one info startup
+    // line, main's "application ready in N ms".
     QElapsedTimer phase_timer;
     phase_timer.start();
     createStatusBar();
-    logInfo("MainWindow startup: status bar took {} ms", phase_timer.restart());
+    logDebug("MainWindow startup: status bar took {} ms", phase_timer.restart());
 
     // Create shared log window BEFORE panels so connectLog() can reference it
     m_logWindow = new DetachableLogWindow(tr("S.A.K. Log"), this);
-    logInfo("MainWindow startup: log window took {} ms", phase_timer.restart());
+    logDebug("MainWindow startup: log window took {} ms", phase_timer.restart());
 
     createPanels();
-    logInfo("MainWindow startup: panels took {} ms", phase_timer.restart());
+    logDebug("MainWindow startup: panels took {} ms", phase_timer.restart());
     createKeyboardShortcuts();
 
     if (!isAccessibilityAuditMode()) {
@@ -555,7 +556,7 @@ void MainWindow::createStatusBar() {
     QElapsedTimer status_timer;
     status_timer.start();
     if (isStartupSmokeMode()) {
-        logInfo("MainWindow startup: entering status bar construction");
+        logDebug("MainWindow startup: entering status bar construction");
         logger::instance().flush();
     }
 
@@ -566,7 +567,8 @@ void MainWindow::createStatusBar() {
         sak::ui::kMarginTight, sak::ui::kMarginNone, sak::ui::kMarginTight, sak::ui::kMarginNone);
     statusBar()->addWidget(m_status_label, 1);
     if (isStartupSmokeMode()) {
-        logInfo("MainWindow startup: first status label ready after {} ms", status_timer.elapsed());
+        logDebug("MainWindow startup: first status label ready after {} ms",
+                 status_timer.elapsed());
         logger::instance().flush();
     }
 
@@ -608,7 +610,7 @@ void MainWindow::createStatusBar() {
 
     createElevationStatusWidgets();
     if (isStartupSmokeMode()) {
-        logInfo("MainWindow startup: status widgets ready after {} ms", status_timer.elapsed());
+        logDebug("MainWindow startup: status widgets ready after {} ms", status_timer.elapsed());
         logger::instance().flush();
     }
 }
@@ -683,11 +685,11 @@ void MainWindow::createPanels() {
     QElapsedTimer phase_timer;
     phase_timer.start();
     registerLazyToolTabs();
-    logInfo("MainWindow startup: lazy tab placeholders took {} ms", phase_timer.restart());
+    logDebug("MainWindow startup: lazy tab placeholders took {} ms", phase_timer.restart());
     createHelpPanel();
-    logInfo("MainWindow startup: help panel took {} ms", phase_timer.restart());
+    logDebug("MainWindow startup: help panel took {} ms", phase_timer.restart());
     createAboutPanel();
-    logInfo("MainWindow startup: about panel took {} ms", phase_timer.restart());
+    logDebug("MainWindow startup: about panel took {} ms", phase_timer.restart());
     // Build each tool panel only when its tab is first activated. Connected
     // before setupLogRouting so the panel exists before onTabChanged runs.
     connect(m_tab_widget, &QTabWidget::currentChanged, this, [this](int index) {
@@ -800,9 +802,9 @@ void MainWindow::materializeTab(int slot) {
     }
     QElapsedTimer transition_timer;
     transition_timer.start();
-    logInfo("MainWindow: tab {} built in {} ms",
-            m_tab_widget->tabText(m_tab_widget->count() - 1).toStdString(),
-            build_timer.restart());
+    logDebug("MainWindow: tab {} built in {} ms",
+             m_tab_widget->tabText(m_tab_widget->count() - 1).toStdString(),
+             build_timer.restart());
     logLazyTabTransition(slot, "build log", &transition_timer);
 
     // Move the freshly built tab into the placeholder's slot and drop the
@@ -851,9 +853,9 @@ void MainWindow::finishInPlaceLazyTab(int slot,
         placeholder->layout() == nullptr) {
         throw std::logic_error("In-place lazy panel did not populate its existing tab");
     }
-    logInfo("MainWindow: tab {} built in {} ms",
-            m_tab_widget->tabText(slot).toStdString(),
-            elapsed_ms);
+    logDebug("MainWindow: tab {} built in {} ms",
+             m_tab_widget->tabText(slot).toStdString(),
+             elapsed_ms);
     if (isStartupSmokeMode()) {
         logger::instance().flush();
     }
@@ -864,7 +866,7 @@ void MainWindow::finishInPlaceLazyTab(int slot,
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
 void MainWindow::createAiAssistantPanelTab(int slot) {
     if (isStartupSmokeMode()) {
-        logInfo("MainWindow startup: creating AI Assistant panel");
+        logDebug("MainWindow startup: creating AI Assistant panel");
         logger::instance().flush();
     }
     // Populate the placeholder already owned by QTabWidget. Moving a
@@ -878,47 +880,47 @@ void MainWindow::createAiAssistantPanelTab(int slot) {
     layout->setContentsMargins(ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
     layout->setSpacing(ui::kSpacingNone);
     if (isStartupSmokeMode()) {
-        logInfo("MainWindow startup: AI Assistant placeholder ready");
+        logDebug("MainWindow startup: AI Assistant placeholder ready");
         logger::instance().flush();
     }
     m_ai_assistant_panel = std::make_unique<AiAssistantPanel>(wrapper);
     layout->addWidget(m_ai_assistant_panel.get());
     if (isStartupSmokeMode()) {
-        logInfo("MainWindow startup: AI Assistant panel attached to tab");
+        logDebug("MainWindow startup: AI Assistant panel attached to tab");
         logger::instance().flush();
     }
 }
 #endif
 
 void MainWindow::createBackupRestorePanel() {
-    logInfo("MainWindow: creating Backup and Restore panel");
+    logDebug("MainWindow: creating Backup and Restore panel");
     m_user_migration_panel = std::make_unique<UserMigrationPanel>(this);
     addTabWithTooltip(m_tab_widget,
                       m_user_migration_panel.get(),
                       "Backup and Restore",
                       kTooltipUserMigration,
                       ":/icons/icons/panel_backup_restore.svg");
-    logInfo("MainWindow: Backup and Restore panel initialized");
+    logDebug("MainWindow: Backup and Restore panel initialized");
 }
 
 void MainWindow::createFileManagementPanel() {
-    logInfo("MainWindow: creating File Management panels");
+    logDebug("MainWindow: creating File Management panels");
     if (isStartupSmokeMode()) {
         logger::instance().flush();
     }
     m_organizer_panel = std::make_unique<OrganizerPanel>(this);
     if (isStartupSmokeMode()) {
-        logInfo("MainWindow startup: Organizer panel constructed");
+        logDebug("MainWindow startup: Organizer panel constructed");
         logger::instance().flush();
     }
     m_advanced_search_panel = std::make_unique<AdvancedSearchPanel>(this);
     if (isStartupSmokeMode()) {
-        logInfo("MainWindow startup: Advanced Search panel constructed");
+        logDebug("MainWindow startup: Advanced Search panel constructed");
         logger::instance().flush();
     }
     m_organizer_panel->tabWidget()->addTab(m_advanced_search_panel.get(), tr("Advanced Search"));
     if (isStartupSmokeMode()) {
-        logInfo("MainWindow startup: Advanced Search inner tab attached");
+        logDebug("MainWindow startup: Advanced Search inner tab attached");
         logger::instance().flush();
     }
     addTabWithTooltip(m_tab_widget,
@@ -927,14 +929,14 @@ void MainWindow::createFileManagementPanel() {
                       kTooltipOrganizer,
                       ":/icons/icons/panel_organizer.svg");
     if (isStartupSmokeMode()) {
-        logInfo("MainWindow startup: File Management outer tab attached");
+        logDebug("MainWindow startup: File Management outer tab attached");
         logger::instance().flush();
     }
-    logInfo("MainWindow: File Management panels initialized");
+    logDebug("MainWindow: File Management panels initialized");
 }
 
 void MainWindow::createPartitionManagerPanel() {
-    logInfo("MainWindow: creating Partition Manager panel");
+    logDebug("MainWindow: creating Partition Manager panel");
     m_partition_manager_panel = std::make_unique<PartitionManagerPanel>(this);
     addTabWithTooltip(m_tab_widget,
                       m_partition_manager_panel.get(),
@@ -942,22 +944,22 @@ void MainWindow::createPartitionManagerPanel() {
                       "Manage disks, partitions, SMART status, cloning, migration, boot repair, "
                       "SSD optimization, and wipe operations",
                       ":/icons/icons/icons8-pm-disk.svg");
-    logInfo("MainWindow: Partition Manager panel initialized");
+    logDebug("MainWindow: Partition Manager panel initialized");
 }
 
 void MainWindow::createImageFlasherPanel() {
-    logInfo("MainWindow: creating Image Flasher panel");
+    logDebug("MainWindow: creating Image Flasher panel");
     m_image_flasher_panel = std::make_unique<ImageFlasherPanel>(this);
     addTabWithTooltip(m_tab_widget,
                       m_image_flasher_panel.get(),
                       "Image Flasher",
                       kTooltipImageFlasher,
                       ":/icons/icons/panel_image_flasher.svg");
-    logInfo("MainWindow: Image Flasher panel initialized");
+    logDebug("MainWindow: Image Flasher panel initialized");
 }
 
 void MainWindow::createDiagnosticPanel() {
-    logInfo("MainWindow: creating Benchmark and Diagnostics panel");
+    logDebug("MainWindow: creating Benchmark and Diagnostics panel");
     auto* wrapper = m_tab_widget->widget(m_slotDiagnostic);
     if (wrapper == nullptr || wrapper->layout() != nullptr) {
         throw std::logic_error("Diagnostic placeholder is unavailable or already populated");
@@ -967,19 +969,19 @@ void MainWindow::createDiagnosticPanel() {
     layout->setContentsMargins(ui::kMarginNone, ui::kMarginNone, ui::kMarginNone, ui::kMarginNone);
     layout->setSpacing(ui::kSpacingNone);
     if (isStartupSmokeMode()) {
-        logInfo("MainWindow startup: Diagnostic placeholder ready");
+        logDebug("MainWindow startup: Diagnostic placeholder ready");
         logger::instance().flush();
     }
     m_diagnostic_benchmark_panel = std::make_unique<DiagnosticBenchmarkPanel>(wrapper);
     layout->addWidget(m_diagnostic_benchmark_panel.get());
-    logInfo("MainWindow: Benchmark and Diagnostics panel initialized");
+    logDebug("MainWindow: Benchmark and Diagnostics panel initialized");
     if (isStartupSmokeMode()) {
         logger::instance().flush();
     }
 }
 
 void MainWindow::createEmailToolsPanel() {
-    logInfo("MainWindow: creating Email Tools panels");
+    logDebug("MainWindow: creating Email Tools panels");
     m_email_inspector_panel = std::make_unique<EmailInspectorPanel>(this);
     m_ost_converter_widget = std::make_unique<OstConverterWidget>(this);
 
@@ -1042,13 +1044,13 @@ void MainWindow::createEmailToolsPanel() {
                       "Email Tools",
                       kTooltipEmailTool,
                       ":/icons/icons/panel_email.svg");
-    logInfo("MainWindow: Email Tools panels initialized");
+    logDebug("MainWindow: Email Tools panels initialized");
 }
 
 void MainWindow::createAppManagementPanel() {
     Q_ASSERT(m_tab_widget);
     Q_ASSERT(!m_app_installation_panel);
-    logInfo("MainWindow: creating Application Management wrapper");
+    logDebug("MainWindow: creating Application Management wrapper");
     auto* app_mgmt_wrapper = m_tab_widget->widget(m_slotAppManagement);
     if (app_mgmt_wrapper == nullptr || app_mgmt_wrapper->layout() != nullptr) {
         throw std::logic_error("Application Management placeholder is unavailable or populated");
@@ -1108,34 +1110,34 @@ void MainWindow::createAppManagementPanel() {
     });
 
     updateVulnerabilityStatusBarVisibility();
-    logInfo("MainWindow: Application Management panels initialized");
+    logDebug("MainWindow: Application Management panels initialized");
 }
 
 void MainWindow::createAppManagementChildPanels(QWidget* app_install_shell,
                                                 QWidget* advanced_shell,
                                                 QWidget* vulnerability_shell) {
-    logInfo("MainWindow: creating Application Management panels");
-    logInfo("MainWindow: creating App Installation panel");
+    logDebug("MainWindow: creating Application Management panels");
+    logDebug("MainWindow: creating App Installation panel");
     if (isStartupSmokeMode()) {
         logger::instance().flush();
     }
     m_app_installation_panel = std::make_unique<AppInstallationPanel>(app_install_shell);
     app_install_shell->layout()->addWidget(m_app_installation_panel.get());
-    logInfo("MainWindow: App Installation panel initialized");
-    logInfo("MainWindow: creating Advanced Uninstall panel");
+    logDebug("MainWindow: App Installation panel initialized");
+    logDebug("MainWindow: creating Advanced Uninstall panel");
     if (isStartupSmokeMode()) {
         logger::instance().flush();
     }
     m_advanced_uninstall_panel = std::make_unique<AdvancedUninstallPanel>(advanced_shell);
     advanced_shell->layout()->addWidget(m_advanced_uninstall_panel.get());
-    logInfo("MainWindow: Advanced Uninstall panel initialized");
-    logInfo("MainWindow: creating Vulnerability Scanner panel");
+    logDebug("MainWindow: Advanced Uninstall panel initialized");
+    logDebug("MainWindow: creating Vulnerability Scanner panel");
     if (isStartupSmokeMode()) {
         logger::instance().flush();
     }
     m_vulnerability_panel = std::make_unique<VulnerabilityPanel>(vulnerability_shell);
     vulnerability_shell->layout()->addWidget(m_vulnerability_panel.get());
-    logInfo("MainWindow: Vulnerability Scanner panel initialized");
+    logDebug("MainWindow: Vulnerability Scanner panel initialized");
     if (isStartupSmokeMode()) {
         logger::instance().flush();
     }

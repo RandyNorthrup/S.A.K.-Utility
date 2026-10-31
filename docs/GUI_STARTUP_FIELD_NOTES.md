@@ -45,10 +45,11 @@ lazy-tab placeholders, help and about. Read the newest log under
 
 Since 2026-10-25 the default (info) level carries one startup line, `Main window displayed -
 application ready in N ms` (`initialized` in headless smoke runs), measured from process
-creation. The phase timings -- font wait, main-window construct/show, per-panel construction --
-are debug level and need a build that lowers the logger level (`logger::setLevel`) to appear.
-`test_startup_budget` pins this on the real app. `MainWindow::setupUi`'s own phase lines are still
-info level; they move in a later change.
+creation. The phase timings -- font wait, main-window construct/show, `MainWindow::setupUi`'s
+phases, per-panel construction and the smoke-only lazy-tab steps -- are debug level and need a
+build that lowers the logger level (`logger::setLevel`) to appear. `test_startup_budget` pins this
+on the real app. The one smoke-only line left at info is `MainWindow startup: all tool panels
+materialized`, the completion marker the portable e2e smoke requires.
 
 The font wait logs one line: `Font database warmup: N families in X ms; GUI waited Y ms,
 longest event-loop gap Z ms`. A large Y with a small Z is healthy (slow fonts, responsive GUI); a

@@ -168,7 +168,7 @@ ImageFlasherPanel::ImageFlasherPanel(QWidget* parent)
         },
         [this]() { cancelWritesForExit(); });
 
-    logInfo("Image Flasher Panel initialized");
+    logDebug("Image Flasher Panel initialized");
 }
 
 void ImageFlasherPanel::cancelWritesForExit() {

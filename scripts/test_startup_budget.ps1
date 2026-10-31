@@ -640,10 +640,11 @@ if ($green.timed_out -or $green.exit_code -ne 0 -or
 }
 
 # Startup log noise: the real app's log carries one info-level startup line ("application ready
-# in N ms"). Phase breadcrumbs -- main window construct/show timings, the font warmup and the
-# per-panel construction steps -- are debug and absent at the default level. MainWindow's own
-# setupUi phase lines are not covered here yet (src/gui/main_window.cpp was being changed by
-# another lane when this landed).
+# in N ms"). Phase breadcrumbs -- main window construct/show timings, the font warmup, MainWindow's
+# setupUi phases and the per-panel construction steps -- are debug and absent at the default
+# level. This run is a smoke run, so the smoke-only breadcrumbs are checked too. The one smoke
+# marker that stays at info is "MainWindow startup: all tool panels materialized", which the
+# portable e2e smoke requires (scripts/run_portable_e2e_smoke.ps1); it is not a phase timing.
 $runLogs = @(Get-StartupLogNames | Where-Object { -not $logsBeforeGreen.Contains($_) } |
     ForEach-Object { Join-Path $logDirectory $_ } |
     Where-Object { (Get-Content -LiteralPath $_ -Raw) -match 'Startup smoke CI headless mode active' })
@@ -664,6 +665,29 @@ $breadcrumbs = @(
     'OrganizerPanel initialized',
     '[AppInstallationPanel]',
     'DiagnosticBenchmarkPanel startup:',
+    'AiAssistantPanel startup:',
+    'AiAssistantPanel initialized',
+    'AdvancedSearchPanel initialized',
+    'Image Flasher Panel initialized',
+    'MainWindow startup: setupUi took',
+    'MainWindow startup: loadWindowState took',
+    'MainWindow startup: status bar took',
+    'MainWindow startup: log window took',
+    'MainWindow startup: panels took',
+    'MainWindow startup: lazy tab placeholders took',
+    'MainWindow startup: help panel took',
+    'MainWindow startup: about panel took',
+    'MainWindow startup: lazy slot',
+    'MainWindow startup: entering status bar construction',
+    'MainWindow startup: first status label ready',
+    'MainWindow startup: status widgets ready',
+    'MainWindow startup: creating AI Assistant panel',
+    'MainWindow startup: Organizer panel constructed',
+    'MainWindow startup: Diagnostic placeholder ready',
+    'MainWindow: creating ',
+    'MainWindow: tab ',
+    ' panel initialized',
+    ' panels initialized',
     '==========================================='
 )
 $noisy = @($breadcrumbs | Where-Object { $runLog.Contains($_) })

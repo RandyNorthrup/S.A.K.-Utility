@@ -630,7 +630,7 @@ AdvancedSearchPanel::AdvancedSearchPanel(QWidget* parent)
     m_search_combo->setCurrentIndex(-1);
     m_search_combo->lineEdit()->setPlaceholderText(tr("Enter search pattern..."));
 
-    logInfo("AdvancedSearchPanel initialized");
+    logDebug("AdvancedSearchPanel initialized");
 }
 
 AdvancedSearchPanel::~AdvancedSearchPanel() {
