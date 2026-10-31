@@ -122,28 +122,47 @@ if (-not $signtool) {
 }
 Write-Host "Using signtool: $signtool"
 
-# -- Install Azure Trusted Signing dlib ---------------------------
-# The Trusted Signing dlib (Azure.CodeSigning.Dlib) is required by signtool.
-# Install via NuGet if not already present.
-$dlibDir = Join-Path $PSScriptRoot "..\build\trusted-signing-dlib"
+# -- Install the Artifact Signing client dlib ---------------------
+# signtool loads Azure.CodeSigning.Dlib.dll from Microsoft.ArtifactSigning.Client, the
+# successor of the now-unlisted Microsoft.Trusted.Signing.Client. The package is pinned by
+# version and by the SHA-512 nuget.org records for it, in a per-version folder so an older
+# install is never picked up.
+$dlibPackage = "Microsoft.ArtifactSigning.Client"
+$dlibVersion = "1.0.146"
+$dlibSha512 = "/G0hG/VDIS6psW23b5t1V/ORIgn0PVAOtGj9w+hkPmAuI4pempfwlW50E2GtHscnz9+5Qz3hbC4mcb7ej2Yn1A=="
+$dlibDir = Join-Path $PSScriptRoot "..\build\artifact-signing-client\$dlibVersion"
 $dlibDll = Join-Path $dlibDir "bin\x64\Azure.CodeSigning.Dlib.dll"
 
 if (-not (Test-Path $dlibDll)) {
-    Write-Host "Installing Azure Trusted Signing dlib..."
+    Write-Host "Installing $dlibPackage $dlibVersion..."
     New-Item -ItemType Directory -Force -Path $dlibDir | Out-Null
 
-    $nugetUrl = "https://www.nuget.org/api/v2/package/Microsoft.Trusted.Signing.Client"
-    $nugetZip = Join-Path $dlibDir "Microsoft.Trusted.Signing.Client.zip"
+    $nugetUrl = "https://www.nuget.org/api/v2/package/$dlibPackage/$dlibVersion"
+    $nugetZip = Join-Path $dlibDir "$dlibPackage.$dlibVersion.zip"
 
-    Invoke-WebRequest -Uri $nugetUrl -OutFile $nugetZip
+    Invoke-WebRequest -Uri $nugetUrl -OutFile $nugetZip -UseBasicParsing
+    $sha512 = [Convert]::ToBase64String(
+        [Security.Cryptography.SHA512]::Create().ComputeHash([IO.File]::ReadAllBytes($nugetZip)))
+    if ($sha512 -cne $dlibSha512) {
+        Remove-Item $nugetZip -ErrorAction SilentlyContinue
+        Write-Error "$dlibPackage $dlibVersion SHA-512 mismatch: expected $dlibSha512, got $sha512."
+        exit 1
+    }
     Expand-Archive -Path $nugetZip -DestinationPath $dlibDir -Force
     Remove-Item $nugetZip -ErrorAction SilentlyContinue
 
     if (-not (Test-Path $dlibDll)) {
-        Write-Error "Failed to extract Azure.CodeSigning.Dlib.dll from NuGet package."
+        Write-Error "Failed to extract Azure.CodeSigning.Dlib.dll from $dlibPackage $dlibVersion."
         exit 1
     }
     Write-Host "Dlib installed: $dlibDll"
+}
+
+# signtool runs this DLL with signing rights: refuse it unless its Authenticode signature holds.
+$dlibSignature = Get-AuthenticodeSignature -LiteralPath $dlibDll
+if ($dlibSignature.Status -ne "Valid") {
+    Write-Error "Artifact Signing dlib signature is not valid ($($dlibSignature.Status)): $dlibDll"
+    exit 1
 }
 
 # -- Create metadata JSON for Trusted Signing --------------------
