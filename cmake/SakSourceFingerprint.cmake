@@ -32,16 +32,14 @@ function(sak_compute_source_fingerprint output_variable source_root)
         if(NOT EXISTS "${resolved}" OR IS_DIRECTORY "${resolved}")
             message(FATAL_ERROR "Source fingerprint input is missing or not a file: ${input}")
         endif()
-        cmake_path(IS_PREFIX fingerprint_root "${resolved}" NORMALIZE inside_root)
-        if(NOT inside_root)
-            message(FATAL_ERROR "Source fingerprint input escapes source root: ${input}")
-        endif()
         list(APPEND fingerprint_files "${resolved}")
     endforeach()
     list(REMOVE_DUPLICATES fingerprint_files)
     list(SORT fingerprint_files)
-    # CMake REAL_PATH does not dereference Windows directory junctions reliably. Check the
-    # original lexical ancestors through Windows file attributes before reading source bytes.
+    # Check the original lexical ancestors through Windows file attributes before anything
+    # resolves them: a junction is refused as a reparse point whether or not this CMake's
+    # REAL_PATH dereferences it (3.31 did not reliably; 4.4 does, and would otherwise report
+    # an outward junction only as an escape).
     _sak_source_fingerprint_tools(fingerprint_python fingerprint_verifier)
     string(SHA256 input_list_id "${source_root}|${fingerprint_lexical_inputs}")
     set(input_list "${CMAKE_CURRENT_BINARY_DIR}/CMakeFiles/sak-source-${input_list_id}.inputs")
@@ -53,6 +51,12 @@ function(sak_compute_source_fingerprint output_variable source_root)
     if(NOT path_check_result EQUAL 0)
         message(FATAL_ERROR "Source fingerprint path check failed: ${path_check_output}${path_check_error}")
     endif()
+    foreach(resolved IN LISTS fingerprint_files)
+        cmake_path(IS_PREFIX fingerprint_root "${resolved}" NORMALIZE inside_root)
+        if(NOT inside_root)
+            message(FATAL_ERROR "Source fingerprint input escapes source root: ${resolved}")
+        endif()
+    endforeach()
     set(fingerprint_records "")
     set(fingerprint_header_records "")
     foreach(input IN LISTS fingerprint_files)
