@@ -270,7 +270,7 @@ constexpr char kCreditsTabHtml[] = R"SAKCREDITS(
     <span class="desc">UUP-to-ISO converter (patched build, AppX provisioning skipped)</span>
 </div>
 <div class="dep">
-    <b><a href="https://wimlib.net/">wimlib / libwim</a></b> &mdash; LGPL v3 (Eric Biggers)<br/>
+    <b><a href="https://wimlib.net/">wimlib / libwim</a></b> &mdash; LGPL v2.1+ (Eric Biggers)<br/>
     <span class="desc">WIM image library (bundled with UUPMediaConverter)</span>
 </div>
 <div class="dep">

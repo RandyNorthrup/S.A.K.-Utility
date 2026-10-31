@@ -159,7 +159,7 @@ inline constexpr FeatureElevation kFeatureElevationTable[] = {
     {FeatureId::UupIsoConversion,
      ElevationTier::Elevated,
      "UUP ISO Conversion",
-     "DISM AppX provisioning requires administrator privileges"},
+     "Mounting a virtual disk for DISM image servicing requires administrator privileges"},
 
     // Partition Manager -- Mixed/Elevated
     {FeatureId::PartitionInventory,

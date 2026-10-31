@@ -625,10 +625,6 @@ void WindowsISODownloadDialog::onDownloadError(const QString& error) {
                     QLatin1String("aria2"),
                     QLatin1String("internet")})) {
         guidance = "Please check your internet connection and try again.";
-    } else if (matchesAny(lower, {QLatin1String("appx"), QLatin1String("msixbundle")})) {
-        guidance =
-            "This is a known issue with AppX provisioning. "
-            "See the suggestions above for possible workarounds.";
     } else if (matchesAny(lower, {QLatin1String("administrator"), QLatin1String("elevated")})) {
         guidance = "Please restart S.A.K. Utility as Administrator and try again.";
     } else if (matchesAny(lower, {QLatin1String("disk space"), QLatin1String("not enough")})) {

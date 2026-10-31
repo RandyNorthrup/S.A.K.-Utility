@@ -8,6 +8,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **Windows ISO build messages match the converter** - The patched UUP converter never
+  provisions AppX packages, so S.A.K. no longer blames AppX provisioning when it asks for
+  Administrator or offers AppX workarounds when a conversion fails. It still needs
+  Administrator: the converter mounts a virtual disk to service the Windows images with DISM,
+  and the message now says so. The About box lists wimlib as LGPL v2.1+, the license of the
+  wimlib 1.14.5 it ships.
+
 - **aria2c built from source with current libraries** - The bundled downloader is still aria2
   1.37.0, now built here from its source with zlib 1.3.2, c-ares 1.34.9, Expat 2.9.0, SQLite
   3.54.1 and libssh2 1.11.1 instead of the 2023 official build's older copies. It keeps using

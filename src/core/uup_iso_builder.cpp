@@ -912,9 +912,10 @@ bool UupIsoBuilder::prepareConversionEnvironment(QString& uupsDir,
         m_phase = Phase::Failed;
         Q_EMIT buildError(
             "Conversion requires elevated privileges (Administrator). "
-            "The UUP converter performs offline AppX provisioning with DISM, "
-            "which fails without elevation. Restart S.A.K. Utility as "
-            "Administrator and try again.");
+            "The UUP converter mounts a virtual disk to service the Windows images "
+            "with DISM (it cleans the setup boot image and builds the upgrade "
+            "editions there), and Windows allows that only to an administrator. "
+            "Restart S.A.K. Utility as Administrator and try again.");
         return false;
     }
 
@@ -1613,8 +1614,8 @@ namespace {
 
 /// One converter-failure classification: if any keyword appears in the lowercased error text,
 /// the operator gets this guidance. Kept as data rather than an if-chain so a new failure mode
-/// is one row, and so the ORDER in which modes are tried is visible in one place -- it matters,
-/// because an AppX failure also mentions DISM and must be reported as the AppX case.
+/// is one row, and so the ORDER in which modes are tried is visible in one place: the first
+/// rule whose keyword matches wins.
 struct ConverterFailureRule {
     QStringList keywords;
     QString guidance;  // %1 receives the raw (not lowercased) converter errors
@@ -1622,20 +1623,6 @@ struct ConverterFailureRule {
 
 const QVector<ConverterFailureRule>& converterFailureRules() {
     static const QVector<ConverterFailureRule> kRules = {
-        {{QStringLiteral("appx"),
-          QStringLiteral("msixbundle"),
-          QStringLiteral("appx installation")},
-         QStringLiteral("The converter failed during AppX provisioning (Microsoft Store "
-                        "components). This is a known issue with some Windows builds.\n\n"
-                        "Possible fixes:\n"
-                        "  1. Re-run the build -- transient DISM errors sometimes resolve "
-                        "on retry.\n"
-                        "  2. Select a different Windows edition (e.g., Professional N or "
-                        "Enterprise) which skips Store app bundling.\n"
-                        "  3. Run S.A.K. Utility as Administrator on a clean Windows "
-                        "installation (not an insider/preview OS).\n"
-                        "  4. Ensure no antivirus is blocking DISM or the converter.\n\n"
-                        "Detected errors:\n%1")},
         {{QStringLiteral("edition plan"), QStringLiteral("edition")},
          QStringLiteral("The converter could not process the selected Windows edition. "
                         "The downloaded UUP files may not contain the edition you chose, "
