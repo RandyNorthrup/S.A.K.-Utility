@@ -143,9 +143,9 @@ protected:
         painter->save();
         painter->setRenderHint(QPainter::Antialiasing);
         if (m_state == Qt::Unchecked) {
-            painter->setBrush(QColor(QString::fromLatin1(ui::kColorBgSurface)));
-            painter->setPen(QPen(QColor(QString::fromLatin1(ui::kColorBorderMuted)),
-                                 ui::kCssBorderWidthDefaultPx));
+            painter->setBrush(ui::themedColor(ui::kColorBgSurface));
+            painter->setPen(
+                QPen(ui::themedColor(ui::kColorBorderMuted), ui::kCssBorderWidthDefaultPx));
             painter->drawRoundedRect(check_rect,
                                      kEmailHeaderCheckRadiusPx,
                                      kEmailHeaderCheckRadiusPx);

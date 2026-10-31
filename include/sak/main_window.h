@@ -19,6 +19,7 @@
 class QFrame;
 class QHBoxLayout;
 class QKeySequence;
+class QPushButton;
 class QShortcut;
 
 // Forward declarations for feature panels (in global namespace)
@@ -228,11 +229,11 @@ private:
     ///        re-enable the rest, so a panel's own shortcut wins while focus is inside it.
     void yieldShortcutsToFocusedPanel(const QWidget* focus);
 
-    /// @brief Add a synchronized dark-mode toggle immediately after a panel log toggle.
-    void attachThemeToggleToLogToggle(LogToggleSwitch* log_toggle);
+    /// @brief The status bar's Theme button: System, Light or Dark (sak::ui::ThemePreference).
+    void createThemeSelector();
 
-    /// @brief Apply light or dark theme and synchronize all theme toggle widgets.
-    void setDarkThemeEnabled(bool enabled);
+    /// @brief Show the saved preference on the Theme button and check it in its menu.
+    void refreshThemeButton();
 
     /// @brief Find the main tab index containing this panel widget
     [[nodiscard]] int findPanelTabIndex(QWidget* panel) const;
@@ -269,6 +270,7 @@ protected:
     void moveEvent(QMoveEvent* event) override;
     void resizeEvent(QResizeEvent* event) override;
     void showEvent(QShowEvent* event) override;
+    void changeEvent(QEvent* event) override;
 
 private:
     /// @brief A tool tab that constructs its panel(s) lazily on first activation.
@@ -323,6 +325,7 @@ private:
     QLabel* m_ai_status_label{nullptr};
 #endif
     QWidget* m_elevation_label{nullptr};
+    QPushButton* m_theme_button{nullptr};
     QProgressBar* m_progress_bar{nullptr};
 
     // Asks before closing or relaunching while long work runs (child of this window).
@@ -335,8 +338,6 @@ private:
 
     // Shared log window
     DetachableLogWindow* m_logWindow{nullptr};
-    QList<LogToggleSwitch*> m_theme_toggles;
-    bool m_dark_theme_enabled{false};
 
     // Per-panel log storage for tab-aware log switching
     QMap<int, QStringList> m_panelLogs;

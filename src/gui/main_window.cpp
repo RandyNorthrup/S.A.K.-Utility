@@ -36,6 +36,7 @@
 #include "sak/windows11_theme.h"
 
 #include <QAction>
+#include <QActionGroup>
 #include <QApplication>
 #include <QBoxLayout>
 #include <QCloseEvent>
@@ -50,6 +51,7 @@
 #include <QHBoxLayout>
 #include <QIcon>
 #include <QLabel>
+#include <QMenu>
 #include <QMessageBox>
 #include <QMoveEvent>
 #include <QPixmap>
@@ -92,29 +94,6 @@ constexpr auto kTabScrollButtonObjectName = "sakTabScrollButton";
 constexpr auto kTabScrollDirectionProperty = "sakTabScrollDirection";
 constexpr auto kTabScrollDirectionLeft = "left";
 constexpr auto kTabScrollDirectionRight = "right";
-
-QBoxLayout* findBoxLayoutContainingWidget(QLayout* layout, QWidget* target, int& item_index) {
-    if ((layout == nullptr) || (target == nullptr)) {
-        return nullptr;
-    }
-
-    for (int index = 0; index < layout->count(); ++index) {
-        QLayoutItem* item = layout->itemAt(index);
-        if (item == nullptr) {
-            continue;
-        }
-        if (item->widget() == target) {
-            item_index = index;
-            return dynamic_cast<QBoxLayout*>(layout);
-        }
-        if (auto* child_layout = item->layout()) {
-            if (auto* found = findBoxLayoutContainingWidget(child_layout, target, item_index)) {
-                return found;
-            }
-        }
-    }
-    return nullptr;
-}
 
 constexpr char kAboutTabHtml[] = R"SAKABOUT(
 <h2>Swiss Army Knife (S.A.K.) Utility</h2>
@@ -641,6 +620,7 @@ void MainWindow::createStatusBar() {
 #endif
     statusBar()->addPermanentWidget(m_vulnerability_summary_label);
 
+    createThemeSelector();
     createElevationStatusWidgets();
     if (isStartupSmokeMode()) {
         logDebug("MainWindow startup: status widgets ready after {} ms", status_timer.elapsed());
@@ -1259,8 +1239,6 @@ void MainWindow::connectNetworkAdapterLogToggle() {
             &DetachableLogWindow::visibilityChanged,
             adapter_toggle,
             &LogToggleSwitch::setChecked);
-    // Same paired Dark toggle every other Log switch gets via connectPanelLog.
-    attachThemeToggleToLogToggle(adapter_toggle);
 }
 
 void MainWindow::loadAboutPanelIcon(QLabel* icon_label) {
@@ -1752,7 +1730,6 @@ void MainWindow::connectPanelLog(PanelT* panel) {
                 &DetachableLogWindow::visibilityChanged,
                 toggle,
                 &LogToggleSwitch::setChecked);
-        attachThemeToggleToLogToggle(toggle);
     }
 }
 
@@ -1771,47 +1748,47 @@ void MainWindow::setupLogRouting() {
     });
 }
 
-void MainWindow::attachThemeToggleToLogToggle(LogToggleSwitch* log_toggle) {
-    if ((log_toggle == nullptr) || (log_toggle->parentWidget() == nullptr)) {
-        return;
+void MainWindow::createThemeSelector() {
+    m_theme_button = new QPushButton(this);
+    m_theme_button->setFlat(true);
+    m_theme_button->setCursor(Qt::PointingHandCursor);
+    m_theme_button->setStyleSheet(sak::ui::compactLinkButtonStyle());
+    m_theme_button->setAccessibleName(tr("App theme"));
+    m_theme_button->setToolTip(tr("Light, Dark, or System to follow the Windows app theme"));
+    auto* menu = new QMenu(m_theme_button);
+    auto* choices = new QActionGroup(menu);
+    const std::array<std::pair<ui::ThemePreference, QString>, 3> kChoices{
+        {{ui::ThemePreference::System, tr("System")},
+         {ui::ThemePreference::Light, tr("Light")},
+         {ui::ThemePreference::Dark, tr("Dark")}}};
+    for (const auto& [preference, label] : kChoices) {
+        QAction* action = menu->addAction(label);
+        action->setCheckable(true);
+        action->setData(static_cast<int>(preference));
+        choices->addAction(action);
+        connect(action, &QAction::triggered, this, [this, chosen = preference]() {
+            ui::setThemePreference(*qApp, chosen);
+            refreshThemeButton();
+        });
     }
-
-    int item_index = -1;
-    QBoxLayout* box_layout =
-        findBoxLayoutContainingWidget(log_toggle->parentWidget()->layout(), log_toggle, item_index);
-    if ((box_layout == nullptr) || item_index < 0) {
-        return;
-    }
-
-    auto* theme_toggle = new LogToggleSwitch(tr("Dark"), log_toggle->parentWidget());
-    theme_toggle->setToolTip(tr("Toggle dark mode"));
-    theme_toggle->setAccessibleName(tr("Toggle dark mode"));
-    theme_toggle->setChecked(m_dark_theme_enabled);
-    m_theme_toggles.append(theme_toggle);
-
-    connect(theme_toggle, &LogToggleSwitch::toggled, this, &MainWindow::setDarkThemeEnabled);
-    box_layout->insertWidget(item_index + 1, theme_toggle);
+    m_theme_button->setMenu(menu);
+    refreshThemeButton();
+    statusBar()->addPermanentWidget(m_theme_button);
 }
 
-void MainWindow::setDarkThemeEnabled(bool enabled) {
-    if (m_dark_theme_enabled == enabled) {
+void MainWindow::refreshThemeButton() {
+    if (m_theme_button == nullptr) {
         return;
     }
-
-    m_dark_theme_enabled = enabled;
-    if (qApp) {
-        sak::ui::applyWindows11Theme(
-            *qApp, enabled ? sak::ui::AppThemeMode::Dark : sak::ui::AppThemeMode::Light);
-    }
-
-    for (auto* toggle : m_theme_toggles) {
-        if (toggle == nullptr) {
-            continue;
+    const auto saved = static_cast<int>(ui::savedThemePreference());
+    const auto actions = m_theme_button->menu()->actions();
+    for (QAction* action : actions) {
+        const bool current = action->data().toInt() == saved;
+        action->setChecked(current);
+        if (current) {
+            m_theme_button->setText(tr("Theme: %1").arg(action->text()));
         }
-        const QSignalBlocker blocker(toggle);
-        toggle->setChecked(enabled);
     }
-    applyThemedHtmlBrowsers(this);
 }
 
 void MainWindow::updateStatus(const QString& message, int timeout_ms) {
@@ -2072,6 +2049,17 @@ void MainWindow::showEvent(QShowEvent* event) {
             materializeTab(m_tab_widget->currentIndex());
         }
     });
+}
+
+void MainWindow::changeEvent(QEvent* event) {
+    QMainWindow::changeEvent(event);
+    // A theme change re-sets this window's palette (applyWindows11Theme). The About and License
+    // browsers carry the theme in their HTML, and the tab-scroll chevrons in their icons.
+    if (event->type() == QEvent::PaletteChange) {
+        applyThemedHtmlBrowsers(this);
+        applyTabBarChevrons();
+        refreshThemeButton();
+    }
 }
 
 void MainWindow::applyTabBarChevrons() {

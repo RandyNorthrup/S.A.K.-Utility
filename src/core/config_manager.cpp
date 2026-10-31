@@ -54,6 +54,13 @@ QString validValidationModeOrDefault(const QString& value) {
     return QStringLiteral("full");
 }
 
+// Getter-side enum enforcement for ui/theme: "system", "light" or "dark". Anything else (an older
+// or hand-edited INI) reads as the documented default, following Windows.
+bool isThemePreference(const QString& value) {
+    return value == QLatin1String("system") || value == QLatin1String("light") ||
+           value == QLatin1String("dark");
+}
+
 // Getter-side magnitude bound: a buffer size (in MB) outside the sane range
 // [1, kMaxImageFlasherBufferSizeMb] -- from older config, a hand-edited INI, or a
 // foreign writer -- is replaced with the default rather than propagated into an
@@ -170,6 +177,9 @@ void ConfigManager::initializeFlasherDefaults() {
 void ConfigManager::initializeUiDefaults() {
     if (!contains("ui/restore_window_geometry")) {
         setValue("ui/restore_window_geometry", true);
+    }
+    if (!contains("ui/theme")) {
+        setValue("ui/theme", QStringLiteral("system"));
     }
 }
 
@@ -423,6 +433,19 @@ void ConfigManager::setImageFlasherEnableNotifications(bool enable) {
 }
 
 // UI settings
+QString ConfigManager::getThemePreference() const {
+    const QString value = getValue("ui/theme", QStringLiteral("system")).toString();
+    return isThemePreference(value) ? value : QStringLiteral("system");
+}
+
+void ConfigManager::setThemePreference(const QString& preference) {
+    if (!isThemePreference(preference)) {
+        logWarning("setThemePreference: refusing unknown theme '{}'", preference.toStdString());
+        return;
+    }
+    setValue("ui/theme", preference);
+}
+
 bool ConfigManager::getRestoreWindowGeometry() const {
     return getValue("ui/restore_window_geometry", true).toBool();
 }

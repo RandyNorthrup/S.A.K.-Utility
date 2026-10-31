@@ -61,6 +61,7 @@ private Q_SLOTS:
     void imageFlasherValidationMode_setGet();
     void imageFlasherBufferSize_setGet();
     void imageFlasherDefaults_doNotRecreateRetiredSystemDriveWarning();
+    void themePreference_setGetAndUnknownReadsAsSystem();
 
     // Getter-side invariant enforcement (mirror setter invariants on read)
     void typedGetters_reclampOutOfRangeStoredValues();
@@ -270,6 +271,24 @@ void ConfigManagerTests::imageFlasherValidationMode_setGet() {
     QCOMPARE(mgr.getValue("image_flasher/validation_mode").toString(), QString("none"));
     mgr.setImageFlasherValidationMode("full");
     QCOMPARE(mgr.getImageFlasherValidationMode(), QString("full"));
+}
+
+// The one theme setting: "system" (follow Windows), "light" or "dark". An unknown stored value
+// reads as the documented default and the setter refuses one instead of storing it.
+void ConfigManagerTests::themePreference_setGetAndUnknownReadsAsSystem() {
+    auto& mgr = sak::ConfigManager::instance();
+    mgr.setThemePreference(QStringLiteral("dark"));
+    QCOMPARE(mgr.getThemePreference(), QStringLiteral("dark"));
+    QCOMPARE(mgr.getValue("ui/theme").toString(), QStringLiteral("dark"));
+    mgr.setThemePreference(QStringLiteral("purple"));
+    QCOMPARE(mgr.getValue("ui/theme").toString(), QStringLiteral("dark"));
+    mgr.setValue("ui/theme", QStringLiteral("purple"));
+    QCOMPARE(mgr.getThemePreference(), QStringLiteral("system"));
+    mgr.remove("ui/theme");
+    QCOMPARE(mgr.getThemePreference(), QStringLiteral("system"));
+    mgr.setThemePreference(QStringLiteral("light"));
+    QCOMPARE(mgr.getThemePreference(), QStringLiteral("light"));
+    mgr.setThemePreference(QStringLiteral("system"));
 }
 
 void ConfigManagerTests::imageFlasherBufferSize_setGet() {

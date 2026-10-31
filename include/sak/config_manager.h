@@ -194,6 +194,11 @@ public:
     [[nodiscard]] QByteArray getWindowState() const;
     void setWindowState(const QByteArray& state);
 
+    /// The app theme: "system" (follow Windows), "light" or "dark". A stored value outside that
+    /// set reads as "system"; the setter refuses one.
+    [[nodiscard]] QString getThemePreference() const;
+    void setThemePreference(const QString& preference);
+
 Q_SIGNALS:
     /**
      * @brief Emitted when a setting changes

@@ -175,7 +175,7 @@ protected:
 private:
     void drawHeader(QPainter& painter) {
         const int col_width = width() / kDaysPerWeek;
-        painter.setPen(QColor(ui::kColorTextSecondary));
+        painter.setPen(ui::themedColor(ui::kColorTextSecondary));
         QFont header_font = font();
         header_font.setWeight(QFont::DemiBold);
         header_font.setPointSize(ui::kFontSizeBody);
@@ -225,7 +225,7 @@ private:
         if (is_selected) {
             painter.setPen(QPen(QColor(ui::kColorPrimary), kSelectedDayBorderWidthPx));
         } else {
-            painter.setPen(QColor(ui::kColorBorderDefault));
+            painter.setPen(ui::themedColor(ui::kColorBorderDefault));
         }
         painter.drawRect(rect);
 
@@ -240,9 +240,9 @@ private:
         num_font.setWeight(is_today ? QFont::Bold : QFont::Normal);
         painter.setFont(num_font);
 
-        QColor text_color(ui::kColorTextBody);
+        QColor text_color = ui::themedColor(ui::kColorTextBody);
         if (!is_month) {
-            text_color = QColor(ui::kColorTextDisabled);
+            text_color = ui::themedColor(ui::kColorTextDisabled);
         }
         if (is_today) {
             const int circle_diam = email::kCalendarDayLabelHeight - kTodayCircleInsetPx;
@@ -255,7 +255,7 @@ private:
             painter.drawEllipse(QPoint(cx, cy),
                                 circle_diam / kGeometryHalfDivisor,
                                 circle_diam / kGeometryHalfDivisor);
-            text_color = QColor(ui::kColorBgWhite);
+            text_color = QColor(ui::kColorButtonTextOnTone);
         }
         painter.setPen(text_color);
         const QRect label_rect(rect.left() + email::kCalendarCellPadding,
@@ -319,7 +319,7 @@ private:
                                bar_rect.height()),
                          border);
 
-        painter.setPen(QColor(ui::kColorTextBody));
+        painter.setPen(ui::themedColor(ui::kColorTextBody));
         QFont bar_font = font();
         bar_font.setPointSize(ui::kFontSizeSmall);
         painter.setFont(bar_font);
@@ -349,7 +349,7 @@ private:
     }
 
     void drawMoreLabel(QPainter& painter, int count, int left, int top, int width) {
-        painter.setPen(QColor(ui::kColorTextMuted));
+        painter.setPen(ui::themedColor(ui::kColorTextMuted));
         QFont more_font = font();
         more_font.setPointSize(ui::kFontSizeSmall);
         more_font.setItalic(true);
@@ -539,12 +539,12 @@ private:
 
             // Vertical separator between columns
             if (col > 0) {
-                painter.setPen(QColor(ui::kColorBorderDefault));
+                painter.setPen(ui::themedColor(ui::kColorBorderDefault));
                 painter.drawLine(left, 0, left, height());
             }
         }
         // Bottom border of header row
-        painter.setPen(QColor(ui::kColorBorderDefault));
+        painter.setPen(ui::themedColor(ui::kColorBorderDefault));
         const int header_bottom = email::kCalendarDayHeaderHeight;
         painter.drawLine(0, header_bottom, width(), header_bottom);
     }
@@ -567,20 +567,20 @@ private:
 
     void drawHourRow(QPainter& painter, int hour, int row_y) {
         // Full hour solid line
-        painter.setPen(QPen(QColor(ui::kColorBorderDefault), 1, Qt::SolidLine));
+        painter.setPen(QPen(ui::themedColor(ui::kColorBorderDefault), 1, Qt::SolidLine));
         painter.drawLine(email::kCalendarTimeColumnWidth, row_y, width(), row_y);
 
         // Half-hour dashed line
         if (hour < email::kCalendarDayEndHour) {
             const int half_y = row_y + (email::kCalendarHourHeight / kGeometryHalfDivisor);
             const QColor half_color =
-                QColor(ui::kColorBorderDefault).lighter(kHalfHourLineLightness);
+                ui::themedColor(ui::kColorBorderDefault).lighter(kHalfHourLineLightness);
             painter.setPen(QPen(half_color, 1, Qt::DotLine));
             painter.drawLine(email::kCalendarTimeColumnWidth, half_y, width(), half_y);
         }
 
         if (hour < email::kCalendarDayEndHour) {
-            painter.setPen(QColor(ui::kColorTextMuted));
+            painter.setPen(ui::themedColor(ui::kColorTextMuted));
             QString time_str;
             if (hour == 0) {
                 time_str = QStringLiteral("12 AM");
@@ -617,8 +617,8 @@ private:
     void drawAllDayEvents(QPainter& painter) {
         const int header_y = email::kCalendarDayHeaderHeight;
         painter.fillRect(QRect(0, header_y, width(), email::kCalendarAllDayRowHeight),
-                         QColor(ui::kColorBgSurface));
-        painter.setPen(QColor(ui::kColorBorderDefault));
+                         ui::themedColor(ui::kColorBgSurface));
+        painter.setPen(ui::themedColor(ui::kColorBorderDefault));
         painter.drawLine(0,
                          header_y + email::kCalendarAllDayRowHeight,
                          width(),
@@ -724,7 +724,7 @@ private:
     }
 
     void drawBarText(QPainter& painter, const QRect& bar, const CalendarEvent* evt) {
-        painter.setPen(QColor(ui::kColorTextBody));
+        painter.setPen(ui::themedColor(ui::kColorTextBody));
         QFont bar_font = font();
         bar_font.setPointSize(ui::kFontSizeSmall);
         painter.setFont(bar_font);

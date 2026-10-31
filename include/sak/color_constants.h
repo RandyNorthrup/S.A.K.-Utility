@@ -57,6 +57,8 @@ constexpr auto kColorDarkNoteGreen = "#14532d";
 constexpr auto kColorDarkNotePink = "#831843";
 constexpr auto kColorDarkNoteYellow = "#713f12";
 constexpr auto kColorDarkNoteGray = "#1f2937";
+constexpr auto kColorDarkBgWarningPanel = "#422006";  ///< amber-950 -- warning rows/boxes
+constexpr auto kColorDarkBgErrorPanel = "#450a0a";    ///< red-950 -- error rows/boxes
 
 // Dark theme borders
 constexpr auto kColorDarkBorderDefault = "#334155";
@@ -103,10 +105,11 @@ constexpr auto kColorSearchCurrentMatchHighlight = "#ffa500";
 constexpr auto kColorSearchOtherMatchHighlight = "#ffff00";
 constexpr auto kColorWifiSearchMatchHighlight = "#ffff96";
 
-// Action button text and disabled state
+// Action button text and disabled state. The disabled fill and border are translucent slate so
+// one value reads as a muted control on the light page and on the dark one.
 constexpr auto kColorButtonTextOnTone = "#ffffff";
-constexpr auto kColorButtonDisabledBackground = "rgba(203, 213, 225, 0.75)";
-constexpr auto kColorButtonDisabledBorder = "rgba(203, 213, 225, 0.6)";
+constexpr auto kColorButtonDisabledBackground = "rgba(148, 163, 184, 0.35)";
+constexpr auto kColorButtonDisabledBorder = "rgba(148, 163, 184, 0.45)";
 
 // Primary button gradient stops
 constexpr auto kColorPrimaryButtonNormalTop = "rgba(79, 142, 252, 0.92)";

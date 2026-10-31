@@ -364,7 +364,7 @@ void LogToggleSwitch::paintEvent(QPaintEvent* /*event*/) {
     const QRect track_rect(
         0, (height() - track_height) / kToggleTrackRadiusDivisor, track_width, track_height);
     const QColor track_color = m_checked ? QColor(QString::fromLatin1(ui::kColorPrimary))
-                                         : QColor(QString::fromLatin1(ui::kColorBorderMuted));
+                                         : ui::themedColor(ui::kColorBorderMuted);
     p.setBrush(track_color);
     p.setPen(Qt::NoPen);
     p.drawRoundedRect(track_rect,

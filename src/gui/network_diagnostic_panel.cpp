@@ -4417,7 +4417,7 @@ void NetworkDiagnosticPanel::populateFirewallTable(const QVector<FirewallRule>& 
         const auto& r = filtered[i];
         auto* enabled_item = new QTableWidgetItem(r.enabled ? tr("Yes") : tr("No"));
         if (!r.enabled) {
-            enabled_item->setForeground(QColor(ui::kColorTextMuted));
+            enabled_item->setForeground(ui::themedColor(ui::kColorTextMuted));
         }
         m_fwRuleTable->setItem(i, KFirewallColumnEnabled, enabled_item);
         m_fwRuleTable->setItem(i, KFirewallColumnName, new QTableWidgetItem(r.name));

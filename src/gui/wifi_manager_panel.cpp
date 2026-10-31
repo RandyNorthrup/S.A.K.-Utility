@@ -124,8 +124,8 @@ protected:
         painter->setRenderHint(QPainter::Antialiasing);
 
         if (m_state == Qt::Unchecked) {
-            painter->setBrush(QColor(QString::fromLatin1(sak::ui::kColorBgSurface)));
-            painter->setPen(QPen(QColor(QString::fromLatin1(sak::ui::kColorBorderMuted)),
+            painter->setBrush(sak::ui::themedColor(sak::ui::kColorBgSurface));
+            painter->setPen(QPen(sak::ui::themedColor(sak::ui::kColorBorderMuted),
                                  sak::ui::kCssBorderWidthDefaultPx));
             painter->drawRoundedRect(cb_rect, kHeaderCheckRadiusPx, kHeaderCheckRadiusPx);
         } else {

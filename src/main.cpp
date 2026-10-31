@@ -412,8 +412,6 @@ void initializeApp(QApplication& app, const RuntimeOptions& options) {
     }
 
     sak::ui::installWheelPolicy(app);
-    // Surfaces are flat with 1px borders from the style tokens; there is no drop-shadow pass.
-    sak::ui::applyWindows11Theme(app);
 }
 
 /// @brief Initialize the logger subsystem.
@@ -705,6 +703,9 @@ int runApplication(int argc, char* argv[]) {
     if (options.startup_smoke_test) {
         sak::logger::instance().flush();
     }
+    // The saved theme (Light / Dark / System, from the portable config) once the data folder is
+    // decided; System keeps following Windows. Surfaces are flat with 1px borders.
+    sak::ui::initializeAppTheme(app);
     return showMainWindow(app,
                           **instance,
                           options.startup_smoke_test,

@@ -812,13 +812,16 @@ inline QString buttonBaseRule(const QString& selector,
                "}");
 }
 
+// Defined with the token alias table below; the disabled rule names its text colour through it.
+inline QString cssColor(const char* color);
+
 inline QString buttonDisabledRule(const QString& selector) {
     return selector +
            QStringLiteral(
                ":disabled {"
                "  background: ") +
            QString::fromLatin1(kColorButtonDisabledBackground) + QStringLiteral("; color: ") +
-           QString::fromLatin1(kColorTextMuted) +
+           cssColor(kColorTextMuted) +
            QStringLiteral(
                ";"
                "  border: ") +
@@ -982,6 +985,8 @@ inline constexpr DarkHtmlAlias kDarkHtmlAliases[] = {
     {kColorNotePink, kColorDarkNotePink},
     {kColorNoteYellow, kColorDarkNoteYellow},
     {kColorNoteGray, kColorDarkNoteGray},
+    {kColorBgWarningPanel, kColorDarkBgWarningPanel},
+    {kColorBgErrorPanel, kColorDarkBgErrorPanel},
 };
 
 inline QString cssColor(const QString& color) {
@@ -1138,6 +1143,14 @@ inline QString htmlColor(const QString& color) {
 
 inline QString htmlColor(const char* color) {
     return htmlColor(QString::fromLatin1(color));
+}
+
+/// A colour token as it paints in the current theme: the palette colour the token stands for
+/// (kHtmlPaletteAliases), the dark counterpart of a tint while the dark palette is applied
+/// (kDarkHtmlAliases), or the token itself. Call it when painting, not once at construction, so
+/// a theme change shows on the next repaint.
+inline QColor themedColor(const char* token) {
+    return QColor(htmlColor(token));
 }
 
 inline QString htmlBrowserDocumentStyleSheet() {

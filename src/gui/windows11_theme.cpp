@@ -3,11 +3,13 @@
 
 #include "sak/windows11_theme.h"
 
+#include "sak/config_manager.h"
 #include "sak/style_constants.h"
 
 #include <QMenu>
 #include <QPalette>
 #include <QStyle>
+#include <QStyleHints>
 #include <QWidget>
 
 namespace sak::ui {
@@ -248,11 +250,39 @@ inline constexpr ThemePaletteSpec kDarkPaletteSpec{.window = kColorDarkBgPage,
                                                    .disabled = kColorDarkTextDisabled,
                                                    .border = kColorDarkBorderDefault,
                                                    .light = kColorDarkBgHover,
-                                                   .dark = kColorDarkBgPressed,
+                                                   // Dark is the muted-text role on both
+                                                   // palettes (light: slate-400); the File
+                                                   // Explorer's secondary text uses it.
+                                                   .dark = kColorDarkTextMuted,
                                                    .shadow = kColorDarkBgInputFocus};
 
 const ThemePaletteSpec& themePaletteSpec(AppThemeMode mode) {
     return mode == AppThemeMode::Dark ? kDarkPaletteSpec : kLightPaletteSpec;
+}
+
+/// Applies @p mode unless it is already the applied theme: Windows and the menu can both ask for
+/// the theme that is showing, and re-polishing every widget for nothing is visible work.
+void showThemeMode(QApplication& app, AppThemeMode mode) {
+    if (app.property("sakThemeMode").isValid() && currentThemeMode(app) == mode) {
+        return;
+    }
+    applyWindows11Theme(app, mode);
+}
+
+/// Light and Dark are asked of Qt so the window frame matches; System hands it back to Windows.
+void requestFrameScheme(ThemePreference preference) {
+    QStyleHints* hints = QGuiApplication::styleHints();
+    switch (preference) {
+    case ThemePreference::Light:
+        hints->setColorScheme(Qt::ColorScheme::Light);
+        break;
+    case ThemePreference::Dark:
+        hints->setColorScheme(Qt::ColorScheme::Dark);
+        break;
+    case ThemePreference::System:
+        hints->unsetColorScheme();
+        break;
+    }
 }
 
 QPalette themePalette(AppThemeMode mode) {
@@ -324,6 +354,65 @@ void applyWindows11Theme(QApplication& app, AppThemeMode mode) {
 AppThemeMode currentThemeMode(const QApplication& app) {
     return app.property("sakThemeMode").toString() == QStringLiteral("dark") ? AppThemeMode::Dark
                                                                              : AppThemeMode::Light;
+}
+
+ThemePreference themePreferenceFromSetting(const QString& setting) {
+    if (setting == QLatin1String("light")) {
+        return ThemePreference::Light;
+    }
+    if (setting == QLatin1String("dark")) {
+        return ThemePreference::Dark;
+    }
+    return ThemePreference::System;
+}
+
+QString themePreferenceSetting(ThemePreference preference) {
+    switch (preference) {
+    case ThemePreference::Light:
+        return QStringLiteral("light");
+    case ThemePreference::Dark:
+        return QStringLiteral("dark");
+    case ThemePreference::System:
+        break;
+    }
+    return QStringLiteral("system");
+}
+
+AppThemeMode themeModeFor(ThemePreference preference, Qt::ColorScheme windows_scheme) {
+    switch (preference) {
+    case ThemePreference::Light:
+        return AppThemeMode::Light;
+    case ThemePreference::Dark:
+        return AppThemeMode::Dark;
+    case ThemePreference::System:
+        break;
+    }
+    return windows_scheme == Qt::ColorScheme::Dark ? AppThemeMode::Dark : AppThemeMode::Light;
+}
+
+ThemePreference savedThemePreference() {
+    return themePreferenceFromSetting(ConfigManager::instance().getThemePreference());
+}
+
+void initializeAppTheme(QApplication& app) {
+    const ThemePreference preference = savedThemePreference();
+    requestFrameScheme(preference);
+    showThemeMode(app, themeModeFor(preference, QGuiApplication::styleHints()->colorScheme()));
+    QObject::connect(QGuiApplication::styleHints(),
+                     &QStyleHints::colorSchemeChanged,
+                     &app,
+                     [&app](Qt::ColorScheme scheme) {
+                         const ThemePreference current = savedThemePreference();
+                         if (current == ThemePreference::System) {
+                             showThemeMode(app, themeModeFor(current, scheme));
+                         }
+                     });
+}
+
+void setThemePreference(QApplication& app, ThemePreference preference) {
+    ConfigManager::instance().setThemePreference(themePreferenceSetting(preference));
+    requestFrameScheme(preference);
+    showThemeMode(app, themeModeFor(preference, QGuiApplication::styleHints()->colorScheme()));
 }
 
 }  // namespace sak::ui
