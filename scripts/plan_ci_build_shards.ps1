@@ -143,7 +143,9 @@ $selectedSet = [System.Collections.Generic.HashSet[string]]::new([string[]]$sele
 
 $required = @{}
 $exeRe = [regex]'[/\\]Release[/\\](?<name>[A-Za-z0-9_.+-]+)\.exe"'
-$addTestRe = [regex]'^\s*add_test\(\[=\[(?<name>[^\]]+)\]=\](?<rest>.*)$'
+# CMake 3.x writes the test name as a bracket argument (add_test([=[name]=] ...)); CMake 4.4
+# writes a quoted one (add_test("name" ...)). Accept both, or a CMake upgrade empties the plan.
+$addTestRe = [regex]'^\s*add_test\((?:\[=\[(?<name>[^\]]+)\]=\]|"(?<name>[^"]+)")(?<rest>.*)$'
 $quotedArgRe = [regex]'"(?<value>[^"]*)"'
 $scriptExeRe = [regex]'(?<![A-Za-z0-9_])(?<name>[A-Za-z0-9_]+)\.exe(?![A-Za-z0-9_])'
 $scriptExeCache = @{}
