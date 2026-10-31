@@ -47,6 +47,11 @@ about what is "obviously fine".
   registry. Reference case: two font calls added to diagnose a slow startup became the 6-50 s
   startup freeze (`docs/GUI_STARTUP_FIELD_NOTES.md`). The 2026-10-24 behavior-audit decisions are
   in `docs/RELEASE_READINESS.md`.
+- **Every dependency tracks its latest stable release** (owner, 2026-10-30): Qt, the compiler
+  toolset, vcpkg libraries, bundled tools, CI actions and gate tools. An update lands with the
+  same proof as any change (build, the tests it can reach, T2 green). A downloaded artifact is
+  pinned by hash and its provenance recorded in the bundle script. Staying behind needs a
+  written reason in `docs/RELEASE_READINESS.md`.
 
 **Make a proper decision about it.** Keep or remove is a real decision, and it has to be made on
 evidence rather than on whichever is easier at that moment. Deleting something to make a problem
