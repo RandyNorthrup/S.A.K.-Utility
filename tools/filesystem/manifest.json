@@ -69,7 +69,7 @@
       "runtime_files": [
         {
           "relative_path": "hfsprogs/msys-2.0.dll",
-          "sha256": "80817f159a33b8f641e6a15de73d1efcc9af3a7557a69121e4798c99930152f1"
+          "sha256": "d5983eccf5ac3340bc35774f68e576ea1735eb01e7a7578d9bfb30e8b065a5e2"
         },
         {
           "relative_path": "hfsprogs/hfsprogs_540.1.linux3.orig.tar.gz",
@@ -89,7 +89,7 @@
         },
         {
           "relative_path": "hfsprogs/BUILD-NOTES.md",
-          "sha256": "3a87f35ccaeb55521bb5ab682a6820435c53b9ef72bb8dc7deb35aa80a695bcc"
+          "sha256": "69af5aa8a0964e732dd7cd3208d105a3759e71a42456352ec1869df1204d0d80"
         },
         {
           "relative_path": "hfsprogs/CYGWIN_LICENSE",
@@ -115,7 +115,7 @@
       "runtime_files": [
         {
           "relative_path": "hfsprogs/msys-2.0.dll",
-          "sha256": "80817f159a33b8f641e6a15de73d1efcc9af3a7557a69121e4798c99930152f1"
+          "sha256": "d5983eccf5ac3340bc35774f68e576ea1735eb01e7a7578d9bfb30e8b065a5e2"
         },
         {
           "relative_path": "hfsprogs/hfsprogs_540.1.linux3.orig.tar.gz",
@@ -135,7 +135,7 @@
         },
         {
           "relative_path": "hfsprogs/BUILD-NOTES.md",
-          "sha256": "3a87f35ccaeb55521bb5ab682a6820435c53b9ef72bb8dc7deb35aa80a695bcc"
+          "sha256": "69af5aa8a0964e732dd7cd3208d105a3759e71a42456352ec1869df1204d0d80"
         },
         {
           "relative_path": "hfsprogs/CYGWIN_LICENSE",

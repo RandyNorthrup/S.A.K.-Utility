@@ -36,6 +36,10 @@ make CC=gcc
 objdump -p newfs_hfs.tproj/newfs_hfs.exe | grep 'DLL Name'   # msys-2.0.dll and KERNEL32.dll only
 ```
 
+The shipped `msys-2.0.dll` is msys2-runtime 3.6.12-1 (updated 2026-10-30), taken from
+`msys2-runtime-3.6.12-1-x86_64.pkg.tar.zst` after its signature verified against the MSYS2
+keyring; the runtime is ABI-compatible across 3.6.x, so the binaries were not rebuilt for it.
+
 The builds are not bit-reproducible (the PE header carries a link timestamp).
 `newfs_hfs.exe` was rebuilt 2026-10-30 to drop OpenSSL; `fsck_hfs.exe`, whose
 sources the patch does not touch, is the earlier build.
