@@ -1238,7 +1238,8 @@ std::optional<AppActionResult> validateOrganizeInputs(const QString& target,
     return std::nullopt;
 }
 
-AppActionResult organizeDirectory(const QJsonObject& args) {
+AppActionResult organizeDirectory(const QJsonObject& args,
+                                  const AppActionCancelCheck& should_cancel) {
     const QString target = args.value(QStringLiteral("target_directory")).toString().trimmed();
     const QString collision_strategy =
         args.value(QStringLiteral("collision_strategy")).toString().trimmed().isEmpty()
@@ -1272,7 +1273,19 @@ AppActionResult organizeDirectory(const QJsonObject& args) {
     // reports an overrun and retains it until it finishes), never into a destroyed context.
     const sak::WorkerPtr<OrganizerWorker> owned_worker = sak::makeWorker<OrganizerWorker>(config);
     OrganizerWorker& worker = *owned_worker;
-    AsyncActionInvocation inv;
+    AsyncActionInvocation inv(kDefaultAsyncActionTimeoutMs, should_cancel);
+    // A Stop leaves the files already moved where they are: say how many.
+    inv.setStopRequest([&worker]() { worker.requestStop(); });
+    QObject::connect(&worker, &WorkerBase::cancelled, inv.context(), [&inv, &worker, target]() {
+        const int moved = worker.movedCount();
+        inv.finish({false,
+                    QStringLiteral("Organize of %1 cancelled after %2 file(s) moved")
+                        .arg(target)
+                        .arg(moved),
+                    {{QStringLiteral("target_directory"), target},
+                     {QStringLiteral("files_moved"), moved},
+                     {QStringLiteral("cancelled"), true}}});
+    });
     QObject::connect(&worker, &WorkerBase::finished, inv.context(), [&inv, &worker, target]() {
         const int moved = worker.movedCount();
         const QJsonObject data{{QStringLiteral("target_directory"), target},
@@ -1409,18 +1422,27 @@ QJsonObject serializeFlashResult(const sak::FlashResult& result, const QString& 
 // coordinator is declared before the invocation so it is destroyed LAST (its dtor
 // cancels + joins the flash workers); on timeout the invocation returns and cancel()
 // stops the in-flight write.
-AppActionResult runFlash(const QString& image_path, const FlashTargetResolution& target) {
+AppActionResult runFlash(const QString& image_path,
+                         const FlashTargetResolution& target,
+                         const AppActionCancelCheck& should_cancel) {
     FlashCoordinator coordinator;
-    AsyncActionInvocation inv(kFlashTimeoutMs);
+    AsyncActionInvocation inv(kFlashTimeoutMs, should_cancel);
+    bool stop_requested = false;
+    inv.setStopRequest([&coordinator, &stop_requested]() {
+        stop_requested = true;
+        coordinator.cancel();
+    });
     const QString device_path = target.device_path;
     QObject::connect(&coordinator,
                      &FlashCoordinator::flashCompleted,
                      inv.context(),
-                     [&inv, device_path](const sak::FlashResult& result) {
+                     [&inv, &stop_requested, device_path](const sak::FlashResult& result) {
                          const bool ok = result.success && !result.hasErrors();
                          const QString message =
                              ok ? QStringLiteral("Flashed image to %1").arg(device_path)
-                                : QStringLiteral("Flash to %1 failed").arg(device_path);
+                             : stop_requested
+                                 ? QStringLiteral("Flash to %1 was cancelled").arg(device_path)
+                                 : QStringLiteral("Flash to %1 failed").arg(device_path);
                          inv.finish({ok, message, serializeFlashResult(result, device_path)});
                      });
     QObject::connect(&coordinator,
@@ -1440,7 +1462,7 @@ AppActionResult runFlash(const QString& image_path, const FlashTargetResolution&
     return result;
 }
 
-AppActionResult flashImage(const QJsonObject& args) {
+AppActionResult flashImage(const QJsonObject& args, const AppActionCancelCheck& should_cancel) {
     const QString image_path = args.value(QStringLiteral("image_path")).toString().trimmed();
     if (image_path.isEmpty() || !args.value(QStringLiteral("disk_number")).isDouble()) {
         return {false,
@@ -1472,7 +1494,7 @@ AppActionResult flashImage(const QJsonObject& args) {
     if (!target.ok) {
         return target.error;
     }
-    return runFlash(image_path, target);
+    return runFlash(image_path, target, should_cancel);
 }
 
 QJsonObject flashParamsSchema() {
@@ -1919,7 +1941,9 @@ AppActionResult runApplyOperation(const ParsedPartitionOp& parsed,
                                   const QJsonObject& args,
                                   const PartitionApplyResolution& target,
                                   const PartitionInventory& inventory,
-                                  bool dry_run) {
+                                  const AppActionCancelCheck& should_cancel) {
+    // dry_run is validated as a boolean by validatePartitionApplyArgs before this runs.
+    const bool dry_run = args.value(QStringLiteral("dry_run")).toBool(false);
     const int disk_number = args.value(QStringLiteral("disk_number")).toInt(-1);
     const PartitionTarget pt =
         buildPartitionOpTarget(args, static_cast<uint32_t>(disk_number), parsed.kind);
@@ -1947,7 +1971,8 @@ AppActionResult runApplyOperation(const ParsedPartitionOp& parsed,
     const sak::WorkerPtr<PartitionApplyWorker> owned_worker = sak::makeWorker<PartitionApplyWorker>(
         QVector<PartitionOperation>{op}, dry_run, /*use_elevation=*/!dry_run);
     PartitionApplyWorker& worker = *owned_worker;
-    AsyncActionInvocation inv(kApplyTimeoutMs);
+    AsyncActionInvocation inv(kApplyTimeoutMs, should_cancel);
+    inv.setStopRequest([&worker]() { worker.cancelExecution(); });
     QObject::connect(&worker,
                      &WorkerBase::finished,
                      inv.context(),
@@ -1972,7 +1997,8 @@ AppActionResult runApplyOperation(const ParsedPartitionOp& parsed,
     return result;
 }
 
-AppActionResult applyPartitionOperation(const QJsonObject& args) {
+AppActionResult applyPartitionOperation(const QJsonObject& args,
+                                        const AppActionCancelCheck& should_cancel) {
     const QString type_name = args.value(QStringLiteral("operation")).toString().trimmed();
     const std::optional<ParsedPartitionOp> parsed = parsePartitionOpType(type_name);
     if (!parsed) {
@@ -1984,7 +2010,6 @@ AppActionResult applyPartitionOperation(const QJsonObject& args) {
     if (const std::optional<AppActionResult> error = validatePartitionApplyArgs(args)) {
         return *error;
     }
-    const bool dry_run = args.value(QStringLiteral("dry_run")).toBool(false);
     const int disk_number = args.value(QStringLiteral("disk_number")).toInt(-1);
     const QString confirm_hash =
         args.value(QStringLiteral("confirm_layout_hash")).toString().trimmed();
@@ -1998,7 +2023,7 @@ AppActionResult applyPartitionOperation(const QJsonObject& args) {
     if (!target.ok) {
         return target.error;
     }
-    return runApplyOperation(*parsed, args, target, inventory, dry_run);
+    return runApplyOperation(*parsed, args, target, inventory, should_cancel);
 }
 
 QJsonObject applyParamsSchema() {
@@ -2073,8 +2098,12 @@ QJsonObject uninstallProgramParamsSchema(const QString& name_description) {
 // -> cancelled. The caller owns the worker through a WorkerPtr: after the stop request below, that
 // owner joins it within the stop deadline, or reports the overrun and retains it until it finishes.
 // It is never terminated mid-uninstall.
-AppActionResult driveUninstallWorker(UninstallWorker& worker, const QString& name, int timeout_ms) {
-    AsyncActionInvocation inv(timeout_ms);
+AppActionResult driveUninstallWorker(UninstallWorker& worker,
+                                     const QString& name,
+                                     int timeout_ms,
+                                     const AppActionCancelCheck& should_cancel) {
+    AsyncActionInvocation inv(timeout_ms, should_cancel);
+    inv.setStopRequest([&worker]() { worker.requestStop(); });
     QObject::connect(&worker,
                      &UninstallWorker::uninstallComplete,
                      inv.context(),
@@ -2191,7 +2220,8 @@ std::optional<AppActionResult> resolveWin32Program(const QString& name, ProgramI
     return resolveWin32ProgramFromList(enumerator.enumerateRegistryProgramsSync(), name, out);
 }
 
-AppActionResult uninstallUwpApp(const QJsonObject& args) {
+AppActionResult uninstallUwpApp(const QJsonObject& args,
+                                const AppActionCancelCheck& should_cancel) {
     const QString name = args.value(QStringLiteral("program_name")).toString().trimmed();
     if (name.isEmpty()) {
         return {false, QStringLiteral("uninstall_uwp_app requires a 'program_name' argument"), {}};
@@ -2205,10 +2235,11 @@ AppActionResult uninstallUwpApp(const QJsonObject& args) {
     // createRestorePoint false: a Store app is reinstallable and a restore point needs admin.
     const sak::WorkerPtr<UninstallWorker> worker = sak::makeWorker<UninstallWorker>(
         program, UninstallWorker::Mode::UwpRemove, ScanLevel::Safe, false);
-    return driveUninstallWorker(*worker, name, kUwpUninstallTimeoutMs);
+    return driveUninstallWorker(*worker, name, kUwpUninstallTimeoutMs, should_cancel);
 }
 
-AppActionResult uninstallWin32Program(const QJsonObject& args) {
+AppActionResult uninstallWin32Program(const QJsonObject& args,
+                                      const AppActionCancelCheck& should_cancel) {
     const QString name = args.value(QStringLiteral("program_name")).toString().trimmed();
     if (name.isEmpty()) {
         return {false, QStringLiteral("uninstall_program requires a 'program_name' argument"), {}};
@@ -2232,10 +2263,10 @@ AppActionResult uninstallWin32Program(const QJsonObject& args) {
     const sak::WorkerPtr<UninstallWorker> worker = sak::makeWorker<UninstallWorker>(
         program, UninstallWorker::Mode::Standard, ScanLevel::Safe, false);
     worker->setHeadlessSilent(true);
-    return driveUninstallWorker(*worker, name, kWin32UninstallTimeoutMs);
+    return driveUninstallWorker(*worker, name, kWin32UninstallTimeoutMs, should_cancel);
 }
 
-using AddMutatingActionFn = std::function<void(const AppActionDescriptor&, AppActionInvoke)>;
+using AddMutatingActionFn = AppActionAdder;
 
 // Register the software-management ops. Split out to keep registerMutatingAppActionsInto
 // within the length budget as the op set grows.
@@ -2360,7 +2391,9 @@ AppActionResult buildCleanupResult(int items_total, const CleanupTally& tally) {
 // ok=false), so success means EVERY item deleted. Like driveUninstallWorker, the WorkerPtr owner
 // joins it after the stop request (or retains an overrun until it finishes), so a timeout can never
 // destroy a running worker; it is never terminated mid-delete.
-AppActionResult runCleanupWorker(const QVector<LeftoverItem>& items, bool use_recycle_bin) {
+AppActionResult runCleanupWorker(const QVector<LeftoverItem>& items,
+                                 bool use_recycle_bin,
+                                 const AppActionCancelCheck& should_cancel) {
     // worker declared BEFORE inv so it is destroyed AFTER inv: a late finished() on teardown then
     // hits an already-gone context and is dropped rather than delivered to a dangling bridge.
     const sak::WorkerPtr<CleanupWorker> owned_worker =
@@ -2370,7 +2403,8 @@ AppActionResult runCleanupWorker(const QVector<LeftoverItem>& items, bool use_re
     // item, so a recycle failure must leave the item in place (reported failed) instead of
     // escalating to a permanent delete. Stated explicitly here, not left to the worker default.
     worker.setRequireRecoverable(use_recycle_bin);
-    AsyncActionInvocation inv(kCleanupTimeoutMs);
+    AsyncActionInvocation inv(kCleanupTimeoutMs, should_cancel);
+    inv.setStopRequest([&worker]() { worker.requestStop(); });
     CleanupTally tally;
 
     QObject::connect(&worker,
@@ -2496,7 +2530,7 @@ AppActionResult provenanceRefusalResult(const QStringList& unscanned, int total)
            value == QLatin1String("yes") || value == QLatin1String("on");
 }
 
-AppActionResult cleanLeftovers(const QJsonObject& args) {
+AppActionResult cleanLeftovers(const QJsonObject& args, const AppActionCancelCheck& should_cancel) {
     const QJsonValue items_val = args.value(QStringLiteral("items"));
     if (!items_val.isArray()) {
         return {false, QStringLiteral("clean_leftovers requires an 'items' array"), {}};
@@ -2558,7 +2592,7 @@ AppActionResult cleanLeftovers(const QJsonObject& args) {
     // reported rather than permanently deleted. Registry keys/values, services, tasks, and
     // firewall rules have no recycle equivalent -- their deletion is always permanent.
     const bool use_recycle_bin = args.value(QStringLiteral("use_recycle_bin")).toBool(true);
-    return runCleanupWorker(items, use_recycle_bin);
+    return runCleanupWorker(items, use_recycle_bin, should_cancel);
 }
 
 QJsonObject cleanLeftoversParamsSchema() {
@@ -4554,11 +4588,19 @@ static void registerImagingMutatingOps(const AddMutatingActionFn& add) {
 
 int registerMutatingAppActionsInto(AppActionRegistry& registry) {
     int registered = 0;
-    const auto add = [&](const AppActionDescriptor& descriptor, AppActionInvoke invoke) {
-        if (registry.registerAction(descriptor, std::move(invoke))) {
-            ++registered;
-        }
-    };
+    const AddMutatingActionFn add{
+        .add_plain =
+            [&](const AppActionDescriptor& descriptor, AppActionInvoke invoke) {
+                if (registry.registerAction(descriptor, std::move(invoke))) {
+                    ++registered;
+                }
+            },
+        .add_cancellable =
+            [&](const AppActionDescriptor& descriptor, AppActionCancellableInvoke invoke) {
+                if (registry.registerCancellableAction(descriptor, std::move(invoke))) {
+                    ++registered;
+                }
+            }};
 
     registerEmailMutatingOps(add);
 

@@ -10,11 +10,15 @@
 #include "sak/app_action_service.h"
 #include "sak/quick_action.h"
 #include "sak/quick_action_controller.h"
+#include "sak/worker_base.h"
 
 #include <QEventLoop>
 #include <QJsonObject>
 #include <QPointer>
 #include <QTimer>
+
+#include <functional>
+#include <utility>
 
 namespace sak {
 
@@ -59,9 +63,52 @@ AppActionResult resultFromAction(const QuickAction* action) {
         {r.success, r.message, r.bytes_processed, r.files_processed, r.duration_ms, r.output_path});
 }
 
+// Ask @p controller, on its own thread, to cancel its running action -- which also reaches the
+// elevated helper for an administrator action -- so the action unwinds and the controller stops
+// being busy. Best-effort: a well-behaved action honors the cooperative cancel promptly.
+void requestControllerCancel(QuickActionController* controller) {
+    QMetaObject::invokeMethod(
+        controller, [controller]() { controller->cancelCurrentAction(); }, Qt::QueuedConnection);
+}
+
+// Poll the caller's cancel route during runQuickActionSync. The first Stop cancels the action on
+// the controller; the wait then continues for the action's own result (it reports itself
+// cancelled once it unwinds) and settles with appActionCancelledResult() only if that has not
+// arrived within kAppActionStopGraceMs.
+// The poll timer is a child of @p context, so it dies with the wait.
+void watchForStop(QObject* context,
+                  const AppActionCancelCheck& should_cancel,
+                  QuickActionController* controller,
+                  const std::function<void(const AppActionResult&)>& settle,
+                  const bool& done) {
+    if (!should_cancel) {
+        return;
+    }
+    auto* poll = new QTimer(context);
+    QObject::connect(poll,
+                     &QTimer::timeout,
+                     context,
+                     [poll, context, should_cancel, controller, settle, &done]() {
+                         if (done || !should_cancel()) {
+                             return;
+                         }
+                         poll->stop();
+                         requestControllerCancel(controller);
+                         QTimer::singleShot(kAppActionStopGraceMs, context, [settle]() {
+                             settle(appActionCancelledResult());
+                         });
+                     });
+    poll->start(kAppActionCancelPollMs);
+}
+
 }  // namespace
 
-AsyncActionInvocation::AsyncActionInvocation(int timeout_ms) : m_timeout_ms(timeout_ms) {}
+AsyncActionInvocation::AsyncActionInvocation(int timeout_ms,
+                                             AppActionCancelCheck should_cancel,
+                                             int stop_grace_ms)
+    : m_timeout_ms(timeout_ms)
+    , m_stop_grace_ms(stop_grace_ms)
+    , m_should_cancel(std::move(should_cancel)) {}
 
 QObject* AsyncActionInvocation::context() {
     return &m_ctx;
@@ -80,6 +127,27 @@ bool AsyncActionInvocation::isDone() const {
     return m_done;
 }
 
+void AsyncActionInvocation::setStopRequest(std::function<void()> request_stop) {
+    m_request_stop = std::move(request_stop);
+}
+
+void AsyncActionInvocation::onCancelPoll() {
+    if (m_done || m_stop_requested || !m_should_cancel()) {
+        return;
+    }
+    m_stop_requested = true;
+    m_cancel_poll.stop();
+    if (!m_request_stop) {
+        finish(appActionCancelledResult());
+        return;
+    }
+    // Ask the operation to stop, then wait briefly for its OWN terminal signal: a cooperative op
+    // reports itself cancelled (or its real result, if it finished first), which is the truth;
+    // only an op that does not answer within the grace gets the generic cancelled result.
+    m_request_stop();
+    QTimer::singleShot(m_stop_grace_ms, &m_ctx, [this]() { finish(appActionCancelledResult()); });
+}
+
 AppActionResult AsyncActionInvocation::run(const std::function<void()>& start) {
     // Fail closed on reuse: a terminal result was already recorded, so a second run()
     // would launch a fresh operation, skip the loop (m_done is still set) and return
@@ -88,11 +156,20 @@ AppActionResult AsyncActionInvocation::run(const std::function<void()>& start) {
     if (m_done) {
         return {false, QStringLiteral("AsyncActionInvocation already used"), {}};
     }
+    // A Stop that arrived before the work started: never start it.
+    if (m_should_cancel && m_should_cancel()) {
+        finish(appActionCancelledResult());
+        return m_result;
+    }
     // Timer is owned by m_ctx (caller-thread affinity), so it fires on this thread
     // via the local loop even though the controller emits from a worker thread.
     QTimer::singleShot(m_timeout_ms, &m_ctx, [this]() {
         finish({false, QStringLiteral("Action timed out after %1 ms").arg(m_timeout_ms), {}});
     });
+    if (m_should_cancel) {
+        QObject::connect(&m_cancel_poll, &QTimer::timeout, &m_ctx, [this]() { onCancelPoll(); });
+        m_cancel_poll.start(kAppActionCancelPollMs);
+    }
     if (start) {
         start();
     }
@@ -102,7 +179,15 @@ AppActionResult AsyncActionInvocation::run(const std::function<void()>& start) {
     if (!m_done) {
         m_loop.exec();
     }
+    m_cancel_poll.stop();
     return m_result;
+}
+
+void stopWorkerOnCancel(AsyncActionInvocation& invocation, ::WorkerBase& worker) {
+    invocation.setStopRequest([&worker]() { worker.requestStop(); });
+    QObject::connect(&worker, &::WorkerBase::cancelled, invocation.context(), [&invocation]() {
+        invocation.finish(appActionCancelledResult());
+    });
 }
 
 AppActionResult appActionResultFromExecution(const AppActionExecutionFields& fields) {
@@ -117,7 +202,8 @@ AppActionResult appActionResultFromExecution(const AppActionExecutionFields& fie
 
 AppActionResult runQuickActionSync(QuickActionController* controller,
                                    const QString& action_name,
-                                   int timeout_ms) {
+                                   int timeout_ms,
+                                   const AppActionCancelCheck& should_cancel) {
     if (controller == nullptr) {
         return {false, QStringLiteral("No action controller"), {}};
     }
@@ -125,54 +211,52 @@ AppActionResult runQuickActionSync(QuickActionController* controller,
     if (action == nullptr) {
         return {false, QStringLiteral("Unknown action: %1").arg(action_name), {}};
     }
+    if (should_cancel && should_cancel()) {
+        return appActionCancelledResult();  // a Stop before the action started: never start it
+    }
 
     // SAK-ALLOW-BLOCKING: nested loop on the CALLER's thread, which is the assistant's
     // worker thread, never the controller's. executeAction is marshaled with a queued
     // connection so it cannot complete before exec() begins, and the timeout below
     // always quits the loop.
     QEventLoop loop;
-    const QObject ctx;  // caller-thread affinity: all lambdas run serially on this thread
+    QObject ctx;  // caller-thread affinity: all lambdas run serially on this thread
     AppActionResult out{false, QStringLiteral("Action did not complete"), {}};
     bool done = false;
-
-    QObject::connect(controller,
-                     &QuickActionController::actionExecutionComplete,
-                     &ctx,
-                     [&, action](QuickAction* finished) {
-                         if (done || finished != action) {
-                             return;
-                         }
-                         done = true;
-                         out = resultFromAction(action);
-                         loop.quit();
-                     });
-    QObject::connect(controller,
-                     &QuickActionController::actionError,
-                     &ctx,
-                     [&, action](QuickAction* failed, const QString& error) {
-                         if (done || failed != action) {
-                             return;
-                         }
-                         done = true;
-                         out = {false, error, {}};
-                         loop.quit();
-                     });
-    QTimer::singleShot(timeout_ms, &ctx, [&, controller]() {
+    const auto settle = [&done, &out, &loop](const AppActionResult& result) {
         if (done) {
             return;
         }
         done = true;
-        out = {false, QStringLiteral("Action timed out after %1 ms").arg(timeout_ms), {}};
-        // Request cancellation of the still-running action on the controller's thread
-        // before we abandon it. Without this a timed-out action leaves the controller
-        // marked busy, and every later action would be silently queued behind it.
-        // Best-effort: a well-behaved action honors the cooperative cancel and unwinds.
-        QMetaObject::invokeMethod(
-            controller,
-            [controller]() { controller->cancelCurrentAction(); },
-            Qt::QueuedConnection);
+        out = result;
         loop.quit();
+    };
+
+    QObject::connect(controller,
+                     &QuickActionController::actionExecutionComplete,
+                     &ctx,
+                     [&settle, action](QuickAction* finished) {
+                         if (finished == action) {
+                             settle(resultFromAction(action));
+                         }
+                     });
+    QObject::connect(controller,
+                     &QuickActionController::actionError,
+                     &ctx,
+                     [&settle, action](QuickAction* failed, const QString& error) {
+                         if (failed == action) {
+                             settle({false, error, {}});
+                         }
+                     });
+    // On timeout, cancel the still-running action before abandoning it: without that a
+    // timed-out action leaves the controller busy and every later action queues behind it.
+    QTimer::singleShot(timeout_ms, &ctx, [&settle, &done, controller, timeout_ms]() {
+        if (!done) {
+            requestControllerCancel(controller);
+            settle({false, QStringLiteral("Action timed out after %1 ms").arg(timeout_ms), {}});
+        }
     });
+    watchForStop(&ctx, should_cancel, controller, settle, done);
 
     // Run the action on the controller's own thread; false = no GUI confirmation
     // (the assistant applies its own human-gate/restore before we get here).
@@ -212,10 +296,12 @@ int registerQuickActionsInto(QuickActionController& controller, AppActionRegistr
         // The action's own declared bound is the wait: one clock per run, so a step the action
         // is still allowed to finish is never cut off by a shorter generic ceiling here.
         const int timeout_ms = action->executionTimeoutMs();
-        AppActionInvoke invoke = [controller_ptr, name, timeout_ms](const QJsonObject&) {
-            return runQuickActionSync(controller_ptr, name, timeout_ms);
-        };
-        if (registry.registerAction(descriptor, std::move(invoke))) {
+        AppActionCancellableInvoke invoke =
+            [controller_ptr, name, timeout_ms](const QJsonObject&,
+                                               const AppActionCancelCheck& should_cancel) {
+                return runQuickActionSync(controller_ptr, name, timeout_ms, should_cancel);
+            };
+        if (registry.registerCancellableAction(descriptor, std::move(invoke))) {
             ++registered;
         }
     }

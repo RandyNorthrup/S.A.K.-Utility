@@ -12,6 +12,7 @@
 
 #include <functional>
 #include <optional>
+#include <utility>
 
 /// @file app_action_registry.h
 /// @brief App-scoped registry of headless technician actions.
@@ -56,6 +57,20 @@ struct AppActionDescriptor {
 /// its lock while a thunk runs.
 using AppActionInvoke = std::function<AppActionResult(const QJsonObject& arguments)>;
 
+/// The caller's cancel route for one invocation, polled from the thread running the action:
+/// true once the caller wants the action stopped (the assistant's Stop). An empty check never
+/// cancels.
+using AppActionCancelCheck = std::function<bool()>;
+
+/// Invoke thunk for an action that can be stopped part-way. It polls @p should_cancel, asks the
+/// work it drives to stop once that reads true, and returns promptly -- the work's own
+/// cancelled result when it confirms the stop, appActionCancelledResult() otherwise.
+using AppActionCancellableInvoke = std::function<AppActionResult(
+    const QJsonObject& arguments, const AppActionCancelCheck& should_cancel)>;
+
+/// The result an action reports when a Stop ended it before it finished.
+[[nodiscard]] AppActionResult appActionCancelledResult();
+
 /// Thread-safe registry. Registration happens once at app startup (GUI thread);
 /// listing and invocation happen from the AI worker thread. A read/write lock lets
 /// many readers enumerate concurrently while registration is exclusive.
@@ -74,6 +89,16 @@ public:
                         AppActionInvoke invoke,
                         QString* error = nullptr);
 
+    /// Register an action whose thunk takes the caller's cancel route (same rules as
+    /// registerAction).
+    bool registerCancellableAction(const AppActionDescriptor& descriptor,
+                                   AppActionCancellableInvoke invoke,
+                                   QString* error = nullptr);
+
+    /// Whether a Stop reaches this action part-way (registered with registerCancellableAction).
+    /// Any other action runs to its own end once started.
+    [[nodiscard]] bool isCancellable(const QString& id) const;
+
     [[nodiscard]] bool contains(const QString& id) const;
     [[nodiscard]] std::optional<AppActionDescriptor> descriptor(const QString& id) const;
 
@@ -86,21 +111,45 @@ public:
 
     /// Invoke an action by id. Unknown id sets @p error and returns a failed result.
     /// The thunk is copied out under the lock and called with the lock released, so a
-    /// long-running or GUI-marshalling action never blocks other readers.
+    /// long-running or GUI-marshalling action never blocks other readers. @p should_cancel
+    /// reaches a cancellable action's thunk; any other action ignores it.
     [[nodiscard]] AppActionResult invoke(const QString& id,
                                          const QJsonObject& arguments,
-                                         QString* error = nullptr) const;
+                                         QString* error = nullptr,
+                                         const AppActionCancelCheck& should_cancel = {}) const;
 
     [[nodiscard]] int count() const;
 
 private:
     struct Entry {
         AppActionDescriptor descriptor;
-        AppActionInvoke invoke;
+        AppActionCancellableInvoke invoke;
+        bool cancellable{false};
     };
+
+    bool storeAction(const AppActionDescriptor& descriptor,
+                     AppActionCancellableInvoke invoke,
+                     bool cancellable,
+                     QString* error);
 
     mutable QReadWriteLock m_lock;
     QMap<QString, Entry> m_actions;
+};
+
+/// The registration callback the action catalogs call: one call shape for both thunk kinds. A
+/// thunk that takes the caller's cancel route goes to add_cancellable (a Stop reaches it
+/// part-way); any other goes to add_plain and runs to its own end once started.
+struct AppActionAdder {
+    std::function<void(const AppActionDescriptor&, AppActionInvoke)> add_plain;
+    std::function<void(const AppActionDescriptor&, AppActionCancellableInvoke)> add_cancellable;
+
+    void operator()(const AppActionDescriptor& descriptor, AppActionInvoke invoke) const {
+        add_plain(descriptor, std::move(invoke));
+    }
+    void operator()(const AppActionDescriptor& descriptor,
+                    AppActionCancellableInvoke invoke) const {
+        add_cancellable(descriptor, std::move(invoke));
+    }
 };
 
 /// Serialize one descriptor to the catalog JSON shape (shared by the registry and

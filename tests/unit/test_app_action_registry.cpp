@@ -35,8 +35,78 @@ private Q_SLOTS:
     void invokeUnknownId_returnsFailureAndError();
     void listAndCatalog_areSortedAndCarryRiskFlags();
     void invokeDoesNotHoldLock_soThunkMayReenterRegistry();
+    void cancellableThunkReceivesTheCallersCancelRoute();
+    void plainThunkIsNotCancellable();
 };
 
+// A Stop reaches a cancellable action through invoke(): the thunk sees the caller's check, and
+// what it reads is what the caller says now (a polled route, not a copy taken at registration).
+void AppActionRegistryTests::cancellableThunkReceivesTheCallersCancelRoute() {
+    AppActionRegistry registry;
+    QVERIFY(registry.registerCancellableAction(
+        readOnlyDescriptor(QStringLiteral("diag.long_scan")),
+        [](const QJsonObject&, const sak::AppActionCancelCheck& should_cancel) {
+            if (should_cancel && should_cancel()) {
+                return sak::appActionCancelledResult();
+            }
+            return AppActionResult{true, QStringLiteral("ran to the end"), {}};
+        }));
+    QVERIFY(registry.isCancellable(QStringLiteral("diag.long_scan")));
+
+    bool stop = false;
+    const sak::AppActionCancelCheck check = [&stop]() {
+        return stop;
+    };
+    QVERIFY(registry.invoke(QStringLiteral("diag.long_scan"), {}, nullptr, check).success);
+    stop = true;
+    const AppActionResult stopped =
+        registry.invoke(QStringLiteral("diag.long_scan"), {}, nullptr, check);
+    QVERIFY(!stopped.success);
+    QCOMPARE(stopped.message, QStringLiteral("Action cancelled"));
+    QVERIFY(stopped.data.value(QStringLiteral("cancelled")).toBool());
+    // No route at all is "never cancelled", not "cancelled".
+    QVERIFY(registry.invoke(QStringLiteral("diag.long_scan"), {}).success);
+
+    // The same registration rules apply: a null cancellable thunk is refused.
+    QString error;
+    QVERIFY(!registry.registerCancellableAction(readOnlyDescriptor(QStringLiteral("diag.null")),
+                                                sak::AppActionCancellableInvoke{},
+                                                &error));
+    QCOMPARE(error, QStringLiteral("App action 'diag.null' has no invoke handler"));
+}
+
+void AppActionRegistryTests::plainThunkIsNotCancellable() {
+    AppActionRegistry registry;
+    QVERIFY(registry.registerAction(readOnlyDescriptor(QStringLiteral("diag.quick")),
+                                    [](const QJsonObject&) {
+                                        return AppActionResult{true, QStringLiteral("done"), {}};
+                                    }));
+    QVERIFY(!registry.isCancellable(QStringLiteral("diag.quick")));
+    QVERIFY(!registry.isCancellable(QStringLiteral("diag.unknown")));
+    // A plain action ignores the route and runs to its end.
+    QVERIFY(
+        registry.invoke(QStringLiteral("diag.quick"), {}, nullptr, []() { return true; }).success);
+
+    // The catalogs' adder routes each thunk shape to the matching registration.
+    const sak::AppActionAdder add{
+        .add_plain =
+            [&registry](const AppActionDescriptor& descriptor, sak::AppActionInvoke invoke) {
+                registry.registerAction(descriptor, std::move(invoke));
+            },
+        .add_cancellable =
+            [&registry](const AppActionDescriptor& descriptor,
+                        sak::AppActionCancellableInvoke invoke) {
+                registry.registerCancellableAction(descriptor, std::move(invoke));
+            }};
+    add(readOnlyDescriptor(QStringLiteral("diag.plain")),
+        [](const QJsonObject&) { return AppActionResult{true, {}, {}}; });
+    add(readOnlyDescriptor(QStringLiteral("diag.stoppable")),
+        [](const QJsonObject&, const sak::AppActionCancelCheck&) {
+            return AppActionResult{true, {}, {}};
+        });
+    QVERIFY(!registry.isCancellable(QStringLiteral("diag.plain")));
+    QVERIFY(registry.isCancellable(QStringLiteral("diag.stoppable")));
+}
 void AppActionRegistryTests::registerAndInvoke_roundTripsResult() {
     AppActionRegistry registry;
     QJsonObject seen_args;

@@ -6,13 +6,16 @@
 #include "sak/app_action_service.h"
 #include "sak/quick_action.h"
 #include "sak/quick_action_controller.h"
+#include "sak/worker_base.h"
 
+#include <QElapsedTimer>
 #include <QJsonObject>
 #include <QTimer>
 #include <QtTest/QtTest>
 #include <QVector>
 
 #include <atomic>
+#include <expected>
 #include <memory>
 
 using sak::AppActionDescriptor;
@@ -46,6 +49,9 @@ public:
             Q_EMIT failed(error);
         });
     }
+    void scheduleCancelled(int delay_ms) {
+        QTimer::singleShot(delay_ms, this, [this]() { Q_EMIT cancelled(); });
+    }
     void scheduleBatchesThenDone(int delay_ms) {
         QTimer::singleShot(delay_ms, this, [this]() {
             Q_EMIT batch(10);
@@ -58,6 +64,7 @@ Q_SIGNALS:
     void done(int value);
     void failed(const QString& error);
     void batch(int value);
+    void cancelled();
 };
 
 }  // namespace
@@ -99,9 +106,13 @@ public:
         while (!m_released.load() && !isCancelled()) {
             QThread::msleep(2);
         }
+        // A run ended by cancel reports itself cancelled, like the real actions do.
+        const bool cancelled = isCancelled() && !m_released.load();
         ExecutionResult result;
-        result.success = m_succeed;
-        result.message = m_succeed ? QStringLiteral("probe ok") : QStringLiteral("probe fail");
+        result.success = m_succeed && !cancelled;
+        result.message = cancelled   ? QStringLiteral("probe cancelled")
+                         : m_succeed ? QStringLiteral("probe ok")
+                                     : QStringLiteral("probe fail");
         result.files_processed = 7;
         setExecutionResult(result);
         Q_EMIT executionComplete(result);
@@ -114,6 +125,20 @@ private:
     bool m_read_only;
     int m_timeout_ms;
     std::atomic_bool m_released{false};
+};
+
+// A worker that runs until it is asked to stop -- what a long scan looks like to its owner.
+class SpinUntilStoppedWorker : public WorkerBase {
+public:
+    ~SpinUntilStoppedWorker() override { stopAndJoin(); }
+
+protected:
+    auto execute() -> std::expected<void, sak::error_code> override {
+        while (!stopRequested()) {
+            QThread::msleep(2);
+        }
+        return {};
+    }
 };
 
 }  // namespace
@@ -136,6 +161,13 @@ private Q_SLOTS:
     void asyncInvocation_timesOut();
     void asyncInvocation_firstWins();
     void asyncInvocation_accumulatesBatchesThenFinishes();
+    void asyncInvocation_stopBeforeStartNeverStartsTheWork();
+    void asyncInvocation_stopAsksTheOpAndTakesItsOwnResult();
+    void asyncInvocation_unansweredStopSettlesAfterTheGrace();
+    void asyncInvocation_stopWithoutStopRequestSettlesAtOnce();
+    void runQuickActionSync_stopCancelsTheRunningAction();
+    void registerQuickActionsInto_stopReachesTheAction();
+    void stopWorkerOnCancel_settlesOnTheWorkersCancelled();
 };
 
 void AppActionServiceTests::runQuickActionSync_returnsResultSynchronously() {
@@ -404,5 +436,143 @@ void AppActionServiceTests::asyncInvocation_accumulatesBatchesThenFinishes() {
     QCOMPARE(result.data.value(QStringLiteral("sum")).toInt(), 30);
 }
 
+// A Stop that came before the work started: the work is never started at all.
+void AppActionServiceTests::asyncInvocation_stopBeforeStartNeverStartsTheWork() {
+    AsyncActionInvocation inv(5000, []() { return true; });
+    bool started = false;
+    const AppActionResult result = inv.run([&started]() { started = true; });
+    QVERIFY(!started);
+    QVERIFY(!result.success);
+    QCOMPARE(result.message, QStringLiteral("Action cancelled"));
+    QVERIFY(result.data.value(QStringLiteral("cancelled")).toBool());
+}
+
+// A Stop while the op runs asks the op to stop and returns the op's OWN terminal result -- the
+// truth about what it did -- well inside the timeout.
+void AppActionServiceTests::asyncInvocation_stopAsksTheOpAndTakesItsOwnResult() {
+    FakeAsyncOp op;  // never completes on its own
+    bool stop = false;
+    AsyncActionInvocation inv(5000, [&stop]() { return stop; });
+    bool stop_requested = false;
+    inv.setStopRequest([&op, &stop_requested]() {
+        stop_requested = true;
+        op.scheduleCancelled(10);
+    });
+    QObject::connect(&op, &FakeAsyncOp::cancelled, inv.context(), [&inv]() {
+        inv.finish({false, QStringLiteral("op stopped after 3 items"), {}});
+    });
+    QElapsedTimer elapsed;
+    elapsed.start();
+    const AppActionResult result =
+        inv.run([&stop]() { QTimer::singleShot(30, [&stop]() { stop = true; }); });
+    QVERIFY(stop_requested);
+    QVERIFY(!result.success);
+    QCOMPARE(result.message, QStringLiteral("op stopped after 3 items"));
+    QVERIFY2(elapsed.elapsed() < 4000, "a Stop must not wait out the action's timeout");
+}
+
+// An op that does not answer a Stop is not waited on past the grace: the wait settles as
+// cancelled and the caller's teardown stops the work.
+void AppActionServiceTests::asyncInvocation_unansweredStopSettlesAfterTheGrace() {
+    FakeAsyncOp op;  // never completes, ignores the stop request
+    bool stop = false;
+    AsyncActionInvocation inv(5000, [&stop]() { return stop; }, /*stop_grace_ms=*/50);
+    bool stop_requested = false;
+    inv.setStopRequest([&stop_requested]() { stop_requested = true; });
+    QObject::connect(&op, &FakeAsyncOp::done, inv.context(), [&inv](int) {
+        inv.finish({true, QStringLiteral("ok"), {}});
+    });
+    QElapsedTimer elapsed;
+    elapsed.start();
+    const AppActionResult result =
+        inv.run([&stop]() { QTimer::singleShot(30, [&stop]() { stop = true; }); });
+    QVERIFY(stop_requested);
+    QCOMPARE(result.message, QStringLiteral("Action cancelled"));
+    QVERIFY2(elapsed.elapsed() < 4000, "an unanswered Stop must settle after the grace");
+}
+
+void AppActionServiceTests::asyncInvocation_stopWithoutStopRequestSettlesAtOnce() {
+    FakeAsyncOp op;  // never emits
+    bool stop = false;
+    AsyncActionInvocation inv(5000, [&stop]() { return stop; });
+    QObject::connect(&op, &FakeAsyncOp::done, inv.context(), [&inv](int) {
+        inv.finish({true, QStringLiteral("ok"), {}});
+    });
+    QElapsedTimer elapsed;
+    elapsed.start();
+    const AppActionResult result =
+        inv.run([&stop]() { QTimer::singleShot(30, [&stop]() { stop = true; }); });
+    QCOMPARE(result.message, QStringLiteral("Action cancelled"));
+    QVERIFY(elapsed.elapsed() < 4000);
+}
+
+// The quick-action thunk's Stop cancels the action on its controller (the route that also reaches
+// the elevated helper), and the action -- never released by the test -- unwinds and reports
+// itself cancelled, which is what the caller is told.
+void AppActionServiceTests::runQuickActionSync_stopCancelsTheRunningAction() {
+    QuickActionController controller;
+    auto probe = std::make_unique<ProbeAction>(QStringLiteral("Stoppable Probe"));
+    ProbeAction* raw = probe.get();
+    controller.registerAction(std::move(probe));
+    auto completed = std::make_shared<int>(0);
+    QObject::connect(&controller,
+                     &QuickActionController::actionExecutionComplete,
+                     &controller,
+                     [completed](QuickAction*) { ++(*completed); });
+
+    bool stop = false;
+    QTimer::singleShot(50, &controller, [&stop]() { stop = true; });
+    QElapsedTimer elapsed;
+    elapsed.start();
+    const AppActionResult result = runQuickActionSync(
+        &controller, QStringLiteral("Stoppable Probe"), 30'000, [&stop]() { return stop; });
+    QVERIFY(!result.success);
+    QCOMPARE(result.message, QStringLiteral("probe cancelled"));
+    QCOMPARE(*completed, 1);
+    QVERIFY2(elapsed.elapsed() < 10'000, "Stop must not wait out the action's own bound");
+    raw->release();  // no-op safety: the probe already unwound on the cancel
+}
+// The quick-action thunk the registry stores carries the Stop through to the controller: the
+// same cancel as runQuickActionSync, reached by registry.invoke().
+void AppActionServiceTests::registerQuickActionsInto_stopReachesTheAction() {
+    QuickActionController controller;
+    auto probe = std::make_unique<ProbeAction>(QStringLiteral("Registered Probe"));
+    ProbeAction* raw = probe.get();
+    controller.registerAction(std::move(probe));
+    AppActionRegistry registry;
+    QCOMPARE(registerQuickActionsInto(controller, registry), 1);
+    QVERIFY(registry.isCancellable(QStringLiteral("action.registered_probe")));
+
+    bool stop = false;
+    QTimer::singleShot(50, &controller, [&stop]() { stop = true; });
+    const AppActionResult result = registry.invoke(QStringLiteral("action.registered_probe"),
+                                                   QJsonObject{},
+                                                   nullptr,
+                                                   [&stop]() { return stop; });
+    QVERIFY(!result.success);
+    QCOMPARE(result.message, QStringLiteral("probe cancelled"));
+    raw->release();
+}
+
+// A WorkerBase-driven action settles on the worker's own cancelled() once Stop asks it to stop,
+// well before the 15 s grace a silent op would get.
+void AppActionServiceTests::stopWorkerOnCancel_settlesOnTheWorkersCancelled() {
+    const auto worker = sak::makeWorker<SpinUntilStoppedWorker>();
+    bool stop = false;
+    AsyncActionInvocation inv(5000, [&stop]() { return stop; });
+    sak::stopWorkerOnCancel(inv, *worker);
+    QObject::connect(worker.get(), &WorkerBase::finished, inv.context(), [&inv]() {
+        inv.finish({true, QStringLiteral("ran to the end"), {}});
+    });
+    QElapsedTimer elapsed;
+    elapsed.start();
+    const AppActionResult result = inv.run([&worker, &stop]() {
+        worker->start();
+        QTimer::singleShot(30, [&stop]() { stop = true; });
+    });
+    QVERIFY(!result.success);
+    QCOMPARE(result.message, QStringLiteral("Action cancelled"));
+    QVERIFY2(elapsed.elapsed() < 4000, "the worker's cancelled() must settle the Stop");
+}
 QTEST_MAIN(AppActionServiceTests)
 #include "test_app_action_service.moc"

@@ -46,6 +46,7 @@
 #include <QComboBox>
 #include <QDialog>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -1052,6 +1053,101 @@ private Q_SLOTS:
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
                  QStringLiteral("app_action_not_found"));
+    }
+
+    // Stop reaches a running app action: the panel hands the registry its tool-run cancel
+    // route, so a cancellable action sees the Stop and ends cancelled instead of running on to
+    // its own ceiling. (The Stop is requested up front; a panel that passed no route would let
+    // this action wait its full 10 s and fail with "Stop never reached the action".)
+    void appActionRunPassesStopToTheAction() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        AppActionDescriptor descriptor;
+        descriptor.id = QStringLiteral("test.waits_for_stop");
+        descriptor.title = QStringLiteral("Waits for Stop");
+        descriptor.category = QStringLiteral("diagnostics");
+        descriptor.read_only = true;
+        QVERIFY(panel.m_appActionRegistry.registerCancellableAction(
+            descriptor, [](const QJsonObject&, const AppActionCancelCheck& should_cancel) {
+                QElapsedTimer waited;
+                waited.start();
+                while (!(should_cancel && should_cancel())) {
+                    if (waited.elapsed() > 10'000) {
+                        return AppActionResult{false,
+                                               QStringLiteral("Stop never reached the action"),
+                                               {}};
+                    }
+                    QThread::msleep(5);
+                }
+                return appActionCancelledResult();
+            }));
+        panel.m_activeToolRunToken = ai::CancellationToken::createRoot(QStringLiteral("tool-run"));
+        panel.m_activeToolRunToken.cancel(QStringLiteral("user_cancelled"));
+
+        const QJsonObject result = panel.runAppActionRun(QStringLiteral("test.waits_for_stop"),
+                                                         QJsonObject{});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("message")).toString(),
+                 QStringLiteral("Action cancelled"));
+    }
+
+    // Every app action that drives async work, and every quick action (whose cancel reaches the
+    // elevated helper), is registered cancellable -- pinned exactly, so a new async action that
+    // forgets its cancel route shows up here.
+    void appActionStopReachesEveryAsyncAction() {
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        QStringList cancellable;
+        for (const AppActionDescriptor& descriptor : panel.m_appActionRegistry.list()) {
+            if (panel.m_appActionRegistry.isCancellable(descriptor.id)) {
+                cancellable << descriptor.id;
+            }
+        }
+        cancellable.sort();
+        QStringList expected{QStringLiteral("action.bitlocker_key_backup"),
+                             QStringLiteral("action.check_disk_errors"),
+                             QStringLiteral("action.generate_system_report"),
+                             QStringLiteral("action.microsoft_defender_full_scan"),
+                             QStringLiteral("action.microsoft_defender_quick_scan"),
+                             QStringLiteral("action.microsoft_defender_signature_update"),
+                             QStringLiteral("action.optimize_power_settings"),
+                             QStringLiteral("action.reset_network_settings"),
+                             QStringLiteral("action.screenshot_settings"),
+                             QStringLiteral("action.verify_system_files"),
+                             QStringLiteral("diagnostics.run_benchmark"),
+                             QStringLiteral("imaging.flash_image"),
+                             QStringLiteral("network.mtr"),
+                             QStringLiteral("network.ping"),
+                             QStringLiteral("network.port_scan"),
+                             QStringLiteral("network.traceroute"),
+                             QStringLiteral("organizer.find_duplicates"),
+                             QStringLiteral("organizer.organize_directory"),
+                             QStringLiteral("organizer.preview_organize"),
+                             QStringLiteral("partition.apply_operation"),
+                             QStringLiteral("search.find_in_files"),
+                             QStringLiteral("software.clean_leftovers"),
+                             QStringLiteral("software.uninstall_program"),
+                             QStringLiteral("software.uninstall_uwp_app")};
+        expected.sort();
+        QCOMPARE(cancellable, expected);
+    }
+
+    // A real async action end to end: a Stop requested before the file search starts means the
+    // search never starts and reports itself cancelled.
+    void appActionStopReachesARealFileSearch() {
+        QTemporaryDir root;
+        QVERIFY(root.isValid());
+        AiAssistantPanel panel;
+        panel.ensureAppActionService();
+        panel.m_activeToolRunToken = ai::CancellationToken::createRoot(QStringLiteral("tool-run"));
+        panel.m_activeToolRunToken.cancel(QStringLiteral("user_cancelled"));
+        const QJsonObject result = panel.runAppActionRun(
+            QStringLiteral("search.find_in_files"),
+            QJsonObject{{QStringLiteral("root_path"), root.path()},
+                        {QStringLiteral("pattern"), QStringLiteral("needle")}});
+        QVERIFY(!result.value(QStringLiteral("success")).toBool());
+        QCOMPARE(result.value(QStringLiteral("message")).toString(),
+                 QStringLiteral("Action cancelled"));
     }
 
     // W1a: the read-only technician ops are listed alongside the QuickActions with

@@ -7833,7 +7833,10 @@ AppActionResult AiAssistantPanel::invokeAppActionWithStaging(const QString& acti
         m_appActionStagingDir->setAutoRemove(false);
         m_appActionService->setOutputDirectory(m_appActionStagingDir->path());
     }
-    AppActionResult run = m_appActionRegistry.invoke(action_id, action_args, error_message);
+    // Stop reaches the action: a cancellable action (every async one, and the quick actions,
+    // whose cancel reaches the elevated helper) polls this and stops part-way.
+    AppActionResult run =
+        m_appActionRegistry.invoke(action_id, action_args, error_message, toolCallCancelCheck());
     if (m_appActionStagingDir && !publishStagedAppActionArtifacts(m_conversationStore.get(),
                                                                   m_appActionStagingDir->path(),
                                                                   action_id,

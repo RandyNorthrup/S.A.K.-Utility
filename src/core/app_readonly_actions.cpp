@@ -1408,7 +1408,7 @@ QJsonObject serializeSearch(const QVector<SearchMatch>& matches, int total_files
                        {QStringLiteral("matches"), listed}};
 }
 
-AppActionResult searchFiles(const QJsonObject& args) {
+AppActionResult searchFiles(const QJsonObject& args, const AppActionCancelCheck& should_cancel) {
     const QString root = args.value(QStringLiteral("root_path")).toString().trimmed();
     const QString pattern = args.value(QStringLiteral("pattern")).toString();
     if (root.isEmpty() || pattern.isEmpty()) {
@@ -1433,15 +1433,15 @@ AppActionResult searchFiles(const QJsonObject& args) {
     // controller loads/persists shared preferences and prepends the pattern to the
     // user's on-disk search history, which would (a) be a write from a "read-only"
     // op and (b) race the unlocked ConfigManager singleton off the GUI thread. The
-    // worker touches neither. It runs on its own thread and posts results back,
-    // drained by the local event loop; its WorkerPtr (destroyed last) joins it on teardown or
-    // retains an overrun until it ends, so a timed-out search is reaped, never terminated.
+    // worker touches neither. It runs on its own thread and posts results back, drained by the
+    // local event loop; its WorkerPtr (destroyed last) joins it on teardown or retains an overrun
+    // until it ends, so a timed-out or stopped search is reaped, never terminated.
     const auto owned_worker = sak::makeWorker<AdvancedSearchWorker>(config);
     AdvancedSearchWorker& worker = *owned_worker;
-    AsyncActionInvocation inv;
+    AsyncActionInvocation inv(kDefaultAsyncActionTimeoutMs, should_cancel);
+    stopWorkerOnCancel(inv, worker);
     auto matches = std::make_shared<QVector<SearchMatch>>();
     auto file_count = std::make_shared<int>(0);
-
     QObject::connect(&worker,
                      &AdvancedSearchWorker::resultsReady,
                      inv.context(),
@@ -1580,7 +1580,7 @@ std::optional<AppActionResult> validateDupInputs(const QStringList& dirs) {
     return std::nullopt;
 }
 
-AppActionResult findDuplicates(const QJsonObject& args) {
+AppActionResult findDuplicates(const QJsonObject& args, const AppActionCancelCheck& should_cancel) {
     const QStringList dirs = dupDirectoriesFromArgs(args);
     if (const std::optional<AppActionResult> error = validateDupInputs(dirs)) {
         return *error;
@@ -1603,7 +1603,8 @@ AppActionResult findDuplicates(const QJsonObject& args) {
     const sak::WorkerPtr<DuplicateFinderWorker> owned_worker =
         sak::makeWorker<DuplicateFinderWorker>(config);
     DuplicateFinderWorker& worker = *owned_worker;
-    AsyncActionInvocation inv(kDupScanTimeoutMs);
+    AsyncActionInvocation inv(kDupScanTimeoutMs, should_cancel);
+    stopWorkerOnCancel(inv, worker);
     QObject::connect(&worker, &WorkerBase::finished, inv.context(), [&inv, &worker]() {
         int total_dupes = 0;
         qint64 total_wasted = 0;
@@ -1721,7 +1722,8 @@ QJsonObject serializePreviewPlan(const std::vector<OrganizerWorker::MoveOperatio
                        {QStringLiteral("plan_truncated"), plan_truncated}};
 }
 
-AppActionResult previewOrganize(const QJsonObject& args) {
+AppActionResult previewOrganize(const QJsonObject& args,
+                                const AppActionCancelCheck& should_cancel) {
     const QString target = args.value(QStringLiteral("target_directory")).toString().trimmed();
     const QMap<QString, QStringList> mapping =
         categoryMappingFromArgs(args.value(QStringLiteral("category_mapping")).toObject());
@@ -1744,7 +1746,8 @@ AppActionResult previewOrganize(const QJsonObject& args) {
     // a still-running scan is reaped, never leaked.
     const sak::WorkerPtr<OrganizerWorker> owned_worker = sak::makeWorker<OrganizerWorker>(config);
     OrganizerWorker& worker = *owned_worker;
-    AsyncActionInvocation inv(kOrganizePreviewTimeoutMs);
+    AsyncActionInvocation inv(kOrganizePreviewTimeoutMs, should_cancel);
+    stopWorkerOnCancel(inv, worker);
     QObject::connect(&worker, &WorkerBase::finished, inv.context(), [&inv, &worker, target]() {
         const bool truncated = worker.planTruncated();
         const QJsonObject data =
@@ -2593,9 +2596,10 @@ bool memoryBenchmarkMeasurementOk(const MemoryBenchmarkResult& r) {
 // suite is pure compute (no filesystem or system change), so it stays read-only; it consumes CPU
 // transiently. worker.result() is valid once finished has fired (written on the worker thread
 // before the signal, so happens-before holds). requestStop() after run() reaps a timed-out run.
-AppActionResult runCpuBenchmark() {
+AppActionResult runCpuBenchmark(const AppActionCancelCheck& should_cancel) {
     CpuBenchmarkWorker worker;
-    AsyncActionInvocation inv(kBenchmarkTimeoutMs);
+    AsyncActionInvocation inv(kBenchmarkTimeoutMs, should_cancel);
+    stopWorkerOnCancel(inv, worker);
     QObject::connect(&worker, &WorkerBase::finished, inv.context(), [&inv, &worker]() {
         const CpuBenchmarkResult& r = worker.result();
         if (!cpuBenchmarkMeasurementOk(r)) {
@@ -2624,9 +2628,10 @@ AppActionResult runCpuBenchmark() {
 // Same bridge for the memory benchmark engine. Peak transient footprint is bounded (256 MB
 // bandwidth buffers + a 64 MB latency array + a single <=1 GB alloc probe, all freed immediately);
 // no persistent change, so read-only.
-AppActionResult runMemoryBenchmark() {
+AppActionResult runMemoryBenchmark(const AppActionCancelCheck& should_cancel) {
     MemoryBenchmarkWorker worker;
-    AsyncActionInvocation inv(kBenchmarkTimeoutMs);
+    AsyncActionInvocation inv(kBenchmarkTimeoutMs, should_cancel);
+    stopWorkerOnCancel(inv, worker);
     QObject::connect(&worker, &WorkerBase::finished, inv.context(), [&inv, &worker]() {
         const MemoryBenchmarkResult& r = worker.result();
         if (!memoryBenchmarkMeasurementOk(r)) {
@@ -2659,13 +2664,14 @@ AppActionResult runMemoryBenchmark() {
 // exposed -- both are pure in-memory workloads with no persistent change, so the op stays
 // read-only. The DISK benchmark is deliberately NOT exposed here: it writes a multi-GB test file
 // to a drive (a mutating side effect + wear), so it belongs on the mutating path if ever added.
-AppActionResult benchmarkSystem(const QJsonObject& args) {
+AppActionResult benchmarkSystem(const QJsonObject& args,
+                                const AppActionCancelCheck& should_cancel) {
     const QString target = args.value(QStringLiteral("target")).toString().trimmed().toLower();
     if (target.isEmpty() || target == QStringLiteral("cpu")) {
-        return runCpuBenchmark();
+        return runCpuBenchmark(should_cancel);
     }
     if (target == QStringLiteral("memory")) {
-        return runMemoryBenchmark();
+        return runMemoryBenchmark(should_cancel);
     }
     return {false,
             QStringLiteral("benchmark 'target' must be \"cpu\" or \"memory\" (the disk benchmark "
@@ -4478,8 +4484,10 @@ QJsonObject serializePortScan(const QString& target, const QVector<PortScanResul
 // show 100% loss / target-not-reached / all-filtered -- like a failed DNS lookup); a
 // non-empty error() (e.g. a resolve failure, which also emits *Complete) is a failure.
 AppActionResult driveNetworkProbe(NetworkProbeWorker& worker,
+                                  const AppActionCancelCheck& should_cancel,
                                   const std::function<AppActionResult()>& on_captured) {
-    AsyncActionInvocation inv(kNetworkProbeTimeoutMs);
+    AsyncActionInvocation inv(kNetworkProbeTimeoutMs, should_cancel);
+    inv.setStopRequest([&worker]() { worker.cancelExecution(); });
     QObject::connect(
         &worker, &WorkerBase::finished, inv.context(), [&inv, &worker, &on_captured]() {
             if (worker.captured() && worker.error().isEmpty()) {
@@ -4503,7 +4511,7 @@ AppActionResult driveNetworkProbe(NetworkProbeWorker& worker,
     return result;
 }
 
-AppActionResult pingHost(const QJsonObject& args) {
+AppActionResult pingHost(const QJsonObject& args, const AppActionCancelCheck& should_cancel) {
     const QString target = args.value(QStringLiteral("target")).toString().trimmed();
     if (target.isEmpty()) {
         return {false, QStringLiteral("ping requires a 'target' argument"), {}};
@@ -4518,7 +4526,7 @@ AppActionResult pingHost(const QJsonObject& args) {
     const sak::WorkerPtr<NetworkProbeWorker> owned_worker =
         sak::makeWorker<NetworkProbeWorker>(pingConfigFromArgs(target, args));
     NetworkProbeWorker& worker = *owned_worker;
-    return driveNetworkProbe(worker, [&worker, target]() {
+    return driveNetworkProbe(worker, should_cancel, [&worker, target]() {
         const PingResult& r = worker.pingResult();
         // QString::arg is not printf: it does not collapse "%%". "%4% loss" fills %4 with
         // the number and leaves the trailing "% loss" literal.
@@ -4532,7 +4540,7 @@ AppActionResult pingHost(const QJsonObject& args) {
     });
 }
 
-AppActionResult tracerouteHost(const QJsonObject& args) {
+AppActionResult tracerouteHost(const QJsonObject& args, const AppActionCancelCheck& should_cancel) {
     const QString target = args.value(QStringLiteral("target")).toString().trimmed();
     if (target.isEmpty()) {
         return {false, QStringLiteral("traceroute requires a 'target' argument"), {}};
@@ -4547,7 +4555,7 @@ AppActionResult tracerouteHost(const QJsonObject& args) {
     const sak::WorkerPtr<NetworkProbeWorker> owned_worker =
         sak::makeWorker<NetworkProbeWorker>(tracerouteConfigFromArgs(target, args));
     NetworkProbeWorker& worker = *owned_worker;
-    return driveNetworkProbe(worker, [&worker, target]() {
+    return driveNetworkProbe(worker, should_cancel, [&worker, target]() {
         const TracerouteResult& r = worker.tracerouteResult();
         const QString message =
             r.reachedTarget
@@ -4557,7 +4565,7 @@ AppActionResult tracerouteHost(const QJsonObject& args) {
     });
 }
 
-AppActionResult mtrHost(const QJsonObject& args) {
+AppActionResult mtrHost(const QJsonObject& args, const AppActionCancelCheck& should_cancel) {
     const QString target = args.value(QStringLiteral("target")).toString().trimmed();
     if (target.isEmpty()) {
         return {false, QStringLiteral("mtr requires a 'target' argument"), {}};
@@ -4573,7 +4581,7 @@ AppActionResult mtrHost(const QJsonObject& args) {
     const sak::WorkerPtr<NetworkProbeWorker> owned_worker =
         sak::makeWorker<NetworkProbeWorker>(mtrConfigFromArgs(target, args));
     NetworkProbeWorker& worker = *owned_worker;
-    return driveNetworkProbe(worker, [&worker, target]() {
+    return driveNetworkProbe(worker, should_cancel, [&worker, target]() {
         const MtrResult& r = worker.mtrResult();
         // A resolvable target where NO hop at any TTL ever answers (offline, ICMP-filtered,
         // or an unroutable literal) leaves the hop list empty and totalCycles 0. The engine
@@ -4602,7 +4610,7 @@ AppActionResult mtrHost(const QJsonObject& args) {
     });
 }
 
-AppActionResult portScan(const QJsonObject& args) {
+AppActionResult portScan(const QJsonObject& args, const AppActionCancelCheck& should_cancel) {
     const QString target = args.value(QStringLiteral("target")).toString().trimmed();
     if (target.isEmpty()) {
         return {false, QStringLiteral("port_scan requires a 'target' argument"), {}};
@@ -4626,7 +4634,7 @@ AppActionResult portScan(const QJsonObject& args) {
     const sak::WorkerPtr<NetworkProbeWorker> owned_worker =
         sak::makeWorker<NetworkProbeWorker>(scanConfigFromArgs(target, std::move(ports), args));
     NetworkProbeWorker& worker = *owned_worker;
-    return driveNetworkProbe(worker, [&worker, target]() {
+    return driveNetworkProbe(worker, should_cancel, [&worker, target]() {
         const QVector<PortScanResult>& r = worker.portScanResult();
         int open = 0;
         int errored = 0;
@@ -4924,7 +4932,7 @@ QJsonObject previewParamsSchema() {
                        {QStringLiteral("additionalProperties"), false}};
 }
 
-using AddActionFn = std::function<void(const AppActionDescriptor&, AppActionInvoke)>;
+using AddActionFn = AppActionAdder;
 
 // Register the read-only partition ops. Split out of registerReadOnlyAppActionsInto
 // to keep that function within the length budget as the op set grows.
@@ -5385,16 +5393,39 @@ static void reportUnregisteredReadOnlyAction(const AppActionDescriptor& descript
                "app action registration rejected (duplicate/empty id or null invoke)");
 }
 
+// The read-only catalog's registration callback: counts each registration and reports any the
+// registry rejects. Split out of registerReadOnlyAppActionsInto to keep it within the length
+// budget.
+static AddActionFn readOnlyActionAdder(AppActionRegistry& registry, int* registered) {
+    const auto record =
+        [registered](const AppActionDescriptor& descriptor, bool accepted, const QString& error) {
+            if (accepted) {
+                ++*registered;
+            } else {
+                reportUnregisteredReadOnlyAction(descriptor, error);
+            }
+        };
+    return {.add_plain =
+                [&registry, record](const AppActionDescriptor& descriptor, AppActionInvoke invoke) {
+                    QString error;
+                    record(descriptor,
+                           registry.registerAction(descriptor, std::move(invoke), &error),
+                           error);
+                },
+            .add_cancellable =
+                [&registry, record](const AppActionDescriptor& descriptor,
+                                    AppActionCancellableInvoke invoke) {
+                    QString error;
+                    record(
+                        descriptor,
+                        registry.registerCancellableAction(descriptor, std::move(invoke), &error),
+                        error);
+                }};
+}
+
 int registerReadOnlyAppActionsInto(AppActionRegistry& registry) {
     int registered = 0;
-    const auto add = [&](const AppActionDescriptor& descriptor, AppActionInvoke invoke) {
-        QString error;
-        if (registry.registerAction(descriptor, std::move(invoke), &error)) {
-            ++registered;
-        } else {
-            reportUnregisteredReadOnlyAction(descriptor, error);
-        }
-    };
+    const AddActionFn add = readOnlyActionAdder(registry, &registered);
 
     registerPartitionReadOnlyOps(add);
     registerNetworkReadOnlyOps(add);

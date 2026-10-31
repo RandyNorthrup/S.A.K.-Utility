@@ -36,11 +36,11 @@ namespace {
 // elevation path is not knowable at this layer -- the run handler/bridge owns that.)
 QString registrationError(const QString& id,
                           const AppActionDescriptor& descriptor,
-                          const AppActionInvoke& invoke) {
+                          bool has_invoke) {
     if (id.isEmpty()) {
         return QStringLiteral("App action id is empty");
     }
-    if (!invoke) {
+    if (!has_invoke) {
         return QStringLiteral("App action '%1' has no invoke handler").arg(id);
     }
     if (descriptor.read_only &&
@@ -59,11 +59,39 @@ QString registrationError(const QString& id,
 
 }  // namespace
 
+AppActionResult appActionCancelledResult() {
+    return {.success = false,
+            .message = QStringLiteral("Action cancelled"),
+            .data = QJsonObject{{QStringLiteral("cancelled"), true}}};
+}
+
 bool AppActionRegistry::registerAction(const AppActionDescriptor& descriptor,
                                        AppActionInvoke invoke,
                                        QString* error) {
+    // An action that cannot be stopped part-way ignores the caller's cancel route; wrapping it
+    // keeps one stored shape. A null thunk stays null so registration refuses it.
+    AppActionCancellableInvoke wrapped;
+    if (invoke) {
+        wrapped = [plain = std::move(invoke)](const QJsonObject& arguments,
+                                              const AppActionCancelCheck&) {
+            return plain(arguments);
+        };
+    }
+    return storeAction(descriptor, std::move(wrapped), /*cancellable=*/false, error);
+}
+
+bool AppActionRegistry::registerCancellableAction(const AppActionDescriptor& descriptor,
+                                                  AppActionCancellableInvoke invoke,
+                                                  QString* error) {
+    return storeAction(descriptor, std::move(invoke), /*cancellable=*/true, error);
+}
+
+bool AppActionRegistry::storeAction(const AppActionDescriptor& descriptor,
+                                    AppActionCancellableInvoke invoke,
+                                    bool cancellable,
+                                    QString* error) {
     const QString id = descriptor.id.trimmed();
-    const QString invalid = registrationError(id, descriptor, invoke);
+    const QString invalid = registrationError(id, descriptor, static_cast<bool>(invoke));
     if (!invalid.isEmpty()) {
         if (error != nullptr) {
             *error = invalid;
@@ -80,7 +108,8 @@ bool AppActionRegistry::registerAction(const AppActionDescriptor& descriptor,
     }
     AppActionDescriptor stored = descriptor;
     stored.id = id;
-    m_actions.insert(id, Entry{.descriptor = stored, .invoke = std::move(invoke)});
+    m_actions.insert(
+        id, Entry{.descriptor = stored, .invoke = std::move(invoke), .cancellable = cancellable});
     if (error != nullptr) {
         error->clear();
     }
@@ -90,6 +119,12 @@ bool AppActionRegistry::registerAction(const AppActionDescriptor& descriptor,
 bool AppActionRegistry::contains(const QString& id) const {
     const QReadLocker lock(&m_lock);
     return m_actions.contains(id.trimmed());
+}
+
+bool AppActionRegistry::isCancellable(const QString& id) const {
+    const QReadLocker lock(&m_lock);
+    const auto it = m_actions.constFind(id.trimmed());
+    return it != m_actions.constEnd() && it->cancellable;
 }
 
 std::optional<AppActionDescriptor> AppActionRegistry::descriptor(const QString& id) const {
@@ -122,8 +157,9 @@ QJsonArray AppActionRegistry::toJsonCatalog() const {
 
 AppActionResult AppActionRegistry::invoke(const QString& id,
                                           const QJsonObject& arguments,
-                                          QString* error) const {
-    AppActionInvoke handler;
+                                          QString* error,
+                                          const AppActionCancelCheck& should_cancel) const {
+    AppActionCancellableInvoke handler;
     {
         const QReadLocker lock(&m_lock);
         const auto it = m_actions.constFind(id.trimmed());
@@ -142,7 +178,7 @@ AppActionResult AppActionRegistry::invoke(const QString& id,
     }
     // Call outside the lock: the thunk may run for a long time or marshal onto the
     // GUI thread, and must not block concurrent readers.
-    return handler(arguments);
+    return handler(arguments, should_cancel);
 }
 
 int AppActionRegistry::count() const {
