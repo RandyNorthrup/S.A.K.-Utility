@@ -74,8 +74,9 @@ struct SearchConfig {
     bool skip_symlinks = true;
 
     // Filtering
-    QStringList file_extensions;      ///< Empty = all files
-    QStringList exclude_patterns = {  ///< Exclusion regex patterns
+    QStringList file_extensions;  ///< Empty = all files
+    /// Exclusion regex patterns
+    QStringList exclude_patterns = {
         R"(\.git)",
         R"(\.svn)",
         R"(__pycache__)",
@@ -84,7 +85,8 @@ struct SearchConfig {
         R"(\.exe$)",
         R"(\.dll$)",
         R"(\.so$)",
-        R"(\.bin$)"};
+        R"(\.bin$)",
+    };
 
     // Limits
     int context_lines = kAdvancedSearchDefaultContextLines;
@@ -168,7 +170,8 @@ inline const QSet<QString> kFileMetadataExtensions = {
     // Screenwriting
     "fdx",
     "fountain",
-    "celtx"};
+    "celtx",
+};
 
 /// @brief Archive extensions that can be searched internally
 inline const QSet<QString> kArchiveExtensions = {"zip", "epub"};

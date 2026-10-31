@@ -24,7 +24,7 @@
 # mechanically instead of leaving them to be found by inspection.
 #
 # REQUIREMENTS
-#   * clang-cl, llvm-profdata and llvm-cov (LLVM 22.1.1 is installed at C:\Program Files\LLVM).
+#   * clang-cl, llvm-profdata and llvm-cov (the LLVM release nightly.yml pins, installed at C:\Program Files\LLVM).
 #     MSVC cannot produce a coverage mapping, so the coverage tree MUST be a clang-cl one.
 #   * A configured build tree with -DENABLE_COVERAGE=ON. The CMake option refuses to configure
 #     under MSVC rather than emit uninstrumented binaries whose empty report would read as full

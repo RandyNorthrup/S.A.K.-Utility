@@ -366,10 +366,10 @@ that exists for reasons that no longer apply. Owner decisions (2026-10-24):
 - Done 2026-10-24: the Current Certification State block in `docs/PARTITION_MANAGER_CERTIFICATION.md`
   is generated from the computed claim level and both certification matrices, the T3 check fails
   when it is stale, and the regex-over-prose claim checks are retired.
-- `vcpkg.json` with a pinned baseline. (Done 2026-10-24: the CI vcpkg cache key tracks the
-  runner image, its vcpkg commit, the triplet and the port list with no catch-all restore key;
-  clang-format is pinned to one version, 22.1.1, in `requirements-gates.txt` for CI and the local
-  `.venv`.)
+- Done 2026-10-30: `vcpkg.json` pins zlib, bzip2 and liblzma through its builtin-baseline,
+  installed per build tree; the CI binary cache is keyed on the runner image, the triplet and
+  vcpkg.json with no catch-all restore key. clang-format and the nightly clang-tidy are one LLVM
+  release, 23.1.3 (`requirements-gates.txt` for CI and the local `.venv`; `nightly.yml`).
 - Done 2026-10-24: certifier and writer-CLI script tests delete their run folder when they pass,
   keep failures for diagnosis, and cap leftover failed runs at the newest three
   (`scripts/run_folder_retention.ps1`). They once held over 1 TB under `build/test_results`.
