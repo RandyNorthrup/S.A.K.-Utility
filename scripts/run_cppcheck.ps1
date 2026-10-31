@@ -240,6 +240,14 @@ if ($Files -and $Files.Count -gt 0) {
         exit 0
     }
 
+    # Resolve each path against PowerShell's location NOW. cppcheck is a child process and
+    # [System.IO.Path]::GetFullPath is .NET; both resolve a relative path against the PROCESS
+    # working directory, which Set-Location does not move. An in-process caller that had
+    # Set-Location'd into a second checkout passed Test-Path above for its own file and then had
+    # cppcheck analyze the same relative path under the process directory -- the other
+    # checkout's copy -- and report on code it was never asked about.
+    $SourceFiles = @($SourceFiles | ForEach-Object { (Resolve-Path -LiteralPath $_).ProviderPath })
+
     # A header is not a translation unit. Passing one to cppcheck by itself makes
     # unusedStructMember report every member whose use lives in the corresponding .cpp as dead.
     # Analyze changed headers through all real first-party translation units instead. Include

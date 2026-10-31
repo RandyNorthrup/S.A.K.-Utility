@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import shutil
 import subprocess
 import tempfile
@@ -282,6 +283,44 @@ void Product::callback() {}
         scope, paths = self.cppcheck_input_scope(source)
         self.assertEqual(scope, "file-list")
         self.assertEqual(paths, [str(source)])
+
+    def test_relative_source_resolves_against_powershell_location(self) -> None:
+        # Set-Location moves PowerShell's location but not the process working directory, and
+        # cppcheck (a child process) resolves a relative path against the latter. The runner
+        # must hand cppcheck the file the caller named, so a relative path has to arrive
+        # absolute, resolved from the location. The process directory here is a temp folder.
+        powershell = shutil.which("powershell.exe") or shutil.which("powershell")
+        self.assertIsNotNone(powershell, "Windows PowerShell is required for the scope contract")
+        relative = "src/core/mbox_writer.cpp"
+        root_literal = str(PROJECT_ROOT).replace("'", "''")
+        runner_literal = str(RUNNER_PATH).replace("'", "''")
+        result = subprocess.run(
+            [
+                powershell,
+                "-NoProfile",
+                "-NonInteractive",
+                "-Command",
+                f"Set-Location -LiteralPath '{root_literal}'; "
+                f"& '{runner_literal}' -PrintInputScope '{relative}'; exit $LASTEXITCODE",
+            ],
+            cwd=self.root,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        paths = [
+            line.removeprefix("CPPCHECK_INPUT_PATH=")
+            for line in result.stdout.splitlines()
+            if line.startswith("CPPCHECK_INPUT_PATH=")
+        ]
+        self.assertEqual(len(paths), 1, result.stdout + result.stderr)
+        self.assertTrue(Path(paths[0]).is_absolute(), paths[0])
+        self.assertEqual(
+            os.path.normcase(paths[0]),
+            os.path.normcase(str(PROJECT_ROOT / "src" / "core" / "mbox_writer.cpp")),
+        )
 
     def test_changed_header_expands_to_real_translation_units(self) -> None:
         header = PROJECT_ROOT / "include" / "sak" / "ai_assistant_panel.h"
