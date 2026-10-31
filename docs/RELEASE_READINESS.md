@@ -40,8 +40,9 @@ keeps their history.
    reproduce the build); `msys-crypto-3.dll` (5.4 MB) left the package. FIXED 2026-10-30:
    iPerf3 3.21 -> 3.22 (esnet 3.22 notes: server use-after-free CVE-2026-101283, auth heap
    overflows CVE-2026-101276, DoS loop CVE-2026-102253; the app runs iperf3 as a server).
-3. Downloaded third-party binaries without a hash pin: smartmontools and the Trusted Signing
-   client library. (iperf3 is pinned since 2026-10-30.)
+3. Downloaded third-party binaries without a hash pin: the Trusted Signing client library.
+   (iperf3 and smartmontools are pinned since 2026-10-30; the bundled smartctl.exe is
+   byte-identical to the one in the pinned, SignPath-signed 7.5 installer.)
 4. 78 unverified findings (18 HIGH) in 14 review briefs under `docs/review_briefs/` that no ledger
    unit binds. Triage each against current code; two sampled HIGH/MEDIUM findings were already
    fixed.

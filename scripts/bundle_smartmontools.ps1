@@ -38,6 +38,27 @@ Write-Host ""
 $ToolName = "smartmontools"
 $Version = "7.5"
 
+# Pinned SHA-256 of smartmontools-$Version.win32-setup.exe: identical bytes from the GitHub
+# release RELEASE_7_5 and SourceForge, MD5 matching the release's .md5 file, Authenticode
+# signed by SignPath Foundation. -ExpectedSha256 overrides it when $Version moves.
+$PinnedSha256 = "896337FCC253220614CF8CDBD5CF2321C5AA326A37A04160A672A281E6104C70"
+if ([string]::IsNullOrWhiteSpace($ExpectedSha256)) {
+    $ExpectedSha256 = $PinnedSha256
+}
+
+# Upstream signs the installer, not the smartctl.exe inside it, so the binary itself is bound
+# to the SHA-256 it has in that pinned installer. Update both pins together with $Version.
+$PinnedSmartctlSha256 = "B5DB94E5082C042BE44994B7A4FA8F7B5C8E713B2AB1C9A560D8F7A7995EA27D"
+
+function Assert-PinnedSmartctl {
+    param([Parameter(Mandatory = $true)] [string]$Path)
+
+    $hash = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+    if ($hash -ne $PinnedSmartctlSha256) {
+        throw "smartctl.exe SHA-256 $hash does not match the pinned $PinnedSmartctlSha256 for v$Version."
+    }
+}
+
 if ([string]::IsNullOrEmpty($DestinationPath)) {
     $DestinationPath = Join-Path $PSScriptRoot "..\tools\smartmontools"
 }
@@ -61,10 +82,10 @@ Write-Host ""
 $SmartctlExe = Join-Path $DestinationPath "smartctl.exe"
 if ((Test-Path -LiteralPath $SmartctlExe) -and (-not $Force)) {
     try {
-        # Do not trust a pre-existing destination binary blindly: verify its signature
+        # Do not trust a pre-existing destination binary blindly: verify its pinned hash
         # and that it reports the expected version before short-circuiting. On any
         # failure fall through to a fresh, re-verified download rather than accepting it.
-        Assert-AuthenticodeValid -Path $SmartctlExe
+        Assert-PinnedSmartctl -Path $SmartctlExe
         $existingVersion = & $SmartctlExe --version 2>&1 | Select-String "smartctl" | Select-Object -First 1
         if ($LASTEXITCODE -ne 0 -or -not $existingVersion -or "$existingVersion" -notmatch [regex]::Escape($Version)) {
             throw "Existing smartctl.exe did not report version $Version (exit $LASTEXITCODE)."
@@ -183,8 +204,8 @@ try {
     }
 
     # The extracted path can come from a recursive search, so bind trust to the binary
-    # itself: fail closed unless the selected smartctl.exe carries a valid signature.
-    Assert-AuthenticodeValid -Path $SmartctlSrc
+    # itself: fail closed unless the selected smartctl.exe has the pinned hash.
+    Assert-PinnedSmartctl -Path $SmartctlSrc
     Copy-Item -LiteralPath $SmartctlSrc -Destination $SmartctlExe -Force
     Write-Host "Copied smartctl.exe to $DestinationPath" -ForegroundColor Green
 
