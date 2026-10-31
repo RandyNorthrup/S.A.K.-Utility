@@ -246,6 +246,7 @@ and termination-utility setup handshakes; neither changes production deadlines.
 | test_detachable_log_window | `DetachableLogWindow` | The anchored log stays inside the screen work area beside a maximized main window, opens without taking focus, ignores refills while hidden, and shows lines literally |
 | test_advanced_uninstall_panel | `AdvancedUninstallPanel` | Install-folder size measured only on demand (Measure button, off the GUI thread), cached per folder, never offered for a remote folder |
 | test_network_diagnostic_panel | `NetworkDiagnosticPanel` | The start-up adapter scan runs in interactive, startup-smoke and accessibility-audit modes, off the GUI thread, and an immediate teardown joins it |
+| test_app_installation_panel | `AppInstallationPanel` | Signal connections and the bundled Chocolatey initialization run in interactive, startup-smoke and accessibility-audit modes (a Search click reaches the handler, which finds Chocolatey initialized) |
 | test_screenshot_settings_action | `ScreenshotSettingsAction` | Report seams; only a Settings window this run opened is closed, found by EnumWindows, with no taskkill/tasklist/fixed sleeps |
 | test_backup_bitlocker_keys_action | `BackupBitlockerKeysAction` | Key-gate, backup-location screening, and refusal of a destination on a BitLocker volume whose key is in the backup |
 | test_stage_portable_release | `scripts/stage_portable_release.ps1` | Portable staging contract, including that the package ships no portable.ini |

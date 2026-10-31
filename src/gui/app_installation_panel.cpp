@@ -72,11 +72,8 @@ AppInstallationPanel::AppInstallationPanel(QWidget* parent)
     sak::logDebug("[AppInstallationPanel] constructing");
     setupUi();
     sak::logDebug("[AppInstallationPanel] setupUi complete");
-    if (qApp->property("sakAccessibilityAudit").toBool()) {
-        sak::logDebug(
-            "[AppInstallationPanel] Accessibility audit: connections and external init skipped");
-        return;
-    }
+    // Every mode -- the accessibility audit and the startup smoke included -- runs the same
+    // construction a user gets: connections and the bundled Chocolatey initialization.
     setupConnections();
     sak::logDebug("[AppInstallationPanel] setupConnections complete");
 

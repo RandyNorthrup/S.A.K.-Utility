@@ -18,7 +18,6 @@
 
 #include <QCheckBox>
 #include <QComboBox>
-#include <QCoreApplication>
 #include <QDateEdit>
 #include <QDesktopServices>
 #include <QFileDialog>
@@ -57,11 +56,6 @@ void applyCompactOstButton(QPushButton* button, const QString& style) {
     button->setStyleSheet(style);
 }
 
-bool isAccessibilityAuditMode() {
-    const auto* app = QCoreApplication::instance();
-    return (app != nullptr) && app->property("sakAccessibilityAudit").toBool();
-}
-
 }  // namespace
 
 // ============================================================================
@@ -72,15 +66,11 @@ OstConverterWidget::OstConverterWidget(QWidget* parent)
     : QWidget(parent), m_controller(std::make_unique<OstConverterController>(this)) {
     setupUi();
     connectController();
-    if (!isAccessibilityAuditMode()) {
-        loadSettings();
-    }
+    loadSettings();
 }
 
 OstConverterWidget::~OstConverterWidget() {
-    if (!isAccessibilityAuditMode()) {
-        saveSettings();
-    }
+    saveSettings();
 }
 
 // ============================================================================

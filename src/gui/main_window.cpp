@@ -474,19 +474,15 @@ MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
     startup_timer.start();
     setupUi();
     logDebug("MainWindow startup: setupUi took {} ms", startup_timer.restart());
-    if (!isAccessibilityAuditMode()) {
-        loadWindowState();
-        logDebug("MainWindow startup: loadWindowState took {} ms", startup_timer.elapsed());
-    }
+    loadWindowState();
+    logDebug("MainWindow startup: loadWindowState took {} ms", startup_timer.elapsed());
 }
 
 MainWindow::~MainWindow() {
     // Must be first: stops the tab-change status-bar handlers from running while
     // the window is being destroyed (they would dereference freed tool panels).
     m_shutting_down = true;
-    if (!isAccessibilityAuditMode()) {
-        saveWindowState();
-    }
+    saveWindowState();
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
     // The assistant's background workers dereference the panel. release() destroys it once
     // they have stopped, or reports an overrun and keeps it alive until they do -- never a
@@ -532,22 +528,21 @@ void MainWindow::setupUi() {
     logDebug("MainWindow startup: panels took {} ms", phase_timer.restart());
     createKeyboardShortcuts();
 
-    if (!isAccessibilityAuditMode()) {
-        // Apply chevron icons to the tab-bar scroll buttons.
-        // Qt creates the scroll QToolButtons lazily when tabs overflow, so we
-        // re-apply after layout and on tab changes to cover all cases.
+    // Every mode, the accessibility audit included, wires the window the way a user gets it.
+    // Apply chevron icons to the tab-bar scroll buttons.
+    // Qt creates the scroll QToolButtons lazily when tabs overflow, so we
+    // re-apply after layout and on tab changes to cover all cases.
+    QTimer::singleShot(0, this, &MainWindow::applyTabBarChevrons);
+    connect(m_tab_widget, &QTabWidget::currentChanged, this, [this](int) {
         QTimer::singleShot(0, this, &MainWindow::applyTabBarChevrons);
-        connect(m_tab_widget, &QTabWidget::currentChanged, this, [this](int) {
-            QTimer::singleShot(0, this, &MainWindow::applyTabBarChevrons);
-            updateVulnerabilityStatusBarVisibility();
+        updateVulnerabilityStatusBarVisibility();
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
-            updateAiStatusBarVisibility();
+        updateAiStatusBarVisibility();
 #endif
-        });
+    });
 
-        // Enable mouse-wheel tab switching on the tab bar
-        m_tab_widget->tabBar()->installEventFilter(this);
-    }
+    // Enable mouse-wheel tab switching on the tab bar
+    m_tab_widget->tabBar()->installEventFilter(this);
 
     updateStatus("Ready", 0);
 }
