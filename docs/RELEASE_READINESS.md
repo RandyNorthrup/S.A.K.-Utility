@@ -58,11 +58,16 @@ keeps their history.
    sources both contain release 3.1.9.3 (e0c4ce0). Its `libwim-15.dll` moves from the wimlib
    1.14.4 that ManagedWimLib 2.6.0 carries to wimlib's own 1.14.5 build, after a harness on the
    converter's `WimLibImaging` read, exported, updated and extracted a test WIM through it.
-   Pending: aria2c 1.37.0 is the latest official
-   build but embeds old c-ares/zlib (rebuild it ourselves or not). Open owner decision: the
-   converter writes the ISO with the `cdimage.exe` upstream carries, Microsoft's unsigned CDIMAGE
-   2.53m marked "For Microsoft internal use only", which comes with no license, so its
-   redistribution terms are unclear (`THIRD_PARTY_LICENSES.md`).
+   aria2c 1.37.0 (still the latest aria2) is now built here from source
+   (`scripts/build_aria2.ps1`, `tools/uup/aria2/BUILD-NOTES.md`) instead of shipping the 2023
+   official build with zlib 1.3, c-ares 1.19.1, Expat 2.5.0, SQLite 3.43.1 and libssh2 1.11.0: it
+   links zlib 1.3.2, c-ares 1.34.9, Expat 2.9.0, SQLite 3.54.1 and libssh2 1.11.1 (WinCNG)
+   statically, keeps Windows TLS and the Windows certificate store, and imports only Windows DLLs;
+   it verified a GitHub download and refused expired, wrong-host, self-signed and untrusted-root
+   certificates. Open owner decision: the converter writes the ISO with the `cdimage.exe`
+   upstream carries, Microsoft's unsigned CDIMAGE 2.53m marked "For Microsoft internal use only",
+   which comes with no license, so its redistribution terms are unclear
+   (`THIRD_PARTY_LICENSES.md`).
 3. FIXED 2026-10-30: downloaded third-party binaries without a hash pin. iperf3 and
    smartmontools are pinned (the bundled smartctl.exe is byte-identical to the one in the
    pinned, SignPath-signed 7.5 installer), and `scripts/sign-exe.ps1` pins

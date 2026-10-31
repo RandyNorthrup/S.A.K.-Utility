@@ -9,8 +9,9 @@
 # a file is present that nothing pins (a leftover no gate would ever look at again). It changes
 # nothing on a tree that verifies, so running it twice is the same as running it once.
 #
-# aria2c.exe alone can be restored here: when it is missing it is extracted from the pinned
-# official release zip and then held to the same pin as everything else.
+# Nothing is downloaded. aria2c.exe is built from the sources in tools/uup/aria2 by
+# scripts/build_aria2.ps1, and UUPMediaConverter.exe by scripts/build_uup_media_converter.ps1;
+# each script prints the SHA-256 to pin here when a rebuild changes it.
 #
 # What the converter reads, relative to UUPMediaConverter.exe:
 #   CDImage\cdimage.exe    ISO writer (UUPMediaCreator CDImageWrapper)
@@ -30,8 +31,18 @@ $ErrorActionPreference = "Stop"
 
 # Path relative to tools/uup -> SHA-256 of the exact bytes that ship.
 $Pins = [ordered]@{
-    # aria2 1.37.0 official Windows build (aria2-1.37.0-win-64bit-build1.zip).
-    "aria2c.exe"                                    = "BE2099C214F63A3CB4954B09A0BECD6E2E34660B886D4C898D260FEBFE9D70C2"
+    # aria2 1.37.0 built from source with WinTLS (aria2/BUILD-NOTES.md), with the source tarballs of
+    # aria2 and every library linked into it, the build recipe, and the license texts.
+    "aria2c.exe"                                    = "0094FC1C68AE8BFB009B955874BB590A9CDCC4449A80A94DC3912AE2E5350A80"
+    "aria2/aria2-1.37.0.tar.xz"                     = "60A420AD7085EB616CB6E2BDF0A7206D68FF3D37FB5A956DC44242EB2F79B66B"
+    "aria2/zlib-1.3.2.tar.xz"                       = "D7A0654783A4DA529D1BB793B7AD9C3318020AF77667BCAE35F95D0E42A792F3"
+    "aria2/c-ares-1.34.9.tar.gz"                    = "9364B70A12EB59A06830FB488D9357F90100DFF0D98B23EA3593A183D43E6F2F"
+    "aria2/expat-2.9.0.tar.xz"                      = "1E6371862CC31999B368C3B89B49994F0677E1BAB5F1B2B85AE3741F5D803051"
+    "aria2/sqlite-autoconf-3540100.tar.gz"          = "926EF8D3EAB93FBF6E06011901273EEC076B25594A4E1CDADD50C987F4F6D64E"
+    "aria2/libssh2-1.11.1.tar.xz"                   = "9954CB54C4F548198A7CBEBAD248BDC87DD64BD26185708A294B2B50771E3769"
+    "aria2/build_aria2.sh"                          = "B8F4F19312F959DC04D83CA3E0AEB09DEF36758E948A5780DD36B1ECC0F86F3C"
+    "aria2/NOTICE"                                  = "5130D6F6EF287F03A6F3020104D02FCB052CFCFBF43957E529E37E45788F789C"
+    "aria2/BUILD-NOTES.md"                          = "293FDB38BCB9F113F3F4D8B255F5737FF0ECF122CAE6290BC884D79EDA994EE1"
     # UUPMediaCreator 885f2e36 + the S.A.K. patch, self-contained single-file on .NET 10.0.14.
     # Rebuilt bit for bit by scripts/build_uup_media_converter.ps1 (uupmc/BUILD-NOTES.md).
     "uupmc/UUPMediaConverter.exe"                   = "D5C609FEA3A3F90AF5D119990E46CA7F5725726A8EFC690C8AE47DB63EFE8165"
@@ -52,9 +63,6 @@ $Pins = [ordered]@{
     # Upstream Settings.ini at 885f2e36 (git blob 65dff311, includes PR #194's six files).
     "uupmc/Settings/Settings.ini"                   = "3447F26FFAED3CA2FB84090B4AF6CF022D4EA4E23E7371CDD9F5980EBB165684"
 }
-
-$Aria2Url = "https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip"
-$Aria2ZipSha256 = "67D015301EEF0B612191212D564C5BB0A14B5B9C4796B76454276A4D28D9B288"
 
 # --- Functions ---------------------------------------------------------------------------------
 
@@ -78,38 +86,6 @@ function Get-Sha256 {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToUpperInvariant()
 }
 
-# Restores a missing aria2c.exe from the pinned official zip. The extracted file is verified
-# against its own pin by the main loop, like every other file.
-function Restore-Aria2 {
-    param([Parameter(Mandatory = $true)][string]$Destination)
-
-    $tempDir = Join-Path $env:TEMP "sak_uup_bundle_$(Get-Random)"
-    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
-    try {
-        $zip = Join-Path $tempDir "aria2.zip"
-        Write-Status "aria2c.exe missing; downloading $Aria2Url"
-        $global:LASTEXITCODE = 0
-        & curl.exe --fail --location --silent --show-error --output $zip $Aria2Url
-        if ($LASTEXITCODE -ne 0) {
-            throw "Download failed: curl.exe exited with code $LASTEXITCODE"
-        }
-        $zipSha = Get-Sha256 -Path $zip
-        if ($zipSha -ne $Aria2ZipSha256) {
-            throw "SHA-256 mismatch for the aria2 zip: expected $Aria2ZipSha256, got $zipSha"
-        }
-        Expand-Archive -LiteralPath $zip -DestinationPath $tempDir -Force
-        $extracted = Join-Path $tempDir "aria2-1.37.0-win-64bit-build1\aria2c.exe"
-        if (-not (Test-Path -LiteralPath $extracted -PathType Leaf)) {
-            throw "aria2c.exe not found in the pinned zip"
-        }
-        Copy-Item -LiteralPath $extracted -Destination $Destination -Force
-        Write-Success "aria2c.exe restored from the pinned release zip"
-    }
-    finally {
-        Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
-    }
-}
-
 # --- Main --------------------------------------------------------------------------------------
 
 Write-Status "=== UUP tools verification ==="
@@ -118,11 +94,6 @@ if (-not (Test-Path -LiteralPath $OutputDir -PathType Container)) {
 }
 $root = (Resolve-Path -LiteralPath $OutputDir).Path
 Write-Status "Directory: $root"
-
-$aria2Path = Join-Path $root "aria2c.exe"
-if (-not (Test-Path -LiteralPath $aria2Path)) {
-    Restore-Aria2 -Destination $aria2Path
-}
 
 $problems = @()
 foreach ($relative in $Pins.Keys) {
@@ -154,6 +125,7 @@ if ($problems.Count -gt 0) {
     foreach ($problem in $problems) {
         Write-Err $problem
     }
+    Write-Err "Rebuild a missing or changed binary with scripts/build_aria2.ps1 -Install or scripts/build_uup_media_converter.ps1 -Install."
     throw "UUP tools verification failed: $($problems.Count) problem(s) in $root"
 }
 Write-Success "=== All $($Pins.Count) UUP tool files match their pinned SHA-256 ==="

@@ -8,6 +8,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **aria2c built from source with current libraries** - The bundled downloader is still aria2
+  1.37.0, now built here from its source with zlib 1.3.2, c-ares 1.34.9, Expat 2.9.0, SQLite
+  3.54.1 and libssh2 1.11.1 instead of the 2023 official build's older copies. It keeps using
+  Windows' own TLS and certificate store and needs no extra DLLs. The sources, the build recipe
+  and the license texts ship in `tools/uup/aria2/`; `scripts/build_aria2.ps1` rebuilds it.
+
 - **UUP converter on .NET 10, rebuilt from source in the repo** - The patched UUPMediaConverter
   is now built from current upstream UUPMediaCreator with its patch kept in
   `tools/uup/uupmc/`, by `scripts/build_uup_media_converter.ps1`, which reproduces the shipped

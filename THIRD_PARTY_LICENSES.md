@@ -207,20 +207,42 @@ incorporated.
 
 ## aria2
 
-**License:** GNU General Public License v2.0 (GPLv2)
-**Version:** 1.37.0
+**License:** GNU General Public License v2.0 or later (GPLv2+)
+**Version:** 1.37.0, built by S.A.K. Utility from source
 **Website:** https://aria2.github.io/
 **Source:** https://github.com/aria2/aria2
-**Used for:** Multi-connection download manager for UUP file retrieval
-**Bundled at:** `tools/uup/aria2c.exe`
+**Used for:** Multi-connection download manager for UUP file and Linux ISO retrieval
+**Bundled at:** `tools/uup/aria2c.exe`, with its sources, license texts and
+build notes in `tools/uup/aria2/`
 
 aria2 is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free
 Software Foundation; either version 2 of the License, or (at your
 option) any later version.
 
-As required by GPLv2, the complete source code for aria2 is available at:
-https://github.com/aria2/aria2/releases
+As required by GPLv2, the complete source code for aria2c.exe ships with it
+in `tools/uup/aria2/`: the unmodified release tarballs of aria2 (which
+includes wslay) and of zlib, c-ares, Expat, SQLite and libssh2, and
+`build_aria2.sh`, the script that compiles and links them
+(`tools/uup/aria2/BUILD-NOTES.md` describes the build). The MinGW-w64 and
+GCC runtime pieces come from the compiler toolchain under licenses that do
+not ask for source. aria2 is also available at
+https://github.com/aria2/aria2/releases.
+
+`aria2c.exe` uses Windows' own TLS (Schannel) and certificate store; it
+contains no OpenSSL or GnuTLS. It statically links these libraries, whose
+license texts are reproduced in `tools/uup/aria2/NOTICE`:
+
+| Library | Version | License |
+|---|---|---|
+| wslay (bundled in the aria2 source) | 1.1.1 | MIT (Copyright (c) 2011, 2012, 2015 Tatsuhiro Tsujikawa) |
+| zlib | 1.3.2 | zlib License ((C) 1995-2026 Jean-loup Gailly and Mark Adler) |
+| c-ares | 1.34.9 | MIT (Copyright (c) 1998 Massachusetts Institute of Technology, Copyright (c) 2007 - 2023 Daniel Stenberg with many contributors) |
+| Expat | 2.9.0 | MIT (Copyright (c) 1998-2000 Thai Open Source Software Center Ltd and Clark Cooper, Copyright (c) 2001-2025 Expat maintainers) |
+| SQLite | 3.54.1 | Public domain |
+| libssh2 | 1.11.1 | BSD 3-Clause (Copyright (C) 2004-2007 Sara Golemon, 2009-2023 Daniel Stenberg, 2015 Microsoft Corp. and others) |
+| MinGW-w64 runtime and winpthreads | 14.0.0 | MinGW-w64 runtime licenses (ZPL 2.1, MIT, BSD-style, public domain) |
+| libgcc, libstdc++ | GCC 16.2.0 | GPL-3.0 with the GCC Runtime Library Exception 3.1 |
 
 ---
 
