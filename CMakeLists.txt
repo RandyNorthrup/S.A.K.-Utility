@@ -1006,7 +1006,6 @@ set(SAK_GUI_SOURCES
 # Always built: the AI unit tests are not conditional on SAK_ENABLE_AI_ASSISTANT. Without the
 # assistant panel nothing in the application references it, so none of it is linked in.
 set(SAK_AI_CORE_SOURCES
-    src/ai/ai_app_action_planner.cpp
     src/ai/ai_credential_store.cpp
     src/ai/ai_secret_redaction.cpp
     src/ai/ai_cancellation_token.cpp
@@ -1032,7 +1031,6 @@ set(SAK_AI_CORE_SOURCES
     src/ai/ai_provider_gateway_authorization.cpp
     src/ai/ai_provider_gateway_tool_runner.cpp
     src/ai/ai_provider_registry.cpp
-    src/ai/ai_win32_gui_runner.cpp
     src/ai/ai_recovery_policy.cpp
     src/ai/ai_async_tool_runner.cpp
     src/ai/ai_skill.cpp
@@ -1057,7 +1055,6 @@ set(SAK_AI_CORE_SOURCES
     src/ai/ai_workflow_store.cpp
     src/ai/ai_workflow_template.cpp
     src/ai/openai_responses_client.cpp
-    include/sak/ai/ai_app_action_planner.h
     include/sak/ai/ai_async_tool_runner.h
     include/sak/ai/ai_credential_store.h
     include/sak/ai/ai_cancellation_token.h
@@ -1117,7 +1114,7 @@ if(SAK_ENABLE_AI_ASSISTANT)
 endif()
 
 # Quick actions (part of sak_core: the app-action service seeds them and the elevated helper runs
-# four of them, neither through a widget)
+# the ones that need administrator rights, neither through a widget)
 set(SAK_QUICK_ACTIONS_SOURCES
     # System Optimization
     src/actions/optimize_power_settings_action.cpp
@@ -1126,6 +1123,7 @@ set(SAK_QUICK_ACTIONS_SOURCES
     src/actions/verify_system_files_action.cpp
     src/actions/check_disk_errors_action.cpp
     src/actions/reset_network_action.cpp
+    src/actions/microsoft_defender_action.cpp
 
     # Troubleshooting
     src/actions/generate_system_report_action.cpp
@@ -1139,6 +1137,7 @@ set(SAK_QUICK_ACTIONS_SOURCES
     include/sak/actions/verify_system_files_action.h
     include/sak/actions/check_disk_errors_action.h
     include/sak/actions/reset_network_action.h
+    include/sak/actions/microsoft_defender_action.h
     include/sak/actions/generate_system_report_action.h
     include/sak/actions/screenshot_settings_action.h
     include/sak/actions/backup_bitlocker_keys_action.h
@@ -1666,59 +1665,9 @@ add_custom_command(TARGET sak_utility POST_BUILD
     VERBATIM
 )
 
-# The assistant reads its provider policy and its app-action recipes from these
-# directories. A build that quietly omits them ships an AI panel running on a
-# partial tool policy, which is exactly the kind of "configured but not really"
-# state the rest of this file refuses to produce.
-if(SAK_ENABLE_AI_ASSISTANT)
-    foreach(_sak_ai_data_dir providers app_manifests)
-        if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/ai/${_sak_ai_data_dir}")
-            message(FATAL_ERROR
-                "SAK_ENABLE_AI_ASSISTANT is ON but resources/ai/${_sak_ai_data_dir} is missing. "
-                "The assistant loads its tool/provider policy from that directory, so the build "
-                "would ship a partial security configuration. Restore it from git, or configure "
-                "with -DSAK_ENABLE_AI_ASSISTANT=OFF.")
-        endif()
-    endforeach()
-endif()
-
-# Bundled AI policy data is staged by a target of its own, and that target runs
-# on EVERY build. Two staleness hazards made the old POST_BUILD copies unsafe
-# for security-relevant data:
-#   - a POST_BUILD command only runs when its target relinks, so editing a
-#     manifest and rebuilding left the OLD manifest sitting beside the exe;
-#   - copy_directory never deletes, so a manifest removed from the source tree
-#     kept shipping forever.
-# The staging purges each destination first, so what ships is what is in the
-# source tree - nothing older, nothing withdrawn.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/ai/providers")
-    add_custom_target(sak_stage_ai_providers ALL
-        COMMAND ${CMAKE_COMMAND} -E rm -rf
-            "$<TARGET_FILE_DIR:sak_utility>/data/ai/providers"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_CURRENT_SOURCE_DIR}/resources/ai/providers"
-            "$<TARGET_FILE_DIR:sak_utility>/data/ai/providers"
-        COMMAND ${CMAKE_COMMAND} -E rm -f
-            "$<TARGET_FILE_DIR:sak_utility>/data/ai/providers/provider_secrets.example.json"
-            "$<TARGET_FILE_DIR:sak_utility>/data/ai/providers/provider_secrets.local.json"
-        COMMENT "Staging bundled AI provider manifests to output directory"
-        VERBATIM
-    )
-    add_dependencies(sak_stage_ai_providers sak_utility)
-endif()
-
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/ai/app_manifests")
-    add_custom_target(sak_stage_ai_app_manifests ALL
-        COMMAND ${CMAKE_COMMAND} -E rm -rf
-            "$<TARGET_FILE_DIR:sak_utility>/data/ai/app_manifests"
-        COMMAND ${CMAKE_COMMAND} -E copy_directory
-            "${CMAKE_CURRENT_SOURCE_DIR}/resources/ai/app_manifests"
-            "$<TARGET_FILE_DIR:sak_utility>/data/ai/app_manifests"
-        COMMENT "Staging bundled AI app manifests to output directory"
-        VERBATIM
-    )
-    add_dependencies(sak_stage_ai_app_manifests sak_utility)
-endif()
+# The assistant's provider policy (resources/ai/providers/providers.json) is compiled into the
+# executable through resources/ai.qrc, and that embedded copy is the only one it reads, so no
+# data/ai folder is staged beside the exe.
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/sak_splash.png")
     add_custom_command(TARGET sak_utility POST_BUILD
@@ -1839,20 +1788,6 @@ install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tools/"
     DESTINATION bin/tools
     PATTERN "_build" EXCLUDE
 )
-
-# AI provider/app policy, minus the secret templates that must never ship.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/ai/providers")
-    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/resources/ai/providers/"
-        DESTINATION bin/data/ai/providers
-        PATTERN "provider_secrets.example.json" EXCLUDE
-        PATTERN "provider_secrets.local.json" EXCLUDE
-    )
-endif()
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/ai/app_manifests")
-    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/resources/ai/app_manifests/"
-        DESTINATION bin/data/ai/app_manifests
-    )
-endif()
 
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/sak_splash.png")
     install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/resources/sak_splash.png"

@@ -683,11 +683,14 @@ void OpenAIResponsesClientTests::buildPayload_assistedOrUnattendedAdvertisesLoca
              QJsonArray({QStringLiteral("providers"),
                          QStringLiteral("provider_status"),
                          QStringLiteral("docs_query"),
-                         QStringLiteral("win32_mcp_call"),
-                         QStringLiteral("app_manifest"),
-                         QStringLiteral("app_capabilities"),
-                         QStringLiteral("app_run_action_plan"),
-                         QStringLiteral("app_run_action")}));
+                         QStringLiteral("win32_mcp_call")}));
+    // The retired app-manifest fields are gone from the schema, not left as dead inputs.
+    const QJsonObject gateway_properties = gateway.value(QStringLiteral("parameters"))
+                                               .toObject()
+                                               .value(QStringLiteral("properties"))
+                                               .toObject();
+    QVERIFY(!gateway_properties.contains(QStringLiteral("app_id")));
+    QVERIFY(!gateway_properties.contains(QStringLiteral("action")));
     // Nine presence checks above prove no tool is MISSING; the count proves none was ADDED.
     QCOMPARE(tools.size(), 14);
     QCOMPARE(root.value(QStringLiteral("parallel_tool_calls")).toBool(true), false);

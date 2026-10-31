@@ -38,6 +38,7 @@ enum class PipeMessageType : uint8_t {
     TaskResult = 0x11,      ///< Final result: { success, data }
     TaskError = 0x12,       ///< Error: { code, message }
     Ready = 0x13,           ///< Helper is ready to accept tasks
+    Heartbeat = 0x14,       ///< A task is still running (no payload); see kTaskHeartbeatIntervalMs
 };
 
 // ======================================================================
@@ -61,6 +62,17 @@ inline constexpr int kPipeConnectTimeoutMs = 10'000;
 
 /// @brief Pipe read/write timeout
 inline constexpr int kPipeIoTimeoutMs = 30'000;
+
+/// @brief How often the helper tells the client a task is still running.
+///
+/// The client reads each frame with kPipeIoTimeoutMs, and a task step can run silently for far
+/// longer (SFC, a Defender scan, a long PowerShell command): without a frame in that window the
+/// client took the helper for lost and abandoned a task that was working. While a task runs the
+/// helper sends a Heartbeat every interval, so silence past kPipeIoTimeoutMs still means a
+/// helper that stopped answering.
+inline constexpr int kTaskHeartbeatIntervalMs = 10'000;
+static_assert(kTaskHeartbeatIntervalMs * 2 < kPipeIoTimeoutMs,
+              "a running task must send at least two heartbeats inside the client's read timeout");
 inline constexpr uint32_t kPipeFrameByteMask = 0xFF;
 inline constexpr int kPipeFrameByteShift1 = 8;
 inline constexpr int kPipeFrameByteShift2 = 16;
@@ -160,6 +172,23 @@ inline constexpr int kPipeNonceHexWidth = 16;
     return frameMessage(PipeMessageType::Ready);
 }
 
+/// @brief Build a heartbeat message (no payload)
+[[nodiscard]] inline QByteArray buildHeartbeat() {
+    return frameMessage(PipeMessageType::Heartbeat);
+}
+
+/// @brief True when a running task's last Heartbeat (or its start) was @p ms_since_last_heartbeat
+/// ago, so the helper must send a Heartbeat now.
+[[nodiscard]] constexpr bool taskHeartbeatDue(qint64 ms_since_last_heartbeat) {
+    return ms_since_last_heartbeat >= kTaskHeartbeatIntervalMs;
+}
+
+/// @brief True for a server frame that says a task is still running (progress or heartbeat):
+/// the client keeps waiting for the task's result instead of returning.
+[[nodiscard]] constexpr bool pipeMessageKeepsTaskAlive(PipeMessageType type) {
+    return type == PipeMessageType::ProgressUpdate || type == PipeMessageType::Heartbeat;
+}
+
 // ======================================================================
 // Parsed Message
 // ======================================================================
@@ -227,6 +256,7 @@ struct PipeMessage {
         return taskErrorBodyIsValid(json);
     case PipeMessageType::Shutdown:
     case PipeMessageType::Ready:
+    case PipeMessageType::Heartbeat:
         // These carry no payload at all; an accompanying JSON body is malformed.
         return false;
     }
@@ -239,8 +269,9 @@ struct PipeMessage {
     msg.type = type;
 
     if (payload.isEmpty()) {
-        // Messages like Shutdown and Ready have no payload
-        msg.valid = (type == PipeMessageType::Shutdown || type == PipeMessageType::Ready);
+        // Messages like Shutdown, Ready and Heartbeat have no payload
+        msg.valid = (type == PipeMessageType::Shutdown || type == PipeMessageType::Ready ||
+                     type == PipeMessageType::Heartbeat);
         return msg;
     }
 

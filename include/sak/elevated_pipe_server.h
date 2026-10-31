@@ -55,6 +55,9 @@ public:
     /// @brief Send the Ready message after initialization
     void sendReady();
 
+    /// @brief Tell the client a task is still running (see kTaskHeartbeatIntervalMs)
+    void sendHeartbeat();
+
     /// @brief Read the next framed message from the client
     [[nodiscard]] auto readMessage() -> std::expected<PipeMessage, sak::error_code>;
 

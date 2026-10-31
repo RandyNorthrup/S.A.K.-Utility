@@ -422,10 +422,9 @@ ToolResult textQuery(const QJsonObject& args, bool assert_mode) {
     out.insert(QStringLiteral("text"), query);
     out.insert(QStringLiteral("visible"), !matches.isEmpty());
     if (matches.isEmpty()) {
-        // A failed assertion is an ERROR, not a bare {visible:false} success: the direct caller and
-        // the win32_gui recipe runner (which fails a step only on an error result) must both treat
-        // it as a failure so downstream steps do not run against a screen that never reached the
-        // asserted state.
+        // A failed assertion is an ERROR, not a bare {visible:false} success: a caller that fails
+        // only on an error result must treat it as a failure, so later steps do not run against a
+        // screen that never reached the asserted state.
         out.insert(QStringLiteral("error"),
                    QStringLiteral("Asserted text is not visible on screen: %1").arg(query));
         return {.text = QString::fromUtf8(QJsonDocument(out).toJson(QJsonDocument::Compact)),

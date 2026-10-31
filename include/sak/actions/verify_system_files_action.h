@@ -6,9 +6,17 @@
 #include "sak/action_constants.h"
 #include "sak/quick_action.h"
 
+#include <QDeadlineTimer>
 #include <QString>
 
 namespace sak {
+
+struct ProcessResult;
+
+/// The one time bound for a whole Verify System Files run (SFC, then the DISM probes and any
+/// repair). Every step's own timeout is cut to what is left of it, and the assistant's registry
+/// thunk waits exactly this long, so no layer can stop the run at a different moment.
+inline constexpr int kVerifySystemFilesTimeoutMs = 60 * 60 * 1000;
 
 /**
  * @brief Verify System Files Action
@@ -28,9 +36,14 @@ public:
     QIcon icon() const override { return QIcon(); }
     ActionCategory category() const override { return ActionCategory::Maintenance; }
     bool requiresAdmin() const override { return true; }
+    int executionTimeoutMs() const override { return kVerifySystemFilesTimeoutMs; }
 
     void scan() override;
     void execute() override;
+
+    /// @brief The timeout one step may use: its own cap, cut to what is left of the run's
+    /// budget. Zero (never negative) once the budget is spent, which means "do not start".
+    static int boundedStepTimeoutMs(int step_cap_ms, qint64 remaining_ms);
 
     // ------------------------------------------------------------------
     // Pure decision seams (public for unit testing; no I/O, no state)
@@ -62,8 +75,15 @@ private:
     // ScanHealth and report full health after only a partial verification.
     bool m_dism_check_assessed{false};
     bool m_dism_scan_assessed{false};
+    // Set when a step was skipped or cut short because the run's single time budget ran out.
+    bool m_time_limit_reached{false};
+    QDeadlineTimer m_run_deadline;
     QString m_cbs_log_path;
 
+    /// The timeout for the next step, or 0 (and m_time_limit_reached set) when none is left.
+    [[nodiscard]] int nextStepTimeoutMs(int step_cap_ms);
+    /// A step that ran on the last of the budget and timed out ended because of the budget.
+    void noteStepOutcome(const ProcessResult& proc, int granted_ms, int step_cap_ms);
     void runDISM();
     [[nodiscard]] bool runDismCheckHealth();
     [[nodiscard]] bool runDismScanHealth();

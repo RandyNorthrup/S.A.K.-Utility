@@ -60,18 +60,14 @@ bool isReadOnlyProviderOperation(const AiToolCallRequest& request) {
     const QString operation = norm(request.operation);
     return operation == QLatin1String("providers") ||
            operation == QLatin1String("provider_status") ||
-           operation == QLatin1String("docs_query") || operation == QLatin1String("app_manifest") ||
-           operation == QLatin1String("app_capabilities") ||
-           operation == QLatin1String("app_run_action_plan");
+           operation == QLatin1String("docs_query");
 }
 
 bool isMutatingProviderOperation(const AiToolCallRequest& request) {
     if (!isProviderGatewayTool(request.tool_name)) {
         return false;
     }
-    const QString operation = norm(request.operation);
-    return operation == QLatin1String("app_run_action") ||
-           operation == QLatin1String("win32_mcp_call");
+    return norm(request.operation) == QLatin1String("win32_mcp_call");
 }
 
 bool isDownloadTool(const AiToolCallRequest& request) {

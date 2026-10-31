@@ -64,6 +64,9 @@ QString elevatedTaskIdForQuickAction(const QString& action_name) {
         std::pair{kCheckDiskErrorsName, kCheckDiskErrorsTaskId},
         std::pair{kResetNetworkName, kResetNetworkTaskId},
         std::pair{kBackupBitLockerKeysName, kBackupBitLockerKeysTaskId},
+        std::pair{kDefenderQuickScanName, kDefenderQuickScanTaskId},
+        std::pair{kDefenderFullScanName, kDefenderFullScanTaskId},
+        std::pair{kDefenderSignatureUpdateName, kDefenderSignatureUpdateTaskId},
     };
     const auto match = std::ranges::find_if(mappings, [&action_name](const auto& mapping) {
         return action_name == QString::fromLatin1(mapping.first);

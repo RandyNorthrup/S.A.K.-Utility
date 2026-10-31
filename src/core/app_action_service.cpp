@@ -10,6 +10,7 @@
 #include "sak/actions/backup_bitlocker_keys_action.h"
 #include "sak/actions/check_disk_errors_action.h"
 #include "sak/actions/generate_system_report_action.h"
+#include "sak/actions/microsoft_defender_action.h"
 #include "sak/actions/optimize_power_settings_action.h"
 #include "sak/actions/reset_network_action.h"
 #include "sak/actions/screenshot_settings_action.h"
@@ -38,6 +39,11 @@ AppActionService::AppActionService(const QString& backup_dir, QObject* parent)
     auto bitlocker_action = std::make_unique<BackupBitlockerKeysAction>(backup_dir);
     m_bitlocker_action = bitlocker_action.get();
     m_controller->registerAction(std::move(bitlocker_action));
+    for (const DefenderOperation operation : {DefenderOperation::QuickScan,
+                                              DefenderOperation::FullScan,
+                                              DefenderOperation::SignatureUpdate}) {
+        m_controller->registerAction(std::make_unique<MicrosoftDefenderAction>(operation));
+    }
 }
 
 AppActionService::~AppActionService() = default;

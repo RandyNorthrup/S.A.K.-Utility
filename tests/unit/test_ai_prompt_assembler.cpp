@@ -305,9 +305,10 @@ void AiPromptAssemblerTests::assembleIncludesAppActionGuardrails() {
         "DNS + Wi-Fi configuration, firewall/port/connection audit, restore points, "
         "drive/SMART/temperature/benchmark diagnostics, installed-program and leftover "
         "scanning/uninstall/cleanup, imaging identify/carve/flash/restore, file "
-        "search/scan/hash/zip and recycle-bin delete, duplicate-find/organize, and backup preview. "
-        "Call operation=list FIRST to discover the available action_ids, their params, and their "
-        "risk flags, then operation=run with an action_id.");
+        "search/scan/hash/zip and recycle-bin delete, duplicate-find/organize, backup preview, and "
+        "Windows maintenance (System File Checker/DISM, Microsoft Defender quick and full scans "
+        "and signature updates). Call operation=list FIRST to discover the available action_ids, "
+        "their params, and their risk flags, then operation=run with an action_id.");
     QVERIFY(prompt.split(QLatin1Char('\n')).contains(kAppActionCatalogRule));
     QVERIFY(prompt.contains(QStringLiteral("operation=list FIRST")));
     const QString kAppActionPreferenceRule = QStringLiteral(

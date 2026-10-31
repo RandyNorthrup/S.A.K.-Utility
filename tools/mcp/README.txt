@@ -3,8 +3,9 @@ SAK MCP bundle layout
 
 The Win32 desktop and browser automation MCP server is built into the app binary
 (sak_utility.exe run in a headless stdio mode), not a separately bundled tool, so
-there are no local runtime files to place here for it. The provider manifest
-(data/ai/providers/providers.json) points the win32_mcp provider at sak_utility.exe.
+there are no local runtime files to place here for it. The provider catalog compiled
+into the app (resources/ai/providers/providers.json in the source tree) points the
+win32_mcp provider at sak_utility.exe.
 
 Remote MCP providers do not need local runtime files:
 

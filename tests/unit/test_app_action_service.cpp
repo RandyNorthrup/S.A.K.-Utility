@@ -72,8 +72,13 @@ public:
     explicit ProbeAction(QString name,
                          bool succeed = true,
                          bool admin = false,
-                         bool read_only = false)
-        : m_name(std::move(name)), m_succeed(succeed), m_admin(admin), m_read_only(read_only) {}
+                         bool read_only = false,
+                         int timeout_ms = sak::kDefaultQuickActionTimeoutMs)
+        : m_name(std::move(name))
+        , m_succeed(succeed)
+        , m_admin(admin)
+        , m_read_only(read_only)
+        , m_timeout_ms(timeout_ms) {}
 
     QString name() const override { return m_name; }
     QString description() const override { return QStringLiteral("probe action"); }
@@ -81,6 +86,7 @@ public:
     QIcon icon() const override { return {}; }
     bool requiresAdmin() const override { return m_admin; }
     bool isReadOnly() const override { return m_read_only; }
+    int executionTimeoutMs() const override { return m_timeout_ms; }
 
     void release() { m_released.store(true); }
 
@@ -106,6 +112,7 @@ private:
     bool m_succeed;
     bool m_admin;
     bool m_read_only;
+    int m_timeout_ms;
     std::atomic_bool m_released{false};
 };
 
@@ -122,6 +129,7 @@ private Q_SLOTS:
     void resultFromExecution_mapsFieldsIntoData();
     void registerQuickActionsInto_buildsSluggedDescriptorsWithAdminFlags();
     void registerQuickActionsInto_readOnlyActionNeedsNoApproval();
+    void registerQuickActionsInto_thunkWaitsTheActionsOwnTimeout();
 
     void asyncInvocation_deliversCompletion();
     void asyncInvocation_deliversFailure();
@@ -285,6 +293,38 @@ void AppActionServiceTests::registerQuickActionsInto_readOnlyActionNeedsNoApprov
     QVERIFY(changing.has_value());
     QVERIFY(!changing->read_only);
     QVERIFY(changing->mutating);
+}
+// The registry thunk waits exactly the action's declared bound (executionTimeoutMs), not a generic
+// ceiling: SFC/DISM is allowed 60 minutes and a Defender full scan four hours, while a shorter one
+// must be stopped at its own bound.
+void AppActionServiceTests::registerQuickActionsInto_thunkWaitsTheActionsOwnTimeout() {
+    QuickActionController controller;
+    auto probe = std::make_unique<ProbeAction>(QStringLiteral("Bounded Probe"),
+                                               true,
+                                               /*admin=*/false,
+                                               /*read_only=*/false,
+                                               /*timeout_ms=*/80);
+    ProbeAction* raw = probe.get();
+    controller.registerAction(std::move(probe));
+    AppActionRegistry registry;
+    QCOMPARE(registerQuickActionsInto(controller, registry), 1);
+
+    // The probe finishes successfully on its own after 2 s. A thunk that ignored the action's
+    // 80 ms bound would wait for that and report success; the right one stops at 80 ms.
+    auto completed = std::make_shared<int>(0);
+    QObject::connect(&controller,
+                     &QuickActionController::actionExecutionComplete,
+                     &controller,
+                     [completed](QuickAction*) { ++(*completed); });
+    QTimer::singleShot(2000, &controller, [raw]() { raw->release(); });
+    const AppActionResult result = registry.invoke(QStringLiteral("action.bounded_probe"),
+                                                   QJsonObject{});
+    QVERIFY(!result.success);
+    QCOMPARE(result.message, QStringLiteral("Action timed out after 80 ms"));
+
+    // Drain: the timeout requested a cancel; let the probe unwind before teardown.
+    raw->release();
+    QTRY_VERIFY_WITH_TIMEOUT(*completed == 1, 5000);
 }
 void AppActionServiceTests::asyncInvocation_deliversCompletion() {
     FakeAsyncOp op;

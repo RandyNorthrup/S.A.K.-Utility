@@ -41,8 +41,5 @@
         <file alias="skills/malware-removal-triage.md">ai/skills/malware-removal-triage.md</file>
         <file alias="skills/system-cleanup-bloatware-adware.md">ai/skills/system-cleanup-bloatware-adware.md</file>
         <file alias="providers/providers.json">ai/providers/providers.json</file>
-        <file alias="app_manifests/windows_defender.json">ai/app_manifests/windows_defender.json</file>
-        <file alias="app_manifests/superantispyware.json">ai/app_manifests/superantispyware.json</file>
-        <file alias="app_manifests/windows_sfc.json">ai/app_manifests/windows_sfc.json</file>
     </qresource>
 </RCC>

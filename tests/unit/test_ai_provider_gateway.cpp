@@ -39,13 +39,10 @@ class AiProviderGatewayTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
-    void initTestCase();
-    void cleanupTestCase();
     void docsQueryRequiresProviderId();
     void docsQueryRejectsNonHttpProvider();
     void docsQueryRejectsToolMissingFromProviderManifest();
     void classifiesWin32McpToolRisk();
-    void classifiesRecipeDesktopInputAllowlist();
     void classifiesDesktopInputAndCloseToolRisk();
     void classifiesBatch3BrowserTools();
     void planWin32McpCallFlagsBrowserInputForConfirmation();
@@ -55,7 +52,6 @@ private Q_SLOTS:
     void win32McpResultFlagsLogicalToolError();
     void planWin32McpCallBuildsReadOnlyPlan();
     void planWin32McpCallClampsTimeout();
-    void checkAvailabilityRejectsUnsupportedAppAction();
     void checkAvailabilityAcceptsReadOnlyWin32Tool();
     void mutatingToolsAreNeverReadOnly();
     void authorizeWin32Mcp_browserInputRequiresConfirmEveryMode();
@@ -67,18 +63,6 @@ private Q_SLOTS:
     void planWin32McpCall_refusesMalformedEnvelope();             // R5-G10-9
     void callWin32McpWithoutPoolFailsClosed();
 };
-
-// The registry loads the embedded resource by default and honors an on-disk providers.json only
-// under an out-of-band operator opt-in. Every gateway test here builds its provider set by writing
-// a temp providers.json, so opt in for the whole suite; the fail-closed default is covered in
-// test_ai_provider_registry.
-void AiProviderGatewayTests::initTestCase() {
-    qputenv("SAK_AI_POLICY_DISK_OVERRIDE", "1");
-}
-
-void AiProviderGatewayTests::cleanupTestCase() {
-    qunsetenv("SAK_AI_POLICY_DISK_OVERRIDE");
-}
 
 void AiProviderGatewayTests::mutatingToolsAreNeverReadOnly() {
     // The fail-closed default (requires_confirmation unless read_only||high_risk) only protects a
@@ -124,18 +108,13 @@ void AiProviderGatewayTests::docsQueryRejectsNonHttpProvider() {
     const QString command_path =
         QDir(temp.path()).filePath(QStringLiteral("tools/mcp/docs/server.exe"));
     QVERIFY(writeFile(command_path, QByteArray("stub")));
-    const QString providers_path =
-        QDir(temp.path()).filePath(QStringLiteral("data/ai/providers/providers.json"));
     const QJsonObject provider{{QStringLiteral("id"), QStringLiteral("microsoft_docs")},
                                {QStringLiteral("transport"), QStringLiteral("stdio")},
                                {QStringLiteral("command"),
                                 QStringLiteral("tools/mcp/docs/server.exe")}};
-    QVERIFY(
-        writeFile(providers_path,
-                  QJsonDocument(QJsonObject{{QStringLiteral("providers"), QJsonArray{provider}}})
-                      .toJson(QJsonDocument::Compact)));
 
-    const sak::ai::AiProviderGateway gateway{sak::ai::AiProviderRegistry(temp.path())};
+    const sak::ai::AiProviderGateway gateway{sak::ai::AiProviderRegistry::withCatalogForTesting(
+        temp.path(), QJsonObject{{QStringLiteral("providers"), QJsonArray{provider}}})};
     QString error;
     const QJsonObject result = gateway.docsQuery(
         QJsonObject{{QStringLiteral("provider_id"), QStringLiteral("microsoft_docs")},
@@ -149,19 +128,14 @@ void AiProviderGatewayTests::docsQueryRejectsNonHttpProvider() {
 void AiProviderGatewayTests::docsQueryRejectsToolMissingFromProviderManifest() {
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
-    const QString providers_path =
-        QDir(temp.path()).filePath(QStringLiteral("data/ai/providers/providers.json"));
     const QJsonObject provider{
         {QStringLiteral("id"), QStringLiteral("context7")},
         {QStringLiteral("transport"), QStringLiteral("http")},
         {QStringLiteral("endpoint"), QStringLiteral("https://context7.com/mcp")},
         {QStringLiteral("tools"), QJsonArray{QStringLiteral("resolve-library-id")}}};
-    QVERIFY(
-        writeFile(providers_path,
-                  QJsonDocument(QJsonObject{{QStringLiteral("providers"), QJsonArray{provider}}})
-                      .toJson(QJsonDocument::Compact)));
 
-    const sak::ai::AiProviderGateway gateway{sak::ai::AiProviderRegistry(temp.path())};
+    const sak::ai::AiProviderGateway gateway{sak::ai::AiProviderRegistry::withCatalogForTesting(
+        temp.path(), QJsonObject{{QStringLiteral("providers"), QJsonArray{provider}}})};
     QString error;
     const QJsonObject result = gateway.docsQuery(
         QJsonObject{{QStringLiteral("provider_id"), QStringLiteral("context7")},
@@ -239,36 +213,12 @@ void AiProviderGatewayTests::classifiesWin32McpToolRisk() {
         QStringLiteral("browser_extension_install")));
 }
 
-void AiProviderGatewayTests::classifiesRecipeDesktopInputAllowlist() {
-    // CODEX_REVIEW_4 M-B1-6: only the PHYSICAL-desktop input tools may auto-run inside a
-    // win32_gui recipe. The desktop subset is true; browser/clipboard/extension input tools are
-    // input-tier but NOT desktop-input, so they still require a per-call confirm in a recipe.
-    for (const QString& desktop : {QStringLiteral("click_text"),
-                                   QStringLiteral("uia_click_control"),
-                                   QStringLiteral("dismiss_dialog"),
-                                   QStringLiteral("mouse_click"),
-                                   QStringLiteral("type_text"),
-                                   QStringLiteral("send_keys"),
-                                   QStringLiteral("focus_window")}) {
-        QVERIFY2(sak::ai::AiProviderGateway::isWin32DesktopInputTool(desktop), qPrintable(desktop));
-    }
-    for (const QString& nonDesktop : {QStringLiteral("browser_click"),
-                                      QStringLiteral("browser_type"),
-                                      QStringLiteral("clipboard_write"),
-                                      QStringLiteral("browser_extension_install")}) {
-        QVERIFY2(sak::ai::AiProviderGateway::isWin32InputTool(nonDesktop), qPrintable(nonDesktop));
-        QVERIFY2(!sak::ai::AiProviderGateway::isWin32DesktopInputTool(nonDesktop),
-                 qPrintable(nonDesktop));
-    }
-}
-
 void AiProviderGatewayTests::classifiesDesktopInputAndCloseToolRisk() {
     // The live-desktop input tools (UIA activate + text-click, already shipped) and the SendInput
     // physical-input tools (DC batch 5) all inject input and must be in the hard-confirm input
     // tier; none may be on the read-only allowlist.
-    // dismiss_dialog invokes a pop-up's affirmative button (a UIA activation) -- input tier, and
-    // deliberately NOT high-risk so a vetted win32_gui recipe may use it to close a completion
-    // dialog without needing a dynamic ref.
+    // dismiss_dialog invokes a pop-up's affirmative button (a UIA activation) -- input tier, so
+    // every call takes the hard human confirm, and not high-risk.
     for (const QString& in : {QStringLiteral("uia_click_control"),
                               QStringLiteral("click_text"),
                               QStringLiteral("mouse_click"),
@@ -362,8 +312,6 @@ void AiProviderGatewayTests::planWin32McpCallFlagsBrowserInputForConfirmation() 
     const QString command_path =
         QDir(temp.path()).filePath(QStringLiteral("tools/mcp/win32-mcp-server/server.exe"));
     QVERIFY(writeFile(command_path, QByteArray("stub")));
-    const QString providers_path =
-        QDir(temp.path()).filePath(QStringLiteral("data/ai/providers/providers.json"));
     const QJsonObject provider{{QStringLiteral("id"), QStringLiteral("win32_mcp")},
                                {QStringLiteral("transport"), QStringLiteral("stdio")},
                                {QStringLiteral("command"),
@@ -373,12 +321,9 @@ void AiProviderGatewayTests::planWin32McpCallFlagsBrowserInputForConfirmation() 
                                            QStringLiteral("browser_snapshot"),
                                            QStringLiteral("clipboard_read"),
                                            QStringLiteral("mystery_tool")}}};
-    QVERIFY(
-        writeFile(providers_path,
-                  QJsonDocument(QJsonObject{{QStringLiteral("providers"), QJsonArray{provider}}})
-                      .toJson(QJsonDocument::Compact)));
 
-    const sak::ai::AiProviderGateway gateway{sak::ai::AiProviderRegistry(temp.path())};
+    const sak::ai::AiProviderGateway gateway{sak::ai::AiProviderRegistry::withCatalogForTesting(
+        temp.path(), QJsonObject{{QStringLiteral("providers"), QJsonArray{provider}}})};
     QString error;
 
     // Input tool: not read-only, and flagged for a mandatory human confirmation.
@@ -429,8 +374,6 @@ void AiProviderGatewayTests::planWin32McpCallGatesExtensionTools() {
     const QString command_path =
         QDir(temp.path()).filePath(QStringLiteral("tools/mcp/win32-mcp-server/server.exe"));
     QVERIFY(writeFile(command_path, QByteArray("stub")));
-    const QString providers_path =
-        QDir(temp.path()).filePath(QStringLiteral("data/ai/providers/providers.json"));
     const QJsonObject provider{{QStringLiteral("id"), QStringLiteral("win32_mcp")},
                                {QStringLiteral("transport"), QStringLiteral("stdio")},
                                {QStringLiteral("command"),
@@ -438,12 +381,9 @@ void AiProviderGatewayTests::planWin32McpCallGatesExtensionTools() {
                                {QStringLiteral("tools"),
                                 QJsonArray{QStringLiteral("browser_extension_install"),
                                            QStringLiteral("browser_extension_status")}}};
-    QVERIFY(
-        writeFile(providers_path,
-                  QJsonDocument(QJsonObject{{QStringLiteral("providers"), QJsonArray{provider}}})
-                      .toJson(QJsonDocument::Compact)));
 
-    const sak::ai::AiProviderGateway gateway{sak::ai::AiProviderRegistry(temp.path())};
+    const sak::ai::AiProviderGateway gateway{sak::ai::AiProviderRegistry::withCatalogForTesting(
+        temp.path(), QJsonObject{{QStringLiteral("providers"), QJsonArray{provider}}})};
     QString error;
 
     // Installing the extension writes Chrome policy: not read-only, mandatory confirmation.
@@ -545,20 +485,15 @@ void AiProviderGatewayTests::planWin32McpCallBuildsReadOnlyPlan() {
         QDir(temp.path()).filePath(QStringLiteral("tools/mcp/win32-mcp-server/server.exe"));
     QVERIFY(writeFile(command_path, QByteArray("stub")));
 
-    const QString providers_path =
-        QDir(temp.path()).filePath(QStringLiteral("data/ai/providers/providers.json"));
     const QJsonObject provider{
         {QStringLiteral("id"), QStringLiteral("win32_mcp")},
         {QStringLiteral("transport"), QStringLiteral("stdio")},
         {QStringLiteral("command"), QStringLiteral("tools/mcp/win32-mcp-server/server.exe")},
         {QStringLiteral("tools"),
          QJsonArray{QStringLiteral("list_windows"), QStringLiteral("click")}}};
-    QVERIFY(
-        writeFile(providers_path,
-                  QJsonDocument(QJsonObject{{QStringLiteral("providers"), QJsonArray{provider}}})
-                      .toJson(QJsonDocument::Compact)));
 
-    const sak::ai::AiProviderGateway gateway{sak::ai::AiProviderRegistry(temp.path())};
+    const sak::ai::AiProviderGateway gateway{sak::ai::AiProviderRegistry::withCatalogForTesting(
+        temp.path(), QJsonObject{{QStringLiteral("providers"), QJsonArray{provider}}})};
     QString error;
     const QJsonObject args{
         {QStringLiteral("arguments"),
@@ -592,19 +527,14 @@ void AiProviderGatewayTests::planWin32McpCallClampsTimeout() {
         QDir(temp.path()).filePath(QStringLiteral("tools/mcp/win32-mcp-server/server.exe"));
     QVERIFY(writeFile(command_path, QByteArray("stub")));
 
-    const QString providers_path =
-        QDir(temp.path()).filePath(QStringLiteral("data/ai/providers/providers.json"));
     const QJsonObject provider{
         {QStringLiteral("id"), QStringLiteral("win32_mcp")},
         {QStringLiteral("transport"), QStringLiteral("stdio")},
         {QStringLiteral("command"), QStringLiteral("tools/mcp/win32-mcp-server/server.exe")},
         {QStringLiteral("tools"), QJsonArray{QStringLiteral("list_windows")}}};
-    QVERIFY(
-        writeFile(providers_path,
-                  QJsonDocument(QJsonObject{{QStringLiteral("providers"), QJsonArray{provider}}})
-                      .toJson(QJsonDocument::Compact)));
 
-    const sak::ai::AiProviderGateway gateway{sak::ai::AiProviderRegistry(temp.path())};
+    const sak::ai::AiProviderGateway gateway{sak::ai::AiProviderRegistry::withCatalogForTesting(
+        temp.path(), QJsonObject{{QStringLiteral("providers"), QJsonArray{provider}}})};
     QString error;
     const auto low = gateway.planWin32McpCall(
         QJsonObject{{QStringLiteral("arguments"),
@@ -623,29 +553,6 @@ void AiProviderGatewayTests::planWin32McpCallClampsTimeout() {
     QCOMPARE(high.timeout_ms, 7'200'000);  // clamped to the long-operation ceiling (2 hours)
 }
 
-void AiProviderGatewayTests::checkAvailabilityRejectsUnsupportedAppAction() {
-    QTemporaryDir temp;
-    QVERIFY(temp.isValid());
-    const QString providers_path =
-        QDir(temp.path()).filePath(QStringLiteral("data/ai/providers/providers.json"));
-    QVERIFY(writeFile(providers_path, R"({"providers":[]})"));
-    const QString manifest_path =
-        QDir(temp.path()).filePath(QStringLiteral("data/ai/app_manifests/testapp.json"));
-    QVERIFY(writeFile(manifest_path, R"({"id":"testapp","actions":{"scan":{"supported":false}}})"));
-
-    const sak::ai::AiProviderGateway gateway{sak::ai::AiProviderRegistry(temp.path())};
-    const QJsonObject result = gateway.checkAvailability(
-        QJsonObject{{QStringLiteral("operation"), QStringLiteral("app_run_action")},
-                    {QStringLiteral("app_id"), QStringLiteral("testapp")},
-                    {QStringLiteral("action"), QStringLiteral("scan")}});
-
-    QVERIFY(!result.value(QStringLiteral("success")).toBool(true));
-    QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
-             QStringLiteral("app_action_unsupported"));
-    QCOMPARE(result.value(QStringLiteral("error_message")).toString(),
-             QStringLiteral("App action is not supported by bundled manifest"));
-}
-
 void AiProviderGatewayTests::checkAvailabilityAcceptsReadOnlyWin32Tool() {
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
@@ -653,19 +560,14 @@ void AiProviderGatewayTests::checkAvailabilityAcceptsReadOnlyWin32Tool() {
         QDir(temp.path()).filePath(QStringLiteral("tools/mcp/win32-mcp-server/server.exe"));
     QVERIFY(writeFile(command_path, QByteArray("stub")));
 
-    const QString providers_path =
-        QDir(temp.path()).filePath(QStringLiteral("data/ai/providers/providers.json"));
     const QJsonObject provider{
         {QStringLiteral("id"), QStringLiteral("win32_mcp")},
         {QStringLiteral("transport"), QStringLiteral("stdio")},
         {QStringLiteral("command"), QStringLiteral("tools/mcp/win32-mcp-server/server.exe")},
         {QStringLiteral("tools"), QJsonArray{QStringLiteral("list_windows")}}};
-    QVERIFY(
-        writeFile(providers_path,
-                  QJsonDocument(QJsonObject{{QStringLiteral("providers"), QJsonArray{provider}}})
-                      .toJson(QJsonDocument::Compact)));
 
-    const sak::ai::AiProviderGateway gateway{sak::ai::AiProviderRegistry(temp.path())};
+    const sak::ai::AiProviderGateway gateway{sak::ai::AiProviderRegistry::withCatalogForTesting(
+        temp.path(), QJsonObject{{QStringLiteral("providers"), QJsonArray{provider}}})};
     const QJsonObject result = gateway.checkAvailability(
         QJsonObject{{QStringLiteral("operation"), QStringLiteral("win32_mcp_call")},
                     {QStringLiteral("arguments"),
@@ -909,18 +811,13 @@ void AiProviderGatewayTests::docsQuery_refusesNonHttpsEndpoint() {
     // query is never POSTed to an attacker host or over cleartext.
     QTemporaryDir temp;
     QVERIFY(temp.isValid());
-    const QString providers_path =
-        QDir(temp.path()).filePath(QStringLiteral("data/ai/providers/providers.json"));
     const QJsonObject provider{{QStringLiteral("id"), QStringLiteral("microsoft_docs")},
                                {QStringLiteral("transport"), QStringLiteral("http")},
                                {QStringLiteral("endpoint"),
                                 QStringLiteral("http://attacker.example/mcp")}};  // non-TLS
-    QVERIFY(
-        writeFile(providers_path,
-                  QJsonDocument(QJsonObject{{QStringLiteral("providers"), QJsonArray{provider}}})
-                      .toJson(QJsonDocument::Compact)));
 
-    const sak::ai::AiProviderGateway gateway{sak::ai::AiProviderRegistry(temp.path())};
+    const sak::ai::AiProviderGateway gateway{sak::ai::AiProviderRegistry::withCatalogForTesting(
+        temp.path(), QJsonObject{{QStringLiteral("providers"), QJsonArray{provider}}})};
     QString error;
     const QJsonObject result = gateway.docsQuery(
         QJsonObject{{QStringLiteral("provider_id"), QStringLiteral("microsoft_docs")},
@@ -943,18 +840,13 @@ void AiProviderGatewayTests::planWin32McpCall_refusesMalformedEnvelope() {
     const QString command_path =
         QDir(temp.path()).filePath(QStringLiteral("tools/mcp/win32-mcp-server/server.exe"));
     QVERIFY(writeFile(command_path, QByteArray("stub")));
-    const QString providers_path =
-        QDir(temp.path()).filePath(QStringLiteral("data/ai/providers/providers.json"));
     const QJsonObject provider{
         {QStringLiteral("id"), QStringLiteral("win32_mcp")},
         {QStringLiteral("transport"), QStringLiteral("stdio")},
         {QStringLiteral("command"), QStringLiteral("tools/mcp/win32-mcp-server/server.exe")},
         {QStringLiteral("tools"), QJsonArray{QStringLiteral("browser_snapshot")}}};
-    QVERIFY(
-        writeFile(providers_path,
-                  QJsonDocument(QJsonObject{{QStringLiteral("providers"), QJsonArray{provider}}})
-                      .toJson(QJsonDocument::Compact)));
-    const sak::ai::AiProviderGateway gateway{sak::ai::AiProviderRegistry(temp.path())};
+    const sak::ai::AiProviderGateway gateway{sak::ai::AiProviderRegistry::withCatalogForTesting(
+        temp.path(), QJsonObject{{QStringLiteral("providers"), QJsonArray{provider}}})};
 
     QString argsError;
     const auto argsPlan = gateway.planWin32McpCall(

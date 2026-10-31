@@ -964,26 +964,33 @@ private Q_SLOTS:
 
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         QCOMPARE(result.value(QStringLiteral("operation")).toString(), QStringLiteral("list"));
-        // Exact catalog size: 7 QuickActions + 40 read-only + 24 mutating registrations. A
+        // Exact catalog size: 10 QuickActions + 40 read-only + 24 mutating registrations. A
         // floor would tolerate registrations silently failing (registerAction returns false
         // on a duplicate/empty id) and the assistant losing actions it can no longer reach.
         // 21 -> 24 on 2026-08-27: network.enable_adapter / disable_adapter / rename_adapter
         // (R5-IDX-19c). This assertion is what caught them being added, which is the point.
-        QCOMPARE(result.value(QStringLiteral("action_count")).toInt(), 71);
+        // 71 -> 74 on 2026-10-31: the three Microsoft Defender actions that replaced the
+        // retired app_run_action manifest path.
+        QCOMPARE(result.value(QStringLiteral("action_count")).toInt(), 74);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
-        bool found_verify = false;
+        QSet<QString> admin_maintenance;
         for (const auto& value : actions) {
             const QJsonObject action = value.toObject();
-            if (action.value(QStringLiteral("id")).toString() ==
-                QStringLiteral("action.verify_system_files")) {
-                found_verify = true;
-                QVERIFY(action.value(QStringLiteral("requires_admin")).toBool());
-                QVERIFY(action.value(QStringLiteral("mutating")).toBool());
-                QVERIFY(!action.value(QStringLiteral("read_only")).toBool());
+            const QString id = action.value(QStringLiteral("id")).toString();
+            if (id == QStringLiteral("action.verify_system_files") ||
+                id.startsWith(QStringLiteral("action.microsoft_defender_"))) {
+                admin_maintenance.insert(id);
+                QVERIFY2(action.value(QStringLiteral("requires_admin")).toBool(), qPrintable(id));
+                QVERIFY2(action.value(QStringLiteral("mutating")).toBool(), qPrintable(id));
+                QVERIFY2(!action.value(QStringLiteral("read_only")).toBool(), qPrintable(id));
             }
         }
-        QVERIFY(found_verify);
+        QCOMPARE(admin_maintenance,
+                 (QSet<QString>{QStringLiteral("action.verify_system_files"),
+                                QStringLiteral("action.microsoft_defender_quick_scan"),
+                                QStringLiteral("action.microsoft_defender_full_scan"),
+                                QStringLiteral("action.microsoft_defender_signature_update")}));
     }
 
     void appActionServiceTracksSessionArtifactRootWithoutFallback() {
@@ -1057,8 +1064,8 @@ private Q_SLOTS:
                         {QStringLiteral("action_id"), QString()},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
-        // 7 built-in QuickActions + 40 read-only + 24 mutating ops, pinned exactly.
-        QCOMPARE(result.value(QStringLiteral("action_count")).toInt(), 71);
+        // 10 built-in QuickActions + 40 read-only + 24 mutating ops, pinned exactly.
+        QCOMPARE(result.value(QStringLiteral("action_count")).toInt(), 74);
 
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QSet<QString> read_only_ids;

@@ -797,9 +797,9 @@ AI Assistant sessions and credentials are intentionally portable-app local:
 |---|---|
 | `<app>/data/credentials/openai_api_key.dpapi.json` | Encrypted OpenAI API key |
 | `<app>/data/ai_sessions/` | Session manifests, transcripts, usage, memory, run state, artifacts, downloads, screenshots, and reports |
-| `<app>/data/ai/providers/` | Portable AI provider registry overrides |
-| `<app>/data/ai/app_manifests/` | Portable app-control manifests for scanner/tool workflows |
 | `<app>/data/ai/workflows/` | User-added workflow templates |
+
+The AI provider catalog is compiled into the executable; nothing beside it overrides it.
 
 OpenAI API calls include a `safety_identifier` derived from the local AI session
 ID hash. The raw session ID and user identity are not sent for this field.
@@ -809,10 +809,10 @@ lookups through HTTP MCP, plus the app's built-in Win32 desktop and browser
 automation server (the app binary run in a headless stdio mode). Win32 MCP access
 follows the selected AI access mode: observation tools are read-only, interactive
 tools use the interactive profile, and high-risk tools require the existing high-risk
-handling path. Supported app-manifest actions can run through the same gateway;
-for example, the Microsoft Defender manifest exposes quick/full scan and
-definition update actions while SUPERAntiSpyware scan actions remain manual
-until a validated non-interactive workflow exists.
+handling path. Maintenance the assistant runs for you -- System File Checker/DISM and
+Microsoft Defender quick scan, full scan and signature update -- are built-in app
+actions (`sak_app_action`), elevated through the same helper as the app's other
+administrator actions.
 
 ### Key Settings
 

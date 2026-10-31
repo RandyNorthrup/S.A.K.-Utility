@@ -349,11 +349,7 @@ if ($packagedLocalProviderFiles) {
 
 $requiredPackageFiles = @(
     "sak_utility.exe",
-    "sak_elevated_helper.exe",
-    "data/ai/providers/providers.json",
-    "data/ai/app_manifests/windows_defender.json",
-    "data/ai/app_manifests/superantispyware.json",
-    "data/ai/app_manifests/windows_sfc.json"
+    "sak_elevated_helper.exe"
 )
 foreach ($relativePath in $requiredPackageFiles) {
     $fullPath = Join-Path $packageDir $relativePath

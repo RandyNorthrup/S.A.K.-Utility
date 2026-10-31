@@ -610,16 +610,11 @@ QJsonObject offlineTool() {
 
 QJsonObject providerGatewayTool() {
     QJsonObject operation = stringParameter(QStringLiteral(
-        "Operation to run: providers, provider_status, docs_query, win32_mcp_call, app_manifest, "
-        "app_capabilities, app_run_action_plan, app_run_action."));
+        "Operation to run: providers, provider_status, docs_query, win32_mcp_call."));
     operation[QStringLiteral("enum")] = QJsonArray{QStringLiteral("providers"),
                                                    QStringLiteral("provider_status"),
                                                    QStringLiteral("docs_query"),
-                                                   QStringLiteral("win32_mcp_call"),
-                                                   QStringLiteral("app_manifest"),
-                                                   QStringLiteral("app_capabilities"),
-                                                   QStringLiteral("app_run_action_plan"),
-                                                   QStringLiteral("app_run_action")};
+                                                   QStringLiteral("win32_mcp_call")};
 
     const QJsonObject arguments = stringParameter(
         QStringLiteral("JSON object string for provider-specific arguments. Use {} when unused. "
@@ -631,30 +626,23 @@ QJsonObject providerGatewayTool() {
     properties[QStringLiteral("operation")] = operation;
     properties[QStringLiteral("provider_id")] =
         stringParameter(QStringLiteral("Provider id, e.g. microsoft_docs, context7, win32_mcp."));
-    properties[QStringLiteral("app_id")] = stringParameter(
-        QStringLiteral("App manifest id, e.g. windows_defender, superantispyware, windows_sfc."));
-    properties[QStringLiteral("action")] =
-        stringParameter(QStringLiteral("Requested app action, e.g. quick_scan or verify_only."));
     properties[QStringLiteral("query")] =
         stringParameter(QStringLiteral("Documentation or provider query; empty when unused."));
     properties[QStringLiteral("arguments")] = arguments;
 
     return functionTool(QStringLiteral("sak_provider_gateway"),
-                        QStringLiteral("Use S.A.K. Utility's bundled provider/app-control "
-                                       "registry. Use this before raw shell probing when checking "
-                                       "MCP providers, app manifests, or whether an app action is "
-                                       "supported. Use operation=docs_query for Microsoft Learn "
-                                       "MCP or Context7 public documentation lookup. Use "
+                        QStringLiteral("Use S.A.K. Utility's bundled provider registry. Use this "
+                                       "before raw shell probing when checking MCP providers. Use "
+                                       "operation=docs_query for Microsoft Learn MCP or Context7 "
+                                       "public documentation lookup. Use "
                                        "operation=win32_mcp_call for bundled Win32 MCP desktop "
-                                       "automation when local tools are enabled. Use "
-                                       "operation=app_run_action only for supported app manifest "
-                                       "actions. Access mode and tool risk determine "
-                                       "confirmation/security profile."),
+                                       "automation when local tools are enabled. Access mode and "
+                                       "tool risk determine confirmation/security profile. App "
+                                       "maintenance such as Microsoft Defender scans runs through "
+                                       "sak_app_action."),
                         properties,
                         QJsonArray{QStringLiteral("operation"),
                                    QStringLiteral("provider_id"),
-                                   QStringLiteral("app_id"),
-                                   QStringLiteral("action"),
                                    QStringLiteral("query"),
                                    QStringLiteral("arguments")});
 }

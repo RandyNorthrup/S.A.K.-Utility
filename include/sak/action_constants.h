@@ -22,6 +22,12 @@ constexpr char kResetNetworkName[] = "Reset Network Settings";
 constexpr char kResetNetworkTaskId[] = "Reset Network";
 constexpr char kBackupBitLockerKeysName[] = "BitLocker Key Backup";
 constexpr char kBackupBitLockerKeysTaskId[] = "Backup BitLocker Keys";
+constexpr char kDefenderQuickScanName[] = "Microsoft Defender Quick Scan";
+constexpr char kDefenderQuickScanTaskId[] = "Defender Quick Scan";
+constexpr char kDefenderFullScanName[] = "Microsoft Defender Full Scan";
+constexpr char kDefenderFullScanTaskId[] = "Defender Full Scan";
+constexpr char kDefenderSignatureUpdateName[] = "Microsoft Defender Signature Update";
+constexpr char kDefenderSignatureUpdateTaskId[] = "Defender Signature Update";
 }  // namespace quick_action_elevation
 
 // ============================================================================

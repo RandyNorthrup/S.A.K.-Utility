@@ -53,11 +53,6 @@ public:
                                              QString* error_message = nullptr) const;
     [[nodiscard]] QJsonObject docsQuery(const QJsonObject& args,
                                         QString* error_message = nullptr) const;
-    [[nodiscard]] QJsonObject appManifest(const QString& app_id,
-                                          QString* error_message = nullptr) const;
-    [[nodiscard]] QJsonObject appCapabilities(const QString& app_id,
-                                              const QString& action,
-                                              QString* error_message = nullptr) const;
     [[nodiscard]] QJsonObject checkAvailability(const QJsonObject& args,
                                                 QString* error_message = nullptr) const;
     /// The win32_mcp_call leg of checkAvailability. Split out so the dispatcher stays a flat
@@ -83,11 +78,6 @@ public:
     /// install/uninstall. Any tool on none of the classifier lists is confirmed as well (see
     /// planWin32McpCall), so this list is the named subset, not the whole gate.
     [[nodiscard]] static bool isWin32InputTool(const QString& tool_name);
-    /// The subset of input tools that drive the PHYSICAL desktop (mouse/keyboard/UIA/focus).
-    /// Only these may auto-run inside a win32_gui recipe on the single recipe-level
-    /// authorization; browser/clipboard/extension input tools still demand a per-call confirm.
-    /// A newly added input tool defaults to REJECTED in recipes until whitelisted here.
-    [[nodiscard]] static bool isWin32DesktopInputTool(const QString& tool_name);
     /// Builds the MCP child environment for @p security_profile. Fails CLOSED (empty
     /// environment, error_message set) on an unrecognized profile, on a provider manifest whose
     /// "environment" is not an object of strings, and on any manifest entry that would redirect

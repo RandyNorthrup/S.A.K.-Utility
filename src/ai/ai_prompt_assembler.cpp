@@ -69,11 +69,10 @@ void appendSakToolPriorityGuardrails(QStringList& lines) {
         "Chocolatey bundle, and operation=install_bundle to install from an existing manifest.");
     lines << QStringLiteral(
         "SAK provider gateway priority: use sak_provider_gateway before raw shell probing when "
-        "checking bundled MCP/provider availability, app-control manifests, or whether an app "
-        "action is supported. Use operation=docs_query for Microsoft Learn or Context7 public "
-        "documentation lookup. The gateway reports provider status, docs results, app action "
-        "plans, and approved Win32 MCP automation results; local desktop automation must still "
-        "respect access mode, tool policy, and app manifest guidance.");
+        "checking bundled MCP/provider availability. Use operation=docs_query for Microsoft Learn "
+        "or Context7 public documentation lookup. The gateway reports provider status, docs "
+        "results, and approved Win32 MCP automation results; local desktop automation must still "
+        "respect access mode and tool policy.");
     lines << QStringLiteral(
         "SAK session search priority: use sak_session_search when debugging prior AI runs, QA "
         "failures, tool-loop behavior, or previous command evidence. Do not grep broad artifact "
@@ -88,9 +87,10 @@ void appendAppActionGuardrails(QStringList& lines) {
         "DNS + Wi-Fi configuration, firewall/port/connection audit, restore points, "
         "drive/SMART/temperature/benchmark diagnostics, installed-program and leftover "
         "scanning/uninstall/cleanup, imaging identify/carve/flash/restore, file "
-        "search/scan/hash/zip and recycle-bin delete, duplicate-find/organize, and backup "
-        "preview. Call operation=list FIRST to discover the available action_ids, their params, "
-        "and their risk flags, then operation=run with an action_id.");
+        "search/scan/hash/zip and recycle-bin delete, duplicate-find/organize, backup "
+        "preview, and Windows maintenance (System File Checker/DISM, Microsoft Defender quick and "
+        "full scans and signature updates). Call operation=list FIRST to discover the available "
+        "action_ids, their params, and their risk flags, then operation=run with an action_id.");
     lines << QStringLiteral(
         "Prefer sak_app_action over raw run_powershell/run_cmd whenever a built-in app action "
         "already covers the task: it drives the app's own certified engine instead of a "

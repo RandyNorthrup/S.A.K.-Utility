@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/app_action_registry.h"
+#include "sak/quick_action.h"
 
 #include <QEventLoop>
 #include <QObject>
@@ -32,10 +33,6 @@ class QuickActionController;
 class BackupBitlockerKeysAction;
 class GenerateSystemReportAction;
 class ScreenshotSettingsAction;
-
-/// Generous default: some actions (SFC/DISM, CHKDSK) legitimately run for many
-/// minutes. The assistant tool layer applies its own outer timeout too.
-inline constexpr int kDefaultQuickActionTimeoutMs = 30 * 60 * 1000;
 
 /// Run @p action_name on @p controller to completion and return its result.
 /// Confirmation is suppressed (require_confirmation=false): the assistant applies

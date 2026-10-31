@@ -188,22 +188,13 @@ can you run a SUPERAntiSpyware quick scan?
 
 Expected:
 
-- The assistant checks the `superantispyware` app manifest before launching
-  executables.
-- It reports that quick_scan, full_scan and definition_update ARE supported for
-  the `superantispyware` manifest, each via a `method: win32_gui` recipe -- an
-  ordered list of desktop-control steps the win32 step runner drives against the
-  already-running GUI, with a per-step risk check. (Corrected 2026-08-30: this
-  expected the assistant to report those actions "not yet validated for
-  non-interactive execution". The manifest marks all three `supported: true`, so a
-  tester following this runbook would have failed a pass the product passes.)
-- It does not reinstall SUPERAntiSpyware, brute-force helper EXEs, or exhaust
-  tool iterations.
+- The assistant has no SUPERAntiSpyware automation (the desktop-recipe path was retired
+  2026-10-31) and says so; it does not reinstall SUPERAntiSpyware, brute-force helper EXEs,
+  or exhaust tool iterations.
 - If the model asks `sak_package_manager` to install/upgrade/uninstall during
   this scan request, tool policy blocks the call and reports the scan/install
   intent mismatch.
-- It offers a manual GUI path or another scanner with a supported manifest,
-  such as Microsoft Defender.
+- It offers the manual GUI path, or a Microsoft Defender scan through `sak_app_action`.
 
 ## Pass 3C: Session Search and Replay Trace
 
@@ -237,30 +228,27 @@ run a Microsoft Defender quick scan
 
 Expected:
 
-- The assistant checks the `windows_defender` app manifest.
-- Because `quick_scan` is manifest-supported, it uses
-  `sak_provider_gateway` with `operation=app_run_action`.
-- The action runs `Start-MpScan -ScanType QuickScan` through the app action
-  execution path.
-- Assisted mode asks before execution. Unattended mode proceeds under the
-  existing access policy.
-- Result records command id, exit code, stdout/stderr, requested action, and
-  evidence hints.
+- The assistant lists `sak_app_action` and runs `action.microsoft_defender_quick_scan`
+  (operation=run).
+- Assisted mode asks before execution; Unattended proceeds under the access policy. When the
+  app is not elevated, Windows shows one UAC prompt for the elevated helper.
+- The scan runs `MpCmdRun.exe -Scan -ScanType 1` from the platform folder Defender registers
+  (`InstallLocation`). The result says clean (exit 0), threats needing attention (exit 2, with
+  a pointer to Protection history), or failure with the exit code.
+- Stop during the scan cancels it (and the service-side scan) and reports it cancelled.
 
 Prompt:
 
 ```text
-run Windows System File Checker verify-only
+run Windows System File Checker
 ```
 
 Expected:
 
-- The assistant checks the `windows_sfc` app manifest.
-- Because `verify_only` is manifest-supported, it uses
-  `sak_provider_gateway` with `operation=app_run_action`.
-- The action runs `sfc.exe /verifyonly`; it does not run repair mode.
-- `scan_repair` is reported unsupported until an explicit repair workflow with
-  restore-point handling is selected.
+- The assistant runs `action.verify_system_files` through `sak_app_action` (SFC
+  `/scannow` and DISM health checks, repair only when DISM reports corruption), after the
+  Assisted confirmation.
+- The whole run is bounded at 60 minutes; a run that hits the bound says so in its result.
 
 ## Pass 4: Workflow Input Gates
 

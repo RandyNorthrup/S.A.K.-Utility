@@ -22,11 +22,7 @@ $required = @(
     'Qt6Gui.dll',
     'Qt6Widgets.dll',
     'platforms/qwindows.dll',
-    'tools/filesystem/manifest.json',
-    'data/ai/providers/providers.json',
-    'data/ai/app_manifests/windows_defender.json',
-    'data/ai/app_manifests/superantispyware.json',
-    'data/ai/app_manifests/windows_sfc.json'
+    'tools/filesystem/manifest.json'
 )
 
 foreach ($rel in $required) {
@@ -50,6 +46,10 @@ foreach ($rel in @('data/ai_sessions', 'data/temp', 'data/logs', 'data/config', 
         Fail "mutable runtime data leaked into package: $rel"
     }
 }
+# The provider policy is compiled into sak_utility.exe and is the only copy it reads.
+if (Test-Path -LiteralPath (Join-Path $root 'data/ai')) {
+    Fail 'unread data/ai folder shipped in package'
+}
 foreach ($rel in @('tools/chocolatey/lib-bad', 'tools/chocolatey/cache', 'tools/chocolatey/temp')) {
     if (Test-Path -LiteralPath (Join-Path $root $rel)) {
         Fail "Chocolatey mutable runtime state leaked into package: $rel"
@@ -63,7 +63,16 @@ if (Test-Path -LiteralPath $chocolateyLogs) {
     }
 }
 
-$providersPath = Join-Path $root 'data/ai/providers/providers.json'
+# The catalog the executable embeds (resources/ai.qrc) is read from the source tree it was built
+# from: every stdio command it names must ship inside the package, and no provider may carry a
+# secret.
+if (-not $RepoRoot) {
+    Fail '-RepoRoot is required to read the embedded AI provider catalog'
+}
+$providersPath = Join-Path (Resolve-Path -LiteralPath $RepoRoot).Path 'resources/ai/providers/providers.json'
+if (-not (Test-Path -LiteralPath $providersPath -PathType Leaf)) {
+    Fail "embedded AI provider catalog not found: $providersPath"
+}
 $providers = Get-Content -LiteralPath $providersPath -Raw | ConvertFrom-Json
 if ($null -eq $providers -or ($providers.PSObject.Properties.Name -notcontains 'providers')) {
     Fail 'providers.json has no providers array'

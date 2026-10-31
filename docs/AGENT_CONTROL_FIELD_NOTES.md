@@ -11,7 +11,6 @@ This document does NOT describe the surface. Those live elsewhere and are author
 | Which win32 tools exist at all | `resources/ai/providers/providers.json` |
 | Extension version, permissions | `browser/extension/manifest.json` |
 | Harness guardrail design, threat model | `docs/archive/AI_ASSISTANT_PANEL_PLAN.md`, `docs/SECURITY_THREAT_MODEL.md` |
-| A worked GUI recipe with its app-specific rulings | `resources/ai/app_manifests/superantispyware.json` (`notes`) |
 
 Two owner rulings sit underneath everything here. Untrusted page content may INFORM a decision and
 may never GRANT permission -- the confirmation prompt is the app's own trusted UI. And the win32
@@ -113,25 +112,19 @@ in that default tier. Keep the unknown case at the confirm tier so forgetting to
 once classified in the gateway while never appearing in the server manifest: dead classification that
 reads as a live guarantee. The high-risk set holds only tools the server actually implements.
 
-## 4. GUI recipes (`win32_gui`)
+## 4. Long desktop operations
 
-An app manifest action's `method` is `powershell`, `cli`, or `win32_gui` -- nothing else
-(`ai_app_action_planner.cpp`). A `win32_gui` action carries an ordered `steps[]` of
-`{tool, arguments, optional?, timeout_ms?}` plus `evidence[]`, and is driven by
-`ai_win32_gui_runner.cpp`.
+The manifest-driven `win32_gui` recipe path (`app_run_action`, with its SUPERAntiSpyware recipe) was
+removed on 2026-10-31: an app the product cannot drive headless is not automated through a stored
+desktop recipe that runs on one up-front consent. The model still drives the desktop through
+`win32_mcp_call`, one gated call at a time, and the lessons below came from those recipes and still
+apply to such calls.
 
-- Consent is taken ONCE at action level, not per step, because the steps are vetted manifest content
-  rather than model output. That is precisely why a recipe must never contain a high-risk tool: the
-  runner rejects one structurally instead of relying on a prompt that will not be shown.
-- The runner stops at the first fatal step -- an unplannable tool, a high-risk tool, or a
-  non-optional error. It does not march on.
-- A wait step whose `found` / `satisfied` / `idle` is false OR ABSENT counts as FAILED. A missing
-  flag is not a pass; a silent march-on past a wait is how a recipe ends up clicking into a scan
-  that is still running.
-- `optional:true` means "this label may legitimately not appear", not "ignore errors here".
+- A wait whose `found` / `satisfied` / `idle` is false OR ABSENT has FAILED. A missing flag is not
+  a pass; marching on past a wait is how a click lands in a scan that is still running.
 
-**Timeouts are the single most common recipe bug.** The wait tools' ceiling is hours
-(`kMaxWaitMs`, `win32_mcp_watch.cpp`) but their DEFAULT is seconds. A recipe that drives a scan and
+**Timeouts are the most common long-operation bug.** The wait tools' ceiling is hours
+(`kMaxWaitMs`, `win32_mcp_watch.cpp`) but their DEFAULT is seconds. A wait on a scan that
 does not set an explicit `timeout_ms` will "time out" in seconds and continue mid-scan. Set it
 explicitly, and raise `poll_ms` toward its own ceiling for OCR-backed waits so polling does not burn
 the machine for an hour.
@@ -144,8 +137,8 @@ only honest common marker.
 ## 5. Driving real Windows apps
 
 Every quirk below was found by driving a real technician app, and each one is an engine bug fixed in
-the engine rather than worked around in a recipe. A live app is the engine's quirk oracle: if a
-recipe needs a hack, the engine is wrong.
+the engine rather than worked around by the caller. A live app is the engine's quirk oracle: if a
+caller needs a hack, the engine is wrong.
 
 | Trap | Defence |
 | --- | --- |
@@ -164,8 +157,7 @@ recipe needs a hack, the engine is wrong.
 Free editions frequently have no scan CLI at all, which is why the GUI path exists. Map the surface
 headless first (a vendor CLI parsed from stdout or a report file) and fall back to
 `uia_inspect_window` + OCR only when there is nothing to parse. Never brute-force undocumented CLI
-switches -- read vendor docs. Record what you learn in the app manifest's `notes`, not in a recipe
-comment: the manifest is what the planner reads.
+switches -- read vendor docs.
 
 ## 6. Build and link traps
 

@@ -10,6 +10,7 @@
 
 #include "sak/actions/backup_bitlocker_keys_action.h"
 #include "sak/actions/check_disk_errors_action.h"
+#include "sak/actions/microsoft_defender_action.h"
 #include "sak/actions/reset_network_action.h"
 #include "sak/actions/verify_system_files_action.h"
 #include "sak/app_paths.h"
@@ -33,6 +34,7 @@
 #include <QStringList>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -46,6 +48,7 @@
 #include <optional>
 #include <stop_token>
 #include <thread>
+#include <utility>
 
 namespace {
 constexpr int kQuickActionCancelPollMs = sak::kTimerRetryBaseMs;
@@ -852,6 +855,29 @@ void registerQuickActionTasks(sak::ElevatedTaskDispatcher& dispatcher) {
         });
 }
 
+void registerDefenderTasks(sak::ElevatedTaskDispatcher& dispatcher) {
+    // Microsoft Defender runs MpCmdRun.exe, which must run elevated. The operation is fixed by
+    // the task id; the payload carries nothing the action reads.
+    constexpr std::array defender_tasks{
+        std::pair{sak::quick_action_elevation::kDefenderQuickScanTaskId,
+                  sak::DefenderOperation::QuickScan},
+        std::pair{sak::quick_action_elevation::kDefenderFullScanTaskId,
+                  sak::DefenderOperation::FullScan},
+        std::pair{sak::quick_action_elevation::kDefenderSignatureUpdateTaskId,
+                  sak::DefenderOperation::SignatureUpdate},
+    };
+    for (const auto& [task_id, operation] : defender_tasks) {
+        dispatcher.registerHandler(
+            QString::fromLatin1(task_id),
+            [operation](const QJsonObject& payload,
+                        sak::ProgressCallback progress,
+                        sak::CancelCheck is_cancelled) {
+                return runQuickAction<sak::MicrosoftDefenderAction>(
+                    payload, std::move(progress), std::move(is_cancelled), operation);
+            });
+    }
+}
+
 void registerPermissionTasks(sak::ElevatedTaskDispatcher& dispatcher) {
     dispatcher.registerHandler(
         QStringLiteral("TakeOwnership"),
@@ -1035,6 +1061,7 @@ void registerAiTasks(sak::ElevatedTaskDispatcher& dispatcher) {
 
 void registerAllTasks(sak::ElevatedTaskDispatcher& dispatcher) {
     registerQuickActionTasks(dispatcher);
+    registerDefenderTasks(dispatcher);
     registerPermissionTasks(dispatcher);
     registerFileTasks(dispatcher);
     registerAiTasks(dispatcher);
@@ -1122,9 +1149,17 @@ ActiveTaskOutcome finishActiveTaskWithCancelPolling(
     std::future<std::expected<sak::TaskHandlerResult, sak::error_code>>* future,
     const std::shared_ptr<std::atomic_bool>& cancel_requested) {
     bool shutdown_after_task = false;
+    QElapsedTimer since_heartbeat;
+    since_heartbeat.start();
     while (future->wait_for(std::chrono::milliseconds(kActiveTaskCancelPollMs)) !=
            std::future_status::ready) {
         const std::lock_guard<std::mutex> lock(server_mutex);
+        // A step can run silently for minutes; keep the client from reading that as a lost
+        // helper (see kTaskHeartbeatIntervalMs).
+        if (sak::taskHeartbeatDue(since_heartbeat.elapsed())) {
+            server.sendHeartbeat();
+            since_heartbeat.restart();
+        }
         switch (server.pollPipe()) {
         case sak::ElevatedPipeServer::PipePoll::NoData:
             continue;

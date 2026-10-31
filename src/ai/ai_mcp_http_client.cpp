@@ -318,7 +318,7 @@ private:
 };
 
 // A loopback host may use plain http (a local MCP server is not a MITM/eavesdrop surface); every
-// other host MUST use https so a manifest typo or disk override cannot downgrade to cleartext.
+// other host MUST use https so a catalog typo cannot downgrade to cleartext.
 [[nodiscard]] bool isLoopbackHost(const QString& host) {
     return host.compare(QStringLiteral("localhost"), Qt::CaseInsensitive) == 0 ||
            host == QStringLiteral("127.0.0.1") || host == QStringLiteral("::1");

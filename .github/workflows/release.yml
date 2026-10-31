@@ -176,13 +176,6 @@ jobs:
         # separately bundled executable.
         if (Test-Path "tools/mcp/_build") { Write-Error "FATAL: tools/mcp/_build leaked into release output"; exit 1 }
 
-        foreach ($f in @("data/ai/providers/providers.json", "data/ai/app_manifests/superantispyware.json", "data/ai/app_manifests/windows_sfc.json")) {
-          if (!(Test-Path $f)) { Write-Error "FATAL: $f not found"; exit 1 }
-        }
-        if (Get-ChildItem "data/ai/providers" -Recurse -Filter "*.local.json" -ErrorAction SilentlyContinue) {
-          Write-Error "FATAL: local provider config present in CI build output"; exit 1
-        }
-
         # Imported non-system DLLs must exist in the build output.
         & ../../scripts/verify_windows_runtime_dependencies.ps1 -RootDir . -PrimaryExe "sak_utility.exe"
         if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

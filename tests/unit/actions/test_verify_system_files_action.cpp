@@ -24,7 +24,33 @@ private Q_SLOTS:
     void dismReportsCorruption_repairableAndDetectedAreCorrupt();
     // B6-08: SFC redirect target is unpredictable and PowerShell-safe.
     void makeUniqueSfcOutputName_uniqueAndWellFormed();
+    // One 60-minute bound for the whole run, and the registry waits exactly that long.
+    void runIsBoundByOneSixtyMinuteTimeout();
+    void stepTimeoutIsCutToTheRemainingBudget();
 };
+
+void VerifySystemFilesActionTests::runIsBoundByOneSixtyMinuteTimeout() {
+    QCOMPARE(sak::kVerifySystemFilesTimeoutMs, 60 * 60 * 1000);
+    const Action action;
+    // The value the assistant's registry thunk waits on is the action's own bound, not the
+    // 30-minute generic ceiling that used to cut SFC + DISM off part-way.
+    QCOMPARE(action.executionTimeoutMs(), sak::kVerifySystemFilesTimeoutMs);
+    QVERIFY(action.executionTimeoutMs() != sak::kDefaultQuickActionTimeoutMs);
+}
+
+void VerifySystemFilesActionTests::stepTimeoutIsCutToTheRemainingBudget() {
+    constexpr int kStepCapMs = 1'800'000;
+    // Plenty left: the step keeps its own cap.
+    QCOMPARE(Action::boundedStepTimeoutMs(kStepCapMs, 3'600'000), kStepCapMs);
+    // Less left than the cap: the step gets only what is left, so the steps' sum can never
+    // run past the run's single bound.
+    QCOMPARE(Action::boundedStepTimeoutMs(kStepCapMs, 120'000), 120'000);
+    QCOMPARE(Action::boundedStepTimeoutMs(kStepCapMs, 1), 1);
+    // Nothing left (or the deadline already passed): the step must not start at all.
+    QCOMPARE(Action::boundedStepTimeoutMs(kStepCapMs, 0), 0);
+    QCOMPARE(Action::boundedStepTimeoutMs(kStepCapMs, -5), 0);
+    QCOMPARE(Action::boundedStepTimeoutMs(0, 3'600'000), 0);
+}
 
 void VerifySystemFilesActionTests::dismReportsCorruption_cleanMachineIsNotCorrupt() {
     // The exact DISM /CheckHealth and /ScanHealth healthy output.

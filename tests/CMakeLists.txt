@@ -48,6 +48,13 @@ set(SAK_PARTITION_FS_TEST_HOOK_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/partition_hfs_file_system_reader.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/partition_executor.cpp"
 )
+# The same arrangement for the AI layer's test-only seams: compiled only under SAK_AI_TEST_HOOKS,
+# into the tests that drive them, so sak_ai_core and sak_gui -- and every shipped binary -- carry
+# none of them. Each hook is a static function, so hooked and product objects agree on every class
+# layout and the hooked object replaces the library's copy in that link.
+set(SAK_AI_PROVIDER_REGISTRY_TEST_HOOK_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/ai/ai_provider_registry.cpp"
+)
 set(SAK_PROCESS_RUNNER_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/process_runner.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/process_runner.h"
@@ -1567,6 +1574,7 @@ message(STATUS "Added unit test: test_ai_openai_model_client")
 
 add_executable(test_ai_provider_registry
     unit/test_ai_provider_registry.cpp
+    ${SAK_AI_PROVIDER_REGISTRY_TEST_HOOK_SOURCES}
     ../resources/ai.qrc
 )
 set_target_properties(test_ai_provider_registry PROPERTIES
@@ -1581,6 +1589,7 @@ target_link_libraries(test_ai_provider_registry PRIVATE
 target_include_directories(test_ai_provider_registry PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
+target_compile_definitions(test_ai_provider_registry PRIVATE SAK_AI_TEST_HOOKS)
 add_test(NAME test_ai_provider_registry COMMAND test_ai_provider_registry
          -o "${TEST_OUTPUT_DIR}/test_ai_provider_registry.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
@@ -2298,6 +2307,7 @@ message(STATUS "Added unit test: test_fuzz_mbox_container")
 
 add_executable(test_ai_provider_gateway
     unit/test_ai_provider_gateway.cpp
+    ${SAK_AI_PROVIDER_REGISTRY_TEST_HOOK_SOURCES}
 )
 set_target_properties(test_ai_provider_gateway PROPERTIES
     AUTOMOC ON
@@ -2310,48 +2320,11 @@ target_link_libraries(test_ai_provider_gateway PRIVATE
 target_include_directories(test_ai_provider_gateway PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
+target_compile_definitions(test_ai_provider_gateway PRIVATE SAK_AI_TEST_HOOKS)
 add_test(NAME test_ai_provider_gateway COMMAND test_ai_provider_gateway
          -o "${TEST_OUTPUT_DIR}/test_ai_provider_gateway.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_ai_provider_gateway")
-
-add_executable(test_ai_app_action_planner
-    unit/test_ai_app_action_planner.cpp
-)
-set_target_properties(test_ai_app_action_planner PROPERTIES
-    AUTOMOC ON
-    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-)
-target_link_libraries(test_ai_app_action_planner PRIVATE
-    sak_ai_core sak_foundation
-    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-)
-target_include_directories(test_ai_app_action_planner PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include
-)
-add_test(NAME test_ai_app_action_planner COMMAND test_ai_app_action_planner
-         -o "${TEST_OUTPUT_DIR}/test_ai_app_action_planner.txt,txt" -o -,txt
-         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-message(STATUS "Added unit test: test_ai_app_action_planner")
-
-add_executable(test_ai_win32_gui_runner
-    unit/test_ai_win32_gui_runner.cpp
-)
-set_target_properties(test_ai_win32_gui_runner PROPERTIES
-    AUTOMOC ON
-    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-)
-target_link_libraries(test_ai_win32_gui_runner PRIVATE
-    sak_ai_core
-    Qt6::Core Qt6::Test ${PLATFORM_LIBS}
-)
-target_include_directories(test_ai_win32_gui_runner PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include
-)
-add_test(NAME test_ai_win32_gui_runner COMMAND test_ai_win32_gui_runner
-         -o "${TEST_OUTPUT_DIR}/test_ai_win32_gui_runner.txt,txt" -o -,txt
-         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-message(STATUS "Added unit test: test_ai_win32_gui_runner")
 
 # test_win32_mcp_dialog_choice --- pure, deterministic coverage of the dismiss_dialog button
 # selection: affirmative ranking, never-Cancel safety, lone-nameless fallback, explicit override.
@@ -3784,6 +3757,30 @@ add_test(NAME test_check_disk_errors_action
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 
 message(STATUS "Added unit test: test_check_disk_errors_action")
+
+# test_microsoft_defender_action -- MpCmdRun result mapping (clean / threats need attention /
+# failure), the platform-folder resolution rule, and the shared elevated-helper task mapping
+add_executable(test_microsoft_defender_action
+    unit/actions/test_microsoft_defender_action.cpp
+)
+set_target_properties(test_microsoft_defender_action PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_microsoft_defender_action PRIVATE
+    sak_core sak_foundation
+    Qt6::Core
+    Qt6::Test
+    ${PLATFORM_LIBS}
+)
+target_include_directories(test_microsoft_defender_action PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_microsoft_defender_action
+         COMMAND test_microsoft_defender_action
+         -o "${TEST_OUTPUT_DIR}/test_microsoft_defender_action.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_microsoft_defender_action")
 
 # test_reset_network_action -- B6-12/13 pure seams (adapter reset fails closed;
 # a timed-out / non-zero step counts as a failure for the final verdict)

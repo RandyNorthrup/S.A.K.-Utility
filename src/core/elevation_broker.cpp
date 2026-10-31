@@ -204,10 +204,12 @@ auto ElevationBroker::awaitTaskResult(const QString& task_id)
             return std::unexpected(sak::error_code::helper_crashed);
         }
 
-        if (msg->type == PipeMessageType::ProgressUpdate) {
-            const int percent = msg->json["percent"].toInt(0);
-            const QString status = msg->json["status"].toString();
-            Q_EMIT progressUpdated(percent, status);
+        if (pipeMessageKeepsTaskAlive(msg->type)) {
+            if (msg->type == PipeMessageType::ProgressUpdate) {
+                const int percent = msg->json["percent"].toInt(0);
+                const QString status = msg->json["status"].toString();
+                Q_EMIT progressUpdated(percent, status);
+            }
             continue;
         }
 

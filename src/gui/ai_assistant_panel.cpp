@@ -345,7 +345,6 @@ constexpr int kPackageResultOutputMaxChars = 8000;
 constexpr int kPackageFileResultLimit = 200;
 constexpr int kPackageArtifactDisplayLimit = 20;
 constexpr int kPackageLogLineResultLimit = 80;
-constexpr int kToolOutputMaxBytes = 4 * static_cast<int>(sak::kBytesPerMB);
 constexpr int kWorkflowPhaseStatusMessageMs = 2500;
 constexpr int kRunStateMessageMaxChars = 200;
 constexpr int kHumanApprovalInfoMaxChars = 600;
@@ -7302,15 +7301,8 @@ QJsonObject AiAssistantPanel::runProviderGatewayTool(const QJsonObject& args) {
     } else if (mode == ai::AiAccessMode::UnattendedFullAccess) {
         access = ai::AiProviderGatewayToolAccess::UnattendedFullAccess;
     }
-    QJsonObject result = ai::AiProviderGatewayToolRunner::run(
-        args,
-        &gateway,
-        access,
-        providerGatewayCallbacks(),
-        ai::AiProviderGatewayToolOptions{.default_output_bytes = static_cast<int>(
-                                             kDefaultOutputCapKb * sak::kBytesPerKB),
-                                         .min_output_bytes = static_cast<int>(sak::kBytesPerKB),
-                                         .max_output_bytes = kToolOutputMaxBytes});
+    QJsonObject result =
+        ai::AiProviderGatewayToolRunner::run(args, &gateway, access, providerGatewayCallbacks());
     // This may run on the tool worker thread; the timer lives on the GUI thread.
     QMetaObject::invokeMethod(this, &AiAssistantPanel::armMcpIdleReap, Qt::QueuedConnection);
     return result;
@@ -7357,38 +7349,6 @@ ai::AiProviderGatewayToolCallbacks AiAssistantPanel::providerGatewayCallbacks() 
     callbacks.offer_restore_point = [this](const QString& preview, bool risky) {
         return offerRestorePointIfNeeded(preview, risky);
     };
-    callbacks.allocate_command_id = [this]() {
-        return allocateCommandId();
-    };
-    callbacks.execute_powershell = [this](const ai::AiCommandRequest& request,
-                                          const QString& command_id) {
-        return executeWorkflowPowerShellRequest(request, command_id);
-    };
-    callbacks.append_local_event = [this](const QString& message) {
-        appendLocalEvent(message);
-    };
-    callbacks.log_output = [this](const QString& line) {
-        Q_EMIT logOutput(line);
-    };
-    callbacks.record_command = [this](const QString& preview, const QJsonObject& result) {
-        // Store write + session-picker rebuild belong on the GUI thread; this
-        // callback fires from the provider-gateway worker thread.
-        runOnGuiThread([this, &preview, &result]() {
-            if (!m_conversationStore) {
-                return;
-            }
-            QString error;
-            (void)m_conversationStore->appendCommand(preview, result, &error);
-            if (!error.isEmpty()) {
-                appendLocalEvent(tr("App action command record failed: %1").arg(error));
-            }
-            reloadSessionPicker();
-        });
-    };
-    callbacks.append_session_memory =
-        [this](const QString& role, const QString& title, const QString& body) {
-            appendSessionMemory(role, title, body);
-        };
     return callbacks;
 }
 

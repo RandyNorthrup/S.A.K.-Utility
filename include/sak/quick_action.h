@@ -14,6 +14,11 @@
 
 namespace sak {
 
+/// How long a run of a quick action may take, end to end, unless the action declares its own
+/// bound (QuickAction::executionTimeoutMs). The assistant's registry thunk waits exactly this
+/// long, so one number bounds a run instead of an inner and an outer clock that disagree.
+inline constexpr int kDefaultQuickActionTimeoutMs = 30 * 60 * 1000;
+
 /**
  * @brief Base class for all quick actions
  *
@@ -138,6 +143,15 @@ public:
      * nothing.
      */
     virtual bool isReadOnly() const { return false; }
+
+    /**
+     * @brief The one end-to-end time bound for a run of this action, in milliseconds
+     *
+     * The assistant's registry thunk waits this long before it stops the run, and an action
+     * whose steps have their own timeouts keeps their sum inside it. Override when the work
+     * legitimately runs longer (or must stop sooner) than kDefaultQuickActionTimeoutMs.
+     */
+    virtual int executionTimeoutMs() const { return kDefaultQuickActionTimeoutMs; }
 
     /**
      * @brief Get current status

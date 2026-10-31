@@ -229,6 +229,12 @@ void ElevatedPipeServer::sendReady() {
     }
 }
 
+void ElevatedPipeServer::sendHeartbeat() {
+    if (!sendRaw(buildHeartbeat())) {
+        sak::logWarning("ElevatedPipeServer: sendHeartbeat() failed; pipe may be broken");
+    }
+}
+
 auto ElevatedPipeServer::readMessage() -> std::expected<PipeMessage, sak::error_code> {
     char header[kPipeHeaderSize];
     if (!readExact(header, kPipeHeaderSize, kHelperTimeoutMs)) {

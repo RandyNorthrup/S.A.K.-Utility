@@ -209,8 +209,11 @@ int registerQuickActionsInto(QuickActionController& controller, AppActionRegistr
         // fails closed (runQuickActionSync returns "No action controller") instead of
         // dereferencing a dangling raw pointer.
         const QPointer<QuickActionController> controller_ptr = &controller;
-        AppActionInvoke invoke = [controller_ptr, name](const QJsonObject&) {
-            return runQuickActionSync(controller_ptr, name);
+        // The action's own declared bound is the wait: one clock per run, so a step the action
+        // is still allowed to finish is never cut off by a shorter generic ceiling here.
+        const int timeout_ms = action->executionTimeoutMs();
+        AppActionInvoke invoke = [controller_ptr, name, timeout_ms](const QJsonObject&) {
+            return runQuickActionSync(controller_ptr, name, timeout_ms);
         };
         if (registry.registerAction(descriptor, std::move(invoke))) {
             ++registered;

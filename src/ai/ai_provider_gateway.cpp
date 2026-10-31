@@ -26,9 +26,9 @@ constexpr qsizetype kMcpInlineResultJsonBytes = 65'536;
 constexpr int kWin32McpDefaultTimeoutMs = 20'000;
 constexpr int kWin32McpMinimumTimeoutMs = 1000;
 // A single win32 call may legitimately block for a long-running desktop operation -- a wait_for_*
-// step that polls until an antivirus scan finishes runs for minutes to hours. The default stays
-// short (20s); only a step that explicitly requests a long timeout_ms (e.g. a scan recipe) gets
-// one. These calls run off the GUI thread, so a long block never freezes the app.
+// call that polls until a long task on screen finishes runs for minutes to hours. The default
+// stays short (20s); only a call that explicitly requests a long timeout_ms gets one. These calls
+// run off the GUI thread, and Stop cancels them, so a long block never freezes the app.
 constexpr int kWin32McpMaximumTimeoutMs = 7'200'000;  // 2 hours
 
 QString cappedString(const QString& value, qsizetype max_chars, bool* truncated = nullptr) {
@@ -394,9 +394,8 @@ QJsonObject loadHttpDocsProvider(const AiProviderRegistry& registry,
         return {};
     }
     if (provider.value(QStringLiteral("transport")).toString() == QLatin1String("http")) {
-        // An on-disk providers.json silently overrides the bundled manifest, so the endpoint is
-        // untrusted text. Refuse anything that is not an absolute https URL rather than posting
-        // the model's query at whatever a rewritten manifest names.
+        // Defense in depth over the embedded catalog: refuse anything that is not an absolute
+        // https URL rather than posting the model's query at whatever an entry names.
         const QString endpoint = provider.value(QStringLiteral("endpoint")).toString().trimmed();
         if (!isAbsoluteHttpUrl(endpoint, true)) {
             if (error_message != nullptr) {
@@ -427,14 +426,6 @@ bool requireProviderTool(const QJsonObject& provider,
                 .arg(provider_id, provider_tool);
     }
     return false;
-}
-
-bool isAppOperation(const QString& operation) {
-    static const QSet<QString> kOperations{QStringLiteral("app_manifest"),
-                                           QStringLiteral("app_capabilities"),
-                                           QStringLiteral("app_run_action_plan"),
-                                           QStringLiteral("app_run_action")};
-    return kOperations.contains(operation);
 }
 
 // Keeps the pointer-level error channel in step with the availability envelope: a success
@@ -536,42 +527,6 @@ QJsonObject docsQueryAvailability(const AiProviderRegistry& registry,
     return ok;
 }
 
-QJsonObject appOperationAvailability(const AiProviderRegistry& registry,
-                                     const QJsonObject& args,
-                                     const QString& operation) {
-    QString error;
-    const QString app_id = args.value(QStringLiteral("app_id")).toString().trimmed();
-    const QString action = args.value(QStringLiteral("action")).toString().trimmed();
-    if (app_id.isEmpty()) {
-        return availabilityError(operation,
-                                 QStringLiteral("invalid_request"),
-                                 QStringLiteral("Provider app operation requires app_id"));
-    }
-    const QJsonObject manifest = operation == QLatin1String("app_manifest")
-                                     ? registry.appManifest(app_id, &error)
-                                     : registry.appCapabilities(app_id, action, &error);
-    if (!error.isEmpty() || manifest.isEmpty()) {
-        return availabilityError(operation,
-                                 QStringLiteral("app_manifest_unavailable"),
-                                 error.isEmpty()
-                                     ? QStringLiteral("No bundled manifest for app: %1").arg(app_id)
-                                     : error);
-    }
-    if (operation != QLatin1String("app_manifest") &&
-        !manifest.value(QStringLiteral("requested_action_supported")).toBool(false)) {
-        return availabilityError(operation,
-                                 QStringLiteral("app_action_unsupported"),
-                                 QStringLiteral("App action is not supported by bundled manifest"));
-    }
-
-    QJsonObject ok = availabilityOk(operation);
-    ok[QStringLiteral("app_id")] = app_id;
-    if (!action.isEmpty()) {
-        ok[QStringLiteral("action")] = action;
-    }
-    return ok;
-}
-
 // Non-empty when a docs_query request carries a wrong-typed field. A non-object "arguments"
 // would otherwise become an empty object and the provider-specific planner would report the
 // caller's fields as absent instead of rejecting the request.
@@ -613,10 +568,10 @@ QString win32CallEnvelopeError(const QJsonObject& args) {
     return {};
 }
 
-// Environment variables an on-disk providers.json must never set for the MCP child process:
+// Environment variables a provider catalog entry must never set for the MCP child process:
 // they redirect where that child resolves code (PATH, Qt plugin paths) or which user
-// directories it reads and writes. The child can run elevated, so a manifest that names one of
-// these is a configuration attack, not a preference -- fail closed instead of honoring it.
+// directories it reads and writes. The child can run elevated, so an entry that names one of
+// these is a configuration error at best -- fail closed instead of honoring it.
 bool isProtectedChildEnvVar(const QString& name) {
     static const QSet<QString> kProtectedVars{
         QStringLiteral("PATH"),
@@ -885,16 +840,6 @@ QJsonObject AiProviderGateway::docsQuery(const QJsonObject& args, QString* error
     return runDocsToolCall(provider, plan, query, error_message);
 }
 
-QJsonObject AiProviderGateway::appManifest(const QString& app_id, QString* error_message) const {
-    return m_registry.appManifest(app_id, error_message);
-}
-
-QJsonObject AiProviderGateway::appCapabilities(const QString& app_id,
-                                               const QString& action,
-                                               QString* error_message) const {
-    return m_registry.appCapabilities(app_id, action, error_message);
-}
-
 QJsonObject AiProviderGateway::win32McpAvailability(const QJsonObject& args,
                                                     const QString& operation) const {
     QString error;
@@ -944,11 +889,6 @@ QJsonObject AiProviderGateway::checkAvailability(const QJsonObject& args,
 
     if (operation == QLatin1String("win32_mcp_call")) {
         return withAvailabilityError(win32McpAvailability(args, operation), error_message);
-    }
-
-    if (isAppOperation(operation)) {
-        return withAvailabilityError(appOperationAvailability(m_registry, args, operation),
-                                     error_message);
     }
 
     return withAvailabilityError(
@@ -1132,25 +1072,6 @@ bool AiProviderGateway::isWin32InputTool(const QString& tool_name) {
         QStringLiteral("focus_window"),
     };
     return kInputTools.contains(tool_name.trimmed());
-}
-
-bool AiProviderGateway::isWin32DesktopInputTool(const QString& tool_name) {
-    // ONLY the physical-desktop-driving input tools: mouse/keyboard via SendInput, UIA
-    // activation, dialog dismissal, and focus. Deliberately EXCLUDES the browser input tools,
-    // clipboard_write, and extension install/uninstall -- those still require a per-call human
-    // confirm even inside a win32_gui recipe (a SUPERAntiSpyware-style desktop recipe does not
-    // need them). This is a positive allowlist, so a newly added input tool is rejected in
-    // recipes until it is explicitly added here.
-    static const QSet<QString> kDesktopTools{
-        QStringLiteral("click_text"),
-        QStringLiteral("uia_click_control"),
-        QStringLiteral("dismiss_dialog"),
-        QStringLiteral("mouse_click"),
-        QStringLiteral("type_text"),
-        QStringLiteral("send_keys"),
-        QStringLiteral("focus_window"),
-    };
-    return kDesktopTools.contains(tool_name.trimmed());
 }
 
 QProcessEnvironment AiProviderGateway::win32McpEnvironment(const QString& security_profile,

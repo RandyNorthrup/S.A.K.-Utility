@@ -195,6 +195,35 @@ private Q_SLOTS:
         QCOMPARE(msg.type, sak::PipeMessageType::Ready);
     }
 
+    // A long elevated step (SFC, a Defender scan) can run silently far past the client's 30 s
+    // frame read timeout. The helper sends a payloadless Heartbeat while a task runs, and the
+    // client keeps waiting on it; before this the client read a silent step as a lost helper and
+    // abandoned a task that was working.
+    void testHeartbeatKeepsALongSilentTaskAlive() {
+        const QByteArray frame = sak::buildHeartbeat();
+        QCOMPARE(frame.size(), sak::kPipeHeaderSize);
+        QCOMPARE(static_cast<uint8_t>(frame[4]),
+                 static_cast<uint8_t>(sak::PipeMessageType::Heartbeat));
+        const sak::PipeMessage msg = sak::parsePayload(sak::PipeMessageType::Heartbeat, {});
+        QVERIFY(msg.valid);
+        // Payloadless, like Ready: a heartbeat that carries a body is malformed.
+        QVERIFY(!sak::parsePayload(sak::PipeMessageType::Heartbeat, R"({"x":1})").valid);
+
+        // The client keeps waiting on progress and heartbeats, and only on those.
+        QVERIFY(sak::pipeMessageKeepsTaskAlive(sak::PipeMessageType::Heartbeat));
+        QVERIFY(sak::pipeMessageKeepsTaskAlive(sak::PipeMessageType::ProgressUpdate));
+        QVERIFY(!sak::pipeMessageKeepsTaskAlive(sak::PipeMessageType::TaskResult));
+        QVERIFY(!sak::pipeMessageKeepsTaskAlive(sak::PipeMessageType::TaskError));
+        QVERIFY(!sak::pipeMessageKeepsTaskAlive(sak::PipeMessageType::Ready));
+
+        // The helper sends one at the interval (that the interval fits twice inside the client's
+        // read timeout is a static_assert beside the constant).
+        QVERIFY(!sak::taskHeartbeatDue(0));
+        QVERIFY(!sak::taskHeartbeatDue(sak::kTaskHeartbeatIntervalMs - 1));
+        QVERIFY(sak::taskHeartbeatDue(sak::kTaskHeartbeatIntervalMs));
+        QVERIFY(sak::taskHeartbeatDue(sak::kPipeIoTimeoutMs));
+    }
+
     void testParseEmptyPayloadForNonEmptyType() {
         // TaskResult with empty payload should be invalid
         sak::PipeMessage msg = sak::parsePayload(sak::PipeMessageType::TaskResult, {});

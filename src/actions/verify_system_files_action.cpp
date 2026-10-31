@@ -15,6 +15,7 @@
 #include <QRandomGenerator>
 #include <QRegularExpression>
 
+#include <algorithm>
 #include <atomic>
 
 namespace sak {
@@ -59,6 +60,29 @@ QString VerifySystemFilesAction::makeUniqueSfcOutputName(qint64 entropy,
 
 VerifySystemFilesAction::VerifySystemFilesAction(QObject* parent) : QuickAction(parent) {}
 
+int VerifySystemFilesAction::boundedStepTimeoutMs(int step_cap_ms, qint64 remaining_ms) {
+    if (step_cap_ms <= 0 || remaining_ms <= 0) {
+        return 0;
+    }
+    return static_cast<int>(std::min<qint64>(step_cap_ms, remaining_ms));
+}
+
+int VerifySystemFilesAction::nextStepTimeoutMs(int step_cap_ms) {
+    const int granted = boundedStepTimeoutMs(step_cap_ms, m_run_deadline.remainingTime());
+    if (granted == 0) {
+        m_time_limit_reached = true;
+    }
+    return granted;
+}
+
+void VerifySystemFilesAction::noteStepOutcome(const ProcessResult& proc,
+                                              int granted_ms,
+                                              int step_cap_ms) {
+    if (proc.timed_out && granted_ms < step_cap_ms) {
+        m_time_limit_reached = true;
+    }
+}
+
 void VerifySystemFilesAction::runSFC() {
     Q_EMIT executionProgress("Running System File Checker (SFC)...", progress::kStep10);
 
@@ -90,8 +114,13 @@ void VerifySystemFilesAction::runSFC() {
             .arg(sfc_out_name);
 
     Q_EMIT executionProgress("SFC scanning...", progress::kStep25);
-    const ProcessResult proc = runPowerShell(
-        ps_script, sak::kTimeoutSystemRepairMs, true, true, [this]() { return isCancelled(); });
+    const int granted_ms = nextStepTimeoutMs(sak::kTimeoutSystemRepairMs);
+    if (granted_ms == 0) {
+        return;
+    }
+    const ProcessResult proc =
+        runPowerShell(ps_script, granted_ms, true, true, [this]() { return isCancelled(); });
+    noteStepOutcome(proc, granted_ms, sak::kTimeoutSystemRepairMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("SFC warning: " + proc.std_err.trimmed());
     }
@@ -127,8 +156,13 @@ bool VerifySystemFilesAction::runDismCheckHealth() {
     // Thread cancellation like runSFC/runDismRestoreHealth so cancel() force-terminates the
     // child; otherwise the probe ignores cancel and the controller's thread->wait(10s) times
     // out and deletes a still-running thread.
-    const ProcessResult proc = runPowerShell(
-        script, sak::kTimeoutDismCheckMs, true, true, [this]() { return isCancelled(); });
+    const int granted_ms = nextStepTimeoutMs(sak::kTimeoutDismCheckMs);
+    if (granted_ms == 0) {
+        return false;  // no budget left: not assessed, so the run cannot claim a clean store
+    }
+    const ProcessResult proc =
+        runPowerShell(script, granted_ms, true, true, [this]() { return isCancelled(); });
+    noteStepOutcome(proc, granted_ms, sak::kTimeoutDismCheckMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("DISM CheckHealth warning: " + proc.std_err.trimmed());
     }
@@ -149,9 +183,13 @@ bool VerifySystemFilesAction::runDismScanHealth() {
         "& (Join-Path ([System.Environment]::GetFolderPath('System')) 'DISM.exe') "
         "/Online /Cleanup-Image /ScanHealth /English";
 
-    const ProcessResult proc = runPowerShell(script, sak::kTimeoutDismScanMs, true, true, [this]() {
-        return isCancelled();
-    });
+    const int granted_ms = nextStepTimeoutMs(sak::kTimeoutDismScanMs);
+    if (granted_ms == 0) {
+        return false;  // no budget left: not assessed, so the run cannot claim a clean store
+    }
+    const ProcessResult proc =
+        runPowerShell(script, granted_ms, true, true, [this]() { return isCancelled(); });
+    noteStepOutcome(proc, granted_ms, sak::kTimeoutDismScanMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("DISM ScanHealth warning: " + proc.std_err.trimmed());
     }
@@ -173,8 +211,13 @@ void VerifySystemFilesAction::runDismRestoreHealth() {
         "/Online /Cleanup-Image /RestoreHealth /LimitAccess /English";
 
     Q_EMIT executionProgress("DISM restoring...", progress::kStep75);
-    const ProcessResult proc = runPowerShell(
-        script, sak::kTimeoutSystemRepairMs, true, true, [this]() { return isCancelled(); });
+    const int granted_ms = nextStepTimeoutMs(sak::kTimeoutSystemRepairMs);
+    if (granted_ms == 0) {
+        return;
+    }
+    const ProcessResult proc =
+        runPowerShell(script, granted_ms, true, true, [this]() { return isCancelled(); });
+    noteStepOutcome(proc, granted_ms, sak::kTimeoutSystemRepairMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("DISM RestoreHealth warning: " + proc.std_err.trimmed());
     }
@@ -257,6 +300,8 @@ void VerifySystemFilesAction::execute() {
     m_dism_repaired_issues = false;
     m_dism_check_assessed = false;
     m_dism_scan_assessed = false;
+    m_time_limit_reached = false;
+    m_run_deadline = QDeadlineTimer(kVerifySystemFilesTimeoutMs);
     m_cbs_log_path.clear();  // never carry a prior run's CBS log path into this run
 
     runSFC();
@@ -290,6 +335,11 @@ VerifySystemFilesAction::ExecutionResult VerifySystemFilesAction::buildVerificat
         // incomplete probe, or a failed repair). Do NOT claim health -- fail closed in the
         // human-facing message, matching result.success == false.
         message += QStringLiteral("DISM did not complete a component store assessment.");
+    }
+    if (m_time_limit_reached) {
+        message += QStringLiteral(" Stopped at the %1-minute limit for one verification run.")
+                       .arg(kVerifySystemFilesTimeoutMs /
+                            (sak::kMillisecondsPerSecond * sak::kSecondsPerMinute));
     }
 
     ExecutionResult result;

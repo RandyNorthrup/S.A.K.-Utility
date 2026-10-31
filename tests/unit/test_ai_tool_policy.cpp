@@ -267,13 +267,12 @@ void AiToolPolicyTests::readOnlyPolicyAllowsProviderGatewayStatus() {
     QVERIFY(!decision.risky_change);
     QVERIFY(!decision.requires_lease);
 
-    request.operation = QStringLiteral("app_run_action");
+    request.operation = QStringLiteral("win32_mcp_call");
     decision = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::ReadOnlyPc, request);
     QVERIFY(!decision.allowed);
-    // The mutating-provider-operation classification must be what refuses: drop app_run_action
+    // The mutating-provider-operation classification must be what refuses: drop win32_mcp_call
     // from it and the call falls to the not-a-permitted-tool catch-all, where !allowed alone
-    // still passes while the classification is dead. (The win32_mcp_call case below already
-    // asserts risky_change, so the two were asymmetric.)
+    // still passes while the classification is dead.
     QVERIFY(decision.risky_change);
     QCOMPARE(decision.reason, QStringLiteral("Read-only PC policy blocked mutating command"));
 
@@ -287,15 +286,15 @@ void AiToolPolicyTests::readOnlyPolicyAllowsProviderGatewayStatus() {
     QVERIFY(!decision.requires_exclusive_lease);
     QCOMPARE(decision.reason, QStringLiteral("Known local tool allowed"));
 
-    request.operation = QStringLiteral("win32_mcp_call");
-    decision = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::ReadOnlyPc, request);
-    QVERIFY(!decision.allowed);
-    QVERIFY(decision.risky_change);
-
-    decision = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::MutatingRequiresLease, request);
-    QVERIFY(decision.allowed);
-    QVERIFY(decision.risky_change);
-    QVERIFY(decision.requires_lease);
+    // The retired app-manifest operations are no longer read-only gateway lookups: under the
+    // read-only policy they are refused like any other unknown operation.
+    for (const QString& retired : {QStringLiteral("app_manifest"),
+                                   QStringLiteral("app_capabilities"),
+                                   QStringLiteral("app_run_action_plan")}) {
+        request.operation = retired;
+        decision = sak::ai::evaluateToolPolicy(sak::ai::AiToolPolicy::ReadOnlyPc, request);
+        QVERIFY2(!decision.allowed, qPrintable(retired));
+    }
 }
 
 void AiToolPolicyTests::readOnlyPolicyAllowsSessionSearch() {

@@ -559,8 +559,8 @@ private:
     /// Runs the pool's idle reap off the GUI thread (closing can take the pool's cleanup
     /// deadline) and re-arms while sessions remain open.
     void reapIdleMcpSessions();
-    /// The panel-side hooks a provider-gateway call uses (confirmation, restore point, command
-    /// execution and recording); split out of runProviderGatewayTool.
+    /// The human gates a provider-gateway Win32 MCP call uses (confirmation, restore point);
+    /// split out of runProviderGatewayTool.
     [[nodiscard]] ai::AiProviderGatewayToolCallbacks providerGatewayCallbacks();
     [[nodiscard]] QJsonObject runSessionSearchTool(const QJsonObject& args) const;
     // sak_skill handler: operation "list" returns the skill catalog, "load"

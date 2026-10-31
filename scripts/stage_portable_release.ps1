@@ -44,17 +44,6 @@ function Copy-OptionalFile([string]$Source, [string]$DestinationDirectory) {
     }
 }
 
-function Copy-RequiredDirectoryContents([string]$SourceDirectory, [string]$DestinationDirectory, [string]$Description) {
-    if (-not (Test-Path -LiteralPath $SourceDirectory -PathType Container)) {
-        throw "$Description directory missing: $SourceDirectory"
-    }
-    [void](Get-StageDirectTreeItem -Root $SourceDirectory -Description $Description)
-    [void](Assert-StageDirectDirectoryPath -Path $DestinationDirectory -Description $Description -RequireExisting $false)
-    New-Item -ItemType Directory -Force -Path $DestinationDirectory | Out-Null
-    Copy-Item -Path (Join-Path $SourceDirectory "*") -Destination $DestinationDirectory -Recurse -Force
-    Write-Host "  Bundled: $Description"
-}
-
 function Copy-DirectoryExcludingBuildScratch([string]$SourceDirectory, [string]$DestinationDirectory, [string]$Description) {
     if (-not (Test-Path -LiteralPath $SourceDirectory -PathType Container)) {
         throw "$Description directory missing: $SourceDirectory"
@@ -247,29 +236,20 @@ if (Test-Path -LiteralPath $chocoPath -PathType Container) {
     }
 }
 
-Copy-RequiredDirectoryContents `
-    (Join-Path $buildRoot "data/ai/providers") `
-    (Join-Path $packageRoot "data/ai/providers") `
-    "data/ai/providers"
-Copy-RequiredDirectoryContents `
-    (Join-Path $buildRoot "data/ai/app_manifests") `
-    (Join-Path $packageRoot "data/ai/app_manifests") `
-    "data/ai/app_manifests"
-$aiLocalFiles = @(Get-StageDirectTreeItem -Root (Join-Path $packageRoot 'data/ai') -Description 'Bundled AI data' |
-    Where-Object { -not $_.PSIsContainer -and $_.Name -like '*.local.json' })
-foreach ($localFile in $aiLocalFiles) {
-    if (Assert-StageSafeDeleteTarget $localFile.FullName 'Leaf') {
-        Remove-Item -LiteralPath $localFile.FullName -Force -ErrorAction Stop
-    }
-}
+# The assistant's provider policy is compiled into sak_utility.exe (resources/ai.qrc) and is the
+# only copy it reads, so no data/ai folder is staged.
 
 Copy-RequiredFile (Join-Path $repoRootPath "README.md") $packageRoot
 Copy-RequiredFile (Join-Path $repoRootPath "LICENSE") $packageRoot
 Copy-OptionalFile (Join-Path $repoRootPath "CONTRIBUTING.md") $packageRoot
 Copy-RequiredFile (Join-Path $repoRootPath "THIRD_PARTY_LICENSES.md") $packageRoot
 
+# Nothing staged above creates a data folder, so a missing parent means there is nothing to clean.
 foreach ($relativePath in @("data/ai_sessions", "data/temp", "data/logs", "_logs")) {
-    Remove-PathIfExists (Join-Path $packageRoot $relativePath) "Container"
+    $mutablePath = Join-Path $packageRoot $relativePath
+    if (Test-Path -LiteralPath (Split-Path -Parent $mutablePath) -PathType Container) {
+        Remove-PathIfExists $mutablePath "Container"
+    }
 }
 
 $critical = @(
@@ -280,11 +260,7 @@ $critical = @(
     "Qt6Core.dll",
     "Qt6Widgets.dll",
     "platforms/qwindows.dll",
-    "tools/filesystem/manifest.json",
-    "data/ai/providers/providers.json",
-    "data/ai/app_manifests/windows_defender.json",
-    "data/ai/app_manifests/superantispyware.json",
-    "data/ai/app_manifests/windows_sfc.json"
+    "tools/filesystem/manifest.json"
 )
 $missing = $critical | Where-Object { -not (Test-Path -LiteralPath (Join-Path $packageRoot $_) -PathType Leaf) }
 if ($missing) {

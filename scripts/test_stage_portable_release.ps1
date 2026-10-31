@@ -238,9 +238,7 @@ function New-ArchiveContractFixture {
     $fixtureBuild = New-StageContractDirectory $Root
     $name = "ArchiveContract"
     $package = Join-Path $fixtureBuild $name
-    $files = @("sak_utility.exe", "sak_elevated_helper.exe", "data/ai/providers/providers.json",
-        "data/ai/app_manifests/windows_defender.json", "data/ai/app_manifests/superantispyware.json",
-        "data/ai/app_manifests/windows_sfc.json")
+    $files = @("sak_utility.exe", "sak_elevated_helper.exe")
     foreach ($relative in $files) {
         $path = Join-Path $package $relative
         New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force | Out-Null
@@ -1415,14 +1413,22 @@ try {
     foreach ($relative in @(
             "sak_utility.exe",
             "sak_browser_control.crx",
-            "zlib1.dll",
-            "data\ai\providers\providers.json",
             "tools\filesystem\manifest.json")) {
         $path = Join-Path $stagePackageRoot $relative
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             throw "Portable stage omitted required regression artifact: $relative"
         }
     }
+    # zlib ships under the name the vcpkg baseline builds it as (the stager accepts either);
+    # exactly one must be in the package.
+    $zlibCopies = @(@('z.dll', 'zlib1.dll') |
+        Where-Object { Test-Path -LiteralPath (Join-Path $stagePackageRoot $_) -PathType Leaf })
+    Assert-StageContract ($zlibCopies.Count -eq 1) `
+        "Portable stage did not ship exactly one zlib DLL: $($zlibCopies -join ', ')"
+    # The assistant's provider policy is compiled into the executable; a data/ai copy would be a
+    # file nothing reads.
+    Assert-StageContract (-not (Test-Path -LiteralPath (Join-Path $stagePackageRoot 'data\ai'))) `
+        "Portable stage shipped an unread data/ai folder"
     # Nothing reads portable.ini (portable mode is the writable data/ folder beside the exe); it
     # was staged into every package anyway.
     Assert-StageContract (-not (Test-Path -LiteralPath (Join-Path $stagePackageRoot 'portable.ini'))) `

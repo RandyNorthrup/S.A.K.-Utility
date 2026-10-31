@@ -63,12 +63,12 @@ try {
         }
     }
 
+    # The catalog compiled into the executable is the only provider manifest the app reads.
     $providerFiles = @(
-        "resources/ai/providers/providers.json",
-        "data/ai/providers/providers.json"
+        "resources/ai/providers/providers.json"
     ) | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
     if (@($providerFiles).Count -eq 0) {
-        throw "No AI provider manifest found to scan for embedded API keys (expected resources/ai/providers/providers.json or data/ai/providers/providers.json)"
+        throw "No AI provider manifest found to scan for embedded API keys (expected resources/ai/providers/providers.json)"
     }
     foreach ($providerFile in $providerFiles) {
         $providerText = Get-Content -LiteralPath $providerFile -Raw
