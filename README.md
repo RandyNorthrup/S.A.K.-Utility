@@ -769,7 +769,7 @@ and `-PartitionExternalEvidenceChecklist`. See
 | [UUPMediaCreator](https://github.com/OSTooling/UUPMediaCreator) | MIT | Bundled UUP-to-ISO conversion tooling |
 | [wimlib / libwim](https://wimlib.net/) | LGPL v3 | WIM image library bundled with the UUP conversion tooling |
 | [smartmontools 7.5](https://www.smartmontools.org/) | GPLv2 | SMART disk health analysis (bundled `smartctl.exe`) |
-| [iPerf3 3.21](https://iperf.fr/) | BSD 3-Clause | LAN bandwidth testing (bundled `iperf3.exe`) |
+| [iPerf3 3.22](https://iperf.fr/) | BSD 3-Clause | LAN bandwidth testing (bundled `iperf3.exe`) |
 | [Chocolatey 2.7.2](https://chocolatey.org/) | Apache 2.0 | Embedded portable package manager |
 | [Icons8](https://icons8.com/) | Icons8 Free License | UI icons with attribution |
 | Windows BCrypt | OS component | AES-256, PBKDF2, SHA-256 |

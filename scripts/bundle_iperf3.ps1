@@ -93,7 +93,7 @@ Write-Host "=== iPerf3 Bundle Script ===" -ForegroundColor Cyan
 Write-Host ""
 
 $ToolName = "iperf3"
-$Version = "3.21"
+$Version = "3.22"
 
 if ([string]::IsNullOrEmpty($DestinationPath)) {
     $DestinationPath = Join-Path $PSScriptRoot "..\tools\iperf3"
@@ -101,10 +101,10 @@ if ([string]::IsNullOrEmpty($DestinationPath)) {
 $DestinationPath = [System.IO.Path]::GetFullPath($DestinationPath)
 Assert-SafeBundleDirectory -Path $DestinationPath
 
-# Pinned SHA-256 of iperf-$Version-win64.zip. Leave empty ONLY until the release
-# digest is recorded here; with a pin (or -ExpectedSha256) a mismatched archive
-# aborts the bundle instead of being extracted and executed.
-$PinnedSha256 = ""
+# Pinned SHA-256 of iperf-$Version-win64.zip, from the release asset's GitHub digest
+# (gh release view $Version -R ar51an/iperf3-win-builds --json assets). A mismatched
+# archive aborts the bundle instead of being extracted and executed.
+$PinnedSha256 = "C9FEABB3D721039508CCB81F74C2ADA3AE11B9E75D33D24510573C2AA21DA420"
 $RequiredSha256 = $PinnedSha256
 if (-not [string]::IsNullOrWhiteSpace($ExpectedSha256)) {
     $RequiredSha256 = $ExpectedSha256
@@ -270,7 +270,7 @@ Builds:  https://github.com/ar51an/iperf3-win-builds
 
 iPerf3 is used by the Network Diagnostic panel to measure LAN bandwidth
 between two machines (client/server mode).
-"@ | Set-Content (Join-Path $DestinationPath "README.txt") -Encoding UTF8
+"@ | Set-Content (Join-Path $DestinationPath "README.txt") -Encoding ascii
 
     # -- Verify -----------------------------------------------------------------
 

@@ -478,7 +478,7 @@ https://github.com/smartmontools/smartmontools/releases
 ## iPerf3
 
 **License:** BSD 3-Clause
-**Version:** 3.21
+**Version:** 3.22
 **Website:** https://iperf.fr/
 **Source:** https://github.com/esnet/iperf
 **Used for:** LAN bandwidth testing in the Network Diagnostics panel
