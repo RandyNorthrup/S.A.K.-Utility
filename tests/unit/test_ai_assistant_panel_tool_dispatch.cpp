@@ -1003,8 +1003,9 @@ private Q_SLOTS:
         QCOMPARE(staging, panel.m_appActionStagingDir->path());
         QVERIFY(staging != artifact_root);
 
-        QVERIFY(panel.m_conversationStore->renameCurrentSession(
-            QStringLiteral("Renamed App Action Artifacts"), &error));
+        QVERIFY2(panel.m_conversationStore->renameCurrentSession(
+                     QStringLiteral("Renamed App Action Artifacts"), &error),
+                 qPrintable(error));
         panel.ensureAppActionService();
         const QString renamed_staging = panel.m_appActionService->outputDirectory();
         QVERIFY(!renamed_staging.isEmpty());

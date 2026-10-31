@@ -28,6 +28,8 @@
 #include <utility>
 #include <vector>
 
+#include <windows.h>
+
 namespace sak::ai {
 
 namespace {
@@ -1421,12 +1423,21 @@ ConversationStore::ArtifactRenameOutcome ConversationStore::renameArtifactDirect
         }
         return ArtifactRenameOutcome::Failed;
     }
-    if (root_dir.rename(old_name, new_name)) {
+    // MoveFileExW rather than QDir::rename so a refusal says why: a handle another process
+    // holds inside the folder (an open artifact, a scanner) surfaces as Win32 error 5 or 32.
+    const QString native_old = QDir::toNativeSeparators(old_path);
+    const QString native_new = QDir::toNativeSeparators(new_path);
+    if (MoveFileExW(reinterpret_cast<LPCWSTR>(native_old.utf16()),
+                    reinterpret_cast<LPCWSTR>(native_new.utf16()),
+                    0) != 0) {
         return ArtifactRenameOutcome::Renamed;  // reversible: the caller can rename back
     }
+    const DWORD move_error = GetLastError();
     if (error_message != nullptr) {
-        *error_message = QStringLiteral("Could not rename artifact directory '%1' to '%2'")
-                             .arg(old_path, new_path);
+        *error_message =
+            QStringLiteral("Could not rename artifact directory '%1' to '%2' (Win32 error %3)")
+                .arg(old_path, new_path)
+                .arg(move_error);
     }
     return ArtifactRenameOutcome::Failed;
 }

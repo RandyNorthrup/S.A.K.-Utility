@@ -61,6 +61,7 @@ private Q_SLOTS:
     void renameSession_rollsBackTheArtifactMoveWhenTheManifestFails();
     void renameSession_refusesExistingArtifactDestination();
     void renameSession_doesNotCopyWhenExactMoveFails();
+    void renameSession_heldArtifactReportsTheWindowsError();
     void startSession_doesNotPresentASessionThatFailedToPersist();
     void caseOnlyRename_preservesArtifacts();
     void memoryFile_appendsEntries();
@@ -1316,6 +1317,45 @@ void AiConversationStoreTests::renameSession_doesNotCopyWhenExactMoveFails() {
     QVERIFY2(!QFileInfo::exists(QDir(destination_root).filePath(QStringLiteral("locked.txt"))),
              qPrintable(error));
     QVERIFY(QFileInfo::exists(source_file));
+}
+
+void AiConversationStoreTests::renameSession_heldArtifactReportsTheWindowsError() {
+    // Another process holding a file inside the artifact folder (without delete sharing) makes
+    // Windows refuse the folder rename. The rename must fail cleanly -- title and folder
+    // unchanged -- and say which Win32 error refused it, then succeed once the handle closes.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    sak::ai::ConversationStore store(temp.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Held"), &error));
+    const QString held_root = store.artifactRootDirectory(&error);
+    QVERIFY2(!held_root.isEmpty(), qPrintable(error));
+    const QString held_file = QDir(held_root).filePath(QStringLiteral("open.txt"));
+    QFile file(held_file);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write("held"), static_cast<qint64>(4));
+    file.close();
+    const HANDLE hold = CreateFileW(reinterpret_cast<LPCWSTR>(held_file.utf16()),
+                                    GENERIC_READ,
+                                    FILE_SHARE_READ | FILE_SHARE_WRITE,
+                                    nullptr,
+                                    OPEN_EXISTING,
+                                    FILE_ATTRIBUTE_NORMAL,
+                                    nullptr);
+    QVERIFY(hold != INVALID_HANDLE_VALUE);
+
+    error.clear();
+    const bool renamed_while_held = store.renameCurrentSession(QStringLiteral("Released"), &error);
+    CloseHandle(hold);
+    QVERIFY(!renamed_while_held);
+    QVERIFY2(error.contains(QStringLiteral("Could not rename artifact directory")) &&
+                 error.contains(QStringLiteral("(Win32 error ")),
+             qPrintable(error));
+    QCOMPARE(store.currentSessionInfo().title, QStringLiteral("Held"));
+    QVERIFY(QFileInfo::exists(held_file));
+
+    QVERIFY2(store.renameCurrentSession(QStringLiteral("Released"), &error), qPrintable(error));
+    QCOMPARE(store.currentSessionInfo().title, QStringLiteral("Released"));
 }
 
 void AiConversationStoreTests::startSession_doesNotPresentASessionThatFailedToPersist() {
