@@ -30,16 +30,26 @@ keeps their history.
 1. Startup GUI freeze: FIXED locally 2026-10-24 (GUI block 5.8-10.8 s -> under 0.15 s on a
    2491-family machine; see `docs/GUI_STARTUP_FIELD_NOTES.md`). Still to prove on release bytes:
    the stock Windows 11 VM run and the package smoke.
-2. Dependency security updates (verify each advisory ID at its source before acting): Qt 6.10.3
-   (6.10 support ended 2026-10-07; JSON-parsing advisories), zlib 1.3.1 and liblzma 5.8.2.
-   FIXED 2026-10-30: Chocolatey 2.7.2 -> 2.7.5 (2.7.4: security log4net 3.3.1 and 7-Zip 26.02;
-   2.7.5: 7-Zip 26.05), from the community nupkg whose SHA-512 matches the feed. FIXED
-   2026-10-30: the hfsprogs OpenSSL 3.6 runtime (end of
-   life 2026-11-01) is gone -- `newfs_hfs` used it only for SHA-1 over volume-ID entropy, now a
-   public-domain header in the S.A.K. patch (which also had malformed hunks and could not
-   reproduce the build); `msys-crypto-3.dll` (5.4 MB) left the package. FIXED 2026-10-30:
-   iPerf3 3.21 -> 3.22 (esnet 3.22 notes: server use-after-free CVE-2026-101283, auth heap
-   overflows CVE-2026-101276, DoS loop CVE-2026-102253; the app runs iperf3 as a server).
+2. FIXED 2026-10-30, dependency security updates (owner: every dependency on its latest stable
+   release). Qt 6.10.3 -> 6.12.0 LTS (6.10 support ended 2026-10-07; 6.12 is supported to
+   2031-09-30 and is the last Qt release for Windows 10); CMake now requires 6.12, and CI installs
+   it through aqtinstall master at a pinned commit because the released 3.3.0 cannot read the
+   6.11+ repository layout. zlib 1.3.1 -> 1.3.2 and liblzma 5.8.2 -> 5.8.4: `vcpkg.json` pins
+   them through its builtin-baseline (vcpkg 2026.10.16) and configure installs them into the
+   build tree, so local and CI builds link the same versions (CI had taken whatever its runner
+   image's vcpkg shipped, local builds a January checkout). Chocolatey 2.7.2 -> 2.7.5 (2.7.4:
+   security log4net 3.3.1 and 7-Zip 26.02; 2.7.5: 7-Zip 26.05), from the community nupkg whose
+   SHA-512 matches the feed. The hfsprogs OpenSSL 3.6 runtime (end of life 2026-11-01) is gone
+   -- `newfs_hfs` used it only for SHA-1 over volume-ID entropy, now a public-domain header in
+   the S.A.K. patch (which also had malformed hunks and could not reproduce the build);
+   `msys-crypto-3.dll` (5.4 MB) left the package, and `msys-2.0.dll` is 3.6.12. iPerf3 3.21 ->
+   3.22 (esnet 3.22 notes: server use-after-free CVE-2026-101283, auth heap overflows
+   CVE-2026-101276, DoS loop CVE-2026-102253; the app runs iperf3 as a server).
+   Behind latest on purpose: MSVC stays on VS 2022 / v143 (Qt 6.12 lists MSVC 2022 as its
+   supported x64 compiler; VS 2026 is v145); `cygwin1.dll` 3.6.10 ships inside the pinned
+   upstream iperf3 build and moves with the next one. Owner decisions pending: aria2c 1.37.0 is
+   the latest official build but embeds old c-ares/zlib (rebuild it ourselves or not), and the
+   patched UUPMediaCreator 3.1.9.2 trails 3.1.9.3 with its patch not in the repository.
 3. FIXED 2026-10-30: downloaded third-party binaries without a hash pin. iperf3 and
    smartmontools are pinned (the bundled smartctl.exe is byte-identical to the one in the
    pinned, SignPath-signed 7.5 installer), and `scripts/sign-exe.ps1` pins

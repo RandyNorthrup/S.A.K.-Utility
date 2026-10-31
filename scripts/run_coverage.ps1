@@ -29,7 +29,7 @@ param(
     [string]$TestRegex = '.',
     [string]$Config = 'RelWithDebInfo',
     [string]$OutDir = 'build/coverage',
-    [string]$QtBin = 'C:\Qt\6.10.3\msvc2022_64\bin',
+    [string]$QtBin = 'C:\Qt\6.12.0\msvc2022_64\bin',
     [string]$BuildDir = 'build',
     [string]$OpenCppCoveragePath = ''
 )

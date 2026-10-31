@@ -24,7 +24,7 @@ try {
 
     $licenseText = Get-Content -LiteralPath $licensePath -Raw
     $requiredSections = @(
-        "Qt 6.5+",
+        "Qt 6.12",
         "qrcodegen",
         "Context7 MCP",
         "Microsoft Learn MCP",

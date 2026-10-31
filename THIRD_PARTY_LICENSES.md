@@ -6,13 +6,14 @@ below.
 
 ---
 
-## Qt 6.5+
+## Qt 6.12
 
 **License:** LGPL v3 (GNU Lesser General Public License, version 3)
+**Version:** 6.12.0 (msvc2022_64)
 **Website:** https://www.qt.io/
 **Modules used:** Core, Widgets, Concurrent, Network, Xml (Gui linked transitively via Widgets; Svg icon-engine plugin loaded at runtime)
 
-The Qt Toolkit is Copyright (C) 2023 The Qt Company Ltd and other
+The Qt Toolkit is Copyright (C) The Qt Company Ltd and other
 contributors.
 
 Qt is used under the terms of the GNU Lesser General Public License
@@ -20,7 +21,7 @@ version 3 as published by the Free Software Foundation. A copy of the
 LGPL v3 is available at https://www.gnu.org/licenses/lgpl-3.0.html.
 
 You may obtain the complete corresponding Qt source code from
-https://code.qt.io/ or https://download.qt.io/archive/qt/6.5/6.5.3/.
+https://code.qt.io/ or https://download.qt.io/official_releases/qt/6.12/6.12.0/.
 
 ---
 

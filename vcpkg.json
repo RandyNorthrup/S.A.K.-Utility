@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "dependencies": [
+    "bzip2",
+    "liblzma",
+    "zlib"
+  ],
+  "builtin-baseline": "9eec002df1cd109f8f104cd966a763daf9751489"
+}

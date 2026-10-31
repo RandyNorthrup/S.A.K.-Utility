@@ -26,7 +26,7 @@ Thank you for your interest in contributing to S.A.K. Utility! This document pro
 - **Windows 10/11** (x64)
 - **Visual Studio 2022** with C++ Desktop Development
 - **CMake 3.28+**
-- **Qt 6.10.3** (msvc2022_64) - the version CI builds and releases with
+- **Qt 6.12.0** (msvc2022_64, LTS) - the version CI builds and releases with; CMake requires 6.12
 - **Git**
 
 ### Setting Up Your Development Environment
@@ -46,7 +46,7 @@ Thank you for your interest in contributing to S.A.K. Utility! This document pro
 
 4. **Configure CMake**:
    ```powershell
-   cmake -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH="C:/Qt/6.10.3/msvc2022_64"
+   cmake -B build -G "Visual Studio 17 2022" -A x64 -DCMAKE_PREFIX_PATH="C:/Qt/6.12.0/msvc2022_64"
    ```
 
 5. **Build the project**:

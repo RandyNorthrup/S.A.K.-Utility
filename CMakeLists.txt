@@ -361,7 +361,11 @@ endif()
 
 # Qt6 - Required. CorePrivate provides QZipReader/QZipWriter for the explorer
 # zip compress/extract (no third-party archive library is vendored).
-find_package(Qt6 6.5 REQUIRED COMPONENTS
+# Qt warns that private headers tie the build to one Qt version. The package ships the Qt it
+# was built with, and WindowsProcessJob refuses a runtime qVersion() that differs from
+# QT_VERSION_STR, so the warning says nothing this build does not already enforce.
+set(QT_NO_PRIVATE_MODULE_WARNING ON)
+find_package(Qt6 6.12 REQUIRED COMPONENTS
     Core
     CorePrivate
     Widgets

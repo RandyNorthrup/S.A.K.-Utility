@@ -25,8 +25,8 @@ env:
 jobs:
   release:
     name: Build, package, sign and publish
-    # Pinned to windows-2022 (Visual Studio 2022 / v17). windows-latest is VS 2026 only, which
-    # the "Visual Studio 17 2022" generator and the Qt win64_msvc2022_64 libraries cannot use.
+    # Pinned to windows-2022 (Visual Studio 2022, MSVC v143): Qt 6.12 lists MSVC 2022 as its
+    # supported x64 compiler, and every workflow configures with "Visual Studio 17 2022".
     runs-on: windows-2022
     timeout-minutes: 180
     permissions:
@@ -119,11 +119,6 @@ jobs:
         $buildExit = $LASTEXITCODE
         "BUILD EXIT: $buildExit"
         exit $buildExit
-
-    - name: Bundle vcpkg runtime DLLs
-      working-directory: build/Release
-      shell: pwsh
-      run: '& ../../scripts/bundle_vcpkg_runtime.ps1 -DestinationPath .'
 
     - name: Verify build output
       working-directory: build/Release

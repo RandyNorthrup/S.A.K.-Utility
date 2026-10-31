@@ -2103,7 +2103,7 @@ private Q_SLOTS:
             }
         }
         QVERIFY2(tag_row, "tag row did not render in the sidebar");
-        const QPoint drop_pos = targetList->visualItemRect(tag_row).center();
+        const QPointF drop_pos = targetList->visualItemRect(tag_row).center();
         QDragEnterEvent enter(drop_pos,
                               Qt::CopyAction | Qt::MoveAction | Qt::LinkAction,
                               &drag_mime,
@@ -2150,7 +2150,7 @@ private Q_SLOTS:
         QMimeData favorite_mime;
         favorite_mime.setData(QStringLiteral("application/x-sak-explorer-favorite"),
                               QByteArrayLiteral("0"));
-        const QPoint drop_pos = targetList->visualItemRect(second_favorite).center();
+        const QPointF drop_pos = targetList->visualItemRect(second_favorite).center();
         QDragEnterEvent enter(
             drop_pos, Qt::MoveAction, &favorite_mime, Qt::NoButton, Qt::NoModifier);
         QVERIFY(QApplication::sendEvent(targetList->viewport(), &enter));
@@ -4207,7 +4207,7 @@ private Q_SLOTS:
                   const QMimeData* mime,
                   Qt::KeyboardModifiers modifiers) {
         QDragEnterEvent enter(
-            pos.toPoint(), Qt::CopyAction | Qt::MoveAction, mime, Qt::LeftButton, modifiers);
+            pos, Qt::CopyAction | Qt::MoveAction, mime, Qt::LeftButton, modifiers);
         QApplication::sendEvent(view->viewport(), &enter);
         QDropEvent drop(pos, Qt::CopyAction | Qt::MoveAction, mime, Qt::LeftButton, modifiers);
         QApplication::sendEvent(view->viewport(), &drop);

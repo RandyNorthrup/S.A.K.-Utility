@@ -245,13 +245,16 @@ void WindowsProcessJob::applyPipeLimits() {
         stderr_reader->maxReadBufferSize() != m_pipe_limits->stderr_bytes) {
         failFast(QStringLiteral("QProcess pipe limits were not installed before child launch"));
     }
-    // QProcess's default readyRead slots copy every private-reader chunk to a
+    // QProcess's default readyRead receivers copy every private-reader chunk to a
     // second, uncapped QRingBuffer. Disconnect both before CreateProcess; the
-    // bounded caller reads these private readers directly instead.
+    // bounded caller reads these private readers directly instead. Qt 6.12 wires
+    // them with QObjectPrivate::connect (receiver: the QProcess) to QProcessPrivate
+    // members that Qt6Core does not export, so every readyRead connection from each
+    // reader to the process is removed; none left to remove means Qt rewired it.
     const bool stdout_disconnected = QObject::disconnect(
-        stdout_reader, SIGNAL(readyRead()), m_installed_process, SLOT(_q_canReadStandardOutput()));
+        stdout_reader, &QWindowsPipeReader::readyRead, m_installed_process.data(), nullptr);
     const bool stderr_disconnected = QObject::disconnect(
-        stderr_reader, SIGNAL(readyRead()), m_installed_process, SLOT(_q_canReadStandardError()));
+        stderr_reader, &QWindowsPipeReader::readyRead, m_installed_process.data(), nullptr);
     if (!stdout_disconnected || !stderr_disconnected) {
         failFast(QStringLiteral("Could not disable unbounded QProcess channel buffering"));
     }

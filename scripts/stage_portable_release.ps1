@@ -207,8 +207,16 @@ foreach ($pattern in @("vcruntime*.dll", "msvcp*.dll", "concrt*.dll")) {
         }
 }
 
-Invoke-RequiredScript (Join-Path $repoRootPath "scripts/bundle_vcpkg_runtime.ps1") `
-    @{ DestinationPath = $packageRoot }
+# zlib, bzip2 and liblzma: the build copies them from its own vcpkg_installed tree (vcpkg.json
+# baseline) next to sak_utility.exe, so the package takes exactly the DLLs the app was linked
+# and tested against. Each group lists the names vcpkg has used for one library.
+foreach ($group in @(@("z.dll", "zlib1.dll"), @("bz2.dll", "libbz2.dll"), @("liblzma.dll", "lzma.dll"))) {
+    $present = @($group | Where-Object { Test-Path -LiteralPath (Join-Path $buildRoot $_) -PathType Leaf })
+    if ($present.Count -ne 1) {
+        throw "Expected exactly one of $($group -join ' / ') in $buildRoot, found $($present.Count)"
+    }
+    Copy-RequiredFile (Join-Path $buildRoot $present[0]) $packageRoot
+}
 
 $toolsSource = Join-Path $buildRoot "tools"
 if (-not (Test-Path -LiteralPath $toolsSource -PathType Container)) {

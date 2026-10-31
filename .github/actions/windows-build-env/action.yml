@@ -1,16 +1,16 @@
 name: Windows build environment
 description: >
   The toolchain every S.A.K. Utility workflow builds or gates with: Python with the pinned gate
-  tools (requirements-gates.txt), ripgrep, and optionally Qt, MSBuild and the vcpkg packages.
+  tools (requirements-gates.txt), ripgrep, and optionally Qt, MSBuild and vcpkg (vcpkg.json's libraries install at configure).
   One definition, so ci.yml, release.yml and nightly.yml cannot drift apart.
 
 inputs:
   build-tools:
-    description: "'true' to also install Qt, MSBuild and the vcpkg packages"
+    description: "'true' to also install Qt and MSBuild and prepare vcpkg"
     default: 'true'
   qt-version:
     description: Qt version (msvc2022_64)
-    default: '6.10.3'
+    default: '6.12.0'
   python-version:
     description: Python version for the gate tools and the Python CTests
     default: '3.14'
@@ -19,9 +19,6 @@ inputs:
       vcpkg triplet. x64-windows builds against the DYNAMIC CRT, which Qt's msvc2022_64 binaries
       and this project use; CMakeLists refuses a triplet whose CRT disagrees.
     default: 'x64-windows'
-  vcpkg-packages:
-    description: Space-separated vcpkg ports
-    default: 'zlib bzip2 liblzma'
   ripgrep-version:
     description: ripgrep release
     default: '15.2.0'
@@ -106,6 +103,10 @@ runs:
       # Left on, the action runs its own setup-python ('>=3.14.0', so 3.15 today), which
       # replaces pythonLocation and puts an interpreter without the pinned tools first on PATH.
       setup-python: 'false'
+      # aqtinstall 3.3.0, the latest release, predates the per-architecture repository layout Qt
+      # uses from 6.11 and cannot install 6.12. This maintainer-merged master commit can; move
+      # back to a released aqtversion when one ships.
+      aqtsource: 'git+https://github.com/miurahr/aqtinstall.git@076e1659807d0b362a3ed684d54c2e9c775eb9c7'
       version: ${{ inputs.qt-version }}
       host: 'windows'
       target: 'desktop'
@@ -118,32 +119,41 @@ runs:
     with:
       vs-version: '[17.0,18.0)'
 
-  # The vcpkg binary cache is keyed on what decides the binaries: the runner image (its
-  # compiler), the vcpkg commit that image ships, the triplet and the port list. There is no
-  # partial restore key, so a new vcpkg or a new port is built rather than served stale.
-  - name: Resolve vcpkg cache key
+  # The libraries are declared in vcpkg.json at the versions of its builtin-baseline, and CMake's
+  # configure installs them into the build tree (manifest mode). The image's vcpkg only supplies
+  # the tool and the port history, so it must contain the baseline commit. The binary cache is
+  # keyed on the runner image (its compiler), the triplet and vcpkg.json; there is no partial
+  # restore key, so a new baseline is built rather than served stale.
+  - name: Resolve vcpkg baseline and cache key
     id: vcpkg
     if: ${{ inputs.build-tools == 'true' }}
     shell: pwsh
     env:
       SAK_VCPKG_TRIPLET: ${{ inputs.vcpkg-triplet }}
-      SAK_VCPKG_PACKAGES: ${{ inputs.vcpkg-packages }}
     run: |
       $root = $env:VCPKG_INSTALLATION_ROOT
       if (-not $root -or -not (Test-Path -LiteralPath (Join-Path $root 'vcpkg.exe'))) {
         throw "vcpkg not found at VCPKG_INSTALLATION_ROOT='$root'"
       }
       $root = $root.Replace('\', '/')
-      $commit = (git -C $root rev-parse HEAD).Trim()
-      if ($LASTEXITCODE -ne 0 -or -not $commit) { throw "Cannot read the vcpkg commit at $root" }
-      $ports = ($env:SAK_VCPKG_PACKAGES -split '\s+' | Where-Object { $_ } | Sort-Object) -join '-'
+      $manifest = Join-Path $env:GITHUB_WORKSPACE 'vcpkg.json'
+      $baseline = (Get-Content -LiteralPath $manifest -Raw | ConvertFrom-Json).'builtin-baseline'
+      if ($baseline -notmatch '^[0-9a-f]{40}$') { throw "vcpkg.json builtin-baseline is not a commit: '$baseline'" }
+      git -C $root cat-file -e "$baseline^{commit}" 2>$null
+      if ($LASTEXITCODE -ne 0) {
+        git -C $root fetch --quiet origin
+        git -C $root cat-file -e "$baseline^{commit}"
+        if ($LASTEXITCODE -ne 0) { throw "vcpkg at $root does not contain baseline $baseline" }
+      }
+      $manifestHash = (Get-FileHash -LiteralPath $manifest -Algorithm SHA256).Hash.Substring(0, 16)
       $dir = Join-Path $env:RUNNER_TEMP "vcpkg-bincache"
       New-Item -ItemType Directory -Force -Path $dir | Out-Null
       "VCPKG_ROOT=$root" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
       "VCPKG_TRIPLET=$env:SAK_VCPKG_TRIPLET" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
-      "key=vcpkg-$env:ImageOS-$env:ImageVersion-$env:SAK_VCPKG_TRIPLET-$commit-$ports" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
+      "VCPKG_BINARY_SOURCES=clear;files,$dir,readwrite" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
+      "key=vcpkg-$env:ImageOS-$env:ImageVersion-$env:SAK_VCPKG_TRIPLET-$manifestHash" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
       "dir=$dir" | Out-File -Append -Encoding utf8 $env:GITHUB_OUTPUT
-      Write-Host "vcpkg $root at $commit; ports $ports"
+      Write-Host "vcpkg $root; baseline $baseline; vcpkg.json $manifestHash"
 
   - name: Cache vcpkg binaries
     if: ${{ inputs.build-tools == 'true' }}
@@ -151,14 +161,3 @@ runs:
     with:
       path: ${{ steps.vcpkg.outputs.dir }}
       key: ${{ steps.vcpkg.outputs.key }}
-
-  - name: Install vcpkg packages
-    if: ${{ inputs.build-tools == 'true' }}
-    shell: pwsh
-    env:
-      VCPKG_BINARY_SOURCES: clear;files,${{ steps.vcpkg.outputs.dir }},readwrite
-      SAK_VCPKG_PACKAGES: ${{ inputs.vcpkg-packages }}
-    run: |
-      $ports = $env:SAK_VCPKG_PACKAGES -split '\s+' | Where-Object { $_ } | ForEach-Object { "${_}:$env:VCPKG_TRIPLET" }
-      & (Join-Path $env:VCPKG_ROOT 'vcpkg.exe') install @ports
-      if ($LASTEXITCODE -ne 0) { throw "vcpkg install exited $LASTEXITCODE" }

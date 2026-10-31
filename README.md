@@ -6,7 +6,7 @@
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](LICENSE)
 [![C++23](https://img.shields.io/badge/C%2B%2B-23-blue.svg)](https://isocpp.org/)
-[![Qt 6.5+](https://img.shields.io/badge/Qt-6.5%2B-41cd52.svg)](https://www.qt.io/)
+[![Qt 6.12](https://img.shields.io/badge/Qt-6.12-41cd52.svg)](https://www.qt.io/)
 [![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4.svg)](https://www.microsoft.com/windows)
 [![CI](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/ci.yml/badge.svg?branch=dev)](https://github.com/RandyNorthrup/S.A.K.-Utility/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/badge/Version-0.9.2.0-orange.svg)](VERSION)
@@ -636,10 +636,10 @@ Cryptographic operations use Windows DPAPI and BCrypt APIs where implemented. Wi
 |---|---|
 | Visual Studio 2022 | v17+ with _Desktop development with C++_ |
 | CMake | 3.28+ |
-| Qt | 6.5+ for MSVC x64 |
+| Qt | 6.12 (LTS) for MSVC 2022 x64 |
 | vcpkg | Current supported bootstrap (for zlib, bzip2, liblzma) |
 
-Release CI currently builds with Qt 6.10.3 on the latest aqt-installable MSVC 2022 x64 Qt package while the source minimum remains Qt 6.5+.
+CI and releases build with Qt 6.12.0 (MSVC 2022 x64), which is also the minimum CMake accepts. zlib, bzip2 and liblzma come from vcpkg at the versions pinned by `vcpkg.json`, installed into the build tree at configure.
 Set `Qt6_DIR` or replace `$env:Qt6_DIR` below with your installed Qt path, for example
 `C:/Qt/<version>/<msvc-x64-kit>`.
 
@@ -758,7 +758,7 @@ and `-PartitionExternalEvidenceChecklist`. See
 
 | Library | License | Purpose |
 |---|---|---|
-| [Qt 6.5+](https://www.qt.io/) | LGPL v3 | UI framework (Core, Widgets, Concurrent, Network, Xml; Gui linked transitively via Widgets) |
+| [Qt 6.12](https://www.qt.io/) | LGPL v3 | UI framework (Core, Widgets, Concurrent, Network, Xml; Gui linked transitively via Widgets) |
 | [zlib](https://www.zlib.net/) | zlib License | Compression and ZIP archive decompression (deflate) |
 | [bzip2](https://sourceware.org/bzip2/) | BSD-style | bzip2 compression |
 | [liblzma](https://tukaani.org/xz/) | 0BSD / Public Domain | xz/LZMA compression |

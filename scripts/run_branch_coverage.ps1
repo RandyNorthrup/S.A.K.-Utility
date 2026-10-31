@@ -35,10 +35,9 @@
 #         -DCMAKE_CXX_COMPILER="C:/Program Files/LLVM/bin/clang-cl.exe" `
 #         -DCMAKE_RC_COMPILER="C:/Program Files/LLVM/bin/llvm-rc.exe" `
 #         -DCMAKE_MT="C:/Program Files/LLVM/bin/llvm-mt.exe" `
-#         -DCMAKE_PREFIX_PATH="C:/Qt/6.10.3/msvc2022_64;C:/vcpkg/installed/x64-windows" `
-#         -DZLIB_INCLUDE_DIR="C:/vcpkg/installed/x64-windows/include" `
-#         -DZLIB_LIBRARY="C:/vcpkg/installed/x64-windows/lib/zlib.lib" `
-#         -DVCPKG_INSTALLED_DIR="C:/vcpkg/installed" -DVCPKG_TARGET_TRIPLET=x64-windows `
+#         -DCMAKE_PREFIX_PATH="C:/Qt/6.12.0/msvc2022_64" `
+#         -DCMAKE_TOOLCHAIN_FILE="C:/vcpkg/scripts/buildsystems/vcpkg.cmake" `
+#         -DVCPKG_TARGET_TRIPLET=x64-windows `
 #         -DENABLE_COVERAGE=ON -DENABLE_ASAN=OFF -DENABLE_UBSAN=OFF
 #
 #     Ninja rather than the Visual Studio generator because the VS "ClangCL" platform toolset
@@ -57,7 +56,7 @@ param(
     [string]$TestRegex = '.',
     [string]$BuildDir = 'build-cov',
     [string]$OutDir = 'build-cov/coverage',
-    [string]$QtBin = 'C:\Qt\6.10.3\msvc2022_64\bin',
+    [string]$QtBin = 'C:\Qt\6.12.0\msvc2022_64\bin',
     [string]$LlvmBin = 'C:\Program Files\LLVM\bin',
     [string]$CtestPath = '',
     [string]$LlvmProfdataPath = '',
