@@ -47,7 +47,9 @@ keeps their history.
    CVE-2026-101276, DoS loop CVE-2026-102253; the app runs iperf3 as a server).
    Behind latest on purpose: MSVC stays on VS 2022 / v143 (Qt 6.12 lists MSVC 2022 as its
    supported x64 compiler; VS 2026 is v145); `cygwin1.dll` 3.6.10 ships inside the pinned
-   upstream iperf3 build and moves with the next one. Owner decisions pending: aria2c 1.37.0 is
+   upstream iperf3 build and moves with the next one; the gate tools run on Python 3.14 (CI
+   resolves the newest 3.14 patch) because pre-commit's PyYAML has no Python 3.15 Windows wheel
+   yet. CMake: CI configures with a pinned 4.4.5 instead of the runner image's 3.31. Owner decisions pending: aria2c 1.37.0 is
    the latest official build but embeds old c-ares/zlib (rebuild it ourselves or not), and the
    patched UUPMediaCreator 3.1.9.2 trails 3.1.9.3 with its patch not in the repository.
 3. FIXED 2026-10-30: downloaded third-party binaries without a hash pin. iperf3 and

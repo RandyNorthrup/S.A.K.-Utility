@@ -25,6 +25,12 @@ inputs:
   ripgrep-sha256:
     description: SHA-256 of the x86_64-pc-windows-msvc zip of that release
     default: '71b2fef860abe467217a538ff31de02f5258807c0129f771846f87bd029aafc5'
+  cmake-version:
+    description: CMake release every build configures with (the image's own is older)
+    default: '4.4.5'
+  cmake-sha256:
+    description: SHA-256 of cmake-<version>-windows-x86_64.zip
+    default: '326c826486d46a23cf9d5a1c9ee3a567d427bdd02c4a34071937a2a675cff004'
   cppcheck:
     description: "'true' to install cppcheck (the T2 Qt-slot classifier test and the T4 gates run it)"
     default: 'false'
@@ -77,6 +83,26 @@ runs:
       $dir = Join-Path $env:RUNNER_TEMP "ripgrep-$env:RG_VERSION-x86_64-pc-windows-msvc"
       $dir | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
       & (Join-Path $dir rg.exe) --version
+
+  # First on PATH, so cmake and ctest in every later step are this release, not the image's.
+  - name: Install CMake
+    if: ${{ inputs.build-tools == 'true' }}
+    shell: pwsh
+    env:
+      CMAKE_PIN_VERSION: ${{ inputs.cmake-version }}
+      CMAKE_PIN_SHA256: ${{ inputs.cmake-sha256 }}
+    run: |
+      $zip = Join-Path $env:RUNNER_TEMP "cmake.zip"
+      $url = "https://github.com/Kitware/CMake/releases/download/v$env:CMAKE_PIN_VERSION/cmake-$env:CMAKE_PIN_VERSION-windows-x86_64.zip"
+      Invoke-WebRequest -Uri $url -OutFile $zip
+      $hash = (Get-FileHash -LiteralPath $zip -Algorithm SHA256).Hash.ToLowerInvariant()
+      if ($hash -ne $env:CMAKE_PIN_SHA256) { throw "CMake archive hash $hash does not match the pin" }
+      Expand-Archive -LiteralPath $zip -DestinationPath $env:RUNNER_TEMP -Force
+      $bin = Join-Path $env:RUNNER_TEMP "cmake-$env:CMAKE_PIN_VERSION-windows-x86_64\bin"
+      $bin | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+      $version = (& (Join-Path $bin cmake.exe) --version | Select-Object -First 1)
+      Write-Host $version
+      if ($version -ne "cmake version $env:CMAKE_PIN_VERSION") { throw "CMake is not $env:CMAKE_PIN_VERSION" }
 
   - name: Install cppcheck
     if: ${{ inputs.cppcheck == 'true' }}
