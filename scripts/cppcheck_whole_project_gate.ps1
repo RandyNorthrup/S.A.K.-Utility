@@ -39,8 +39,8 @@
     FALSE-GREEN TRIPWIRE. cppcheck degrades silently: an unparseable macro in a translation
     unit drops it to "Active checkers: 4/186" and it still exits 0 with no findings. That is
     how 65 of 238 test files were once unanalyzed while the gate reported a pass. Both passes
-    therefore assert cppcheck's own checkersReport line shows at least 170 of its 186
-    checkers active, and fail if the line is absent entirely.
+    therefore assert cppcheck's own checkersReport line shows at least 180 of its 189
+    checkers active (cppcheck 2.22), and fail if the line is absent entirely.
 
     COST. Two exhaustive cppcheck passes over the tree, on the order of twenty minutes total.
     That is why this is manual-stage rather than per-commit -- the per-commit `cppcheck` hook
@@ -67,10 +67,10 @@ $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent (Split-Path -Parent $PSCommandPath)
 $RunCppcheck = Join-Path $PSScriptRoot "run_cppcheck.ps1"
 
-# cppcheck reported 183/186 active checkers over this tree on 2026-08-30. The floor is set
-# just under that: it has to catch the catastrophic degradation (4/186) without going red
-# every time a cppcheck release adds or retires a checker.
-$kMinimumActiveCheckers = 170
+# cppcheck 2.22.0 reports 186/189 active checkers over this tree (2026-10-30; 2.20.0 reported
+# 183/186). The floor sits just under that: it has to catch the catastrophic degradation
+# (4/189) without going red when a cppcheck release adds or retires a checker or two.
+$kMinimumActiveCheckers = 180
 
 # Findings are one per line ending in [checkId]. checkersReport is cppcheck's own
 # informational summary, not a finding.

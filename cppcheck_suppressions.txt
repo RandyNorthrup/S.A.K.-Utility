@@ -15,6 +15,15 @@ unmatchedSuppression
 // This existing exception is not a permanent Qt-style exemption.
 useStlAlgorithm
 
+// Naming-only checks, no product risk (owner ruling: a gate exists to catch product risk, not
+// style alone). cppcheck 2.22 reports both in volume.
+// shadowFunction: a parameter or local shares a name with a function (a `blockers` argument
+// beside a blockers() accessor); the compiler resolves each use, nothing reads the wrong entity.
+shadowFunction
+// funcArgNamesDifferentUnnamed: a definition leaves unnamed a parameter its declaration names
+// (an unused slot argument); declaration parameter names have no effect on any call.
+funcArgNamesDifferentUnnamed
+
 // functionStatic has no file-level suppression. scripts/run_cppcheck.ps1 reports every finding,
 // then source-validates and classifies only exact methods declared under Q_SLOTS. Ordinary test
 // helpers remain actionable, while Qt meta-object callbacks are never made static.

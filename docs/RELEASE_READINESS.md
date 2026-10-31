@@ -370,6 +370,8 @@ that exists for reasons that no longer apply. Owner decisions (2026-10-24):
   installed per build tree; the CI binary cache is keyed on the runner image, the triplet and
   vcpkg.json with no catch-all restore key. clang-format and the nightly clang-tidy are one LLVM
   release, 23.1.3 (`requirements-gates.txt` for CI and the local `.venv`; `nightly.yml`).
+  cppcheck is 2.22.0, its MSI pinned by SHA-256 in `.github/actions/windows-build-env`; the
+  whole-project gate floor is 180 of its 189 checkers (2.22 runs 186 over this tree).
 - Done 2026-10-24: certifier and writer-CLI script tests delete their run folder when they pass,
   keep failures for diagnosis, and cap leftover failed runs at the newest three
   (`scripts/run_folder_retention.ps1`). They once held over 1 TB under `build/test_results`.
