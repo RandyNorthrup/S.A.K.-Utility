@@ -175,6 +175,12 @@ proved by its own file's tests -- search for the message and run those too. The 
 in T2 on every push; a red T2 is fixed before anything else lands on `dev`. Nothing merges to
 `main` without a green T2.
 
+Before every push to `dev`: read the latest T2 conclusion
+(`gh run list --branch dev --workflow "CI (T2)" --limit 1`) -- if it is red, your push fixes it
+or waits -- and run the whole-tree style scripts from ci.yml's static-gates job locally (a few
+minutes, no build). They are pre-commit `manual` stage, so no local commit runs them: a raw
+`setContentsMargins(0, 0, 0, 0)` sat red on `dev` across three pushes on 2026-10-25.
+
 Capture the build exit code in its own statement and read it before believing any test result:
 
 ```powershell
