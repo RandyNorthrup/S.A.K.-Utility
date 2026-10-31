@@ -245,6 +245,11 @@ Done:
   `test_release_binary_test_hooks` scans `sak_ai_core.lib` and `sak_gui.lib` for any
   `ForTesting@` symbol and the approval hook, and the binaries for
   `SAK_AI_POLICY_DISK_OVERRIDE`. fa5db306
+- Found by T2 on 0fa17dce, FIXED (010d02f0): the session picker's off-thread listing (550766d0)
+  read every manifest without the store's lock, so a rename or prompt save replacing the open
+  session's manifest could fail with "Could not commit manifest: Access is denied" (Windows
+  refuses to replace a file another handle has open). The listing reads under the read lock;
+  `test_ai_conversation_store` holds a manifest open in the read and renames the session.
 
 Open, each with why:
 
