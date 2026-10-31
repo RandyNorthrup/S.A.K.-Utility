@@ -6,6 +6,10 @@
 # the manifest recorded.
 tools/filesystem/** -text
 
+# The vendored Chocolatey bundle keeps the release's exact bytes: its helper scripts carry
+# Authenticode signatures over CRLF text, which an LF checkout would invalidate.
+tools/chocolatey/** -text
+
 # The signed browser-control extension is a CRX3 (ZIP + RSA signature over exact bytes).
 # core.autocrlf rewriting any byte breaks the signature and Chrome rejects the install,
 # so the CRX must be treated as binary on every checkout.
