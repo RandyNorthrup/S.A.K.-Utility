@@ -406,10 +406,8 @@ void initializeApp(QApplication& app, const RuntimeOptions& options) {
     }
 
     sak::ui::installWheelPolicy(app);
+    // Surfaces are flat with 1px borders from the style tokens; there is no drop-shadow pass.
     sak::ui::applyWindows11Theme(app);
-    if (!options.accessibility_audit) {
-        sak::ui::installThemePolishHelper(app);
-    }
 }
 
 /// @brief Initialize the logger subsystem.

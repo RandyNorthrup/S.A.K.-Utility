@@ -34,8 +34,4 @@ void applyWindows11Theme(QApplication& app, AppThemeMode mode = AppThemeMode::Li
 /// @brief Read the currently applied application theme mode.
 [[nodiscard]] AppThemeMode currentThemeMode(const QApplication& app);
 
-/// @brief Install non-semantic visual polish helpers (shadows only).
-/// @param app Reference to the QApplication instance
-void installThemePolishHelper(QApplication& app);
-
 }  // namespace sak::ui

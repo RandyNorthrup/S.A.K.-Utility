@@ -5,9 +5,6 @@
 
 #include "sak/style_constants.h"
 
-#include <QEvent>
-#include <QGraphicsDropShadowEffect>
-#include <QGroupBox>
 #include <QMenu>
 #include <QPalette>
 #include <QStyle>
@@ -16,56 +13,6 @@
 namespace sak::ui {
 
 namespace {
-
-void applyShadow(QWidget* widget) {
-    if ((widget == nullptr) || (widget->graphicsEffect() != nullptr)) {
-        return;
-    }
-
-    const bool should_shadow = (qobject_cast<QGroupBox*>(widget) != nullptr) ||
-                               widget->property("sakElevated").toBool() ||
-                               widget->property("sakCard").toBool() ||
-                               (widget->styleSheet().contains("border-radius") &&
-                                widget->styleSheet().contains("background-color"));
-
-    if (should_shadow) {
-        auto* shadow = new QGraphicsDropShadowEffect(widget);
-        shadow->setBlurRadius(kCardShadowBlurRadius);
-        shadow->setColor(
-            QColor(kCardShadowRed, kCardShadowGreen, kCardShadowBlue, kCardShadowAlpha));
-        shadow->setOffset(0.0, kCardShadowOffsetY);
-        shadow->setEnabled(true);
-        widget->setGraphicsEffect(shadow);
-        widget->setAutoFillBackground(true);
-    }
-}
-
-class ThemePolishEventFilter final : public QObject {
-public:
-    using QObject::QObject;
-
-    bool eventFilter(QObject* watched, QEvent* event) override {
-        if ((watched == nullptr) || (event == nullptr)) {
-            return QObject::eventFilter(watched, event);
-        }
-
-        if (event->type() != QEvent::Show && event->type() != QEvent::Polish) {
-            return QObject::eventFilter(watched, event);
-        }
-
-        auto* widget = qobject_cast<QWidget*>(watched);
-        if (widget == nullptr) {
-            return QObject::eventFilter(watched, event);
-        }
-
-        if (!widget->property("sakShadowApplied").toBool()) {
-            applyShadow(widget);
-            widget->setProperty("sakShadowApplied", true);
-        }
-
-        return QObject::eventFilter(watched, event);
-    }
-};
 
 constexpr double kChromeDialogAlpha = 0.92;
 constexpr double kChromeTooltipAlpha = 0.95;
@@ -377,10 +324,6 @@ void applyWindows11Theme(QApplication& app, AppThemeMode mode) {
 AppThemeMode currentThemeMode(const QApplication& app) {
     return app.property("sakThemeMode").toString() == QStringLiteral("dark") ? AppThemeMode::Dark
                                                                              : AppThemeMode::Light;
-}
-
-void installThemePolishHelper(QApplication& app) {
-    app.installEventFilter(new ThemePolishEventFilter(&app));
 }
 
 }  // namespace sak::ui

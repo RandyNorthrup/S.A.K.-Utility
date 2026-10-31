@@ -8,7 +8,6 @@
 
 #include <QApplication>
 #include <QFrame>
-#include <QGraphicsDropShadowEffect>
 #include <QHBoxLayout>
 #include <QLabel>
 #include <QPainter>
@@ -29,9 +28,6 @@ constexpr int kInfoGlyphBarBottomPercent = 78;
 constexpr int kInfoGlyphDotTopPercent = 28;
 constexpr int kInfoGlyphDotRadiusDivisor = 8;
 constexpr int kInfoGlyphCornerRadiusPx = 1;
-constexpr qreal kInfoPopupShadowBlurRadius = 16;
-constexpr int kInfoPopupShadowAlpha = 40;
-constexpr qreal kInfoPopupShadowYOffset = 2;
 constexpr int kInfoPopupScreenPaddingPx = 4;
 
 }  // namespace
@@ -131,14 +127,8 @@ void InfoButton::togglePopup() {
     label->setStyleSheet(sak::ui::infoPopupLabelStyle());
     layout->addWidget(label);
 
-    // Drop shadow
-    auto* shadow = new QGraphicsDropShadowEffect(popup);
-    shadow->setBlurRadius(kInfoPopupShadowBlurRadius);
-    QColor shadow_color(Qt::black);
-    shadow_color.setAlpha(kInfoPopupShadowAlpha);
-    shadow->setColor(shadow_color);
-    shadow->setOffset(0, kInfoPopupShadowYOffset);
-    popup->setGraphicsEffect(shadow);
+    // The frame's 1px border (infoPopupFrameStyle) outlines it; a popup window gets Windows'
+    // own drop shadow, so no graphics effect is drawn over it.
 
     popup->adjustSize();
 

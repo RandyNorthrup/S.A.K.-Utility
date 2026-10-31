@@ -286,7 +286,8 @@ Remaining release status belongs to `RELEASE_READINESS.md`; the archived R5 camp
 - **Pre-matching the real UI fonts off-thread.** The warmup thread and the GUI thread serialize
   on Qt's shared font mutex, and there is too little other startup work to overlap with, so the
   cost only moves.
-- **`QGraphicsDropShadowEffect`** as a startup cost.
+- **`QGraphicsDropShadowEffect`** as a startup cost. (The app-wide shadow pass is gone anyway since
+  2026-10-31: the owner replaced drop shadows with 1px borders.)
 - **Application-wide stylesheet matching** as a startup cost.
 - **Deferring widget polish to `show()`**.
 

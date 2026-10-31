@@ -1496,6 +1496,32 @@ set_tests_properties(test_window_input PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 message(STATUS "Added unit test: test_window_input")
 
+# test_app_theme - the main window's appearance: flat surfaces with 1px borders and no drop
+# shadows; the theme follows Windows (Light / Dark / System) and every built tab renders in both
+add_executable(test_app_theme
+    unit/test_app_theme.cpp
+    ../resources/icons.qrc
+)
+set_target_properties(test_app_theme PROPERTIES
+    AUTOMOC ON
+    AUTORCC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_app_theme PRIVATE
+    sak_gui sak_ai_core sak_win32mcp sak_core sak_partition_fs sak_foundation
+    Qt6::Core Qt6::Widgets Qt6::Test
+    ${PLATFORM_LIBS}
+)
+target_include_directories(test_app_theme PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_app_theme COMMAND test_app_theme
+         -o "${TEST_OUTPUT_DIR}/test_app_theme.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+set_tests_properties(test_app_theme PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+message(STATUS "Added unit test: test_app_theme")
+
 # test_file_management_file_system - File Management target bridge
 add_executable(test_file_management_file_system
     unit/test_file_management_file_system.cpp
@@ -6622,7 +6648,7 @@ set(_sak_lock_portable_data_root
     test_advanced_search_controller test_advanced_uninstall_controller
     test_ai_assistant_panel_tool_dispatch test_app_action_service test_quick_action_controller
     test_image_flasher_panel test_network_diagnostic_controller test_partition_manager_panel
-    test_running_work_exit_guard test_app_installation_panel test_window_input
+    test_running_work_exit_guard test_app_installation_panel test_window_input test_app_theme
     test_diagnostic_benchmark_panel test_advanced_uninstall_panel test_network_diagnostic_panel
     test_file_management_explorer_panel
     test_startup_budget test_stage_portable_release test_release_archive_recovery)
