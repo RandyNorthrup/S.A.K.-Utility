@@ -967,6 +967,8 @@ set(SAK_GUI_SOURCES
     include/sak/windows11_theme.h
     src/gui/wheel_policy.cpp
     include/sak/wheel_policy.h
+    src/gui/single_instance_guard.cpp
+    include/sak/single_instance_guard.h
     src/gui/splash_screen.cpp
     include/sak/splash_screen.h
     src/gui/diagnostic_benchmark_panel.cpp

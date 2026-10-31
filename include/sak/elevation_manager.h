@@ -44,6 +44,15 @@ public:
      */
     static auto restartElevated(bool wait_for_exit = false) -> std::expected<void, sak::error_code>;
 
+    /// The argument an elevated relaunch of the application carries. The new instance waits for
+    /// the one that launched it to exit (sak::SingleInstanceGuard) instead of bringing that
+    /// closing window forward and quitting as a second launch would.
+    static constexpr const char* kElevatedRelaunchArgument = "--elevated-relaunch";
+
+    /// @brief The arguments an elevated relaunch is started with: this process's own arguments
+    ///        (@p current_args, already serialized) followed by kElevatedRelaunchArgument. Pure.
+    [[nodiscard]] static std::wstring relaunchArguments(const std::wstring& current_args);
+
     /// @brief Whether a failed restartElevated() deserves an error dialog. Declining the UAC
     ///        prompt (ERROR_CANCELLED -> operation_cancelled) is the user's answer, not a
     ///        failure: it used to raise "Elevation Failed".

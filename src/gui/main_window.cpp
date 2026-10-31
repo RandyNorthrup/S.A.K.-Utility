@@ -72,6 +72,8 @@
 #include <stdexcept>
 #include <utility>
 
+#include <windows.h>
+
 namespace sak {
 
 namespace {
@@ -1853,6 +1855,19 @@ void MainWindow::updateProgress(int current, int maximum) {
     } else if (maximum > 0) {
         m_progress_bar->setVisible(true);
     }
+}
+
+void MainWindow::bringToFront() {
+    if (!isVisible()) {
+        return;
+    }
+    setWindowState((windowState() & ~Qt::WindowMinimized) | Qt::WindowActive);
+    raise();
+    activateWindow();
+    // The second launch gave this process the right to take the foreground
+    // (AllowSetForegroundWindow); activateWindow alone only flashes the taskbar button while
+    // another process is in front.
+    ::SetForegroundWindow(reinterpret_cast<HWND>(winId()));
 }
 
 void MainWindow::hideProgressBarIfComplete() {

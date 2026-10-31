@@ -98,6 +98,11 @@ public Q_SLOTS:
      */
     void setProgressVisible(bool visible);
 
+    /// @brief Restore the window if minimized and bring it to the foreground. A second launch
+    ///        on the same data folder asks for this (SingleInstanceGuard); a window that was
+    ///        never shown (a headless smoke run) is left alone.
+    void bringToFront();
+
 private Q_SLOTS:
     void onTabChanged(int index);
 

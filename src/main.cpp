@@ -6,11 +6,13 @@
 
 #include "sak/app_paths.h"
 #include "sak/crash_reporter.h"
+#include "sak/elevation_manager.h"
 #include "sak/error_codes.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/main_window.h"
 #include "sak/message_box_helpers.h"
+#include "sak/single_instance_guard.h"
 #include "sak/splash_screen.h"
 #include "sak/version.h"
 #include "sak/wheel_policy.h"
@@ -48,9 +50,11 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <exception>
+#include <expected>
 #include <filesystem>
 #include <iostream>
 #include <memory>
@@ -73,6 +77,8 @@ struct RuntimeOptions {
     QString accessibility_audit_output;
     bool startup_smoke_test{false};
     bool no_splash{false};
+    /// Started by Run as Admin: wait for the instance that launched this one to exit.
+    bool elevated_relaunch{false};
 };
 
 void writeStartupSmokePhase(bool startup_smoke_test, const char* phase) {
@@ -429,17 +435,23 @@ bool initializeLogger() {
     return true;
 }
 
+/// Tells the user why this launch cannot start -- on stderr always, and in a dialog unless the
+/// run is non-interactive (startup smoke, accessibility audit).
+void reportStartupRefusal(const RuntimeOptions& options, const QString& title, const QString& why) {
+    std::cerr << "Fatal: " << why.toStdString() << '\n';
+    if (!options.startup_smoke_test && !options.accessibility_audit) {
+        sak::showCriticalLogged(nullptr, title, why);
+    }
+}
+
 /// Decide where data lives (once, no fallback) and tidy this app's own temp leftovers.
 /// Returns false -- after telling the user why -- when there is no usable data folder.
 bool configurePortableRuntimeDirs(const RuntimeOptions& options) {
     const auto data_root = sak::app_paths::initializeDataRoot();
     if (!data_root) {
-        std::cerr << "Fatal: " << data_root.error().toStdString() << '\n';
-        if (!options.startup_smoke_test && !options.accessibility_audit) {
-            sak::showCriticalLogged(nullptr,
-                                    QStringLiteral("S.A.K. Utility -- data folder"),
-                                    data_root.error());
-        }
+        reportStartupRefusal(options,
+                             QStringLiteral("S.A.K. Utility -- data folder"),
+                             data_root.error());
         return false;
     }
     // TMP/TEMP are no longer redirected for the whole process: children that need a portable
@@ -450,6 +462,34 @@ bool configurePortableRuntimeDirs(const RuntimeOptions& options) {
         sak::app_paths::removeSessionTempDirectory();
     });
     return true;
+}
+
+/// One S.A.K. Utility per data folder (sak::SingleInstanceGuard). The claim this process keeps
+/// for its lifetime, or the exit code when this launch ends here: 0 once the running instance
+/// was asked to come forward, 1 (reported) when the instance could not be established. An
+/// elevated relaunch waits for the instance that launched it to exit instead of asking it.
+std::expected<std::unique_ptr<sak::SingleInstanceGuard>, int> claimSingleInstance(
+    const RuntimeOptions& options) {
+    const QString title = QStringLiteral("S.A.K. Utility");
+    const auto wait = options.elevated_relaunch
+                          ? std::chrono::milliseconds(sak::kElevatedRelaunchHandoffLimit)
+                          : std::chrono::milliseconds::zero();
+    auto claim = sak::SingleInstanceGuard::claim(sak::app_paths::dataRoot(), wait);
+    if (!claim) {
+        reportStartupRefusal(options, title, claim.error());
+        return std::unexpected(1);
+    }
+    if ((*claim)->role() == sak::SingleInstanceGuard::Role::Primary) {
+        return std::move(*claim);
+    }
+    const auto asked = (*claim)->activateRunningInstance();
+    if (!asked) {
+        reportStartupRefusal(options, title, asked.error());
+        return std::unexpected(1);
+    }
+    std::cerr << "S.A.K. Utility is already running for this data folder; "
+                 "brought it to the front.\n";
+    return std::unexpected(0);
 }
 
 /// @brief Log which build is starting: one line, so a support log still names the version.
@@ -494,6 +534,8 @@ RuntimeOptions runtimeOptionsFromArgs(int argc, char* argv[]) {
     options.startup_smoke_test = hasRawArgument(argc, argv, "--smoke-test") ||
                                  hasRawArgument(argc, argv, "--startup-smoke-test");
     options.no_splash = hasRawArgument(argc, argv, "--no-splash");
+    options.elevated_relaunch =
+        hasRawArgument(argc, argv, sak::ElevationManager::kElevatedRelaunchArgument);
     return options;
 }
 
@@ -548,6 +590,7 @@ int runAccessibilityAuditHeadless(QApplication& app, sak::MainWindow& main_windo
 }
 
 int showMainWindow(QApplication& app,
+                   sak::SingleInstanceGuard& instance,
                    bool startup_smoke_test,
                    bool show_splash,
                    bool accessibility_audit) {
@@ -575,6 +618,12 @@ int showMainWindow(QApplication& app,
     window_timer.start();
     sak::MainWindow main_window;
     sak::logDebug("Main window constructed in {} ms", window_timer.restart());
+    // A second launch on this data folder now brings this window forward.
+    instance.listenForActivation();
+    QObject::connect(&instance,
+                     &sak::SingleInstanceGuard::activationRequested,
+                     &main_window,
+                     &sak::MainWindow::bringToFront);
     if (startup_smoke_test) {
         sak::logger::instance().flush();
     }
@@ -632,6 +681,10 @@ int runApplication(int argc, char* argv[]) {
     if (options.accessibility_audit) {
         writeAccessibilityAuditStatus(QStringLiteral("runtime-dirs-configured"));
     }
+    auto instance = claimSingleInstance(options);
+    if (!instance) {
+        return instance.error();
+    }
 
     configureLoggingForMode(options);
     if (!initializeLogger()) {
@@ -652,8 +705,11 @@ int runApplication(int argc, char* argv[]) {
     if (options.startup_smoke_test) {
         sak::logger::instance().flush();
     }
-    return showMainWindow(
-        app, options.startup_smoke_test, shouldShowSplash(options), options.accessibility_audit);
+    return showMainWindow(app,
+                          **instance,
+                          options.startup_smoke_test,
+                          shouldShowSplash(options),
+                          options.accessibility_audit);
 }
 
 struct FatalErrorOutput {

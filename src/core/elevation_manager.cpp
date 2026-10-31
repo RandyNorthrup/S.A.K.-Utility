@@ -10,6 +10,8 @@
 
 #include "sak/logger.h"
 
+#include <string_view>
+
 #include <windows.h>
 
 #include <sddl.h>
@@ -91,6 +93,16 @@ std::wstring ElevationManager::serializeArgsForRelaunch(int argc, wchar_t* const
         }
         appendQuotedArg(args, std::wstring(argv[i]));
     }
+    return args;
+}
+
+std::wstring ElevationManager::relaunchArguments(const std::wstring& current_args) {
+    std::wstring args = current_args;
+    if (!args.empty()) {
+        args += L' ';
+    }
+    const std::string_view flag(kElevatedRelaunchArgument);
+    args.append(flag.begin(), flag.end());
     return args;
 }
 
@@ -182,7 +194,9 @@ auto ElevationManager::restartElevated(bool wait_for_exit) -> std::expected<void
     if (!args_result) {
         return std::unexpected(args_result.error());
     }
-    const std::wstring& args = args_result.value();
+    // The relaunch is told it is one: it waits for this instance to exit instead of bringing
+    // it forward as a second launch would (SingleInstanceGuard, owner request 2026-10-31).
+    const std::wstring args = relaunchArguments(args_result.value());
 
     // Log using narrow-string conversion for log output
     const int logLen = WideCharToMultiByte(

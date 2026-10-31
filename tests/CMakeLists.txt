@@ -1522,6 +1522,32 @@ set_tests_properties(test_app_theme PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 message(STATUS "Added unit test: test_app_theme")
 
+# test_single_instance_guard - one instance per data folder (any spelling of it), a second launch
+# asks the running one forward, and an elevated relaunch waits for its launcher to exit
+add_executable(test_single_instance_guard
+    unit/test_single_instance_guard.cpp
+    ../resources/icons.qrc
+)
+set_target_properties(test_single_instance_guard PROPERTIES
+    AUTOMOC ON
+    AUTORCC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_single_instance_guard PRIVATE
+    sak_gui sak_ai_core sak_win32mcp sak_core sak_partition_fs sak_foundation
+    Qt6::Core Qt6::Widgets Qt6::Test
+    ${PLATFORM_LIBS}
+)
+target_include_directories(test_single_instance_guard PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_single_instance_guard COMMAND test_single_instance_guard
+         -o "${TEST_OUTPUT_DIR}/test_single_instance_guard.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+set_tests_properties(test_single_instance_guard PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+message(STATUS "Added unit test: test_single_instance_guard")
+
 # test_file_management_file_system - File Management target bridge
 add_executable(test_file_management_file_system
     unit/test_file_management_file_system.cpp
@@ -6456,6 +6482,14 @@ if(PLATFORM_WINDOWS)
                      -ExePath "$<TARGET_FILE:sak_utility>")
     set_tests_properties(test_startup_budget PROPERTIES TIMEOUT 180)
 
+    # The real application: a second launch on one data folder brings the running instance
+    # forward and exits; an elevated relaunch (--elevated-relaunch) waits for its launcher.
+    add_test(NAME test_single_instance_app
+             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_single_instance_app.ps1"
+                     -ExePath "$<TARGET_FILE:sak_utility>")
+    set_tests_properties(test_single_instance_app PROPERTIES TIMEOUT 300)
+
     add_test(NAME test_windows_runtime_dependencies
              COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
                      -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_windows_runtime_dependencies.ps1"
@@ -6601,6 +6635,7 @@ set(_sak_label_lists
 set(_sak_labels_product
     test_browser_extension_pure test_pack_extension test_register_native_host
     test_sak_apfs_writer_cli test_sak_hfs_writer_cli test_release_binary_test_hooks
+    test_single_instance_app
     test_partition_image_volume_lock_whole_disk
     test_partition_image_volume_lock_selected_partition
     test_partition_image_volume_lock_selected_mbr_unpinned_guid
@@ -6649,6 +6684,7 @@ set(_sak_lock_portable_data_root
     test_ai_assistant_panel_tool_dispatch test_app_action_service test_quick_action_controller
     test_image_flasher_panel test_network_diagnostic_controller test_partition_manager_panel
     test_running_work_exit_guard test_app_installation_panel test_window_input test_app_theme
+    test_single_instance_guard test_single_instance_app
     test_diagnostic_benchmark_panel test_advanced_uninstall_panel test_network_diagnostic_panel
     test_file_management_explorer_panel
     test_startup_budget test_stage_portable_release test_release_archive_recovery)
