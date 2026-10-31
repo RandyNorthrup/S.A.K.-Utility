@@ -1028,12 +1028,23 @@ std::optional<std::vector<ParsedManifest>> listManifests(const QString& root_dir
     return manifests;
 }
 
+/// listManifests under the store's read lock. writeManifest replaces the current session's
+/// manifest under the write lock, and Windows refuses to replace a file while any handle has it
+/// open, so a listing on the thread pool that was reading it made a rename or a prompt save on the
+/// GUI thread fail with "Could not commit manifest: Access is denied".
+std::optional<std::vector<ParsedManifest>> listManifestsLocked(QReadWriteLock& lock,
+                                                               const QString& root_dir,
+                                                               QStringList* errors) {
+    const QReadLocker locker(&lock);
+    return listManifests(root_dir, errors);
+}
+
 }  // namespace
 
 QVector<AiSessionInfo> ConversationStore::listSessions(QString* error_message) const {
     QVector<AiSessionInfo> sessions;
     QStringList errors;
-    const auto manifests = listManifests(m_root_dir, &errors);
+    const auto manifests = listManifestsLocked(m_lock, m_root_dir, &errors);
     if (!manifests) {
         setError(error_message, errors.join(QStringLiteral("; ")));
         return sessions;
@@ -1050,7 +1061,8 @@ QVector<AiSessionInfo> ConversationStore::listSessions(QString* error_message) c
 QVector<AiSessionInfo> ConversationStore::listPromptedSessions(QString* error_message) const {
     QVector<AiSessionInfo> sessions;
     QStringList errors;
-    const auto manifests = listManifests(m_root_dir, &errors);
+    // Only the reading is locked: the backfill below takes the write lock itself.
+    const auto manifests = listManifestsLocked(m_lock, m_root_dir, &errors);
     if (!manifests) {
         setError(error_message, errors.join(QStringLiteral("; ")));
         return sessions;

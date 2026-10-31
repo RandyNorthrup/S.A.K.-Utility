@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <thread>
 #include <vector>
 
@@ -28,6 +29,7 @@ private Q_SLOTS:
     void listSessions_listsMostRecentlyActiveAboveTheListLimit();
     void childLoader_keepsNewestAndRefusesPastTheEnumerationCeiling();
     void listSessions_rejectsOversizedManifestWithoutPartialResults();
+    void listSessions_holdsOffAManifestReplaceUntilTheReadEnds();
     void openSession_rejectsManifestIdThatDiffersFromDirectory();
     void openSession_refusesManifestParentSwap();
     void openSession_refusesManifestGrowthDuringRead();
@@ -86,6 +88,10 @@ namespace {
 
 constexpr int kSessionDirectoryCap = 512;
 constexpr qint64 kManifestByteCap = 64 * 1024;
+// The race test holds a manifest open in the listing's read; the replace gets this long to try.
+constexpr int kManifestReadHoldLimitMs = 10'000;
+constexpr int kManifestReadPollMs = 10;
+constexpr int kReplaceAttemptWindowMs = 1500;
 
 int createJunction(const QString& junction, const QString& target) {
     const QString command =
@@ -371,6 +377,55 @@ void AiConversationStoreTests::openSession_refusesManifestParentSwap() {
     QVERIFY2(error.contains(QStringLiteral("Refusing redirected ai session file")),
              qPrintable(error));
     QVERIFY(store.currentSessionId().isEmpty());
+}
+
+// The session picker lists manifests on the thread pool while the GUI thread renames the open
+// session or records a prompt, both of which replace its manifest. Windows refuses to replace a
+// file any handle has open, so a replace that landed while the listing was reading that manifest
+// failed ("Could not commit manifest: Access is denied", seen in T2 2026-10-31). The listing
+// reads under the store's read lock now: the replace waits for the read to end, then succeeds.
+void AiConversationStoreTests::listSessions_holdsOffAManifestReplaceUntilTheReadEnds() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    sak::ai::ConversationStore store(root.path());
+    QString error;
+    QVERIFY(store.startSession(QStringLiteral("Listed"), &error));
+    const QString id = store.currentSessionId();
+
+    std::atomic<bool> reading{false};
+    std::atomic<bool> release{false};
+    std::atomic<bool> wrote_during_read{false};
+    sak::ai::ConversationStore::setBeforeManifestFileReadHookForTesting([&](const QString& path) {
+        if (!path.contains(id)) {
+            return;
+        }
+        reading = true;
+        for (int waited = 0; !release && waited < kManifestReadHoldLimitMs;
+             waited += kManifestReadPollMs) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(kManifestReadPollMs));
+        }
+    });
+    sak::ai::ConversationStore::setBeforeManifestWriteHookForTesting([&](const QString&) {
+        if (reading && !release) {
+            wrote_during_read = true;
+        }
+    });
+
+    QString list_error;
+    std::thread listing([&]() { (void)store.listSessions(&list_error); });
+    QTRY_VERIFY_WITH_TIMEOUT(reading.load(), kManifestReadHoldLimitMs);
+    bool renamed = false;
+    QString rename_error;
+    std::thread rename(
+        [&]() { renamed = store.renameCurrentSession(QStringLiteral("Renamed"), &rename_error); });
+    QTest::qWait(kReplaceAttemptWindowMs);
+    release = true;
+    listing.join();
+    rename.join();
+
+    QVERIFY2(!wrote_during_read, "the manifest was replaced while the listing was reading it");
+    QVERIFY2(renamed, qPrintable(rename_error));
+    QVERIFY2(list_error.isEmpty(), qPrintable(list_error));
 }
 
 void AiConversationStoreTests::openSession_refusesManifestGrowthDuringRead() {
