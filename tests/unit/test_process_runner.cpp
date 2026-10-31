@@ -217,7 +217,10 @@ void ProcessRunnerTests::runProcess_timeoutKillsChildTree() {
                     QStringLiteral("-NonInteractive"),
                     QStringLiteral("-Command"),
                     sleepingChildScript(QStringLiteral("Start-Sleep -Seconds 30"))};
-    request.timeout_ms = 5000;
+    // The timeout must fire after the child exists. Windows PowerShell's cold start plus
+    // Start-Process took longer than 5 s on a loaded CI runner (b3c439f3, shard 0), so the run
+    // timed out before CHILD_PID was printed and there was no tree to prove killed.
+    request.timeout_ms = 15'000;
     request.on_output = [&](const QString& chunk, bool is_stderr) {
         captureChildGeneration(
             chunk, is_stderr, &observed_output, &child_generation, &observation_error);
