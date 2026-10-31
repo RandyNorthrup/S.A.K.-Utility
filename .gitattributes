@@ -6,6 +6,13 @@
 # the manifest recorded.
 tools/filesystem/** -text
 
+# UUP tools (aria2c, the patched UUPMediaConverter, their sources, patches and notes): every file
+# is pinned by SHA-256 in scripts/bundle_uup_tools.ps1, so checkout must keep the exact bytes.
+tools/uup/** -text
+
+# The aria2 build recipe runs under MSYS2 bash, which rejects CRLF line endings.
+scripts/build_aria2.sh text eol=lf
+
 # The vendored Chocolatey bundle keeps the release's exact bytes: its helper scripts carry
 # Authenticode signatures over CRLF text, which an LF checkout would invalidate.
 tools/chocolatey/** -text

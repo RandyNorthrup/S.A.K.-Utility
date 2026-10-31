@@ -85,7 +85,7 @@ jobs:
       shell: pwsh
       run: '& scripts/bundle_smartmontools.ps1'
 
-    - name: Bundle UUP tools (aria2c + verify uupmc)
+    - name: Verify UUP tools (aria2c + uupmc, pinned SHA-256)
       shell: pwsh
       run: '& scripts/bundle_uup_tools.ps1'
 
@@ -164,10 +164,11 @@ jobs:
         $aria2Ver = & .\tools\uup\aria2c.exe --version 2>&1 | Select-Object -First 1
         Write-Host "OK  tools/uup/aria2c.exe ($aria2Ver)"
 
-        if (!(Test-Path "tools/uup/uupmc/UUPMediaConverter.exe")) { Write-Error "FATAL: tools/uup/uupmc/UUPMediaConverter.exe not found - UUP conversion will be broken"; exit 1 }
-        Write-Host "OK  tools/uup/uupmc/UUPMediaConverter.exe"
-        if (!(Test-Path "tools/uup/uupmc/UUPDownload.exe")) { Write-Error "FATAL: tools/uup/uupmc/UUPDownload.exe not found - UUP downloads will be broken"; exit 1 }
-        Write-Host "OK  tools/uup/uupmc/UUPDownload.exe"
+        # The copied UUP bundle must be byte-identical to the pinned tree: the converter, the
+        # files it reads beside itself (CDImage\cdimage.exe, Settings\Settings.ini,
+        # libwim-15.dll) and nothing else.
+        & "$env:GITHUB_WORKSPACE/scripts/bundle_uup_tools.ps1" -OutputDir "tools/uup"
+        Write-Host "OK  tools/uup (pinned UUP bundle)"
 
         if (!(Test-Path "tools/iperf3/iperf3.exe")) { Write-Warning "tools/iperf3/iperf3.exe not found - LAN bandwidth testing unavailable" } else { Write-Host "OK  tools/iperf3/iperf3.exe" }
 

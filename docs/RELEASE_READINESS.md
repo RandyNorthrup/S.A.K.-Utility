@@ -111,6 +111,20 @@ keeps their history.
      the command finished; `onBrokerFinished`/`onRequestFinished` now settle a pending stop.
    - The exit prompt's per-panel registrations are covered by review, not by a test each; the
      registry, the prompt and the main window's use of it are tested.
+8. FIXED 2026-10-31: Windows ISO builds could not finish. UUPMediaConverter starts
+   `CDImage\cdimage.exe` beside itself to write the ISO (upstream `CDImageWrapper.cs`; a missing
+   file makes `Process.Start` throw and the step return failure), but the bundle had it at
+   `tools/uup/uupmc/CDImage/CDImage/cdimage.exe`, so by static reading every conversion failed
+   at its last step. The converter also read a `Settings\Settings.ini` from before upstream PR
+   #194, so six setup files were left off the media (`pnppropmig.dll`, `UnattendMgr.dll`,
+   `WinSetupBoot.hiv/.sys`, `WinSetupMon.hiv/.sys`), while the current file sat unread in a
+   nested `Settings\Settings\`. The layout is now the one the converter reads, and
+   `scripts/bundle_uup_tools.ps1` (also run by the release workflow over the copied bundle) pins
+   every file under `tools/uup` by SHA-256 and rejects any file it does not pin. Removed as
+   unused under the 2026-10-24 ruling: `UUPDownload.exe` (nothing launches it; downloads use
+   aria2c) and three .NET Framework `*.dll.config` binding-redirect files that .NET ignores (the
+   converter runs its help and its failure paths without them). Still to prove: an elevated
+   conversion of a real UUP set on the Windows 11 VM (VM smoke).
 
 ### Fixed by the lifecycle package (2026-10-25)
 

@@ -263,9 +263,20 @@ DEALINGS IN THE SOFTWARE.
 
 ### Microsoft cdimage.exe
 
-The converter package bundles `cdimage.exe` from the Windows Assessment
-and Deployment Kit (Windows ADK). This is the intellectual property of
-Microsoft Corporation.
+**Bundled at:** `tools/uup/uupmc/CDImage/cdimage.exe` (the converter runs
+`CDImage\cdimage.exe` beside itself to write the ISO)
+
+This is the copy the UUPMediaCreator repository carries at
+`src/UnifiedUpdatePlatform.Media.Creator/CDImage/cdimage.exe` (byte-identical,
+SHA-256 `A3B761293D213BE7FE6F01526CE4B3C18DCC8F95B92E24488011837377DF6582`).
+It is not part of the Windows ADK (the ADK's ISO tool is `oscdimg.exe`). Its
+version resource reads: Microsoft Corporation, "Microsoft CD/DVD Premastering
+Utility", CDIMAGE 2.53m, "Copyright (C) Microsoft Corporation, 1993-2007",
+comment "For Microsoft internal use only". It carries no Authenticode
+signature, and no license from Microsoft accompanies it, so its redistribution
+terms are unclear. It is the intellectual property of Microsoft Corporation.
+Whether to keep shipping it is an open owner decision (see
+`docs/RELEASE_READINESS.md`).
 
 ---
 

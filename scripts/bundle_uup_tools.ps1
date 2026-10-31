@@ -1,36 +1,51 @@
 # Copyright (c) 2025 Randy Northrup. All rights reserved.
 # SPDX-License-Identifier: AGPL-3.0-or-later
 #
-# bundle_uup_tools.ps1 - Downloads and bundles UUP dump support tools
+# bundle_uup_tools.ps1 - Verifies the bundled UUP tools against pinned SHA-256 hashes.
 #
-# This script downloads aria2c and verifies that the patched UUPMediaConverter
-# (checked into the repo) is present. aria2c is the only runtime dependency
-# that must be downloaded; the converter binary ships in tools/uup/uupmc/.
+# tools/uup holds aria2c.exe (UUP and Linux ISO downloads) and the patched UUPMediaConverter
+# (UUP set -> ISO) with the companion files it reads at run time. Every file under tools/uup is
+# pinned below. The script fails when a pinned file is missing or differs from its pin, and when
+# a file is present that nothing pins (a leftover no gate would ever look at again). It changes
+# nothing on a tree that verifies, so running it twice is the same as running it once.
+#
+# aria2c.exe alone can be restored here: when it is missing it is extracted from the pinned
+# official release zip and then held to the same pin as everything else.
+#
+# What the converter reads, relative to UUPMediaConverter.exe:
+#   CDImage\cdimage.exe    ISO writer (UUPMediaCreator CDImageWrapper)
+#   Settings\Settings.ini  setup-media file list and edition names (IniReader)
+#   libwim-15.dll          wimlib, loaded through ManagedWimLib (WimLibImaging)
 #
 # Usage: powershell -ExecutionPolicy Bypass -File scripts/bundle_uup_tools.ps1
-#
-# Required tools after bundling:
-#   tools/uup/aria2c.exe              - Multi-connection download manager
-#   tools/uup/uupmc/                  - Patched UUP Media Creator
-#     +-- UUPMediaConverter.exe        - UUP-to-ISO conversion utility
-#     +-- UUPDownload.exe              - UUP download utility
-#     +-- libwim-15.dll                - WIM library
-#     +-- CDImage/CDImage/cdimage.exe  - CD/DVD image builder
 
 param(
-    [string]$OutputDir = (Join-Path $PSScriptRoot "..\tools\uup"),
-    [switch]$Force
+    [string]$OutputDir = (Join-Path $PSScriptRoot "..\tools\uup")
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-# --- Configuration ---
-$Aria2Version = "1.37.0"
-$Aria2Url = "https://github.com/aria2/aria2/releases/download/release-$Aria2Version/aria2-$Aria2Version-win-64bit-build1.zip"
-$Aria2Sha256 = "67D015301EEF0B612191212D564C5BB0A14B5B9C4796B76454276A4D28D9B288"
+# --- Pins --------------------------------------------------------------------------------------
 
-# --- Functions ---
+# Path relative to tools/uup -> SHA-256 of the exact bytes that ship.
+$Pins = [ordered]@{
+    # aria2 1.37.0 official Windows build (aria2-1.37.0-win-64bit-build1.zip).
+    "aria2c.exe"                      = "BE2099C214F63A3CB4954B09A0BECD6E2E34660B886D4C898D260FEBFE9D70C2"
+    # Patched UUPMediaCreator 3.1.9.2 (upstream 71a24c3), self-contained single-file on .NET 8.
+    "uupmc/UUPMediaConverter.exe"     = "8BC3145ABDF4A894A809C804F5416817F611667F55C9C6F0403C840E722FCA60"
+    # wimlib 1.14.4, from the ManagedWimLib 2.6.0 NuGet package.
+    "uupmc/libwim-15.dll"             = "592431EF475A2093F0D8FB60DB532E6B5CC31760084F4FC1F47ABB0A58502328"
+    # Upstream src/UnifiedUpdatePlatform.Media.Creator/CDImage/cdimage.exe (CDIMAGE 2.53m).
+    "uupmc/CDImage/cdimage.exe"       = "A3B761293D213BE7FE6F01526CE4B3C18DCC8F95B92E24488011837377DF6582"
+    # Upstream Settings.ini at 885f2e36 (git blob 65dff311, includes PR #194's six files).
+    "uupmc/Settings/Settings.ini"     = "3447F26FFAED3CA2FB84090B4AF6CF022D4EA4E23E7371CDD9F5980EBB165684"
+}
+
+$Aria2Url = "https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip"
+$Aria2ZipSha256 = "67D015301EEF0B612191212D564C5BB0A14B5B9C4796B76454276A4D28D9B288"
+
+# --- Functions ---------------------------------------------------------------------------------
 
 function Write-Status {
     param([string]$Message)
@@ -47,181 +62,87 @@ function Write-Err {
     Write-Host "[UUP Tools] ERROR: $Message" -ForegroundColor Red
 }
 
-function Test-FileHash {
-    param(
-        [string]$FilePath,
-        [string]$ExpectedHash
-    )
-    $actualHash = (Get-FileHash -Path $FilePath -Algorithm SHA256).Hash
-    return $actualHash -eq $ExpectedHash.ToUpper()
+function Get-Sha256 {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToUpperInvariant()
 }
 
-function Get-SecureDownload {
-    param(
-        [string]$Url,
-        [string]$OutputPath,
-        [string]$ExpectedSha256,
-        [string]$Description,
-        [int]$MaxRetries = 3
-    )
+# Restores a missing aria2c.exe from the pinned official zip. The extracted file is verified
+# against its own pin by the main loop, like every other file.
+function Restore-Aria2 {
+    param([Parameter(Mandatory = $true)][string]$Destination)
 
-    if ((Test-Path $OutputPath) -and -not $Force) {
-        if (Test-FileHash -FilePath $OutputPath -ExpectedHash $ExpectedSha256) {
-            Write-Status "$Description already exists and hash matches. Skipping download."
-            return $true
+    $tempDir = Join-Path $env:TEMP "sak_uup_bundle_$(Get-Random)"
+    New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
+    try {
+        $zip = Join-Path $tempDir "aria2.zip"
+        Write-Status "aria2c.exe missing; downloading $Aria2Url"
+        $global:LASTEXITCODE = 0
+        & curl.exe --fail --location --silent --show-error --output $zip $Aria2Url
+        if ($LASTEXITCODE -ne 0) {
+            throw "Download failed: curl.exe exited with code $LASTEXITCODE"
         }
-        Write-Status "$Description exists but hash mismatch. Re-downloading..."
-        Remove-Item $OutputPath -Force
+        $zipSha = Get-Sha256 -Path $zip
+        if ($zipSha -ne $Aria2ZipSha256) {
+            throw "SHA-256 mismatch for the aria2 zip: expected $Aria2ZipSha256, got $zipSha"
+        }
+        Expand-Archive -LiteralPath $zip -DestinationPath $tempDir -Force
+        $extracted = Join-Path $tempDir "aria2-1.37.0-win-64bit-build1\aria2c.exe"
+        if (-not (Test-Path -LiteralPath $extracted -PathType Leaf)) {
+            throw "aria2c.exe not found in the pinned zip"
+        }
+        Copy-Item -LiteralPath $extracted -Destination $Destination -Force
+        Write-Success "aria2c.exe restored from the pinned release zip"
     }
-
-    for ($attempt = 1; $attempt -le $MaxRetries; $attempt++) {
-        Write-Status "Downloading $Description (attempt $attempt/$MaxRetries)..."
-        Write-Status "  URL: $Url"
-
-        try {
-            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-            $webClient = New-Object System.Net.WebClient
-            $webClient.DownloadFile($Url, $OutputPath)
-            $webClient.Dispose()
-        }
-        catch {
-            Write-Err "Download attempt $attempt failed: $_"
-            if ($attempt -lt $MaxRetries) {
-                $delay = $attempt * 10
-                Write-Status "Retrying in $delay seconds..."
-                Start-Sleep -Seconds $delay
-                continue
-            }
-            return $false
-        }
-
-        if (Test-FileHash -FilePath $OutputPath -ExpectedHash $ExpectedSha256) {
-            Write-Success "$Description downloaded and verified."
-            return $true
-        }
-
-        Write-Err "SHA-256 hash mismatch for $Description (attempt $attempt)"
-        Write-Err "  Expected: $ExpectedSha256"
-        $actualHash = (Get-FileHash -Path $OutputPath -Algorithm SHA256).Hash
-        Write-Err "  Actual:   $actualHash"
-        Remove-Item $OutputPath -Force
-
-        if ($attempt -lt $MaxRetries) {
-            $delay = $attempt * 10
-            Write-Status "Retrying in $delay seconds..."
-            Start-Sleep -Seconds $delay
-        }
-    }
-
-    return $false
-}
-
-# --- Main ---
-
-Write-Status "=== UUP Dump Tools Bundler ==="
-Write-Status "Output directory: $OutputDir"
-
-# Create output directory
-if (-not (Test-Path $OutputDir)) {
-    New-Item -ItemType Directory -Path $OutputDir -Force | Out-Null
-}
-
-$tempDir = Join-Path $env:TEMP "sak_uup_bundle_$(Get-Random)"
-New-Item -ItemType Directory -Path $tempDir -Force | Out-Null
-
-try {
-    # --- Step 1: Download and extract aria2c ---
-    $aria2Zip = Join-Path $tempDir "aria2.zip"
-    $aria2Exe = Join-Path $OutputDir "aria2c.exe"
-
-    if ((Test-Path $aria2Exe -PathType Leaf) -and -not $Force) {
-        Write-Status "aria2c.exe already present. Use -Force to re-download."
-    }
-    else {
-        if (-not (Get-SecureDownload -Url $Aria2Url -OutputPath $aria2Zip -ExpectedSha256 $Aria2Sha256 -Description "aria2c")) {
-            throw "Failed to download aria2c"
-        }
-
-        Write-Status "Extracting aria2c..."
-        Expand-Archive -Path $aria2Zip -DestinationPath $tempDir -Force
-
-        $aria2ExtractDir = Get-ChildItem -Path $tempDir -Directory -Filter "aria2-*" | Select-Object -First 1
-        if (-not $aria2ExtractDir) {
-            throw "Could not find extracted aria2 directory"
-        }
-
-        Copy-Item -Path (Join-Path $aria2ExtractDir.FullName "aria2c.exe") -Destination $aria2Exe -Force
-        Write-Success "aria2c.exe installed to $aria2Exe"
-    }
-
-    # --- Step 2: Verify patched UUPMediaConverter (checked into repo) ---
-    $uupmcDir = Join-Path $OutputDir "uupmc"
-    $uupmcCritical = @(
-        "UUPMediaConverter.exe",
-        "UUPDownload.exe",
-        "libwim-15.dll",
-        "CDImage\CDImage\cdimage.exe"
-    )
-
-    Write-Status "Verifying patched UUPMediaConverter..."
-    foreach ($file in $uupmcCritical) {
-        $filePath = Join-Path $uupmcDir $file
-        # -PathType Leaf so a directory bearing the file's name cannot satisfy the gate.
-        if (-not (Test-Path $filePath -PathType Leaf)) {
-            Write-Err "MISSING: $filePath"
-            Write-Err "UUPMediaConverter binaries must be checked into the repo at tools/uup/uupmc/"
-            throw "Patched UUPMediaConverter not found: $file"
-        }
-        $length = (Get-Item -LiteralPath $filePath).Length
-        if ($length -le 0) {
-            Write-Err "EMPTY: $filePath"
-            throw "Patched UUPMediaConverter file is empty: $file"
-        }
-        $sizeKB = [math]::Round($length / 1024, 1)
-        Write-Success "  OK: $file ($sizeKB KB)"
-    }
-
-    # --- Step 3: Final verification ---
-    Write-Status "Verifying installation..."
-
-    $requiredFiles = @(
-        (Join-Path $OutputDir "aria2c.exe"),
-        (Join-Path $uupmcDir "UUPMediaConverter.exe"),
-        (Join-Path $uupmcDir "UUPDownload.exe")
-    )
-
-    $allPresent = $true
-    foreach ($file in $requiredFiles) {
-        if (Test-Path $file -PathType Leaf) {
-            Write-Success "  OK: $file"
-        }
-        else {
-            Write-Err "  MISSING: $file"
-            $allPresent = $false
-        }
-    }
-
-    # List uupmc contents
-    if (Test-Path $uupmcDir) {
-        Write-Status "UUP Media Creator contents:"
-        $uupmcDirFull = (Resolve-Path $uupmcDir).Path
-        Get-ChildItem -Path $uupmcDirFull -Recurse -File | ForEach-Object {
-            $relativePath = $_.FullName.Substring($uupmcDirFull.Length + 1)
-            $sizeKB = [math]::Round($_.Length / 1024, 1)
-            Write-Status "  $relativePath ($sizeKB KB)"
-        }
-    }
-
-    if ($allPresent) {
-        Write-Success "=== All UUP tools bundled successfully ==="
-    }
-    else {
-        throw "Some required files are missing"
+    finally {
+        Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
     }
 }
-finally {
-    # Clean up temp directory
-    if (Test-Path $tempDir) {
-        Remove-Item $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+
+# --- Main --------------------------------------------------------------------------------------
+
+Write-Status "=== UUP tools verification ==="
+if (-not (Test-Path -LiteralPath $OutputDir -PathType Container)) {
+    throw "UUP tools directory not found: $OutputDir"
+}
+$root = (Resolve-Path -LiteralPath $OutputDir).Path
+Write-Status "Directory: $root"
+
+$aria2Path = Join-Path $root "aria2c.exe"
+if (-not (Test-Path -LiteralPath $aria2Path)) {
+    Restore-Aria2 -Destination $aria2Path
+}
+
+$problems = @()
+foreach ($relative in $Pins.Keys) {
+    $path = Join-Path $root ($relative -replace '/', '\')
+    # -PathType Leaf so a directory bearing the file's name cannot satisfy the pin.
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+        $problems += "MISSING: $relative"
+        continue
+    }
+    $actual = Get-Sha256 -Path $path
+    if ($actual -ne $Pins[$relative]) {
+        $problems += "HASH MISMATCH: $relative (expected $($Pins[$relative]), got $actual)"
+        continue
+    }
+    $sizeKB = [math]::Round((Get-Item -LiteralPath $path).Length / 1KB, 1)
+    Write-Success "  OK: $relative ($sizeKB KB)"
+}
+
+# Every file present must be pinned: a stale leftover (an old nested CDImage\CDImage, a .NET
+# Framework .dll.config, a tool nothing launches) would otherwise ship unexamined.
+foreach ($file in @(Get-ChildItem -LiteralPath $root -Recurse -File -Force)) {
+    $relative = $file.FullName.Substring($root.Length).TrimStart('\') -replace '\\', '/'
+    if (-not $Pins.Contains($relative)) {
+        $problems += "UNPINNED FILE: $relative"
     }
 }
+
+if ($problems.Count -gt 0) {
+    foreach ($problem in $problems) {
+        Write-Err $problem
+    }
+    throw "UUP tools verification failed: $($problems.Count) problem(s) in $root"
+}
+Write-Success "=== All $($Pins.Count) UUP tool files match their pinned SHA-256 ==="

@@ -8,6 +8,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **Windows ISO builds can finish** - The UUP converter looks for its ISO writer at
+  `CDImage\cdimage.exe` beside itself, but the bundle had it one folder deeper, so the last step
+  of every conversion failed. It also read an older `Settings.ini` that left six setup files off
+  the media. Both are where the converter reads them now, and the unused `UUPDownload.exe` and
+  .NET Framework `.dll.config` files are gone. `scripts/bundle_uup_tools.ps1` checks every bundled
+  UUP file against a pinned SHA-256 instead of only checking that it exists.
+
 - **Partition Manager names say what each disk tool does** - "Surface Test" is now "Scan File
   Systems" (it reads reliability counters and scans file systems; it never read the disk
   surface), "Partition Alignment" is "TRIM SSD Volume" (it runs Optimize-Volume -ReTrim on one
