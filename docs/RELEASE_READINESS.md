@@ -117,12 +117,11 @@ keeps their history.
      panel's network, command and offline thread joins, AppInstallationPanel's search futures,
      DiagnosticController's scan futures, and the stack-thread joins in
      `advanced_search_controller`, `port_scanner` and `network_transfer_runner`.
-   - Assistant app actions (`sak_app_action`) do not observe Stop: `AsyncActionInvocation` has no
-     cancel hook, so a Stop during e.g. `uninstall_program` parks the run in Cancelling until the
-     action's own ceiling (up to 22 min). Exit waits the same way, with progress shown.
+   - FIXED (2d7de3b0): assistant app actions (`sak_app_action`) observe Stop and exit. Every
+     async action and every quick action takes the caller's cancel route; see the AI package below.
    - The AI tool handlers still reach panel state through `this`. Teardown is safe because
      `AiAssistantPanel::release` keeps the whole panel alive until they drain; moving the handlers
-     onto shared state is open.
+     onto shared state is open (AI package below says which state and why).
    - FIXED (c507b338): a Stop during a `run_powershell` command left the run at Cancelling after
      the command finished; `onBrokerFinished`/`onRequestFinished` now settle a pending stop.
    - The exit prompt's per-panel registrations are covered by review, not by a test each; the
@@ -201,30 +200,66 @@ Done:
 - The accessibility audit builds the real AI panel; the constructor's audit early return is gone.
   2f451519
 - A Stop during a PowerShell command settles to Cancelled when the command ends. c507b338
+- `app_run_action` retired (item 8, owner-delegated decision). SUPERAntiSpyware's Win32
+  desktop-control recipe is dropped with no AI-layer replacement. Microsoft Defender quick scan,
+  full scan and signature update are registry actions (`action.microsoft_defender_*`,
+  `MicrosoftDefenderAction`): MpCmdRun.exe comes from the platform folder Defender registers
+  (`HKLM\SOFTWARE\Microsoft\Windows Defender\InstallLocation`), accepted only as a version folder
+  under `ProgramData\Microsoft\Windows Defender\Platform` or as `Program Files\Windows
+  Defender`, and the actions elevate through the quick-action elevated-helper route
+  (`QuickActionController::executeElevatedAction` -> `sak_elevated_helper` tasks). Exit 0 is
+  clean (scan) or up to date (update); a scan's exit 2 is "threats need attention or scan
+  errors", never clean; any other code is a failure with its value. A cancelled or timed-out scan
+  is also cancelled in the Defender service (`MpCmdRun -Scan -Cancel`). Bounds: 2 h quick, 4 h
+  full, 30 min update. SFC (`action.verify_system_files`) has one 60-minute bound: each SFC/DISM
+  step is cut to what is left, and the registry thunk waits each quick action's own declared
+  bound (`QuickAction::executionTimeoutMs`) instead of a generic 30 minutes. The gateway, tool
+  runner, policy, tool schema and planner no longer know `app_run_action`,
+  `app_run_action_plan`, `app_manifest` or `app_capabilities`; the manifests, their qrc
+  entries, the win32_gui step runner, `SAK_AI_POLICY_DISK_OVERRIDE` and the mtime cache are gone,
+  and with the disk override gone the `data/ai` staging nothing read any more left CMake, the
+  stage/archive/smoke scripts and release.yml (the smoke checks the embedded catalog's stdio
+  commands against the package instead). Found and fixed on the way: the elevated helper sent
+  nothing while a task step ran, and the broker reads each frame with a 30 s timeout, so any
+  elevated step silent for longer (SFC, a scan) was read as a lost helper and abandoned; the
+  helper now sends a Heartbeat every 10 s while a task runs. 254c7160
+- Assistant app actions observe Stop (item 10). `AppActionRegistry` passes the caller's cancel
+  route to cancellable thunks; `AsyncActionInvocation` never starts work a Stop already
+  cancelled, and on a Stop during the run calls the site's stop request and waits up to 15 s
+  (`kAppActionStopGraceMs`) for the operation's own result before settling as cancelled. Every
+  async action is cancellable (file search, duplicate finder, organize preview and organize,
+  benchmarks, ping, traceroute, mtr, port scan, flash, partition apply, uninstalls, leftover
+  cleanup), and the quick actions cancel on their controller, which reaches the elevated helper.
+  The panel passes its tool-run cancel check to every app-action invoke, so Stop and exit both
+  reach a running action. 2d7de3b0
+- `*ForTesting` hooks are out of the AI libraries (item 11b): the store file hooks, credential
+  wipe observers, MCP/model-client thread starters, the MCP/Responses/registry `*ForTesting`
+  entry points and the panel's workflow wipe observer and approval-prompt hook compile only
+  under `SAK_AI_TEST_HOOKS`, into the tests that drive them (`SAK_AI_*_TEST_HOOK_SOURCES`).
+  `test_release_binary_test_hooks` scans `sak_ai_core.lib` and `sak_gui.lib` for any
+  `ForTesting@` symbol and the approval hook, and the binaries for
+  `SAK_AI_POLICY_DISK_OVERRIDE`. fa5db306
 
 Open, each with why:
 
-- Retire `app_run_action` (not started; owner decision recorded): the registry has
-  `action.verify_system_files` (30 min ceiling vs the manifest's 7200 s, still to reconcile), but
-  has no Microsoft Defender action at all, so quick/full scan and signature update need new
-  registry actions with an elevation route (the manifest path ran them through the elevated
-  PowerShell runner; an in-process registry action needs the app elevated or an elevated-helper
-  task). SUPERAntiSpyware has no CLI: its manifest is a Win32 desktop-control recipe driven by the
-  AI step runner, so moving it means an AI-layer registration over that runner or dropping it --
-  a decision, not a move. Then remove `app_run_action`/`app_run_action_plan`/`app_manifest` from the
-  gateway, tool runner, policy, tool schema and planner, the manifests and their qrc/CMake
-  staging, `stage_portable_release.ps1`, `verify_portable_release_smoke.ps1` and
-  `create_release_archive.ps1` requirements, `SAK_AI_POLICY_DISK_OVERRIDE` and the mtime cache.
-- Assistant app actions do not observe Stop (open item 7): `AsyncActionInvocation` and the
-  registry thunk carry no cancel hook, so each async action needs its own cancel route.
-- AI tool handlers still reach panel state through `this` (open item 7); teardown stays safe via
-  `AiAssistantPanel::release`.
-- `*ForTesting` hooks in production AI headers (conversation/skill/workflow store file hooks,
-  credential-store wipe observers, the MCP/model-client thread starters, the panel's workflow
-  wipe observer and approval-prompt hook) are still compiled into the libraries. Moving them
-  behind a test-only define means compiling each hooked AI source into its tests as
-  `SAK_PARTITION_FS_TEST_HOOK_SOURCES` does, and extending `test_release_binary_test_hooks` to
-  `sak_ai_core.lib` and `sak_gui.lib`.
+- AI tool handlers still reach panel state through `this` (open item 7). The handlers run on the
+  async tool worker and read or write panel members directly: the app-action handler uses
+  `m_appActionRegistry`, `m_appActionService`, `m_appActionStagingDir` and
+  `m_conversationStore`; the gateway, download, session-search, package, offline-downloader,
+  skill and workflow handlers use their own members the same way. Nothing on the GUI thread
+  changes those members while a tool runs (a new or switched session is refused while the panel
+  is busy) and teardown stays safe via `AiAssistantPanel::release`, so the remaining risk is a
+  future GUI-thread write racing a handler. Removing it means giving each handler a shared,
+  thread-safe context instead of `this` -- a refactor across about ten handlers in the
+  13,000-line panel, larger than this package.
+- The panel's `m_delegateSubagentModelFactoryOverride` member is a test seam outside the
+  `*ForTesting` list: it is a data member, so moving it behind `SAK_AI_TEST_HOOKS` would change
+  `AiAssistantPanel`'s layout between hooked and product objects. It needs the factory made a
+  constructor/static seam first.
+- The Defender actions and the elevated-helper heartbeat are unit-tested (result mapping, path
+  rule, elevated task mapping, heartbeat protocol) but not run end to end here: a live run needs a
+  UAC prompt and a real scan, which the T2 runners and this host's unattended lane cannot give.
+  First live check is the Windows 11 VM smoke.
 
 ### Behavior audit 2026-10-24 -- owner decisions
 
@@ -250,7 +285,7 @@ that exists for reasons that no longer apply. Owner decisions (2026-10-24):
   per-session in memory instead of persisted for 24 h.
 - Decided (owner delegated): keep `sak_app_action` (the core AppActionRegistry seam the GUI and
   assistant share) and retire the AI-only manifest path `app_run_action` and
-  `resources/ai/app_manifests`, moving any action the registry lacks into it.
+  `resources/ai/app_manifests`, moving any action the registry lacks into it. Done (254c7160).
 - Behavior fixes needing no decision: poll sensors only while their tab is visible; drive
   rescans on device-change notifications instead of a 5 s timer; program sizes from the
   registry's EstimatedSize; WiFi, restore-point and AI session-list work off the GUI thread;
