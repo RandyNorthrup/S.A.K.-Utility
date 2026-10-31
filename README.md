@@ -767,7 +767,7 @@ and `-PartitionExternalEvidenceChecklist`. See
 | [Microsoft Learn MCP](https://learn.microsoft.com/en-us/training/support/mcp) | Microsoft Learn Terms | Remote Microsoft documentation MCP provider; no bundled code; no app API key |
 | [aria2](https://aria2.github.io/) | GPLv2 | Multi-connection downloader bundled for ISO/UUP payload downloads |
 | [UUPMediaCreator](https://github.com/OSTooling/UUPMediaCreator) | MIT | Bundled UUP-to-ISO conversion tooling |
-| [wimlib / libwim](https://wimlib.net/) | LGPL v3 | WIM image library bundled with the UUP conversion tooling |
+| [wimlib / libwim](https://wimlib.net/) | LGPL v2.1+ | WIM image library bundled with the UUP conversion tooling |
 | [smartmontools 7.5](https://www.smartmontools.org/) | GPLv2 | SMART disk health analysis (bundled `smartctl.exe`) |
 | [iPerf3 3.22](https://iperf.fr/) | BSD 3-Clause | LAN bandwidth testing (bundled `iperf3.exe`) |
 | [Chocolatey 2.7.5](https://chocolatey.org/) | Apache 2.0 | Embedded portable package manager |
@@ -860,7 +860,7 @@ Third-party dependency licenses are documented in [THIRD_PARTY_LICENSES.md](THIR
 - [**Microsoft Learn MCP**](https://learn.microsoft.com/en-us/training/support/mcp) - Remote Microsoft documentation MCP provider
 - [**aria2**](https://aria2.github.io/) - Multi-connection download manager (GPLv2)
 - [**UUPMediaCreator**](https://github.com/OSTooling/UUPMediaCreator) - UUP-to-ISO converter by OSTooling (MIT)
-- [**wimlib / libwim**](https://wimlib.net/) - WIM image library by Eric Biggers (LGPL v3, bundled with UUPMediaConverter)
+- [**wimlib / libwim**](https://wimlib.net/) - WIM image library by Eric Biggers (LGPL v2.1+, bundled with UUPMediaConverter)
 - [**smartmontools**](https://www.smartmontools.org/) - SMART disk diagnostics (GPLv2)
 - [**iPerf3**](https://iperf.fr/) - LAN bandwidth testing (BSD 3-Clause)
 - [**Icons8**](https://icons8.com/) - UI icons (Icons8 Free License with attribution)
@@ -870,7 +870,7 @@ Third-party dependency licenses are documented in [THIRD_PARTY_LICENSES.md](THIR
 - [**XZ Utils**](https://tukaani.org/xz/) - LZMA compression (0BSD / Public Domain)
 - [**vcpkg**](https://vcpkg.io/) - C++ dependency manager (MIT)
 - [**CMake**](https://cmake.org/) - Build system (BSD 3-Clause)
-- **Microsoft** - Windows BCrypt API, PowerShell, Windows SDK, ADK tools (cdimage, imagex, bcdedit, cabarc)
+- **Microsoft** - Windows BCrypt API, PowerShell, Windows SDK, ADK tools (imagex, bcdedit, cabarc), and CDIMAGE, the ISO writer the UUP converter carries (see THIRD_PARTY_LICENSES.md)
 
 ---
 

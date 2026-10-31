@@ -82,7 +82,7 @@ void UupConversionPipelineTest::testConverterExecutableExists() {
 /**
  * CRITICAL TEST: Verify converter stays attached to QProcess.
  *
- * UUPMediaConverter.exe is a self-contained .NET 8 executable.
+ * UUPMediaConverter.exe is a self-contained single-file .NET executable.
  * This test ensures it does not fork or detach; QProcess should
  * be able to track the process to completion.
  */

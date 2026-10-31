@@ -31,15 +31,26 @@ $ErrorActionPreference = "Stop"
 # Path relative to tools/uup -> SHA-256 of the exact bytes that ship.
 $Pins = [ordered]@{
     # aria2 1.37.0 official Windows build (aria2-1.37.0-win-64bit-build1.zip).
-    "aria2c.exe"                      = "BE2099C214F63A3CB4954B09A0BECD6E2E34660B886D4C898D260FEBFE9D70C2"
-    # Patched UUPMediaCreator 3.1.9.2 (upstream 71a24c3), self-contained single-file on .NET 8.
-    "uupmc/UUPMediaConverter.exe"     = "8BC3145ABDF4A894A809C804F5416817F611667F55C9C6F0403C840E722FCA60"
-    # wimlib 1.14.4, from the ManagedWimLib 2.6.0 NuGet package.
-    "uupmc/libwim-15.dll"             = "592431EF475A2093F0D8FB60DB532E6B5CC31760084F4FC1F47ABB0A58502328"
+    "aria2c.exe"                                    = "BE2099C214F63A3CB4954B09A0BECD6E2E34660B886D4C898D260FEBFE9D70C2"
+    # UUPMediaCreator 885f2e36 + the S.A.K. patch, self-contained single-file on .NET 10.0.14.
+    # Rebuilt bit for bit by scripts/build_uup_media_converter.ps1 (uupmc/BUILD-NOTES.md).
+    "uupmc/UUPMediaConverter.exe"                   = "D5C609FEA3A3F90AF5D119990E46CA7F5725726A8EFC690C8AE47DB63EFE8165"
+    "uupmc/UUPMediaCreator-885f2e36-sak.patch"      = "C4D3C17C2258A4C501EFE5E0DC8717B8D5356AF738CF95C387E61CD463457922"
+    "uupmc/BUILD-NOTES.md"                          = "08C263DF93285CDC598911FC2EEB55223C437C8EA8ED190C01381B04066D84EA"
+    # wimlib 1.14.5, the DLL from wimlib's wimlib-1.14.5-windows-x86_64-bin.zip (zip SHA-256
+    # 2F446D6FA3866582175F1A22A7BE198EEEE0AEC7ABA5B4E04AD25C99EAE2D265), with its signed source
+    # tarball and license files.
+    "uupmc/libwim-15.dll"                           = "BA853EE1E3FC5F5798581F02E8E066BA07A0A2375F0BF444FE981431FD508495"
+    "uupmc/wimlib/wimlib-1.14.5.tar.gz"             = "84221A3ABD5B91228F15F8E6065C335A336237B5738197B75BF419EEA561A194"
+    "uupmc/wimlib/wimlib-1.14.5.tar.gz.sig"         = "2ABB5FE21D16EB84C9C7260BB971F2CE04923DA491011F0E9211DA0ADE06B20B"
+    "uupmc/wimlib/COPYING.txt"                      = "ED5CC16630B6AA5EDAF9CFD440DBF5EDA8E2257471752EAD93634AC8EB102583"
+    "uupmc/wimlib/COPYING.LGPL.txt"                 = "B14C366C41CC9F62DC20EC1A0885F278CF9681076D98027012A910FCA5E89639"
+    "uupmc/wimlib/COPYING.GPLv3.txt"                = "230184F60BAE2FEAF244F10A8BAC053C8FF33A183BCC365B4D8B876D2B7F4809"
+    "uupmc/wimlib/COPYING.libdivsufsort-lite.txt"   = "6783C2BE541A8871BCCFD0E9A26253DEF3A32922FB1DA5344B6BBD43CBAB851F"
     # Upstream src/UnifiedUpdatePlatform.Media.Creator/CDImage/cdimage.exe (CDIMAGE 2.53m).
-    "uupmc/CDImage/cdimage.exe"       = "A3B761293D213BE7FE6F01526CE4B3C18DCC8F95B92E24488011837377DF6582"
+    "uupmc/CDImage/cdimage.exe"                     = "A3B761293D213BE7FE6F01526CE4B3C18DCC8F95B92E24488011837377DF6582"
     # Upstream Settings.ini at 885f2e36 (git blob 65dff311, includes PR #194's six files).
-    "uupmc/Settings/Settings.ini"     = "3447F26FFAED3CA2FB84090B4AF6CF022D4EA4E23E7371CDD9F5980EBB165684"
+    "uupmc/Settings/Settings.ini"                   = "3447F26FFAED3CA2FB84090B4AF6CF022D4EA4E23E7371CDD9F5980EBB165684"
 }
 
 $Aria2Url = "https://github.com/aria2/aria2/releases/download/release-1.37.0/aria2-1.37.0-win-64bit-build1.zip"

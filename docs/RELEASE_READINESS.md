@@ -49,9 +49,20 @@ keeps their history.
    supported x64 compiler; VS 2026 is v145); `cygwin1.dll` 3.6.10 ships inside the pinned
    upstream iperf3 build and moves with the next one; the gate tools run on Python 3.14 (CI
    resolves the newest 3.14 patch) because pre-commit's PyYAML has no Python 3.15 Windows wheel
-   yet. CMake: CI configures with a pinned 4.4.5 instead of the runner image's 3.31. Owner decisions pending: aria2c 1.37.0 is
-   the latest official build but embeds old c-ares/zlib (rebuild it ourselves or not), and the
-   patched UUPMediaCreator 3.1.9.2 trails 3.1.9.3 with its patch not in the repository.
+   yet. CMake: CI configures with a pinned 4.4.5 instead of the runner image's 3.31. Owner decisions
+   (2026-10-31): the patched UUPMediaConverter is rebuilt from upstream `main` 885f2e36 on .NET 10
+   LTS (supported to 2028-11-14) with its patch in the repository
+   (`scripts/build_uup_media_converter.ps1` reproduces it bit for bit;
+   `tools/uup/uupmc/BUILD-NOTES.md`), replacing the .NET 8.0.23 build whose support ends
+   2026-11-10. It reports 3.1.9.2 only because upstream never bumped that string; the old and new
+   sources both contain release 3.1.9.3 (e0c4ce0). Its `libwim-15.dll` moves from the wimlib
+   1.14.4 that ManagedWimLib 2.6.0 carries to wimlib's own 1.14.5 build, after a harness on the
+   converter's `WimLibImaging` read, exported, updated and extracted a test WIM through it.
+   Pending: aria2c 1.37.0 is the latest official
+   build but embeds old c-ares/zlib (rebuild it ourselves or not). Open owner decision: the
+   converter writes the ISO with the `cdimage.exe` upstream carries, Microsoft's unsigned CDIMAGE
+   2.53m marked "For Microsoft internal use only", which comes with no license, so its
+   redistribution terms are unclear (`THIRD_PARTY_LICENSES.md`).
 3. FIXED 2026-10-30: downloaded third-party binaries without a hash pin. iperf3 and
    smartmontools are pinned (the bundled smartctl.exe is byte-identical to the one in the
    pinned, SignPath-signed 7.5 installer), and `scripts/sign-exe.ps1` pins

@@ -227,20 +227,43 @@ https://github.com/aria2/aria2/releases
 ## UUPMediaCreator
 
 **License:** MIT
+**Version:** upstream `main` at `885f2e3603d515918773c904e778f331bb239d1b`
+(2026-04-10; the converter reports 3.1.9.2), plus the S.A.K. patch below
 **Website:** https://github.com/OSTooling/UUPMediaCreator
 **Used for:** Converting UUP update files into bootable Windows ISOs
 **Bundled at:** `tools/uup/uupmc/UUPMediaConverter.exe`
 
-This project bundles a **patched build** of UUPMediaCreator (OSTooling).
-The patch skips AppX provisioning during `desktop-convert` to avoid
-DISM servicing-stack failures on Professional edition builds. Store
-apps install automatically via Windows Update on first boot.
+This project bundles a **patched build** of UUPMediaCreator. The patch,
+`tools/uup/uupmc/UUPMediaCreator-885f2e36-sak.patch`, ships beside the
+executable and makes two changes: the converter always builds the base
+edition without AppX slipstreaming (offline DISM AppX provisioning fails
+when the host servicing stack does not match the target build, and that
+failure failed the whole edition; the media then carries no provisioned
+Store apps, as upstream's own non-elevated builds do), and `desktop-convert`
+exits 1 when the conversion reported an error. The complete source is the
+pinned upstream commit plus that patch; `scripts/build_uup_media_converter.ps1`
+rebuilds the executable from them bit for bit, and
+`tools/uup/uupmc/BUILD-NOTES.md` records the build and its pins.
 
-Source code for the patched fork is maintained at the project's build
-directory. The original MIT license applies:
+The executable is a self-contained .NET 10 single-file bundle. Besides the
+UUPMediaCreator assemblies and the .NET 10.0.14 runtime (MIT, Microsoft), it
+contains these NuGet packages, each pinned by SHA-512 in the build script:
+CommandLineParser 2.9.1 (MIT), ini-parser-new 2.6.2 (MIT),
+JCRCI.LTRData.DiscUtils 1.0.31 (MIT), LTRData.Extensions 1.0.1 (MIT),
+SharpZipLib 1.4.2 (MIT), Joveler.DynLoader 2.3.1 (MIT), Microsoft.Bcl.HashCode,
+Microsoft.CSharp, Microsoft.Win32.Registry, System.Security.Principal.Windows
+and System.Data.DataSetExtensions (MIT, Microsoft), and ManagedWimLib 2.6.0
+(LGPL-3.0-or-later, Copyright (c) 2018-present Hajin Jang; source at
+https://github.com/ied206/ManagedWimLib). Because the build script, the patch
+and every pinned input are public, the bundle can be rebuilt with a modified
+ManagedWimLib, which is what the LGPL asks of a combined work. UUPMediaCreator's
+Cabinet project includes an LZX decoder derived from libmspack, which its
+authors license under LGPL-2.1 or MS-PL at the user's choice.
+
+The upstream MIT license applies to UUPMediaCreator:
 
 ```
-Copyright (c) UUPMediaCreator Contributors (OSTooling)
+Copyright (c) Gustave Monce and Contributors
 
 Permission is hereby granted, free of charge, to any person obtaining a
 copy of this software and associated documentation files (the "Software"),
@@ -282,25 +305,32 @@ Whether to keep shipping it is an open owner decision (see
 
 ## wimlib / libwim
 
-**License:** GNU Lesser General Public License v3.0 (LGPL v3)
+**License:** GNU Lesser General Public License v2.1 or later (the library;
+dual-licensed with GPLv3+)
+**Version:** 1.14.5 (wimlib's own Windows build)
 **Website:** https://wimlib.net/
 **Source:** https://github.com/ebiggers/wimlib
 **Used for:** WIM image manipulation (bundled with UUPMediaConverter)
-**Bundled at:** `tools/uup/uupmc/libwim-15.dll`
+**Bundled at:** `tools/uup/uupmc/libwim-15.dll`, with its source tarball,
+signature and license files in `tools/uup/uupmc/wimlib/`
 
 ```
 wimlib (software) Copyright 2012-2026 Eric Biggers
 ```
 
-wimlib is free software; you can redistribute it and/or modify it under
-the terms of the GNU Lesser General Public License as published by the
-Free Software Foundation; either version 3 of the License, or (at your
-option) any later version.
+libwim, the library portion of wimlib, may be redistributed and/or modified
+under the terms of the GNU Lesser General Public License as published by the
+Free Software Foundation; either version 2.1 of the License, or (at your
+option) any later version (wimlib 1.14.5 relaxed this from LGPLv3+). The
+Windows build does not link libntfs-3g, so the LGPL option applies. The
+library includes libdivsufsort-lite (MIT). The license texts ship as
+`tools/uup/uupmc/wimlib/COPYING*.txt`.
 
-A copy of the LGPL v3 is available at
-https://www.gnu.org/licenses/lgpl-3.0.html.
-
-Source code is available at: https://wimlib.net/downloads/index.html
+The complete source of the bundled library is
+`tools/uup/uupmc/wimlib/wimlib-1.14.5.tar.gz` (also at
+https://wimlib.net/downloads/index.html). The DLL is the one in wimlib's
+`wimlib-1.14.5-windows-x86_64-bin.zip`, unmodified; `tools/uup/uupmc/BUILD-NOTES.md`
+records its provenance and the proof that the converter works with it.
 
 ---
 

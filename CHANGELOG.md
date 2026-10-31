@@ -8,6 +8,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **UUP converter on .NET 10, rebuilt from source in the repo** - The patched UUPMediaConverter
+  is now built from current upstream UUPMediaCreator with its patch kept in
+  `tools/uup/uupmc/`, by `scripts/build_uup_media_converter.ps1`, which reproduces the shipped
+  executable bit for bit. It runs on .NET 10 (supported to 2028-11-14) instead of .NET 8, whose
+  support ends 2026-11-10, and carries wimlib 1.14.5.
+
 - **Windows ISO builds can finish** - The UUP converter looks for its ISO writer at
   `CDImage\cdimage.exe` beside itself, but the bundle had it one folder deeper, so the last step
   of every conversion failed. It also read an older `Settings.ini` that left six setup files off

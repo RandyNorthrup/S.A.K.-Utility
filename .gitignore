@@ -494,6 +494,9 @@ artifacts/flash-live-certification/disk3-flashworker-b4/*
 *.diff
 !tools/filesystem/**/*.patch
 !tools/filesystem/**/*.diff
+# The UUP tools' sources and patches ship beside the binaries they produce.
+!tools/uup/**/*.patch
+!tools/uup/**/*.tar.gz
 
 # Lock files
 *.lock
