@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-    Fails when the product libraries or the application carry partition/filesystem test hooks or
-    the SAK_DEV_SOURCE_TREE escape hatch.
+    Fails when the product libraries or the application carry partition/filesystem or AI test
+    hooks, or the SAK_DEV_SOURCE_TREE / SAK_AI_POLICY_DISK_OVERRIDE escape hatches.
 
 .DESCRIPTION
     Owner ruling 2026-10-24: test hooks and escape hatches do not live in production paths. The
@@ -9,6 +9,13 @@
     image readers, the raw-target predicate, the executor's broker observer, the removed APFS
     evidence validator) are compiled only under SAK_PARTITION_FS_TEST_HOOKS, and the manifest
     resolver no longer reads SAK_DEV_SOURCE_TREE.
+
+    The AI layer's seams (the conversation/skill/workflow store file hooks, the credential-store
+    wipe observers, the MCP/model-client thread starters, the *ForTesting entry points of the MCP,
+    Responses and provider-registry code, and the assistant panel's workflow wipe observer and
+    approval-prompt hook) are compiled only under SAK_AI_TEST_HOOKS, so sak_ai_core and sak_gui
+    carry none of them; the retired SAK_AI_POLICY_DISK_OVERRIDE (an on-disk AI policy override)
+    must not be read by anything that ships.
 
     A Release executable has no symbol table, so the function names are checked where they would
     be: the static product libraries every shipped binary links. A static library's linker member
@@ -26,6 +33,8 @@
 param(
     [Parameter(Mandatory = $true)][string]$PartitionFsLibrary,
     [Parameter(Mandatory = $true)][string]$CoreLibrary,
+    [Parameter(Mandatory = $true)][string]$AiCoreLibrary,
+    [Parameter(Mandatory = $true)][string]$GuiLibrary,
     [Parameter(Mandatory = $true)][string]$ApplicationExe
 )
 
@@ -102,6 +111,7 @@ function Assert-Scan {
 }
 
 $escapeHatch = "SAK_DEV_SOURCE_TREE"
+$aiEscapeHatch = "SAK_AI_POLICY_DISK_OVERRIDE"
 
 # Decorated-name fragments. "<name>@<Class>@sak@@" is how MSVC spells a member of sak::<Class>.
 $partitionFsHooks = @(
@@ -145,11 +155,19 @@ $allFailures += Assert-Scan -Path $CoreLibrary `
         "?resolveRuntimeManifestPath@PartitionFileSystemToolManifest@sak@@") `
     -MustNotContain $coreHooks
 
+$allFailures += Assert-Scan -Path $AiCoreLibrary `
+    -MustContain @("@ConversationStore@ai@sak@@", "@AiProviderRegistry@ai@sak@@") `
+    -MustNotContain @("ForTesting@", $aiEscapeHatch)
+
+$allFailures += Assert-Scan -Path $GuiLibrary `
+    -MustContain @("@AiAssistantPanel@sak@@") `
+    -MustNotContain @("ForTesting@", "?aiApprovalPromptTestHook@sak@@")
+
 $allFailures += Assert-Scan -Path $ApplicationExe `
     -MustContain @("tools/filesystem/manifest.json") `
-    -MustNotContain @($escapeHatch)
+    -MustNotContain @($escapeHatch, $aiEscapeHatch)
 
 if ($allFailures.Count -gt 0) {
     throw ("Release binaries carry test hooks or escape hatches:`n  " + ($allFailures -join "`n  "))
 }
-Write-Host "Release binaries carry no partition/filesystem test hooks and no SAK_DEV_SOURCE_TREE"
+Write-Host "Release binaries carry no partition/filesystem or AI test hooks and no escape hatches"

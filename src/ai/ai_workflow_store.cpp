@@ -18,8 +18,23 @@ namespace {
 
 constexpr qint64 kMaxWorkflowFileBytes = 1LL * 1024 * 1024;
 constexpr int kMaxWorkflowFiles = 512;
+#ifdef SAK_AI_TEST_HOOKS
+// Test-only race hooks (SAK_AI_TEST_HOOKS); a product build hands the loader none.
 std::function<void(const QString&)> g_before_file_open_hook;
 std::function<void(const QString&)> g_before_file_read_hook;
+
+detail::StoreFileLoadHooks storeFileLoadHooks() {
+    return {.before_file_open = g_before_file_open_hook,
+            .before_file_read = g_before_file_read_hook,
+            .before_child_open = {},
+            .before_leaf_temp_open = {},
+            .before_leaf_publish = {}};
+}
+#else
+detail::StoreFileLoadHooks storeFileLoadHooks() {
+    return {};
+}
+#endif  // SAK_AI_TEST_HOOKS
 
 const detail::StoreFileLoadPolicy& workflowFileLoadPolicy() {
     static const detail::StoreFileLoadPolicy kPolicy{QStringLiteral("Workflow"),
@@ -32,6 +47,7 @@ const detail::StoreFileLoadPolicy& workflowFileLoadPolicy() {
 
 }  // namespace
 
+#ifdef SAK_AI_TEST_HOOKS
 void WorkflowStore::setBeforeFileOpenHookForTesting(std::function<void(const QString&)> hook) {
     g_before_file_open_hook = std::move(hook);
 }
@@ -39,6 +55,7 @@ void WorkflowStore::setBeforeFileOpenHookForTesting(std::function<void(const QSt
 void WorkflowStore::setBeforeFileReadHookForTesting(std::function<void(const QString&)> hook) {
     g_before_file_read_hook = std::move(hook);
 }
+#endif  // SAK_AI_TEST_HOOKS
 
 bool WorkflowStore::loadDefaults(QStringList* errors) {
     bool ok = loadBuiltIn(errors);
@@ -54,11 +71,7 @@ bool WorkflowStore::loadBuiltIn(QStringList* errors) {
 }
 
 bool WorkflowStore::loadDirectory(const QString& directory, QStringList* errors) {
-    const detail::StoreFileLoadHooks hooks{.before_file_open = g_before_file_open_hook,
-                                           .before_file_read = g_before_file_read_hook,
-                                           .before_child_open = {},
-                                           .before_leaf_temp_open = {},
-                                           .before_leaf_publish = {}};
+    const detail::StoreFileLoadHooks hooks = storeFileLoadHooks();
     const detail::StoreFileConsumer consume = [this, errors](const QString& path,
                                                              const QByteArray& bytes) {
         QStringList parse_errors;

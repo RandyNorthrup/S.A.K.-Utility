@@ -28,6 +28,8 @@ public:
                                               int timeout_ms,
                                               QString& error_message);
 
+#ifdef SAK_AI_TEST_HOOKS
+    // Test-only (compiled only into tests that define SAK_AI_TEST_HOOKS).
     /// Parses a complete JSON or SSE response body through the production framing rules.
     [[nodiscard]] static QJsonObject extractJsonRpcMessageForTesting(
         const QByteArray& response_body, QString* error_message = nullptr);
@@ -39,6 +41,7 @@ public:
     ///        must be rejected, never accepted as the tool result. Test seam for the
     ///        correlation gate in callTool().
     [[nodiscard]] static bool responseIdMatchesRequestForTesting(const QJsonObject& message);
+#endif  // SAK_AI_TEST_HOOKS
 };
 
 }  // namespace sak::ai

@@ -17,8 +17,23 @@ namespace {
 
 constexpr qint64 kMaxSkillFileBytes = 1LL * 1024 * 1024;
 constexpr int kMaxSkillFiles = 512;
+#ifdef SAK_AI_TEST_HOOKS
+// Test-only race hooks (SAK_AI_TEST_HOOKS); a product build hands the loader none.
 std::function<void(const QString&)> g_before_file_open_hook;
 std::function<void(const QString&)> g_before_file_read_hook;
+
+detail::StoreFileLoadHooks storeFileLoadHooks() {
+    return {.before_file_open = g_before_file_open_hook,
+            .before_file_read = g_before_file_read_hook,
+            .before_child_open = {},
+            .before_leaf_temp_open = {},
+            .before_leaf_publish = {}};
+}
+#else
+detail::StoreFileLoadHooks storeFileLoadHooks() {
+    return {};
+}
+#endif  // SAK_AI_TEST_HOOKS
 
 const detail::StoreFileLoadPolicy& skillFileLoadPolicy() {
     static const detail::StoreFileLoadPolicy kPolicy{QStringLiteral("Skill"),
@@ -31,6 +46,7 @@ const detail::StoreFileLoadPolicy& skillFileLoadPolicy() {
 
 }  // namespace
 
+#ifdef SAK_AI_TEST_HOOKS
 void SkillStore::setBeforeFileOpenHookForTesting(std::function<void(const QString&)> hook) {
     g_before_file_open_hook = std::move(hook);
 }
@@ -38,6 +54,7 @@ void SkillStore::setBeforeFileOpenHookForTesting(std::function<void(const QStrin
 void SkillStore::setBeforeFileReadHookForTesting(std::function<void(const QString&)> hook) {
     g_before_file_read_hook = std::move(hook);
 }
+#endif  // SAK_AI_TEST_HOOKS
 
 bool SkillStore::loadDefaults(QStringList* errors) {
     bool ok = loadBuiltIn(errors);
@@ -53,11 +70,7 @@ bool SkillStore::loadBuiltIn(QStringList* errors) {
 }
 
 bool SkillStore::loadDirectory(const QString& directory, QStringList* errors) {
-    const detail::StoreFileLoadHooks hooks{.before_file_open = g_before_file_open_hook,
-                                           .before_file_read = g_before_file_read_hook,
-                                           .before_child_open = {},
-                                           .before_leaf_temp_open = {},
-                                           .before_leaf_publish = {}};
+    const detail::StoreFileLoadHooks hooks = storeFileLoadHooks();
     const detail::StoreFileConsumer consume = [this, errors](const QString& path,
                                                              const QByteArray& bytes) {
         const Skill skill = Skill::fromMarkdown(bytes, path);

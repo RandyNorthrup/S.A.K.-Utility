@@ -62,6 +62,9 @@ constexpr qsizetype kSessionUuidSuffixChars = 8;
 constexpr qsizetype kMemoryAppendMaxChars = 4000;
 constexpr qsizetype kSafeFilenameMaxChars = 80;
 
+#ifdef SAK_AI_TEST_HOOKS
+// Test-only race hooks (SAK_AI_TEST_HOOKS). A product build has none: the helpers below hand the
+// file loader empty hooks.
 std::function<void(const QString&)> g_before_manifest_child_open_hook;
 std::function<void(const QString&)> g_before_manifest_file_open_hook;
 std::function<void(const QString&)> g_before_manifest_file_read_hook;
@@ -69,6 +72,48 @@ std::function<void(const QString&)> g_before_manifest_write_hook;
 std::function<void(const QString&)> g_before_artifact_child_open_hook;
 std::function<void(const QString&)> g_before_artifact_leaf_temp_open_hook;
 std::function<void(const QString&)> g_before_artifact_leaf_publish_hook;
+
+detail::StoreFileLoadHooks manifestLoadHooks() {
+    return {.before_file_open = g_before_manifest_file_open_hook,
+            .before_file_read = g_before_manifest_file_read_hook,
+            .before_child_open = g_before_manifest_child_open_hook,
+            .before_leaf_temp_open = {},
+            .before_leaf_publish = {}};
+}
+
+detail::StoreFileLoadHooks artifactDirectoryHooks() {
+    detail::StoreFileLoadHooks hooks;
+    hooks.before_child_open = g_before_artifact_child_open_hook;
+    return hooks;
+}
+
+detail::StoreFileLoadHooks artifactLeafHooks() {
+    detail::StoreFileLoadHooks hooks;
+    hooks.before_leaf_temp_open = g_before_artifact_leaf_temp_open_hook;
+    hooks.before_leaf_publish = g_before_artifact_leaf_publish_hook;
+    return hooks;
+}
+
+void beforeManifestWrite(const QString& manifest_path) {
+    if (g_before_manifest_write_hook) {
+        g_before_manifest_write_hook(manifest_path);
+    }
+}
+#else
+detail::StoreFileLoadHooks manifestLoadHooks() {
+    return {};
+}
+
+detail::StoreFileLoadHooks artifactDirectoryHooks() {
+    return {};
+}
+
+detail::StoreFileLoadHooks artifactLeafHooks() {
+    return {};
+}
+
+void beforeManifestWrite(const QString& /*manifest_path*/) {}
+#endif  // SAK_AI_TEST_HOOKS
 
 QString nowIso() {
     return QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
@@ -299,14 +344,6 @@ detail::StoreChildFileLoadPolicy manifestLoadPolicy() {
             .max_file_bytes = kMaxManifestBytes,
             .max_child_directories = kAiSessionListLimit,
             .max_enumerated_child_directories = kMaxEnumeratedSessionDirectories};
-}
-
-detail::StoreFileLoadHooks manifestLoadHooks() {
-    return {.before_file_open = g_before_manifest_file_open_hook,
-            .before_file_read = g_before_manifest_file_read_hook,
-            .before_child_open = g_before_manifest_child_open_hook,
-            .before_leaf_temp_open = {},
-            .before_leaf_publish = {}};
 }
 
 struct ParsedManifest {
@@ -894,6 +931,7 @@ bool searchSessionFiles(const AiSessionInfo& session,
 ConversationStore::ConversationStore(QString root_dir)
     : m_root_dir(root_dir.trimmed().isEmpty() ? defaultRootDirectory() : std::move(root_dir)) {}
 
+#ifdef SAK_AI_TEST_HOOKS
 void ConversationStore::setBeforeManifestChildOpenHookForTesting(
     std::function<void(const QString&)> hook) {
     g_before_manifest_child_open_hook = std::move(hook);
@@ -928,6 +966,7 @@ void ConversationStore::setBeforeArtifactLeafPublishHookForTesting(
     std::function<void(const QString&)> hook) {
     g_before_artifact_leaf_publish_hook = std::move(hook);
 }
+#endif  // SAK_AI_TEST_HOOKS
 
 QString ConversationStore::rootDirectory() const {
     return m_root_dir;
@@ -1552,8 +1591,7 @@ detail::StoreDirectoryPin ConversationStore::pinnedArtifactDirectoryPin(
         }
         return *existing;
     }
-    detail::StoreFileLoadHooks hooks;
-    hooks.before_child_open = g_before_artifact_child_open_hook;
+    const detail::StoreFileLoadHooks hooks = artifactDirectoryHooks();
     detail::StoreDirectoryPin pin =
         detail::pinOrCreateStoreDirectory(m_root_dir, components, 1, hooks, error_message);
     if (!pin.valid()) {
@@ -1620,10 +1658,8 @@ QString ConversationStore::writeArtifactFile(const QString& subdir,
     if (!directory.valid()) {
         return {};
     }
-    detail::StoreFileLoadHooks hooks;
-    hooks.before_leaf_temp_open = g_before_artifact_leaf_temp_open_hook;
-    hooks.before_leaf_publish = g_before_artifact_leaf_publish_hook;
-    return detail::writePinnedStoreFile(directory, filename, bytes, hooks, error_message);
+    return detail::writePinnedStoreFile(
+        directory, filename, bytes, artifactLeafHooks(), error_message);
 }
 
 QString ConversationStore::copyArtifactFile(const QString& subdir,
@@ -1639,10 +1675,8 @@ QString ConversationStore::copyArtifactFile(const QString& subdir,
     if (!directory.valid()) {
         return {};
     }
-    detail::StoreFileLoadHooks hooks;
-    hooks.before_leaf_temp_open = g_before_artifact_leaf_temp_open_hook;
-    hooks.before_leaf_publish = g_before_artifact_leaf_publish_hook;
-    return detail::copyPinnedStoreFile(directory, filename, source_path, hooks, error_message);
+    return detail::copyPinnedStoreFile(
+        directory, filename, source_path, artifactLeafHooks(), error_message);
 }
 
 QString ConversationStore::writeCommandLog(const QString& command_id,
@@ -1796,9 +1830,7 @@ bool ConversationStore::writeManifest(QString* error_message) const {
 
     const QString manifest_path =
         QDir(currentSessionPath()).filePath(QString::fromLatin1(kManifestFile));
-    if (g_before_manifest_write_hook) {
-        g_before_manifest_write_hook(manifest_path);
-    }
+    beforeManifestWrite(manifest_path);
     QSaveFile file(manifest_path);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
         if (error_message != nullptr) {

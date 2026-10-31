@@ -52,8 +52,24 @@ set(SAK_PARTITION_FS_TEST_HOOK_SOURCES
 # into the tests that drive them, so sak_ai_core and sak_gui -- and every shipped binary -- carry
 # none of them. Each hook is a static function, so hooked and product objects agree on every class
 # layout and the hooked object replaces the library's copy in that link.
+set(SAK_AI_HOOKED_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../src/ai")
 set(SAK_AI_PROVIDER_REGISTRY_TEST_HOOK_SOURCES
-    "${CMAKE_CURRENT_SOURCE_DIR}/../src/ai/ai_provider_registry.cpp"
+    "${SAK_AI_HOOKED_SOURCE_DIR}/ai_provider_registry.cpp"
+)
+set(SAK_AI_CONVERSATION_STORE_TEST_HOOK_SOURCES
+    "${SAK_AI_HOOKED_SOURCE_DIR}/ai_conversation_store.cpp"
+)
+set(SAK_AI_MCP_STDIO_SESSION_TEST_HOOK_SOURCES
+    "${SAK_AI_HOOKED_SOURCE_DIR}/ai_mcp_stdio_session.cpp"
+)
+set(SAK_AI_RESPONSES_CLIENT_TEST_HOOK_SOURCES
+    "${SAK_AI_HOOKED_SOURCE_DIR}/openai_responses_client.cpp"
+)
+# The assistant panel's own seams (workflow wipe observer, approval-prompt hook) are in sak_gui;
+# its dispatch test compiles the panel with them, plus the header so AUTOMOC sees the class.
+set(SAK_AI_PANEL_TEST_HOOK_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/gui/ai_assistant_panel.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/ai_assistant_panel.h"
 )
 set(SAK_PROCESS_RUNNER_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/process_runner.cpp"
@@ -1536,6 +1552,7 @@ message(STATUS "Added unit test: test_ai_token_usage_tracker")
 
 add_executable(test_openai_responses_client
     unit/test_openai_responses_client.cpp
+    ${SAK_AI_RESPONSES_CLIENT_TEST_HOOK_SOURCES}
 )
 set_target_properties(test_openai_responses_client PROPERTIES
     AUTOMOC ON
@@ -1548,6 +1565,7 @@ target_link_libraries(test_openai_responses_client PRIVATE
 target_include_directories(test_openai_responses_client PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
+target_compile_definitions(test_openai_responses_client PRIVATE SAK_AI_TEST_HOOKS)
 add_test(NAME test_openai_responses_client COMMAND test_openai_responses_client
          -o "${TEST_OUTPUT_DIR}/test_openai_responses_client.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
@@ -1555,6 +1573,7 @@ message(STATUS "Added unit test: test_openai_responses_client")
 
 add_executable(test_ai_openai_model_client
     unit/test_ai_openai_model_client.cpp
+    "${SAK_AI_HOOKED_SOURCE_DIR}/ai_openai_model_client.cpp"
 )
 set_target_properties(test_ai_openai_model_client PROPERTIES
     AUTOMOC ON
@@ -1567,6 +1586,7 @@ target_link_libraries(test_ai_openai_model_client PRIVATE
 target_include_directories(test_ai_openai_model_client PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
+target_compile_definitions(test_ai_openai_model_client PRIVATE SAK_AI_TEST_HOOKS)
 add_test(NAME test_ai_openai_model_client COMMAND test_ai_openai_model_client
          -o "${TEST_OUTPUT_DIR}/test_ai_openai_model_client.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
@@ -1628,6 +1648,9 @@ if(SAK_ENABLE_AI_ASSISTANT)
     # covered by the dedicated worker tests.
     add_executable(test_ai_assistant_panel_tool_dispatch
         unit/test_ai_assistant_panel_tool_dispatch.cpp
+        ${SAK_AI_RESPONSES_CLIENT_TEST_HOOK_SOURCES}
+        ${SAK_AI_CONVERSATION_STORE_TEST_HOOK_SOURCES}
+        ${SAK_AI_PANEL_TEST_HOOK_SOURCES}
         ${CMAKE_SOURCE_DIR}/resources/ai.qrc
         ${CMAKE_SOURCE_DIR}/resources/icons.qrc
         # Stub the raw/image-filesystem bridge so the whole APFS/HFS+/ext driver stays out of
@@ -1662,6 +1685,7 @@ if(SAK_ENABLE_AI_ASSISTANT)
         ${CMAKE_BINARY_DIR}/include
         ${CMAKE_SOURCE_DIR}/src/third_party/qrcodegen
     )
+    target_compile_definitions(test_ai_assistant_panel_tool_dispatch PRIVATE SAK_AI_TEST_HOOKS)
     add_test(NAME test_ai_assistant_panel_tool_dispatch
              COMMAND test_ai_assistant_panel_tool_dispatch
              -o "${TEST_OUTPUT_DIR}/test_ai_assistant_panel_tool_dispatch.txt,txt" -o -,txt
@@ -2514,6 +2538,7 @@ message(STATUS "Added unit test: test_win32_mcp_geometry")
 # transcript. It had no test of its own until R5-LEDGER found two leaks in it.
 add_executable(test_ai_credential_store
     unit/test_ai_credential_store.cpp
+    "${SAK_AI_HOOKED_SOURCE_DIR}/ai_credential_store.cpp"
 )
 set_target_properties(test_ai_credential_store PROPERTIES
     AUTOMOC ON
@@ -2526,6 +2551,7 @@ target_link_libraries(test_ai_credential_store PRIVATE
 target_include_directories(test_ai_credential_store PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
+target_compile_definitions(test_ai_credential_store PRIVATE SAK_AI_TEST_HOOKS)
 add_test(NAME test_ai_credential_store COMMAND test_ai_credential_store
          -o "${TEST_OUTPUT_DIR}/test_ai_credential_store.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
@@ -2591,6 +2617,7 @@ message(STATUS "Added unit test: test_ai_tool_call_router")
 
 add_executable(test_ai_mcp_http_client
     unit/test_ai_mcp_http_client.cpp
+    "${SAK_AI_HOOKED_SOURCE_DIR}/ai_mcp_http_client.cpp"
 )
 set_target_properties(test_ai_mcp_http_client PROPERTIES
     AUTOMOC ON
@@ -2603,6 +2630,7 @@ target_link_libraries(test_ai_mcp_http_client PRIVATE
 target_include_directories(test_ai_mcp_http_client PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
+target_compile_definitions(test_ai_mcp_http_client PRIVATE SAK_AI_TEST_HOOKS)
 add_test(NAME test_ai_mcp_http_client COMMAND test_ai_mcp_http_client
          -o "${TEST_OUTPUT_DIR}/test_ai_mcp_http_client.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
@@ -2610,6 +2638,7 @@ message(STATUS "Added unit test: test_ai_mcp_http_client")
 
 add_executable(test_ai_mcp_stdio_session
     unit/test_ai_mcp_stdio_session.cpp
+    ${SAK_AI_MCP_STDIO_SESSION_TEST_HOOK_SOURCES}
     support/ai_mcp_native_fixture.h
 )
 set_target_properties(test_ai_mcp_stdio_session PROPERTIES
@@ -2623,6 +2652,7 @@ target_link_libraries(test_ai_mcp_stdio_session PRIVATE
 target_include_directories(test_ai_mcp_stdio_session PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
+target_compile_definitions(test_ai_mcp_stdio_session PRIVATE SAK_AI_TEST_HOOKS)
 add_dependencies(test_ai_mcp_stdio_session sak_utility)
 add_test(NAME test_ai_mcp_stdio_session COMMAND test_ai_mcp_stdio_session
          -o "${TEST_OUTPUT_DIR}/test_ai_mcp_stdio_session.txt,txt" -o -,txt
@@ -2632,6 +2662,8 @@ message(STATUS "Added unit test: test_ai_mcp_stdio_session")
 
 add_executable(test_ai_mcp_session_pool
     unit/test_ai_mcp_session_pool.cpp
+    "${SAK_AI_HOOKED_SOURCE_DIR}/ai_mcp_session_pool.cpp"
+    ${SAK_AI_MCP_STDIO_SESSION_TEST_HOOK_SOURCES}
     support/ai_mcp_native_fixture.h
 )
 set_target_properties(test_ai_mcp_session_pool PROPERTIES
@@ -2645,6 +2677,7 @@ target_link_libraries(test_ai_mcp_session_pool PRIVATE
 target_include_directories(test_ai_mcp_session_pool PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
+target_compile_definitions(test_ai_mcp_session_pool PRIVATE SAK_AI_TEST_HOOKS)
 add_dependencies(test_ai_mcp_session_pool sak_utility)
 add_test(NAME test_ai_mcp_session_pool COMMAND test_ai_mcp_session_pool
          -o "${TEST_OUTPUT_DIR}/test_ai_mcp_session_pool.txt,txt" -o -,txt
@@ -2692,6 +2725,7 @@ message(STATUS "Added unit test: test_app_action_service")
 
 add_executable(test_ai_conversation_store
     unit/test_ai_conversation_store.cpp
+    ${SAK_AI_CONVERSATION_STORE_TEST_HOOK_SOURCES}
 )
 set_target_properties(test_ai_conversation_store PROPERTIES
     AUTOMOC ON
@@ -2704,6 +2738,7 @@ target_link_libraries(test_ai_conversation_store PRIVATE
 target_include_directories(test_ai_conversation_store PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
+target_compile_definitions(test_ai_conversation_store PRIVATE SAK_AI_TEST_HOOKS)
 add_test(NAME test_ai_conversation_store COMMAND test_ai_conversation_store
          -o "${TEST_OUTPUT_DIR}/test_ai_conversation_store.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
@@ -2901,6 +2936,7 @@ message(STATUS "Added unit test: test_ai_tool_policy")
 
 add_executable(test_ai_skill_store
     unit/test_ai_skill_store.cpp
+    "${SAK_AI_HOOKED_SOURCE_DIR}/ai_skill_store.cpp"
     ${CMAKE_SOURCE_DIR}/resources/ai.qrc
     fixtures/ai_store_crlf/ai_store_crlf.qrc
 )
@@ -2916,6 +2952,7 @@ target_link_libraries(test_ai_skill_store PRIVATE
 target_include_directories(test_ai_skill_store PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
+target_compile_definitions(test_ai_skill_store PRIVATE SAK_AI_TEST_HOOKS)
 add_test(NAME test_ai_skill_store COMMAND test_ai_skill_store
          -o "${TEST_OUTPUT_DIR}/test_ai_skill_store.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
@@ -3170,6 +3207,7 @@ message(STATUS "Added unit test: test_ai_orchestrator")
 
 add_executable(test_ai_workflow_store
     unit/test_ai_workflow_store.cpp
+    "${SAK_AI_HOOKED_SOURCE_DIR}/ai_workflow_store.cpp"
     ../resources/ai.qrc
     fixtures/ai_store_crlf/ai_store_crlf.qrc
 )
@@ -3185,6 +3223,7 @@ target_link_libraries(test_ai_workflow_store PRIVATE
 target_include_directories(test_ai_workflow_store PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
+target_compile_definitions(test_ai_workflow_store PRIVATE SAK_AI_TEST_HOOKS)
 add_test(NAME test_ai_workflow_store COMMAND test_ai_workflow_store
          -o "${TEST_OUTPUT_DIR}/test_ai_workflow_store.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
@@ -6170,12 +6209,15 @@ if(PLATFORM_WINDOWS)
 
     # Owner ruling 2026-10-24: no test hooks or escape hatches in production. The release libraries
     # and the application are scanned for the partition/filesystem test seams (compiled only under
-    # SAK_PARTITION_FS_TEST_HOOKS) and for the retired SAK_DEV_SOURCE_TREE override.
+    # SAK_PARTITION_FS_TEST_HOOKS), the AI and assistant-panel seams (SAK_AI_TEST_HOOKS), and for
+    # the retired SAK_DEV_SOURCE_TREE and SAK_AI_POLICY_DISK_OVERRIDE overrides.
     add_test(NAME test_release_binary_test_hooks
              COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
                      -File "${CMAKE_SOURCE_DIR}/scripts/test_release_binary_test_hooks.ps1"
                      -PartitionFsLibrary "$<TARGET_FILE:sak_partition_fs>"
                      -CoreLibrary "$<TARGET_FILE:sak_core>"
+                     -AiCoreLibrary "$<TARGET_FILE:sak_ai_core>"
+                     -GuiLibrary "$<TARGET_FILE:sak_gui>"
                      -ApplicationExe "$<TARGET_FILE:sak_utility>")
     set_tests_properties(test_release_binary_test_hooks PROPERTIES TIMEOUT 120)
 

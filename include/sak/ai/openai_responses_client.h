@@ -43,8 +43,11 @@ public:
                                                      QString* error_message);
     [[nodiscard]] static QString extractApiError(const QByteArray& data);
     [[nodiscard]] static bool hasUsableApiKey(const QString& api_key) noexcept;
+#ifdef SAK_AI_TEST_HOOKS
+    /// Test-only (compiled only into tests that define SAK_AI_TEST_HOOKS).
     [[nodiscard]] static QByteArray buildResponsePayloadForTesting(
         const OpenAIResponseRequest& request);
+#endif  // SAK_AI_TEST_HOOKS
 
 Q_SIGNALS:
     void requestStarted();

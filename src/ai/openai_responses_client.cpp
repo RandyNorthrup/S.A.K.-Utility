@@ -1160,11 +1160,13 @@ QNetworkRequest OpenAIResponsesClient::buildRequest(const QString& path,
     return request;
 }
 
+#ifdef SAK_AI_TEST_HOOKS
 QByteArray OpenAIResponsesClient::buildResponsePayloadForTesting(
     const OpenAIResponseRequest& request) {
     const OpenAIResponsesClient client;
     return client.buildResponsePayload(request);
 }
+#endif  // SAK_AI_TEST_HOOKS
 
 QByteArray OpenAIResponsesClient::buildResponsePayload(const OpenAIResponseRequest& request) const {
     if (!untrustedInputMessageError(request).isEmpty()) {

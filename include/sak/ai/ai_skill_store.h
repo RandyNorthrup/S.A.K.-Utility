@@ -39,8 +39,12 @@ public:
     [[nodiscard]] static QString defaultUserSkillDirectory();
 
 private:
+#ifdef SAK_AI_TEST_HOOKS
+    // Test-only (compiled only into tests that define SAK_AI_TEST_HOOKS): race hooks run just
+    // before a store file is opened and read.
     static void setBeforeFileOpenHookForTesting(std::function<void(const QString&)> hook);
     static void setBeforeFileReadHookForTesting(std::function<void(const QString&)> hook);
+#endif  // SAK_AI_TEST_HOOKS
 
     QVector<Skill> m_skills;
     QHash<QString, int> m_index_by_id;

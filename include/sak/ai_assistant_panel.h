@@ -89,12 +89,14 @@ struct AiProviderGatewayToolCallbacks;
 enum class AiAccessMode;
 }  // namespace ai
 
-// Test-only seam: when installed, replaces the modal approval / restore-point
-// dialog so headless certification can script human decisions deterministically.
-// The callback receives the prompt window title and command text and returns the
-// chosen ApprovalPromptChoice as an int. Empty (unused) in production builds.
+#ifdef SAK_AI_TEST_HOOKS
+// Test-only seam (compiled only into tests that define SAK_AI_TEST_HOOKS): when installed,
+// replaces the modal approval / restore-point dialog so a test can script human decisions
+// deterministically. The callback receives the prompt window title and command text and
+// returns the chosen ApprovalPromptChoice as an int.
 using AiApprovalPromptTestHook = std::function<int(const QString&, const QString&)>;
 [[nodiscard]] AiApprovalPromptTestHook& aiApprovalPromptTestHook();
+#endif  // SAK_AI_TEST_HOOKS
 
 /// @brief UI shell for the SAK AI Assistant panel.
 ///
@@ -948,8 +950,11 @@ private:
         const QJsonObject& resume_state);
     [[nodiscard]] static std::expected<QJsonObject, QString> unprotectWorkflowResumeState(
         const QJsonObject& protected_state);
+#ifdef SAK_AI_TEST_HOOKS
+    // Test-only (SAK_AI_TEST_HOOKS): observe the resume-state plaintext after it is wiped.
     static void setWorkflowResumePlaintextWipeObserverForTesting(
         std::function<void(const QByteArray&)> observer);
+#endif  // SAK_AI_TEST_HOOKS
     [[nodiscard]] static std::expected<QString, QString> workflowRevision(
         const ai::WorkflowTemplate& workflow);
     [[nodiscard]] static QString workflowResumeBindingError(const ai::WorkflowTemplate& workflow,

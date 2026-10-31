@@ -191,9 +191,11 @@ void OpenAIResponsesModelClient::setEnableWebSearch(bool enabled) {
     m_enable_web_search = enabled;
 }
 
+#ifdef SAK_AI_TEST_HOOKS
 void OpenAIResponsesModelClient::setThreadStarterForTesting(std::function<void(QThread&)> starter) {
     m_thread_starter = starter ? std::move(starter) : startNetworkThread;
 }
+#endif  // SAK_AI_TEST_HOOKS
 
 IAiModelClient::Response OpenAIResponsesModelClient::runResponseRequest(
     const OpenAIResponseRequest& request, const CancellationToken& token) const {

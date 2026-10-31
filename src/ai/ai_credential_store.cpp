@@ -48,8 +48,11 @@ constexpr qint64 kMaxCredentialFileBytes = 256LL * 1024LL;
 constexpr qsizetype kMaxDpapiPayloadBytes = 8LL * 1024LL * 1024LL;
 constexpr qsizetype kMaxDpapiCiphertextBytes = kMaxDpapiPayloadBytes * 2;
 constexpr qsizetype kMaxDpapiPurposeBytes = 512;
+#ifdef SAK_AI_TEST_HOOKS
+// Test-only wipe observers (SAK_AI_TEST_HOOKS): see the wiped buffer after the wipe.
 std::function<void(const QByteArray&)> g_dpapi_plaintext_wipe_observer;
 std::function<void(const QByteArray&)> g_credential_decrypt_input_wipe_observer;
+#endif  // SAK_AI_TEST_HOOKS
 
 [[nodiscard]] QString winErrorMessage(DWORD code) {
     return QStringLiteral("Windows error %1").arg(static_cast<qulonglong>(code));
@@ -132,10 +135,12 @@ QString decryptCredentialBytes(QByteArray encrypted, QString* error_message) {
     const auto wipe_inputs = qScopeGuard([&encrypted, &entropy]() {
         sak::secure_wiper::wipe(encrypted.data(), static_cast<std::size_t>(encrypted.size()));
         sak::secure_wiper::wipe(entropy.data(), static_cast<std::size_t>(entropy.size()));
+#ifdef SAK_AI_TEST_HOOKS
         if (g_credential_decrypt_input_wipe_observer) {
             g_credential_decrypt_input_wipe_observer(encrypted);
             g_credential_decrypt_input_wipe_observer(entropy);
         }
+#endif  // SAK_AI_TEST_HOOKS
     });
 
     DATA_BLOB out_blob{};
@@ -269,9 +274,11 @@ std::expected<QByteArray, QString> CredentialStore::protectCurrentUserData(
     const auto wipe_plaintext = qScopeGuard([&plaintext_copy]() {
         sak::secure_wiper::wipe(plaintext_copy.data(),
                                 static_cast<std::size_t>(plaintext_copy.size()));
+#ifdef SAK_AI_TEST_HOOKS
         if (g_dpapi_plaintext_wipe_observer) {
             g_dpapi_plaintext_wipe_observer(plaintext_copy);
         }
+#endif  // SAK_AI_TEST_HOOKS
     });
     QByteArray purpose_copy = purpose;
     DATA_BLOB input{static_cast<DWORD>(plaintext_copy.size()),
@@ -337,6 +344,7 @@ std::expected<QByteArray, QString> CredentialStore::unprotectCurrentUserData(
     return plaintext;
 }
 
+#ifdef SAK_AI_TEST_HOOKS
 void CredentialStore::setDpapiPlaintextWipeObserverForTesting(
     std::function<void(const QByteArray&)> observer) {
     g_dpapi_plaintext_wipe_observer = std::move(observer);
@@ -351,6 +359,7 @@ QString CredentialStore::decryptCredentialBytesForTesting(QByteArray encrypted,
                                                           QString* error_message) {
     return decryptCredentialBytes(std::move(encrypted), error_message);
 }
+#endif  // SAK_AI_TEST_HOOKS
 
 QString CredentialStore::loadApiKey(QString* error_message) {
     if (error_message != nullptr) {

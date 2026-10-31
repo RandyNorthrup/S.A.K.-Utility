@@ -36,9 +36,12 @@ public:
     ~OpenAIResponsesModelClient() override;
 
     void setEnableWebSearch(bool enabled);
-    /// @brief Replaces QThread::start for deterministic launch-failure tests.
+#ifdef SAK_AI_TEST_HOOKS
+    /// @brief Test-only (compiled only into tests that define SAK_AI_TEST_HOOKS): replaces
+    ///        QThread::start for deterministic launch-failure tests.
     /// @note Set before invoke(); an empty function restores normal thread startup.
     void setThreadStarterForTesting(std::function<void(QThread&)> starter);
+#endif  // SAK_AI_TEST_HOOKS
 
     [[nodiscard]] Response invoke(const Request& request, const CancellationToken& token) override;
     [[nodiscard]] Response continueWithToolOutputs(const Request& request,

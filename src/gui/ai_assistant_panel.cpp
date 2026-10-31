@@ -157,12 +157,14 @@
 
 namespace sak {
 
+#ifdef SAK_AI_TEST_HOOKS
 AiApprovalPromptTestHook& aiApprovalPromptTestHook() {
-    // Function-local static so the seam has a single definition and is safe to
-    // set/clear from certification tests. Never set in production code paths.
+    // Function-local static so the seam has a single definition and is safe to set/clear from
+    // tests.
     static AiApprovalPromptTestHook hook;
     return hook;
 }
+#endif  // SAK_AI_TEST_HOOKS
 
 namespace {
 
@@ -287,7 +289,9 @@ constexpr qint64 kResumeGenerationStateMaxBytes = 64;
 constexpr auto kWorkflowResumeProtectedSchema = "sak.ai.workflow_recovery_resume.protected.v1";
 constexpr auto kWorkflowResumeProtectedProvider = "dpapi-current-user-v1";
 constexpr char kWorkflowResumeDpapiPurpose[] = "SAK Utility/Workflow Recovery Resume/v1";
+#ifdef SAK_AI_TEST_HOOKS
 std::function<void(const QByteArray&)> g_workflow_resume_plaintext_wipe_observer;
+#endif  // SAK_AI_TEST_HOOKS
 
 QByteArray workflowResumeDpapiPurpose() {
     return QByteArray(kWorkflowResumeDpapiPurpose,
@@ -296,9 +300,11 @@ QByteArray workflowResumeDpapiPurpose() {
 
 void wipeWorkflowResumePlaintext(QByteArray* plaintext) {
     sak::secure_wiper::wipe(plaintext->data(), static_cast<std::size_t>(plaintext->size()));
+#ifdef SAK_AI_TEST_HOOKS
     if (g_workflow_resume_plaintext_wipe_observer) {
         g_workflow_resume_plaintext_wipe_observer(*plaintext);
     }
+#endif  // SAK_AI_TEST_HOOKS
 }
 constexpr qint64 kDefaultContextWindowTokens = 128'000;
 constexpr qint64 kGptFiveFrontierContextWindowTokens = 1'050'000;
@@ -804,9 +810,11 @@ void addApprovalButtons(QVBoxLayout* layout,
 }
 
 ApprovalPromptChoice showApprovalPrompt(const ApprovalPromptSpec& spec) {
+#ifdef SAK_AI_TEST_HOOKS
     if (const auto& hook = aiApprovalPromptTestHook(); hook) {
         return static_cast<ApprovalPromptChoice>(hook(spec.window_title, spec.command_text));
     }
+#endif  // SAK_AI_TEST_HOOKS
     QDialog dialog(spec.parent);
     configureApprovalDialog(&dialog, spec.window_title);
     dialog.setModal(true);
@@ -11841,10 +11849,12 @@ std::expected<QJsonObject, QString> AiAssistantPanel::unprotectWorkflowResumeSta
     return authenticatedWorkflowResumeObject(*ciphertext);
 }
 
+#ifdef SAK_AI_TEST_HOOKS
 void AiAssistantPanel::setWorkflowResumePlaintextWipeObserverForTesting(
     std::function<void(const QByteArray&)> observer) {
     g_workflow_resume_plaintext_wipe_observer = std::move(observer);
 }
+#endif  // SAK_AI_TEST_HOOKS
 
 void AiAssistantPanel::applyWorkflowResumeState(ai::AiOrchestrationOptions* options,
                                                 const QJsonObject& resume_state) {

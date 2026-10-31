@@ -46,13 +46,17 @@ public:
     ///   - objects and arrays are walked recursively; non-string scalars are left alone.
     [[nodiscard]] static QJsonObject redactSecretsInJson(const QJsonObject& object);
 
+#ifdef SAK_AI_TEST_HOOKS
 private:
+    // Test-only (compiled only into tests that define SAK_AI_TEST_HOOKS): observe the buffers
+    // the store wipes, and drive the decrypt path directly.
     static void setDpapiPlaintextWipeObserverForTesting(
         std::function<void(const QByteArray&)> observer);
     static void setCredentialDecryptInputWipeObserverForTesting(
         std::function<void(const QByteArray&)> observer);
     [[nodiscard]] static QString decryptCredentialBytesForTesting(QByteArray encrypted,
                                                                   QString* error_message);
+#endif  // SAK_AI_TEST_HOOKS
 };
 
 }  // namespace sak::ai

@@ -374,8 +374,10 @@ int AiMcpSessionPool::pooledSlotCount() const {
     return static_cast<int>(m_sessions.size());
 }
 
+#ifdef SAK_AI_TEST_HOOKS
 QString AiMcpSessionPool::sessionKeyForTesting(const AiMcpStdioCallRequest& request) {
     return sessionKey(request);
 }
+#endif  // SAK_AI_TEST_HOOKS
 
 }  // namespace sak::ai

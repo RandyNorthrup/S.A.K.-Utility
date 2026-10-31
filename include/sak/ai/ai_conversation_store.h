@@ -150,6 +150,9 @@ public:
                                   const TokenUsage& session_total,
                                   QString* error_message = nullptr);
 
+#ifdef SAK_AI_TEST_HOOKS
+    // Test-only (compiled only into tests that define SAK_AI_TEST_HOOKS): race hooks run just
+    // before the store opens, reads or publishes a file, so a test can swap the path underneath it.
     static void setBeforeManifestChildOpenHookForTesting(std::function<void(const QString&)> hook);
     static void setBeforeManifestFileOpenHookForTesting(std::function<void(const QString&)> hook);
     static void setBeforeManifestFileReadHookForTesting(std::function<void(const QString&)> hook);
@@ -159,6 +162,7 @@ public:
         std::function<void(const QString&)> hook);
     static void setBeforeArtifactLeafPublishHookForTesting(
         std::function<void(const QString&)> hook);
+#endif  // SAK_AI_TEST_HOOKS
 
 private:
     [[nodiscard]] QString sessionPath(const QString& session_id) const;

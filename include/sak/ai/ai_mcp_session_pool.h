@@ -85,9 +85,11 @@ public:
     /// diagnostics.
     [[nodiscard]] int pooledSlotCount() const;
 
-    /// The cache key derived for a request: command + full launch-environment hash + effective
-    /// timeout. Exposed for tests.
+#ifdef SAK_AI_TEST_HOOKS
+    /// Test-only (compiled only into tests that define SAK_AI_TEST_HOOKS): the cache key derived
+    /// for a request -- command + full launch-environment hash + effective timeout.
     [[nodiscard]] static QString sessionKeyForTesting(const AiMcpStdioCallRequest& request);
+#endif  // SAK_AI_TEST_HOOKS
 
 private:
     friend class ::AiMcpSessionPoolTests;

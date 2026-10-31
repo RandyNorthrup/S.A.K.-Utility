@@ -94,9 +94,12 @@ public:
     /// open() on an already-open session closes the previous one first.
     [[nodiscard]] std::expected<void, QString> open(const AiMcpSessionConfig& config);
 
-    /// Replaces QThread::start for real-allocation observation and launch-failure tests.
-    /// Set before open(); an empty function restores normal thread startup.
+#ifdef SAK_AI_TEST_HOOKS
+    /// Test-only (compiled only into tests that define SAK_AI_TEST_HOOKS): replaces
+    /// QThread::start for real-allocation observation and launch-failure tests. Set before
+    /// open(); an empty function restores normal thread startup.
     void setThreadStarterForTesting(std::function<void(QThread&)> starter);
+#endif  // SAK_AI_TEST_HOOKS
 
     /// True only while the initialized server process remains live.
     [[nodiscard]] bool isOpen() const;
@@ -169,8 +172,10 @@ private:
     /// Hands a session whose close failed to process-lifetime custody with its diagnostic.
     static void quarantine(std::unique_ptr<AiMcpStdioSession> session, const QString& reason);
     [[nodiscard]] bool isClosed() const;
-    /// Exposes the actual QObject only to friend tests for controlled worker-lifetime faults.
+#ifdef SAK_AI_TEST_HOOKS
+    /// Test-only: exposes the actual QObject to friend tests for controlled worker-lifetime faults.
     [[nodiscard]] QObject* workerObjectForTesting() const;
+#endif                                    // SAK_AI_TEST_HOOKS
     Worker* m_worker{nullptr};            // deleteLater() on worker-thread finish
     QPointer<QObject> m_worker_liveness;  // Observe proved Worker destruction after join.
     QThread* m_thread{nullptr};

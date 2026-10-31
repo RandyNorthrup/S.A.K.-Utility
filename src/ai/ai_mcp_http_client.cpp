@@ -497,6 +497,7 @@ QJsonObject AiMcpHttpClient::callTool(const QUrl& endpoint,
     return message;
 }
 
+#ifdef SAK_AI_TEST_HOOKS
 QJsonObject AiMcpHttpClient::extractJsonRpcMessageForTesting(const QByteArray& response_body,
                                                              QString* error_message) {
     return extractJsonRpcMessage(response_body, error_message);
@@ -510,5 +511,6 @@ QJsonObject AiMcpHttpClient::toolCallPayloadForTesting(const QString& tool_name,
 bool AiMcpHttpClient::responseIdMatchesRequestForTesting(const QJsonObject& message) {
     return responseIdMatchesRequest(message);
 }
+#endif  // SAK_AI_TEST_HOOKS
 
 }  // namespace sak::ai

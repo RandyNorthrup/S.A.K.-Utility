@@ -617,9 +617,11 @@ void AiMcpStdioSession::quarantine(std::unique_ptr<AiMcpStdioSession> session,
         std::make_unique<QuarantinedSession>(std::move(session)), reason);
 }
 
+#ifdef SAK_AI_TEST_HOOKS
 void AiMcpStdioSession::setThreadStarterForTesting(std::function<void(QThread&)> starter) {
     m_thread_starter = starter ? std::move(starter) : startSessionThread;
 }
+#endif  // SAK_AI_TEST_HOOKS
 
 std::expected<void, QString> AiMcpStdioSession::startWorker() {
     m_thread = new QThread;
@@ -774,9 +776,11 @@ bool AiMcpStdioSession::isClosed() const {
     return m_thread == nullptr;
 }
 
+#ifdef SAK_AI_TEST_HOOKS
 QObject* AiMcpStdioSession::workerObjectForTesting() const {
     return m_worker;
 }
+#endif  // SAK_AI_TEST_HOOKS
 
 std::expected<void, QString> AiMcpStdioSession::cleanupWorkerBeforeJoin(
     const QDeadlineTimer& deadline) {
