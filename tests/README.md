@@ -145,11 +145,11 @@ and termination-utility setup handshakes; neither changes production deadlines.
 |---|---|---|
 | test_partition_image_volume_lock (five CTests) | `PartitionScriptBuilder`, Create Image source locks | Each disk/selected-partition, pinned/unpinned GUID, and offline capture shape executes the full generated PowerShell lock fixture and its guard drills in a separately bounded CTest. No row is dropped from the former aggregate core test. |
 | test_path_utils | `path_utils` | Path validation, normalization, sanitization, env-var expansion, safe-delete checks |
-| test_logger | `logger` | Log levels, formatting, file rotation, thread safety |
-| test_config_manager | `config_manager` | Get/set values, persistence, portable mode, type conversions |
+| test_logger | `logger` | Log levels, formatting, file rotation, thread safety; old session logs pruned at initialize (newest 30, 200 MB) |
+| test_config_manager | `config_manager` | Get/set values, persistence, portable mode, type conversions; UI state in data/config/ui_state.ini (no registry QSettings in src/), no data-root fallback, per-session child temp |
 | test_file_scanner | `file_scanner` | Recursive scan, extension/size/date filters, cancellation, controlled junction-cycle fixtures, and injected canonical-resolution failure |
 | test_file_hash | `file_hash` | MD5/SHA-256 hashing, large-file streaming, hash comparison |
-| test_process_runner | `process_runner` | Process execution, stdout/stderr capture, timeout, exit codes, held-generation Job cleanup on cancellation, timeout, normal-exit survivors and callback exceptions, unprovable cleanup reported as a failed run with the live process and armed Job in custody, detached-tool fault injection, and five GUI detached-launch failure guards |
+| test_process_runner | `process_runner` | Process execution, stdout/stderr capture, timeout, exit codes, held-generation Job cleanup on cancellation, timeout, normal-exit survivors and callback exceptions, unprovable cleanup reported as a failed run with the live process and armed Job in custody, detached-tool fault injection, and five GUI detached-launch failure guards; ChildProcessPolicy::WaitForJobEmpty lets a relaunched child finish, stops and reports a family that outlives the wait, honours cancel, and the uninstaller/Chocolatey callers request it |
 | test_windows_process_job | `windows_process_job` | Native preparation failures (including a refused close after one), startup modifier preservation, real child/descendant containment, retained handles after cleanup failures, and isolated destruction of an unproved Job that reports and closes it, kill-on-close ending a live member, without crashing |
 | test_resource_soak | `process_runner` | Long-session handle/GDI/USER/memory-growth soak over the real launchers |
 | test_error_codes | `error_codes` | Error code enum values, category strings, display messages |
@@ -184,14 +184,14 @@ and termination-utility setup handshakes; neither changes production deadlines.
 | test_app_installation_worker | `app_installation_worker` | Package installation workflow, retry, error handling |
 | test_permission_manager | `permission_manager` | NTFS ACL read/write, controlled junction/hard-link refusal, and pure primary-group apply planning |
 | test_smart_file_filter | `smart_file_filter` | Category-based filtering, exclusion patterns, size thresholds |
-| test_elevation_manager | `elevation_manager` | Admin privilege detection, UAC status |
+| test_elevation_manager | `elevation_manager` | Admin privilege detection, UAC status; a declined UAC prompt needs no failure notice |
 | test_user_data_manager | `user_data_manager` | User data discovery and categorization |
 | test_user_profile_types | `user_profile_types` | Profile data structures, serialization, and the fields deliberately kept OUT of it (a WiFi profile's plaintext key must never reach a manifest) |
 | test_user_profile_backup_worker | `user_profile_backup_worker` | Backup workflow, compression, encryption |
 | test_user_profile_restore_worker | `user_profile_restore_worker` | Restore workflow, permission handling, merge |
 | test_windows_user_scanner | `windows_user_scanner` | Windows user profile enumeration and deterministic standard-folder fixture sizing |
 | test_cleanup_worker | `cleanup_worker` | Temp file cleanup, cache clearing |
-| test_restore_point_manager | `restore_point_manager` | System restore point creation |
+| test_restore_point_manager | `restore_point_manager` | System restore point creation; the once-per-24h refusal reuses a restore point from the last 24 h (named), and fails closed without one |
 | test_package_list_manager | `package_list_manager` | Curated package list management, list generation |
 | test_install_script_parser | `install_script_parser` | Installation script parsing and validation |
 | test_nuget_version_range | `nuget_version_range` | NuGet SemVer parse/compare + version-range grammar |
@@ -226,7 +226,7 @@ and termination-utility setup handshakes; neither changes production deadlines.
 | test_ethernet_config_manager | `ethernet_config_manager` | Ethernet backup/restore, JSON persistence, and injected friendly/system-name MAC lookup |
 | test_dns_diagnostic_tool | `dns_diagnostic_tool` | DNS queries, record type parsing |
 | test_port_scanner | `port_scanner` | TCP port scanning, banner grabbing |
-| test_bandwidth_tester | `bandwidth_tester` | iPerf3/HTTP speed testing |
+| test_bandwidth_tester | `bandwidth_tester` | iPerf3/HTTP speed testing; stale iPerf3 firewall-rule sweep (owner PID) and the server running inside its own Job |
 | test_active_connections_monitor | `active_connections_monitor` | TCP/UDP connection listing |
 | test_firewall_rule_auditor | `firewall_rule_auditor` | Firewall rule enumeration, conflict detection |
 | test_network_share_browser | `network_share_browser` | SMB share discovery |
@@ -246,6 +246,9 @@ and termination-utility setup handshakes; neither changes production deadlines.
 | test_detachable_log_window | `DetachableLogWindow` | The anchored log stays inside the screen work area beside a maximized main window, opens without taking focus, ignores refills while hidden, and shows lines literally |
 | test_advanced_uninstall_panel | `AdvancedUninstallPanel` | Install-folder size measured only on demand (Measure button, off the GUI thread), cached per folder, never offered for a remote folder |
 | test_network_diagnostic_panel | `NetworkDiagnosticPanel` | The start-up adapter scan runs in interactive, startup-smoke and accessibility-audit modes, off the GUI thread, and an immediate teardown joins it |
+| test_screenshot_settings_action | `ScreenshotSettingsAction` | Report seams; only a Settings window this run opened is closed, found by EnumWindows, with no taskkill/tasklist/fixed sleeps |
+| test_backup_bitlocker_keys_action | `BackupBitlockerKeysAction` | Key-gate, backup-location screening, and refusal of a destination on a BitLocker volume whose key is in the backup |
+| test_stage_portable_release | `scripts/stage_portable_release.ps1` | Portable staging contract, including that the package ships no portable.ini |
 | test_drive_unmounter | `drive_unmounter` | Volume unmount, lock/unlock |
 | test_flash_types | `flash_types` | Flash operation data structures |
 | test_flash_worker | `flash_worker` | Raw sector write, verification, decompression |
@@ -268,7 +271,7 @@ and termination-utility setup handshakes; neither changes production deadlines.
 | Test | Module Under Test | Coverage |
 |---|---|---|
 | test_advanced_uninstall_types | `advanced_uninstall_types` | Program info, leftover structures, risk levels |
-| test_advanced_uninstall_controller | `advanced_uninstall_controller` | Uninstall orchestration, batch queue |
+| test_advanced_uninstall_controller | `advanced_uninstall_controller` | Uninstall orchestration, batch queue; the batch restore point is made off the GUI thread and a cancel during it stops the batch |
 | test_leftover_scanner | `leftover_scanner` | File/registry/service leftover detection |
 | test_registry_snapshot_engine | `registry_snapshot_engine` | Pre/post snapshot, diff computation |
 | test_program_enumerator | `program_enumerator` | Win32/UWP/provisioned app enumeration |

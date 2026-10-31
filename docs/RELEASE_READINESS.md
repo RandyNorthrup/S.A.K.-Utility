@@ -40,17 +40,26 @@ keeps their history.
    unit binds. Triage each against current code; two sampled HIGH/MEDIUM findings were already
    fixed.
 5. Real defects found by the 2026-10-24 behavior audit:
-   - `ProcessRunner` kills descendants still alive about 1 s after the root exits and marks the
-     run failed, so NSIS uninstallers (which relaunch from %TEMP%) and Chocolatey installs that
-     leave an updater running are reported as failed (`process_runner.cpp` ~96, ~135-147).
-   - A second uninstall within 24 h is refused: Windows' once-per-day restore-point limit is
-     treated as a failure (`restore_point_manager.cpp` ~87, ~118).
+   - FIXED (76ca7a52): `ProcessRunner` killed descendants still alive about 1 s after the root
+     exited and marked the run failed, so NSIS uninstallers (which relaunch from %TEMP%) and
+     Chocolatey installs were reported as failed. Runs take a child-process policy; the native
+     uninstaller and Chocolatey install/uninstall/upgrade wait, bounded and cancellable, for the
+     whole Job, and a family that outlives the wait is stopped and reported, never silently.
+   - FIXED (4e47cf6c): a second uninstall within 24 h was refused because Windows' once-per-day
+     restore-point limit was a failure. A restore point from the last 24 h is reused and named;
+     the batch restore point is made off the GUI thread.
    - FIXED (550766d0): the AI session list went empty above 512 session folders. It now lists the
      512 most recently active and a retention policy keeps the newest 500 (AI package below).
-   - The default backup path stores BitLocker recovery keys on the volume they unlock.
-   - The iperf3 server and its inbound firewall rule leak after a crash (launched outside the
-     kill-on-close Job).
-   - The settings-screenshot action force-kills the user's own Settings windows.
+   - FIXED (04109495): the default backup path stored BitLocker recovery keys on the volume they
+     unlock. The panel asks for a destination each time and the action (in process and in the
+     elevated helper) refuses a folder on a BitLocker volume whose key is in the backup.
+   - FIXED (4f3af0fc): the iperf3 server ran outside any Job, so a crash leaked it and its inbound
+     firewall rule. It runs in a kill-on-close Job; rule names carry the owner's process ID and a
+     server start sweeps rules whose owner is gone. Under CTest (itself a Job) the test can check
+     only that the server's QProcess holds its Job; OS-level membership is checked outside CTest.
+   - FIXED (c4edbb04): the settings-screenshot action force-killed every Settings window,
+     including the user's, ran tasklist per page and slept fixed times. It finds Settings by
+     EnumWindows, waits for the window to answer, and closes (WM_CLOSE) only a window it opened.
 6. FIXED 2026-10-25: defects the first T2 CI runs found, each reproducing in a fresh Git for
    Windows clone (default `core.autocrlf=true`), which is also how CI checks out and builds:
    - Built-in AI workflows and skills did not load from a CRLF checkout: `loadResourceFile`
@@ -297,6 +306,23 @@ that exists for reasons that no longer apply. Owner decisions (2026-10-24):
 - FOUND, not changed: `AppInstallationPanel` still skips its connections and Chocolatey
   initialization under the accessibility audit, the same kind of mode skip removed elsewhere.
 
+#### Portable and lifecycle package status (2026-10-25)
+
+- DONE (1cd0e976): no registry settings, no process-wide TEMP, one data root. UI state that 35
+  bare `QSettings` and the Quick Actions block wrote to HKEY_CURRENT_USER goes to
+  `data/config/ui_state.ini` (`sak::PortableSettings`) or ConfigManager; existing HKCU values are
+  not migrated, only no longer written. TMP/TEMP are no longer redirected for the whole app;
+  the Chocolatey children get `data/temp/session-<pid>`, removed at exit, and startup removes
+  session folders of dead processes. The data root is decided once with no fallback: an
+  unwritable portable folder is an error the user is told about, and the app exits. The unused
+  `portable.ini` is no longer staged or in the repo. Drill note: the "no process-wide TMP"
+  source check sits after the stale-session check in the same test, so its drill was masked by
+  that one; the stale-session drill went red.
+- DONE (0fe1805c): old session logs are pruned when the logger starts (newest 30, 200 MB).
+- DONE (72878a61): declining the UAC prompt from Run as Administrator no longer shows
+  "Elevation Failed". The decision function is tested; the MainWindow call site is by review.
+- Fixes for the 2026-10-24 audit defects above: 76ca7a52, 4e47cf6c, 04109495, 4f3af0fc,
+  c4edbb04.
 ### Open release infrastructure
 
 - Tiered gates: the local tiers (T1 commit hooks, T1p pre-push, manual-stage T2-T4 twins), the
@@ -311,6 +337,12 @@ that exists for reasons that no longer apply. Owner decisions (2026-10-24):
   running; seven serial reruns of the same sequence passed and Defender real-time protection is
   off. If a user's machine can hold that file the same way, a settings save fails visibly
   rather than silently, but it fails.
+  Investigated 2026-10-25 (still open, not reproduced): inside one process ConfigManager is the
+  only object on `Utility.ini` (UI state now has its own `ui_state.ini`, and the Quick Actions
+  settings moved into ConfigManager). A second writer exists only across processes: two app
+  instances at once (there is no single-instance guard), or CTest suites sharing
+  `build/Release/data`. Every suite found writing there is in the `portable_data_root` lock;
+  `test_file_management_explorer_panel` joined it when it started writing `ui_state.ini`.
 - One shared core library so first-party sources compile once instead of once per test target.
 - Done 2026-10-24: the Current Certification State block in `docs/PARTITION_MANAGER_CERTIFICATION.md`
   is generated from the computed claim level and both certification matrices, the T3 check fails
