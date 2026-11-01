@@ -575,11 +575,16 @@ directory junctions when compressing (2b98a864).
   among themselves, not against a developer's running app. Whether such an app was behind the one
   2026-10-24 failure cannot be established now; the item stays open until it recurs with a cause or
   a run of full suites shows it gone.
-- Intermittent, cause unidentified (2026-11-01): `test_ai_assistant_panel_tool_dispatch`
-  `sessionPickerListsSessionsOffTheGuiThread` failed once (`itemText(0)` did not start with
-  "Listed chat") in a `-j 6` run beside two 30-75 s archive suites, and passed when rerun alone.
-  The run touched no session-picker code; the case waits on an off-thread listing, so a load-bound
-  wait is the likely shape, not established.
+- FIXED 2026-11-01, a test timing assumption, not a product race:
+  `test_ai_assistant_panel_tool_dispatch` `sessionPickerListsSessionsOffTheGuiThread` failed once
+  under `-j 6` (`itemText(0)` did not start with "Listed chat"). The panel's constructor lists the
+  default store, which can leave exactly one row (the "AI Session  (new)" draft), and the case
+  waited for a count of 1, so a slow pool passed the wait before its own listing landed.
+  Reproduced on demand by holding the listing 1.5 s in the manifest-read hook (the same assertion
+  failed); the case now waits for its own row. The suspected product race, a replaced listing's
+  queued finished() making the GUI thread wait on the new listing's result(), does not occur: a
+  probe that left the first finished() queued, replaced the future and held the new listing 5 s
+  returned from the event loop at once (Qt drops the replaced future's call-out).
 - One shared core library so first-party sources compile once instead of once per test target.
 - Done 2026-10-24: the Current Certification State block in `docs/PARTITION_MANAGER_CERTIFICATION.md`
   is generated from the computed claim level and both certification matrices, the T3 check fails

@@ -8178,8 +8178,11 @@ private Q_SLOTS:
         panel.reloadSessionPicker();
         QTRY_VERIFY(reader.load() != nullptr);
         QVERIFY(reader.load() != QThread::currentThread());
-        QTRY_COMPARE(panel.m_sessionCombo->count(), 1);
-        QVERIFY(panel.m_sessionCombo->itemText(0).startsWith(QStringLiteral("Listed chat")));
+        // Wait for this listing's own row. The constructor's listing of the default store can
+        // leave exactly one row (the "(new)" draft), so a count of 1 alone passed before this
+        // listing landed whenever the pool was slow.
+        QTRY_VERIFY(panel.m_sessionCombo->itemText(0).startsWith(QStringLiteral("Listed chat")));
+        QCOMPARE(panel.m_sessionCombo->count(), 1);
         QTRY_VERIFY(!panel.m_sessionListWatcher->isRunning());
     }
 
