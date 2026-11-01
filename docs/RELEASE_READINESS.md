@@ -89,9 +89,16 @@ keeps their history.
    nonconforming member names in the AI panel) is naming debt, which the owner ruled is not a
    release requirement. MCPS-9 needs a runtime run: test_ai_mcp_stdio_session and
    test_ai_mcp_session_pool from a clean package on the Windows 11 VM plus one assistant E2E
-   win32_mcp health_check through the gateway (VMs offline). Found by the lane and open: NEW-10,
-   the win32 MCP server's own redaction list has the same compound-name gap (a third catalogue,
-   in a library that cannot reach keyNamesASecret today).
+   win32_mcp health_check through the gateway (VMs offline). Found by the lane: NEW-10, the win32
+   MCP server's own redaction list had the same compound-name gap. FIXED 2026-10-31 (second build
+   lane) 4bda0e91: the redactor is its own library, sak_secret_redaction, which the AI layer and
+   the win32 MCP server both link, so tool output reaching the model and anything the assistant
+   persists go through one catalogue; a JSON tool result is redacted as a tree. The GUARD-6
+   residual over-block is kept as a design decision (22290db6: splitting at braces would let a
+   loop-variable registry scan through), and the command-guard mutation catalog now runs in full
+   (81f31c2e). Found and fixed on the way: NEW-11, a saved Wi-Fi passphrase that
+   `netsh ... key=clear` prints as `Key Content` was not redacted (7115b623). The triage's
+   "Second build lane" section has the detail.
 5. Real defects found by the 2026-10-24 behavior audit:
    - FIXED (76ca7a52): `ProcessRunner` killed descendants still alive about 1 s after the root
      exited and marked the run failed, so NSIS uninstallers (which relaunch from %TEMP%) and
