@@ -89,7 +89,7 @@ public:
     [[nodiscard]] static QString launchableSystemTool(const QString& exeName);
 
     /// @brief Handle-verified recursive delete of @p path's tree, exposed as a standalone entry so
-    ///        a separate manager (e.g. UserDataManager::deleteBackup) can REUSE this exact
+    ///        a separate manager (e.g. AiConversationStore's session pruning) can REUSE this exact
     ///        security-critical walk instead of QDir::removeRecursively's string re-resolution. On
     ///        Windows it drives the same per-node open+GetFinalPathNameByHandleW walk cleanup uses,
     ///        so an ancestor-junction swapped in mid-delete is caught at every node (fail closed).

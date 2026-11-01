@@ -1649,8 +1649,7 @@ QString OfflineDeploymentWorker::downloadAndExtractNupkg(const QString& pkg_id,
 
     QString extract_dir = temp_dir + "/extracted";
     QString extract_error;
-    PackageInternalizationEngine engine;
-    if (!engine.extractNupkg(nupkg_path, extract_dir, extract_error)) {
+    if (!PackageInternalizationEngine::extractNupkg(nupkg_path, extract_dir, extract_error)) {
         emitLog(QString("[%1] Extract failed: %2").arg(pkg_id, extract_error));
         return {};
     }
@@ -1690,12 +1689,12 @@ QPair<QString, QString> OfflineDeploymentWorker::resolveMetaPackageDependency(
 
     const QString dep_extract = temp_dir + "/dep_extracted";
     QString dep_error;
-    PackageInternalizationEngine engine;
-    if (!engine.extractNupkg(dep_nupkg_path, dep_extract, dep_error)) {
+    if (!PackageInternalizationEngine::extractNupkg(dep_nupkg_path, dep_extract, dep_error)) {
         emitLog(QString("[%1] Dependency extract failed: %2").arg(dep_id, dep_error));
         return {};
     }
 
+    const PackageInternalizationEngine engine;
     const QString script_path = engine.findInstallScript(dep_extract);
     if (script_path.isEmpty()) {
         emitLog(QString("[%1] Dependency %2 also has no script").arg(pkg_id, dep_id));

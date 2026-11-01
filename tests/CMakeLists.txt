@@ -4290,26 +4290,6 @@ add_test(NAME test_user_profile_types COMMAND test_user_profile_types
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_user_profile_types")
 
-# test_user_data_manager - Checksums, data locations, size calc (TST-04)
-add_executable(test_user_data_manager
-    unit/test_user_data_manager.cpp
-)
-set_target_properties(test_user_data_manager PROPERTIES
-    AUTOMOC ON
-    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-)
-target_link_libraries(test_user_data_manager PRIVATE
-    sak_core sak_foundation
-    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
-)
-target_include_directories(test_user_data_manager PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include
-)
-add_test(NAME test_user_data_manager COMMAND test_user_data_manager
-         -o "${TEST_OUTPUT_DIR}/test_user_data_manager.txt,txt" -o -,txt
-         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-message(STATUS "Added unit test: test_user_data_manager")
-
 # test_duplicate_finder_worker - Duplicate detection with temp files (TST-11)
 add_executable(test_duplicate_finder_worker
     unit/test_duplicate_finder_worker.cpp
@@ -5978,7 +5958,8 @@ add_test(NAME test_email_report_generator COMMAND test_email_report_generator
 message(STATUS "Added unit test: test_email_report_generator")
 
 # test_package_internalization_engine -- B10-11 pure isSafePackageComponent seam
-# (package id / version cannot escape the work dir). No network at runtime.
+# (package id / version cannot escape the work dir), and .nupkg extract/repack through the
+# app's zip engine (QZipWriter builds the hostile fixtures). No network at runtime.
 add_executable(test_package_internalization_engine
     unit/test_package_internalization_engine.cpp
 )
@@ -5988,7 +5969,7 @@ set_target_properties(test_package_internalization_engine PROPERTIES
 )
 target_link_libraries(test_package_internalization_engine PRIVATE
     sak_core sak_foundation
-    Qt6::Core Qt6::Network Qt6::Xml Qt6::Test ${PLATFORM_LIBS}
+    Qt6::Core Qt6::CorePrivate Qt6::Network Qt6::Xml Qt6::Test ${PLATFORM_LIBS}
 )
 target_include_directories(test_package_internalization_engine PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include

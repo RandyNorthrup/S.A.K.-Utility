@@ -37,10 +37,12 @@ struct ArchiveListing {
     QStringList blockers;
 };
 
-/// Zip archive engine mirroring the Files StorageArchiveService semantics the
-/// explorer clones: archive naming from the selection, "smart" single-root
-/// detection, and recursive folder compression. Host (local) paths only - raw
-/// sources and destinations stage through the bridge at the panel layer.
+/// The app's one zip engine: the File Management Explorer, the assistant's file actions and
+/// offline package internalization (.nupkg extract and repack) all read and write zips here.
+/// It mirrors the Files StorageArchiveService semantics the explorer clones: archive naming
+/// from the selection, "smart" single-root detection, and recursive folder compression. Host
+/// (local) paths only - raw sources and destinations stage through the bridge at the panel
+/// layer.
 class FileExplorerArchiveService {
 public:
     /// Files GenerateArchiveNameFromItems: one item names the archive after

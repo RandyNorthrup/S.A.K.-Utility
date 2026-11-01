@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file file_explorer_archive_service.cpp
-/// @brief Zip compress/extract engine for the File Management Explorer.
+/// @brief The app's one zip compress/extract engine (the header names its callers).
 
 #include "sak/file_explorer_archive_service.h"
 

@@ -16,7 +16,6 @@
 #include "sak/quick_action_controller.h"
 #include "sak/running_operations.h"
 #include "sak/style_constants.h"
-#include "sak/user_data_manager.h"
 #include "sak/user_profile_backup_wizard.h"
 #include "sak/user_profile_restore_wizard.h"
 #include "sak/widget_helpers.h"
@@ -49,8 +48,7 @@ constexpr int kProgressBarMinimum = 0;
 
 }  // namespace
 
-UserMigrationPanel::UserMigrationPanel(QWidget* parent)
-    : QWidget(parent), m_dataManager(std::make_shared<UserDataManager>()) {
+UserMigrationPanel::UserMigrationPanel(QWidget* parent) : QWidget(parent) {
     setupUi();
     setupConnections();
     createQuickActions();
@@ -189,7 +187,6 @@ void UserMigrationPanel::setupConnections() {
 }
 
 void UserMigrationPanel::onBackupSelected() {
-    Q_ASSERT(m_dataManager);
     // Launch the comprehensive user profile backup wizard
     auto* wizard = new UserProfileBackupWizard(this);
 
@@ -214,7 +211,6 @@ void UserMigrationPanel::onBackupSelected() {
 }
 
 void UserMigrationPanel::onRestoreBackup() {
-    Q_ASSERT(m_dataManager);
     // Launch the comprehensive user profile restore wizard
     auto* wizard = new UserProfileRestoreWizard(this);
 

@@ -20,7 +20,6 @@ private Q_SLOTS:
     void appInfo_confidence_defaults();
     void appInfo_source_defaults();
     void appInfo_versionLocking_defaults();
-    void appInfo_userData_defaults();
     void appInfo_fieldAssignment();
     void scanRegistry_returnsInstalledPrograms();
     void scanAll_returnsNonEmpty();
@@ -67,12 +66,6 @@ void TestAppScanner::appInfo_versionLocking_defaults() {
     QVERIFY(info.locked_version.isEmpty());
 }
 
-void TestAppScanner::appInfo_userData_defaults() {
-    AppScanner::AppInfo info;
-    QVERIFY(!info.has_user_data);
-    QCOMPARE(info.estimated_data_size, static_cast<qint64>(0));
-}
-
 void TestAppScanner::appInfo_fieldAssignment() {
     AppScanner::AppInfo info;
     info.name = QStringLiteral("Test App");
@@ -83,8 +76,6 @@ void TestAppScanner::appInfo_fieldAssignment() {
     info.source = AppScanner::AppInfo::Source::AppX;
     info.version_locked = true;
     info.locked_version = QStringLiteral("1.0.0");
-    info.has_user_data = true;
-    info.estimated_data_size = 1024;
 
     QCOMPARE(info.name, QStringLiteral("Test App"));
     QCOMPARE(info.version, QStringLiteral("1.2.3"));
@@ -94,8 +85,6 @@ void TestAppScanner::appInfo_fieldAssignment() {
     QCOMPARE(info.source, AppScanner::AppInfo::Source::AppX);
     QVERIFY(info.version_locked);
     QCOMPARE(info.locked_version, QStringLiteral("1.0.0"));
-    QVERIFY(info.has_user_data);
-    QCOMPARE(info.estimated_data_size, static_cast<qint64>(1024));
 }
 
 void TestAppScanner::scanRegistry_returnsInstalledPrograms() {

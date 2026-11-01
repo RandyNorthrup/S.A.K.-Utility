@@ -49,7 +49,6 @@
     "Unable to resolve export root path",
     "Unable to scan HFS+ attributes",
     "Unsupported DNS record type: %1",
-    "[UserDataManager] Cannot resolve the System32 PowerShell path",
     "iPerf3 not found. Place iperf3.exe in tools/iperf3/",
     "iPerf3 process timed out"
   ]

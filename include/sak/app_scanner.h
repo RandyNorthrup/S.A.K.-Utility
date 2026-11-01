@@ -54,10 +54,6 @@ public:
         // Version locking (for migration)
         bool version_locked{false};  // Lock to specific version for restore
         QString locked_version;      // The version to install (defaults to current version)
-
-        // User data (populated by UserDataManager)
-        bool has_user_data{false};
-        qint64 estimated_data_size{0};
     };
 
     AppScanner();

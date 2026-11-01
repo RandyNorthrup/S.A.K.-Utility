@@ -57,7 +57,6 @@
 #include "sak/smart_disk_analyzer.h"
 #include "sak/storage_inventory_worker.h"
 #include "sak/thermal_monitor.h"
-#include "sak/user_data_manager.h"
 #include "sak/vulnerability_scanner.h"
 #include "sak/wifi_analyzer.h"
 #include "sak/wifi_profile_scanner.h"
@@ -65,11 +64,14 @@
 #include "sak/windows_user_scanner.h"
 #include "sak/worker_base.h"
 
+#include <QDir>
+#include <QDirIterator>
 #include <QFile>
 #include <QFileInfo>
 #include <QHostAddress>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QStandardPaths>
 #include <QString>
 #include <QStringList>
 #include <QtGlobal>
@@ -2069,12 +2071,12 @@ QJsonObject scanDirectoryParamsSchema() {
 
 // backup.preview_app_data
 // ---------------------------------------------------------------------------
-// Read-only preview of what a user-data backup would capture for a named app. Drives the app's OWN
-// UserDataManager::scanForAppData, which substring-matches the names of the REAL immediate subdirs
-// of fixed standard data locations (AppData Local/Roaming, ProgramData, Documents, Home). The op
-// takes an app NAME (rejected if path-shaped) and never joins it into a path or stats it, so a
-// prompt-injected model cannot steer discovery at an arbitrary/off-box location (see
-// discoverAppDataDirs for why discoverAppDataPaths is deliberately avoided). Each discovered
+// Read-only preview of a named app's data folders and their size. scanForAppData substring-matches
+// the names of the REAL immediate subdirs of fixed standard data locations (AppData Local/Roaming,
+// the generic data location, Documents, Home). The op takes an app NAME (rejected if path-shaped)
+// and never joins it into a path or stats it, so a prompt-injected model cannot steer discovery at
+// an arbitrary/off-box location (see discoverAppDataDirs for why no path is ever built from the
+// name). Each discovered
 // directory's on-disk size is summed with the already-hardened file_scanner (skip_symlinks on,
 // follow off) under ONE shared wall-time deadline; a directory that is (or sits under) a reparse
 // point or a UNC/device path is screened out, reported separately, and marks the total a lower
@@ -2116,25 +2118,53 @@ QStringList dropNestedPaths(QStringList paths) {
     return kept;
 }
 
+// The immediate subdirectories of the standard data roots (AppData Local and Roaming, the generic
+// data location, Documents, the user's home folder) whose path contains @p app_name,
+// case-insensitively. Fails closed on an empty name: QString::contains("") is true for every path,
+// so every directory under the roots would be reported as this app's data.
+QStringList scanForAppData(const QString& app_name) {
+    if (app_name.isEmpty()) {
+        logWarning("[AppReadonlyActions] scanForAppData refused: empty app name");
+        return {};
+    }
+    const QStringList roots = {
+        QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation) +
+            QStringLiteral("/.."),
+        QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/.."),
+        QStandardPaths::writableLocation(QStandardPaths::GenericDataLocation),
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation),
+        QStandardPaths::writableLocation(QStandardPaths::HomeLocation),
+    };
+    QStringList found;
+    for (const QString& root : roots) {
+        QDirIterator it(root, QDir::Dirs | QDir::NoDotAndDotDot, QDirIterator::NoIteratorFlags);
+        while (it.hasNext()) {
+            const QString path = it.next();
+            if (path.contains(app_name, Qt::CaseInsensitive)) {
+                found.append(path);
+            }
+        }
+    }
+    return found;
+}
+
 // Discover the candidate data directories for @p app_name (normalized, deduplicated,
 // non-overlapping).
 //
-// SECURITY: only scanForAppData is used. It substring-matches the names of the REAL immediate
-// subdirectories of the fixed standard bases (QDirIterator listing) -- app_name never becomes a
-// path or a stat target. UserDataManager::discoverAppDataPaths is DELIBERATELY NOT used: it does
-// QDir(base).filePath(variant) then QDir(path).exists(), and QDir::filePath returns an ABSOLUTE
-// argument (e.g. a UNC app_name like "\\\\host\\share") VERBATIM, so its following exists() would
-// perform an outbound SMB/NTLM handshake to a model-supplied host and leak the credential hash --
-// with no local plant and outside any deadline. scanForAppData has neither the path-join nor the
-// exists(); a listed directory that is itself a reparse point is screened on the sizing side
-// (pathReparseUnsafe in runAppDataPreview) before file_scanner ever follows it.
+// SECURITY: scanForAppData substring-matches the names of the REAL immediate subdirectories of the
+// fixed standard bases (QDirIterator listing) -- app_name never becomes a path or a stat target.
+// Joining the name to a base and testing exists() is DELIBERATELY avoided: QDir::filePath returns
+// an ABSOLUTE argument (e.g. a UNC app_name like "\\\\host\\share") VERBATIM, so the following
+// exists() would perform an outbound SMB/NTLM handshake to a model-supplied host and leak the
+// credential hash -- with no local plant and outside any deadline. A listed directory that is
+// itself a reparse point is screened on the sizing side (pathReparseUnsafe in runAppDataPreview)
+// before file_scanner ever follows it.
 //
 // Paths are QDir::cleanPath-normalized (unifies separators, resolves ".."/"." LEXICALLY -- no
 // filesystem access, no symlink following), deduped case-INSENSITIVELY (Windows FS), then
 // ancestor-filtered so an overlapping subtree is sized once.
 QStringList discoverAppDataDirs(const QString& app_name) {
-    const UserDataManager manager;
-    const QStringList raw = manager.scanForAppData(app_name);
+    const QStringList raw = scanForAppData(app_name);
     QStringList normalized;
     QSet<QString> seen;
     for (const QString& path : raw) {

@@ -6,11 +6,11 @@
 
 #include "sak/package_internalization_engine.h"
 
+#include "sak/file_explorer_archive_service.h"
 #include "sak/logger.h"
 #include "sak/network_transfer_runner.h"
 #include "sak/nuget_version_range.h"
 #include "sak/offline_deployment_constants.h"
-#include "sak/process_runner.h"
 
 #include <QCryptographicHash>
 #include <QDir>
@@ -796,10 +796,17 @@ void PackageInternalizationEngine::repackAndFinish(InternalizationResult& result
         return;
     }
 
+    // Repacking runs in-process and cannot be interrupted, so a Stop is honoured before it,
+    // the same way as after extraction (a cancelled run ends without success or an error).
+    if (m_cancelled) {
+        m_busy = false;
+        return;
+    }
     const QString output_nupkg = output_dir + "/" + result.package_id + "." + result.version +
                                  ".nupkg";
-    if (!repackNupkg(extract_dir, output_nupkg)) {
-        finishWithError(result, "Failed to repack .nupkg");
+    QString repack_error;
+    if (!repackNupkg(extract_dir, output_nupkg, repack_error)) {
+        finishWithError(result, "Failed to repack .nupkg: " + repack_error);
         return;
     }
 
@@ -1053,59 +1060,19 @@ bool PackageInternalizationEngine::extractNupkg(const QString& nupkg_path,
     if (!nupkgHasZipMagic(nupkg_path, error_out)) {
         return false;
     }
-
-    // Zip-bomb guard: a hostile .nupkg can inflate to exhaust the disk. Enumerate
-    // the archive first and refuse once the entry count or total DECOMPRESSED size
-    // exceeds the cap, before any file is written.
-    constexpr qint64 kMaxEntries = 20'000;
-    constexpr qint64 kMaxDecompressedBytes = 4LL * 1024 * 1024 * 1024;  // 4 GiB
-
-    // Use .NET ZipFile for reliable extraction with native path separators
-    QString native_nupkg = QDir::toNativeSeparators(nupkg_path);
-    QString native_extract = QDir::toNativeSeparators(extract_dir);
-    // Escape apostrophes for the single-quoted PowerShell string literals below;
-    // a path containing ' would otherwise close the literal and inject commands.
-    native_nupkg.replace(QLatin1Char('\''), QStringLiteral("''"));
-    native_extract.replace(QLatin1Char('\''), QStringLiteral("''"));
-    const QString ps_command =
-        QString(
-            "$ErrorActionPreference='Stop'; $src='%1'; $dst='%2'; "
-            "Add-Type -AssemblyName System.IO.Compression.FileSystem; "
-            "try { $zip=[System.IO.Compression.ZipFile]::OpenRead($src); "
-            "try { $n=0; $sz=0; foreach($e in $zip.Entries){ $n++; $sz=$sz+$e.Length; "
-            "if($n -gt %3){ throw 'nupkg entry count exceeds limit' } "
-            "if($sz -gt %4){ throw 'nupkg decompressed size exceeds limit' } } } "
-            "finally { $zip.Dispose() } "
-            "[System.IO.Compression.ZipFile]::ExtractToDirectory($src, $dst) } "
-            "catch { Write-Error $_; exit 1 }")
-            .arg(native_nupkg, native_extract)
-            .arg(kMaxEntries)
-            .arg(kMaxDecompressedBytes);
-
-    const auto process = runPowerShell(ps_command, offline::kPackTimeoutMs, true, false, [this]() {
-        return m_cancelled.load();
-    });
-    if (process.timed_out) {
-        error_out = "Extraction timed out";
-        sak::logError("[InternalizationEngine] {}", error_out.toStdString());
+    // The app's one zip engine: bounded central directory, entry and expansion caps, zip-slip
+    // and junction refusal, exclusive file creation and rollback of a partial extraction.
+    const FileExplorerArchiveResult extracted = FileExplorerArchiveService::extractZip(nupkg_path,
+                                                                                       extract_dir);
+    // A skipped entry (a symlink, or a corrupt central-directory record) would be missing from
+    // the repacked package, so for a package it is a failure rather than a warning.
+    const QStringList problems = extracted.blockers + extracted.warnings;
+    if (!extracted.ok || !problems.isEmpty()) {
+        error_out = problems.isEmpty() ? QStringLiteral("the archive could not be extracted")
+                                       : problems.join(QStringLiteral(" "));
+        sak::logError("[InternalizationEngine] Extract failed: {}", error_out.toStdString());
         return false;
     }
-    if (process.cancelled) {
-        error_out = "Extraction cancelled";
-        return false;
-    }
-
-    if (process.exit_code != 0) {
-        const QString stderr_text = process.std_err.trimmed();
-        error_out = stderr_text.isEmpty()
-                        ? QString("PowerShell exit code %1").arg(process.exit_code)
-                        : stderr_text;
-        sak::logError("[InternalizationEngine] Extract failed (exit {}): {}",
-                      process.exit_code,
-                      error_out.toStdString());
-        return false;
-    }
-
     return true;
 }
 
@@ -1172,39 +1139,39 @@ bool PackageInternalizationEngine::cleanNugetArtifacts(const QString& extract_di
 // ============================================================================
 
 bool PackageInternalizationEngine::repackNupkg(const QString& source_dir,
-                                               const QString& output_path) {
-    // Use .NET ZipFile to create the archive (Compress-Archive rejects .nupkg)
-    QString native_src = QDir::toNativeSeparators(source_dir);
-    QString native_out = QDir::toNativeSeparators(output_path);
-    // Escape apostrophes for the single-quoted PowerShell string literals below;
-    // a path containing ' would otherwise close the literal and inject commands.
-    native_src.replace(QLatin1Char('\''), QStringLiteral("''"));
-    native_out.replace(QLatin1Char('\''), QStringLiteral("''"));
-    const QString ps_command =
-        QString(
-            "Add-Type -AssemblyName System.IO.Compression.FileSystem; "
-            "[System.IO.Compression.ZipFile]::CreateFromDirectory('%1', '%2')")
-            .arg(native_src, native_out);
-
-    const auto process = runPowerShell(ps_command, offline::kPackTimeoutMs, true, false, [this]() {
-        return m_cancelled.load();
-    });
-    if (process.timed_out) {
-        sak::logError("[InternalizationEngine] Repack timed out");
+                                               const QString& output_path,
+                                               QString& error_out) {
+    // The package's files belong at the archive root, so the sources are the extracted tree's
+    // top-level entries rather than the folder itself (which would add a wrapper folder).
+    const QFileInfoList top_level =
+        QDir(source_dir)
+            .entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden | QDir::System,
+                           QDir::Name);
+    if (top_level.isEmpty()) {
+        error_out = QStringLiteral("%1 holds nothing to repack").arg(source_dir);
+        sak::logError("[InternalizationEngine] Nothing to repack: {}", error_out.toStdString());
         return false;
     }
-    if (process.cancelled) {
-        sak::logError("[InternalizationEngine] Repack cancelled");
+    QStringList sources;
+    sources.reserve(top_level.size());
+    for (const QFileInfo& entry : top_level) {
+        sources.append(entry.absoluteFilePath());
+    }
+    // compressToZip creates the archive exclusively and removes it when it reports a failure.
+    const FileExplorerArchiveResult packed = FileExplorerArchiveService::compressToZip(output_path,
+                                                                                       sources);
+    // A skipped source (a symlink or special file) would be missing from the package.
+    const QStringList problems = packed.blockers + packed.warnings;
+    if (!packed.ok || !problems.isEmpty()) {
+        if (packed.ok) {
+            QFile::remove(output_path);
+        }
+        error_out = problems.isEmpty() ? QStringLiteral("the archive could not be written")
+                                       : problems.join(QStringLiteral(" "));
+        sak::logError("[InternalizationEngine] Repack failed: {}", error_out.toStdString());
         return false;
     }
-
-    if (process.exit_code != 0) {
-        const QString err = process.std_err;
-        sak::logError("[InternalizationEngine] Repack failed: {}", err.toStdString());
-        return false;
-    }
-
-    return QFile::exists(output_path);
+    return true;
 }
 
 // ============================================================================

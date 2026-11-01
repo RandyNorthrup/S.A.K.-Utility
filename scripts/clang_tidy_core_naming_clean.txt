@@ -18,5 +18,4 @@ src/core/input_validator.cpp
 src/core/iso_analyzer.cpp
 src/core/recycle_bin.cpp
 src/core/thermal_monitor.cpp
-src/core/user_data_manager.cpp
 src/core/vulnerability_scanner.cpp

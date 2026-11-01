@@ -52,7 +52,6 @@ constexpr int kDownloadProgressIntervalMs = 250;
 // ============================================================================
 
 constexpr int kMaxPackagesPerBuild = 200;
-constexpr int kPackTimeoutMs = 60'000;
 constexpr int kInstallTimeoutPerPackageMs = 600'000;
 constexpr int kMaxDependencyDepth = 10;
 

@@ -594,7 +594,6 @@ set(SAK_CORE_SOURCES
     src/core/migration_report.cpp
     src/core/app_installation_worker.cpp
     src/core/app_installation_busy.cpp
-    src/core/user_data_manager.cpp
     src/core/smart_file_filter.cpp
     src/core/windows_user_scanner.cpp
     src/core/permission_manager.cpp
@@ -697,7 +696,6 @@ set(SAK_CORE_SOURCES
     include/sak/package_matcher.h
     include/sak/migration_report.h
     include/sak/app_installation_worker.h
-    include/sak/user_data_manager.h
     include/sak/user_profile_progress.h
     include/sak/smart_file_filter.h
     include/sak/windows_user_scanner.h

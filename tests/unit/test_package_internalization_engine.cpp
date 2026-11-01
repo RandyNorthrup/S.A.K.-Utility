@@ -4,13 +4,18 @@
 /// @file test_package_internalization_engine.cpp
 /// @brief Unit tests for PackageInternalizationEngine pure seams (B10-11).
 
+#include "sak/file_explorer_archive_service.h"
 #include "sak/package_internalization_engine.h"
 
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
+#include <QProcess>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
+
+#include <private/qzipwriter_p.h>
 
 using namespace sak;
 
@@ -33,7 +38,133 @@ private Q_SLOTS:
     void scriptHasNetworkDownload_detectsUrlsAndRawDownloadPrimitives();
     void scriptHasNetworkDownload_detectsDynamicAndCommandDownloads();
     void scriptHasNetworkDownload_ignoresLocalOnlyScripts();
+    void extractNupkg_refusesAnEntryEscapingTheDestination();
+    void extractNupkg_failsOnAnEntryTheEngineWouldSkip();
+    void repackNupkg_placesThePackageAtTheArchiveRoot();
+    void repackNupkg_failsOnASourceTheEngineWouldSkip();
 };
+
+namespace {
+
+void writeFixtureFile(const QString& path, const QByteArray& bytes) {
+    QVERIFY(QDir().mkpath(QFileInfo(path).absolutePath()));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(bytes), static_cast<qint64>(bytes.size()));
+}
+
+}  // namespace
+
+void TestPackageInternalizationEngine::extractNupkg_refusesAnEntryEscapingTheDestination() {
+    // Extraction used .NET ZipFile through a PowerShell child. It now goes through the app's
+    // zip engine, so a package carries the same refusals as any other archive: an absolute entry
+    // name (the zip-slip shape QZipReader keeps intact) is refused and nothing is written there.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QDir root(dir.path());
+    const QString nupkg = root.filePath(QStringLiteral("slip.nupkg"));
+    const QString escaped = root.filePath(QStringLiteral("escaped.ps1"));
+    {
+        QZipWriter writer(nupkg);
+        writer.addFile(QStringLiteral("slip.nuspec"), QByteArrayLiteral("<package/>"));
+        writer.addFile(escaped, QByteArrayLiteral("owned"));
+        writer.close();
+        QCOMPARE(writer.status(), QZipWriter::NoError);
+    }
+    QString error;
+    QVERIFY(!PackageInternalizationEngine::extractNupkg(
+        nupkg, root.filePath(QStringLiteral("extract")), error));
+    QCOMPARE(error,
+             QStringLiteral("Refused entry %1 (path escapes the destination).").arg(escaped));
+    QVERIFY(!QFile::exists(escaped));
+    // The engine rolled back the entry it had already written.
+    QVERIFY(!QFile::exists(root.filePath(QStringLiteral("extract/slip.nuspec"))));
+}
+
+void TestPackageInternalizationEngine::extractNupkg_failsOnAnEntryTheEngineWouldSkip() {
+    // The engine skips a symlink entry with a warning and still reports ok, which is right for
+    // the explorer. For a package it would repack an incomplete .nupkg, so the warning fails it.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QDir root(dir.path());
+    const QString nupkg = root.filePath(QStringLiteral("link.nupkg"));
+    {
+        QZipWriter writer(nupkg);
+        writer.addFile(QStringLiteral("link.nuspec"), QByteArrayLiteral("<package/>"));
+        writer.addSymLink(QStringLiteral("tools/linked.ps1"), QStringLiteral("../../target.ps1"));
+        writer.close();
+        QCOMPARE(writer.status(), QZipWriter::NoError);
+    }
+    QString error;
+    QVERIFY(!PackageInternalizationEngine::extractNupkg(
+        nupkg, root.filePath(QStringLiteral("extract")), error));
+    QCOMPARE(error, QStringLiteral("Skipped symlink tools/linked.ps1 (links are not extracted)."));
+}
+
+void TestPackageInternalizationEngine::repackNupkg_placesThePackageAtTheArchiveRoot() {
+    // CreateFromDirectory put the package's files at the archive root. Handing the engine the
+    // folder itself would add a wrapper folder Chocolatey cannot read; the top-level entries are
+    // the sources instead. Round trip: the repacked package extracts back to the same tree.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QDir root(dir.path());
+    const QString source = root.filePath(QStringLiteral("demo.1.0.0"));
+    writeFixtureFile(source + QStringLiteral("/demo.nuspec"), QByteArrayLiteral("<package/>"));
+    writeFixtureFile(source + QStringLiteral("/tools/chocolateyInstall.ps1"),
+                     QByteArrayLiteral("Write-Output 'installed'"));
+    const QString output = root.filePath(QStringLiteral("demo.1.0.0.nupkg"));
+
+    QString error;
+    QVERIFY2(PackageInternalizationEngine::repackNupkg(source, output, error), qPrintable(error));
+
+    const ArchiveListing listing = FileExplorerArchiveService::listEntries(output);
+    QVERIFY(listing.ok);
+    QStringList paths;
+    for (const ArchiveEntryInfo& entry : listing.entries) {
+        paths.append(entry.path);
+    }
+    paths.sort();
+    QCOMPARE(paths,
+             (QStringList{QStringLiteral("demo.nuspec"),
+                          QStringLiteral("tools"),
+                          QStringLiteral("tools/chocolateyInstall.ps1")}));
+    const QString again = root.filePath(QStringLiteral("again"));
+    QVERIFY2(PackageInternalizationEngine::extractNupkg(output, again, error), qPrintable(error));
+    QFile script(again + QStringLiteral("/tools/chocolateyInstall.ps1"));
+    QVERIFY(script.open(QIODevice::ReadOnly));
+    QCOMPARE(script.readAll(), QByteArrayLiteral("Write-Output 'installed'"));
+}
+
+void TestPackageInternalizationEngine::repackNupkg_failsOnASourceTheEngineWouldSkip() {
+    // A link in the tree is skipped by the engine with a warning; a package missing it is
+    // refused and no .nupkg is left behind. A directory junction needs no privilege to create.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QDir root(dir.path());
+    const QString source = root.filePath(QStringLiteral("demo.1.0.0"));
+    writeFixtureFile(source + QStringLiteral("/demo.nuspec"), QByteArrayLiteral("<package/>"));
+    const QString target = root.filePath(QStringLiteral("outside"));
+    writeFixtureFile(target + QStringLiteral("/secret.txt"), QByteArrayLiteral("outside"));
+    const QString link = source + QStringLiteral("/linked");
+    QProcess mklink;
+    mklink.start(QStringLiteral("cmd.exe"),
+                 {QStringLiteral("/c"),
+                  QStringLiteral("mklink"),
+                  QStringLiteral("/J"),
+                  QDir::toNativeSeparators(link),
+                  QDir::toNativeSeparators(target)});
+    QVERIFY(mklink.waitForFinished(10'000));
+    QCOMPARE(mklink.exitCode(), 0);
+    QVERIFY(QFileInfo(link).isJunction());
+    const QString output = root.filePath(QStringLiteral("demo.1.0.0.nupkg"));
+
+    QString error;
+    QVERIFY(!PackageInternalizationEngine::repackNupkg(source, output, error));
+    QCOMPARE(error,
+             QStringLiteral("Skipped junction %1 (links are not archived).")
+                 .arg(QFileInfo(link).absoluteFilePath()));
+    QVERIFY(!QFile::exists(output));
+}
 
 void TestPackageInternalizationEngine::isSafePackageComponent_acceptsNormalIdsAndVersions() {
     // Real NuGet ids (dotted) and versions (semver / prerelease / build metadata).
@@ -558,5 +689,5 @@ void TestPackageInternalizationEngine::scriptHasNetworkDownload_ignoresLocalOnly
     QVERIFY(!PackageInternalizationEngine::scriptHasNetworkDownload(QString()));
 }
 
-QTEST_APPLESS_MAIN(TestPackageInternalizationEngine)
+QTEST_GUILESS_MAIN(TestPackageInternalizationEngine)
 #include "test_package_internalization_engine.moc"

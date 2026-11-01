@@ -23,7 +23,6 @@ class QGroupBox;
 class QProgressBar;
 
 namespace sak {
-class UserDataManager;
 class LogToggleSwitch;
 class QuickAction;
 class QuickActionController;
@@ -111,9 +110,6 @@ private:
     QuickActionController* m_action_controller{nullptr};
     QHash<QString, QPushButton*> m_action_buttons;
     QProgressBar* m_action_progress_bar{nullptr};
-
-    // Data
-    std::shared_ptr<UserDataManager> m_dataManager;
 };
 
 }  // namespace sak

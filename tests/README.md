@@ -185,7 +185,6 @@ and termination-utility setup handshakes; neither changes production deadlines.
 | test_permission_manager | `permission_manager` | NTFS ACL read/write, controlled junction/hard-link refusal, and pure primary-group apply planning |
 | test_smart_file_filter | `smart_file_filter` | Category-based filtering, exclusion patterns, size thresholds |
 | test_elevation_manager | `elevation_manager` | Admin privilege detection, UAC status; a declined UAC prompt needs no failure notice |
-| test_user_data_manager | `user_data_manager` | User data discovery and categorization |
 | test_user_profile_types | `user_profile_types` | Profile data structures, serialization, and the fields deliberately kept OUT of it (a WiFi profile's plaintext key must never reach a manifest) |
 | test_user_profile_backup_worker | `user_profile_backup_worker` | Backup workflow, compression, encryption |
 | test_user_profile_restore_worker | `user_profile_restore_worker` | Restore workflow, permission handling, merge |

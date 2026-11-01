@@ -137,10 +137,19 @@ public:
     /// @brief Resolve the latest version from the NuGet v2 OData API
     [[nodiscard]] QString resolveLatestVersion(const QString& package_id);
 
-    /// @brief Extract a .nupkg (ZIP) to a directory
-    [[nodiscard]] bool extractNupkg(const QString& nupkg_path,
-                                    const QString& extract_dir,
-                                    QString& error_out);
+    /// @brief Extract a .nupkg (ZIP) into @p extract_dir through the app's zip engine
+    ///        (FileExplorerArchiveService). Fails closed, with the reason in @p error_out, on a
+    ///        file that is not a zip, any refused entry, and any entry the engine would skip.
+    [[nodiscard]] static bool extractNupkg(const QString& nupkg_path,
+                                           const QString& extract_dir,
+                                           QString& error_out);
+
+    /// @brief Repack @p source_dir into a new .nupkg at @p output_path (which must not exist),
+    ///        its contents at the archive root. Fails closed, with the reason in @p error_out,
+    ///        when the engine refuses or would skip any source; no archive is left behind.
+    [[nodiscard]] static bool repackNupkg(const QString& source_dir,
+                                          const QString& output_path,
+                                          QString& error_out);
 
     /// @brief Find the chocolateyInstall.ps1 within extracted package
     [[nodiscard]] QString findInstallScript(const QString& extract_dir) const;
@@ -292,9 +301,6 @@ private:
     ///        Returns false if any removal failed, so the caller can fail closed
     ///        rather than repack leftover NuGet metadata into the output nupkg.
     [[nodiscard]] bool cleanNugetArtifacts(const QString& extract_dir) const;
-
-    /// @brief Repack an extracted directory into a .nupkg
-    [[nodiscard]] bool repackNupkg(const QString& source_dir, const QString& output_path);
 
     /// @brief Compute SHA-256 checksum of a file
     [[nodiscard]] QString computeChecksum(const QString& file_path) const;
