@@ -52,7 +52,6 @@ public:
 
     void scan() override;
     void execute() override;
-    void setBackupLocation(const QString& backup_location) { m_backup_location = backup_location; }
 
 private:
     /**
@@ -82,7 +81,6 @@ private:
         QVector<KeyProtectorInfo> key_protectors;
     };
 
-    QString m_backup_location;
     QVector<VolumeInfo> m_volumes;
 
     /**

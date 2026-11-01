@@ -6,8 +6,7 @@
 
 #include "sak/user_migration_panel.h"
 
-#include "sak/actions/backup_bitlocker_keys_action.h"
-#include "sak/actions/screenshot_settings_action.h"
+#include "sak/action_constants.h"
 #include "sak/detachable_log_window.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
@@ -40,7 +39,8 @@ constexpr int kProgressBarMinimum = 0;
 
 }  // namespace
 
-UserMigrationPanel::UserMigrationPanel(QWidget* parent) : QWidget(parent) {
+UserMigrationPanel::UserMigrationPanel(QuickActionController& quick_actions, QWidget* parent)
+    : QWidget(parent), m_action_controller(&quick_actions) {
     setupUi();
     setupConnections();
     createQuickActions();
@@ -281,16 +281,12 @@ void UserMigrationPanel::createQuickActions() {
     constexpr auto kDefaultBackupPath = "C:/SAK_Backups";
     const auto backup_path = QString::fromLatin1(kDefaultBackupPath);
 
-    m_action_controller = new QuickActionController(this);
     m_action_controller->setBackupLocation(backup_path);
     RunningOperations::add(
         this,
         tr("Quick action"),
         [this]() { return m_action_controller->isExecuting(); },
         [this]() { m_action_controller->cancelCurrentAction(); });
-
-    m_action_controller->registerAction(std::make_unique<ScreenshotSettingsAction>(backup_path));
-    m_action_controller->registerAction(std::make_unique<BackupBitlockerKeysAction>(backup_path));
 
     // Connect controller signals
     connect(m_action_controller,
@@ -330,7 +326,7 @@ void UserMigrationPanel::createQuickActions() {
 
 void UserMigrationPanel::onQuickActionClicked(QuickAction* action) {
     Q_ASSERT(action);
-    if (auto* bitlocker = qobject_cast<BackupBitlockerKeysAction*>(action)) {
+    if (action->name() == QLatin1String(quick_action_elevation::kBackupBitLockerKeysName)) {
         // Recovery keys are asked a destination every time: the default (C:/SAK_Backups) is
         // usually on the very volume they unlock. The action refuses any folder on a BitLocker
         // volume whose key it is backing up.
@@ -344,7 +340,7 @@ void UserMigrationPanel::onQuickActionClicked(QuickAction* action) {
             appendLog(tr("BitLocker key backup cancelled: no destination was chosen"));
             return;
         }
-        bitlocker->setBackupLocation(destination);
+        action->setOutputFolder(destination);
         m_action_controller->setBackupLocation(destination);  // the elevated run's payload
     }
     appendLog(QString("Executing: %1").arg(action->name()));

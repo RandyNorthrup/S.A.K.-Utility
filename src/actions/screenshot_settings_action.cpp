@@ -42,7 +42,9 @@ constexpr int kScreenshotReportFieldWidth = 61;
 }  // namespace
 
 ScreenshotSettingsAction::ScreenshotSettingsAction(const QString& output_location, QObject* parent)
-    : QuickAction(parent), m_output_location(output_location) {}
+    : QuickAction(parent) {
+    setOutputFolder(output_location);
+}
 
 bool ScreenshotSettingsAction::grabAndSaveOnGui(WId window, const QString& filepath) {
     QScreen* screen = QGuiApplication::primaryScreen();
@@ -102,7 +104,7 @@ void ScreenshotSettingsAction::execute() {
     // "/SettingsScreenshots/..." (drive root) and a relative one resolves against the
     // working directory, so screenshots and the report could land outside the intended
     // backup folder.
-    if (m_output_location.trimmed().isEmpty() || !QDir::isAbsolutePath(m_output_location)) {
+    if (outputFolder().trimmed().isEmpty() || !QDir::isAbsolutePath(outputFolder())) {
         ExecutionResult result;
         result.success = false;
         result.message = QStringLiteral("Screenshot output location is invalid");
@@ -117,7 +119,7 @@ void ScreenshotSettingsAction::execute() {
 
     Q_EMIT executionProgress("Preparing screenshot directory...", progress::kStep5);
     const QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
-    const QDir output_dir(m_output_location + "/SettingsScreenshots/" + timestamp);
+    const QDir output_dir(outputFolder() + "/SettingsScreenshots/" + timestamp);
     if (!output_dir.mkpath(".")) {
         sak::logWarning("Failed to create screenshot output directory: {}",
                         output_dir.absolutePath().toStdString());

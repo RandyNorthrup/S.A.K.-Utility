@@ -46,6 +46,22 @@ struct RetainedActionRun {
     std::unique_ptr<QuickAction> action;
     std::unique_ptr<ElevationBroker> broker;
 };
+
+#ifdef SAK_CORE_TEST_HOOKS
+std::function<std::unique_ptr<ElevationBroker>()>& brokerFactoryForTesting() {
+    static std::function<std::unique_ptr<ElevationBroker>()> factory;
+    return factory;
+}
+#endif
+
+std::unique_ptr<ElevationBroker> makeElevationBroker() {
+#ifdef SAK_CORE_TEST_HOOKS
+    if (const auto& factory = brokerFactoryForTesting()) {
+        return factory();
+    }
+#endif
+    return std::make_unique<ElevationBroker>();
+}
 }  // namespace
 
 namespace {
@@ -142,6 +158,13 @@ QuickAction::ExecutionResult makeElevatedActionResult(
     return result;
 }
 }  // namespace
+
+#ifdef SAK_CORE_TEST_HOOKS
+void QuickActionController::setElevationBrokerFactoryForTesting(
+    std::function<std::unique_ptr<ElevationBroker>()> factory) {
+    brokerFactoryForTesting() = std::move(factory);
+}
+#endif
 
 QuickActionController::QuickActionController(QObject* parent) : QObject(parent) {
     // Setup log file path
@@ -428,7 +451,8 @@ void QuickActionController::executeElevatedAction(QuickAction* action, const QSt
     // The broker is designed for executeTask() on a worker while cancelCurrentTask() runs
     // on the controller thread. Single-flight is guaranteed by the m_current_execution_action
     // guard above, so m_broker is null here; it is released in onExecutionComplete().
-    m_broker = new ElevationBroker(this);
+    m_broker = makeElevationBroker().release();
+    m_broker->setParent(this);
     connect(
         m_broker,
         &ElevationBroker::progressUpdated,

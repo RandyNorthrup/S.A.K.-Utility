@@ -11,6 +11,7 @@
 #include <QString>
 #include <QThread>
 
+#include <functional>
 #include <memory>
 #include <vector>
 
@@ -101,6 +102,14 @@ public:
      * @param enabled True to enable logging
      */
     void setLoggingEnabled(bool enabled);
+
+#ifdef SAK_CORE_TEST_HOOKS
+    /// Test-only: what the controller builds its elevated-helper broker with (an empty function
+    /// restores the real ElevationBroker). Compiled only into the tests that drive the elevated
+    /// route (tests/CMakeLists.txt, SAK_CORE_QUICK_ACTION_TEST_HOOK_SOURCES).
+    static void setElevationBrokerFactoryForTesting(
+        std::function<std::unique_ptr<ElevationBroker>()> factory);
+#endif
 
 Q_SIGNALS:
     /**

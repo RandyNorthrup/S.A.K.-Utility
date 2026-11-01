@@ -5,7 +5,9 @@
 /// @brief The thermal readout polls only while the Diagnostics panel is shown, and the System
 ///        Inventory Report asks where to save and says where it went.
 
+#include "sak/actions/generate_system_report_action.h"
 #include "sak/diagnostic_benchmark_panel.h"
+#include "sak/quick_action_controller.h"
 #include "sak/thermal_monitor.h"
 
 #include <QApplication>
@@ -21,6 +23,7 @@
 #include <QtTest/QtTest>
 
 #include <functional>
+#include <memory>
 
 namespace {
 // One real sensor query (PowerShell: WMI zone, nvidia-smi, reliability counters) is in flight
@@ -45,6 +48,13 @@ void inspectNextFolderDialog(const std::function<void(QFileDialog*)>& inspect) {
     QTimer::singleShot(0, qApp, [inspect]() {
         inspect(qobject_cast<QFileDialog*>(QApplication::activeModalWidget()));
     });
+}
+
+/// Registers the real System Inventory Report, the one quick action this suite runs for real.
+void registerInventoryReport(sak::QuickActionController& quick_actions) {
+    QVERIFY(
+        !quick_actions.registerAction(std::make_unique<sak::GenerateSystemReportAction>(QString()))
+             .isEmpty());
 }
 
 QStringList statusTexts(const QSignalSpy& spy) {
@@ -103,7 +113,8 @@ void DiagnosticBenchmarkPanelTests::thermalPollsOnlyWhileShown() {
     if (!mode.isEmpty()) {
         qApp->setProperty(mode.constData(), true);
     }
-    sak::DiagnosticBenchmarkPanel panel;
+    sak::QuickActionController quick_actions;
+    sak::DiagnosticBenchmarkPanel panel(quick_actions);
     auto* monitor = panel.findChild<sak::ThermalMonitor*>();
     QVERIFY(monitor != nullptr);
     QVERIFY2(!monitor->isRunning(), "constructing the panel must not start sensor polling");
@@ -128,7 +139,9 @@ void DiagnosticBenchmarkPanelTests::thermalPollsOnlyWhileShown() {
 void DiagnosticBenchmarkPanelTests::inventoryReportAsksWhereToSaveAndSaysWhereItWent() {
     QTemporaryDir output;
     QVERIFY(output.isValid());
-    sak::DiagnosticBenchmarkPanel panel;
+    sak::QuickActionController quick_actions;
+    registerInventoryReport(quick_actions);
+    sak::DiagnosticBenchmarkPanel panel(quick_actions);
     QSignalSpy status(&panel, &sak::DiagnosticBenchmarkPanel::statusMessage);
     QPushButton* button = inventoryReportButton(panel);
     QVERIFY2(button != nullptr, "the System Inventory Report button must exist by that name");
@@ -174,7 +187,9 @@ void DiagnosticBenchmarkPanelTests::inventoryReportAsksWhereToSaveAndSaysWhereIt
 }
 
 void DiagnosticBenchmarkPanelTests::inventoryReportCancelledFolderRunsNothing() {
-    sak::DiagnosticBenchmarkPanel panel;
+    sak::QuickActionController quick_actions;
+    registerInventoryReport(quick_actions);
+    sak::DiagnosticBenchmarkPanel panel(quick_actions);
     QSignalSpy status(&panel, &sak::DiagnosticBenchmarkPanel::statusMessage);
     QSignalSpy log(&panel, &sak::DiagnosticBenchmarkPanel::logOutput);
     QPushButton* button = inventoryReportButton(panel);

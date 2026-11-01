@@ -45,9 +45,11 @@ class UserMigrationPanel : public QWidget {
 public:
     /**
      * @brief Constructor
+     * @param quick_actions Runs the Quick Tools actions (Screenshot Settings, BitLocker Key
+     *        Backup); it must outlive the panel
      * @param parent Parent widget
      */
-    explicit UserMigrationPanel(QWidget* parent = nullptr);
+    explicit UserMigrationPanel(QuickActionController& quick_actions, QWidget* parent = nullptr);
 
     /**
      * @brief Destructor

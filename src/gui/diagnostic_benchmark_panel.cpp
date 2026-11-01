@@ -6,10 +6,6 @@
 
 #include "sak/diagnostic_benchmark_panel.h"
 
-#include "sak/actions/check_disk_errors_action.h"
-#include "sak/actions/generate_system_report_action.h"
-#include "sak/actions/optimize_power_settings_action.h"
-#include "sak/actions/verify_system_files_action.h"
 #include "sak/detachable_log_window.h"
 #include "sak/diagnostic_controller.h"
 #include "sak/format_utils.h"
@@ -84,8 +80,11 @@ void logDiagnosticStartupPhase(QElapsedTimer* timer, const char* phase) {
 // Construction / Destruction
 // ============================================================================
 
-DiagnosticBenchmarkPanel::DiagnosticBenchmarkPanel(QWidget* parent)
-    : QWidget(parent), m_controller(std::make_unique<DiagnosticController>(this)) {
+DiagnosticBenchmarkPanel::DiagnosticBenchmarkPanel(QuickActionController& quick_actions,
+                                                   QWidget* parent)
+    : QWidget(parent)
+    , m_controller(std::make_unique<DiagnosticController>(this))
+    , m_qa_controller(&quick_actions) {
     logDebug("DiagnosticBenchmarkPanel: constructing");
     setupUi();
     connectController();
@@ -1105,17 +1104,11 @@ void DiagnosticBenchmarkPanel::createQuickActions() {
     // No default output folder: the inventory report asks where to save on every run (it wrote
     // to a fixed C:/SAK_Backups without saying so). The controller's backup location feeds only
     // the BitLocker key backup, which this panel does not host.
-    m_qa_controller = new QuickActionController(this);
     RunningOperations::add(
         this,
         tr("Quick action"),
         [this]() { return m_qa_controller->isExecuting(); },
         [this]() { m_qa_controller->cancelCurrentAction(); });
-
-    m_qa_controller->registerAction(std::make_unique<OptimizePowerSettingsAction>());
-    m_qa_controller->registerAction(std::make_unique<VerifySystemFilesAction>());
-    m_qa_controller->registerAction(std::make_unique<CheckDiskErrorsAction>());
-    m_qa_controller->registerAction(std::make_unique<GenerateSystemReportAction>(QString()));
 
     connect(m_qa_controller,
             &QuickActionController::actionExecutionProgress,
@@ -1152,8 +1145,7 @@ void DiagnosticBenchmarkPanel::createQuickActions() {
 }
 
 bool DiagnosticBenchmarkPanel::chooseQuickActionOutputFolder(QuickAction* action) {
-    auto* inventory = qobject_cast<GenerateSystemReportAction*>(action);
-    if (inventory == nullptr) {
+    if (action->name() != QLatin1String("System Inventory Report")) {
         return true;
     }
     const QString folder = QFileDialog::getExistingDirectory(
@@ -1165,7 +1157,7 @@ bool DiagnosticBenchmarkPanel::chooseQuickActionOutputFolder(QuickAction* action
         logMessage(tr("System Inventory Report cancelled: no folder was chosen"));
         return false;
     }
-    inventory->setOutputLocation(folder);
+    action->setOutputFolder(folder);
     return true;
 }
 

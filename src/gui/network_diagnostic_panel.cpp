@@ -7,7 +7,6 @@
 #include "sak/network_diagnostic_panel.h"
 // sak::csvEscape -- the one CSV cell writer, with the CWE-1236 formula guard.
 #include "sak/action_constants.h"
-#include "sak/actions/reset_network_action.h"
 #include "sak/csv_escape.h"
 #include "sak/detachable_log_window.h"
 #include "sak/dns_diagnostic_tool.h"
@@ -236,8 +235,11 @@ constexpr int kToolTabDnsIndex = 3;
 // Construction / Destruction
 // ===================================================================
 
-NetworkDiagnosticPanel::NetworkDiagnosticPanel(QWidget* parent)
-    : QWidget(parent), m_controller(std::make_unique<NetworkDiagnosticController>(this)) {
+NetworkDiagnosticPanel::NetworkDiagnosticPanel(QuickActionController& quick_actions,
+                                               QWidget* parent)
+    : QWidget(parent)
+    , m_controller(std::make_unique<NetworkDiagnosticController>(this))
+    , m_qa_controller(&quick_actions) {
     setupUi();
     connectSignals();
     createResetNetworkAction();
@@ -4668,14 +4670,11 @@ void NetworkDiagnosticPanel::onError(QString error) {
 // ===================================================================
 
 void NetworkDiagnosticPanel::createResetNetworkAction() {
-    m_qa_controller = new QuickActionController(this);
     RunningOperations::add(
         this,
         tr("Network reset"),
         [this]() { return m_qa_controller->isExecuting(); },
         [this]() { m_qa_controller->cancelCurrentAction(); });
-
-    m_qa_controller->registerAction(std::make_unique<ResetNetworkAction>());
 
     connect(m_qa_controller,
             &QuickActionController::actionExecutionComplete,

@@ -55,7 +55,9 @@ class NetworkDiagnosticPanel : public QWidget {
     Q_OBJECT
 
 public:
-    explicit NetworkDiagnosticPanel(QWidget* parent = nullptr);
+    /// @param quick_actions Runs Reset Network; it must outlive the panel
+    explicit NetworkDiagnosticPanel(QuickActionController& quick_actions,
+                                    QWidget* parent = nullptr);
     ~NetworkDiagnosticPanel() override;
 
     NetworkDiagnosticPanel(const NetworkDiagnosticPanel&) = delete;

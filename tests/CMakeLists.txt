@@ -73,10 +73,15 @@ set(SAK_AI_PANEL_TEST_HOOK_SOURCES
 )
 # The same arrangement for sak_core's own test-only seams (SAK_CORE_TEST_HOOKS): ConfigManager's
 # clear and reset, which the config suites use to hand each case a well-formed store and the
-# product no longer offers. Each is a non-virtual member function, so hooked and product objects
-# agree on the class layout and the hooked object replaces the library's copy in that link.
+# product no longer offers, and the quick-action controller's broker factory, which lets a suite
+# drive the elevated route with a broker that launches no helper. Each is a non-virtual or static
+# member function, so hooked and product objects agree on the class layout and the hooked object
+# replaces the library's copy in that link.
 set(SAK_CORE_CONFIG_TEST_HOOK_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/config_manager.cpp"
+)
+set(SAK_CORE_QUICK_ACTION_TEST_HOOK_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/quick_action_controller.cpp"
 )
 set(SAK_PROCESS_RUNNER_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/process_runner.cpp"
@@ -4208,6 +4213,34 @@ add_test(NAME test_advanced_uninstall_panel COMMAND test_advanced_uninstall_pane
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_advanced_uninstall_panel")
 
+# test_quick_action_panels - drives each panel's quick-action flow (Backup and Restore, Diagnostics,
+# Network): click, confirmation, folder choice, run, progress and completion, through a real
+# QuickActionController with fake actions and a fake elevated-helper broker, so nothing touches
+# the system. Compiles the controller with SAK_CORE_TEST_HOOKS for the broker factory.
+add_executable(test_quick_action_panels
+    unit/test_quick_action_panels.cpp
+    ${SAK_CORE_QUICK_ACTION_TEST_HOOK_SOURCES}
+    ../resources/icons.qrc
+)
+set_target_properties(test_quick_action_panels PROPERTIES
+    AUTOMOC ON
+    AUTORCC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_compile_definitions(test_quick_action_panels PRIVATE SAK_CORE_TEST_HOOKS)
+target_link_libraries(test_quick_action_panels PRIVATE
+    sak_gui sak_core sak_partition_fs sak_foundation
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Test
+    ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
+)
+target_include_directories(test_quick_action_panels PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_quick_action_panels COMMAND test_quick_action_panels
+         -o "${TEST_OUTPUT_DIR}/test_quick_action_panels.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_quick_action_panels")
+
 # test_network_diagnostic_panel - the panel's start-up adapter scan runs in every run mode (smoke
 # and audit no longer skip it), off the GUI thread, and teardown joins it. Offscreen; each panel
 # runs one real, read-only adapter enumeration.
@@ -6671,7 +6704,7 @@ set(_sak_lock_portable_data_root
     test_running_work_exit_guard test_app_installation_panel test_window_input test_app_theme
     test_single_instance_guard test_single_instance_app
     test_diagnostic_benchmark_panel test_advanced_uninstall_panel test_network_diagnostic_panel
-    test_file_management_explorer_panel
+    test_quick_action_panels test_file_management_explorer_panel
     test_startup_budget test_stage_portable_release test_release_archive_recovery)
 set(_sak_lock_system_clipboard test_ai_transcript_view test_win32_mcp_server)
 set(_sak_lock_desktop_session test_win32_mcp_server test_follow_scroll_controller)

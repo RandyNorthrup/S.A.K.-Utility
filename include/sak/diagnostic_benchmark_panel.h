@@ -50,8 +50,10 @@ class DiagnosticBenchmarkPanel : public QWidget {
 
 public:
     /// @brief Construct the diagnostic benchmark panel
+    /// @param quick_actions Runs the System Maintenance actions; it must outlive the panel
     /// @param parent Parent widget
-    explicit DiagnosticBenchmarkPanel(QWidget* parent = nullptr);
+    explicit DiagnosticBenchmarkPanel(QuickActionController& quick_actions,
+                                      QWidget* parent = nullptr);
     ~DiagnosticBenchmarkPanel() override;
 
     // Non-copyable, non-movable

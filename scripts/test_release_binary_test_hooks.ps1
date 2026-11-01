@@ -17,8 +17,8 @@
     carry none of them; the retired SAK_AI_POLICY_DISK_OVERRIDE (an on-disk AI policy override)
     must not be read by anything that ships.
 
-    sak_core's own seams (ConfigManager's clear and reset, which only the config suites use) are
-    compiled only under SAK_CORE_TEST_HOOKS.
+    sak_core's own seams (ConfigManager's clear and reset, which only the config suites use, and
+    the quick-action controller's broker factory) are compiled only under SAK_CORE_TEST_HOOKS.
 
     A Release executable has no symbol table, so the function names are checked where they would
     be: the static product libraries every shipped binary links. A static library's linker member
@@ -141,6 +141,7 @@ $partitionFsHooks = @(
 $coreHooks = @(
     "ForTesting@PartitionExecutor@sak@@",
     "ForTesting@ConfigManager@sak@@",
+    "ForTesting@QuickActionController@sak@@",
     $escapeHatch
 )
 
@@ -157,7 +158,8 @@ $allFailures += Assert-Scan -Path $CoreLibrary `
     -MustContain @(
         "?execute@PartitionExecutor@sak@@",
         "?resolveRuntimeManifestPath@PartitionFileSystemToolManifest@sak@@",
-        "?sync@ConfigManager@sak@@") `
+        "?sync@ConfigManager@sak@@",
+        "?registerAction@QuickActionController@sak@@") `
     -MustNotContain $coreHooks
 
 $allFailures += Assert-Scan -Path $AiCoreLibrary `

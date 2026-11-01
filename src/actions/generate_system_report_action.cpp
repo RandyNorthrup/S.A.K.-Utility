@@ -53,7 +53,9 @@ QString buildReportFilePath(const QDir& output_dir) {
 
 GenerateSystemReportAction::GenerateSystemReportAction(const QString& output_location,
                                                        QObject* parent)
-    : QuickAction(parent), m_output_location(output_location) {}
+    : QuickAction(parent) {
+    setOutputFolder(output_location);
+}
 
 bool GenerateSystemReportAction::collectorFailed(bool timed_out,
                                                  int exit_code,
@@ -82,7 +84,7 @@ void GenerateSystemReportAction::scan() {
 // against the process working directory and a relative one escapes the intended
 // reports folder, so the report must never be written to a caller-unintended place.
 bool GenerateSystemReportAction::rejectInvalidOutputLocation() {
-    if (m_output_location.trimmed().isEmpty() || !QDir::isAbsolutePath(m_output_location)) {
+    if (outputFolder().trimmed().isEmpty() || !QDir::isAbsolutePath(outputFolder())) {
         ExecutionResult result;
         result.success = false;
         result.message = QStringLiteral("System inventory report has no valid output folder");
@@ -153,7 +155,7 @@ void GenerateSystemReportAction::execute() {
     // Phase 6: Save
     Q_EMIT executionProgress("Saving report...", progress::kStep95);
 
-    const QDir output_dir(m_output_location);
+    const QDir output_dir(outputFolder());
     const QString directory_error = ensureOutputDirectory(output_dir);
     const QString filepath = buildReportFilePath(output_dir);
 
@@ -175,8 +177,8 @@ QString GenerateSystemReportAction::ensureOutputDirectory(const QDir& output_dir
         return {};
     }
     sak::logWarning("Failed to create system inventory report folder: {}",
-                    m_output_location.toStdString());
-    return QStringLiteral("The report folder could not be created: %1").arg(m_output_location);
+                    outputFolder().toStdString());
+    return QStringLiteral("The report folder could not be created: %1").arg(outputFolder());
 }
 
 void GenerateSystemReportAction::saveReportAndFinish(const QString& report,

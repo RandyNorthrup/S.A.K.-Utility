@@ -62,13 +62,15 @@ public:
     /// @param reason   Human-readable reason shown in UAC context
     /// @param payload  Task-specific JSON parameters
     /// @return Task result or error code
-    [[nodiscard]] auto executeTask(const QString& task_id,
-                                   const QString& reason,
-                                   const QJsonObject& payload = {})
+    /// @note Virtual, with cancelCurrentTask(), so the quick-action route can be driven end to
+    ///       end in tests with a broker that launches no helper (test_quick_action_panels).
+    [[nodiscard]] virtual auto executeTask(const QString& task_id,
+                                           const QString& reason,
+                                           const QJsonObject& payload = {})
         -> std::expected<ElevatedTaskResult, sak::error_code>;
 
     /// @brief Request cancellation of the currently running task
-    void cancelCurrentTask();
+    virtual void cancelCurrentTask();
 
     /// @brief Whether the pipe server's PID is the helper we actually launched.
     /// @param expectedHelperPid PID of the process the broker launched (from the

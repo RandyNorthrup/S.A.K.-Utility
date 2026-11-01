@@ -48,7 +48,6 @@ public:
 
     void scan() override;
     void execute() override;
-    void setOutputLocation(const QString& output_location) { m_output_location = output_location; }
 
     // ------------------------------------------------------------------
     // Pure decision seams (public for unit testing; no I/O, no state)
@@ -64,7 +63,6 @@ public:
     static bool reportGenerationSucceeded(bool save_ok, bool all_collectors_ok);
 
 private:
-    QString m_output_location;
     /// @brief Names of collectors that failed to run during the current execute().
     QStringList m_collector_errors;
 

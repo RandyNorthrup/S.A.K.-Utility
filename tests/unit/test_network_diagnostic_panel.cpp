@@ -6,6 +6,7 @@
 
 #include "sak/network_diagnostic_controller.h"
 #include "sak/network_diagnostic_panel.h"
+#include "sak/quick_action_controller.h"
 
 #include <QApplication>
 #include <QtTest/QtTest>
@@ -47,7 +48,8 @@ void NetworkDiagnosticPanelTests::adapterScanRunsInEveryMode() {
     if (!mode.isEmpty()) {
         qApp->setProperty(mode.constData(), true);
     }
-    sak::NetworkDiagnosticPanel panel;
+    sak::QuickActionController quick_actions;
+    sak::NetworkDiagnosticPanel panel(quick_actions);
     auto* controller = panel.findChild<sak::NetworkDiagnosticController*>();
     QVERIFY(controller != nullptr);
     int scans = 0;
@@ -63,8 +65,9 @@ void NetworkDiagnosticPanelTests::adapterScanRunsInEveryMode() {
 // cleanly instead of racing a scan into freed state.
 void NetworkDiagnosticPanelTests::teardownRightAfterConstructionJoinsTheScan() {
     qApp->setProperty("sakStartupSmokeTest", true);
+    sak::QuickActionController quick_actions;
     for (int round = 0; round < 3; ++round) {
-        auto panel = std::make_unique<sak::NetworkDiagnosticPanel>();
+        auto panel = std::make_unique<sak::NetworkDiagnosticPanel>(quick_actions);
         QCoreApplication::processEvents();  // dispatch the queued scan
         panel.reset();
     }

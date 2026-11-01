@@ -40,7 +40,9 @@ namespace sak {
 
 BackupBitlockerKeysAction::BackupBitlockerKeysAction(const QString& backup_location,
                                                      QObject* parent)
-    : QuickAction(parent), m_backup_location(backup_location) {}
+    : QuickAction(parent) {
+    setOutputFolder(backup_location);
+}
 
 // ============================================================================
 // Static Helpers -- WMI Enum Formatting
@@ -923,7 +925,7 @@ bool BackupBitlockerKeysAction::createBackupDirectory(const QDateTime& start_tim
     // policy-screened HERE, before any directory is created under it. A refused location
     // fails closed: nothing is created and nothing is written.
     QString refusal;
-    const QString location = screenBackupLocation(m_backup_location, refusal);
+    const QString location = screenBackupLocation(outputFolder(), refusal);
     if (location.isEmpty()) {
         emitFailedResult("Refused the BitLocker backup location", refusal, start_time);
         return false;

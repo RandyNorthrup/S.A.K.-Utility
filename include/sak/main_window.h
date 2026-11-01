@@ -44,6 +44,7 @@ class EmailInspectorPanel;
 class OstConverterWidget;
 class VulnerabilityPanel;
 class RunningWorkExitGuard;
+class QuickActionController;
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
 class AiAssistantPanel;
 #endif
@@ -291,6 +292,12 @@ private:
     int m_slotImageFlasher{-1};
     int m_slotDiagnostic{-1};
     int m_slotAppManagement{-1};
+
+    // The quick-action controllers the panels below run their quick actions on. The panels hold
+    // references, so these are declared first and destroyed after them.
+    std::unique_ptr<QuickActionController> m_backup_restore_quick_actions;
+    std::unique_ptr<QuickActionController> m_diagnostic_quick_actions;
+    std::unique_ptr<QuickActionController> m_network_quick_actions;
 
     // Feature panels
     std::unique_ptr<UserMigrationPanel> m_user_migration_panel;

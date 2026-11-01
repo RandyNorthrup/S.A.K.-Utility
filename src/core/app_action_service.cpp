@@ -51,9 +51,9 @@ AppActionService::~AppActionService() = default;
 void AppActionService::setOutputDirectory(const QString& output_directory) {
     m_backup_dir = output_directory.trimmed();
     m_controller->setBackupLocation(m_backup_dir);
-    m_report_action->setOutputLocation(m_backup_dir);
-    m_screenshot_action->setOutputLocation(m_backup_dir);
-    m_bitlocker_action->setBackupLocation(m_backup_dir);
+    m_report_action->setOutputFolder(m_backup_dir);
+    m_screenshot_action->setOutputFolder(m_backup_dir);
+    m_bitlocker_action->setOutputFolder(m_backup_dir);
 }
 
 int AppActionService::registerInto(AppActionRegistry& registry) {

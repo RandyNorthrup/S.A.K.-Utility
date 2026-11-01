@@ -35,10 +35,8 @@ public:
 
     void scan() override;
     void execute() override;
-    void setOutputLocation(const QString& output_location) { m_output_location = output_location; }
 
 private:
-    QString m_output_location;
     /// The Settings window that was open before this run (the user's), or 0. Never closed.
     WId m_settings_window_before_launch{0};
 

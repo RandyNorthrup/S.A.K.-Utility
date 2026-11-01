@@ -203,6 +203,15 @@ public:
         setStatus(status);
     }
 
+    /**
+     * @brief The folder a run writes its files into (a report, screenshots, recovery keys)
+     *
+     * Empty for an action that writes nothing; an action that writes files refuses to run
+     * without an absolute folder. Set before execute() runs and read only by that run.
+     */
+    void setOutputFolder(const QString& folder) { m_output_folder = folder; }
+    [[nodiscard]] const QString& outputFolder() const { return m_output_folder; }
+
 Q_SIGNALS:
     /**
      * @brief Emitted when status changes
@@ -352,6 +361,7 @@ private:
     ScanResult m_scan_result;
     ExecutionResult m_execution_result;
     std::atomic<bool> m_cancelled{false};
+    QString m_output_folder;
 };
 
 }  // namespace sak
