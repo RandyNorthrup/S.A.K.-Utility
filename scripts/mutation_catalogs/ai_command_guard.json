@@ -3,14 +3,15 @@
   "config": "Release",
   "target": "test_ai_command_guard",
   "ctest_regex": "^test_ai_command_guard$",
+  "_note": "The guard result's encapsulation (private storage, no default construction, not an aggregate) is a compile-time property: test_ai_command_guard.cpp static_asserts it, so every build of that test checks it. It has no mutant here because run_mutation_test.py scores a mutant that does not compile as a catalog error (KILLED means the mutant compiled and a test failed), as every catalog assumes. result-stores-block-as-approval covers the stored verdict at run time.",
   "mutants": [
     {
-      "id": "result-storage-becomes-publicly-mutable",
-      "file": "include/sak/ai/ai_command_guard.h",
-      "find": "private:\n    friend AiCommandGuardResult evaluateCommandGuard(const AiCommandRequest& request);",
-      "replace": "public:\n    friend AiCommandGuardResult evaluateCommandGuard(const AiCommandRequest& request);",
+      "id": "result-stores-block-as-approval",
+      "file": "src/ai/ai_command_guard.cpp",
+      "find": "    : m_block_error(std::move(block_error)), m_approval_reason(std::move(approval_reason)) {}",
+      "replace": "    : m_block_error(std::move(approval_reason)), m_approval_reason(std::move(block_error)) {}",
       "expect": "killed",
-      "why": "The guard result owns private state so callers cannot fabricate allowed, blocked, or approval-required combinations."
+      "why": "blocksBinaryContentDump requires a refusal to be stored as a refusal (blockError set, approvalReason empty) and directProcessCacheInstallerRequiresApproval an approval as an approval. A result that kept the evaluator's verdict in the other field would turn a blocked command into one the user can approve."
     },
     {
       "id": "approval-required-result-reports-allowed",
