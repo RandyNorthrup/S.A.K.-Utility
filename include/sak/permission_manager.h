@@ -125,10 +125,12 @@ private:
 ///
 /// Applies the protected DACL trySetStandardUserPermissions applies -- no inherited entries, so
 /// other users of the machine lose access -- through the same no-follow handle, which refuses a
-/// reparse point, a file with more than one hard link and a path an ancestor junction
-/// redirected. SYSTEM and Administrators stay on it for the reason buildStandardUserDacl gives:
-/// both can take ownership anyway, and a file they cannot open breaks backup, antivirus and
-/// cleanup without protecting anything.
+/// reparse point and a file with more than one hard link. Unlike trySetStandardUserPermissions it
+/// accepts a path whose ancestors resolve elsewhere (a mapped drive, a SUBST drive, a junctioned
+/// folder): it is for a file the caller just created in its own folder, where that is another
+/// spelling of the same file. SYSTEM and Administrators stay on it for the reason
+/// buildStandardUserDacl gives: both can take ownership anyway, and a file they cannot open breaks
+/// backup, antivirus and cleanup without protecting anything.
 ///
 /// Unlike constructing a PermissionManager, this enables NO privilege: the owner of an object
 /// may always write its DACL, so a caller protecting its own file needs nothing more.

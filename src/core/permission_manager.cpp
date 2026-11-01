@@ -161,7 +161,14 @@ bool handleMatchesRequestedPath(HANDLE h, const QString& path) {
 // THIS handle closes the final-component junction/symlink swap TOCTOU that the
 // by-name SetNamedSecurityInfoW would expose; verifying the handle's resolved
 // path additionally closes an ANCESTOR-directory junction swap. FAIL CLOSED.
-DWORD applySecurityNoFollow(const QString& path, DWORD access, const SecurityChange& change) {
+// @p verify_resolved_path false skips only that ancestor comparison, for a caller restricting a
+// file it has just created in its own folder (restrictFileToCurrentUser): there a mapped network
+// drive, a SUBST drive or a junctioned folder resolves to another spelling of the same file, and
+// refusing would fail the save. The reparse-point and hard-link refusals still apply.
+DWORD applySecurityNoFollow(const QString& path,
+                            DWORD access,
+                            const SecurityChange& change,
+                            bool verify_resolved_path = true) {
     if (hasEmbeddedNul(path)) {
         return ERROR_INVALID_NAME;
     }
@@ -196,7 +203,7 @@ DWORD applySecurityNoFollow(const QString& path, DWORD access, const SecurityCha
         CloseHandle(h);
         return kHardLinkRefused;
     }
-    if (!handleMatchesRequestedPath(h, path)) {
+    if (verify_resolved_path && !handleMatchesRequestedPath(h, path)) {
         CloseHandle(h);
         return kPathRedirected;
     }
@@ -722,7 +729,11 @@ std::expected<void, QString> restrictFileToCurrentUser(const QString& path) {
                                 .owner = nullptr,
                                 .group = nullptr,
                                 .dacl = dacl};
-    const DWORD applied = applySecurityNoFollow(path, WRITE_DAC | READ_CONTROL, change);
+    // No resolved-path comparison: the caller just created this file in its own folder, and a
+    // mapped drive, SUBST drive or junctioned ancestor is another spelling of that same file.
+    // Whoever could swap an ancestor of it can already read it, so the comparison would only
+    // turn a portable copy run from such a path into a failed save.
+    const DWORD applied = applySecurityNoFollow(path, WRITE_DAC | READ_CONTROL, change, false);
     LocalFree(dacl);
     QString refusal;
     if (interpretSecurityResult(applied, "Failed to set permissions", refusal)) {

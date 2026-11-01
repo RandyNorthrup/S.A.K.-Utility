@@ -20,9 +20,11 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonValue>
+#include <QProcess>
 #include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
@@ -58,6 +60,7 @@ private Q_SLOTS:
     void keyFileVersionIsChecked();
     void decryptedKeyIsValidatedLikeASavedOne();
     void savedKeyFileIsRestrictedToItsUser();
+    void keyFileSavesThroughAJunctionedFolder();
 };
 
 namespace {
@@ -128,6 +131,70 @@ std::vector<BYTE> wellKnownSid(WELL_KNOWN_SID_TYPE type) {
     }
     sid.resize(size);
     return sid;
+}
+
+struct AllowedSids {
+    std::vector<BYTE> user;
+    std::vector<BYTE> system;
+    std::vector<BYTE> admins;
+};
+
+// Empty when @p ace is a direct (not inherited) allow entry for the user, SYSTEM or
+// Administrators; *@p is_user says whether it is the user's.
+QString aceProblem(void* ace, const AllowedSids& allowed, bool* is_user) {
+    const auto* header = static_cast<const ACE_HEADER*>(ace);
+    if (header->AceType != ACCESS_ALLOWED_ACE_TYPE || (header->AceFlags & INHERITED_ACE) != 0) {
+        return QStringLiteral("an entry is not a direct allow entry");
+    }
+    PSID sid = &static_cast<ACCESS_ALLOWED_ACE*>(ace)->SidStart;
+    *is_user = EqualSid(sid, const_cast<BYTE*>(allowed.user.data())) != 0;
+    if (!*is_user && EqualSid(sid, const_cast<BYTE*>(allowed.system.data())) == 0 &&
+        EqualSid(sid, const_cast<BYTE*>(allowed.admins.data())) == 0) {
+        return QStringLiteral("an account other than the user, SYSTEM or Administrators");
+    }
+    return {};
+}
+
+// Empty when @p path carries a PROTECTED DACL (nothing inherited) that grants only this user,
+// SYSTEM and Administrators, and grants this user; otherwise what is wrong with it.
+QString daclRestrictionProblem(const QString& path) {
+    const std::wstring native = QDir::toNativeSeparators(path).toStdWString();
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    PACL dacl = nullptr;
+    if (GetNamedSecurityInfoW(native.c_str(),
+                              SE_FILE_OBJECT,
+                              DACL_SECURITY_INFORMATION,
+                              nullptr,
+                              nullptr,
+                              &dacl,
+                              nullptr,
+                              &descriptor) != ERROR_SUCCESS) {
+        return QStringLiteral("the DACL could not be read");
+    }
+    const auto free_descriptor = qScopeGuard([descriptor]() { LocalFree(descriptor); });
+    SECURITY_DESCRIPTOR_CONTROL control = 0;
+    DWORD revision = 0;
+    if (GetSecurityDescriptorControl(descriptor, &control, &revision) == 0 ||
+        (control & SE_DACL_PROTECTED) == 0 || dacl == nullptr) {
+        return QStringLiteral("the key file's DACL is not protected (it inherits)");
+    }
+    const AllowedSids allowed{.user = currentUserSid(),
+                              .system = wellKnownSid(WinLocalSystemSid),
+                              .admins = wellKnownSid(WinBuiltinAdministratorsSid)};
+    bool user_allowed = false;
+    for (DWORD index = 0; index < dacl->AceCount; ++index) {
+        void* ace = nullptr;
+        if (GetAce(dacl, index, &ace) == 0) {
+            return QStringLiteral("an entry could not be read");
+        }
+        bool is_user = false;
+        const QString problem = aceProblem(ace, allowed, &is_user);
+        if (!problem.isEmpty()) {
+            return problem;
+        }
+        user_allowed = user_allowed || is_user;
+    }
+    return user_allowed ? QString() : QStringLiteral("the user is not granted access");
 }
 
 }  // namespace
@@ -253,44 +320,41 @@ void AiCredentialStoreTests::savedKeyFileIsRestrictedToItsUser() {
     QString error;
     QVERIFY2(sak::ai::CredentialStore::saveApiKeyToPathForTesting(path, fixtureApiKey(), &error),
              qPrintable(error));
+    const QString problem = daclRestrictionProblem(path);
+    QVERIFY2(problem.isEmpty(), qPrintable(problem));
+}
 
-    const std::wstring native = QDir::toNativeSeparators(path).toStdWString();
-    PSECURITY_DESCRIPTOR descriptor = nullptr;
-    PACL dacl = nullptr;
-    QCOMPARE(GetNamedSecurityInfoW(native.c_str(),
-                                   SE_FILE_OBJECT,
-                                   DACL_SECURITY_INFORMATION,
-                                   nullptr,
-                                   nullptr,
-                                   &dacl,
-                                   nullptr,
-                                   &descriptor),
-             static_cast<DWORD>(ERROR_SUCCESS));
-    const auto free_descriptor = qScopeGuard([descriptor]() { LocalFree(descriptor); });
-    SECURITY_DESCRIPTOR_CONTROL control = 0;
-    DWORD revision = 0;
-    QVERIFY(GetSecurityDescriptorControl(descriptor, &control, &revision) != 0);
-    QVERIFY2((control & SE_DACL_PROTECTED) != 0, "the key file's DACL must not inherit");
-    QVERIFY(dacl != nullptr);
+void AiCredentialStoreTests::keyFileSavesThroughAJunctionedFolder() {
+    // A portable copy run from a mapped network drive, a SUBST drive or a junctioned folder
+    // reaches its data folder through a path that resolves to another spelling. PermissionManager's
+    // apply refuses such a path for an elevated change; for the key file the store has just
+    // written, that refusal would only turn into a failed save and a deleted key file. The save
+    // must succeed, and the real file must carry the restricted DACL.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString real_folder = dir.filePath(QStringLiteral("real"));
+    QVERIFY(QDir().mkpath(real_folder));
+    const QString junction = dir.filePath(QStringLiteral("linked"));
+    const QString cmd =
+        QDir(qEnvironmentVariable("SystemRoot")).filePath(QStringLiteral("System32/cmd.exe"));
+    QCOMPARE(QProcess::execute(cmd,
+                               {QStringLiteral("/d"),
+                                QStringLiteral("/c"),
+                                QStringLiteral("mklink"),
+                                QStringLiteral("/J"),
+                                QDir::toNativeSeparators(junction),
+                                QDir::toNativeSeparators(real_folder)}),
+             0);
+    const auto remove_junction = qScopeGuard([junction]() { QDir().rmdir(junction); });
 
-    std::vector<BYTE> user = currentUserSid();
-    std::vector<BYTE> system = wellKnownSid(WinLocalSystemSid);
-    std::vector<BYTE> admins = wellKnownSid(WinBuiltinAdministratorsSid);
-    QVERIFY(!user.empty() && !system.empty() && !admins.empty());
-    bool user_allowed = false;
-    for (DWORD index = 0; index < dacl->AceCount; ++index) {
-        void* ace = nullptr;
-        QVERIFY(GetAce(dacl, index, &ace) != 0);
-        const auto* header = static_cast<const ACE_HEADER*>(ace);
-        QCOMPARE(header->AceType, static_cast<BYTE>(ACCESS_ALLOWED_ACE_TYPE));
-        QVERIFY2((header->AceFlags & INHERITED_ACE) == 0, "no entry may be inherited");
-        const PSID sid = &static_cast<ACCESS_ALLOWED_ACE*>(ace)->SidStart;
-        const bool is_user = EqualSid(sid, user.data()) != 0;
-        QVERIFY2(is_user || EqualSid(sid, system.data()) != 0 || EqualSid(sid, admins.data()) != 0,
-                 "only the user, SYSTEM and Administrators may be granted access");
-        user_allowed = user_allowed || is_user;
-    }
-    QVERIFY(user_allowed);
+    QString error;
+    QVERIFY2(sak::ai::CredentialStore::saveApiKeyToPathForTesting(
+                 QDir(junction).filePath(QStringLiteral("key.json")), fixtureApiKey(), &error),
+             qPrintable(error));
+    const QString real_file = QDir(real_folder).filePath(QStringLiteral("key.json"));
+    QVERIFY(QFileInfo::exists(real_file));
+    const QString problem = daclRestrictionProblem(real_file);
+    QVERIFY2(problem.isEmpty(), qPrintable(problem));
 }
 
 void AiCredentialStoreTests::credentialDecryptFailureWipesCiphertextAndEntropy() {
