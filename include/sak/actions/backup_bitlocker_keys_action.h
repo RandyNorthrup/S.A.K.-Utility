@@ -50,7 +50,6 @@ public:
     ActionCategory category() const override { return ActionCategory::EmergencyRecovery; }
     bool requiresAdmin() const override { return true; }
 
-    void scan() override;
     void execute() override;
 
 private:

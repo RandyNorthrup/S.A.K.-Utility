@@ -83,7 +83,6 @@ static constexpr std::array<CodeDescriptionEntry, 11> kProtectorTypes = {{
 constexpr int kVolumeTypeOperatingSystem = 0;
 constexpr int kVolumeTypeFixedData = 1;
 constexpr int kVolumeTypeRemovableData = 2;
-constexpr int kEstimatedDurationPerVolumeMs = kTimeoutProcessShortMs;
 constexpr int kKeyRetrievalProgressSpan = 40;
 constexpr qsizetype kBitlockerSummaryLineReserve = 14;
 constexpr int kVolumeSizeDisplayPrecision = 2;
@@ -544,67 +543,6 @@ BackupBitlockerKeysAction::parseKeyProtectorResponse(const QString& output, bool
 // Pre-Execution Scan
 // ============================================================================
 
-void BackupBitlockerKeysAction::scan() {
-    setStatus(ActionStatus::Scanning);
-    Q_EMIT scanProgress("Detecting BitLocker-encrypted volumes...");
-
-    bool query_ok = false;
-    m_volumes = detectEncryptedVolumes(query_ok);
-
-    // A failed/denied query must not be reported as "no BitLocker" (fail closed): the volume set
-    // is UNKNOWN, so surface that and tell the technician to retry elevated.
-    if (!query_ok) {
-        ScanResult failure;
-        failure.applicable = false;
-        failure.summary = "BitLocker detection failed";
-        failure.details =
-            "Could not query BitLocker volume status. Administrator privileges are required, or "
-            "the query failed. The volume set is unknown -- run elevated and retry.";
-        setScanResult(failure);
-        setStatus(ActionStatus::Ready);
-        Q_EMIT scanComplete(failure);
-        return;
-    }
-
-    // Count total key protectors across all volumes
-    // We haven't retrieved keys yet during scan (that requires admin)
-    // Just report volume count
-
-    ScanResult result;
-    if (m_volumes.isEmpty()) {
-        result.applicable = false;
-        result.summary = "No BitLocker-encrypted volumes detected";
-        result.details =
-            "BitLocker is not configured on any volumes, "
-            "or administrator privileges are required to detect them.";
-    } else {
-        result.applicable = true;
-        result.summary = QString("Found %1 BitLocker volume(s)").arg(m_volumes.size());
-
-        QStringList volume_details;
-        for (const auto& vol : m_volumes) {
-            const QString metadata = !vol.volume_metadata_known
-                                         ? QStringLiteral("Metadata unavailable")
-                                         : (vol.volume_label.isEmpty() ? QStringLiteral("No Label")
-                                                                       : vol.volume_label);
-            const QString detail = QString("%1 (%2) -- Protection: %3, Encryption: %4")
-                                       .arg(vol.drive_letter)
-                                       .arg(metadata)
-                                       .arg(vol.protection_status)
-                                       .arg(vol.encryption_method);
-            volume_details.append(detail);
-        }
-        result.details = volume_details.join("\n");
-        result.files_count = m_volumes.size();
-        result.estimated_duration_ms = m_volumes.size() * kEstimatedDurationPerVolumeMs;
-        result.warning = "Recovery keys are sensitive -- store the backup securely";
-    }
-
-    setScanResult(result);
-    setStatus(ActionStatus::Ready);
-    Q_EMIT scanComplete(result);
-}
-
 // ============================================================================
 // Execution -- Full Key Backup
 // ============================================================================
@@ -646,9 +584,6 @@ void BackupBitlockerKeysAction::execute() {
 bool BackupBitlockerKeysAction::executeDiscoverVolumes(const QDateTime& start_time) {
     Q_EMIT executionProgress("Detecting BitLocker volumes...", progress::kStep5);
 
-    // Always re-detect at execution time rather than trusting the pre-scan
-    // cache: a volume added, removed, or reconfigured between scan and execute
-    // must be reflected so the backup never certifies a stale volume set.
     bool query_ok = false;
     m_volumes = detectEncryptedVolumes(query_ok);
 

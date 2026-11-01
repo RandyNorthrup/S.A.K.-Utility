@@ -74,22 +74,6 @@ QString describeProcessFailure(const ProcessResult& proc) {
 
 CheckDiskErrorsAction::CheckDiskErrorsAction(QObject* parent) : QuickAction(parent) {}
 
-void CheckDiskErrorsAction::scan() {
-    setStatus(ActionStatus::Scanning);
-
-    const QVector<QChar> drives = enumerateWritableDriveLetters();
-
-    ScanResult result;
-    result.applicable = !drives.isEmpty();
-    result.summary = result.applicable ? QString("Drives detected: %1").arg(drives.count())
-                                       : "No writable drives detected";
-    result.details = "Read-only online scan; reports drives needing repair without modifying them";
-
-    setScanResult(result);
-    setStatus(ActionStatus::Ready);
-    Q_EMIT scanComplete(result);
-}
-
 void CheckDiskErrorsAction::execute() {
     if (isCancelled()) {
         emitCancelledResult("Disk error check cancelled");

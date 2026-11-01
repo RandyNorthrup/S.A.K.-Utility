@@ -46,7 +46,6 @@ public:
     // Reads inventory and writes only its own report file: no system change to approve.
     bool isReadOnly() const override { return true; }
 
-    void scan() override;
     void execute() override;
 
     // ------------------------------------------------------------------

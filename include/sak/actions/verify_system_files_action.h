@@ -38,7 +38,6 @@ public:
     bool requiresAdmin() const override { return true; }
     int executionTimeoutMs() const override { return kVerifySystemFilesTimeoutMs; }
 
-    void scan() override;
     void execute() override;
 
     /// @brief The timeout one step may use: its own cap, cut to what is left of the run's

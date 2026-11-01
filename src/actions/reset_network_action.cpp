@@ -19,7 +19,6 @@
 namespace sak {
 
 namespace {
-constexpr qsizetype kAdapterCountPrefixLength = 9;
 
 // The verify probe only certifies the reset if it exited cleanly AND emitted its
 // success sentinel. A non-terminating cmdlet error leaves exit code 0 with no
@@ -52,55 +51,6 @@ QString ResetNetworkAction::buildAdapterResetScript() {
 
 bool ResetNetworkAction::stepFailed(bool timed_out, int exit_code) {
     return timed_out || exit_code != 0;
-}
-
-void ResetNetworkAction::scan() {
-    setStatus(ActionStatus::Scanning);
-
-    // On a scan failure the catch emits an ERROR sentinel and exits non-zero, so
-    // a failed enumeration is never coerced into a valid "0 adapters" reading.
-    const QString ps_cmd =
-        "$ErrorActionPreference = 'Stop'; try { "
-        "  $adapters = Get-NetAdapter | Where-Object {$_.Status -eq 'Up'}; "
-        "  Write-Output \"ADAPTERS:$($adapters.Count)\"; "
-        "} catch { Write-Output 'ADAPTERS:ERROR'; exit 1 }";
-    const ProcessResult proc = runPowerShell(ps_cmd, sak::kTimerNetshWaitMs);
-    if (!proc.std_err.trimmed().isEmpty()) {
-        Q_EMIT logMessage("Network adapter scan warning: " + proc.std_err.trimmed());
-    }
-    const QString output = proc.std_out.trimmed();
-
-    const bool scan_failed = stepFailed(proc.timed_out, proc.exit_code) ||
-                             output.contains(QStringLiteral("ADAPTERS:ERROR")) ||
-                             !output.contains(QStringLiteral("ADAPTERS:"));
-    int adapters = 0;
-    if (!scan_failed) {
-        adapters =
-            output.mid(output.indexOf("ADAPTERS:") + kAdapterCountPrefixLength).trimmed().toInt();
-    }
-
-    ScanResult result;
-    if (scan_failed) {
-        // Surface the failed scan rather than silently claiming zero adapters.
-        result.applicable = false;
-        result.summary = "Network adapter scan failed";
-        result.details =
-            "Could not enumerate network adapters; administrator privileges "
-            "may be required.";
-        result.warning = "Adapter scan failed -- reset applicability is unknown";
-    } else {
-        result.applicable = adapters > 0;
-        result.summary = adapters > 0 ? QString("Active adapters: %1").arg(adapters)
-                                      : "No active network adapters detected";
-        result.details = "Reset will refresh DNS, Winsock, TCP/IP and firewall";
-        if (adapters == 0) {
-            result.warning = "Network reset may not be applicable without active adapters";
-        }
-    }
-
-    setScanResult(result);
-    setStatus(ActionStatus::Ready);
-    Q_EMIT scanComplete(result);
 }
 
 void ResetNetworkAction::execute() {

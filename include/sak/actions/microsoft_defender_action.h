@@ -68,7 +68,6 @@ public:
     bool requiresAdmin() const override { return true; }
     int executionTimeoutMs() const override { return timeoutMs(m_operation); }
 
-    void scan() override;
     void execute() override;
 
     // ------------------------------------------------------------------

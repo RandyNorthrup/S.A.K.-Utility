@@ -45,7 +45,6 @@ public:
     QIcon icon() const override { return {}; }
     ActionCategory category() const override { return ActionCategory::Maintenance; }
     bool requiresAdmin() const override { return false; }
-    void scan() override {}
     void execute() override {
         setStatus(ActionStatus::Running);
         ExecutionResult r;

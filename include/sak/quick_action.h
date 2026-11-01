@@ -23,13 +23,10 @@ inline constexpr int kDefaultQuickActionTimeoutMs = 30 * 60 * 1000;
  * @brief Base class for all quick actions
  *
  * Provides a common interface for one-click operations that technicians
- * frequently perform. Each action supports:
- * - Pre-scan to detect what will be affected (files, size, count)
- * - Execution with progress tracking
- * - Result reporting
- * - Applicability checking
+ * frequently perform. Each action supports execution with progress tracking
+ * and result reporting.
  *
- * Thread-Safety: scan() and execute() may be called from worker threads.
+ * Thread-Safety: execute() may be called from worker threads.
  * Signals are emitted on the thread where the action was created.
  */
 class QuickAction : public QObject {
@@ -52,27 +49,12 @@ public:
      */
     enum class ActionStatus {
         Idle,      // Not started
-        Scanning,  // Pre-scanning to determine scope
-        Ready,     // Scan complete, ready to execute
         Running,   // Currently executing
         Success,   // Completed successfully
         Failed,    // Failed with error
         Cancelled  // Cancelled by user
     };
     Q_ENUM(ActionStatus)
-
-    /**
-     * @brief Scan result from pre-execution scan
-     */
-    struct ScanResult {
-        bool applicable{false};           // Is this action applicable?
-        QString summary;                  // e.g., "Frees: 2.3 GB"
-        QString details;                  // Additional details
-        qint64 bytes_affected{0};         // Total bytes to process
-        qint64 files_count{0};            // Number of files
-        qint64 estimated_duration_ms{0};  // Estimated time
-        QString warning;                  // Optional warning message
-    };
 
     /**
      * @brief Execution result
@@ -160,18 +142,6 @@ public:
     ActionStatus status() const { return m_status.load(); }
 
     /**
-     * @brief Get last scan result
-     * @return Most recent scan result
-     *
-     * Thread-Safety: m_scan_result is not synchronized. scan() may write it from a
-     * worker thread, so this reference is only valid to read AFTER the queued
-     * scanComplete() signal has been delivered (that queued-connection delivery
-     * establishes the happens-before edge). Do NOT read it concurrently while a
-     * scan() is in progress on a worker thread -- that is an unsynchronized race.
-     */
-    const ScanResult& lastScanResult() const { return m_scan_result; }
-
-    /**
      * @brief Get last execution result
      * @return Most recent execution result
      *
@@ -220,18 +190,6 @@ Q_SIGNALS:
     void statusChanged(ActionStatus status);
 
     /**
-     * @brief Emitted during scan progress
-     * @param message Progress message
-     */
-    void scanProgress(const QString& message);
-
-    /**
-     * @brief Emitted when scan completes
-     * @param result Scan result
-     */
-    void scanComplete(const ScanResult& result);
-
-    /**
      * @brief Emitted during execution progress
      * @param message Progress message
      * @param progress Progress value (0-100)
@@ -258,16 +216,6 @@ Q_SIGNALS:
 
 public Q_SLOTS:
     /**
-     * @brief Perform pre-execution scan
-     *
-     * Scans the system to determine what files/data will be affected.
-     * This is called when the panel loads to show size estimates.
-     *
-     * Thread-Safety: May be called from worker thread
-     */
-    virtual void scan() = 0;
-
-    /**
      * @brief Execute the action
      *
      * Performs the actual operation (cleanup, backup, etc.)
@@ -288,12 +236,6 @@ protected:
      * @param status New status
      */
     void setStatus(ActionStatus status);
-
-    /**
-     * @brief Set scan result
-     * @param result Scan result to store
-     */
-    void setScanResult(const ScanResult& result);
 
     /**
      * @brief Set execution result
@@ -358,7 +300,6 @@ protected:
 
 private:
     std::atomic<ActionStatus> m_status{ActionStatus::Idle};
-    ScanResult m_scan_result;
     ExecutionResult m_execution_result;
     std::atomic<bool> m_cancelled{false};
     QString m_output_folder;

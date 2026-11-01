@@ -429,36 +429,6 @@ OptimizePowerSettingsAction::resolveHighPerformancePlan(const QVector<PowerPlan>
     return built_in;
 }
 
-OptimizePowerSettingsAction::ScanResult OptimizePowerSettingsAction::scanResultFor(
-    const std::expected<PowerPlan, QString>& active) {
-    ScanResult result;
-    if (!active) {
-        // Surface the failed query rather than claiming "Power plan detected": the scan read
-        // nothing, so whether the optimization applies is unknown.
-        result.applicable = false;
-        result.summary = QStringLiteral("Active power plan could not be read");
-        result.details = active.error();
-        result.warning =
-            QStringLiteral("Power plan query failed -- whether optimization applies is unknown");
-        return result;
-    }
-    result.applicable = true;
-    result.summary = QStringLiteral("Active plan: %1").arg(active->name);
-    result.details =
-        QStringLiteral("Optimization will switch to the built-in High Performance plan");
-    return result;
-}
-
-void OptimizePowerSettingsAction::scan() {
-    setStatus(ActionStatus::Scanning);
-
-    const ScanResult result = scanResultFor(getActivePowerPlan());
-
-    setScanResult(result);
-    setStatus(ActionStatus::Ready);
-    Q_EMIT scanComplete(result);
-}
-
 QString OptimizePowerSettingsAction::buildPowerPlanListReport(
     const std::expected<PowerPlan, QString>& current_plan, const QVector<PowerPlan>& all_plans) {
     QString report = reportRule();

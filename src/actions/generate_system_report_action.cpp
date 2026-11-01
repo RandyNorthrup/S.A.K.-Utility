@@ -67,19 +67,6 @@ bool GenerateSystemReportAction::reportGenerationSucceeded(bool save_ok, bool al
     return save_ok && all_collectors_ok;
 }
 
-void GenerateSystemReportAction::scan() {
-    setStatus(ActionStatus::Scanning);
-
-    ScanResult result;
-    result.applicable = true;
-    result.summary = "Inventory will gather OS, hardware, storage, network, and volume data";
-    result.details = "Saved as a text file in the chosen folder";
-
-    setScanResult(result);
-    setStatus(ActionStatus::Ready);
-    Q_EMIT scanComplete(result);
-}
-
 // Fail closed on an empty or relative output location: a blank path resolves
 // against the process working directory and a relative one escapes the intended
 // reports folder, so the report must never be written to a caller-unintended place.

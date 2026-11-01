@@ -29,7 +29,6 @@ private Q_SLOTS:
     void formatPowerTimeout_rendersZeroAsNever();
     void resolveHighPerformancePlan_prefersBuiltInGuidOverCustomName();
     void activePlanFromQuery_reportsAFailedQuery();
-    void scanResultFor_doesNotClaimAnUnreadPlan();
     void failureText_namesTheRealCause();
     void reportRows_matchTheBorderWidth();
 };
@@ -441,24 +440,6 @@ void OptimizePowerSettingsActionTests::activePlanFromQuery_reportsAFailedQuery()
     const auto balanced = Action::activePlanFromQuery(good);
     QVERIFY(balanced.has_value());
     QCOMPARE(balanced->name, QStringLiteral("Balanced"));
-}
-
-void OptimizePowerSettingsActionTests::scanResultFor_doesNotClaimAnUnreadPlan() {
-    // POWER-5. A failed query used to produce applicable=true and "Power plan detected".
-    const auto unread = Action::scanResultFor(
-        std::unexpected(QStringLiteral("powercfg -GETACTIVESCHEME timed out")));
-    QVERIFY(!unread.applicable);
-    QVERIFY2(unread.summary.contains(QStringLiteral("could not be read")),
-             qPrintable(unread.summary));
-    QVERIFY(unread.details.contains(QStringLiteral("timed out")));
-    QVERIFY(!unread.warning.isEmpty());
-
-    const auto read = Action::scanResultFor(
-        Action::PowerPlan{.guid = QStringLiteral("381b4222-f694-41f0-9685-ff5bb260df2e"),
-                          .name = QStringLiteral("Balanced"),
-                          .isActive = true});
-    QVERIFY(read.applicable);
-    QCOMPARE(read.summary, QStringLiteral("Active plan: Balanced"));
 }
 
 void OptimizePowerSettingsActionTests::failureText_namesTheRealCause() {

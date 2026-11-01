@@ -48,7 +48,6 @@ private Q_SLOTS:
 
     // Initial state
     void testInitialStatusIsIdle();
-    void testInitialScanResultNotApplicable();
     void testInitialExecutionResultNotSuccess();
 
     void cleanupTestCase();
@@ -246,32 +245,6 @@ void TestActionFactory::testInitialStatusIsIdle() {
         QVERIFY2(action->status() == QuickAction::ActionStatus::Idle,
                  qPrintable(
                      QStringLiteral("Action '%1' initial status is not Idle").arg(action->name())));
-    }
-}
-
-void TestActionFactory::testInitialScanResultNotApplicable() {
-    for (const auto& action : m_actions) {
-        const QuickAction::ScanResult& scan = action->lastScanResult();
-        QVERIFY2(
-            !scan.applicable,
-            qPrintable(
-                QStringLiteral("Action '%1' initial scan claims applicable").arg(action->name())));
-
-        // The panel renders bytes/count/ETA as the pre-scan estimate, so a dropped or wrong
-        // default member initializer would show garbage before any scan runs. Pin the whole
-        // default-constructed struct, not just `applicable`.
-        QCOMPARE(scan.bytes_affected, Q_INT64_C(0));
-        QCOMPARE(scan.files_count, Q_INT64_C(0));
-        QCOMPARE(scan.estimated_duration_ms, Q_INT64_C(0));
-        QVERIFY2(scan.summary.isEmpty(),
-                 qPrintable(QStringLiteral("Action '%1' initial scan summary is '%2'")
-                                .arg(action->name(), scan.summary)));
-        QVERIFY2(scan.details.isEmpty(),
-                 qPrintable(QStringLiteral("Action '%1' initial scan details is '%2'")
-                                .arg(action->name(), scan.details)));
-        QVERIFY2(scan.warning.isEmpty(),
-                 qPrintable(QStringLiteral("Action '%1' initial scan warning is '%2'")
-                                .arg(action->name(), scan.warning)));
     }
 }
 

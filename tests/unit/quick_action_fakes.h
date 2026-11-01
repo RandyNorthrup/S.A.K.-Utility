@@ -86,11 +86,6 @@ public:
     QIcon icon() const override { return {}; }
     bool requiresAdmin() const override { return m_admin; }
 
-    void scan() override {
-        setScanResult({});
-        Q_EMIT scanComplete({});
-    }
-
     void execute() override {
         setStatus(ActionStatus::Running);
         Q_EMIT executionProgress(QStringLiteral("fake step"), 50);

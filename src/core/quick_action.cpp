@@ -20,10 +20,6 @@ void QuickAction::setStatus(ActionStatus status) {
     }
 }
 
-void QuickAction::setScanResult(const ScanResult& result) {
-    m_scan_result = result;
-}
-
 void QuickAction::setExecutionResult(const ExecutionResult& result) {
     m_execution_result = result;
 }
@@ -33,7 +29,7 @@ void QuickAction::cancel() {
 
     // One atomic load so the guard sees a single consistent snapshot of the status word.
     const ActionStatus current = m_status.load();
-    if (current == ActionStatus::Scanning || current == ActionStatus::Running) {
+    if (current == ActionStatus::Running) {
         setStatus(ActionStatus::Cancelled);
     }
 }

@@ -260,16 +260,6 @@ void VerifySystemFilesAction::runDISM() {
     }
 }
 
-void VerifySystemFilesAction::scan() {
-    setStatus(ActionStatus::Scanning);
-    ScanResult result;
-    result.applicable = true;
-    result.summary = "Ready to verify system files";
-    setScanResult(result);
-    setStatus(ActionStatus::Ready);
-    Q_EMIT scanComplete(result);
-}
-
 QString VerifySystemFilesAction::buildSfcSummary() const {
     if (!m_sfc_ran) {
         // SFC never produced an authoritative verdict (e.g. elevation refused or

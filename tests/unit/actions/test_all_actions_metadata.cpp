@@ -24,11 +24,10 @@ namespace {
 // The shipped catalog size, mirroring the registration list at app_action_service.cpp:26-32.
 constexpr int kExpectedActionCount = 7;
 
-// Every ActionStatus that is NOT in-flight. QuickAction::cancel() guards on a whitelist of
-// exactly two states (quick_action.cpp:43-45), so these five are its entire false arm.
-constexpr std::array<QuickAction::ActionStatus, 5> kNotInFlightStatuses{
+// Every ActionStatus that is NOT in-flight. QuickAction::cancel() transitions only from Running,
+// so these four are its entire false arm.
+constexpr std::array<QuickAction::ActionStatus, 4> kNotInFlightStatuses{
     QuickAction::ActionStatus::Idle,
-    QuickAction::ActionStatus::Ready,
     QuickAction::ActionStatus::Success,
     QuickAction::ActionStatus::Failed,
     QuickAction::ActionStatus::Cancelled};
@@ -288,24 +287,6 @@ void TestAllActionsMetadata::testStatusAfterCancel() {
         action->cancel();
         QVERIFY2(action->status() == QuickAction::ActionStatus::Idle,
                  qPrintable("cancel() from Idle changed status of '" + action->name() + "'"));
-
-        // Scanning IS in-flight: cancel() must transition to Cancelled AND announce it. The
-        // status read alone is the wrong observable: statusChanged is emitted from exactly one
-        // place (quick_action.cpp:26, inside setStatus) and is the only channel by which any
-        // observer learns of the transition -- the controller hooks it at
-        // quick_action_controller.cpp:209 and nothing polls status() -- so the Scanning path
-        // could reach the right status by a route that notifies nobody, exactly as the Running
-        // arm below already guards against.
-        action->clearCancellation();
-        action->updateStatus(QuickAction::ActionStatus::Scanning);
-        QSignalSpy scanning_spy(action.get(), &QuickAction::statusChanged);
-        QVERIFY(scanning_spy.isValid());
-        action->cancel();
-        QVERIFY2(action->status() == QuickAction::ActionStatus::Cancelled,
-                 qPrintable("cancel() during Scanning left '" + action->name() + "' un-cancelled"));
-        QCOMPARE(scanning_spy.count(), 1);
-        QCOMPARE(scanning_spy.at(0).at(0).value<QuickAction::ActionStatus>(),
-                 QuickAction::ActionStatus::Cancelled);
 
         // Running IS in-flight: cancel() must transition to Cancelled AND emit statusChanged --
         // that signal is what releases the panel's Cancel button.

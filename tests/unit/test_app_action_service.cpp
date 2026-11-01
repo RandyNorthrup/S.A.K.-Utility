@@ -98,11 +98,6 @@ public:
 
     void release() { m_released.store(true); }
 
-    void scan() override {
-        setScanResult({});
-        Q_EMIT scanComplete({});
-    }
-
     void execute() override {
         const int run = m_runs.fetch_add(1) + 1;
         m_seen_folder = outputFolder();

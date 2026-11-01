@@ -82,19 +82,6 @@ bool ScreenshotSettingsAction::captureWindowToPng(WId window, const QString& fil
     return ok;
 }
 
-void ScreenshotSettingsAction::scan() {
-    setStatus(ActionStatus::Scanning);
-
-    ScanResult result;
-    result.applicable = true;
-    result.summary = "Settings screenshots will open and capture key pages";
-    result.details = "Requires interactive desktop session";
-
-    setScanResult(result);
-    setStatus(ActionStatus::Ready);
-    Q_EMIT scanComplete(result);
-}
-
 void ScreenshotSettingsAction::execute() {
     if (isCancelled()) {
         emitCancelledResult("Screenshot capture cancelled");

@@ -31,14 +31,6 @@ public:
     bool requiresAdmin() const override { return false; }
 
 public Q_SLOTS:
-    void scan() override {
-        ScanResult r;
-        r.applicable = true;
-        r.summary = "test";
-        r.bytes_affected = 1024;
-        setScanResult(r);
-        setStatus(ActionStatus::Ready);
-    }
     void execute() override {
         ExecutionResult r;
         r.success = true;
@@ -112,15 +104,6 @@ private Q_SLOTS:
     void initialStatusIsIdle() {
         StubAction action;
         QCOMPARE(action.status(), QuickAction::ActionStatus::Idle);
-    }
-
-    void scanUpdatesStatus() {
-        StubAction action;
-        action.scan();
-        QCOMPARE(action.status(), QuickAction::ActionStatus::Ready);
-        QVERIFY(action.lastScanResult().applicable);
-        QCOMPARE(action.lastScanResult().bytes_affected, qint64(1024));
-        QCOMPARE(action.lastScanResult().summary, QStringLiteral("test"));
     }
 
     void executeUpdatesStatus() {

@@ -295,16 +295,6 @@ std::expected<QString, QString> MicrosoftDefenderAction::mpCmdRunPathFromInstall
                                     QString::fromLatin1(kMpCmdRunFileName));
 }
 
-void MicrosoftDefenderAction::scan() {
-    setStatus(ActionStatus::Scanning);
-    ScanResult result;
-    result.applicable = true;
-    result.summary = QStringLiteral("Ready: %1").arg(name());
-    setScanResult(result);
-    setStatus(ActionStatus::Ready);
-    Q_EMIT scanComplete(result);
-}
-
 void MicrosoftDefenderAction::execute() {
     const QDateTime started = QDateTime::currentDateTime();
     if (isCancelled()) {

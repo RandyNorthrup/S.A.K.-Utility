@@ -32,7 +32,6 @@ public:
     ActionCategory category() const override { return ActionCategory::SystemOptimization; }
     bool requiresAdmin() const override { return false; }
 
-    void scan() override;
     void execute() override;
 
     /// @brief True if the given active-scheme GUID is a high-performance plan
@@ -134,13 +133,9 @@ public:
     ///        none: the run failed or timed out, or it printed no scheme GUID.
     ///
     /// The query's own result used to be ignored, so a timeout or a missing powercfg read as
-    /// "no name" and the scan still reported "Power plan detected".
+    /// "no name", as if the query had found a plan with no name.
     [[nodiscard]] static std::expected<PowerPlan, QString> activePlanFromQuery(
         const ProcessResult& query);
-
-    /// @brief What scan() reports for an active-plan query result. A query that could not be
-    ///        read is reported as such, and the action is not offered as applicable on a guess.
-    [[nodiscard]] static ScanResult scanResultFor(const std::expected<PowerPlan, QString>& active);
 
     /// @brief The plan this action activates: a BUILT-IN high-performance scheme, identified by
     ///        GUID. A listed High or Ultimate Performance scheme wins; when powercfg lists
