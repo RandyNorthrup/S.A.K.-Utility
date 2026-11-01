@@ -16,6 +16,7 @@
 #include <QVector>
 
 #include <functional>
+#include <memory>
 
 // Global-namespace unit-test class, befriended below so it can exercise the pure static
 // path-safety seams (safeArtifactDirectoryName / commandLogPath) directly.
@@ -69,6 +70,14 @@ public:
     [[nodiscard]] QString rootDirectory() const;
     [[nodiscard]] QString currentSessionId() const;
     [[nodiscard]] AiSessionInfo currentSessionInfo() const;
+
+    /// @brief A store on this root bound to the session open now (none if none is open).
+    ///
+    /// Opening, starting or clearing a session on this store later does not move it, so a tool
+    /// call that captured it at dispatch writes its artifacts into the chat it ran for. It is
+    /// const: its session record is a copy, so writing the manifest through it could undo a
+    /// change made here since (a rename); manifest writes stay on this store.
+    [[nodiscard]] std::shared_ptr<const ConversationStore> sessionSnapshot() const;
 
     [[nodiscard]] static QString defaultRootDirectory();
 

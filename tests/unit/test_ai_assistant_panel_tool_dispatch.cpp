@@ -382,8 +382,8 @@ private Q_SLOTS:
         // genuinely in-flight when the panel is destroyed.
         panel->m_toolDispatcher->registerHandler(
             QStringLiteral("download_file"),
-            [&entered, &handler_returned, &handler_thread](const QJsonObject&,
-                                                           const ai::AiToolPolicyDecision&) {
+            [&entered, &handler_returned, &handler_thread](
+                const ai::AiToolCallContext&, const QJsonObject&, const ai::AiToolPolicyDecision&) {
                 handler_thread = QThread::currentThreadId();
                 entered = true;
                 QThread::msleep(200);
@@ -430,8 +430,8 @@ private Q_SLOTS:
         QSemaphore gate;
         panel->m_toolDispatcher->registerHandler(
             QStringLiteral("download_file"),
-            [&entered, &handler_returned, &gate](const QJsonObject&,
-                                                 const ai::AiToolPolicyDecision&) {
+            [&entered, &handler_returned, &gate](
+                const ai::AiToolCallContext&, const QJsonObject&, const ai::AiToolPolicyDecision&) {
                 entered = true;
                 gate.acquire();  // Ignores cancellation, like a tool stuck in a native call.
                 handler_returned = true;
@@ -452,6 +452,68 @@ private Q_SLOTS:
         gate.release();
         QTRY_VERIFY_WITH_TIMEOUT(observer.isNull(), 5000);
         QVERIFY(handler_returned.load());
+    }
+
+    // A tool call runs with the context captured when it was dispatched. Another chat opened
+    // while it runs cannot redirect it: what it writes lands in the chat it ran for, and its
+    // result is dropped instead of continuing a turn in the chat now open. (Switching is refused
+    // while the panel is busy; this opens one underneath, as a later GUI-thread change might.)
+    void sessionSwitchDuringToolKeepsItsWritesInItsOwnChat() {
+        AiAssistantPanel panel;
+        QVERIFY(panel.ensurePersistentSession(
+            QStringLiteral("Dispatch chat %1").arg(QUuid::createUuid().toString(QUuid::Id128))));
+        const QString dispatch_session = panel.m_conversationStore->currentSessionId();
+        QVERIFY(!dispatch_session.isEmpty());
+        std::atomic<bool> entered{false};
+        QSemaphore gate;
+        QString written_path;
+        installBlockingArtifactWriter(panel, &entered, &gate, &written_path);
+        allowLocalToolsAndValidRun(panel);
+        panel.beginToolTurn(downloadResponse());
+        QTRY_VERIFY_WITH_TIMEOUT(entered.load(), 5000);
+
+        QString error;
+        QVERIFY2(panel.m_conversationStore->startSession(QStringLiteral("Chat opened meanwhile"),
+                                                         &error),
+                 qPrintable(error));
+        const QString open_session = panel.m_conversationStore->currentSessionId();
+        QVERIFY(open_session != dispatch_session);
+
+        gate.release();
+        QTRY_VERIFY_WITH_TIMEOUT(!panel.m_asyncToolRunner->isRunning(), 5000);
+        QVERIFY2(written_path.contains(dispatch_session), qPrintable(written_path));
+        QVERIFY(!written_path.contains(open_session));
+        QVERIFY(QFileInfo::exists(written_path));
+        // Dropped: the result never reached the turn, and the turn ended with its chat.
+        QCOMPARE(panel.m_runState.completed_tools, 0);
+        QVERIFY(!panel.m_toolTurn.active());
+        QVERIFY(!panel.isAiBusy());
+    }
+
+    // Teardown while a tool runs: the call owns its chat's store, so it finishes writing into
+    // that chat after the panel is released and gone, and nothing crashes.
+    void releaseDuringToolKeepsItsWritesInItsOwnChat() {
+        constexpr int kShortDrainMs = 200;
+        auto panel = std::make_unique<AiAssistantPanel>();
+        QVERIFY(panel->ensurePersistentSession(
+            QStringLiteral("Released chat %1").arg(QUuid::createUuid().toString(QUuid::Id128))));
+        const QString dispatch_session = panel->m_conversationStore->currentSessionId();
+        std::atomic<bool> entered{false};
+        QSemaphore gate;
+        QString written_path;
+        installBlockingArtifactWriter(*panel, &entered, &gate, &written_path);
+        allowLocalToolsAndValidRun(*panel);
+        panel->beginToolTurn(downloadResponse());
+        QTRY_VERIFY_WITH_TIMEOUT(entered.load(), 5000);
+
+        QPointer<AiAssistantPanel> observer(panel.get());
+        AiAssistantPanel::release(std::move(panel), kShortDrainMs);
+        QVERIFY(!observer.isNull());
+
+        gate.release();
+        QTRY_VERIFY_WITH_TIMEOUT(observer.isNull(), 5000);
+        QVERIFY2(written_path.contains(dispatch_session), qPrintable(written_path));
+        QVERIFY(QFileInfo::exists(written_path));
     }
 
     // A fresh panel starts with least privilege: local execution is opt-in.
@@ -8300,7 +8362,9 @@ private Q_SLOTS:
                  qPrintable(errors.join(QLatin1Char('\n'))));
         panel.m_activeUserMessage = QStringLiteral("check disk space on this laptop");
 
-        const auto ctx = panel.resolveWorkflowRunContext(workflow.id, QJsonObject{});
+        const auto ctx = panel.resolveWorkflowRunContext(panel.captureToolCallContext(),
+                                                         workflow.id,
+                                                         QJsonObject{});
         QVERIFY(ctx.found);
         QCOMPARE(ctx.user_message, QStringLiteral("check disk space on this laptop"));
     }
@@ -8323,7 +8387,8 @@ private Q_SLOTS:
             ai::AiToolPolicy::DownloadOnly,
             request,
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("search")},
-                        {QStringLiteral("query"), QStringLiteral("7zip")}});
+                        {QStringLiteral("query"), QStringLiteral("7zip")}},
+            panel.captureToolCallContext());
         QVERIFY(outcome.availability_denied);
         QCOMPARE(outcome.result.value(QStringLiteral("failure_class")).toString(),
                  QStringLiteral("tool_busy"));
@@ -8334,13 +8399,15 @@ private Q_SLOTS:
     void runWorkflowToolValidatesWorkflowId() {
         AiAssistantPanel panel;
 
-        const QJsonObject no_id = panel.runRunWorkflowTool(QJsonObject{});
+        const QJsonObject no_id = panel.runRunWorkflowTool(panel.captureToolCallContext(),
+                                                           QJsonObject{});
         QCOMPARE(no_id.value(QStringLiteral("success")).toBool(), false);
         QVERIFY(no_id.value(QStringLiteral("error_message"))
                     .toString()
                     .contains(QStringLiteral("workflow_id")));
 
         const QJsonObject unknown = panel.runRunWorkflowTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("workflow_id"), QStringLiteral("does_not_exist_xyz")}});
         // success=false was never asserted for this arm at all, so the refusal could have been
         // reported alongside a successful launch. The message echoes the rejected id.
@@ -8356,8 +8423,11 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         ai::AiToolCallRequest request;
         request.tool_name = QStringLiteral("delegate_subagent");
-        const QJsonObject delegated = panel.dispatchSubagentToolCall(
-            ai::AiToolPolicy::ReadOnlyPc, request, QJsonObject{}, QStringLiteral("sub"));
+        const QJsonObject delegated = panel.dispatchSubagentToolCall(panel.captureToolCallContext(),
+                                                                     ai::AiToolPolicy::ReadOnlyPc,
+                                                                     request,
+                                                                     QJsonObject{},
+                                                                     QStringLiteral("sub"));
         // Neither arm asserted success=false, and the recursion backstop is the whole point:
         // pin the structural refusal itself, not a fragment shared with the policy messages.
         QCOMPARE(delegated.value(QStringLiteral("success")).toBool(), false);
@@ -8365,8 +8435,12 @@ private Q_SLOTS:
                  QStringLiteral("Sub-agents may not delegate to sub-agents or launch workflows"));
 
         request.tool_name = QStringLiteral("run_workflow");
-        const QJsonObject workflowed = panel.dispatchSubagentToolCall(
-            ai::AiToolPolicy::ReadOnlyPc, request, QJsonObject{}, QStringLiteral("sub"));
+        const QJsonObject workflowed =
+            panel.dispatchSubagentToolCall(panel.captureToolCallContext(),
+                                           ai::AiToolPolicy::ReadOnlyPc,
+                                           request,
+                                           QJsonObject{},
+                                           QStringLiteral("sub"));
         QCOMPARE(workflowed.value(QStringLiteral("success")).toBool(), false);
         QCOMPARE(workflowed.value(QStringLiteral("error_message")).toString(),
                  QStringLiteral("Sub-agents may not delegate to sub-agents or launch workflows"));
@@ -8381,8 +8455,8 @@ private Q_SLOTS:
         phase.type = QStringLiteral("tool_action");
         phase.tool = QStringLiteral("run_workflow");
         ai::AiWorkflowPhaseContext context;
-        const QJsonObject result =
-            panel.dispatchWorkflowToolPhase(phase, ai::AiToolPolicy::ReadOnlyPc, context);
+        const QJsonObject result = panel.dispatchWorkflowToolPhase(
+            phase, ai::AiToolPolicy::ReadOnlyPc, context, panel.captureToolCallContext());
         QCOMPARE(result.value(QStringLiteral("success")).toBool(), false);
         // Names BOTH banned tools: a phase refused only for run_workflow while
         // delegate_subagent still slipped through would satisfy any "may not use" fragment.
@@ -8395,7 +8469,9 @@ private Q_SLOTS:
         std::atomic<bool> handler_ran{false};
         panel.m_toolDispatcher->registerHandler(
             QStringLiteral("sak_skill"),
-            [&handler_ran](const QJsonObject& args, const ai::AiToolPolicyDecision&) {
+            [&handler_ran](const ai::AiToolCallContext&,
+                           const QJsonObject& args,
+                           const ai::AiToolPolicyDecision&) {
                 handler_ran = true;
                 return QJsonObject{{QStringLiteral("success"), true},
                                    {QStringLiteral("operation"),
@@ -8417,12 +8493,14 @@ private Q_SLOTS:
     void loopGuardRefusesIdenticalRepeatedToolCall() {
         AiAssistantPanel panel;
         std::atomic<int> handler_calls{0};
-        panel.m_toolDispatcher->registerHandler(
-            QStringLiteral("sak_skill"),
-            [&handler_calls](const QJsonObject&, const ai::AiToolPolicyDecision&) {
-                handler_calls.fetch_add(1);
-                return QJsonObject{{QStringLiteral("success"), true}};
-            });
+        panel.m_toolDispatcher->registerHandler(QStringLiteral("sak_skill"),
+                                                [&handler_calls](const ai::AiToolCallContext&,
+                                                                 const QJsonObject&,
+                                                                 const ai::AiToolPolicyDecision&) {
+                                                    handler_calls.fetch_add(1);
+                                                    return QJsonObject{
+                                                        {QStringLiteral("success"), true}};
+                                                });
         allowLocalToolsAndValidRun(panel);
 
         // One response carrying four identical sak_skill calls; the loop is
@@ -8440,12 +8518,14 @@ private Q_SLOTS:
     void loopGuardAllowsDistinctArgumentsPastThreshold() {
         AiAssistantPanel panel;
         std::atomic<int> handler_calls{0};
-        panel.m_toolDispatcher->registerHandler(
-            QStringLiteral("sak_skill"),
-            [&handler_calls](const QJsonObject&, const ai::AiToolPolicyDecision&) {
-                handler_calls.fetch_add(1);
-                return QJsonObject{{QStringLiteral("success"), true}};
-            });
+        panel.m_toolDispatcher->registerHandler(QStringLiteral("sak_skill"),
+                                                [&handler_calls](const ai::AiToolCallContext&,
+                                                                 const QJsonObject&,
+                                                                 const ai::AiToolPolicyDecision&) {
+                                                    handler_calls.fetch_add(1);
+                                                    return QJsonObject{
+                                                        {QStringLiteral("success"), true}};
+                                                });
         allowLocalToolsAndValidRun(panel);
 
         panel.beginToolTurn(repeatedSkillResponse(6, /*identical=*/false));
@@ -8746,6 +8826,36 @@ private:
         panel.m_runToken = ai::CancellationToken::createRoot(QStringLiteral("test_run"));
     }
 
+    // Replace the real download handler with one that blocks on the test's gate and then writes
+    // an artifact through the store its call's context carries, reporting where it landed.
+    static void installBlockingArtifactWriter(AiAssistantPanel& panel,
+                                              std::atomic<bool>* entered,
+                                              QSemaphore* gate,
+                                              QString* written_path) {
+        panel.m_toolDispatcher->registerHandler(
+            QStringLiteral("download_file"),
+            [entered, gate, written_path](const ai::AiToolCallContext& context,
+                                          const QJsonObject&,
+                                          const ai::AiToolPolicyDecision&) {
+                *entered = true;
+                gate->acquire();
+                QString error = QStringLiteral("the call's context carries no store");
+                if (context.session_store) {
+                    *written_path =
+                        context.session_store->writeArtifactFile(QStringLiteral("downloads"),
+                                                                 QStringLiteral("late_result.txt"),
+                                                                 QByteArrayLiteral("late"),
+                                                                 &error);
+                }
+                if (written_path->isEmpty()) {
+                    return QJsonObject{{QStringLiteral("success"), false},
+                                       {QStringLiteral("error_message"), error}};
+                }
+                return QJsonObject{{QStringLiteral("success"), true},
+                                   {QStringLiteral("path"), *written_path}};
+            });
+    }
+
     // Replace the real download handler with one that blocks on the test's gate,
     // recording the thread it ran on.
     static void installBlockingDownloadHandler(AiAssistantPanel& panel,
@@ -8754,7 +8864,8 @@ private:
                                                QSemaphore* gate) {
         panel.m_toolDispatcher->registerHandler(
             QStringLiteral("download_file"),
-            [entered, handler_thread, gate](const QJsonObject&, const ai::AiToolPolicyDecision&) {
+            [entered, handler_thread, gate](
+                const ai::AiToolCallContext&, const QJsonObject&, const ai::AiToolPolicyDecision&) {
                 *handler_thread = QThread::currentThreadId();
                 *entered = true;
                 gate->acquire();

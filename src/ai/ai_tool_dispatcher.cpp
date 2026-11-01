@@ -283,13 +283,14 @@ void AiToolDispatcher::setHealthLedger(AiToolHealthLedger* ledger) {
 }
 
 void AiToolDispatcher::invokeHandler(const Handler& handler,
+                                     const AiToolCallContext& context,
                                      const AiToolCallRequest& request,
                                      const QJsonObject& arguments,
                                      DispatchOutcome* outcome) {
     QElapsedTimer timer;
     timer.start();
     try {
-        outcome->result = handler(arguments, outcome->policy_decision);
+        outcome->result = handler(context, arguments, outcome->policy_decision);
     } catch (const std::exception& ex) {
         // Fail closed: a throwing handler must not leak the mutation lease -- leases never expire,
         // so an unreleased one blocks every future mutating call until restart -- nor skip health
@@ -310,6 +311,7 @@ void AiToolDispatcher::invokeHandler(const Handler& handler,
 AiToolDispatcher::DispatchOutcome AiToolDispatcher::dispatch(AiToolPolicy policy,
                                                              const AiToolCallRequest& request,
                                                              const QJsonObject& arguments,
+                                                             const AiToolCallContext& context,
                                                              const QString& agent_id) const {
     DispatchOutcome outcome;
     outcome.policy_decision = evaluateToolPolicy(policy, request);
@@ -337,7 +339,10 @@ AiToolDispatcher::DispatchOutcome AiToolDispatcher::dispatch(AiToolPolicy policy
         return outcome;
     }
 
-    invokeHandler(handler, request, arguments, &outcome);
+    // The handler runs under this dispatch's lease, never one a caller put in the context.
+    AiToolCallContext call_context = context;
+    call_context.lease_id = lease_id;
+    invokeHandler(handler, call_context, request, arguments, &outcome);
     // Release BEFORE recording health: a release that reports the lease was already gone means
     // lease ownership was violated mid-op, which fails the result closed -- and the health ledger
     // must then record that corrected failure, not the handler's (now untrustworthy) success.

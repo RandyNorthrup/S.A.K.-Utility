@@ -943,6 +943,7 @@ set(SAK_AI_CORE_SOURCES
     include/sak/ai/ai_subagent_tool_executor.h
     include/sak/ai/ai_tool_loop_detector.h
     include/sak/ai/ai_token_usage_tracker.h
+    include/sak/ai/ai_tool_call_context.h
     include/sak/ai/ai_tool_call_router.h
     include/sak/ai/ai_tool_dispatcher.h
     include/sak/ai/ai_tool_error.h

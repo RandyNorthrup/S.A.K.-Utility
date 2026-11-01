@@ -10,6 +10,7 @@
 #include "sak/ai/ai_orchestrator.h"
 #include "sak/ai/ai_run_state.h"
 #include "sak/ai/ai_subagent_tool_executor.h"
+#include "sak/ai/ai_tool_call_context.h"
 #include "sak/ai/ai_tool_call_router.h"
 #include "sak/ai/ai_tool_dispatcher.h"
 #include "sak/ai/ai_tool_loop_detector.h"
@@ -401,6 +402,15 @@ private:
                                                  const ai::AiToolCallRequest& policy_request,
                                                  const QJsonObject& args);
     void finishAsyncBuiltInToolCall(const QJsonObject& bundle);
+    /// What a tool call dispatched now runs with: the open chat (and a store bound to it), the
+    /// access mode, the run's cancel route and the user's request. GUI thread; the call owns
+    /// the copy, so nothing the panel does afterwards changes it.
+    [[nodiscard]] ai::AiToolCallContext captureToolCallContext() const;
+    /// Whether the chat a tool call was dispatched in is still the open one. GUI thread.
+    [[nodiscard]] bool toolCallChatIsOpen(const QString& call_session_id) const;
+    /// Ends the tool turn of a result whose chat is no longer the open one. Continuing it would
+    /// send the model's next answer, and its records, into the chat now open.
+    void dropToolResultForClosedSession(const QString& tool_name);
     // Teardown helpers (destructor and release()): stop any running local work, then wait out
     // the async tool worker and the workflow run (both may deref the panel from a worker
     // thread) before members are destroyed.
@@ -535,15 +545,18 @@ private:
                                                   QJsonObject trace_metadata);
     [[nodiscard]] QString allocateCommandId();
     void appendCitationsToList(const QVector<ai::OpenAIUrlCitation>& citations);
-    [[nodiscard]] QJsonObject runScreenshotTool(const QString& reason);
-    // Validate a download request and resolve where the file will be written, returning an
-    // empty path with *error_message set to why it cannot proceed. The artifact path is
-    // resolved on the GUI thread because download_file itself runs on a worker thread.
-    [[nodiscard]] QString resolveDownloadFileName(const QUrl& url,
-                                                  const QString& url_string,
-                                                  const QString& filename,
-                                                  QString* error_message);
-    [[nodiscard]] QJsonObject runDownloadTool(const QString& url_string, const QString& filename);
+    [[nodiscard]] QJsonObject runScreenshotTool(const ai::AiToolCallContext& context,
+                                                const QString& reason);
+    // Validate a download request and resolve the file name it will be written under, returning
+    // an empty name with *error_message set to why it cannot proceed.
+    [[nodiscard]] static QString resolveDownloadFileName(const ai::AiToolCallContext& context,
+                                                         const QUrl& url,
+                                                         const QString& url_string,
+                                                         const QString& filename,
+                                                         QString* error_message);
+    [[nodiscard]] QJsonObject runDownloadTool(const ai::AiToolCallContext& context,
+                                              const QString& url_string,
+                                              const QString& filename);
     [[nodiscard]] QJsonObject runWorkflowPowerShellTool(const QJsonObject& args,
                                                         const QString& command_preview);
     [[nodiscard]] ai::AiCommandResult executeWorkflowPowerShellRequest(
@@ -568,7 +581,8 @@ private:
     /// The human gates a provider-gateway Win32 MCP call uses (confirmation, restore point);
     /// split out of runProviderGatewayTool.
     [[nodiscard]] ai::AiProviderGatewayToolCallbacks providerGatewayCallbacks();
-    [[nodiscard]] QJsonObject runSessionSearchTool(const QJsonObject& args) const;
+    [[nodiscard]] static QJsonObject runSessionSearchTool(const ai::AiToolCallContext& context,
+                                                          const QJsonObject& args);
     // sak_skill handler: operation "list" returns the skill catalog, "load"
     // returns the full guidance body for a skill_id. Read-only resource lookup.
     [[nodiscard]] QJsonObject runSkillTool(const QJsonObject& args) const;
@@ -785,6 +799,7 @@ private:
     [[nodiscard]] int workflowProgressValue(int completed, int total, bool has_active_phase) const;
     [[nodiscard]] int workflowCompletedPhaseCount() const;
     [[nodiscard]] ai::AiToolPolicy currentAccessToolPolicy() const;
+    [[nodiscard]] static ai::AiToolPolicy accessToolPolicy(ai::AiAccessMode mode);
     [[nodiscard]] const ai::WorkflowTemplate* attachedWorkflow() const;
     [[nodiscard]] bool ensureWorkflowInputs(const ai::WorkflowTemplate& workflow,
                                             const QString& user_message,
@@ -834,27 +849,32 @@ private:
     void recordWorkflowResult(const ai::AiOrchestratorResult& result,
                               const QString& workflow_result_text);
     void finishWorkflowRunState(const ai::AiOrchestratorResult& result);
+    // @p tool_context is the one the workflow captured at launch, with this phase's token.
     [[nodiscard]] QJsonObject dispatchWorkflowToolPhase(const ai::WorkflowPhase& phase,
                                                         ai::AiToolPolicy policy,
-                                                        const ai::AiWorkflowPhaseContext& context);
+                                                        const ai::AiWorkflowPhaseContext& context,
+                                                        const ai::AiToolCallContext& tool_context);
     // Runs one acting-subagent tool call through the same policy/lease/health
     // dispatcher as workflow tool phases. Invoked on the workflow worker thread
     // via the injected AiSubagentToolExecutor (which already gated it by allowlist
     // + parsed its arguments).
-    [[nodiscard]] QJsonObject dispatchSubagentToolCall(ai::AiToolPolicy policy,
+    [[nodiscard]] QJsonObject dispatchSubagentToolCall(const ai::AiToolCallContext& tool_context,
+                                                       ai::AiToolPolicy policy,
                                                        const ai::AiToolCallRequest& request,
                                                        const QJsonObject& arguments,
                                                        const QString& agent_id);
     // Handles the model's delegate_subagent tool: spawns one scoped acting
     // sub-agent (policy clamped to the session ceiling), runs it off the GUI
     // thread, and returns its structured result to the overseer chat model.
-    [[nodiscard]] QJsonObject runDelegateSubagentTool(const QJsonObject& args);
+    [[nodiscard]] QJsonObject runDelegateSubagentTool(const ai::AiToolCallContext& context,
+                                                      const QJsonObject& args);
     // Handles the model's run_workflow tool: validates the workflow id + required
     // inputs, then runs the named catalog workflow as a blocking orchestration
     // (per-phase policy/lease/human gates still apply) and returns its result. The
     // workflow-run watcher/progress UI is left untouched; per-phase human gates do
     // still share the run-status/human-gate machinery.
-    [[nodiscard]] QJsonObject runRunWorkflowTool(const QJsonObject& args);
+    [[nodiscard]] QJsonObject runRunWorkflowTool(const ai::AiToolCallContext& context,
+                                                 const QJsonObject& args);
     struct WorkflowRunToolContext {
         ai::WorkflowTemplate workflow;
         bool found{false};
@@ -866,15 +886,19 @@ private:
         // The user's own request for this turn: the only source of the workflow's user_message.
         QString user_message;
     };
-    // Reads session state and resolves + validates the requested workflow on the
-    // GUI thread (called from the run_workflow async handler).
-    [[nodiscard]] WorkflowRunToolContext resolveWorkflowRunContext(const QString& workflow_id,
-                                                                   const QJsonObject& input_values);
+    // Takes the run token and user request from the call's @p context, and reads the panel's
+    // model settings and resolves + validates the requested workflow on the GUI thread (called
+    // from the run_workflow async handler).
+    [[nodiscard]] WorkflowRunToolContext resolveWorkflowRunContext(
+        const ai::AiToolCallContext& context,
+        const QString& workflow_id,
+        const QJsonObject& input_values);
     // Builds the RawDispatch that routes a sub-agent tool call back through the
     // guarded panel to the real policy/lease/health dispatcher. Shared by workflow
-    // delegate phases and the delegate_subagent tool so both gate identically.
+    // delegate phases and the delegate_subagent tool so both gate identically. Every call
+    // runs with @p tool_context, the context of the workflow or tool call that spawned it.
     [[nodiscard]] static ai::AiSubagentToolExecutor::RawDispatch makeSubagentToolDispatch(
-        QPointer<AiAssistantPanel> guard);
+        QPointer<AiAssistantPanel> guard, ai::AiToolCallContext tool_context);
     [[nodiscard]] WorkflowToolDispatchPlan workflowToolDispatchPlan(
         const ai::WorkflowPhase& phase,
         ai::AiToolPolicy policy,
@@ -919,6 +943,9 @@ private:
         // the orchestrator so every workflow agent is clamped to it (B12-01). Defaults to the
         // most restrictive policy so an unset ceiling fails closed.
         ai::AiToolPolicy session_policy_ceiling{ai::AiToolPolicy::NoLocalExecution};
+        // What every tool the workflow runs (its tool phases, its sub-agents' tools) runs with,
+        // captured when the workflow was launched.
+        ai::AiToolCallContext tool_context;
         PanelToolExecutor* executor{nullptr};
         // When false (the model's run_workflow tool path) the orchestrator runs
         // WITHOUT wiring the panel's workflow-run UI callbacks, so a tool-invoked

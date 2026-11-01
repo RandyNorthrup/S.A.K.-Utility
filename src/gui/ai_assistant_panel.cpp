@@ -5917,8 +5917,9 @@ bool AiAssistantPanel::dispatchBuiltInToolCall(const PendingToolCallContext& con
         return startAsyncBuiltInToolCall(context, policy_request, args);
     }
 
+    const ai::AiToolCallContext tool_context = captureToolCallContext();
     const auto outcome =
-        m_toolDispatcher->dispatch(currentAccessToolPolicy(), policy_request, args);
+        m_toolDispatcher->dispatch(tool_context.session_policy, policy_request, args, tool_context);
     recordToolLoopObservation(context.call->name, outcome.result);
     output->output =
         QString::fromUtf8(QJsonDocument(outcome.result).toJson(QJsonDocument::Compact));
@@ -5933,12 +5934,13 @@ bool AiAssistantPanel::dispatchBuiltInToolCall(const PendingToolCallContext& con
 bool AiAssistantPanel::startAsyncBuiltInToolCall(const PendingToolCallContext& context,
                                                  const ai::AiToolCallRequest& policy_request,
                                                  const QJsonObject& args) {
-    // Read the widget-backed policy on the GUI thread before going async; the
-    // worker must never touch the access-mode combo directly.
-    const ai::AiToolPolicy policy = currentAccessToolPolicy();
-    // Share the run token with the worker so a long download can be aborted
-    // (lock-free poll); cancelling m_runToken cancels this copy too.
-    m_activeToolRunToken = m_runToken;
+    // Everything the handler runs with -- the chat, the access mode, the cancel route, the
+    // user's request -- is captured here on the GUI thread and owned by the call. The worker
+    // reads none of it from the panel, so nothing the panel does meanwhile can redirect it.
+    const ai::AiToolCallContext tool_context = captureToolCallContext();
+    // The panel's own handle on the call's cancel route (shared state): Stop and teardown
+    // cancel it, and the handler polls it lock-free.
+    m_activeToolRunToken = tool_context.cancel_token;
     const QJsonObject base_metadata = context.metadata;
     const QString call_id = context.call->call_id;
     const QString name = context.call->name;
@@ -5950,11 +5952,12 @@ bool AiAssistantPanel::startAsyncBuiltInToolCall(const PendingToolCallContext& c
     // throw is entirely possible. Convert it into the ordinary failed-tool-call shape the
     // panel already understands, at the one place that knows the call_id and name.
     //
-    // The work holds the dispatcher by shared ownership, not through `this`: everything it
-    // touches directly stays alive for as long as it runs. (The registered handlers still reach
-    // panel state, which is why teardown goes through release().)
+    // The work holds the dispatcher by shared ownership and the context by value, not through
+    // `this`. (The handlers still reach the panel's long-lived services and its GUI-thread
+    // dialogs, which is why teardown goes through release().) The bundle names the chat the
+    // call ran for, so a result that comes back after another chat was opened is dropped.
     auto work = [dispatcher = m_toolDispatcher,
-                 policy,
+                 tool_context,
                  policy_request,
                  args,
                  base_metadata,
@@ -5963,8 +5966,10 @@ bool AiAssistantPanel::startAsyncBuiltInToolCall(const PendingToolCallContext& c
         QJsonObject bundle;
         bundle[QStringLiteral("call_id")] = call_id;
         bundle[QStringLiteral("name")] = name;
+        bundle[QStringLiteral("session_id")] = tool_context.session_id;
         try {
-            const auto outcome = dispatcher->dispatch(policy, policy_request, args);
+            const auto outcome = dispatcher->dispatch(
+                tool_context.session_policy, policy_request, args, tool_context);
             bundle[QStringLiteral("output")] =
                 QString::fromUtf8(QJsonDocument(outcome.result).toJson(QJsonDocument::Compact));
             bundle[QStringLiteral("result")] = outcome.result;
@@ -5995,8 +6000,46 @@ bool AiAssistantPanel::startAsyncBuiltInToolCall(const PendingToolCallContext& c
     return true;
 }
 
+ai::AiToolCallContext AiAssistantPanel::captureToolCallContext() const {
+    // Reads widget-backed and GUI-thread state; marshal if ever asked from a worker.
+    if (!isOnGuiThread()) {
+        return runOnGuiThread([this]() { return captureToolCallContext(); });
+    }
+    ai::AiToolCallContext context;
+    if (m_conversationStore) {
+        context.session_store = m_conversationStore->sessionSnapshot();
+        context.session_id = context.session_store->currentSessionId();
+    }
+    // One read of the mode decides both: two reads could straddle a change.
+    context.access_mode = currentAccessMode();
+    context.session_policy = accessToolPolicy(context.access_mode);
+    context.cancel_token = m_runToken;
+    context.user_message = m_activeUserMessage;
+    return context;
+}
+
+bool AiAssistantPanel::toolCallChatIsOpen(const QString& call_session_id) const {
+    // A call dispatched with no chat open belongs to none, so no chat can have replaced it.
+    return call_session_id.isEmpty() ||
+           (m_conversationStore && m_conversationStore->currentSessionId() == call_session_id);
+}
+
+void AiAssistantPanel::dropToolResultForClosedSession(const QString& tool_name) {
+    // No trace: the trace store now writes the open chat's log, not the call's.
+    appendLocalEvent(
+        tr("Dropped the %1 result: the chat it ran for is no longer open").arg(tool_name));
+    // The run state went with that chat (opening a chat loads its own); only the turn is left.
+    resetPendingToolTurn();
+    setUiBusy(isAiBusy());
+    updateCredentialControls();
+}
+
 void AiAssistantPanel::finishAsyncBuiltInToolCall(const QJsonObject& bundle) {
     const QString name = bundle.value(QStringLiteral("name")).toString();
+    if (!toolCallChatIsOpen(bundle.value(QStringLiteral("session_id")).toString())) {
+        dropToolResultForClosedSession(name);
+        return;
+    }
     recordToolLoopObservation(name, bundle.value(QStringLiteral("result")).toObject());
     traceAiEvent(QStringLiteral("tool_call"),
                  name,
@@ -6874,16 +6917,18 @@ bool AiAssistantPanel::handleRestorePointResponse(const QJsonObject& response_da
     return false;
 }
 
-QJsonObject AiAssistantPanel::runScreenshotTool(const QString& reason) {
+QJsonObject AiAssistantPanel::runScreenshotTool(const ai::AiToolCallContext& context,
+                                                const QString& reason) {
     // QScreen/QPixmap are GUI-affine. A workflow phase or async tool handler dispatches
     // this on a worker thread, so marshal the whole capture onto the GUI thread rather
     // than grabbing and saving the screen off-thread (undefined behavior / crash).
     if (!isOnGuiThread()) {
-        return runOnGuiThread([this, reason]() { return runScreenshotTool(reason); });
+        return runOnGuiThread(
+            [this, &context, &reason]() { return runScreenshotTool(context, reason); });
     }
     QJsonObject result;
     result[QStringLiteral("success")] = false;
-    if (!m_conversationStore) {
+    if (!context.session_store) {
         result[QStringLiteral("error_message")] =
             QStringLiteral("No active AI session for screenshot");
         return result;
@@ -6910,7 +6955,7 @@ QJsonObject AiAssistantPanel::runScreenshotTool(const QString& reason) {
         return result;
     }
     QString error;
-    const QString path = m_conversationStore->writeArtifactFile(
+    const QString path = context.session_store->writeArtifactFile(
         QStringLiteral("screenshots"), filename, png_bytes, &error);
     if (path.isEmpty()) {
         result[QStringLiteral("error_message")] = error;
@@ -6925,11 +6970,12 @@ QJsonObject AiAssistantPanel::runScreenshotTool(const QString& reason) {
     return result;
 }
 
-QString AiAssistantPanel::resolveDownloadFileName(const QUrl& url,
+QString AiAssistantPanel::resolveDownloadFileName(const ai::AiToolCallContext& context,
+                                                  const QUrl& url,
                                                   const QString& url_string,
                                                   const QString& filename,
                                                   QString* error_message) {
-    if (!m_conversationStore) {
+    if (!context.session_store) {
         *error_message = QStringLiteral("No active AI session for download");
         return {};
     }
@@ -6953,21 +6999,21 @@ QString AiAssistantPanel::resolveDownloadFileName(const QUrl& url,
     return safe_name;
 }
 
-QJsonObject AiAssistantPanel::runDownloadTool(const QString& url_string, const QString& filename) {
+QJsonObject AiAssistantPanel::runDownloadTool(const ai::AiToolCallContext& context,
+                                              const QString& url_string,
+                                              const QString& filename) {
     QJsonObject result;
     result[QStringLiteral("success")] = false;
     const QUrl url(url_string);
     QString error;
-    const QString safe_name = resolveDownloadFileName(url, url_string, filename, &error);
+    const QString safe_name = resolveDownloadFileName(context, url, url_string, filename, &error);
     if (safe_name.isEmpty()) {
         result[QStringLiteral("error_message")] = error;
         return result;
     }
 
     QByteArray bytes;
-    const auto cancel_requested = [this]() {
-        return m_activeToolRunToken.isValid() && m_activeToolRunToken.isCancellationRequested();
-    };
+    const std::function<bool()> cancel_requested = context.cancelCheck();
     if (!downloadUrlBytes(url, &bytes, &error, cancel_requested)) {
         result[QStringLiteral("error_message")] = error;
         return result;
@@ -6978,7 +7024,8 @@ QJsonObject AiAssistantPanel::runDownloadTool(const QString& url_string, const Q
         result[QStringLiteral("error_message")] = QStringLiteral("Download cancelled");
         return result;
     }
-    const QString destination = m_conversationStore->writeArtifactFile(
+    // The chat the call was dispatched in, whatever is open now.
+    const QString destination = context.session_store->writeArtifactFile(
         QStringLiteral("downloads"), safe_name, bytes, &error);
     if (destination.isEmpty()) {
         result[QStringLiteral("error_message")] = error;
@@ -7285,8 +7332,9 @@ ai::AiProviderGatewayToolCallbacks AiAssistantPanel::providerGatewayCallbacks() 
     return callbacks;
 }
 
-QJsonObject AiAssistantPanel::runSessionSearchTool(const QJsonObject& args) const {
-    if (!m_conversationStore) {
+QJsonObject AiAssistantPanel::runSessionSearchTool(const ai::AiToolCallContext& context,
+                                                   const QJsonObject& args) {
+    if (!context.session_store) {
         QJsonObject result = toolError(QStringLiteral("AI session store is not available"));
         result[QStringLiteral("failure_class")] = QStringLiteral("session_store_unavailable");
         return result;
@@ -7294,7 +7342,7 @@ QJsonObject AiAssistantPanel::runSessionSearchTool(const QJsonObject& args) cons
     const QString query = args.value(QStringLiteral("query")).toString().trimmed();
     const int max_results = std::clamp(args.value(QStringLiteral("max_results")).toInt(25), 1, 100);
     QString error;
-    const auto hits = m_conversationStore->searchSessions(query, max_results, &error);
+    const auto hits = context.session_store->searchSessions(query, max_results, &error);
     if (!error.isEmpty()) {
         QJsonObject result = toolError(error);
         result[QStringLiteral("failure_class")] = QStringLiteral("session_search_failed");
@@ -9733,7 +9781,11 @@ void AiAssistantPanel::clearPendingGateIfResolved(const ai::AiHumanGate& gate) {
 }
 
 ai::AiToolPolicy AiAssistantPanel::currentAccessToolPolicy() const {
-    switch (currentAccessMode()) {
+    return accessToolPolicy(currentAccessMode());
+}
+
+ai::AiToolPolicy AiAssistantPanel::accessToolPolicy(ai::AiAccessMode mode) {
+    switch (mode) {
     case ai::AiAccessMode::Invalid:
     case ai::AiAccessMode::ChatAndResearch:
         return ai::AiToolPolicy::NoLocalExecution;
@@ -9916,63 +9968,67 @@ void AiAssistantPanel::registerSessionSearchAvailabilityChecker() {
 }
 
 void AiAssistantPanel::registerToolHandlers() {
+    // Each handler gets the context its call was dispatched with and reads the chat, access
+    // mode and cancel route from it, never from the panel (see ai::AiToolCallContext).
+    using Context = ai::AiToolCallContext;
+    using Decision = ai::AiToolPolicyDecision;
     m_toolDispatcher->registerHandler(
         QStringLiteral("take_screenshot"),
-        [this](const QJsonObject& args, const ai::AiToolPolicyDecision&) {
-            return runScreenshotTool(args.value(QStringLiteral("reason")).toString());
+        [this](const Context& context, const QJsonObject& args, const Decision&) {
+            return runScreenshotTool(context, args.value(QStringLiteral("reason")).toString());
         });
     m_toolDispatcher->registerHandler(
         QStringLiteral("download_file"),
-        [this](const QJsonObject& args, const ai::AiToolPolicyDecision&) {
-            return runDownloadTool(args.value(QStringLiteral("url")).toString(),
+        [this](const Context& context, const QJsonObject& args, const Decision&) {
+            return runDownloadTool(context,
+                                   args.value(QStringLiteral("url")).toString(),
                                    args.value(QStringLiteral("filename")).toString());
         });
     m_toolDispatcher->registerHandler(
         QStringLiteral("run_powershell"),
-        [this](const QJsonObject& args, const ai::AiToolPolicyDecision&) {
+        [this](const Context&, const QJsonObject& args, const Decision&) {
             return runWorkflowPowerShellTool(
                 args, args.value(QStringLiteral("command_preview")).toString());
         });
-    m_toolDispatcher->registerHandler(QStringLiteral("sak_package_manager"),
-                                      [this](const QJsonObject& args,
-                                             const ai::AiToolPolicyDecision&) {
-                                          return runPackageManagerTool(args);
-                                      });
-    m_toolDispatcher->registerHandler(QStringLiteral("sak_offline_downloader"),
-                                      [this](const QJsonObject& args,
-                                             const ai::AiToolPolicyDecision&) {
-                                          return runOfflineDownloaderTool(args);
-                                      });
-    m_toolDispatcher->registerHandler(QStringLiteral("sak_provider_gateway"),
-                                      [this](const QJsonObject& args,
-                                             const ai::AiToolPolicyDecision&) {
-                                          return runProviderGatewayTool(args);
-                                      });
-    m_toolDispatcher->registerHandler(QStringLiteral("sak_session_search"),
-                                      [this](const QJsonObject& args,
-                                             const ai::AiToolPolicyDecision&) {
-                                          return runSessionSearchTool(args);
-                                      });
+    m_toolDispatcher->registerHandler(
+        QStringLiteral("sak_package_manager"),
+        [this](const Context&, const QJsonObject& args, const Decision&) {
+            return runPackageManagerTool(args);
+        });
+    m_toolDispatcher->registerHandler(
+        QStringLiteral("sak_offline_downloader"),
+        [this](const Context&, const QJsonObject& args, const Decision&) {
+            return runOfflineDownloaderTool(args);
+        });
+    m_toolDispatcher->registerHandler(
+        QStringLiteral("sak_provider_gateway"),
+        [this](const Context&, const QJsonObject& args, const Decision&) {
+            return runProviderGatewayTool(args);
+        });
+    m_toolDispatcher->registerHandler(
+        QStringLiteral("sak_session_search"),
+        [](const Context& context, const QJsonObject& args, const Decision&) {
+            return runSessionSearchTool(context, args);
+        });
+    // The skill catalog is the panel's, loaded once; a call reads nothing session-scoped.
     m_toolDispatcher->registerHandler(QStringLiteral("sak_skill"),
-                                      [this](const QJsonObject& args,
-                                             const ai::AiToolPolicyDecision&) {
-                                          return runSkillTool(args);
-                                      });
-    m_toolDispatcher->registerHandler(QStringLiteral("delegate_subagent"),
-                                      [this](const QJsonObject& args,
-                                             const ai::AiToolPolicyDecision&) {
-                                          return runDelegateSubagentTool(args);
-                                      });
-    m_toolDispatcher->registerHandler(QStringLiteral("run_workflow"),
-                                      [this](const QJsonObject& args,
-                                             const ai::AiToolPolicyDecision&) {
-                                          return runRunWorkflowTool(args);
-                                      });
+                                      [this](const Context&,
+                                             const QJsonObject& args,
+                                             const Decision&) { return runSkillTool(args); });
+    m_toolDispatcher->registerHandler(
+        QStringLiteral("delegate_subagent"),
+        [this](const Context& context, const QJsonObject& args, const Decision&) {
+            return runDelegateSubagentTool(context, args);
+        });
+    m_toolDispatcher->registerHandler(
+        QStringLiteral("run_workflow"),
+        [this](const Context& context, const QJsonObject& args, const Decision&) {
+            return runRunWorkflowTool(context, args);
+        });
     m_toolDispatcher->registerHandler(QStringLiteral("sak_app_action"),
-                                      [this](const QJsonObject& args,
-                                             const ai::AiToolPolicyDecision&) {
-                                          return runAppActionTool(args);
-                                      });
+                                      [this](const Context&,
+                                             const QJsonObject& args,
+                                             const Decision&) { return runAppActionTool(args); });
 }
 
 const ai::WorkflowTemplate* AiAssistantPanel::attachedWorkflow() const {
@@ -10269,7 +10325,8 @@ bool AiAssistantPanel::resolveWorkflowRecoveryChoice(const ai::AiHumanGate& gate
 }
 QJsonObject AiAssistantPanel::dispatchWorkflowToolPhase(const ai::WorkflowPhase& phase,
                                                         ai::AiToolPolicy policy,
-                                                        const ai::AiWorkflowPhaseContext& context) {
+                                                        const ai::AiWorkflowPhaseContext& context,
+                                                        const ai::AiToolCallContext& tool_context) {
     if (phase.type.compare(QStringLiteral("cleanup"), Qt::CaseInsensitive) == 0 &&
         phase.tool.trimmed().isEmpty()) {
         QJsonObject ok;
@@ -10300,13 +10357,15 @@ QJsonObject AiAssistantPanel::dispatchWorkflowToolPhase(const ai::WorkflowPhase&
     const auto outcome = m_toolDispatcher->dispatch(plan.policy,
                                                     plan.request,
                                                     plan.args,
+                                                    tool_context,
                                                     phase.agent.isEmpty()
                                                         ? QStringLiteral("overseer")
                                                         : phase.agent);
     return outcome.result;
 }
 
-QJsonObject AiAssistantPanel::dispatchSubagentToolCall(ai::AiToolPolicy policy,
+QJsonObject AiAssistantPanel::dispatchSubagentToolCall(const ai::AiToolCallContext& tool_context,
+                                                       ai::AiToolPolicy policy,
                                                        const ai::AiToolCallRequest& request,
                                                        const QJsonObject& arguments,
                                                        const QString& agent_id) {
@@ -10329,18 +10388,23 @@ QJsonObject AiAssistantPanel::dispatchSubagentToolCall(ai::AiToolPolicy policy,
         return toolError(
             QStringLiteral("Sub-agents may not delegate to sub-agents or launch workflows"));
     }
-    const auto outcome = m_toolDispatcher->dispatch(
-        policy, request, arguments, agent_id.isEmpty() ? QStringLiteral("subagent") : agent_id);
+    const auto outcome = m_toolDispatcher->dispatch(policy,
+                                                    request,
+                                                    arguments,
+                                                    tool_context,
+                                                    agent_id.isEmpty() ? QStringLiteral("subagent")
+                                                                       : agent_id);
     return outcome.result;
 }
 
 ai::AiSubagentToolExecutor::RawDispatch AiAssistantPanel::makeSubagentToolDispatch(
-    QPointer<AiAssistantPanel> guard) {
-    return [guard](ai::AiToolPolicy policy,
-                   const ai::AiToolCallRequest& request,
-                   const QJsonObject& arguments,
-                   const QString& agent_id,
-                   const ai::CancellationToken& token) -> QJsonObject {
+    QPointer<AiAssistantPanel> guard, ai::AiToolCallContext tool_context) {
+    return [guard, tool_context = std::move(tool_context)](
+               ai::AiToolPolicy policy,
+               const ai::AiToolCallRequest& request,
+               const QJsonObject& arguments,
+               const QString& agent_id,
+               const ai::CancellationToken& token) -> QJsonObject {
         if (!guard) {
             return toolError(QStringLiteral("Panel gone"));
         }
@@ -10349,36 +10413,37 @@ ai::AiSubagentToolExecutor::RawDispatch AiAssistantPanel::makeSubagentToolDispat
             cancelled[QStringLiteral("cancelled")] = true;
             return cancelled;
         }
-        return guard->dispatchSubagentToolCall(policy, request, arguments, agent_id);
+        // The spawning call's context, cancelled through the sub-agent's own token.
+        ai::AiToolCallContext call_context = tool_context;
+        if (token.isValid()) {
+            call_context.cancel_token = token;
+        }
+        return guard->dispatchSubagentToolCall(call_context, policy, request, arguments, agent_id);
     };
 }
 
-QJsonObject AiAssistantPanel::runDelegateSubagentTool(const QJsonObject& args) {
+QJsonObject AiAssistantPanel::runDelegateSubagentTool(const ai::AiToolCallContext& context,
+                                                      const QJsonObject& args) {
     const QString objective = args.value(QStringLiteral("objective")).toString().trimmed();
     if (objective.isEmpty()) {
         return toolError(QStringLiteral("delegate_subagent requires a non-empty 'objective'"));
     }
 
-    // Read session-scoped, GUI-affine state on the GUI thread before running the
-    // sub-agent off-thread (this handler already runs on the async worker).
+    // The key and model are panel settings, read on the GUI thread (this handler runs on the
+    // async worker). Everything session-scoped -- the user's request, the policy ceiling, the
+    // cancel route -- is the call's own, from its context.
     QString api_key;
     QString model;
-    QString user_message;
-    ai::AiToolPolicy session_policy = ai::AiToolPolicy::NoLocalExecution;
-    ai::CancellationToken token;
     ai::AiModelClientFactory factory_override;
     invokeOnGuiThreadBlocking([&]() {
         api_key = apiKey();
         model = m_modelCombo ? m_modelCombo->currentText().trimmed() : QString();
-        user_message = m_activeUserMessage;
-        session_policy = currentAccessToolPolicy();
-        token = m_activeToolRunToken.isValid() ? m_activeToolRunToken : m_runToken;
         factory_override = m_delegateSubagentModelFactoryOverride;
     });
 
     const ai::AiToolPolicy requested =
         ai::toolPolicyFromString(args.value(QStringLiteral("tool_policy")).toString());
-    const ai::AiToolPolicy effective = ai::clampToolPolicy(requested, session_policy);
+    const ai::AiToolPolicy effective = ai::clampToolPolicy(requested, context.session_policy);
 
     ai::AiSubagentTask task;
     task.task_id =
@@ -10386,7 +10451,7 @@ QJsonObject AiAssistantPanel::runDelegateSubagentTool(const QJsonObject& args) {
     task.run_id = task.task_id;
     task.agent_id = QStringLiteral("delegate");
     task.objective = objective;
-    task.user_message = user_message;
+    task.user_message = context.user_message;
     task.tool_policy = effective;
     task.expected_output_schema = args.value(QStringLiteral("expected_output")).toString();
     task.model = model;
@@ -10411,11 +10476,11 @@ QJsonObject AiAssistantPanel::runDelegateSubagentTool(const QJsonObject& args) {
     runner.setOptions(opts);
 
     ai::AiSubagentToolExecutor tool_executor(
-        makeSubagentToolDispatch(QPointer<AiAssistantPanel>(this)));
+        makeSubagentToolDispatch(QPointer<AiAssistantPanel>(this), context));
     tool_executor.setAllowedTools(subagentAllowedToolNames());
     runner.setToolExecutor(&tool_executor);
 
-    const ai::AiSubagentResult result = runner.run(task, token);
+    const ai::AiSubagentResult result = runner.run(task, context.cancel_token);
     QJsonObject out = result.toJson();
     out[QStringLiteral("success")] = (result.status == ai::AiSubagentStatus::Complete ||
                                       result.status == ai::AiSubagentStatus::Degraded);
@@ -10704,7 +10769,9 @@ bool AiAssistantPanel::authorizeWorkflowToolPhase(const ai::WorkflowPhase& phase
 }
 class AiAssistantPanel::PanelToolExecutor : public ai::IAiToolExecutor {
 public:
-    explicit PanelToolExecutor(AiAssistantPanel* panel) : m_panel(panel) {}
+    /// @param tool_context what the workflow's tool phases run with, captured at its launch
+    PanelToolExecutor(AiAssistantPanel* panel, ai::AiToolCallContext tool_context)
+        : m_panel(panel), m_tool_context(std::move(tool_context)) {}
 
     QJsonObject runToolPhase(const ai::WorkflowPhase& phase,
                              ai::AiToolPolicy policy,
@@ -10724,11 +10791,17 @@ public:
         // handlers marshal their own GUI/store touchpoints back to the GUI thread
         // (runOnGuiThread), and the panel destructor joins this run before members
         // are destroyed (or release() retains the panel), so dereferencing it is safe.
-        return panel->dispatchWorkflowToolPhase(phase, policy, context);
+        // The phase runs with the workflow's launch context, cancelled through its own token.
+        ai::AiToolCallContext call_context = m_tool_context;
+        if (token.isValid()) {
+            call_context.cancel_token = token;
+        }
+        return panel->dispatchWorkflowToolPhase(phase, policy, context, call_context);
     }
 
 private:
     QPointer<AiAssistantPanel> m_panel;
+    ai::AiToolCallContext m_tool_context;
 };
 
 void AiAssistantPanel::appendPhaseStartedToTranscript(const ai::WorkflowPhase& phase) {
@@ -11190,7 +11263,11 @@ void AiAssistantPanel::startWorkflowRunFuture(const ai::WorkflowTemplate& workfl
     const QJsonObject input_values_copy = input_values;
     const QJsonObject resume_state_copy = resume_state;
     const QPointer<AiAssistantPanel> panel_guard(this);
-    PanelToolExecutor* executor = new PanelToolExecutor(this);
+    // Every tool the workflow runs belongs to the chat open now and the request that started it.
+    ai::AiToolCallContext tool_context = captureToolCallContext();
+    tool_context.cancel_token = token;
+    tool_context.user_message = user_message;
+    PanelToolExecutor* executor = new PanelToolExecutor(this, tool_context);
     const WorkflowRunLaunch launch{.panel_guard = panel_guard,
                                    .workflow = workflow_copy,
                                    .run_id = run_id,
@@ -11201,7 +11278,8 @@ void AiAssistantPanel::startWorkflowRunFuture(const ai::WorkflowTemplate& workfl
                                    .input_values = input_values_copy,
                                    .resume_state = resume_state_copy,
                                    .user_message = user_message,
-                                   .session_policy_ceiling = currentAccessToolPolicy(),
+                                   .session_policy_ceiling = tool_context.session_policy,
+                                   .tool_context = tool_context,
                                    .executor = executor};
 
     const QFuture<ai::AiOrchestratorResult> future =
@@ -11282,8 +11360,8 @@ ai::AiOrchestratorResult AiAssistantPanel::executeWorkflowRun(const WorkflowRunL
     // because parallel phase groups are restricted to read-only policies (no
     // leases; the read-only handlers only read immutable stores). Do NOT allowlist
     // a mutating/stateful handler without making it concurrency-safe.
-    ai::AiSubagentToolExecutor subagent_tool_executor(makeSubagentToolDispatch(launch.panel_guard),
-                                                      true);
+    ai::AiSubagentToolExecutor subagent_tool_executor(
+        makeSubagentToolDispatch(launch.panel_guard, launch.tool_context), true);
     subagent_tool_executor.setAllowedTools(subagentAllowedToolNames());
     runner.setToolExecutor(&subagent_tool_executor);
 
@@ -11313,16 +11391,19 @@ ai::AiOrchestratorResult AiAssistantPanel::executeWorkflowRun(const WorkflowRunL
 }
 
 AiAssistantPanel::WorkflowRunToolContext AiAssistantPanel::resolveWorkflowRunContext(
-    const QString& workflow_id, const QJsonObject& input_values) {
+    const ai::AiToolCallContext& context,
+    const QString& workflow_id,
+    const QJsonObject& input_values) {
     WorkflowRunToolContext ctx;
+    // The call's own: the run it belongs to and the request the user made for it.
+    ctx.token = context.cancel_token;
+    ctx.user_message = context.user_message;
     invokeOnGuiThreadBlocking([&]() {
         ctx.api_key = apiKey();
         ctx.model = m_modelCombo ? m_modelCombo->currentText().trimmed() : QString();
         ctx.reasoning = m_reasoningEffortCombo
                             ? m_reasoningEffortCombo->currentText().trimmed().toLower()
                             : QString();
-        ctx.token = m_activeToolRunToken.isValid() ? m_activeToolRunToken : m_runToken;
-        ctx.user_message = m_activeUserMessage;
         const ai::WorkflowTemplate* workflow =
             m_workflowStore ? m_workflowStore->workflowById(workflow_id) : nullptr;
         if (workflow == nullptr) {
@@ -11342,7 +11423,8 @@ AiAssistantPanel::WorkflowRunToolContext AiAssistantPanel::resolveWorkflowRunCon
     return ctx;
 }
 
-QJsonObject AiAssistantPanel::runRunWorkflowTool(const QJsonObject& args) {
+QJsonObject AiAssistantPanel::runRunWorkflowTool(const ai::AiToolCallContext& context,
+                                                 const QJsonObject& args) {
     const QString workflow_id = args.value(QStringLiteral("workflow_id")).toString().trimmed();
     if (workflow_id.isEmpty()) {
         return toolError(QStringLiteral("run_workflow requires a 'workflow_id' from the catalog"));
@@ -11354,7 +11436,8 @@ QJsonObject AiAssistantPanel::runRunWorkflowTool(const QJsonObject& args) {
         return toolError(parse_error);
     }
 
-    const WorkflowRunToolContext ctx = resolveWorkflowRunContext(workflow_id, input_values);
+    const WorkflowRunToolContext ctx =
+        resolveWorkflowRunContext(context, workflow_id, input_values);
     if (!ctx.found) {
         return toolError(
             QStringLiteral("Unknown workflow_id '%1' (not in the catalog)").arg(workflow_id));
@@ -11389,9 +11472,11 @@ QJsonObject AiAssistantPanel::runRunWorkflowTool(const QJsonObject& args) {
     // this no longer depends on that.
     launch.user_message = ctx.user_message;
     // Clamp the tool-invoked workflow to the session ceiling too (B12-01): a run_workflow tool
-    // call must not let a workflow agent exceed the session's granted capability.
-    launch.session_policy_ceiling = currentAccessToolPolicy();
-    launch.executor = new PanelToolExecutor(this);
+    // call must not let a workflow agent exceed the session's granted capability. The ceiling
+    // and every tool the workflow runs are the dispatching call's.
+    launch.session_policy_ceiling = context.session_policy;
+    launch.tool_context = context;
+    launch.executor = new PanelToolExecutor(this, context);
     launch.wire_callbacks = false;
 
     const ai::AiOrchestratorResult result = executeWorkflowRun(launch);
@@ -12568,6 +12653,13 @@ void AiAssistantPanel::onSessionSelected(int index) {
 
 void AiAssistantPanel::onRenameSessionClicked() {
     if (!m_conversationStore) {
+        return;
+    }
+    if (isAiBusy()) {
+        // A rename moves the chat's artifact folder, and a running tool call writes into the
+        // folder of the chat it was dispatched in. (The button is disabled while busy too.)
+        Q_EMIT statusMessage(tr("Stop the active AI run before renaming the chat"),
+                             sak::kTimerStatusDefaultMs);
         return;
     }
     const auto info = m_conversationStore->currentSessionInfo();

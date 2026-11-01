@@ -37,7 +37,8 @@ void AiToolDispatcherTests::policyDeniedReturnsStructuredBlock() {
     sak::ai::AiToolDispatcher dispatcher;
     bool handler_called = false;
     dispatcher.registerHandler(QStringLiteral("run_powershell"),
-                               [&handler_called](const QJsonObject&,
+                               [&handler_called](const sak::ai::AiToolCallContext&,
+                                                 const QJsonObject&,
                                                  const sak::ai::AiToolPolicyDecision&) {
                                    handler_called = true;
                                    return QJsonObject{};
@@ -47,7 +48,7 @@ void AiToolDispatcherTests::policyDeniedReturnsStructuredBlock() {
     request.tool_name = QStringLiteral("run_powershell");
     request.command_preview = QStringLiteral("Remove-Item C:\\temp\\x -Recurse");
 
-    const auto outcome = dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {});
+    const auto outcome = dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {}, {});
     QVERIFY(!outcome.dispatched);
     QVERIFY(!outcome.policy_decision.allowed);
     QVERIFY(outcome.policy_decision.risky_change);
@@ -72,10 +73,14 @@ void AiToolDispatcherTests::policyDeniedReturnsStructuredBlock() {
 void AiToolDispatcherTests::allowedCallReachesHandler() {
     sak::ai::AiToolDispatcher dispatcher;
     QJsonObject received_args;
+    QString received_lease = QStringLiteral("not called");
     dispatcher.registerHandler(QStringLiteral("take_screenshot"),
-                               [&received_args](const QJsonObject& args,
-                                                const sak::ai::AiToolPolicyDecision&) {
+                               [&received_args,
+                                &received_lease](const sak::ai::AiToolCallContext& context,
+                                                 const QJsonObject& args,
+                                                 const sak::ai::AiToolPolicyDecision&) {
                                    received_args = args;
+                                   received_lease = context.lease_id;
                                    QJsonObject result;
                                    result[QStringLiteral("success")] = true;
                                    result[QStringLiteral("path")] = QStringLiteral("a.png");
@@ -88,8 +93,13 @@ void AiToolDispatcherTests::allowedCallReachesHandler() {
 
     QJsonObject args;
     args[QStringLiteral("reason")] = QStringLiteral("snapshot");
-    const auto outcome = dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, args);
+    // A read-only dispatch takes no lease, so a lease a caller planted never reaches the handler.
+    sak::ai::AiToolCallContext context;
+    context.lease_id = QStringLiteral("lease_supplied_by_the_caller");
+    const auto outcome =
+        dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, args, context);
     QVERIFY(outcome.dispatched);
+    QCOMPARE(received_lease, QString());
     QVERIFY(outcome.policy_decision.allowed);
     QCOMPARE(outcome.policy_decision.reason, QStringLiteral("Read-only tool allowed"));
     // The dispatcher forwards the caller's argument object UNCHANGED -- pin the whole object so
@@ -111,7 +121,8 @@ void AiToolDispatcherTests::packageInstallReportsLeaseRequirement() {
     dispatcher.setLeaseManager(&leases);
     sak::ai::AiToolPolicyDecision captured_decision;
     dispatcher.registerHandler(QStringLiteral("sak_package_manager"),
-                               [&captured_decision](const QJsonObject&,
+                               [&captured_decision](const sak::ai::AiToolCallContext&,
+                                                    const QJsonObject&,
                                                     const sak::ai::AiToolPolicyDecision& decision) {
                                    captured_decision = decision;
                                    return QJsonObject{};
@@ -122,7 +133,8 @@ void AiToolDispatcherTests::packageInstallReportsLeaseRequirement() {
     request.operation = QStringLiteral("install");
     request.user_message = QStringLiteral("Install the selected package");
 
-    const auto outcome = dispatcher.dispatch(sak::ai::AiToolPolicy::PackageToolsOnly, request, {});
+    const auto outcome =
+        dispatcher.dispatch(sak::ai::AiToolPolicy::PackageToolsOnly, request, {}, {});
     QVERIFY(outcome.dispatched);
     QVERIFY(outcome.policy_decision.allowed);
     QVERIFY(outcome.policy_decision.risky_change);
@@ -151,7 +163,7 @@ void AiToolDispatcherTests::missingHandlerReportsMissingFlag() {
     request.tool_name = QStringLiteral("take_screenshot");
     request.operation = QStringLiteral("capture");
 
-    const auto outcome = dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {});
+    const auto outcome = dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {}, {});
     QVERIFY(!outcome.dispatched);
     QVERIFY(outcome.handler_missing);
     QVERIFY(outcome.policy_decision.allowed);
@@ -166,14 +178,14 @@ void AiToolDispatcherTests::missingHandlerReportsMissingFlag() {
 void AiToolDispatcherTests::emptyHandlerResultIsStructuredFailure() {
     sak::ai::AiToolDispatcher dispatcher;
     dispatcher.registerHandler(QStringLiteral("take_screenshot"),
-                               [](const QJsonObject&, const sak::ai::AiToolPolicyDecision&) {
-                                   return QJsonObject{};
-                               });
+                               [](const sak::ai::AiToolCallContext&,
+                                  const QJsonObject&,
+                                  const sak::ai::AiToolPolicyDecision&) { return QJsonObject{}; });
 
     sak::ai::AiToolCallRequest request;
     request.tool_name = QStringLiteral("take_screenshot");
 
-    const auto outcome = dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {});
+    const auto outcome = dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {}, {});
     QVERIFY(outcome.dispatched);
     QVERIFY(outcome.policy_decision.allowed);
     QVERIFY(!outcome.result.value(QStringLiteral("success")).toBool(true));
@@ -187,7 +199,9 @@ void AiToolDispatcherTests::exclusiveLeaseBlocksConcurrentMutating() {
     sak::ai::AiLeaseManager leases;
     dispatcher.setLeaseManager(&leases);
     dispatcher.registerHandler(QStringLiteral("run_cmd"),
-                               [](const QJsonObject&, const sak::ai::AiToolPolicyDecision&) {
+                               [](const sak::ai::AiToolCallContext&,
+                                  const QJsonObject&,
+                                  const sak::ai::AiToolPolicyDecision&) {
                                    QJsonObject ok;
                                    ok[QStringLiteral("success")] = true;
                                    return ok;
@@ -202,6 +216,7 @@ void AiToolDispatcherTests::exclusiveLeaseBlocksConcurrentMutating() {
 
     const auto outcome = dispatcher.dispatch(sak::ai::AiToolPolicy::ExclusiveMutatingExecutor,
                                              request,
+                                             {},
                                              {},
                                              QStringLiteral("repair_agent"));
     QVERIFY(!outcome.dispatched);
@@ -240,8 +255,15 @@ void AiToolDispatcherTests::leaseReleasedAfterDispatch() {
     sak::ai::AiToolDispatcher dispatcher;
     sak::ai::AiLeaseManager leases;
     dispatcher.setLeaseManager(&leases);
+    QString handler_lease_id;
+    QString handler_session_id;
     dispatcher.registerHandler(QStringLiteral("sak_package_manager"),
-                               [](const QJsonObject&, const sak::ai::AiToolPolicyDecision&) {
+                               [&handler_lease_id,
+                                &handler_session_id](const sak::ai::AiToolCallContext& context,
+                                                     const QJsonObject&,
+                                                     const sak::ai::AiToolPolicyDecision&) {
+                                   handler_lease_id = context.lease_id;
+                                   handler_session_id = context.session_id;
                                    QJsonObject ok;
                                    ok[QStringLiteral("success")] = true;
                                    return ok;
@@ -252,9 +274,20 @@ void AiToolDispatcherTests::leaseReleasedAfterDispatch() {
     request.operation = QStringLiteral("install");
     request.user_message = QStringLiteral("Install the selected package");
 
-    const auto outcome = dispatcher.dispatch(
-        sak::ai::AiToolPolicy::PackageToolsOnly, request, {}, QStringLiteral("package_agent"));
+    // A caller's context reaches the handler, but its lease never does: the handler runs under
+    // the lease this dispatch took.
+    sak::ai::AiToolCallContext context;
+    context.session_id = QStringLiteral("ai_session_under_test");
+    context.lease_id = QStringLiteral("lease_supplied_by_the_caller");
+    const auto outcome = dispatcher.dispatch(sak::ai::AiToolPolicy::PackageToolsOnly,
+                                             request,
+                                             {},
+                                             context,
+                                             QStringLiteral("package_agent"));
     QVERIFY(outcome.dispatched);
+    QCOMPARE(handler_session_id, QStringLiteral("ai_session_under_test"));
+    QVERIFY(!outcome.lease_id.isEmpty());
+    QCOMPARE(handler_lease_id, outcome.lease_id);
     // A clean release leaves the handler's result untouched; the failed-release path would have
     // stamped success:false + lease_release_failed over the top, so pinning the whole payload
     // proves this dispatch took the normal branch.
@@ -284,7 +317,8 @@ void AiToolDispatcherTests::availabilityCheckerBlocksBeforeHandler() {
                                {QStringLiteral("error_message"), QStringLiteral("bad url")}};
         });
     dispatcher.registerHandler(QStringLiteral("download_file"),
-                               [&handler_called](const QJsonObject&,
+                               [&handler_called](const sak::ai::AiToolCallContext&,
+                                                 const QJsonObject&,
                                                  const sak::ai::AiToolPolicyDecision&) {
                                    handler_called = true;
                                    return QJsonObject{{QStringLiteral("success"), true}};
@@ -292,7 +326,7 @@ void AiToolDispatcherTests::availabilityCheckerBlocksBeforeHandler() {
 
     sak::ai::AiToolCallRequest request;
     request.tool_name = QStringLiteral("download_file");
-    const auto outcome = dispatcher.dispatch(sak::ai::AiToolPolicy::DownloadOnly, request, {});
+    const auto outcome = dispatcher.dispatch(sak::ai::AiToolPolicy::DownloadOnly, request, {}, {});
     QVERIFY(outcome.availability_denied);
     QVERIFY(!outcome.dispatched);
     QVERIFY(!handler_called);
@@ -319,7 +353,8 @@ void AiToolDispatcherTests::availabilityCheckerEmptyResultDeniesCall() {
         QStringLiteral("download_file"),
         [](const QJsonObject&, const sak::ai::AiToolPolicyDecision&) { return QJsonObject{}; });
     dispatcher.registerHandler(QStringLiteral("download_file"),
-                               [&handler_called](const QJsonObject&,
+                               [&handler_called](const sak::ai::AiToolCallContext&,
+                                                 const QJsonObject&,
                                                  const sak::ai::AiToolPolicyDecision&) {
                                    handler_called = true;
                                    return QJsonObject{{QStringLiteral("success"), true}};
@@ -327,7 +362,7 @@ void AiToolDispatcherTests::availabilityCheckerEmptyResultDeniesCall() {
 
     sak::ai::AiToolCallRequest request;
     request.tool_name = QStringLiteral("download_file");
-    const auto outcome = dispatcher.dispatch(sak::ai::AiToolPolicy::DownloadOnly, request, {});
+    const auto outcome = dispatcher.dispatch(sak::ai::AiToolPolicy::DownloadOnly, request, {}, {});
     QVERIFY(outcome.availability_denied);
     QVERIFY(!outcome.dispatched);
     QVERIFY(!handler_called);
@@ -348,7 +383,8 @@ void AiToolDispatcherTests::requiresLeaseFailsClosedWithoutLeaseManager() {
     sak::ai::AiToolDispatcher dispatcher;  // no setLeaseManager()
     bool handler_called = false;
     dispatcher.registerHandler(QStringLiteral("sak_package_manager"),
-                               [&handler_called](const QJsonObject&,
+                               [&handler_called](const sak::ai::AiToolCallContext&,
+                                                 const QJsonObject&,
                                                  const sak::ai::AiToolPolicyDecision&) {
                                    handler_called = true;
                                    return QJsonObject{{QStringLiteral("success"), true}};
@@ -360,7 +396,7 @@ void AiToolDispatcherTests::requiresLeaseFailsClosedWithoutLeaseManager() {
     request.user_message = QStringLiteral("install the selected package");
 
     const auto outcome = dispatcher.dispatch(
-        sak::ai::AiToolPolicy::PackageToolsOnly, request, {}, QStringLiteral("agent"));
+        sak::ai::AiToolPolicy::PackageToolsOnly, request, {}, {}, QStringLiteral("agent"));
     QVERIFY(outcome.policy_decision.allowed);
     QVERIFY(outcome.policy_decision.requires_lease);
     QVERIFY(outcome.lease_denied);
@@ -383,7 +419,9 @@ void AiToolDispatcherTests::healthLedgerSuppressesRepeatedFailures() {
     sak::ai::AiToolHealthLedger ledger(2, 60'000, 60'000);
     dispatcher.setHealthLedger(&ledger);
     dispatcher.registerHandler(QStringLiteral("take_screenshot"),
-                               [](const QJsonObject&, const sak::ai::AiToolPolicyDecision&) {
+                               [](const sak::ai::AiToolCallContext&,
+                                  const QJsonObject&,
+                                  const sak::ai::AiToolPolicyDecision&) {
                                    return QJsonObject{{QStringLiteral("success"), false},
                                                       {QStringLiteral("error_message"),
                                                        QStringLiteral("capture failed")}};
@@ -391,8 +429,8 @@ void AiToolDispatcherTests::healthLedgerSuppressesRepeatedFailures() {
 
     sak::ai::AiToolCallRequest request;
     request.tool_name = QStringLiteral("take_screenshot");
-    QVERIFY(dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {}).dispatched);
-    const auto primed = dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {});
+    QVERIFY(dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {}, {}).dispatched);
+    const auto primed = dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {}, {});
     QVERIFY(primed.dispatched);
     QCOMPARE(primed.health_key, QStringLiteral("take_screenshot"));
     // Pin what the two priming dispatches actually recorded: the suppression that follows is
@@ -404,7 +442,7 @@ void AiToolDispatcherTests::healthLedgerSuppressesRepeatedFailures() {
     QCOMPARE(primed_record.last_failure_class, QStringLiteral("tool_failed"));
     QCOMPARE(primed_record.last_error_message, QStringLiteral("capture failed"));
 
-    const auto outcome = dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {});
+    const auto outcome = dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {}, {});
     QVERIFY(outcome.health_suppressed);
     QVERIFY(!outcome.dispatched);
     QVERIFY(outcome.result.value(QStringLiteral("health_suppressed")).toBool(false));
@@ -432,7 +470,8 @@ void AiToolDispatcherTests::malformedHandlerResultsFailClosed() {
     for (const QJsonObject& malformed : malformed_results) {
         sak::ai::AiToolDispatcher dispatcher;
         dispatcher.registerHandler(QStringLiteral("take_screenshot"),
-                                   [malformed](const QJsonObject&,
+                                   [malformed](const sak::ai::AiToolCallContext&,
+                                               const QJsonObject&,
                                                const sak::ai::AiToolPolicyDecision&) {
                                        return malformed;
                                    });
@@ -440,7 +479,8 @@ void AiToolDispatcherTests::malformedHandlerResultsFailClosed() {
         request.tool_name = QStringLiteral("take_screenshot");
         request.operation = QStringLiteral("capture");
 
-        const auto outcome = dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {});
+        const auto outcome =
+            dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {}, {});
         QVERIFY(outcome.dispatched);
         QVERIFY(!outcome.result.value(QStringLiteral("success")).toBool(true));
         QCOMPARE(outcome.result.value(QStringLiteral("failure_class")).toString(),
@@ -457,7 +497,9 @@ void AiToolDispatcherTests::contradictorySuccessCountsAsHealthFailure() {
     sak::ai::AiToolHealthLedger ledger(1, 60'000, 60'000);
     dispatcher.setHealthLedger(&ledger);
     dispatcher.registerHandler(QStringLiteral("take_screenshot"),
-                               [](const QJsonObject&, const sak::ai::AiToolPolicyDecision&) {
+                               [](const sak::ai::AiToolCallContext&,
+                                  const QJsonObject&,
+                                  const sak::ai::AiToolPolicyDecision&) {
                                    return QJsonObject{{QStringLiteral("success"), true},
                                                       {QStringLiteral("failure_class"),
                                                        QStringLiteral("timeout")},
@@ -467,7 +509,7 @@ void AiToolDispatcherTests::contradictorySuccessCountsAsHealthFailure() {
     sak::ai::AiToolCallRequest request;
     request.tool_name = QStringLiteral("take_screenshot");
 
-    const auto failed = dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {});
+    const auto failed = dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {}, {});
     QVERIFY(failed.dispatched);
     QVERIFY(!failed.result.value(QStringLiteral("success")).toBool(true));
     QCOMPARE(failed.result.value(QStringLiteral("failure_class")).toString(),
@@ -476,7 +518,7 @@ void AiToolDispatcherTests::contradictorySuccessCountsAsHealthFailure() {
     QCOMPARE(record.failure_count, 1);
     QCOMPARE(record.success_count, 0);
 
-    const auto suppressed = dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {});
+    const auto suppressed = dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {}, {});
     QVERIFY(suppressed.health_suppressed);
     QVERIFY(!suppressed.dispatched);
 }
@@ -486,7 +528,9 @@ void AiToolDispatcherTests::businessFailuresDoNotTripHealth() {
     sak::ai::AiToolHealthLedger ledger(1, 60'000, 60'000);
     dispatcher.setHealthLedger(&ledger);
     dispatcher.registerHandler(QStringLiteral("take_screenshot"),
-                               [](const QJsonObject&, const sak::ai::AiToolPolicyDecision&) {
+                               [](const sak::ai::AiToolCallContext&,
+                                  const QJsonObject&,
+                                  const sak::ai::AiToolPolicyDecision&) {
                                    return QJsonObject{{QStringLiteral("success"), false},
                                                       {QStringLiteral("failure_class"),
                                                        QStringLiteral("cancelled")},
@@ -496,8 +540,8 @@ void AiToolDispatcherTests::businessFailuresDoNotTripHealth() {
     sak::ai::AiToolCallRequest request;
     request.tool_name = QStringLiteral("take_screenshot");
 
-    QVERIFY(dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {}).dispatched);
-    QVERIFY(dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {}).dispatched);
+    QVERIFY(dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {}, {}).dispatched);
+    QVERIFY(dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {}, {}).dispatched);
     QCOMPARE(ledger.size(), 0);
 }
 
@@ -506,7 +550,9 @@ void AiToolDispatcherTests::providerGatewayHealthKeyUsesCanonicalTarget() {
     sak::ai::AiLeaseManager leases;
     dispatcher.setLeaseManager(&leases);
     dispatcher.registerHandler(QStringLiteral("sak_provider_gateway"),
-                               [](const QJsonObject&, const sak::ai::AiToolPolicyDecision&) {
+                               [](const sak::ai::AiToolCallContext&,
+                                  const QJsonObject&,
+                                  const sak::ai::AiToolPolicyDecision&) {
                                    return QJsonObject{{QStringLiteral("success"), true}};
                                });
     sak::ai::AiToolCallRequest request;
@@ -527,10 +573,12 @@ void AiToolDispatcherTests::providerGatewayHealthKeyUsesCanonicalTarget() {
          QStringLiteral("{\"tool_name\":\"list_windows\",\"noise\":1}")},
     };
     const QString expected = QStringLiteral("sak_provider_gateway:win32_mcp_call:list_windows");
-    QCOMPARE(dispatcher.dispatch(sak::ai::AiToolPolicy::MutatingRequiresLease, request, object_args)
+    QCOMPARE(dispatcher
+                 .dispatch(sak::ai::AiToolPolicy::MutatingRequiresLease, request, object_args, {})
                  .health_key,
              expected);
-    QCOMPARE(dispatcher.dispatch(sak::ai::AiToolPolicy::MutatingRequiresLease, request, string_args)
+    QCOMPARE(dispatcher
+                 .dispatch(sak::ai::AiToolPolicy::MutatingRequiresLease, request, string_args, {})
                  .health_key,
              expected);
 }
@@ -544,7 +592,9 @@ void AiToolDispatcherTests::appActionAndPackageHealthIsPerTarget() {
     sak::ai::AiToolHealthLedger ledger(1, 60'000, 60'000);  // one failure trips a key
     dispatcher.setLeaseManager(&leases);
     dispatcher.setHealthLedger(&ledger);
-    const auto failing = [](const QJsonObject&, const sak::ai::AiToolPolicyDecision&) {
+    const auto failing = [](const sak::ai::AiToolCallContext&,
+                            const QJsonObject&,
+                            const sak::ai::AiToolPolicyDecision&) {
         return QJsonObject{{QStringLiteral("success"), false},
                            {QStringLiteral("error_message"), QStringLiteral("target broke")}};
     };
@@ -555,7 +605,7 @@ void AiToolDispatcherTests::appActionAndPackageHealthIsPerTarget() {
     action.tool_name = QStringLiteral("sak_app_action");
     action.operation = QStringLiteral("run");
     const auto run = [&](const sak::ai::AiToolCallRequest& request, const QJsonObject& args) {
-        return dispatcher.dispatch(sak::ai::AiToolPolicy::MutatingRequiresLease, request, args);
+        return dispatcher.dispatch(sak::ai::AiToolPolicy::MutatingRequiresLease, request, args, {});
     };
     const QJsonObject broken_action{{QStringLiteral("action_id"), QStringLiteral("disk_check")}};
     const QJsonObject other_action{{QStringLiteral("action_id"), QStringLiteral("sfc_scan")}};
@@ -602,7 +652,9 @@ void AiToolDispatcherTests::leaseReleaseFailureNamesTheRealCause() {
 void AiToolDispatcherTests::clearRegistrationsClearsHandlersAndCheckers() {
     sak::ai::AiToolDispatcher dispatcher;
     dispatcher.registerHandler(QStringLiteral("take_screenshot"),
-                               [](const QJsonObject&, const sak::ai::AiToolPolicyDecision&) {
+                               [](const sak::ai::AiToolCallContext&,
+                                  const QJsonObject&,
+                                  const sak::ai::AiToolPolicyDecision&) {
                                    return QJsonObject{{QStringLiteral("success"), true}};
                                });
     dispatcher.registerAvailabilityChecker(
@@ -615,7 +667,7 @@ void AiToolDispatcherTests::clearRegistrationsClearsHandlersAndCheckers() {
 
     sak::ai::AiToolCallRequest request;
     request.tool_name = QStringLiteral("take_screenshot");
-    const auto outcome = dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {});
+    const auto outcome = dispatcher.dispatch(sak::ai::AiToolPolicy::ReadOnlyPc, request, {}, {});
     QVERIFY(outcome.handler_missing);
     QVERIFY(!outcome.availability_denied);
 }

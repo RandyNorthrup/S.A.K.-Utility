@@ -982,6 +982,14 @@ AiSessionInfo ConversationStore::currentSessionInfo() const {
     return m_current_session;
 }
 
+std::shared_ptr<const ConversationStore> ConversationStore::sessionSnapshot() const {
+    auto snapshot = std::make_shared<ConversationStore>(m_root_dir);
+    // The copy is taken under the read lock, so it is one session record, never half of one
+    // and half of the next. The snapshot pins its own artifact directories as it writes.
+    snapshot->m_current_session = currentSessionInfo();
+    return snapshot;
+}
+
 QString ConversationStore::defaultRootDirectory() {
     return sessionRootDirectory();
 }

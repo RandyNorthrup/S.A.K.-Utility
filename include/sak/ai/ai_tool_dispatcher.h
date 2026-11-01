@@ -4,6 +4,7 @@
 #pragma once
 
 #include "sak/ai/ai_lease_manager.h"
+#include "sak/ai/ai_tool_call_context.h"
 #include "sak/ai/ai_tool_health_ledger.h"
 #include "sak/ai/ai_tool_policy.h"
 
@@ -21,11 +22,12 @@ namespace sak::ai {
 /// The panel registers a handler per tool name. The dispatcher evaluates the
 /// active AiToolPolicy first; if the call is blocked, it returns a structured
 /// `policy_denied` payload without invoking the handler. Allowed calls reach
-/// the handler with the parsed JSON arguments and the policy decision so the
-/// handler can attach lease/restore-point context to its result.
+/// the handler with the call's own context (stamped with the lease this
+/// dispatch took), the parsed JSON arguments and the policy decision.
 class AiToolDispatcher {
 public:
-    using Handler = std::function<QJsonObject(const QJsonObject& arguments,
+    using Handler = std::function<QJsonObject(const AiToolCallContext& context,
+                                              const QJsonObject& arguments,
                                               const AiToolPolicyDecision& decision)>;
     using AvailabilityChecker = std::function<QJsonObject(const QJsonObject& arguments,
                                                           const AiToolPolicyDecision& decision)>;
@@ -60,9 +62,12 @@ public:
     void setLeaseManager(AiLeaseManager* manager);
     void setHealthLedger(AiToolHealthLedger* ledger);
 
+    /// @param context what the call runs with, captured by the caller at dispatch; the handler
+    ///        receives a copy carrying the lease this dispatch acquired
     [[nodiscard]] DispatchOutcome dispatch(AiToolPolicy policy,
                                            const AiToolCallRequest& request,
                                            const QJsonObject& arguments,
+                                           const AiToolCallContext& context,
                                            const QString& agent_id = {}) const;
 
     [[nodiscard]] static QJsonObject policyDeniedResult(const AiToolCallRequest& request,
@@ -96,6 +101,7 @@ private:
                                  const AiToolCallRequest& request,
                                  const QString& lease_id) const;
     static void invokeHandler(const Handler& handler,
+                              const AiToolCallContext& context,
                               const AiToolCallRequest& request,
                               const QJsonObject& arguments,
                               DispatchOutcome* outcome);
