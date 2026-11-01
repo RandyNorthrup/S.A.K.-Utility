@@ -2868,8 +2868,11 @@ add_test(NAME test_ai_chat_title COMMAND test_ai_chat_title
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_ai_chat_title")
 
+# Compiles the broker with SAK_AI_TEST_HOOKS for its Job-factory seam: a launch whose
+# kill-on-close Job cannot be created must be refused, never run uncontained.
 add_executable(test_ai_execution_broker
     unit/test_ai_execution_broker.cpp
+    "${SAK_AI_HOOKED_SOURCE_DIR}/ai_execution_broker.cpp"
 )
 set_target_properties(test_ai_execution_broker PROPERTIES
     AUTOMOC ON
@@ -2882,6 +2885,7 @@ target_link_libraries(test_ai_execution_broker PRIVATE
 target_include_directories(test_ai_execution_broker PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
+target_compile_definitions(test_ai_execution_broker PRIVATE SAK_AI_TEST_HOOKS)
 add_test(NAME test_ai_execution_broker COMMAND test_ai_execution_broker
          -o "${TEST_OUTPUT_DIR}/test_ai_execution_broker.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")

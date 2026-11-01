@@ -3,16 +3,22 @@
 
 #include "sak/ai/ai_execution_broker.h"
 #include "sak/process_runner.h"
+#include "sak/windows_process_job.h"
 
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonParseError>
+#include <QRegularExpression>
+#include <QScopeGuard>
 #include <QSignalSpy>
 #include <QStringList>
+#include <QTemporaryDir>
 #include <QTimer>
 #include <QtTest/QtTest>
+
+#include <windows.h>
 
 Q_DECLARE_METATYPE(sak::ai::AiCommandResult)
 
@@ -43,6 +49,9 @@ private Q_SLOTS:
     void embeddedNulSurvivesJsonTextSoTheGuardIsModelReachable();
     void toJson_redactsSecretsInStdoutAndStderr();
     void runPowerShell_truncationKeepsTerminalError();
+    void grandchildDiesWhenTheCommandIsCancelled();
+    void grandchildDiesWhenTheCommandFinishes();
+    void launchIsRefusedWhenTheJobCannotBeCreated();
 };
 
 namespace {
@@ -61,6 +70,59 @@ namespace {
     const QList<QVariant> args = spy.first();
     return args.at(1).value<sak::ai::AiCommandResult>();
 }
+
+// A PowerShell command whose FIRST statement starts a grandchild (a long ping, in its own hidden
+// console so it shares no pipe with the command) and prints its PID; @p then runs afterwards.
+QString grandchildCommand(const QString& then) {
+    return QStringLiteral(
+               "$g = Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\\PING.EXE') "
+               "-ArgumentList '-n','120','127.0.0.1' -WindowStyle Hidden -PassThru; "
+               "Write-Output ('GRANDCHILD:' + $g.Id); ") +
+           then;
+}
+
+// Opens the grandchild the moment its PID is printed -- inside the chunk signal, so the handle
+// is taken while the process is certainly still alive and a later PID reuse cannot fool the
+// wait. The handle can terminate it, so a failing run does not leak a two-minute ping.
+class GrandchildWatch {
+public:
+    explicit GrandchildWatch(sak::ai::ExecutionBroker& broker) {
+        QObject::connect(&broker,
+                         &sak::ai::ExecutionBroker::stdoutChunk,
+                         &broker,
+                         [this](const QString&, const QString& chunk) { capture(chunk); });
+    }
+    GrandchildWatch(const GrandchildWatch&) = delete;
+    GrandchildWatch& operator=(const GrandchildWatch&) = delete;
+    ~GrandchildWatch() {
+        if (m_handle != nullptr) {
+            TerminateProcess(m_handle, 1);
+            CloseHandle(m_handle);
+        }
+    }
+    [[nodiscard]] bool opened() const { return m_handle != nullptr; }
+    // True when the grandchild has exited within @p timeout_ms.
+    [[nodiscard]] bool exitsWithin(DWORD timeout_ms) const {
+        return WaitForSingleObject(m_handle, timeout_ms) == WAIT_OBJECT_0;
+    }
+
+private:
+    void capture(const QString& chunk) {
+        static const QRegularExpression kPid(QStringLiteral(R"(GRANDCHILD:(\d+))"));
+        const QRegularExpressionMatch match = kPid.match(chunk);
+        if (m_handle != nullptr || !match.hasMatch()) {
+            return;
+        }
+        m_handle = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE,
+                               FALSE,
+                               static_cast<DWORD>(match.captured(1).toULong()));
+    }
+
+    HANDLE m_handle{nullptr};
+};
+
+constexpr int kGrandchildStartBudgetMs = 30'000;
+constexpr DWORD kGrandchildExitBudgetMs = 10'000;
 
 }  // namespace
 
@@ -793,6 +855,79 @@ void AiExecutionBrokerTests::runPowerShell_truncationKeepsTerminalError() {
     QVERIFY(!min_cap_result.stderr_text.contains(QStringLiteral("bytes truncated")));
     QVERIFY(min_cap_result.stdout_text.toUtf8().size() <= 1024);
     QVERIFY(min_cap_result.output_truncated);
+}
+
+void AiExecutionBrokerTests::grandchildDiesWhenTheCommandIsCancelled() {
+    // NEW-1. The command's process joined its kill-on-close Job only from the `started` slot,
+    // after CreateProcess, and ran on uncontained whenever the Job could not be attached; the
+    // only cleanup left was a PID-snapshot walk. The command below starts a grandchild as its
+    // very first statement and then waits: a Stop must end the grandchild too.
+    sak::ai::ExecutionBroker broker;
+    GrandchildWatch grandchild(broker);
+    QSignalSpy finished_spy(&broker, &sak::ai::ExecutionBroker::finished);
+
+    sak::ai::AiCommandRequest request;
+    request.command = grandchildCommand(QStringLiteral("Start-Sleep -Seconds 60"));
+    request.timeout_seconds = 120;
+    QVERIFY(broker.startPowerShell(request, QStringLiteral("cmd_grandchild_cancel")));
+    QVERIFY(
+        QTest::qWaitFor([&grandchild]() { return grandchild.opened(); }, kGrandchildStartBudgetMs));
+
+    broker.cancel();
+    QVERIFY(waitForFinish(finished_spy));
+    QVERIFY(resultFromSpy(finished_spy).cancelled);
+    QVERIFY2(grandchild.exitsWithin(kGrandchildExitBudgetMs),
+             "the grandchild survived the cancelled command");
+}
+
+void AiExecutionBrokerTests::grandchildDiesWhenTheCommandFinishes() {
+    // A command that exits on its own while something it started is still running: what it
+    // started ends with it, as kill-on-close always made it do -- now proved, not assumed.
+    sak::ai::ExecutionBroker broker;
+    GrandchildWatch grandchild(broker);
+    QSignalSpy finished_spy(&broker, &sak::ai::ExecutionBroker::finished);
+
+    sak::ai::AiCommandRequest request;
+    request.command = grandchildCommand(QStringLiteral("exit 0"));
+    request.timeout_seconds = 120;
+    QVERIFY(broker.startPowerShell(request, QStringLiteral("cmd_grandchild_finish")));
+    QVERIFY(waitForFinish(finished_spy, kGrandchildStartBudgetMs));
+    QVERIFY(grandchild.opened());
+    QCOMPARE(resultFromSpy(finished_spy).exit_code, 0);
+    QVERIFY2(grandchild.exitsWithin(kGrandchildExitBudgetMs),
+             "the grandchild outlived the command that started it");
+}
+
+void AiExecutionBrokerTests::launchIsRefusedWhenTheJobCannotBeCreated() {
+    // The old path dropped a Job it could not set up and RAN THE COMMAND ANYWAY. A launch with no
+    // Job to contain it is now refused before any process exists: the command below would create
+    // the marker file if it ran at all.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString marker = dir.filePath(QStringLiteral("ran.txt"));
+    sak::ai::ExecutionBroker::setJobFactoryForTesting(
+        []() -> std::expected<std::unique_ptr<sak::WindowsProcessJob>, QString> {
+            return std::unexpected(QStringLiteral("planted Job failure"));
+        });
+    const auto restore =
+        qScopeGuard([]() { sak::ai::ExecutionBroker::setJobFactoryForTesting({}); });
+
+    sak::ai::ExecutionBroker broker;
+    QSignalSpy finished_spy(&broker, &sak::ai::ExecutionBroker::finished);
+    QSignalSpy started_spy(&broker, &sak::ai::ExecutionBroker::started);
+    sak::ai::AiCommandRequest request;
+    request.command = QStringLiteral("Set-Content -LiteralPath '%1' -Value ran").arg(marker);
+    request.timeout_seconds = 30;
+    QVERIFY(!broker.startPowerShell(request, QStringLiteral("cmd_uncontained")));
+    QVERIFY(waitForFinish(finished_spy));
+
+    const auto result = resultFromSpy(finished_spy);
+    QVERIFY(!result.started);
+    QCOMPARE(started_spy.count(), 0);
+    QVERIFY2(result.error_message.contains(QStringLiteral("planted Job failure")),
+             qPrintable(result.error_message));
+    QVERIFY2(!QFileInfo::exists(marker), "the command ran without its Job");
+    QVERIFY(!broker.isRunning());
 }
 
 QTEST_GUILESS_MAIN(AiExecutionBrokerTests)

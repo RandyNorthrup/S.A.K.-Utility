@@ -4,9 +4,13 @@
 #include "sak/ai/ai_execution_broker.h"
 
 #include "sak/ai/ai_credential_store.h"
+#include "sak/contained_process_quarantine.h"
 #include "sak/elevation_manager.h"
+#include "sak/logger.h"
 #include "sak/process_runner.h"
+#include "sak/windows_process_job.h"
 
+#include <QDeadlineTimer>
 #include <QDir>
 #include <QFileInfo>
 #include <QJsonArray>
@@ -16,16 +20,9 @@
 #include <QStandardPaths>
 #include <QTimer>
 
-#ifdef _WIN32
-#include <windows.h>
-
-#include <tlhelp32.h>
-#endif
-
 #include <algorithm>
 #include <cmath>
 #include <utility>
-#include <vector>
 
 namespace sak::ai {
 
@@ -226,128 +223,198 @@ ExecutionBroker::ExecutionBroker(QObject* parent) : QObject(parent), m_deadline_
     connect(&m_deadline_timer, &QTimer::timeout, this, &ExecutionBroker::onDeadlineReached);
 }
 
+namespace {
+
+// How often SettlingJob checks whether the members a finished command left behind have exited
+// after their Job was told to terminate them (bounded by kTimeoutProcessTerminateMs).
+constexpr int kJobSettlePollMs = 25;
+
+#ifdef SAK_AI_TEST_HOOKS
+std::function<std::expected<std::unique_ptr<sak::WindowsProcessJob>, QString>()>
+    g_job_factory_for_testing;
+#endif  // SAK_AI_TEST_HOOKS
+
+std::expected<std::unique_ptr<sak::WindowsProcessJob>, QString> createCommandJob() {
+#ifdef SAK_AI_TEST_HOOKS
+    if (g_job_factory_for_testing) {
+        return g_job_factory_for_testing();
+    }
+#endif  // SAK_AI_TEST_HOOKS
+    return sak::WindowsProcessJob::create();
+}
+
+// Custody adapter: a Job whose members could not be proved gone. A retry terminates what is left
+// and closes the Job only once it is empty; until then the open handle keeps kill-on-close armed,
+// so nothing in it can outlive the application.
+class RetainedCommandJob final : public sak::ContainedProcessQuarantine::Owner {
+public:
+    explicit RetainedCommandJob(std::unique_ptr<sak::WindowsProcessJob> job)
+        : m_job(std::move(job)) {}
+
+    [[nodiscard]] std::expected<void, QString> retryCleanup() override {
+        const auto accounting = m_job->accounting();
+        if (!accounting) {
+            return std::unexpected(accounting.error());
+        }
+        if (accounting->active_processes != 0) {
+            const auto terminated = m_job->terminate();
+            return std::unexpected(
+                terminated ? QStringLiteral("AI command Job still has %1 active processes")
+                                 .arg(accounting->active_processes)
+                           : terminated.error());
+        }
+        return m_job->closeEmpty();
+    }
+
+private:
+    std::unique_ptr<sak::WindowsProcessJob> m_job;
+};
+
+void quarantineCommandJob(std::unique_ptr<sak::WindowsProcessJob> job, const QString& reason) {
+    sak::ContainedProcessQuarantine::retain(
+        std::make_unique<RetainedCommandJob>(std::move(job)),
+        QStringLiteral("AI command Job cleanup could not be proved: %1").arg(reason));
+}
+
+// The members a finished command left running have been told to terminate; this proves they are
+// gone without blocking the GUI thread the broker lives on -- the broker is event-driven, so its
+// wait is too. Once the Job is empty it is closed; a failed query, a refused close or members
+// still alive at the deadline send it to quarantine instead. A child of the broker, so a broker
+// destroyed mid-settle hands the Job to quarantine through the destructor.
+class SettlingJob final : public QObject {
+public:
+    SettlingJob(std::unique_ptr<sak::WindowsProcessJob> job, QObject* parent)
+        : QObject(parent)
+        , m_job(std::move(job))
+        , m_deadline(sak::kTimeoutProcessTerminateMs, Qt::CoarseTimer) {
+        setObjectName(QStringLiteral("aiCommandJobSettle"));
+        m_poll.setInterval(kJobSettlePollMs);
+        connect(&m_poll, &QTimer::timeout, this, &SettlingJob::poll);
+        m_poll.start();
+    }
+
+    SettlingJob(const SettlingJob&) = delete;
+    SettlingJob& operator=(const SettlingJob&) = delete;
+    SettlingJob(SettlingJob&&) = delete;
+    SettlingJob& operator=(SettlingJob&&) = delete;
+
+    ~SettlingJob() override {
+        if (m_job) {
+            quarantineCommandJob(std::move(m_job),
+                                 QStringLiteral("its broker was destroyed while the members it "
+                                                "had terminated were still exiting"));
+        }
+    }
+
+private:
+    void poll() {
+        const auto accounting = m_job->accounting();
+        if (!accounting) {
+            settle(accounting.error());
+            return;
+        }
+        if (accounting->active_processes == 0) {
+            const auto closed = m_job->closeEmpty();
+            settle(closed ? QString() : closed.error());
+            return;
+        }
+        if (m_deadline.hasExpired()) {
+            settle(QStringLiteral("%1 processes were still active %2 ms after termination")
+                       .arg(accounting->active_processes)
+                       .arg(sak::kTimeoutProcessTerminateMs));
+        }
+    }
+
+    void settle(const QString& failure) {
+        m_poll.stop();
+        if (failure.isEmpty()) {
+            m_job.reset();
+        } else {
+            quarantineCommandJob(std::move(m_job), failure);
+        }
+        deleteLater();
+    }
+
+    std::unique_ptr<sak::WindowsProcessJob> m_job;
+    QDeadlineTimer m_deadline;
+    QTimer m_poll;
+};
+
+}  // namespace
+
+#ifdef SAK_AI_TEST_HOOKS
+void ExecutionBroker::setJobFactoryForTesting(JobFactory factory) {
+    g_job_factory_for_testing = std::move(factory);
+}
+#endif  // SAK_AI_TEST_HOOKS
+
 ExecutionBroker::~ExecutionBroker() {
     if (m_process) {
         m_process->disconnect(this);
         if (m_process->state() != QProcess::NotRunning) {
-#ifdef _WIN32
-            terminateProcessTree();
-#endif
-            m_process->kill();
+            stopContainedProcess();
         }
+        m_process.reset();
     }
-#ifdef _WIN32
-    closeJobHandle();
-#endif
-}
-
-#ifdef _WIN32
-namespace {
-// Recursively terminate a process and its descendants via a Toolhelp snapshot. Used only as a
-// fallback when the Job Object could not be established: it must run while the primary is still
-// alive (before m_process->kill()), because a parent-PID walk cannot find descendants once the
-// parent has exited and the children have been reparented.
-constexpr int kMaxProcessTreeDepth = 32;
-
-void killProcessTreeSnapshot(DWORD process_id, int depth, std::vector<DWORD>& visited) {
-    if (process_id == 0 || depth >= kMaxProcessTreeDepth) {
+    if (!m_job) {
         return;
     }
-    // Parent-PID fields are stale once a PID is reused, so the snapshot graph can contain a
-    // cycle. Without a visited set that cycle recurses until the stack is exhausted.
-    if (std::ranges::find(visited, process_id) != visited.end()) {
-        return;
-    }
-    visited.push_back(process_id);
-    HANDLE snapshot = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (snapshot != INVALID_HANDLE_VALUE) {
-        PROCESSENTRY32W entry{};
-        entry.dwSize = sizeof(entry);
-        if (::Process32FirstW(snapshot, &entry) != 0) {
-            do {
-                if (entry.th32ParentProcessID == process_id) {
-                    killProcessTreeSnapshot(entry.th32ProcessID, depth + 1, visited);
-                }
-            } while (::Process32NextW(snapshot, &entry) != 0);
-        }
-        ::CloseHandle(snapshot);
-    }
-    HANDLE process = ::OpenProcess(PROCESS_TERMINATE, FALSE, process_id);
-    if (process != nullptr) {
-        ::TerminateProcess(process, 1);
-        ::CloseHandle(process);
-    }
-}
-
-void killProcessTreeSnapshot(DWORD process_id) {
-    std::vector<DWORD> visited;
-    killProcessTreeSnapshot(process_id, 0, visited);
-}
-}  // namespace
-
-void ExecutionBroker::assignProcessToJob() {
-    if (!m_process || m_process->processId() <= 0) {
-        return;
-    }
-    if (m_job_handle == nullptr) {
-        m_job_handle = ::CreateJobObjectW(nullptr, nullptr);
-        if (m_job_handle == nullptr) {
-            return;
-        }
-        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits{};
-        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-        if (::SetInformationJobObject(
-                m_job_handle, JobObjectExtendedLimitInformation, &limits, sizeof(limits)) == 0) {
-            // Without KILL_ON_JOB_CLOSE the job cannot guarantee descendant cleanup; drop it
-            // so teardown relies on the direct primary-process kill rather than a job that
-            // will not reap survivors.
-            closeJobHandle();
+    // No event loop to settle on from here: an empty Job is closed, anything else is terminated
+    // and handed to custody, whose open handle keeps kill-on-close armed until the app exits.
+    const auto accounting = m_job->accounting();
+    if (accounting && accounting->active_processes == 0) {
+        if (const auto closed = m_job->closeEmpty(); closed) {
+            m_job.reset();
             return;
         }
     }
-    const HANDLE process = ::OpenProcess(PROCESS_SET_QUOTA | PROCESS_TERMINATE,
-                                         FALSE,
-                                         static_cast<DWORD>(m_process->processId()));
-    if (process == nullptr) {
-        // An empty job would make terminateProcessTree() call TerminateJobObject on a job
-        // that contains nothing and then RETURN, skipping the snapshot fallback entirely.
-        // Drop it so the fallback still reaps the tree.
-        closeJobHandle();
+    if (m_job) {
+        static_cast<void>(m_job->terminate());
+        quarantineCommandJob(std::move(m_job),
+                             QStringLiteral("the broker was destroyed with the command's "
+                                            "processes still active"));
+    }
+}
+
+void ExecutionBroker::stopContainedProcess() {
+    if (m_job) {
+        if (const auto terminated = m_job->terminate(); !terminated) {
+            // The primary is still killed below, and the Job's kill-on-close covers the rest
+            // when it is released or quarantined; the refusal itself is reported.
+            sak::logError("Could not terminate the AI command's Job: {}",
+                          terminated.error().toStdString());
+        }
+    }
+    if (m_process && m_process->state() != QProcess::NotRunning) {
+        m_process->kill();
+    }
+}
+
+void ExecutionBroker::releaseJob() {
+    if (!m_job) {
         return;
     }
-    if (::AssignProcessToJobObject(m_job_handle, process) == 0) {
-        // The process is NOT in the job, so TerminateJobObject would silently reap nothing
-        // and grandchildren could survive. Drop the job handle so teardown falls back to
-        // killing the primary process directly instead of trusting an empty job.
-        closeJobHandle();
+    std::unique_ptr<sak::WindowsProcessJob> job = std::move(m_job);
+    const auto accounting = job->accounting();
+    if (!accounting) {
+        quarantineCommandJob(std::move(job), accounting.error());
+        return;
     }
-    ::CloseHandle(process);
-}
-
-void ExecutionBroker::terminateProcessTree() {
-    if (m_job_handle != nullptr) {
-        if (::TerminateJobObject(m_job_handle, 1) != 0) {
-            return;
+    if (accounting->active_processes == 0) {
+        if (const auto closed = job->closeEmpty(); !closed) {
+            quarantineCommandJob(std::move(job), closed.error());
         }
-        // The job refused the kill, so nothing was reaped. Fall through to the snapshot walk
-        // instead of reporting containment that did not happen.
+        return;
     }
-    // The Job Object could not be established (CreateJobObject/SetInformation/OpenProcess/
-    // AssignProcessToJobObject failed and dropped the handle). Fall back to a snapshot walk while
-    // the primary is still alive so descendants are reaped rather than orphaned -- cleanup is
-    // never weaker than the direct primary kill that follows at the call sites.
-    if (m_process && m_process->processId() > 0) {
-        killProcessTreeSnapshot(static_cast<DWORD>(m_process->processId()));
+    // The command finished but left processes running (Start-Process, a detached installer).
+    // They were started by the command and end with it, as the Job's kill-on-close always made
+    // them do; terminate them now and prove it without blocking the GUI thread.
+    if (const auto terminated = job->terminate(); !terminated) {
+        quarantineCommandJob(std::move(job), terminated.error());
+        return;
     }
+    new SettlingJob(std::move(job), this);
 }
-
-void ExecutionBroker::closeJobHandle() {
-    if (m_job_handle != nullptr) {
-        ::CloseHandle(m_job_handle);  // KILL_ON_JOB_CLOSE reaps any survivors
-        m_job_handle = nullptr;
-    }
-}
-#endif
 
 void ExecutionBroker::setElevatedRunner(ElevatedRunner runner) {
     m_elevated_runner = std::move(runner);
@@ -786,25 +853,34 @@ void ExecutionBroker::connectProcessSignals() {
             [this](int code, QProcess::ExitStatus status) {
                 onProcessFinished(code, static_cast<int>(status));
             });
-    connect(m_process.get(), &QProcess::started, this, [this]() {
-#ifdef _WIN32
-        assignProcessToJob();
-#endif
-        // A directly connected receiver may destroy this broker from started().
-        const QPointer<ExecutionBroker> self(this);
-        Q_EMIT started(m_command_id);
-        if (self.isNull()) {
-            return;
-        }
-        if (m_timeout_ms > 0) {
-            // The clock started at launch, so the deadline is what is LEFT of the timeout.
-            m_deadline_timer.start(static_cast<int>(
-                std::max<qint64>(0, static_cast<qint64>(m_timeout_ms) - m_timer.elapsed())));
-        }
-    });
-    connect(m_process.get(), &QProcess::errorOccurred, this, [this](QProcess::ProcessError error) {
-        onProcessError(static_cast<int>(error));
-    });
+    // No `started` or `errorOccurred` receiver: on Windows QProcess::start() creates the process
+    // synchronously and emits both from inside start(), BEFORE the Job launch can be verified.
+    // launchProcess() reads the outcome after start() returns and announces only a launch it has
+    // proved contained.
+}
+
+void ExecutionBroker::announceLaunch() {
+    // A directly connected receiver may destroy this broker from started().
+    const QPointer<ExecutionBroker> self(this);
+    Q_EMIT started(m_command_id);
+    if (self.isNull() || !m_running) {
+        return;
+    }
+    if (m_timeout_ms > 0) {
+        // The clock started at launch, so the deadline is what is LEFT of the timeout.
+        m_deadline_timer.start(static_cast<int>(
+            std::max<qint64>(0, static_cast<qint64>(m_timeout_ms) - m_timer.elapsed())));
+    }
+}
+
+void ExecutionBroker::failLaunch(AiCommandResult result) {
+    if (m_process) {
+        m_process->disconnect(this);
+        stopContainedProcess();
+        m_process.reset();
+    }
+    releaseJob();
+    emitDeferredFinish(std::move(result));
 }
 
 bool ExecutionBroker::launchProcess(const ProcessLaunchRequest& request) {
@@ -835,12 +911,66 @@ bool ExecutionBroker::launchProcess(const ProcessLaunchRequest& request) {
     const int clamped = std::clamp(request.timeout_seconds, kMinTimeoutSeconds, kMaxTimeoutSeconds);
     m_timeout_ms = clamped * kMillisecondsPerSecond;
 
+    if (!prepareContainedProcess()) {
+        return false;
+    }
+    return startContainedProcess(request);
+}
+
+bool ExecutionBroker::prepareContainedProcess() {
+    // CONTAINED FROM CREATION. The process used to be assigned to its kill-on-close Job from the
+    // `started` slot, i.e. AFTER CreateProcess, so anything it spawned before that ran outside
+    // the Job; and when CreateJobObject, OpenProcess or AssignProcessToJobObject failed, the Job
+    // was dropped and the command kept running uncontained, with a PID-snapshot walk as its only
+    // cleanup. The Job now rides in as a PROC_THREAD_ATTRIBUTE_JOB_LIST launch attribute, so the
+    // child is a member before its first instruction, and a launch without one is refused.
+    auto job = createCommandJob();
+    if (!job) {
+        AiCommandResult fail;
+        fail.error_message = QStringLiteral("Cannot contain the command in a kill-on-close Job: %1")
+                                 .arg(job.error());
+        emitDeferredFinish(std::move(fail));
+        return false;
+    }
+    m_job = std::move(*job);
     m_process = std::make_unique<QProcess>(this);
     connectProcessSignals();
+    if (const auto installed = m_job->installOn(*m_process); !installed) {
+        AiCommandResult fail;
+        fail.error_message = QStringLiteral("Cannot contain the command in a kill-on-close Job: %1")
+                                 .arg(installed.error());
+        failLaunch(std::move(fail));
+        return false;
+    }
+    return true;
+}
 
+bool ExecutionBroker::startContainedProcess(const ProcessLaunchRequest& request) {
     m_running = true;
     m_timer.start();
     m_process->start(request.program, request.arguments);
+    const bool started = m_process->waitForStarted(sak::kTimeoutProcessStartMs);
+    if (const auto completed = m_job->completeLaunch(*m_process, started); !completed) {
+        // Started but not provably inside the Job (or the launch state is inconsistent): stop it
+        // and refuse, rather than run a command nothing could reap.
+        AiCommandResult fail;
+        fail.error_message = QStringLiteral(
+                                 "The command was not contained in its kill-on-close Job and was "
+                                 "stopped: %1")
+                                 .arg(completed.error());
+        failLaunch(std::move(fail));
+        return false;
+    }
+    if (!started) {
+        // Reported after the event loop turns, like every other refusal, so the caller's single
+        // completion path sees it after start* has returned.
+        AiCommandResult fail;
+        fail.error_message =
+            QStringLiteral("Process start error: %1").arg(m_process->errorString());
+        failLaunch(std::move(fail));
+        return true;
+    }
+    announceLaunch();
     return true;
 }
 
@@ -854,10 +984,7 @@ void ExecutionBroker::cancel() {
         return;
     }
     if (m_process && m_process->state() != QProcess::NotRunning) {
-#ifdef _WIN32
-        terminateProcessTree();
-#endif
-        m_process->kill();
+        stopContainedProcess();
     }
 }
 
@@ -925,18 +1052,6 @@ void ExecutionBroker::onProcessFinished(int exit_code, int exit_status) {
     completeWith(std::move(result));
 }
 
-void ExecutionBroker::onProcessError(int error) {
-    if (!m_process || m_finished_emitted) {
-        return;
-    }
-    if (static_cast<QProcess::ProcessError>(error) == QProcess::FailedToStart) {
-        AiCommandResult result;
-        result.error_message =
-            QStringLiteral("Process start error: %1").arg(m_process->errorString());
-        completeWith(std::move(result));
-    }
-}
-
 /// @brief Settle an expired run as a timeout: reap the tree, drain what the child managed to
 /// write, and report that partial output rather than an exit code the run never produced.
 ///
@@ -944,10 +1059,7 @@ void ExecutionBroker::onProcessError(int error) {
 void ExecutionBroker::completeAsTimedOut() {
     m_cancel_requested = false;
     if (m_process) {
-#ifdef _WIN32
-        terminateProcessTree();
-#endif
-        m_process->kill();
+        stopContainedProcess();
     }
     onReadyReadStdout();
     onReadyReadStderr();
@@ -982,16 +1094,11 @@ void ExecutionBroker::completeWith(AiCommandResult result) {
     if (m_process) {
         m_process->disconnect(this);
         if (m_process->state() != QProcess::NotRunning) {
-#ifdef _WIN32
-            terminateProcessTree();
-#endif
-            m_process->kill();
+            stopContainedProcess();
         }
         m_process.reset();
     }
-#ifdef _WIN32
-    closeJobHandle();
-#endif
+    releaseJob();
     Q_EMIT finished(id, result);
 }
 

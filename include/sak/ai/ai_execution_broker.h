@@ -13,14 +13,16 @@
 #include <QStringList>
 #include <QTimer>
 
+#include <expected>
 #include <functional>
 #include <memory>
 
-#ifdef _WIN32
-#include <windows.h>
-#endif
-
 class QProcess;
+class AiExecutionBrokerTests;
+
+namespace sak {
+class WindowsProcessJob;
+}
 
 namespace sak::ai {
 
@@ -148,8 +150,16 @@ struct ProcessLaunchRequest {
 /// `stderrChunk` for the command timeline. `cancel` kills the running
 /// process. Elevated commands still route synchronously through the
 /// injected runner (Milestone 6 will replace that with the elevated worker).
+///
+/// Every plain launch runs inside its own kill-on-close Windows Job from the moment the process
+/// is created (sak::WindowsProcessJob's PROC_THREAD_ATTRIBUTE_JOB_LIST launch, the one the MCP
+/// session and ProcessRunner use), so nothing the command starts can escape it. A launch whose
+/// Job cannot be created or attached is refused. When a run settles, whatever it left running is
+/// terminated with the Job; a Job whose emptiness cannot be proved goes to
+/// sak::ContainedProcessQuarantine, never to a crash.
 class ExecutionBroker : public QObject {
     Q_OBJECT
+    friend class ::AiExecutionBrokerTests;
 
 public:
     using ElevatedRunner = std::function<AiCommandResult(const AiCommandRequest&)>;
@@ -195,15 +205,35 @@ Q_SIGNALS:
     void stderrChunk(const QString& command_id, const QString& chunk);
     void finished(const QString& command_id, const sak::ai::AiCommandResult& result);
 
+#ifdef SAK_AI_TEST_HOOKS
+private:
+    using JobFactory =
+        std::function<std::expected<std::unique_ptr<sak::WindowsProcessJob>, QString>()>;
+    // Test-only (SAK_AI_TEST_HOOKS): replace the Job factory, to prove a launch whose Job cannot
+    // be created is refused instead of run uncontained. An empty factory restores the real one.
+    static void setJobFactoryForTesting(JobFactory factory);
+#endif  // SAK_AI_TEST_HOOKS
+
 private:
     bool runElevatedRequest(const AiCommandRequest& request);
     void connectProcessSignals();
     bool launchProcess(const ProcessLaunchRequest& request);
-#ifdef _WIN32
-    void assignProcessToJob();
-    void terminateProcessTree();
-    void closeJobHandle();
-#endif
+    /// @brief Create the command's Job and QProcess and install the JOB_LIST launch hook.
+    /// @return false when there is no Job to contain the launch; the refusal is already reported.
+    bool prepareContainedProcess();
+    /// @brief Start the prepared process, verify it launched inside its Job, and announce it.
+    /// @return false when the launch was refused for want of containment.
+    bool startContainedProcess(const ProcessLaunchRequest& request);
+    /// @brief Report a started, contained launch: emit `started` and arm the deadline.
+    void announceLaunch();
+    /// @brief Tear down a launch that did not happen as planned and report @p result once the
+    /// event loop turns, so a caller always gets `finished` after start* returns.
+    void failLaunch(AiCommandResult result);
+    /// @brief Stop the whole command: every member of its Job, then the primary process.
+    void stopContainedProcess();
+    /// @brief Hand the Job on once the run is over: close it when empty, otherwise terminate
+    /// what is left and let SettlingJob prove it gone (or quarantine it).
+    void releaseJob();
     void completeWith(AiCommandResult result);
     void emitDeferredFinish(AiCommandResult result);
     void emitDeferredStandaloneFinish(const QString& command_id, AiCommandResult result);
@@ -211,7 +241,6 @@ private:
     void onReadyReadStderr();
     void fillCappedOutput(AiCommandResult& result);
     void onProcessFinished(int exit_code, int exit_status);
-    void onProcessError(int error);
     void completeAsTimedOut();
     void onDeadlineReached();
     void appendCapped(QString& target, const QString& chunk);
@@ -220,9 +249,9 @@ private:
     ElevatedCancel m_elevated_cancel;
     bool m_elevated_in_flight{false};
     std::unique_ptr<QProcess> m_process;
-#ifdef _WIN32
-    HANDLE m_job_handle{nullptr};
-#endif
+    /// The running command's kill-on-close Job, owned from before CreateProcess until the run
+    /// settles, then closed, handed to a SettlingJob, or quarantined by releaseJob().
+    std::unique_ptr<sak::WindowsProcessJob> m_job;
     QString m_command_id;
     int m_max_output_bytes{kAiCommandDefaultMaxOutputBytes};
     int m_timeout_ms{0};
