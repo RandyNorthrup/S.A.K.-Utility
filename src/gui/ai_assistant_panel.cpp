@@ -3295,7 +3295,7 @@ QString managedActionSubdir(const QString& action_id) {
 }
 
 struct ManagedActionOutputRequest {
-    ai::ConversationStore* store;
+    const ai::ConversationStore* store;
     QString staging_root;
     QString subdir;
     // cppcheck-suppress uninitMemberVarNoCtor ; reference member, always bound
@@ -3320,7 +3320,7 @@ QString managedActionOutputPath(const ManagedActionOutputRequest& request) {
                : request.store->artifactSubdir(request.subdir, request.error_message);
 }
 
-bool publishStagedAppActionArtifacts(ai::ConversationStore* store,
+bool publishStagedAppActionArtifacts(const ai::ConversationStore* store,
                                      const QString& staging_root,
                                      const QString& action_id,
                                      AppActionResult* run,
@@ -6426,6 +6426,36 @@ bool AiAssistantPanel::confirmCommandWithUser(const QString& shell,
     return restore_ok;
 }
 
+bool AiAssistantPanel::confirmToolCallWithUser(const ai::AiToolCallContext& context,
+                                               const QString& shell,
+                                               const QString& preview,
+                                               bool risky_change,
+                                               bool catastrophic) {
+    // The check and the prompt run in one GUI-thread call, so no chat can open between them.
+    return runOnGuiThread([&]() {
+        if (!toolCallChatIsOpen(context.session_id)) {
+            appendLocalEvent(
+                tr("Declined a %1 prompt: the chat it ran for is no longer open").arg(shell));
+            return false;
+        }
+        return confirmCommandWithUser(shell, preview, risky_change, catastrophic);
+    });
+}
+
+bool AiAssistantPanel::offerRestorePointForToolCall(const ai::AiToolCallContext& context,
+                                                    const QString& preview,
+                                                    bool risky_change,
+                                                    bool catastrophic) {
+    return runOnGuiThread([&]() {
+        if (!toolCallChatIsOpen(context.session_id)) {
+            appendLocalEvent(
+                tr("Declined a restore-point prompt: the chat it ran for is no longer open"));
+            return false;
+        }
+        return offerRestorePointIfNeeded(preview, risky_change, catastrophic);
+    });
+}
+
 bool AiAssistantPanel::consumeResumedCommandApproval(const QString& shell,
                                                      const QString& preview,
                                                      bool risky_change,
@@ -7450,7 +7480,8 @@ bool parseAppActionArguments(const QJsonValue& raw, QJsonObject* out, QString* e
 }
 }  // namespace
 
-QJsonObject AiAssistantPanel::runAppActionTool(const QJsonObject& args) {
+QJsonObject AiAssistantPanel::runAppActionTool(const ai::AiToolCallContext& context,
+                                               const QJsonObject& args) {
     if (!m_appActionService) {
         return toolError(tr("App action service is not available"));
     }
@@ -7477,7 +7508,7 @@ QJsonObject AiAssistantPanel::runAppActionTool(const QJsonObject& args) {
             result[QStringLiteral("failure_class")] = QStringLiteral("invalid_request");
             return result;
         }
-        return runAppActionRun(action_id, action_args);
+        return runAppActionRun(context, action_id, action_args);
     }
 
     QJsonObject result = toolError(tr("Unknown sak_app_action operation: %1").arg(operation));
@@ -7496,9 +7527,10 @@ bool isUngatedReadOnlyAction(const AppActionDescriptor& descriptor) {
 }
 }  // namespace
 
-std::optional<QJsonObject> AiAssistantPanel::appActionRunGate(const AppActionDescriptor& descriptor,
+std::optional<QJsonObject> AiAssistantPanel::appActionRunGate(const ai::AiToolCallContext& context,
+                                                              const AppActionDescriptor& descriptor,
                                                               const QString& detail) {
-    const ai::AiAccessMode mode = currentAccessMode();
+    const ai::AiAccessMode mode = context.access_mode;
     if (!ai::aiAccessModeIsValid(mode)) {
         QJsonObject result = toolError(tr("App actions are blocked: invalid access mode"));
         result[QStringLiteral("failure_class")] = QStringLiteral("policy_blocked");
@@ -7526,7 +7558,7 @@ std::optional<QJsonObject> AiAssistantPanel::appActionRunGate(const AppActionDes
         return result;
     }
     if (catastrophic || mode == ai::AiAccessMode::AssistedFullAccess) {
-        if (!confirmCommandWithUser(tr("app action"), preview, true, catastrophic)) {
+        if (!confirmToolCallWithUser(context, tr("app action"), preview, true, catastrophic)) {
             QJsonObject result =
                 toolError(tr("App action '%1' was declined").arg(descriptor.title));
             result[QStringLiteral("failure_class")] = QStringLiteral("user_declined");
@@ -7534,7 +7566,7 @@ std::optional<QJsonObject> AiAssistantPanel::appActionRunGate(const AppActionDes
         }
         return std::nullopt;
     }
-    if (!offerRestorePointIfNeeded(preview, true, descriptor.destructive)) {
+    if (!offerRestorePointForToolCall(context, preview, true, descriptor.destructive)) {
         QJsonObject result =
             toolError(tr("App action '%1' aborted before a restore point could be made")
                           .arg(descriptor.title));
@@ -7752,7 +7784,8 @@ static QString buildActionConfirmDetail(const AppActionDescriptor& descriptor,
     return renderArgsConfirmPreview(action_args);
 }
 
-QJsonObject AiAssistantPanel::runAppActionRun(const QString& action_id,
+QJsonObject AiAssistantPanel::runAppActionRun(const ai::AiToolCallContext& context,
+                                              const QString& action_id,
                                               const QJsonObject& action_args) {
     const std::optional<AppActionDescriptor> descriptor = m_appActionRegistry.descriptor(action_id);
     if (!descriptor.has_value()) {
@@ -7778,13 +7811,13 @@ QJsonObject AiAssistantPanel::runAppActionRun(const QString& action_id,
         result[QStringLiteral("failure_class")] = QStringLiteral("batch_too_large_to_review");
         return result;
     }
-    if (const std::optional<QJsonObject> blocked = appActionRunGate(*descriptor, detail)) {
+    if (const std::optional<QJsonObject> blocked = appActionRunGate(context, *descriptor, detail)) {
         return *blocked;
     }
 
     appendLocalEvent(tr("Running app action: %1").arg(descriptor->title));
     QString error;
-    const AppActionResult run = invokeAppActionWithStaging(action_id, action_args, &error);
+    const AppActionResult run = invokeAppActionWithStaging(context, action_id, action_args, &error);
     QJsonObject result;
     result[QStringLiteral("success")] = run.success;
     result[QStringLiteral("operation")] = QStringLiteral("run");
@@ -7797,44 +7830,49 @@ QJsonObject AiAssistantPanel::runAppActionRun(const QString& action_id,
     return result;
 }
 
-AppActionResult AiAssistantPanel::invokeAppActionWithStaging(const QString& action_id,
+AppActionResult AiAssistantPanel::invokeAppActionWithStaging(const ai::AiToolCallContext& context,
+                                                             const QString& action_id,
                                                              const QJsonObject& action_args,
                                                              QString* error_message) {
-    if (m_appActionService && m_conversationStore &&
-        !m_conversationStore->currentSessionId().isEmpty()) {
-        m_appActionStagingDir = std::make_unique<QTemporaryDir>();
-        if (!m_appActionStagingDir->isValid()) {
+    // A local, never a panel member: nothing on the GUI thread can replace the folder this
+    // call's action is writing into, or the store its files are published to.
+    std::optional<QTemporaryDir> staging;
+    if (m_appActionService && context.session_store && !context.session_id.isEmpty()) {
+        staging.emplace();
+        if (!staging->isValid()) {
             return {false, QStringLiteral("Could not create secure app-action staging"), {}};
         }
-        m_appActionStagingDir->setAutoRemove(false);
-        m_appActionService->setOutputDirectory(m_appActionStagingDir->path());
+        staging->setAutoRemove(false);
     }
-    // Stop reaches the action: a cancellable action (every async one, and the quick actions,
-    // whose cancel reaches the elevated helper) polls this and stops part-way.
-    AppActionResult run =
-        m_appActionRegistry.invoke(action_id, action_args, error_message, toolCallCancelCheck());
-    if (m_appActionStagingDir && !publishStagedAppActionArtifacts(m_conversationStore.get(),
-                                                                  m_appActionStagingDir->path(),
-                                                                  action_id,
-                                                                  &run,
-                                                                  error_message)) {
+    AppActionResult run;
+    {
+        std::optional<AppActionService::OutputDirectoryScope> output_directory;
+        if (staging) {
+            output_directory.emplace(*m_appActionService, staging->path());
+        }
+        // Stop reaches the action: a cancellable action (every async one, and the quick actions,
+        // whose cancel reaches the elevated helper) polls this and stops part-way.
+        run = m_appActionRegistry.invoke(
+            action_id, action_args, error_message, context.cancelCheck());
+    }
+    if (!staging) {
+        return run;
+    }
+    if (!publishStagedAppActionArtifacts(
+            context.session_store.get(), staging->path(), action_id, &run, error_message)) {
         run.success = false;
         run.message = QStringLiteral("App-action artifact publication failed: %1")
                           .arg(error_message == nullptr ? QString() : *error_message);
     }
-    cleanupAppActionStaging(&run, error_message);
+    cleanupAppActionStaging(staging->path(), &run, error_message);
     return run;
 }
 
-void AiAssistantPanel::cleanupAppActionStaging(AppActionResult* run, QString* error_message) {
-    if (m_appActionService) {
-        m_appActionService->setOutputDirectory({});
-    }
+void AiAssistantPanel::cleanupAppActionStaging(const QString& staging_root,
+                                               AppActionResult* run,
+                                               QString* error_message) {
     QString cleanup_error;
-    const bool cleaned = !m_appActionStagingDir ||
-                         removeStagingTreeWithoutFollowingReparse(m_appActionStagingDir->path(),
-                                                                  &cleanup_error);
-    m_appActionStagingDir.reset();
+    const bool cleaned = removeStagingTreeWithoutFollowingReparse(staging_root, &cleanup_error);
     if (cleaned || run == nullptr) {
         return;
     }
@@ -9283,7 +9321,6 @@ void AiAssistantPanel::startNewPersistentSession(const QString& title) {
         appendLocalEvent(tr("AI session store failed: %1").arg(error));
         return;
     }
-    ensureAppActionService();
     m_toolCallsThisSession = 0;
     m_citations.clear();
     m_nextCommandSequence = 1;
@@ -9810,20 +9847,10 @@ void AiAssistantPanel::registerToolDispatcherHandlers() {
 }
 
 void AiAssistantPanel::ensureAppActionService() {
-    QString backup_dir;
-    if (m_conversationStore && !m_conversationStore->currentSessionId().isEmpty()) {
-        m_appActionStagingDir = std::make_unique<QTemporaryDir>();
-        if (m_appActionStagingDir->isValid()) {
-            backup_dir = m_appActionStagingDir->path();
-        } else {
-            appendLocalEvent(tr("App action output disabled: secure staging unavailable"));
-        }
-    }
     if (m_appActionService) {
-        m_appActionService->setOutputDirectory(backup_dir);
         return;
     }
-    m_appActionService = std::make_unique<AppActionService>(m_quickActions, backup_dir);
+    m_appActionService = std::make_unique<AppActionService>(m_quickActions);
     const int seeded = m_appActionService->registerInto(m_appActionRegistry);
     const int read_only = registerReadOnlyAppActionsInto(m_appActionRegistry);
     const int mutating = registerMutatingAppActionsInto(m_appActionRegistry);
@@ -10025,10 +10052,11 @@ void AiAssistantPanel::registerToolHandlers() {
         [this](const Context& context, const QJsonObject& args, const Decision&) {
             return runRunWorkflowTool(context, args);
         });
-    m_toolDispatcher->registerHandler(QStringLiteral("sak_app_action"),
-                                      [this](const Context&,
-                                             const QJsonObject& args,
-                                             const Decision&) { return runAppActionTool(args); });
+    m_toolDispatcher->registerHandler(
+        QStringLiteral("sak_app_action"),
+        [this](const Context& context, const QJsonObject& args, const Decision&) {
+            return runAppActionTool(context, args);
+        });
 }
 
 const ai::WorkflowTemplate* AiAssistantPanel::attachedWorkflow() const {
@@ -12617,7 +12645,6 @@ void AiAssistantPanel::onSessionSelected(int index) {
         appendLocalEvent(tr("Could not open AI session: %1").arg(error));
         return;
     }
-    ensureAppActionService();
 
     // Reset per-session safety state so it cannot leak across a switch (e.g. a restore
     // point already offered in the previous session must not suppress the offer here).
@@ -12677,7 +12704,6 @@ void AiAssistantPanel::onRenameSessionClicked() {
         Q_EMIT statusMessage(tr("AI chat rename failed"), sak::kTimerStatusDefaultMs);
         return;
     }
-    ensureAppActionService();
     appendSessionMemory(QStringLiteral("Session"),
                         QStringLiteral("Renamed"),
                         tr("Chat renamed to %1").arg(title));
@@ -12741,7 +12767,6 @@ void AiAssistantPanel::onNewSessionClicked() {
     if (m_conversationStore) {
         m_conversationStore->clearCurrentSession();
     }
-    ensureAppActionService();
     refreshTraceStoreForSession();
     saveRunStateSnapshot();
     updateWorkflowProgressUi();

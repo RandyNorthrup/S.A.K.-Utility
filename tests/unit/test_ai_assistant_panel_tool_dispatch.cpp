@@ -46,6 +46,7 @@
 #include <QComboBox>
 #include <QDialog>
 #include <QDir>
+#include <QDirIterator>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
@@ -514,6 +515,92 @@ private Q_SLOTS:
         QTRY_VERIFY_WITH_TIMEOUT(observer.isNull(), 5000);
         QVERIFY2(written_path.contains(dispatch_session), qPrintable(written_path));
         QVERIFY(QFileInfo::exists(written_path));
+    }
+
+    // The real sak_app_action handler, with another chat opened while the action runs (and the
+    // service touched the way every chat change used to touch it): the action keeps writing into
+    // its call's staging folder, its files publish into the chat it ran for, and the result is
+    // dropped rather than continuing a turn in the chat now open.
+    void sessionSwitchDuringAppActionPublishesToItsOwnChat() {
+        AiAssistantPanel panel;
+        QVERIFY(panel.ensurePersistentSession(
+            QStringLiteral("Action %1").arg(QUuid::createUuid().toString(QUuid::Id128).left(8))));
+        const QString dispatch_session = panel.m_conversationStore->currentSessionId();
+        const QString dispatch_path = panel.m_conversationStore->currentSessionInfo().path;
+        std::atomic<bool> entered{false};
+        QSemaphore gate;
+        registerBlockingStagedAction(panel, &entered, &gate);
+        allowLocalToolsAndValidRun(panel);
+        panel.beginToolTurn(blockingStagedActionResponse());
+        QTRY_VERIFY_WITH_TIMEOUT(entered.load(), 5000);
+
+        QString error;
+        QVERIFY2(panel.m_conversationStore->startSession(QStringLiteral("Chat opened meanwhile"),
+                                                         &error),
+                 qPrintable(error));
+        const QString open_path = panel.m_conversationStore->currentSessionInfo().path;
+        QVERIFY(panel.m_conversationStore->currentSessionId() != dispatch_session);
+        panel.ensureAppActionService();
+
+        gate.release();
+        QTRY_VERIFY_WITH_TIMEOUT(!panel.m_asyncToolRunner->isRunning(), 5000);
+        QCOMPARE(filesNamedUnder(dispatch_path, kStagedActionFileName), 1);
+        QCOMPARE(filesNamedUnder(open_path, kStagedActionFileName), 0);
+        QCOMPARE(panel.m_runState.completed_tools, 0);
+        QVERIFY(!panel.m_toolTurn.active());
+    }
+
+    // The same handler with the panel released mid-run: the action finishes, its files reach
+    // the chat it ran for, and the panel deletes itself once the worker is gone. No crash.
+    void releaseDuringAppActionPublishesToItsOwnChat() {
+        constexpr int kShortDrainMs = 200;
+        auto panel = std::make_unique<AiAssistantPanel>();
+        QVERIFY(panel->ensurePersistentSession(
+            QStringLiteral("Released %1").arg(QUuid::createUuid().toString(QUuid::Id128).left(8))));
+        const QString dispatch_path = panel->m_conversationStore->currentSessionInfo().path;
+        std::atomic<bool> entered{false};
+        QSemaphore gate;
+        registerBlockingStagedAction(*panel, &entered, &gate);
+        allowLocalToolsAndValidRun(*panel);
+        panel->beginToolTurn(blockingStagedActionResponse());
+        QTRY_VERIFY_WITH_TIMEOUT(entered.load(), 5000);
+
+        QPointer<AiAssistantPanel> observer(panel.get());
+        AiAssistantPanel::release(std::move(panel), kShortDrainMs);
+        QVERIFY(!observer.isNull());
+
+        gate.release();
+        QTRY_VERIFY_WITH_TIMEOUT(observer.isNull(), 5000);
+        QCOMPARE(filesNamedUnder(dispatch_path, kStagedActionFileName), 1);
+    }
+
+    // A prompt from a call whose chat closed is declined without being shown, so it can neither
+    // ask the user about the wrong chat nor leave a gate record in the chat now open.
+    void toolCallGatesDeclineOnceItsChatCloses() {
+        AiAssistantPanel panel;
+        QVERIFY(panel.ensurePersistentSession(
+            QStringLiteral("Gate chat %1").arg(QUuid::createUuid().toString(QUuid::Id128))));
+        const ai::AiToolCallContext context = panel.captureToolCallContext();
+        int prompts = 0;
+        aiApprovalPromptTestHook() = [&prompts](const QString&, const QString&) -> int {
+            ++prompts;
+            return 0;  // ApprovalPromptChoice::Accept
+        };
+        const auto reset_hook = qScopeGuard([]() { aiApprovalPromptTestHook() = nullptr; });
+
+        // Open chat: the prompt shows and its answer counts.
+        QVERIFY(panel.confirmToolCallWithUser(
+            context, QStringLiteral("test"), QStringLiteral("p"), false));
+        QCOMPARE(prompts, 1);
+
+        QString error;
+        QVERIFY2(panel.m_conversationStore->startSession(QStringLiteral("Chat opened meanwhile"),
+                                                         &error),
+                 qPrintable(error));
+        QVERIFY(!panel.confirmToolCallWithUser(
+            context, QStringLiteral("test"), QStringLiteral("p"), true));
+        QVERIFY(!panel.offerRestorePointForToolCall(context, QStringLiteral("p"), true, true));
+        QCOMPARE(prompts, 1);
     }
 
     // A fresh panel starts with least privilege: local execution is opt-in.
@@ -1014,6 +1101,7 @@ private Q_SLOTS:
         AiAssistantPanel panel(nullptr, createAppQuickActionController());
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")},
                         {QStringLiteral("action_id"), QString()},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -1049,31 +1137,51 @@ private Q_SLOTS:
                                 QStringLiteral("action.microsoft_defender_signature_update")}));
     }
 
-    void appActionServiceTracksSessionArtifactRootWithoutFallback() {
+    // An app action writes into a staging folder its own call created, never into the chat's
+    // artifact tree directly and never into a folder the panel keeps between calls: outside a
+    // call there is none, whatever a chat start, rename or new chat does.
+    void appActionStagingBelongsToTheCallNotTheSession() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         QVERIFY(panel.m_appActionService != nullptr);
         QCOMPARE(panel.m_appActionService->outputDirectory(), QString());
 
         panel.startNewPersistentSession(QStringLiteral("App Action Artifacts"));
-        QVERIFY(panel.m_conversationStore != nullptr);
+        QCOMPARE(panel.m_appActionService->outputDirectory(), QString());
         QString error;
         const QString artifact_root = panel.m_conversationStore->artifactRootDirectory(&error);
         QVERIFY2(!artifact_root.isEmpty(), qPrintable(error));
-        const QString staging = panel.m_appActionService->outputDirectory();
-        QVERIFY(!staging.isEmpty());
-        QVERIFY(panel.m_appActionStagingDir && panel.m_appActionStagingDir->isValid());
-        QCOMPARE(staging, panel.m_appActionStagingDir->path());
-        QVERIFY(staging != artifact_root);
 
+        AppActionDescriptor descriptor;
+        descriptor.id = QStringLiteral("test.reports_staging");
+        descriptor.title = QStringLiteral("Reports its staging");
+        descriptor.read_only = true;
+        QStringList staging_seen;
+        QVERIFY(panel.m_appActionRegistry.registerAction(
+            descriptor, [&panel, &staging_seen](const QJsonObject&) {
+                staging_seen << panel.m_appActionService->outputDirectory();
+                return AppActionResult{true, QStringLiteral("seen"), {}};
+            }));
+        const auto run_once = [&panel, &descriptor]() {
+            return panel.runAppActionRun(panel.captureToolCallContext(),
+                                         descriptor.id,
+                                         QJsonObject{});
+        };
+        QVERIFY(run_once().value(QStringLiteral("success")).toBool());
         QVERIFY2(panel.m_conversationStore->renameCurrentSession(
                      QStringLiteral("Renamed App Action Artifacts"), &error),
                  qPrintable(error));
-        panel.ensureAppActionService();
-        const QString renamed_staging = panel.m_appActionService->outputDirectory();
-        QVERIFY(!renamed_staging.isEmpty());
-        QVERIFY(renamed_staging != staging);
-        QVERIFY(renamed_staging != panel.m_conversationStore->artifactRootDirectory(&error));
+        QVERIFY(run_once().value(QStringLiteral("success")).toBool());
+
+        QCOMPARE(staging_seen.size(), 2);
+        QVERIFY(!staging_seen.at(0).isEmpty());
+        QVERIFY(!staging_seen.at(1).isEmpty());
+        QVERIFY(staging_seen.at(0) != staging_seen.at(1));
+        QVERIFY(staging_seen.at(0) != artifact_root);
+        // Both removed with their calls, and the service holds nothing between calls.
+        QVERIFY(!QFileInfo::exists(staging_seen.at(0)));
+        QVERIFY(!QFileInfo::exists(staging_seen.at(1)));
+        QCOMPARE(panel.m_appActionService->outputDirectory(), QString());
 
         panel.onNewSessionClicked();
         QCOMPARE(panel.m_appActionService->outputDirectory(), QString());
@@ -1088,6 +1196,7 @@ private Q_SLOTS:
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
 
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("action.verify_system_files")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -1102,6 +1211,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("action.does_not_exist")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -1136,10 +1246,11 @@ private Q_SLOTS:
                 }
                 return appActionCancelledResult();
             }));
-        panel.m_activeToolRunToken = ai::CancellationToken::createRoot(QStringLiteral("tool-run"));
-        panel.m_activeToolRunToken.cancel(QStringLiteral("user_cancelled"));
+        panel.m_runToken = ai::CancellationToken::createRoot(QStringLiteral("tool-run"));
+        panel.m_runToken.cancel(QStringLiteral("user_cancelled"));
 
-        const QJsonObject result = panel.runAppActionRun(QStringLiteral("test.waits_for_stop"),
+        const QJsonObject result = panel.runAppActionRun(panel.captureToolCallContext(),
+                                                         QStringLiteral("test.waits_for_stop"),
                                                          QJsonObject{});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QCOMPARE(result.value(QStringLiteral("message")).toString(),
@@ -1194,9 +1305,10 @@ private Q_SLOTS:
         QVERIFY(root.isValid());
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        panel.m_activeToolRunToken = ai::CancellationToken::createRoot(QStringLiteral("tool-run"));
-        panel.m_activeToolRunToken.cancel(QStringLiteral("user_cancelled"));
+        panel.m_runToken = ai::CancellationToken::createRoot(QStringLiteral("tool-run"));
+        panel.m_runToken.cancel(QStringLiteral("user_cancelled"));
         const QJsonObject result = panel.runAppActionRun(
+            panel.captureToolCallContext(),
             QStringLiteral("search.find_in_files"),
             QJsonObject{{QStringLiteral("root_path"), root.path()},
                         {QStringLiteral("pattern"), QStringLiteral("needle")}});
@@ -1211,6 +1323,7 @@ private Q_SLOTS:
         AiAssistantPanel panel(nullptr, createAppQuickActionController());
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")},
                         {QStringLiteral("action_id"), QString()},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -1286,10 +1399,12 @@ private Q_SLOTS:
 
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("imaging.identify_image")},
-            {QStringLiteral("arguments"), QStringLiteral("{\"path\":\"%1\"}").arg(path)}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("imaging.identify_image")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"path\":\"%1\"}").arg(path)}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         const QJsonObject data = result.value(QStringLiteral("data")).toObject();
         QCOMPARE(data.value(QStringLiteral("format")).toString(), QStringLiteral("gzip"));
@@ -1323,10 +1438,12 @@ private Q_SLOTS:
 
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("imaging.analyze_iso")},
-            {QStringLiteral("arguments"), QStringLiteral("{\"path\":\"%1\"}").arg(path)}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("imaging.analyze_iso")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"path\":\"%1\"}").arg(path)}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         const QJsonObject data = result.value(QStringLiteral("data")).toObject();
         QVERIFY(data.value(QStringLiteral("is_valid")).toBool());
@@ -1349,10 +1466,12 @@ private Q_SLOTS:
         }
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("imaging.analyze_iso")},
-            {QStringLiteral("arguments"), QStringLiteral("{\"path\":\"%1\"}").arg(path)}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("imaging.analyze_iso")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"path\":\"%1\"}").arg(path)}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         QCOMPARE(result.value(QStringLiteral("data"))
                      .toObject()
@@ -1367,6 +1486,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("imaging.analyze_iso")},
                         {QStringLiteral("arguments"),
@@ -1383,6 +1503,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("imaging.analyze_iso")},
                         {QStringLiteral("arguments"),
@@ -1402,6 +1523,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("diagnostics.run_benchmark")},
                         {QStringLiteral("arguments"), QStringLiteral("{\"target\":\"disk\"}")}});
@@ -1421,6 +1543,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject listing = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")},
                         {QStringLiteral("action_id"), QString()},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -1458,6 +1581,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.list_profiles")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -1494,10 +1618,12 @@ private Q_SLOTS:
         panel.ensureAppActionService();
         QVERIFY(panel.m_accessModeCombo != nullptr);
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("imaging.identify_image")},
-            {QStringLiteral("arguments"), QStringLiteral("{\"path\":\"%1\"}").arg(path)}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("imaging.identify_image")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"path\":\"%1\"}").arg(path)}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         QVERIFY(!result.contains(QStringLiteral("failure_class")));
     }
@@ -1507,6 +1633,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("imaging.identify_image")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -1525,6 +1652,7 @@ private Q_SLOTS:
                 QJsonObject{{QStringLiteral("path"), QStringLiteral("\\\\host\\share\\x.iso")}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("imaging.identify_image")},
                         {QStringLiteral("arguments"), args}});
@@ -1552,6 +1680,7 @@ private Q_SLOTS:
             QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("path"), link}})
                                   .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.read_mbox")},
                         {QStringLiteral("arguments"), args}});
@@ -1608,6 +1737,7 @@ private Q_SLOTS:
         const QString args =
             QStringLiteral("{\"root_path\":\"%1\",\"pattern\":\"NEEDLE\"}").arg(dir.path());
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("search.find_in_files")},
                         {QStringLiteral("arguments"), args}});
@@ -1654,6 +1784,7 @@ private Q_SLOTS:
                                           {QStringLiteral("pattern"), QStringLiteral("x")}})
                     .toJson(QJsonDocument::Compact));
             const QJsonObject result = panel.runAppActionTool(
+                panel.captureToolCallContext(),
                 QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                             {QStringLiteral("action_id"), QStringLiteral("search.find_in_files")},
                             {QStringLiteral("arguments"), args}});
@@ -1670,6 +1801,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("search.find_in_files")},
                         {QStringLiteral("arguments"), QStringLiteral("{\"pattern\":\"x\"}")}});
@@ -1700,6 +1832,7 @@ private Q_SLOTS:
             QJsonDocument(QJsonObject{{QStringLiteral("directories"), QJsonArray{dir.path()}}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("organizer.find_duplicates")},
                         {QStringLiteral("arguments"), args}});
@@ -1726,6 +1859,7 @@ private Q_SLOTS:
             QJsonDocument(QJsonObject{{QStringLiteral("directories"), QJsonArray{dir.path()}}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("organizer.find_duplicates")},
                         {QStringLiteral("arguments"), args}});
@@ -1748,10 +1882,12 @@ private Q_SLOTS:
             const QString args = QString::fromUtf8(
                 QJsonDocument(QJsonObject{{QStringLiteral("directories"), QJsonArray{root}}})
                     .toJson(QJsonDocument::Compact));
-            const QJsonObject result = panel.runAppActionTool(QJsonObject{
-                {QStringLiteral("operation"), QStringLiteral("run")},
-                {QStringLiteral("action_id"), QStringLiteral("organizer.find_duplicates")},
-                {QStringLiteral("arguments"), args}});
+            const QJsonObject result = panel.runAppActionTool(
+                panel.captureToolCallContext(),
+                QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                            {QStringLiteral("action_id"),
+                             QStringLiteral("organizer.find_duplicates")},
+                            {QStringLiteral("arguments"), args}});
             QVERIFY2(!result.value(QStringLiteral("success")).toBool(), qPrintable(root));
             QVERIFY2(result.value(QStringLiteral("message"))
                          .toString()
@@ -1765,6 +1901,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("organizer.find_duplicates")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -1787,6 +1924,7 @@ private Q_SLOTS:
             QJsonDocument(QJsonObject{{QStringLiteral("directories"), QJsonArray{missing}}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("organizer.find_duplicates")},
                         {QStringLiteral("arguments"), args}});
@@ -1822,6 +1960,7 @@ private Q_SLOTS:
                                       {QStringLiteral("category_mapping"), mapping}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("organizer.preview_organize")},
                         {QStringLiteral("arguments"), args}});
@@ -1860,6 +1999,7 @@ private Q_SLOTS:
                                       {QStringLiteral("category_mapping"), mapping}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("organizer.preview_organize")},
                         {QStringLiteral("arguments"), args}});
@@ -1884,6 +2024,7 @@ private Q_SLOTS:
                                       {QStringLiteral("category_mapping"), mapping}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("organizer.preview_organize")},
                         {QStringLiteral("arguments"), args}});
@@ -1897,6 +2038,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("software.scan_leftovers")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -1920,6 +2062,7 @@ private Q_SLOTS:
                                        QStringLiteral("NoSuchProgram_5f3c1a9e-dead-beef")}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("software.scan_leftovers")},
                         {QStringLiteral("arguments"), args}});
@@ -1955,10 +2098,12 @@ private Q_SLOTS:
         setReadOnlyActionProgramsForTesting({fixture}, true);
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject listed = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("security.list_installed_programs")},
-            {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        const QJsonObject listed = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"),
+                         QStringLiteral("security.list_installed_programs")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(listed.value(QStringLiteral("success")).toBool());
         const QJsonArray programs = listed.value(QStringLiteral("data"))
                                         .toObject()
@@ -1983,6 +2128,7 @@ private Q_SLOTS:
                                                         {QStringLiteral("advanced"), true}})
                                   .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("software.scan_leftovers")},
                         {QStringLiteral("arguments"), args}});
@@ -1999,6 +2145,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("imaging.scan_recoverable")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -2036,6 +2183,7 @@ private Q_SLOTS:
             QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("image_path"), imgPath}})
                                   .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("imaging.scan_recoverable")},
                         {QStringLiteral("arguments"), args}});
@@ -2076,6 +2224,7 @@ private Q_SLOTS:
                              QStringLiteral("\\\\attacker.example.com\\share\\disk.img")}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("imaging.scan_recoverable")},
                         {QStringLiteral("arguments"), args}});
@@ -2106,6 +2255,7 @@ private Q_SLOTS:
         QVERIFY(panel.m_accessModeCombo != nullptr);
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (read-only runs ungated)
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("imaging.list_drives")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -2170,6 +2320,7 @@ private Q_SLOTS:
                 QJsonDocument(QJsonObject{{QStringLiteral("removable_only"), removable_only}})
                     .toJson(QJsonDocument::Compact));
             return panel.runAppActionTool(
+                panel.captureToolCallContext(),
                 QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                             {QStringLiteral("action_id"), QStringLiteral("imaging.list_drives")},
                             {QStringLiteral("arguments"), args}});
@@ -2220,6 +2371,7 @@ private Q_SLOTS:
             QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("path"), filePath}})
                                   .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("files.hash_file")},
                         {QStringLiteral("arguments"), args}});
@@ -2253,6 +2405,7 @@ private Q_SLOTS:
                                       {QStringLiteral("algorithm"), QStringLiteral("md5")}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("files.hash_file")},
                         {QStringLiteral("arguments"), args}});
@@ -2269,6 +2422,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("files.hash_file")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -2294,6 +2448,7 @@ private Q_SLOTS:
                                       {QStringLiteral("algorithm"), QStringLiteral("sha1")}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("files.hash_file")},
                         {QStringLiteral("arguments"), args}});
@@ -2314,6 +2469,7 @@ private Q_SLOTS:
                              QStringLiteral("\\\\attacker.example.com\\share\\secret.bin")}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("files.hash_file")},
                         {QStringLiteral("arguments"), args}});
@@ -2351,10 +2507,12 @@ private Q_SLOTS:
             const QString args = QString::fromUtf8(
                 QJsonDocument(QJsonObject{{QStringLiteral("image_path"), imagePath}})
                     .toJson(QJsonDocument::Compact));
-            return panel.runAppActionTool(QJsonObject{
-                {QStringLiteral("operation"), QStringLiteral("run")},
-                {QStringLiteral("action_id"), QStringLiteral("imaging.scan_recoverable")},
-                {QStringLiteral("arguments"), args}});
+            return panel.runAppActionTool(panel.captureToolCallContext(),
+                                          QJsonObject{{QStringLiteral("operation"),
+                                                       QStringLiteral("run")},
+                                                      {QStringLiteral("action_id"),
+                                                       QStringLiteral("imaging.scan_recoverable")},
+                                                      {QStringLiteral("arguments"), args}});
         };
 
         // Control: the real path (no reparse ancestor) is accepted -- confirms the temp tree itself
@@ -2413,10 +2571,11 @@ private Q_SLOTS:
         const auto run = [&](const QString& actionId, const QJsonObject& arguments) {
             const QString args =
                 QString::fromUtf8(QJsonDocument(arguments).toJson(QJsonDocument::Compact));
-            return panel.runAppActionTool(
-                QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
-                            {QStringLiteral("action_id"), actionId},
-                            {QStringLiteral("arguments"), args}});
+            return panel.runAppActionTool(panel.captureToolCallContext(),
+                                          QJsonObject{{QStringLiteral("operation"),
+                                                       QStringLiteral("run")},
+                                                      {QStringLiteral("action_id"), actionId},
+                                                      {QStringLiteral("arguments"), args}});
         };
 
         const QJsonObject dup =
@@ -2573,6 +2732,7 @@ private Q_SLOTS:
             QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("path"), path}})
                                   .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.read_mbox")},
                         {QStringLiteral("arguments"), args}});
@@ -2616,6 +2776,7 @@ private Q_SLOTS:
             QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("path"), path}})
                                   .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.read_mbox")},
                         {QStringLiteral("arguments"), args}});
@@ -2631,6 +2792,7 @@ private Q_SLOTS:
         const QString args =
             QString::fromUtf8(QJsonDocument(arguments).toJson(QJsonDocument::Compact));
         return panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.read_pst")},
                         {QStringLiteral("arguments"), args}});
@@ -2710,6 +2872,7 @@ private Q_SLOTS:
         const QString args =
             QString::fromUtf8(QJsonDocument(arguments).toJson(QJsonDocument::Compact));
         return panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.recover_deleted")},
                         {QStringLiteral("arguments"), args}});
@@ -2859,6 +3022,7 @@ private Q_SLOTS:
                                       {QStringLiteral("query"), QStringLiteral("Second")}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.search_mbox")},
                         {QStringLiteral("arguments"), args}});
@@ -2897,6 +3061,7 @@ private Q_SLOTS:
                                       {QStringLiteral("query"), QStringLiteral("zzznomatchzzz")}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.search_mbox")},
                         {QStringLiteral("arguments"), args}});
@@ -2918,6 +3083,7 @@ private Q_SLOTS:
             QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("path"), path}})
                                   .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.search_mbox")},
                         {QStringLiteral("arguments"), args}});
@@ -2936,6 +3102,7 @@ private Q_SLOTS:
                                       {QStringLiteral("query"), QStringLiteral("hi")}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.search_mbox")},
                         {QStringLiteral("arguments"), args}});
@@ -2959,6 +3126,7 @@ private Q_SLOTS:
             QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("path"), path}})
                                   .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.search_pst")},
                         {QStringLiteral("arguments"), args}});
@@ -2978,6 +3146,7 @@ private Q_SLOTS:
                                       {QStringLiteral("query"), QStringLiteral("hi")}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.search_pst")},
                         {QStringLiteral("arguments"), args}});
@@ -3000,6 +3169,7 @@ private Q_SLOTS:
                                       {QStringLiteral("query"), QStringLiteral("hello")}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.search_pst")},
                         {QStringLiteral("arguments"), args}});
@@ -3020,10 +3190,12 @@ private Q_SLOTS:
                                       {QStringLiteral("password"), QStringLiteral("secret123")},
                                       {QStringLiteral("security"), QStringLiteral("wpa2")}})
                 .toJson(QJsonDocument::Compact));
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("network.generate_wifi_setup_script")},
-            {QStringLiteral("arguments"), args}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"),
+                         QStringLiteral("network.generate_wifi_setup_script")},
+                        {QStringLiteral("arguments"), args}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         const QJsonObject data = result.value(QStringLiteral("data")).toObject();
         const QString script = data.value(QStringLiteral("script")).toString();
@@ -3050,10 +3222,12 @@ private Q_SLOTS:
                                       {QStringLiteral("password"), QStringLiteral("ignored")},
                                       {QStringLiteral("security"), QStringLiteral("open")}})
                 .toJson(QJsonDocument::Compact));
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("network.generate_wifi_setup_script")},
-            {QStringLiteral("arguments"), args}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"),
+                         QStringLiteral("network.generate_wifi_setup_script")},
+                        {QStringLiteral("arguments"), args}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         const QJsonObject data = result.value(QStringLiteral("data")).toObject();
         QVERIFY(!data.value(QStringLiteral("embeds_password")).toBool());
@@ -3076,10 +3250,12 @@ private Q_SLOTS:
             QJsonDocument(QJsonObject{{QStringLiteral("ssid"), QStringLiteral("Net\"work")},
                                       {QStringLiteral("password"), QStringLiteral("pw")}})
                 .toJson(QJsonDocument::Compact));
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("network.generate_wifi_setup_script")},
-            {QStringLiteral("arguments"), args}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"),
+                         QStringLiteral("network.generate_wifi_setup_script")},
+                        {QStringLiteral("arguments"), args}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
@@ -3091,10 +3267,12 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         panel.m_accessModeCombo->setCurrentIndex(0);
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("network.generate_wifi_setup_script")},
-            {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"),
+                         QStringLiteral("network.generate_wifi_setup_script")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(
             result.value(QStringLiteral("message")).toString().contains(QStringLiteral("ssid")));
@@ -3110,8 +3288,9 @@ private Q_SLOTS:
     void convertOstListedAsMutating() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(
-            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonObject result = panel.runAppActionTool(panel.captureToolCallContext(),
+                                                          QJsonObject{{QStringLiteral("operation"),
+                                                                       QStringLiteral("list")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         bool found = false;
@@ -3135,8 +3314,9 @@ private Q_SLOTS:
     void convertOstSchemaHasNoFormatParameter() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(
-            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonObject result = panel.runAppActionTool(panel.captureToolCallContext(),
+                                                          QJsonObject{{QStringLiteral("operation"),
+                                                                       QStringLiteral("list")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
 
         QJsonObject params;
@@ -3185,6 +3365,7 @@ private Q_SLOTS:
                                       {QStringLiteral("format"), QStringLiteral("eml")}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.convert_ost")},
                         {QStringLiteral("arguments"), args}});
@@ -3225,6 +3406,7 @@ private Q_SLOTS:
                                 {QStringLiteral("format"), fmt}})
                     .toJson(QJsonDocument::Compact));
             const QJsonObject result = panel.runAppActionTool(
+                panel.captureToolCallContext(),
                 QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                             {QStringLiteral("action_id"), QStringLiteral("email.convert_ost")},
                             {QStringLiteral("arguments"), args}});
@@ -3257,6 +3439,7 @@ private Q_SLOTS:
                                       {QStringLiteral("format"), QStringLiteral("eml")}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.convert_ost")},
                         {QStringLiteral("arguments"), args}});
@@ -3285,6 +3468,7 @@ private Q_SLOTS:
                                       {QStringLiteral("format"), QStringLiteral("eml")}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.convert_ost")},
                         {QStringLiteral("arguments"), args}});
@@ -3316,6 +3500,7 @@ private Q_SLOTS:
                                       {QStringLiteral("format"), QStringLiteral("eml")}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.convert_ost")},
                         {QStringLiteral("arguments"), args}});
@@ -3333,8 +3518,9 @@ private Q_SLOTS:
     void connectWifiListedAsMutatingAdmin() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(
-            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonObject result = panel.runAppActionTool(panel.captureToolCallContext(),
+                                                          QJsonObject{{QStringLiteral("operation"),
+                                                                       QStringLiteral("list")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         bool found = false;
@@ -3363,6 +3549,7 @@ private Q_SLOTS:
                                       {QStringLiteral("password"), QStringLiteral("pw")}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.connect_wifi")},
                         {QStringLiteral("arguments"), args}});
@@ -3379,6 +3566,7 @@ private Q_SLOTS:
         QStringList titles;
         installApprovalHook(&titles);
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.connect_wifi")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -3399,6 +3587,7 @@ private Q_SLOTS:
                                       {QStringLiteral("password"), QStringLiteral("pw")}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.connect_wifi")},
                         {QStringLiteral("arguments"), args}});
@@ -3424,8 +3613,9 @@ private Q_SLOTS:
     void cleanLeftoversListedCatastrophic() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(
-            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonObject result = panel.runAppActionTool(panel.captureToolCallContext(),
+                                                          QJsonObject{{QStringLiteral("operation"),
+                                                                       QStringLiteral("list")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         bool found = false;
@@ -3458,6 +3648,7 @@ private Q_SLOTS:
                                  {QStringLiteral("path"), QStringLiteral("C:\\Temp\\Acme")}}}}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("software.clean_leftovers")},
                         {QStringLiteral("arguments"), args}});
@@ -3474,6 +3665,7 @@ private Q_SLOTS:
         QStringList titles;
         installApprovalHook(&titles);
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("software.clean_leftovers")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -3490,6 +3682,7 @@ private Q_SLOTS:
             QJsonDocument(QJsonObject{{QStringLiteral("items"), QJsonArray{item}}})
                 .toJson(QJsonDocument::Compact));
         return panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("software.clean_leftovers")},
                         {QStringLiteral("arguments"), args}});
@@ -3561,6 +3754,7 @@ private Q_SLOTS:
             QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("items"), items}})
                                   .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("software.clean_leftovers")},
                         {QStringLiteral("arguments"), args}});
@@ -3596,6 +3790,7 @@ private Q_SLOTS:
             QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("items"), items}})
                                   .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("software.clean_leftovers")},
                         {QStringLiteral("arguments"), args}});
@@ -3611,8 +3806,9 @@ private Q_SLOTS:
     void exportMboxListedAsMutating() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(
-            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonObject result = panel.runAppActionTool(panel.captureToolCallContext(),
+                                                          QJsonObject{{QStringLiteral("operation"),
+                                                                       QStringLiteral("list")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         bool found = false;
@@ -3648,6 +3844,7 @@ private Q_SLOTS:
                             {QStringLiteral("output_path"), dir.filePath(QStringLiteral("out"))}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.export_mbox")},
                         {QStringLiteral("arguments"), args}});
@@ -3680,6 +3877,7 @@ private Q_SLOTS:
                                       {QStringLiteral("format"), QStringLiteral("eml")}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.export_mbox")},
                         {QStringLiteral("arguments"), args}});
@@ -3718,6 +3916,7 @@ private Q_SLOTS:
                                           {QStringLiteral("output_path"), c.output_path}})
                     .toJson(QJsonDocument::Compact));
             const QJsonObject result = panel.runAppActionTool(
+                panel.captureToolCallContext(),
                 QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                             {QStringLiteral("action_id"), QStringLiteral("email.export_mbox")},
                             {QStringLiteral("arguments"), args}});
@@ -3736,6 +3935,7 @@ private Q_SLOTS:
         QStringList titles;
         installApprovalHook(&titles);
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.export_mbox")},
                         {QStringLiteral("arguments"), QStringLiteral("{\"path\":\"x.mbox\"}")}});
@@ -3774,6 +3974,7 @@ private Q_SLOTS:
                                                         {QStringLiteral("output_path"), out_dir}})
                                   .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.export_mbox")},
                         {QStringLiteral("arguments"), args}});
@@ -3828,8 +4029,9 @@ private Q_SLOTS:
     void saveMboxAttachmentsListedAsMutating() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(
-            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonObject result = panel.runAppActionTool(panel.captureToolCallContext(),
+                                                          QJsonObject{{QStringLiteral("operation"),
+                                                                       QStringLiteral("list")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         bool found = false;
@@ -3862,10 +4064,12 @@ private Q_SLOTS:
                                                         {QStringLiteral("message_index"), 0},
                                                         {QStringLiteral("output_dir"), dir.path()}})
                                   .toJson(QJsonDocument::Compact));
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("email.save_mbox_attachments")},
-            {QStringLiteral("arguments"), args}});
+        const QJsonObject result =
+            panel.runAppActionTool(panel.captureToolCallContext(),
+                                   QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                                               {QStringLiteral("action_id"),
+                                                QStringLiteral("email.save_mbox_attachments")},
+                                               {QStringLiteral("arguments"), args}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
                  QStringLiteral("policy_blocked"));
@@ -3893,10 +4097,12 @@ private Q_SLOTS:
                                                         {QStringLiteral("message_index"), 0},
                                                         {QStringLiteral("output_dir"), out_dir}})
                                   .toJson(QJsonDocument::Compact));
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("email.save_mbox_attachments")},
-            {QStringLiteral("arguments"), args}});
+        const QJsonObject result =
+            panel.runAppActionTool(panel.captureToolCallContext(),
+                                   QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                                               {QStringLiteral("action_id"),
+                                                QStringLiteral("email.save_mbox_attachments")},
+                                               {QStringLiteral("arguments"), args}});
 
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         const QJsonObject data = result.value(QStringLiteral("data")).toObject();
@@ -3969,10 +4175,12 @@ private Q_SLOTS:
                                                         {QStringLiteral("message_index"), 0},
                                                         {QStringLiteral("output_dir"), out_dir}})
                                   .toJson(QJsonDocument::Compact));
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("email.save_mbox_attachments")},
-            {QStringLiteral("arguments"), args}});
+        const QJsonObject result =
+            panel.runAppActionTool(panel.captureToolCallContext(),
+                                   QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                                               {QStringLiteral("action_id"),
+                                                QStringLiteral("email.save_mbox_attachments")},
+                                               {QStringLiteral("arguments"), args}});
 
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         const QJsonObject data = result.value(QStringLiteral("data")).toObject();
@@ -4004,10 +4212,12 @@ private Q_SLOTS:
                                                         {QStringLiteral("message_index"), 0},
                                                         {QStringLiteral("output_dir"), dir.path()}})
                                   .toJson(QJsonDocument::Compact));
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("email.save_mbox_attachments")},
-            {QStringLiteral("arguments"), args}});
+        const QJsonObject result =
+            panel.runAppActionTool(panel.captureToolCallContext(),
+                                   QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                                               {QStringLiteral("action_id"),
+                                                QStringLiteral("email.save_mbox_attachments")},
+                                               {QStringLiteral("arguments"), args}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
@@ -4029,10 +4239,12 @@ private Q_SLOTS:
                                       {QStringLiteral("message_index"), 0},
                                       {QStringLiteral("output_dir"), dir.path()}})
                 .toJson(QJsonDocument::Compact));
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("email.save_mbox_attachments")},
-            {QStringLiteral("arguments"), args}});
+        const QJsonObject result =
+            panel.runAppActionTool(panel.captureToolCallContext(),
+                                   QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                                               {QStringLiteral("action_id"),
+                                                QStringLiteral("email.save_mbox_attachments")},
+                                               {QStringLiteral("arguments"), args}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(
             result.value(QStringLiteral("message")).toString().contains(QStringLiteral("network")));
@@ -4055,10 +4267,12 @@ private Q_SLOTS:
                             {QStringLiteral("message_index"), 0},
                             {QStringLiteral("output_dir"), dir.filePath(QStringLiteral("nope"))}})
                 .toJson(QJsonDocument::Compact));
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("email.save_mbox_attachments")},
-            {QStringLiteral("arguments"), args}});
+        const QJsonObject result =
+            panel.runAppActionTool(panel.captureToolCallContext(),
+                                   QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                                               {QStringLiteral("action_id"),
+                                                QStringLiteral("email.save_mbox_attachments")},
+                                               {QStringLiteral("arguments"), args}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
@@ -4076,8 +4290,9 @@ private Q_SLOTS:
     void savePstAttachmentsListedAsMutating() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(
-            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonObject result = panel.runAppActionTool(panel.captureToolCallContext(),
+                                                          QJsonObject{{QStringLiteral("operation"),
+                                                                       QStringLiteral("list")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         bool found = false;
@@ -4110,6 +4325,7 @@ private Q_SLOTS:
                             {QStringLiteral("output_dir"), dir.path()}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.save_pst_attachments")},
                         {QStringLiteral("arguments"), args}});
@@ -4133,6 +4349,7 @@ private Q_SLOTS:
                             {QStringLiteral("output_dir"), dir.path()}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.save_pst_attachments")},
                         {QStringLiteral("arguments"), args}});
@@ -4158,6 +4375,7 @@ private Q_SLOTS:
                                       {QStringLiteral("output_dir"), dir.path()}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.save_pst_attachments")},
                         {QStringLiteral("arguments"), args}});
@@ -4189,6 +4407,7 @@ private Q_SLOTS:
                             {QStringLiteral("output_dir"), dir.filePath(QStringLiteral("nope"))}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.save_pst_attachments")},
                         {QStringLiteral("arguments"), args}});
@@ -4219,6 +4438,7 @@ private Q_SLOTS:
                                       {QStringLiteral("output_dir"), dir.path()}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.save_pst_attachments")},
                         {QStringLiteral("arguments"), args}});
@@ -4249,8 +4469,9 @@ private Q_SLOTS:
     void restoreRecoverableListedAsMutating() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(
-            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonObject result = panel.runAppActionTool(panel.captureToolCallContext(),
+                                                          QJsonObject{{QStringLiteral("operation"),
+                                                                       QStringLiteral("list")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         bool found = false;
@@ -4283,10 +4504,12 @@ private Q_SLOTS:
                                       {QStringLiteral("destination_directory"), dir.path()},
                                       {QStringLiteral("candidates"), QJsonArray{cand}}})
                 .toJson(QJsonDocument::Compact));
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("imaging.restore_recoverable")},
-            {QStringLiteral("arguments"), args}});
+        const QJsonObject result =
+            panel.runAppActionTool(panel.captureToolCallContext(),
+                                   QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                                               {QStringLiteral("action_id"),
+                                                QStringLiteral("imaging.restore_recoverable")},
+                                               {QStringLiteral("arguments"), args}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
                  QStringLiteral("policy_blocked"));
@@ -4316,10 +4539,12 @@ private Q_SLOTS:
                                       {QStringLiteral("destination_directory"), dest},
                                       {QStringLiteral("candidates"), QJsonArray{cand}}})
                 .toJson(QJsonDocument::Compact));
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("imaging.restore_recoverable")},
-            {QStringLiteral("arguments"), args}});
+        const QJsonObject result =
+            panel.runAppActionTool(panel.captureToolCallContext(),
+                                   QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                                               {QStringLiteral("action_id"),
+                                                QStringLiteral("imaging.restore_recoverable")},
+                                               {QStringLiteral("arguments"), args}});
 
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         const QJsonObject data = result.value(QStringLiteral("data")).toObject();
@@ -4354,10 +4579,12 @@ private Q_SLOTS:
                                       {QStringLiteral("destination_directory"), dest},
                                       {QStringLiteral("candidates"), QJsonArray{cand}}})
                 .toJson(QJsonDocument::Compact));
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("imaging.restore_recoverable")},
-            {QStringLiteral("arguments"), args}});
+        const QJsonObject result =
+            panel.runAppActionTool(panel.captureToolCallContext(),
+                                   QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                                               {QStringLiteral("action_id"),
+                                                QStringLiteral("imaging.restore_recoverable")},
+                                               {QStringLiteral("arguments"), args}});
 
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         // Sanitized to "evil"; the file is inside dest and nothing escaped above it.
@@ -4387,10 +4614,12 @@ private Q_SLOTS:
                                       {QStringLiteral("destination_directory"), dest},
                                       {QStringLiteral("candidates"), QJsonArray{cand}}})
                 .toJson(QJsonDocument::Compact));
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("imaging.restore_recoverable")},
-            {QStringLiteral("arguments"), args}});
+        const QJsonObject result =
+            panel.runAppActionTool(panel.captureToolCallContext(),
+                                   QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                                               {QStringLiteral("action_id"),
+                                                QStringLiteral("imaging.restore_recoverable")},
+                                               {QStringLiteral("arguments"), args}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(
             result.value(QStringLiteral("message")).toString().contains(QStringLiteral("outside")));
@@ -4419,10 +4648,12 @@ private Q_SLOTS:
                                       {QStringLiteral("destination_directory"), dest},
                                       {QStringLiteral("candidates"), cands}})
                 .toJson(QJsonDocument::Compact));
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("imaging.restore_recoverable")},
-            {QStringLiteral("arguments"), args}});
+        const QJsonObject result =
+            panel.runAppActionTool(panel.captureToolCallContext(),
+                                   QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                                               {QStringLiteral("action_id"),
+                                                QStringLiteral("imaging.restore_recoverable")},
+                                               {QStringLiteral("arguments"), args}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
@@ -4449,10 +4680,12 @@ private Q_SLOTS:
                                       {QStringLiteral("destination_directory"), dest},
                                       {QStringLiteral("candidates"), QJsonArray{}}})
                 .toJson(QJsonDocument::Compact));
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("imaging.restore_recoverable")},
-            {QStringLiteral("arguments"), args}});
+        const QJsonObject result =
+            panel.runAppActionTool(panel.captureToolCallContext(),
+                                   QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                                               {QStringLiteral("action_id"),
+                                                QStringLiteral("imaging.restore_recoverable")},
+                                               {QStringLiteral("arguments"), args}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
@@ -4476,10 +4709,12 @@ private Q_SLOTS:
                                       {QStringLiteral("destination_directory"), dir.path()},
                                       {QStringLiteral("candidates"), QJsonArray{cand}}})
                 .toJson(QJsonDocument::Compact));
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("imaging.restore_recoverable")},
-            {QStringLiteral("arguments"), args}});
+        const QJsonObject result =
+            panel.runAppActionTool(panel.captureToolCallContext(),
+                                   QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                                               {QStringLiteral("action_id"),
+                                                QStringLiteral("imaging.restore_recoverable")},
+                                               {QStringLiteral("arguments"), args}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(
             result.value(QStringLiteral("message")).toString().contains(QStringLiteral("network")));
@@ -4504,10 +4739,12 @@ private Q_SLOTS:
                                        dir.filePath(QStringLiteral("nope"))},
                                       {QStringLiteral("candidates"), QJsonArray{cand}}})
                 .toJson(QJsonDocument::Compact));
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("imaging.restore_recoverable")},
-            {QStringLiteral("arguments"), args}});
+        const QJsonObject result =
+            panel.runAppActionTool(panel.captureToolCallContext(),
+                                   QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                                               {QStringLiteral("action_id"),
+                                                QStringLiteral("imaging.restore_recoverable")},
+                                               {QStringLiteral("arguments"), args}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         const QString msg = result.value(QStringLiteral("message")).toString();
         QVERIFY(msg.contains(QStringLiteral("existing directory")));
@@ -4520,8 +4757,9 @@ private Q_SLOTS:
     void exportPstListedAsMutating() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(
-            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonObject result = panel.runAppActionTool(panel.captureToolCallContext(),
+                                                          QJsonObject{{QStringLiteral("operation"),
+                                                                       QStringLiteral("list")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         bool found = false;
@@ -4554,6 +4792,7 @@ private Q_SLOTS:
                             {QStringLiteral("output_path"), dir.filePath(QStringLiteral("out"))}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.export_pst")},
                         {QStringLiteral("arguments"), args}});
@@ -4584,6 +4823,7 @@ private Q_SLOTS:
                                           {QStringLiteral("output_path"), c.output_path}})
                     .toJson(QJsonDocument::Compact));
             const QJsonObject result = panel.runAppActionTool(
+                panel.captureToolCallContext(),
                 QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                             {QStringLiteral("action_id"), QStringLiteral("email.export_pst")},
                             {QStringLiteral("arguments"), args}});
@@ -4602,6 +4842,7 @@ private Q_SLOTS:
         QStringList titles;
         installApprovalHook(&titles);
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.export_pst")},
                         {QStringLiteral("arguments"), QStringLiteral("{\"path\":\"x.pst\"}")}});
@@ -4637,6 +4878,7 @@ private Q_SLOTS:
                                                         {QStringLiteral("output_path"), out_dir}})
                                   .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("email.export_pst")},
                         {QStringLiteral("arguments"), args}});
@@ -4666,10 +4908,11 @@ private Q_SLOTS:
                                     const QJsonObject& arguments) {
         const QString args =
             QString::fromUtf8(QJsonDocument(arguments).toJson(QJsonDocument::Compact));
-        return panel.runAppActionTool(
-            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
-                        {QStringLiteral("action_id"), action_id},
-                        {QStringLiteral("arguments"), args}});
+        return panel.runAppActionTool(panel.captureToolCallContext(),
+                                      QJsonObject{{QStringLiteral("operation"),
+                                                   QStringLiteral("run")},
+                                                  {QStringLiteral("action_id"), action_id},
+                                                  {QStringLiteral("arguments"), args}});
     }
 
     static void verifyArchiveOpMutating(const QJsonArray& actions, const QString& id) {
@@ -4690,8 +4933,9 @@ private Q_SLOTS:
     void archiveOpsListedAsMutating() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(
-            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonObject result = panel.runAppActionTool(panel.captureToolCallContext(),
+                                                          QJsonObject{{QStringLiteral("operation"),
+                                                                       QStringLiteral("list")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         verifyArchiveOpMutating(actions, QStringLiteral("files.compress_zip"));
@@ -5132,6 +5376,7 @@ private Q_SLOTS:
                                        QStringLiteral("NoSuchApp_5f3c1a9e_dead_beef")}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("backup.preview_app_data")},
                         {QStringLiteral("arguments"), args}});
@@ -5171,6 +5416,7 @@ private Q_SLOTS:
             QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("app_name"), token}})
                                   .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("backup.preview_app_data")},
                         {QStringLiteral("arguments"), args}});
@@ -5205,10 +5451,12 @@ private Q_SLOTS:
             const QString args =
                 QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("app_name"), name}})
                                       .toJson(QJsonDocument::Compact));
-            const QJsonObject result = panel.runAppActionTool(QJsonObject{
-                {QStringLiteral("operation"), QStringLiteral("run")},
-                {QStringLiteral("action_id"), QStringLiteral("backup.preview_app_data")},
-                {QStringLiteral("arguments"), args}});
+            const QJsonObject result = panel.runAppActionTool(
+                panel.captureToolCallContext(),
+                QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                            {QStringLiteral("action_id"),
+                             QStringLiteral("backup.preview_app_data")},
+                            {QStringLiteral("arguments"), args}});
             QVERIFY2(!result.value(QStringLiteral("success")).toBool(), qPrintable(name));
             QVERIFY2(result.value(QStringLiteral("message"))
                          .toString()
@@ -5267,8 +5515,9 @@ private Q_SLOTS:
     void organizeListedAsMutatingDestructive() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(
-            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonObject result = panel.runAppActionTool(panel.captureToolCallContext(),
+                                                          QJsonObject{{QStringLiteral("operation"),
+                                                                       QStringLiteral("list")}});
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         bool found = false;
         for (const auto& value : actions) {
@@ -5299,10 +5548,12 @@ private Q_SLOTS:
         panel.ensureAppActionService();
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
         const QJsonObject mapping{{QStringLiteral("Docs"), QJsonArray{QStringLiteral("txt")}}};
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("organizer.organize_directory")},
-            {QStringLiteral("arguments"), organizeArgs(dir.path(), mapping)}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"),
+                         QStringLiteral("organizer.organize_directory")},
+                        {QStringLiteral("arguments"), organizeArgs(dir.path(), mapping)}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
                  QStringLiteral("policy_blocked"));
@@ -5332,10 +5583,12 @@ private Q_SLOTS:
 
         const QJsonObject mapping{{QStringLiteral("Docs"), QJsonArray{QStringLiteral("txt")}},
                                   {QStringLiteral("Images"), QJsonArray{QStringLiteral("jpg")}}};
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("organizer.organize_directory")},
-            {QStringLiteral("arguments"), organizeArgs(dir.path(), mapping)}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"),
+                         QStringLiteral("organizer.organize_directory")},
+                        {QStringLiteral("arguments"), organizeArgs(dir.path(), mapping)}});
 
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         QCOMPARE(result.value(QStringLiteral("data"))
@@ -5360,11 +5613,13 @@ private Q_SLOTS:
         QStringList titles;
         installApprovalHook(&titles);
         const QJsonObject mapping{{QStringLiteral("Docs"), QJsonArray{QStringLiteral("txt")}}};
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("organizer.organize_directory")},
-            {QStringLiteral("arguments"),
-             organizeArgs(dir.path(), mapping, QStringLiteral("overwrite"))}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"),
+                         QStringLiteral("organizer.organize_directory")},
+                        {QStringLiteral("arguments"),
+                         organizeArgs(dir.path(), mapping, QStringLiteral("overwrite"))}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
@@ -5379,11 +5634,13 @@ private Q_SLOTS:
         QStringList titles;
         installApprovalHook(&titles);
         const QJsonObject mapping{{QStringLiteral("Docs"), QJsonArray{QStringLiteral("txt")}}};
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("organizer.organize_directory")},
-            {QStringLiteral("arguments"),
-             organizeArgs(QStringLiteral("\\\\attacker\\share"), mapping)}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"),
+                         QStringLiteral("organizer.organize_directory")},
+                        {QStringLiteral("arguments"),
+                         organizeArgs(QStringLiteral("\\\\attacker\\share"), mapping)}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(
             result.value(QStringLiteral("message")).toString().contains(QStringLiteral("network")));
@@ -5413,10 +5670,12 @@ private Q_SLOTS:
                                   QStringLiteral("sub/dir")};
         for (const QString& category : evil) {
             const QJsonObject mapping{{category, QJsonArray{QStringLiteral("txt")}}};
-            const QJsonObject result = panel.runAppActionTool(QJsonObject{
-                {QStringLiteral("operation"), QStringLiteral("run")},
-                {QStringLiteral("action_id"), QStringLiteral("organizer.organize_directory")},
-                {QStringLiteral("arguments"), organizeArgs(target, mapping)}});
+            const QJsonObject result = panel.runAppActionTool(
+                panel.captureToolCallContext(),
+                QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                            {QStringLiteral("action_id"),
+                             QStringLiteral("organizer.organize_directory")},
+                            {QStringLiteral("arguments"), organizeArgs(target, mapping)}});
             QVERIFY2(!result.value(QStringLiteral("success")).toBool(), qPrintable(category));
             QVERIFY2(result.value(QStringLiteral("message"))
                          .toString()
@@ -5439,10 +5698,12 @@ private Q_SLOTS:
         const QString args = QString::fromUtf8(
             QJsonDocument(QJsonObject{{QStringLiteral("target_directory"), dir.path()}})
                 .toJson(QJsonDocument::Compact));
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("organizer.organize_directory")},
-            {QStringLiteral("arguments"), args}});
+        const QJsonObject result =
+            panel.runAppActionTool(panel.captureToolCallContext(),
+                                   QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                                               {QStringLiteral("action_id"),
+                                                QStringLiteral("organizer.organize_directory")},
+                                               {QStringLiteral("arguments"), args}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
@@ -5459,8 +5720,9 @@ private Q_SLOTS:
     void recycleListedAsMutatingDestructive() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(
-            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonObject result = panel.runAppActionTool(panel.captureToolCallContext(),
+                                                          QJsonObject{{QStringLiteral("operation"),
+                                                                       QStringLiteral("list")}});
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         bool found = false;
         for (const auto& value : actions) {
@@ -5652,6 +5914,7 @@ private Q_SLOTS:
                                       {QStringLiteral("technician_override"), true}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("software.clean_leftovers")},
                         {QStringLiteral("arguments"), args}});
@@ -5689,7 +5952,8 @@ private Q_SLOTS:
         QStringList titles;
         installApprovalHook(&titles);  // approves "Approve AI Command"
         const std::optional<QJsonObject> blocked =
-            panel.appActionRunGate(riskyDescriptor(/*destructive=*/true, /*catastrophic=*/true));
+            panel.appActionRunGate(panel.captureToolCallContext(),
+                                   riskyDescriptor(/*destructive=*/true, /*catastrophic=*/true));
         QVERIFY(!blocked.has_value());  // allowed after the forced confirm
         QCOMPARE(countTitles(titles, QStringLiteral("Approve AI Command")), 1);
     }
@@ -5702,7 +5966,8 @@ private Q_SLOTS:
         QStringList titles;
         installApprovalHook(&titles);
         const std::optional<QJsonObject> blocked =
-            panel.appActionRunGate(riskyDescriptor(/*destructive=*/true, /*catastrophic=*/false));
+            panel.appActionRunGate(panel.captureToolCallContext(),
+                                   riskyDescriptor(/*destructive=*/true, /*catastrophic=*/false));
         QVERIFY(!blocked.has_value());
         QCOMPARE(countTitles(titles, QStringLiteral("Approve AI Command")), 0);
         QCOMPARE(countTitles(titles, QStringLiteral("Create Restore Point")), 1);
@@ -5720,7 +5985,8 @@ private Q_SLOTS:
             return 3;  // ApprovalPromptChoice::Cancel
         };
         const std::optional<QJsonObject> blocked =
-            panel.appActionRunGate(riskyDescriptor(/*destructive=*/true, /*catastrophic=*/true));
+            panel.appActionRunGate(panel.captureToolCallContext(),
+                                   riskyDescriptor(/*destructive=*/true, /*catastrophic=*/true));
         QVERIFY(blocked.has_value());
         QCOMPARE(blocked->value(QStringLiteral("failure_class")).toString(),
                  QStringLiteral("user_declined"));
@@ -5731,8 +5997,9 @@ private Q_SLOTS:
     void catalogExposesCatastrophicFlag() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(
-            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonObject result = panel.runAppActionTool(panel.captureToolCallContext(),
+                                                          QJsonObject{{QStringLiteral("operation"),
+                                                                       QStringLiteral("list")}});
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         QVERIFY(!actions.isEmpty());
         // Every catalog entry carries the (default-false) catastrophic field.
@@ -5963,8 +6230,9 @@ private Q_SLOTS:
     void applyOperationListedCatastrophic() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(
-            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonObject result = panel.runAppActionTool(panel.captureToolCallContext(),
+                                                          QJsonObject{{QStringLiteral("operation"),
+                                                                       QStringLiteral("list")}});
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         bool found = false;
         for (const auto& value : actions) {
@@ -6069,6 +6337,7 @@ private Q_SLOTS:
         panel.ensureAppActionService();
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("partition.apply_operation")},
                         {QStringLiteral("arguments"),
@@ -6088,6 +6357,7 @@ private Q_SLOTS:
         QStringList titles;
         installApprovalHook(&titles);  // approve the forced catastrophic confirm
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("partition.apply_operation")},
                         {QStringLiteral("arguments"),
@@ -6106,6 +6376,7 @@ private Q_SLOTS:
         QStringList titles;
         installApprovalHook(&titles);
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("partition.apply_operation")},
                         {QStringLiteral("arguments"),
@@ -6128,6 +6399,7 @@ private Q_SLOTS:
         QStringList titles;
         installApprovalHook(&titles);  // approve the forced catastrophic confirm
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("partition.apply_operation")},
                         {QStringLiteral("arguments"),
@@ -6148,6 +6420,7 @@ private Q_SLOTS:
         QStringList titles;
         installApprovalHook(&titles);
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("partition.apply_operation")},
                         {QStringLiteral("arguments"),
@@ -6164,8 +6437,9 @@ private Q_SLOTS:
     void flashImageListedCatastrophic() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(
-            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonObject result = panel.runAppActionTool(panel.captureToolCallContext(),
+                                                          QJsonObject{{QStringLiteral("operation"),
+                                                                       QStringLiteral("list")}});
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         bool found = false;
         for (const auto& value : actions) {
@@ -6192,6 +6466,7 @@ private Q_SLOTS:
                                       {QStringLiteral("disk_number"), 3}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("imaging.flash_image")},
                         {QStringLiteral("arguments"), args}});
@@ -6213,6 +6488,7 @@ private Q_SLOTS:
                                                         {QStringLiteral("disk_number"), 3}})
                                   .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("imaging.flash_image")},
                         {QStringLiteral("arguments"), args}});
@@ -6229,6 +6505,7 @@ private Q_SLOTS:
         QStringList titles;
         installApprovalHook(&titles);
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("imaging.flash_image")},
                         {QStringLiteral("arguments"), QStringLiteral("{\"disk_number\":3}")}});
@@ -6242,10 +6519,12 @@ private Q_SLOTS:
     void previewOperationMissingOperationFails() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("partition.preview_operation")},
-            {QStringLiteral("arguments"), QStringLiteral("{\"disk_number\":0}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"),
+                         QStringLiteral("partition.preview_operation")},
+                        {QStringLiteral("arguments"), QStringLiteral("{\"disk_number\":0}")}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
@@ -6257,11 +6536,13 @@ private Q_SLOTS:
     void previewOperationRejectsUnsupportedType() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("partition.preview_operation")},
-            {QStringLiteral("arguments"),
-             QStringLiteral("{\"operation\":\"frobnicate\",\"disk_number\":0}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"),
+                         QStringLiteral("partition.preview_operation")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"operation\":\"frobnicate\",\"disk_number\":0}")}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
@@ -6272,10 +6553,12 @@ private Q_SLOTS:
     void previewOperationMissingDiskNumberFails() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("partition.preview_operation")},
-            {QStringLiteral("arguments"), QStringLiteral("{\"operation\":\"delete\"}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{
+                {QStringLiteral("operation"), QStringLiteral("run")},
+                {QStringLiteral("action_id"), QStringLiteral("partition.preview_operation")},
+                {QStringLiteral("arguments"), QStringLiteral("{\"operation\":\"delete\"}")}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
@@ -6292,12 +6575,14 @@ private Q_SLOTS:
         panel.ensureAppActionService();
         QVERIFY(panel.m_accessModeCombo != nullptr);
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("partition.preview_operation")},
-            {QStringLiteral("arguments"),
-             QStringLiteral("{\"operation\":\"delete\",\"disk_number\":99999,"
-                            "\"partition_number\":1}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"),
+                         QStringLiteral("partition.preview_operation")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"operation\":\"delete\",\"disk_number\":99999,"
+                                        "\"partition_number\":1}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
         const QJsonObject data = result.value(QStringLiteral("data")).toObject();
@@ -6321,11 +6606,13 @@ private Q_SLOTS:
     void previewPartitionScopedOpWithoutPartitionIsBlocked() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("partition.preview_operation")},
-            {QStringLiteral("arguments"),
-             QStringLiteral("{\"operation\":\"format\",\"disk_number\":0}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"),
+                         QStringLiteral("partition.preview_operation")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"operation\":\"format\",\"disk_number\":0}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         const QJsonObject data = result.value(QStringLiteral("data")).toObject();
         QVERIFY(!data.value(QStringLiteral("can_apply")).toBool());
@@ -6337,11 +6624,14 @@ private Q_SLOTS:
     void previewOperationRejectsNegativeByteCount() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("partition.preview_operation")},
-            {QStringLiteral("arguments"),
-             QStringLiteral("{\"operation\":\"create\",\"disk_number\":0,\"size_bytes\":-1}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"),
+                         QStringLiteral("partition.preview_operation")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral(
+                             "{\"operation\":\"create\",\"disk_number\":0,\"size_bytes\":-1}")}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
@@ -6353,8 +6643,9 @@ private Q_SLOTS:
     void uninstallUwpListedMutatingDestructiveAdmin() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(
-            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonObject result = panel.runAppActionTool(panel.captureToolCallContext(),
+                                                          QJsonObject{{QStringLiteral("operation"),
+                                                                       QStringLiteral("list")}});
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         bool found = false;
         for (const auto& value : actions) {
@@ -6380,6 +6671,7 @@ private Q_SLOTS:
         QStringList titles;
         installApprovalHook(&titles);  // proceeds past the destructive restore-point offer
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("software.uninstall_uwp_app")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -6394,10 +6686,12 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("software.uninstall_uwp_app")},
-            {QStringLiteral("arguments"), QStringLiteral("{\"program_name\":\"Whatever\"}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("software.uninstall_uwp_app")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"program_name\":\"Whatever\"}")}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
                  QStringLiteral("policy_blocked"));
@@ -6413,6 +6707,7 @@ private Q_SLOTS:
         QStringList titles;
         installApprovalHook(&titles);
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("software.uninstall_uwp_app")},
                         {QStringLiteral("arguments"),
@@ -6448,8 +6743,9 @@ private Q_SLOTS:
     void uninstallProgramListedMutatingDestructiveAdmin() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(
-            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonObject result = panel.runAppActionTool(panel.captureToolCallContext(),
+                                                          QJsonObject{{QStringLiteral("operation"),
+                                                                       QStringLiteral("list")}});
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         bool found = false;
         for (const auto& value : actions) {
@@ -6475,6 +6771,7 @@ private Q_SLOTS:
         QStringList titles;
         installApprovalHook(&titles);
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("software.uninstall_program")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -6489,10 +6786,12 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("software.uninstall_program")},
-            {QStringLiteral("arguments"), QStringLiteral("{\"program_name\":\"Whatever\"}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("software.uninstall_program")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"program_name\":\"Whatever\"}")}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
                  QStringLiteral("policy_blocked"));
@@ -6506,11 +6805,13 @@ private Q_SLOTS:
         setUnattended(panel);
         QStringList titles;
         installApprovalHook(&titles);
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("software.uninstall_program")},
-            {QStringLiteral("arguments"),
-             QStringLiteral("{\"program_name\":\"SAK No Such Win32 Program ZZZ 9f3c\"}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{
+                {QStringLiteral("operation"), QStringLiteral("run")},
+                {QStringLiteral("action_id"), QStringLiteral("software.uninstall_program")},
+                {QStringLiteral("arguments"),
+                 QStringLiteral("{\"program_name\":\"SAK No Such Win32 Program ZZZ 9f3c\"}")}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
@@ -6523,8 +6824,9 @@ private Q_SLOTS:
     void setAdapterDhcpListedMutatingAdmin() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(
-            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonObject result = panel.runAppActionTool(panel.captureToolCallContext(),
+                                                          QJsonObject{{QStringLiteral("operation"),
+                                                                       QStringLiteral("list")}});
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         bool found = false;
         for (const auto& value : actions) {
@@ -6550,6 +6852,7 @@ private Q_SLOTS:
         QStringList titles;
         installApprovalHook(&titles);
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_dhcp")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -6564,10 +6867,12 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_dhcp")},
-            {QStringLiteral("arguments"), QStringLiteral("{\"adapter_name\":\"Ethernet\"}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_dhcp")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"adapter_name\":\"Ethernet\"}")}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
                  QStringLiteral("policy_blocked"));
@@ -6584,6 +6889,7 @@ private Q_SLOTS:
         QStringList titles;
         installApprovalHook(&titles);
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_dhcp")},
                         {QStringLiteral("arguments"),
@@ -6600,8 +6906,9 @@ private Q_SLOTS:
     void setAdapterStaticIpListedMutatingAdmin() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(
-            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonObject result = panel.runAppActionTool(panel.captureToolCallContext(),
+                                                          QJsonObject{{QStringLiteral("operation"),
+                                                                       QStringLiteral("list")}});
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         bool found = false;
         for (const auto& value : actions) {
@@ -6626,11 +6933,14 @@ private Q_SLOTS:
         setUnattended(panel);
         QStringList titles;
         installApprovalHook(&titles);
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_static_ip")},
-            {QStringLiteral("arguments"),
-             QStringLiteral("{\"adapter_name\":\"Ethernet\",\"subnet_mask\":\"255.255.255.0\"}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{
+                {QStringLiteral("operation"), QStringLiteral("run")},
+                {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_static_ip")},
+                {QStringLiteral("arguments"),
+                 QStringLiteral(
+                     "{\"adapter_name\":\"Ethernet\",\"subnet_mask\":\"255.255.255.0\"}")}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
@@ -6645,12 +6955,14 @@ private Q_SLOTS:
         setUnattended(panel);
         QStringList titles;
         installApprovalHook(&titles);
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_static_ip")},
-            {QStringLiteral("arguments"),
-             QStringLiteral("{\"adapter_name\":\"Ethernet\",\"ip_address\":\"999.1.2.3 extra\","
-                            "\"subnet_mask\":\"255.255.255.0\"}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{
+                {QStringLiteral("operation"), QStringLiteral("run")},
+                {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_static_ip")},
+                {QStringLiteral("arguments"),
+                 QStringLiteral("{\"adapter_name\":\"Ethernet\",\"ip_address\":\"999.1.2.3 extra\","
+                                "\"subnet_mask\":\"255.255.255.0\"}")}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
@@ -6662,12 +6974,14 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_static_ip")},
-            {QStringLiteral("arguments"),
-             QStringLiteral("{\"adapter_name\":\"Ethernet\",\"ip_address\":\"192.168.1.50\","
-                            "\"subnet_mask\":\"255.255.255.0\"}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{
+                {QStringLiteral("operation"), QStringLiteral("run")},
+                {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_static_ip")},
+                {QStringLiteral("arguments"),
+                 QStringLiteral("{\"adapter_name\":\"Ethernet\",\"ip_address\":\"192.168.1.50\","
+                                "\"subnet_mask\":\"255.255.255.0\"}")}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
                  QStringLiteral("policy_blocked"));
@@ -6683,12 +6997,14 @@ private Q_SLOTS:
         setUnattended(panel);
         QStringList titles;
         installApprovalHook(&titles);
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_static_ip")},
-            {QStringLiteral("arguments"),
-             QStringLiteral("{\"adapter_name\":\"SAK No Such Adapter ZZZ 9f3c\",\"ip_address\":"
-                            "\"192.168.1.50\",\"subnet_mask\":\"255.255.255.0\"}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{
+                {QStringLiteral("operation"), QStringLiteral("run")},
+                {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_static_ip")},
+                {QStringLiteral("arguments"),
+                 QStringLiteral("{\"adapter_name\":\"SAK No Such Adapter ZZZ 9f3c\",\"ip_address\":"
+                                "\"192.168.1.50\",\"subnet_mask\":\"255.255.255.0\"}")}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
@@ -6704,13 +7020,15 @@ private Q_SLOTS:
         setUnattended(panel);
         QStringList titles;
         installApprovalHook(&titles);
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_static_ip")},
-            {QStringLiteral("arguments"),
-             QStringLiteral(
-                 "{\"adapter_name\":\"Ethernet\",\"ip_address\":\"192.168.1.50\","
-                 "\"subnet_mask\":\"255.255.255.0\",\"dns_servers\":[\"not-an-ip\"]}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{
+                {QStringLiteral("operation"), QStringLiteral("run")},
+                {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_static_ip")},
+                {QStringLiteral("arguments"),
+                 QStringLiteral(
+                     "{\"adapter_name\":\"Ethernet\",\"ip_address\":\"192.168.1.50\","
+                     "\"subnet_mask\":\"255.255.255.0\",\"dns_servers\":[\"not-an-ip\"]}")}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
@@ -6723,8 +7041,9 @@ private Q_SLOTS:
     void setAdapterDnsListedMutatingAdmin() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(
-            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonObject result = panel.runAppActionTool(panel.captureToolCallContext(),
+                                                          QJsonObject{{QStringLiteral("operation"),
+                                                                       QStringLiteral("list")}});
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         bool found = false;
         for (const auto& value : actions) {
@@ -6747,11 +7066,13 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_dns")},
-            {QStringLiteral("arguments"),
-             QStringLiteral("{\"adapter_name\":\"Ethernet\",\"dns_servers\":[\"1.1.1.1\"]}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{
+                {QStringLiteral("operation"), QStringLiteral("run")},
+                {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_dns")},
+                {QStringLiteral("arguments"),
+                 QStringLiteral("{\"adapter_name\":\"Ethernet\",\"dns_servers\":[\"1.1.1.1\"]}")}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
                  QStringLiteral("policy_blocked"));
@@ -6767,6 +7088,7 @@ private Q_SLOTS:
         QStringList titles;
         installApprovalHook(&titles);
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_dns")},
                         {QStringLiteral("arguments"),
@@ -6786,6 +7108,7 @@ private Q_SLOTS:
         QStringList titles;
         installApprovalHook(&titles);
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_dns")},
                         {QStringLiteral("arguments"),
@@ -6807,6 +7130,7 @@ private Q_SLOTS:
         QStringList titles;
         installApprovalHook(&titles);
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.set_adapter_dns")},
                         {QStringLiteral("arguments"),
@@ -6824,8 +7148,9 @@ private Q_SLOTS:
     void createRestorePointListedMutatingAdmin() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(
-            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonObject result = panel.runAppActionTool(panel.captureToolCallContext(),
+                                                          QJsonObject{{QStringLiteral("operation"),
+                                                                       QStringLiteral("list")}});
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         bool found = false;
         for (const auto& value : actions) {
@@ -6849,10 +7174,13 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("diagnostics.create_restore_point")},
-            {QStringLiteral("arguments"), QStringLiteral("{\"description\":\"Before update\"}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"),
+                         QStringLiteral("diagnostics.create_restore_point")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"description\":\"Before update\"}")}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QCOMPARE(result.value(QStringLiteral("failure_class")).toString(),
                  QStringLiteral("policy_blocked"));
@@ -6868,10 +7196,12 @@ private Q_SLOTS:
         setUnattended(panel);
         QStringList titles;
         installApprovalHook(&titles);
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("diagnostics.create_restore_point")},
-            {QStringLiteral("arguments"), QStringLiteral("{\"description\":\"   \"}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{
+                {QStringLiteral("operation"), QStringLiteral("run")},
+                {QStringLiteral("action_id"), QStringLiteral("diagnostics.create_restore_point")},
+                {QStringLiteral("arguments"), QStringLiteral("{\"description\":\"   \"}")}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
@@ -6887,11 +7217,13 @@ private Q_SLOTS:
         QStringList titles;
         installApprovalHook(&titles);
         const QString long_desc(80, QLatin1Char('x'));  // > 64
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("diagnostics.create_restore_point")},
-            {QStringLiteral("arguments"),
-             QStringLiteral("{\"description\":\"%1\"}").arg(long_desc)}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"),
+                         QStringLiteral("diagnostics.create_restore_point")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"description\":\"%1\"}").arg(long_desc)}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(result.value(QStringLiteral("message"))
                     .toString()
@@ -6904,8 +7236,9 @@ private Q_SLOTS:
     void flushDnsListedMutating() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(
-            QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")}});
+        const QJsonObject result = panel.runAppActionTool(panel.captureToolCallContext(),
+                                                          QJsonObject{{QStringLiteral("operation"),
+                                                                       QStringLiteral("list")}});
         const QJsonArray actions = result.value(QStringLiteral("actions")).toArray();
         bool found = false;
         for (const auto& value : actions) {
@@ -6929,6 +7262,7 @@ private Q_SLOTS:
         panel.ensureAppActionService();
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.flush_dns")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -6948,6 +7282,7 @@ private Q_SLOTS:
         QStringList titles;
         installApprovalHook(&titles);
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.flush_dns")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -7056,6 +7391,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.list_adapters")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -7070,6 +7406,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.dns_query")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -7087,10 +7424,12 @@ private Q_SLOTS:
         panel.ensureAppActionService();
         QVERIFY(panel.m_accessModeCombo != nullptr);
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("network.dns_query")},
-            {QStringLiteral("arguments"), QStringLiteral("{\"hostname\":\"localhost\"}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.dns_query")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"hostname\":\"localhost\"}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
         const QJsonObject data = result.value(QStringLiteral("data")).toObject();
@@ -7105,6 +7444,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.list_connections")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -7124,6 +7464,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.list_connections")},
                         {QStringLiteral("arguments"),
@@ -7142,6 +7483,7 @@ private Q_SLOTS:
         QVERIFY(panel.m_accessModeCombo != nullptr);
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.list_connections")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -7157,6 +7499,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.audit_firewall")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -7176,6 +7519,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.audit_firewall")},
                         {QStringLiteral("arguments"),
@@ -7195,6 +7539,7 @@ private Q_SLOTS:
         QVERIFY(panel.m_accessModeCombo != nullptr);
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.audit_firewall")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -7211,6 +7556,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.wifi_scan")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -7242,6 +7588,7 @@ private Q_SLOTS:
         QVERIFY(panel.m_accessModeCombo != nullptr);
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.wifi_scan")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -7259,6 +7606,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.list_wifi_profiles")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -7296,6 +7644,7 @@ private Q_SLOTS:
         QVERIFY(panel.m_accessModeCombo != nullptr);
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.list_wifi_profiles")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -7314,10 +7663,12 @@ private Q_SLOTS:
     void listRestorePointsReturnsWellFormed() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("diagnostics.list_restore_points")},
-            {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"),
+                         QStringLiteral("diagnostics.list_restore_points")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.contains(QStringLiteral("success")));
         if (result.value(QStringLiteral("success")).toBool()) {
             const QJsonObject data = result.value(QStringLiteral("data")).toObject();
@@ -7345,10 +7696,12 @@ private Q_SLOTS:
         panel.ensureAppActionService();
         QVERIFY(panel.m_accessModeCombo != nullptr);
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("diagnostics.list_restore_points")},
-            {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"),
+                         QStringLiteral("diagnostics.list_restore_points")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.contains(QStringLiteral("success")));         // answered, not silently empty
         QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
     }
@@ -7362,10 +7715,12 @@ private Q_SLOTS:
     void readTemperaturesReturnsWellFormed() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("diagnostics.read_temperatures")},
-            {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"),
+                         QStringLiteral("diagnostics.read_temperatures")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.contains(QStringLiteral("success")));
         if (result.value(QStringLiteral("success")).toBool()) {
             const QJsonObject data = result.value(QStringLiteral("data")).toObject();
@@ -7390,10 +7745,12 @@ private Q_SLOTS:
         panel.ensureAppActionService();
         QVERIFY(panel.m_accessModeCombo != nullptr);
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("diagnostics.read_temperatures")},
-            {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"),
+                         QStringLiteral("diagnostics.read_temperatures")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
         QVERIFY(result.contains(QStringLiteral("success")));         // answered, not silently empty
         QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
     }
@@ -7407,6 +7764,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("system.list_users")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -7435,6 +7793,7 @@ private Q_SLOTS:
         QVERIFY(panel.m_accessModeCombo != nullptr);
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("system.list_users")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -7451,6 +7810,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.list_shares")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -7480,10 +7840,12 @@ private Q_SLOTS:
     void listSharesIgnoresInjectedHostname() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("network.list_shares")},
-            {QStringLiteral("arguments"), QStringLiteral("{\"hostname\":\"8.8.8.8\"}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.list_shares")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"hostname\":\"8.8.8.8\"}")}});
         QVERIFY(result.contains(QStringLiteral("success")));
         const QString message = result.value(QStringLiteral("message")).toString();
         QVERIFY(
@@ -7503,6 +7865,7 @@ private Q_SLOTS:
         QVERIFY(panel.m_accessModeCombo != nullptr);
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.list_shares")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -7515,6 +7878,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.ping")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -7531,6 +7895,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.ping")},
                         {QStringLiteral("arguments"),
@@ -7550,11 +7915,13 @@ private Q_SLOTS:
         panel.ensureAppActionService();
         QVERIFY(panel.m_accessModeCombo != nullptr);
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("network.ping")},
-            {QStringLiteral("arguments"),
-             QStringLiteral("{\"target\":\"127.0.0.1\",\"count\":1,\"interval_ms\":0}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{
+                {QStringLiteral("operation"), QStringLiteral("run")},
+                {QStringLiteral("action_id"), QStringLiteral("network.ping")},
+                {QStringLiteral("arguments"),
+                 QStringLiteral("{\"target\":\"127.0.0.1\",\"count\":1,\"interval_ms\":0}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         QVERIFY(!result.contains(QStringLiteral("failure_class")));  // never gated
     }
@@ -7564,6 +7931,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.traceroute")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -7577,12 +7945,14 @@ private Q_SLOTS:
     void tracerouteLoopbackReachesTarget() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("network.traceroute")},
-            {QStringLiteral("arguments"),
-             QStringLiteral("{\"target\":\"127.0.0.1\",\"max_hops\":5,\"probes_per_hop\":1,"
-                            "\"timeout_ms\":1000,\"resolve_hostnames\":false}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.traceroute")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral(
+                             "{\"target\":\"127.0.0.1\",\"max_hops\":5,\"probes_per_hop\":1,"
+                             "\"timeout_ms\":1000,\"resolve_hostnames\":false}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         const QJsonObject data = result.value(QStringLiteral("data")).toObject();
         QVERIFY(data.value(QStringLiteral("reached_target")).toBool());
@@ -7593,6 +7963,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.mtr")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -7609,6 +7980,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.mtr")},
                         {QStringLiteral("arguments"),
@@ -7640,6 +8012,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.mtr")},
                         {QStringLiteral("arguments"),
@@ -7659,6 +8032,7 @@ private Q_SLOTS:
         QVERIFY(panel.m_accessModeCombo != nullptr);
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.mtr")},
                         {QStringLiteral("arguments"),
@@ -7673,6 +8047,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.port_scan")},
                         {QStringLiteral("arguments"), QStringLiteral("{}")}});
@@ -7686,10 +8061,12 @@ private Q_SLOTS:
     void portScanRequiresPorts() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("network.port_scan")},
-            {QStringLiteral("arguments"), QStringLiteral("{\"target\":\"127.0.0.1\"}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.port_scan")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral("{\"target\":\"127.0.0.1\"}")}});
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         QVERIFY(
             result.value(QStringLiteral("message")).toString().contains(QStringLiteral("ports")));
@@ -7702,6 +8079,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.port_scan")},
                         {QStringLiteral("arguments"),
@@ -7717,6 +8095,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.port_scan")},
                         {QStringLiteral("arguments"),
@@ -7739,6 +8118,7 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("network.port_scan")},
                         {QStringLiteral("arguments"),
@@ -7754,12 +8134,14 @@ private Q_SLOTS:
     void portScanLoopbackReportsResult() {
         AiAssistantPanel panel;
         panel.ensureAppActionService();
-        const QJsonObject result = panel.runAppActionTool(QJsonObject{
-            {QStringLiteral("operation"), QStringLiteral("run")},
-            {QStringLiteral("action_id"), QStringLiteral("network.port_scan")},
-            {QStringLiteral("arguments"),
-             QStringLiteral("{\"target\":\"127.0.0.1\",\"ports\":[1],\"timeout_ms\":500,"
-                            "\"grab_banners\":false}")}});
+        const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("network.port_scan")},
+                        {QStringLiteral("arguments"),
+                         QStringLiteral(
+                             "{\"target\":\"127.0.0.1\",\"ports\":[1],\"timeout_ms\":500,"
+                             "\"grab_banners\":false}")}});
         QVERIFY(result.value(QStringLiteral("success")).toBool());
         const QJsonObject data = result.value(QStringLiteral("data")).toObject();
         QCOMPARE(data.value(QStringLiteral("scanned_count")).toInt(), 1);
@@ -8581,6 +8963,7 @@ private Q_SLOTS:
                                       {QStringLiteral("output_path"), long_path}})
                 .toJson(QJsonDocument::Compact));
         const QJsonObject result = panel.runAppActionTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
                         {QStringLiteral("action_id"), QStringLiteral("files.compress_zip")},
                         {QStringLiteral("arguments"), args}});
@@ -8605,12 +8988,11 @@ private Q_SLOTS:
         QString staging_root;
         QVERIFY(panel.m_appActionRegistry.registerAction(
             descriptor, [&panel, &staging_root](const QJsonObject&) {
-                if (!panel.m_appActionStagingDir || !panel.m_appActionStagingDir->isValid()) {
+                staging_root = panel.m_appActionService->outputDirectory();
+                if (staging_root.isEmpty()) {
                     return AppActionResult{false, QStringLiteral("missing staging"), {}};
                 }
-                staging_root = panel.m_appActionStagingDir->path();
-                const QString staged =
-                    QDir(panel.m_appActionStagingDir->path()).filePath(QStringLiteral("probe.txt"));
+                const QString staged = QDir(staging_root).filePath(QStringLiteral("probe.txt"));
                 QFile file(staged);
                 if (!file.open(QIODevice::WriteOnly) || file.write("probe") != 5 || !file.flush()) {
                     return AppActionResult{false, QStringLiteral("staging write failed"), {}};
@@ -8620,7 +9002,8 @@ private Q_SLOTS:
                                        QJsonObject{{QStringLiteral("output_path"), staged}}};
             }));
 
-        const QJsonObject result = panel.runAppActionRun(descriptor.id, QJsonObject{});
+        const QJsonObject result =
+            panel.runAppActionRun(panel.captureToolCallContext(), descriptor.id, QJsonObject{});
 
         QVERIFY(result.value(QStringLiteral("success")).toBool(false));
         const QString published = result.value(QStringLiteral("data"))
@@ -8632,7 +9015,7 @@ private Q_SLOTS:
         QFile file(published);
         QVERIFY(file.open(QIODevice::ReadOnly));
         QCOMPARE(file.readAll(), QByteArray("probe"));
-        QVERIFY(!panel.m_appActionStagingDir);
+        QVERIFY(!QFileInfo::exists(staging_root));
     }
 
     void appActionArtifactImportRejectsStagedJunction() {
@@ -8654,8 +9037,8 @@ private Q_SLOTS:
         descriptor.read_only = true;
         QVERIFY(panel.m_appActionRegistry.registerAction(
             descriptor, [&panel, &outside](const QJsonObject&) {
-                const QString junction =
-                    QDir(panel.m_appActionStagingDir->path()).filePath(QStringLiteral("redirect"));
+                const QString junction = QDir(panel.m_appActionService->outputDirectory())
+                                             .filePath(QStringLiteral("redirect"));
                 const QString command = QDir(qEnvironmentVariable("SystemRoot"))
                                             .filePath(QStringLiteral("System32/cmd.exe"));
                 const int exit_code = QProcess::execute(command,
@@ -8670,7 +9053,8 @@ private Q_SLOTS:
                                        QJsonObject{{QStringLiteral("output_path"), junction}}};
             }));
 
-        const QJsonObject result = panel.runAppActionRun(descriptor.id, QJsonObject{});
+        const QJsonObject result =
+            panel.runAppActionRun(panel.captureToolCallContext(), descriptor.id, QJsonObject{});
 
         QVERIFY(!result.value(QStringLiteral("success")).toBool(true));
         QVERIFY2(result.value(QStringLiteral("message"))
@@ -8824,6 +9208,66 @@ private:
         QVERIFY(panel.m_accessModeCombo != nullptr);
         panel.m_accessModeCombo->setCurrentIndex(1);
         panel.m_runToken = ai::CancellationToken::createRoot(QStringLiteral("test_run"));
+    }
+
+    static constexpr const char* kStagedActionFileName = "staged.txt";
+
+    // Registers a read-only app action that blocks on the test's gate and then writes one file
+    // into the staging folder its call set for this thread.
+    static void registerBlockingStagedAction(AiAssistantPanel& panel,
+                                             std::atomic<bool>* entered,
+                                             QSemaphore* gate) {
+        AppActionDescriptor descriptor;
+        descriptor.id = QStringLiteral("test.staged");
+        descriptor.title = QStringLiteral("Blocking staged output");
+        descriptor.description = QStringLiteral("Blocks, then writes one staged file");
+        descriptor.read_only = true;
+        QVERIFY(panel.m_appActionRegistry.registerAction(
+            descriptor,
+            [service = panel.m_appActionService.get(), entered, gate](const QJsonObject&) {
+                const QString staging = service->outputDirectory();
+                *entered = true;
+                gate->acquire();
+                if (staging.isEmpty()) {
+                    return AppActionResult{false, QStringLiteral("missing staging"), {}};
+                }
+                const QString staged =
+                    QDir(staging).filePath(QString::fromLatin1(kStagedActionFileName));
+                QFile file(staged);
+                if (!file.open(QIODevice::WriteOnly) || file.write("late") != 4 || !file.flush()) {
+                    return AppActionResult{false, QStringLiteral("staging write failed"), {}};
+                }
+                return AppActionResult{true,
+                                       QStringLiteral("written"),
+                                       QJsonObject{{QStringLiteral("output_path"), staged}}};
+            }));
+    }
+
+    static ai::OpenAIResponseResult blockingStagedActionResponse() {
+        ai::OpenAIFunctionCall call;
+        call.call_id = QStringLiteral("call_staged_action");
+        call.name = QStringLiteral("sak_app_action");
+        call.arguments_json = QStringLiteral(
+            "{\"operation\":\"run\",\"action_id\":\"test.staged\","
+            "\"arguments\":\"{}\"}");
+        ai::OpenAIResponseResult response;
+        response.id = QStringLiteral("resp_staged_action");
+        response.function_calls.append(call);
+        return response;
+    }
+
+    // How many files named @p file_name a session folder holds, however deep.
+    static int filesNamedUnder(const QString& session_path, const char* file_name) {
+        int count = 0;
+        QDirIterator files(session_path,
+                           {QString::fromLatin1(file_name)},
+                           QDir::Files,
+                           QDirIterator::Subdirectories);
+        while (files.hasNext()) {
+            files.next();
+            ++count;
+        }
+        return count;
     }
 
     // Replace the real download handler with one that blocks on the test's gate and then writes

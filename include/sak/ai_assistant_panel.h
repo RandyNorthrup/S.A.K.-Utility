@@ -53,7 +53,6 @@ class QSplitter;
 class QTextBrowser;
 class QThread;
 class QTimer;
-class QTemporaryDir;
 class QUrl;
 class QVBoxLayout;
 
@@ -499,6 +498,17 @@ private:
                                               const QString& preview,
                                               bool risky_change,
                                               bool catastrophic = false);
+    // The human gates as a tool call sees them: a call whose chat is no longer the open one is
+    // declined, never shown a prompt or given a gate record in the chat now open.
+    [[nodiscard]] bool confirmToolCallWithUser(const ai::AiToolCallContext& context,
+                                               const QString& shell,
+                                               const QString& preview,
+                                               bool risky_change,
+                                               bool catastrophic = false);
+    [[nodiscard]] bool offerRestorePointForToolCall(const ai::AiToolCallContext& context,
+                                                    const QString& preview,
+                                                    bool risky_change,
+                                                    bool catastrophic = false);
     [[nodiscard]] bool consumeResumedCommandApproval(const QString& shell,
                                                      const QString& preview,
                                                      bool risky_change,
@@ -589,20 +599,28 @@ private:
     // sak_app_action handler: "list" returns the app-action catalog (read-only);
     // "run" executes one action by id headless, applying a human gate + restore
     // point for mutating/destructive/admin actions before invoking.
-    [[nodiscard]] QJsonObject runAppActionTool(const QJsonObject& args);
-    [[nodiscard]] QJsonObject runAppActionRun(const QString& action_id,
+    [[nodiscard]] QJsonObject runAppActionTool(const ai::AiToolCallContext& context,
+                                               const QJsonObject& args);
+    [[nodiscard]] QJsonObject runAppActionRun(const ai::AiToolCallContext& context,
+                                              const QString& action_id,
                                               const QJsonObject& action_args);
-    [[nodiscard]] AppActionResult invokeAppActionWithStaging(const QString& action_id,
+    // Runs the action with a staging folder of its own, publishes what it wrote into the call's
+    // chat and removes the folder. The folder belongs to this call, not to the panel.
+    [[nodiscard]] AppActionResult invokeAppActionWithStaging(const ai::AiToolCallContext& context,
+                                                             const QString& action_id,
                                                              const QJsonObject& action_args,
                                                              QString* error_message);
-    void cleanupAppActionStaging(AppActionResult* run, QString* error_message);
+    static void cleanupAppActionStaging(const QString& staging_root,
+                                        AppActionResult* run,
+                                        QString* error_message);
     // Access-mode gate for a mutating/destructive/admin app action: returns an error
     // object to abort (blocked/declined), or std::nullopt to proceed. Read-only
     // actions and non-execution sessions are handled by the caller/policy. @p detail
     // is a short, model-supplied argument summary (e.g. the target disk) appended to
     // the confirm/restore preview so the human sees WHAT is being run, not just the
     // action title -- critical for a catastrophic op whose target matters.
-    [[nodiscard]] std::optional<QJsonObject> appActionRunGate(const AppActionDescriptor& descriptor,
+    [[nodiscard]] std::optional<QJsonObject> appActionRunGate(const ai::AiToolCallContext& context,
+                                                              const AppActionDescriptor& descriptor,
                                                               const QString& detail = QString());
     // Build the app-scoped AppActionService (on the GUI thread) and seed its actions
     // into m_appActionRegistry exactly once. Idempotent.
@@ -1117,7 +1135,6 @@ private:
     std::shared_ptr<QuickActionController> m_quickActions;
     AppActionRegistry m_appActionRegistry;
     std::unique_ptr<AppActionService> m_appActionService;
-    std::unique_ptr<QTemporaryDir> m_appActionStagingDir;
     // Test seam: when set, delegate_subagent uses this instead of the real OpenAI
     // model client factory, so the tool can be certified deterministically offline.
     ai::AiModelClientFactory m_delegateSubagentModelFactoryOverride;

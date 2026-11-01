@@ -17,14 +17,23 @@
 #include "sak/actions/verify_system_files_action.h"
 #include "sak/quick_action_controller.h"
 
+#include <QHash>
+#include <QThread>
+
 #include <mutex>
 #include <utility>
 
 namespace sak {
 
-struct AppActionService::OutputFolder {
+// Keyed by thread: a call's thunk reads its folder synchronously on the thread that set it.
+struct AppActionService::OutputFolders {
     mutable std::mutex mutex;
-    QString path;
+    QHash<Qt::HANDLE, QString> by_thread;
+
+    [[nodiscard]] QString forCurrentThread() const {
+        const std::lock_guard<std::mutex> lock(mutex);
+        return by_thread.value(QThread::currentThreadId());
+    }
 };
 
 std::shared_ptr<QuickActionController> createAppQuickActionController() {
@@ -47,35 +56,37 @@ std::shared_ptr<QuickActionController> createAppQuickActionController() {
 }
 
 AppActionService::AppActionService(std::shared_ptr<QuickActionController> quick_actions,
-                                   const QString& output_directory,
                                    QObject* parent)
     : QObject(parent)
     , m_quick_actions(std::move(quick_actions))
-    , m_output_folder(std::make_shared<OutputFolder>()) {
-    setOutputDirectory(output_directory);
-}
+    , m_output_folders(std::make_shared<OutputFolders>()) {}
 
 AppActionService::~AppActionService() = default;
 
-void AppActionService::setOutputDirectory(const QString& output_directory) {
-    const std::lock_guard<std::mutex> lock(m_output_folder->mutex);
-    m_output_folder->path = output_directory.trimmed();
+AppActionService::OutputDirectoryScope::OutputDirectoryScope(const AppActionService& service,
+                                                             const QString& output_directory)
+    : m_folders(service.m_output_folders) {
+    const std::lock_guard<std::mutex> lock(m_folders->mutex);
+    m_folders->by_thread.insert(QThread::currentThreadId(), output_directory.trimmed());
+}
+
+AppActionService::OutputDirectoryScope::~OutputDirectoryScope() {
+    const std::lock_guard<std::mutex> lock(m_folders->mutex);
+    m_folders->by_thread.remove(QThread::currentThreadId());
 }
 
 QString AppActionService::outputDirectory() const {
-    const std::lock_guard<std::mutex> lock(m_output_folder->mutex);
-    return m_output_folder->path;
+    return m_output_folders->forCurrentThread();
 }
 
 int AppActionService::registerInto(AppActionRegistry& registry) {
     if (!m_quick_actions) {
         return 0;
     }
-    // Read when a run is requested, so each run carries the staging folder of the call that
-    // asked for it (the panel replaces the folder per call and per session).
-    return registerQuickActionsInto(*m_quick_actions, registry, [folder = m_output_folder]() {
-        const std::lock_guard<std::mutex> lock(folder->mutex);
-        return folder->path;
+    // Read when a run is requested, on the thread of the call that asked for it, so each run
+    // carries that call's staging folder.
+    return registerQuickActionsInto(*m_quick_actions, registry, [folders = m_output_folders]() {
+        return folders->forCurrentThread();
     });
 }
 

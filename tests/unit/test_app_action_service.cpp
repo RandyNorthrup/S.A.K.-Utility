@@ -10,6 +10,7 @@
 
 #include <QElapsedTimer>
 #include <QJsonObject>
+#include <QThread>
 #include <QTimer>
 #include <QtTest/QtTest>
 #include <QVector>
@@ -182,6 +183,7 @@ private Q_SLOTS:
     void stopWorkerOnCancel_settlesOnTheWorkersCancelled();
     void runQuickActionSync_carriesItsOutputFolder();
     void registerQuickActionsInto_readsTheFolderWhenTheRunIsRequested();
+    void outputDirectoryScope_isThePerCallFolderOfItsThread();
     void runQuickActionSync_waitsForItsOwnRunNotAnotherCallers();
 };
 
@@ -627,6 +629,52 @@ void AppActionServiceTests::registerQuickActionsInto_readsTheFolderWhenTheRunIsR
     *folder = QStringLiteral("C:/staging/second");
     QVERIFY(registry.invoke(QStringLiteral("action.staged_probe"), QJsonObject{}).success);
     QCOMPARE(raw->seenFolder(), QStringLiteral("C:/staging/second"));
+}
+
+// A call's staging folder belongs to the call's thread: another thread setting its own (or none)
+// cannot redirect the run, and outside a scope there is no folder to write into.
+void AppActionServiceTests::outputDirectoryScope_isThePerCallFolderOfItsThread() {
+    auto controller = std::make_shared<QuickActionController>();
+    auto probe = std::make_unique<ProbeAction>(QStringLiteral("Scoped Probe"));
+    ProbeAction* raw = probe.get();
+    controller->registerAction(std::move(probe));
+    raw->release();
+    sak::AppActionService service(controller);
+    AppActionRegistry registry;
+    QCOMPARE(service.registerInto(registry), 1);
+    QCOMPARE(service.outputDirectory(), QString());
+
+    {
+        const sak::AppActionService::OutputDirectoryScope scope(service,
+                                                                QStringLiteral("C:/staging/gui"));
+        QCOMPARE(service.outputDirectory(), QStringLiteral("C:/staging/gui"));
+
+        QString other_before;
+        QString other_inside;
+        QString other_after;
+        std::unique_ptr<QThread> other(QThread::create([&]() {
+            other_before = service.outputDirectory();
+            {
+                const sak::AppActionService::OutputDirectoryScope inner(
+                    service, QStringLiteral("C:/staging/worker"));
+                other_inside = service.outputDirectory();
+            }
+            other_after = service.outputDirectory();
+        }));
+        other->start();
+        QVERIFY(other->wait(10'000));
+        QCOMPARE(other_before, QString());
+        QCOMPARE(other_inside, QStringLiteral("C:/staging/worker"));
+        QCOMPARE(other_after, QString());
+
+        // The other thread's scope came and went; this thread's run still gets its own folder.
+        QCOMPARE(service.outputDirectory(), QStringLiteral("C:/staging/gui"));
+        QVERIFY(registry.invoke(QStringLiteral("action.scoped_probe"), QJsonObject{}).success);
+        QCOMPARE(raw->seenFolder(), QStringLiteral("C:/staging/gui"));
+    }
+    QCOMPARE(service.outputDirectory(), QString());
+    QVERIFY(registry.invoke(QStringLiteral("action.scoped_probe"), QJsonObject{}).success);
+    QCOMPARE(raw->seenFolder(), QString());
 }
 
 // One controller serves the panels and the assistant. A panel's run of the same action that

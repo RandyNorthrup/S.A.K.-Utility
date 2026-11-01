@@ -86,11 +86,8 @@ class AppActionService : public QObject {
 public:
     /// @param quick_actions the application's quick-action controller; null registers no
     ///        built-in actions
-    /// @param output_directory where the assistant's runs of the actions that write files
-    ///        (system report, settings screenshots, BitLocker key backup) put them
-    AppActionService(std::shared_ptr<QuickActionController> quick_actions,
-                     const QString& output_directory,
-                     QObject* parent = nullptr);
+    explicit AppActionService(std::shared_ptr<QuickActionController> quick_actions,
+                              QObject* parent = nullptr);
     ~AppActionService() override;
 
     AppActionService(const AppActionService&) = delete;
@@ -103,16 +100,35 @@ public:
     /// registered. Ids are stable ("action.<slug>").
     [[nodiscard]] int registerInto(AppActionRegistry& registry);
 
-    /// The folder the next requested run writes into. Each run takes the folder current when
-    /// it is requested, so a later change never redirects a run already queued.
-    void setOutputDirectory(const QString& output_directory);
+private:
+    struct OutputFolders;
+
+public:
+    /// While this lives, the actions that write files (system report, settings screenshots,
+    /// BitLocker key backup) and that are run on the CALLING thread write into @p
+    /// output_directory. Each assistant tool call holds one for its own staging folder, so
+    /// nothing another thread does (a chat switch, another call) can redirect its run.
+    class OutputDirectoryScope {
+    public:
+        OutputDirectoryScope(const AppActionService& service, const QString& output_directory);
+        ~OutputDirectoryScope();
+
+        OutputDirectoryScope(const OutputDirectoryScope&) = delete;
+        OutputDirectoryScope& operator=(const OutputDirectoryScope&) = delete;
+        OutputDirectoryScope(OutputDirectoryScope&&) = delete;
+        OutputDirectoryScope& operator=(OutputDirectoryScope&&) = delete;
+
+    private:
+        std::shared_ptr<OutputFolders> m_folders;
+    };
+
+    /// The folder the calling thread's scope set; empty outside one.
     [[nodiscard]] QString outputDirectory() const;
 
 private:
-    struct OutputFolder;
     std::shared_ptr<QuickActionController> m_quick_actions;
     // Shared with the registry thunks, which read it from the assistant's worker thread.
-    std::shared_ptr<OutputFolder> m_output_folder;
+    std::shared_ptr<OutputFolders> m_output_folders;
 };
 
 /// Generous default for a signal-driven read-only op (some file searches / scans
