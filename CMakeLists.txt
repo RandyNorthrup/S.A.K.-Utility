@@ -719,8 +719,6 @@ set(SAK_CORE_SOURCES
     include/sak/quick_action.h
     include/sak/quick_action_controller.h
     include/sak/running_operations.h
-    src/core/quick_action_result_io.cpp
-    include/sak/quick_action_result_io.h
     src/core/network_transfer_runner.cpp
     include/sak/network_transfer_runner.h
 )

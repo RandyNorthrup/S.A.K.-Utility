@@ -399,7 +399,6 @@ stay read-only with exact blockers.
 | test_all_actions_metadata | `quick_action` | Validates every registered action has complete metadata |
 | test_quick_action | `quick_action` | Base action interface, state transitions |
 | test_quick_action_controller | `quick_action_controller` | The application's one controller: each run carries its own output folder and owner (a queued run writes where its own caller chose), a request while another runs is queued and announced, a refused request finishes at once, a caller's cancel touches only its own runs, every elevated run shares the one broker the controller owns (faked through the SAK_CORE_TEST_HOOKS factory) and gets its own folder, an unsafe folder is never handed to the helper, destroying the controller cancels the elevated task and shuts the helper down, and teardown during a stuck run retains the thread and its action in custody instead of blocking |
-| test_quick_action_result_io | `quick_action_result_io` | Result serialization, history persistence |
 
 ### Integration Tests
 | Test | Workflow | Coverage |

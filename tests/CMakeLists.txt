@@ -4498,26 +4498,6 @@ message(STATUS "Added unit test: test_flash_worker")
 # Unit Tests - Phase 8: Expanded Test Coverage
 # ============================================================================
 
-# test_quick_action_result_io - enum to string round-trips, file write/read
-add_executable(test_quick_action_result_io
-    unit/test_quick_action_result_io.cpp
-)
-set_target_properties(test_quick_action_result_io PROPERTIES
-    AUTOMOC ON
-    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
-)
-target_link_libraries(test_quick_action_result_io PRIVATE
-    sak_core sak_foundation
-    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
-)
-target_include_directories(test_quick_action_result_io PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../include
-)
-add_test(NAME test_quick_action_result_io COMMAND test_quick_action_result_io
-         -o "${TEST_OUTPUT_DIR}/test_quick_action_result_io.txt,txt" -o -,txt
-         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
-message(STATUS "Added unit test: test_quick_action_result_io")
-
 # test_keep_awake -- KeepAwake refcount / guard lifetime (P06-08 overlap)
 add_executable(test_keep_awake
     unit/test_keep_awake.cpp
