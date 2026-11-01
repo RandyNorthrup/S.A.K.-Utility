@@ -3881,17 +3881,6 @@ AiAssistantPanel::~AiAssistantPanel() {
     releaseCurrentCommandLease();
 }
 
-std::function<bool()> AiAssistantPanel::toolCallCancelCheck() const {
-    // Copies share the token state, so the check stays valid off the GUI thread and after a
-    // later run replaces these members: Stop cancels both, teardown cancels both.
-    const ai::CancellationToken tool_token = m_activeToolRunToken;
-    const ai::CancellationToken run_token = m_runToken;
-    return [tool_token, run_token]() {
-        return (tool_token.isValid() && tool_token.isCancellationRequested()) ||
-               (run_token.isValid() && run_token.isCancellationRequested());
-    };
-}
-
 QString AiAssistantPanel::statusDetails() const {
     const QString task = m_taskStatus.isEmpty() ? tr("Idle") : m_taskStatus;
     const QString key = ai::OpenAIResponsesClient::hasUsableApiKey(apiKey()) ? tr("Loaded")
@@ -7074,18 +7063,19 @@ QJsonObject AiAssistantPanel::runDownloadTool(const ai::AiToolCallContext& conte
     return result;
 }
 
-QJsonObject AiAssistantPanel::runWorkflowPowerShellTool(const QJsonObject& args,
+QJsonObject AiAssistantPanel::runWorkflowPowerShellTool(const ai::AiToolCallContext& context,
+                                                        const QJsonObject& args,
                                                         const QString& command_preview) {
     ai::AiWorkflowPowerShellToolCallbacks callbacks;
-    callbacks.confirm = [this](const QString& title, const QString& preview, bool risky) {
-        return confirmCommandWithUser(title, preview, risky);
+    callbacks.confirm = [this, &context](const QString& title, const QString& preview, bool risky) {
+        return confirmToolCallWithUser(context, title, preview, risky);
     };
     callbacks.allocate_command_id = [this]() {
         return allocateCommandId();
     };
-    callbacks.execute_powershell = [this](const ai::AiCommandRequest& request,
-                                          const QString& command_id) {
-        return executeWorkflowPowerShellRequest(request, command_id);
+    callbacks.execute_powershell = [this, &context](const ai::AiCommandRequest& request,
+                                                    const QString& command_id) {
+        return executeWorkflowPowerShellRequest(context, request, command_id);
     };
     callbacks.append_local_event = [this](const QString& message) {
         appendLocalEvent(message);
@@ -7093,20 +7083,13 @@ QJsonObject AiAssistantPanel::runWorkflowPowerShellTool(const QJsonObject& args,
     callbacks.log_output = [this](const QString& line) {
         Q_EMIT logOutput(line);
     };
-    callbacks.record_command = [this](const QString& preview, const QJsonObject& result_json) {
-        if (!m_conversationStore) {
-            return;
-        }
-        QString error;
-        (void)m_conversationStore->appendCommand(preview, result_json, &error);
-        if (!error.isEmpty()) {
-            appendLocalEvent(tr("Workflow command record failed: %1").arg(error));
-        }
-        reloadSessionPicker();
+    callbacks.record_command = [this, &context](const QString& preview,
+                                                const QJsonObject& result_json) {
+        recordToolCallCommand(context, preview, result_json);
     };
     callbacks.append_session_memory =
-        [this](const QString& role, const QString& title, const QString& body) {
-            appendSessionMemory(role, title, body);
+        [this, &context](const QString& role, const QString& title, const QString& body) {
+            appendToolCallMemory(context, role, title, body);
         };
 
     return ai::AiWorkflowPowerShellToolRunner::run(
@@ -7118,12 +7101,54 @@ QJsonObject AiAssistantPanel::runWorkflowPowerShellTool(const QJsonObject& args,
             .min_output_bytes = static_cast<int>(sak::kBytesPerKB)});
 }
 
+bool AiAssistantPanel::toolCallMayWriteSessionRecords(const ai::AiToolCallContext& context,
+                                                      const QString& what) {
+    if (!m_conversationStore || context.session_id.isEmpty()) {
+        return false;  // Dispatched with no chat open: there is nothing to record it in.
+    }
+    if (m_conversationStore->currentSessionId() != context.session_id) {
+        appendLocalEvent(tr("Dropped a %1: the chat it ran for is no longer open").arg(what));
+        return false;
+    }
+    return true;
+}
+
+void AiAssistantPanel::recordToolCallCommand(const ai::AiToolCallContext& context,
+                                             const QString& preview,
+                                             const QJsonObject& result_json) {
+    // The check and the write run in one GUI-thread call, so no chat can open between them.
+    runOnGuiThread([&]() {
+        if (!toolCallMayWriteSessionRecords(context, tr("command record"))) {
+            return;
+        }
+        QString error;
+        (void)m_conversationStore->appendCommand(preview, result_json, &error);
+        if (!error.isEmpty()) {
+            appendLocalEvent(tr("Workflow command record failed: %1").arg(error));
+        }
+        reloadSessionPicker();
+    });
+}
+
+void AiAssistantPanel::appendToolCallMemory(const ai::AiToolCallContext& context,
+                                            const QString& kind,
+                                            const QString& title,
+                                            const QString& text) {
+    runOnGuiThread([&]() {
+        if (toolCallMayWriteSessionRecords(context, tr("session memory entry"))) {
+            appendSessionMemory(kind, title, text);
+        }
+    });
+}
+
 ai::AiCommandResult AiAssistantPanel::executeWorkflowPowerShellRequest(
-    const ai::AiCommandRequest& request, const QString& command_id) {
+    const ai::AiToolCallContext& context,
+    const ai::AiCommandRequest& request,
+    const QString& command_id) {
     if (request.requires_admin) {
         return executeElevatedWorkflowPowerShellRequest(request);
     }
-    return executeStandardWorkflowPowerShellRequest(request, command_id);
+    return executeStandardWorkflowPowerShellRequest(context, request, command_id);
 }
 
 ai::AiCommandResult AiAssistantPanel::executeElevatedWorkflowPowerShellRequest(
@@ -7160,7 +7185,9 @@ ai::AiCommandResult AiAssistantPanel::executeElevatedWorkflowPowerShellRequest(
 }
 
 ai::AiCommandResult AiAssistantPanel::executeStandardWorkflowPowerShellRequest(
-    const ai::AiCommandRequest& request, const QString& command_id) {
+    const ai::AiToolCallContext& context,
+    const ai::AiCommandRequest& request,
+    const QString& command_id) {
     ai::AiCommandResult command_result;
     bool finished = false;
     QSemaphore done;
@@ -7168,7 +7195,6 @@ ai::AiCommandResult AiAssistantPanel::executeStandardWorkflowPowerShellRequest(
     QObject* worker = new QObject;
     worker->moveToThread(&command_thread);
     QObject::connect(&command_thread, &QThread::finished, worker, &QObject::deleteLater);
-    const bool caller_is_ui_thread = QThread::currentThread() == thread();
     QObject::connect(&command_thread,
                      &QThread::started,
                      worker,
@@ -7176,7 +7202,7 @@ ai::AiCommandResult AiAssistantPanel::executeStandardWorkflowPowerShellRequest(
                       worker,
                       request,
                       command_id,
-                      caller_is_ui_thread,
+                      should_cancel = context.cancelCheck(),
                       &command_result,
                       &finished,
                       &done,
@@ -7193,9 +7219,8 @@ ai::AiCommandResult AiAssistantPanel::executeStandardWorkflowPowerShellRequest(
                                               done.release();
                                               command_thread.quit();
                                           });
-                         if (!caller_is_ui_thread) {
-                             connectWorkflowPowerShellCancelPolling(cancel_timer, broker, worker);
-                         }
+                         connectWorkflowPowerShellCancelPolling(
+                             cancel_timer, broker, worker, should_cancel);
                          (void)broker->startPowerShell(request, command_id);
                      });
     command_thread.start();
@@ -7248,27 +7273,24 @@ void AiAssistantPanel::connectWorkflowPowerShellLogging(ai::ExecutionBroker* bro
                      });
 }
 
-void AiAssistantPanel::connectWorkflowPowerShellCancelPolling(QTimer* cancel_timer,
-                                                              ai::ExecutionBroker* broker,
-                                                              QObject* worker) {
+void AiAssistantPanel::connectWorkflowPowerShellCancelPolling(
+    QTimer* cancel_timer,
+    ai::ExecutionBroker* broker,
+    QObject* worker,
+    const std::function<bool()>& should_cancel) {
     cancel_timer->setInterval(kWorkflowWorkerCancelPollMs);
-    QObject::connect(cancel_timer, &QTimer::timeout, worker, [this, broker]() {
-        bool should_cancel = false;
-        const bool invoked = QMetaObject::invokeMethod(
-            this,
-            [this, &should_cancel]() {
-                should_cancel = m_runToken.isValid() && m_runToken.isCancellationRequested();
-            },
-            Qt::BlockingQueuedConnection);
-        if (invoked && should_cancel && broker->isRunning()) {
+    // The call's own token, read on this thread: no round trip to the GUI thread for each poll.
+    QObject::connect(cancel_timer, &QTimer::timeout, worker, [broker, should_cancel]() {
+        if (should_cancel() && broker->isRunning()) {
             broker->cancel();
         }
     });
     cancel_timer->start();
 }
 
-QJsonObject AiAssistantPanel::runPackageManagerTool(const QJsonObject& args) {
-    if (!ai::aiAccessModeAllowsLocalExecution(currentAccessMode())) {
+QJsonObject AiAssistantPanel::runPackageManagerTool(const ai::AiToolCallContext& context,
+                                                    const QJsonObject& args) {
+    if (!ai::aiAccessModeAllowsLocalExecution(context.access_mode)) {
         return toolError(QStringLiteral("Local package management is disabled in Chat mode"));
     }
     if (!m_chocoManager || !m_chocoManager->isInitialized()) {
@@ -7285,10 +7307,11 @@ QJsonObject AiAssistantPanel::runPackageManagerTool(const QJsonObject& args) {
         return query_result;
     }
     return packageManagerPackageOperation(
-        plan.operation, plan.package_id, plan.version, plan.timeout_seconds);
+        context, plan.operation, plan.package_id, plan.version, plan.timeout_seconds);
 }
 
-QJsonObject AiAssistantPanel::runProviderGatewayTool(const QJsonObject& args) {
+QJsonObject AiAssistantPanel::runProviderGatewayTool(const ai::AiToolCallContext& context,
+                                                     const QJsonObject& args) {
     ai::AiProviderGateway gateway;
     // Reuse persistent MCP server processes across win32 MCP tool calls instead of
     // respawning one per call. The pool is thread-safe, so the provider-gateway worker thread
@@ -7298,10 +7321,8 @@ QJsonObject AiAssistantPanel::runProviderGatewayTool(const QJsonObject& args) {
     gateway.setMcpSessionPool(mcp_pool.get());
     // Stop and teardown cancel the run token; an in-flight MCP call then kills its server and
     // returns at once instead of holding the run in Cancelling for its whole timeout.
-    gateway.setCancelCheck(toolCallCancelCheck());
-    // One snapshot for the whole call: reading the mode twice can mix two different
-    // modes into one access decision if it changes between the reads.
-    const ai::AiAccessMode mode = currentAccessMode();
+    gateway.setCancelCheck(context.cancelCheck());
+    const ai::AiAccessMode mode = context.access_mode;
     if (!ai::aiAccessModeIsValid(mode)) {
         return toolError(QStringLiteral("Provider gateway is disabled: invalid access mode"));
     }
@@ -7311,8 +7332,8 @@ QJsonObject AiAssistantPanel::runProviderGatewayTool(const QJsonObject& args) {
     } else if (mode == ai::AiAccessMode::UnattendedFullAccess) {
         access = ai::AiProviderGatewayToolAccess::UnattendedFullAccess;
     }
-    QJsonObject result =
-        ai::AiProviderGatewayToolRunner::run(args, &gateway, access, providerGatewayCallbacks());
+    QJsonObject result = ai::AiProviderGatewayToolRunner::run(
+        args, &gateway, access, providerGatewayCallbacks(context));
     // This may run on the tool worker thread; the timer lives on the GUI thread.
     QMetaObject::invokeMethod(this, &AiAssistantPanel::armMcpIdleReap, Qt::QueuedConnection);
     return result;
@@ -7351,13 +7372,14 @@ void AiAssistantPanel::reapIdleMcpSessions() {
         [pool = m_mcpSessionPool]() { return pool->reapIdleSessions(ai::kAiMcpSessionIdleReap); }));
 }
 
-ai::AiProviderGatewayToolCallbacks AiAssistantPanel::providerGatewayCallbacks() {
+ai::AiProviderGatewayToolCallbacks AiAssistantPanel::providerGatewayCallbacks(
+    const ai::AiToolCallContext& context) {
     ai::AiProviderGatewayToolCallbacks callbacks;
-    callbacks.confirm = [this](const QString& title, const QString& preview, bool risky) {
-        return confirmCommandWithUser(title, preview, risky);
+    callbacks.confirm = [this, context](const QString& title, const QString& preview, bool risky) {
+        return confirmToolCallWithUser(context, title, preview, risky);
     };
-    callbacks.offer_restore_point = [this](const QString& preview, bool risky) {
-        return offerRestorePointIfNeeded(preview, risky);
+    callbacks.offer_restore_point = [this, context](const QString& preview, bool risky) {
+        return offerRestorePointForToolCall(context, preview, risky);
     };
     return callbacks;
 }
@@ -7905,7 +7927,8 @@ QJsonObject AiAssistantPanel::packageManagerQueryOperation(const QJsonObject& ar
     return {};
 }
 
-QJsonObject AiAssistantPanel::packageManagerPackageOperation(const QString& operation,
+QJsonObject AiAssistantPanel::packageManagerPackageOperation(const ai::AiToolCallContext& context,
+                                                             const QString& operation,
                                                              const QString& package_id,
                                                              const QString& version,
                                                              int timeout_seconds) {
@@ -7914,7 +7937,7 @@ QJsonObject AiAssistantPanel::packageManagerPackageOperation(const QString& oper
         return preflight;
     }
     const QString preview = packageManagerChangePreview(operation, package_id, version);
-    const QJsonObject authorization_error = authorizePackageManagerChange(preview);
+    const QJsonObject authorization_error = authorizePackageManagerChange(context, preview);
     if (!authorization_error.isEmpty()) {
         return authorization_error;
     }
@@ -7946,21 +7969,23 @@ QJsonObject AiAssistantPanel::packageManagerPackagePreflight(const QString& oper
     return {};
 }
 
-QJsonObject AiAssistantPanel::authorizePackageManagerChange(const QString& preview) {
-    // ONE immutable snapshot decides the whole authorization. Re-reading the mode per
-    // branch lets a switch to Chat between the two reads fall through BOTH of them and
-    // authorize the install/uninstall with no confirm and no restore point.
-    const ai::AiAccessMode mode = currentAccessMode();
+QJsonObject AiAssistantPanel::authorizePackageManagerChange(const ai::AiToolCallContext& context,
+                                                            const QString& preview) {
+    // ONE immutable snapshot decides the whole authorization: the mode the call was dispatched
+    // with. Re-reading the panel's per branch lets a switch to Chat between the two reads fall
+    // through BOTH of them and authorize the install/uninstall with no confirm and no restore
+    // point.
+    const ai::AiAccessMode mode = context.access_mode;
     if (!ai::aiAccessModeAllowsLocalExecution(mode)) {
         return toolError(QStringLiteral("Local package management is disabled in Chat mode"));
     }
     if (mode == ai::AiAccessMode::AssistedFullAccess) {
-        if (!confirmCommandWithUser(tr("SAK Package Manager"), preview, true)) {
+        if (!confirmToolCallWithUser(context, tr("SAK Package Manager"), preview, true)) {
             return toolError(QStringLiteral("User declined SAK package manager operation"));
         }
         return {};
     }
-    if (!offerRestorePointIfNeeded(preview, true)) {
+    if (!offerRestorePointForToolCall(context, preview, true)) {
         return toolError(QStringLiteral("User cancelled before package manager operation"));
     }
     return {};
@@ -8124,8 +8149,9 @@ QJsonObject AiAssistantPanel::runPackageManagerChange(const QString& operation,
     result[QStringLiteral("tool_path")] = m_chocoManager->getChocoPath();
     return result;
 }
-QJsonObject AiAssistantPanel::runOfflineDownloaderTool(const QJsonObject& args) {
-    if (!ai::aiAccessModeAllowsLocalExecution(currentAccessMode())) {
+QJsonObject AiAssistantPanel::runOfflineDownloaderTool(const ai::AiToolCallContext& context,
+                                                       const QJsonObject& args) {
+    if (!ai::aiAccessModeAllowsLocalExecution(context.access_mode)) {
         return toolError(QStringLiteral("Local offline downloader is disabled in Chat mode"));
     }
     if (!m_packageListManager) {
@@ -8142,13 +8168,15 @@ QJsonObject AiAssistantPanel::runOfflineDownloaderTool(const QJsonObject& args) 
     callbacks.search_result = [this](const QJsonObject& search_args, const QString& query) {
         return offlineSearchResult(search_args, query);
     };
-    callbacks.run_operation = [this](const QJsonObject& run_args, const QString& operation) {
-        return offlineRunOperation(run_args, operation);
+    callbacks.run_operation = [this, &context](const QJsonObject& run_args,
+                                               const QString& operation) {
+        return offlineRunOperation(context, run_args, operation);
     };
     return ai::AiOfflineDownloaderToolRunner::run(args, callbacks);
 }
 
-QJsonObject AiAssistantPanel::offlineRunOperation(const QJsonObject& args,
+QJsonObject AiAssistantPanel::offlineRunOperation(const ai::AiToolCallContext& context,
+                                                  const QJsonObject& args,
                                                   const QString& operation) {
     QString package_error;
     const QVector<QPair<QString, QString>> packages =
@@ -8159,7 +8187,7 @@ QJsonObject AiAssistantPanel::offlineRunOperation(const QJsonObject& args,
         return toolError(package_request_error);
     }
     QString output_error;
-    const QString output_dir = offlineOutputDirectory(operation, args, &output_error);
+    const QString output_dir = offlineOutputDirectory(context, operation, args, &output_error);
     if (!output_error.isEmpty()) {
         return toolError(output_error);
     }
@@ -8178,33 +8206,35 @@ QJsonObject AiAssistantPanel::offlineRunOperation(const QJsonObject& args,
     if (!packed_error.isEmpty()) {
         return toolError(packed_error);
     }
-    if (!authorizeOfflineOperation(operation, args)) {
+    if (!authorizeOfflineOperation(context, operation, args)) {
         return toolError(QStringLiteral("User declined or cancelled offline downloader operation"));
     }
 
     OfflineToolRunResult run_result =
-        executeOfflineOperation(operation, packages, worker_output_dir, args);
-    publishManagedOfflineArtifacts(managed_output, worker_output_dir, output_dir, &run_result);
+        executeOfflineOperation(context, operation, packages, worker_output_dir, args);
+    publishManagedOfflineArtifacts(
+        context, managed_output, worker_output_dir, output_dir, &run_result);
     cleanupManagedOfflineStaging(managed_output, worker_output_dir, &run_result);
     QJsonObject result = offlineOperationResultJson(operation, output_dir, run_result);
     appendOfflineArtifacts(output_dir, run_result.manifest_written, &result);
     return result;
 }
 
-void AiAssistantPanel::publishManagedOfflineArtifacts(bool managed_output,
+void AiAssistantPanel::publishManagedOfflineArtifacts(const ai::AiToolCallContext& context,
+                                                      bool managed_output,
                                                       const QString& worker_output_dir,
                                                       const QString& output_dir,
-                                                      OfflineToolRunResult* run_result) const {
+                                                      OfflineToolRunResult* run_result) {
     if (!managed_output || run_result == nullptr || !run_result->completed ||
         !run_result->operation_error.isEmpty()) {
         return;
     }
     QString error;
-    const QString artifact_root = m_conversationStore->artifactRootDirectory(&error);
+    const QString artifact_root = context.session_store->artifactRootDirectory(&error);
     const QString managed_subdir =
         QDir::cleanPath(QDir(artifact_root).relativeFilePath(output_dir));
     const auto published = importManagedArtifactTree(
-        m_conversationStore.get(), worker_output_dir, managed_subdir, &error);
+        context.session_store.get(), worker_output_dir, managed_subdir, &error);
     if (!published) {
         run_result->completed = false;
         run_result->operation_error = error;
@@ -8301,9 +8331,10 @@ bool offlineRequestedOutputDirIsUsable(const QJsonObject& args,
 }
 }  // namespace
 
-QString AiAssistantPanel::offlineOutputDirectory(const QString& operation,
+QString AiAssistantPanel::offlineOutputDirectory(const ai::AiToolCallContext& context,
+                                                 const QString& operation,
                                                  const QJsonObject& args,
-                                                 QString* error_message) const {
+                                                 QString* error_message) {
     QString output_dir;
     QString request_error;
     if (!offlineRequestedOutputDirIsUsable(args, &output_dir, &request_error)) {
@@ -8318,7 +8349,7 @@ QString AiAssistantPanel::offlineOutputDirectory(const QString& operation,
     if (!offlineCreatesDefaultOutput(operation)) {
         return output_dir;
     }
-    if (!m_conversationStore) {
+    if (!context.session_store) {
         if (error_message != nullptr) {
             *error_message = QStringLiteral("No active AI session for artifact output");
         }
@@ -8329,19 +8360,16 @@ QString AiAssistantPanel::offlineOutputDirectory(const QString& operation,
     const QString subdir = operation == QLatin1String("direct_download")
                                ? QStringLiteral("downloads/offline_installers_%1").arg(stamp)
                                : QStringLiteral("downloads/offline_bundle_%1").arg(stamp);
-    // sak_offline_downloader runs on a worker thread; the conversation store
-    // access that creates the artifact subdir belongs on the GUI thread.
-    return runOnGuiThread([this, &subdir, error_message]() {
-        return m_conversationStore->artifactSubdir(subdir, error_message);
-    });
+    return context.session_store->artifactSubdir(subdir, error_message);
 }
 
-bool AiAssistantPanel::authorizeOfflineOperation(const QString& operation,
+bool AiAssistantPanel::authorizeOfflineOperation(const ai::AiToolCallContext& context,
+                                                 const QString& operation,
                                                  const QJsonObject& args) {
     // ONE immutable snapshot decides the whole authorization (mirrors
-    // authorizePackageManagerChange): re-reading the mode per branch lets a switch to
+    // authorizePackageManagerChange): re-reading the panel's mode per branch lets a switch to
     // Chat between the reads fall through every branch and authorize with no gate.
-    const ai::AiAccessMode mode = currentAccessMode();
+    const ai::AiAccessMode mode = context.access_mode;
     if (!ai::aiAccessModeAllowsLocalExecution(mode)) {
         return false;
     }
@@ -8353,7 +8381,8 @@ bool AiAssistantPanel::authorizeOfflineOperation(const QString& operation,
         if (requested_dir.isEmpty() || mode != ai::AiAccessMode::AssistedFullAccess) {
             return true;
         }
-        return confirmCommandWithUser(
+        return confirmToolCallWithUser(
+            context,
             tr("SAK Offline Downloader"),
             tr("Write offline downloader output for '%1' into '%2'").arg(operation, requested_dir),
             true);
@@ -8362,10 +8391,10 @@ bool AiAssistantPanel::authorizeOfflineOperation(const QString& operation,
     const QString preview =
         tr("Install offline Chocolatey deployment bundle from '%1'").arg(manifest_path);
     if (mode == ai::AiAccessMode::AssistedFullAccess) {
-        return confirmCommandWithUser(tr("SAK Offline Downloader"), preview, true);
+        return confirmToolCallWithUser(context, tr("SAK Offline Downloader"), preview, true);
     }
     if (mode == ai::AiAccessMode::UnattendedFullAccess) {
-        return offerRestorePointIfNeeded(preview, true);
+        return offerRestorePointForToolCall(context, preview, true);
     }
     return false;
 }
@@ -8388,6 +8417,7 @@ static void waitForOfflineWorker(QSemaphore* done,
 }
 
 AiAssistantPanel::OfflineToolRunResult AiAssistantPanel::executeOfflineOperation(
+    const ai::AiToolCallContext& context,
     const QString& operation,
     const QVector<QPair<QString, QString>>& packages,
     const QString& output_dir,
@@ -8405,19 +8435,19 @@ AiAssistantPanel::OfflineToolRunResult AiAssistantPanel::executeOfflineOperation
     QSemaphore done;
     QThread offline_thread;
     auto* worker = new OfflineDeploymentWorker;
-    auto* context = new QObject;
+    auto* thread_context = new QObject;
     worker->moveToThread(&offline_thread);
-    context->moveToThread(&offline_thread);
+    thread_context->moveToThread(&offline_thread);
     // `worker` is deliberately NOT torn down via finished->deleteLater. The cancellation
     // poll below calls worker->cancel() cross-thread, and finished fires the instant the
     // worker completes -- deleting it during the poll would be a use-after-free. It is
     // deleted after offline_thread.wait() instead, once the thread has fully stopped and
     // the poll has returned.
-    QObject::connect(&offline_thread, &QThread::finished, context, &QObject::deleteLater);
-    connectOfflineWorkerSignals(worker, context, &offline_thread, &done, &run);
+    QObject::connect(&offline_thread, &QThread::finished, thread_context, &QObject::deleteLater);
+    connectOfflineWorkerSignals(worker, thread_context, &offline_thread, &done, &run);
     QObject::connect(&offline_thread,
                      &QThread::started,
-                     context,
+                     thread_context,
                      [this, worker, operation, packages, output_dir, args]() {
                          startOfflineWorkerOperation(worker, operation, packages, output_dir, args);
                      });
@@ -8425,9 +8455,7 @@ AiAssistantPanel::OfflineToolRunResult AiAssistantPanel::executeOfflineOperation
     // Bounded, cancellation-aware wait: a Stop cancels the shared run token, which
     // this poll observes and turns into worker->cancel() so the offline op aborts
     // rather than blocking teardown on an unbounded semaphore acquire.
-    waitForOfflineWorker(&done, worker, [this]() {
-        return m_activeToolRunToken.isValid() && m_activeToolRunToken.isCancellationRequested();
-    });
+    waitForOfflineWorker(&done, worker, context.cancelCheck());
     offline_thread.quit();
     // SAK-ALLOW-BLOCKING: `offline_thread` is a stack local destroyed on return, and
     // ~QThread on a live thread aborts the process. waitForOfflineWorker above already
@@ -10013,24 +10041,24 @@ void AiAssistantPanel::registerToolHandlers() {
         });
     m_toolDispatcher->registerHandler(
         QStringLiteral("run_powershell"),
-        [this](const Context&, const QJsonObject& args, const Decision&) {
+        [this](const Context& context, const QJsonObject& args, const Decision&) {
             return runWorkflowPowerShellTool(
-                args, args.value(QStringLiteral("command_preview")).toString());
+                context, args, args.value(QStringLiteral("command_preview")).toString());
         });
     m_toolDispatcher->registerHandler(
         QStringLiteral("sak_package_manager"),
-        [this](const Context&, const QJsonObject& args, const Decision&) {
-            return runPackageManagerTool(args);
+        [this](const Context& context, const QJsonObject& args, const Decision&) {
+            return runPackageManagerTool(context, args);
         });
     m_toolDispatcher->registerHandler(
         QStringLiteral("sak_offline_downloader"),
-        [this](const Context&, const QJsonObject& args, const Decision&) {
-            return runOfflineDownloaderTool(args);
+        [this](const Context& context, const QJsonObject& args, const Decision&) {
+            return runOfflineDownloaderTool(context, args);
         });
     m_toolDispatcher->registerHandler(
         QStringLiteral("sak_provider_gateway"),
-        [this](const Context&, const QJsonObject& args, const Decision&) {
-            return runProviderGatewayTool(args);
+        [this](const Context& context, const QJsonObject& args, const Decision&) {
+            return runProviderGatewayTool(context, args);
         });
     m_toolDispatcher->registerHandler(
         QStringLiteral("sak_session_search"),
@@ -10375,11 +10403,11 @@ QJsonObject AiAssistantPanel::dispatchWorkflowToolPhase(const ai::WorkflowPhase&
         return toolError(
             QStringLiteral("Workflow phases may not use delegate_subagent or run_workflow"));
     }
-    WorkflowToolDispatchPlan plan = workflowToolDispatchPlan(phase, policy, context);
+    WorkflowToolDispatchPlan plan = workflowToolDispatchPlan(tool_context, phase, policy, context);
     if (!plan.ok) {
         return plan.error;
     }
-    if (!authorizeWorkflowToolPhase(phase, plan)) {
+    if (!authorizeWorkflowToolPhase(tool_context, phase, plan)) {
         return toolError(QStringLiteral("User declined workflow tool phase '%1'").arg(phase.id));
     }
     const auto outcome = m_toolDispatcher->dispatch(plan.policy,
@@ -10518,6 +10546,7 @@ QJsonObject AiAssistantPanel::runDelegateSubagentTool(const ai::AiToolCallContex
 }
 
 AiAssistantPanel::WorkflowToolDispatchPlan AiAssistantPanel::workflowToolDispatchPlan(
+    const ai::AiToolCallContext& tool_context,
     const ai::WorkflowPhase& phase,
     ai::AiToolPolicy policy,
     const ai::AiWorkflowPhaseContext& context) {
@@ -10526,7 +10555,7 @@ AiAssistantPanel::WorkflowToolDispatchPlan AiAssistantPanel::workflowToolDispatc
         plan.error = toolError(QStringLiteral("Workflow phase '%1' has no tool").arg(phase.id));
         return plan;
     }
-    initializeWorkflowToolPlan(phase, policy, context, &plan);
+    initializeWorkflowToolPlan(tool_context, phase, policy, context, &plan);
     if (phase.tool == QLatin1String("run_powershell") &&
         !prepareWorkflowPowerShellTool(phase, &plan)) {
         return plan;
@@ -10535,24 +10564,25 @@ AiAssistantPanel::WorkflowToolDispatchPlan AiAssistantPanel::workflowToolDispatc
         return plan;
     }
     if (phase.tool == QLatin1String("sak_package_manager") &&
-        !prepareWorkflowPackageTool(phase, context, &plan)) {
+        !prepareWorkflowPackageTool(tool_context, phase, context, &plan)) {
         return plan;
     }
     if (phase.tool == QLatin1String("sak_offline_downloader") &&
-        !prepareWorkflowOfflineTool(phase, context, &plan)) {
+        !prepareWorkflowOfflineTool(tool_context, phase, context, &plan)) {
         return plan;
     }
     finalizeWorkflowToolPlan(phase, &plan);
     return plan;
 }
 
-void AiAssistantPanel::initializeWorkflowToolPlan(const ai::WorkflowPhase& phase,
+void AiAssistantPanel::initializeWorkflowToolPlan(const ai::AiToolCallContext& tool_context,
+                                                  const ai::WorkflowPhase& phase,
                                                   ai::AiToolPolicy policy,
                                                   const ai::AiWorkflowPhaseContext& context,
                                                   WorkflowToolDispatchPlan* plan) {
     plan->policy = policy;
     if (plan->policy == ai::AiToolPolicy::NoLocalExecution && phase.agent.trimmed().isEmpty()) {
-        plan->policy = currentAccessToolPolicy();
+        plan->policy = tool_context.session_policy;
     }
     plan->request.tool_name = phase.tool;
     plan->request.operation = phase.operation;
@@ -10635,7 +10665,8 @@ void AiAssistantPanel::finalizeWorkflowToolPlan(const ai::WorkflowPhase& phase,
     plan->args[QStringLiteral("command_preview")] = plan->request.command_preview;
     plan->ok = true;
 }
-bool AiAssistantPanel::prepareWorkflowPackageTool(const ai::WorkflowPhase& phase,
+bool AiAssistantPanel::prepareWorkflowPackageTool(const ai::AiToolCallContext& tool_context,
+                                                  const ai::WorkflowPhase& phase,
                                                   const ai::AiWorkflowPhaseContext& context,
                                                   WorkflowToolDispatchPlan* plan) {
     const QString operation = phase.operation.trimmed().toLower();
@@ -10662,7 +10693,7 @@ bool AiAssistantPanel::prepareWorkflowPackageTool(const ai::WorkflowPhase& phase
     QJsonObject search_args;
     search_args[QStringLiteral("operation")] = QStringLiteral("search");
     search_args[QStringLiteral("query")] = workflowPackageQuery(context);
-    const QJsonObject search_result = runPackageManagerTool(search_args);
+    const QJsonObject search_result = runPackageManagerTool(tool_context, search_args);
     if (!search_result.value(QStringLiteral("success")).toBool(false)) {
         plan->error = search_result;
         return false;
@@ -10687,7 +10718,8 @@ bool AiAssistantPanel::prepareWorkflowPackageTool(const ai::WorkflowPhase& phase
     return true;
 }
 
-bool AiAssistantPanel::prepareWorkflowOfflineTool(const ai::WorkflowPhase& phase,
+bool AiAssistantPanel::prepareWorkflowOfflineTool(const ai::AiToolCallContext& tool_context,
+                                                  const ai::WorkflowPhase& phase,
                                                   const ai::AiWorkflowPhaseContext& context,
                                                   WorkflowToolDispatchPlan* plan) {
     const QString operation = phase.operation.trimmed().toLower();
@@ -10716,7 +10748,7 @@ bool AiAssistantPanel::prepareWorkflowOfflineTool(const ai::WorkflowPhase& phase
         QJsonObject search_args;
         search_args[QStringLiteral("operation")] = QStringLiteral("search");
         search_args[QStringLiteral("query")] = package_query;
-        const QJsonObject search_result = runOfflineDownloaderTool(search_args);
+        const QJsonObject search_result = runOfflineDownloaderTool(tool_context, search_args);
         QString package_error;
         QJsonObject selection_details;
         const QJsonArray packages = packagesFromToolSearch(
@@ -10748,9 +10780,10 @@ bool workflowPhaseNeedsGate(const ai::AiToolPolicyDecision& decision,
 
 }  // namespace
 
-bool AiAssistantPanel::authorizeWorkflowToolPhase(const ai::WorkflowPhase& phase,
+bool AiAssistantPanel::authorizeWorkflowToolPhase(const ai::AiToolCallContext& tool_context,
+                                                  const ai::WorkflowPhase& phase,
                                                   WorkflowToolDispatchPlan& plan) {
-    const ai::AiAccessMode mode = currentAccessMode();
+    const ai::AiAccessMode mode = tool_context.access_mode;
     if (!ai::aiAccessModeAllowsLocalExecution(mode)) {
         return false;
     }
@@ -10776,7 +10809,8 @@ bool AiAssistantPanel::authorizeWorkflowToolPhase(const ai::WorkflowPhase& phase
     if (catastrophic || mode == ai::AiAccessMode::AssistedFullAccess) {
         // confirmCommandWithUser also offers the restore point (re-offered for a
         // catastrophic phase even if one was already offered this session).
-        if (!confirmCommandWithUser(label, plan.request.command_preview, true, catastrophic)) {
+        if (!confirmToolCallWithUser(
+                tool_context, label, plan.request.command_preview, true, catastrophic)) {
             return false;
         }
         // Record the explicit human confirmation so the machine gate in evaluateToolPolicy
@@ -10791,7 +10825,8 @@ bool AiAssistantPanel::authorizeWorkflowToolPhase(const ai::WorkflowPhase& phase
         // Reached only for a non-catastrophic risky phase (catastrophic took the confirm
         // branch above): the restore-point offer is not a human confirmation and never
         // sets human_confirmed, so a catastrophic phase can never run unconfirmed.
-        return offerRestorePointIfNeeded(plan.request.command_preview, true, catastrophic);
+        return offerRestorePointForToolCall(
+            tool_context, plan.request.command_preview, true, catastrophic);
     }
     return false;
 }

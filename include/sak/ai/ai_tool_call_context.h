@@ -23,6 +23,9 @@ class ConversationStore;
 /// dispatch took. A handler reads its session, access mode and cancel route from here, never
 /// from the panel: a session switch, a new chat or the panel's teardown while the call runs then
 /// cannot redirect what it writes, widen what it may do, or swap state out from under a worker.
+/// The panel's long-lived services stay on the panel (the app-action registry, package managers,
+/// skill and workflow catalogs, MCP pool): nothing replaces them while it lives, and
+/// AiAssistantPanel::release keeps it alive until its tool work has stopped.
 struct AiToolCallContext {
     /// The chat the call was dispatched in; empty when none was open.
     QString session_id;

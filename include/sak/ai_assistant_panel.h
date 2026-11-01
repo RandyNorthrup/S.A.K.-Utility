@@ -417,8 +417,6 @@ private:
     void stopBackgroundWorkForTeardown();
     [[nodiscard]] bool pumpUntilBackgroundWorkStops(int deadline_ms) const;
     void deleteOnceBackgroundWorkStops();
-    /// The cancel check a Win32 MCP call polls: true once Stop or teardown cancelled the run.
-    [[nodiscard]] std::function<bool()> toolCallCancelCheck() const;
     // Pure result-shaping shared by the sync and async built-in paths (safe to
     // call off the GUI thread: no widget or shared-state access).
     [[nodiscard]] static QJsonObject buildBuiltInToolMetadata(
@@ -567,20 +565,39 @@ private:
     [[nodiscard]] QJsonObject runDownloadTool(const ai::AiToolCallContext& context,
                                               const QString& url_string,
                                               const QString& filename);
-    [[nodiscard]] QJsonObject runWorkflowPowerShellTool(const QJsonObject& args,
+    [[nodiscard]] QJsonObject runWorkflowPowerShellTool(const ai::AiToolCallContext& context,
+                                                        const QJsonObject& args,
                                                         const QString& command_preview);
+    // Records of a call's command and its session memory write the manifest, so they go through
+    // the panel's store on the GUI thread, and only while the call's chat is the open one.
+    void recordToolCallCommand(const ai::AiToolCallContext& context,
+                               const QString& preview,
+                               const QJsonObject& result_json);
+    void appendToolCallMemory(const ai::AiToolCallContext& context,
+                              const QString& kind,
+                              const QString& title,
+                              const QString& text);
+    [[nodiscard]] bool toolCallMayWriteSessionRecords(const ai::AiToolCallContext& context,
+                                                      const QString& what);
     [[nodiscard]] ai::AiCommandResult executeWorkflowPowerShellRequest(
-        const ai::AiCommandRequest& request, const QString& command_id);
+        const ai::AiToolCallContext& context,
+        const ai::AiCommandRequest& request,
+        const QString& command_id);
     [[nodiscard]] ai::AiCommandResult executeElevatedWorkflowPowerShellRequest(
         const ai::AiCommandRequest& request);
     [[nodiscard]] ai::AiCommandResult executeStandardWorkflowPowerShellRequest(
-        const ai::AiCommandRequest& request, const QString& command_id);
+        const ai::AiToolCallContext& context,
+        const ai::AiCommandRequest& request,
+        const QString& command_id);
     void connectWorkflowPowerShellLogging(ai::ExecutionBroker* broker, QObject* worker);
-    void connectWorkflowPowerShellCancelPolling(QTimer* cancel_timer,
-                                                ai::ExecutionBroker* broker,
-                                                QObject* worker);
-    [[nodiscard]] QJsonObject runPackageManagerTool(const QJsonObject& args);
-    [[nodiscard]] QJsonObject runProviderGatewayTool(const QJsonObject& args);
+    static void connectWorkflowPowerShellCancelPolling(QTimer* cancel_timer,
+                                                       ai::ExecutionBroker* broker,
+                                                       QObject* worker,
+                                                       const std::function<bool()>& should_cancel);
+    [[nodiscard]] QJsonObject runPackageManagerTool(const ai::AiToolCallContext& context,
+                                                    const QJsonObject& args);
+    [[nodiscard]] QJsonObject runProviderGatewayTool(const ai::AiToolCallContext& context,
+                                                     const QJsonObject& args);
     /// (Re)arms the single-shot idle reap after a provider-gateway call, so a pooled MCP server
     /// (the full-access win32 MCP child included) closes once unused for kAiMcpSessionIdleReap
     /// instead of living until the app exits. GUI thread.
@@ -590,7 +607,8 @@ private:
     void reapIdleMcpSessions();
     /// The human gates a provider-gateway Win32 MCP call uses (confirmation, restore point);
     /// split out of runProviderGatewayTool.
-    [[nodiscard]] ai::AiProviderGatewayToolCallbacks providerGatewayCallbacks();
+    [[nodiscard]] ai::AiProviderGatewayToolCallbacks providerGatewayCallbacks(
+        const ai::AiToolCallContext& context);
     [[nodiscard]] static QJsonObject runSessionSearchTool(const ai::AiToolCallContext& context,
                                                           const QJsonObject& args);
     // sak_skill handler: operation "list" returns the skill catalog, "load"
@@ -628,14 +646,16 @@ private:
     [[nodiscard]] QJsonObject packageManagerQueryOperation(const QJsonObject& args,
                                                            const QString& operation,
                                                            const QString& query);
-    [[nodiscard]] QJsonObject packageManagerPackageOperation(const QString& operation,
+    [[nodiscard]] QJsonObject packageManagerPackageOperation(const ai::AiToolCallContext& context,
+                                                             const QString& operation,
                                                              const QString& package_id,
                                                              const QString& version,
                                                              int timeout_seconds);
     [[nodiscard]] QJsonObject packageManagerPackagePreflight(const QString& operation,
                                                              const QString& package_id,
                                                              const QString& version);
-    [[nodiscard]] QJsonObject authorizePackageManagerChange(const QString& preview);
+    [[nodiscard]] QJsonObject authorizePackageManagerChange(const ai::AiToolCallContext& context,
+                                                            const QString& preview);
     [[nodiscard]] QJsonObject executePackageManagerPackageChange(const QString& operation,
                                                                  const QString& package_id,
                                                                  const QString& version,
@@ -657,23 +677,30 @@ private:
                                                       const QString& package_id,
                                                       const QString& version,
                                                       int timeout_seconds);
-    [[nodiscard]] QJsonObject runOfflineDownloaderTool(const QJsonObject& args);
-    [[nodiscard]] QJsonObject offlineRunOperation(const QJsonObject& args,
+    [[nodiscard]] QJsonObject runOfflineDownloaderTool(const ai::AiToolCallContext& context,
+                                                       const QJsonObject& args);
+    [[nodiscard]] QJsonObject offlineRunOperation(const ai::AiToolCallContext& context,
+                                                  const QJsonObject& args,
                                                   const QString& operation);
     [[nodiscard]] QJsonObject offlinePresetsResult() const;
     [[nodiscard]] QJsonObject offlineSearchResult(const QJsonObject& args, const QString& query);
-    [[nodiscard]] QString offlineOutputDirectory(const QString& operation,
-                                                 const QJsonObject& args,
-                                                 QString* error_message) const;
-    void publishManagedOfflineArtifacts(bool managed_output,
-                                        const QString& worker_output_dir,
-                                        const QString& output_dir,
-                                        OfflineToolRunResult* run_result) const;
+    [[nodiscard]] static QString offlineOutputDirectory(const ai::AiToolCallContext& context,
+                                                        const QString& operation,
+                                                        const QJsonObject& args,
+                                                        QString* error_message);
+    static void publishManagedOfflineArtifacts(const ai::AiToolCallContext& context,
+                                               bool managed_output,
+                                               const QString& worker_output_dir,
+                                               const QString& output_dir,
+                                               OfflineToolRunResult* run_result);
     static void cleanupManagedOfflineStaging(bool managed_output,
                                              const QString& worker_output_dir,
                                              OfflineToolRunResult* run_result);
-    [[nodiscard]] bool authorizeOfflineOperation(const QString& operation, const QJsonObject& args);
+    [[nodiscard]] bool authorizeOfflineOperation(const ai::AiToolCallContext& context,
+                                                 const QString& operation,
+                                                 const QJsonObject& args);
     [[nodiscard]] OfflineToolRunResult executeOfflineOperation(
+        const ai::AiToolCallContext& context,
         const QString& operation,
         const QVector<QPair<QString, QString>>& packages,
         const QString& output_dir,
@@ -918,10 +945,12 @@ private:
     [[nodiscard]] static ai::AiSubagentToolExecutor::RawDispatch makeSubagentToolDispatch(
         QPointer<AiAssistantPanel> guard, ai::AiToolCallContext tool_context);
     [[nodiscard]] WorkflowToolDispatchPlan workflowToolDispatchPlan(
+        const ai::AiToolCallContext& tool_context,
         const ai::WorkflowPhase& phase,
         ai::AiToolPolicy policy,
         const ai::AiWorkflowPhaseContext& context);
-    void initializeWorkflowToolPlan(const ai::WorkflowPhase& phase,
+    void initializeWorkflowToolPlan(const ai::AiToolCallContext& tool_context,
+                                    const ai::WorkflowPhase& phase,
                                     ai::AiToolPolicy policy,
                                     const ai::AiWorkflowPhaseContext& context,
                                     WorkflowToolDispatchPlan* plan);
@@ -932,16 +961,19 @@ private:
     [[nodiscard]] bool prepareWorkflowCmdTool(const ai::WorkflowPhase& phase,
                                               WorkflowToolDispatchPlan* plan);
     void finalizeWorkflowToolPlan(const ai::WorkflowPhase& phase, WorkflowToolDispatchPlan* plan);
-    [[nodiscard]] bool prepareWorkflowPackageTool(const ai::WorkflowPhase& phase,
+    [[nodiscard]] bool prepareWorkflowPackageTool(const ai::AiToolCallContext& tool_context,
+                                                  const ai::WorkflowPhase& phase,
                                                   const ai::AiWorkflowPhaseContext& context,
                                                   WorkflowToolDispatchPlan* plan);
-    [[nodiscard]] bool prepareWorkflowOfflineTool(const ai::WorkflowPhase& phase,
+    [[nodiscard]] bool prepareWorkflowOfflineTool(const ai::AiToolCallContext& tool_context,
+                                                  const ai::WorkflowPhase& phase,
                                                   const ai::AiWorkflowPhaseContext& context,
                                                   WorkflowToolDispatchPlan* plan);
     // Takes the plan by non-const reference so it can record the human's explicit
     // confirmation (plan.request.human_confirmed) for a catastrophic phase, which the
     // machine gate in evaluateToolPolicy then requires when dispatch re-evaluates.
-    [[nodiscard]] bool authorizeWorkflowToolPhase(const ai::WorkflowPhase& phase,
+    [[nodiscard]] bool authorizeWorkflowToolPhase(const ai::AiToolCallContext& tool_context,
+                                                  const ai::WorkflowPhase& phase,
                                                   WorkflowToolDispatchPlan& plan);
 
     class PanelToolExecutor;
@@ -1122,9 +1154,9 @@ private:
     // NOTE: there is deliberately no separate "async tool in flight" flag. The runner
     // itself is the single authority (isRunning()); a mirror flag went stale the moment
     // Stop detached the job and made the panel report idle while the work still ran.
-    // Copy of m_runToken taken (on the GUI thread) when an async built-in tool
-    // starts, so its worker can poll cancellation lock-free (the token shares
-    // state with m_runToken) without touching GUI-thread members.
+    // The panel's handle on the running async built-in tool's cancel route. The call's context
+    // holds the same token (shared state) and the worker reads only that; this copy is what Stop
+    // and teardown cancel, even if m_runToken has moved on. GUI thread.
     ai::CancellationToken m_activeToolRunToken;
     std::unique_ptr<ai::WorkflowStore> m_workflowStore;
     std::unique_ptr<ai::SkillStore> m_skillStore;

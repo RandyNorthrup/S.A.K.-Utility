@@ -124,6 +124,7 @@ private Q_SLOTS:
         QVERIFY(panel.m_accessModeCombo != nullptr);
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research blocks local packages.
         const QJsonObject result = panel.runPackageManagerTool(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("search")},
                         {QStringLiteral("query"), QStringLiteral("7zip")}});
         QCOMPARE(result.size(), 2);
@@ -582,9 +583,10 @@ private Q_SLOTS:
             QStringLiteral("Gate chat %1").arg(QUuid::createUuid().toString(QUuid::Id128))));
         const ai::AiToolCallContext context = panel.captureToolCallContext();
         int prompts = 0;
-        aiApprovalPromptTestHook() = [&prompts](const QString&, const QString&) -> int {
+        aiApprovalPromptTestHook() = [&prompts](const QString& title, const QString&) -> int {
             ++prompts;
-            return 0;  // ApprovalPromptChoice::Accept
+            // Accept the command; Cancel a restore point rather than create one.
+            return title.contains(QStringLiteral("Approve AI Command")) ? 0 : 3;
         };
         const auto reset_hook = qScopeGuard([]() { aiApprovalPromptTestHook() = nullptr; });
 
@@ -601,6 +603,111 @@ private Q_SLOTS:
             context, QStringLiteral("test"), QStringLiteral("p"), true));
         QVERIFY(!panel.offerRestorePointForToolCall(context, QStringLiteral("p"), true, true));
         QCOMPARE(prompts, 1);
+    }
+
+    // A call runs under the access mode it was dispatched with: widening the mode while it runs
+    // does not widen it. (Each refusal below reads the context; the combo says Unattended.)
+    void toolCallKeepsTheAccessModeItWasDispatchedWith() {
+        AiAssistantPanel panel(nullptr, createAppQuickActionController());
+        QVERIFY(panel.m_accessModeCombo != nullptr);
+        panel.m_accessModeCombo->setCurrentIndex(0);  // Chat and Research
+        const ai::AiToolCallContext chat_call = panel.captureToolCallContext();
+        QCOMPARE(chat_call.access_mode, ai::AiAccessMode::ChatAndResearch);
+        QCOMPARE(chat_call.session_policy, ai::AiToolPolicy::NoLocalExecution);
+        panel.m_accessModeCombo->setCurrentIndex(2);  // Unattended
+        QCOMPARE(panel.currentAccessMode(), ai::AiAccessMode::UnattendedFullAccess);
+        // A gate reached by reading the combo must decline, not wait on a dialog nobody answers.
+        aiApprovalPromptTestHook() = [](const QString&, const QString&) -> int {
+            return 3;  // ApprovalPromptChoice::Cancel
+        };
+        const auto reset_hook = qScopeGuard([]() { aiApprovalPromptTestHook() = nullptr; });
+
+        const QJsonObject package = panel.runPackageManagerTool(
+            chat_call, QJsonObject{{QStringLiteral("operation"), QStringLiteral("version")}});
+        QCOMPARE(package.value(QStringLiteral("error_message")).toString(),
+                 QStringLiteral("Local package management is disabled in Chat mode"));
+        const QJsonObject offline = panel.runOfflineDownloaderTool(
+            chat_call, QJsonObject{{QStringLiteral("operation"), QStringLiteral("presets")}});
+        QCOMPARE(offline.value(QStringLiteral("error_message")).toString(),
+                 QStringLiteral("Local offline downloader is disabled in Chat mode"));
+        const QJsonObject action = panel.runAppActionTool(
+            chat_call,
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("run")},
+                        {QStringLiteral("action_id"), QStringLiteral("action.verify_system_files")},
+                        {QStringLiteral("arguments"), QStringLiteral("{}")}});
+        QCOMPARE(action.value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("policy_blocked"));
+        // The ceiling a sub-agent or tool-launched workflow is clamped to is the call's too.
+        ai::WorkflowPhase phase;
+        phase.id = QStringLiteral("p1");
+        phase.tool = QStringLiteral("sak_skill");
+        AiAssistantPanel::WorkflowToolDispatchPlan plan;
+        panel.initializeWorkflowToolPlan(chat_call,
+                                         phase,
+                                         ai::AiToolPolicy::NoLocalExecution,
+                                         ai::AiWorkflowPhaseContext{},
+                                         &plan);
+        QCOMPARE(plan.policy, ai::AiToolPolicy::NoLocalExecution);
+    }
+
+    // A workflow PowerShell command stops on its call's own token. The panel's token here is
+    // another run's and never cancelled, so only the context can stop the sleep short. (The poll
+    // used to read the panel's token through a blocking call to the GUI thread on every tick.)
+    void workflowPowerShellStopsOnItsCallsToken() {
+        constexpr int kSleepSeconds = 60;
+        constexpr int kWellInsideTheSleepMs = 30'000;
+        AiAssistantPanel panel;
+        panel.m_runToken = ai::CancellationToken::createRoot(QStringLiteral("another_run"));
+        ai::AiToolCallContext call = panel.captureToolCallContext();
+        call.cancel_token = ai::CancellationToken::createRoot(QStringLiteral("this_call"));
+        call.cancel_token.cancel(QStringLiteral("user_cancelled"));
+        ai::AiCommandRequest request;
+        request.command = QStringLiteral("Start-Sleep -Seconds %1").arg(kSleepSeconds);
+        request.timeout_seconds = kSleepSeconds;
+        QElapsedTimer waited;
+        waited.start();
+        const ai::AiCommandResult result = panel.executeStandardWorkflowPowerShellRequest(
+            call, request, QStringLiteral("cmd_call_token"));
+        QVERIFY2(result.cancelled, qPrintable(result.error_message));
+        QVERIFY(waited.elapsed() < kWellInsideTheSleepMs);
+    }
+
+    // Command records and session memory write the manifest, so they stay on the panel's store:
+    // written while the call's chat is open, dropped (never written to the other chat) once not.
+    void toolCallRecordsDropOnceItsChatCloses() {
+        AiAssistantPanel panel;
+        QVERIFY(panel.ensurePersistentSession(
+            QStringLiteral("Record chat %1").arg(QUuid::createUuid().toString(QUuid::Id128))));
+        const ai::AiToolCallContext call = panel.captureToolCallContext();
+        const QString dispatch_path = panel.m_conversationStore->currentSessionInfo().path;
+
+        panel.recordToolCallCommand(call,
+                                    QStringLiteral("cmd one"),
+                                    QJsonObject{{QStringLiteral("exit_code"), 0}});
+        panel.appendToolCallMemory(
+            call, QStringLiteral("Tool"), QStringLiteral("t"), QStringLiteral("memory while open"));
+        const QString commands_file =
+            QDir(dispatch_path).filePath(QStringLiteral("commands.jsonl"));
+        QVERIFY(QFileInfo::exists(commands_file));
+        const qint64 commands_size = QFileInfo(commands_file).size();
+
+        QString error;
+        QVERIFY2(panel.m_conversationStore->startSession(QStringLiteral("Chat opened meanwhile"),
+                                                         &error),
+                 qPrintable(error));
+        const QString open_path = panel.m_conversationStore->currentSessionInfo().path;
+        panel.recordToolCallCommand(call,
+                                    QStringLiteral("cmd two"),
+                                    QJsonObject{{QStringLiteral("exit_code"), 0}});
+        panel.appendToolCallMemory(call,
+                                   QStringLiteral("Tool"),
+                                   QStringLiteral("t"),
+                                   QStringLiteral("memory after the switch"));
+
+        QCOMPARE(QFileInfo(commands_file).size(), commands_size);
+        QVERIFY(!QFileInfo::exists(QDir(open_path).filePath(QStringLiteral("commands.jsonl"))));
+        const QString open_memory = panel.m_conversationStore->memoryText();
+        QVERIFY(!open_memory.contains(QStringLiteral("memory after the switch")));
     }
 
     // A fresh panel starts with least privilege: local execution is opt-in.
@@ -639,7 +746,7 @@ private Q_SLOTS:
     void stopFlipsToolCallCancelCheck() {
         AiAssistantPanel panel;
         allowLocalToolsAndValidRun(panel);
-        const std::function<bool()> cancelled = panel.toolCallCancelCheck();
+        const std::function<bool()> cancelled = panel.captureToolCallContext().cancelCheck();
         QVERIFY(!cancelled());
         panel.onStopClicked();
         QVERIFY(cancelled());
@@ -652,6 +759,7 @@ private Q_SLOTS:
     void offlineInstallRejectsWrongTypedPackedOnly() {
         AiAssistantPanel panel;
         const QJsonObject result = panel.offlineRunOperation(
+            panel.captureToolCallContext(),
             QJsonObject{{QStringLiteral("manifest_path"), QStringLiteral("m.json")},
                         {QStringLiteral("packed_only"), 1}},
             QStringLiteral("install_bundle"));
@@ -670,8 +778,10 @@ private Q_SLOTS:
         AiAssistantPanel panel;
         QJsonArray packages;
         packages.append(QJsonObject{{QStringLiteral("package_id"), QStringLiteral("fire/fox")}});
-        const QJsonObject result = panel.offlineRunOperation(
-            QJsonObject{{QStringLiteral("packages"), packages}}, QStringLiteral("direct_download"));
+        const QJsonObject result =
+            panel.offlineRunOperation(panel.captureToolCallContext(),
+                                      QJsonObject{{QStringLiteral("packages"), packages}},
+                                      QStringLiteral("direct_download"));
         QVERIFY(!result.value(QStringLiteral("success")).toBool());
         // The refusal must ECHO the rejected id: that is what proves nothing was silently
         // repaired into a different, valid package before the check ran.
@@ -8386,7 +8496,7 @@ private Q_SLOTS:
         plan.request.command_preview = QStringLiteral("format c: /y");
         plan.ok = true;
 
-        QVERIFY(panel.authorizeWorkflowToolPhase(phase, plan));
+        QVERIFY(panel.authorizeWorkflowToolPhase(panel.captureToolCallContext(), phase, plan));
         QCOMPARE(countTitles(titles, QStringLiteral("Approve AI Command")), 1);
     }
 
@@ -8408,7 +8518,7 @@ private Q_SLOTS:
         plan.phase_risky = true;  // gate is needed, but the command is not catastrophic
         plan.ok = true;
 
-        QVERIFY(panel.authorizeWorkflowToolPhase(phase, plan));
+        QVERIFY(panel.authorizeWorkflowToolPhase(panel.captureToolCallContext(), phase, plan));
         QCOMPARE(countTitles(titles, QStringLiteral("Approve AI Command")), 0);
         QCOMPARE(countTitles(titles, QStringLiteral("Create Restore Point")), 1);
     }
@@ -8560,7 +8670,7 @@ private Q_SLOTS:
     void providerGatewayCallArmsMcpIdleReap() {
         AiAssistantPanel panel;
         QVERIFY(panel.findChild<QTimer*>(QStringLiteral("mcpIdleReapTimer")) == nullptr);
-        (void)panel.runProviderGatewayTool(QJsonObject{});
+        (void)panel.runProviderGatewayTool(panel.captureToolCallContext(), QJsonObject{});
         QTRY_VERIFY(panel.findChild<QTimer*>(QStringLiteral("mcpIdleReapTimer")) != nullptr);
         auto* timer = panel.findChild<QTimer*>(QStringLiteral("mcpIdleReapTimer"));
         QVERIFY(timer->isActive());
@@ -9077,7 +9187,11 @@ private Q_SLOTS:
         ai::AiWorkflowPhaseContext context;
         context.user_message = QStringLiteral("install 7zip for the customer");
         AiAssistantPanel::WorkflowToolDispatchPlan plan;
-        panel.initializeWorkflowToolPlan(phase, ai::AiToolPolicy::PackageToolsOnly, context, &plan);
+        panel.initializeWorkflowToolPlan(panel.captureToolCallContext(),
+                                         phase,
+                                         ai::AiToolPolicy::PackageToolsOnly,
+                                         context,
+                                         &plan);
         QCOMPARE(plan.request.user_message, context.user_message);
     }
 
