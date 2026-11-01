@@ -341,17 +341,6 @@ protected:
     static QString formatFileSize(qint64 bytes);
 
     /**
-     * @brief Build a box-drawing formatted log string
-     * @param title Title for the box header (e.g., "BROWSER CACHE CLEARING - RESULTS")
-     * @param content_lines Lines of content to display inside the box
-     * @param duration_ms Optional duration to append in footer (-1 to omit)
-     * @return Formatted string with box-drawing characters
-     */
-    static QString formatLogBox(const QString& title,
-                                const QStringList& content_lines,
-                                qint64 duration_ms = -1);
-
-    /**
      * @brief Sanitize a filesystem path for use as a backup subdirectory name
      * @param path Source filesystem path
      * @return Path with ':', '\\', '/' replaced by '_'

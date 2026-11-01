@@ -4,18 +4,11 @@
 #include "sak/quick_action.h"
 
 #include "sak/format_utils.h"
-#include "sak/layout_constants.h"
 
 #include <QDateTime>
 #include <QtGlobal>
 
 namespace sak {
-
-namespace {
-constexpr int kLogBoxContentWidth = 65;
-constexpr int kDurationPrecision = 2;
-constexpr int kCompletedInPrefixWidth = 15;
-}  // namespace
 
 QuickAction::QuickAction(QObject* parent) : QObject(parent) {}
 
@@ -87,43 +80,6 @@ void QuickAction::finishWithResult(const ExecutionResult& result, ActionStatus s
 
 QString QuickAction::formatFileSize(qint64 bytes) {
     return sak::formatBytes(bytes);
-}
-
-QString QuickAction::formatLogBox(const QString& title,
-                                  const QStringList& content_lines,
-                                  qint64 duration_ms) {
-    const QString top =
-        QStringLiteral("+================================================================+\n");
-    const QString sep =
-        QStringLiteral("+================================================================+\n");
-    const QString bottom =
-        QStringLiteral("+================================================================+\n");
-
-    QString box = top;
-    box += QString("| %1|\n").arg(title.leftJustified(kLogBoxContentWidth));
-    box += sep;
-
-    for (const QString& line : content_lines) {
-        if (line == "---") {
-            box += sep;
-        } else {
-            box += QString("| %1|\n").arg(line.leftJustified(kLogBoxContentWidth));
-        }
-    }
-
-    if (duration_ms >= 0) {
-        const double duration_seconds = static_cast<double>(duration_ms) / kMillisecondsPerSecondF;
-        const QString duration_text = QString::number(duration_seconds, 'f', kDurationPrecision);
-        const int padding_width = static_cast<int>(kLogBoxContentWidth - kCompletedInPrefixWidth -
-                                                   duration_text.length());
-        box += sep;
-        box += QString("| Completed in: %1 seconds%2|\n")
-                   .arg(duration_seconds, 0, 'f', kDurationPrecision)
-                   .arg(QString(qMax(0, padding_width), ' '));
-    }
-
-    box += bottom;
-    return box;
 }
 
 QString QuickAction::sanitizePathForBackup(const QString& path) {

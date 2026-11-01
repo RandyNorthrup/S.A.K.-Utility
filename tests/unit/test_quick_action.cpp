@@ -18,7 +18,6 @@ public:
 
     // Expose protected static methods for testing
     using QuickAction::formatFileSize;
-    using QuickAction::formatLogBox;
     using QuickAction::sanitizePathForBackup;
 
     // Expose the protected cancellation flag so cancel() can be asserted on
@@ -106,47 +105,6 @@ private Q_SLOTS:
 
     void sanitizeEmptyPath() {
         QCOMPARE(StubAction::sanitizePathForBackup(""), QStringLiteral(""));
-    }
-
-    // --- formatLogBox ---
-
-    void formatLogBoxBasic() {
-        QStringList lines = {"Line 1", "Line 2"};
-        QString result = StubAction::formatLogBox("TITLE", lines);
-        // Pin the exact box: fields are leftJustified(65), so pad counts are 65 minus token length.
-        const QString border =
-            QStringLiteral("+================================================================+\n");
-        QCOMPARE(result,
-                 border + QStringLiteral("| TITLE") + QString(60, ' ') + QStringLiteral("|\n") +
-                     border + QStringLiteral("| Line 1") + QString(59, ' ') +
-                     QStringLiteral("|\n") + QStringLiteral("| Line 2") + QString(59, ' ') +
-                     QStringLiteral("|\n") + border);
-    }
-
-    void formatLogBoxWithDuration() {
-        QStringList lines = {"Result: OK"};
-        QString result = StubAction::formatLogBox("TEST", lines, 1500);
-        // 1500 ms -> "1.50 seconds"; the footer is intentionally not box-aligned (46-space pad).
-        const QString border =
-            QStringLiteral("+================================================================+\n");
-        QCOMPARE(result,
-                 border + QStringLiteral("| TEST") + QString(61, ' ') + QStringLiteral("|\n") +
-                     border + QStringLiteral("| Result: OK") + QString(55, ' ') +
-                     QStringLiteral("|\n") + border +
-                     QStringLiteral("| Completed in: 1.50 seconds") + QString(46, ' ') +
-                     QStringLiteral("|\n") + border);
-    }
-
-    void formatLogBoxEmptyLines() {
-        QStringList lines;
-        QString result = StubAction::formatLogBox("EMPTY", lines);
-        // No content lines and no duration -> a 3-border box; pins EMPTY and footer absence at
-        // once.
-        const QString border =
-            QStringLiteral("+================================================================+\n");
-        QCOMPARE(result,
-                 border + QStringLiteral("| EMPTY") + QString(60, ' ') + QStringLiteral("|\n") +
-                     border + border);
     }
 
     // --- Base class state management ---
