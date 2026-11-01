@@ -79,9 +79,19 @@ keeps their history.
    space leaking into saved chat titles, and a custom "High Performance" plan chosen over the
    built-in one), plus 9 new defects the briefs missed (2 HIGH: AI command tools join their
    kill-on-close Job only after launch, and the redaction misses `access_token=`,
-   `client_secret=`, `AWS_SECRET_ACCESS_KEY=` and JSON `Authorization`/`Cookie` keys). Open: the
-   fix packages listed at the top of the triage. PANEL-6 (116 nonconforming member names in the
-   AI panel) is naming debt, which the owner ruled is not a release requirement.
+   `client_secret=`, `AWS_SECRET_ACCESS_KEY=` and JSON `Authorization`/`Cookie` keys).
+   FIXED 2026-10-31 (build lane), each with a test and a drill; the triage's "Fixed" section maps
+   every item to its commit: redaction and chat titles d3aad6dc (TITLE-2, CRED-1R/NEW-2, CRED-8),
+   credential store 3900a0a0 (CRED-3 to CRED-7; the key file now gets a protected DACL), power
+   action a1ba827f (POWER-2, 5 to 9), system report dd77a031 (SYSREP-8, 10, 11), AI command
+   containment c2edaa8a (NEW-1: JOB_LIST launch, refused without a Job), command guard 913d5be8
+   (NEW-3 to NEW-5), dispatcher and panel 9ad0e6d5 (NEW-6 to NEW-9). Remaining: PANEL-6 (116
+   nonconforming member names in the AI panel) is naming debt, which the owner ruled is not a
+   release requirement. MCPS-9 needs a runtime run: test_ai_mcp_stdio_session and
+   test_ai_mcp_session_pool from a clean package on the Windows 11 VM plus one assistant E2E
+   win32_mcp health_check through the gateway (VMs offline). Found by the lane and open: NEW-10,
+   the win32 MCP server's own redaction list has the same compound-name gap (a third catalogue,
+   in a library that cannot reach keyNamesASecret today).
 5. Real defects found by the 2026-10-24 behavior audit:
    - FIXED (76ca7a52): `ProcessRunner` killed descendants still alive about 1 s after the root
      exited and marked the run failed, so NSIS uninstallers (which relaunch from %TEMP%) and
