@@ -54,6 +54,7 @@ private Q_SLOTS:
     void artifactRoot_refusesArtifactsJunction();
     void artifactSubdir_refusesJunctionLeaf();
     void artifactSubdirPinsBlockRenameUntilSessionClears();
+    void sessionSnapshot_staysOnItsSessionWhenAnotherOpens();
     void writeArtifactFile_atomicallyPublishesNewLeaf();
     void writeArtifactFile_refusesLeafPlantedBeforePublish();
     void writeArtifactFile_refusesPreexistingTemporaryLeaf();
@@ -1097,6 +1098,40 @@ void AiConversationStoreTests::artifactSubdirPinsBlockRenameUntilSessionClears()
     QVERIFY(
         QDir(artifact_root).rename(QStringLiteral("downloads"), QStringLiteral("downloads_moved")));
     QVERIFY(QDir(QDir(artifact_root).filePath(QStringLiteral("downloads_moved"))).exists());
+}
+
+// What a tool call holds: opening, starting or clearing a session on the store does not move it.
+void AiConversationStoreTests::sessionSnapshot_staysOnItsSessionWhenAnotherOpens() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    sak::ai::ConversationStore store(root.path());
+    QString error;
+    QVERIFY2(store.startSession(QStringLiteral("Dispatched"), &error), qPrintable(error));
+    const QString dispatched = store.currentSessionId();
+    const auto snapshot = store.sessionSnapshot();
+    QCOMPARE(snapshot->currentSessionId(), dispatched);
+    QCOMPARE(snapshot->rootDirectory(), store.rootDirectory());
+
+    QVERIFY2(store.startSession(QStringLiteral("Opened later"), &error), qPrintable(error));
+    QVERIFY(store.currentSessionId() != dispatched);
+    QCOMPARE(snapshot->currentSessionId(), dispatched);
+    const QString artifact = snapshot->writeArtifactFile(
+        QStringLiteral("downloads"), QStringLiteral("late.txt"), QByteArrayLiteral("late"), &error);
+    QVERIFY2(!artifact.isEmpty(), qPrintable(error));
+    QVERIFY2(artifact.contains(dispatched), qPrintable(artifact));
+    QVERIFY(QFileInfo::exists(artifact));
+
+    store.clearCurrentSession();
+    QCOMPARE(snapshot->currentSessionId(), dispatched);
+
+    // With none open the snapshot has none, and refuses a write like the store does.
+    const auto none = store.sessionSnapshot();
+    QCOMPARE(none->currentSessionId(), QString());
+    QVERIFY(none->writeArtifactFile(QStringLiteral("downloads"),
+                                    QStringLiteral("no_session.txt"),
+                                    QByteArrayLiteral("late"),
+                                    &error)
+                .isEmpty());
 }
 
 void AiConversationStoreTests::writeArtifactFile_atomicallyPublishesNewLeaf() {
