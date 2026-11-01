@@ -60,7 +60,8 @@ namespace sak::ai {
 /// @brief Replace anything that looks like a credential in @p text.
 ///
 /// Covers vendor-prefixed keys (OpenAI, Context7, GitHub, Slack, AWS, Google, Stripe), bearer
-/// tokens across the whole base64/base64url/opaque alphabet, a `Cookie:` header line, and any
+/// tokens across the whole base64/base64url/opaque alphabet, a `Cookie:` header line, the Wi-Fi
+/// passphrase `netsh wlan show profile ... key=clear` prints as `Key Content : ...`, and any
 /// `name=value` / `name: value` assignment whose name keyNamesASecret() accepts -- environment
 /// style (`AWS_SECRET_ACCESS_KEY=...`), query-string style (`?access_token=...`), header style
 /// (`Authorization: Basic ...`, which keeps the scheme word) and quoted JSON style -- in bare,

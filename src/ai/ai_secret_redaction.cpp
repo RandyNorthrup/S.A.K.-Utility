@@ -91,6 +91,19 @@ void redactCookieHeaders(QString& result) {
     result.replace(kCookieHeaderRegex, QStringLiteral("\\1: [redacted]"));
 }
 
+// `netsh wlan show profile name=<ssid> key=clear` prints a saved Wi-Fi network's passphrase as
+// `Key Content            : <passphrase>`. The label is two words, so the assignment rule below,
+// which captures one identifier, judged only "Content" and printed the passphrase. A passphrase
+// may contain spaces, so the rest of the line goes. netsh's English label only: a localised
+// Windows prints its own words, which this does not know.
+const QRegularExpression kWifiKeyContentRegex(
+    QStringLiteral(R"((?<![A-Za-z0-9_])(key content[ \t]*:[ \t]*)[^\s][^\r\n]*)"),
+    QRegularExpression::CaseInsensitiveOption);
+
+void redactWifiKeyContent(QString& result) {
+    result.replace(kWifiKeyContentRegex, QStringLiteral("\\1[redacted]"));
+}
+
 // `name=value` and `name: value` assignments whose NAME keyNamesASecret() accepts, INCLUDING the
 // quoted-JSON form "password":"..." -- the optional "? after the name lets the closing quote of a
 // JSON key sit between the name and the ':' separator.
@@ -333,6 +346,7 @@ QString redactSecrets(const QString& text) {
     redactVendorPrefixedKeys(result);
     redactBearerTokens(result);
     redactCookieHeaders(result);
+    redactWifiKeyContent(result);
     redactAssignmentSecrets(result);
     return result;
 }

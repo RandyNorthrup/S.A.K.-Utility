@@ -47,6 +47,7 @@ private Q_SLOTS:
     void redactsAssignmentsInEveryQuotingStyle();
     void redactsCompoundAndEnvironmentStyleSecretNames();
     void redactsAuthorizationAndCookieHeaders();
+    void redactsTheWifiPassphraseNetshPrints();
     void leavesOrdinaryTextAlone();
     void leavesUnmatchedTextUncopied();
     void redactsJsonWithoutDestroyingTheDocument();
@@ -563,6 +564,20 @@ void AiCredentialStoreTests::redactsAuthorizationAndCookieHeaders() {
                                                       QStringLiteral("z9y8x7w6") +
                                                       QStringLiteral("; Path=/; HttpOnly"));
     QVERIFY2(!set_cookie.contains(QStringLiteral("z9y8x7w6")), qPrintable(set_cookie));
+}
+
+void AiCredentialStoreTests::redactsTheWifiPassphraseNetshPrints() {
+    // `netsh wlan show profile name=<ssid> key=clear`. The label is two words, so the assignment
+    // rule judged only "Content" and the passphrase -- spaces and all -- went to the model and the
+    // transcript. The neighbouring "Security key : Present" line is a fact and stays.
+    const QString passphrase = QStringLiteral("correct horse ") + QStringLiteral("battery staple");
+    const QString netsh = QStringLiteral(
+                              "    Security key           : Present\r\n"
+                              "    Key Content            : ") +
+                          passphrase + QStringLiteral("\r\n\r\nCost settings");
+    QCOMPARE(sak::ai::redactSecrets(netsh),
+             QStringLiteral("    Security key           : Present\r\n"
+                            "    Key Content            : [redacted]\r\n\r\nCost settings"));
 }
 
 void AiCredentialStoreTests::leavesOrdinaryTextAlone() {
