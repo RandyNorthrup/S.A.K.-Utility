@@ -5,8 +5,11 @@
 
 #include "sak/quick_action.h"
 
+#include <QDir>
 #include <QString>
 #include <QStringList>
+
+#include <expected>
 
 class GenerateSystemReportActionTests;
 
@@ -82,8 +85,12 @@ private:
 
     /// @brief Builds the PowerShell script for OS and computer system info sections.
     static QString buildOsInfoScript();
-    /// @brief Builds the PowerShell script for hardware, BIOS, network, and activation sections.
+    /// @brief Builds the PowerShell script for hardware, BIOS, network, and Windows product
+    /// sections (the WINDOWS ACTIVATION heading and its product fields).
     static QString buildHardwareInfoScript();
+    /// @brief Builds the PowerShell that completes WINDOWS ACTIVATION with the real license
+    /// status and channel (SoftwareLicensingProduct), reporting a failed query in the section.
+    static QString buildActivationInfoScript();
 
     /// @brief Gathers physical disk and SMART info via Get-PhysicalDisk.
     /// @return Report section text.
@@ -105,17 +112,22 @@ private:
     /// @return Report section text.
     QString gatherQtAndVolumeInfo() const;
 
-    /// @brief Saves the assembled report to disk with timing footer.
-    /// @return True on successful write.
-    /// Writes @p report to @p filepath as UTF-8. @p bytes_written receives the number of BYTES
-    /// actually written -- not QString::size(), which counts UTF-16 code units and disagrees with
-    /// the file on disk for any non-ASCII content.
-    bool saveReport(const QString& report, const QString& filepath, qint64* bytes_written);
+    /// @brief Writes @p report to @p filepath as UTF-8.
+    /// @return The size of the file on disk in BYTES -- not QString::size(), which counts UTF-16
+    /// code units and disagrees with the file for any non-ASCII content -- or the reason the
+    /// save failed, carrying QSaveFile's own error text.
+    std::expected<qint64, QString> saveReport(const QString& report, const QString& filepath);
 
-    /// @brief Save the report file and emit the final ExecutionResult
+    /// @brief Create @p output_dir when it is missing.
+    /// @return Empty on success, or the failure in words for the report's failure log.
+    QString ensureOutputDirectory(const QDir& output_dir) const;
+
+    /// @brief Save the report file and emit the final ExecutionResult. @p directory_error, when
+    /// set, says the report folder could not be created, and joins a failed save's log.
     void saveReportAndFinish(const QString& report,
                              const QString& filepath,
-                             const QDateTime& start_time);
+                             const QDateTime& start_time,
+                             const QString& directory_error);
 };
 
 }  // namespace sak

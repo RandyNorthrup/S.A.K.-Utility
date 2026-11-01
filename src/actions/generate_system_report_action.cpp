@@ -154,13 +154,7 @@ void GenerateSystemReportAction::execute() {
     Q_EMIT executionProgress("Saving report...", progress::kStep95);
 
     const QDir output_dir(m_output_location);
-    if (!output_dir.exists()) {
-        if (!output_dir.mkpath(".")) {
-            sak::logWarning("Failed to create system report directory: {}",
-                            m_output_location.toStdString());
-        }
-    }
-
+    const QString directory_error = ensureOutputDirectory(output_dir);
     const QString filepath = buildReportFilePath(output_dir);
 
     report += QString("-").repeated(kTextReportRuleWidth) + "\n";
@@ -171,14 +165,27 @@ void GenerateSystemReportAction::execute() {
                        'f',
                        kDurationDisplayPrecision);
 
-    saveReportAndFinish(report, filepath, start_time);
+    saveReportAndFinish(report, filepath, start_time, directory_error);
+}
+
+// A directory that could not be created is the usual REASON the save then fails, so it is
+// returned for the failure log rather than left in the app log alone.
+QString GenerateSystemReportAction::ensureOutputDirectory(const QDir& output_dir) const {
+    if (output_dir.exists() || output_dir.mkpath(".")) {
+        return {};
+    }
+    sak::logWarning("Failed to create system report directory: {}",
+                    m_output_location.toStdString());
+    return QStringLiteral("The report folder could not be created: %1").arg(m_output_location);
 }
 
 void GenerateSystemReportAction::saveReportAndFinish(const QString& report,
                                                      const QString& filepath,
-                                                     const QDateTime& start_time) {
-    qint64 report_bytes = 0;
-    const bool save_success = saveReport(report, filepath, &report_bytes);
+                                                     const QDateTime& start_time,
+                                                     const QString& directory_error) {
+    const std::expected<qint64, QString> saved = saveReport(report, filepath);
+    const bool save_success = saved.has_value();
+    const qint64 report_bytes = saved.value_or(0);
     const bool all_collectors_ok = m_collector_errors.isEmpty();
     const bool overall_success = reportGenerationSucceeded(save_success, all_collectors_ok);
 
@@ -206,8 +213,13 @@ void GenerateSystemReportAction::saveReportAndFinish(const QString& report,
                               'f',
                               kDurationDisplayPrecision);
     } else if (!save_success) {
-        result.message = "Failed to save system report";
-        result.log = QString("Could not write to: %1").arg(filepath);
+        // The reason, not just the path: disk full, access denied and a missing folder all used
+        // to read "Could not write to: <path>" and nothing else.
+        result.message = QStringLiteral("Failed to save system report: %1").arg(saved.error());
+        result.log = QStringLiteral("Could not write to: %1\n%2").arg(filepath, saved.error());
+        if (!directory_error.isEmpty()) {
+            result.log += QLatin1Char('\n') + directory_error;
+        }
     } else {
         // Saved, but one or more collectors failed to run: surface it rather than
         // pass off an empty/partial report as a complete success.
@@ -340,19 +352,67 @@ QString GenerateSystemReportAction::buildHardwareInfoScript() {
            "Write-Output \"Product ID: $($info.WindowsProductId)\"\n"
            "Write-Output \"Edition ID: $($info.WindowsEditionId)\"\n"
            "Write-Output \"Registered Owner: $($info.WindowsRegisteredOwner)\"\n"
-           "Write-Output \"Registered Organization: $($info.WindowsRegisteredOrganization)\"";
+           "Write-Output \"Registered Organization: $($info.WindowsRegisteredOrganization)\"\n";
+}
+
+QString GenerateSystemReportAction::buildActivationInfoScript() {
+    // The section is titled WINDOWS ACTIVATION, and it printed the product name, ID, edition and
+    // owner but no activation state at all, so on an unactivated machine the technician read the
+    // section and saw no sign of the problem. This is the state slmgr /dli reports: the
+    // SoftwareLicensingProduct entry for Windows itself (its fixed ApplicationID) that has a
+    // product key installed, with LicenseStatus decoded per the documented values.
+    //
+    // A failed query is reported in the section, not thrown: the script runs under
+    // $ErrorActionPreference = 'Stop', so an uncaught licensing error would fail the whole
+    // OS/hardware collector and drop every section above it. Ordinary string literals, like the
+    // other collectors: lizard's tokenizer cannot follow PowerShell inside a raw string.
+    return QStringLiteral(
+        "$windowsAppId = '55c92734-d682-4d71-983e-d6ec3f16059f'\n"
+        "$licenseFilter = 'ApplicationID=''' + $windowsAppId + "
+        "''' AND PartialProductKey IS NOT NULL'\n"
+        "$licenses = $null\n"
+        "try {\n"
+        "    $licenses = @(Get-CimInstance SoftwareLicensingProduct -Filter $licenseFilter "
+        "-ErrorAction Stop)\n"
+        "} catch {\n"
+        "    Write-Output ('License Status: query failed: ' + $_.Exception.Message)\n"
+        "}\n"
+        "if ($null -ne $licenses -and $licenses.Count -eq 0) {\n"
+        "    Write-Output 'License Status: no Windows license with an installed product key'\n"
+        "}\n"
+        "$licenseStatusNames = @{\n"
+        "    0 = 'Unlicensed'; 1 = 'Licensed'; 2 = 'Out-of-box grace period';\n"
+        "    3 = 'Out-of-tolerance grace period'; 4 = 'Non-genuine grace period';\n"
+        "    5 = 'Notification (not activated)'; 6 = 'Extended grace period'\n"
+        "}\n"
+        "foreach ($license in @($licenses)) {\n"
+        "    if ($null -eq $license) { continue }\n"
+        "    $statusCode = [int]$license.LicenseStatus\n"
+        "    $statusName = $licenseStatusNames[$statusCode]\n"
+        "    if ($null -eq $statusName) { $statusName = 'Unknown status code ' + $statusCode }\n"
+        "    Write-Output ('License Status: ' + $statusName)\n"
+        "    Write-Output ('License Channel: ' + $license.ProductKeyChannel)\n"
+        "}\n"
+        "Write-Output ''\n");
 }
 
 QString GenerateSystemReportAction::gatherOsAndHardwareInfo() {
-    const QString ps_cmd_info = buildOsInfoScript() + buildHardwareInfoScript();
+    const QString ps_cmd_info = buildOsInfoScript() + buildHardwareInfoScript() +
+                                buildActivationInfoScript();
 
     // The cancel callback is what makes cancel() actually stop this collector. Without it
     // the action only re-checked isCancelled() BETWEEN steps, so a cancel arriving while a
     // collector was running left that PowerShell child running to its full timeout --
     // cancellation that does not cancel. Matches runSFC / the DISM probes, which already
     // pass this.
+    // Its OWN bound (kTimeoutSystemInfoMs). This borrowed kTimeoutChocoListMs, a Chocolatey
+    // constant, so retuning package listing would have silently retuned the system report, at a
+    // 15 s that Get-ComputerInfo can exceed on a slow machine. Get-ComputerInfo plus the
+    // licensing query in one cold Windows PowerShell measured 3.4-3.8 s on a fast workstation
+    // (2026-10-31); the bound is 60 s because slow disks and old hardware take far longer and
+    // the collector is cancellable, so a generous bound costs a user nothing.
     const ProcessResult proc_info = runPowerShell(
-        ps_cmd_info, sak::kTimeoutChocoListMs, true, true, [this]() { return isCancelled(); });
+        ps_cmd_info, sak::kTimeoutSystemInfoMs, true, true, [this]() { return isCancelled(); });
     if (!proc_info.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("System report OS warning: " + proc_info.std_err.trimmed());
     }
@@ -568,23 +628,26 @@ QString GenerateSystemReportAction::gatherQtAndVolumeInfo() const {
     return section;
 }
 
-bool GenerateSystemReportAction::saveReport(const QString& report,
-                                            const QString& filepath,
-                                            qint64* bytes_written) {
+std::expected<qint64, QString> GenerateSystemReportAction::saveReport(const QString& report,
+                                                                      const QString& filepath) {
     // QSaveFile: the report is written to a temp file and atomically renamed on
     // commit(), so a crash mid-write never leaves a truncated report in place,
     // and commit() surfaces a close/flush error instead of it being ignored.
+    // Every failure carries QSaveFile's own reason; each path used to return a bare false.
     QSaveFile file(filepath);
     if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
-        return false;
+        return std::unexpected(
+            QStringLiteral("Could not open the report for writing: %1").arg(file.errorString()));
     }
     const QByteArray data = report.toUtf8();
     if (file.write(data) != data.size()) {
+        const QString reason = file.errorString();
         file.cancelWriting();
-        return false;
+        return std::unexpected(QStringLiteral("Could not write the report: %1").arg(reason));
     }
     if (!file.commit()) {
-        return false;
+        return std::unexpected(
+            QStringLiteral("Could not finish saving the report: %1").arg(file.errorString()));
     }
     // Report the SIZE OF THE FILE ON DISK, which is the number the technician can verify in
     // Explorer. The caller used QString::size() for both the ExecutionResult's bytes_processed
@@ -596,10 +659,7 @@ bool GenerateSystemReportAction::saveReport(const QString& report,
     // been a subtler version of the same mistake: the device is opened with QIODevice::Text, so
     // on Windows every '\n' is translated to "\r\n" on the way out and the file is larger than
     // the bytes handed to write(). Ask the filesystem.
-    if (bytes_written != nullptr) {
-        *bytes_written = QFileInfo(filepath).size();
-    }
-    return true;
+    return QFileInfo(filepath).size();
 }
 
 }  // namespace sak

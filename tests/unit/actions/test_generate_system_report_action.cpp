@@ -8,10 +8,17 @@
 
 #include "sak/actions/generate_system_report_action.h"
 
+#include <QDateTime>
+#include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QProcess>
+#include <QRegularExpression>
+#include <QSaveFile>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
+
+#include <expected>
 
 using sak::GenerateSystemReportAction;
 
@@ -25,6 +32,10 @@ private Q_SLOTS:
     void collectorScriptsSurfaceUnavailableQueries();
     void reportGenerationSucceeded_requiresSaveAndCollectors();
     void saveReportCountsUtf8BytesNotUtf16Units();
+    void activationSectionReportsTheLicenseStatus();
+    void activationScriptRunsAndReportsAStatus();
+    void saveReportCarriesTheWriteError();
+    void failedSaveLogsItsReason();
 };
 
 void GenerateSystemReportActionTests::collectorScriptsSurfaceUnavailableQueries() {
@@ -87,8 +98,9 @@ void GenerateSystemReportActionTests::saveReportCountsUtf8BytesNotUtf16Units() {
     const QString report = QStringLiteral("System Report\n") + cyrillic.repeated(100);
 
     Action action(temp.path());
-    qint64 bytes_written = -1;
-    QVERIFY(action.saveReport(report, path, &bytes_written));
+    const std::expected<qint64, QString> saved = action.saveReport(report, path);
+    QVERIFY2(saved.has_value(), qPrintable(saved ? QString() : saved.error()));
+    const qint64 bytes_written = *saved;
 
     // The reported count is the SIZE OF THE FILE ON DISK -- the number the technician can check
     // in Explorer.
@@ -104,6 +116,112 @@ void GenerateSystemReportActionTests::saveReportCountsUtf8BytesNotUtf16Units() {
         bytes_written >= static_cast<qint64>(report.toUtf8().size()),
         qPrintable(
             QStringLiteral("file=%1 payload=%2").arg(bytes_written).arg(report.toUtf8().size())));
+}
+
+void GenerateSystemReportActionTests::activationSectionReportsTheLicenseStatus() {
+    // SYSREP-8. The section titled WINDOWS ACTIVATION printed product name, ID, edition and
+    // owner, and no activation state, so an unactivated machine looked fine in the report.
+    const QString hardware = Action::buildHardwareInfoScript();
+    QVERIFY(hardware.contains(QStringLiteral("=== WINDOWS ACTIVATION ===")));
+    const QString activation = Action::buildActivationInfoScript();
+    // The Windows entry of SoftwareLicensingProduct that carries a product key -- the record
+    // slmgr /dli reports.
+    QVERIFY(activation.contains(QStringLiteral("SoftwareLicensingProduct")));
+    QVERIFY(activation.contains(QStringLiteral("55c92734-d682-4d71-983e-d6ec3f16059f")));
+    QVERIFY(activation.contains(QStringLiteral("PartialProductKey IS NOT NULL")));
+    QVERIFY(activation.contains(QStringLiteral("$license.LicenseStatus")));
+    // Every documented LicenseStatus value is named.
+    for (const char* status : {"Unlicensed",
+                               "Licensed",
+                               "Out-of-box grace period",
+                               "Out-of-tolerance grace period",
+                               "Non-genuine grace period",
+                               "Notification (not activated)",
+                               "Extended grace period"}) {
+        QVERIFY2(activation.contains(QLatin1String(status)), status);
+    }
+    // A failed query is reported in the section, never swallowed and never thrown -- the script
+    // runs under $ErrorActionPreference = 'Stop', where an uncaught error drops the whole
+    // OS/hardware collector.
+    QVERIFY(activation.contains(QStringLiteral("License Status: query failed: ")));
+    QVERIFY(!activation.contains(QStringLiteral("SilentlyContinue")));
+    QVERIFY(!activation.contains(QStringLiteral("catch {}")));
+}
+
+void GenerateSystemReportActionTests::activationScriptRunsAndReportsAStatus() {
+    // The licensing query runs inside the OS/hardware collector, so a PowerShell error in it
+    // would cost the report its whole OS and hardware section. Run it as the collector does
+    // (Windows PowerShell, Stop preference) and require the documented line shape.
+    const QString powershell =
+        QDir(qEnvironmentVariable("SystemRoot"))
+            .filePath(QStringLiteral("System32/WindowsPowerShell/v1.0/powershell.exe"));
+    QProcess process;
+    process.start(powershell,
+                  {QStringLiteral("-NoProfile"),
+                   QStringLiteral("-NonInteractive"),
+                   QStringLiteral("-Command"),
+                   QStringLiteral("$ErrorActionPreference = 'Stop'\n") +
+                       Action::buildActivationInfoScript()});
+    constexpr int kLicenseQueryBudgetMs = 60'000;
+    QVERIFY(process.waitForFinished(kLicenseQueryBudgetMs));
+    const QString output = QString::fromLocal8Bit(process.readAllStandardOutput());
+    QVERIFY2(process.exitStatus() == QProcess::NormalExit && process.exitCode() == 0,
+             qPrintable(QString::fromLocal8Bit(process.readAllStandardError())));
+    static const QRegularExpression kStatusLine(
+        QStringLiteral(R"(^License Status: (Unlicensed|Licensed|Out-of-box grace period|)"
+                       R"(Out-of-tolerance grace period|Non-genuine grace period|)"
+                       R"(Notification \(not activated\)|Extended grace period|)"
+                       R"(Unknown status code \d+|query failed: .+|)"
+                       R"(no Windows license with an installed product key)\r?$)"),
+        QRegularExpression::MultilineOption);
+    QVERIFY2(kStatusLine.match(output).hasMatch(), qPrintable(output));
+}
+
+void GenerateSystemReportActionTests::saveReportCarriesTheWriteError() {
+    // SYSREP-11. Every save failure returned a bare false, so disk-full, access-denied and a
+    // missing folder all reached the technician as "Could not write to: <path>" alone.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString path = temp.filePath(QStringLiteral("missing-folder/report.txt"));
+    QSaveFile probe(path);
+    QVERIFY(!probe.open(QIODevice::WriteOnly | QIODevice::Text));
+    const QString reason = probe.errorString();
+    QVERIFY(!reason.isEmpty());
+
+    Action action(temp.path());
+    const auto saved = action.saveReport(QStringLiteral("report"), path);
+    QVERIFY(!saved.has_value());
+    QVERIFY2(saved.error().contains(reason), qPrintable(saved.error()));
+}
+
+void GenerateSystemReportActionTests::failedSaveLogsItsReason() {
+    // ... and the reason has to reach the result the technician reads, with the folder that
+    // could not be created when that is what happened.
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QString path = temp.filePath(QStringLiteral("missing-folder/report.txt"));
+    QSaveFile probe(path);
+    QVERIFY(!probe.open(QIODevice::WriteOnly | QIODevice::Text));
+    const QString reason = probe.errorString();
+
+    Action action(temp.path());
+    QString log;
+    QString message;
+    QObject::connect(&action,
+                     &sak::QuickAction::executionComplete,
+                     &action,
+                     [&log, &message](const sak::QuickAction::ExecutionResult& result) {
+                         log = result.log;
+                         message = result.message;
+                     });
+    action.saveReportAndFinish(QStringLiteral("report"),
+                               path,
+                               QDateTime::currentDateTime(),
+                               QStringLiteral("The report folder could not be created: X"));
+    QVERIFY2(log.contains(path), qPrintable(log));
+    QVERIFY2(log.contains(reason), qPrintable(log));
+    QVERIFY2(log.contains(QStringLiteral("could not be created")), qPrintable(log));
+    QVERIFY2(message.contains(reason), qPrintable(message));
 }
 
 QTEST_GUILESS_MAIN(GenerateSystemReportActionTests)

@@ -1313,7 +1313,7 @@ bool BackupBitlockerKeysAction::restrictFilePermissions(const QString& path) {
     const QString script =
         QString::fromUtf8(kRestrictPermissionsScriptTemplate).arg(QString(path).replace("'", "''"));
 
-    const ProcessResult proc = runPowerShell(script, sak::kTimeoutChocoListMs);
+    const ProcessResult proc = runPowerShell(script, sak::kTimeoutAclScriptMs);
     // The script emits exactly "SUCCESS" on its one success path and nothing else on stdout
     // (Set-Acl/Get-ChildItem produce no output), so require an exact match rather than a
     // substring -- a stray token accompanying an error must not read as success.
