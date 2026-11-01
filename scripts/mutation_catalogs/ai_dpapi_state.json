@@ -47,8 +47,8 @@
     {
       "id": "credential-decrypt-failure-leaves-entropy-copy-in-memory",
       "file": "src/ai/ai_credential_store.cpp",
-      "find": "        sak::secure_wiper::wipe(entropy.data(), static_cast<std::size_t>(entropy.size()));\n        if (g_credential_decrypt_input_wipe_observer) {",
-      "replace": "        sak::secure_wiper::wipe(entropy.data(), 0);\n        if (g_credential_decrypt_input_wipe_observer) {",
+      "find": "        sak::secure_wiper::wipe(entropy.data(), static_cast<std::size_t>(entropy.size()));\n#ifdef SAK_AI_TEST_HOOKS\n        if (g_credential_decrypt_input_wipe_observer) {",
+      "replace": "        sak::secure_wiper::wipe(entropy.data(), 0);\n#ifdef SAK_AI_TEST_HOOKS\n        if (g_credential_decrypt_input_wipe_observer) {",
       "expect": "killed",
       "why": "credentialDecryptFailureWipesCiphertextAndEntropy requires the scoped failure cleanup to zero DPAPI entropy too."
     }
