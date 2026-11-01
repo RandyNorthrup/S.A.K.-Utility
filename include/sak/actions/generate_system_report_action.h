@@ -16,9 +16,12 @@ class GenerateSystemReportActionTests;
 namespace sak {
 
 /**
- * @brief Generate System Report Action
+ * @brief System Inventory Report action
  *
- * Generates a comprehensive UTF-8 text report from PowerShell and Qt system collectors.
+ * Collects a live inventory of this PC (Windows and licence status, hardware, storage, network,
+ * volumes) from PowerShell and Qt collectors into a UTF-8 text file in the output folder: the
+ * folder the technician chose in the Diagnostics panel, or the assistant's session staging folder.
+ * Not the Diagnostics panel's scan report, which renders the results of scans already run.
  */
 class GenerateSystemReportAction : public QuickAction {
     // Test seam, matching this tree's convention (DriveScannerTests, FileScannerTests,
@@ -33,8 +36,10 @@ class GenerateSystemReportAction : public QuickAction {
 public:
     explicit GenerateSystemReportAction(const QString& output_location, QObject* parent = nullptr);
 
-    QString name() const override { return "Generate System Report"; }
-    QString description() const override { return "Create comprehensive system report"; }
+    QString name() const override { return "System Inventory Report"; }
+    QString description() const override {
+        return "Collect a live system inventory into a text report";
+    }
     QIcon icon() const override { return QIcon(); }
     ActionCategory category() const override { return ActionCategory::Troubleshooting; }
     bool requiresAdmin() const override { return false; }

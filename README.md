@@ -321,14 +321,14 @@ Comprehensive hardware diagnostics, performance benchmarking, and stability test
 | Optimize Power Settings | Applies High Performance / Ultimate Performance plan |
 | Verify System Files | `sfc /scannow` + `DISM /RestoreHealth` |
 | Check Disk Errors | `chkdsk` with bad-sector scan |
-| Generate System Report | Comprehensive report: OS, hardware, storage, network, drivers, event logs, installed programs (HTML) |
+| System Inventory Report | Live inventory of this PC (Windows and licence status, hardware, storage, network, volumes) saved as a text file in a folder you choose; the completion message names the file |
 
 **Full Suite Mode**
-- One-click sequential run: Hardware Scan ? SMART Analysis ? CPU Benchmark ? Disk Benchmark ? Memory Benchmark ? Stress Test ? Report Generation
+- One-click sequential run: Hardware Scan ? SMART Analysis ? CPU Benchmark ? Disk Benchmark ? Memory Benchmark ? Stress Test ? Aggregate Results (the suite writes no file; export the Scan Report afterwards)
 - Step-by-step progress with live status
 
-**Report Export**
-- **HTML** - Styled report with hardware summary, SMART health, benchmark scores, and stress test results
+**Scan Report** - the results of the scans run in this session, with technician, ticket and notes fields
+- **Export Scan Report (HTML)** - Styled report with hardware summary, SMART health, benchmark scores, and stress test results
 - **JSON** - Machine-readable structured data for automation
 - **CSV** - RFC 4180 compliant, importable into Excel or data pipelines
 

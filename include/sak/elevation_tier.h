@@ -47,7 +47,7 @@ enum class FeatureId : uint16_t {
     EmailInspector = 200,
 
     // Quick Actions -- Standard (300-349)
-    GenerateSystemReport = 300,
+    SystemInventoryReport = 300,
     ScreenshotSettings = 301,
     OptimizePowerSettings = 302,
 
@@ -129,7 +129,7 @@ inline constexpr FeatureElevation kFeatureElevationTable[] = {
     {FeatureId::EmailInspector, ElevationTier::Standard, "Email Inspector", ""},
 
     // Quick Actions -- Standard
-    {FeatureId::GenerateSystemReport, ElevationTier::Standard, "Generate System Report", ""},
+    {FeatureId::SystemInventoryReport, ElevationTier::Standard, "System Inventory Report", ""},
     {FeatureId::ScreenshotSettings, ElevationTier::Standard, "Screenshot Settings", ""},
     {FeatureId::OptimizePowerSettings, ElevationTier::Standard, "Optimize Power Settings", ""},
 

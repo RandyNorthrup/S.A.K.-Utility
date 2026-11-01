@@ -89,7 +89,7 @@ private Q_SLOTS:
     void tier1_fileOrganizerIsStandard();
     void tier1_duplicateFinderIsStandard();
     void tier1_emailInspectorIsStandard();
-    void tier1_generateSystemReportIsStandard();
+    void tier1_systemInventoryReportIsStandard();
     void tier1_screenshotSettingsIsStandard();
     void tier1_optimizePowerSettingsIsStandard();
     void tier1_backupCurrentUserIsStandard();
@@ -222,10 +222,10 @@ void TestElevationHardening::tier1_emailInspectorIsStandard() {
     verifyTierIs(sak::FeatureId::EmailInspector, sak::ElevationTier::Standard, "EmailInspector");
 }
 
-void TestElevationHardening::tier1_generateSystemReportIsStandard() {
-    verifyTierIs(sak::FeatureId::GenerateSystemReport,
+void TestElevationHardening::tier1_systemInventoryReportIsStandard() {
+    verifyTierIs(sak::FeatureId::SystemInventoryReport,
                  sak::ElevationTier::Standard,
-                 "GenerateSystemReport");
+                 "SystemInventoryReport");
 }
 
 void TestElevationHardening::tier1_screenshotSettingsIsStandard() {

@@ -117,8 +117,8 @@ void TestActionFactory::testAllDescriptionsNonEmpty() {
          QStringLiteral("Backup BitLocker recovery keys for all encrypted volumes")},
         {QStringLiteral("Check Disk Errors"),
          QStringLiteral("Run read-only online scans on all drives")},
-        {QStringLiteral("Generate System Report"),
-         QStringLiteral("Create comprehensive system report")},
+        {QStringLiteral("System Inventory Report"),
+         QStringLiteral("Collect a live system inventory into a text report")},
         {QStringLiteral("Optimize Power Settings"),
          QStringLiteral("Switch to High Performance power plan")},
         {QStringLiteral("Reset Network Settings"),
@@ -159,7 +159,7 @@ void TestActionFactory::testAllCategoriesValid() {
     const std::vector<Expected> expected = {
         {QStringLiteral("BitLocker Key Backup"), QuickAction::ActionCategory::EmergencyRecovery},
         {QStringLiteral("Check Disk Errors"), QuickAction::ActionCategory::Maintenance},
-        {QStringLiteral("Generate System Report"), QuickAction::ActionCategory::Troubleshooting},
+        {QStringLiteral("System Inventory Report"), QuickAction::ActionCategory::Troubleshooting},
         {QStringLiteral("Optimize Power Settings"),
          QuickAction::ActionCategory::SystemOptimization},
         {QStringLiteral("Reset Network Settings"), QuickAction::ActionCategory::Maintenance},
@@ -185,7 +185,7 @@ void TestActionFactory::testRequiresAdminIsBool() {
     const std::vector<Expected> expected = {
         {QStringLiteral("BitLocker Key Backup"), true},
         {QStringLiteral("Check Disk Errors"), true},
-        {QStringLiteral("Generate System Report"), false},
+        {QStringLiteral("System Inventory Report"), false},
         {QStringLiteral("Optimize Power Settings"), false},
         {QStringLiteral("Reset Network Settings"), true},
         {QStringLiteral("Screenshot Settings"), false},

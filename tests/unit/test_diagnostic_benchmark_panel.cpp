@@ -2,28 +2,85 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file test_diagnostic_benchmark_panel.cpp
-/// @brief The thermal readout polls only while the Diagnostics panel is shown.
+/// @brief The thermal readout polls only while the Diagnostics panel is shown, and the System
+///        Inventory Report asks where to save and says where it went.
 
 #include "sak/diagnostic_benchmark_panel.h"
 #include "sak/thermal_monitor.h"
 
 #include <QApplication>
+#include <QDir>
+#include <QFileDialog>
+#include <QFileInfo>
+#include <QPushButton>
+#include <QScopeGuard>
+#include <QSignalSpy>
+#include <QStandardPaths>
+#include <QTemporaryDir>
+#include <QTimer>
 #include <QtTest/QtTest>
+
+#include <functional>
 
 namespace {
 // One real sensor query (PowerShell: WMI zone, nvidia-smi, reliability counters) is in flight
 // when the panel hides; stopping waits for it to land. Bounded well past its own 10 s timeout.
 constexpr int kPollSettleTimeoutMs = 30'000;
+// The inventory report runs its real, read-only collectors (Get-ComputerInfo, storage, network),
+// each bounded by its own timeout; this is well past their sum under a loaded test run.
+constexpr int kInventoryReportTimeoutMs = 300'000;
+const QString kInventoryReport = QStringLiteral("System Inventory Report");
+
+QPushButton* inventoryReportButton(const sak::DiagnosticBenchmarkPanel& panel) {
+    for (auto* button : panel.findChildren<QPushButton*>()) {
+        if (button->accessibleName() == kInventoryReport) {
+            return button;
+        }
+    }
+    return nullptr;
+}
+
+/// Runs @p inspect on the folder dialog the next click opens, inside that dialog's own loop.
+void inspectNextFolderDialog(const std::function<void(QFileDialog*)>& inspect) {
+    QTimer::singleShot(0, qApp, [inspect]() {
+        inspect(qobject_cast<QFileDialog*>(QApplication::activeModalWidget()));
+    });
+}
+
+QStringList statusTexts(const QSignalSpy& spy) {
+    QStringList texts;
+    for (const auto& arguments : spy) {
+        texts << arguments.at(0).toString();
+    }
+    return texts;
+}
 }  // namespace
 
 class DiagnosticBenchmarkPanelTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void initTestCase();
+    void cleanupTestCase();
     void cleanup();
     void thermalPollsOnlyWhileShown_data();
     void thermalPollsOnlyWhileShown();
+    void inventoryReportAsksWhereToSaveAndSaysWhereItWent();
+    void inventoryReportCancelledFolderRunsNothing();
+
+private:
+    bool m_nativeDialogsWereDisabled{false};
 };
+
+void DiagnosticBenchmarkPanelTests::initTestCase() {
+    // The Qt dialog, not the Windows one, so the test can drive it.
+    m_nativeDialogsWereDisabled = QApplication::testAttribute(Qt::AA_DontUseNativeDialogs);
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);
+}
+
+void DiagnosticBenchmarkPanelTests::cleanupTestCase() {
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, m_nativeDialogsWereDisabled);
+}
 
 void DiagnosticBenchmarkPanelTests::cleanup() {
     qApp->setProperty("sakStartupSmokeTest", QVariant());
@@ -64,6 +121,81 @@ void DiagnosticBenchmarkPanelTests::thermalPollsOnlyWhileShown() {
     QVERIFY2(monitor->isRunning(), "showing the readout again resumes polling");
     panel.hide();
     QTRY_VERIFY_WITH_TIMEOUT(!monitor->isRunning(), kPollSettleTimeoutMs);
+}
+
+// The inventory quick action wrote to a fixed C:/SAK_Backups and reported only "Completed". It
+// now asks for a folder (starting in Documents), writes there, and the completion names the file.
+void DiagnosticBenchmarkPanelTests::inventoryReportAsksWhereToSaveAndSaysWhereItWent() {
+    QTemporaryDir output;
+    QVERIFY(output.isValid());
+    sak::DiagnosticBenchmarkPanel panel;
+    QSignalSpy status(&panel, &sak::DiagnosticBenchmarkPanel::statusMessage);
+    QPushButton* button = inventoryReportButton(panel);
+    QVERIFY2(button != nullptr, "the System Inventory Report button must exist by that name");
+
+    bool asked = false;
+    QString started_in;
+    inspectNextFolderDialog([&](QFileDialog* dialog) {
+        if (dialog == nullptr) {
+            return;  // no dialog: `asked` stays false and the test fails below
+        }
+        asked = true;
+        started_in = dialog->directory().absolutePath();
+        dialog->setDirectory(output.path());
+        // QFileDialog::accept is protected; through QDialog it still dispatches to it.
+        static_cast<QDialog*>(dialog)->accept();
+    });
+    button->click();
+    QVERIFY2(asked, "the report must ask where to save before it runs");
+    QCOMPARE(QDir::cleanPath(started_in),
+             QDir::cleanPath(QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation)));
+
+    const QString finished_prefix_ok = QStringLiteral("Completed: ") + kInventoryReport;
+    const QString finished_prefix_failed = QStringLiteral("Failed: ") + kInventoryReport;
+    QString finished;
+    const auto report_finished = [&]() {
+        for (const QString& text : statusTexts(status)) {
+            if (text.startsWith(finished_prefix_ok) || text.startsWith(finished_prefix_failed)) {
+                finished = text;
+                return true;
+            }
+        }
+        return false;
+    };
+    QTRY_VERIFY_WITH_TIMEOUT(report_finished(), kInventoryReportTimeoutMs);
+
+    const QStringList written =
+        QDir(output.path()).entryList({QStringLiteral("*.txt")}, QDir::Files);
+    QCOMPARE(written.size(), 1);
+    QVERIFY(written.first().startsWith(QStringLiteral("SystemInventory_")));
+    const QString saved = QDir::toNativeSeparators(QDir(output.path()).filePath(written.first()));
+    QVERIFY2(finished.endsWith(QStringLiteral(" - saved to ") + saved), qPrintable(finished));
+    QVERIFY(QFileInfo(saved).size() > 0);
+}
+
+void DiagnosticBenchmarkPanelTests::inventoryReportCancelledFolderRunsNothing() {
+    sak::DiagnosticBenchmarkPanel panel;
+    QSignalSpy status(&panel, &sak::DiagnosticBenchmarkPanel::statusMessage);
+    QSignalSpy log(&panel, &sak::DiagnosticBenchmarkPanel::logOutput);
+    QPushButton* button = inventoryReportButton(panel);
+    QVERIFY(button != nullptr);
+
+    bool asked = false;
+    inspectNextFolderDialog([&](QFileDialog* dialog) {
+        if (dialog != nullptr) {
+            asked = true;
+            dialog->reject();
+        }
+    });
+    button->click();
+    QVERIFY(asked);
+    QTest::qWait(1);
+    for (const QString& text : statusTexts(status)) {
+        QVERIFY2(!text.startsWith(QStringLiteral("Running: ")), qPrintable(text));
+    }
+    QVERIFY(button->isEnabled());
+    QVERIFY(statusTexts(log).contains(
+        QStringLiteral("System Inventory Report cancelled: no folder was chosen")));
 }
 
 QTEST_MAIN(DiagnosticBenchmarkPanelTests)

@@ -530,9 +530,9 @@ deletions of that group's commits (`git show --numstat`).
   "Generate Report" (`GenerateSystemReportAction`, also the assistant's read-only
   `action.generate_system_report`) collects a live inventory -- Windows licence status, uptime,
   network adapters, volumes -- into a text file. Five hardware fields overlap; neither can replace
-  the other without new collection work, so neither is redundant as the approval requires. Open
-  for the owner: the two buttons share a name on one panel, and the quick action writes to a fixed
-  `C:/SAK_Backups` without showing the path.
+  the other without new collection work, so neither is redundant as the approval requires. The
+  shared name and the fixed `C:/SAK_Backups` were decided under "behaves like a normal Windows
+  tool" and are done: see the cleanup package status below.
 - OPEN: the three quick-action controllers (User Migration, Diagnostics and Network panels each
   own a `QuickActionController` and their own action objects; the assistant's `AppActionService`
   owns a fourth with all ten actions). One app-scoped controller needs three things the panels do

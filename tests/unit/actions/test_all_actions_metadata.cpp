@@ -114,7 +114,7 @@ void TestAllActionsMetadata::initTestCase() {
     names.sort();
     QStringList expected{QStringLiteral("BitLocker Key Backup"),
                          QStringLiteral("Check Disk Errors"),
-                         QStringLiteral("Generate System Report"),
+                         QStringLiteral("System Inventory Report"),
                          QStringLiteral("Optimize Power Settings"),
                          QStringLiteral("Reset Network Settings"),
                          QStringLiteral("Screenshot Settings"),
@@ -222,8 +222,8 @@ void TestAllActionsMetadata::testResetNetwork() {
 // ============================================================================
 
 void TestAllActionsMetadata::testGenerateSystemReport() {
-    verifyAction("Generate System Report",
-                 "Create comprehensive system report",
+    verifyAction("System Inventory Report",
+                 "Collect a live system inventory into a text report",
                  QuickAction::ActionCategory::Troubleshooting,
                  false);
 }

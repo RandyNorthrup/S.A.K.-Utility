@@ -130,7 +130,7 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
         <li><b>SMART Disk Health</b> &mdash; Drive health, temperature, power-on hours, and attribute monitoring via bundled smartmontools</li>
         <li><b>Benchmarks</b> &mdash; CPU (single/multi-thread), disk (sequential &amp; random I/O), memory (bandwidth &amp; latency)</li>
         <li><b>Stress Testing</b> &mdash; CPU, memory, and disk stress with real-time thermal monitoring and configurable auto-abort</li>
-        <li><b>System Maintenance</b> &mdash; Optimize Power Settings, Verify System Files, Check Disk Errors, and Generate System Report</li>
+        <li><b>System Maintenance</b> &mdash; Optimize Power Settings, Verify System Files, Check Disk Errors, and System Inventory Report</li>
         <li><b>Report Export</b> &mdash; HTML, JSON, and CSV reports</li>
     </ul>
 </div>

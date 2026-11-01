@@ -8,6 +8,18 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **Two reports, two names** - The Diagnostics panel had two features called "Generate Report".
+  The one that saves the results of the scans you ran (HTML, JSON or CSV) is now the Scan Report,
+  with an Export Scan Report button. The one-click action that collects a live inventory of the
+  PC into a text file is now the System Inventory Report (the assistant knows it as
+  `action.system_inventory_report`). The Full Suite step that only gathers results is called
+  Aggregate Results; it never wrote a report.
+
+- **System Inventory Report asks where to save** - It used to write to a fixed `C:\SAK_Backups`
+  without saying so. It now asks for a folder each time, starting in Documents, and the
+  completion message gives the full path of the file it saved. Cancelling the folder choice runs
+  nothing. The assistant saves it to the chat session's artifacts, as before.
+
 - **The theme follows Windows** - One setting, Light / Dark / System, in the status bar's Theme
   button, saved in the portable `data/config/Utility.ini` and set to System on first run. System
   follows the Windows app theme while S.A.K. runs, title bar included. The Dark switch that sat

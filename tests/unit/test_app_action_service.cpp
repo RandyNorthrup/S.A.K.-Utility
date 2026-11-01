@@ -307,7 +307,7 @@ void AppActionServiceTests::registerQuickActionsInto_buildsSluggedDescriptorsWit
     QVERIFY(!power->destructive);
 }
 
-// Generate System Report only reads and writes its own report, so it must not reach the assistant
+// System Inventory Report only reads and writes its own report, so it must not reach the assistant
 // as a mutating action (which forces an approval and a lease); everything else still does.
 void AppActionServiceTests::registerQuickActionsInto_readOnlyActionNeedsNoApproval() {
     QVERIFY(sak::GenerateSystemReportAction(QString()).isReadOnly());

@@ -4134,8 +4134,9 @@ set_tests_properties(test_image_flasher_panel PROPERTIES
 message(STATUS "Added unit test: test_image_flasher_panel")
 
 # test_diagnostic_benchmark_panel - the thermal readout polls only while the panel is shown,
-# in every run mode (smoke and audit no longer skip it). Runs offscreen; each show launches one
-# real, read-only sensor query.
+# in every run mode (smoke and audit no longer skip it), and the System Inventory Report asks
+# where to save and names the file it wrote. Runs offscreen; each show launches one real,
+# read-only sensor query, and the report runs its real read-only collectors.
 add_executable(test_diagnostic_benchmark_panel
     unit/test_diagnostic_benchmark_panel.cpp
     ../resources/icons.qrc

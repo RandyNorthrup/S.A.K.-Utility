@@ -27,6 +27,7 @@
 #include <QClipboard>
 #include <QComboBox>
 #include <QDateTime>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QFileDialog>
 #include <QGroupBox>
@@ -40,6 +41,7 @@
 #include <QScrollArea>
 #include <QSet>
 #include <QSpinBox>
+#include <QStandardPaths>
 #include <QTableWidget>
 #include <QTextEdit>
 #include <QVBoxLayout>
@@ -718,7 +720,7 @@ void DiagnosticBenchmarkPanel::createSuiteStepLabels(QVBoxLayout* layout) {
         "Disk I/O Benchmark",
         "Memory Benchmark",
         "Stress Test",
-        "Generate Report",
+        "Aggregate Results",
     };
     for (int i = 0; i < kSuiteStepCount; ++i) {
         m_suite_step_names[i] = QString::fromLatin1(kSuiteStepNames[i]);
@@ -797,7 +799,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createSuiteSection() {
 // ============================================================================
 
 QGroupBox* DiagnosticBenchmarkPanel::createReportSection() {
-    auto* group = new QGroupBox("Report Generation", this);
+    auto* group = new QGroupBox("Scan Report", this);
     auto* layout = new QVBoxLayout(group);
 
     createReportInfoFields(layout);
@@ -843,24 +845,25 @@ void DiagnosticBenchmarkPanel::createReportExportButtons(QVBoxLayout* layout) {
     auto* export_layout = new QHBoxLayout();
     export_layout->addStretch();
 
-    m_report_html_button = new QPushButton("Generate HTML Report", this);
+    m_report_html_button = new QPushButton("Export Scan Report", this);
     m_report_html_button->setMinimumWidth(sak::kButtonWidthXLarge);
-    m_report_html_button->setAccessibleName(QStringLiteral("Generate HTML Report"));
-    m_report_html_button->setToolTip(QStringLiteral("Generate a formatted HTML diagnostic report"));
+    m_report_html_button->setAccessibleName(QStringLiteral("Export Scan Report"));
+    m_report_html_button->setToolTip(
+        QStringLiteral("Save the results of the scans run here as a formatted HTML report"));
     m_report_html_button->setStyleSheet(sak::ui::kPrimaryButtonStyle);
     export_layout->addWidget(m_report_html_button);
 
     m_report_json_button = new QPushButton("Export JSON", this);
     m_report_json_button->setMinimumWidth(sak::kButtonWidthMedium);
-    m_report_json_button->setAccessibleName(QStringLiteral("Export JSON Report"));
-    m_report_json_button->setToolTip(QStringLiteral("Export diagnostic data as a JSON file"));
+    m_report_json_button->setAccessibleName(QStringLiteral("Export Scan Report as JSON"));
+    m_report_json_button->setToolTip(QStringLiteral("Save the scan results as a JSON file"));
     m_report_json_button->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     export_layout->addWidget(m_report_json_button);
 
     m_report_csv_button = new QPushButton("Export CSV", this);
     m_report_csv_button->setMinimumWidth(sak::kButtonWidthMedium);
-    m_report_csv_button->setAccessibleName(QStringLiteral("Export CSV Report"));
-    m_report_csv_button->setToolTip(QStringLiteral("Export diagnostic data as a CSV file"));
+    m_report_csv_button->setAccessibleName(QStringLiteral("Export Scan Report as CSV"));
+    m_report_csv_button->setToolTip(QStringLiteral("Save the scan results as a CSV file"));
     m_report_csv_button->setStyleSheet(sak::ui::kSecondaryButtonStyle);
     export_layout->addWidget(m_report_csv_button);
 
@@ -1080,9 +1083,10 @@ QGroupBox* DiagnosticBenchmarkPanel::createSystemMaintenanceSection() {
     make_button(tr("Check Disk Errors"),
                 tr("Scan disk for filesystem errors (requires admin)"),
                 QStringLiteral("Check Disk Errors"));
-    make_button(tr("Generate Report"),
-                tr("Generate comprehensive system diagnostic report"),
-                QStringLiteral("Generate System Report"));
+    make_button(tr("System Inventory Report"),
+                tr("Collect a live inventory of this PC (Windows and licence status, hardware, "
+                   "storage, network) into a text file in a folder you choose"),
+                QStringLiteral("System Inventory Report"));
 
 
     btn_layout->addStretch();
@@ -1098,11 +1102,10 @@ QGroupBox* DiagnosticBenchmarkPanel::createSystemMaintenanceSection() {
 }
 
 void DiagnosticBenchmarkPanel::createQuickActions() {
-    constexpr auto kDefaultBackupPath = "C:/SAK_Backups";
-    const auto backup_path = QString::fromLatin1(kDefaultBackupPath);
-
+    // No default output folder: the inventory report asks where to save on every run (it wrote
+    // to a fixed C:/SAK_Backups without saying so). The controller's backup location feeds only
+    // the BitLocker key backup, which this panel does not host.
     m_qa_controller = new QuickActionController(this);
-    m_qa_controller->setBackupLocation(backup_path);
     RunningOperations::add(
         this,
         tr("Quick action"),
@@ -1112,7 +1115,7 @@ void DiagnosticBenchmarkPanel::createQuickActions() {
     m_qa_controller->registerAction(std::make_unique<OptimizePowerSettingsAction>());
     m_qa_controller->registerAction(std::make_unique<VerifySystemFilesAction>());
     m_qa_controller->registerAction(std::make_unique<CheckDiskErrorsAction>());
-    m_qa_controller->registerAction(std::make_unique<GenerateSystemReportAction>(backup_path));
+    m_qa_controller->registerAction(std::make_unique<GenerateSystemReportAction>(QString()));
 
     connect(m_qa_controller,
             &QuickActionController::actionExecutionProgress,
@@ -1148,6 +1151,24 @@ void DiagnosticBenchmarkPanel::createQuickActions() {
     }
 }
 
+bool DiagnosticBenchmarkPanel::chooseQuickActionOutputFolder(QuickAction* action) {
+    auto* inventory = qobject_cast<GenerateSystemReportAction*>(action);
+    if (inventory == nullptr) {
+        return true;
+    }
+    const QString folder = QFileDialog::getExistingDirectory(
+        this,
+        tr("Choose where to save the system inventory report"),
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation),
+        QFileDialog::ShowDirsOnly);
+    if (folder.isEmpty()) {
+        logMessage(tr("System Inventory Report cancelled: no folder was chosen"));
+        return false;
+    }
+    inventory->setOutputLocation(folder);
+    return true;
+}
+
 void DiagnosticBenchmarkPanel::onQuickActionClicked(QuickAction* action) {
     Q_ASSERT(action);
     // Some quick actions shown in a diagnostic panel actually perform system REPAIRS
@@ -1167,6 +1188,9 @@ void DiagnosticBenchmarkPanel::onQuickActionClicked(QuickAction* action) {
         if (confirm != QMessageBox::Yes) {
             return;
         }
+    }
+    if (!chooseQuickActionOutputFolder(action)) {
+        return;
     }
     logMessage(QString("Executing: %1").arg(action->name()));
     Q_EMIT statusMessage(QString("Running: %1...").arg(action->name()), sak::kTimerStatusMessageMs);
@@ -1201,9 +1225,13 @@ void DiagnosticBenchmarkPanel::onQuickActionComplete(const QuickAction* action) 
         return;
     }
     const auto& result = action->lastExecutionResult();
-    const QString status = result.success
-                               ? QString("Completed: %1").arg(action->name())
-                               : QString("Failed: %1 - %2").arg(action->name(), result.message);
+    QString status = result.success
+                         ? QString("Completed: %1").arg(action->name())
+                         : QString("Failed: %1 - %2").arg(action->name(), result.message);
+    // A report saved even partly says where it went.
+    if (!result.output_path.isEmpty()) {
+        status += tr(" - saved to %1").arg(QDir::toNativeSeparators(result.output_path));
+    }
     m_qa_progress_bar->setVisible(false);
     logMessage(status);
     Q_EMIT statusMessage(status, sak::kTimerStatusDefaultMs);

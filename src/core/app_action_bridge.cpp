@@ -279,7 +279,7 @@ int registerQuickActionsInto(QuickActionController& controller, AppActionRegistr
         descriptor.description = action->description();
         descriptor.category = categoryToString(action->category());
         // A QuickAction is mutating (which alone forces the per-action human gate and
-        // lease) unless it states it changes nothing: Generate System Report only reads
+        // lease) unless it states it changes nothing: System Inventory Report only reads
         // and writes its own report, so it runs without an approval. `destructive` stays
         // false: none of the built-in QuickActions are irreversible data-loss, and
         // QuickAction exposes no destructive flag today. If an irreversible action is ever

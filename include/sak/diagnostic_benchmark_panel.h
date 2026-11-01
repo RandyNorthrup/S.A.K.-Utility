@@ -182,6 +182,10 @@ private:
 
     QGroupBox* createSystemMaintenanceSection();
     void createQuickActions();
+    /// @brief For the System Inventory Report, asks where to save it (starting in Documents) and
+    ///        hands the folder to the action. Other actions pass through.
+    /// @return False when the technician cancelled the folder choice, so nothing runs.
+    bool chooseQuickActionOutputFolder(QuickAction* action);
 
     /// @brief Build technician/ticket/notes input fields for report section
     void createReportInfoFields(QVBoxLayout* layout);

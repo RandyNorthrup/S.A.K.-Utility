@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file generate_system_report_action.cpp
-/// @brief Implements system information report generation
+/// @brief Implements the System Inventory Report quick action
 
 #include "sak/actions/generate_system_report_action.h"
 
@@ -32,7 +32,7 @@ constexpr int kPercentDisplayPrecision = 1;
 // otherwise collide and the atomic save would truncate the earlier one.
 QString buildReportFilePath(const QDir& output_dir) {
     const QString stamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss_zzz");
-    QString path = output_dir.filePath(QString("SystemReport_%1.txt").arg(stamp));
+    QString path = output_dir.filePath(QString("SystemInventory_%1.txt").arg(stamp));
     // Millisecond resolution makes a collision unlikely -- a report takes seconds to produce --
     // but "unlikely" is not "cannot", and the save is an ATOMIC REPLACE: a collision silently
     // destroys the earlier report rather than failing. Since the cost of being wrong is a lost
@@ -44,7 +44,7 @@ QString buildReportFilePath(const QDir& output_dir) {
     for (int attempt = kFirstDuplicateSuffix;
          QFileInfo::exists(path) && attempt <= kMaxReportNameAttempts;
          ++attempt) {
-        path = output_dir.filePath(QString("SystemReport_%1_%2.txt").arg(stamp).arg(attempt));
+        path = output_dir.filePath(QString("SystemInventory_%1_%2.txt").arg(stamp).arg(attempt));
     }
     return path;
 }
@@ -70,8 +70,8 @@ void GenerateSystemReportAction::scan() {
 
     ScanResult result;
     result.applicable = true;
-    result.summary = "System report will gather OS, hardware, storage, network, and volume data";
-    result.details = "Output saved to reports folder";
+    result.summary = "Inventory will gather OS, hardware, storage, network, and volume data";
+    result.details = "Saved as a text file in the chosen folder";
 
     setScanResult(result);
     setStatus(ActionStatus::Ready);
@@ -85,9 +85,9 @@ bool GenerateSystemReportAction::rejectInvalidOutputLocation() {
     if (m_output_location.trimmed().isEmpty() || !QDir::isAbsolutePath(m_output_location)) {
         ExecutionResult result;
         result.success = false;
-        result.message = QStringLiteral("System report output location is invalid");
-        result.log =
-            QStringLiteral("Refusing to write a system report to a blank or relative path");
+        result.message = QStringLiteral("System inventory report has no valid output folder");
+        result.log = QStringLiteral(
+            "Refusing to write a system inventory report to a blank or relative path");
         finishWithResult(result, ActionStatus::Failed);
         return true;
     }
@@ -98,7 +98,7 @@ bool GenerateSystemReportAction::rejectInvalidOutputLocation() {
 // outcome (stamped with start_time) and reports whether execute() should return.
 bool GenerateSystemReportAction::finishIfCancelled(const QDateTime& start_time) {
     if (isCancelled()) {
-        emitCancelledResult(QStringLiteral("System report generation cancelled"), start_time);
+        emitCancelledResult(QStringLiteral("System inventory report cancelled"), start_time);
         return true;
     }
     return false;
@@ -106,7 +106,7 @@ bool GenerateSystemReportAction::finishIfCancelled(const QDateTime& start_time) 
 
 void GenerateSystemReportAction::execute() {
     if (isCancelled()) {
-        emitCancelledResult(QStringLiteral("System report generation cancelled"));
+        emitCancelledResult(QStringLiteral("System inventory report cancelled"));
         return;
     }
 
@@ -174,7 +174,7 @@ QString GenerateSystemReportAction::ensureOutputDirectory(const QDir& output_dir
     if (output_dir.exists() || output_dir.mkpath(".")) {
         return {};
     }
-    sak::logWarning("Failed to create system report directory: {}",
+    sak::logWarning("Failed to create system inventory report folder: {}",
                     m_output_location.toStdString());
     return QStringLiteral("The report folder could not be created: %1").arg(m_output_location);
 }
@@ -199,8 +199,8 @@ void GenerateSystemReportAction::saveReportAndFinish(const QString& report,
     result.success = overall_success;
 
     if (overall_success) {
-        result.message = QString("Comprehensive system report generated: %1")
-                             .arg(QFileInfo(filepath).fileName());
+        result.message =
+            QString("System inventory report saved: %1").arg(QFileInfo(filepath).fileName());
         result.output_path = filepath;
         result.log = QString("Report saved to: %1\nSize: %2 KB\nDuration: %3 seconds")
                          .arg(filepath)
@@ -215,7 +215,8 @@ void GenerateSystemReportAction::saveReportAndFinish(const QString& report,
     } else if (!save_success) {
         // The reason, not just the path: disk full, access denied and a missing folder all used
         // to read "Could not write to: <path>" and nothing else.
-        result.message = QStringLiteral("Failed to save system report: %1").arg(saved.error());
+        result.message =
+            QStringLiteral("Failed to save system inventory report: %1").arg(saved.error());
         result.log = QStringLiteral("Could not write to: %1\n%2").arg(filepath, saved.error());
         if (!directory_error.isEmpty()) {
             result.log += QLatin1Char('\n') + directory_error;
@@ -223,8 +224,9 @@ void GenerateSystemReportAction::saveReportAndFinish(const QString& report,
     } else {
         // Saved, but one or more collectors failed to run: surface it rather than
         // pass off an empty/partial report as a complete success.
-        result.message = QString("System report incomplete: %1 data could not be collected")
-                             .arg(m_collector_errors.join(", "));
+        result.message =
+            QString("System inventory report incomplete: %1 data could not be collected")
+                .arg(m_collector_errors.join(", "));
         result.output_path = filepath;
         result.log = QString("Partial report saved to: %1\nFailed collectors: %2")
                          .arg(filepath, m_collector_errors.join(", "));
@@ -240,10 +242,7 @@ void GenerateSystemReportAction::saveReportAndFinish(const QString& report,
 QString GenerateSystemReportAction::buildReportHeader() const {
     QString header;
     header += "+" + QString("=").repeated(kTextReportRuleWidth) + "+\n";
-    header +=
-        "|" +
-        QString(" COMPREHENSIVE SYSTEM DIAGNOSTIC REPORT").leftJustified(kTextReportRuleWidth) +
-        "|\n";
+    header += "|" + QString(" SYSTEM INVENTORY REPORT").leftJustified(kTextReportRuleWidth) + "|\n";
     header += "+" + QString("=").repeated(kTextReportRuleWidth) + "+\n\n";
     header += QString("Generated: %1\n\n")
                   .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd "

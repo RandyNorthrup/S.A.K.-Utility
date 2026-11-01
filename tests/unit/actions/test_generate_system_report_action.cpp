@@ -222,6 +222,10 @@ void GenerateSystemReportActionTests::failedSaveLogsItsReason() {
     QVERIFY2(log.contains(reason), qPrintable(log));
     QVERIFY2(log.contains(QStringLiteral("could not be created")), qPrintable(log));
     QVERIFY2(message.contains(reason), qPrintable(message));
+    // The message is the one-line summary, not a copy of the log.
+    QVERIFY2(message.startsWith(QStringLiteral("Failed to save system inventory report: ")),
+             qPrintable(message));
+    QVERIFY2(!message.contains(path), qPrintable(message));
 }
 
 QTEST_GUILESS_MAIN(GenerateSystemReportActionTests)
