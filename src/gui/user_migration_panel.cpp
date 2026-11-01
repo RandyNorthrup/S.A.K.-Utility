@@ -374,7 +374,7 @@ void UserMigrationPanel::onQuickActionFinished(const QuickActionRun& run,
     appendLog(text);
     Q_EMIT statusMessage(text, sak::kTimerStatusDefaultMs);
     if (status == QuickAction::ActionStatus::Failed) {
-        sak::logError("Quick action failed: {} - {}",
+        sak::logError("Backup and Restore quick action failed: {} - {}",
                       run.action_name.toStdString(),
                       result.message.toStdString());
     }
