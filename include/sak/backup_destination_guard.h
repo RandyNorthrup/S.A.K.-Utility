@@ -50,11 +50,7 @@ struct BackupDestinationCheck {
     while (key.size() > 1 && key.endsWith(QLatin1Char('/'))) {
         key.chop(1);
     }
-#ifdef Q_OS_WIN
     return key.toLower();
-#else
-    return key;
-#endif
 }
 
 /// True when @p path is the same directory as @p root or lies underneath it.

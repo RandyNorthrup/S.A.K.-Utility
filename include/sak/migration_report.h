@@ -149,8 +149,8 @@ public:
 
 private:
     // Helper methods
-    QString getComputerName() const;
-    QString getCurrentUser() const;
+    static QString getComputerName();
+    static QString getCurrentUser();
 
     static QString escapeCsvField(const QString& field);
     QString formatHtmlReport() const;

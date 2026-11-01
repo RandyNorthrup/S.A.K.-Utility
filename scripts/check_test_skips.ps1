@@ -114,7 +114,7 @@ function Read-StaticSkipInventory {
 }
 
 function Test-PlatformCondition([string]$condition) {
-    return $condition -match '(?:^|[^A-Za-z0-9])_WIN32\b|\bQ_OS_WIN\b|\bSAK_PLATFORM_WINDOWS\b'
+    return $condition -match '(?:^|[^A-Za-z0-9])_WIN32\b|\bQ_OS_WIN\b'
 }
 
 function Test-PlatformStack([System.Collections.Generic.List[bool]]$stack) {

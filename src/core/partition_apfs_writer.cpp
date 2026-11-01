@@ -21697,7 +21697,7 @@ static bool appendExistingFormatTargetBlockers(const PartitionApfsImageFormatReq
 // large container (the metadata-overflow/CAB tiers reach multiple TiB) materializes
 // only the metadata blocks actually written rather than its full logical size. Best
 // effort: on a file system without sparse support the subsequent resize still works
-// when the volume has room. On POSIX, ftruncate already produces a sparse file.
+// when the volume has room.
 static void markImageSparse(QFile* image) {
     markFileSparse(image->handle());
 }

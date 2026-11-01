@@ -173,9 +173,9 @@ private:
     ///        target. Between validate and delete, a local attacker can swap an ANCESTOR directory
     ///        into a junction so the same string resolves elsewhere; this opens a handle, reads the
     ///        object's real path (GetFinalPathNameByHandleW), and refuses (false) on a redirect or
-    ///        a resolved-to-protected target. Non-Windows: always true. See
-    ///        cleanupHandleRedirectRefusal. Failure to open an existing object is a refusal, not a
-    ///        license to continue with a lexical/pathname-only check.
+    ///        a resolved-to-protected target. See cleanupHandleRedirectRefusal. Failure to open an
+    ///        existing object is a refusal, not a license to continue with a lexical/pathname-only
+    ///        check.
     [[nodiscard]] bool deleteTimeRedirectSafe(const QString& path);
 
     /// @brief Permanently unlink a regular file through the shared verified-handle seam.

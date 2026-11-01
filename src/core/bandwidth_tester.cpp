@@ -784,16 +784,11 @@ QString BandwidthTester::composeNetshPath(const QString& systemRoot) {
 }
 
 QString BandwidthTester::resolveNetshPath() {
-#ifdef Q_OS_WIN
     // Resolve netsh from the AUTHORITATIVE system directory (GetSystemDirectoryW, via
     // system32Path), never the attacker-influenceable %SystemRoot% environment variable:
     // that env var can name a relative or planted directory, and this binary runs with our
     // (often elevated) rights. Fails closed (empty) if the system directory is unresolvable.
     return system32Path(QStringLiteral("netsh.exe"));
-#else
-    // No netsh off Windows: fail closed so no bare "netsh" is ever launched.
-    return {};
-#endif
 }
 
 void BandwidthTester::createFirewallRule(const QString& ruleName, uint16_t port) {

@@ -25,12 +25,7 @@
 #include <limits>
 #include <optional>
 
-#ifdef Q_OS_WIN
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
 #include <windows.h>
-#endif
 
 namespace {
 
@@ -329,7 +324,6 @@ uint64_t remainingSizeAfterOffset(uint64_t fullSize, uint64_t offsetBytes) {
     return offsetBytes < fullSize ? fullSize - offsetBytes : 0ULL;
 }
 
-#ifdef Q_OS_WIN
 class ScopedWin32Handle {
 public:
     explicit ScopedWin32Handle(HANDLE handle) : handle_(handle) {}
@@ -457,14 +451,11 @@ std::optional<QByteArray> readWindowsDeviceProbeBytes(const QString& path,
     }
     return readWindowsProbeBytesFromHandle(handle.get(), errorMessage);
 }
-#endif
 
 QString reportInputPath(const QString& path) {
-#ifdef Q_OS_WIN
     if (isWindowsDevicePath(path)) {
         return path;
     }
-#endif
     return QFileInfo(path).absoluteFilePath();
 }
 
@@ -900,11 +891,9 @@ std::optional<QByteArray> readProbeBytes(const QString& path,
                                          uint64_t inputOffsetBytes,
                                          uint64_t* inputSizeBytes,
                                          QString* errorMessage) {
-#ifdef Q_OS_WIN
     if (isWindowsDevicePath(path)) {
         return readWindowsDeviceProbeBytes(path, inputOffsetBytes, inputSizeBytes, errorMessage);
     }
-#endif
 
     QFile file(path);
     if (!openFileReadOnly(&file, errorMessage)) {

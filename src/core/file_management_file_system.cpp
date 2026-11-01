@@ -31,13 +31,11 @@
 #include <optional>
 #include <vector>
 
-#ifdef _WIN32
 #include <windows.h>
 // Undefine Windows macros that conflict with Qt
 #undef emit
 #undef signals
 #undef slots
-#endif
 
 namespace sak {
 
@@ -1875,12 +1873,8 @@ namespace {
 // entry must never be traversed by a recursive delete: descending would delete
 // the LINK's target, which lives outside the user-selected tree (R5-P9-2).
 bool isReparsePointPath(const QString& path) {
-#ifdef _WIN32
     const DWORD attrs = GetFileAttributesW(path.toStdWString().c_str());
     return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
-#else
-    return QFileInfo(path).isSymLink();
-#endif
 }
 
 // Remove a reparse-point entry by unlinking the LINK itself, never its target.

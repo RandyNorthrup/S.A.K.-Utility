@@ -15,9 +15,7 @@
 #include <QTemporaryFile>
 #include <QtTest/QtTest>
 
-#ifdef _WIN32
 #include <windows.h>
-#endif
 
 using sak::AdvancedSearchController;
 using sak::SearchConfig;

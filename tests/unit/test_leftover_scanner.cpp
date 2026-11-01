@@ -29,11 +29,9 @@ namespace sak {
 bool firewallDumpHeaderMissing(const QStringList& lines);
 void applyFirewallField(const QString& trimmed, LeftoverItem& item);
 QString parseFirstCsvField(const QString& line);
-#ifdef Q_OS_WIN
 bool growRunValueBuffers(std::vector<wchar_t>& name_buf,
                          std::vector<BYTE>& data_buf,
                          DWORD data_len);
-#endif
 }  // namespace sak
 
 class LeftoverScannerTests : public QObject {
@@ -95,11 +93,9 @@ private Q_SLOTS:
     void csvFirstField_escapedQuotes();
 
     // -- Run-key ERROR_MORE_DATA buffer growth (long values must not be skipped) --
-#ifdef Q_OS_WIN
     void runValueBuffers_growsDataToRequiredSize();
     void runValueBuffers_doublesNameWhenDataFits();
     void runValueBuffers_failsClosedPastCeiling();
-#endif
 
     // -- R5-P7-6: a registry InstallLocation must EARN deletion authority --
     void installLocationSyntax_refusesUnpinnableShapes();
@@ -237,7 +233,6 @@ void verifyProgramFilesOperandAloneClassifiesSafe() {
 // ALLUSERSPROFILE == ProgramData, TMP == TEMP, and PUBLIC is re-added by the profile walk,
 // so deleting any one leaves an identical string behind. Inject a UNIQUE sentinel per
 // variable so each catalog line is pinned on its own.
-#ifdef Q_OS_WIN
 void verifyEveryEnvDerivedCriticalRootIsPinned() {
     // The catalog is a CONTRACT, not a sample: the four probes above spot-check it while ten
     // environment-derived roots have no assertion at all, so any one of them can be dropped in
@@ -288,7 +283,6 @@ void verifyEveryEnvDerivedCriticalRootIsPinned() {
     // genuine masked equivalent (QDir::homePath() and the profile walk both re-add the same
     // path), and injecting it would only change homePath() in lockstep.
 }
-#endif
 
 }  // namespace
 
@@ -484,7 +478,6 @@ void LeftoverScannerTests::scan_safeLevelSkipsRegistry() {
         QVERIFY(item.type != LeftoverItem::Type::RegistryValue);
     }
 
-#ifdef Q_OS_WIN
     // CONTROL: the SAME program at Moderate DOES report that existing key. Without this the
     // emptiness above is equally satisfied by a scanner that never reads the registry at all,
     // or by a checkKey that can never open anything -- coverage reports its success arm as
@@ -496,7 +489,6 @@ void LeftoverScannerTests::scan_safeLevelSkipsRegistry() {
              qPrintable(QStringLiteral("Moderate did not report %1").arg(uninstallKey)));
     QCOMPARE(key->type, LeftoverItem::Type::RegistryKey);
     QCOMPARE(key->description, QStringLiteral("Program uninstall key still exists"));
-#endif
 }
 
 void LeftoverScannerTests::scan_cancellationStopsScan() {
@@ -1239,7 +1231,6 @@ void LeftoverScannerTests::csvFirstField_escapedQuotes() {
              QStringLiteral("He said \"hi\""));
 }
 
-#ifdef Q_OS_WIN
 // -- Run-key ERROR_MORE_DATA buffer growth -----------------------------------
 // RegEnumValueW reports only the required DATA size on ERROR_MORE_DATA; the name size is unknown.
 // growRunValueBuffers must therefore grow data to the reported size and double the name buffer, and
@@ -1282,7 +1273,6 @@ void LeftoverScannerTests::runValueBuffers_failsClosedPastCeiling() {
     QVERIFY(sak::growRunValueBuffers(name_at_cap, data_at_cap, 1024u * 1024u));
     QCOMPARE(static_cast<int>(data_at_cap.size()), 1024 * 1024);
 }
-#endif
 
 // -- R5-P7-6: registry InstallLocation as deletion authority -----------------
 //

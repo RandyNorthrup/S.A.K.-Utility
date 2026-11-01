@@ -121,8 +121,7 @@ void TestAppScanner::composePowerShellPath_absoluteUnderSystemRoot() {
 
 void TestAppScanner::authoritativeWindowsRoot_fromOsNotEnv() {
     const QString root = AppScanner::authoritativeWindowsRoot();
-#ifdef _WIN32
-    // On Windows the OS API must return a concrete, absolute Windows directory,
+    // The OS API must return a concrete, absolute Windows directory,
     // independent of (and unspoofable via) the %SystemRoot% environment variable.
     QVERIFY(!root.isEmpty());
     QVERIFY(QDir::isAbsolutePath(root));
@@ -130,10 +129,6 @@ void TestAppScanner::authoritativeWindowsRoot_fromOsNotEnv() {
     const QString ps = AppScanner::composePowerShellPath(root);
     QVERIFY(QDir::isAbsolutePath(ps));
     QVERIFY(ps.endsWith(QStringLiteral("System32/WindowsPowerShell/v1.0/powershell.exe")));
-#else
-    // No Windows directory off Windows: fail closed.
-    QVERIFY(root.isEmpty());
-#endif
 }
 
 QTEST_MAIN(TestAppScanner)

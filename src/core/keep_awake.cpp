@@ -3,8 +3,6 @@
 
 #include "sak/keep_awake.h"
 
-#ifdef _WIN32
-
 #include "sak/logger.h"
 
 #include <windows.h>
@@ -173,5 +171,3 @@ KeepAwakeGuard::~KeepAwakeGuard() {
 }
 
 }  // namespace sak
-
-#endif  // _WIN32

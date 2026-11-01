@@ -16,6 +16,10 @@
  *   - Tests run without admin privileges.
  */
 
+#include "sak/user_profile_progress.h"
+#include "sak/user_profile_restore_worker.h"
+#include "sak/user_profile_types.h"
+
 #include <QDir>
 #include <QSignalSpy>
 #include <QTemporaryDir>
@@ -23,13 +27,7 @@
 
 #include <algorithm>
 
-#ifdef Q_OS_WIN
 #include <windows.h>
-#endif
-
-#include "sak/user_profile_progress.h"
-#include "sak/user_profile_restore_worker.h"
-#include "sak/user_profile_types.h"
 
 // ---------------------------------------------------------------------------
 // Helper: create a BackupManifest with one user whose backed_up_folders match
@@ -871,7 +869,6 @@ void UserProfileRestoreWorkerTests::conflictKeepNewer() {
     // Backdate the destination so the backup copy is unambiguously newer. (A QFileInfo
     // and a "30 days ago" QDateTime used to be built here and never read; the SetFileTime
     // call below is what actually decides this test.)
-#ifdef Q_OS_WIN
     {
         HANDLE hFile = CreateFileW(reinterpret_cast<LPCWSTR>(destFile.utf16()),
                                    FILE_WRITE_ATTRIBUTES,
@@ -888,7 +885,6 @@ void UserProfileRestoreWorkerTests::conflictKeepNewer() {
             CloseHandle(hFile);
         }
     }
-#endif
 
     auto folder = makeFolder(sak::FolderType::Documents,
                              QStringLiteral("Documents"),

@@ -30,16 +30,11 @@ constexpr std::size_t kMd5HexChars = 32;
 constexpr qsizetype kSha256DigestBytes = 32;
 constexpr std::size_t kSha256HexChars = 64;
 
-// Convert a filesystem path to a QString without a lossy narrow round-trip. On
-// Windows std::filesystem::path::string() emits CP_ACP bytes that QString would
-// then misread as UTF-8, mangling any non-ASCII path; native() preserves the
-// wide path. On POSIX native() is already a byte string.
+// Convert a filesystem path to a QString without a lossy narrow round-trip.
+// std::filesystem::path::string() emits CP_ACP bytes that QString would then
+// misread as UTF-8, mangling any non-ASCII path; native() preserves the wide path.
 QString pathToQString(const std::filesystem::path& path) {
-#ifdef _WIN32
     return QString::fromStdWString(path.native());
-#else
-    return QString::fromStdString(path.native());
-#endif
 }
 }  // namespace
 

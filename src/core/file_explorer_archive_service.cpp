@@ -15,16 +15,14 @@
 #include <algorithm>
 #include <optional>
 
+#include <windows.h>
+
 #include <private/qzipreader_p.h>
 #include <private/qzipwriter_p.h>
-
-#ifdef _WIN32
-#include <windows.h>
 // Undefine Windows macros that conflict with Qt
 #undef emit
 #undef signals
 #undef slots
-#endif
 
 namespace sak {
 
@@ -153,15 +151,11 @@ bool entryEscapesDestination(const QString& destination_dir, const QString& entr
     return candidate != root && !candidate.startsWith(root + QLatin1Char('/'));
 }
 
-// True when @p path is an existing reparse point (symlink or junction). On
-// Windows the native attribute covers both; elsewhere a symlink is equivalent.
+// True when @p path is an existing reparse point (symlink or junction); the native
+// attribute covers both.
 bool isReparsePoint(const QString& path) {
-#ifdef _WIN32
     const DWORD attrs = GetFileAttributesW(path.toStdWString().c_str());
     return attrs != INVALID_FILE_ATTRIBUTES && (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
-#else
-    return QFileInfo(path).isSymLink();
-#endif
 }
 
 // True when any parent directory of @p out_path between @p destination_dir and

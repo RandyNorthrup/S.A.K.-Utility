@@ -16,9 +16,7 @@
 #include <system_error>
 #include <vector>
 
-#ifdef _WIN32
 #include <windows.h>
-#endif
 
 namespace sak {
 
@@ -27,11 +25,9 @@ namespace {
 /// @brief Normalize path separators and case for comparison
 std::string normalize_for_compare(std::string value) {
     std::ranges::replace(value, '\\', '/');
-#ifdef _WIN32
     std::ranges::transform(value, value.begin(), [](unsigned char c) {
         return static_cast<char>(std::tolower(c));
     });
-#endif
     return value;
 }
 
@@ -137,7 +133,6 @@ bool shouldRecurse(const std::filesystem::directory_entry& entry) {
     if (entry.is_symlink(ec) || ec) {
         return false;
     }
-#ifdef _WIN32
     const DWORD attributes = GetFileAttributesW(entry.path().c_str());
     if (attributes != INVALID_FILE_ATTRIBUTES && (attributes & FILE_ATTRIBUTE_REPARSE_POINT) != 0) {
         // A reparse point (junction/mount point) is not a plain subdirectory to descend.
@@ -146,7 +141,6 @@ bool shouldRecurse(const std::filesystem::directory_entry& entry) {
         // skipping it here would silently under-count.)
         return false;
     }
-#endif
     return entry.is_directory(ec) && !ec;
 }
 

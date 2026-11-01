@@ -26,7 +26,6 @@ const QStringList RegistrySnapshotEngine::kMonitoredPaths = {
     "HKCU\\Software",
 };
 
-#ifdef Q_OS_WIN
 namespace {
 
 // Open a monitored key for read. A hard failure (e.g. ERROR_ACCESS_DENIED) means an
@@ -134,13 +133,11 @@ QString joinKeyPath(const QString& hiveName, const QString& subkey) {
 }
 
 }  // namespace
-#endif  // Q_OS_WIN
 
 QSet<QString> RegistrySnapshotEngine::captureSnapshot(bool* reliable) {
     QSet<QString> snapshot;
     bool ok = true;
 
-#ifdef Q_OS_WIN
     const SnapshotSink sink{.keys = snapshot, .reliable = ok};
     for (const auto& path : kMonitoredPaths) {
         HKEY hive = nullptr;
@@ -159,15 +156,12 @@ QSet<QString> RegistrySnapshotEngine::captureSnapshot(bool* reliable) {
             enumerateKeys(hive, subkey, hive_name, sink, kDefaultMaxDepth);
         }
     }
-#endif
 
     if (reliable != nullptr) {
         *reliable = ok;
     }
     return snapshot;
 }
-
-#ifdef Q_OS_WIN
 
 void RegistrySnapshotEngine::enumerateKeys(HKEY hive,
                                            const QString& subkey,
@@ -201,7 +195,5 @@ void RegistrySnapshotEngine::enumerateKeys(HKEY hive,
         enumerateKeys(hive, child_path, hiveName, sink, maxDepth - 1);
     }
 }
-
-#endif  // Q_OS_WIN
 
 }  // namespace sak

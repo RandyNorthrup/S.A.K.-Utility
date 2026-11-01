@@ -16,16 +16,11 @@
 #include <QJsonObject>
 #include <QStorageInfo>
 
-#ifdef SAK_PLATFORM_WINDOWS
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
 #include <Windows.h>
 
 #include <dxgi.h>
 #include <wrl/client.h>
 #pragma comment(lib, "dxgi.lib")
-#endif
 
 namespace {
 constexpr int kScanProgressCpu = 0;
@@ -168,7 +163,6 @@ bool parseWmiJsonOutput(const QByteArray& output,
     return true;
 }
 
-#ifdef SAK_PLATFORM_WINDOWS
 /// @brief Map a DXGI vendor ID to a human-readable manufacturer name.
 QString dxgiVendorName(unsigned int vendor_id) {
     switch (vendor_id) {
@@ -196,7 +190,6 @@ bool tryBuildGpuFromAdapter(IDXGIAdapter1* adapter, sak::GpuInfo& out) {
     out.manufacturer = dxgiVendorName(desc.VendorId);
     return true;
 }
-#endif
 
 }  // namespace
 
@@ -502,7 +495,6 @@ MemorySummary HardwareInventoryScanner::queryMemory() {
     MemorySummary summary;
 
     // Global memory status from Windows API
-#ifdef SAK_PLATFORM_WINDOWS
     MEMORYSTATUSEX mem_status{};
     mem_status.dwLength = sizeof(mem_status);
     if (GlobalMemoryStatusEx(&mem_status) != 0) {
@@ -513,7 +505,6 @@ MemorySummary HardwareInventoryScanner::queryMemory() {
                    GetLastError());
         m_wmiQueryFailed = true;
     }
-#endif
 
     // Per-module info from WMI
     const auto results = wmiQuery("Win32_PhysicalMemory",
@@ -761,10 +752,8 @@ void HardwareInventoryScanner::enrichDeviceWithVolumes(
 QVector<GpuInfo> HardwareInventoryScanner::queryGpu() {
     QVector<GpuInfo> gpus;
 
-#ifdef SAK_PLATFORM_WINDOWS
     // Primary method: DXGI adapter enumeration (most accurate VRAM reporting)
     enumerateDxgiAdapters(gpus);
-#endif
 
     // Enrich with driver info from WMI
     const auto wmi_gpus = wmiQuery("Win32_VideoController",
@@ -806,7 +795,6 @@ QVector<GpuInfo> HardwareInventoryScanner::queryGpu() {
 }
 
 void HardwareInventoryScanner::enumerateDxgiAdapters(QVector<GpuInfo>& gpus) {
-#ifdef SAK_PLATFORM_WINDOWS
     Microsoft::WRL::ComPtr<IDXGIFactory1> factory;
     if (!SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) {
         return;
@@ -834,7 +822,6 @@ void HardwareInventoryScanner::enumerateDxgiAdapters(QVector<GpuInfo>& gpus) {
         }
         adapter.Reset();
     }
-#endif
 }
 
 MotherboardInfo HardwareInventoryScanner::queryMotherboard() {
@@ -863,7 +850,6 @@ MotherboardInfo HardwareInventoryScanner::queryMotherboard() {
     return info;
 }
 
-#ifdef SAK_PLATFORM_WINDOWS
 bool HardwareInventoryScanner::queryBatteryPowerStatus(BatteryInfo& info) {
     SYSTEM_POWER_STATUS power_status{};
     if (GetSystemPowerStatus(&power_status) == 0) {
@@ -901,16 +887,13 @@ bool HardwareInventoryScanner::queryBatteryPowerStatus(BatteryInfo& info) {
 
     return true;
 }
-#endif
 
 BatteryInfo HardwareInventoryScanner::queryBattery() {
     BatteryInfo info;
 
-#ifdef SAK_PLATFORM_WINDOWS
     if (!queryBatteryPowerStatus(info)) {
         return info;
     }
-#endif
 
     const auto batteries = wmiQuery("Win32_Battery",
                                     {"Name",

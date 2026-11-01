@@ -8,8 +8,6 @@
 #include <expected>
 #include <string>
 
-#ifdef _WIN32
-
 namespace sak {
 
 /**
@@ -97,5 +95,3 @@ private:
 };
 
 }  // namespace sak
-
-#endif  // _WIN32

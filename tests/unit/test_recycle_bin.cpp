@@ -21,13 +21,9 @@ private Q_SLOTS:
         // the empty-input guard from a downstream one, so pin the exact refusal reason.
         QString err;
         QVERIFY(!sak::sendPathToRecycleBin(QString(), &err));
-#ifdef Q_OS_WIN
         QCOMPARE(err,
                  QStringLiteral("Refusing to recycle a path that is empty or carries a "
                                 "wildcard or embedded NUL."));
-#else
-        QCOMPARE(err, QStringLiteral("The Recycle Bin is only available on Windows."));
-#endif
         QString err2;
         QVERIFY(!sak::sendPathToRecycleBin(QStringLiteral(""), &err2));
         QCOMPARE(err2, err);  // "" takes the same empty-input branch
@@ -38,13 +34,9 @@ private Q_SLOTS:
         // match rather than the literal path -- a mass-deletion vector. Refused
         // before the shell call; pin the exact input-refusal reason so the guard that
         // fired (not a downstream one) is proven.
-#ifdef Q_OS_WIN
         const QString expected = QStringLiteral(
             "Refusing to recycle a path that is empty or "
             "carries a wildcard or embedded NUL.");
-#else
-        const QString expected = QStringLiteral("The Recycle Bin is only available on Windows.");
-#endif
         const QStringList wildcards = {QStringLiteral("X:/scratch/*"),
                                        QStringLiteral("X:/scratch/*.txt"),
                                        QStringLiteral("X:/scratch/file?.txt")};
@@ -63,13 +55,9 @@ private Q_SLOTS:
         withNul.append(QStringLiteral("X:/scratch/b.txt"));
         QString err;
         QVERIFY(!sak::sendPathToRecycleBin(withNul, &err));
-#ifdef Q_OS_WIN
         QCOMPARE(err,
                  QStringLiteral("Refusing to recycle a path that is empty or carries a "
                                 "wildcard or embedded NUL."));
-#else
-        QCOMPARE(err, QStringLiteral("The Recycle Bin is only available on Windows."));
-#endif
     }
 
     void refusesVolumesWithoutARecycleBin() {
@@ -82,16 +70,12 @@ private Q_SLOTS:
         QVERIFY(!sak::pathVolumeHasRecycleBin(unc));
         QString err;
         QVERIFY(!sak::sendPathToRecycleBin(unc, &err));
-#ifdef Q_OS_WIN
         // Passes the input guard (no empty/wildcard/NUL) and is refused by the volume guard on
         // the resolved absolute path (QFileInfo normalizes the UNC to forward slashes).
         QCOMPARE(err,
                  QStringLiteral("'//sak-no-such-host/share/payload.txt' is not on a volume "
                                 "with a Recycle Bin; refusing to turn a recycle into a "
                                 "permanent delete."));
-#else
-        QCOMPARE(err, QStringLiteral("The Recycle Bin is only available on Windows."));
-#endif
         // The forward-slash spelling normalizes to the same UNC path.
         QVERIFY(
             !sak::pathVolumeHasRecycleBin(QStringLiteral("//sak-no-such-host/share/payload.txt")));
@@ -101,14 +85,8 @@ private Q_SLOTS:
     void acceptsFixedVolumeWithARecycleBin() {
         // The volume guard must be a real discriminator, not a blanket refusal: the
         // fixed volume this test runs from does have a Recycle Bin, so an ordinary
-        // local recycle still reaches the shell call. (The slot itself stays
-        // unconditional so moc registers it on every platform; only the expected
-        // verdict is platform-specific -- there is no bin to reach off Windows.)
-#ifdef Q_OS_WIN
+        // local recycle still reaches the shell call.
         QVERIFY(sak::pathVolumeHasRecycleBin(QDir::currentPath()));
-#else
-        QVERIFY(!sak::pathVolumeHasRecycleBin(QDir::currentPath()));
-#endif
     }
 };
 

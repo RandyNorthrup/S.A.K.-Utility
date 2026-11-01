@@ -18,9 +18,7 @@
 
 #include <algorithm>
 
-#ifdef _WIN32
 #include <windows.h>
-#endif
 
 namespace sak {
 
@@ -39,7 +37,6 @@ void markSourceIncomplete(bool* scanOk) {
     }
 }
 
-#ifdef _WIN32
 // Short hive label so a registry_key identifier disambiguates HKLM vs HKCU
 // entries that share the same Uninstall subkey path.
 QString hiveDisplayPrefix(HKEY hive) {
@@ -51,7 +48,6 @@ QString hiveDisplayPrefix(HKEY hive) {
     }
     return QStringLiteral("HKEY");
 }
-#endif
 }  // namespace
 
 // Registry paths for installed applications
@@ -280,16 +276,12 @@ bool AppScanner::isSystemComponent(const QString& name) {
 }
 
 QString AppScanner::authoritativeWindowsRoot() {
-#ifdef _WIN32
     wchar_t buffer[MAX_PATH];
     const UINT len = GetWindowsDirectoryW(buffer, MAX_PATH);
     if (len == 0 || len >= MAX_PATH) {
         return {};  // fail closed: cannot trust an unresolved Windows root
     }
     return QString::fromWCharArray(buffer, static_cast<int>(len));
-#else
-    return {};
-#endif
 }
 
 QString AppScanner::composePowerShellPath(const QString& systemRoot) {

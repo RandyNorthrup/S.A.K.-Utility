@@ -15,9 +15,7 @@
 
 #include <optional>
 
-#ifdef Q_OS_WIN
 #include <windows.h>
-#endif
 
 namespace sak {
 

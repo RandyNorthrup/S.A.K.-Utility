@@ -179,67 +179,21 @@ for ($index = 0; $index -lt $rootLines.Count; $index++) {
     }
 }
 
-# Configure rejects non-Windows hosts before any target is created. These audited product modules
-# therefore must contain only the shipped Windows implementation: platform branches, POSIX host-I/O
-# shims, and Q_UNUSED placeholders are dead code that can drift away from the executable path.
-$windowsOnlyProductFiles = @(
-    "include/sak/elevated_pipe_server.h",
-    "include/sak/elevation_broker.h",
-    "include/sak/input_validator.h",
-    "include/sak/leftover_scanner.h",
-    "include/sak/secure_memory.h",
-    "src/actions/backup_bitlocker_keys_action.cpp",
-    "src/ai/ai_credential_store.cpp",
-    "src/core/advanced_search_worker.cpp",
-    "src/core/app_mutating_actions.cpp",
-    "src/core/chocolatey_manager.cpp",
-    "src/core/crash_reporter.cpp",
-    "src/core/disk_benchmark_worker.cpp",
-    "src/core/elevated_pipe_server.cpp",
-    "src/core/elevation_broker.cpp",
-    "src/core/encryption.cpp",
-    "src/core/input_validator.cpp",
-    "src/core/leftover_scanner.cpp",
-    "src/core/partition_raw_device_io.cpp",
-    "src/core/recycle_bin.cpp",
-    "src/core/secure_memory.cpp",
-    "src/core/stress_test_worker.cpp",
-    "src/core/vulnerability_scanner.cpp",
-    "src/core/wifi_profile_scanner.cpp",
-    "src/core/windows_user_scanner.cpp",
-    "src/tools/sak_apfs_writer_cli.cpp",
-    "src/tools/sak_hfs_writer_cli.cpp"
-)
-$deadPlatformGuardPattern =
-    '^\s*#\s*(?:if|ifdef|ifndef|elif)\b.*(?:_WIN32|Q_OS_WIN|SAK_PLATFORM_WINDOWS|_MSC_VER|__linux__|__APPLE__|SEEK_DATA|SEEK_HOLE)'
+# Configure rejects non-Windows hosts before any target is created, so first-party product source
+# must contain only the shipped Windows implementation: platform branches and POSIX host-I/O shims
+# are dead code that can drift away from the executable path. Both checks run over every C/C++
+# file the production-source walk below collects. A platform macro is matched as a whole
+# identifier, so a name that merely contains WIN32 (a SAK_WIN32MCP_..._H header guard,
+# WIN32_LEAN_AND_MEAN) is not a platform test. Q_UNUSED is caught by the warning-silence check.
+$deadPlatformGuardPattern = ('^\s*#\s*(?:if|ifdef|ifndef|elif)\b.*(?<![A-Za-z0-9_])' +
+    '(?:_WIN32|_WIN64|WIN32|Q_OS_[A-Za-z0-9_]+|SAK_PLATFORM_[A-Za-z0-9_]+|PLATFORM_WINDOWS|' +
+    '_MSC_VER|__linux(?:__)?|__APPLE__|__unix(?:__)?|SEEK_DATA|SEEK_HOLE)(?![A-Za-z0-9_])')
 $deadHostCompatibilityTokens = @(
     "#include <sys/resource.h>",
     "#include <sys/stat.h>",
     "#include <sys/statvfs.h>",
-    "#include <unistd.h>",
-    "Q_UNUSED("
+    "#include <unistd.h>"
 )
-foreach ($relativePath in $windowsOnlyProductFiles) {
-    $sourcePath = Join-Path $root $relativePath
-    if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
-        $violations += "${relativePath}: audited Windows-only product file is missing"
-        continue
-    }
-    $lineNo = 0
-    foreach ($line in (Get-Content -LiteralPath $sourcePath)) {
-        $lineNo++
-        if ($line -match $deadPlatformGuardPattern) {
-            $violations += ("${relativePath}:${lineNo}: dead application-platform guard; " +
-                            "configure already rejects non-Windows targets")
-        }
-        foreach ($token in $deadHostCompatibilityTokens) {
-            if ($line.Contains($token)) {
-                $violations += ("${relativePath}:${lineNo}: dead host-compatibility token " +
-                                "'$token' in Windows-only product module")
-            }
-        }
-    }
-}
 
 # Warning-silencing markers are forbidden across all first-party production C/C++ source. An
 # unused callback parameter can be unnamed; a discarded value must be asserted, reported, or
@@ -263,6 +217,16 @@ foreach ($sourceFile in ($productionSourceFiles | Sort-Object FullName -Unique))
         $lineNo++
         if ($line.TrimStart().StartsWith("//")) {
             continue
+        }
+        if ($line -match $deadPlatformGuardPattern) {
+            $violations += ("${relativePath}:${lineNo}: dead application-platform guard; " +
+                            "configure already rejects non-Windows targets")
+        }
+        foreach ($token in $deadHostCompatibilityTokens) {
+            if ($line.Contains($token)) {
+                $violations += ("${relativePath}:${lineNo}: dead host-compatibility token " +
+                                "'$token' in Windows-only product module")
+            }
         }
         foreach ($marker in @("Q_UNUSED(", "[[maybe_unused]]")) {
             if ($line.Contains($marker)) {
@@ -322,14 +286,6 @@ if ($testsCmakeText -notmatch
     '(?ms)find_program\s*\(\s*SAK_TEST_POWERSHELL_PATH\b.*?if\s*\(\s*NOT\s+SAK_TEST_POWERSHELL_PATH\b.*?\).*?message\s*\(\s*FATAL_ERROR') {
     $violations += ("tests/CMakeLists.txt: required PowerShell CTests lack a fail-closed " +
                     "find_program/FATAL_ERROR preflight")
-}
-foreach ($target in @("test_ai_assistant_panel_tool_dispatch", "test_browser_extension_installer")) {
-    $definitionPattern = ('(?ms)target_compile_definitions\s*\(\s*' + [regex]::Escape($target) +
-                          '\s+PRIVATE(?:(?!\)\s*$).)*\bSAK_WIN_REGISTRY_TESTS\b')
-    if ($testsCmakeText -notmatch $definitionPattern) {
-        $violations += ("tests/CMakeLists.txt: $target must define SAK_WIN_REGISTRY_TESTS " +
-                        "unconditionally so AUTOMOC registers its Windows slots")
-    }
 }
 $firstTargetLine = 0
 for ($index = 0; $index -lt $rootLines.Count; $index++) {

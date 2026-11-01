@@ -17,9 +17,7 @@
 #include <memory>
 #include <type_traits>
 
-#ifdef Q_OS_WIN
 #include <windows.h>
-#endif
 
 class TestProgramEnumerator;
 
@@ -102,7 +100,6 @@ Q_SIGNALS:
     void enumerationWarning(const QString& message);
 
 private:
-#ifdef Q_OS_WIN
     /// @brief Scan Win32 programs from all registry hives
     QVector<ProgramInfo> scanRegistryPrograms();
 
@@ -123,7 +120,6 @@ private:
 
     /// @brief Check if entry is a system component (filter out)
     [[nodiscard]] static bool isSystemComponent(HKEY key);
-#endif
 
     /// @brief True when an Appx/provisioned scan produced a real, parseable result. False for
     ///        process/timeout/exit failures or unparseable output, so a failed scan is never
@@ -154,7 +150,6 @@ private:
     /// @brief Extract icons and calculate sizes for enumerated programs
     [[nodiscard]] bool enrichWithIconsAndSizes(QVector<ProgramInfo>& programs);
 
-#ifdef Q_OS_WIN
     // Registry paths
     static constexpr const wchar_t* kUninstallKey64 =
         L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall";
@@ -162,7 +157,6 @@ private:
         L"SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall";
     static constexpr const wchar_t* kUninstallKeyHKCU =
         L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall";
-#endif
 
     QVector<ProgramInfo> m_cachedPrograms;
     std::atomic<bool> m_cancelRequested{false};

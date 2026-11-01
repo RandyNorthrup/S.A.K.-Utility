@@ -811,7 +811,6 @@ int runApplicationGuarded(int argc,
 /// @param argv Argument vector
 /// @return Exit code
 int main(int argc, char* argv[]) {
-#if defined(_WIN32)
     // The win32 MCP server and the Chrome browser-control host are folded into this one
     // binary. When launched in either helper mode (env var set by the provider gateway, or
     // a chrome-extension:// origin passed by Chrome), run headless on stdio and return
@@ -819,7 +818,6 @@ int main(int argc, char* argv[]) {
     if (sak::win32mcp::isWin32McpHelperInvocation(argc, argv)) {
         return sak::win32mcp::runWin32McpProcess(argc, argv);
     }
-#endif
 
     return runApplicationGuarded(argc, argv);
 }

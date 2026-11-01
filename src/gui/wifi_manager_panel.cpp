@@ -1621,11 +1621,6 @@ std::pair<QList<WifiManagerPanel::WifiConfig>, bool> WifiManagerPanel::scanKnown
 }
 
 void WifiManagerPanel::onScanNetworksClicked() {
-#ifndef Q_OS_WIN
-    Q_EMIT statusMessage("Scan Known Networks is only supported on Windows.",
-                         sak::kTimerStatusWarnMs);
-    return;
-#else
     m_scan_networks_btn->setEnabled(false);
     Q_EMIT statusMessage("Scanning known Windows WiFi profiles...", 0);
 
@@ -1672,7 +1667,6 @@ void WifiManagerPanel::onScanNetworksClicked() {
     });
 
     watcher->setFuture(QtConcurrent::run(&WifiManagerPanel::scanKnownWifiNetworks));
-#endif
 }
 
 
@@ -1754,10 +1748,6 @@ void WifiManagerPanel::onTableItemChanged(QTableWidgetItem* item) {
 
 void WifiManagerPanel::onAddToWindowsClicked() {
     Q_ASSERT(m_network_table);
-#ifndef Q_OS_WIN
-    Q_EMIT statusMessage("Add to Windows is only supported on Windows.", sak::kTimerStatusWarnMs);
-    return;
-#else
     const QList<int> checked_rows = checkedWifiRows();
     if (checked_rows.isEmpty()) {
         Q_EMIT statusMessage("Check at least one network row first.", sak::kTimerStatusMessageMs);
@@ -1771,7 +1761,6 @@ void WifiManagerPanel::onAddToWindowsClicked() {
     }
 
     startAddToWindowsProfiles(configs);
-#endif
 }
 
 QList<int> WifiManagerPanel::checkedWifiRows() const {

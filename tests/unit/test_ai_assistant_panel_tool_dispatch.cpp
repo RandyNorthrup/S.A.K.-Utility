@@ -75,12 +75,7 @@
 #include <memory>
 #include <thread>
 
-#if defined(SAK_WIN_REGISTRY_TESTS)
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
 #include <windows.h>
-#endif
 
 namespace sak {
 
@@ -254,7 +249,6 @@ private Q_SLOTS:
         QVERIFY(ai::OpenAIResponsesClient::buildResponsePayloadForTesting(request).isEmpty());
     }
 
-#if defined(SAK_WIN_REGISTRY_TESTS)
     // The panel's Install/Uninstall button drives BrowserExtensionInstaller in-process.
     // Point it at a throwaway HKCU key + temp dir (never the real Chrome policy) via the
     // friend seam, then confirm a click installs and a second click uninstalls, verified
@@ -299,7 +293,6 @@ private Q_SLOTS:
         panel.onBrowserExtensionButtonClicked();  // uninstall
         QCOMPARE(stateProbe.stateString(), QStringLiteral("not_installed"));
     }
-#endif
 
     // A download_file call whose handler blocks must run off the GUI thread: the
     // handler enters on a non-GUI thread, the GUI event loop keeps running, and

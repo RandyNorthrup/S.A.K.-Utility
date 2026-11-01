@@ -17,14 +17,9 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
-#ifdef SAK_PLATFORM_WINDOWS
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
 #include <algorithm>
 
 #include <Windows.h>
-#endif
 
 namespace sak {
 
@@ -631,7 +626,6 @@ void SmartDiskAnalyzer::generateRecommendations(SmartReport& report) {
     }
 }
 
-#ifdef SAK_PLATFORM_WINDOWS
 namespace {
 
 // True when \\.\PhysicalDriveN exists. Opened with zero access -- an existence
@@ -656,12 +650,10 @@ bool physicalDriveExists(uint32_t index) {
 }
 
 }  // namespace
-#endif
 
 QVector<uint32_t> SmartDiskAnalyzer::enumerateDrives() {
     QVector<uint32_t> drives;
 
-#ifdef SAK_PLATFORM_WINDOWS
     // Probe PhysicalDriveN tolerating gaps in numbering; stop after a run of
     // consecutive misses rather than a fixed 0..15 window that hides higher or
     // sparsely numbered drives.
@@ -675,7 +667,6 @@ QVector<uint32_t> SmartDiskAnalyzer::enumerateDrives() {
             ++consecutive_misses;
         }
     }
-#endif
 
     logInfo("Enumerated {} physical drive(s)", drives.size());
     return drives;

@@ -141,7 +141,6 @@ void ProgramEnumerator::enumerateAll(int generation) {
     QVector<ProgramInfo> all_programs;
 
     try {
-#ifdef Q_OS_WIN
         // Phase 1: Win32 registry programs
         auto registry_programs = scanRegistryPrograms();
         if (m_cancelRequested.load(std::memory_order_acquire)) {
@@ -150,7 +149,6 @@ void ProgramEnumerator::enumerateAll(int generation) {
         }
         all_programs.append(registry_programs);
         Q_EMIT enumerationProgress(kRegistryScanProgress, kPercentMax);
-#endif
 
         // Phase 2: UWP packages
         bool uwpOk = true;
@@ -221,7 +219,6 @@ QVector<ProgramInfo> ProgramEnumerator::enumerateUwpPackagesSync(bool& scanOk) {
 }
 
 QVector<ProgramInfo> ProgramEnumerator::enumerateRegistryProgramsSync() {
-#ifdef Q_OS_WIN
     // Reuse the exact registry scanner enumerateAll uses -- just the Win32 phase, with no
     // UWP/orphan/bloatware/icon/dir-size work. Intentionally NOT deduped: the dedup key
     // (displayName|publisher) can merge two genuinely-distinct same-name programs, which would
@@ -229,9 +226,6 @@ QVector<ProgramInfo> ProgramEnumerator::enumerateRegistryProgramsSync() {
     // single match must disambiguate themselves (e.g. by the actual uninstall command). The
     // registry read has no external process to fail (unlike the Appx scans), so no scanOk here.
     return scanRegistryPrograms();
-#else
-    return {};
-#endif
 }
 
 void ProgramEnumerator::warnIfAppxIncomplete(bool uwpOk, bool provisionedOk) {
@@ -423,8 +417,6 @@ qint64 ProgramEnumerator::measureFolderBytes(const QString& path,
     }
     return total;
 }
-
-#ifdef Q_OS_WIN
 
 QVector<ProgramInfo> ProgramEnumerator::scanRegistryPrograms() {
     QVector<ProgramInfo> all;
@@ -649,8 +641,6 @@ bool ProgramEnumerator::isSystemComponent(HKEY key) {
     DWORD const sys_comp = readRegDword(key, L"SystemComponent");
     return sys_comp == 1;
 }
-
-#endif  // Q_OS_WIN
 
 void ProgramEnumerator::parseUwpPackage(const QJsonObject& obj, QVector<ProgramInfo>& results) {
     if (obj["IsFramework"].toBool(false)) {

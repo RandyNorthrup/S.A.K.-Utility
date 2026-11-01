@@ -99,15 +99,9 @@ void TestOfflineDeploymentWorker::safeInstallerFilename_confinesTraversalNames()
     // A backslash name must land on a CONFINED basename, not merely on "something
     // without a separator": the fallback satisfies !contains('/') && !contains('\\')
     // just as well, and that is precisely the distinction the caller acts on.
-#ifdef Q_OS_WIN
     // QFileInfo treats '\' as a separator here, so the name is split, not refused.
     QCOMPARE(OfflineDeploymentWorker::safeInstallerFilename(QStringLiteral("bad\\path.exe"), fb),
              QStringLiteral("path.exe"));
-#else
-    // Elsewhere '\' is an ordinary character, so the separator guard refuses it.
-    QCOMPARE(OfflineDeploymentWorker::safeInstallerFilename(QStringLiteral("bad\\path.exe"), fb),
-             fb);
-#endif
 
     // The Windows-filename-hazard arm is a THIRD refusal, distinct from empty/traversal
     // and from the separator guard: such a name carries no separator at all, so only an

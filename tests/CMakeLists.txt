@@ -86,46 +86,44 @@ set(SAK_WINDOWS_PROCESS_JOB_SOURCES
 
 # windeployqt only analyses sak_utility.exe, which does not link Qt6::Test.
 # Copy Qt6Test.dll so the test executables can actually load at runtime.
-if(WIN32)
-    get_target_property(_qt_test_dll Qt6::Test IMPORTED_LOCATION_RELEASE)
-    if(NOT _qt_test_dll)
-        get_target_property(_qt_test_dll Qt6::Test IMPORTED_LOCATION)
-    endif()
-    if(_qt_test_dll AND EXISTS "${_qt_test_dll}")
-        file(COPY "${_qt_test_dll}" DESTINATION "${SAK_MAIN_OUTPUT_DIR}")
-        message(STATUS "Deployed ${_qt_test_dll} -> ${SAK_MAIN_OUTPUT_DIR}")
-    else()
-        message(FATAL_ERROR "Qt6Test.dll not found - tests cannot run without it")
-    endif()
-    # windeployqt deploys only qwindows.dll; the GUI suites run on the
-    # offscreen platform (QT_QPA_PLATFORM=offscreen) so no test window ever
-    # appears on the developer desktop. Deploy that plugin too. This must be
-    # loud on failure: the test environment forces the offscreen backend, so a
-    # missing plugin aborts every GUI suite at startup (0xC0000409) with no
-    # useful message.
-    get_target_property(_qt_core_dll Qt6::Core IMPORTED_LOCATION_RELEASE)
-    if(NOT _qt_core_dll)
-        get_target_property(_qt_core_dll Qt6::Core IMPORTED_LOCATION)
-    endif()
-    set(_qt_offscreen "")
-    if(_qt_core_dll)
-        get_filename_component(_qt_bin_dir "${_qt_core_dll}" DIRECTORY)
-        foreach(_candidate qoffscreen.dll qoffscreend.dll)
-            if(EXISTS "${_qt_bin_dir}/../plugins/platforms/${_candidate}")
-                set(_qt_offscreen "${_qt_bin_dir}/../plugins/platforms/${_candidate}")
-                break()
-            endif()
-        endforeach()
-    endif()
-    if(_qt_offscreen)
-        file(COPY "${_qt_offscreen}"
-             DESTINATION "${SAK_MAIN_OUTPUT_DIR}/platforms")
-        message(STATUS "Deployed ${_qt_offscreen} for headless GUI tests")
-    else()
-        message(FATAL_ERROR
-            "qoffscreen.dll not found next to Qt6::Core - the GUI test suites "
-            "force QT_QPA_PLATFORM=offscreen and would abort at startup")
-    endif()
+get_target_property(_qt_test_dll Qt6::Test IMPORTED_LOCATION_RELEASE)
+if(NOT _qt_test_dll)
+    get_target_property(_qt_test_dll Qt6::Test IMPORTED_LOCATION)
+endif()
+if(_qt_test_dll AND EXISTS "${_qt_test_dll}")
+    file(COPY "${_qt_test_dll}" DESTINATION "${SAK_MAIN_OUTPUT_DIR}")
+    message(STATUS "Deployed ${_qt_test_dll} -> ${SAK_MAIN_OUTPUT_DIR}")
+else()
+    message(FATAL_ERROR "Qt6Test.dll not found - tests cannot run without it")
+endif()
+# windeployqt deploys only qwindows.dll; the GUI suites run on the
+# offscreen platform (QT_QPA_PLATFORM=offscreen) so no test window ever
+# appears on the developer desktop. Deploy that plugin too. This must be
+# loud on failure: the test environment forces the offscreen backend, so a
+# missing plugin aborts every GUI suite at startup (0xC0000409) with no
+# useful message.
+get_target_property(_qt_core_dll Qt6::Core IMPORTED_LOCATION_RELEASE)
+if(NOT _qt_core_dll)
+    get_target_property(_qt_core_dll Qt6::Core IMPORTED_LOCATION)
+endif()
+set(_qt_offscreen "")
+if(_qt_core_dll)
+    get_filename_component(_qt_bin_dir "${_qt_core_dll}" DIRECTORY)
+    foreach(_candidate qoffscreen.dll qoffscreend.dll)
+        if(EXISTS "${_qt_bin_dir}/../plugins/platforms/${_candidate}")
+            set(_qt_offscreen "${_qt_bin_dir}/../plugins/platforms/${_candidate}")
+            break()
+        endif()
+    endforeach()
+endif()
+if(_qt_offscreen)
+    file(COPY "${_qt_offscreen}"
+         DESTINATION "${SAK_MAIN_OUTPUT_DIR}/platforms")
+    message(STATUS "Deployed ${_qt_offscreen} for headless GUI tests")
+else()
+    message(FATAL_ERROR
+        "qoffscreen.dll not found next to Qt6::Core - the GUI test suites "
+        "force QT_QPA_PLATFORM=offscreen and would abort at startup")
 endif()
 
 # ============================================================================
@@ -651,9 +649,9 @@ target_include_directories(file_management_live_certifier PRIVATE
 message(STATUS "Added certification helper: file_management_live_certifier")
 
 # flash_live_certifier - LIVE, DESTRUCTIVE raw-disk cert of the Batch 4 FlashWorker
-# memory-safety fixes. Built only on Windows; run manually + elevated against a
-# disposable removable USB (it hard-refuses non-USB / system / oversized disks).
-if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/certification/flash_live_certifier.cpp")
+# memory-safety fixes. Run manually + elevated against a disposable removable USB
+# (it hard-refuses non-USB / system / oversized disks).
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/certification/flash_live_certifier.cpp")
     add_executable(flash_live_certifier
         certification/flash_live_certifier.cpp
         ../src/threading/flash_worker.cpp
@@ -1772,10 +1770,6 @@ if(SAK_ENABLE_AI_ASSISTANT)
     target_compile_definitions(test_ai_assistant_panel_tool_dispatch PRIVATE
         SAK_ENABLE_AI_ASSISTANT=$<BOOL:${SAK_ENABLE_AI_ASSISTANT}>
     )
-    # AUTOMOC forwards target compile definitions to moc (not the builtin _WIN32). The product
-    # configures only on Windows, so register the browser-extension button slot unconditionally.
-    target_compile_definitions(test_ai_assistant_panel_tool_dispatch PRIVATE
-        SAK_WIN_REGISTRY_TESTS)
     target_link_libraries(test_ai_assistant_panel_tool_dispatch PRIVATE
         sak_gui sak_ai_core sak_win32mcp sak_core sak_partition_fs sak_foundation
         Qt6::Core Qt6::CorePrivate Qt6::Widgets Qt6::Concurrent Qt6::Network Qt6::Xml
@@ -1926,9 +1920,7 @@ target_link_libraries(test_crash_reporter PRIVATE
     sak_core
     Qt6::Core Qt6::Test
 )
-if(WIN32)
-    target_link_libraries(test_crash_reporter PRIVATE dbghelp)
-endif()
+target_link_libraries(test_crash_reporter PRIVATE dbghelp)
 target_include_directories(test_crash_reporter PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
@@ -4956,9 +4948,6 @@ target_link_libraries(test_browser_extension_installer PRIVATE
 target_include_directories(test_browser_extension_installer PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../include
 )
-# AUTOMOC forwards target compile definitions to moc (unlike the builtin _WIN32). The product
-# configures only on Windows, so register the registry slots unconditionally.
-target_compile_definitions(test_browser_extension_installer PRIVATE SAK_WIN_REGISTRY_TESTS)
 add_test(NAME test_browser_extension_installer COMMAND test_browser_extension_installer
          -o "${TEST_OUTPUT_DIR}/test_browser_extension_installer.txt,txt" -o -,txt
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
@@ -6273,281 +6262,279 @@ endforeach()
 # Both are hermetic: each copies the script under test into a scratch directory and, for
 # the native host, passes a throwaway -RegistryRoot, so neither touches the developer's
 # Chrome installation or the committed manifest.
-if(PLATFORM_WINDOWS)
-    find_program(SAK_PWSH_EXECUTABLE NAMES pwsh)
-    if(NOT SAK_PWSH_EXECUTABLE)
-        message(FATAL_ERROR
-                "pwsh was not found, so the PowerShell guard tests could not run. "
-                "Refusing to configure a test suite that silently drops them.")
-    endif()
-    add_test(NAME test_partition_manager_live_certifier
-             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_SOURCE_DIR}/scripts/test_partition_manager_live_certifier.ps1"
-                     -CertifierPath "$<TARGET_FILE:partition_manager_live_certifier>"
-                     -OutputRoot "${TEST_OUTPUT_DIR}/partition_manager_live_certifier")
-    set_tests_properties(test_partition_manager_live_certifier PROPERTIES TIMEOUT 120)
-
-    add_test(NAME test_partition_manager_controller_evidence
-             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_controller_evidence.ps1")
-    set_tests_properties(test_partition_manager_controller_evidence PROPERTIES TIMEOUT 120)
-
-    add_test(NAME test_partition_manager_controller_restore_routing
-             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_SOURCE_DIR}/scripts/test_partition_manager_controller_restore_routing.ps1"
-                     -RunGuardDrills)
-    set_tests_properties(test_partition_manager_controller_restore_routing PROPERTIES TIMEOUT 60)
-
-    # Owner ruling 2026-10-24: no test hooks or escape hatches in production. The release libraries
-    # and the application are scanned for the partition/filesystem test seams (compiled only under
-    # SAK_PARTITION_FS_TEST_HOOKS), the AI and assistant-panel seams (SAK_AI_TEST_HOOKS), and for
-    # the retired SAK_DEV_SOURCE_TREE and SAK_AI_POLICY_DISK_OVERRIDE overrides.
-    add_test(NAME test_release_binary_test_hooks
-             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_SOURCE_DIR}/scripts/test_release_binary_test_hooks.ps1"
-                     -PartitionFsLibrary "$<TARGET_FILE:sak_partition_fs>"
-                     -CoreLibrary "$<TARGET_FILE:sak_core>"
-                     -AiCoreLibrary "$<TARGET_FILE:sak_ai_core>"
-                     -GuiLibrary "$<TARGET_FILE:sak_gui>"
-                     -ApplicationExe "$<TARGET_FILE:sak_utility>")
-    set_tests_properties(test_release_binary_test_hooks PROPERTIES TIMEOUT 120)
-
-    foreach(_sak_ps_test test_pack_extension test_register_native_host)
-        add_test(NAME ${_sak_ps_test}
-                 COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                         -File "${CMAKE_CURRENT_SOURCE_DIR}/unit/${_sak_ps_test}.ps1")
-        set_tests_properties(${_sak_ps_test} PROPERTIES TIMEOUT 300)
-    endforeach()
-
-    # scripts/test_partition_manager_certification_tools.ps1 self-tests the certification
-    # verifiers against synthetic reports -- it creates no VHDs and mutates no disks. It
-    # was reachable ONLY from scripts/check_release_readiness.ps1, which runs in the
-    # release workflow, and CI has not run for 776 commits (R5-G21-7). An 800-line self
-    # test that executes once per release is not a gate, so it runs in the suite now.
-    #
-    # -OutputRoot is explicit in the build tree. Its default also stays under
-    # build/test_results so standalone self-tests cannot mix synthetic fixtures
-    # with captured certification evidence under artifacts/.
-    add_test(NAME test_partition_manager_certification_tools
-             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_manager_certification_tools.ps1"
-                     -OutputRoot "${TEST_OUTPUT_DIR}/partition-manager-certification-tools")
-    set_tests_properties(test_partition_manager_certification_tools PROPERTIES TIMEOUT 600)
-
-    # Start-Process with redirected output can leave ExitCode null under Windows PowerShell
-    # 5.1, and sequential pipe reads can deadlock when both streams fill. This hermetic test
-    # drives the shared ProcessStartInfo seam through exit 0/7, large dual-stream output,
-    # argument quoting, and a bounded timeout. It also pins the named certification runners to
-    # that seam and rejects their old scoped capture blocks. Keep each bounded group separate
-    # under pwsh and Windows PowerShell 5.1: the old aggregate crossed its 60-second deadline
-    # at different groups on repeated runs, hiding the remaining assertions.
-    add_test(NAME test_process_capture
-             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
-                     -CoreOnly)
-    set_tests_properties(test_process_capture PROPERTIES TIMEOUT 60)
-
-    # CTest is a native parent: unlike a direct PowerShell-to-PowerShell launch, it retains
-    # the caller's PowerShell 7 module path. Clear only that inherited variable at each
-    # Windows PowerShell launch so 5.1 initializes its own standard-module search paths.
-    set(SAK_WINDOWS_POWERSHELL_EXECUTABLE
-        "$ENV{SystemRoot}/System32/WindowsPowerShell/v1.0/powershell.exe")
-    if(NOT EXISTS "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}")
-        message(FATAL_ERROR
-                "Windows PowerShell 5.1 was not found, so its redirected-process exit-code "
-                "regression test cannot run.")
-    endif()
-    add_test(NAME test_process_capture_windows_powershell
-             COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
-                     "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
-                     -CoreOnly)
-    set_tests_properties(test_process_capture_windows_powershell PROPERTIES TIMEOUT 60)
-
-    add_test(NAME test_process_capture_ownership
-             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
-                     -OwnershipOnly)
-    add_test(NAME test_process_capture_ownership_windows_powershell
-             COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
-                     "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
-                     -OwnershipOnly)
-    add_test(NAME test_process_capture_deadline
-             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
-                     -DeadlineOnly)
-    add_test(NAME test_process_capture_deadline_windows_powershell
-             COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
-                     "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
-                     -DeadlineOnly)
-    add_test(NAME test_process_capture_output
-             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
-                     -OutputOnly)
-    add_test(NAME test_process_capture_output_windows_powershell
-             COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
-                     "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
-                     -OutputOnly)
-    add_test(NAME test_process_capture_stdin
-             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
-                     -StdinOnly)
-    add_test(NAME test_process_capture_stdin_windows_powershell
-             COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
-                     "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
-                     -StdinOnly)
-    add_test(NAME test_process_capture_environment
-             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
-                     -EnvironmentOnly)
-    add_test(NAME test_process_capture_environment_windows_powershell
-             COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
-                     "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
-                     -EnvironmentOnly)
-    set_tests_properties(
-        test_process_capture_ownership
-        test_process_capture_ownership_windows_powershell
-        test_process_capture_deadline
-        test_process_capture_deadline_windows_powershell
-        test_process_capture_output
-        test_process_capture_output_windows_powershell
-        test_process_capture_stdin
-        test_process_capture_stdin_windows_powershell
-        test_process_capture_environment
-        test_process_capture_environment_windows_powershell
-        PROPERTIES TIMEOUT 60)
-
-    # Coverage reports are evidence only when every child/tool succeeds and every output is fresh.
-    # Fake native tools make each refusal deterministic without needing an instrumented build.
-    add_test(NAME test_coverage_runners
-             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_coverage_runners.ps1")
-    set_tests_properties(test_coverage_runners PROPERTIES TIMEOUT 300)
-
-    add_test(NAME test_coverage_runners_windows_powershell
-             COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
-                     "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_coverage_runners.ps1")
-    set_tests_properties(test_coverage_runners_windows_powershell PROPERTIES TIMEOUT 300)
-
-    add_test(NAME test_new_partition_manager_automation_vm_security
-             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_new_partition_manager_automation_vm_security.ps1")
-    set_tests_properties(test_new_partition_manager_automation_vm_security PROPERTIES TIMEOUT 120)
-
-    add_test(NAME test_new_partition_manager_automation_vm_security_windows_powershell
-             COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
-                     "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_new_partition_manager_automation_vm_security.ps1")
-    set_tests_properties(
-        test_new_partition_manager_automation_vm_security_windows_powershell PROPERTIES TIMEOUT 120)
-
-    add_test(NAME test_false_green_command_propagation
-             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_false_green_command_propagation.ps1")
-    set_tests_properties(test_false_green_command_propagation PROPERTIES TIMEOUT 60)
-
-    add_test(NAME test_false_green_command_propagation_windows_powershell
-             COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
-                     "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_false_green_command_propagation.ps1")
-    set_tests_properties(
-        test_false_green_command_propagation_windows_powershell PROPERTIES TIMEOUT 60)
-
-    # Both run the application THIS build produced, passed from the target, never a path under
-    # build\Release that may hold some other build's binary; scripts/assert_built_target.ps1
-    # refuses a missing, misplaced or stale target.
-    add_test(NAME test_startup_budget
-             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_startup_budget.ps1"
-                     -ExePath "$<TARGET_FILE:sak_utility>")
-    set_tests_properties(test_startup_budget PROPERTIES TIMEOUT 180)
-
-    # The real application: a second launch on one data folder brings the running instance
-    # forward and exits; an elevated relaunch (--elevated-relaunch) waits for its launcher.
-    add_test(NAME test_single_instance_app
-             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_single_instance_app.ps1"
-                     -ExePath "$<TARGET_FILE:sak_utility>")
-    set_tests_properties(test_single_instance_app PROPERTIES TIMEOUT 300)
-
-    add_test(NAME test_windows_runtime_dependencies
-             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_windows_runtime_dependencies.ps1"
-                     -ExePath "$<TARGET_FILE:sak_utility>"
-                     -ReleaseDir "$<TARGET_FILE_DIR:sak_utility>")
-    set_tests_properties(test_windows_runtime_dependencies PROPERTIES TIMEOUT 120)
-
-    add_test(NAME test_assert_built_target
-             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_assert_built_target.ps1")
-    set_tests_properties(test_assert_built_target PROPERTIES TIMEOUT 60)
-
-    # scripts/run_folder_retention.ps1 deletes the run folders of passing certifier and CLI
-    # image tests (they once held over 1 TB under build/test_results). It deletes directories,
-    # so its fences are tested under both hosts: they delete through different .NET runtimes.
-    add_test(NAME test_run_folder_retention
-             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_run_folder_retention.ps1")
-    add_test(NAME test_run_folder_retention_windows_powershell
-             COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
-                     "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_run_folder_retention.ps1")
-    set_tests_properties(test_run_folder_retention test_run_folder_retention_windows_powershell
-                         PROPERTIES TIMEOUT 60)
-
-    add_test(NAME test_stage_portable_release
-             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_stage_portable_release.ps1"
-                     -BuildDirectory "${CMAKE_BINARY_DIR}" -SkipArchiveContracts)
-    set_tests_properties(test_stage_portable_release PROPERTIES TIMEOUT 240)
-
-    add_test(NAME test_release_archive_recovery
-             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
-                     -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_stage_portable_release.ps1"
-                     -BuildDirectory "${CMAKE_BINARY_DIR}" -ArchiveOnly)
-    set_tests_properties(test_release_archive_recovery PROPERTIES TIMEOUT 180)
-
-    find_program(SAK_PYTHON_EXECUTABLE NAMES python3 python)
-    if(NOT SAK_PYTHON_EXECUTABLE)
-        message(FATAL_ERROR
-                "Python was not found, so the lizard JavaScript-baseline gate test cannot run.")
-    endif()
-    add_test(NAME test_run_lizard_js_baseline
-             COMMAND "${SAK_PYTHON_EXECUTABLE}"
-                     "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_run_lizard_js_baseline.py")
-    set_tests_properties(test_run_lizard_js_baseline PROPERTIES TIMEOUT 60)
-
-    add_test(NAME test_mutation_runner
-             COMMAND "${SAK_PYTHON_EXECUTABLE}"
-                     "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mutation_runner.py")
-    set_tests_properties(test_mutation_runner PROPERTIES TIMEOUT 60)
-
-    add_test(NAME test_source_fingerprint
-             COMMAND "${SAK_PYTHON_EXECUTABLE}"
-                     "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_source_fingerprint.py")
-    set_tests_properties(test_source_fingerprint PROPERTIES TIMEOUT 180)
-
-    add_test(NAME test_cppcheck_qt_slot_classifier
-             COMMAND "${SAK_PYTHON_EXECUTABLE}"
-                     "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_cppcheck_qt_slot_classifier.py")
-    set_tests_properties(test_cppcheck_qt_slot_classifier PROPERTIES TIMEOUT 60)
-
-    add_test(NAME test_clang_tidy_naming_gate
-             COMMAND "${SAK_PYTHON_EXECUTABLE}"
-                     "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_clang_tidy_naming_gate.py")
-    set_tests_properties(test_clang_tidy_naming_gate PROPERTIES TIMEOUT 60)
-
-    add_test(NAME test_apple_filesystem_capability_matrix
-             COMMAND "${SAK_PYTHON_EXECUTABLE}"
-                     "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_apple_filesystem_capability_matrix.py")
-    set_tests_properties(test_apple_filesystem_capability_matrix PROPERTIES TIMEOUT 60)
+find_program(SAK_PWSH_EXECUTABLE NAMES pwsh)
+if(NOT SAK_PWSH_EXECUTABLE)
+    message(FATAL_ERROR
+            "pwsh was not found, so the PowerShell guard tests could not run. "
+            "Refusing to configure a test suite that silently drops them.")
 endif()
+add_test(NAME test_partition_manager_live_certifier
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_SOURCE_DIR}/scripts/test_partition_manager_live_certifier.ps1"
+                 -CertifierPath "$<TARGET_FILE:partition_manager_live_certifier>"
+                 -OutputRoot "${TEST_OUTPUT_DIR}/partition_manager_live_certifier")
+set_tests_properties(test_partition_manager_live_certifier PROPERTIES TIMEOUT 120)
+
+add_test(NAME test_partition_manager_controller_evidence
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_partition_manager_controller_evidence.ps1")
+set_tests_properties(test_partition_manager_controller_evidence PROPERTIES TIMEOUT 120)
+
+add_test(NAME test_partition_manager_controller_restore_routing
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_SOURCE_DIR}/scripts/test_partition_manager_controller_restore_routing.ps1"
+                 -RunGuardDrills)
+set_tests_properties(test_partition_manager_controller_restore_routing PROPERTIES TIMEOUT 60)
+
+# Owner ruling 2026-10-24: no test hooks or escape hatches in production. The release libraries
+# and the application are scanned for the partition/filesystem test seams (compiled only under
+# SAK_PARTITION_FS_TEST_HOOKS), the AI and assistant-panel seams (SAK_AI_TEST_HOOKS), and for
+# the retired SAK_DEV_SOURCE_TREE and SAK_AI_POLICY_DISK_OVERRIDE overrides.
+add_test(NAME test_release_binary_test_hooks
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_SOURCE_DIR}/scripts/test_release_binary_test_hooks.ps1"
+                 -PartitionFsLibrary "$<TARGET_FILE:sak_partition_fs>"
+                 -CoreLibrary "$<TARGET_FILE:sak_core>"
+                 -AiCoreLibrary "$<TARGET_FILE:sak_ai_core>"
+                 -GuiLibrary "$<TARGET_FILE:sak_gui>"
+                 -ApplicationExe "$<TARGET_FILE:sak_utility>")
+set_tests_properties(test_release_binary_test_hooks PROPERTIES TIMEOUT 120)
+
+foreach(_sak_ps_test test_pack_extension test_register_native_host)
+    add_test(NAME ${_sak_ps_test}
+             COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                     -File "${CMAKE_CURRENT_SOURCE_DIR}/unit/${_sak_ps_test}.ps1")
+    set_tests_properties(${_sak_ps_test} PROPERTIES TIMEOUT 300)
+endforeach()
+
+# scripts/test_partition_manager_certification_tools.ps1 self-tests the certification
+# verifiers against synthetic reports -- it creates no VHDs and mutates no disks. It
+# was reachable ONLY from scripts/check_release_readiness.ps1, which runs in the
+# release workflow, and CI has not run for 776 commits (R5-G21-7). An 800-line self
+# test that executes once per release is not a gate, so it runs in the suite now.
+#
+# -OutputRoot is explicit in the build tree. Its default also stays under
+# build/test_results so standalone self-tests cannot mix synthetic fixtures
+# with captured certification evidence under artifacts/.
+add_test(NAME test_partition_manager_certification_tools
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_partition_manager_certification_tools.ps1"
+                 -OutputRoot "${TEST_OUTPUT_DIR}/partition-manager-certification-tools")
+set_tests_properties(test_partition_manager_certification_tools PROPERTIES TIMEOUT 600)
+
+# Start-Process with redirected output can leave ExitCode null under Windows PowerShell
+# 5.1, and sequential pipe reads can deadlock when both streams fill. This hermetic test
+# drives the shared ProcessStartInfo seam through exit 0/7, large dual-stream output,
+# argument quoting, and a bounded timeout. It also pins the named certification runners to
+# that seam and rejects their old scoped capture blocks. Keep each bounded group separate
+# under pwsh and Windows PowerShell 5.1: the old aggregate crossed its 60-second deadline
+# at different groups on repeated runs, hiding the remaining assertions.
+add_test(NAME test_process_capture
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
+                 -CoreOnly)
+set_tests_properties(test_process_capture PROPERTIES TIMEOUT 60)
+
+# CTest is a native parent: unlike a direct PowerShell-to-PowerShell launch, it retains
+# the caller's PowerShell 7 module path. Clear only that inherited variable at each
+# Windows PowerShell launch so 5.1 initializes its own standard-module search paths.
+set(SAK_WINDOWS_POWERSHELL_EXECUTABLE
+    "$ENV{SystemRoot}/System32/WindowsPowerShell/v1.0/powershell.exe")
+if(NOT EXISTS "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}")
+    message(FATAL_ERROR
+            "Windows PowerShell 5.1 was not found, so its redirected-process exit-code "
+            "regression test cannot run.")
+endif()
+add_test(NAME test_process_capture_windows_powershell
+         COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
+                 "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
+                 -CoreOnly)
+set_tests_properties(test_process_capture_windows_powershell PROPERTIES TIMEOUT 60)
+
+add_test(NAME test_process_capture_ownership
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
+                 -OwnershipOnly)
+add_test(NAME test_process_capture_ownership_windows_powershell
+         COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
+                 "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
+                 -OwnershipOnly)
+add_test(NAME test_process_capture_deadline
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
+                 -DeadlineOnly)
+add_test(NAME test_process_capture_deadline_windows_powershell
+         COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
+                 "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
+                 -DeadlineOnly)
+add_test(NAME test_process_capture_output
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
+                 -OutputOnly)
+add_test(NAME test_process_capture_output_windows_powershell
+         COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
+                 "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
+                 -OutputOnly)
+add_test(NAME test_process_capture_stdin
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
+                 -StdinOnly)
+add_test(NAME test_process_capture_stdin_windows_powershell
+         COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
+                 "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
+                 -StdinOnly)
+add_test(NAME test_process_capture_environment
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
+                 -EnvironmentOnly)
+add_test(NAME test_process_capture_environment_windows_powershell
+         COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
+                 "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_process_capture.ps1"
+                 -EnvironmentOnly)
+set_tests_properties(
+    test_process_capture_ownership
+    test_process_capture_ownership_windows_powershell
+    test_process_capture_deadline
+    test_process_capture_deadline_windows_powershell
+    test_process_capture_output
+    test_process_capture_output_windows_powershell
+    test_process_capture_stdin
+    test_process_capture_stdin_windows_powershell
+    test_process_capture_environment
+    test_process_capture_environment_windows_powershell
+    PROPERTIES TIMEOUT 60)
+
+# Coverage reports are evidence only when every child/tool succeeds and every output is fresh.
+# Fake native tools make each refusal deterministic without needing an instrumented build.
+add_test(NAME test_coverage_runners
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_coverage_runners.ps1")
+set_tests_properties(test_coverage_runners PROPERTIES TIMEOUT 300)
+
+add_test(NAME test_coverage_runners_windows_powershell
+         COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
+                 "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_coverage_runners.ps1")
+set_tests_properties(test_coverage_runners_windows_powershell PROPERTIES TIMEOUT 300)
+
+add_test(NAME test_new_partition_manager_automation_vm_security
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_new_partition_manager_automation_vm_security.ps1")
+set_tests_properties(test_new_partition_manager_automation_vm_security PROPERTIES TIMEOUT 120)
+
+add_test(NAME test_new_partition_manager_automation_vm_security_windows_powershell
+         COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
+                 "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_new_partition_manager_automation_vm_security.ps1")
+set_tests_properties(
+    test_new_partition_manager_automation_vm_security_windows_powershell PROPERTIES TIMEOUT 120)
+
+add_test(NAME test_false_green_command_propagation
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_false_green_command_propagation.ps1")
+set_tests_properties(test_false_green_command_propagation PROPERTIES TIMEOUT 60)
+
+add_test(NAME test_false_green_command_propagation_windows_powershell
+         COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
+                 "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_false_green_command_propagation.ps1")
+set_tests_properties(
+    test_false_green_command_propagation_windows_powershell PROPERTIES TIMEOUT 60)
+
+# Both run the application THIS build produced, passed from the target, never a path under
+# build\Release that may hold some other build's binary; scripts/assert_built_target.ps1
+# refuses a missing, misplaced or stale target.
+add_test(NAME test_startup_budget
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_startup_budget.ps1"
+                 -ExePath "$<TARGET_FILE:sak_utility>")
+set_tests_properties(test_startup_budget PROPERTIES TIMEOUT 180)
+
+# The real application: a second launch on one data folder brings the running instance
+# forward and exits; an elevated relaunch (--elevated-relaunch) waits for its launcher.
+add_test(NAME test_single_instance_app
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_single_instance_app.ps1"
+                 -ExePath "$<TARGET_FILE:sak_utility>")
+set_tests_properties(test_single_instance_app PROPERTIES TIMEOUT 300)
+
+add_test(NAME test_windows_runtime_dependencies
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_windows_runtime_dependencies.ps1"
+                 -ExePath "$<TARGET_FILE:sak_utility>"
+                 -ReleaseDir "$<TARGET_FILE_DIR:sak_utility>")
+set_tests_properties(test_windows_runtime_dependencies PROPERTIES TIMEOUT 120)
+
+add_test(NAME test_assert_built_target
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_assert_built_target.ps1")
+set_tests_properties(test_assert_built_target PROPERTIES TIMEOUT 60)
+
+# scripts/run_folder_retention.ps1 deletes the run folders of passing certifier and CLI
+# image tests (they once held over 1 TB under build/test_results). It deletes directories,
+# so its fences are tested under both hosts: they delete through different .NET runtimes.
+add_test(NAME test_run_folder_retention
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_run_folder_retention.ps1")
+add_test(NAME test_run_folder_retention_windows_powershell
+         COMMAND "${CMAKE_COMMAND}" -E env --unset=PSModulePath
+                 "${SAK_WINDOWS_POWERSHELL_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_run_folder_retention.ps1")
+set_tests_properties(test_run_folder_retention test_run_folder_retention_windows_powershell
+                     PROPERTIES TIMEOUT 60)
+
+add_test(NAME test_stage_portable_release
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_stage_portable_release.ps1"
+                 -BuildDirectory "${CMAKE_BINARY_DIR}" -SkipArchiveContracts)
+set_tests_properties(test_stage_portable_release PROPERTIES TIMEOUT 240)
+
+add_test(NAME test_release_archive_recovery
+         COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
+                 -File "${CMAKE_CURRENT_SOURCE_DIR}/../scripts/test_stage_portable_release.ps1"
+                 -BuildDirectory "${CMAKE_BINARY_DIR}" -ArchiveOnly)
+set_tests_properties(test_release_archive_recovery PROPERTIES TIMEOUT 180)
+
+find_program(SAK_PYTHON_EXECUTABLE NAMES python3 python)
+if(NOT SAK_PYTHON_EXECUTABLE)
+    message(FATAL_ERROR
+            "Python was not found, so the lizard JavaScript-baseline gate test cannot run.")
+endif()
+add_test(NAME test_run_lizard_js_baseline
+         COMMAND "${SAK_PYTHON_EXECUTABLE}"
+                 "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_run_lizard_js_baseline.py")
+set_tests_properties(test_run_lizard_js_baseline PROPERTIES TIMEOUT 60)
+
+add_test(NAME test_mutation_runner
+         COMMAND "${SAK_PYTHON_EXECUTABLE}"
+                 "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_mutation_runner.py")
+set_tests_properties(test_mutation_runner PROPERTIES TIMEOUT 60)
+
+add_test(NAME test_source_fingerprint
+         COMMAND "${SAK_PYTHON_EXECUTABLE}"
+                 "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_source_fingerprint.py")
+set_tests_properties(test_source_fingerprint PROPERTIES TIMEOUT 180)
+
+add_test(NAME test_cppcheck_qt_slot_classifier
+         COMMAND "${SAK_PYTHON_EXECUTABLE}"
+                 "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_cppcheck_qt_slot_classifier.py")
+set_tests_properties(test_cppcheck_qt_slot_classifier PROPERTIES TIMEOUT 60)
+
+add_test(NAME test_clang_tidy_naming_gate
+         COMMAND "${SAK_PYTHON_EXECUTABLE}"
+                 "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_clang_tidy_naming_gate.py")
+set_tests_properties(test_clang_tidy_naming_gate PROPERTIES TIMEOUT 60)
+
+add_test(NAME test_apple_filesystem_capability_matrix
+         COMMAND "${SAK_PYTHON_EXECUTABLE}"
+                 "${CMAKE_CURRENT_SOURCE_DIR}/unit/test_apple_filesystem_capability_matrix.py")
+set_tests_properties(test_apple_filesystem_capability_matrix PROPERTIES TIMEOUT 60)
 
 # The browser-control service worker is ~3300 lines of privileged JavaScript that drives a
 # real user's browser over CDP and parses page-controlled data. No C/C++ gate can see it, so
@@ -6780,39 +6767,37 @@ message(STATUS "Test labels: ${_sak_label_test_count} tests labelled; "
 # ENVIRONMENT_MODIFICATION prepends rather than replaces, so the rest of PATH
 # survives. Applied to every registered test in this directory, so a new test
 # target inherits it automatically and cannot regress.
-if(WIN32)
-    get_target_property(_sak_qt_core_location Qt6::Core LOCATION)
-    if(_sak_qt_core_location)
-        get_filename_component(_sak_qt_bin_dir "${_sak_qt_core_location}" DIRECTORY)
+get_target_property(_sak_qt_core_location Qt6::Core LOCATION)
+if(_sak_qt_core_location)
+    get_filename_component(_sak_qt_bin_dir "${_sak_qt_core_location}" DIRECTORY)
 
-        # The vcpkg bin directory is needed for the SAME reason, and only became
-        # needed when the build moved to the dynamic x64-windows triplet: zlib1,
-        # bz2 and liblzma are now DLLs rather than static libraries. sak_utility
-        # gets them staged beside it by a POST_BUILD step, but test executables
-        # live in a different directory and had no such step, so every test would
-        # have died with STATUS_DLL_NOT_FOUND. Staged here so the fix covers all
-        # tests at once instead of per target.
-        set(_sak_test_path_dirs "${_sak_qt_bin_dir}")
-        if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
-            set(_sak_vcpkg_bin_dir "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
-            if(EXISTS "${_sak_vcpkg_bin_dir}")
-                list(APPEND _sak_test_path_dirs "${_sak_vcpkg_bin_dir}")
-            endif()
+    # The vcpkg bin directory is needed for the SAME reason, and only became
+    # needed when the build moved to the dynamic x64-windows triplet: zlib1,
+    # bz2 and liblzma are now DLLs rather than static libraries. sak_utility
+    # gets them staged beside it by a POST_BUILD step, but test executables
+    # live in a different directory and had no such step, so every test would
+    # have died with STATUS_DLL_NOT_FOUND. Staged here so the fix covers all
+    # tests at once instead of per target.
+    set(_sak_test_path_dirs "${_sak_qt_bin_dir}")
+    if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+        set(_sak_vcpkg_bin_dir "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+        if(EXISTS "${_sak_vcpkg_bin_dir}")
+            list(APPEND _sak_test_path_dirs "${_sak_vcpkg_bin_dir}")
         endif()
-
-        get_property(_sak_registered_tests DIRECTORY PROPERTY TESTS)
-        foreach(_sak_test IN LISTS _sak_registered_tests)
-            foreach(_sak_path_dir IN LISTS _sak_test_path_dirs)
-                set_property(TEST ${_sak_test} APPEND PROPERTY ENVIRONMENT_MODIFICATION
-                             "PATH=path_list_prepend:${_sak_path_dir}")
-            endforeach()
-        endforeach()
-        list(LENGTH _sak_registered_tests _sak_test_count)
-        message(STATUS "Test PATH staging: ${_sak_test_count} tests get ${_sak_test_path_dirs}")
-    else()
-        message(FATAL_ERROR
-                "Could not resolve the Qt6::Core location, so test binaries would "
-                "not find their Qt DLLs. Refusing to configure a test suite that "
-                "cannot run.")
     endif()
+
+    get_property(_sak_registered_tests DIRECTORY PROPERTY TESTS)
+    foreach(_sak_test IN LISTS _sak_registered_tests)
+        foreach(_sak_path_dir IN LISTS _sak_test_path_dirs)
+            set_property(TEST ${_sak_test} APPEND PROPERTY ENVIRONMENT_MODIFICATION
+                         "PATH=path_list_prepend:${_sak_path_dir}")
+        endforeach()
+    endforeach()
+    list(LENGTH _sak_registered_tests _sak_test_count)
+    message(STATUS "Test PATH staging: ${_sak_test_count} tests get ${_sak_test_path_dirs}")
+else()
+    message(FATAL_ERROR
+            "Could not resolve the Qt6::Core location, so test binaries would "
+            "not find their Qt DLLs. Refusing to configure a test suite that "
+            "cannot run.")
 endif()

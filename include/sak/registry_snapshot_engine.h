@@ -14,9 +14,7 @@
 
 #include <type_traits>
 
-#ifdef Q_OS_WIN
 #include <windows.h>
-#endif
 
 namespace sak {
 
@@ -54,7 +52,6 @@ public:
     [[nodiscard]] static QSet<QString> captureSnapshot(bool* reliable = nullptr);
 
 private:
-#ifdef Q_OS_WIN
     static constexpr int kDefaultMaxDepth = 3;
 
     /// @brief Accumulator threaded through the recursive walk: the captured key set
@@ -76,7 +73,6 @@ private:
                               const QString& hiveName,
                               const SnapshotSink& sink,
                               int maxDepth = kDefaultMaxDepth);
-#endif
 
     /// @brief Monitored registry paths for snapshots
     static const QStringList kMonitoredPaths;

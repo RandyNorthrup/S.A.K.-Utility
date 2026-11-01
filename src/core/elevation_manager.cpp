@@ -6,8 +6,6 @@
 
 #include "sak/elevation_manager.h"
 
-#ifdef _WIN32
-
 #include "sak/logger.h"
 
 #include <string_view>
@@ -248,5 +246,3 @@ std::string ElevationManager::getElevationErrorMessage(unsigned long error_code)
 }
 
 }  // namespace sak
-
-#endif  // _WIN32

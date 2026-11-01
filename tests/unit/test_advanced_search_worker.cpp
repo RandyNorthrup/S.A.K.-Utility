@@ -19,11 +19,9 @@
 #include <algorithm>
 #include <limits>
 
-#include <zlib.h>
-
-#ifdef _WIN32
 #include <windows.h>
-#endif
+
+#include <zlib.h>
 
 using sak::AdvancedSearchWorker;
 using sak::SearchConfig;

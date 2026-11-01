@@ -18,14 +18,11 @@
 #include <QTextStream>
 
 #include <algorithm>
-
-#ifdef Q_OS_WIN
 #include <iterator>
 
 #include <windows.h>
 
 #include <lmcons.h>
-#endif
 
 namespace sak {
 
@@ -484,25 +481,21 @@ void MigrationReport::clear() {
     m_metadata.match_rate = 0.0;
 }
 
-QString MigrationReport::getComputerName() const {
-#ifdef Q_OS_WIN
+QString MigrationReport::getComputerName() {
     WCHAR buffer[MAX_COMPUTERNAME_LENGTH + 1];
     DWORD size = MAX_COMPUTERNAME_LENGTH + 1;
     if (GetComputerNameW(buffer, &size) != 0) {
         return QString::fromWCharArray(buffer);
     }
-#endif
     return QSysInfo::machineHostName();
 }
 
-QString MigrationReport::getCurrentUser() const {
-#ifdef Q_OS_WIN
+QString MigrationReport::getCurrentUser() {
     WCHAR buffer[UNLEN + 1];
     DWORD size = UNLEN + 1;
     if (GetUserNameW(buffer, &size) != 0) {
         return QString::fromWCharArray(buffer);
     }
-#endif
     return qEnvironmentVariable("USERNAME");
 }
 

@@ -130,8 +130,8 @@ public:
 
     /// @brief True iff the file at @p choco_path is a genuine, Chocolatey-signed
     ///        binary: valid Authenticode signature chaining to a trusted root AND
-    ///        a trusted Chocolatey signer subject. Fails closed on an empty path,
-    ///        a missing/unsigned file, or off Windows. Exposed so every path that
+    ///        a trusted Chocolatey signer subject. Fails closed on an empty path
+    ///        or a missing/unsigned file. Exposed so every path that
     ///        launches the bundled choco.exe (manager execution AND the scanner)
     ///        shares one execution-time authenticity gate.
     [[nodiscard]] static bool isAuthenticChocoBinary(const QString& choco_path);

@@ -15,14 +15,11 @@
 
 #include <vector>
 
-#ifdef Q_OS_WIN
 #include <sddl.h>
 #pragma comment(lib, "advapi32.lib")
-#endif
 
 namespace sak {
 
-#ifdef Q_OS_WIN
 namespace {
 // The standard-user DACL grants three trustees: the destination user, SYSTEM, and
 // the local Administrators group.
@@ -376,10 +373,8 @@ QString sddlApplyFailureMessage(DWORD result) {
     return QString();
 }
 }  // namespace
-#endif
 
 PermissionManager::PermissionManager() {
-#ifdef Q_OS_WIN
     // Enable privileges lazily -- only succeeds when running elevated.
     // Non-elevated callers will get clear errors from methods that need them.
     if (ElevationManager::isElevated()) {
@@ -396,7 +391,6 @@ PermissionManager::PermissionManager() {
                 "privileges; ACL operations that need them will fail closed with access denied");
         }
     }
-#endif
 }
 
 PermissionManager::~PermissionManager() {}
@@ -429,7 +423,6 @@ bool PermissionManager::setStandardUserPermissions(const QString& path, const QS
 // had, so a Hybrid call with no SID stripped the file and then reported failure.
 
 QString PermissionManager::getOwner(const QString& path) {
-#ifdef Q_OS_WIN
     if (hasEmbeddedNul(path)) {
         return QString();
     }
@@ -458,13 +451,9 @@ QString PermissionManager::getOwner(const QString& path) {
 
     LocalFree(pSD);
     return ownerSid;
-#else
-    return QString();
-#endif
 }
 
 QString PermissionManager::getSecurityDescriptorSddl(const QString& path) {
-#ifdef Q_OS_WIN
     if (hasEmbeddedNul(path)) {
         m_lastError = "Refused: path contains an embedded NUL";
         return QString();
@@ -501,14 +490,9 @@ QString PermissionManager::getSecurityDescriptorSddl(const QString& path) {
     LocalFree(sddlString);
     LocalFree(pSD);
     return sddl;
-#else
-    m_lastError = "Permission management only supported on Windows";
-    return QString();
-#endif
 }
 
 bool PermissionManager::setSecurityDescriptorSddl(const QString& path, const QString& sddl) {
-#ifdef Q_OS_WIN
     if (sddl.isEmpty()) {
         m_lastError = "Empty SDDL";
         return false;
@@ -539,14 +523,9 @@ bool PermissionManager::setSecurityDescriptorSddl(const QString& path, const QSt
     }
 
     return true;
-#else
-    m_lastError = "Permission management only supported on Windows";
-    return false;
-#endif
 }
 
 bool PermissionManager::sddlAppliesPrimaryGroupForTesting(const QString& sddl) {
-#ifdef Q_OS_WIN
     if (sddl.isEmpty() || hasEmbeddedNul(sddl)) {
         return false;
     }
@@ -565,9 +544,6 @@ bool PermissionManager::sddlAppliesPrimaryGroupForTesting(const QString& sddl) {
                                 (security_information & GROUP_SECURITY_INFORMATION) != 0u;
     LocalFree(descriptor);
     return includes_group;
-#else
-    return false;
-#endif
 }
 
 // ============================================================================
@@ -576,7 +552,6 @@ bool PermissionManager::sddlAppliesPrimaryGroupForTesting(const QString& sddl) {
 
 auto PermissionManager::tryStripPermissions(const QString& path)
     -> std::expected<void, sak::error_code> {
-#ifdef Q_OS_WIN
     const QFileInfo fileInfo(path);
     if (!fileInfo.exists()) {
         m_lastError = "File does not exist";
@@ -600,10 +575,6 @@ auto PermissionManager::tryStripPermissions(const QString& path)
                                 .dacl = &emptyDacl};
     const DWORD result = applySecurityNoFollow(path, WRITE_DAC | READ_CONTROL, change);
     return interpretSecurityResult(result, "Failed to strip permissions", m_lastError);
-#else
-    m_lastError = "Permission management only supported on Windows";
-    return std::unexpected(sak::error_code::platform_not_supported);
-#endif
 }
 
 std::optional<sak::error_code> PermissionManager::takeOwnershipElevationRefusal(
@@ -616,7 +587,6 @@ std::optional<sak::error_code> PermissionManager::takeOwnershipElevationRefusal(
 
 auto PermissionManager::tryTakeOwnership(const QString& path, const QString& userSID)
     -> std::expected<void, sak::error_code> {
-#ifdef Q_OS_WIN
     if (const auto refusal = takeOwnershipElevationRefusal(ElevationManager::isElevated())) {
         m_lastError = "Administrator privileges required to take ownership";
         return std::unexpected(*refusal);
@@ -638,15 +608,10 @@ auto PermissionManager::tryTakeOwnership(const QString& path, const QString& use
     const DWORD result = applySecurityNoFollow(path, WRITE_OWNER, change);
     LocalFree(pSid);
     return interpretSecurityResult(result, "Failed to take ownership", m_lastError);
-#else
-    m_lastError = "Permission management only supported on Windows";
-    return std::unexpected(sak::error_code::platform_not_supported);
-#endif
 }
 
 auto PermissionManager::trySetStandardUserPermissions(const QString& path, const QString& userSID)
     -> std::expected<void, sak::error_code> {
-#ifdef Q_OS_WIN
     if (hasEmbeddedNul(userSID)) {
         m_lastError = "Invalid SID: embedded NUL";
         return std::unexpected(sak::error_code::invalid_argument);
@@ -677,10 +642,6 @@ auto PermissionManager::trySetStandardUserPermissions(const QString& path, const
     LocalFree(pNewAcl);
     LocalFree(pSid);
     return interpretSecurityResult(result, "Failed to set permissions", m_lastError);
-#else
-    m_lastError = "Permission management only supported on Windows";
-    return std::unexpected(sak::error_code::platform_not_supported);
-#endif
 }
 
 namespace {
@@ -742,7 +703,6 @@ std::expected<void, QString> restrictFileToCurrentUser(const QString& path) {
     return std::unexpected(refusal);
 }
 
-#ifdef Q_OS_WIN
 bool PermissionManager::enablePrivilege(const wchar_t* privilegeName) {
     // Private static; the constructor is the only caller and passes the
     // SE_BACKUP_NAME / SE_RESTORE_NAME / SE_TAKE_OWNERSHIP_NAME literals.
@@ -776,7 +736,5 @@ bool PermissionManager::enablePrivilege(const wchar_t* privilegeName) {
     CloseHandle(hToken);
     return adjusted && adjustError != ERROR_NOT_ALL_ASSIGNED;
 }
-
-#endif
 
 }  // namespace sak

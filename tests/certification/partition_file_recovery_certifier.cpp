@@ -17,11 +17,9 @@
 #include <algorithm>
 #include <optional>
 
-#ifdef Q_OS_WIN
 #include <windows.h>
 
 #include <io.h>
-#endif
 
 namespace {
 
@@ -149,15 +147,11 @@ bool flushFileToDisk(QFile* file) {
     if (!file->flush()) {
         return false;
     }
-#ifdef Q_OS_WIN
     const intptr_t osFileHandle = _get_osfhandle(file->handle());
     if (osFileHandle == -1) {
         return false;
     }
     return FlushFileBuffers(reinterpret_cast<HANDLE>(osFileHandle)) != 0;
-#else
-    return true;
-#endif
 }
 
 QJsonArray stringArray(const QStringList& values) {

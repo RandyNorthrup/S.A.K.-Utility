@@ -17,9 +17,7 @@
 #include <algorithm>
 #include <limits>
 
-#ifdef Q_OS_WIN
 #include <windows.h>
-#endif
 
 class FileManagementFileSystemTests : public QObject {
     Q_OBJECT
@@ -892,14 +890,9 @@ private Q_SLOTS:
         writeOne(root.filePath(QStringLiteral("visible.txt")));
         const QString hiddenPath = root.filePath(QStringLiteral("secret.dat"));
         writeOne(hiddenPath);
-#ifdef Q_OS_WIN
         const std::wstring native = QDir::toNativeSeparators(hiddenPath).toStdWString();
         QVERIFY(SetFileAttributesW(native.c_str(), FILE_ATTRIBUTE_HIDDEN) != 0);
         const QString hiddenName = QStringLiteral("secret.dat");
-#else
-        const QString hiddenName = QStringLiteral(".secret.dat");
-        QVERIFY(QFile::rename(hiddenPath, root.filePath(hiddenName)));
-#endif
         const auto target = sak::FileManagementFileSystemBridge::localTarget(dir.path());
         const auto listing =
             sak::FileManagementFileSystemBridge::listDirectory(target, dir.path(), 100);
@@ -918,10 +911,8 @@ private Q_SLOTS:
         // Hidden|System are in the listing filters, so the count is deterministically 2 and a
         // spurious extra entry (which contains() would miss) is caught.
         QCOMPARE(listing.entries.size(), qsizetype(2));
-#ifdef Q_OS_WIN
         // The hidden attribute rides through on the entry so the view can filter it.
         QVERIFY(hidden_flag);
-#endif
     }
 
     void listLocalDirectoryCapsToSortedPrefixWithWarning() {

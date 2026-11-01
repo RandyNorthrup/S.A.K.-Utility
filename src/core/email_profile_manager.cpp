@@ -22,11 +22,9 @@
 #include <QTemporaryDir>
 #include <QTextStream>
 
-#ifdef Q_OS_WIN
 #include <vector>
 
 #include <windows.h>
-#endif
 
 namespace {
 
@@ -60,7 +58,6 @@ private:
     std::atomic<bool>& m_flag;
 };
 
-#ifdef Q_OS_WIN
 /// wchar_t capacity for the GetFinalPathNameByHandleW output buffer.
 constexpr int kFinalPathBufferChars = 4096;
 /// Length of the Win32 "\\?\" extended-length path prefix stripped from a resolved path.
@@ -94,11 +91,6 @@ QString realCanonicalPath(const QString& path) {
     }
     return QDir::fromNativeSeparators(result);
 }
-#else
-QString realCanonicalPath(const QString& path) {
-    return QFileInfo(path).canonicalFilePath();
-}
-#endif
 
 constexpr int kSupportedManifestVersion = 1;
 constexpr int kRegExportTimeoutMs = 10'000;

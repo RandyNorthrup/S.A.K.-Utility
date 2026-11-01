@@ -18,9 +18,7 @@
 
 #include <algorithm>
 
-#ifdef Q_OS_WIN
 #include <windows.h>
-#endif
 
 namespace sak {
 
@@ -43,7 +41,6 @@ constexpr int kFirstNonControlCodePoint = 0x20;
 // True if the path is an NTFS reparse point (junction/symlink/mount point). Fails CLOSED: a query
 // that cannot resolve the path is reported AS a reparse point so the caller refuses to follow it.
 bool isReparsePoint(const QString& path) {
-#ifdef Q_OS_WIN
     // Query through the \\?\ extended-length form so a path longer than MAX_PATH (this process
     // carries no long-path manifest) still resolves. A bare GetFileAttributesW fails on such a path
     // and -- under the fail-closed rule below -- would refuse every ordinary deep profile path;
@@ -56,9 +53,6 @@ bool isReparsePoint(const QString& path) {
         return true;  // fail closed: an unresolvable/denied query must not read as "not a link"
     }
     return (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
-#else
-    return QFileInfo(path).isSymLink();
-#endif
 }
 
 // True if @p path resolves through a reparse point anywhere between @p root (inclusive) and the
@@ -142,11 +136,7 @@ bool pathIsWithin(const QString& child, const QString& parent) {
     if (c.isEmpty() || p.isEmpty()) {
         return false;
     }
-#ifdef Q_OS_WIN
     const Qt::CaseSensitivity cs = Qt::CaseInsensitive;
-#else
-    const Qt::CaseSensitivity cs = Qt::CaseSensitive;
-#endif
     if (c.compare(p, cs) == 0) {
         return true;
     }
@@ -861,7 +851,6 @@ bool UserProfileBackupWorker::createDirectory(const QString& path) {
 }
 
 bool UserProfileBackupWorker::canReadPath(const QString& path) {
-#ifdef Q_OS_WIN
     const std::wstring wide = path.toStdWString();
     DWORD const attrs = GetFileAttributesW(wide.c_str());
     if (attrs == INVALID_FILE_ATTRIBUTES) {
@@ -888,9 +877,6 @@ bool UserProfileBackupWorker::canReadPath(const QString& path) {
     }
     CloseHandle(handle);
     return true;
-#else
-    return QFileInfo(path).isReadable();
-#endif
 }
 
 bool UserProfileBackupWorker::isSafePathSegment(const QString& segment) {

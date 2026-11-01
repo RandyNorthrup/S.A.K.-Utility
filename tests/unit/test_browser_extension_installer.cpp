@@ -18,18 +18,12 @@
 #include <QtTest/QtTest>
 #include <QUrl>
 
-#if defined(_WIN32)
-#ifndef WIN32_LEAN_AND_MEAN
-#define WIN32_LEAN_AND_MEAN
-#endif
 #include <windows.h>
-#endif
 
 using namespace sak::win32mcp;
 
 namespace {
 
-#if defined(_WIN32)
 const QString kTestBase = QStringLiteral("Software\\SAK_Test\\ExtInstaller");
 
 std::wstring toW(const QString& s) {
@@ -109,14 +103,12 @@ void seedReg(const QString& subkey, const QString& name, const QString& value) {
         RegCloseKey(h);
     }
 }
-#endif  // _WIN32
 
 }  // namespace
 
 class BrowserExtensionInstallerTest : public QObject {
     Q_OBJECT
 
-#if defined(_WIN32)
     QString forcelistKey() const { return kTestBase + QStringLiteral("\\Forcelist"); }
     QString hostKey() const {
         return kTestBase + QStringLiteral("\\NativeHost\\") + QString::fromLatin1(kNativeHostName);
@@ -143,19 +135,10 @@ class BrowserExtensionInstallerTest : public QObject {
         }
         return path;
     }
-#endif
 
 private Q_SLOTS:
-    void init() {
-#if defined(_WIN32)
-        nukeTestTree();
-#endif
-    }
-    void cleanup() {
-#if defined(_WIN32)
-        nukeTestTree();
-#endif
-    }
+    void init() { nukeTestTree(); }
+    void cleanup() { nukeTestTree(); }
 
     // The committed manifest's public key must hash to the pinned id, and its version
     // must equal the pinned version (guards against silent drift of key/id/version).
@@ -180,11 +163,6 @@ private Q_SLOTS:
                  QString::fromLatin1(kBrowserExtensionVersion));
     }
 
-// moc does not define the compiler builtin _WIN32, so a _WIN32 guard here would hide
-// these slots from moc and they would never run. SAK_WIN_REGISTRY_TESTS is a target
-// compile definition (set on Windows in tests/CMakeLists.txt) that AUTOMOC forwards to
-// moc, so the slots register on Windows and compile out elsewhere.
-#if defined(SAK_WIN_REGISTRY_TESTS)
     void installWritesPolicyAndHost() {
         QTemporaryDir dir;
         QVERIFY(dir.isValid());
@@ -391,7 +369,6 @@ private Q_SLOTS:
                     QStringLiteral(";file:///C:/x/browser_ext_update.xml"));
         QCOMPARE(inst.stateString(), QStringLiteral("partial"));  // policy present, host absent
     }
-#endif                                                            // SAK_WIN_REGISTRY_TESTS
 };
 
 QTEST_MAIN(BrowserExtensionInstallerTest)

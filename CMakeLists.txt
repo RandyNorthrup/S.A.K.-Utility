@@ -31,12 +31,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Platform defines (apply to all targets)
-if(WIN32)
-    add_compile_definitions(
-        WIN32_LEAN_AND_MEAN  # Exclude rarely-used Windows headers
-        NOMINMAX             # Prevent Windows min/max macro conflicts
-    )
-endif()
+add_compile_definitions(
+    WIN32_LEAN_AND_MEAN  # Exclude rarely-used Windows headers
+    NOMINMAX             # Prevent Windows min/max macro conflicts
+)
 
 # Export compile commands for IDE integration
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -52,10 +50,6 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 
 # Suppress optional Vulkan header discovery (not required for this app)
 set(CMAKE_DISABLE_FIND_PACKAGE_WrapVulkanHeaders TRUE)
-
-# Product platform -- configure already refused every non-Windows target above.
-set(PLATFORM_WINDOWS TRUE)
-add_definitions(-DSAK_PLATFORM_WINDOWS)
 
 # ============================================================================
 # Compiler Configuration - STRICT STANDARDS
@@ -1192,19 +1186,17 @@ set(SAK_WIN32MCP_SOURCES
 set(MAIN_SOURCE src/main.cpp)
 
 # Windows resource file for icon and version info
-if(WIN32)
-    configure_file(
-        "${CMAKE_CURRENT_SOURCE_DIR}/resources/sak_utility.manifest.in"
-        "${CMAKE_CURRENT_BINARY_DIR}/sak_utility.manifest"
-        @ONLY
-    )
-    configure_file(
-        "${CMAKE_CURRENT_SOURCE_DIR}/resources/sak_utility.rc.in"
-        "${CMAKE_CURRENT_BINARY_DIR}/sak_utility.rc"
-        @ONLY
-    )
-    set(RESOURCE_FILES "${CMAKE_CURRENT_BINARY_DIR}/sak_utility.rc")
-endif()
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/sak_utility.manifest.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/sak_utility.manifest"
+    @ONLY
+)
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/sak_utility.rc.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/sak_utility.rc"
+    @ONLY
+)
+set(RESOURCE_FILES "${CMAKE_CURRENT_BINARY_DIR}/sak_utility.rc")
 
 # Qt icon resources (processed by AUTORCC)
 list(APPEND RESOURCE_FILES "${CMAKE_CURRENT_SOURCE_DIR}/resources/icons.qrc")
@@ -1556,71 +1548,69 @@ add_dependencies(sak_utility sak_hfs_writer_cli)
 # Elevated Helper Executable (Phase 2 -- per-task elevation)
 # ============================================================================
 
-if(PLATFORM_WINDOWS)
-    # Helper entry point; the IPC layer, the task dispatcher and the four elevated actions it
-    # runs come from sak_core.
-    set(HELPER_SOURCES
-        src/elevated/elevated_helper_main.cpp
-    )
+# Helper entry point; the IPC layer, the task dispatcher and the four elevated actions it
+# runs come from sak_core.
+set(HELPER_SOURCES
+    src/elevated/elevated_helper_main.cpp
+)
 
-    # Resource file for embedding the requireAdministrator manifest
-    configure_file(
-        "${CMAKE_CURRENT_SOURCE_DIR}/resources/sak_elevated_helper.manifest"
-        "${CMAKE_CURRENT_BINARY_DIR}/sak_elevated_helper.manifest"
-        COPYONLY
-    )
+# Resource file for embedding the requireAdministrator manifest
+configure_file(
+    "${CMAKE_CURRENT_SOURCE_DIR}/resources/sak_elevated_helper.manifest"
+    "${CMAKE_CURRENT_BINARY_DIR}/sak_elevated_helper.manifest"
+    COPYONLY
+)
 
-    # Generate a minimal .rc that embeds the manifest
-    file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/sak_elevated_helper.rc"
-        "#include <winuser.h>\nCREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST \"sak_elevated_helper.manifest\"\n"
-    )
+# Generate a minimal .rc that embeds the manifest
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/sak_elevated_helper.rc"
+    "#include <winuser.h>\nCREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST \"sak_elevated_helper.manifest\"\n"
+)
 
-    add_executable(sak_elevated_helper
-        ${HELPER_SOURCES}
-        "${CMAKE_CURRENT_BINARY_DIR}/sak_elevated_helper.rc"
-    )
+add_executable(sak_elevated_helper
+    ${HELPER_SOURCES}
+    "${CMAKE_CURRENT_BINARY_DIR}/sak_elevated_helper.rc"
+)
 
+set_target_properties(sak_elevated_helper PROPERTIES
+    AUTOMOC ON
+    WIN32_EXECUTABLE FALSE
+)
+
+target_include_directories(sak_elevated_helper PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_BINARY_DIR}/include
+)
+
+target_link_libraries(sak_elevated_helper PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    sak_core
+    sak_foundation
+    Threads::Threads
+    ${PLATFORM_LIBS}
+)
+
+target_compile_definitions(sak_elevated_helper PRIVATE
+    QT_NO_KEYWORDS
+    QT_DEPRECATED_WARNINGS
+    QT_DISABLE_DEPRECATED_BEFORE=0x060000
+)
+
+# Suppress linker-generated manifest -- we embed via RC
+if(MSVC)
     set_target_properties(sak_elevated_helper PROPERTIES
-        AUTOMOC ON
-        WIN32_EXECUTABLE FALSE
+        LINK_FLAGS "/MANIFEST:NO"
     )
-
-    target_include_directories(sak_elevated_helper PRIVATE
-        ${CMAKE_CURRENT_SOURCE_DIR}/include
-        ${CMAKE_CURRENT_BINARY_DIR}/include
-    )
-
-    target_link_libraries(sak_elevated_helper PRIVATE
-        Qt6::Core
-        Qt6::Gui
-        sak_core
-        sak_foundation
-        Threads::Threads
-        ${PLATFORM_LIBS}
-    )
-
-    target_compile_definitions(sak_elevated_helper PRIVATE
-        QT_NO_KEYWORDS
-        QT_DEPRECATED_WARNINGS
-        QT_DISABLE_DEPRECATED_BEFORE=0x060000
-    )
-
-    # Suppress linker-generated manifest -- we embed via RC
-    if(MSVC)
-        set_target_properties(sak_elevated_helper PROPERTIES
-            LINK_FLAGS "/MANIFEST:NO"
-        )
-    endif()
-
-    # Copy helper to main output directory so they sit side-by-side
-    add_custom_command(TARGET sak_elevated_helper POST_BUILD
-        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-            $<TARGET_FILE:sak_elevated_helper>
-            $<TARGET_FILE_DIR:sak_utility>/sak_elevated_helper.exe
-        COMMENT "Copying elevated helper next to sak_utility"
-    )
-    add_dependencies(sak_utility sak_elevated_helper)
 endif()
+
+# Copy helper to main output directory so they sit side-by-side
+add_custom_command(TARGET sak_elevated_helper POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:sak_elevated_helper>
+        $<TARGET_FILE_DIR:sak_utility>/sak_elevated_helper.exe
+    COMMENT "Copying elevated helper next to sak_utility"
+)
+add_dependencies(sak_utility sak_elevated_helper)
 
 # Check for bundled smartmontools (required for SMART diagnostics)
 if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/smartmontools/smartctl.exe")
@@ -1660,7 +1650,7 @@ endif()
 # assistant's extension installer. Guard against a release silently shipping without it:
 # if it is missing the install fails closed on every customer PC. Restore it from git, or
 # re-sign with 'powershell -File browser/pack-extension.ps1'.
-if(PLATFORM_WINDOWS AND NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/browser/dist/sak_browser_control.crx")
+if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/browser/dist/sak_browser_control.crx")
     message(FATAL_ERROR "browser/dist/sak_browser_control.crx not found. Restore it from git "
                         "or re-sign with 'powershell -File browser/pack-extension.ps1'.")
 endif()
@@ -1730,39 +1720,37 @@ option(SAK_IMPORT_PARENT_ICON
     "Overwrite the tracked resources/ icon with ../icon.ico|.icns during configure" OFF)
 
 # Windows-specific settings
-if(PLATFORM_WINDOWS)
-    # Set Windows subsystem. This has to be per-configuration, not
-    # "if(CMAKE_BUILD_TYPE STREQUAL Release)": under the Visual Studio
-    # multi-config generator CMAKE_BUILD_TYPE is empty and gets FORCEd to
-    # Release at the top of this file, so that test was true even for a
-    # --config Debug build and Debug lost its console. WIN32_EXECUTABLE accepts
-    # generator expressions, which are evaluated per configuration.
+# Set Windows subsystem. This has to be per-configuration, not
+# "if(CMAKE_BUILD_TYPE STREQUAL Release)": under the Visual Studio
+# multi-config generator CMAKE_BUILD_TYPE is empty and gets FORCEd to
+# Release at the top of this file, so that test was true even for a
+# --config Debug build and Debug lost its console. WIN32_EXECUTABLE accepts
+# generator expressions, which are evaluated per configuration.
+set_target_properties(sak_utility PROPERTIES
+    WIN32_EXECUTABLE $<NOT:$<CONFIG:Debug>>
+)
+
+# Manifest is embedded via the RC file; suppress linker-generated manifest to avoid conflict
+if(MSVC)
     set_target_properties(sak_utility PROPERTIES
-        WIN32_EXECUTABLE $<NOT:$<CONFIG:Debug>>
+        LINK_FLAGS "/MANIFEST:NO"
     )
+endif()
 
-    # Manifest is embedded via the RC file; suppress linker-generated manifest to avoid conflict
-    if(MSVC)
-        set_target_properties(sak_utility PROPERTIES
-            LINK_FLAGS "/MANIFEST:NO"
-        )
-    endif()
-
-    # Icon bootstrap from the parent directory. resources/icon.ico is tracked, so
-    # importing it unconditionally let an UNTRACKED file one level above the
-    # repository root overwrite a committed resource during configure - the build
-    # output would depend on whatever happens to sit outside the checkout. Keep
-    # the bootstrap for a tree that has no icon yet, and require an explicit
-    # opt-in to replace one that does.
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../icon.ico"
-       AND (SAK_IMPORT_PARENT_ICON OR NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.ico"))
-        configure_file(
-            "${CMAKE_CURRENT_SOURCE_DIR}/../icon.ico"
-            "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.ico"
-            COPYONLY
-        )
-        message(STATUS "Icon:               imported from ../icon.ico into resources/")
-    endif()
+# Icon bootstrap from the parent directory. resources/icon.ico is tracked, so
+# importing it unconditionally let an UNTRACKED file one level above the
+# repository root overwrite a committed resource during configure - the build
+# output would depend on whatever happens to sit outside the checkout. Keep
+# the bootstrap for a tree that has no icon yet, and require an explicit
+# opt-in to replace one that does.
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../icon.ico"
+   AND (SAK_IMPORT_PARENT_ICON OR NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.ico"))
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/../icon.ico"
+        "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.ico"
+        COPYONLY
+    )
+    message(STATUS "Icon:               imported from ../icon.ico into resources/")
 endif()
 
 # ============================================================================
@@ -1785,138 +1773,136 @@ endif()
 # configured here. What follows makes the BUILD directory runnable for tests and development.
 
 # Qt deployment
-if(PLATFORM_WINDOWS)
-    # Use windeployqt. Without it the output directory holds an executable that
-    # cannot start (no Qt DLLs, no platform plugin), so a missing windeployqt is
-    # a broken package, not a degraded one - fail configure instead of leaving a
-    # build that only appears to have produced something shippable.
-    find_program(WINDEPLOYQT windeployqt HINTS "${Qt6_DIR}/../../../bin")
-    if(NOT WINDEPLOYQT)
-        message(FATAL_ERROR
-            "windeployqt was not found (searched PATH and '${Qt6_DIR}/../../../bin'). It is "
-            "required to place the Qt runtime and platform plugins beside sak_utility.exe; "
-            "without it the build tree cannot run and the package cannot be staged. Add the Qt bin directory to "
-            "PATH or pass -DCMAKE_PREFIX_PATH pointing at the Qt installation.")
-    endif()
-    # No --release/--debug here on purpose: windeployqt reads the binary and
-    # deploys the matching Qt build. Hard-coding --release deployed release Qt
-    # DLLs next to a --config Debug executable, which links the debug ones.
-    add_custom_command(TARGET sak_utility POST_BUILD
-        COMMAND ${WINDEPLOYQT} --no-translations --no-compiler-runtime $<TARGET_FILE:sak_utility>
-        COMMENT "Running windeployqt..."
-    )
+# Use windeployqt. Without it the output directory holds an executable that
+# cannot start (no Qt DLLs, no platform plugin), so a missing windeployqt is
+# a broken package, not a degraded one - fail configure instead of leaving a
+# build that only appears to have produced something shippable.
+find_program(WINDEPLOYQT windeployqt HINTS "${Qt6_DIR}/../../../bin")
+if(NOT WINDEPLOYQT)
+    message(FATAL_ERROR
+        "windeployqt was not found (searched PATH and '${Qt6_DIR}/../../../bin'). It is "
+        "required to place the Qt runtime and platform plugins beside sak_utility.exe; "
+        "without it the build tree cannot run and the package cannot be staged. Add the Qt bin directory to "
+        "PATH or pass -DCMAKE_PREFIX_PATH pointing at the Qt installation.")
+endif()
+# No --release/--debug here on purpose: windeployqt reads the binary and
+# deploys the matching Qt build. Hard-coding --release deployed release Qt
+# DLLs next to a --config Debug executable, which links the debug ones.
+add_custom_command(TARGET sak_utility POST_BUILD
+    COMMAND ${WINDEPLOYQT} --no-translations --no-compiler-runtime $<TARGET_FILE:sak_utility>
+    COMMENT "Running windeployqt..."
+)
 
-    # Bundle dynamic vcpkg runtime DLLs when using a dynamic triplet.
-    # Each group lists the accepted file names for ONE library, separated by "|":
-    # vcpkg has renamed these across versions and the alias that exists is the
-    # one to ship.
-    set(SAK_VCPKG_RUNTIME_DLL_GROUPS
-        "z.dll|zlib1.dll"
-        "bz2.dll|libbz2.dll"
-        "liblzma.dll|lzma.dll"
-    )
-    # A triplet whose name contains "-static" supplies static libraries, so there
-    # is no DLL to bundle and nothing to check. Any other triplet supplies import
-    # libraries, and then the DLLs are load-bearing: shipping without them
-    # produces an exe that dies at load time on the customer's PC.
-    if(DEFINED VCPKG_TARGET_TRIPLET AND NOT "${VCPKG_TARGET_TRIPLET}" MATCHES "-static")
-        set(_sak_vcpkg_dlls_required TRUE)
-    else()
-        set(_sak_vcpkg_dlls_required FALSE)
-    endif()
-    if(_sak_vcpkg_dlls_required AND NOT DEFINED VCPKG_INSTALLED_DIR)
-        message(FATAL_ERROR
-            "vcpkg triplet '${VCPKG_TARGET_TRIPLET}' supplies shared libraries but "
-            "VCPKG_INSTALLED_DIR is not set, so zlib/bzip2/liblzma DLLs cannot be located "
-            "or bundled. Configure with the vcpkg toolchain file so VCPKG_INSTALLED_DIR is "
-            "defined, or use a -static triplet.")
-    endif()
-    if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
-        set(SAK_VCPKG_BIN "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
-        foreach(group ${SAK_VCPKG_RUNTIME_DLL_GROUPS})
-            string(REPLACE "|" ";" group_dlls "${group}")
-            set(group_found FALSE)
-            foreach(dll ${group_dlls})
-                set(runtime_dll "${SAK_VCPKG_BIN}/${dll}")
-                if(EXISTS "${runtime_dll}")
-                    add_custom_command(TARGET sak_utility POST_BUILD
-                        COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                            "${runtime_dll}"
-                            "$<TARGET_FILE_DIR:sak_utility>"
-                        COMMENT "Bundling ${dll} from vcpkg..."
-                    )
-                    set(group_found TRUE)
-                endif()
-            endforeach()
-            if(_sak_vcpkg_dlls_required AND NOT group_found)
-                message(FATAL_ERROR
-                    "vcpkg triplet '${VCPKG_TARGET_TRIPLET}' is a shared-library triplet but none "
-                    "of '${group}' was found in '${SAK_VCPKG_BIN}'. The app links that library, so "
-                    "the package would ship without a DLL it loads at startup. Install the port for "
-                    "this triplet, or build with -DVCPKG_TARGET_TRIPLET=x64-windows-static-md.")
+# Bundle dynamic vcpkg runtime DLLs when using a dynamic triplet.
+# Each group lists the accepted file names for ONE library, separated by "|":
+# vcpkg has renamed these across versions and the alias that exists is the
+# one to ship.
+set(SAK_VCPKG_RUNTIME_DLL_GROUPS
+    "z.dll|zlib1.dll"
+    "bz2.dll|libbz2.dll"
+    "liblzma.dll|lzma.dll"
+)
+# A triplet whose name contains "-static" supplies static libraries, so there
+# is no DLL to bundle and nothing to check. Any other triplet supplies import
+# libraries, and then the DLLs are load-bearing: shipping without them
+# produces an exe that dies at load time on the customer's PC.
+if(DEFINED VCPKG_TARGET_TRIPLET AND NOT "${VCPKG_TARGET_TRIPLET}" MATCHES "-static")
+    set(_sak_vcpkg_dlls_required TRUE)
+else()
+    set(_sak_vcpkg_dlls_required FALSE)
+endif()
+if(_sak_vcpkg_dlls_required AND NOT DEFINED VCPKG_INSTALLED_DIR)
+    message(FATAL_ERROR
+        "vcpkg triplet '${VCPKG_TARGET_TRIPLET}' supplies shared libraries but "
+        "VCPKG_INSTALLED_DIR is not set, so zlib/bzip2/liblzma DLLs cannot be located "
+        "or bundled. Configure with the vcpkg toolchain file so VCPKG_INSTALLED_DIR is "
+        "defined, or use a -static triplet.")
+endif()
+if(DEFINED VCPKG_INSTALLED_DIR AND DEFINED VCPKG_TARGET_TRIPLET)
+    set(SAK_VCPKG_BIN "${VCPKG_INSTALLED_DIR}/${VCPKG_TARGET_TRIPLET}/bin")
+    foreach(group ${SAK_VCPKG_RUNTIME_DLL_GROUPS})
+        string(REPLACE "|" ";" group_dlls "${group}")
+        set(group_found FALSE)
+        foreach(dll ${group_dlls})
+            set(runtime_dll "${SAK_VCPKG_BIN}/${dll}")
+            if(EXISTS "${runtime_dll}")
+                add_custom_command(TARGET sak_utility POST_BUILD
+                    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                        "${runtime_dll}"
+                        "$<TARGET_FILE_DIR:sak_utility>"
+                    COMMENT "Bundling ${dll} from vcpkg..."
+                )
+                set(group_found TRUE)
             endif()
         endforeach()
-    endif()
-
-    # Bundle MSVC runtime DLLs (required by Qt DLLs)
-    # Find and copy the runtime DLLs to the output directory
-    set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
-    include(InstallRequiredSystemLibraries)
-
-    # This project is required to build against the dynamic CRT (see the CRT
-    # coherence gate above), so msvcp140/vcruntime140 are not optional extras -
-    # the app cannot start without them on a PC that has no VC redistributable
-    # installed. Neither discovery path is allowed to end in a warning.
-    if(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
-        foreach(lib ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS})
-            add_custom_command(TARGET sak_utility POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${lib}"
-                    "$<TARGET_FILE_DIR:sak_utility>"
-                COMMENT "Bundling ${lib}..."
-            )
-        endforeach()
-    else()
-        # Fallback: manually locate MSVC runtime DLLs across installed VS editions.
-        file(GLOB MSVC_VERSIONS
-            "C:/Program Files/Microsoft Visual Studio/2022/*/VC/Redist/MSVC/*"
-            "C:/Program Files (x86)/Microsoft Visual Studio/2022/*/VC/Redist/MSVC/*"
-        )
-        list(SORT MSVC_VERSIONS)
-        list(REVERSE MSVC_VERSIONS)
-
-        if(NOT MSVC_VERSIONS)
+        if(_sak_vcpkg_dlls_required AND NOT group_found)
             message(FATAL_ERROR
-                "MSVC runtime DLLs could not be located: InstallRequiredSystemLibraries found "
-                "none and no VC redistributable directory exists under the Visual Studio 2022 "
-                "install. This build links the dynamic CRT, so the packaged app would fail to "
-                "start on any PC without the VC++ redistributable. Install the "
-                "'C++ 2022 Redistributable MSMs / Redist' component of Visual Studio.")
+                "vcpkg triplet '${VCPKG_TARGET_TRIPLET}' is a shared-library triplet but none "
+                "of '${group}' was found in '${SAK_VCPKG_BIN}'. The app links that library, so "
+                "the package would ship without a DLL it loads at startup. Install the port for "
+                "this triplet, or build with -DVCPKG_TARGET_TRIPLET=x64-windows-static-md.")
         endif()
+    endforeach()
+endif()
 
-        list(GET MSVC_VERSIONS 0 LATEST_MSVC)
-        set(MSVC_DLLS
-            "${LATEST_MSVC}/x64/Microsoft.VC143.CRT/msvcp140.dll"
-            "${LATEST_MSVC}/x64/Microsoft.VC143.CRT/vcruntime140.dll"
-            "${LATEST_MSVC}/x64/Microsoft.VC143.CRT/vcruntime140_1.dll"
+# Bundle MSVC runtime DLLs (required by Qt DLLs)
+# Find and copy the runtime DLLs to the output directory
+set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)
+include(InstallRequiredSystemLibraries)
+
+# This project is required to build against the dynamic CRT (see the CRT
+# coherence gate above), so msvcp140/vcruntime140 are not optional extras -
+# the app cannot start without them on a PC that has no VC redistributable
+# installed. Neither discovery path is allowed to end in a warning.
+if(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS)
+    foreach(lib ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS})
+        add_custom_command(TARGET sak_utility POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${lib}"
+                "$<TARGET_FILE_DIR:sak_utility>"
+            COMMENT "Bundling ${lib}..."
         )
+    endforeach()
+else()
+    # Fallback: manually locate MSVC runtime DLLs across installed VS editions.
+    file(GLOB MSVC_VERSIONS
+        "C:/Program Files/Microsoft Visual Studio/2022/*/VC/Redist/MSVC/*"
+        "C:/Program Files (x86)/Microsoft Visual Studio/2022/*/VC/Redist/MSVC/*"
+    )
+    list(SORT MSVC_VERSIONS)
+    list(REVERSE MSVC_VERSIONS)
 
-        foreach(dll ${MSVC_DLLS})
-            if(NOT EXISTS "${dll}")
-                message(FATAL_ERROR
-                    "Required MSVC runtime DLL '${dll}' is missing from the redistributable "
-                    "directory. Bundling only part of the CRT ships an app that loads on the "
-                    "build machine and fails on the customer's. Repair the Visual Studio "
-                    "'Redist' component, or install a toolset whose redistributable is complete.")
-            endif()
-            add_custom_command(TARGET sak_utility POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "${dll}"
-                    "$<TARGET_FILE_DIR:sak_utility>"
-                COMMENT "Bundling ${dll}..."
-            )
-        endforeach()
+    if(NOT MSVC_VERSIONS)
+        message(FATAL_ERROR
+            "MSVC runtime DLLs could not be located: InstallRequiredSystemLibraries found "
+            "none and no VC redistributable directory exists under the Visual Studio 2022 "
+            "install. This build links the dynamic CRT, so the packaged app would fail to "
+            "start on any PC without the VC++ redistributable. Install the "
+            "'C++ 2022 Redistributable MSMs / Redist' component of Visual Studio.")
     endif()
+
+    list(GET MSVC_VERSIONS 0 LATEST_MSVC)
+    set(MSVC_DLLS
+        "${LATEST_MSVC}/x64/Microsoft.VC143.CRT/msvcp140.dll"
+        "${LATEST_MSVC}/x64/Microsoft.VC143.CRT/vcruntime140.dll"
+        "${LATEST_MSVC}/x64/Microsoft.VC143.CRT/vcruntime140_1.dll"
+    )
+
+    foreach(dll ${MSVC_DLLS})
+        if(NOT EXISTS "${dll}")
+            message(FATAL_ERROR
+                "Required MSVC runtime DLL '${dll}' is missing from the redistributable "
+                "directory. Bundling only part of the CRT ships an app that loads on the "
+                "build machine and fails on the customer's. Repair the Visual Studio "
+                "'Redist' component, or install a toolset whose redistributable is complete.")
+        endif()
+        add_custom_command(TARGET sak_utility POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${dll}"
+                "$<TARGET_FILE_DIR:sak_utility>"
+            COMMENT "Bundling ${dll}..."
+        )
+    endforeach()
 endif()
 
 # ============================================================================
@@ -1925,7 +1911,7 @@ endif()
 
 option(SAK_CODE_SIGN "Sign the executable after build using Azure Trusted Signing" OFF)
 
-if(SAK_CODE_SIGN AND PLATFORM_WINDOWS)
+if(SAK_CODE_SIGN)
     find_program(POWERSHELL_EXE pwsh HINTS "$ENV{ProgramFiles}/PowerShell/7")
     if(NOT POWERSHELL_EXE)
         find_program(POWERSHELL_EXE powershell)
@@ -1950,10 +1936,7 @@ if(SAK_CODE_SIGN AND PLATFORM_WINDOWS)
     # helper is the one that runs as administrator, and the two writer CLIs are
     # the ones that mutate raw disks -- exactly the binaries a customer machine
     # has the most reason to check the signature of.
-    set(SAK_SIGN_TARGETS sak_utility sak_apfs_writer_cli sak_hfs_writer_cli)
-    if(TARGET sak_elevated_helper)
-        list(APPEND SAK_SIGN_TARGETS sak_elevated_helper)
-    endif()
+    set(SAK_SIGN_TARGETS sak_utility sak_apfs_writer_cli sak_hfs_writer_cli sak_elevated_helper)
     foreach(sign_target ${SAK_SIGN_TARGETS})
         add_custom_command(TARGET ${sign_target} POST_BUILD
             COMMAND ${POWERSHELL_EXE} -ExecutionPolicy Bypass -File "${SIGN_SCRIPT}"

@@ -13,11 +13,9 @@
 #include <atomic>
 #include <mutex>
 
-#ifdef Q_OS_WIN
 #include <windows.h>
 
 #include <appmodel.h>
-#endif
 
 namespace sak::app_paths {
 
@@ -87,13 +85,9 @@ QString applicationDirectory() {
 }
 
 bool isPackaged() {
-#ifdef Q_OS_WIN
     UINT32 length = 0;
     const LONG result = GetCurrentPackageFullName(&length, nullptr);
     return result == ERROR_INSUFFICIENT_BUFFER;
-#else
-    return false;
-#endif
 }
 
 std::expected<QString, QString> decideDataRoot(

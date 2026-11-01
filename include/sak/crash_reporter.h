@@ -19,7 +19,7 @@ namespace sak {
 /// C++ try/catch, so before this the application simply vanished on a technician's
 /// machine (R5-G23-2). Once installed, an unhandled exception writes a minidump
 /// (.dmp) plus a human-readable summary (.txt) into a crash directory, then lets
-/// the process terminate. Windows-only; install() is a no-op elsewhere.
+/// the process terminate.
 ///
 /// The filter itself lives in the .cpp and touches only the pure helpers below;
 /// those carry no global state and are unit-tested directly (the dump write

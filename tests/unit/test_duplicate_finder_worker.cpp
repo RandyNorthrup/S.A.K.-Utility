@@ -12,9 +12,7 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
-#ifdef _WIN32
 #include <windows.h>
-#endif
 
 class DuplicateFinderWorkerTests : public QObject {
     Q_OBJECT
@@ -40,7 +38,6 @@ private:
         return config;
     }
 
-#ifdef _WIN32
     /// Open @p path with NO sharing, so any subsequent read open (the hasher's) fails. The
     /// caller owns the returned handle.
     static HANDLE openExclusive(const QString& path) {
@@ -53,7 +50,6 @@ private:
                            FILE_ATTRIBUTE_NORMAL,
                            nullptr);
     }
-#endif
 
     /// Pin one duplicate group's whole shape: digest, sizes, and the exact unordered pair of
     /// paths. total_duplicates and wasted_space are derived from the hash BUCKET, not from

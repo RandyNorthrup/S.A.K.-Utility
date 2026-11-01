@@ -19,15 +19,12 @@
 #include <QProcessEnvironment>
 #include <QtTest/QtTest>
 
-#ifdef Q_OS_WIN
 #include <windows.h>
 // <psapi.h> must follow <windows.h>.
 #include <psapi.h>
-#endif
 
 namespace {
 
-#ifdef Q_OS_WIN
 struct ResourceSnapshot {
     qint64 handles{0};
     qint64 gdiObjects{0};
@@ -77,7 +74,6 @@ void doOneLaunch(int index) {
         QCOMPARE(result.exit_code, 0);
     }
 }
-#endif
 
 }  // namespace
 

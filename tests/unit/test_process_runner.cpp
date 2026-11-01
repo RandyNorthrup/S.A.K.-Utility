@@ -779,7 +779,6 @@ void ProcessRunnerTests::processFaultInjector_substitutesResultForEveryLauncher(
     QCOMPARE(shell.std_err, QStringLiteral("INJECTED-FAILURE"));
 
     QCOMPARE(calls, 2);
-#ifdef Q_OS_WIN
     // R5-P7-22: the launcher must hand the runner the ABSOLUTE System32 interpreter
     // (process_runner.cpp:263 + 272). The bare string "powershell.exe" ALSO satisfies
     // endsWith("powershell.exe"), so that check alone is green for exactly the hijackable
@@ -789,10 +788,6 @@ void ProcessRunnerTests::processFaultInjector_substitutesResultForEveryLauncher(
                                   Qt::CaseInsensitive),
              qPrintable(lastProgram));
     QCOMPARE(lastProgram, sak::systemPowerShellPath());
-#else
-    QVERIFY2(lastProgram.endsWith(QStringLiteral("powershell.exe"), Qt::CaseInsensitive),
-             qPrintable(lastProgram));
-#endif
 }
 
 void ProcessRunnerTests::detachedToolLaunchersConsultFaultInjector() {

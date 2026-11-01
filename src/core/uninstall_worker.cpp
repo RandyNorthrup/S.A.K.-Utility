@@ -19,9 +19,7 @@
 #include <QRegularExpression>
 #include <QThread>
 
-#ifdef Q_OS_WIN
 #include <windows.h>
-#endif
 
 namespace sak {
 
@@ -131,7 +129,6 @@ struct ParsedCommand {
     return QStringLiteral("\"%1\" /x %2 %3").arg(QDir::toNativeSeparators(msiexec), guid, tail);
 }
 
-#ifdef Q_OS_WIN
 /// @brief True only if @p postHivePath sits STRICTLY beneath a Windows Uninstall root (native or
 /// WOW6432): a non-empty leaf must follow it. The Uninstall container itself, and anything outside
 /// the subtree, is refused. The strict-leaf requirement also subsumes the hive-root screen -- an
@@ -196,7 +193,6 @@ struct ParsedCommand {
     }
     return false;
 }
-#endif  // Q_OS_WIN
 
 }  // namespace
 
@@ -537,7 +533,6 @@ bool UninstallWorker::removeUwpPackage() {
 }
 
 bool UninstallWorker::removeRegistryEntry() {
-#ifdef Q_OS_WIN
     if (m_program.registryKeyPath.isEmpty()) {
         return false;
     }
@@ -586,9 +581,6 @@ bool UninstallWorker::removeRegistryEntry() {
                         m_program.registryKeyPath.toStdString());
     }
     return rc == ERROR_SUCCESS;
-#else
-    return false;
-#endif
 }
 
 bool UninstallWorker::isMsiInstaller() const {

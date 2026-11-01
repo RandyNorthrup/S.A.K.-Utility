@@ -18,12 +18,7 @@
 #include <random>
 #include <vector>
 
-#ifdef SAK_PLATFORM_WINDOWS
-#ifndef NOMINMAX
-#define NOMINMAX
-#endif
 #include <Windows.h>
-#endif
 
 namespace sak {
 

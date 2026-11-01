@@ -15,9 +15,7 @@
 #include <windows.h>
 
 #include <bcrypt.h>
-#ifdef _MSC_VER
 #pragma comment(lib, "bcrypt.lib")
-#endif
 
 namespace sak::apfs_crypto {
 

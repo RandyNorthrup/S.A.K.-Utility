@@ -21,9 +21,7 @@
 #include <algorithm>
 #include <limits>
 
-#ifdef Q_OS_WIN
 #include <windows.h>
-#endif
 
 // ============================================================================
 // File-scope regex patterns (kept outside functions for Lizard compatibility)

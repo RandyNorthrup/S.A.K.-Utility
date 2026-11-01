@@ -12,11 +12,9 @@
 #include <expected>
 #include <optional>
 
-#ifdef Q_OS_WIN
 #include <windows.h>
 
 #include <aclapi.h>
-#endif
 
 namespace sak {
 
@@ -59,7 +57,7 @@ public:
      * @param path File or folder path
      * @return Owner SID or empty string
      */
-    QString getOwner(const QString& path);
+    static QString getOwner(const QString& path);
 
     /**
      * @brief Get full security descriptor in SDDL format
@@ -109,9 +107,7 @@ public:
     QString getLastError() const { return m_lastError; }
 
 private:
-#ifdef Q_OS_WIN
     static bool enablePrivilege(const wchar_t* privilegeName);
-#endif
 
     QString m_lastError;
 };

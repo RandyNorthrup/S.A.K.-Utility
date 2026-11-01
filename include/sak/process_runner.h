@@ -151,8 +151,7 @@ private:
 ///        name when launched from an elevated process. @p relativeExe is joined under
 ///        the real system directory (GetSystemDirectoryW), e.g. "netsh.exe" or
 ///        "WindowsPowerShell/v1.0/powershell.exe". Returns an empty string (the caller
-///        MUST fail closed) if the system directory cannot be resolved. On non-Windows
-///        returns @p relativeExe unchanged.
+///        MUST fail closed) if the system directory cannot be resolved.
 [[nodiscard]] QString system32Path(const QString& relativeExe);
 
 /// @brief Absolute path to the Windows-shipped powershell.exe
@@ -162,15 +161,14 @@ private:
 ///        plants a powershell.exe on that search path gets it run, worse still by an
 ///        elevated caller. Returns an empty string when the system directory cannot
 ///        be resolved or the interpreter is not present there; every caller MUST fail
-///        closed on empty instead of falling back to the bare name. On non-Windows
-///        returns "powershell.exe".
+///        closed on empty instead of falling back to the bare name.
 [[nodiscard]] QString systemPowerShellPath();
 
 /// @brief Same as system32Path but rooted at the Windows directory itself
 ///        (GetWindowsDirectoryW) rather than System32, for the tools that live there --
 ///        explorer.exe most notably, which is NOT a System32 binary. Returns an empty
 ///        string (the caller MUST fail closed) if the Windows directory cannot be
-///        resolved. On non-Windows returns @p relativeExe unchanged.
+///        resolved.
 [[nodiscard]] QString windowsDirPath(const QString& relativeExe);
 
 /// @brief Resolve a BARE executable name (no path separator) to an absolute path, fail-closed.

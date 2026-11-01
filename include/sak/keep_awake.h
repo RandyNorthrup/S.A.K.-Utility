@@ -8,8 +8,6 @@
 #include <expected>
 #include <mutex>
 
-#ifdef _WIN32
-
 namespace sak {
 
 /**
@@ -119,5 +117,3 @@ private:
 };
 
 }  // namespace sak
-
-#endif  // _WIN32

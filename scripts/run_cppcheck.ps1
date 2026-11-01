@@ -181,7 +181,6 @@ $CppcheckArgs += "--platform=win64"
 # analysis budget on code that never compiles. --force is deliberately NOT used: this
 # application is Windows-only, so the single Windows configuration is the real one.
 $CppcheckArgs += @(
-    "-DSAK_PLATFORM_WINDOWS"
     "-DQ_OS_WIN"
     "-D_WIN32"
     "-D_MSC_VER=1939"

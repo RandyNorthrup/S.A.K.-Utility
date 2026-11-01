@@ -20,11 +20,9 @@
 #include <QSaveFile>
 #include <QTextStream>
 
-#ifdef Q_OS_WIN
 #include <vector>
 
 #include <windows.h>
-#endif
 
 namespace sak {
 
@@ -118,7 +116,6 @@ bool subfolderEscapes(const QString& output_dir, const QString& target_dir) {
     return resolved != base && !resolved.startsWith(base + QLatin1Char('/'));
 }
 
-#ifdef Q_OS_WIN
 // wchar_t capacity for the GetFinalPathNameByHandleW output buffer.
 constexpr int kFinalPathBufferChars = 4096;
 // Length of the Win32 "\\?\" extended-length path prefix stripped from a resolved path.
@@ -152,11 +149,6 @@ QString realCanonicalPath(const QString& path) {
     }
     return QDir::fromNativeSeparators(result);
 }
-#else
-QString realCanonicalPath(const QString& path) {
-    return QFileInfo(path).canonicalFilePath();
-}
-#endif
 
 // Deepest existing ancestor directory of @p abs_path (which itself may not exist yet), or empty if
 // none of its ancestors exist. A junction/symlink can only redirect through an EXISTING reparse

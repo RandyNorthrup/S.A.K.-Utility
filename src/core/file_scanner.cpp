@@ -12,15 +12,11 @@
 
 #include <algorithm>
 
-#ifdef _WIN32
 #include <windows.h>
 // Undefine Windows macros that conflict with Qt
 #undef emit
 #undef signals
 #undef slots
-#else
-#include <sys/stat.h>
-#endif
 
 namespace sak {
 
@@ -204,14 +200,12 @@ bool checkSizeFilter(const std::filesystem::directory_entry& entry, const scan_o
 // file_type::symlink), so is_symlink() returns false for junctions. We therefore read the reparse
 // attribute directly -- GetFileAttributesW returns the reparse point's OWN attributes and does NOT
 // follow the link, so it never resolves a (possibly UNC) target. Mirrors the leaf guard
-// sak::pathIsReparsePoint used across the file ops. On non-Windows, is_symlink() is authoritative.
+// sak::pathIsReparsePoint used across the file ops.
 bool isReparsePointEntry(const std::filesystem::directory_entry& entry) {
-#ifdef _WIN32
     const DWORD attrs = GetFileAttributesW(entry.path().wstring().c_str());
     if (attrs != INVALID_FILE_ATTRIBUTES) {
         return (attrs & FILE_ATTRIBUTE_REPARSE_POINT) != 0;
     }
-#endif
     return entry.is_symlink();
 }
 
@@ -305,13 +299,11 @@ bool file_scanner::isHidden(const std::filesystem::path& path) noexcept {
             return true;
         }
 
-#ifdef _WIN32
         // Windows hidden attribute
         DWORD const attrs = GetFileAttributesW(path.wstring().c_str());
         if (attrs != INVALID_FILE_ATTRIBUTES) {
             return (attrs & FILE_ATTRIBUTE_HIDDEN) != 0;
         }
-#endif
 
         return false;
 
