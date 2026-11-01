@@ -25,6 +25,7 @@
 #include "sak/dns_diagnostic_tool.h"
 #include "sak/drive_scanner.h"
 #include "sak/duplicate_finder_worker.h"
+#include "sak/elevation_manager.h"
 #include "sak/email_constants.h"
 #include "sak/email_profile_manager.h"
 #include "sak/email_search_worker.h"
@@ -2488,7 +2489,7 @@ AppActionResult smartScan(const QJsonObject&) {
 AppActionResult listRestorePoints(const QJsonObject&) {
     const RestorePointManager manager;
     const bool enabled = manager.isSystemRestoreEnabled();
-    const bool elevated = RestorePointManager::isElevated();
+    const bool elevated = ElevationManager::isElevated();
     bool query_ok = false;
     const QVector<QPair<QDateTime, QString>> points = manager.listRestorePoints(query_ok);
 

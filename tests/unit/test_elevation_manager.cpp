@@ -26,8 +26,7 @@ private Q_SLOTS:
     // isElevated
     void isElevated_returnsConsistently();
 
-    // canElevate
-    void canElevate_reportsUacAvailable();
+    void declinedUacPromptMapsToElevationDenied();
 
     // getElevationErrorMessage
     void errorMessage_knownCode();
@@ -59,18 +58,6 @@ void ElevationManagerTests::isElevated_returnsConsistently() {
     LocalFree(administrators);
     QVERIFY(checked != 0);
     QCOMPARE(first, member == TRUE);
-}
-
-// ============================================================================
-// canElevate
-// ============================================================================
-
-void ElevationManagerTests::canElevate_reportsUacAvailable() {
-    // canElevate() is a VerifyVersionInfo(major >= 6) probe, so on every Windows this
-    // suite can run on (Vista and later) it MUST report true. The previous body captured
-    // the result, Q_UNUSED'd it and ended in QVERIFY(true), so an inverted return or a
-    // broken condition mask would have passed unnoticed.
-    QVERIFY(sak::ElevationManager::canElevate());
 }
 
 // ============================================================================
@@ -127,9 +114,20 @@ void ElevationManagerTests::errorMessage_operationCancelled() {
 // Declining the UAC prompt from "Run as Administrator" showed "Elevation Failed". It is the
 // user's answer, so the app just keeps running; a real failure still gets its dialog.
 void ElevationManagerTests::declinedUacPromptIsNotAFailureNotice() {
-    QVERIFY(
-        !sak::ElevationManager::restartFailureNeedsNotice(sak::error_code::operation_cancelled));
+    QVERIFY(!sak::ElevationManager::restartFailureNeedsNotice(sak::error_code::elevation_denied));
     QVERIFY(sak::ElevationManager::restartFailureNeedsNotice(sak::error_code::elevation_failed));
+}
+
+// The relaunch and the elevated helper used two ShellExecuteEx "runas" copies that reported a
+// declined prompt as two different codes (operation_cancelled and elevation_denied); the one
+// launch primitive maps it once, so both callers see the same answer.
+void ElevationManagerTests::declinedUacPromptMapsToElevationDenied() {
+    QCOMPARE(sak::ElevationManager::elevationLaunchError(ERROR_CANCELLED),
+             sak::error_code::elevation_denied);
+    QCOMPARE(sak::ElevationManager::elevationLaunchError(ERROR_ACCESS_DENIED),
+             sak::error_code::elevation_failed);
+    QCOMPARE(sak::ElevationManager::elevationLaunchError(ERROR_FILE_NOT_FOUND),
+             sak::error_code::elevation_failed);
 }
 
 QTEST_GUILESS_MAIN(ElevationManagerTests)

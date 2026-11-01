@@ -161,7 +161,8 @@ bool RestorePointManager::createRestorePoint(const QString& description) {
     // The empty-description and administrator-privileges preflight is extracted into the pure,
     // side-effect-free restorePointPreflightRefusal so it is unit-testable without invoking the
     // real elevated work; here it runs against the live elevation state.
-    const QString refusal = restorePointPreflightRefusal(description, isElevated());
+    const QString refusal = restorePointPreflightRefusal(description,
+                                                         ElevationManager::isElevated());
     if (!refusal.isEmpty()) {
         Q_EMIT restorePointFailed(refusal);
         return false;
@@ -242,7 +243,8 @@ RestorePointManager::Outcome RestorePointManager::outcomeOfCheckpoint(
 }
 
 RestorePointManager::Outcome RestorePointManager::ensureRestorePoint(const QString& description) {
-    const QString refusal = restorePointPreflightRefusal(description, isElevated());
+    const QString refusal = restorePointPreflightRefusal(description,
+                                                         ElevationManager::isElevated());
     if (!refusal.isEmpty()) {
         return {.kind = Outcome::Kind::Failed, .message = refusal};
     }
@@ -445,10 +447,6 @@ QVector<QPair<QDateTime, QString>> RestorePointManager::listRestorePoints(bool& 
 
     queryOk = true;
     return points;
-}
-
-bool RestorePointManager::isElevated() {
-    return ElevationManager::isElevated();
 }
 
 }  // namespace sak

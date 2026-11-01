@@ -241,8 +241,6 @@ private:
     bool isFileAlreadyDownloaded(const UupDumpApi::FileInfo& fileInfo,
                                  const QString& downloadDir) const;
 
-    // Check if process is running with administrator privileges
-    static bool isRunningAsAdmin();
 
     // Progress parsing
     /// @brief Poll download-phase progress and emit updates

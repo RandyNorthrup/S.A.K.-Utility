@@ -6,15 +6,17 @@
 /// @file elevation_gate.h
 /// @brief Reusable UI gate for features that require administrator privileges
 ///
-/// Phase 1 approach: offer to restart the whole app as admin.
-/// Phase 2 will replace these gates with the elevated helper broker.
+/// Features that need the whole process elevated offer to restart the app as administrator,
+/// through the same routine as the status bar's Run as Admin (requestElevatedRestart).
 
 #include "sak/elevation_manager.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
+#include "sak/running_work_exit_guard.h"
 
-#include <QApplication>
+#include <QCoreApplication>
 #include <QMessageBox>
+#include <QPointer>
 #include <QString>
 #include <QWidget>
 
@@ -39,6 +41,61 @@ enum class ElevationGateResult : uint8_t {
         return ElevationGateResult::AlreadyElevated;
     }
     return std::nullopt;
+}
+
+/// @brief Relaunch the app as administrator now; this instance quits once the elevated copy has
+///        started. A declined UAC prompt is the user's answer: nothing happens and nothing is
+///        shown. Any other failure is reported. Returns true when the relaunch started.
+inline bool relaunchElevated(QWidget* parent) {
+    const auto result = ElevationManager::restartElevated();
+    if (result) {
+        QCoreApplication::quit();
+        return true;
+    }
+    if (!ElevationManager::restartFailureNeedsNotice(result.error())) {
+        return false;
+    }
+    sak::logError("Failed to restart elevated: {}", to_string(result.error()));
+    sak::showCriticalLogged(parent,
+                            QObject::tr("Elevation Failed"),
+                            QObject::tr("Failed to restart with administrator privileges.\n\n"
+                                        "Try right-clicking the application and selecting "
+                                        "\"Run as administrator\"."));
+    return false;
+}
+
+/// @brief The one way to restart as administrator -- the status bar's Run as Admin and every
+///        elevation gate. Running work is asked about first, exactly as closing does, through the
+///        main window's RunningWorkExitGuard (found up @p parent's widget chain); the relaunch
+///        happens now, or once that work has stopped.
+/// @return RestartRequested when the relaunch started or waits for running work to stop;
+///         Declined when it was declined, refused or failed.
+inline ElevationGateResult requestElevatedRestart(QWidget* parent) {
+    RunningWorkExitGuard* guard = nullptr;
+    for (QWidget* widget = parent; widget != nullptr && guard == nullptr;
+         widget = widget->parentWidget()) {
+        guard = widget->findChild<RunningWorkExitGuard*>(QString(), Qt::FindDirectChildrenOnly);
+    }
+    if (guard == nullptr) {
+        // A caller outside the main window: relaunching without asking about running work could
+        // leave this instance running beside the elevated one, so refuse visibly.
+        sak::logError("Elevated restart requested outside the main window; refused");
+        sak::showCriticalLogged(parent,
+                                QObject::tr("Elevation Failed"),
+                                QObject::tr("Use Run as Admin in the status bar to restart S.A.K. "
+                                            "Utility as administrator."));
+        return ElevationGateResult::Declined;
+    }
+    const QPointer<QWidget> deferred_parent(parent);
+    if (guard->proceedNowOrAfterCancelling(RunningWorkExitGuard::Intent::RestartElevated,
+                                           [deferred_parent]() {
+                                               relaunchElevated(deferred_parent.data());
+                                           })) {
+        return relaunchElevated(parent) ? ElevationGateResult::RestartRequested
+                                        : ElevationGateResult::Declined;
+    }
+    return guard->isWaitingForCancellation() ? ElevationGateResult::RestartRequested
+                                             : ElevationGateResult::Declined;
 }
 
 /// @brief Check elevation and show a restart-as-admin dialog if needed
@@ -76,18 +133,7 @@ enum class ElevationGateResult : uint8_t {
     }
 
     sak::logInfo("User accepted elevation restart for: {}", feature.toStdString());
-    auto result = ElevationManager::restartElevated();
-    if (result) {
-        QApplication::quit();
-    } else {
-        sak::logError("Failed to restart elevated: {}", to_string(result.error()));
-        sak::showCriticalLogged(parent,
-                                QObject::tr("Elevation Failed"),
-                                QObject::tr("Failed to restart with administrator privileges.\n\n"
-                                            "Try right-clicking the application and selecting "
-                                            "\"Run as administrator\"."));
-    }
-    return ElevationGateResult::RestartRequested;
+    return requestElevatedRestart(parent);
 }
 
 }  // namespace sak

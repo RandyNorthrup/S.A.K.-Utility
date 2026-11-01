@@ -47,8 +47,6 @@ private Q_SLOTS:
     void setSddl_refusesSacl();
     void setSddl_refusesEmbeddedNul();
 
-    // isRunningAsAdmin
-    void isRunningAsAdmin_returnsBoolean();
 
     // getLastError
     void getLastError_initiallyEmpty();
@@ -481,19 +479,6 @@ void PermissionManagerTests::setSddl_refusesEmbeddedNul() {
 // compiled, and it asserted nothing: it called the function, discarded the result with
 // Q_UNUSED because "result depends on privileges", and ended in QVERIFY(true). A test that
 // cannot fail does not make dead code live.
-
-// ============================================================================
-// isRunningAsAdmin
-// ============================================================================
-
-void PermissionManagerTests::isRunningAsAdmin_returnsBoolean() {
-    // The whole contract of isRunningAsAdmin is that it reports the SAME elevation state as the
-    // canonical token check, ElevationManager::isElevated(); every elevation gate in the manager
-    // (tryTakeOwnership) branches on it. The old body discarded the result and asserted
-    // QVERIFY(true), which a hardcoded "return false" would have passed -- silently turning
-    // every elevated operation into elevation_required.
-    QCOMPARE(sak::PermissionManager::isRunningAsAdmin(), sak::ElevationManager::isElevated());
-}
 
 // ============================================================================
 // getLastError

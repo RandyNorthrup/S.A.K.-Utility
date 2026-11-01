@@ -19,7 +19,6 @@ class TestRestorePointManager : public QObject {
 private Q_SLOTS:
     void construction_default();
     void construction_nonCopyable();
-    void isElevated_returnsBool();
     void isSystemRestoreEnabled_returnsBool();
     void restoreEnabledFromProbe_failsClosed();
     void createRestorePointPreflight_failsClosedWithoutAdmin();  // R5-G23-4 no-admin
@@ -39,21 +38,6 @@ void TestRestorePointManager::construction_default() {
 void TestRestorePointManager::construction_nonCopyable() {
     QVERIFY(!std::is_copy_constructible_v<RestorePointManager>);
     QVERIFY(!std::is_move_constructible_v<RestorePointManager>);
-}
-
-void TestRestorePointManager::isElevated_returnsBool() {
-    const bool elevated = RestorePointManager::isElevated();
-    // (!elevated || elevated) is A||!A -- vacuously true for EVERY implementation, including a
-    // hardcoded "return true"; the determinism check below only compares the function to itself.
-    // The real contract is delegation: RestorePointManager::isElevated forwards to the one
-    // canonical token check (src/core/restore_point_manager.cpp:376-378), and createRestorePoint
-    // feeds that value straight into its preflight gate (cpp:157), so a hardcoded true makes a
-    // non-elevated process skip the admin refusal and run Checkpoint-Computer. Both sides read
-    // the same live token, so this holds on an elevated or an unelevated host alike. Same pin the
-    // campaign uses for PermissionManager (tests/unit/test_permission_manager.cpp:465).
-    QCOMPARE(elevated, sak::ElevationManager::isElevated());
-    // Verify it's a deterministic call -- same result twice
-    QCOMPARE(RestorePointManager::isElevated(), elevated);
 }
 
 void TestRestorePointManager::isSystemRestoreEnabled_returnsBool() {

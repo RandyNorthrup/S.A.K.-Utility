@@ -617,7 +617,7 @@ std::optional<sak::error_code> PermissionManager::takeOwnershipElevationRefusal(
 auto PermissionManager::tryTakeOwnership(const QString& path, const QString& userSID)
     -> std::expected<void, sak::error_code> {
 #ifdef Q_OS_WIN
-    if (const auto refusal = takeOwnershipElevationRefusal(isRunningAsAdmin())) {
+    if (const auto refusal = takeOwnershipElevationRefusal(ElevationManager::isElevated())) {
         m_lastError = "Administrator privileges required to take ownership";
         return std::unexpected(*refusal);
     }
@@ -740,10 +740,6 @@ std::expected<void, QString> restrictFileToCurrentUser(const QString& path) {
         return {};
     }
     return std::unexpected(refusal);
-}
-
-bool PermissionManager::isRunningAsAdmin() {
-    return ElevationManager::isElevated();
 }
 
 #ifdef Q_OS_WIN

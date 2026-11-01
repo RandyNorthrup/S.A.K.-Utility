@@ -325,10 +325,6 @@ std::vector<QuickAction*> QuickActionController::getActionsByCategory(
     return result;
 }
 
-bool QuickActionController::hasAdminPrivileges() {
-    return ElevationManager::isElevated();
-}
-
 void QuickActionController::scanAction(const QString& action_name) {
     QuickAction* action = getAction(action_name);
     if (action == nullptr) {
@@ -352,7 +348,7 @@ void QuickActionController::scanAction(const QString& action_name) {
     // Check admin requirements - but allow scan to proceed
     // Scan can determine if action is applicable regardless of admin status
     // Admin check will happen again before execution
-    if (action->requiresAdmin() && !hasAdminPrivileges()) {
+    if (action->requiresAdmin() && !ElevationManager::isElevated()) {
         logOperation(action, "Note: Action requires admin privileges for execution");
     }
 
@@ -395,7 +391,7 @@ void QuickActionController::executeAction(const QString& action_name, bool requi
     }
 
     // Check admin requirements
-    if (action->requiresAdmin() && !hasAdminPrivileges()) {
+    if (action->requiresAdmin() && !ElevationManager::isElevated()) {
         executeElevatedAction(action, action_name);
         return;
     }

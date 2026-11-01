@@ -30,19 +30,22 @@ public:
     [[nodiscard]] static bool isElevated() noexcept;
 
     /**
-     * @brief Check if current process can elevate
-     * @return True if UAC elevation is available
+     * @brief Start this executable again with administrator privileges (the caller then quits)
+     * @return Success or error code; a declined UAC prompt is elevation_denied
      */
-    [[nodiscard]] static bool canElevate() noexcept;
+    static auto restartElevated() -> std::expected<void, sak::error_code>;
 
-    /**
-     * @brief Restart current process with administrator privileges
-     * @param wait_for_exit If true, wait for elevated process to exit
-     * @return Success or error code
-     *
-     * @note This will terminate the current process if successful
-     */
-    static auto restartElevated(bool wait_for_exit = false) -> std::expected<void, sak::error_code>;
+    /// @brief The one UAC request: ShellExecuteExW "runas" of @p executable with @p arguments
+    ///        (already quoted), shown with @p show_command (SW_*). Returns the process handle,
+    ///        which the caller owns and closes. Used by restartElevated and by ElevationBroker to
+    ///        start sak_elevated_helper.exe.
+    static auto launchElevated(const std::wstring& executable,
+                               const std::wstring& arguments,
+                               int show_command) -> std::expected<void*, sak::error_code>;
+
+    /// @brief The result for a failed elevated launch's Win32 error: ERROR_CANCELLED (the user
+    ///        declined the UAC prompt) is elevation_denied, anything else elevation_failed. Pure.
+    [[nodiscard]] static sak::error_code elevationLaunchError(unsigned long win32_error) noexcept;
 
     /// The argument an elevated relaunch of the application carries. The new instance waits for
     /// the one that launched it to exit (sak::SingleInstanceGuard) instead of bringing that
@@ -54,22 +57,11 @@ public:
     [[nodiscard]] static std::wstring relaunchArguments(const std::wstring& current_args);
 
     /// @brief Whether a failed restartElevated() deserves an error dialog. Declining the UAC
-    ///        prompt (ERROR_CANCELLED -> operation_cancelled) is the user's answer, not a
+    ///        prompt (ERROR_CANCELLED -> elevation_denied) is the user's answer, not a
     ///        failure: it used to raise "Elevation Failed".
     [[nodiscard]] static bool restartFailureNeedsNotice(sak::error_code error) noexcept {
-        return error != sak::error_code::operation_cancelled;
+        return error != sak::error_code::elevation_denied;
     }
-
-    /**
-     * @brief Execute command with administrator privileges
-     * @param executable Path to executable
-     * @param arguments Command line arguments
-     * @param wait_for_exit If true, wait for process to complete
-     * @return Success or error code
-     */
-    static auto executeElevated(const std::wstring& executable,
-                                const std::wstring& arguments = L"",
-                                bool wait_for_exit = true) -> std::expected<void, sak::error_code>;
 
     /**
      * @brief Get elevation error message

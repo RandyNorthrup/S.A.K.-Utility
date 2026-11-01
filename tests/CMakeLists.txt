@@ -3419,7 +3419,7 @@ add_test(NAME test_permission_manager COMMAND test_permission_manager
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_permission_manager")
 
-# test_elevation_manager - isElevated, canElevate, error messages
+# test_elevation_manager - isElevated, the UAC decline mapping, error messages
 add_executable(test_elevation_manager
     unit/test_elevation_manager.cpp
 )

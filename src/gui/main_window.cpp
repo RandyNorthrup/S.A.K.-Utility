@@ -15,6 +15,7 @@
 #include "sak/config_manager.h"
 #include "sak/detachable_log_window.h"
 #include "sak/diagnostic_benchmark_panel.h"
+#include "sak/elevation_gate.h"
 #include "sak/elevation_manager.h"
 #include "sak/email_inspector_panel.h"
 #include "sak/image_flasher_panel.h"
@@ -72,6 +73,7 @@
 
 #include <array>
 #include <stdexcept>
+#include <tuple>
 #include <utility>
 
 #include <windows.h>
@@ -664,34 +666,14 @@ void MainWindow::createElevationStatusWidgets() {
         elevate_btn->setFlat(true);
         elevate_btn->setCursor(Qt::PointingHandCursor);
         elevate_btn->setStyleSheet(sak::ui::compactLinkButtonStyle());
+        // Relaunching ends this instance, so it asks first about running work exactly as closing
+        // does, and relaunches only once that work has stopped -- the same routine every
+        // elevation gate uses.
         connect(elevate_btn, &QPushButton::clicked, this, [this]() {
-            // Relaunching ends this instance, so it asks first about running work exactly as
-            // closing does, and relaunches only once that work has stopped.
-            if (m_exit_guard->proceedNowOrAfterCancelling(
-                    RunningWorkExitGuard::Intent::RestartElevated,
-                    [this]() { restartElevated(); })) {
-                restartElevated();
-            }
+            std::ignore = sak::requestElevatedRestart(this);
         });
         statusBar()->addPermanentWidget(elevate_btn);
     }
-}
-
-void MainWindow::restartElevated() {
-    auto result = ElevationManager::restartElevated();
-    if (result) {
-        QCoreApplication::quit();
-        return;
-    }
-    if (!ElevationManager::restartFailureNeedsNotice(result.error())) {
-        return;  // the user declined the UAC prompt: keep running as is, no error
-    }
-    sak::logError("Failed to restart elevated from status bar: {}", to_string(result.error()));
-    sak::showCriticalLogged(this,
-                            tr("Elevation Failed"),
-                            tr("Failed to restart with administrator privileges.\n\n"
-                               "Try right-clicking the application and selecting "
-                               "\"Run as administrator\"."));
 }
 
 void MainWindow::createPanels() {

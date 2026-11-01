@@ -89,11 +89,6 @@ public:
     /// @brief True while an action is executing (from start until its completion is handled).
     [[nodiscard]] bool isExecuting() const { return m_current_execution_action != nullptr; }
 
-    /**
-     * @brief Check if admin privileges are available
-     * @return True if running as administrator
-     */
-    static bool hasAdminPrivileges();
 
     /**
      * @brief Set backup location for elevated runs

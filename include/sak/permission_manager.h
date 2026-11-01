@@ -101,11 +101,6 @@ public:
     [[nodiscard]] auto trySetStandardUserPermissions(const QString& path, const QString& userSID)
         -> std::expected<void, sak::error_code>;
 
-    /**
-     * @brief Check if running with administrator privileges
-     * @return true if admin
-     */
-    static bool isRunningAsAdmin();
 
     /**
      * @brief Get last error message

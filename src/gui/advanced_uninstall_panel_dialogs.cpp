@@ -7,6 +7,7 @@
 
 #include "sak/advanced_uninstall_controller.h"
 #include "sak/advanced_uninstall_panel.h"
+#include "sak/elevation_manager.h"
 #include "sak/layout_constants.h"
 #include "sak/message_box_helpers.h"
 #include "sak/program_enumerator.h"
@@ -154,7 +155,7 @@ QCheckBox* addRestorePointOption(QDialog* dialog, QVBoxLayout* layout, bool auto
     auto* restore_check = new QCheckBox(QObject::tr("Create system restore point before uninstall"),
                                         dialog);
     restore_check->setChecked(auto_restore_point);
-    if (!sak::RestorePointManager::isElevated()) {
+    if (!sak::ElevationManager::isElevated()) {
         restore_check->setToolTip(
             QObject::tr("Requires administrator privileges. Run SAK as administrator to enable."));
         restore_check->setEnabled(false);
@@ -247,7 +248,7 @@ QCheckBox* addForcedUninstallRestoreOption(QDialog* dialog, QVBoxLayout* layout)
         new QCheckBox(QObject::tr("Create system restore point before forced removal"), dialog);
     restore_check->setChecked(true);
 
-    if (!sak::RestorePointManager::isElevated()) {
+    if (!sak::ElevationManager::isElevated()) {
         restore_check->setEnabled(false);
         restore_check->setChecked(false);
         restore_check->setToolTip(QObject::tr("Requires administrator privileges."));
@@ -390,7 +391,7 @@ QCheckBox* AdvancedUninstallPanel::addBatchUninstallOptions(QDialog* dialog,
     auto* restore_check = new QCheckBox(tr("Create single restore point before batch"), dialog);
     restore_check->setChecked(m_controller->autoRestorePoint());
 
-    const bool elevated = RestorePointManager::isElevated();
+    const bool elevated = ElevationManager::isElevated();
     if (!elevated) {
         restore_check->setEnabled(false);
         restore_check->setChecked(false);
@@ -696,7 +697,7 @@ QCheckBox* AdvancedUninstallPanel::addSettingsRestorePointGroup(QDialog* dialog,
         tr("When enabled, a Windows System Restore point is created before "
            "running the uninstaller. Requires administrator privileges."));
 
-    const bool elevated = RestorePointManager::isElevated();
+    const bool elevated = ElevationManager::isElevated();
     if (!elevated) {
         restore_point_check->setEnabled(false);
         restore_point_check->setChecked(false);
@@ -800,7 +801,7 @@ void AdvancedUninstallPanel::showSettingsDialog() {
     // force-unchecked and disabled the box because restore points require admin, so its state does
     // NOT reflect the user's intent. Writing it would silently wipe a previously-enabled
     // preference just because Settings was opened without elevation.
-    if (RestorePointManager::isElevated()) {
+    if (ElevationManager::isElevated()) {
         m_controller->setAutoRestorePoint(restore_point_check->isChecked());
     }
 

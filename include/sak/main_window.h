@@ -123,8 +123,6 @@ private:
      */
     void createElevationStatusWidgets();
 
-    /// @brief Relaunch elevated and close this instance (only once nothing is running).
-    void restartElevated();
 
     /**
      * @brief Create feature panels

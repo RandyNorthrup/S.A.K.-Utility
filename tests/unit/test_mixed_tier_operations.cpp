@@ -9,6 +9,7 @@
 ///  - New task handler registrations in elevated helper dispatcher
 
 #include "sak/elevated_task_dispatcher.h"
+#include "sak/elevation_manager.h"
 #include "sak/error_codes.h"
 #include "sak/permission_manager.h"
 #include "sak/user_profile_backup_worker.h"
@@ -95,7 +96,7 @@ private Q_SLOTS:
         sak::PermissionManager pm;
         auto result = pm.tryTakeOwnership(tmp.fileName(), QStringLiteral("NOT-A-VALID-SID"));
         QVERIFY(!result.has_value());
-        const auto expected = sak::PermissionManager::isRunningAsAdmin()
+        const auto expected = sak::ElevationManager::isElevated()
                                   ? sak::error_code::invalid_argument
                                   : sak::error_code::elevation_required;
         QCOMPARE(result.error(), expected);

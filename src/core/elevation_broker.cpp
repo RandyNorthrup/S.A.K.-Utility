@@ -6,6 +6,7 @@
 
 #include "sak/elevation_broker.h"
 
+#include "sak/elevation_manager.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 
@@ -334,23 +335,12 @@ auto ElevationBroker::launchHelper() -> std::expected<void, sak::error_code> {
                              .arg(m_pipe_name)
                              .arg(QCoreApplication::applicationPid());
 
-    SHELLEXECUTEINFOW sei{};
-    sei.cbSize = sizeof(sei);
-    sei.lpVerb = L"runas";
-    sei.lpFile = reinterpret_cast<LPCWSTR>(helper_path->utf16());
-    const std::wstring wide_args = args.toStdWString();
-    sei.lpParameters = wide_args.c_str();
-    sei.nShow = SW_HIDE;
-    sei.fMask = SEE_MASK_NOCLOSEPROCESS;
-
-    if (ShellExecuteExW(&sei) == 0) {
-        DWORD const error = GetLastError();
-        if (error == ERROR_CANCELLED) {
-            sak::logInfo("ElevationBroker: user cancelled UAC prompt");
-            return std::unexpected(sak::error_code::elevation_denied);
-        }
-        sak::logError("ElevationBroker: ShellExecuteExW failed: {}", error);
-        return std::unexpected(sak::error_code::elevation_failed);
+    // The app's one UAC request (ElevationManager::launchElevated); a declined prompt comes back
+    // as elevation_denied.
+    const auto launched =
+        ElevationManager::launchElevated(helper_path->toStdWString(), args.toStdWString(), SW_HIDE);
+    if (!launched) {
+        return std::unexpected(launched.error());
     }
 
     {
@@ -358,7 +348,7 @@ auto ElevationBroker::launchHelper() -> std::expected<void, sak::error_code> {
         // nulls+closes it under, and isHelperAlive() reads it under -- so a concurrent GUI/AI
         // shutdown() can never race this write of the raw HANDLE.
         const std::lock_guard<std::mutex> lock(m_send_mutex);
-        m_helper_process = sei.hProcess;
+        m_helper_process = static_cast<HANDLE>(*launched);
     }
     sak::logInfo("ElevationBroker: helper launched successfully");
     return {};

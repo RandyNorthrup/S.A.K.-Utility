@@ -908,7 +908,7 @@ bool UupIsoBuilder::prepareConversionEnvironment(QString& uupsDir,
                                                  QString& nativeConversionTempDir,
                                                  QString& outputIsoPath,
                                                  QString& uupMediaConverter) {
-    if (!isRunningAsAdmin()) {
+    if (!sak::ElevationManager::isElevated()) {
         m_phase = Phase::Failed;
         Q_EMIT buildError(
             "Conversion requires elevated privileges (Administrator). "
@@ -1578,10 +1578,6 @@ void UupIsoBuilder::finalizeSuccessfulConversion() {
 // ============================================================================
 // Admin Check & Cleanup
 // ============================================================================
-
-bool UupIsoBuilder::isRunningAsAdmin() {
-    return sak::ElevationManager::isElevated();
-}
 
 void UupIsoBuilder::cleanupWorkDir() {
     // finalizeSuccessfulConversion, the only caller, runs while m_phase is ConvertingToISO.
