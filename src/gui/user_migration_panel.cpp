@@ -19,6 +19,7 @@
 
 #include <QDateTime>
 #include <QDialog>
+#include <QDir>
 #include <QFileDialog>
 #include <QFont>
 #include <QFrame>
@@ -29,6 +30,7 @@
 #include <QMessageBox>
 #include <QProgressBar>
 #include <QScrollArea>
+#include <QStandardPaths>
 #include <QVBoxLayout>
 
 namespace sak {
@@ -278,10 +280,8 @@ QGroupBox* UserMigrationPanel::createQuickToolsSection(QWidget* parent) {
 }
 
 void UserMigrationPanel::createQuickActions() {
-    constexpr auto kDefaultBackupPath = "C:/SAK_Backups";
-    const auto backup_path = QString::fromLatin1(kDefaultBackupPath);
-
-    m_action_controller->setBackupLocation(backup_path);
+    // No default output folder: both Quick Tools ask where to save on every run (Screenshot
+    // Settings wrote to a fixed C:/SAK_Backups without saying so).
     RunningOperations::add(
         this,
         tr("Quick action"),
@@ -324,12 +324,11 @@ void UserMigrationPanel::createQuickActions() {
     }
 }
 
-void UserMigrationPanel::onQuickActionClicked(QuickAction* action) {
-    Q_ASSERT(action);
-    if (action->name() == QLatin1String(quick_action_elevation::kBackupBitLockerKeysName)) {
-        // Recovery keys are asked a destination every time: the default (C:/SAK_Backups) is
-        // usually on the very volume they unlock. The action refuses any folder on a BitLocker
-        // volume whose key it is backing up.
+QString UserMigrationPanel::chooseQuickActionOutputFolder(const QString& action_name) {
+    if (action_name == QLatin1String(quick_action_elevation::kBackupBitLockerKeysName)) {
+        // Recovery keys are asked a destination every time, with no starting folder: a folder on
+        // the system drive is usually on the very volume they unlock. The action refuses any
+        // folder on a BitLocker volume whose key it is backing up.
         const QString destination = QFileDialog::getExistingDirectory(
             this,
             tr("Choose where to save the BitLocker recovery keys (use another drive, such as a "
@@ -338,10 +337,31 @@ void UserMigrationPanel::onQuickActionClicked(QuickAction* action) {
             QFileDialog::ShowDirsOnly);
         if (destination.isEmpty()) {
             appendLog(tr("BitLocker key backup cancelled: no destination was chosen"));
-            return;
         }
-        action->setOutputFolder(destination);
-        m_action_controller->setBackupLocation(destination);  // the elevated run's payload
+        return destination;
+    }
+    // Screenshot Settings, the panel's other Quick Tool: asked every time, starting in
+    // Documents, like the System Inventory Report.
+    const QString folder = QFileDialog::getExistingDirectory(
+        this,
+        tr("Choose where to save the Settings screenshots"),
+        QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation),
+        QFileDialog::ShowDirsOnly);
+    if (folder.isEmpty()) {
+        appendLog(tr("Screenshot Settings cancelled: no folder was chosen"));
+    }
+    return folder;
+}
+
+void UserMigrationPanel::onQuickActionClicked(QuickAction* action) {
+    Q_ASSERT(action);
+    const QString folder = chooseQuickActionOutputFolder(action->name());
+    if (folder.isEmpty()) {
+        return;
+    }
+    action->setOutputFolder(folder);
+    if (action->name() == QLatin1String(quick_action_elevation::kBackupBitLockerKeysName)) {
+        m_action_controller->setBackupLocation(folder);  // the elevated run's payload
     }
     appendLog(QString("Executing: %1").arg(action->name()));
     Q_EMIT statusMessage(QString("Running: %1...").arg(action->name()), sak::kTimerStatusMessageMs);
@@ -361,9 +381,13 @@ void UserMigrationPanel::onQuickActionProgress(QuickAction* action,
 void UserMigrationPanel::onQuickActionComplete(QuickAction* action) {
     Q_ASSERT(action);
     const auto& result = action->lastExecutionResult();
-    const QString status = result.success
-                               ? QString("Completed: %1").arg(action->name())
-                               : QString("Failed: %1 - %2").arg(action->name(), result.message);
+    QString status = result.success
+                         ? QString("Completed: %1").arg(action->name())
+                         : QString("Failed: %1 - %2").arg(action->name(), result.message);
+    // Output saved even partly says where it went (the screenshot folder, the key backup folder).
+    if (!result.output_path.isEmpty()) {
+        status += tr(" - saved to %1").arg(QDir::toNativeSeparators(result.output_path));
+    }
     m_action_progress_bar->setVisible(false);
     appendLog(status);
     Q_EMIT statusMessage(status, sak::kTimerStatusDefaultMs);

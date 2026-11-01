@@ -29,6 +29,13 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   completion message gives the full path of the file it saved. Cancelling the folder choice runs
   nothing. The assistant saves it to the chat session's artifacts, as before.
 
+- **Screenshot Settings asks where to save** - Backup and Restore's Screenshot Settings wrote to
+  a fixed `C:\SAK_Backups` without saying so. It now asks for a folder each time, starting in
+  Documents, saves the screenshots and their report in a `SettingsScreenshots` folder there, and
+  the completion message gives the folder's full path. Cancelling the folder choice runs nothing,
+  and a folder it cannot create stops the run before any Settings page opens. BitLocker Key
+  Backup's completion message names its folder too.
+
 - **The theme follows Windows** - One setting, Light / Dark / System, in the status bar's Theme
   button, saved in the portable `data/config/Utility.ini` and set to System on first run. System
   follows the Windows app theme while S.A.K. runs, title bar included. The Dark switch that sat

@@ -116,7 +116,8 @@ private Q_SLOTS:
     void init();
     void cleanup();
 
-    void userMigrationScreenshotRunsAndReportsCompletion();
+    void userMigrationScreenshotAsksWhereToSaveAndSaysWhereItWent();
+    void userMigrationScreenshotWithNoFolderRunsNothing();
     void userMigrationBitLockerAsksForAFolderAndHandsItToTheHelper();
     void userMigrationBitLockerWithNoFolderRunsNothing();
     void diagnosticsRunsEachMaintenanceActionThroughTheController();
@@ -154,7 +155,11 @@ void QuickActionPanelTests::cleanup() {
     m_system.reset();
 }
 
-void QuickActionPanelTests::userMigrationScreenshotRunsAndReportsCompletion() {
+// Screenshot Settings wrote to a fixed C:/SAK_Backups and reported only "Completed". It now asks
+// for a folder (starting in Documents), writes there, and the completion names what it saved.
+void QuickActionPanelTests::userMigrationScreenshotAsksWhereToSaveAndSaysWhereItWent() {
+    QTemporaryDir output;
+    QVERIFY(output.isValid());
     sak::QuickActionController controller;
     QVERIFY(registerFakes(controller, m_system, {kScreenshotSettings, kBitLocker}));
     sak::UserMigrationPanel panel(controller);
@@ -162,11 +167,47 @@ void QuickActionPanelTests::userMigrationScreenshotRunsAndReportsCompletion() {
     QPushButton* button = buttonNamed(panel, QStringLiteral("Screenshot Settings"));
     QVERIFY(button != nullptr);
 
+    bool asked = false;
+    QString started_in;
+    chooseFolderInNextDialog(output.path(), &asked, &started_in);
     button->click();
-    QTRY_VERIFY_WITH_TIMEOUT(
-        anyStartsWith(status, QStringLiteral("Completed: ") + kScreenshotSettings), kRunTimeoutMs);
-    QCOMPARE(m_system->inProcessRuns().size(), 1);
+    QVERIFY2(asked, "Screenshot Settings must ask where to save before it runs");
+    QCOMPARE(QDir::cleanPath(started_in), documentsFolder());
+    const QString saved =
+        QDir::toNativeSeparators(QDir(output.path()).filePath(kScreenshotSettings + ".txt"));
+    QTRY_VERIFY_WITH_TIMEOUT(texts(status).contains(QStringLiteral("Completed: ") +
+                                                    kScreenshotSettings +
+                                                    QStringLiteral(" - saved to ") + saved),
+                             kRunTimeoutMs);
+    QCOMPARE(m_system->inProcessRuns(),
+             QStringList{kScreenshotSettings + QLatin1Char('|') + output.path()});
+    QVERIFY(QFile::exists(saved));
     QVERIFY(m_system->elevatedTasks().isEmpty());
+}
+
+void QuickActionPanelTests::userMigrationScreenshotWithNoFolderRunsNothing() {
+    sak::QuickActionController controller;
+    QVERIFY(registerFakes(controller, m_system, {kScreenshotSettings, kBitLocker}));
+    sak::UserMigrationPanel panel(controller);
+    QSignalSpy status(&panel, &sak::UserMigrationPanel::statusMessage);
+    QSignalSpy log(&panel, &sak::UserMigrationPanel::logOutput);
+    QPushButton* button = buttonNamed(panel, QStringLiteral("Screenshot Settings"));
+    QVERIFY(button != nullptr);
+
+    bool asked = false;
+    handleNextDialog([&asked](QWidget* modal) {
+        if (auto* dialog = qobject_cast<QFileDialog*>(modal)) {
+            asked = true;
+            dialog->reject();
+        }
+    });
+    button->click();
+    QVERIFY(asked);
+    QTest::qWait(50);
+    QVERIFY(!anyStartsWith(status, QStringLiteral("Running: ")));
+    QVERIFY(m_system->inProcessRuns().isEmpty());
+    QVERIFY(
+        texts(log).contains(QStringLiteral("Screenshot Settings cancelled: no folder was chosen")));
 }
 
 void QuickActionPanelTests::userMigrationBitLockerAsksForAFolderAndHandsItToTheHelper() {

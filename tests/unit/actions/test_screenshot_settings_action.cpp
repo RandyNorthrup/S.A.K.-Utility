@@ -32,6 +32,7 @@ private Q_SLOTS:
     void windowToClose_neverTheUsersOwnSettingsWindow();
     void settingsWindowIsFoundAndWaitedForWithoutTasklistOrKills();
     void reportPathLine_onlyAdvertisesWrittenReport();
+    void createCaptureFolder_reportsAFolderItCannotCreate();
     void buildScreenshotReportText_containsPagesAndSections();
     void buildScreenshotReportText_omitsFailedSectionOnCleanRun();
     void generateReport_writesAndDetectsFailure();
@@ -60,6 +61,25 @@ ScreenshotSettingsAction::CaptureContext ScreenshotSettingsActionTests::contextW
     ctx.start_time = QDateTime::currentDateTime();
     ctx.report_written = report_written;
     return ctx;
+}
+
+// The capture folder is created before any Settings page is opened, and a folder that cannot
+// be created ends the run with that error; it used to log a warning and open every page anyway,
+// each capture then failing on its own.
+void ScreenshotSettingsActionTests::createCaptureFolder_reportsAFolderItCannotCreate() {
+    QTemporaryDir root;
+    QVERIFY(root.isValid());
+    const QDir fresh(root.filePath(QStringLiteral("SettingsScreenshots/20261101_120000")));
+    QCOMPARE(Action::createCaptureFolder(fresh), QString());
+    QVERIFY(fresh.exists());
+
+    QFile blocker(root.filePath(QStringLiteral("not-a-folder")));
+    QVERIFY(blocker.open(QIODevice::WriteOnly));
+    blocker.close();
+    const QDir blocked(root.filePath(QStringLiteral("not-a-folder/SettingsScreenshots/ts")));
+    QCOMPARE(Action::createCaptureFolder(blocked),
+             QStringLiteral("Could not create the screenshot folder: %1")
+                 .arg(QDir::toNativeSeparators(blocked.absolutePath())));
 }
 
 void ScreenshotSettingsActionTests::reportPathLine_onlyAdvertisesWrittenReport() {

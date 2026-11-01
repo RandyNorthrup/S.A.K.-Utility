@@ -99,6 +99,12 @@ private:
     /// report was actually written, otherwise a write-failure marker.
     static QString reportPathLine(bool report_written, const QString& report_path);
 
+    /// Ends the run as failed when the output folder is blank or relative; true when it did.
+    bool rejectInvalidOutputFolder();
+
+    /// Creates the run's capture folder; the error to report when it cannot (empty on success).
+    [[nodiscard]] static QString createCaptureFolder(const QDir& output_dir);
+
     /// @brief Context needed to assemble the final execution result
     struct CaptureContext {
         int total_pages{0};

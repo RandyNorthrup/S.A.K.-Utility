@@ -897,13 +897,12 @@ void MainWindow::createAiAssistantPanelTab(int slot) {
 
 void MainWindow::createBackupRestorePanel() {
     logDebug("MainWindow: creating Backup and Restore panel");
-    constexpr auto kDefaultBackupPath = "C:/SAK_Backups";
-    const auto backup_path = QString::fromLatin1(kDefaultBackupPath);
+    // No default folder: the panel asks where each run saves.
     m_backup_restore_quick_actions = std::make_unique<QuickActionController>();
     m_backup_restore_quick_actions->registerAction(
-        std::make_unique<ScreenshotSettingsAction>(backup_path));
+        std::make_unique<ScreenshotSettingsAction>(QString()));
     m_backup_restore_quick_actions->registerAction(
-        std::make_unique<BackupBitlockerKeysAction>(backup_path));
+        std::make_unique<BackupBitlockerKeysAction>(QString()));
     m_user_migration_panel = std::make_unique<UserMigrationPanel>(*m_backup_restore_quick_actions,
                                                                   this);
     addTabWithTooltip(m_tab_widget,

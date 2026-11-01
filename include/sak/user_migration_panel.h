@@ -99,6 +99,8 @@ private:
                                 QPushButton*& btn);
     QGroupBox* createQuickToolsSection(QWidget* parent);
     void createQuickActions();
+    /// Asks where @p action_name saves this run; empty (and logged) when the user cancels.
+    [[nodiscard]] QString chooseQuickActionOutputFolder(const QString& action_name);
     void setupConnections();
     void appendLog(const QString& message);
 

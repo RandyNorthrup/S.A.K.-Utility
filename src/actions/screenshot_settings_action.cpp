@@ -100,16 +100,7 @@ void ScreenshotSettingsAction::execute() {
         emitCancelledResult("Screenshot capture cancelled");
         return;
     }
-    // Fail closed on a blank or relative output location: "" makes the output path
-    // "/SettingsScreenshots/..." (drive root) and a relative one resolves against the
-    // working directory, so screenshots and the report could land outside the intended
-    // backup folder.
-    if (outputFolder().trimmed().isEmpty() || !QDir::isAbsolutePath(outputFolder())) {
-        ExecutionResult result;
-        result.success = false;
-        result.message = QStringLiteral("Screenshot output location is invalid");
-        result.log = QStringLiteral("Refusing to capture to a blank or relative path");
-        finishWithResult(result, ActionStatus::Failed);
+    if (rejectInvalidOutputFolder()) {
         return;
     }
     setStatus(ActionStatus::Running);
@@ -120,9 +111,11 @@ void ScreenshotSettingsAction::execute() {
     Q_EMIT executionProgress("Preparing screenshot directory...", progress::kStep5);
     const QString timestamp = QDateTime::currentDateTime().toString("yyyyMMdd_HHmmss");
     const QDir output_dir(outputFolder() + "/SettingsScreenshots/" + timestamp);
-    if (!output_dir.mkpath(".")) {
-        sak::logWarning("Failed to create screenshot output directory: {}",
-                        output_dir.absolutePath().toStdString());
+    // Fail closed: without the folder every capture would fail one by one, after Settings pages
+    // had been opened for nothing.
+    if (const QString folder_error = createCaptureFolder(output_dir); !folder_error.isEmpty()) {
+        emitFailedResult(folder_error, folder_error, start_time);
+        return;
     }
 
     // A Settings window open now is the user's: navigated (single-instance), never closed.
@@ -461,6 +454,32 @@ bool ScreenshotSettingsAction::generateReport(const QString& output_dir_path,
 }
 
 // Helper method: Detect monitor count for multi-monitor support
+bool ScreenshotSettingsAction::rejectInvalidOutputFolder() {
+    // Fail closed on a blank or relative output location: "" makes the output path
+    // "/SettingsScreenshots/..." (drive root) and a relative one resolves against the
+    // working directory, so screenshots and the report could land outside the folder the
+    // user chose.
+    if (!outputFolder().trimmed().isEmpty() && QDir::isAbsolutePath(outputFolder())) {
+        return false;
+    }
+    ExecutionResult result;
+    result.success = false;
+    result.message = QStringLiteral("Screenshot output location is invalid");
+    result.log = QStringLiteral("Refusing to capture to a blank or relative path");
+    finishWithResult(result, ActionStatus::Failed);
+    return true;
+}
+
+QString ScreenshotSettingsAction::createCaptureFolder(const QDir& output_dir) {
+    if (output_dir.mkpath(QStringLiteral("."))) {
+        return {};
+    }
+    sak::logWarning("Failed to create screenshot output directory: {}",
+                    output_dir.absolutePath().toStdString());
+    return QStringLiteral("Could not create the screenshot folder: %1")
+        .arg(QDir::toNativeSeparators(output_dir.absolutePath()));
+}
+
 int ScreenshotSettingsAction::detectMonitorCount() {
     // QGuiApplication::screens()/QScreen access is GUI-thread-affine, but execute() runs
     // on the quick-action worker thread. Marshal the query onto the GUI thread and block
