@@ -546,6 +546,82 @@ Fixed in the kept copies on the way (each its own guard and drill): the archive 
 archives QZipWriter cannot encode (65,536+ entries read back as 0, 4 GiB+ wrapped), and followed
 directory junctions when compressing (2b98a864).
 
+#### Cleanup package status (2026-11-01)
+
+Dead code, package files nothing loads, repository leftovers and two owner-ruling fixes, approved
+as a class (behavior audit above). Each removal was proved unused first; lines are the commit's
+deletions (`git show --numstat`; whitespace-insensitive where a block was only unwrapped).
+
+- DONE (0249712e; -1,320 lines): dead dialogs, functions and settings. `SettingsDialog` and
+  `LogViewer` (nothing included or built either), `MainWindow::setProgressVisible` and
+  `QuickActionController::scanAllActions` (no caller), User Migration's "Settings" popup (its
+  thread count, MD5 verification and backup location were read by no backup code), the settings
+  keys only those used or nothing read (`backup/*`, `quick_actions/*`, `organizer/preview_mode`,
+  `duplicate/*`, `ui/restore_window_geometry`, which nothing set) and the unconnected
+  `ConfigManager::settingChanged`. `ConfigManager::removeRetiredKeys` drops them from an existing
+  `Utility.ini` on load (the precedent was `show_system_drive_warning`).
+- DONE (30aa413a; -647 / +102 lines): non-Windows `#else` branches, the `SAK_PLATFORM_WINDOWS` /
+  `PLATFORM_WINDOWS` machinery and `SAK_WIN_REGISTRY_TESTS` (64 files). The build-system lint now
+  forbids a platform conditional in every first-party source instead of a 26-file allowlist.
+- DONE (9d173ce0; -79 lines): the env-var escape hatch `SAK_LEFTOVER_TECHNICIAN_OVERRIDE` and the
+  `technician_override` argument it honoured; leftover cleanup's proof-of-scan has no bypass. No
+  other escape hatch is left in a production path: the remaining environment reads are Windows
+  locations (`SystemRoot`, `LOCALAPPDATA` and the like), the win32 MCP mode switch the AI layer
+  sets for its own child, and the two startup-smoke variables below.
+- DONE (abd4eebd): package diet. Package 158 files / 209,978,320 bytes (200.3 MB) -> 148 files /
+  184,497,349 bytes (176.0 MB); ZIP 103,401,619 -> 93,315,042 bytes. Left out, each proved unused by
+  dumpbin and by the modules a staged app loads (accessibility audit, interactive session, live
+  HTTPS): Mesa `opengl32sw.dll`, `D3Dcompiler_47.dll`, `generic/qtuiotouchplugin`,
+  `networkinformation/qnetworklistmanager`, `tls/qcertonlybackend`, `concrt140.dll`,
+  `msvcp140_codecvt_ids.dll`, the retired `tools/mcp` README, and Chocolatey's runtime state.
+  Kept because they load: `qwindows`, `qmodernwindowsstyle`, `qsvgicon`, the gif/ico/jpeg/svg
+  image formats and `qschannelbackend`. The stager's dependency check now covers every binary the
+  app process loads (`-WholePackage`) and found `qwindows.dll` importing `mscms.dll`, which the
+  classifier lacked. Proof on the trimmed package: stage, archive, extract, portable smoke,
+  startup E2E, runtime dependencies, accessibility audit (`missing=0 checked=1950`), and an HTTPS
+  request through the package's own Qt runtime (`test_linux_iso_downloader`
+  `testDirectUrlReachable_Ubuntu`, run from a package copy, loaded only `qschannelbackend`).
+- FIXED on the way (abd4eebd): `check_startup_budget.ps1` forces Qt's offscreen platform, which a
+  package has not shipped since 1bfcc2e8, so against a package it sat at Qt's missing-plugin
+  message box and reported a hung startup after 60 s (also on the untrimmed package). It refuses
+  such a folder at once; the gate stays a build-tree gate (4.9 s of 15 s here), and a package is
+  timed by `run_portable_e2e_smoke.ps1`.
+- DONE (7e163c49; -1,127 lines): repository leftovers. Dev scripts `tools/count_methods.py` and
+  `tools/decompose_execute.py` (both broken, and shipped because tools/ is copied wholesale),
+  `package_mappings.json` with the test-only `PackageMatcher::exportMappings`/`importMappings`,
+  `.vsignore` (no tool reads it), `scripts/create-release-tag.ps1` (unreferenced; it accepted tags
+  the release rule forbids), six icons no code names and `resources/icon.icns`, stale
+  `.gitignore` rules (and the UUP converter `.exe` exception, which the later `*.exe` rule
+  overrode), the unreachable GCC/GNU-driver CMake branches with `SAK_ENABLE_MARCH_NATIVE`, the
+  `ENABLE_UBSAN`/`ENABLE_TSAN` options (one only printed SKIPPED, the other could only fail
+  configure) and the unread `SAK_BUILD_TYPE`. Configure now refuses a GNU-style driver. The local
+  Chocolatey state (`tools/chocolatey/logs`, `bin/_processed.txt`, `bin/RefreshEnv.cmd`) was
+  deleted from the main checkout and is excluded from the build's tools copy (abd4eebd).
+- DONE (3dd86c2e): the two Diagnostics reports have distinct names -- the Scan Report ("Export
+  Scan Report", HTML/JSON/CSV of the scans run) and the System Inventory Report (the live-inventory
+  quick action; the assistant's id is now `action.system_inventory_report`) -- and the Full Suite
+  step that only aggregates results is "Aggregate Results". The inventory report asks for a folder
+  each time (starting in Documents) instead of writing to a fixed `C:/SAK_Backups`, and the
+  completion status names the saved file; the assistant keeps writing to the session's artifacts.
+- DONE (47dc2624): the intermittent `sessionPickerListsSessionsOffTheGuiThread` was the test's wait
+  (a count of 1 that the constructor's draft row already satisfied), reproduced on demand and
+  fixed; the suspected product race does not occur (see the infrastructure item below).
+- Not found: the "job-object loop guard" named for this package. Nothing in the tree, docs (archive
+  included), ignored files or commit messages since 2026-10-20 carries that name or describes a
+  loop guard around a Job object. Closest: `ContainedProcessQuarantine::retryRetained` (a retry
+  over quarantined Jobs) has no product caller, only the MCP test fixture's drain; quarantined
+  owners stay until exit by design (kill-on-close), so it was left.
+- Left, with reasons: `ConfigManager::resetToDefaults` now has only test callers (every config
+  suite resets through it); `SAK_STARTUP_SMOKE_HEADLESS` and `SAK_STARTUP_SMOKE_CI_HEADLESS` are
+  two names for the gates' headless smoke mode, not an escape hatch (one name would do; the e2e
+  smoke's tests pin both); the User Migration panel's Screenshot Settings still writes to the fixed
+  `C:/SAK_Backups` (not in this package's ruling); seven File Explorer icon-registry entries
+  (`view-*-28`, `favorite`, `properties-security`) are requested by nothing but a test.
+- OPEN, found here: `test_linux_iso_downloader` `testGitHubVersionCheck_Network` (opt-in live
+  test, skipped in CTest) fails at once with "GitHub API error: Network metadata request
+  cancelled", the same on the c2991a86 package, the trimmed package and the build tree; the
+  test's message ("did not respond within 15 seconds") hides that. Not caused by this package.
+
 ### Open release infrastructure
 
 - Tiered gates: the local tiers (T1 commit hooks, T1p pre-push, manual-stage T2-T4 twins), the
@@ -598,8 +674,9 @@ directory junctions when compressing (2b98a864).
 - Done 2026-10-24: certifier and writer-CLI script tests delete their run folder when they pass,
   keep failures for diagnosis, and cap leftover failed runs at the newest three
   (`scripts/run_folder_retention.ps1`). They once held over 1 TB under `build/test_results`.
-- Refresh `THIRD_PARTY_LICENSES.md` against what actually ships (Mesa opengl32sw, D3Dcompiler,
-  MSVC runtime, 7-Zip, cygwin1.dll and others are missing; Qt section names 6.5).
+- Refresh `THIRD_PARTY_LICENSES.md` against what actually ships (MSVC runtime, 7-Zip, cygwin1.dll
+  and others are missing; Qt section names 6.5). Mesa opengl32sw and D3Dcompiler no longer ship
+  (abd4eebd).
 
 ## Current gate boundary: Wave 69 (2026-10-24)
 

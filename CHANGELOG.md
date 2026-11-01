@@ -8,6 +8,15 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **Smaller download** - The package no longer carries files the app never loads: Mesa's
+  software OpenGL renderer (20 MB), the Direct3D shader compiler, Qt's touch-input,
+  network-information and certificate-only TLS plugins, and two unused Visual C++ runtime DLLs.
+  The folder is 176 MB instead of 200 MB, the ZIP 89 MB instead of 99 MB.
+
+- **User Migration's Settings button is gone** - Its thread count, MD5 verification and backup
+  location were saved but never used by a backup. Settings that no longer exist are removed from
+  `Utility.ini` when the app starts.
+
 - **Two reports, two names** - The Diagnostics panel had two features called "Generate Report".
   The one that saves the results of the scans you ran (HTML, JSON or CSV) is now the Scan Report,
   with an Export Scan Report button. The one-click action that collects a live inventory of the
