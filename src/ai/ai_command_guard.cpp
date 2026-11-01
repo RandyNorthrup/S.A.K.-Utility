@@ -32,9 +32,15 @@ const QRegularExpression kBinaryExtensionRegex(
     QStringLiteral(
         R"(\.(?:exe|dll|bin|db|db3|sqlite|sdb|zip|7z|msi|cab|sys|png|jpe?g|gif|webp|pdf)(?:['"`\s;)]|$))"),
     QRegularExpression::CaseInsensitiveOption);
+// The HKLM/HKCU hive root or its SOFTWARE key, as a recursion target. Every spelling PowerShell
+// accepts for those is covered: the drive form with or without its backslash (`HKLM:\`, `HKLM:`,
+// `HKLM:Software`), the provider form long or short (`Registry::HKEY_LOCAL_MACHINE`,
+// `Registry::HKLM\Software`), and a trailing `\` or `\*` wildcard. Only `HKLM:\Software` and the
+// long provider form used to match, so `HKLM:\Software\*`, a bare hive root and the short
+// provider form recursed the whole hive unchecked. A runaway-output guardrail, not a boundary.
 const QRegularExpression kRegistryRootRegex(
-    QStringLiteral(R"((?:(?:hklm|hkcu):\\|registry::hkey_(?:local_machine|)"
-                   R"(current_user)\\)software(?:\\)?(?:['"`\s,;)]|$))"),
+    QStringLiteral(R"((?:(?:hklm|hkcu):\\?|registry::(?:hkey_(?:local_machine|)"
+                   R"(current_user)|hklm|hkcu)\\?)(?:software)?(?:\\?\*|\\)?(?:['"`\s,;)]|$))"),
     QRegularExpression::CaseInsensitiveOption);
 const QRegularExpression kActiveRecurseRegex(QStringLiteral("(?:^|\\s)-rec(?:u(?:r(?:s(?:e)?)?)?)?"
                                                             "(?:\\s*:\\s*\\$true)?(?:$|[\\s,)])"),
@@ -48,8 +54,18 @@ const QRegularExpression kBypassSwitchRegex(
                    R"(|download-?checksums?(?:-?x64)?|checksums?(?:64)?)"
                    R"(|checksum-?type)\b)"),
     QRegularExpression::CaseInsensitiveOption);
+// TEMP and TMP: both name the temp folder and Chocolatey's cache lives under either, so knowing
+// only `temp` let `& "$env:TMP\chocolatey\pkg\1.0\setup.exe"` run a cached installer unasked.
 const QRegularExpression kChocolateyTempEnvironmentRegex(
-    QStringLiteral(R"((?:\$env:temp|\$\{env:temp\}|%temp%)[\\/]chocolatey[\\/])"),
+    QStringLiteral(R"((?:\$env:te?mp|\$\{env:te?mp\}|%te?mp%)[\\/]chocolatey[\\/])"),
+    QRegularExpression::CaseInsensitiveOption);
+// `choco feature disable --name=checksumFiles` turns checksum verification off for EVERY later
+// install -- a bypass as complete as --ignore-checksums, and one that outlives the command. The
+// switch rule needs a '-' or '/' directly before "checksum", which the feature NAME never has.
+// Order-independent, since an option may precede the subcommand. Re-ENABLING the feature is
+// allowed; enabling allowEmptyChecksums is caught by the substring list below.
+const QRegularExpression kChecksumFeatureDisableRegex(
+    QStringLiteral(R"(\bfeature\b(?=.*\bdisable\b)(?=.*\bchecksumfiles\b))"),
     QRegularExpression::CaseInsensitiveOption);
 const QRegularExpression kChocolateyInstallCacheRegex(
     QStringLiteral(R"((?:\$env:chocolateyinstall|\$\{env:chocolateyinstall\}|)"
@@ -204,6 +220,7 @@ bool commandContainsChecksumBypass(const QStringList& clauses) {
     // "checksum" in a preview or a comment does not trip the guard.
     return std::any_of(clauses.cbegin(), clauses.cend(), [](const QString& clause) {
         return kBypassSwitchRegex.match(clause).hasMatch() ||
+               kChecksumFeatureDisableRegex.match(clause).hasMatch() ||
                clause.contains(QStringLiteral("chocolateyignorechecksums")) ||
                clause.contains(QStringLiteral("chocolateyallowemptychecksums")) ||
                clause.contains(QStringLiteral("ignorechecksum")) ||

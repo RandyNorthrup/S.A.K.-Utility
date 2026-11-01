@@ -34,6 +34,9 @@ private Q_SLOTS:
     void cacheApprovalIsClauseScopedAndRequiresInstaller();
     void directProcessCacheInstallerRequiresApproval();
     void safeReadOnlyCommandPasses();
+    void checksumFeatureDisableIsBlocked();
+    void tmpEnvironmentCacheInstallerNeedsApproval();
+    void registryHiveRootsAndWildcardsAreBroad();
 };
 
 void AiCommandGuardTests::blocksBinaryContentDump() {
@@ -307,6 +310,79 @@ void AiCommandGuardTests::safeReadOnlyCommandPasses() {
     QVERIFY(!result.requiresApproval());
     QVERIFY(result.blockError().isEmpty());
     QVERIFY(result.approvalReason().isEmpty());
+}
+
+void AiCommandGuardTests::checksumFeatureDisableIsBlocked() {
+    // NEW-3. Turning Chocolatey's checksumFiles feature off disables verification for EVERY later
+    // install. The switch rule needs '-' or '/' directly before "checksum", which a feature NAME
+    // never has, so this passed -- and in Unattended mode ran without a prompt.
+    const auto blockError = [](const QString& command) {
+        sak::ai::AiCommandRequest request;
+        request.command = command;
+        return sak::ai::evaluateCommandGuard(request).blockError();
+    };
+    for (const QString& command : {
+             QStringLiteral("choco feature disable -n checksumFiles"),
+             QStringLiteral("choco feature disable --name=\"checksumFiles\""),
+             QStringLiteral("choco feature disable -n=checksumFiles -y"),
+             QStringLiteral("& 'C:\\ProgramData\\chocolatey\\bin\\choco.exe' feature disable "
+                            "--name 'checksumFiles'"),
+             QStringLiteral("choco feature -n checksumFiles disable"),
+             // Enabling empty checksums was already blocked; it stays blocked.
+             QStringLiteral("choco feature enable -n allowEmptyChecksums"),
+         }) {
+        QVERIFY2(blockError(command).startsWith(QStringLiteral("Blocked package checksum bypass")),
+                 qPrintable(command));
+    }
+    // Re-enabling verification, and disabling an unrelated feature, are ordinary.
+    QVERIFY(blockError(QStringLiteral("choco feature enable -n checksumFiles")).isEmpty());
+    QVERIFY(blockError(QStringLiteral("choco feature disable -n showDownloadProgress")).isEmpty());
+    QVERIFY(blockError(QStringLiteral("choco feature list")).isEmpty());
+}
+
+void AiCommandGuardTests::tmpEnvironmentCacheInstallerNeedsApproval() {
+    // NEW-4. TMP names the temp folder as TEMP does, and the cache rule knew only TEMP.
+    for (const QString& command : {
+             QStringLiteral("& \"$env:TMP\\chocolatey\\pkg\\1.0\\setup.exe\" /S"),
+             QStringLiteral("Start-Process \"${env:TMP}\\chocolatey\\pkg\\1.0\\setup.msi\""),
+             QStringLiteral("%TMP%\\chocolatey\\pkg\\1.0\\setup.exe /quiet"),
+         }) {
+        sak::ai::AiCommandRequest request;
+        request.command = command;
+        const auto result = sak::ai::evaluateCommandGuard(request);
+        QVERIFY2(result.blockError().isEmpty(), qPrintable(command));
+        QVERIFY2(!result.approvalReason().isEmpty(), qPrintable(command));
+    }
+}
+
+void AiCommandGuardTests::registryHiveRootsAndWildcardsAreBroad() {
+    // NEW-5. Only HKLM:\Software and the long provider form were recognised as a broad root, so
+    // a wildcard, a bare hive root and the short provider form all recursed the whole hive.
+    const auto blockError = [](const QString& command) {
+        sak::ai::AiCommandRequest request;
+        request.command = command;
+        return sak::ai::evaluateCommandGuard(request).blockError();
+    };
+    for (const QString& root : {
+             QStringLiteral("HKLM:\\Software\\*"),
+             QStringLiteral("HKLM:\\"),
+             QStringLiteral("HKLM:"),
+             QStringLiteral("HKCU:Software"),
+             QStringLiteral("Registry::HKLM\\Software"),
+             QStringLiteral("Registry::HKEY_LOCAL_MACHINE"),
+             QStringLiteral("'HKCU:\\Software\\*'"),
+         }) {
+        QVERIFY2(blockError(QStringLiteral("Get-ChildItem %1 -Recurse").arg(root))
+                     .startsWith(QStringLiteral("Blocked broad recursive registry scan")),
+                 qPrintable(root));
+    }
+    // An exact vendor or uninstall key stays allowed, wildcard included.
+    QVERIFY(blockError(QStringLiteral("Get-ChildItem "
+                                      "HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\"
+                                      "Uninstall\\* -Recurse"))
+                .isEmpty());
+    QVERIFY(blockError(QStringLiteral("Get-ChildItem Registry::HKLM\\Software\\Vendor -Recurse"))
+                .isEmpty());
 }
 
 QTEST_GUILESS_MAIN(AiCommandGuardTests)

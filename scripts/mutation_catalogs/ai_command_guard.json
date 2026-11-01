@@ -79,8 +79,8 @@
     {
       "id": "provider-qualified-registry-root-is-ignored",
       "file": "src/ai/ai_command_guard.cpp",
-      "find": "registry::hkey_(?:local_machine|)",
-      "replace": "registry::ignored_hkey_(?:local_machine|)",
+      "find": "registry::(?:hkey_(?:local_machine|)",
+      "replace": "registry::(?:ignored_hkey_(?:local_machine|)",
       "expect": "killed",
       "why": "registryRecursionCheckIsClauseScoped blocks broad recursion through Registry::HKEY_LOCAL_MACHINE and Registry::HKEY_CURRENT_USER provider-qualified roots."
     },
@@ -163,6 +163,30 @@
       "replace": "        clauses.append(request.command.toLower());",
       "expect": "killed",
       "why": "directProcessCacheInstallerRequiresApproval proves program and argv are security inputs even when shell command is empty."
+    },
+    {
+      "id": "checksum-feature-disable-is-ignored",
+      "file": "src/ai/ai_command_guard.cpp",
+      "find": "               kChecksumFeatureDisableRegex.match(clause).hasMatch() ||",
+      "replace": "               clause.isEmpty() ||",
+      "expect": "killed",
+      "why": "checksumFeatureDisableIsBlocked: choco feature disable checksumFiles turns verification off for every later install and must be blocked."
+    },
+    {
+      "id": "tmp-environment-cache-is-ignored",
+      "file": "src/ai/ai_command_guard.cpp",
+      "find": "(?:\\$env:te?mp|\\$\\{env:te?mp\\}|%te?mp%)",
+      "replace": "(?:\\$env:temp|\\$\\{env:temp\\}|%temp%)",
+      "expect": "killed",
+      "why": "tmpEnvironmentCacheInstallerNeedsApproval covers $env:TMP, ${env:TMP} and %TMP% Chocolatey installer paths."
+    },
+    {
+      "id": "registry-hive-root-and-wildcard-are-ignored",
+      "file": "src/ai/ai_command_guard.cpp",
+      "find": "(?:software)?(?:\\\\?\\*|\\\\)?",
+      "replace": "software(?:\\\\)?",
+      "expect": "killed",
+      "why": "registryHiveRootsAndWildcardsAreBroad blocks recursion over HKLM:\\Software\\*, a bare hive root and the short provider form."
     }
   ]
 }
