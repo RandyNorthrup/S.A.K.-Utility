@@ -3,10 +3,15 @@
 
 #pragma once
 
+#include "sak/process_runner.h"
 #include "sak/quick_action.h"
 
 #include <QDateTime>
 #include <QString>
+#include <QVector>
+
+#include <expected>
+#include <optional>
 
 namespace sak {
 
@@ -125,6 +130,58 @@ public:
     ///        which as a bare "0" reads like an immediate timeout -- the opposite of what it means.
     [[nodiscard]] static QString formatPowerTimeout(qint64 seconds);
 
+    /// @brief The active plan a finished `powercfg -GETACTIVESCHEME` reported, or why there is
+    ///        none: the run failed or timed out, or it printed no scheme GUID.
+    ///
+    /// The query's own result used to be ignored, so a timeout or a missing powercfg read as
+    /// "no name" and the scan still reported "Power plan detected".
+    [[nodiscard]] static std::expected<PowerPlan, QString> activePlanFromQuery(
+        const ProcessResult& query);
+
+    /// @brief What scan() reports for an active-plan query result. A query that could not be
+    ///        read is reported as such, and the action is not offered as applicable on a guess.
+    [[nodiscard]] static ScanResult scanResultFor(const std::expected<PowerPlan, QString>& active);
+
+    /// @brief The plan this action activates: a BUILT-IN high-performance scheme, identified by
+    ///        GUID. A listed High or Ultimate Performance scheme wins; when powercfg lists
+    ///        neither, the canonical High Performance GUID is used (it is hidden on some SKUs).
+    ///
+    /// A plan merely NAMED "High Performance" is never chosen. It used to win whenever no
+    /// built-in GUID was listed, so a renamed custom plan was activated and reported as
+    /// "Switched to High Performance" -- and, being GUID-unknown, re-activated on every run.
+    /// nullopt when discovery failed or found no plans: nothing may be activated on a guess.
+    [[nodiscard]] static std::optional<PowerPlan> resolveHighPerformancePlan(
+        const QVector<PowerPlan>& plans, bool discovery_ok);
+
+    /// @brief The report header: current plan (or why it could not be read) and every plan
+    ///        powercfg listed. Every row is exactly as wide as the border around it.
+    [[nodiscard]] static QString buildPowerPlanListReport(
+        const std::expected<PowerPlan, QString>& current_plan, const QVector<PowerPlan>& all_plans);
+
+    /// @brief One framed report row: `| text ... |` padded to the border width, newline last.
+    [[nodiscard]] static QString reportRow(const QString& text);
+
+    /// @brief How a run ended. Each failure names its own cause: discovery failing is not an
+    ///        activation failure, and an activation that ran but cannot be confirmed is neither.
+    enum class Outcome {
+        AlreadyOptimized,
+        Switched,
+        DiscoveryFailed,
+        ActivationFailed,
+        VerificationFailed
+    };
+
+    /// @brief The result message and closing log lines for a FAILED outcome. @p target_guid is
+    ///        offered back as a manual `powercfg -SETACTIVE` command only when there is one --
+    ///        a discovery failure has no target, and used to print the command with no GUID.
+    struct FailureText {
+        QString message;
+        QString log_tail;
+    };
+    [[nodiscard]] static FailureText failureText(Outcome outcome,
+                                                 const QString& target_guid,
+                                                 const QString& reason);
+
 private:
     struct OptimizationResultContext {
         QDateTime start_time;
@@ -133,8 +190,9 @@ private:
         QString high_perf_guid;
         /// The timeouts actually in force once the action finished, read back from powercfg.
         PowerTimeouts effective_timeouts;
-        bool already_optimized{false};
-        bool success{false};
+        Outcome outcome{Outcome::DiscoveryFailed};
+        /// For a failed outcome, the cause in powercfg's or this action's own words.
+        QString failure_reason;
     };
 
     QVector<PowerPlan> enumeratePowerPlans(bool& discovery_ok);
@@ -147,26 +205,16 @@ private:
     /// technician to go and run powercfg -QUERY themselves. The read-back is now wired up and
     /// the report states what it measured.
     PowerPlanDetails queryPowerPlan(const QString& guid);
-    PowerPlan getActivePowerPlan();
-    bool setPowerPlan(const QString& guid);
-    /// @brief Exact (case-insensitive) name match within an ALREADY-enumerated plan list, so the
-    ///        caller enumerates once instead of re-running powercfg per lookup.
-    static PowerPlan findPlanByNameIn(const QVector<PowerPlan>& plans, const QString& name);
-    /// @brief Pick the High/Ultimate Performance plan from @p plans, falling back to the canonical
-    ///        built-in GUID ONLY when discovery succeeded. Returns false (fail closed, no
-    ///        mutation) when discovery failed or no usable plan/GUID could be resolved.
-    bool resolveHighPerformancePlan(const QVector<PowerPlan>& plans,
-                                    bool discovery_ok,
-                                    PowerPlan& out_plan);
-    QString getStandardPowerPlanGuid(const QString& plan_type);
+    std::expected<PowerPlan, QString> getActivePowerPlan();
+    /// @brief Run `powercfg -SETACTIVE`, returning powercfg's own account of a failure.
+    std::expected<void, QString> setPowerPlan(const QString& guid);
 
-    /// @brief Activate the High Performance plan, verify, and append status to report
-    bool activateHighPerformancePlan(const PowerPlan& high_perf_plan,
-                                     const QString& current_plan_name,
-                                     QString& report);
-    /// @brief Build the report header listing current and available power plans
-    QString buildPowerPlanListReport(const PowerPlan& current_plan,
-                                     const QVector<PowerPlan>& all_plans) const;
+    /// @brief Activate the High Performance plan, verify it, and append the status rows.
+    /// @return Switched, ActivationFailed or VerificationFailed; @p reason gets the cause.
+    Outcome activateHighPerformancePlan(const PowerPlan& high_perf_plan,
+                                        const QString& current_plan_name,
+                                        QString& report,
+                                        QString& reason);
     /// @brief Create and emit the final execution result with recommendations
     void finalizePowerOptimizationResult(const OptimizationResultContext& context);
     /// @brief Append the "Target Plan / Target GUID" block that closes the report header.
@@ -182,7 +230,10 @@ private:
     ///        (no plan mutation). Extracted so execute() stays within the length cap.
     void finalizeDiscoveryFailure(const QDateTime& start_time,
                                   QString& report,
-                                  const QString& previous_plan_name);
+                                  const QString& previous_plan_name,
+                                  const QString& reason);
+    /// @brief Append the success-path log: recommendations and the read-back timeouts.
+    static void appendSuccessLog(const OptimizationResultContext& context, QString& log);
 };
 
 }  // namespace sak

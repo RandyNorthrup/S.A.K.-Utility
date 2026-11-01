@@ -12,7 +12,6 @@
 
 #include <QRegularExpression>
 #include <QStringList>
-#include <QTextStream>
 
 #include <algorithm>
 #include <limits>
@@ -41,11 +40,53 @@ constexpr auto kActivePowerPlanPattern =
 constexpr int kPowerPlanGuidCaptureGroup = 1;
 constexpr int kPowerPlanNameCaptureGroup = 2;
 constexpr int kPowerPlanActiveMarkerCaptureGroup = 3;
-constexpr int kReportInnerWidth = 67;
 
-// Built-in high-performance scheme GUIDs (lower-case, canonical).
-constexpr auto kHighPerformanceGuid = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";      // SCHEME_MIN
+// The report frame: a border of kReportRuleChars '=' between two '+', and rows of "| " + text +
+// " |" padded to the same width. Rows used to end in '\n' BEFORE they were padded, so the padding
+// and the closing bar landed on the next line, and the pad width (67) exceeded the 66-character
+// border anyway: every row of the report rendered broken.
+constexpr int kReportRuleChars = 64;
+constexpr int kReportRowFrameChars = 2;  // the "| " opening and " |" closing take one column each
+constexpr int kReportTextChars = kReportRuleChars - kReportRowFrameChars;
+
+QString reportRule() {
+    return QStringLiteral("+") + QString(kReportRuleChars, QLatin1Char('=')) +
+           QStringLiteral("+\n");
+}
+
+QString reportTitleRow(const QString& title) {
+    constexpr qsizetype kCenteringSides = 2;  // the free space splits between left and right
+    const qsizetype left_pad =
+        std::max<qsizetype>(0, (kReportTextChars - title.size()) / kCenteringSides);
+    return QStringLiteral("| ") +
+           (QString(left_pad, QLatin1Char(' ')) + title).leftJustified(kReportTextChars) +
+           QStringLiteral(" |\n");
+}
+
+// The ONE built-in High Performance scheme GUID (SCHEME_MIN, lower-case, canonical). It was
+// written twice -- here and as a literal inside a name-to-GUID lookup whose Balanced and Power
+// Saver branches no caller could reach -- and is now only here.
+constexpr auto kHighPerformanceGuid = "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";
 constexpr auto kUltimatePerformanceGuid = "e9a42b02-d5df-448d-aa00-03f14749eb61";  // Ultimate
+
+// powercfg reports its failures on stdout as often as on stderr, so the cause is whichever
+// stream carries text.
+QString powercfgFailure(const QString& command, const ProcessResult& run) {
+    if (run.timed_out) {
+        return QStringLiteral("%1 timed out").arg(command);
+    }
+    QString detail = run.std_err.trimmed();
+    if (detail.isEmpty()) {
+        detail = run.std_out.trimmed();
+    }
+    if (detail.isEmpty()) {
+        detail = QStringLiteral("no output");
+    }
+    return QStringLiteral("%1 failed (exit code %2): %3")
+        .arg(command)
+        .arg(run.exit_code)
+        .arg(detail);
+}
 
 // Well-known power SETTING GUIDs (not scheme GUIDs). Stable across Windows versions and
 // locales, which is exactly why the read-back keys on them instead of on the printed labels.
@@ -277,7 +318,7 @@ OptimizePowerSettingsAction::PowerPlanDetails OptimizePowerSettingsAction::query
 }
 
 // ENTERPRISE-GRADE: Set power plan using powercfg -SETACTIVE
-bool OptimizePowerSettingsAction::setPowerPlan(const QString& guid) {
+std::expected<void, QString> OptimizePowerSettingsAction::setPowerPlan(const QString& guid) {
     Q_EMIT executionProgress("Activating power plan...", progress::kStep60);
 
     const ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("powercfg.exe")),
@@ -286,20 +327,34 @@ bool OptimizePowerSettingsAction::setPowerPlan(const QString& guid) {
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Power plan activate warning: " + proc.std_err.trimmed());
     }
-    return proc.succeeded();
+    if (!proc.succeeded()) {
+        return std::unexpected(powercfgFailure(QStringLiteral("powercfg -SETACTIVE"), proc));
+    }
+    return {};
 }
 
 // ENTERPRISE-GRADE: Get active power plan using powercfg -GETACTIVESCHEME
-OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::getActivePowerPlan() {
-    PowerPlan active_plan;
-
+std::expected<OptimizePowerSettingsAction::PowerPlan, QString>
+OptimizePowerSettingsAction::getActivePowerPlan() {
     const ProcessResult proc = runProcess(sak::system32Path(QStringLiteral("powercfg.exe")),
                                           QStringList() << "-GETACTIVESCHEME",
                                           sak::kTimeoutProcessShortMs);
     if (!proc.std_err.trimmed().isEmpty()) {
         Q_EMIT logMessage("Power plan active query warning: " + proc.std_err.trimmed());
     }
-    return parseActivePowerPlan(proc.std_out);
+    return activePlanFromQuery(proc);
+}
+
+std::expected<OptimizePowerSettingsAction::PowerPlan, QString>
+OptimizePowerSettingsAction::activePlanFromQuery(const ProcessResult& query) {
+    if (!query.succeeded()) {
+        return std::unexpected(powercfgFailure(QStringLiteral("powercfg -GETACTIVESCHEME"), query));
+    }
+    const PowerPlan active = parseActivePowerPlan(query.std_out);
+    if (active.guid.isEmpty()) {
+        return std::unexpected(QStringLiteral("powercfg -GETACTIVESCHEME printed no scheme GUID"));
+    }
+    return active;
 }
 
 OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::parseActivePowerPlan(
@@ -320,103 +375,84 @@ OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::parseActiveP
     return active_plan;
 }
 
-// ENTERPRISE-GRADE: Find power plan by name (case-insensitive) within an enumerated list.
-OptimizePowerSettingsAction::PowerPlan OptimizePowerSettingsAction::findPlanByNameIn(
-    const QVector<PowerPlan>& plans, const QString& name) {
-    // Exact (case-insensitive) name match, NOT a substring match: a custom plan
-    // named e.g. "My High Performance Rig" must not be selected when searching
-    // for the built-in "High Performance". If no exact match exists, the caller
-    // falls back to the canonical built-in GUID via getStandardPowerPlanGuid().
-    auto it = std::ranges::find_if(plans, [&name](const PowerPlan& plan) {
-        return plan.name.compare(name, Qt::CaseInsensitive) == 0;
-    });
-    return it != plans.end() ? *it : PowerPlan();
-}
-
 bool OptimizePowerSettingsAction::discoveryPermitsActivation(bool discovery_ok, int plans_found) {
     return discovery_ok && plans_found > 0;
 }
 
+QString OptimizePowerSettingsAction::reportRow(const QString& text) {
+    // A row whose text is wider than the frame is printed whole rather than cut: a plan name is
+    // the information, and a truncated one is a different name.
+    return QStringLiteral("| ") + text.leftJustified(kReportTextChars) + QStringLiteral(" |\n");
+}
+
 void OptimizePowerSettingsAction::finalizeDiscoveryFailure(const QDateTime& start_time,
                                                            QString& report,
-                                                           const QString& previous_plan_name) {
-    report += QString("| Status:       Power plan discovery FAILED\n")
-                  .leftJustified(kReportInnerWidth, ' ') +
-              "|\n";
-    report += QString("| Error:        Could not enumerate power plans; not mutating\n")
-                  .leftJustified(kReportInnerWidth, ' ') +
-              "|\n";
-    report += "+================================================================+\n";
+                                                           const QString& previous_plan_name,
+                                                           const QString& reason) {
+    report += reportRow(QStringLiteral("Status:       Power plan discovery FAILED"));
+    report +=
+        reportRow(QStringLiteral("Error:        Could not enumerate power plans; not mutating"));
+    report += reportRule();
     finalizePowerOptimizationResult({.start_time = start_time,
                                      .report = report,
                                      .previous_plan_name = previous_plan_name,
                                      .high_perf_guid = QString(),
                                      .effective_timeouts = PowerTimeouts(),
-                                     .already_optimized = false,
-                                     .success = false});
+                                     .outcome = Outcome::DiscoveryFailed,
+                                     .failure_reason = reason});
 }
 
-bool OptimizePowerSettingsAction::resolveHighPerformancePlan(const QVector<PowerPlan>& plans,
-                                                             bool discovery_ok,
-                                                             PowerPlan& out_plan) {
+std::optional<OptimizePowerSettingsAction::PowerPlan>
+OptimizePowerSettingsAction::resolveHighPerformancePlan(const QVector<PowerPlan>& plans,
+                                                        bool discovery_ok) {
     // Fail closed if powercfg discovery did not actually succeed and return plans: we must never
-    // fall back to a hard-coded GUID and then mutate the system on a guess.
+    // mutate the system on a GUID that discovery did not stand behind.
     if (!discoveryPermitsActivation(discovery_ok, static_cast<int>(plans.size()))) {
-        return false;
+        return std::nullopt;
     }
-    // Prefer a plan the enumeration identifies by its canonical built-in GUID: a custom
-    // plan merely NAMED "High Performance"/"Ultimate Performance" must never win over the
-    // real built-in scheme. Selection stays GUID-anchored (same predicate the
-    // already-optimized check uses), not a name that an arbitrary plan can spoof.
-    auto by_guid = std::ranges::find_if(plans, [](const PowerPlan& plan) {
+    // A listed BUILT-IN scheme, by GUID -- the same predicate the already-optimized check uses,
+    // so the plan activated here is the plan a later run recognises.
+    const auto by_guid = std::ranges::find_if(plans, [](const PowerPlan& plan) {
         return isHighPerformanceGuid(plan.guid);
     });
     if (by_guid != plans.end()) {
-        out_plan = *by_guid;
-        return true;
+        return *by_guid;
     }
-    PowerPlan found = findPlanByNameIn(plans, "High Performance");
-    if (found.guid.isEmpty()) {
-        found = findPlanByNameIn(plans, "Ultimate Performance");
-    }
-    if (!found.guid.isEmpty()) {
-        out_plan = found;
-        return true;
-    }
-    // The canonical built-in GUID is used ONLY now that discovery is known good and simply lacked
-    // a matching named plan (e.g. the hidden High Performance plan on some SKUs).
-    out_plan.guid = getStandardPowerPlanGuid("High Performance");
-    out_plan.name = "High Performance (Standard)";
-    return !out_plan.guid.isEmpty();
+    // Not listed: some SKUs hide the built-in High Performance plan. Its canonical GUID is
+    // Microsoft's documented SCHEME_MIN, not a guess, and discovery is known good here, so it is
+    // what gets activated. A custom plan that merely carries the name is NOT taken instead -- the
+    // name is the one thing any plan can claim. If Windows refuses the hidden scheme, activation
+    // fails and says so.
+    PowerPlan built_in;
+    built_in.guid = QString::fromLatin1(kHighPerformanceGuid);
+    built_in.name = QStringLiteral("High Performance (built-in, not listed by powercfg)");
+    return built_in;
 }
 
-// ENTERPRISE-GRADE: Standard power scheme GUIDs
-// These are Microsoft's documented, canonical built-in scheme GUIDs -- not a
-// guessed default. Returning one when enumeration finds no exact-named plan
-// activates the REAL built-in plan, so this is correct-by-design, not an
-// error-hiding fallback.
-QString OptimizePowerSettingsAction::getStandardPowerPlanGuid(const QString& plan_type) {
-    if (plan_type == "High Performance" || plan_type == "high") {
-        return "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c";  // SCHEME_MIN (High Performance)
-    } else if (plan_type == "Balanced") {
-        return "381b4222-f694-41f0-9685-ff5bb260df2e";  // SCHEME_BALANCED
-    } else if (plan_type == "Power Saver") {
-        return "a1841308-3541-4fab-bc81-f71556f20b4a";  // SCHEME_MAX (Power Saver)
+OptimizePowerSettingsAction::ScanResult OptimizePowerSettingsAction::scanResultFor(
+    const std::expected<PowerPlan, QString>& active) {
+    ScanResult result;
+    if (!active) {
+        // Surface the failed query rather than claiming "Power plan detected": the scan read
+        // nothing, so whether the optimization applies is unknown.
+        result.applicable = false;
+        result.summary = QStringLiteral("Active power plan could not be read");
+        result.details = active.error();
+        result.warning =
+            QStringLiteral("Power plan query failed -- whether optimization applies is unknown");
+        return result;
     }
-    return QString();
+    result.applicable = true;
+    result.summary = QStringLiteral("Active plan: %1").arg(active->name);
+    result.details =
+        QStringLiteral("Optimization will switch to the built-in High Performance plan");
+    return result;
 }
 
 void OptimizePowerSettingsAction::scan() {
     setStatus(ActionStatus::Scanning);
 
-    const PowerPlan current_plan = getActivePowerPlan();
-
-    ScanResult result;
-    result.applicable = true;
-    result.summary = current_plan.name.isEmpty()
-                         ? "Power plan detected"
-                         : QString("Active plan: %1").arg(current_plan.name);
-    result.details = "Optimization will switch to High Performance if available";
+    const ScanResult result = scanResultFor(getActivePowerPlan());
 
     setScanResult(result);
     setStatus(ActionStatus::Ready);
@@ -424,46 +460,32 @@ void OptimizePowerSettingsAction::scan() {
 }
 
 QString OptimizePowerSettingsAction::buildPowerPlanListReport(
-    const PowerPlan& current_plan, const QVector<PowerPlan>& all_plans) const {
-    QString report = "+================================================================+\n";
-    report += "|             POWER PLAN OPTIMIZATION REPORT                   |\n";
-    report += "+================================================================+\n";
-    report += QString("| Current Plan: %1\n")
-                  .arg(current_plan.name)
-                  .leftJustified(kReportInnerWidth, ' ') +
-              "|\n";
-    report += QString("| Current GUID: %1\n")
-                  .arg(current_plan.guid)
-                  .leftJustified(kReportInnerWidth, ' ') +
-              "|\n";
-    report += "+================================================================+\n";
-    report += QString("| Available Power Plans: %1\n")
-                  .arg(all_plans.size())
-                  .leftJustified(kReportInnerWidth, ' ') +
-              "|\n";
-
-    // List all plans
-    for (const PowerPlan& plan : all_plans) {
-        const QString plan_line =
-            QString("|   %1 %2\n").arg(plan.isActive ? "[ACTIVE]" : "        ").arg(plan.name);
-        report += plan_line.leftJustified(kReportInnerWidth, ' ') + "|\n";
+    const std::expected<PowerPlan, QString>& current_plan, const QVector<PowerPlan>& all_plans) {
+    QString report = reportRule();
+    report += reportTitleRow(QStringLiteral("POWER PLAN OPTIMIZATION REPORT"));
+    report += reportRule();
+    if (current_plan) {
+        report += reportRow(QStringLiteral("Current Plan: %1").arg(current_plan->name));
+        report += reportRow(QStringLiteral("Current GUID: %1").arg(current_plan->guid));
+    } else {
+        report += reportRow(QStringLiteral("Current Plan: NOT READ"));
+        report += reportRow(QStringLiteral("Reason:       %1").arg(current_plan.error()));
     }
-
-    report += "+================================================================+\n";
+    report += reportRule();
+    report += reportRow(QStringLiteral("Available Power Plans: %1").arg(all_plans.size()));
+    for (const PowerPlan& plan : all_plans) {
+        report += reportRow(QStringLiteral("  %1 %2").arg(
+            plan.isActive ? QStringLiteral("[ACTIVE]") : QStringLiteral("        "), plan.name));
+    }
+    report += reportRule();
     return report;
 }
 
 void OptimizePowerSettingsAction::appendTargetPlanHeader(const PowerPlan& target_plan,
                                                          QString& report) {
-    report += QString("| Target Plan:  %1\n")
-                  .arg(target_plan.name)
-                  .leftJustified(kReportInnerWidth, ' ') +
-              "|\n";
-    report += QString("| Target GUID:  %1\n")
-                  .arg(target_plan.guid)
-                  .leftJustified(kReportInnerWidth, ' ') +
-              "|\n";
-    report += "+================================================================+\n";
+    report += reportRow(QStringLiteral("Target Plan:  %1").arg(target_plan.name));
+    report += reportRow(QStringLiteral("Target GUID:  %1").arg(target_plan.guid));
+    report += reportRule();
 }
 
 OptimizePowerSettingsAction::PowerTimeouts OptimizePowerSettingsAction::readEffectiveTimeouts(
@@ -474,8 +496,8 @@ OptimizePowerSettingsAction::PowerTimeouts OptimizePowerSettingsAction::readEffe
     // target GUID is the next best subject -- and any setting that then fails to parse is
     // reported as unread rather than filled in.
     Q_EMIT executionProgress("Reading effective power settings...", progress::kStep90);
-    const PowerPlan active_now = getActivePowerPlan();
-    const QString query_guid = active_now.guid.isEmpty() ? fallback_guid : active_now.guid;
+    const auto active_now = getActivePowerPlan();
+    const QString query_guid = active_now ? active_now->guid : fallback_guid;
     return queryPowerPlan(query_guid).timeouts;
 }
 
@@ -509,6 +531,56 @@ void OptimizePowerSettingsAction::appendEffectiveTimeouts(const PowerTimeouts& t
     }
 }
 
+void OptimizePowerSettingsAction::appendSuccessLog(const OptimizationResultContext& context,
+                                                   QString& log) {
+    log += "RECOMMENDATIONS:\n";
+    if (context.outcome == Outcome::AlreadyOptimized) {
+        // Stated as what the PLAN is, not as measured facts. These lines used to read
+        // "Processor performance boost enabled" and "Minimal power management restrictions" --
+        // assertions about the machine's effective settings that nothing here ever queried.
+        // Switching schemes can change sleep, display and processor settings, so a report that
+        // announces them without reading them is telling a technician something it does not know.
+        log += "* System is already on the High Performance plan\n";
+        log += "* That plan is Windows' least power-restricted scheme\n";
+    } else {
+        // "Sleep/hibernate settings unchanged" and "Display timeout settings unchanged" were not
+        // merely unverified, they were WRONG: every scheme carries its OWN sleep, hibernate and
+        // display timeouts, so activating a different plan changes those effective values. The
+        // report told a technician the opposite of what the action had just done.
+        log +=
+            "* The active plan changed, so its sleep, hibernate and display timeouts "
+            "now apply INSTEAD of the previous plan's\n";
+    }
+    appendEffectiveTimeouts(context.effective_timeouts, log);
+}
+
+OptimizePowerSettingsAction::FailureText OptimizePowerSettingsAction::failureText(
+    Outcome outcome, const QString& target_guid, const QString& reason) {
+    FailureText text;
+    if (outcome == Outcome::DiscoveryFailed) {
+        // Nothing was attempted, so this is not an activation failure, and there is no plan to
+        // offer back as a command.
+        text.message = QStringLiteral("Power plan discovery failed; no plan was changed");
+        text.log_tail = QStringLiteral(
+                            "\nCould not list the power plans (%1), so nothing was "
+                            "activated.\n")
+                            .arg(reason);
+        return text;
+    }
+    text.message = outcome == Outcome::VerificationFailed
+                       ? QStringLiteral("High Performance activation could not be verified")
+                       : QStringLiteral("Failed to activate High Performance plan");
+    // The cause in powercfg's own words. The old line guessed "administrative privileges may be
+    // required" whatever powercfg said; this action does not need elevation, and a hidden plan
+    // or a policy-managed power scheme fails the same command for reasons that guess hides.
+    text.log_tail = QStringLiteral("\n%1\n").arg(reason);
+    if (!target_guid.isEmpty()) {
+        text.log_tail +=
+            QStringLiteral("To retry by hand: powercfg -SETACTIVE %1\n").arg(target_guid);
+    }
+    return text;
+}
+
 void OptimizePowerSettingsAction::finalizePowerOptimizationResult(
     const OptimizationResultContext& context) {
     Q_EMIT executionProgress("Power optimization complete", progress::kComplete);
@@ -517,84 +589,66 @@ void OptimizePowerSettingsAction::finalizePowerOptimizationResult(
 
     ExecutionResult result;
     result.duration_ms = duration_ms;
+    result.log = context.report;
+    result.success = context.outcome == Outcome::AlreadyOptimized ||
+                     context.outcome == Outcome::Switched;
 
-    if (context.already_optimized) {
-        result.success = true;
-        result.message = "Already using High Performance power plan";
-        result.log = context.report;
+    if (result.success) {
+        result.message = context.outcome == Outcome::AlreadyOptimized
+                             ? QStringLiteral("Already using High Performance power plan")
+                             : QStringLiteral("Switched to High Performance (was: %1)")
+                                   .arg(context.previous_plan_name);
         result.log += QString("\nCompleted in %1 ms\n").arg(duration_ms);
-        // Stated as what the PLAN is, not as measured facts. These lines used to read
-        // "Processor performance boost enabled" and "Minimal power management restrictions" --
-        // assertions about the machine's effective settings that nothing here ever queried.
-        // Switching schemes can change sleep, display and processor settings, so a report that
-        // announces them without reading them is telling a technician something it does not know.
-        result.log += "RECOMMENDATIONS:\n";
-        result.log += "* System is already on the High Performance plan\n";
-        result.log += "* That plan is Windows' least power-restricted scheme\n";
-        appendEffectiveTimeouts(context.effective_timeouts, result.log);
-    } else if (context.success) {
-        result.success = true;
-        result.message =
-            QString("Switched to High Performance (was: %1)").arg(context.previous_plan_name);
-        result.log = context.report;
-        result.log += QString("\nCompleted in %1 ms\n").arg(duration_ms);
-        // "Sleep/hibernate settings unchanged" and "Display timeout settings unchanged" were not
-        // merely unverified, they were WRONG: every scheme carries its OWN sleep, hibernate and
-        // display timeouts, so activating a different plan changes those effective values. The
-        // report told a technician the opposite of what the action had just done.
-        result.log += "RECOMMENDATIONS:\n";
-        result.log +=
-            "* The active plan changed, so its sleep, hibernate and display timeouts "
-            "now apply INSTEAD of the previous plan's\n";
-        appendEffectiveTimeouts(context.effective_timeouts, result.log);
+        appendSuccessLog(context, result.log);
     } else {
-        result.success = false;
-        result.message = "Failed to activate High Performance plan";
-        result.log = context.report;
-        result.log += "\nFailed to change power plan - administrative privileges may be required\n";
-        result.log += "Try running as Administrator or use: powercfg -SETACTIVE " +
-                      context.high_perf_guid + "\n";
+        const FailureText failure =
+            failureText(context.outcome, context.high_perf_guid, context.failure_reason);
+        result.message = failure.message;
+        result.log += failure.log_tail;
     }
 
     finishWithResult(result, result.success ? ActionStatus::Success : ActionStatus::Failed);
 }
 
-bool OptimizePowerSettingsAction::activateHighPerformancePlan(const PowerPlan& high_perf_plan,
-                                                              const QString& current_plan_name,
-                                                              QString& report) {
-    bool success = setPowerPlan(high_perf_plan.guid);
-
-    if (success) {
-        Q_EMIT executionProgress("Verifying power plan activation...", progress::kStep80);
-        const PowerPlan new_active = getActivePowerPlan();
-
-        // Verify by GUID: either the exact plan we set, or any built-in
-        // high-performance scheme -- never a mere name-substring match.
-        success = (new_active.guid.compare(high_perf_plan.guid, Qt::CaseInsensitive) == 0) ||
-                  isHighPerformanceGuid(new_active.guid);
-
-        if (success) {
-            report += QString("| Status:       Power plan activated\n")
-                          .leftJustified(kReportInnerWidth, ' ') +
-                      "|\n";
-            report += QString("| Previous:     %1\n")
-                          .arg(current_plan_name)
-                          .leftJustified(kReportInnerWidth, ' ') +
-                      "|\n";
-            report += QString("| Current:      %1\n")
-                          .arg(new_active.name)
-                          .leftJustified(kReportInnerWidth, ' ') +
-                      "|\n";
-        } else {
-            report += QString("| Status:       Activation verification FAILED\n")
-                          .leftJustified(kReportInnerWidth, ' ') +
-                      "|\n";
-        }
-    } else {
-        report += "| Status:       Activation FAILED                             |\n";
-        report += "| Error:        powercfg command failed                       |\n";
+OptimizePowerSettingsAction::Outcome OptimizePowerSettingsAction::activateHighPerformancePlan(
+    const PowerPlan& high_perf_plan,
+    const QString& current_plan_name,
+    QString& report,
+    QString& reason) {
+    const auto activated = setPowerPlan(high_perf_plan.guid);
+    if (!activated) {
+        reason = activated.error();
+        report += reportRow(QStringLiteral("Status:       Activation FAILED"));
+        report += reportRow(QStringLiteral("Error:        %1").arg(reason));
+        return Outcome::ActivationFailed;
     }
-    return success;
+
+    Q_EMIT executionProgress("Verifying power plan activation...", progress::kStep80);
+    const auto new_active = getActivePowerPlan();
+    if (!new_active) {
+        reason = QStringLiteral(
+                     "powercfg -SETACTIVE succeeded, but the active plan could not be "
+                     "read back: %1")
+                     .arg(new_active.error());
+        report += reportRow(QStringLiteral("Status:       Activation verification FAILED"));
+        report += reportRow(QStringLiteral("Error:        %1").arg(new_active.error()));
+        return Outcome::VerificationFailed;
+    }
+    // Verify by GUID: either the exact plan we set, or any built-in high-performance scheme --
+    // never a name match.
+    if (new_active->guid.compare(high_perf_plan.guid, Qt::CaseInsensitive) != 0 &&
+        !isHighPerformanceGuid(new_active->guid)) {
+        reason =
+            QStringLiteral("powercfg -SETACTIVE succeeded, but the active plan is still %1 (%2)")
+                .arg(new_active->name, new_active->guid);
+        report += reportRow(QStringLiteral("Status:       Activation verification FAILED"));
+        report += reportRow(QStringLiteral("Active:       %1").arg(new_active->name));
+        return Outcome::VerificationFailed;
+    }
+    report += reportRow(QStringLiteral("Status:       Power plan activated"));
+    report += reportRow(QStringLiteral("Previous:     %1").arg(current_plan_name));
+    report += reportRow(QStringLiteral("Current:      %1").arg(new_active->name));
+    return Outcome::Switched;
 }
 
 void OptimizePowerSettingsAction::execute() {
@@ -606,7 +660,8 @@ void OptimizePowerSettingsAction::execute() {
     setStatus(ActionStatus::Running);
     const QDateTime start_time = QDateTime::currentDateTime();
     Q_EMIT executionProgress("Enumerating power plans...", progress::kStep10);
-    const PowerPlan current_plan = getActivePowerPlan();
+    const auto current_plan = getActivePowerPlan();
+    const QString current_name = current_plan ? current_plan->name : QStringLiteral("unknown");
 
     Q_EMIT executionProgress("Scanning available power plans...", progress::kStep25);
     bool discovery_ok = false;
@@ -615,28 +670,28 @@ void OptimizePowerSettingsAction::execute() {
     QString report = buildPowerPlanListReport(current_plan, all_plans);
 
     Q_EMIT executionProgress("Locating High Performance plan...", progress::kStep40);
-    PowerPlan high_perf_plan;
-    if (!resolveHighPerformancePlan(all_plans, discovery_ok, high_perf_plan)) {
+    const std::optional<PowerPlan> high_perf_plan = resolveHighPerformancePlan(all_plans,
+                                                                               discovery_ok);
+    if (!high_perf_plan) {
         // Discovery failed: fail closed. Do NOT mutate the active power plan on a guessed GUID.
-        finalizeDiscoveryFailure(start_time, report, current_plan.name);
+        finalizeDiscoveryFailure(start_time,
+                                 report,
+                                 current_name,
+                                 discovery_ok ? QStringLiteral("powercfg -LIST listed no plans")
+                                              : QStringLiteral("powercfg -LIST failed"));
         return;
     }
 
-    appendTargetPlanHeader(high_perf_plan, report);
+    appendTargetPlanHeader(*high_perf_plan, report);
 
-    // Match by GUID, not by name substring: a custom plan named e.g. "My High
-    // Performance Rig" must NOT be treated as the built-in plan (which would skip
-    // switching to the real one).
-    const bool already_optimized = isHighPerformanceGuid(current_plan.guid);
-    bool success = true;
-
-    if (already_optimized) {
-        report += QString("| Status:       Already using High Performance\n")
-                      .leftJustified(kReportInnerWidth, ' ') +
-                  "|\n";
-        report +=
-            QString("| Action:       No change needed\n").leftJustified(kReportInnerWidth, ' ') +
-            "|\n";
+    // Match by GUID, not by name: a custom plan named e.g. "My High Performance Rig" must NOT be
+    // treated as the built-in plan (which would skip switching to the real one). An active plan
+    // that could not be read is not "already optimized" either.
+    Outcome outcome = Outcome::AlreadyOptimized;
+    QString failure_reason;
+    if (current_plan && isHighPerformanceGuid(current_plan->guid)) {
+        report += reportRow(QStringLiteral("Status:       Already using High Performance"));
+        report += reportRow(QStringLiteral("Action:       No change needed"));
     } else {
         // Discovery ran several powercfg processes; honor a cancellation that arrived
         // during it before mutating the active plan with -SETACTIVE (fail closed).
@@ -644,23 +699,25 @@ void OptimizePowerSettingsAction::execute() {
             emitCancelledResult("Power settings optimization cancelled");
             return;
         }
-        success = activateHighPerformancePlan(high_perf_plan, current_plan.name, report);
+        outcome =
+            activateHighPerformancePlan(*high_perf_plan, current_name, report, failure_reason);
     }
 
-    report += "+================================================================+\n";
+    report += reportRule();
 
     // Skipped when activation failed: the report's failure branch must not print settings as
     // though something had been applied.
-    const PowerTimeouts effective_timeouts = success ? readEffectiveTimeouts(high_perf_plan.guid)
+    const bool applied = outcome == Outcome::AlreadyOptimized || outcome == Outcome::Switched;
+    const PowerTimeouts effective_timeouts = applied ? readEffectiveTimeouts(high_perf_plan->guid)
                                                      : PowerTimeouts{};
 
     finalizePowerOptimizationResult({.start_time = start_time,
                                      .report = report,
-                                     .previous_plan_name = current_plan.name,
-                                     .high_perf_guid = high_perf_plan.guid,
+                                     .previous_plan_name = current_name,
+                                     .high_perf_guid = high_perf_plan->guid,
                                      .effective_timeouts = effective_timeouts,
-                                     .already_optimized = already_optimized,
-                                     .success = success});
+                                     .outcome = outcome,
+                                     .failure_reason = failure_reason});
 }
 
 }  // namespace sak

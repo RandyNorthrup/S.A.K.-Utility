@@ -27,6 +27,11 @@ private Q_SLOTS:
     void parsePowerTimeout_isLocaleIndependent();
     void parsePowerTimeout_failsClosedRatherThanGuessing();
     void formatPowerTimeout_rendersZeroAsNever();
+    void resolveHighPerformancePlan_prefersBuiltInGuidOverCustomName();
+    void activePlanFromQuery_reportsAFailedQuery();
+    void scanResultFor_doesNotClaimAnUnreadPlan();
+    void failureText_namesTheRealCause();
+    void reportRows_matchTheBorderWidth();
 };
 
 namespace {
@@ -370,6 +375,156 @@ void OptimizePowerSettingsActionTests::discoveryPermitsActivation_failsClosedWit
     QVERIFY(!Action::discoveryPermitsActivation(true, 0));   // ran but found nothing -> no mutation
     QVERIFY(Action::discoveryPermitsActivation(true, 1));    // ran and found plans -> may activate
     QVERIFY(Action::discoveryPermitsActivation(true, 42));
+}
+
+void OptimizePowerSettingsActionTests::
+    resolveHighPerformancePlan_prefersBuiltInGuidOverCustomName() {
+    // POWER-2. When powercfg listed no built-in high-performance GUID, an exact NAME match won
+    // over the canonical GUID, so a user's custom plan called "High Performance" was activated,
+    // reported as "Switched to High Performance", and -- its GUID being unknown -- re-activated on
+    // every run. The name is the one thing any plan can claim.
+    const QString custom_guid = QStringLiteral("11111111-2222-3333-4444-555555555555");
+    const QVector<Action::PowerPlan> custom_named{
+        {.guid = QStringLiteral("381b4222-f694-41f0-9685-ff5bb260df2e"),
+         .name = QStringLiteral("Balanced"),
+         .isActive = true},
+        {.guid = custom_guid, .name = QStringLiteral("High Performance"), .isActive = false},
+        {.guid = QStringLiteral("22222222-3333-4444-5555-666666666666"),
+         .name = QStringLiteral("Ultimate Performance"),
+         .isActive = false},
+    };
+    const auto hidden = Action::resolveHighPerformancePlan(custom_named, true);
+    QVERIFY(hidden.has_value());
+    QCOMPARE(hidden->guid, QStringLiteral("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"));
+    QVERIFY2(hidden->name.contains(QStringLiteral("built-in")), qPrintable(hidden->name));
+
+    // A LISTED built-in scheme is taken as listed, Ultimate included, ahead of any name.
+    QVector<Action::PowerPlan> with_ultimate = custom_named;
+    with_ultimate.append({.guid = QStringLiteral("e9a42b02-d5df-448d-aa00-03f14749eb61"),
+                          .name = QStringLiteral("Ultimate Performance"),
+                          .isActive = false});
+    const auto ultimate = Action::resolveHighPerformancePlan(with_ultimate, true);
+    QVERIFY(ultimate.has_value());
+    QCOMPARE(ultimate->guid, QStringLiteral("e9a42b02-d5df-448d-aa00-03f14749eb61"));
+
+    // Discovery that failed or found nothing still activates nothing.
+    QVERIFY(!Action::resolveHighPerformancePlan(custom_named, false).has_value());
+    QVERIFY(!Action::resolveHighPerformancePlan({}, true).has_value());
+}
+
+void OptimizePowerSettingsActionTests::activePlanFromQuery_reportsAFailedQuery() {
+    // POWER-5. The active-scheme query's own result was ignored: a timeout, a failed run and a
+    // run that printed no scheme all read as "no name", indistinguishable from success.
+    sak::ProcessResult timed_out;
+    timed_out.timed_out = true;
+    const auto late = Action::activePlanFromQuery(timed_out);
+    QVERIFY(!late.has_value());
+    QVERIFY2(late.error().contains(QStringLiteral("timed out")), qPrintable(late.error()));
+
+    sak::ProcessResult failed;
+    failed.exit_code = 1;
+    failed.std_out = QStringLiteral("Unable to perform operation.");
+    const auto refused = Action::activePlanFromQuery(failed);
+    QVERIFY(!refused.has_value());
+    QVERIFY2(refused.error().contains(QStringLiteral("exit code 1")), qPrintable(refused.error()));
+    QVERIFY2(refused.error().contains(QStringLiteral("Unable to perform operation")),
+             qPrintable(refused.error()));
+
+    sak::ProcessResult empty;
+    empty.exit_code = 0;
+    QVERIFY(!Action::activePlanFromQuery(empty).has_value());
+
+    sak::ProcessResult good;
+    good.exit_code = 0;
+    good.std_out =
+        QStringLiteral("Power Scheme GUID: 381b4222-f694-41f0-9685-ff5bb260df2e  (Balanced)\r\n");
+    const auto balanced = Action::activePlanFromQuery(good);
+    QVERIFY(balanced.has_value());
+    QCOMPARE(balanced->name, QStringLiteral("Balanced"));
+}
+
+void OptimizePowerSettingsActionTests::scanResultFor_doesNotClaimAnUnreadPlan() {
+    // POWER-5. A failed query used to produce applicable=true and "Power plan detected".
+    const auto unread = Action::scanResultFor(
+        std::unexpected(QStringLiteral("powercfg -GETACTIVESCHEME timed out")));
+    QVERIFY(!unread.applicable);
+    QVERIFY2(unread.summary.contains(QStringLiteral("could not be read")),
+             qPrintable(unread.summary));
+    QVERIFY(unread.details.contains(QStringLiteral("timed out")));
+    QVERIFY(!unread.warning.isEmpty());
+
+    const auto read = Action::scanResultFor(
+        Action::PowerPlan{.guid = QStringLiteral("381b4222-f694-41f0-9685-ff5bb260df2e"),
+                          .name = QStringLiteral("Balanced"),
+                          .isActive = true});
+    QVERIFY(read.applicable);
+    QCOMPARE(read.summary, QStringLiteral("Active plan: Balanced"));
+}
+
+void OptimizePowerSettingsActionTests::failureText_namesTheRealCause() {
+    // POWER-6. A discovery failure took the activation-failure branch: "Failed to activate High
+    // Performance plan", an administrator hint, and "use: powercfg -SETACTIVE " with NO GUID.
+    const auto discovery = Action::failureText(Action::Outcome::DiscoveryFailed,
+                                               QString(),
+                                               QStringLiteral("powercfg -LIST failed"));
+    QVERIFY2(discovery.message.contains(QStringLiteral("discovery")),
+             qPrintable(discovery.message));
+    QVERIFY(!discovery.message.contains(QStringLiteral("activate")));
+    QVERIFY2(!discovery.log_tail.contains(QStringLiteral("SETACTIVE")),
+             qPrintable(discovery.log_tail));
+    QVERIFY(discovery.log_tail.contains(QStringLiteral("powercfg -LIST failed")));
+
+    // An activation failure carries powercfg's own reason and a COMPLETE retry command.
+    const QString guid = QStringLiteral("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c");
+    const auto activation =
+        Action::failureText(Action::Outcome::ActivationFailed,
+                            guid,
+                            QStringLiteral("powercfg -SETACTIVE failed (exit code 1): Unable"));
+    QVERIFY(activation.message.contains(QStringLiteral("Failed to activate")));
+    QVERIFY(activation.log_tail.contains(QStringLiteral("exit code 1")));
+    QVERIFY(activation.log_tail.contains(QStringLiteral("powercfg -SETACTIVE ") + guid));
+    QVERIFY(!activation.log_tail.contains(QStringLiteral("administrative privileges")));
+    // With no target GUID there is no command to offer -- never a bare "-SETACTIVE ".
+    QVERIFY(!Action::failureText(Action::Outcome::ActivationFailed, QString(), QStringLiteral("x"))
+                 .log_tail.contains(QStringLiteral("SETACTIVE")));
+
+    const auto unverified =
+        Action::failureText(Action::Outcome::VerificationFailed,
+                            guid,
+                            QStringLiteral("the active plan is still Balanced"));
+    QVERIFY(unverified.message.contains(QStringLiteral("could not be verified")));
+}
+
+void OptimizePowerSettingsActionTests::reportRows_matchTheBorderWidth() {
+    // POWER-7. Each row ended in '\n' BEFORE it was padded, so the padding and the closing bar
+    // landed on the next line, and the pad width exceeded the border: every row rendered broken.
+    const QVector<Action::PowerPlan> plans{
+        {.guid = QStringLiteral("381b4222-f694-41f0-9685-ff5bb260df2e"),
+         .name = QStringLiteral("Balanced"),
+         .isActive = true},
+        {.guid = QStringLiteral("8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c"),
+         .name = QStringLiteral("High performance"),
+         .isActive = false},
+    };
+    const Action::PowerPlan balanced = plans.first();
+    for (const QString& report : {Action::buildPowerPlanListReport(balanced, plans),
+                                  Action::buildPowerPlanListReport(
+                                      std::unexpected(QStringLiteral("query timed out")), plans)}) {
+        const QStringList lines = report.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
+        QVERIFY(lines.size() > 4);
+        const qsizetype border = lines.first().size();
+        QCOMPARE(border, qsizetype(66));
+        for (const QString& line : lines) {
+            QVERIFY2(line.size() == border, qPrintable(line));
+            QVERIFY2(line.endsWith(QLatin1Char('|')) || line.endsWith(QLatin1Char('+')),
+                     qPrintable(line));
+        }
+    }
+    // An unread current plan says so instead of printing blank fields.
+    QVERIFY(
+        Action::buildPowerPlanListReport(std::unexpected(QStringLiteral("query timed out")), plans)
+            .contains(QStringLiteral("NOT READ")));
+    QCOMPARE(Action::reportRow(QStringLiteral("x")).size(), qsizetype(67));  // 66 + newline
 }
 
 QTEST_GUILESS_MAIN(OptimizePowerSettingsActionTests)
