@@ -31,10 +31,10 @@ private Q_SLOTS:
     void sanitizedBinaryBasename_reducesUnsafeNamesToFallback();
     void isAllowedInstallerUrl_acceptsOnlyHttps();
     void nupkgHashMatches_verifiesBase64FeedHash();
-    void parsePackageHashFromOData_extractsHashForVersion();
-    void parsePackageHashFromOData_prefersPrefixedSpelling();
-    void parseLatestVersionFromOData_picksSemverMaxWithoutLatestFlag();
-    void parseLatestVersionFromOData_failsClosedOnUnparseableVersions();
+    void feedEntryForVersion_extractsHashForVersion();
+    void feedEntryForVersion_prefersPrefixedSpelling();
+    void latestFeedVersion_picksSemverMaxWithoutLatestFlag();
+    void latestFeedVersion_failsClosedOnUnparseableVersions();
     void scriptHasNetworkDownload_detectsUrlsAndRawDownloadPrimitives();
     void scriptHasNetworkDownload_detectsDynamicAndCommandDownloads();
     void scriptHasNetworkDownload_ignoresLocalOnlyScripts();
@@ -42,6 +42,9 @@ private Q_SLOTS:
     void extractNupkg_failsOnAnEntryTheEngineWouldSkip();
     void repackNupkg_placesThePackageAtTheArchiveRoot();
     void repackNupkg_failsOnASourceTheEngineWouldSkip();
+    void latestFeedVersion_readsEveryPage();
+    void parseFeedPage_refusesAnythingButAWellFormedFeed();
+    void sameFeedOrigin_requiresSchemeHostAndPort();
 };
 
 namespace {
@@ -53,7 +56,80 @@ void writeFixtureFile(const QString& path, const QByteArray& bytes) {
     QCOMPARE(file.write(bytes), static_cast<qint64>(bytes.size()));
 }
 
+// The (PackageHash, PackageHashAlgorithm) the feed client takes for @p version from one page;
+// an empty pair when the version is not listed.
+QPair<QString, QString> feedHashFor(const QByteArray& page, const QString& version) {
+    const auto entry = PackageInternalizationEngine::feedEntryForVersion(
+        PackageInternalizationEngine::parseFeedPage(page).versions, version);
+    if (!entry) {
+        return {};
+    }
+    return {entry->package_hash, entry->package_hash_algorithm};
+}
+
+// The version the feed client resolves as latest from one page.
+QString latestFeedVersionIn(const QByteArray& page) {
+    return PackageInternalizationEngine::latestFeedVersion(
+        PackageInternalizationEngine::parseFeedPage(page).versions);
+}
+
 }  // namespace
+
+void TestPackageInternalizationEngine::latestFeedVersion_readsEveryPage() {
+    // Version resolution and the .nupkg hash lookup each read ONLY the first FindPackagesById
+    // page, so an IsLatestVersion entry, or the requested version's PackageHash, on a later page
+    // was never seen: resolution picked an older version and the hash lookup reported "no hash".
+    // The one client hands every page's entries to both, in feed order.
+    const QByteArray first = QByteArrayLiteral(
+        "<feed xmlns:m='m' xmlns:d='d'>"
+        "<link rel='next' href='https://community.chocolatey.org/api/v2/FindPackagesById?skip=1'/>"
+        "<entry><m:properties><d:Version>3.0.0-beta</d:Version></m:properties></entry></feed>");
+    const QByteArray second = QByteArrayLiteral(
+        "<feed xmlns:m='m' xmlns:d='d'>"
+        "<entry><m:properties><d:Version>2.0.0</d:Version>"
+        "<d:IsLatestVersion>true</d:IsLatestVersion>"
+        "<d:PackageHash>LATERPAGE==</d:PackageHash>"
+        "<d:PackageHashAlgorithm>SHA512</d:PackageHashAlgorithm></m:properties></entry></feed>");
+    const auto first_page = PackageInternalizationEngine::parseFeedPage(first);
+    QVERIFY(first_page.well_formed);
+    QCOMPARE(first_page.next_link,
+             QStringLiteral("https://community.chocolatey.org/api/v2/FindPackagesById?skip=1"));
+    QVector<FeedPackageVersion> listing = first_page.versions;
+    listing.append(PackageInternalizationEngine::parseFeedPage(second).versions);
+    QCOMPARE(PackageInternalizationEngine::latestFeedVersion(listing), QStringLiteral("2.0.0"));
+    const auto entry = PackageInternalizationEngine::feedEntryForVersion(listing, "2.0.0");
+    QVERIFY(entry.has_value());
+    QCOMPARE(entry->package_hash, QStringLiteral("LATERPAGE=="));
+    QCOMPARE(entry->package_hash_algorithm, QStringLiteral("SHA512"));
+}
+
+void TestPackageInternalizationEngine::parseFeedPage_refusesAnythingButAWellFormedFeed() {
+    // An error document, HTML or truncated XML is not an authoritative empty list.
+    for (const QByteArray& body : {QByteArrayLiteral("<html><body>503</body></html>"),
+                                   QByteArrayLiteral("<feed><entry><m:properties>"),
+                                   QByteArrayLiteral("not xml at all")}) {
+        const auto page = PackageInternalizationEngine::parseFeedPage(body);
+        QVERIFY2(!page.well_formed, body.constData());
+        QVERIFY(page.versions.isEmpty());
+        QVERIFY(page.next_link.isEmpty());
+    }
+    // A valid feed with no entries is a real "no versions" answer.
+    const auto empty = PackageInternalizationEngine::parseFeedPage(QByteArrayLiteral("<feed/>"));
+    QVERIFY(empty.well_formed);
+    QVERIFY(empty.versions.isEmpty());
+}
+
+void TestPackageInternalizationEngine::sameFeedOrigin_requiresSchemeHostAndPort() {
+    const QUrl origin(QStringLiteral("https://community.chocolatey.org/api/v2/FindPackagesById()"));
+    QVERIFY(PackageInternalizationEngine::sameFeedOrigin(
+        origin, QUrl(QStringLiteral("https://community.chocolatey.org/api/v2/x?skip=30"))));
+    QVERIFY(!PackageInternalizationEngine::sameFeedOrigin(
+        origin, QUrl(QStringLiteral("https://evil.example/api/v2/x"))));
+    QVERIFY(!PackageInternalizationEngine::sameFeedOrigin(
+        origin, QUrl(QStringLiteral("http://community.chocolatey.org/api/v2/x"))));
+    QVERIFY(!PackageInternalizationEngine::sameFeedOrigin(
+        origin, QUrl(QStringLiteral("https://community.chocolatey.org:8443/api/v2/x"))));
+}
 
 void TestPackageInternalizationEngine::extractNupkg_refusesAnEntryEscapingTheDestination() {
     // Extraction used .NET ZipFile through a PowerShell child. It now goes through the app's
@@ -393,13 +469,18 @@ void TestPackageInternalizationEngine::nupkgHashMatches_verifiesBase64FeedHash()
         !PackageInternalizationEngine::nupkgHashMatches(data, b64_512, QStringLiteral("crc32")));
     QVERIFY(!PackageInternalizationEngine::nupkgHashMatches(
         data, QStringLiteral("AAAA"), QStringLiteral("SHA512")));
+    // A blank hash or no algorithm is nothing the feed vouched for (ported from the worker's
+    // deleted nupkgFeedVerified wrapper).
+    QVERIFY(!PackageInternalizationEngine::nupkgHashMatches(
+        data, QStringLiteral("   "), QStringLiteral("SHA512")));
+    QVERIFY(!PackageInternalizationEngine::nupkgHashMatches(data, b64_512, QString()));
 
     // The base64 compare is EXACT, unlike the CASE-INSENSITIVE hex compare in the sibling
     // binaryChecksumMatches (deliberately pinned above). Base64 is case-SIGNIFICANT: an
     // upper-cased digest decodes to a different byte string and must NOT verify. The "AAAA"
     // fixture above differs in length too, so it cannot probe case; copying the sibling's
     // Qt::CaseInsensitive compare here would collapse distinct digests onto one another in
-    // the gate that authenticates the whole downloaded .nupkg (verifyNupkgIntegrity).
+    // the gate that authenticates the whole downloaded .nupkg (downloadVerifiedNupkg).
     QVERIFY(b64_512.toUpper() != b64_512);  // the case pins below are not vacuous
     QVERIFY(b64_256.toUpper() != b64_256);
     QVERIFY(!PackageInternalizationEngine::nupkgHashMatches(
@@ -408,7 +489,7 @@ void TestPackageInternalizationEngine::nupkgHashMatches_verifiesBase64FeedHash()
         data, b64_256.toUpper(), QStringLiteral("sha256")));
 }
 
-void TestPackageInternalizationEngine::parsePackageHashFromOData_extractsHashForVersion() {
+void TestPackageInternalizationEngine::feedEntryForVersion_extractsHashForVersion() {
     const QByteArray doc = QByteArrayLiteral(
         "<feed xmlns:m='m' xmlns:d='d'>"
         "<entry><m:properties><d:Version>1.0.0</d:Version>"
@@ -417,24 +498,23 @@ void TestPackageInternalizationEngine::parsePackageHashFromOData_extractsHashFor
         "<entry><m:properties><d:Version>2.0.0</d:Version>"
         "<d:PackageHash>BBBBHASH==</d:PackageHash>"
         "<d:PackageHashAlgorithm>SHA512</d:PackageHashAlgorithm></m:properties></entry></feed>");
-    const auto meta = PackageInternalizationEngine::parsePackageHashFromOData(doc, "2.0.0");
+    const auto meta = feedHashFor(doc, "2.0.0");
     QCOMPARE(meta.first, QStringLiteral("BBBBHASH=="));
     QCOMPARE(meta.second, QStringLiteral("SHA512"));
     // A version absent from the feed yields an empty (fail-closed) pair.
-    const auto missing = PackageInternalizationEngine::parsePackageHashFromOData(doc, "9.9.9");
+    const auto missing = feedHashFor(doc, "9.9.9");
     QVERIFY(missing.first.isEmpty());
     QVERIFY(missing.second.isEmpty());  // the whole pair is empty (fail closed), not just the hash
     // The version compare is EXACT, not prefix / suffix / substring / component-truncating:
     // a near-miss request must never resolve to a DIFFERENT entry's PackageHash, which
-    // verifyNupkgIntegrity then trusts as the expected digest for the downloaded body.
+    // downloadVerifiedNupkg then trusts as the expected digest for the downloaded body.
     // "2.0" kills a startsWith/prefix compare, "2.0.0.0" kills a component-truncating
     // compare, and the shared tail "0.0" kills an endsWith/contains compare.
     const QStringList near_miss_versions = {QStringLiteral("2.0"),
                                             QStringLiteral("2.0.0.0"),
                                             QStringLiteral("0.0")};
     for (const QString& near_miss : near_miss_versions) {
-        const auto near_meta = PackageInternalizationEngine::parsePackageHashFromOData(doc,
-                                                                                       near_miss);
+        const auto near_meta = feedHashFor(doc, near_miss);
         QVERIFY2(near_meta.first.isEmpty(), qPrintable(near_miss));
         QVERIFY2(near_meta.second.isEmpty(), qPrintable(near_miss));
     }
@@ -444,16 +524,16 @@ void TestPackageInternalizationEngine::parsePackageHashFromOData_extractsHashFor
         "<feed><entry><properties><Version>3.0.0</Version>"
         "<PackageHash>CCCCHASH==</PackageHash>"
         "<PackageHashAlgorithm>SHA256</PackageHashAlgorithm></properties></entry></feed>");
-    const auto plain_meta = PackageInternalizationEngine::parsePackageHashFromOData(plain, "3.0.0");
+    const auto plain_meta = feedHashFor(plain, "3.0.0");
     QCOMPARE(plain_meta.first, QStringLiteral("CCCCHASH=="));
     QCOMPARE(plain_meta.second, QStringLiteral("SHA256"));
 }
 
-void TestPackageInternalizationEngine::parsePackageHashFromOData_prefersPrefixedSpelling() {
+void TestPackageInternalizationEngine::feedEntryForVersion_prefersPrefixedSpelling() {
     // Both spellings in ONE properties element: the OData-prefixed child WINS, so a
     // crafted unprefixed twin cannot substitute the hash the integrity check compares.
     // Every other fixture supplies exactly one spelling, so swapping the two lookups in
-    // odataChildText would be invisible.
+    // the resolver's extractProperty would be invisible.
     const QByteArray dual_child = QByteArrayLiteral(
         "<feed xmlns:m='m' xmlns:d='d'>"
         "<entry><m:properties><Version>4.0.0</Version><d:Version>4.0.0</d:Version>"
@@ -462,8 +542,7 @@ void TestPackageInternalizationEngine::parsePackageHashFromOData_prefersPrefixed
         "<PackageHashAlgorithm>SHA256</PackageHashAlgorithm>"
         "<d:PackageHashAlgorithm>SHA512</d:PackageHashAlgorithm>"
         "</m:properties></entry></feed>");
-    const auto dual_child_meta = PackageInternalizationEngine::parsePackageHashFromOData(dual_child,
-                                                                                         "4.0.0");
+    const auto dual_child_meta = feedHashFor(dual_child, "4.0.0");
     QCOMPARE(dual_child_meta.first, QStringLiteral("PREFIXHASH=="));
     QCOMPARE(dual_child_meta.second, QStringLiteral("SHA512"));
 
@@ -477,14 +556,12 @@ void TestPackageInternalizationEngine::parsePackageHashFromOData_prefersPrefixed
         "<m:properties><d:Version>5.0.0</d:Version>"
         "<d:PackageHash>PREFIXPROPS==</d:PackageHash>"
         "<d:PackageHashAlgorithm>SHA512</d:PackageHashAlgorithm></m:properties></entry></feed>");
-    const auto dual_props_meta = PackageInternalizationEngine::parsePackageHashFromOData(dual_props,
-                                                                                         "5.0.0");
+    const auto dual_props_meta = feedHashFor(dual_props, "5.0.0");
     QCOMPARE(dual_props_meta.first, QStringLiteral("PREFIXPROPS=="));
     QCOMPARE(dual_props_meta.second, QStringLiteral("SHA512"));
 }
 
-void TestPackageInternalizationEngine::
-    parseLatestVersionFromOData_picksSemverMaxWithoutLatestFlag() {
+void TestPackageInternalizationEngine::latestFeedVersion_picksSemverMaxWithoutLatestFlag() {
     // No IsLatestVersion flag: must pick the SemVer-max (1.10.0 > 1.9.0 > 1.2.0),
     // NOT the feed's last entry (1.9.0) and NOT a string sort (which ranks "1.9" high).
     const QByteArray unsorted = QByteArrayLiteral(
@@ -492,8 +569,7 @@ void TestPackageInternalizationEngine::
         "<entry><m:properties><d:Version>1.2.0</d:Version></m:properties></entry>"
         "<entry><m:properties><d:Version>1.10.0</d:Version></m:properties></entry>"
         "<entry><m:properties><d:Version>1.9.0</d:Version></m:properties></entry></feed>");
-    QCOMPARE(PackageInternalizationEngine::parseLatestVersionFromOData(unsorted),
-             QStringLiteral("1.10.0"));
+    QCOMPARE(latestFeedVersionIn(unsorted), QStringLiteral("1.10.0"));
     // An explicit IsLatestVersion flag wins outright over SemVer ordering, and the flag text is
     // matched case-insensitively ("True" counts).
     const QByteArray flagged = QByteArrayLiteral(
@@ -501,8 +577,7 @@ void TestPackageInternalizationEngine::
         "<entry><m:properties><d:Version>2.0.0</d:Version></m:properties></entry>"
         "<entry><m:properties><d:Version>1.5.0</d:Version>"
         "<d:IsLatestVersion>True</d:IsLatestVersion></m:properties></entry></feed>");
-    QCOMPARE(PackageInternalizationEngine::parseLatestVersionFromOData(flagged),
-             QStringLiteral("1.5.0"));
+    QCOMPARE(latestFeedVersionIn(flagged), QStringLiteral("1.5.0"));
     // The flag's VALUE decides, not its mere PRESENCE: with every entry flagged false the
     // SemVer-max (2.0.0) wins, never the first flag-bearing entry.
     const QByteArray flagged_false = QByteArrayLiteral(
@@ -511,12 +586,10 @@ void TestPackageInternalizationEngine::
         "<d:IsLatestVersion>false</d:IsLatestVersion></m:properties></entry>"
         "<entry><m:properties><d:Version>2.0.0</d:Version>"
         "<d:IsLatestVersion>false</d:IsLatestVersion></m:properties></entry></feed>");
-    QCOMPARE(PackageInternalizationEngine::parseLatestVersionFromOData(flagged_false),
-             QStringLiteral("2.0.0"));
+    QCOMPARE(latestFeedVersionIn(flagged_false), QStringLiteral("2.0.0"));
 }
 
-void TestPackageInternalizationEngine::
-    parseLatestVersionFromOData_failsClosedOnUnparseableVersions() {
+void TestPackageInternalizationEngine::latestFeedVersion_failsClosedOnUnparseableVersions() {
     // No entry is flagged latest and NO version parses as a valid SemVer: the result
     // must be empty (fail closed), never a fall back to the feed's raw last entry --
     // trusting unparseable feed order is the downgrade vector this must avoid.
@@ -524,7 +597,7 @@ void TestPackageInternalizationEngine::
         "<feed xmlns:m='m' xmlns:d='d'>"
         "<entry><m:properties><d:Version>not-a-version</d:Version></m:properties></entry>"
         "<entry><m:properties><d:Version>also.bad.$$</d:Version></m:properties></entry></feed>");
-    QVERIFY(PackageInternalizationEngine::parseLatestVersionFromOData(garbage).isEmpty());
+    QVERIFY(latestFeedVersionIn(garbage).isEmpty());
     // ...but an unparseable entry ALONGSIDE a parseable one is skipped, not allowed
     // to poison the whole feed: the SemVer-max of the parseable entries is returned.
     const QByteArray mixed = QByteArrayLiteral(
@@ -532,8 +605,7 @@ void TestPackageInternalizationEngine::
         "<entry><m:properties><d:Version>not-a-version</d:Version></m:properties></entry>"
         "<entry><m:properties><d:Version>1.4.0</d:Version></m:properties></entry>"
         "<entry><m:properties><d:Version>also.bad.$$</d:Version></m:properties></entry></feed>");
-    QCOMPARE(PackageInternalizationEngine::parseLatestVersionFromOData(mixed),
-             QStringLiteral("1.4.0"));
+    QCOMPARE(latestFeedVersionIn(mixed), QStringLiteral("1.4.0"));
 }
 
 void TestPackageInternalizationEngine::

@@ -568,6 +568,11 @@ QVector<FeedPackageVersion> NuGetDependencyResolver::parseODataFeedVersions(cons
         if (!deps.isEmpty()) {
             fv.dependencies = parseDependencies(deps);
         }
+        fv.is_latest = extractProperty(properties, QStringLiteral("IsLatestVersion")).toLower() ==
+                       QLatin1String("true");
+        fv.package_hash = extractProperty(properties, QStringLiteral("PackageHash"));
+        fv.package_hash_algorithm = extractProperty(properties,
+                                                    QStringLiteral("PackageHashAlgorithm"));
         out.append(fv);
     }
     return out;

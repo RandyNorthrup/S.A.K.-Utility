@@ -15,8 +15,6 @@
 #include <QCryptographicHash>
 #include <QDir>
 #include <QDirIterator>
-#include <QDomDocument>
-#include <QDomElement>
 #include <QFile>
 #include <QFileInfo>
 #include <QRegularExpression>
@@ -25,6 +23,7 @@
 #include <QThread>
 #include <QUrl>
 #include <QUrlQuery>
+#include <QXmlStreamReader>
 
 #include <algorithm>
 #include <cstring>
@@ -33,9 +32,8 @@
 namespace sak {
 
 namespace {
-// Version metadata is a small feed document; cap the buffered body at 32 MiB so a
-// hostile endpoint cannot exhaust memory while parsing the feed.
-constexpr qint64 kMaxVersionResponseBytes = 32LL * 1024 * 1024;
+// The retry wait between feed attempts is slept in slices this long, so a Stop ends it promptly.
+constexpr int kFeedRetrySleepSliceMs = 100;
 // Hex-string lengths of the supported digest algorithms (two hex chars per byte).
 constexpr int kMd5HexLength = 32;
 constexpr int kSha1HexLength = 40;
@@ -45,18 +43,72 @@ constexpr int kSha512HexLength = 128;
 // component (U+0000..U+001F).
 constexpr char16_t kFirstNonControlCodeUnit = 0x20;
 
-NetworkTransferRequest makeVersionRequest(const QUrl& url) {
+NetworkTransferRequest makeFeedRequest(const QUrl& url) {
     NetworkTransferRequest request;
     request.url = url;
     request.timeout_ms = offline::kApiRequestTimeoutMs;
-    // Version metadata is a small feed document; cap the buffer so a hostile endpoint
-    // cannot exhaust memory here (B9-19). Binary downloads are left uncapped.
-    request.max_response_bytes = kMaxVersionResponseBytes;
+    // A feed page is a small metadata document; cap the buffer before it is parsed so a hostile
+    // endpoint cannot exhaust memory here (B9-19).
+    request.max_response_bytes = offline::kMaxFeedResponseBytes;
     request.raw_headers.append(QPair<QByteArray, QByteArray>{QByteArrayLiteral("User-Agent"),
                                                              QByteArrayLiteral("SAK-Utility/1.0")});
     request.raw_headers.append(QPair<QByteArray, QByteArray>{
         QByteArrayLiteral("Accept"), QByteArrayLiteral("application/atom+xml")});
     return request;
+}
+
+// Wait @p ms in short slices; false as soon as @p cancel reports a Stop.
+bool sleepUnlessCancelled(int ms, const NetworkCancelCheck& cancel) {
+    for (int waited = 0; waited < ms; waited += kFeedRetrySleepSliceMs) {
+        if (cancel && cancel()) {
+            return false;
+        }
+        QThread::msleep(static_cast<unsigned long>(kFeedRetrySleepSliceMs));
+    }
+    return !(cancel && cancel());
+}
+
+// One pass over every page of the listing that starts at @p first_url. An empty body is the
+// feed's "no further versions" answer; anything short of a final page with no rel="next" is not
+// authoritative and returns no versions.
+PackageInternalizationEngine::FeedListing fetchFeedListingOnce(const QUrl& first_url,
+                                                               const NetworkCancelCheck& cancel) {
+    using Status = PackageInternalizationEngine::FeedListingStatus;
+    PackageInternalizationEngine::FeedListing listing;
+    QUrl url = first_url;
+    for (int page = 0; page < PackageInternalizationEngine::kMaxFeedPages; ++page) {
+        const auto transfer = runNetworkTransfer(makeFeedRequest(url), cancel);
+        listing.http_status = transfer.http_status;
+        if (transfer.cancelled || !transfer.success) {
+            listing.status = transfer.cancelled ? Status::Cancelled : Status::TransportError;
+            listing.versions.clear();
+            return listing;
+        }
+        if (transfer.body.isEmpty()) {
+            listing.status = Status::Ok;
+            return listing;
+        }
+        const auto scanned = PackageInternalizationEngine::parseFeedPage(transfer.body);
+        if (!scanned.well_formed) {
+            listing.status = Status::MalformedBody;
+            listing.versions.clear();
+            return listing;
+        }
+        listing.versions.append(scanned.versions);
+        if (scanned.next_link.isEmpty()) {
+            listing.status = Status::Ok;
+            return listing;
+        }
+        url = QUrl(scanned.next_link);
+        if (!PackageInternalizationEngine::sameFeedOrigin(first_url, url)) {
+            listing.status = Status::OffOriginContinuation;
+            listing.versions.clear();
+            return listing;
+        }
+    }
+    listing.status = Status::TooManyPages;
+    listing.versions.clear();
+    return listing;
 }
 
 QString uniqueBinaryFilename(const QUrl& url, int index, QSet<QString>& used_names) {
@@ -215,24 +267,6 @@ bool lineHasDownloadCommand(const QString& lower) {
         QStringLiteral("[\"'](?:https?|ftp)[\"']\\s*\\+|\\+\\s*[\"']:?//"));
     return kNestedChoco.match(lower).hasMatch() || kCurlWget.match(lower).hasMatch() ||
            kSchemeConcat.match(lower).hasMatch();
-}
-
-// --- OData property helpers --------------------------------------------------
-
-QDomElement odataProperties(const QDomElement& entry) {
-    QDomNodeList props = entry.elementsByTagName(QStringLiteral("m:properties"));
-    if (props.isEmpty()) {
-        props = entry.elementsByTagName(QStringLiteral("properties"));
-    }
-    return props.isEmpty() ? QDomElement() : props.at(0).toElement();
-}
-
-QString odataChildText(const QDomElement& props, const char* ns_name, const char* plain) {
-    QDomElement elem = props.firstChildElement(QLatin1String(ns_name));
-    if (elem.isNull()) {
-        elem = props.firstChildElement(QLatin1String(plain));
-    }
-    return elem.isNull() ? QString() : elem.text().trimmed();
 }
 
 bool nupkgHasZipMagic(const QString& nupkg_path, QString& error_out) {
@@ -557,96 +591,17 @@ bool PackageInternalizationEngine::downloadNupkg(const QString& package_id,
                                                  const QString& nupkg_path,
                                                  InternalizationResult& result) {
     emitProgress(InternalizationStatus::DownloadingNupkg, "Downloading .nupkg...");
-
-    QString nupkg_url;
-    if (version.isEmpty()) {
-        nupkg_url =
-            QString("%1%2%3").arg(offline::kNuGetBaseUrl, offline::kNuGetPackagePath, package_id);
-    } else {
-        nupkg_url =
-            QString("%1%2%3/%4")
-                .arg(offline::kNuGetBaseUrl, offline::kNuGetPackagePath, package_id, version);
-    }
-
-    sak::logInfo("[InternalizationEngine] Download URL: {}", nupkg_url.toStdString());
-
-    // Restrict the package source to https (no file://, ftp://, http://, UNC) so a
-    // tampered config/base URL cannot pull the .nupkg off disk or an insecure origin.
-    if (!isAllowedInstallerUrl(nupkg_url)) {
-        finishWithError(result, "Refusing non-https package URL: " + nupkg_url);
-        return false;
-    }
-
     if (m_cancelled) {
         return false;
     }
-
-    // Shared builder: timeout + User-Agent + a max_response_bytes cap, so the
-    // buffered .nupkg body cannot exhaust memory before it is hashed (B9-19 parity).
-    const NetworkTransferRequest request = makeBinaryDownloadRequest(QUrl(nupkg_url));
-    const auto transfer = runNetworkTransfer(request, [this]() { return m_cancelled.load(); });
-    if (transfer.cancelled) {
+    const NupkgDownload download = downloadVerifiedNupkg(package_id, version, nupkg_path, [this]() {
+        return m_cancelled.load();
+    });
+    if (download.cancelled) {
         return false;
     }
-    if (!transfer.success || transfer.body.isEmpty()) {
-        const auto error = transfer.error_message.isEmpty()
-                               ? QStringLiteral("HTTP %1").arg(transfer.http_status)
-                               : transfer.error_message;
-        sak::logError("[InternalizationEngine] Download HTTP {}: {}",
-                      transfer.http_status,
-                      error.toStdString());
-        finishWithError(result, "Nupkg download failed: " + error);
-        return false;
-    }
-
-    // Verify the downloaded bytes against the feed's published PackageHash BEFORE
-    // they are ever written / extracted / repacked. Fails closed (no hash from the
-    // feed, or a mismatch) so a tampered or corrupt .nupkg cannot enter the bundle.
-    if (!verifyNupkgIntegrity(package_id, version, transfer.body, result)) {
-        return false;
-    }
-
-    // Fail-closed write (QSaveFile + full-size + commit), so a disk-full partial
-    // write never leaves a truncated .nupkg that would then be extracted/repacked
-    // and shipped as a "successfully internalized" package.
-    QString write_error;
-    if (!writeBinaryBody(nupkg_path, transfer.body, write_error)) {
-        finishWithError(result, "Nupkg download failed: " + write_error);
-        return false;
-    }
-
-    return true;
-}
-
-QPair<QString, QString> PackageInternalizationEngine::fetchPackageHashMeta(
-    const QString& package_id, const QString& version) {
-    QUrl url(QString("%1%2").arg(offline::kNuGetBaseUrl, offline::kNuGetFindByIdPath));
-    QUrlQuery query;
-    query.addQueryItem(QStringLiteral("id"), QStringLiteral("'%1'").arg(package_id));
-    url.setQuery(query);
-
-    const NetworkTransferRequest request = makeVersionRequest(url);
-    const auto transfer = runNetworkTransfer(request, [this]() { return m_cancelled.load(); });
-    if (!transfer.success) {
-        return {};
-    }
-    return parsePackageHashFromOData(transfer.body, version);
-}
-
-bool PackageInternalizationEngine::verifyNupkgIntegrity(const QString& package_id,
-                                                        const QString& version,
-                                                        const QByteArray& body,
-                                                        InternalizationResult& result) {
-    const auto meta = fetchPackageHashMeta(package_id, version);
-    if (meta.first.isEmpty()) {
-        finishWithError(
-            result, "Cannot verify package integrity: feed published no hash for " + package_id);
-        return false;
-    }
-    if (!nupkgHashMatches(body, meta.first, meta.second)) {
-        sak::logError("[InternalizationEngine] .nupkg hash mismatch for {}",
-                      package_id.toStdString());
-        finishWithError(result, "Package integrity verification failed for " + package_id);
+    if (!download.ok) {
+        finishWithError(result, download.error);
         return false;
     }
     sak::logInfo("[InternalizationEngine] Verified .nupkg hash for {} v{}",
@@ -656,132 +611,253 @@ bool PackageInternalizationEngine::verifyNupkgIntegrity(const QString& package_i
 }
 
 // ============================================================================
+// NuGet feed client
+// ============================================================================
+
+QString PackageInternalizationEngine::FeedListing::failureReason() const {
+    switch (status) {
+    case FeedListingStatus::Ok:
+        return {};
+    case FeedListingStatus::Cancelled:
+        return QStringLiteral("cancelled");
+    case FeedListingStatus::UnsafePackageId:
+        return QStringLiteral("unsafe package id");
+    case FeedListingStatus::TransportError:
+        return QStringLiteral("HTTP %1").arg(http_status);
+    case FeedListingStatus::MalformedBody:
+        return QStringLiteral("malformed feed body");
+    case FeedListingStatus::OffOriginContinuation:
+        return QStringLiteral("off-origin feed continuation refused");
+    case FeedListingStatus::TooManyPages:
+        return QStringLiteral("feed exceeded %1 pages; version list truncated").arg(kMaxFeedPages);
+    }
+    return QStringLiteral("unknown feed status");
+}
+
+PackageInternalizationEngine::FeedListing PackageInternalizationEngine::fetchFeedVersions(
+    const QString& package_id, int attempts, const NetworkCancelCheck& cancel) {
+    FeedListing listing;
+    // The id is embedded into the feed query; keep it a single safe segment.
+    if (!isSafePackageComponent(package_id)) {
+        listing.status = FeedListingStatus::UnsafePackageId;
+        return listing;
+    }
+    QUrl url(QString("%1%2").arg(offline::kNuGetBaseUrl, offline::kNuGetFindByIdPath));
+    QUrlQuery query;
+    query.addQueryItem(QStringLiteral("id"), QStringLiteral("'%1'").arg(package_id));
+    url.setQuery(query);
+
+    for (int attempt = 0; attempt < std::max(attempts, 1); ++attempt) {
+        if (attempt > 0) {
+            const int delay = offline::kApiRetryDelayBaseMs * attempt;
+            sak::logInfo("[NuGetFeed] Retry {}/{} for {} (wait {} ms)",
+                         attempt + 1,
+                         attempts,
+                         package_id.toStdString(),
+                         delay);
+            if (!sleepUnlessCancelled(delay, cancel)) {
+                listing = {};
+                listing.status = FeedListingStatus::Cancelled;
+                return listing;
+            }
+        }
+        listing = fetchFeedListingOnce(url, cancel);
+        if (listing.status != FeedListingStatus::TransportError) {
+            return listing;
+        }
+        sak::logWarning("[NuGetFeed] {} for {} (attempt {})",
+                        listing.failureReason().toStdString(),
+                        package_id.toStdString(),
+                        attempt + 1);
+    }
+    return listing;
+}
+
+PackageInternalizationEngine::FeedPage PackageInternalizationEngine::parseFeedPage(
+    const QByteArray& body) {
+    // A non-empty body that is NOT a well-formed feed (an error document, HTML, truncated XML)
+    // is refused rather than read as an authoritative empty version list. A genuinely
+    // empty-but-valid <feed> still parses, so a package with no versions is unaffected.
+    FeedPage page;
+    bool saw_feed_root = false;
+    QXmlStreamReader reader(body);
+    while (!reader.atEnd()) {
+        reader.readNext();
+        if (!reader.isStartElement()) {
+            continue;
+        }
+        const QStringView name = reader.name();
+        if (name == QLatin1String("feed")) {
+            saw_feed_root = true;
+        } else if (name == QLatin1String("link") &&
+                   reader.attributes().value(QLatin1String("rel")) == QLatin1String("next")) {
+            page.next_link = reader.attributes().value(QLatin1String("href")).toString();
+        }
+    }
+    page.well_formed = saw_feed_root && !reader.hasError();
+    if (!page.well_formed) {
+        page.next_link.clear();
+        return page;
+    }
+    page.versions = NuGetDependencyResolver::parseODataFeedVersions(body);
+    return page;
+}
+
+bool PackageInternalizationEngine::sameFeedOrigin(const QUrl& origin, const QUrl& candidate) {
+    return candidate.scheme() == origin.scheme() && candidate.host() == origin.host() &&
+           candidate.port() == origin.port();
+}
+
+QString PackageInternalizationEngine::latestFeedVersion(
+    const QVector<FeedPackageVersion>& versions) {
+    QStringList all_versions;
+    for (const FeedPackageVersion& entry : versions) {
+        if (entry.version.isEmpty()) {
+            continue;
+        }
+        // The feed's explicit IsLatestVersion flag wins outright when present.
+        if (entry.is_latest) {
+            return entry.version;
+        }
+        all_versions.append(entry.version);
+    }
+    // No entry flagged latest: pick the SemVer-max rather than trusting feed order (a
+    // hostile/unsorted feed could otherwise push a downgrade via last-entry). When NO entry
+    // parses as a valid SemVer, fail closed (empty) rather than fall back to the feed's raw
+    // last version.
+    return semverMaxVersion(all_versions);
+}
+
+std::optional<FeedPackageVersion> PackageInternalizationEngine::feedEntryForVersion(
+    const QVector<FeedPackageVersion>& versions, const QString& version) {
+    // EXACT compare: a near-miss request ("2.0" for "2.0.0") must never resolve to a different
+    // entry's PackageHash, which the download then trusts as the expected digest.
+    const auto found = std::ranges::find_if(versions, [&version](const FeedPackageVersion& entry) {
+        return entry.version == version;
+    });
+    if (found == versions.end()) {
+        return std::nullopt;
+    }
+    return *found;
+}
+
+namespace {
+
+// The feed entry whose PackageHash authenticates @p version's .nupkg, or nullopt with
+// @p outcome saying why (a Stop, a failed lookup, or no hash published for that version).
+std::optional<FeedPackageVersion> trustedFeedEntry(
+    const QString& package_id,
+    const QString& version,
+    const NetworkCancelCheck& cancel,
+    PackageInternalizationEngine::NupkgDownload& outcome) {
+    using Engine = PackageInternalizationEngine;
+    // Both become segments of the package URL.
+    if (!Engine::isSafePackageComponent(package_id) || !Engine::isSafePackageComponent(version)) {
+        outcome.error = QStringLiteral("Refusing an unsafe package id or version: %1 %2")
+                            .arg(package_id, version);
+        return std::nullopt;
+    }
+    const Engine::FeedListing listing = Engine::fetchFeedVersions(package_id, 1, cancel);
+    if (listing.status == Engine::FeedListingStatus::Cancelled) {
+        outcome.cancelled = true;
+        return std::nullopt;
+    }
+    if (!listing.ok()) {
+        outcome.error = QStringLiteral(
+                            "Cannot verify package integrity: feed lookup for %1 "
+                            "failed (%2)")
+                            .arg(package_id, listing.failureReason());
+        return std::nullopt;
+    }
+    auto entry = Engine::feedEntryForVersion(listing.versions, version);
+    if (!entry || entry->package_hash.trimmed().isEmpty()) {
+        outcome.error = "Cannot verify package integrity: feed published no hash for " + package_id;
+        return std::nullopt;
+    }
+    return entry;
+}
+
+}  // namespace
+
+PackageInternalizationEngine::NupkgDownload PackageInternalizationEngine::downloadVerifiedNupkg(
+    const QString& package_id,
+    const QString& version,
+    const QString& output_path,
+    const NetworkCancelCheck& cancel) {
+    NupkgDownload outcome;
+    // The feed's published hash FIRST: with no trusted hash there is nothing to authenticate
+    // the package against, so it is not downloaded at all.
+    const auto entry = trustedFeedEntry(package_id, version, cancel, outcome);
+    if (!entry) {
+        return outcome;
+    }
+    const QString nupkg_url =
+        QString("%1%2%3/%4")
+            .arg(offline::kNuGetBaseUrl, offline::kNuGetPackagePath, package_id, version);
+    // https only (no file://, ftp://, http://, UNC), so a tampered base URL cannot pull the
+    // package off disk or an insecure origin.
+    if (!isAllowedInstallerUrl(nupkg_url)) {
+        outcome.error = "Refusing non-https package URL: " + nupkg_url;
+        return outcome;
+    }
+    const auto transfer = runNetworkTransfer(makeBinaryDownloadRequest(QUrl(nupkg_url)), cancel);
+    if (transfer.cancelled) {
+        outcome.cancelled = true;
+        return outcome;
+    }
+    if (!transfer.success || transfer.body.isEmpty()) {
+        outcome.error = "Nupkg download failed: " +
+                        (transfer.error_message.isEmpty()
+                             ? QStringLiteral("HTTP %1").arg(transfer.http_status)
+                             : transfer.error_message);
+        return outcome;
+    }
+    // Authenticate BEFORE anything reaches disk: a tampered .nupkg would otherwise have its
+    // install script parsed and its embedded binaries harvested into the bundle.
+    if (!nupkgHashMatches(transfer.body, entry->package_hash, entry->package_hash_algorithm)) {
+        outcome.error = "Package integrity verification failed for " + package_id;
+        return outcome;
+    }
+    // QSaveFile + full-size + commit, so a disk-full partial write never leaves a truncated
+    // .nupkg that would then be extracted and shipped.
+    QString write_error;
+    if (!writeBinaryBody(output_path, transfer.body, write_error)) {
+        outcome.error = "Nupkg download failed: " + write_error;
+        return outcome;
+    }
+    outcome.ok = true;
+    return outcome;
+}
+
+// ============================================================================
 // Version Resolution
 // ============================================================================
 
 QString PackageInternalizationEngine::resolveLatestVersion(const QString& package_id) {
-    const QString url_str = QString("%1%2").arg(offline::kNuGetBaseUrl,
-                                                offline::kNuGetFindByIdPath);
-    QUrl url(url_str);
-    QUrlQuery query;
-    query.addQueryItem("id", QString("'%1'").arg(package_id));
-    url.setQuery(query);
-
-    sak::logInfo("[InternalizationEngine] Resolving version: {}", url.toString().toStdString());
-
-    QString resolved_version;
-
-    for (int attempt = 0; attempt < offline::kApiMaxRetries; ++attempt) {
-        if (m_cancelled) {
-            return {};
+    // A transport failure is retried (kApiMaxRetries attempts in all), as version resolution
+    // always was; a malformed or truncated feed is not.
+    const FeedListing listing = fetchFeedVersions(package_id, offline::kApiMaxRetries, [this]() {
+        return m_cancelled.load();
+    });
+    if (!listing.ok()) {
+        if (listing.status != FeedListingStatus::Cancelled) {
+            sak::logWarning("[InternalizationEngine] Version lookup failed for {}: {}",
+                            package_id.toStdString(),
+                            listing.failureReason().toStdString());
         }
-        if (attempt > 0) {
-            const int delay = offline::kApiRetryDelayBaseMs * attempt;
-            sak::logInfo("[InternalizationEngine] Retry {}/{} for {} (wait {}ms)",
-                         attempt + 1,
-                         offline::kApiMaxRetries,
-                         package_id.toStdString(),
-                         delay);
-            QThread::msleep(static_cast<unsigned long>(delay));
-        }
-
-        const NetworkTransferRequest request = makeVersionRequest(url);
-        bool request_ok = false;
-        const auto transfer = runNetworkTransfer(request, [this]() { return m_cancelled.load(); });
-        if (transfer.cancelled) {
-            return {};
-        }
-        if (!transfer.success) {
-            sak::logWarning(
-                "[InternalizationEngine] HTTP {} for "
-                "{} (attempt {}): {}",
-                transfer.http_status,
-                package_id.toStdString(),
-                attempt + 1,
-                transfer.error_message.toStdString());
-        } else {
-            resolved_version = parseLatestVersionFromOData(transfer.body);
-
-            if (resolved_version.isEmpty()) {
-                sak::logWarning(
-                    "[InternalizationEngine] No version "
-                    "found for {} ({} bytes)",
-                    package_id.toStdString(),
-                    static_cast<int>(transfer.body.size()));
-            } else {
-                sak::logInfo(
-                    "[InternalizationEngine] Resolved "
-                    "{} -> v{}",
-                    package_id.toStdString(),
-                    resolved_version.toStdString());
-            }
-            request_ok = true;
-        }
-
-        if (!resolved_version.isEmpty()) {
-            return resolved_version;
-        }
-        if (request_ok) {
-            break;
-        }
-    }
-
-    return resolved_version;
-}
-
-QString PackageInternalizationEngine::parseLatestVersionFromOData(const QByteArray& data) {
-    QDomDocument doc;
-    if (!doc.setContent(data)) {
-        sak::logError("[InternalizationEngine] XML parse failed ({} bytes)",
-                      static_cast<int>(data.size()));
         return {};
     }
-
-    const QDomNodeList entries = doc.documentElement().elementsByTagName(QStringLiteral("entry"));
-    QStringList all_versions;
-    for (int idx = 0; idx < entries.count(); ++idx) {
-        const QDomElement props = odataProperties(entries.at(idx).toElement());
-        if (props.isNull()) {
-            continue;
-        }
-        const QString ver = odataChildText(props, "d:Version", "Version");
-        if (ver.isEmpty()) {
-            continue;
-        }
-        // The feed's explicit IsLatestVersion flag wins outright when present.
-        if (odataChildText(props, "d:IsLatestVersion", "IsLatestVersion").toLower() ==
-            QLatin1String("true")) {
-            return ver;
-        }
-        all_versions.append(ver);
+    const QString resolved = latestFeedVersion(listing.versions);
+    if (resolved.isEmpty()) {
+        sak::logWarning("[InternalizationEngine] No version found for {} ({} feed entries)",
+                        package_id.toStdString(),
+                        static_cast<int>(listing.versions.size()));
+    } else {
+        sak::logInfo("[InternalizationEngine] Resolved {} -> v{}",
+                     package_id.toStdString(),
+                     resolved.toStdString());
     }
-
-    // No entry flagged latest: pick the SemVer-max rather than trusting feed order
-    // (a hostile/unsorted feed could otherwise push a downgrade via last-entry). When
-    // NO entry parses as a valid SemVer, fail closed (empty) rather than fall back to
-    // the feed's raw last version -- trusting unparseable feed order is exactly the
-    // downgrade vector this function otherwise avoids.
-    return semverMaxVersion(all_versions);
-}
-
-QPair<QString, QString> PackageInternalizationEngine::parsePackageHashFromOData(
-    const QByteArray& data, const QString& version) {
-    QDomDocument doc;
-    if (!doc.setContent(data)) {
-        return {};
-    }
-    const QDomNodeList entries = doc.documentElement().elementsByTagName(QStringLiteral("entry"));
-    for (int idx = 0; idx < entries.count(); ++idx) {
-        const QDomElement props = odataProperties(entries.at(idx).toElement());
-        if (props.isNull() || odataChildText(props, "d:Version", "Version") != version) {
-            continue;
-        }
-        const QString hash = odataChildText(props, "d:PackageHash", "PackageHash");
-        const QString algo =
-            odataChildText(props, "d:PackageHashAlgorithm", "PackageHashAlgorithm");
-        return {hash, algo};
-    }
-    return {};
+    return resolved;
 }
 
 void PackageInternalizationEngine::repackAndFinish(InternalizationResult& result,

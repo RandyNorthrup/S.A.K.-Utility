@@ -145,10 +145,6 @@ QString installOutcomeText(const ProcessResult& process, bool success) {
         .left(kInstallErrorPreviewChars);
 }
 
-// A NuGet OData feed document is small; cap the buffered response so a hostile endpoint
-// cannot exhaust memory while we are only after the published PackageHash.
-constexpr int64_t kMaxFeedDocumentBytes = 32LL * 1024 * 1024;
-
 /// @brief Commit @p body to @p output_path via QSaveFile. Fails CLOSED on a short write
 /// or a failed commit -- the temp file is discarded -- so a truncated artifact is never
 /// counted as a downloaded package.
@@ -191,112 +187,6 @@ bool hasWindowsFilenameHazard(const QString& base) {
     return sak::isWindowsReservedName(base);
 }
 
-// The OData FindPackagesById feed is paginated: a package with many versions is split
-// across pages joined by <link rel="next">. Follow at most this many pages so a huge or
-// hostile feed cannot spin here forever; exceeding the cap is treated as a truncated
-// (non-authoritative) answer rather than a complete version list.
-constexpr int kMaxFeedPages = 128;
-
-/// @brief Result of scanning one OData feed body in a single streaming pass.
-struct FeedBodyScan {
-    bool well_formed_feed{false};  // parsed as a well-formed Atom <feed> document
-    QString next_link;             // href of <link rel="next">, empty when none
-};
-
-/// @brief Confirm @p body is a well-formed Atom <feed> and capture any OData
-/// <link rel="next"> continuation. A non-empty body that is NOT a well-formed feed (an
-/// error document, HTML, or truncated XML) yields well_formed_feed=false so the caller
-/// treats it as a fetch failure instead of an authoritative empty version list. A
-/// genuinely empty-but-valid <feed> still parses, so a package with no versions is
-/// unaffected.
-FeedBodyScan scanFeedBody(const QByteArray& body) {
-    FeedBodyScan scan;
-    bool saw_feed_root = false;
-    QXmlStreamReader reader(body);
-    while (!reader.atEnd()) {
-        reader.readNext();
-        if (!reader.isStartElement()) {
-            continue;
-        }
-        const QStringView name = reader.name();
-        if (name == QLatin1String("feed")) {
-            saw_feed_root = true;
-        } else if (name == QLatin1String("link") &&
-                   reader.attributes().value(QLatin1String("rel")) == QLatin1String("next")) {
-            scan.next_link = reader.attributes().value(QLatin1String("href")).toString();
-        }
-    }
-    scan.well_formed_feed = saw_feed_root && !reader.hasError();
-    return scan;
-}
-
-/// @brief True when @p candidate shares @p origin's scheme, host, and port. A feed's
-/// continuation link is only followed within the same origin so a crafted
-/// <link rel="next"> cannot redirect the build's fetches to an attacker-chosen host.
-bool sameFeedOrigin(const QUrl& origin, const QUrl& candidate) {
-    return candidate.scheme() == origin.scheme() && candidate.host() == origin.host() &&
-           candidate.port() == origin.port();
-}
-
-/// @brief Outcome of fetching one feed page.
-enum class FeedPageStatus {
-    Ok,              // page fetched and its versions appended to the accumulator
-    Cancelled,       // a cancel was observed during the transfer
-    TransportError,  // the transfer itself failed (HTTP/network)
-    MalformedBody    // a non-empty body that is not a well-formed OData feed
-};
-
-struct FeedPageOutcome {
-    FeedPageStatus status{FeedPageStatus::TransportError};
-    int http_status{0};
-    QUrl next_url;  // OData continuation to follow; empty when the feed is complete
-};
-
-/// @brief Fetch one FindPackagesById page from @p url, appending its parsed versions to
-/// @p out and reporting any continuation link. An empty body is a legitimate no-more-
-/// versions answer (Ok); a non-empty body that does not parse as a feed is MalformedBody
-/// so it is never mistaken for an authoritative empty result.
-FeedPageOutcome fetchFeedPage(const QUrl& url,
-                              const NetworkCancelCheck& cancel,
-                              QVector<FeedPackageVersion>& out) {
-    NetworkTransferRequest request;
-    request.url = url;
-    request.timeout_ms = offline::kApiRequestTimeoutMs;
-    // Bound the feed document BEFORE it is buffered and parsed, so a hostile or
-    // oversized endpoint cannot exhaust memory here.
-    request.max_response_bytes = offline::kMaxFeedResponseBytes;
-    request.raw_headers.append(QPair<QByteArray, QByteArray>{QByteArrayLiteral("User-Agent"),
-                                                             QByteArrayLiteral("SAK-Utility/1.0")});
-    request.raw_headers.append(QPair<QByteArray, QByteArray>{QByteArrayLiteral("Accept"),
-                                                             QByteArrayLiteral("application/xml")});
-
-    const auto transfer = runNetworkTransfer(request, cancel);
-    FeedPageOutcome outcome;
-    outcome.http_status = transfer.http_status;
-    if (transfer.cancelled) {
-        outcome.status = FeedPageStatus::Cancelled;
-        return outcome;
-    }
-    if (!transfer.success) {
-        outcome.status = FeedPageStatus::TransportError;
-        return outcome;
-    }
-    if (transfer.body.isEmpty()) {
-        outcome.status = FeedPageStatus::Ok;  // no body -> no further versions
-        return outcome;
-    }
-    const FeedBodyScan scan = scanFeedBody(transfer.body);
-    if (!scan.well_formed_feed) {
-        outcome.status = FeedPageStatus::MalformedBody;
-        return outcome;
-    }
-    out.append(NuGetDependencyResolver::parseODataFeedVersions(transfer.body));
-    if (!scan.next_link.isEmpty()) {
-        outcome.next_url = QUrl(scan.next_link);
-    }
-    outcome.status = FeedPageStatus::Ok;
-    return outcome;
-}
 }  // namespace
 
 // ============================================================================
@@ -676,62 +566,20 @@ void OfflineDeploymentWorker::executeBuildListManifest(const QString& output_dir
 
 QVector<FeedPackageVersion> OfflineDeploymentWorker::fetchFeedVersions(const QString& package_id,
                                                                        bool& ok) {
-    ok = false;
-    // A crafted id is embedded into the feed query; keep it a single safe segment.
-    if (!PackageInternalizationEngine::isSafePackageComponent(package_id)) {
-        emitLog(QStringLiteral("[Dependencies] Rejected unsafe package id: %1").arg(package_id));
-        return {};
+    // The one NuGet feed client: every page, same-origin continuations only, a well-formed
+    // body required, no retry (a failed dependency fetch is recorded and the build goes on).
+    const PackageInternalizationEngine::FeedListing listing =
+        PackageInternalizationEngine::fetchFeedVersions(package_id, 1, [this]() {
+            return m_cancelled.load();
+        });
+    ok = listing.ok();
+    // A cancelled fetch is not a package-missing answer and is not logged as a failure.
+    if (!ok && listing.status != PackageInternalizationEngine::FeedListingStatus::Cancelled) {
+        emitLog(QStringLiteral("[Dependencies] Feed fetch failed for %1 (%2)")
+                    .arg(package_id, listing.failureReason()));
     }
-
-    QUrl url(QString("%1%2").arg(offline::kNuGetBaseUrl, offline::kNuGetFindByIdPath));
-    QUrlQuery query;
-    query.addQueryItem(QStringLiteral("id"), QStringLiteral("'%1'").arg(package_id));
-    url.setQuery(query);
-    const QUrl origin = url;  // continuation links must not leave this origin
-    // Named cancel_check, not cancel: the class already has a cancel() member, and a local of the
-    // same name shadows it -- so a later edit inside this function that meant to REQUEST
-    // cancellation would silently name the predicate instead. Pre-existing finding, surfaced when
-    // this file was touched.
-    const NetworkCancelCheck cancel_check = [this]() {
-        return m_cancelled.load();
-    };
-
-    // Follow every OData <link rel="next"> so a truncated first page is never mistaken
-    // for the full version list; only a page that fetched cleanly through to the final
-    // (no-continuation) page is an authoritative answer.
-    QVector<FeedPackageVersion> versions;
-    for (int page = 0; page < kMaxFeedPages; ++page) {
-        const FeedPageOutcome outcome = fetchFeedPage(url, cancel_check, versions);
-        if (outcome.status == FeedPageStatus::Cancelled) {
-            return {};  // ok stays false; a cancelled fetch is not a package-missing answer
-        }
-        if (outcome.status != FeedPageStatus::Ok) {
-            const QString reason = (outcome.status == FeedPageStatus::MalformedBody)
-                                       ? QStringLiteral("malformed feed body")
-                                       : QStringLiteral("HTTP %1").arg(outcome.http_status);
-            emitLog(QStringLiteral("[Dependencies] Feed fetch failed for %1 (%2)")
-                        .arg(package_id, reason));
-            return {};  // ok stays false: transport failure or an unparseable OData body
-        }
-        if (outcome.next_url.isEmpty()) {
-            ok = true;  // followed every OData continuation through to the final page
-            return versions;
-        }
-        if (!sameFeedOrigin(origin, outcome.next_url)) {
-            emitLog(QStringLiteral("[Dependencies] Off-origin feed continuation refused for %1")
-                        .arg(package_id));
-            return {};  // ok stays false: do not follow a redirected pagination host
-        }
-        url = outcome.next_url;
-    }
-
-    emitLog(QStringLiteral("[Dependencies] Feed for %1 exceeded %2 pages; version list "
-                           "truncated -- treating as a fetch failure")
-                .arg(package_id)
-                .arg(kMaxFeedPages));
-    return {};  // ok stays false: a truncated list is not an authoritative answer
+    return listing.versions;
 }
-
 QVector<BatchInternalizationJob> OfflineDeploymentWorker::resolveDependencyClosure(
     QStringList& warnings) {
     QVector<BatchInternalizationJob> requested;
@@ -1816,95 +1664,20 @@ int OfflineDeploymentWorker::downloadInstallersToDir(const QString& pkg_id,
     return downloaded;
 }
 
-QPair<QString, QString> OfflineDeploymentWorker::fetchNupkgHashMeta(const QString& pkg_id,
-                                                                    const QString& version) {
-    QUrl url(QString("%1%2").arg(offline::kNuGetBaseUrl, offline::kNuGetFindByIdPath));
-    QUrlQuery query;
-    query.addQueryItem(QStringLiteral("id"), QStringLiteral("'%1'").arg(pkg_id));
-    url.setQuery(query);
-
-    NetworkTransferRequest request;
-    request.url = url;
-    request.timeout_ms = offline::kApiRequestTimeoutMs;
-    // Feed metadata is a small document; cap the buffer so a hostile endpoint cannot
-    // exhaust memory here.
-    request.max_response_bytes = kMaxFeedDocumentBytes;
-    request.raw_headers.append(QPair<QByteArray, QByteArray>{QByteArrayLiteral("User-Agent"),
-                                                             QByteArrayLiteral("SAK-Utility/1.0")});
-    request.raw_headers.append(QPair<QByteArray, QByteArray>{
-        QByteArrayLiteral("Accept"), QByteArrayLiteral("application/atom+xml")});
-
-    const auto transfer = runNetworkTransfer(request, [this]() { return m_cancelled.load(); });
-    if (!transfer.success) {
-        return {};
-    }
-    return PackageInternalizationEngine::parsePackageHashFromOData(transfer.body, version);
-}
-
-bool OfflineDeploymentWorker::nupkgFeedVerified(const QByteArray& body,
-                                                const QString& feed_hash_base64,
-                                                const QString& hash_algorithm) {
-    // A .nupkg has a DIFFERENT trust root than an installer binary: an installer is
-    // authenticated against the checksum its install script declares (installerVerified),
-    // a .nupkg against the hash the NuGet feed publishes. Fail closed when the feed
-    // published nothing -- an unauthenticated .nupkg must never be extracted, because its
-    // install script drives every later download and its tools/ binaries are harvested
-    // straight into the offline bundle.
-    if (feed_hash_base64.trimmed().isEmpty()) {
-        return false;
-    }
-    return PackageInternalizationEngine::nupkgHashMatches(body, feed_hash_base64, hash_algorithm);
-}
-
 bool OfflineDeploymentWorker::downloadVerifiedNupkg(const QString& pkg_id,
                                                     const QString& version,
                                                     const QString& output_path) {
-    // Resolve the feed's own published hash FIRST: with no trusted hash there is nothing
-    // to authenticate the package against, so the fetch is refused outright rather than
-    // downgraded to an unverified download.
-    const auto meta = fetchNupkgHashMeta(pkg_id, version);
-    if (meta.first.isEmpty()) {
-        sak::logError("[DirectDownload] Feed published no hash for {} v{}",
+    const PackageInternalizationEngine::NupkgDownload download =
+        PackageInternalizationEngine::downloadVerifiedNupkg(pkg_id, version, output_path, [this]() {
+            return m_cancelled.load();
+        });
+    if (!download.ok && !download.cancelled) {
+        sak::logError("[DirectDownload] {} v{}: {}",
                       pkg_id.toStdString(),
-                      version.toStdString());
-        return false;
+                      version.toStdString(),
+                      download.error.toStdString());
     }
-
-    const QString nupkg_url =
-        QString("%1%2%3/%4")
-            .arg(offline::kNuGetBaseUrl, offline::kNuGetPackagePath, pkg_id, version);
-    if (!PackageInternalizationEngine::isAllowedInstallerUrl(nupkg_url)) {
-        sak::logError("[DirectDownload] Refusing non-https package URL: {}",
-                      nupkg_url.toStdString());
-        return false;
-    }
-
-    NetworkTransferRequest request;
-    request.url = QUrl(nupkg_url);
-    request.timeout_ms = offline::kDownloadTimeoutMs;
-    request.max_response_bytes = offline::kMaxBinarySizeBytes;
-    request.raw_headers.append(QPair<QByteArray, QByteArray>{QByteArrayLiteral("User-Agent"),
-                                                             QByteArrayLiteral("SAK-Utility/1.0")});
-
-    const auto transfer = runNetworkTransfer(request, [this]() { return m_cancelled.load(); });
-    if (!transfer.success || transfer.body.isEmpty()) {
-        sak::logError("[DirectDownload] nupkg HTTP {} for {}: {}",
-                      transfer.http_status,
-                      nupkg_url.toStdString(),
-                      transfer.error_message.toStdString());
-        return false;
-    }
-
-    // Authenticate BEFORE anything reaches disk: a tampered .nupkg would otherwise have
-    // its install script parsed and its embedded binaries harvested into the bundle.
-    if (!nupkgFeedVerified(transfer.body, meta.first, meta.second)) {
-        sak::logError("[DirectDownload] nupkg hash mismatch for {} v{}",
-                      pkg_id.toStdString(),
-                      version.toStdString());
-        return false;
-    }
-
-    return writeDownloadedBody(output_path, transfer.body);
+    return download.ok;
 }
 
 bool OfflineDeploymentWorker::downloadFileFromUrl(const QString& url,

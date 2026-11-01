@@ -52,6 +52,9 @@ struct NuGetDependency {
 struct FeedPackageVersion {
     QString version;
     QVector<NuGetDependency> dependencies;
+    bool is_latest{false};           ///< the feed's IsLatestVersion flag for this entry
+    QString package_hash;            ///< PackageHash (base64); empty when the feed published none
+    QString package_hash_algorithm;  ///< PackageHashAlgorithm, e.g. "SHA512"
 };
 
 /// @brief A concretely selected package in the resolved closure.

@@ -230,19 +230,6 @@ public:
     [[nodiscard]] static QStringList unmetClosureDependencies(
         const QVector<BatchInternalizationJob>& jobs);
 
-    /// @brief Integrity decision for a feed .nupkg fetched by the direct-download
-    ///        harvester. A .nupkg has a DIFFERENT trust root than an installer binary:
-    ///        an installer is authenticated against the checksum its install script
-    ///        declares (PackageInternalizationEngine::installerVerified), a .nupkg
-    ///        against the hash the NuGet feed publishes (base64, per
-    ///        @p hash_algorithm). Returns true ONLY when the feed published a hash and
-    ///        @p body matches it; an empty hash, an unknown algorithm or a mismatch all
-    ///        REFUSE, so an unauthenticated .nupkg is never extracted, script-parsed or
-    ///        harvested. Pure; unit-testable.
-    [[nodiscard]] static bool nupkgFeedVerified(const QByteArray& body,
-                                                const QString& feed_hash_base64,
-                                                const QString& hash_algorithm);
-
 Q_SIGNALS:
     /// @brief Batch operation started
     void operationStarted(int total_packages);
@@ -500,11 +487,6 @@ private:
                                            const QString& output_path,
                                            const QString& expected_checksum,
                                            const QString& checksum_type);
-
-    /// @brief Fetch the NuGet feed's published (PackageHash, PackageHashAlgorithm)
-    ///        for @p pkg_id at @p version. Empty-first pair on any failure.
-    [[nodiscard]] QPair<QString, QString> fetchNupkgHashMeta(const QString& pkg_id,
-                                                             const QString& version);
 
     /// @brief Download the feed .nupkg for @p pkg_id @p version to @p output_path,
     ///        verified against the feed's published PackageHash BEFORE anything is
