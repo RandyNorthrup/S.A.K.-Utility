@@ -48,6 +48,13 @@ constexpr qint64 kExtractMaxTotalBytes = 8LL * 1024 * 1024 * 1024;  // 8 GiB exp
 // entry, or several concurrent extractions, cannot exhaust memory; the entry's
 // DECLARED uncompressed size is checked against it before any decode (B8-10).
 constexpr qint64 kExtractMaxFileBytes = 512LL * 1024 * 1024;  // 512 MiB per file
+// QZipWriter writes no ZIP64 records, so compression is bounded by the classic zip format: the
+// End-Of-Central-Directory entry count is 16-bit and every size and offset is 32-bit. Past either
+// the writer still reports NoError but the archive is corrupt -- 65,536 entries read back as 0
+// because the count wraps, so QZipReader then lists and "extracts" nothing. Compression refuses
+// to write such an archive instead.
+constexpr int kZipMaxEntriesWithoutZip64 = 0xFFFF;
+constexpr qint64 kZipMaxBytesWithoutZip64 = 0xFF'FF'FF'FFLL;
 
 // End-Of-Central-Directory (EOCD) record layout, all little-endian. The record is at least 22
 // bytes, and the total central-directory byte size is a uint32 field at EOCD offset +12.
@@ -356,7 +363,42 @@ bool extractZipEntry(const QZipReader& reader,
     return writeExtractedFile(reader, out_path, info, ctx);
 }
 
-// Add one file to the writer under @p entry_name, streaming from disk.
+// The one refusal for an archive with more entries than a non-ZIP64 zip can count. Appended at
+// most once, whichever check trips first.
+void appendEntryCapBlocker(FileExplorerArchiveResult* result) {
+    const QString truncated =
+        QStringLiteral("Archive exceeds the %1-entry limit; refusing to write a partial archive.")
+            .arg(kZipMaxEntriesWithoutZip64);
+    if (!result->blockers.contains(truncated)) {
+        result->blockers.append(truncated);
+    }
+}
+
+// The refusals only a closed writer can show: the writer's own failure, sources that each stayed
+// under the walk's cap but add up past it, and an archive that grew past 4 GiB -- every
+// local-header offset in the central directory is 32-bit, so such an archive is corrupt although
+// the writer reported NoError.
+void appendFinalizeBlockers(const QZipWriter& writer,
+                            qint64 archive_bytes,
+                            FileExplorerArchiveResult* result) {
+    if (writer.status() != QZipWriter::NoError) {
+        result->blockers.append(
+            QStringLiteral("Could not finalize archive %1.").arg(result->output_path));
+    }
+    if (result->entries > kZipMaxEntriesWithoutZip64) {
+        appendEntryCapBlocker(result);
+    }
+    if (archive_bytes > kZipMaxBytesWithoutZip64) {
+        result->blockers.append(
+            QStringLiteral("Archive %1 grew to %2 bytes, more than a zip without ZIP64 can "
+                           "address (%3 bytes).")
+                .arg(result->output_path)
+                .arg(archive_bytes)
+                .arg(kZipMaxBytesWithoutZip64));
+    }
+}
+
+// Add one file to the writer under @p entry_name. QZipWriter takes the file's bytes in one read.
 bool addFileEntry(QZipWriter* writer,
                   const QString& entry_name,
                   const QString& host_path,
@@ -365,6 +407,16 @@ bool addFileEntry(QZipWriter* writer,
     if (!file.open(QIODevice::ReadOnly)) {
         blockers->append(
             QStringLiteral("Could not read %1: %2").arg(host_path, file.errorString()));
+        return false;
+    }
+    // An entry's sizes are 32-bit without ZIP64: a larger file would be written with a wrapped
+    // length and come back truncated. Refused before its bytes are read.
+    if (file.size() > kZipMaxBytesWithoutZip64) {
+        blockers->append(QStringLiteral("Could not add %1: %2 bytes is more than a zip entry "
+                                        "can hold (%3 bytes).")
+                             .arg(host_path)
+                             .arg(file.size())
+                             .arg(kZipMaxBytesWithoutZip64));
         return false;
     }
     // Re-verify no-follow AFTER opening: the caller's pre-open symlink filter and this
@@ -385,6 +437,25 @@ bool addFileEntry(QZipWriter* writer,
     return true;
 }
 
+// True for a link compression must not follow, recording the warning: a symbolic link, or a
+// directory junction -- a mount-point reparse point Qt does not report as a symlink. A junction
+// can point anywhere on the machine, so following it archived files outside the selection (or
+// looped through a cycle until the entry cap). A cloud or WOF placeholder carries a different
+// reparse tag, is neither, and is archived normally.
+bool skipLink(const QFileInfo& info, const QString& path, FileExplorerArchiveResult* result) {
+    if (info.isSymLink()) {
+        result->warnings.append(
+            QStringLiteral("Skipped symlink %1 (links are not archived).").arg(path));
+        return true;
+    }
+    if (info.isJunction()) {
+        result->warnings.append(
+            QStringLiteral("Skipped junction %1 (links are not archived).").arg(path));
+        return true;
+    }
+    return false;
+}
+
 // Recursively add @p directory under the archive prefix @p prefix.
 void addDirectoryEntries(QZipWriter* writer,
                          const QString& prefix,
@@ -396,13 +467,20 @@ void addDirectoryEntries(QZipWriter* writer,
                     QDir::AllEntries | QDir::NoDotAndDotDot | QDir::Hidden,
                     QDirIterator::Subdirectories);
     const QDir base(directory);
-    while (it.hasNext() && result->entries < kArchiveMaxEntries) {
+    // The iterator still descends into a junction it listed, so whatever it yields beneath a
+    // skipped link is skipped too.
+    QStringList skipped_links;
+    while (it.hasNext() && result->entries < kZipMaxEntriesWithoutZip64) {
         const QString path = it.next();
         const QFileInfo info = it.fileInfo();
         const QString entry_name = prefix + QLatin1Char('/') + base.relativeFilePath(path);
-        if (info.isSymLink()) {
-            result->warnings.append(
-                QStringLiteral("Skipped symlink %1 (links are not archived).").arg(path));
+        if (std::ranges::any_of(skipped_links, [&path](const QString& link) {
+                return path.startsWith(link + QLatin1Char('/'));
+            })) {
+            continue;
+        }
+        if (skipLink(info, path, result)) {
+            skipped_links.append(path);
             continue;
         }
         if (info.isDir()) {
@@ -421,13 +499,7 @@ void addDirectoryEntries(QZipWriter* writer,
     // silently partial archive; fail closed so the caller discards it instead
     // of reporting a truncated zip as a successful compress.
     if (it.hasNext()) {
-        const QString truncated =
-            QStringLiteral(
-                "Archive exceeds the %1-entry limit; refusing to write a partial archive.")
-                .arg(kArchiveMaxEntries);
-        if (!result->blockers.contains(truncated)) {
-            result->blockers.append(truncated);
-        }
+        appendEntryCapBlocker(result);
     }
 }
 
@@ -439,9 +511,7 @@ void addCompressSource(QZipWriter* writer,
                        const QString& source,
                        FileExplorerArchiveResult* result) {
     const QFileInfo info(source);
-    if (info.isSymLink()) {
-        result->warnings.append(
-            QStringLiteral("Skipped symlink %1 (links are not archived).").arg(source));
+    if (skipLink(info, source, result)) {
         return;
     }
     if (info.isDir()) {
@@ -546,9 +616,7 @@ FileExplorerArchiveResult FileExplorerArchiveService::compressToZip(
         addCompressSource(&writer, source, &result);
     }
     writer.close();
-    if (writer.status() != QZipWriter::NoError) {
-        result.blockers.append(QStringLiteral("Could not finalize archive %1.").arg(zip_path));
-    }
+    appendFinalizeBlockers(writer, zip_file.size(), &result);
     zip_file.close();
     result.ok = result.blockers.isEmpty();
     if (!result.ok) {

@@ -10,8 +10,14 @@
 
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
+#include <QProcess>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
+
+#include <windows.h>
+
+#include <winioctl.h>
 
 using sak::FileExplorerArchiveService;
 
@@ -33,7 +39,143 @@ private Q_SLOTS:
     void compressToZip_refusesAnArchiveInsideASourceFolder();
     void extractZip_refusesAnEntryWhoseDeclaredSizeIsALie();
     void extractZip_refusesAnEntryThatOverProducesItsDeclaredSize();
+    void compressToZip_refusesMoreEntriesThanAZipCanCount();
+    void compressToZip_refusesAFileLargerThanAZipEntryCanHold();
+    void compressToZip_doesNotFollowADirectoryJunction();
 };
+
+void FileExplorerArchiveServiceTests::compressToZip_doesNotFollowADirectoryJunction() {
+    // Qt reports a directory junction as a directory, not a symlink, so the symlink checks let it
+    // through: a junction selected for compression, or one inside a selected folder, was walked
+    // and the files it points at -- anywhere on the machine -- were archived. Both shapes are
+    // skipped with a warning now, and nothing beneath them reaches the archive.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QDir root(dir.path());
+    QVERIFY(root.mkpath(QStringLiteral("outside")));
+    writeFile(root.filePath(QStringLiteral("outside/secret.txt")), QByteArrayLiteral("secret"));
+    QVERIFY(root.mkpath(QStringLiteral("bundle")));
+    writeFile(root.filePath(QStringLiteral("bundle/kept.txt")), QByteArrayLiteral("kept"));
+    const QString nested = root.filePath(QStringLiteral("bundle/linked"));
+    const QString top = root.filePath(QStringLiteral("top-link"));
+    for (const QString& link : {nested, top}) {
+        QProcess mklink;
+        mklink.start(QStringLiteral("cmd.exe"),
+                     {QStringLiteral("/c"),
+                      QStringLiteral("mklink"),
+                      QStringLiteral("/J"),
+                      QDir::toNativeSeparators(link),
+                      QDir::toNativeSeparators(root.filePath(QStringLiteral("outside")))});
+        QVERIFY(mklink.waitForFinished(10'000));
+        QCOMPARE(mklink.exitCode(), 0);
+        QVERIFY(QFileInfo(link).isJunction());
+    }
+    const QString out = root.filePath(QStringLiteral("out.zip"));
+
+    const auto result = FileExplorerArchiveService::compressToZip(
+        out, {root.filePath(QStringLiteral("bundle")), top});
+
+    QVERIFY2(result.ok, qPrintable(result.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(
+        result.warnings,
+        (QStringList{QStringLiteral("Skipped junction %1 (links are not archived).").arg(nested),
+                     QStringLiteral("Skipped junction %1 (links are not archived).").arg(top)}));
+    QStringList paths;
+    for (const sak::ArchiveEntryInfo& entry :
+         FileExplorerArchiveService::listEntries(out).entries) {
+        paths.append(entry.path);
+    }
+    paths.sort();
+    QCOMPARE(paths, (QStringList{QStringLiteral("bundle"), QStringLiteral("bundle/kept.txt")}));
+}
+
+void FileExplorerArchiveServiceTests::compressToZip_refusesMoreEntriesThanAZipCanCount() {
+    // QZipWriter writes no ZIP64 records, so the End-Of-Central-Directory entry count is 16-bit.
+    // The compress cap used to be the 100,000-entry READ cap: an archive of 65,536 entries was
+    // written, reported ok, and read back with its count wrapped to 0 -- the explorer's own
+    // Extract then "succeeded" with nothing. Two guards hold the 65,535 limit: the directory walk
+    // stops at it, and the final count catches sources that add up past it after a walk that
+    // completed. Each fixture reaches exactly one of them.
+    constexpr int kZipMaxEntries = 0xFFFF;
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QDir root(dir.path());
+    // The bundle's own entry plus kZipMaxEntries - 1 subdirectories is exactly the limit.
+    QVERIFY(root.mkdir(QStringLiteral("bundle")));
+    const QDir bundle(root.filePath(QStringLiteral("bundle")));
+    for (int index = 0; index < kZipMaxEntries - 1; ++index) {
+        QVERIFY(bundle.mkdir(QString::number(index)));
+    }
+    const QString extra = root.filePath(QStringLiteral("extra.txt"));
+    writeFile(extra, QByteArrayLiteral("x"));
+    const QString refusal =
+        QStringLiteral("Archive exceeds the %1-entry limit; refusing to write a partial archive.")
+            .arg(kZipMaxEntries);
+
+    // The walk reaches the limit with one subdirectory left: the walk guard refuses.
+    const QString walk_out = root.filePath(QStringLiteral("walk.zip"));
+    const auto walk = FileExplorerArchiveService::compressToZip(walk_out, {extra, bundle.path()});
+    QVERIFY2(!walk.ok, "an archive past the 16-bit entry count must be refused");
+    QCOMPARE(walk.blockers, QStringList{refusal});
+    QVERIFY(!QFile::exists(walk_out));
+
+    // The walk completes at the limit and the next source passes it: the final count refuses.
+    const QString sum_out = root.filePath(QStringLiteral("sum.zip"));
+    const auto sum = FileExplorerArchiveService::compressToZip(sum_out, {bundle.path(), extra});
+    QVERIFY2(!sum.ok, "sources that add up past the entry count must be refused");
+    QCOMPARE(sum.blockers, QStringList{refusal});
+    QVERIFY(!QFile::exists(sum_out));
+
+    // At the limit itself the archive is written, and it reads back whole.
+    const QString full_out = root.filePath(QStringLiteral("full.zip"));
+    const auto full = FileExplorerArchiveService::compressToZip(full_out, {bundle.path()});
+    QVERIFY2(full.ok, qPrintable(full.blockers.join(QStringLiteral("; "))));
+    QCOMPARE(full.entries, kZipMaxEntries);
+    QCOMPARE(FileExplorerArchiveService::listEntries(full_out).total_entries, kZipMaxEntries);
+}
+
+void FileExplorerArchiveServiceTests::compressToZip_refusesAFileLargerThanAZipEntryCanHold() {
+    // An entry's sizes are 32-bit without ZIP64, so a file of 4 GiB or more was read whole and
+    // written with a wrapped length. It is refused before a byte of it is read. The fixture is a
+    // sparse file: it costs no disk space, and the guard reads only its size.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString big = dir.filePath(QStringLiteral("big.bin"));
+    const qint64 big_size = 0x1'00'00'00'00LL;  // one byte past what a zip entry can hold
+    {
+        const HANDLE handle = CreateFileW(reinterpret_cast<LPCWSTR>(big.utf16()),
+                                          GENERIC_READ | GENERIC_WRITE,
+                                          0,
+                                          nullptr,
+                                          CREATE_NEW,
+                                          FILE_ATTRIBUTE_NORMAL,
+                                          nullptr);
+        QVERIFY(handle != INVALID_HANDLE_VALUE);
+        DWORD returned = 0;
+        const bool sparse =
+            DeviceIoControl(handle, FSCTL_SET_SPARSE, nullptr, 0, nullptr, 0, &returned, nullptr) !=
+            0;
+        LARGE_INTEGER end{};
+        end.QuadPart = big_size;
+        const bool sized = SetFilePointerEx(handle, end, nullptr, FILE_BEGIN) != 0 &&
+                           SetEndOfFile(handle) != 0;
+        CloseHandle(handle);
+        QVERIFY(sparse);
+        QVERIFY(sized);
+    }
+    QCOMPARE(QFileInfo(big).size(), big_size);
+    const QString out = dir.filePath(QStringLiteral("out.zip"));
+
+    const auto result = FileExplorerArchiveService::compressToZip(out, {big});
+
+    QVERIFY2(!result.ok, "a file a zip entry cannot hold must be refused");
+    QCOMPARE(result.blockers,
+             QStringList{QStringLiteral("Could not add %1: %2 bytes is more than a zip entry can "
+                                        "hold (4294967295 bytes).")
+                             .arg(big)
+                             .arg(big_size)});
+    QVERIFY(!QFile::exists(out));
+}
 
 void FileExplorerArchiveServiceTests::compressToZip_refusesAnArchiveInsideASourceFolder() {
     // compressToZip refuses on four distinct conditions, and every refusal assertion in the tree

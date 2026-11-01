@@ -49,7 +49,9 @@ public:
                                                  const QString& parent_name);
     /// True when @p name has the .zip extension (Files IsZipFile).
     [[nodiscard]] static bool isZipName(const QString& name);
-    /// Compress @p source_paths (files or folders, recursed) into @p zip_path.
+    /// Compress @p source_paths (files or folders, recursed) into @p zip_path, which must not
+    /// exist. The writer has no ZIP64, so more than 65,535 entries, a file of 4 GiB or more, or
+    /// an archive that grows past 4 GiB is refused and the partial archive removed.
     [[nodiscard]] static FileExplorerArchiveResult compressToZip(const QString& zip_path,
                                                                  const QStringList& source_paths);
     /// Extract the whole archive into @p destination_dir (created if missing).
