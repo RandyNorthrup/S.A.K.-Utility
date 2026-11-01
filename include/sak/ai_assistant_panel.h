@@ -97,6 +97,10 @@ enum class AiAccessMode;
 // returns the chosen ApprovalPromptChoice as an int.
 using AiApprovalPromptTestHook = std::function<int(const QString&, const QString&)>;
 [[nodiscard]] AiApprovalPromptTestHook& aiApprovalPromptTestHook();
+// Test-only seam: when set, delegate_subagent uses this instead of the real OpenAI model client
+// factory, so the tool can be certified offline. A static, not a member: guarding a data member
+// would change AiAssistantPanel's layout between hooked and product objects.
+[[nodiscard]] ai::AiModelClientFactory& aiDelegateSubagentModelFactoryTestHook();
 #endif  // SAK_AI_TEST_HOOKS
 
 /// @brief UI shell for the SAK AI Assistant panel.
@@ -1167,9 +1171,6 @@ private:
     std::shared_ptr<QuickActionController> m_quickActions;
     AppActionRegistry m_appActionRegistry;
     std::unique_ptr<AppActionService> m_appActionService;
-    // Test seam: when set, delegate_subagent uses this instead of the real OpenAI
-    // model client factory, so the tool can be certified deterministically offline.
-    ai::AiModelClientFactory m_delegateSubagentModelFactoryOverride;
     std::unique_ptr<ChocolateyManager> m_chocoManager;
     std::unique_ptr<PackageListManager> m_packageListManager;
     // True while executeOfflineOperation runs its operation (on its own local worker). This

@@ -12,10 +12,11 @@
 
     The AI layer's seams (the conversation/skill/workflow store file hooks, the credential-store
     wipe observers, the MCP/model-client thread starters, the *ForTesting entry points of the MCP,
-    Responses and provider-registry code, and the assistant panel's workflow wipe observer and
-    approval-prompt hook) are compiled only under SAK_AI_TEST_HOOKS, so sak_ai_core and sak_gui
-    carry none of them; the retired SAK_AI_POLICY_DISK_OVERRIDE (an on-disk AI policy override)
-    must not be read by anything that ships.
+    Responses and provider-registry code, and the assistant panel's workflow wipe observer,
+    approval-prompt hook and delegate_subagent model-factory hook) are compiled only under
+    SAK_AI_TEST_HOOKS, so sak_ai_core and sak_gui carry none of them; the retired
+    SAK_AI_POLICY_DISK_OVERRIDE (an on-disk AI policy override) must not be read by anything that
+    ships.
 
     sak_core's own seams (ConfigManager's clear and reset, which only the config suites use, and
     the quick-action controller's broker factory) are compiled only under SAK_CORE_TEST_HOOKS.
@@ -168,7 +169,10 @@ $allFailures += Assert-Scan -Path $AiCoreLibrary `
 
 $allFailures += Assert-Scan -Path $GuiLibrary `
     -MustContain @("@AiAssistantPanel@sak@@") `
-    -MustNotContain @("ForTesting@", "?aiApprovalPromptTestHook@sak@@")
+    -MustNotContain @(
+        "ForTesting@",
+        "?aiApprovalPromptTestHook@sak@@",
+        "?aiDelegateSubagentModelFactoryTestHook@sak@@")
 
 $allFailures += Assert-Scan -Path $ApplicationExe `
     -MustContain @("tools/filesystem/manifest.json") `

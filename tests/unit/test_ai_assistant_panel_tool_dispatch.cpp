@@ -8821,10 +8821,13 @@ private Q_SLOTS:
     // Uses an injected fake model client so no network is touched.
     void delegateSubagentToolSpawnsScopedSubagentThroughRealLoop() {
         std::atomic<bool> subagent_invoked{false};
-        AiAssistantPanel panel;
-        panel.m_delegateSubagentModelFactoryOverride = [&subagent_invoked]() {
+        aiDelegateSubagentModelFactoryTestHook() = [&subagent_invoked]() {
             return std::make_unique<FakeSubagentModelClient>(&subagent_invoked);
         };
+        // Declared before the panel: its teardown drains the worker that reads the hook.
+        const auto reset_hook =
+            qScopeGuard([]() { aiDelegateSubagentModelFactoryTestHook() = nullptr; });
+        AiAssistantPanel panel;
         allowLocalToolsAndValidRun(panel);
 
         panel.beginToolTurn(delegateResponse());

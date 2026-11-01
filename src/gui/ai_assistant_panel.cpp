@@ -162,6 +162,11 @@ AiApprovalPromptTestHook& aiApprovalPromptTestHook() {
     static AiApprovalPromptTestHook hook;
     return hook;
 }
+
+ai::AiModelClientFactory& aiDelegateSubagentModelFactoryTestHook() {
+    static ai::AiModelClientFactory hook;
+    return hook;
+}
 #endif  // SAK_AI_TEST_HOOKS
 
 namespace {
@@ -10478,6 +10483,21 @@ ai::AiSubagentToolExecutor::RawDispatch AiAssistantPanel::makeSubagentToolDispat
     };
 }
 
+namespace {
+ai::AiModelClientFactory delegateSubagentModelFactory() {
+#ifdef SAK_AI_TEST_HOOKS
+    if (const ai::AiModelClientFactory& hook = aiDelegateSubagentModelFactoryTestHook(); hook) {
+        return hook;
+    }
+#endif  // SAK_AI_TEST_HOOKS
+    return []() -> std::unique_ptr<ai::IAiModelClient> {
+        auto client = std::make_unique<ai::OpenAIResponsesModelClient>();
+        client->setEnableWebSearch(true);
+        return client;
+    };
+}
+}  // namespace
+
 QJsonObject AiAssistantPanel::runDelegateSubagentTool(const ai::AiToolCallContext& context,
                                                       const QJsonObject& args) {
     const QString objective = args.value(QStringLiteral("objective")).toString().trimmed();
@@ -10490,11 +10510,9 @@ QJsonObject AiAssistantPanel::runDelegateSubagentTool(const ai::AiToolCallContex
     // cancel route -- is the call's own, from its context.
     QString api_key;
     QString model;
-    ai::AiModelClientFactory factory_override;
     invokeOnGuiThreadBlocking([&]() {
         api_key = apiKey();
         model = m_modelCombo ? m_modelCombo->currentText().trimmed() : QString();
-        factory_override = m_delegateSubagentModelFactoryOverride;
     });
 
     const ai::AiToolPolicy requested =
@@ -10518,15 +10536,7 @@ QJsonObject AiAssistantPanel::runDelegateSubagentTool(const ai::AiToolCallContex
         "you are permitted to use. Return only the requested structured JSON result.");
 
     ai::AiSubagentRunner runner(nullptr);
-    if (factory_override) {
-        runner.setModelClientFactory(factory_override);
-    } else {
-        runner.setModelClientFactory([]() {
-            auto client = std::make_unique<ai::OpenAIResponsesModelClient>();
-            client->setEnableWebSearch(true);
-            return client;
-        });
-    }
+    runner.setModelClientFactory(delegateSubagentModelFactory());
     ai::AiSubagentRunnerOptions opts;
     opts.wall_clock_timeout_ms = kWorkflowWallClockTimeoutMs;
     runner.setOptions(opts);
