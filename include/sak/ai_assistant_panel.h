@@ -59,6 +59,7 @@ class QVBoxLayout;
 namespace sak {
 
 class AppActionService;
+class QuickActionController;
 class ChocolateyManager;
 class ElevationBroker;
 class AiTranscriptView;
@@ -110,7 +111,11 @@ class AiAssistantPanel : public QWidget {
     friend class AiAssistantPanelToolDispatchTest;
 
 public:
-    explicit AiAssistantPanel(QWidget* parent = nullptr);
+    /// @param quick_actions the application's quick-action controller, whose built-in actions the
+    ///        assistant lists and runs (shared, since this panel can outlive the main window
+    ///        while its workers drain); null offers none of them
+    explicit AiAssistantPanel(QWidget* parent = nullptr,
+                              std::shared_ptr<QuickActionController> quick_actions = {});
     ~AiAssistantPanel() override;
 
     /// @brief Tears down a panel its owner no longer needs without crashing on live work.
@@ -1080,7 +1085,9 @@ private:
     std::unique_ptr<ai::SkillStore> m_skillStore;
     // Headless command of the app's own technician actions: the registry is the
     // enumerable/invokable surface the assistant's sak_app_action tool drives; the
-    // service owns the app-scoped QuickActionController that backs the seeded actions.
+    // service runs the seeded built-in actions on the application's one quick-action
+    // controller, shared with the panels that offer the same actions.
+    std::shared_ptr<QuickActionController> m_quickActions;
     AppActionRegistry m_appActionRegistry;
     std::unique_ptr<AppActionService> m_appActionService;
     std::unique_ptr<QTemporaryDir> m_appActionStagingDir;

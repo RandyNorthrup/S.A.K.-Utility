@@ -4516,10 +4516,14 @@ add_test(NAME test_keep_awake COMMAND test_keep_awake
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_keep_awake")
 
-# test_quick_action_controller - registration, lookup, category filtering
+# test_quick_action_controller - the application's one quick-action controller: per-run context
+# (each run's own output folder and owner), queueing, per-owner cancel, the elevated-helper broker
+# it owns (faked through the SAK_CORE_TEST_HOOKS broker factory), and bounded teardown.
 add_executable(test_quick_action_controller
     unit/test_quick_action_controller.cpp
+    ${SAK_CORE_QUICK_ACTION_TEST_HOOK_SOURCES}
 )
+target_compile_definitions(test_quick_action_controller PRIVATE SAK_CORE_TEST_HOOKS)
 set_target_properties(test_quick_action_controller PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"

@@ -18,7 +18,6 @@
 #include "sak/network_diagnostic_controller.h"
 #include "sak/port_scanner.h"
 #include "sak/process_runner.h"
-#include "sak/quick_action_controller.h"
 #include "sak/running_operations.h"
 #include "sak/style_constants.h"
 #include "sak/view_empty_state.h"
@@ -56,6 +55,9 @@
 namespace sak {
 
 namespace {
+
+/// This panel's owner token on the application's shared quick-action controller.
+constexpr auto kQuickActionOwner = "network";
 
 constexpr int kNetworkDetailMinHeight = 50;
 constexpr int kFirewallAnalysisMaxHeight = 120;
@@ -239,7 +241,7 @@ NetworkDiagnosticPanel::NetworkDiagnosticPanel(QuickActionController& quick_acti
                                                QWidget* parent)
     : QWidget(parent)
     , m_controller(std::make_unique<NetworkDiagnosticController>(this))
-    , m_qa_controller(&quick_actions) {
+    , m_quick_actions(quick_actions) {
     setupUi();
     connectSignals();
     createResetNetworkAction();
@@ -4670,28 +4672,30 @@ void NetworkDiagnosticPanel::onError(QString error) {
 // ===================================================================
 
 void NetworkDiagnosticPanel::createResetNetworkAction() {
+    const QString owner = QString::fromLatin1(kQuickActionOwner);
     RunningOperations::add(
         this,
         tr("Network reset"),
-        [this]() { return m_qa_controller->isExecuting(); },
-        [this]() { m_qa_controller->cancelCurrentAction(); });
+        [this, owner]() { return m_quick_actions.hasRunsOf(owner); },
+        [this, owner]() { m_quick_actions.cancelRunsOf(owner); });
 
-    connect(m_qa_controller,
-            &QuickActionController::actionExecutionComplete,
-            this,
-            &NetworkDiagnosticPanel::onResetNetworkComplete,
-            Qt::QueuedConnection);
-    connect(m_qa_controller,
-            &QuickActionController::actionError,
-            this,
-            &NetworkDiagnosticPanel::onResetNetworkError,
-            Qt::QueuedConnection);
-    connect(
-        m_qa_controller,
-        &QuickActionController::logMessage,
+    connectRunsOf(
+        m_quick_actions,
+        owner,
         this,
-        [this](const QString& msg) { Q_EMIT logOutput(msg); },
-        Qt::QueuedConnection);
+        {.queued =
+             [this](const QuickActionRun& run, const QString& running_action) {
+                 const QString text = quickActionQueuedText(run, running_action);
+                 m_resetNetworkBtn->setText(tr("Queued..."));
+                 Q_EMIT logOutput(text);
+                 Q_EMIT statusMessage(text, sak::kTimerStatusDefaultMs);
+             },
+         .started =
+             [this](const QuickActionRun&) { m_resetNetworkBtn->setText(tr("Resetting...")); },
+         .log = [this](const QuickActionRun&, const QString& line) { Q_EMIT logOutput(line); },
+         .finished = [this](const QuickActionRun&,
+                            const QuickAction::ExecutionResult& result,
+                            QuickAction::ActionStatus) { onResetNetworkFinished(result); }});
 
     connect(m_resetNetworkBtn,
             &QPushButton::clicked,
@@ -4717,28 +4721,21 @@ void NetworkDiagnosticPanel::onResetNetworkClicked() {
     Q_EMIT logOutput(QStringLiteral("Executing: Reset Network Settings"));
     m_resetNetworkBtn->setEnabled(false);
     m_resetNetworkBtn->setText(tr("Resetting..."));
-    m_qa_controller->executeAction(QStringLiteral("Reset Network Settings"), false);
+    m_quick_actions.requestRun({QString::fromLatin1(quick_action_elevation::kResetNetworkName),
+                                QString::fromLatin1(kQuickActionOwner),
+                                {}});
 }
 
-void NetworkDiagnosticPanel::onResetNetworkComplete(QuickAction* action) {
-    Q_ASSERT(action);
+void NetworkDiagnosticPanel::onResetNetworkFinished(const QuickAction::ExecutionResult& result) {
     m_resetNetworkBtn->setEnabled(true);
     m_resetNetworkBtn->setText(tr("Reset Network"));
-    const auto& result = action->lastExecutionResult();
     const QString msg = result.success ? tr("Network settings reset successfully")
                                        : QString("Reset failed: %1").arg(result.message);
     Q_EMIT logOutput(msg);
     Q_EMIT statusMessage(msg, sak::kTimerStatusDefaultMs);
-}
-
-void NetworkDiagnosticPanel::onResetNetworkError(QuickAction* action, const QString& error) {
-    Q_ASSERT(action);
-    m_resetNetworkBtn->setEnabled(true);
-    m_resetNetworkBtn->setText(tr("Reset Network"));
-    Q_EMIT logOutput(QString("Error: Reset Network - %1").arg(error));
-    Q_EMIT statusMessage(QString("Reset Network failed: %1").arg(error),
-                         sak::kTimerStatusDefaultMs);
-    sak::logError("Reset network error: {}", error.toStdString());
+    if (!result.success) {
+        sak::logError("Reset network failed: {}", result.message.toStdString());
+    }
 }
 
 // ===================================================================

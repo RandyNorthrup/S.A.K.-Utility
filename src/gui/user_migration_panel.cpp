@@ -10,7 +10,6 @@
 #include "sak/detachable_log_window.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
-#include "sak/quick_action_controller.h"
 #include "sak/running_operations.h"
 #include "sak/style_constants.h"
 #include "sak/user_profile_backup_wizard.h"
@@ -38,11 +37,13 @@ namespace sak {
 namespace {
 
 constexpr int kProgressBarMinimum = 0;
+/// This panel's owner token on the application's shared quick-action controller.
+constexpr auto kQuickActionOwner = "backup_restore";
 
 }  // namespace
 
 UserMigrationPanel::UserMigrationPanel(QuickActionController& quick_actions, QWidget* parent)
-    : QWidget(parent), m_action_controller(&quick_actions) {
+    : QWidget(parent), m_quick_actions(quick_actions) {
     setupUi();
     setupConnections();
     createQuickActions();
@@ -282,43 +283,40 @@ QGroupBox* UserMigrationPanel::createQuickToolsSection(QWidget* parent) {
 void UserMigrationPanel::createQuickActions() {
     // No default output folder: both Quick Tools ask where to save on every run (Screenshot
     // Settings wrote to a fixed C:/SAK_Backups without saying so).
+    const QString owner = QString::fromLatin1(kQuickActionOwner);
     RunningOperations::add(
         this,
         tr("Quick action"),
-        [this]() { return m_action_controller->isExecuting(); },
-        [this]() { m_action_controller->cancelCurrentAction(); });
+        [this, owner]() { return m_quick_actions.hasRunsOf(owner); },
+        [this, owner]() { m_quick_actions.cancelRunsOf(owner); });
 
-    // Connect controller signals
-    connect(m_action_controller,
-            &QuickActionController::actionExecutionProgress,
-            this,
-            &UserMigrationPanel::onQuickActionProgress,
-            Qt::QueuedConnection);
-    connect(m_action_controller,
-            &QuickActionController::actionExecutionComplete,
-            this,
-            &UserMigrationPanel::onQuickActionComplete,
-            Qt::QueuedConnection);
-    connect(m_action_controller,
-            &QuickActionController::actionError,
-            this,
-            &UserMigrationPanel::onQuickActionError,
-            Qt::QueuedConnection);
-    connect(
-        m_action_controller,
-        &QuickActionController::logMessage,
-        this,
-        [this](const QString& msg) { appendLog(msg); },
-        Qt::QueuedConnection);
+    connectRunsOf(m_quick_actions,
+                  owner,
+                  this,
+                  {.queued =
+                       [this](const QuickActionRun& run, const QString& running_action) {
+                           const QString text = quickActionQueuedText(run, running_action);
+                           appendLog(text);
+                           Q_EMIT statusMessage(text, sak::kTimerStatusDefaultMs);
+                       },
+                   .progress =
+                       [this](const QuickActionRun&, const QString& message, int percent) {
+                           Q_EMIT statusMessage(message, sak::kTimerStatusMessageMs);
+                           m_action_progress_bar->setValue(percent);
+                       },
+                   .log = [this](const QuickActionRun&, const QString& line) { appendLog(line); },
+                   .finished =
+                       [this](const QuickActionRun& run,
+                              const QuickAction::ExecutionResult& result,
+                              QuickAction::ActionStatus status) {
+                           onQuickActionFinished(run, result, status);
+                       }});
 
-    // Connect buttons to actions
     for (auto it = m_action_buttons.constBegin(); it != m_action_buttons.constEnd(); ++it) {
         const QString action_name = it.key();
-        const QPushButton* btn = it.value();
-        QuickAction* action = m_action_controller->getAction(action_name);
-        if (action != nullptr) {
-            connect(btn, &QPushButton::clicked, this, [this, action]() {
-                onQuickActionClicked(action);
+        if (m_quick_actions.getAction(action_name) != nullptr) {
+            connect(it.value(), &QPushButton::clicked, this, [this, action_name]() {
+                onQuickActionClicked(action_name);
             });
         }
     }
@@ -353,55 +351,33 @@ QString UserMigrationPanel::chooseQuickActionOutputFolder(const QString& action_
     return folder;
 }
 
-void UserMigrationPanel::onQuickActionClicked(QuickAction* action) {
-    Q_ASSERT(action);
-    const QString folder = chooseQuickActionOutputFolder(action->name());
+void UserMigrationPanel::onQuickActionClicked(const QString& action_name) {
+    const QString folder = chooseQuickActionOutputFolder(action_name);
     if (folder.isEmpty()) {
         return;
     }
-    action->setOutputFolder(folder);
-    if (action->name() == QLatin1String(quick_action_elevation::kBackupBitLockerKeysName)) {
-        m_action_controller->setBackupLocation(folder);  // the elevated run's payload
-    }
-    appendLog(QString("Executing: %1").arg(action->name()));
-    Q_EMIT statusMessage(QString("Running: %1...").arg(action->name()), sak::kTimerStatusMessageMs);
+    appendLog(QString("Executing: %1").arg(action_name));
+    Q_EMIT statusMessage(QString("Running: %1...").arg(action_name), sak::kTimerStatusMessageMs);
     m_action_progress_bar->setValue(0);
     m_action_progress_bar->setVisible(true);
-    m_action_controller->executeAction(action->name(), false);
+    // The folder travels with this run: one queued behind another caller's still writes here.
+    m_quick_actions.requestRun({action_name, QString::fromLatin1(kQuickActionOwner), folder});
 }
 
-void UserMigrationPanel::onQuickActionProgress(QuickAction* action,
-                                               const QString& message,
-                                               int progress) {
-    Q_ASSERT(action);
-    Q_EMIT statusMessage(message, sak::kTimerStatusMessageMs);
-    m_action_progress_bar->setValue(progress);
-}
-
-void UserMigrationPanel::onQuickActionComplete(QuickAction* action) {
-    Q_ASSERT(action);
-    const auto& result = action->lastExecutionResult();
-    QString status = result.success
-                         ? QString("Completed: %1").arg(action->name())
-                         : QString("Failed: %1 - %2").arg(action->name(), result.message);
-    // Output saved even partly says where it went (the screenshot folder, the key backup folder).
-    if (!result.output_path.isEmpty()) {
-        status += tr(" - saved to %1").arg(QDir::toNativeSeparators(result.output_path));
+void UserMigrationPanel::onQuickActionFinished(const QuickActionRun& run,
+                                               const QuickAction::ExecutionResult& result,
+                                               QuickAction::ActionStatus status) {
+    if (!m_quick_actions.hasRunsOf(QString::fromLatin1(kQuickActionOwner))) {
+        m_action_progress_bar->setVisible(false);
     }
-    m_action_progress_bar->setVisible(false);
-    appendLog(status);
-    Q_EMIT statusMessage(status, sak::kTimerStatusDefaultMs);
-}
-
-void UserMigrationPanel::onQuickActionError(QuickAction* action, const QString& error_message) {
-    Q_ASSERT(action);
-    const QString status = QString("Error: %1 - %2").arg(action->name(), error_message);
-    m_action_progress_bar->setVisible(false);
-    appendLog(status);
-    Q_EMIT statusMessage(status, sak::kTimerStatusDefaultMs);
-    sak::logError("Quick action error: {} - {}",
-                  action->name().toStdString(),
-                  error_message.toStdString());
+    const QString text = quickActionOutcomeText(run, result, status);
+    appendLog(text);
+    Q_EMIT statusMessage(text, sak::kTimerStatusDefaultMs);
+    if (status == QuickAction::ActionStatus::Failed) {
+        sak::logError("Quick action failed: {} - {}",
+                      run.action_name.toStdString(),
+                      result.message.toStdString());
+    }
 }
 
 }  // namespace sak

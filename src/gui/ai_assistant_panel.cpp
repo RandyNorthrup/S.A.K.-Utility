@@ -3597,7 +3597,8 @@ void logAiStartupPhase(QElapsedTimer* timer, const char* phase) {
 
 }  // namespace
 
-AiAssistantPanel::AiAssistantPanel(QWidget* parent)
+AiAssistantPanel::AiAssistantPanel(QWidget* parent,
+                                   std::shared_ptr<QuickActionController> quick_actions)
     : QWidget(parent)
     , m_client(std::make_unique<ai::OpenAIResponsesClient>(this))
     , m_credentialStore(std::make_unique<ai::CredentialStore>())
@@ -3615,6 +3616,7 @@ AiAssistantPanel::AiAssistantPanel(QWidget* parent)
     , m_mcpSessionPool(std::make_shared<ai::AiMcpSessionPool>())
     , m_workflowStore(std::make_unique<ai::WorkflowStore>())
     , m_skillStore(std::make_unique<ai::SkillStore>())
+    , m_quickActions(std::move(quick_actions))
     , m_chocoManager(std::make_unique<ChocolateyManager>(this))
     , m_packageListManager(std::make_unique<PackageListManager>()) {
     QElapsedTimer phase_timer;
@@ -9769,7 +9771,7 @@ void AiAssistantPanel::ensureAppActionService() {
         m_appActionService->setOutputDirectory(backup_dir);
         return;
     }
-    m_appActionService = std::make_unique<AppActionService>(backup_dir);
+    m_appActionService = std::make_unique<AppActionService>(m_quickActions, backup_dir);
     const int seeded = m_appActionService->registerInto(m_appActionRegistry);
     const int read_only = registerReadOnlyAppActionsInto(m_appActionRegistry);
     const int mutating = registerMutatingAppActionsInto(m_appActionRegistry);

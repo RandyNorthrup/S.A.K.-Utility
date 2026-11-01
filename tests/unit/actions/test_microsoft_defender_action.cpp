@@ -212,7 +212,7 @@ void MicrosoftDefenderActionTests::foldersOutsideDefenderAreRefused() {
 
 void MicrosoftDefenderActionTests::runsThroughTheSharedElevatedHelperRoute() {
     // A non-elevated app runs administrator quick actions in sak_elevated_helper through
-    // QuickActionController::executeElevatedAction; each Defender action must map to its own
+    // QuickActionController::startElevated; each Defender action must map to its own
     // helper task (registered in elevated_helper_main.cpp), never fall to "no task registered".
     using namespace sak::quick_action_elevation;
     const QList<QPair<DefenderOperation, QString>> expected{

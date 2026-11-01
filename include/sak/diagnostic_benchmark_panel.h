@@ -8,6 +8,7 @@
 
 #include "sak/diagnostic_controller.h"
 #include "sak/diagnostic_types.h"
+#include "sak/quick_action_controller.h"
 #include "sak/widget_helpers.h"
 
 #include <QTabWidget>
@@ -31,8 +32,6 @@ class QVBoxLayout;
 namespace sak {
 
 class LogToggleSwitch;
-class QuickAction;
-class QuickActionController;
 
 namespace ui {
 class ViewEmptyState;
@@ -119,12 +118,6 @@ private Q_SLOTS:
     void onOperationProgress(int percent, const QString& message);
     void onErrorOccurred(const QString& message);
 
-    // -- Quick Actions --------------------------------------------
-    void onQuickActionClicked(QuickAction* action);
-    void onQuickActionProgress(QuickAction* action, const QString& message, int progress);
-    void onQuickActionComplete(const QuickAction* action);
-    void onQuickActionError(const QuickAction* action, const QString& error_message);
-
 private:
     static constexpr int kSuiteStepCount = 7;
     enum SmartTableColumn {
@@ -184,10 +177,14 @@ private:
 
     QGroupBox* createSystemMaintenanceSection();
     void createQuickActions();
-    /// @brief For the System Inventory Report, asks where to save it (starting in Documents) and
-    ///        hands the folder to the action. Other actions pass through.
+    void onQuickActionClicked(const QString& action_name);
+    void onQuickActionFinished(const QuickActionRun& run,
+                               const QuickAction::ExecutionResult& result,
+                               QuickAction::ActionStatus status);
+    /// @brief For the System Inventory Report, asks where to save it (starting in Documents)
+    ///        into @p folder. Other actions write no files and pass through.
     /// @return False when the technician cancelled the folder choice, so nothing runs.
-    bool chooseQuickActionOutputFolder(QuickAction* action);
+    bool chooseQuickActionOutputFolder(const QString& action_name, QString* folder);
 
     /// @brief Build technician/ticket/notes input fields for report section
     void createReportInfoFields(QVBoxLayout* layout);
@@ -300,7 +297,9 @@ private:
     LogToggleSwitch* m_logToggle{nullptr};
 
     // -- Quick Action Widgets ------------------------------------
-    QuickActionController* m_qa_controller{nullptr};
+    // The application's one quick-action controller, shared with the Backup and Restore and
+    // Network panels and the assistant; this panel reacts only to its own runs.
+    QuickActionController& m_quick_actions;
     QHash<QString, QPushButton*> m_qa_buttons;
     QProgressBar* m_qa_progress_bar{nullptr};
 

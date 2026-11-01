@@ -949,7 +949,7 @@ private Q_SLOTS:
     // sak_app_action "list" returns the seeded built-in action catalog with risk
     // flags, so the assistant can enumerate the app's OWN technician actions headless.
     void appActionListReturnsSeededCatalogWithRiskFlags() {
-        AiAssistantPanel panel;
+        AiAssistantPanel panel(nullptr, createAppQuickActionController());
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")},
@@ -1020,7 +1020,7 @@ private Q_SLOTS:
     // Running a mutating app action in a chat/research (no-execution) session is
     // refused by the per-action gate before the controller is ever touched.
     void appActionRunBlockedInChatResearchSession() {
-        AiAssistantPanel panel;
+        AiAssistantPanel panel(nullptr, createAppQuickActionController());
         panel.ensureAppActionService();
         QVERIFY(panel.m_accessModeCombo != nullptr);
         panel.m_accessModeCombo->setCurrentIndex(0);  // Chat & Research (no execution)
@@ -1088,7 +1088,7 @@ private Q_SLOTS:
     // elevated helper), is registered cancellable -- pinned exactly, so a new async action that
     // forgets its cancel route shows up here.
     void appActionStopReachesEveryAsyncAction() {
-        AiAssistantPanel panel;
+        AiAssistantPanel panel(nullptr, createAppQuickActionController());
         panel.ensureAppActionService();
         QStringList cancellable;
         for (const AppActionDescriptor& descriptor : panel.m_appActionRegistry.list()) {
@@ -1146,7 +1146,7 @@ private Q_SLOTS:
     // W1a: the read-only technician ops are listed alongside the QuickActions with
     // read_only=true and mutating=false, so the per-action human gate is skipped.
     void readOnlyOpsAreListedAsReadOnly() {
-        AiAssistantPanel panel;
+        AiAssistantPanel panel(nullptr, createAppQuickActionController());
         panel.ensureAppActionService();
         const QJsonObject result = panel.runAppActionTool(
             QJsonObject{{QStringLiteral("operation"), QStringLiteral("list")},

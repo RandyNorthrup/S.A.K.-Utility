@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include "sak/quick_action_controller.h"
+
 #include <QCheckBox>
 #include <QComboBox>
 #include <QLabel>
@@ -24,8 +26,6 @@ class QProgressBar;
 
 namespace sak {
 class LogToggleSwitch;
-class QuickAction;
-class QuickActionController;
 
 /**
  * @brief Windows User Migration Panel
@@ -74,12 +74,6 @@ private Q_SLOTS:
     void onBackupSelected();
     void onRestoreBackup();
 
-    // Quick action slots
-    void onQuickActionClicked(QuickAction* action);
-    void onQuickActionProgress(QuickAction* action, const QString& message, int progress);
-    void onQuickActionComplete(QuickAction* action);
-    void onQuickActionError(QuickAction* action, const QString& error_message);
-
 private:
     /// @brief Configuration for a migration card widget
     struct MigrationCardConfig {
@@ -99,6 +93,10 @@ private:
                                 QPushButton*& btn);
     QGroupBox* createQuickToolsSection(QWidget* parent);
     void createQuickActions();
+    void onQuickActionClicked(const QString& action_name);
+    void onQuickActionFinished(const QuickActionRun& run,
+                               const QuickAction::ExecutionResult& result,
+                               QuickAction::ActionStatus status);
     /// Asks where @p action_name saves this run; empty (and logged) when the user cancels.
     [[nodiscard]] QString chooseQuickActionOutputFolder(const QString& action_name);
     void setupConnections();
@@ -109,8 +107,9 @@ private:
     QPushButton* m_restoreButton{nullptr};
     LogToggleSwitch* m_logToggle{nullptr};
 
-    // Quick action components
-    QuickActionController* m_action_controller{nullptr};
+    // Quick action components. The controller is the application's one, shared with the
+    // Diagnostics and Network panels and the assistant; this panel reacts only to its own runs.
+    QuickActionController& m_quick_actions;
     QHash<QString, QPushButton*> m_action_buttons;
     QProgressBar* m_action_progress_bar{nullptr};
 };

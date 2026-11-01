@@ -6,13 +6,13 @@
 
 #include "sak/diagnostic_benchmark_panel.h"
 
+#include "sak/action_constants.h"
 #include "sak/detachable_log_window.h"
 #include "sak/diagnostic_controller.h"
 #include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
-#include "sak/quick_action_controller.h"
 #include "sak/running_operations.h"
 #include "sak/style_constants.h"
 #include "sak/view_empty_state.h"
@@ -49,6 +49,9 @@ namespace sak {
 
 namespace {
 
+/// This panel's owner token on the application's shared quick-action controller.
+constexpr auto kQuickActionOwner = "diagnostics";
+constexpr auto kInventoryReportName = "System Inventory Report";
 constexpr int kDiagnosticLabelColumnWidth = 100;
 constexpr int kDiagnosticValueColumnWidth = 60;
 constexpr int kBenchmarkDriveComboMinWidth = 300;
@@ -84,7 +87,7 @@ DiagnosticBenchmarkPanel::DiagnosticBenchmarkPanel(QuickActionController& quick_
                                                    QWidget* parent)
     : QWidget(parent)
     , m_controller(std::make_unique<DiagnosticController>(this))
-    , m_qa_controller(&quick_actions) {
+    , m_quick_actions(quick_actions) {
     logDebug("DiagnosticBenchmarkPanel: constructing");
     setupUi();
     connectController();
@@ -1102,153 +1105,112 @@ QGroupBox* DiagnosticBenchmarkPanel::createSystemMaintenanceSection() {
 
 void DiagnosticBenchmarkPanel::createQuickActions() {
     // No default output folder: the inventory report asks where to save on every run (it wrote
-    // to a fixed C:/SAK_Backups without saying so). The controller's backup location feeds only
-    // the BitLocker key backup, which this panel does not host.
+    // to a fixed C:/SAK_Backups without saying so).
+    const QString owner = QString::fromLatin1(kQuickActionOwner);
     RunningOperations::add(
         this,
         tr("Quick action"),
-        [this]() { return m_qa_controller->isExecuting(); },
-        [this]() { m_qa_controller->cancelCurrentAction(); });
+        [this, owner]() { return m_quick_actions.hasRunsOf(owner); },
+        [this, owner]() { m_quick_actions.cancelRunsOf(owner); });
 
-    connect(m_qa_controller,
-            &QuickActionController::actionExecutionProgress,
-            this,
-            &DiagnosticBenchmarkPanel::onQuickActionProgress,
-            Qt::QueuedConnection);
-    connect(m_qa_controller,
-            &QuickActionController::actionExecutionComplete,
-            this,
-            &DiagnosticBenchmarkPanel::onQuickActionComplete,
-            Qt::QueuedConnection);
-    connect(m_qa_controller,
-            &QuickActionController::actionError,
-            this,
-            &DiagnosticBenchmarkPanel::onQuickActionError,
-            Qt::QueuedConnection);
-    connect(
-        m_qa_controller,
-        &QuickActionController::logMessage,
-        this,
-        [this](const QString& msg) { logMessage(msg); },
-        Qt::QueuedConnection);
+    connectRunsOf(m_quick_actions,
+                  owner,
+                  this,
+                  {.queued =
+                       [this](const QuickActionRun& run, const QString& running_action) {
+                           const QString text = quickActionQueuedText(run, running_action);
+                           logMessage(text);
+                           Q_EMIT statusMessage(text, sak::kTimerStatusDefaultMs);
+                       },
+                   .progress =
+                       [this](const QuickActionRun&, const QString& message, int percent) {
+                           Q_EMIT statusMessage(message, sak::kTimerStatusMessageMs);
+                           m_qa_progress_bar->setValue(percent);
+                       },
+                   .log = [this](const QuickActionRun&, const QString& line) { logMessage(line); },
+                   .finished =
+                       [this](const QuickActionRun& run,
+                              const QuickAction::ExecutionResult& result,
+                              QuickAction::ActionStatus status) {
+                           onQuickActionFinished(run, result, status);
+                       }});
 
     for (auto it = m_qa_buttons.constBegin(); it != m_qa_buttons.constEnd(); ++it) {
         const QString action_name = it.key();
-        const QPushButton* btn = it.value();
-        QuickAction* action = m_qa_controller->getAction(action_name);
-        if (action != nullptr) {
-            connect(btn, &QPushButton::clicked, this, [this, action]() {
-                onQuickActionClicked(action);
+        if (m_quick_actions.getAction(action_name) != nullptr) {
+            connect(it.value(), &QPushButton::clicked, this, [this, action_name]() {
+                onQuickActionClicked(action_name);
             });
         }
     }
 }
 
-bool DiagnosticBenchmarkPanel::chooseQuickActionOutputFolder(QuickAction* action) {
-    if (action->name() != QLatin1String("System Inventory Report")) {
-        return true;
+bool DiagnosticBenchmarkPanel::chooseQuickActionOutputFolder(const QString& action_name,
+                                                             QString* folder) {
+    if (action_name != QLatin1String(kInventoryReportName)) {
+        return true;  // the other maintenance actions write no files
     }
-    const QString folder = QFileDialog::getExistingDirectory(
+    *folder = QFileDialog::getExistingDirectory(
         this,
         tr("Choose where to save the system inventory report"),
         QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation),
         QFileDialog::ShowDirsOnly);
-    if (folder.isEmpty()) {
+    if (folder->isEmpty()) {
         logMessage(tr("System Inventory Report cancelled: no folder was chosen"));
         return false;
     }
-    action->setOutputFolder(folder);
     return true;
 }
 
-void DiagnosticBenchmarkPanel::onQuickActionClicked(QuickAction* action) {
-    Q_ASSERT(action);
+void DiagnosticBenchmarkPanel::onQuickActionClicked(const QString& action_name) {
     // Some quick actions shown in a diagnostic panel actually perform system REPAIRS
     // (SFC /scannow, DISM /RestoreHealth) that modify Windows system files. Those must
     // be confirmed rather than firing from a single click as if they were a read-only
-    // scan (the controller's require_confirmation flag is not honored on its own).
-    static const QSet<QString> kConfirmActions = {QStringLiteral("Verify System Files")};
-    if (kConfirmActions.contains(action->name())) {
+    // scan (the controller has no confirmation channel of its own).
+    if (action_name == QLatin1String(quick_action_elevation::kVerifySystemFilesName)) {
         auto confirm = sak::showQuestionLogged(
             this,
-            action->name(),
+            action_name,
             tr("\"%1\" runs system repair operations (SFC /scannow and, if corruption is "
                "found, DISM /RestoreHealth) that modify Windows system files. Run it now?")
-                .arg(action->name()),
+                .arg(action_name),
             QMessageBox::Yes | QMessageBox::No,
             QMessageBox::No);
         if (confirm != QMessageBox::Yes) {
             return;
         }
     }
-    if (!chooseQuickActionOutputFolder(action)) {
+    QString folder;
+    if (!chooseQuickActionOutputFolder(action_name, &folder)) {
         return;
     }
-    logMessage(QString("Executing: %1").arg(action->name()));
-    Q_EMIT statusMessage(QString("Running: %1...").arg(action->name()), sak::kTimerStatusMessageMs);
+    logMessage(QString("Executing: %1").arg(action_name));
+    Q_EMIT statusMessage(QString("Running: %1...").arg(action_name), sak::kTimerStatusMessageMs);
     m_qa_progress_bar->setValue(0);
     m_qa_progress_bar->setVisible(true);
     m_qa_running = true;
     refreshPrimaryControls();  // lock out overlapping diagnostic/suite/stress work
-    m_qa_controller->executeAction(action->name(), false);
+    // The folder travels with this run: one queued behind another caller's still writes here.
+    m_quick_actions.requestRun({action_name, QString::fromLatin1(kQuickActionOwner), folder});
 }
 
-void DiagnosticBenchmarkPanel::onQuickActionProgress(QuickAction*,
-                                                     const QString& message,
-                                                     int progress) {
-    // `action` is part of QuickActionController::actionExecutionProgress's signature
-    // and is not needed here; this slot reports the message and the bar only. It is
-    // never dereferenced, so there is nothing to guard.
-    Q_EMIT statusMessage(message, sak::kTimerStatusMessageMs);
-    m_qa_progress_bar->setValue(progress);
-}
-
-void DiagnosticBenchmarkPanel::onQuickActionComplete(const QuickAction* action) {
-    // The quick action has finished either way; clear the busy flag and re-enable the
-    // controls it was excluding (still gated by any other in-flight operation's flag).
-    m_qa_running = false;
+void DiagnosticBenchmarkPanel::onQuickActionFinished(const QuickActionRun& run,
+                                                     const QuickAction::ExecutionResult& result,
+                                                     QuickAction::ActionStatus status) {
+    // This run is over; the controls stay locked while another run of this panel is queued.
+    m_qa_running = m_quick_actions.hasRunsOf(QString::fromLatin1(kQuickActionOwner));
     refreshPrimaryControls();
-    // Queued connection from QuickActionController, which owns this pointer's
-    // lifetime; this panel cannot vouch for it and dereferences it on the next
-    // line. Refuse rather than crash Release (Debug would have aborted here and
-    // Release would not have checked at all).
-    if (action == nullptr) {
-        logMessage("Quick action completion arrived with no action; ignoring");
-        return;
+    if (!m_qa_running) {
+        m_qa_progress_bar->setVisible(false);
     }
-    const auto& result = action->lastExecutionResult();
-    QString status = result.success
-                         ? QString("Completed: %1").arg(action->name())
-                         : QString("Failed: %1 - %2").arg(action->name(), result.message);
-    // A report saved even partly says where it went.
-    if (!result.output_path.isEmpty()) {
-        status += tr(" - saved to %1").arg(QDir::toNativeSeparators(result.output_path));
+    const QString text = quickActionOutcomeText(run, result, status);
+    logMessage(text);
+    Q_EMIT statusMessage(text, sak::kTimerStatusDefaultMs);
+    if (status == QuickAction::ActionStatus::Failed) {
+        sak::logError("Quick action failed: {} - {}",
+                      run.action_name.toStdString(),
+                      result.message.toStdString());
     }
-    m_qa_progress_bar->setVisible(false);
-    logMessage(status);
-    Q_EMIT statusMessage(status, sak::kTimerStatusDefaultMs);
-}
-
-void DiagnosticBenchmarkPanel::onQuickActionError(const QuickAction* action,
-                                                  const QString& error_message) {
-    // The quick action has terminated; clear the busy flag and restore the controls.
-    m_qa_running = false;
-    refreshPrimaryControls();
-    // Same boundary as onQuickActionComplete, and the next line dereferences it.
-    // Losing the action's name must not lose the error itself.
-    if (action == nullptr) {
-        logMessage(QString("Quick action error with no action: %1").arg(error_message));
-        Q_EMIT statusMessage(QString("Quick action error: %1").arg(error_message),
-                             sak::kTimerStatusDefaultMs);
-        return;
-    }
-    const QString status = QString("Error: %1 - %2").arg(action->name(), error_message);
-    m_qa_progress_bar->setVisible(false);
-    logMessage(status);
-    Q_EMIT statusMessage(status, sak::kTimerStatusDefaultMs);
-    sak::logError("Quick action error: {} - {}",
-                  action->name().toStdString(),
-                  error_message.toStdString());
 }
 
 }  // namespace sak

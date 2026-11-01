@@ -6,6 +6,7 @@
 #include "sak/quick_action.h"
 
 #include <QJsonObject>
+#include <QMetaType>
 #include <QObject>
 #include <QQueue>
 #include <QString>
@@ -13,6 +14,7 @@
 
 #include <functional>
 #include <memory>
+#include <optional>
 #include <vector>
 
 namespace sak {
@@ -21,40 +23,53 @@ class ElevationBroker;
 
 [[nodiscard]] QString elevatedTaskIdForQuickAction(const QString& action_name);
 [[nodiscard]] QJsonObject buildElevatedActionPayload(const QString& task_id,
-                                                     const QString& configured_backup_location);
+                                                     const QString& output_folder);
 
 /**
- * @brief Controls quick action execution and threading
+ * @brief One request to run a quick action, and everything that belongs to that run alone.
  *
- * Manages the lifecycle of quick actions including:
- * - Thread pool for background execution
- * - Action queue for sequential operations
- * - Admin privilege escalation
- * - Logging and error handling
- * - Progress aggregation
+ * It travels with the run from the request to its completion: a run queued behind another
+ * caller's keeps the output folder its own caller chose, and every signal about the run names
+ * the caller that asked for it.
+ */
+struct QuickActionRun {
+    /// The registered action's name.
+    QString action_name;
+    /// Who asked: a fixed token per panel, a fresh one per assistant call. A caller reacts only
+    /// to the runs that carry its own token.
+    QString owner;
+    /// Where this run writes its files (report, screenshots, recovery keys). Empty for an action
+    /// that writes none; an action that needs one refuses to run without it.
+    QString output_folder;
+};
+
+/**
+ * @brief The application's one quick-action runner.
  *
- * Thread-Safety: NOT internally synchronized. Every member below (the owned action vector,
- * the lookup hash, both queues, the current-action pointers and the worker-thread pointers)
- * is plain data owned by the controller's own thread; the workers only run QuickAction code
- * that was moved onto them. Call the public slots from another thread ONLY through a queued
- * connection or QMetaObject::invokeMethod, so the body still runs on the controller's thread.
+ * The Backup and Restore, Diagnostics and Network panels and the assistant share it (MainWindow
+ * creates it with the built-in actions, createAppQuickActionController). It runs one action at a
+ * time; a request that arrives while another runs is queued, and its caller is told so.
+ *
+ * Elevated helper: the controller is the one owner of the broker its administrator actions use.
+ * The broker is created on the first administrator run and kept for the controller's lifetime, so
+ * runs in one session share one helper (one UAC prompt) while the helper stays inside its idle
+ * timeout; ElevationBroker retires a helper near that timeout and starts a new one. A cancel of
+ * the run using it (a panel's Stop on exit, the assistant's Stop or timeout) reaches the helper's
+ * task. Destroying the controller -- at application exit -- cancels the running task, joins the
+ * worker within its bound and shuts the helper down; a worker that overruns is handed, with the
+ * action and the broker it uses, to ThreadCustody. No other feature uses this broker.
+ *
+ * Thread-Safety: NOT internally synchronized. Call requestRun, cancelRunsOf and hasRunsOf on the
+ * controller's thread (another thread uses a queued invocation, as runQuickActionSync does). The
+ * workers only run QuickAction or broker code that was handed to them.
  */
 class QuickActionController : public QObject {
     Q_OBJECT
 
 public:
-    /**
-     * @brief Constructor
-     * @param parent Parent QObject
-     */
     explicit QuickActionController(QObject* parent = nullptr);
-
-    /**
-     * @brief Destructor
-     */
     ~QuickActionController() override;
 
-    // Disable copy and move
     QuickActionController(const QuickActionController&) = delete;
     QuickActionController& operator=(const QuickActionController&) = delete;
     QuickActionController(QuickActionController&&) = delete;
@@ -63,194 +78,128 @@ public:
     /**
      * @brief Register an action
      * @param action Action to register (ownership transferred)
-     * @return Unique action identifier
+     * @return The action's name, or empty when it was refused (null, or a duplicate name)
      */
     QString registerAction(std::unique_ptr<QuickAction> action);
 
-    /**
-     * @brief Get action by name
-     * @param action_name Action identifier
-     * @return Pointer to action, or nullptr if not found
-     */
+    /// @brief The registered action called @p action_name, or nullptr.
     QuickAction* getAction(const QString& action_name) const;
 
-    /**
-     * @brief Get all registered actions
-     * @return Vector of action pointers
-     */
+    /// @brief Every registered action, in registration order.
     std::vector<QuickAction*> getAllActions() const;
 
     /**
-     * @brief Get actions by category
-     * @param category Action category
-     * @return Vector of actions in that category
+     * @brief Run an action for a caller: now, or after the run in progress.
+     *
+     * The caller confirms with the user first (a panel's question, the assistant's human gate);
+     * the controller has no confirmation channel of its own. Every request ends in exactly one
+     * runFinished(): a refused one (unknown action, no owner) at once, a queued one after the
+     * runs ahead of it.
      */
-    std::vector<QuickAction*> getActionsByCategory(QuickAction::ActionCategory category) const;
-
-    /// @brief True while an action is executing (from start until its completion is handled).
-    [[nodiscard]] bool isExecuting() const { return m_current_execution_action != nullptr; }
-
+    void requestRun(const QuickActionRun& run);
 
     /**
-     * @brief Set backup location for elevated runs
-     * @param backup_location Backup path
+     * @brief Cancel every run @p owner asked for.
+     *
+     * A queued run never starts (it finishes as cancelled); a running one is asked to stop --
+     * for an administrator action, through the elevated helper. Runs of other callers are not
+     * touched.
      */
-    void setBackupLocation(const QString& backup_location);
+    void cancelRunsOf(const QString& owner);
 
-    /**
-     * @brief Enable or disable controller logging
-     * @param enabled True to enable logging
-     */
-    void setLoggingEnabled(bool enabled);
+    /// @brief Whether a run @p owner asked for is running or queued.
+    [[nodiscard]] bool hasRunsOf(const QString& owner) const;
 
 #ifdef SAK_CORE_TEST_HOOKS
-    /// Test-only: what the controller builds its elevated-helper broker with (an empty function
-    /// restores the real ElevationBroker). Compiled only into the tests that drive the elevated
-    /// route (tests/CMakeLists.txt, SAK_CORE_QUICK_ACTION_TEST_HOOK_SOURCES).
+    /// Test-only: what the controller builds its broker with (an empty function restores the
+    /// real ElevationBroker). Compiled only into the tests that drive the elevated route
+    /// (tests/CMakeLists.txt, SAK_CORE_QUICK_ACTION_TEST_HOOK_SOURCES).
     static void setElevationBrokerFactoryForTesting(
         std::function<std::unique_ptr<ElevationBroker>()> factory);
 #endif
 
 Q_SIGNALS:
-    /**
-     * @brief Emitted when action scan starts
-     * @param action Action being scanned
-     */
-    void actionScanStarted(QuickAction* action);
-
-    /**
-     * @brief Emitted when action scan completes
-     * @param action Action that completed scan
-     */
-    void actionScanComplete(QuickAction* action);
-
-    /**
-     * @brief Emitted when action execution starts
-     * @param action Action being executed
-     */
-    void actionExecutionStarted(QuickAction* action);
-
-    /**
-     * @brief Emitted during action execution
-     * @param action Action being executed
-     * @param message Progress message
-     * @param progress Progress value (0-100)
-     */
-    void actionExecutionProgress(QuickAction* action, const QString& message, int progress);
-
-    /**
-     * @brief Emitted when action execution completes
-     * @param action Action that completed
-     */
-    void actionExecutionComplete(QuickAction* action);
-
-    /**
-     * @brief Emitted on error
-     * @param action Action that failed
-     * @param error_message Error description
-     */
-    void actionError(QuickAction* action, const QString& error_message);
-
-    /**
-     * @brief Emitted when log message generated
-     * @param message Log message
-     */
-    void logMessage(const QString& message);
-
-public Q_SLOTS:
-    /**
-     * @brief Scan action asynchronously
-     * @param action_name Action identifier
-     */
-    void scanAction(const QString& action_name);
-
-    /**
-     * @brief Execute action asynchronously
-     * @param action_name Action identifier
-     * @param require_confirmation When true the request is REFUSED and logged: this
-     *        controller owns no confirmation channel (no confirmation signal, no approval
-     *        token), so it fails closed rather than run a still-unconfirmed action. Obtain
-     *        the user's confirmation in the caller, then request with false.
-     */
-    void executeAction(const QString& action_name, bool require_confirmation = true);
-
-    /**
-     * @brief Cancel current action
-     */
-    void cancelCurrentAction();
-
-private Q_SLOTS:
-    /**
-     * @brief Handle scan complete from worker
-     */
-    void onScanComplete();
-
-    /**
-     * @brief Handle execution complete from worker
-     */
-    void onExecutionComplete();
+    /// @p run waits behind @p running_action, which another request started first.
+    void runQueued(const sak::QuickActionRun& run, const QString& running_action);
+    void runStarted(const sak::QuickActionRun& run);
+    void runProgress(const sak::QuickActionRun& run, const QString& message, int percent);
+    /// A line for @p run's caller's log (the same line goes to quick_actions.log).
+    void runLog(const sak::QuickActionRun& run, const QString& line);
+    /// @p run is over: completed, failed, refused or cancelled. @p result is this run's own,
+    /// carried by value, so a slot never reads an action object a later run may be writing.
+    void runFinished(const sak::QuickActionRun& run,
+                     const sak::QuickAction::ExecutionResult& result,
+                     sak::QuickAction::ActionStatus status);
 
 private:
-    /// Destruction-only: joins @p thread within its bound, or reports the overrun and hands the
-    /// thread, the @p action it runs and the elevated @p broker it uses to ThreadCustody.
-    void retireThreadOnDestroy(QThread*& thread, QuickAction* action, ElevationBroker* broker);
+    void startRun(const QuickActionRun& run);
+    void startInProcess(QuickAction* action);
+    void startElevated(QuickAction* action);
+    [[nodiscard]] QString elevatedRunRefusal(const QString& task_id) const;
+    ElevationBroker& elevationBroker();
+    void finishCurrent(const QuickAction::ExecutionResult& result,
+                       QuickAction::ActionStatus status);
+    void finishUnstarted(const QuickActionRun& run,
+                         const QString& message,
+                         QuickAction::ActionStatus status);
+    void startNextQueued();
+    void joinCurrentThread();
 
-    /**
-     * @brief Execute an action via admin elevation
-     * @param action Action to execute
-     * @param action_name Action identifier (for queueing)
-     */
-    void executeElevatedAction(QuickAction* action, const QString& action_name);
-    [[nodiscard]] QString prepareElevatedAction(QuickAction* action, const QString& action_name);
+    /// Destruction-only: joins the running worker within its bound, or reports the overrun and
+    /// hands the thread, the action it runs and (for an elevated run) the broker to ThreadCustody.
+    void retireThreadOnDestroy();
 
-    /**
-     * @brief Start scan in worker thread
-     * @param action Action to scan
-     */
-    void startScanWorker(QuickAction* action);
+    void logRun(const QuickActionRun& run, const QString& message);
+    void writeLogLine(const QString& line) const;
+    [[nodiscard]] static QString logLine(const QString& action_name, const QString& message);
 
-    /**
-     * @brief Start execution in worker thread
-     * @param action Action to execute
-     */
-    void startExecutionWorker(QuickAction* action);
-
-    /**
-     * @brief Log operation
-     * @param action Action being logged
-     * @param message Log message
-     */
-    void logOperation(QuickAction* action, const QString& message);
-
-    // Registered actions (owned)
     std::vector<std::unique_ptr<QuickAction>> m_actions;
-
-    // Action lookup
     QHash<QString, QuickAction*> m_action_map;
 
-    // Worker threads
-    QThread* m_scan_thread{nullptr};
-    QThread* m_execution_thread{nullptr};
+    QQueue<QuickActionRun> m_queue;
+    std::optional<QuickActionRun> m_current;
+    QuickAction* m_current_action{nullptr};
+    bool m_current_elevated{false};
+    QThread* m_thread{nullptr};
 
-    // Current operations
-    QuickAction* m_current_scan_action{nullptr};
-    QuickAction* m_current_execution_action{nullptr};
-
-    // Action queue
-    QQueue<QString> m_action_queue;
-
-    // Scan queue
-    QQueue<QString> m_scan_queue;
-
-    // Logging
-    bool m_logging_enabled{true};
+    std::unique_ptr<ElevationBroker> m_broker;
     QString m_log_file_path;
-
-    // Backup location
-    QString m_backup_location;
-
-    // Elevation broker (lazy-initialized on first elevated task)
-    ElevationBroker* m_broker{nullptr};
 };
 
+/// What a caller does with the runs it asked for. Any handler may be empty.
+struct QuickActionRunHandlers {
+    std::function<void(const QuickActionRun& run, const QString& running_action)> queued;
+    std::function<void(const QuickActionRun& run)> started;
+    std::function<void(const QuickActionRun& run, const QString& message, int percent)> progress;
+    std::function<void(const QuickActionRun& run, const QString& line)> log;
+    std::function<void(const QuickActionRun& run,
+                       const QuickAction::ExecutionResult& result,
+                       QuickAction::ActionStatus status)>
+        finished;
+};
+
+/**
+ * @brief Deliver @p controller's signals for the runs @p owner asked for -- and no others -- to
+ *        @p handlers, on @p receiver's thread.
+ *
+ * The connections are queued, so a run refused inside requestRun() reaches its caller after the
+ * request returns, and they end with @p receiver.
+ */
+void connectRunsOf(QuickActionController& controller,
+                   const QString& owner,
+                   QObject* receiver,
+                   QuickActionRunHandlers handlers);
+
+/// "Completed: <action>", "Cancelled: <action>" or "Failed: <action> - <message>", followed by
+/// " - saved to <path>" whenever the run left a file or folder behind (even a failed one).
+[[nodiscard]] QString quickActionOutcomeText(const QuickActionRun& run,
+                                             const QuickAction::ExecutionResult& result,
+                                             QuickAction::ActionStatus status);
+
+/// "Queued: <action> - waits for <running action> to finish".
+[[nodiscard]] QString quickActionQueuedText(const QuickActionRun& run,
+                                            const QString& running_action);
+
 }  // namespace sak
+
+Q_DECLARE_METATYPE(sak::QuickActionRun)

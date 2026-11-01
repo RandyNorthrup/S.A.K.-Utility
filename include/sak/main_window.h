@@ -293,11 +293,12 @@ private:
     int m_slotDiagnostic{-1};
     int m_slotAppManagement{-1};
 
-    // The quick-action controllers the panels below run their quick actions on. The panels hold
-    // references, so these are declared first and destroyed after them.
-    std::unique_ptr<QuickActionController> m_backup_restore_quick_actions;
-    std::unique_ptr<QuickActionController> m_diagnostic_quick_actions;
-    std::unique_ptr<QuickActionController> m_network_quick_actions;
+    // The application's one quick-action controller (createAppQuickActionController), shared by
+    // the Backup and Restore, Diagnostics and Network panels and the assistant. The panels hold
+    // references, so it is declared first and destroyed after them; the assistant shares
+    // ownership because its panel can outlive this window while its workers drain. The
+    // controller owns the elevated helper those actions use and shuts it down when destroyed.
+    std::shared_ptr<QuickActionController> m_quick_actions;
 
     // Feature panels
     std::unique_ptr<UserMigrationPanel> m_user_migration_panel;

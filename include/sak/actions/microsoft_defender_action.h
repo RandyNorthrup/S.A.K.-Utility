@@ -53,7 +53,7 @@ inline constexpr int kMpCmdRunScanAttentionExitCode = 2;
  * version folder, and only when that folder lies under Defender's own platform or program
  * directory. MpCmdRun must run elevated: like the other administrator quick actions this one
  * runs in the elevated helper when the application is not elevated
- * (QuickActionController::executeElevatedAction).
+ * (QuickActionController::startElevated).
  */
 class MicrosoftDefenderAction : public QuickAction {
     Q_OBJECT

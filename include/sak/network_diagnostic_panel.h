@@ -9,6 +9,7 @@
 // sak::AdapterAdminOutcome -- the outcome type every adapter mutation this panel launches returns.
 #include "sak/network_adapter_admin.h"
 #include "sak/network_diagnostic_types.h"
+#include "sak/quick_action_controller.h"
 
 #include <QComboBox>
 #include <QFuture>
@@ -38,8 +39,6 @@ namespace sak {
 
 class NetworkDiagnosticController;
 class LogToggleSwitch;
-class QuickAction;
-class QuickActionController;
 
 namespace ui {
 class ViewEmptyState;
@@ -187,8 +186,7 @@ private Q_SLOTS:
 
     // Quick Action
     void onResetNetworkClicked();
-    void onResetNetworkComplete(QuickAction* action);
-    void onResetNetworkError(QuickAction* action, const QString& error);
+    void onResetNetworkFinished(const QuickAction::ExecutionResult& result);
 
 private:
     // -- UI Setup --
@@ -321,7 +319,9 @@ private:
 
     // -- Controller --
     std::unique_ptr<NetworkDiagnosticController> m_controller;
-    QuickActionController* m_qa_controller{nullptr};
+    // The application's one quick-action controller, shared with the Backup and Restore and
+    // Diagnostics panels and the assistant; this panel reacts only to its own reset.
+    QuickActionController& m_quick_actions;
 
     // In-flight launchAdapterWork() futures (several are MUTATING adapter admin ops). Tracked so
     // ~NetworkDiagnosticPanel can bounded-wait any still running instead of letting the mutation

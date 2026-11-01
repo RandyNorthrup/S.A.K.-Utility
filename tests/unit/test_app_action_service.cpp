@@ -103,6 +103,8 @@ public:
     }
 
     void execute() override {
+        const int run = m_runs.fetch_add(1) + 1;
+        m_seen_folder = outputFolder();
         while (!m_released.load() && !isCancelled()) {
             QThread::msleep(2);
         }
@@ -113,10 +115,17 @@ public:
         result.message = cancelled   ? QStringLiteral("probe cancelled")
                          : m_succeed ? QStringLiteral("probe ok")
                                      : QStringLiteral("probe fail");
+        if (m_number_runs) {
+            result.message += QStringLiteral(" (run %1)").arg(run);
+        }
         result.files_processed = 7;
         setExecutionResult(result);
         Q_EMIT executionComplete(result);
     }
+
+    /// The output folder the latest run started with (read after it finished).
+    [[nodiscard]] QString seenFolder() const { return m_seen_folder; }
+    void numberRuns() { m_number_runs = true; }
 
 private:
     QString m_name;
@@ -125,6 +134,9 @@ private:
     bool m_read_only;
     int m_timeout_ms;
     std::atomic_bool m_released{false};
+    std::atomic<int> m_runs{0};
+    QString m_seen_folder;
+    bool m_number_runs{false};
 };
 
 // A worker that runs until it is asked to stop -- what a long scan looks like to its owner.
@@ -168,6 +180,9 @@ private Q_SLOTS:
     void runQuickActionSync_stopCancelsTheRunningAction();
     void registerQuickActionsInto_stopReachesTheAction();
     void stopWorkerOnCancel_settlesOnTheWorkersCancelled();
+    void runQuickActionSync_carriesItsOutputFolder();
+    void registerQuickActionsInto_readsTheFolderWhenTheRunIsRequested();
+    void runQuickActionSync_waitsForItsOwnRunNotAnotherCallers();
 };
 
 void AppActionServiceTests::runQuickActionSync_returnsResultSynchronously() {
@@ -207,9 +222,11 @@ void AppActionServiceTests::runQuickActionSync_timesOutWhenActionStalls() {
     // timeout REQUESTED cancellation -- the probe is deliberately never released first.
     auto completed = std::make_shared<int>(0);
     QObject::connect(&controller,
-                     &QuickActionController::actionExecutionComplete,
+                     &QuickActionController::runFinished,
                      &controller,
-                     [completed](QuickAction*) { ++(*completed); });
+                     [completed](const sak::QuickActionRun&,
+                                 const QuickAction::ExecutionResult&,
+                                 QuickAction::ActionStatus) { ++(*completed); });
 
     const AppActionResult result =
         runQuickActionSync(&controller, QStringLiteral("Slow Probe"), 60);
@@ -218,9 +235,9 @@ void AppActionServiceTests::runQuickActionSync_timesOutWhenActionStalls() {
     // Proves the fixture really reached the TIMEOUT guard: the action was still running.
     QCOMPARE(*completed, 0);
 
-    // Drain WITHOUT release(): the timeout must have queued cancelCurrentAction() on the
-    // controller (src/core/app_action_bridge.cpp:170-173), which sets the action's cancel
-    // flag so execute() unwinds and the controller stops being busy. Without that request
+    // Drain WITHOUT release(): the timeout must have queued cancelRunsOf(<this call's owner>) on
+    // the controller, which sets the action's cancel flag so execute() unwinds and the
+    // controller stops being busy. Without that request
     // this never completes, instead of passing on a status that never moves off Idle.
     QTRY_VERIFY_WITH_TIMEOUT(*completed == 1, 5000);
     QCOMPARE(*completed, 1);
@@ -345,9 +362,11 @@ void AppActionServiceTests::registerQuickActionsInto_thunkWaitsTheActionsOwnTime
     // 80 ms bound would wait for that and report success; the right one stops at 80 ms.
     auto completed = std::make_shared<int>(0);
     QObject::connect(&controller,
-                     &QuickActionController::actionExecutionComplete,
+                     &QuickActionController::runFinished,
                      &controller,
-                     [completed](QuickAction*) { ++(*completed); });
+                     [completed](const sak::QuickActionRun&,
+                                 const QuickAction::ExecutionResult&,
+                                 QuickAction::ActionStatus) { ++(*completed); });
     QTimer::singleShot(2000, &controller, [raw]() { raw->release(); });
     const AppActionResult result = registry.invoke(QStringLiteral("action.bounded_probe"),
                                                    QJsonObject{});
@@ -516,9 +535,11 @@ void AppActionServiceTests::runQuickActionSync_stopCancelsTheRunningAction() {
     controller.registerAction(std::move(probe));
     auto completed = std::make_shared<int>(0);
     QObject::connect(&controller,
-                     &QuickActionController::actionExecutionComplete,
+                     &QuickActionController::runFinished,
                      &controller,
-                     [completed](QuickAction*) { ++(*completed); });
+                     [completed](const sak::QuickActionRun&,
+                                 const QuickAction::ExecutionResult&,
+                                 QuickAction::ActionStatus) { ++(*completed); });
 
     bool stop = false;
     QTimer::singleShot(50, &controller, [&stop]() { stop = true; });
@@ -574,5 +595,57 @@ void AppActionServiceTests::stopWorkerOnCancel_settlesOnTheWorkersCancelled() {
     QCOMPARE(result.message, QStringLiteral("Action cancelled"));
     QVERIFY2(elapsed.elapsed() < 4000, "the worker's cancelled() must settle the Stop");
 }
+// The assistant's staging folder travels with its run (it used to be set on the shared action
+// object, where a run queued behind another caller's could pick up the wrong folder).
+void AppActionServiceTests::runQuickActionSync_carriesItsOutputFolder() {
+    QuickActionController controller;
+    auto probe = std::make_unique<ProbeAction>(QStringLiteral("Folder Probe"));
+    ProbeAction* raw = probe.get();
+    controller.registerAction(std::move(probe));
+    raw->release();
+
+    const AppActionResult result = runQuickActionSync(
+        &controller, QStringLiteral("Folder Probe"), 30'000, {}, QStringLiteral("C:/staging/a"));
+    QVERIFY(result.success);
+    QCOMPARE(raw->seenFolder(), QStringLiteral("C:/staging/a"));
+}
+
+// The registry thunk asks for the folder when it requests the run, so the folder the assistant
+// sets for one call is the one that call's run uses.
+void AppActionServiceTests::registerQuickActionsInto_readsTheFolderWhenTheRunIsRequested() {
+    QuickActionController controller;
+    auto probe = std::make_unique<ProbeAction>(QStringLiteral("Staged Probe"));
+    ProbeAction* raw = probe.get();
+    controller.registerAction(std::move(probe));
+    raw->release();
+    auto folder = std::make_shared<QString>(QStringLiteral("C:/staging/first"));
+    AppActionRegistry registry;
+    QCOMPARE(registerQuickActionsInto(controller, registry, [folder]() { return *folder; }), 1);
+
+    QVERIFY(registry.invoke(QStringLiteral("action.staged_probe"), QJsonObject{}).success);
+    QCOMPARE(raw->seenFolder(), QStringLiteral("C:/staging/first"));
+    *folder = QStringLiteral("C:/staging/second");
+    QVERIFY(registry.invoke(QStringLiteral("action.staged_probe"), QJsonObject{}).success);
+    QCOMPARE(raw->seenFolder(), QStringLiteral("C:/staging/second"));
+}
+
+// One controller serves the panels and the assistant. A panel's run of the same action that
+// finishes while the assistant's waits must not be taken as the assistant's result (the bridge
+// used to match on the action object alone).
+void AppActionServiceTests::runQuickActionSync_waitsForItsOwnRunNotAnotherCallers() {
+    QuickActionController controller;
+    auto probe = std::make_unique<ProbeAction>(QStringLiteral("Shared Probe"));
+    ProbeAction* raw = probe.get();
+    raw->numberRuns();
+    controller.registerAction(std::move(probe));
+    controller.requestRun({QStringLiteral("Shared Probe"), QStringLiteral("diagnostics"), {}});
+    QTimer::singleShot(50, &controller, [raw]() { raw->release(); });
+
+    const AppActionResult result =
+        runQuickActionSync(&controller, QStringLiteral("Shared Probe"), 30'000);
+    QVERIFY(result.success);
+    QCOMPARE(result.message, QStringLiteral("probe ok (run 2)"));
+}
+
 QTEST_MAIN(AppActionServiceTests)
 #include "test_app_action_service.moc"

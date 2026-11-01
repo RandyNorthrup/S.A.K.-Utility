@@ -9,15 +9,9 @@
 #if defined(SAK_ENABLE_AI_ASSISTANT) && SAK_ENABLE_AI_ASSISTANT
 #include "sak/ai_assistant_panel.h"
 #endif
-#include "sak/actions/backup_bitlocker_keys_action.h"
-#include "sak/actions/check_disk_errors_action.h"
-#include "sak/actions/generate_system_report_action.h"
-#include "sak/actions/optimize_power_settings_action.h"
-#include "sak/actions/reset_network_action.h"
-#include "sak/actions/screenshot_settings_action.h"
-#include "sak/actions/verify_system_files_action.h"
 #include "sak/advanced_search_panel.h"
 #include "sak/advanced_uninstall_panel.h"
+#include "sak/app_action_service.h"
 #include "sak/app_installation_panel.h"
 #include "sak/config_manager.h"
 #include "sak/detachable_log_window.h"
@@ -496,7 +490,8 @@ QWidget* addEmptyPanelTab(QTabWidget* tabs, const QString& title) {
 
 }  // namespace
 
-MainWindow::MainWindow(QWidget* parent) : QMainWindow(parent) {
+MainWindow::MainWindow(QWidget* parent)
+    : QMainWindow(parent), m_quick_actions(createAppQuickActionController()) {
     QElapsedTimer startup_timer;
     startup_timer.start();
     setupUi();
@@ -886,7 +881,7 @@ void MainWindow::createAiAssistantPanelTab(int slot) {
         logDebug("MainWindow startup: AI Assistant placeholder ready");
         logger::instance().flush();
     }
-    m_ai_assistant_panel = std::make_unique<AiAssistantPanel>(wrapper);
+    m_ai_assistant_panel = std::make_unique<AiAssistantPanel>(wrapper, m_quick_actions);
     layout->addWidget(m_ai_assistant_panel.get());
     if (isStartupSmokeMode()) {
         logDebug("MainWindow startup: AI Assistant panel attached to tab");
@@ -897,14 +892,7 @@ void MainWindow::createAiAssistantPanelTab(int slot) {
 
 void MainWindow::createBackupRestorePanel() {
     logDebug("MainWindow: creating Backup and Restore panel");
-    // No default folder: the panel asks where each run saves.
-    m_backup_restore_quick_actions = std::make_unique<QuickActionController>();
-    m_backup_restore_quick_actions->registerAction(
-        std::make_unique<ScreenshotSettingsAction>(QString()));
-    m_backup_restore_quick_actions->registerAction(
-        std::make_unique<BackupBitlockerKeysAction>(QString()));
-    m_user_migration_panel = std::make_unique<UserMigrationPanel>(*m_backup_restore_quick_actions,
-                                                                  this);
+    m_user_migration_panel = std::make_unique<UserMigrationPanel>(*m_quick_actions, this);
     addTabWithTooltip(m_tab_widget,
                       m_user_migration_panel.get(),
                       "Backup and Restore",
@@ -982,14 +970,8 @@ void MainWindow::createDiagnosticPanel() {
         logDebug("MainWindow startup: Diagnostic placeholder ready");
         logger::instance().flush();
     }
-    m_diagnostic_quick_actions = std::make_unique<QuickActionController>();
-    m_diagnostic_quick_actions->registerAction(std::make_unique<OptimizePowerSettingsAction>());
-    m_diagnostic_quick_actions->registerAction(std::make_unique<VerifySystemFilesAction>());
-    m_diagnostic_quick_actions->registerAction(std::make_unique<CheckDiskErrorsAction>());
-    m_diagnostic_quick_actions->registerAction(
-        std::make_unique<GenerateSystemReportAction>(QString()));
-    m_diagnostic_benchmark_panel =
-        std::make_unique<DiagnosticBenchmarkPanel>(*m_diagnostic_quick_actions, wrapper);
+    m_diagnostic_benchmark_panel = std::make_unique<DiagnosticBenchmarkPanel>(*m_quick_actions,
+                                                                              wrapper);
     layout->addWidget(m_diagnostic_benchmark_panel.get());
     logDebug("MainWindow: Benchmark and Diagnostics panel initialized");
     if (isStartupSmokeMode()) {
@@ -1163,10 +1145,7 @@ void MainWindow::createAppManagementChildPanels(QWidget* app_install_shell,
 void MainWindow::createNetworkManagementPanel() {
     Q_ASSERT(m_tab_widget);
     Q_ASSERT(!m_network_diagnostic_panel);
-    m_network_quick_actions = std::make_unique<QuickActionController>();
-    m_network_quick_actions->registerAction(std::make_unique<ResetNetworkAction>());
-    m_network_diagnostic_panel = std::make_unique<NetworkDiagnosticPanel>(*m_network_quick_actions,
-                                                                          this);
+    m_network_diagnostic_panel = std::make_unique<NetworkDiagnosticPanel>(*m_quick_actions, this);
     m_wifi_manager_panel = std::make_unique<WifiManagerPanel>(this);
     connect(m_wifi_manager_panel.get(),
             &WifiManagerPanel::statusMessage,

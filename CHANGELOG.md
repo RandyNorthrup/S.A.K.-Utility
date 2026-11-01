@@ -29,6 +29,16 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   completion message gives the full path of the file it saved. Cancelling the folder choice runs
   nothing. The assistant saves it to the chat session's artifacts, as before.
 
+- **One quick-action runner for the whole app** - Backup and Restore's Quick Tools, the
+  Diagnostics panel's System Maintenance buttons, Reset Network and the assistant's built-in
+  actions now run one at a time on one runner. A quick action started while another is running
+  waits its turn and says so ("Queued: ... - waits for ... to finish"); each panel shows only its
+  own actions' progress and results. Administrator quick actions share one elevated helper, so
+  several in a row ask for administrator approval once while the helper is still running (it
+  closes itself after five idle minutes and when S.A.K. exits) instead of once per action. A
+  cancelled action says "Cancelled", a failure is reported once instead of twice, and warnings an
+  action logs now reach the panel's log.
+
 - **Screenshot Settings asks where to save** - Backup and Restore's Screenshot Settings wrote to
   a fixed `C:\SAK_Backups` without saying so. It now asks for a folder each time, starting in
   Documents, saves the screenshots and their report in a `SettingsScreenshots` folder there, and

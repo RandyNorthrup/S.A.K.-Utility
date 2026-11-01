@@ -1,9 +1,9 @@
 // Copyright (c) 2026 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
-// Concrete half of the app-action service: constructs the app-scoped
-// QuickActionController with the built-in technician actions. The generic bridge
-// and registration logic live in app_action_bridge.cpp (action-agnostic).
+// Concrete half of the app-action service: the application's one QuickActionController with the
+// built-in technician actions, and the assistant's view of it. The generic bridge and
+// registration logic live in app_action_bridge.cpp (action-agnostic).
 
 #include "sak/app_action_service.h"
 
@@ -17,47 +17,66 @@
 #include "sak/actions/verify_system_files_action.h"
 #include "sak/quick_action_controller.h"
 
+#include <mutex>
 #include <utility>
 
 namespace sak {
 
-AppActionService::AppActionService(const QString& backup_dir, QObject* parent)
-    : QObject(parent)
-    , m_controller(std::make_unique<QuickActionController>())
-    , m_backup_dir(backup_dir) {
-    m_controller->setBackupLocation(backup_dir);
-    m_controller->registerAction(std::make_unique<OptimizePowerSettingsAction>());
-    m_controller->registerAction(std::make_unique<VerifySystemFilesAction>());
-    m_controller->registerAction(std::make_unique<CheckDiskErrorsAction>());
-    m_controller->registerAction(std::make_unique<ResetNetworkAction>());
-    auto report_action = std::make_unique<GenerateSystemReportAction>(backup_dir);
-    m_report_action = report_action.get();
-    m_controller->registerAction(std::move(report_action));
-    auto screenshot_action = std::make_unique<ScreenshotSettingsAction>(backup_dir);
-    m_screenshot_action = screenshot_action.get();
-    m_controller->registerAction(std::move(screenshot_action));
-    auto bitlocker_action = std::make_unique<BackupBitlockerKeysAction>(backup_dir);
-    m_bitlocker_action = bitlocker_action.get();
-    m_controller->registerAction(std::move(bitlocker_action));
+struct AppActionService::OutputFolder {
+    mutable std::mutex mutex;
+    QString path;
+};
+
+std::shared_ptr<QuickActionController> createAppQuickActionController() {
+    auto controller = std::make_shared<QuickActionController>();
+    // No action carries a folder of its own: each run brings its caller's (a panel asks the
+    // user, the assistant hands its session staging folder).
+    controller->registerAction(std::make_unique<OptimizePowerSettingsAction>());
+    controller->registerAction(std::make_unique<VerifySystemFilesAction>());
+    controller->registerAction(std::make_unique<CheckDiskErrorsAction>());
+    controller->registerAction(std::make_unique<ResetNetworkAction>());
+    controller->registerAction(std::make_unique<GenerateSystemReportAction>(QString()));
+    controller->registerAction(std::make_unique<ScreenshotSettingsAction>(QString()));
+    controller->registerAction(std::make_unique<BackupBitlockerKeysAction>(QString()));
     for (const DefenderOperation operation : {DefenderOperation::QuickScan,
                                               DefenderOperation::FullScan,
                                               DefenderOperation::SignatureUpdate}) {
-        m_controller->registerAction(std::make_unique<MicrosoftDefenderAction>(operation));
+        controller->registerAction(std::make_unique<MicrosoftDefenderAction>(operation));
     }
+    return controller;
+}
+
+AppActionService::AppActionService(std::shared_ptr<QuickActionController> quick_actions,
+                                   const QString& output_directory,
+                                   QObject* parent)
+    : QObject(parent)
+    , m_quick_actions(std::move(quick_actions))
+    , m_output_folder(std::make_shared<OutputFolder>()) {
+    setOutputDirectory(output_directory);
 }
 
 AppActionService::~AppActionService() = default;
 
 void AppActionService::setOutputDirectory(const QString& output_directory) {
-    m_backup_dir = output_directory.trimmed();
-    m_controller->setBackupLocation(m_backup_dir);
-    m_report_action->setOutputFolder(m_backup_dir);
-    m_screenshot_action->setOutputFolder(m_backup_dir);
-    m_bitlocker_action->setOutputFolder(m_backup_dir);
+    const std::lock_guard<std::mutex> lock(m_output_folder->mutex);
+    m_output_folder->path = output_directory.trimmed();
+}
+
+QString AppActionService::outputDirectory() const {
+    const std::lock_guard<std::mutex> lock(m_output_folder->mutex);
+    return m_output_folder->path;
 }
 
 int AppActionService::registerInto(AppActionRegistry& registry) {
-    return registerQuickActionsInto(*m_controller, registry);
+    if (!m_quick_actions) {
+        return 0;
+    }
+    // Read when a run is requested, so each run carries the staging folder of the call that
+    // asked for it (the panel replaces the folder per call and per session).
+    return registerQuickActionsInto(*m_quick_actions, registry, [folder = m_output_folder]() {
+        const std::lock_guard<std::mutex> lock(folder->mutex);
+        return folder->path;
+    });
 }
 
 }  // namespace sak

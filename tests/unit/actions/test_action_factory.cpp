@@ -148,10 +148,9 @@ void TestActionFactory::testAllCategoriesValid() {
     // (quick_action.h:37-42), so every in-range value satisfied it -- it could only ever catch an
     // out-of-range static_cast, which no action performs. Pin the ROUTING instead, in
     // initTestCase() construction order, the same convention testRequiresAdminIsBool uses.
-    // category() is the single source both for the AI app-action descriptor's category string
-    // (app_action_bridge.cpp:196) and for the panel's getActionsByCategory() grouping
-    // (quick_action_controller.cpp:256), so a mis-route files a destructive recovery action under
-    // routine maintenance in every surface that lists it.
+    // category() is the single source for the AI app-action descriptor's category string
+    // (registerQuickActionsInto), so a mis-route files a destructive recovery action under
+    // routine maintenance in the catalog the assistant lists.
     struct Expected {
         QString name;
         QuickAction::ActionCategory category{};

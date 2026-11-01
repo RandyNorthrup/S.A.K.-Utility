@@ -25,17 +25,24 @@
 ///    without blocking the controller's own (GUI) thread. It marshals the
 ///    async executeAction() onto the controller's thread and pumps a local
 ///    event loop on the caller's thread until the completion/error signal.
-///  - AppActionService: constructs an app-scoped QuickActionController with the
-///    built-in technician QuickActions and registers each into an
-///    AppActionRegistry with a thunk that calls runQuickActionSync().
+///  - AppActionService: the assistant's view of the application's one
+///    QuickActionController (createAppQuickActionController), registering each of
+///    its actions into an AppActionRegistry with a thunk that calls
+///    runQuickActionSync() and hands the run the assistant's output folder.
 class WorkerBase;  // sak/worker_base.h (global namespace)
 
 namespace sak {
 
 class QuickActionController;
-class BackupBitlockerKeysAction;
-class GenerateSystemReportAction;
-class ScreenshotSettingsAction;
+
+/// The application's one quick-action controller, with the ten built-in technician actions
+/// (power plan, SFC/DISM, disk check, network reset, inventory report, Settings screenshots,
+/// BitLocker key backup, three Defender operations). MainWindow creates it and hands it to the
+/// Backup and Restore, Diagnostics and Network panels and to the assistant.
+[[nodiscard]] std::shared_ptr<QuickActionController> createAppQuickActionController();
+
+/// Where an assistant run writes its files, read when the run is requested.
+using QuickActionOutputFolder = std::function<QString()>;
 
 /// How often a running app action polls the caller's cancel route (AppActionCancelCheck).
 inline constexpr int kAppActionCancelPollMs = 100;
@@ -46,36 +53,44 @@ inline constexpr int kAppActionCancelPollMs = 100;
 inline constexpr int kAppActionStopGraceMs = 15'000;
 
 /// Run @p action_name on @p controller to completion and return its result.
-/// Confirmation is suppressed (require_confirmation=false): the assistant applies
-/// its own human-gate/restore-point BEFORE invoking, so the controller must not
-/// pop a GUI dialog. Returns a failed result on unknown action or timeout.
+/// The assistant applies its own human-gate/restore-point BEFORE invoking; the controller has
+/// no confirmation of its own. The run carries @p output_folder and a fresh owner token, so it
+/// takes only its own result from the shared controller and a Stop or timeout cancels only it.
+/// Returns a failed result on unknown action or timeout.
 /// Safe to call from a non-GUI worker thread; does not block the controller's thread.
-/// When @p should_cancel reads true the action is cancelled on the controller (which reaches
+/// When @p should_cancel reads true the run is cancelled on the controller (which reaches
 /// the elevated helper for an administrator action) and its own result is returned once it
 /// unwinds, or appActionCancelledResult() after kAppActionStopGraceMs.
 [[nodiscard]] AppActionResult runQuickActionSync(QuickActionController* controller,
                                                  const QString& action_name,
                                                  int timeout_ms = kDefaultQuickActionTimeoutMs,
-                                                 const AppActionCancelCheck& should_cancel = {});
+                                                 const AppActionCancelCheck& should_cancel = {},
+                                                 const QString& output_folder = {});
 
 /// Register every action currently in @p controller into @p registry as an
 /// AppAction. Each descriptor's id is "action.<slug-of-name>", category is mapped
 /// from the QuickAction category, mutating is set (these run system changes), and
 /// requires_admin is taken from the action. The invoke thunk runs the action headless
-/// via runQuickActionSync(), bounded by the action's executionTimeoutMs() and stopped by the
-/// caller's cancel route (each is registered cancellable). Returns the number registered.
-/// Action-agnostic (no dependency on the concrete built-in actions), so it is unit-testable with
-/// probes.
+/// via runQuickActionSync(), bounded by the action's executionTimeoutMs(), stopped by the
+/// caller's cancel route (each is registered cancellable), and writing into the folder
+/// @p output_folder gives when the run is requested (none when it is empty). Returns the number
+/// registered. Action-agnostic (no dependency on the concrete built-in actions), so it is
+/// unit-testable with probes.
 [[nodiscard]] int registerQuickActionsInto(QuickActionController& controller,
-                                           AppActionRegistry& registry);
+                                           AppActionRegistry& registry,
+                                           const QuickActionOutputFolder& output_folder = {});
 
 class AppActionService : public QObject {
     Q_OBJECT
 
 public:
-    /// @param backup_dir output/backup location handed to the actions that write
-    /// files (system report, settings screenshots, BitLocker key backup).
-    explicit AppActionService(const QString& backup_dir, QObject* parent = nullptr);
+    /// @param quick_actions the application's quick-action controller; null registers no
+    ///        built-in actions
+    /// @param output_directory where the assistant's runs of the actions that write files
+    ///        (system report, settings screenshots, BitLocker key backup) put them
+    AppActionService(std::shared_ptr<QuickActionController> quick_actions,
+                     const QString& output_directory,
+                     QObject* parent = nullptr);
     ~AppActionService() override;
 
     AppActionService(const AppActionService&) = delete;
@@ -88,15 +103,16 @@ public:
     /// registered. Ids are stable ("action.<slug>").
     [[nodiscard]] int registerInto(AppActionRegistry& registry);
 
+    /// The folder the next requested run writes into. Each run takes the folder current when
+    /// it is requested, so a later change never redirects a run already queued.
     void setOutputDirectory(const QString& output_directory);
-    [[nodiscard]] QString outputDirectory() const { return m_backup_dir; }
+    [[nodiscard]] QString outputDirectory() const;
 
 private:
-    std::unique_ptr<QuickActionController> m_controller;
-    QString m_backup_dir;
-    GenerateSystemReportAction* m_report_action{nullptr};
-    ScreenshotSettingsAction* m_screenshot_action{nullptr};
-    BackupBitlockerKeysAction* m_bitlocker_action{nullptr};
+    struct OutputFolder;
+    std::shared_ptr<QuickActionController> m_quick_actions;
+    // Shared with the registry thunks, which read it from the assistant's worker thread.
+    std::shared_ptr<OutputFolder> m_output_folder;
 };
 
 /// Generous default for a signal-driven read-only op (some file searches / scans
