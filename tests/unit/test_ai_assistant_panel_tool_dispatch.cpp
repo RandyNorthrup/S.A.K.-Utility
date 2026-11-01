@@ -5567,13 +5567,14 @@ private Q_SLOTS:
         QVERIFY(QFile::exists(programFiles));  // untouched
     }
 
-    // The model-supplied technician_override JSON flag ALONE must never bypass proof-of-scan. With
-    // the out-of-band control (SAK_LEFTOVER_TECHNICIAN_OVERRIDE) unset, override=true is ignored
-    // and an item no scan surfaced is still refused -- an injected flag cannot rubber-stamp a
+    // Proof-of-scan has no bypass. A technician_override flag plus the environment variable that
+    // once honoured it (SAK_LEFTOVER_TECHNICIAN_OVERRIDE, an escape hatch removed under the
+    // 2026-10-24 ruling) still leave an item no scan surfaced refused -- nothing can rubber-stamp a
     // fabricated deletion list. Runs Unattended (approval auto-hooked) so the thunk itself returns
     // the refusal.
-    void cleanLeftoversOverrideFlagAloneCannotBypassProofOfScan() {
-        qunsetenv("SAK_LEFTOVER_TECHNICIAN_OVERRIDE");
+    void cleanLeftoversHasNoProofOfScanBypass() {
+        qputenv("SAK_LEFTOVER_TECHNICIAN_OVERRIDE", "1");
+        const auto unset = qScopeGuard([]() { qunsetenv("SAK_LEFTOVER_TECHNICIAN_OVERRIDE"); });
         sak::LeftoverScanProvenance::instance().clear();
         AiAssistantPanel panel;
         panel.ensureAppActionService();

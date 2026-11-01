@@ -7646,16 +7646,11 @@ static int countInherentlyPermanentItems(const QJsonArray& items) {
     return count;
 }
 
-// Warning lines that must be surfaced to the human ABOVE the item list: an overridden proof-of-scan
-// check, a permanent (non-recoverable) deletion, and any inherently-permanent (no-Recycle-Bin) item
-// types -- all otherwise invisible in a per-item path list a confused/injected model could set.
+// Warning lines that must be surfaced to the human ABOVE the item list: a permanent
+// (non-recoverable) deletion and any inherently-permanent (no-Recycle-Bin) item types -- both
+// otherwise invisible in a per-item path list a confused/injected model could set.
 static QStringList confirmBatchWarnings(const QJsonObject& action_args, const QJsonArray& items) {
     QStringList warnings;
-    if (action_args.value(QStringLiteral("technician_override")).toBool(false)) {
-        warnings << QObject::tr(
-            "WARNING: proof-of-scan verification is OVERRIDDEN -- these items were NOT confirmed "
-            "to come from a scan.");
-    }
     if (!action_args.value(QStringLiteral("use_recycle_bin")).toBool(true)) {
         warnings << QObject::tr(
             "WARNING: PERMANENT deletion -- files/folders are NOT sent to the Recycle Bin and "

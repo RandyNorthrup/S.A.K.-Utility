@@ -2460,10 +2460,9 @@ AppActionResult runCleanupWorker(const QVector<LeftoverItem>& items,
 
 // Parse + validate + proof-of-scan-bind the model's item array. Fills @p items (accepted for
 // deletion), @p refusals (empty/protected/invalid targets), and @p unscanned (valid targets that no
-// software.scan_leftovers surfaced this session -- populated only when NOT technician-overridden).
-// Split out so cleanLeftovers stays within the complexity budget.
+// software.scan_leftovers surfaced this session). Split out so cleanLeftovers stays within the
+// complexity budget.
 void collectCleanupItems(const QJsonArray& items_arr,
-                         bool technician_override,
                          QVector<LeftoverItem>& items,
                          QStringList& refusals,
                          QStringList& unscanned) {
@@ -2482,9 +2481,9 @@ void collectCleanupItems(const QJsonArray& items_arr,
                 << QStringLiteral("item %1 (%2): %3").arg(i).arg(clampCleanupLine(label), reason);
             continue;
         }
-        // Proof-of-scan: unless the technician explicitly overrides, refuse any item a prior scan
-        // never surfaced (an injected/fabricated path clears the denylist but not this check).
-        if (!technician_override && !LeftoverScanProvenance::instance().contains(item)) {
+        // Proof-of-scan: refuse any item a prior scan never surfaced (an injected/fabricated path
+        // clears the denylist but not this check). There is no bypass.
+        if (!LeftoverScanProvenance::instance().contains(item)) {
             unscanned << QStringLiteral("item %1 (%2)").arg(i).arg(clampCleanupLine(label));
             continue;
         }
@@ -2499,35 +2498,18 @@ constexpr int kMaxRefusalListEntries = 20;
 
 // Result for a batch blocked because items were not produced by a prior scan (proof-of-scan gate).
 AppActionResult provenanceRefusalResult(const QStringList& unscanned, int total) {
-    return {
-        false,
-        QStringLiteral(
-            "Refused: %1 of %2 item(s) were not produced by a prior software.scan_leftovers in "
-            "this "
-            "session; run scan_leftovers for this program first (its output is the safe source for "
-            "this list), or pass technician_override=true to clean a hand-authored list. No "
-            "deletion "
-            "performed. %3")
-            .arg(unscanned.size())
-            .arg(total)
-            .arg(unscanned.mid(0, kRefusalMessagePreviewCount).join(QStringLiteral("; "))),
-        QJsonObject{{QStringLiteral("unscanned"),
-                     jsonStringArrayCapped(unscanned, kMaxRefusalListEntries)},
-                    {QStringLiteral("hint"),
-                     QStringLiteral("call software.scan_leftovers for this program first")}}};
-}
-
-// Out-of-band control gating the technician_override JSON flag. A prompt-injected model can set the
-// flag itself, so the flag ALONE must never bypass proof-of-scan. The override is honored only when
-// the human technician has separately set this environment variable (out of the model's reach) to a
-// truthy value; otherwise the flag is advisory and proof-of-scan stays mandatory. Kept an env
-// control (not a session/config object) because these thunks are stateless free functions with no
-// session handle to read.
-[[nodiscard]] bool technicianOverrideAuthorizedOutOfBand() {
-    const QString value =
-        qEnvironmentVariable("SAK_LEFTOVER_TECHNICIAN_OVERRIDE").trimmed().toLower();
-    return value == QLatin1String("1") || value == QLatin1String("true") ||
-           value == QLatin1String("yes") || value == QLatin1String("on");
+    return {false,
+            QStringLiteral(
+                "Refused: %1 of %2 item(s) were not produced by a prior software.scan_leftovers in "
+                "this session; run scan_leftovers for this program first (its output is the safe "
+                "source for this list). No deletion performed. %3")
+                .arg(unscanned.size())
+                .arg(total)
+                .arg(unscanned.mid(0, kRefusalMessagePreviewCount).join(QStringLiteral("; "))),
+            QJsonObject{{QStringLiteral("unscanned"),
+                         jsonStringArrayCapped(unscanned, kMaxRefusalListEntries)},
+                        {QStringLiteral("hint"),
+                         QStringLiteral("call software.scan_leftovers for this program first")}}};
 }
 
 AppActionResult cleanLeftovers(const QJsonObject& args, const AppActionCancelCheck& should_cancel) {
@@ -2546,23 +2528,12 @@ AppActionResult cleanLeftovers(const QJsonObject& args, const AppActionCancelChe
                 {}};
     }
 
-    // The model-supplied flag only REQUESTS a bypass; it is honored solely when the human
-    // technician has set the out-of-band control. Absent that control, proof-of-scan remains
-    // enforced -- an injected flag cannot rubber-stamp a fabricated deletion list.
-    const bool override_requested = args.value(QStringLiteral("technician_override")).toBool(false);
-    const bool technician_override = override_requested && technicianOverrideAuthorizedOutOfBand();
-    if (override_requested && !technician_override) {
-        sak::logWarning(
-            "clean_leftovers: technician_override requested but the out-of-band control "
-            "(SAK_LEFTOVER_TECHNICIAN_OVERRIDE) is not set -- flag ignored, proof-of-scan "
-            "enforced");
-    }
 
     QVector<LeftoverItem> items;
     items.reserve(items_arr.size());
     QStringList refusals;
     QStringList unscanned;
-    collectCleanupItems(items_arr, technician_override, items, refusals, unscanned);
+    collectCleanupItems(items_arr, items, refusals, unscanned);
 
     // All-or-nothing: any refused item blocks the WHOLE batch. Nothing is deleted unless every item
     // clears the fail-closed screen. The denylist (protected/invalid) takes priority over the
@@ -2581,11 +2552,6 @@ AppActionResult cleanLeftovers(const QJsonObject& args, const AppActionCancelChe
         return provenanceRefusalResult(unscanned, static_cast<int>(items_arr.size()));
     }
 
-    if (technician_override) {
-        sak::logWarning(
-            "clean_leftovers: technician_override set -- proof-of-scan binding bypassed for "
-            "this batch; the fail-closed OS-critical denylist is still enforced");
-    }
 
     // Default to the Recycle Bin (files/folders recoverable), and the worker is put in
     // recoverable-only mode for it, so an item that cannot be recycled is LEFT IN PLACE and
@@ -2641,23 +2607,10 @@ QJsonObject cleanLeftoversParamsSchema() {
          QStringLiteral("If true (default), deleted files/folders go to the Recycle Bin "
                         "(recoverable); if false, permanent deletion. Registry keys/values, "
                         "services, tasks, and firewall rules are always permanent.")}};
-    QJsonObject override_prop{
-        {QStringLiteral("type"), QStringLiteral("boolean")},
-        {QStringLiteral("description"),
-         QStringLiteral(
-             "Leave false. Every item must come from a prior software.scan_leftovers in "
-             "this session; items that did not are refused. Setting true only REQUESTS a "
-             "bypass of the proof-of-scan check for a hand-authored list -- it is honored "
-             "solely when a human technician has separately enabled the out-of-band "
-             "control (the SAK_LEFTOVER_TECHNICIAN_OVERRIDE environment variable); "
-             "otherwise the flag is ignored and proof-of-scan stays enforced. The "
-             "OS-critical denylist always applies and the request is surfaced in the run "
-             "log.")}};
     return QJsonObject{{QStringLiteral("type"), QStringLiteral("object")},
                        {QStringLiteral("properties"),
                         QJsonObject{{QStringLiteral("items"), items_prop},
-                                    {QStringLiteral("use_recycle_bin"), recycle_prop},
-                                    {QStringLiteral("technician_override"), override_prop}}},
+                                    {QStringLiteral("use_recycle_bin"), recycle_prop}}},
                        {QStringLiteral("required"), QJsonArray{QStringLiteral("items")}},
                        {QStringLiteral("additionalProperties"), false}};
 }
