@@ -136,7 +136,7 @@ keeps their history.
 7. Left open by the lifecycle package (2026-10-25), each with why:
    - Unbounded GUI-thread joins outside that package's list remain, each needing its own owner
      custody: `network_diagnostic_controller.cpp` (~238, ~1305), the QuickActionController
-     completion joins (~501/~540; load-bearing, after the action's own completion signal), the AI
+     completion join (`joinCurrentThread`; load-bearing, after the run's own completion), the AI
      panel's network, command and offline thread joins, AppInstallationPanel's search futures,
      DiagnosticController's scan futures, and the stack-thread joins in
      `advanced_search_controller`, `port_scanner` and `network_transfer_runner`.
@@ -230,7 +230,7 @@ Done:
   (`HKLM\SOFTWARE\Microsoft\Windows Defender\InstallLocation`), accepted only as a version folder
   under `ProgramData\Microsoft\Windows Defender\Platform` or as `Program Files\Windows
   Defender`, and the actions elevate through the quick-action elevated-helper route
-  (`QuickActionController::executeElevatedAction` -> `sak_elevated_helper` tasks). Exit 0 is
+  (`QuickActionController::startElevated` -> `sak_elevated_helper` tasks). Exit 0 is
   clean (scan) or up to date (update); a scan's exit 2 is "threats need attention or scan
   errors", never clean; any other code is a failure with its value. A cancelled or timed-out scan
   is also cancelled in the Defender service (`MpCmdRun -Scan -Cancel`). Bounds: 2 h quick, 4 h
@@ -346,9 +346,10 @@ that exists for reasons that no longer apply. Owner decisions (2026-10-24):
   preflight/verification scans and queued operations (`ElevationBroker::sessionBroker`; other
   inventory callers -- File Management, Organizer, Advanced Search -- share it too). A helper
   near its 5-minute idle timeout is retired before a task is sent, never handed one. Still per
-  feature: the AI panel keeps one long-lived broker for elevated PowerShell, and the quick-action
-  controller starts a broker (one helper, one UAC prompt) per elevated run and closes it when the
-  run ends (corrected 2026-11-01; it said both kept one long-lived broker). Not changed, with
+  feature: the AI panel keeps one long-lived broker for elevated PowerShell, and the application's
+  one quick-action controller owns one broker for every quick action, kept for its lifetime
+  (a4136249; until then each of four controllers started a broker per elevated run and closed it
+  when the run ended). Not changed, with
   reasons: the Image Flasher writes raw disks in-process and so requires the whole app elevated
   (restart-as-admin gate); SMART runs smartctl unelevated and reports "re-run with administrator
   privileges". Routing either through the helper needs a new privileged helper task (raw image
@@ -533,14 +534,42 @@ deletions of that group's commits (`git show --numstat`).
   the other without new collection work, so neither is redundant as the approval requires. The
   shared name and the fixed `C:/SAK_Backups` were decided under "behaves like a normal Windows
   tool" and are done: see the cleanup package status below.
-- OPEN: the three quick-action controllers (User Migration, Diagnostics and Network panels each
-  own a `QuickActionController` and their own action objects; the assistant's `AppActionService`
-  owns a fourth with all ten actions). One app-scoped controller needs three things the panels do
-  not do today, each a behaviour change with no panel-level test: the output folder travels with
-  each request (the assistant's staging folder and the BitLocker folder are set on the shared action
-  objects today, so a queued run would write into the other caller's folder); each panel reacts
-  only to its own actions' signals; a click while another caller's action runs says it is queued.
-  Not done in this package for want of a test that drives the panels.
+- DONE (harness d61b093c, consolidation a4136249): the three quick-action controllers. The
+  harness came first: each panel takes the controller it runs on, the output folder lives on the
+  QuickAction base, ElevationBroker's task entry points are virtual and the controller builds its
+  broker through a factory only `SAK_CORE_TEST_HOOKS` builds can replace, and
+  `test_quick_action_panels` drives every panel flow (click, confirmation, folder choice, run,
+  completion, exit cancel) through a real controller with fake actions and a fake broker
+  (`tests/unit/quick_action_fakes.h`), passing on the per-panel controllers before anything was
+  consolidated. Then MainWindow creates one controller with the ten built-in actions
+  (`createAppQuickActionController`) and hands it to the three panels and the assistant (a
+  shared_ptr: the assistant panel can outlive the window while its workers drain). A request is
+  a `QuickActionRun` {action, owner, output folder}; every signal carries its run and callers
+  react only to their own owner token (`connectRunsOf`; a fixed token per panel, a fresh one per
+  assistant call); every request ends in exactly one `runFinished`, with the run's own result by
+  value. Fixed by it, each with its drill: the cross-caller folder (a queued run wrote into the
+  folder set last on the shared action object; it is now applied from the run as it starts), the
+  assistant bridge settling on another caller's run of the same action and its Stop/timeout
+  cancelling whatever ran, a refused BitLocker folder silently falling back to the previous one
+  (an unsafe folder now refuses the run before the helper), results read back from an action a
+  later run could be writing, and action warnings emitted to nobody. A request while another
+  runs is queued and announced ("Queued: X - waits for Y to finish"). Removed with the per-panel
+  controllers, each with no product caller: the scan route (`scanAction`), `getActionsByCategory`,
+  `setLoggingEnabled`, `setBackupLocation`, `isExecuting` and `require_confirmation`.
+  Broker ownership (decided here): the controller is the one owner of the broker its
+  administrator actions use, created on the first elevated run and kept for the controller's
+  lifetime, so a session's quick actions share one helper and one UAC prompt while the helper is
+  inside its idle timeout (ElevationBroker retires one near it). No other feature uses it. A
+  cancel of the run using it reaches the helper task (a panel's cancel on exit through
+  RunningOperations, the assistant's Stop or timeout); destroying the controller at exit cancels
+  the running task, joins within the 10 s bound and destroys the broker, which shuts the helper
+  down; an overrunning worker goes to ThreadCustody with its action and the broker. Live UAC
+  behaviour (one prompt for two queued administrator actions) needs an interactive VM run;
+  CTest covers reuse, per-owner cancel and exit cancel with the fake broker. Proof at 7cac75ea:
+  full build, T2-label suite 279/279, stage, archive, clean-extract portable smoke and startup
+  E2E, accessibility audit and startup budget (build tree, unelevated), the ci.yml static gates.
+  The readiness gate stops at the certification state block in this worktree, which lacks the
+  main checkout's external evidence.
 
 Fixed in the kept copies on the way (each its own guard and drill): the archive engine wrote
 archives QZipWriter cannot encode (65,536+ entries read back as 0, 4 GiB+ wrapped), and followed
@@ -611,16 +640,58 @@ deletions (`git show --numstat`; whitespace-insensitive where a block was only u
   loop guard around a Job object. Closest: `ContainedProcessQuarantine::retryRetained` (a retry
   over quarantined Jobs) has no product caller, only the MCP test fixture's drain; quarantined
   owners stay until exit by design (kill-on-close), so it was left.
-- Left, with reasons: `ConfigManager::resetToDefaults` now has only test callers (every config
-  suite resets through it); `SAK_STARTUP_SMOKE_HEADLESS` and `SAK_STARTUP_SMOKE_CI_HEADLESS` are
+- DONE (a6b5f4ef): `ConfigManager::resetToDefaults`, and `ConfigManager::clear` (also test-only),
+  are `resetToDefaultsForTesting` / `clearForTesting`, compiled only under `SAK_CORE_TEST_HOOKS`
+  into the two config suites (the fa5db306 pattern); `test_release_binary_test_hooks` refuses a
+  `ForTesting` member of ConfigManager in sak_core.lib. Moving them was simpler than removing them:
+  the suites need a way to rebuild the defaults from outside the class.
+- DONE (790d5577): Screenshot Settings asks for a folder every run (starting in Documents) instead
+  of writing to the fixed `C:/SAK_Backups`, and its completion (and BitLocker Key Backup's) names
+  the folder it saved to. A capture folder it cannot create now ends the run before any Settings
+  page opens; it was logged and every capture then failed on its own.
+- Left, with reasons: `SAK_STARTUP_SMOKE_HEADLESS` and `SAK_STARTUP_SMOKE_CI_HEADLESS` are
   two names for the gates' headless smoke mode, not an escape hatch (one name would do; the e2e
-  smoke's tests pin both); the User Migration panel's Screenshot Settings still writes to the fixed
-  `C:/SAK_Backups` (not in this package's ruling); seven File Explorer icon-registry entries
+  smoke's tests pin both); seven File Explorer icon-registry entries
   (`view-*-28`, `favorite`, `properties-security`) are requested by nothing but a test.
-- OPEN, found here: `test_linux_iso_downloader` `testGitHubVersionCheck_Network` (opt-in live
-  test, skipped in CTest) fails at once with "GitHub API error: Network metadata request
-  cancelled", the same on the c2991a86 package, the trimmed package and the build tree; the
-  test's message ("did not respond within 15 seconds") hides that. Not caused by this package.
+- FIXED (19b9aeab; the product was never broken): `test_linux_iso_downloader`
+  `testGitHubVersionCheck_Network`. Its "15 s wait" called `processEvents(AllEvents, 100)` 150
+  times, which returns as soon as no event is pending, so it gave up in milliseconds and said "did
+  not respond within 15 seconds"; the catalog's destructor then aborted the still-pending reply,
+  and that abort was the logged "Network metadata request cancelled". The app's version check
+  (LinuxDistroCatalog::checkLatestVersion, reached from a GitHub-hosted ISO download) runs in the
+  GUI event loop and was fine. The test now waits with `QTest::qWaitFor` past the product's own
+  30 s transfer timeout and reports the check's own error. Live run against api.github.com
+  (opt-in, once): Ventoy v1.1.18 resolved in 344 ms.
+- Fixed-drive-path sweep (2026-11-01), every `"X:\"`/`"X:/"` literal in product code. Treated the
+  way the inventory report was: no fixed location is assumed.
+  - DONE (790d5577): Screenshot Settings' `C:/SAK_Backups` (above); MainWindow and the panel carry
+    no `C:/SAK_Backups` any more.
+  - DONE (7cac75ea): leftover cleanup's protected system folders were written for a C: install only
+    (`LeftoverScanner::kProtectedPaths`); with Windows, ProgramData or Users elsewhere only the
+    container NAME stayed Risky (the leaf check), so a leftover under `D:\ProgramData\Microsoft`
+    was classified like any other folder. They are now also rebased onto this machine's folders
+    from the known-folder API (`protectedPathsFor(liveSystemFolders())`); the C: entries stay.
+  - DONE (7cac75ea): Partition Manager's Rebuild MBR / Boot Repair passed `C:\Windows` to bcdboot
+    and the script builder fell back to it when none was named. The panel passes the running
+    system's Windows folder (GetWindowsDirectoryW via `windowsDirPath`), and the builder refuses a
+    boot repair with no `windows_path`.
+  - DONE (7cac75ea): the email file scanner skipped `C:\Backups` and `C:\Email Backups` on the claim
+    that the profile paths covered them; it scans every writable drive's.
+  - DONE (7cac75ea): `StressTestConfig::disk_test_drive` defaulted to `C:\`; it has no default, and
+    the worker already refused an empty target (every caller names the technician's drive).
+  - Left, with reasons: `systemDriveLetter()` in `app_mutating_actions.cpp` reads
+    `%SystemDrive%` and falls back to `C` when it is unset (Windows sets it for every process,
+    and the flash refusal it feeds also checks the disk's own system/boot/EFI flags);
+    `leftover_cleanup_guard.h` reads `%SystemRoot%` with a `C:/Windows` default, but only to ADD
+    a non-standard Windows folder name -- the `windows` tree is refused on every drive by
+    `cleanupCriticalTreeRegex` either way; the BitLocker recovery document's
+    `Unlock-BitLocker -MountPoint 'C:'` is an example line for the reader, not a path the app
+    uses. The first two would be better read from GetWindowsDirectoryW; neither assumes C: when
+    Windows reports its own location.
+- OPEN, found here (dead code, the approved class; not removed in this package): with
+  `scanAction` gone, nothing in the product calls `QuickAction::scan()` -- eight actions still
+  implement it, and their suites test it; and `quick_action_result_io` (result-file read/write,
+  status to/from string) has no product caller, only its own suite.
 
 ### Open release infrastructure
 
