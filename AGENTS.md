@@ -184,7 +184,9 @@ Before every push to `dev`: read the latest T2 conclusion
 (`gh run list --branch dev --workflow "CI (T2)" --limit 1`) -- if it is red, your push fixes it
 or waits -- and run the whole-tree style scripts from ci.yml's static-gates job locally (a few
 minutes, no build). They are pre-commit `manual` stage, so no local commit runs them: a raw
-`setContentsMargins(0, 0, 0, 0)` sat red on `dev` across three pushes on 2026-10-25.
+`setContentsMargins(0, 0, 0, 0)` sat red on `dev` across three pushes on 2026-10-25. A change that
+adds or moves a `QSKIP` also runs `scripts/check_test_skips.ps1 -StaticOnly` (T2's skip audit):
+five uninventoried elevation skips turned T2 red on 2026-11-01.
 
 Capture the build exit code in its own statement and read it before believing any test result:
 
