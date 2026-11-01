@@ -42,7 +42,7 @@ private Q_SLOTS:
     void remove_key();
 
     // Defaults
-    void resetToDefaults_restoresValues();
+    void resetToDefaultsForTesting_restoresValues();
     void removeRetiredKeys_dropsOnlyGoneSettings();
     void removeRetiredKeys_writesNothingWithoutThem();
 
@@ -66,7 +66,7 @@ private Q_SLOTS:
 
 void ConfigManagerTests::cleanup() {
     // Reset to defaults after each test to avoid cross-contamination
-    sak::ConfigManager::instance().resetToDefaults();
+    sak::ConfigManager::instance().resetToDefaultsForTesting();
 }
 
 // ============================================================================
@@ -126,14 +126,14 @@ void ConfigManagerTests::remove_key() {
 // Defaults
 // ============================================================================
 
-void ConfigManagerTests::resetToDefaults_restoresValues() {
+void ConfigManagerTests::resetToDefaultsForTesting_restoresValues() {
     auto& mgr = sak::ConfigManager::instance();
 
     // Override a known default. Read the raw key: the getter's own fallback is also "system".
     mgr.setThemePreference(QStringLiteral("dark"));
     QCOMPARE(mgr.getValue("ui/theme").toString(), QStringLiteral("dark"));
 
-    mgr.resetToDefaults();
+    mgr.resetToDefaultsForTesting();
 
     QVERIFY(mgr.contains("ui/theme"));
     QCOMPARE(mgr.getValue("ui/theme").toString(), QStringLiteral("system"));
@@ -285,7 +285,7 @@ void ConfigManagerTests::imageFlasherBufferSize_setGet() {
 // would resurrect the control in every config file.
 void ConfigManagerTests::imageFlasherDefaults_doNotRecreateRetiredSystemDriveWarning() {
     auto& mgr = sak::ConfigManager::instance();
-    mgr.resetToDefaults();
+    mgr.resetToDefaultsForTesting();
 
     // The flasher defaults really did run (otherwise the absence below proves
     // nothing).
@@ -362,23 +362,23 @@ void ConfigManagerTests::typedGetters_reclampOutOfRangeStoredValues() {
 
 void ConfigManagerTests::clear_removesAllKeys() {
     auto& mgr = sak::ConfigManager::instance();
-    mgr.resetToDefaults();
+    mgr.resetToDefaultsForTesting();
     mgr.setValue("test/clear_me", "value");
     // A key in no group this build knows about. "Removes ALL keys" is otherwise
-    // unfalsifiable: a clear() that walks the groups it recognizes passes a probe
+    // unfalsifiable: a clear that walks the groups it recognizes passes a probe
     // that lives inside one of them.
     mgr.setValue("foreign/unknown_feature", 9001);
     QVERIFY(mgr.contains("test/clear_me"));
     QVERIFY(mgr.contains("ui/theme"));
     QCOMPARE(mgr.storedSchemaVersion(), sak::ConfigManager::kCurrentSchemaVersion);
 
-    mgr.clear();
+    mgr.clearForTesting();
     QVERIFY(!mgr.contains("test/clear_me"));
     QVERIFY(!mgr.contains("foreign/unknown_feature"));
     QVERIFY(!mgr.contains("ui/theme"));
-    // The meta schema stamp goes too: resetToDefaults() re-stamps it right after
-    // clear() (config_manager.cpp:214-220), and a stamp that survives leaves a
-    // newer-than-current store permanently unhealthy across a "reset to defaults".
+    // The meta schema stamp goes too: resetToDefaultsForTesting() re-stamps it right after
+    // the clear, and a stamp that survives leaves a newer-than-current store permanently
+    // unhealthy across a reset.
     QCOMPARE(mgr.storedSchemaVersion(), sak::ConfigManager::kNoSchemaVersion);
 }
 

@@ -1,7 +1,7 @@
 <#
 .SYNOPSIS
-    Fails when the product libraries or the application carry partition/filesystem or AI test
-    hooks, or the SAK_DEV_SOURCE_TREE / SAK_AI_POLICY_DISK_OVERRIDE escape hatches.
+    Fails when the product libraries or the application carry partition/filesystem, AI or core
+    test hooks, or the SAK_DEV_SOURCE_TREE / SAK_AI_POLICY_DISK_OVERRIDE escape hatches.
 
 .DESCRIPTION
     Owner ruling 2026-10-24: test hooks and escape hatches do not live in production paths. The
@@ -16,6 +16,9 @@
     approval-prompt hook) are compiled only under SAK_AI_TEST_HOOKS, so sak_ai_core and sak_gui
     carry none of them; the retired SAK_AI_POLICY_DISK_OVERRIDE (an on-disk AI policy override)
     must not be read by anything that ships.
+
+    sak_core's own seams (ConfigManager's clear and reset, which only the config suites use) are
+    compiled only under SAK_CORE_TEST_HOOKS.
 
     A Release executable has no symbol table, so the function names are checked where they would
     be: the static product libraries every shipped binary links. A static library's linker member
@@ -137,6 +140,7 @@ $partitionFsHooks = @(
 )
 $coreHooks = @(
     "ForTesting@PartitionExecutor@sak@@",
+    "ForTesting@ConfigManager@sak@@",
     $escapeHatch
 )
 
@@ -152,7 +156,8 @@ $allFailures += Assert-Scan -Path $PartitionFsLibrary `
 $allFailures += Assert-Scan -Path $CoreLibrary `
     -MustContain @(
         "?execute@PartitionExecutor@sak@@",
-        "?resolveRuntimeManifestPath@PartitionFileSystemToolManifest@sak@@") `
+        "?resolveRuntimeManifestPath@PartitionFileSystemToolManifest@sak@@",
+        "?sync@ConfigManager@sak@@") `
     -MustNotContain $coreHooks
 
 $allFailures += Assert-Scan -Path $AiCoreLibrary `
@@ -170,4 +175,4 @@ $allFailures += Assert-Scan -Path $ApplicationExe `
 if ($allFailures.Count -gt 0) {
     throw ("Release binaries carry test hooks or escape hatches:`n  " + ($allFailures -join "`n  "))
 }
-Write-Host "Release binaries carry no partition/filesystem or AI test hooks and no escape hatches"
+Write-Host "Release binaries carry no partition/filesystem, AI or core test hooks and no escape hatches"

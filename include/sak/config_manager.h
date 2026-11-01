@@ -69,15 +69,23 @@ public:
      */
     void remove(const QString& key);
 
+#ifdef SAK_CORE_TEST_HOOKS
     /**
-     * @brief Clear all settings
+     * @brief Test-only: remove every key, the schema stamp included.
      */
-    void clear();
+    void clearForTesting();
 
     /**
-     * @brief Reset to default values
+     * @brief Test-only: clear the store, re-stamp the schema version and write the defaults,
+     *        so a suite hands the next case a well-formed store.
+     *
+     * The product has no reset or clear (the settings dialog that offered them is gone), so both
+     * are compiled only into the config suites (tests/CMakeLists.txt,
+     * SAK_CORE_CONFIG_TEST_HOOK_SOURCES), and test_release_binary_test_hooks keeps them out of
+     * sak_core.
      */
-    void resetToDefaults();
+    void resetToDefaultsForTesting();
+#endif
 
     /**
      * @brief Sync settings to disk.

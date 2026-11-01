@@ -71,6 +71,13 @@ set(SAK_AI_PANEL_TEST_HOOK_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/gui/ai_assistant_panel.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/ai_assistant_panel.h"
 )
+# The same arrangement for sak_core's own test-only seams (SAK_CORE_TEST_HOOKS): ConfigManager's
+# clear and reset, which the config suites use to hand each case a well-formed store and the
+# product no longer offers. Each is a non-virtual member function, so hooked and product objects
+# agree on the class layout and the hooked object replaces the library's copy in that link.
+set(SAK_CORE_CONFIG_TEST_HOOK_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/config_manager.cpp"
+)
 set(SAK_PROCESS_RUNNER_SOURCES
     "${CMAKE_CURRENT_SOURCE_DIR}/../src/core/process_runner.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/../include/sak/process_runner.h"
@@ -1166,7 +1173,9 @@ message(STATUS "Added unit test: test_decompressor_factory")
 # test_config_manager - singleton, get/set, defaults, signals, typed accessors
 add_executable(test_config_manager
     unit/test_config_manager.cpp
+    ${SAK_CORE_CONFIG_TEST_HOOK_SOURCES}
 )
+target_compile_definitions(test_config_manager PRIVATE SAK_CORE_TEST_HOOKS)
 set_target_properties(test_config_manager PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
@@ -1188,7 +1197,9 @@ message(STATUS "Added unit test: test_config_manager")
 # round-trip, older-version migrate (no data loss), newer-version preserve+unhealthy
 add_executable(test_config_schema_versioning
     unit/test_config_schema_versioning.cpp
+    ${SAK_CORE_CONFIG_TEST_HOOK_SOURCES}
 )
+target_compile_definitions(test_config_schema_versioning PRIVATE SAK_CORE_TEST_HOOKS)
 set_target_properties(test_config_schema_versioning PROPERTIES
     AUTOMOC ON
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
@@ -6288,8 +6299,9 @@ set_tests_properties(test_partition_manager_controller_restore_routing PROPERTIE
 
 # Owner ruling 2026-10-24: no test hooks or escape hatches in production. The release libraries
 # and the application are scanned for the partition/filesystem test seams (compiled only under
-# SAK_PARTITION_FS_TEST_HOOKS), the AI and assistant-panel seams (SAK_AI_TEST_HOOKS), and for
-# the retired SAK_DEV_SOURCE_TREE and SAK_AI_POLICY_DISK_OVERRIDE overrides.
+# SAK_PARTITION_FS_TEST_HOOKS), the AI and assistant-panel seams (SAK_AI_TEST_HOOKS), sak_core's
+# own seams (SAK_CORE_TEST_HOOKS), and for the retired SAK_DEV_SOURCE_TREE and
+# SAK_AI_POLICY_DISK_OVERRIDE overrides.
 add_test(NAME test_release_binary_test_hooks
          COMMAND "${SAK_PWSH_EXECUTABLE}" -NoProfile -NonInteractive
                  -File "${CMAKE_SOURCE_DIR}/scripts/test_release_binary_test_hooks.ps1"

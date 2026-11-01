@@ -209,13 +209,14 @@ void ConfigManager::remove(const QString& key) {
     m_settings->remove(key);
 }
 
-void ConfigManager::clear() {
+#ifdef SAK_CORE_TEST_HOOKS
+void ConfigManager::clearForTesting() {
     m_settings->clear();
     logInfo("All settings cleared");
 }
 
-void ConfigManager::resetToDefaults() {
-    clear();
+void ConfigManager::resetToDefaultsForTesting() {
+    clearForTesting();
     // clear() drops the schema key too; re-stamp it so a reset store is fully
     // formed and reads back at the current version. The classification is not
     // needed here (an empty store always migrates forward).
@@ -223,6 +224,7 @@ void ConfigManager::resetToDefaults() {
     initializeDefaults();
     logInfo("Settings reset to defaults");
 }
+#endif  // SAK_CORE_TEST_HOOKS
 
 ConfigManager::SchemaVersionState ConfigManager::reconcileSchemaVersion(QSettings& settings) {
     const int stored = settings.value(QLatin1String(kSchemaVersionKey), kNoSchemaVersion).toInt();

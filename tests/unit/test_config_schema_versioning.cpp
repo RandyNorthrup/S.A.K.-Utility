@@ -66,7 +66,7 @@ private Q_SLOTS:
 void ConfigSchemaVersioningTests::cleanup() {
     // Restore a clean, current-version store after each test so a poked future
     // version cannot leak into the next case.
-    ConfigManager::instance().resetToDefaults();
+    ConfigManager::instance().resetToDefaultsForTesting();
 }
 
 // ============================================================================
@@ -270,14 +270,14 @@ void ConfigSchemaVersioningTests::reconcile_newerVersion_preservesUnknownKeysAnd
 // A freshly reset store is stamped at the current version and reports healthy.
 void ConfigSchemaVersioningTests::singleton_freshStore_isCurrentVersionAndHealthy() {
     auto& mgr = ConfigManager::instance();
-    mgr.resetToDefaults();
+    mgr.resetToDefaultsForTesting();
 
     QCOMPARE(mgr.storedSchemaVersion(), ConfigManager::kCurrentSchemaVersion);
     QVERIFY(mgr.isHealthy());
-    // resetToDefaults() is clear -> reconcile -> initializeDefaults. Delete the last step and
-    // BOTH assertions above still pass against a completely EMPTY store (reconcile stamped the
-    // version, and isHealthy only checks status plus the version bound) -- and every other case
-    // in this file leans on cleanup()'s resetToDefaults() to hand back a well-formed store, so
+    // resetToDefaultsForTesting() is clear -> reconcile -> initializeDefaults. Delete the last
+    // step and BOTH assertions above still pass against a completely EMPTY store (reconcile
+    // stamped the version, and isHealthy only checks status plus the version bound) -- and every
+    // other case in this file leans on cleanup()'s reset to hand back a well-formed store, so
     // the whole file would stay green. Read with no getter-side default so a dropped key cannot
     // be masked by the getter's own fallback.
     QCOMPARE(mgr.getValue(QStringLiteral("image_flasher/buffer_size")).toInt(), 4096);
@@ -312,7 +312,7 @@ void ConfigSchemaVersioningTests::singleton_currentVersionRoundTrip_valueSurvive
 // values both remain readable.
 void ConfigSchemaVersioningTests::singleton_newerVersion_isUnhealthyAndDataPreserved() {
     auto& mgr = ConfigManager::instance();
-    mgr.resetToDefaults();
+    mgr.resetToDefaultsForTesting();
     mgr.setValue(QStringLiteral("test/precious"), kPreciseProbe);
 
     // Simulate a newer build having stamped this store.
