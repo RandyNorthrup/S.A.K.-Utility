@@ -1781,52 +1781,12 @@ if(BUILD_TESTING)
 endif()
 
 # ============================================================================
-# Installation
+# Packaging
 # ============================================================================
 
-# Everything the app resolves next to its own executable at run time has to be
-# part of the install, not only of the build directory. sak_utility launches the
-# elevated helper and the two writer CLIs by path, and refuses to run features
-# whose bundled tool or policy file is absent - so an install tree holding only
-# the GUI exe is a package that fails on the customer's PC, not a smaller one.
-install(TARGETS sak_utility
-    RUNTIME DESTINATION bin
-)
-
-install(TARGETS sak_apfs_writer_cli sak_hfs_writer_cli
-    RUNTIME DESTINATION bin
-)
-
-install(TARGETS sak_elevated_helper
-    RUNTIME DESTINATION bin
-)
-
-# Bundled technician tools (smartctl, aria2c, UUP media converter, iperf3,
-# portable chocolatey, filesystem tool manifest). Their presence is already a
-# configure-time FATAL_ERROR above; ship what was verified.
-install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/tools/"
-    DESTINATION bin/tools
-    PATTERN "_build" EXCLUDE
-)
-
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/sak_splash.png")
-    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/resources/sak_splash.png"
-        DESTINATION bin
-    )
-endif()
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.ico")
-    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/resources/icon.ico"
-        DESTINATION bin
-    )
-endif()
-
-# Ship the signed browser-control CRX beside the installed exe so the assistant's
-# extension installer resolves it at <appDir>/sak_browser_control.crx on customer PCs.
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/browser/dist/sak_browser_control.crx")
-    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/browser/dist/sak_browser_control.crx"
-        DESTINATION bin
-    )
-endif()
+# There is no CMake install route: scripts/stage_portable_release.ps1 assembles the one package
+# (release.yml), deploying Qt through scripts/deploy_qt_runtime.ps1 from the Qt installation
+# configured here. What follows makes the BUILD directory runnable for tests and development.
 
 # Qt deployment
 if(PLATFORM_WINDOWS)
@@ -1839,7 +1799,7 @@ if(PLATFORM_WINDOWS)
         message(FATAL_ERROR
             "windeployqt was not found (searched PATH and '${Qt6_DIR}/../../../bin'). It is "
             "required to place the Qt runtime and platform plugins beside sak_utility.exe; "
-            "without it the built and installed trees cannot run. Add the Qt bin directory to "
+            "without it the build tree cannot run and the package cannot be staged. Add the Qt bin directory to "
             "PATH or pass -DCMAKE_PREFIX_PATH pointing at the Qt installation.")
     endif()
     # No --release/--debug here on purpose: windeployqt reads the binary and
@@ -1849,29 +1809,6 @@ if(PLATFORM_WINDOWS)
         COMMAND ${WINDEPLOYQT} --no-translations --no-compiler-runtime $<TARGET_FILE:sak_utility>
         COMMENT "Running windeployqt..."
     )
-    # Install from the tool's validated plan. Raw deployment can copy this host's Windows
-    # ICU forwarder into the package, which is not valid for every supported Windows version.
-    find_program(SAK_QT_DEPLOY_POWERSHELL powershell.exe
-        PATHS "$ENV{SystemRoot}/System32/WindowsPowerShell/v1.0"
-        NO_DEFAULT_PATH REQUIRED)
-    # A CMake process launched from PowerShell 7 inherits its module search path. The
-    # selected Windows PowerShell 5.1 child must reconstruct its own standard module path;
-    # otherwise a Core Utility module can hide Get-FileHash in the deployment helper.
-    install(CODE "
-        execute_process(
-            COMMAND \"${CMAKE_COMMAND}\" -E env --unset=PSModulePath
-                    \"${SAK_QT_DEPLOY_POWERSHELL}\" -NoProfile -NonInteractive
-                    -ExecutionPolicy RemoteSigned
-                    -File \"${CMAKE_CURRENT_SOURCE_DIR}/scripts/deploy_qt_runtime.ps1\"
-                    -WindeployqtPath \"${WINDEPLOYQT}\"
-                    -ApplicationPath \"\${CMAKE_INSTALL_PREFIX}/bin/sak_utility.exe\"
-            RESULT_VARIABLE _sak_windeployqt_result)
-        if(NOT _sak_windeployqt_result EQUAL 0)
-            message(FATAL_ERROR
-                \"Validated Qt deployment failed (result \${_sak_windeployqt_result}); \"
-                \"the install cannot be accepted as a complete runtime package.\")
-        endif()
-    ")
 
     # Bundle dynamic vcpkg runtime DLLs when using a dynamic triplet.
     # Each group lists the accepted file names for ONE library, separated by "|":
@@ -1912,7 +1849,6 @@ if(PLATFORM_WINDOWS)
                             "$<TARGET_FILE_DIR:sak_utility>"
                         COMMENT "Bundling ${dll} from vcpkg..."
                     )
-                    install(FILES "${runtime_dll}" DESTINATION bin)
                     set(group_found TRUE)
                 endif()
             endforeach()
@@ -1944,7 +1880,6 @@ if(PLATFORM_WINDOWS)
                 COMMENT "Bundling ${lib}..."
             )
         endforeach()
-        install(FILES ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS} DESTINATION bin)
     else()
         # Fallback: manually locate MSVC runtime DLLs across installed VS editions.
         file(GLOB MSVC_VERSIONS
@@ -1985,7 +1920,6 @@ if(PLATFORM_WINDOWS)
                 COMMENT "Bundling ${dll}..."
             )
         endforeach()
-        install(FILES ${MSVC_DLLS} DESTINATION bin)
     endif()
 endif()
 

@@ -14,7 +14,12 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$PackageName,
 
-    [string]$RepoRoot = ""
+    [string]$RepoRoot = "",
+
+    # The windeployqt that plans the Qt runtime. Empty means the one this build was configured
+    # with: WINDEPLOYQT in the CMakeCache.txt beside the build directory (build/CMakeCache.txt for
+    # build/Release). Never a PATH lookup.
+    [string]$WindeployqtPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -158,34 +163,26 @@ Copy-RequiredFile (Join-Path $buildRoot "sak_browser_control.crx") $packageRoot
 Copy-RequiredFile (Join-Path $buildRoot "sak_splash.png") $packageRoot
 Copy-OptionalFile (Join-Path $buildRoot "icon.ico") $packageRoot
 
-$pluginDirs = @(
-    "platforms",
-    "styles",
-    "imageformats",
-    "iconengines",
-    "tls",
-    "networkinformation",
-    "generic"
-)
-foreach ($dir in $pluginDirs) {
-    $source = Join-Path $buildRoot $dir
-    if (Test-Path -LiteralPath $source -PathType Container) {
-        [void](Get-StageDirectTreeItem -Root $source -Description "Plugin directory $dir")
-        Copy-Item -LiteralPath $source -Destination $packageRoot -Recurse -Force
-        $count = (Get-ChildItem -LiteralPath $source -Filter "*.dll" -Recurse -ErrorAction Stop | Measure-Object).Count
-        Write-Host "  Bundled: $dir/ ($count plugins)"
+# The Qt runtime comes from windeployqt's validated plan for the staged executable, copied from
+# the Qt installation (scripts/deploy_qt_runtime.ps1, the one Qt deployment route): exactly the Qt
+# DLLs and plugins the plan names, no OS-named shim, no reparse path, every copy hash-checked.
+# The build directory's own Qt files are not copied -- they also hold what the test suites add
+# (the offscreen platform plugin, Qt6Test.dll).
+if ([string]::IsNullOrWhiteSpace($WindeployqtPath)) {
+    $cachePath = Join-Path (Split-Path -Parent $buildRoot) "CMakeCache.txt"
+    if (-not (Test-Path -LiteralPath $cachePath -PathType Leaf)) {
+        throw "No CMakeCache.txt beside the build directory ($cachePath); pass -WindeployqtPath"
     }
+    $configured = @(Get-Content -LiteralPath $cachePath -ErrorAction Stop |
+        Where-Object { $_ -cmatch '^WINDEPLOYQT:FILEPATH=' })
+    if ($configured.Count -ne 1) {
+        throw "The configured windeployqt is absent or ambiguous in $cachePath; pass -WindeployqtPath"
+    }
+    $WindeployqtPath = $configured[0].Substring("WINDEPLOYQT:FILEPATH=".Length).Replace('/', '\')
 }
-
-$qtDlls = Get-ChildItem -LiteralPath $buildRoot -Filter "Qt6*.dll" -File -ErrorAction Stop |
-    Where-Object { $_.Name -ne "Qt6Test.dll" }
-foreach ($dll in $qtDlls) {
-    Copy-Item -LiteralPath $dll.FullName -Destination $packageRoot -Force
-}
-Write-Host "  Bundled: $($qtDlls.Count) Qt DLL(s)"
-
-foreach ($dllName in @("opengl32sw.dll", "D3Dcompiler_47.dll")) {
-    Copy-OptionalFile (Join-Path $buildRoot $dllName) $packageRoot
+Invoke-RequiredScript (Join-Path $repoRootPath "scripts/deploy_qt_runtime.ps1") @{
+    WindeployqtPath = $WindeployqtPath
+    ApplicationPath = (Join-Path $packageRoot "sak_utility.exe")
 }
 
 foreach ($pattern in @("vcruntime*.dll", "msvcp*.dll", "concrt*.dll")) {

@@ -886,25 +886,37 @@ function Test-PortableRuntimeSelection {
     }
     function New-Item { param($ItemType, [switch]$Force, $Path) }
     $ast = Get-StageAst $Text
-    $assignment = @($ast.FindAll({ param($node)
-        $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -ceq '$qtDlls'
+    $loops = @($ast.FindAll({ param($node)
+        $node -is [Management.Automation.Language.ForEachStatementAst] -and $node.Variable.Extent.Text -ceq '$pattern'
     }, $true))
-    Assert-StageContract ($assignment.Count -eq 1) "Qt selection assignment changed"
-    . ([scriptblock]::Create($assignment[0].Extent.Text))
-    foreach ($variable in @('$dll', '$dllName', '$pattern')) {
-        $loops = @($ast.FindAll({ param($node)
-            $node -is [Management.Automation.Language.ForEachStatementAst] -and $node.Variable.Extent.Text -ceq $variable
-        }, $true))
-        Assert-StageContract ($loops.Count -eq 1) "Runtime selection loop changed: $variable"
-        . ([scriptblock]::Create($loops[0].Extent.Text))
-    }
+    Assert-StageContract ($loops.Count -eq 1) "Runtime selection loop changed: `$pattern"
+    . ([scriptblock]::Create($loops[0].Extent.Text))
     foreach ($name in @("icuuc.dll", "icuin.dll", "icu.dll")) {
         Assert-StageContract (-not $Script:SelectedDlls.Contains($name)) "Portable selection copied Windows ICU shim: $name"
     }
-    foreach ($name in @("Qt6Core.dll", "msvcp140.dll", "vcruntime140.dll", "opengl32sw.dll")) {
+    foreach ($name in @("msvcp140.dll", "vcruntime140.dll")) {
         Assert-StageContract ($Script:SelectedDlls.Contains($name)) "Portable selection omitted required runtime: $name"
     }
-    Assert-StageContract (-not $Script:SelectedDlls.Contains("Qt6Test.dll")) "Portable selection copied Qt Test runtime"
+    # Qt comes only from the validated plan, never from the build directory's own Qt files (which
+    # also hold what the test suites add): nothing Qt is copied from the build directory.
+    foreach ($name in @("Qt6Core.dll", "Qt6Test.dll", "opengl32sw.dll")) {
+        Assert-StageContract (-not $Script:SelectedDlls.Contains($name)) "Portable selection copied build-tree Qt runtime: $name"
+    }
+    $deployCalls = @($ast.FindAll({ param($node)
+        $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq "Invoke-RequiredScript" -and
+            $node.Extent.Text.Contains("deploy_qt_runtime.ps1")
+    }, $true))
+    Assert-StageContract ($deployCalls.Count -eq 1) "Expected one validated Qt deployment call"
+    $Script:QtDeployArguments = $null
+    function Invoke-RequiredScript {
+        param($ScriptPath, $ScriptArguments)
+        $Script:QtDeployArguments = $ScriptArguments
+    }
+    $repoRootPath = $ProjectRoot
+    $WindeployqtPath = "C:\selected\windeployqt.exe"
+    . ([scriptblock]::Create($deployCalls[0].Extent.Text))
+    Assert-StageContract ($Script:QtDeployArguments.ApplicationPath -ceq (Join-Path $packageRoot "sak_utility.exe")) "Qt deployment did not target the staged executable"
+    Assert-StageContract ($Script:QtDeployArguments.WindeployqtPath -ceq "C:\selected\windeployqt.exe") "Qt deployment lost the selected windeployqt"
     $calls = @($ast.FindAll({ param($node)
         $node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -ceq "Invoke-RequiredScript" -and
             $node.Extent.Text.Contains("verify_windows_runtime_dependencies.ps1")
@@ -1091,108 +1103,6 @@ function Test-QtPlannerInvocation {
     Expect-StageFailure { Get-QtRuntimePlan $context } "planning failed"
 }
 
-function Get-CMakeQtInstallLaunch {
-    param([string]$FixtureRoot, [string]$CMakePath)
-    $cmakeText = Get-Content -LiteralPath (Join-Path $ProjectRoot "CMakeLists.txt") -Raw
-    $blocks = [regex]::Matches($cmakeText, '(?s)install\(CODE "\s*(?<code>execute_process\(.*?Validated Qt deployment failed.*?endif\(\))\s*"\)')
-    Assert-StageContract ($blocks.Count -eq 1) "Expected one validated Qt install launch block"
-    # Materialize the production install string without configuring or modifying the shared
-    # build. The executable paths stay real; only the installed helper/payload are fixtures.
-    $code = $blocks[0].Groups['code'].Value.Replace('\"', '"').Replace('\${', '${')
-    $variables = @{
-        '${CMAKE_COMMAND}' = $CMakePath
-        '${SAK_QT_DEPLOY_POWERSHELL}' = (Join-Path ([Environment]::SystemDirectory) 'WindowsPowerShell\v1.0\powershell.exe')
-        '${CMAKE_CURRENT_SOURCE_DIR}' = $FixtureRoot
-        '${WINDEPLOYQT}' = (Join-Path $FixtureRoot 'selected\windeployqt.exe')
-        '${CMAKE_INSTALL_PREFIX}' = $FixtureRoot
-    }
-    foreach ($entry in $variables.GetEnumerator()) {
-        $code = $code.Replace($entry.Key, $entry.Value.Replace('\', '/'))
-    }
-    return $code
-}
-
-function Test-CMakeQtInstallLaunch {
-    param([string]$Root)
-    $fixture = New-StageContractDirectory $Root
-    $cmake = (Get-Command cmake.exe -ErrorAction Stop).Source
-    $powerShellCore = (Get-Command pwsh.exe -ErrorAction Stop).Source
-    $coreEnvironment = Invoke-CapturedProcess -FilePath $powerShellCore -Arguments @(
-        '-NoProfile', '-NonInteractive', '-Command', '[Environment]::GetEnvironmentVariable("PSModulePath", "Process")'
-    ) -TimeoutSeconds 30
-    Assert-StageContract (-not $coreEnvironment.timed_out -and $coreEnvironment.exit_code -eq 0 -and
-        $coreEnvironment.stdout -match '[\\/]PowerShell[\\/]7[\\/]Modules') "PowerShell 7 module-path prerequisite unavailable"
-    New-Item -ItemType Directory -Path (Join-Path $fixture 'scripts'),(Join-Path $fixture 'bin') | Out-Null
-    [IO.File]::WriteAllText((Join-Path $fixture 'bin\sak_utility.exe'), 'ordinary CMake launch fixture')
-    $probe = @'
-param([string]$WindeployqtPath, [string]$ApplicationPath)
-$ErrorActionPreference = 'Stop'
-if ($PSVersionTable.PSEdition -ne 'Desktop') { throw 'Expected selected Windows PowerShell host' }
-if (-not $WindeployqtPath.EndsWith('/selected/windeployqt.exe')) { throw 'Qt tool argument changed' }
-$hash = Get-FileHash -LiteralPath $ApplicationPath -Algorithm SHA256
-if ($hash.Hash.Length -ne 64) { throw 'Install child hash command did not complete' }
-Write-Output 'CMAKE_INSTALL_HASH_OK'
-'@
-    [IO.File]::WriteAllText((Join-Path $fixture 'scripts\deploy_qt_runtime.ps1'), $probe)
-    $launchPath = Join-Path $fixture 'install-launch.cmake'
-    [IO.File]::WriteAllText($launchPath, (Get-CMakeQtInstallLaunch $fixture $cmake))
-    $previousModulePath = [Environment]::GetEnvironmentVariable('PSModulePath', 'Process')
-    try {
-        # A PowerShell-to-PowerShell launch sanitizes this path and hides the defect. CMake
-        # is the actual parent here, retaining the real PowerShell 7 module environment.
-        [Environment]::SetEnvironmentVariable('PSModulePath', $coreEnvironment.stdout, 'Process')
-        $result = Invoke-CapturedProcess -FilePath $cmake -Arguments @('-P', $launchPath) -TimeoutSeconds 30
-    }
-    finally {
-        [Environment]::SetEnvironmentVariable('PSModulePath', $previousModulePath, 'Process')
-    }
-    Assert-StageContract (-not $result.timed_out -and $result.exit_code -eq 0 -and
-        $result.stdout.Contains('CMAKE_INSTALL_HASH_OK')) ("CMake install child failed under inherited PowerShell 7 modules: " +
-        "exit=$($result.exit_code); stdout=$($result.stdout); stderr=$($result.stderr)")
-    Write-Host 'PASS actual CMake install launch under inherited PowerShell 7 module path'
-}
-
-function Test-CMakeToolsInstall {
-    param([string]$Root)
-    $fixture = New-StageContractDirectory $Root
-    $cmake = (Get-Command cmake.exe -ErrorAction Stop).Source
-    $cmakeText = Get-Content -LiteralPath (Join-Path $ProjectRoot "CMakeLists.txt") -Raw
-    $blocks = [regex]::Matches($cmakeText, '(?s)install\(DIRECTORY "\$\{CMAKE_CURRENT_SOURCE_DIR\}/tools/"\s+DESTINATION bin/tools.*?\)')
-    Assert-StageContract ($blocks.Count -eq 1) "Expected one production tools-install block"
-    $retained = @('vendor/tool.exe', 'vendor/runtime.dll', 'vendor/LICENSE.txt', 'filesystem/manifest.json',
-        'vendor/_builder/retained.txt', 'vendor/build/retained.txt')
-    $excluded = @('_build/direct.txt', 'filesystem/_build/nested.txt')
-    foreach ($relative in ($retained + $excluded)) {
-        $path = Join-Path $fixture ('tools/' + $relative)
-        New-Item -ItemType Directory -Path (Split-Path -Parent $path) -Force | Out-Null
-        [IO.File]::WriteAllText($path, ('fixture:' + $relative))
-    }
-    $projectText = "cmake_minimum_required(VERSION 3.28)`nproject(SakToolsInstallContract NONE)`n" + $blocks[0].Value
-    [IO.File]::WriteAllText((Join-Path $fixture 'CMakeLists.txt'), $projectText)
-    $fixtureBuild = Join-Path $fixture 'cmake-build'
-    $configure = Invoke-CapturedProcess -FilePath $cmake -Arguments @(
-        '-S', $fixture, '-B', $fixtureBuild, '-G', 'Visual Studio 17 2022', '-A', 'x64'
-    ) -TimeoutSeconds 60
-    Assert-StageContract (-not $configure.timed_out -and $configure.exit_code -eq 0) (
-        'Tools-install fixture configure failed: ' + $configure.stdout + $configure.stderr)
-    $prefix = Join-Path $fixture 'install'
-    $install = Invoke-CapturedProcess -FilePath $cmake -Arguments @(
-        '--install', $fixtureBuild, '--config', 'Release', '--prefix', $prefix
-    ) -TimeoutSeconds 30
-    Assert-StageContract (-not $install.timed_out -and $install.exit_code -eq 0) (
-        'Tools-install fixture failed: ' + $install.stdout + $install.stderr)
-    foreach ($relative in $retained) {
-        $path = Join-Path $prefix ('bin/tools/' + $relative)
-        Assert-StageContract (Test-Path -LiteralPath $path -PathType Leaf) "Install omitted required tool or near-match: $relative"
-        Assert-StageContract ((Get-Content -LiteralPath $path -Raw) -ceq ('fixture:' + $relative)) "Install changed tool fixture bytes: $relative"
-    }
-    foreach ($relative in $excluded) {
-        Assert-StageContract (-not (Test-Path -LiteralPath (Join-Path $prefix ('bin/tools/' + $relative)))) "Raw install leaked exact _build scratch: $relative"
-        Assert-StageContract (Test-Path -LiteralPath (Join-Path $fixture ('tools/' + $relative)) -PathType Leaf) "Install removed source scratch: $relative"
-    }
-    Write-Host 'PASS actual tools install excludes exact _build scratch and preserves runtime/near-match files'
-}
-
 function Test-PortableBrowserExtension {
     param([string]$StageText, [string]$SmokeText, [string]$Root)
     $fixture = New-StageContractDirectory $Root
@@ -1250,7 +1160,7 @@ function Invoke-BrowserPackagingGuardDrills {
 function Invoke-QtPackagingGuardDrills {
     param([string]$StageText, [string]$DeploymentText, [string]$Root)
     $selectionDrills = @(
-        @{ name = "qt-selection-excludes-os-shims"; from = '-Filter "Qt6*.dll"'; to = '-Filter "*.dll"'; expected = "copied Windows ICU shim" },
+        @{ name = "qt-deploys-the-staged-exe"; from = 'ApplicationPath = (Join-Path $packageRoot "sak_utility.exe")'; to = 'ApplicationPath = (Join-Path $buildRoot "sak_utility.exe")'; expected = "did not target the staged executable" },
         @{ name = "crt-selection-excludes-os-shims"; from = '"vcruntime*.dll", "msvcp*.dll", "concrt*.dll"'; to = '"*.dll", "msvcp*.dll", "concrt*.dll"'; expected = "copied Windows ICU shim" },
         @{ name = "portable-package-refusal-mode"; from = 'RequireNoSystemDlls = $true'; to = 'RequireNoSystemDlls = $false'; expected = "did not require OS-shim refusal" }
     )
@@ -1368,8 +1278,6 @@ if (Test-Path -LiteralPath $buildIcuPath -PathType Leaf) {
 Test-PortableRuntimeSelection $stageText $contractRoot
 Test-QtInstallPlan $deploymentText $contractRoot
 Test-QtPlannerInvocation $deploymentText
-Test-CMakeQtInstallLaunch $contractRoot
-Test-CMakeToolsInstall $contractRoot
 Invoke-BrowserPackagingGuardDrills $stageText (Get-Content -LiteralPath (Join-Path $ProjectRoot 'scripts\verify_portable_release_smoke.ps1') -Raw) $contractRoot
 Test-ActualQtPlan
 Invoke-QtPackagingGuardDrills $stageText $deploymentText $contractRoot
@@ -1397,6 +1305,11 @@ $stageArchiveBefore = (Get-FileHash -LiteralPath $stageArchiveTarget -Algorithm 
 $stageChecksumBefore = (Get-FileHash -LiteralPath $stageChecksumTarget -Algorithm SHA256).Hash
 try {
     $hostPath = (Get-Process -Id $PID).Path
+    # The sandbox has no CMakeCache.txt beside it, so the stager is handed this build's
+    # configured windeployqt explicitly.
+    $configuredTool = @(Get-Content -LiteralPath (Join-Path $resolvedBuildDirectory "CMakeCache.txt") -ErrorAction Stop |
+        Where-Object { $_ -cmatch '^WINDEPLOYQT:FILEPATH=' })
+    Assert-StageContract ($configuredTool.Count -eq 1) "Configured windeployqt path is absent or ambiguous"
     $result = Invoke-CapturedProcess -FilePath $hostPath -Arguments @(
         "-NoProfile",
         "-NonInteractive",
@@ -1405,7 +1318,9 @@ try {
         "-BuildDir",
         $stageBuildRoot,
         "-PackageName",
-        $packageName
+        $packageName,
+        "-WindeployqtPath",
+        $configuredTool[0].Substring("WINDEPLOYQT:FILEPATH=".Length)
     ) -TimeoutSeconds 180
     if ($result.timed_out -or $result.exit_code -ne 0) {
         throw ("Portable stage failed. exit=$($result.exit_code), timed_out=$($result.timed_out), " +
@@ -1415,11 +1330,18 @@ try {
     foreach ($relative in @(
             "sak_utility.exe",
             "sak_browser_control.crx",
-            "tools\filesystem\manifest.json")) {
+            "tools\filesystem\manifest.json",
+            "Qt6Core.dll",
+            "platforms\qwindows.dll")) {
         $path = Join-Path $stagePackageRoot $relative
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             throw "Portable stage omitted required regression artifact: $relative"
         }
+    }
+    # The build directory holds Qt files only the test suites use; the validated plan ships none.
+    foreach ($relative in @("platforms\qoffscreen.dll", "Qt6Test.dll")) {
+        Assert-StageContract (-not (Test-Path -LiteralPath (Join-Path $stagePackageRoot $relative))) `
+            "Portable stage shipped a test-only Qt file: $relative"
     }
     # zlib ships under the name the vcpkg baseline builds it as (the stager accepts either);
     # exactly one must be in the package.
