@@ -14,7 +14,8 @@ anywhere", full review-ledger coverage) could never close.
 - [ ] Startup does not freeze the GUI: the window stays responsive while fonts load, including on
       a machine with thousands of installed fonts; stock Windows 11 VM cold start within budget.
 - [ ] Clean-package smoke and startup end-to-end smoke pass (tier T3).
-- [ ] Shipped binaries are Authenticode-signed, and the Azure signing credential is confirmed valid.
+- [ ] Shipped binaries are Authenticode-signed. The Azure signing credential is valid to 2028
+      (owner confirmed); the first signed release run is still to do.
 - [ ] Windows 11 VM smoke passes on the release bytes.
 - [ ] No known crash, data-loss or unpatched-security item remains in the list below.
 - [x] Hardware-only claims (partition external gates, Apple kernel, Windows 10) are labeled
