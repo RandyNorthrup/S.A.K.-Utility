@@ -18,10 +18,12 @@
 
 #include "sak/linux_distro_catalog.h"
 #include "sak/linux_iso_downloader.h"
+#include "sak/network_constants.h"
 #include "sak/network_transfer_runner.h"
 
 #include <QCoreApplication>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -869,19 +871,27 @@ void LinuxISODownloaderTests::testGitHubVersionCheck_Network() {
 
     catalog.checkLatestVersion("ventoy");
 
-    // Wait up to 15 seconds for API response
-    bool gotResponse = false;
-    for (int i = 0; i < 150 && !gotResponse; ++i) {
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 100);
-        if (completedSpy.count() > 0 || failedSpy.count() > 0) {
-            gotResponse = true;
-        }
-    }
+    // A real wait for the check's own outcome. This used to call processEvents(AllEvents, 100)
+    // 150 times as a "15 s" wait, but that call returns as soon as no event is pending, so the
+    // loop gave up within milliseconds and reported a timeout that never happened; the
+    // catalog's destructor then aborted the reply, and that abort was logged as "Network
+    // metadata request cancelled". The bound is past the product's own transfer timeout, so a
+    // check that stalls reports the product's error rather than this test's.
+    constexpr int kVersionCheckWaitMs = sak::kHttpMetadataTransferTimeoutMs + 15'000;
+    QElapsedTimer waited;
+    waited.start();
+    const bool gotResponse = QTest::qWaitFor(
+        [&]() { return !completedSpy.isEmpty() || !failedSpy.isEmpty(); }, kVersionCheckWaitMs);
 
-    QVERIFY2(gotResponse, "GitHub API did not respond within 15 seconds");
+    QVERIFY2(gotResponse,
+             qPrintable(QStringLiteral("The version check reported neither completion nor "
+                                       "failure within %1 ms")
+                            .arg(waited.elapsed())));
     const QString github_error = failedSpy.isEmpty() ? QString() : failedSpy.at(0).at(1).toString();
     QVERIFY2(failedSpy.isEmpty(),
-             qPrintable(QStringLiteral("GitHub API returned error: %1").arg(github_error)));
+             qPrintable(QStringLiteral("The version check failed after %1 ms: %2")
+                            .arg(waited.elapsed())
+                            .arg(github_error)));
 
     QCOMPARE(completedSpy.count(), 1);
     QString distroId = completedSpy.at(0).at(0).toString();
