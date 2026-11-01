@@ -8853,12 +8853,63 @@ private Q_SLOTS:
         QVERIFY2(panel.m_workflowStore->addWorkflow(workflow, &errors),
                  qPrintable(errors.join(QLatin1Char('\n'))));
         panel.m_activeUserMessage = QStringLiteral("check disk space on this laptop");
+        panel.m_runToken = ai::CancellationToken::createRoot(QStringLiteral("dispatch_run"));
+        const ai::AiToolCallContext call = panel.captureToolCallContext();
+        // What the panel holds by the time the handler reads it is not what the call belongs to.
+        panel.m_activeUserMessage = QStringLiteral("a later request");
+        panel.m_runToken = ai::CancellationToken::createRoot(QStringLiteral("later_run"));
 
-        const auto ctx = panel.resolveWorkflowRunContext(panel.captureToolCallContext(),
-                                                         workflow.id,
-                                                         QJsonObject{});
+        const auto ctx = panel.resolveWorkflowRunContext(call, workflow.id, QJsonObject{});
         QVERIFY(ctx.found);
         QCOMPARE(ctx.user_message, QStringLiteral("check disk space on this laptop"));
+        QCOMPARE(ctx.token.id(), QStringLiteral("dispatch_run"));
+    }
+
+    // The tools a workflow or sub-agent runs get the context captured when it was launched, not
+    // what the panel holds when the tool runs, cancelled through their own phase token.
+    void workflowAndSubagentToolsRunWithTheirLaunchContext() {
+        AiAssistantPanel panel;
+        QString seen_session;
+        QString seen_token;
+        panel.m_toolDispatcher->registerHandler(
+            QStringLiteral("sak_skill"),
+            [&seen_session, &seen_token](const ai::AiToolCallContext& context,
+                                         const QJsonObject&,
+                                         const ai::AiToolPolicyDecision&) {
+                seen_session = context.session_id;
+                seen_token = context.cancel_token.id();
+                return QJsonObject{{QStringLiteral("success"), true}};
+            });
+        ai::AiToolCallContext launch = panel.captureToolCallContext();
+        launch.session_id = QStringLiteral("launch_chat");
+        launch.access_mode = ai::AiAccessMode::AssistedFullAccess;
+        launch.cancel_token = ai::CancellationToken::createRoot(QStringLiteral("launch_token"));
+
+        ai::AiToolCallRequest request;
+        request.tool_name = QStringLiteral("sak_skill");
+        const auto dispatch =
+            AiAssistantPanel::makeSubagentToolDispatch(QPointer<AiAssistantPanel>(&panel), launch);
+        const QJsonObject from_subagent =
+            dispatch(ai::AiToolPolicy::ReadOnlyPc,
+                     request,
+                     QJsonObject{},
+                     QStringLiteral("sub"),
+                     ai::CancellationToken::createRoot(QStringLiteral("phase_token")));
+        QVERIFY(from_subagent.value(QStringLiteral("success")).toBool());
+        QCOMPARE(seen_session, QStringLiteral("launch_chat"));
+        QCOMPARE(seen_token, QStringLiteral("phase_token"));
+
+        seen_session.clear();
+        seen_token.clear();
+        ai::WorkflowPhase phase;
+        phase.id = QStringLiteral("p1");
+        phase.type = QStringLiteral("tool_action");
+        phase.tool = QStringLiteral("sak_skill");
+        const QJsonObject from_phase = panel.dispatchWorkflowToolPhase(
+            phase, ai::AiToolPolicy::ReadOnlyPc, ai::AiWorkflowPhaseContext{}, launch);
+        QVERIFY(from_phase.value(QStringLiteral("success")).toBool());
+        QCOMPARE(seen_session, QStringLiteral("launch_chat"));
+        QCOMPARE(seen_token, QStringLiteral("launch_token"));
     }
 
     // NEW-7: busy and tool_busy watch the LIVE offline operation. They used to watch a member
