@@ -55,9 +55,16 @@ endif()
 file(REMOVE_RECURSE "${SAK_TOOLS_DESTINATION}")
 file(MAKE_DIRECTORY "${SAK_TOOLS_DESTINATION}")
 
+# Chocolatey writes logs/, bin/_processed.txt and bin/RefreshEnv.cmd beside itself when it runs
+# from a checkout. They are machine state, not part of the bundle, so a developer's build output
+# never carries them (the stager and the package smoke refuse them too). On Windows CMake matches
+# REGEX against the lower-cased path, so the expressions are lower case.
 file(COPY "${SAK_TOOLS_SOURCE}/"
     DESTINATION "${SAK_TOOLS_DESTINATION}"
     PATTERN "_build" EXCLUDE
+    REGEX "/chocolatey/logs$" EXCLUDE
+    REGEX "/chocolatey/bin/_processed\\.txt$" EXCLUDE
+    REGEX "/chocolatey/bin/refreshenv\\.cmd$" EXCLUDE
 )
 
 # Prove the copy actually produced a bundle rather than reporting success over an empty tree.

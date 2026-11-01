@@ -147,7 +147,7 @@ jobs:
           Write-Host "OK  $dll"
         }
 
-        foreach ($dll in @("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll", "concrt140.dll")) {
+        foreach ($dll in @("vcruntime140.dll", "vcruntime140_1.dll", "msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll", "msvcp140_atomic_wait.dll")) {
           if (!(Test-Path $dll)) { Write-Warning "$dll not found (may cause runtime failures)" } else { Write-Host "OK  $dll" }
         }
 
@@ -172,9 +172,6 @@ jobs:
 
         if (!(Test-Path "tools/iperf3/iperf3.exe")) { Write-Warning "tools/iperf3/iperf3.exe not found - LAN bandwidth testing unavailable" } else { Write-Host "OK  tools/iperf3/iperf3.exe" }
 
-        # Win32 desktop/browser automation is the app binary's built-in MCP server, not a
-        # separately bundled executable.
-        if (Test-Path "tools/mcp/_build") { Write-Error "FATAL: tools/mcp/_build leaked into release output"; exit 1 }
 
         # Imported non-system DLLs must exist in the build output.
         & ../../scripts/verify_windows_runtime_dependencies.ps1 -RootDir . -PrimaryExe "sak_utility.exe"

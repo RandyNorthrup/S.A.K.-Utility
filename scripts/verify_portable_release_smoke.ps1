@@ -35,9 +35,6 @@ foreach ($rel in $required) {
 if (Get-ChildItem -LiteralPath $root -Recurse -Filter '*.local.json' -ErrorAction Stop) {
     Fail 'local provider/app config leaked into package'
 }
-if (Test-Path -LiteralPath (Join-Path $root 'tools/mcp/_build')) {
-    Fail 'tools/mcp/_build leaked into package'
-}
 if (Test-Path -LiteralPath (Join-Path $root 'tools/filesystem/_build')) {
     Fail 'tools/filesystem/_build leaked into package'
 }
@@ -50,7 +47,8 @@ foreach ($rel in @('data/ai_sessions', 'data/temp', 'data/logs', 'data/config', 
 if (Test-Path -LiteralPath (Join-Path $root 'data/ai')) {
     Fail 'unread data/ai folder shipped in package'
 }
-foreach ($rel in @('tools/chocolatey/lib-bad', 'tools/chocolatey/cache', 'tools/chocolatey/temp')) {
+foreach ($rel in @('tools/chocolatey/lib-bad', 'tools/chocolatey/cache', 'tools/chocolatey/temp',
+        'tools/chocolatey/bin/_processed.txt', 'tools/chocolatey/bin/RefreshEnv.cmd')) {
     if (Test-Path -LiteralPath (Join-Path $root $rel)) {
         Fail "Chocolatey mutable runtime state leaked into package: $rel"
     }

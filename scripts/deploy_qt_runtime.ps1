@@ -21,6 +21,19 @@ $ErrorActionPreference = "Stop"
 $MaximumQtPlanBytes = 4MB
 $MaximumQtPlanEntries = 4096
 $QtPlannerTimeoutSeconds = 60
+# What the plan leaves out of windeployqt's default, each proved unused by the packaged app (the
+# modules a staged app loads in an accessibility-audit run, an interactive session and live HTTPS
+# requests, 2026-11-01; docs/RELEASE_READINESS.md, cleanup package status):
+# - Mesa software OpenGL (opengl32sw.dll) and the D3D shader compilers: a Qt Widgets app with
+#   no OpenGL, Qt Quick or RHI widget never loads them (and Windows ships D3Dcompiler_47.dll).
+# - generic plugins (qtuiotouchplugin, TUIO touch input over UDP): Qt loads one only when asked
+#   (-plugin or QT_QPA_GENERIC_PLUGINS).
+# - networkinformation (qnetworklistmanager): only QNetworkInformation loads it, and the app
+#   does not use that; HTTPS through QNetworkAccessManager does not.
+# - qcertonlybackend, the certificate-only TLS backend: Schannel (qschannelbackend) serves every
+#   TLS connection and certificate the app uses.
+$QtPlanOmissions = @("--no-opengl-sw", "--no-system-d3d-compiler", "--no-system-dxc-compiler",
+    "--skip-plugin-types", "generic,networkinformation", "--exclude-plugins", "qcertonlybackend")
 
 function Assert-QtDeployment {
     param([bool]$Condition, [string]$Message)
@@ -130,7 +143,8 @@ function Get-QtRuntimePlan {
     param([hashtable]$Context)
     $options = @{
         FilePath = $Context.tool
-        Arguments = @("--dry-run", "--json", "--no-translations", "--no-compiler-runtime", $Context.application)
+        Arguments = @("--dry-run", "--json", "--no-translations", "--no-compiler-runtime") +
+            $QtPlanOmissions + @($Context.application)
         WorkingDirectory = $Context.destination
         TimeoutSeconds = $QtPlannerTimeoutSeconds
     }

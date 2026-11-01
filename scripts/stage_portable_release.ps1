@@ -185,12 +185,13 @@ Invoke-RequiredScript (Join-Path $repoRootPath "scripts/deploy_qt_runtime.ps1") 
     ApplicationPath = (Join-Path $packageRoot "sak_utility.exe")
 }
 
-foreach ($pattern in @("vcruntime*.dll", "msvcp*.dll", "concrt*.dll")) {
-    Get-ChildItem -LiteralPath $buildRoot -Filter $pattern -File -ErrorAction Stop |
-        ForEach-Object {
-            Copy-Item -LiteralPath $_.FullName -Destination $packageRoot -Force
-            Write-Host "  Bundled: $($_.Name)"
-        }
+# The MSVC runtime DLLs some packaged binary imports (dumpbin over every exe, DLL and Qt plugin in
+# the package, 2026-11-01). The build directory also holds concrt140.dll and
+# msvcp140_codecvt_ids.dll, which nothing imports. The whole-package dependency check at the end
+# refuses a package that imports a runtime this list leaves out.
+foreach ($runtime in @("msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll",
+        "msvcp140_atomic_wait.dll", "vcruntime140.dll", "vcruntime140_1.dll")) {
+    Copy-RequiredFile (Join-Path $buildRoot $runtime) $packageRoot
 }
 
 # zlib, bzip2 and liblzma: the build copies them from its own vcpkg_installed tree (vcpkg.json
@@ -211,7 +212,7 @@ if (-not (Test-Path -LiteralPath $toolsSource -PathType Container)) {
 Copy-DirectoryExcludingBuildScratch $toolsSource (Join-Path $packageRoot "tools") "tools/"
 
 $toolsRoot = Join-Path $packageRoot "tools"
-Remove-PathIfExists (Join-Path $toolsRoot "mcp/_build") "Container"
+
 Remove-PathIfExists (Join-Path $toolsRoot "filesystem/_build") "Container"
 # A suppressed enumeration error here would read as "no machine-local configs found" and
 # ship them; let the failure surface instead.
@@ -227,6 +228,10 @@ $chocoPath = Join-Path $toolsRoot "chocolatey"
 if (Test-Path -LiteralPath $chocoPath -PathType Container) {
     foreach ($sub in @("lib-bad", "cache", "temp", "logs")) {
         Remove-PathIfExists (Join-Path $chocoPath $sub) "Container"
+    }
+    # Files Chocolatey writes into bin\ when it runs from a checkout; the bundle does not ship them.
+    foreach ($runtimeFile in @("bin/_processed.txt", "bin/RefreshEnv.cmd")) {
+        Remove-PathIfExists (Join-Path $chocoPath $runtimeFile) "Leaf"
     }
     foreach ($sub in @("lib", ".chocolatey", "logs")) {
         New-Item -ItemType Directory -Force -Path (Join-Path $chocoPath $sub) | Out-Null
@@ -289,7 +294,7 @@ if ($localFiles) {
 }
 
 Invoke-RequiredScript (Join-Path $repoRootPath "scripts/verify_windows_runtime_dependencies.ps1") `
-    @{ RootDir = $packageRoot; PrimaryExe = "sak_utility.exe"; RequireNoSystemDlls = $true }
+    @{ RootDir = $packageRoot; PrimaryExe = "sak_utility.exe"; RequireNoSystemDlls = $true; WholePackage = $true }
 
 $files = Get-ChildItem -LiteralPath $packageRoot -Recurse -File
 $totalSize = ($files | Measure-Object -Property Length -Sum).Sum

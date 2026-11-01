@@ -42,7 +42,7 @@ function Test-RuntimePackageContracts {
     }
     foreach ($name in @("icuuc.dll", "ICUIN.DLL", "icu.dll", "VirtDisk.dll", "Authz.dll", "Mpr.dll", "Ntdll.dll",
             "d3d9.dll", "d3d11.dll", "d3d12.dll", "dwrite.dll", "ncrypt.dll", "uiautomationcore.dll", "wtsapi32.dll",
-            "imagehlp.dll", "msvcrt.dll", "rpcrt4.dll")) {
+            "imagehlp.dll", "msvcrt.dll", "rpcrt4.dll", "mscms.dll")) {
         Assert-RuntimeContract (Test-IsSystemDll $name) "Windows-provided DLL classified as private: $name"
     }
     foreach ($name in @("icuuc78.dll", "icuin78.dll", "icudt78.dll", "icuuc-custom.dll", "Qt6Core.dll",
@@ -155,6 +155,7 @@ $mutations = @(
     @{ name = "imagehlp-system-classification"; from = '        "imagehlp.dll",'; to = ''; expected = "classified as private: imagehlp.dll" },
     @{ name = "msvcrt-system-classification"; from = '        "msvcrt.dll",'; to = ''; expected = "classified as private: msvcrt.dll" },
     @{ name = "rpcrt4-system-classification"; from = '        "rpcrt4.dll",'; to = ''; expected = "classified as private: rpcrt4.dll" },
+    @{ name = "mscms-system-classification"; from = '        "mscms.dll",'; to = ''; expected = "classified as private: mscms.dll" },
     @{ name = "private-icu-required"; from = 'return $systemDlls -contains $lower'; to = 'return ($systemDlls -contains $lower) -or $lower.StartsWith("icu")'; expected = "Private runtime incorrectly" },
     @{ name = "package-os-shim-refusal"; from = 'if ($leaked.Count -gt 0)'; to = 'if ($leaked.Count -lt 0)'; expected = "Package accepted OS shim" },
     @{ name = "hidden-os-shim-refusal"; from = '-Filter "*.dll" -File -Force -ErrorAction Stop'; to = '-Filter "*.dll" -File -ErrorAction Stop'; expected = "hidden OS shim" },
@@ -182,5 +183,26 @@ foreach ($executable in @("sak_utility.exe", "partition_manager_live_certifier.e
     }
 }
 
-Write-Host "Runtime-dependency regression tests passed for app, live certifier, QtCore and 19 isolated OS/package guards."
+# Whole-package mode checks the Qt plugins too: a plugin's imports must resolve from the package
+# root. A package holding only the app and the platform plugin reports the plugin's own missing
+# Qt imports in that mode, and only the app's without it.
+$packageFixture = Join-Path $fixtureRoot "whole-package"
+New-Item -ItemType Directory -Path (Join-Path $packageFixture "platforms") -ErrorAction Stop | Out-Null
+Copy-Item -LiteralPath $exePath -Destination $packageFixture -ErrorAction Stop
+Copy-Item -LiteralPath (Join-Path $releaseRoot "platforms\qwindows.dll") `
+    -Destination (Join-Path $packageFixture "platforms") -ErrorAction Stop
+$pluginMissing = "platforms\qwindows.dll: Qt6Gui.dll"
+$primaryOnly = @(& $hostPath -NoProfile -NonInteractive -File $verifier `
+    -RootDir $packageFixture -PrimaryExe "sak_utility.exe" 2>&1 | ForEach-Object { "$_" })
+$primaryOnlyExit = $LASTEXITCODE
+Assert-RuntimeContract ($primaryOnlyExit -eq 1) "Verifier accepted an app without its Qt runtime (exit $primaryOnlyExit)"
+Assert-RuntimeContract (@($primaryOnly -match [regex]::Escape($pluginMissing)).Count -eq 0) "Primary-only mode inspected plugins"
+$wholePackage = @(& $hostPath -NoProfile -NonInteractive -File $verifier `
+    -RootDir $packageFixture -PrimaryExe "sak_utility.exe" -WholePackage 2>&1 | ForEach-Object { "$_" })
+$wholePackageExit = $LASTEXITCODE
+Assert-RuntimeContract ($wholePackageExit -eq 1) "Whole-package mode accepted a plugin with unresolved imports (exit $wholePackageExit)"
+Assert-RuntimeContract (@($wholePackage -match [regex]::Escape($pluginMissing)).Count -gt 0) `
+    "Whole-package mode did not name the plugin's unresolved import: $($wholePackage -join ' | ')"
+
+Write-Host "Runtime-dependency regression tests passed for app, live certifier, QtCore, whole-package plugin imports and 19 isolated OS/package guards."
 exit 0

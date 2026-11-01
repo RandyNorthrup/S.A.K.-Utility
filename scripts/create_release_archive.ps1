@@ -370,10 +370,6 @@ foreach ($relativePath in $requiredPackageFiles) {
     }
 }
 
-$mcpBuildLeak = Join-Path $packageDir "tools/mcp/_build"
-if (Test-Path -LiteralPath $mcpBuildLeak) {
-    throw "Refusing to archive package with temporary MCP build artifacts: $mcpBuildLeak"
-}
 
 $mutableRuntimePaths = @("data/ai_sessions", "data/temp", "data/logs", "data/config", "_logs")
 foreach ($relativePath in $mutableRuntimePaths) {

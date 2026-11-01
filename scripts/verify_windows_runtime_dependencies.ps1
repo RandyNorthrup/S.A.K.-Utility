@@ -20,7 +20,13 @@ param(
 
     # Build trees may contain windeployqt's copied OS forwarders. Shippable package
     # search directories must not: those files can replace the target OS version.
-    [switch]$RequireNoSystemDlls
+    [switch]$RequireNoSystemDlls,
+
+    # Check every binary the app process can load from the package, not only PrimaryExe: each
+    # .exe and .dll in the root and in its Qt plugin folders (every folder but tools/, whose
+    # programs run from their own folders, and data/). Their imports must resolve to Windows
+    # or to a file in the package root, the app's DLL search folder.
+    [switch]$WholePackage
 )
 
 $ErrorActionPreference = "Stop"
@@ -120,91 +126,111 @@ if ($null -eq $exeMachine) {
     throw "Primary executable is not a readable PE image: $resolvedExe"
 }
 
+$targets = [System.Collections.Generic.List[string]]::new()
+$targets.Add($resolvedExe)
+if ($WholePackage) {
+    $searchDirectories = @($root.Path) + @(Get-ChildItem -LiteralPath $root.Path -Directory -Force -ErrorAction Stop |
+        Where-Object { $_.Name -notin @("tools", "data") } | ForEach-Object { $_.FullName })
+    foreach ($directory in $searchDirectories) {
+        foreach ($binary in @(Get-ChildItem -LiteralPath $directory -File -Force -ErrorAction Stop |
+                Where-Object { $_.Extension -in @(".exe", ".dll") })) {
+            if (-not $binary.FullName.Equals($resolvedExe, [System.StringComparison]::OrdinalIgnoreCase)) {
+                $targets.Add($binary.FullName)
+            }
+        }
+    }
+}
+
 $dumpbin = Find-Dumpbin
-Write-Host "Verifying runtime dependencies for $PrimaryExe"
+Write-Host "Verifying runtime dependencies for $PrimaryExe ($($targets.Count) package binaries)"
 Write-Host "Using dumpbin: $dumpbin"
 
-$output = & $dumpbin /DEPENDENTS $resolvedExe 2>&1
-if ($LASTEXITCODE -ne 0) {
-    $text = $output | Out-String
-    throw "dumpbin failed for $resolvedExe`n$text"
-}
+$unresolved = @()
+foreach ($target in $targets) {
+    $targetName = $target.Substring($root.Path.Length).TrimStart('\', '/')
+    $output = & $dumpbin /DEPENDENTS $target 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        $text = $output | Out-String
+        throw "dumpbin failed for $target`n$text"
+    }
 
-# Parse only WITHIN dumpbin's dependency blocks (regular AND delay-load), rather than scanning
-# every line for anything DLL-shaped. Inside a block, accept any legal bare filename (spaces
-# and Unicode allowed; path separators are not), and treat a non-blank line that is not a DLL
-# name as a format change -> FAIL CLOSED instead of silently dropping a real dependency.
-$dependencies = @()
-$inSection = $false
-$sawDepInSection = $false
-foreach ($line in $output) {
-    if ($line -match 'Image has the following( delay load)? dependencies:') {
-        $inSection = $true
-        $sawDepInSection = $false
-        continue
-    }
-    if (-not $inSection) {
-        continue
-    }
-    if ($line -match '^\s*$') {
-        if ($sawDepInSection) {
-            $inSection = $false
+    # Parse only WITHIN dumpbin's dependency blocks (regular AND delay-load), rather than scanning
+    # every line for anything DLL-shaped. Inside a block, accept any legal bare filename (spaces
+    # and Unicode allowed; path separators are not), and treat a non-blank line that is not a DLL
+    # name as a format change -> FAIL CLOSED instead of silently dropping a real dependency.
+    $dependencies = @()
+    $inSection = $false
+    $sawDepInSection = $false
+    foreach ($line in $output) {
+        if ($line -match 'Image has the following( delay load)? dependencies:') {
+            $inSection = $true
+            $sawDepInSection = $false
+            continue
         }
-        continue
+        if (-not $inSection) {
+            continue
+        }
+        if ($line -match '^\s*$') {
+            if ($sawDepInSection) {
+                $inSection = $false
+            }
+            continue
+        }
+        if ($line -imatch '^\s+([^\\/:*?"<>|\r\n]+\.dll)\s*$') {
+            $dependencies += $matches[1].Trim()
+            $sawDepInSection = $true
+            continue
+        }
+        throw "Unexpected line in dumpbin dependency section (format may have changed): $line"
     }
-    if ($line -imatch '^\s+([^\\/:*?"<>|\r\n]+\.dll)\s*$') {
-        $dependencies += $matches[1].Trim()
-        $sawDepInSection = $true
-        continue
+
+    $dependencies = $dependencies | Sort-Object -Unique
+    # A real PE executable always imports at least one DLL (kernel32). Zero parsed dependencies
+    # means the parse recognized nothing -- fail closed rather than declare a vacuous pass.
+    if ($dependencies.Count -eq 0) {
+        throw "No imported DLLs were parsed from dumpbin output for $target (unexpected format or empty result)"
     }
-    throw "Unexpected line in dumpbin dependency section (format may have changed): $line"
+    $missing = @()
+    $exeDir = Split-Path -Parent $target
+
+    foreach ($dll in $dependencies) {
+        if (Test-IsSystemDll $dll) {
+            continue
+        }
+
+        $nextToExe = Join-Path $exeDir $dll
+        $inRoot = Join-Path $root.Path $dll
+        $found = $null
+        if (Test-Path -LiteralPath $nextToExe -PathType Leaf) {
+            $found = $nextToExe
+        } elseif (Test-Path -LiteralPath $inRoot -PathType Leaf) {
+            $found = $inRoot
+        }
+
+        if ($null -eq $found) {
+            $missing += $dll
+            continue
+        }
+
+        # Existence alone is not enough: an empty, truncated, non-PE, or wrong-architecture file
+        # with the right name would satisfy a bare existence check yet fail to load at runtime.
+        # Require a real PE image whose machine matches the primary executable.
+        $machine = Get-PeMachine -Path $found
+        if ($null -eq $machine) {
+            $missing += "$dll (present but not a valid PE image)"
+        } elseif ($machine -ne $exeMachine) {
+            $missing += ("$dll (present but wrong architecture: 0x{0:X} vs 0x{1:X})" -f $machine, $exeMachine)
+        } else {
+            Write-Host "OK  $dll"
+        }
+    }
+    foreach ($entry in $missing) { $unresolved += "${targetName}: $entry" }
 }
 
-$dependencies = $dependencies | Sort-Object -Unique
-# A real PE executable always imports at least one DLL (kernel32). Zero parsed dependencies
-# means the parse recognized nothing -- fail closed rather than declare a vacuous pass.
-if ($dependencies.Count -eq 0) {
-    throw "No imported DLLs were parsed from dumpbin output for $resolvedExe (unexpected format or empty result)"
-}
-$missing = @()
-$exeDir = Split-Path -Parent $resolvedExe
-
-foreach ($dll in $dependencies) {
-    if (Test-IsSystemDll $dll) {
-        continue
-    }
-
-    $nextToExe = Join-Path $exeDir $dll
-    $inRoot = Join-Path $root.Path $dll
-    $found = $null
-    if (Test-Path -LiteralPath $nextToExe -PathType Leaf) {
-        $found = $nextToExe
-    } elseif (Test-Path -LiteralPath $inRoot -PathType Leaf) {
-        $found = $inRoot
-    }
-
-    if ($null -eq $found) {
-        $missing += $dll
-        continue
-    }
-
-    # Existence alone is not enough: an empty, truncated, non-PE, or wrong-architecture file
-    # with the right name would satisfy a bare existence check yet fail to load at runtime.
-    # Require a real PE image whose machine matches the primary executable.
-    $machine = Get-PeMachine -Path $found
-    if ($null -eq $machine) {
-        $missing += "$dll (present but not a valid PE image)"
-    } elseif ($machine -ne $exeMachine) {
-        $missing += ("$dll (present but wrong architecture: 0x{0:X} vs 0x{1:X})" -f $machine, $exeMachine)
-    } else {
-        Write-Host "OK  $dll"
-    }
-}
-
-if ($missing.Count -gt 0) {
+if ($unresolved.Count -gt 0) {
     Write-Host ""
     Write-Host "Missing runtime DLL(s):" -ForegroundColor Red
-    $missing | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+    $unresolved | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
     exit 1
 }
 

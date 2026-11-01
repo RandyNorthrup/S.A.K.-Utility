@@ -46,6 +46,9 @@ function Test-IsSystemDll {
         # Windows network-provider routing API (winnetwk.h / Mpr.lib).
         "mpr.dll",
         "msimg32.dll",
+        # Windows Color System (ICM) API, imported by Qt's Windows platform plugin (qwindows.dll)
+        # for monitor color profiles. System32 only.
+        "mscms.dll",
         # The Windows-protected CRT used by the bundled D3D compiler is not the
         # versioned MSVC redistributable runtime (msvcr100.dll, vcruntime140.dll, etc.).
         "msvcrt.dll",

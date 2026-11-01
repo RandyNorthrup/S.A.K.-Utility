@@ -27,6 +27,16 @@ if (-not (Test-Path -LiteralPath $ExePath -PathType Leaf)) {
     throw "Startup budget: executable not found at ${ExePath}; build before running this gate."
 }
 
+# The run uses Qt's offscreen platform, which only a build tree carries: a staged package ships the
+# windows platform plugin alone, and Qt answers a missing plugin with a message box that would sit
+# until the hard timeout and read as a hung startup. Say so instead.
+$offscreenPlugin = Join-Path (Split-Path -Parent $ExePath) "platforms\qoffscreen.dll"
+if (-not (Test-Path -LiteralPath $offscreenPlugin -PathType Leaf)) {
+    throw ("Startup budget: $offscreenPlugin is missing; this gate runs the build tree's " +
+        "executable (a package ships no offscreen platform plugin). Time a package with " +
+        "scripts/run_portable_e2e_smoke.ps1 instead.")
+}
+
 $env:QT_QPA_PLATFORM = "offscreen"
 $env:SAK_STARTUP_SMOKE_CI_HEADLESS = "1"
 

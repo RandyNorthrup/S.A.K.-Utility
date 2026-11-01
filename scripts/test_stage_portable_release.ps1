@@ -875,10 +875,13 @@ function Test-PortableRuntimeSelection {
     param([string]$Text, [string]$Root)
     $buildRoot = New-StageContractDirectory $Root
     $packageRoot = New-StageContractDirectory $Root
-    foreach ($name in @("Qt6Core.dll", "Qt6Test.dll", "msvcp140.dll", "vcruntime140.dll", "opengl32sw.dll", "icuuc.dll", "icuin.dll", "icu.dll")) {
+    $importedRuntimes = @("msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll", "msvcp140_atomic_wait.dll",
+        "vcruntime140.dll", "vcruntime140_1.dll")
+    foreach ($name in @("Qt6Core.dll", "Qt6Test.dll", "opengl32sw.dll", "icuuc.dll", "icuin.dll", "icu.dll",
+            "concrt140.dll", "msvcp140_codecvt_ids.dll") + $importedRuntimes) {
         [IO.File]::WriteAllText((Join-Path $buildRoot $name), "ordinary selection fixture")
     }
-    . Import-StageFunctions $Text @("Copy-OptionalFile")
+    . Import-StageFunctions $Text @("Copy-RequiredFile")
     $Script:SelectedDlls = [Collections.Generic.List[string]]::new()
     function Copy-Item {
         param($LiteralPath, $Destination, [switch]$Force)
@@ -887,15 +890,19 @@ function Test-PortableRuntimeSelection {
     function New-Item { param($ItemType, [switch]$Force, $Path) }
     $ast = Get-StageAst $Text
     $loops = @($ast.FindAll({ param($node)
-        $node -is [Management.Automation.Language.ForEachStatementAst] -and $node.Variable.Extent.Text -ceq '$pattern'
+        $node -is [Management.Automation.Language.ForEachStatementAst] -and $node.Variable.Extent.Text -ceq '$runtime'
     }, $true))
-    Assert-StageContract ($loops.Count -eq 1) "Runtime selection loop changed: `$pattern"
+    Assert-StageContract ($loops.Count -eq 1) "Runtime selection loop changed: `$runtime"
     . ([scriptblock]::Create($loops[0].Extent.Text))
     foreach ($name in @("icuuc.dll", "icuin.dll", "icu.dll")) {
         Assert-StageContract (-not $Script:SelectedDlls.Contains($name)) "Portable selection copied Windows ICU shim: $name"
     }
-    foreach ($name in @("msvcp140.dll", "vcruntime140.dll")) {
+    foreach ($name in $importedRuntimes) {
         Assert-StageContract ($Script:SelectedDlls.Contains($name)) "Portable selection omitted required runtime: $name"
+    }
+    # The import closure of every packaged binary needs neither (dumpbin, 2026-11-01).
+    foreach ($name in @("concrt140.dll", "msvcp140_codecvt_ids.dll")) {
+        Assert-StageContract (-not $Script:SelectedDlls.Contains($name)) "Portable selection copied a runtime nothing imports: $name"
     }
     # Qt comes only from the validated plan, never from the build directory's own Qt files (which
     # also hold what the test suites add): nothing Qt is copied from the build directory.
@@ -930,6 +937,7 @@ function Test-PortableRuntimeSelection {
     $repoRootPath = $ProjectRoot
     . ([scriptblock]::Create($calls[0].Extent.Text))
     Assert-StageContract ($Script:VerifierArguments.RequireNoSystemDlls -is [bool] -and $Script:VerifierArguments.RequireNoSystemDlls) "Portable stage did not require OS-shim refusal"
+    Assert-StageContract ($Script:VerifierArguments.WholePackage -is [bool] -and $Script:VerifierArguments.WholePackage) "Portable stage did not check every packaged binary's imports"
 }
 
 function New-QtPlanFixture {
@@ -1075,6 +1083,15 @@ function Test-ActualQtPlan {
     Assert-StageContract (@($plan.files | Where-Object { [IO.Path]::GetFileName($_.source) -ceq "Qt6Core.dll" }).Count -eq 1) "Actual Qt plan omitted release Core"
     Assert-StageContract (@($plan.files | Where-Object { [IO.Path]::GetFileName($_.source) -ceq "qwindows.dll" -and $_.target_directory.EndsWith("\platforms") }).Count -eq 1) "Actual Qt plan lost platform plugin directory"
     Assert-StageContract (@($plan.files | Where-Object { [IO.Path]::GetFileName($_.source) -ieq "icuuc.dll" }).Count -eq 0) "Actual Qt plan copied Windows ICU"
+    $planned = @($plan.files | ForEach-Object { [IO.Path]::GetFileName($_.source) })
+    foreach ($name in @("opengl32sw.dll", "D3Dcompiler_47.dll", "dxcompiler.dll", "dxil.dll", "qtuiotouchplugin.dll",
+            "qnetworklistmanager.dll", "qcertonlybackend.dll")) {
+        Assert-StageContract (-not ($planned -contains $name)) "Actual Qt plan ships a file the app never loads: $name"
+    }
+    foreach ($name in @("qschannelbackend.dll", "qmodernwindowsstyle.dll", "qsvgicon.dll", "qsvg.dll", "qjpeg.dll",
+            "qgif.dll", "qico.dll", "Qt6Network.dll", "Qt6Svg.dll")) {
+        Assert-StageContract ($planned -contains $name) "Actual Qt plan lost a file the app loads: $name"
+    }
     Write-Host "PASS actual Qt JSON plan: $($plan.files.Count) selected files; Windows-provided: $($plan.windows_provided -join ', ')"
 }
 function Test-QtPlannerInvocation {
@@ -1093,8 +1110,17 @@ function Test-QtPlannerInvocation {
         return [pscustomobject]@{ timed_out = $Script:PlannerTimeout; exit_code = $Script:PlannerExit; stdout = '{"files":[]}'; stderr = "" }
     }
     function Get-ValidatedQtDeploymentPlan { param($Plan, $Context) return $Plan }
+    $omissions = @((Get-StageAst $Text).FindAll({ param($node)
+        $node -is [Management.Automation.Language.AssignmentStatementAst] -and $node.Left.Extent.Text -ceq '$QtPlanOmissions'
+    }, $true))
+    Assert-StageContract ($omissions.Count -eq 1) "Expected one Qt plan omission list"
+    . ([scriptblock]::Create($omissions[0].Extent.Text))
     Get-QtRuntimePlan $context | Out-Null
-    $expected = @("--dry-run", "--json", "--no-translations", "--no-compiler-runtime", $context.application)
+    # The plan leaves out what the packaged app never loads (deploy_qt_runtime.ps1 says why).
+    $expected = @("--dry-run", "--json", "--no-translations", "--no-compiler-runtime",
+        "--no-opengl-sw", "--no-system-d3d-compiler", "--no-system-dxc-compiler",
+        "--skip-plugin-types", "generic,networkinformation", "--exclude-plugins", "qcertonlybackend",
+        $context.application)
     Assert-StageContract (($Script:PlannerArgs -join "|") -ceq ($expected -join "|")) "Planner arguments changed debug/release auto-detection or dry-run planning"
     $Script:PlannerExit = 7
     Expect-StageFailure { Get-QtRuntimePlan $context } "planning failed"
@@ -1161,7 +1187,10 @@ function Invoke-QtPackagingGuardDrills {
     param([string]$StageText, [string]$DeploymentText, [string]$Root)
     $selectionDrills = @(
         @{ name = "qt-deploys-the-staged-exe"; from = 'ApplicationPath = (Join-Path $packageRoot "sak_utility.exe")'; to = 'ApplicationPath = (Join-Path $buildRoot "sak_utility.exe")'; expected = "did not target the staged executable" },
-        @{ name = "crt-selection-excludes-os-shims"; from = '"vcruntime*.dll", "msvcp*.dll", "concrt*.dll"'; to = '"*.dll", "msvcp*.dll", "concrt*.dll"'; expected = "copied Windows ICU shim" },
+        @{ name = "crt-selection-excludes-os-shims"; from = '"vcruntime140.dll", "vcruntime140_1.dll")'; to = '"vcruntime140.dll", "vcruntime140_1.dll", "icuuc.dll")'; expected = "copied Windows ICU shim" },
+        @{ name = "crt-selection-excludes-unimported"; from = '"vcruntime140.dll", "vcruntime140_1.dll")'; to = '"vcruntime140.dll", "vcruntime140_1.dll", "concrt140.dll")'; expected = "copied a runtime nothing imports" },
+        @{ name = "crt-selection-keeps-imported"; from = '"msvcp140.dll", "msvcp140_1.dll", "msvcp140_2.dll",'; to = '"msvcp140.dll", "msvcp140_1.dll",'; expected = "omitted required runtime: msvcp140_2.dll" },
+        @{ name = "whole-package-dependency-check"; from = 'RequireNoSystemDlls = $true; WholePackage = $true'; to = 'RequireNoSystemDlls = $true; WholePackage = $false'; expected = "check every packaged binary's imports" },
         @{ name = "portable-package-refusal-mode"; from = 'RequireNoSystemDlls = $true'; to = 'RequireNoSystemDlls = $false'; expected = "did not require OS-shim refusal" }
     )
     foreach ($drill in $selectionDrills) {
@@ -1293,6 +1322,13 @@ $stageSandbox = Join-Path $contractRoot "full-stage"
 $stageBuildRoot = Join-Path $stageSandbox "Release"
 New-Item -ItemType Directory -Path $stageBuildRoot -ErrorAction Stop | Out-Null
 Copy-StageFixtureBuildInputs $buildRoot $stageBuildRoot
+# What Chocolatey writes into bin\ when it runs from a checkout: a build copies tools/ wholesale,
+# so a developer's build output can hold them; the package must not.
+$stageChocolateyBin = Join-Path $stageBuildRoot 'tools/chocolatey/bin'
+New-Item -ItemType Directory -Force -Path $stageChocolateyBin -ErrorAction Stop | Out-Null
+foreach ($name in @('_processed.txt', 'RefreshEnv.cmd')) {
+    [IO.File]::WriteAllText((Join-Path $stageChocolateyBin $name), 'chocolatey runtime state fixture')
+}
 $stagePackageRoot = Join-Path $stageBuildRoot $packageName
 $stageArchiveTarget = Join-Path $stageBuildRoot "$packageName-Windows-x64.zip"
 $stageChecksumTarget = Join-Path $stageBuildRoot "SHA256SUMS.txt"
@@ -1361,6 +1397,23 @@ try {
     Assert-StageContract ((Test-Path -LiteralPath $chocolateyLogs -PathType Container) -and
         @(Get-ChildItem -LiteralPath $chocolateyLogs -Force -ErrorAction Stop).Count -eq 0) `
         "Portable stage retained Chocolatey runtime logs: $chocolateyLogs"
+    foreach ($relative in @('tools\chocolatey\bin\_processed.txt', 'tools\chocolatey\bin\RefreshEnv.cmd')) {
+        Assert-StageContract (-not (Test-Path -LiteralPath (Join-Path $stagePackageRoot $relative))) `
+            "Portable stage shipped Chocolatey runtime state: $relative"
+    }
+    # Files nothing in the package loads (deploy_qt_runtime.ps1 and the runtime list in the stager
+    # say why), and the ones the app does load.
+    foreach ($relative in @('opengl32sw.dll', 'D3Dcompiler_47.dll', 'concrt140.dll', 'msvcp140_codecvt_ids.dll',
+            'generic', 'networkinformation', 'tls\qcertonlybackend.dll')) {
+        Assert-StageContract (-not (Test-Path -LiteralPath (Join-Path $stagePackageRoot $relative))) `
+            "Portable stage shipped a file the app never loads: $relative"
+    }
+    foreach ($relative in @('tls\qschannelbackend.dll', 'styles\qmodernwindowsstyle.dll', 'iconengines\qsvgicon.dll',
+            'imageformats\qsvg.dll', 'imageformats\qjpeg.dll', 'imageformats\qgif.dll', 'imageformats\qico.dll',
+            'msvcp140_1.dll', 'msvcp140_2.dll', 'msvcp140_atomic_wait.dll', 'vcruntime140_1.dll')) {
+        Assert-StageContract (Test-Path -LiteralPath (Join-Path $stagePackageRoot $relative) -PathType Leaf) `
+            "Portable stage omitted a file the app loads: $relative"
+    }
     Assert-StageContract ((Test-Path -LiteralPath $stageArchiveTarget -PathType Leaf) -and
         ((Get-FileHash -LiteralPath $stageArchiveTarget -Algorithm SHA256).Hash -ceq $stageArchiveBefore)) `
         "Portable stage removed or modified a preexisting ZIP: $stageArchiveTarget"

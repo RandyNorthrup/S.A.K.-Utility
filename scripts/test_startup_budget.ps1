@@ -614,6 +614,26 @@ if ($red.timed_out -or $red.exit_code -eq 0 -or $red.stderr -notmatch 'Startup b
         "exit=$($red.exit_code), timed_out=$($red.timed_out), stderr=$($red.stderr)")
 }
 
+# A package ships no offscreen platform plugin, and Qt meets a missing plugin with a message box
+# that sat until the 60 s hard timeout and read as "hung startup". The gate now refuses at once.
+$packageShaped = Join-Path ([IO.Path]::GetTempPath()) ("sak-budget-package-" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Path (Join-Path $packageShaped "platforms") -ErrorAction Stop | Out-Null
+try {
+    Copy-Item -LiteralPath $exe -Destination $packageShaped -ErrorAction Stop
+    $refused = Invoke-CapturedProcess -FilePath $hostPath -Arguments @(
+        "-NoProfile", "-NonInteractive", "-File", $gate, "-HardTimeoutSec", "60",
+        "-ExePath", (Join-Path $packageShaped (Split-Path -Leaf $exe))
+    ) -TimeoutSeconds 30
+    if ($refused.timed_out -or $refused.exit_code -eq 0 -or
+        $refused.stderr -notmatch 'ships no offscreen platform plugin') {
+        throw ("Startup budget did not refuse a folder without the offscreen plugin. " +
+            "exit=$($refused.exit_code), timed_out=$($refused.timed_out), stderr=$($refused.stderr)")
+    }
+}
+finally {
+    Remove-Item -LiteralPath $packageShaped -Recurse -Force -ErrorAction SilentlyContinue
+}
+
 $logDirectory = Join-Path (Split-Path -Parent $exe) 'data\logs'
 function Get-StartupLogNames {
     if (-not (Test-Path -LiteralPath $logDirectory -PathType Container)) { return @() }
