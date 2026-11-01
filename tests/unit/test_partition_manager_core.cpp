@@ -1883,6 +1883,7 @@ private Q_SLOTS:
     void diskMediaHeuristics_readTheModelStringToo();
     void jsonUInt64_clampsNegativesInsteadOfWrapping();
     void scriptBuilder_buildsBiosBootRepairScript();
+    void scriptBuilder_refusesBootRepairWithoutWindowsPath();
     void operationQueue_blocksLayoutMismatch();
     void operationQueue_redoAvailableOnlyAfterUndo();
     void powershellQuoting_escapesSingleQuotes();
@@ -21799,6 +21800,29 @@ void PartitionManagerCoreTests::scriptBuilder_buildsBiosBootRepairScript() {
     QVERIFY(script.valid());
     QVERIFY(script.script.contains(QStringLiteral("bcdboot.exe 'D:\\Windows' /s S: /f BIOS")));
     QVERIFY(script.script.contains(QStringLiteral("bootsect.exe /nt60 S: /mbr")));
+}
+
+// Boot repair used to fall back to C:\Windows when no Windows folder was named -- the wrong
+// installation on a machine whose Windows is not on C:. It now refuses.
+void PartitionManagerCoreTests::scriptBuilder_refusesBootRepairWithoutWindowsPath() {
+    PartitionTarget target;
+    target.kind = PartitionTargetKind::Disk;
+    target.disk_number = DiskNumber{0};
+    for (const QString& windows_path : {QString(), QStringLiteral("   ")}) {
+        QJsonObject payload;
+        if (!windows_path.isNull()) {
+            payload[QStringLiteral("windows_path")] = windows_path;
+        }
+        payload[QStringLiteral("esp_letter")] = QStringLiteral("S");
+        payload[QStringLiteral("boot_mode")] = QStringLiteral("UEFI");
+        PartitionScriptBuilder builder;
+        const auto script = builder.buildScript(PartitionOperationPlanner::makeOperation(
+            PartitionOperationType::RepairBoot, target, payload));
+        QVERIFY(!script.valid());
+        QVERIFY(!script.script.contains(QStringLiteral("bcdboot")));
+        QVERIFY2(script.blockers.contains(QStringLiteral("Boot repair requires windows_path")),
+                 qPrintable(script.blockers.join(QLatin1Char('|'))));
+    }
 }
 
 void PartitionManagerCoreTests::operationQueue_blocksLayoutMismatch() {

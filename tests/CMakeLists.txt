@@ -4213,6 +4213,28 @@ add_test(NAME test_advanced_uninstall_panel COMMAND test_advanced_uninstall_pane
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_advanced_uninstall_panel")
 
+# test_email_file_scanner_dialog - the email file scanner looks in every writable drive's
+# Backups folders, the system drive included (C: used to be skipped). Reads drive roots only.
+add_executable(test_email_file_scanner_dialog
+    unit/test_email_file_scanner_dialog.cpp
+)
+set_target_properties(test_email_file_scanner_dialog PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_email_file_scanner_dialog PRIVATE
+    sak_gui sak_core sak_partition_fs sak_foundation
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Network Qt6::Concurrent Qt6::Test
+    ZLIB::ZLIB BZip2::BZip2 LibLZMA::LibLZMA ${PLATFORM_LIBS}
+)
+target_include_directories(test_email_file_scanner_dialog PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_email_file_scanner_dialog COMMAND test_email_file_scanner_dialog
+         -o "${TEST_OUTPUT_DIR}/test_email_file_scanner_dialog.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_email_file_scanner_dialog")
+
 # test_quick_action_panels - drives each panel's quick-action flow (Backup and Restore, Diagnostics,
 # Network): click, confirmation, folder choice, run, progress and completion, through a real
 # QuickActionController with fake actions and a fake elevated-helper broker, so nothing touches

@@ -46,6 +46,12 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   and a folder it cannot create stops the run before any Settings page opens. BitLocker Key
   Backup's completion message names its folder too.
 
+- **No more assumptions that Windows is on C:** - Leftover cleanup protects the system folders
+  where this PC keeps them (a Windows, ProgramData or Users folder on another drive is protected
+  like a C: install's). Partition Manager's Rebuild MBR / Boot Repair rebuilds the boot files of
+  the Windows that is running instead of a fixed `C:\Windows`. The email file scanner now also
+  looks in `C:\Backups` and `C:\Email Backups`, which it used to skip.
+
 - **The theme follows Windows** - One setting, Light / Dark / System, in the status bar's Theme
   button, saved in the portable `data/config/Utility.ini` and set to System on first run. System
   follows the Windows app theme while S.A.K. runs, title bar included. The Dark switch that sat

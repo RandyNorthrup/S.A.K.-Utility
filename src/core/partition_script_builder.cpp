@@ -5659,14 +5659,18 @@ PartitionScript PartitionScriptBuilder::buildCloneOrImageScript(
 
 PartitionScript PartitionScriptBuilder::buildBootRepairScript(
     const PartitionOperation& operation) const {
-    const QString windows_path =
-        payloadString(operation, QStringLiteral("windows_path"), QStringLiteral("C:\\Windows"));
+    // No guessed C:\Windows: the caller names the installation whose boot files are rebuilt
+    // (the panel passes the running system's Windows folder, which is not always on C:).
+    const QString windows_path = payloadString(operation, QStringLiteral("windows_path")).trimmed();
     const QString esp_letter =
         payloadString(operation, QStringLiteral("esp_letter"), QStringLiteral("S")).left(1);
     const QString boot_mode =
         payloadString(operation, QStringLiteral("boot_mode"), QStringLiteral("UEFI"))
             .trimmed()
             .toUpper();
+    if (windows_path.isEmpty()) {
+        return invalidScript(QStringLiteral("Boot repair requires windows_path"));
+    }
     if (!isValidDriveLetter(esp_letter)) {
         return invalidScript(QStringLiteral("Boot repair requires valid esp_letter"));
     }

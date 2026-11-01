@@ -20,6 +20,8 @@
 #include <algorithm>
 #include <vector>
 
+#include <shlobj.h>
+
 namespace sak {
 
 namespace {
@@ -169,7 +171,31 @@ void appendProfileRoots(QStringList& roots) {
 
 }  // namespace
 
-// Protected system paths that should NEVER be auto-selected for deletion
+namespace {
+
+// The folder @p folder_id names on this machine, in native form; empty when the API fails.
+QString knownFolderPath(REFKNOWNFOLDERID folder_id) {
+    PWSTR raw = nullptr;
+    const HRESULT hr = SHGetKnownFolderPath(folder_id, KF_FLAG_DEFAULT, nullptr, &raw);
+    const QString path = (SUCCEEDED(hr) && raw != nullptr) ? QString::fromWCharArray(raw)
+                                                           : QString();
+    CoTaskMemFree(raw);
+    return path.isEmpty() ? QString() : QDir::toNativeSeparators(QDir::cleanPath(path));
+}
+
+// kProtectedPaths plus the same folders where this machine keeps them, resolved once. A system
+// installed on D: (or with Users or ProgramData moved) is protected exactly like a C: install;
+// the C: entries stay, so a second Windows installation on C: keeps its protection too.
+const QStringList& protectedPathsOnThisMachine() {
+    static const QStringList paths =
+        LeftoverScanner::protectedPathsFor(LeftoverScanner::liveSystemFolders());
+    return paths;
+}
+
+}  // namespace
+
+// Protected system paths that should NEVER be auto-selected for deletion, as a C: install lays
+// them out; protectedPathsFor() rebases them onto this machine's own folders.
 const QStringList LeftoverScanner::kProtectedPaths = {
     "C:\\Windows",
     "C:\\Windows\\System32",
@@ -499,10 +525,10 @@ QVector<LeftoverItem> LeftoverScanner::scanKnownPaths(
     const std::atomic<bool>& stopRequested) const {
     QVector<LeftoverItem> items;
 
-    // Scan roots come from environment variables (there is no OS-agnostic other source), while
-    // kProtectedPaths hard-codes C:. This is safe by design: classifyRisk -> isSharedContainerPath
-    // matches the shared-container LEAF name (windows/system32/programdata/...) case-insensitively
-    // on ANY drive, so a non-C: OS directory is still Risky. A poisoned APPDATA/ProgramFiles only
+    // Scan roots come from environment variables (there is no OS-agnostic other source). That is
+    // safe: isProtectedPath covers the system folders where this machine keeps them (known-folder
+    // API, not the environment), and isSharedContainerPath matches a shared-container LEAF name
+    // (windows/system32/programdata/...) on ANY drive. A poisoned APPDATA/ProgramFiles only
     // redirects WHERE we look; anything found is still classified before it can be auto-selected.
     QStringList base_dirs;
     appendEnvDir(base_dirs, "APPDATA");
@@ -1356,17 +1382,44 @@ bool leftoverInsideOwnInstallSubfolder(const QString& path_native,
 }
 }  // namespace
 
-bool LeftoverScanner::isProtectedPath(const QString& path) const {
+LeftoverScanner::SystemFolders LeftoverScanner::liveSystemFolders() {
+    return {.windows = knownFolderPath(FOLDERID_Windows),
+            .program_files = knownFolderPath(FOLDERID_ProgramFiles),
+            .program_files_common = knownFolderPath(FOLDERID_ProgramFilesCommon),
+            .program_data = knownFolderPath(FOLDERID_ProgramData),
+            .user_profiles = knownFolderPath(FOLDERID_UserProfiles),
+            .public_profile = knownFolderPath(FOLDERID_Public)};
+}
+
+QStringList LeftoverScanner::protectedPathsFor(const SystemFolders& folders) {
+    QStringList paths;
+    const auto add = [&paths](const QString& base, const QString& relative) {
+        if (base.isEmpty()) {
+            return;
+        }
+        const QString native = QDir::toNativeSeparators(QDir::cleanPath(base));
+        paths << (relative.isEmpty() ? native : native + QLatin1Char('\\') + relative);
+    };
+    add(folders.windows, {});
+    add(folders.windows, QStringLiteral("System32"));
+    add(folders.windows, QStringLiteral("SysWOW64"));
+    add(folders.windows, QStringLiteral("WinSxS"));
+    add(folders.program_files_common, QStringLiteral("Microsoft Shared"));
+    add(folders.program_files, QStringLiteral("Windows"));
+    add(folders.program_data, QStringLiteral("Microsoft"));
+    add(folders.user_profiles, QStringLiteral("Default"));
+    add(folders.public_profile, {});
+    return paths;
+}
+
+bool LeftoverScanner::pathUnderProtectedRoot(const QString& path,
+                                             const QStringList& roots,
+                                             const QString& trusted_install_location) {
     if (path.isEmpty()) {
         return false;
     }
     const QString path_native = QDir::toNativeSeparators(path);
-    // The protected-root exemption is granted only to a TRUSTED install location. An
-    // unverifiable registry value pointing inside C:\Windows must not be able to exempt
-    // that subtree from the protected-path check.
-    const QString install_native = m_trustedInstallLocation;
-
-    for (const auto& protected_path : kProtectedPaths) {
+    for (const auto& protected_path : roots) {
         if (!path_native.startsWith(protected_path, Qt::CaseInsensitive)) {
             continue;
         }
@@ -1376,9 +1429,19 @@ bool LeftoverScanner::isProtectedPath(const QString& path) const {
         if (!direct && !child) {
             continue;
         }
-        return !leftoverInsideOwnInstallSubfolder(path_native, install_native, protected_path);
+        return !leftoverInsideOwnInstallSubfolder(path_native,
+                                                  trusted_install_location,
+                                                  protected_path);
     }
     return false;
+}
+
+bool LeftoverScanner::isProtectedPath(const QString& path) const {
+    // The protected-root exemption is granted only to a TRUSTED install location. An
+    // unverifiable registry value pointing inside C:\Windows must not be able to exempt
+    // that subtree from the protected-path check.
+    return pathUnderProtectedRoot(path, kProtectedPaths, m_trustedInstallLocation) ||
+           pathUnderProtectedRoot(path, protectedPathsOnThisMachine(), m_trustedInstallLocation);
 }
 
 bool LeftoverScanner::matchesProgramExact(const QString& nameLower) const {

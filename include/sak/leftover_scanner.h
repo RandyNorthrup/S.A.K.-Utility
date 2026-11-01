@@ -103,12 +103,37 @@ public:
     ///        refuses them.
     [[nodiscard]] static QStringList criticalInstallRoots();
 
+    /// @brief Where this machine keeps the folders kProtectedPaths names for a C: install.
+    struct SystemFolders {
+        QString windows;               ///< FOLDERID_Windows, e.g. D:\Windows
+        QString program_files;         ///< FOLDERID_ProgramFiles
+        QString program_files_common;  ///< FOLDERID_ProgramFilesCommon
+        QString program_data;          ///< FOLDERID_ProgramData
+        QString user_profiles;         ///< FOLDERID_UserProfiles, e.g. D:\Users
+        QString public_profile;        ///< FOLDERID_Public
+    };
+
+    /// @brief kProtectedPaths' file-system entries rebased onto @p folders, in native form. An
+    ///        unresolved (empty) folder contributes nothing. Pure; unit-testable.
+    [[nodiscard]] static QStringList protectedPathsFor(const SystemFolders& folders);
+
+    /// @brief This machine's folders, from the Windows known-folder API rather than the
+    ///        environment (which a user can set to anything). Empty where the API fails.
+    [[nodiscard]] static SystemFolders liveSystemFolders();
+
+    /// @brief Whether @p path is one of @p roots or inside one, unless it lies inside the
+    ///        program's own (trusted) install folder that is itself strictly below that root.
+    ///        Pure; unit-testable. isProtectedPath() applies it to kProtectedPaths plus this
+    ///        machine's own folders (protectedPathsFor(liveSystemFolders())).
+    [[nodiscard]] static bool pathUnderProtectedRoot(const QString& path,
+                                                     const QStringList& roots,
+                                                     const QString& trusted_install_location);
+
     /// @brief True when @p path's LEAF directory name is a shared OS/vendor container
     /// (windows / system32 / programdata / program files / ...), matched case-insensitively on
-    /// ANY drive. This is the DRIVE-AGNOSTIC half of the risk classifier: kProtectedPaths
-    /// hard-codes C:, but this leaf match keeps a non-C: system directory (e.g.
-    /// D:\Windows\System32) classified Risky just like C:'s, so the leftover cleaner is safe on a
-    /// machine whose system drive is not C:.
+    /// ANY drive. This is the DRIVE-AGNOSTIC half of the risk classifier; the other half,
+    /// isProtectedPath(), protects the whole subtree of each system folder both where a C:
+    /// install keeps it and where this machine keeps it.
     [[nodiscard]] static bool isSharedContainerPath(const QString& path);
 
 private:

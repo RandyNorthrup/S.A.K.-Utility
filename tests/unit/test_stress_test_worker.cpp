@@ -329,6 +329,8 @@ void TestStressTestWorker::execute_invalidMemoryPercent_failsClosed() {
 
     // (b) disk target: an empty/whitespace/relative disk_test_drive resolves against the
     //     process working directory (a guessed target), so it must be refused, not guessed.
+    //     The config names no drive of its own either (it defaulted to a fixed C:\).
+    QVERIFY(StressTestConfig{}.disk_test_drive.isEmpty());
     StressExecProbe disk_probe;
     StressTestConfig disk_config;
     disk_config.stress_cpu = false;

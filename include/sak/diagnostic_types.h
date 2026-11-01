@@ -328,7 +328,9 @@ struct StressTestConfig {
     int duration_minutes{kStressTestDefaultDurationMinutes};
     int cpu_threads{0};  ///< 0 = all logical processors
     double memory_usage_percent{kStressTestDefaultMemoryUsagePercent};
-    QString disk_test_drive{"C:\\"};
+    /// The drive a disk stress writes its test file to. No default: the caller names the drive
+    /// the technician picked, and the worker refuses an empty one.
+    QString disk_test_drive;
 
     double thermal_limit_celsius{kStressTestDefaultThermalLimitCelsius};
     bool abort_on_error{true};

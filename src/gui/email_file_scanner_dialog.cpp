@@ -355,15 +355,13 @@ QStringList EmailFileScannerDialog::commonScanPaths() {
     // Windows Mail / eM Client
     paths << home + QStringLiteral("/AppData/Roaming/eM Client");
 
-    // Common backup locations on all fixed drives
+    // Common backup locations on every writable drive, the system drive included: the home
+    // paths above cover the profile, not <drive>:/Backups (C: used to be skipped as if they did).
     for (const auto& storage : QStorageInfo::mountedVolumes()) {
         if (!storage.isReady() || storage.isReadOnly()) {
             continue;
         }
         const QString root = storage.rootPath();
-        if (root == QLatin1String("C:/")) {
-            continue;  // Already covered by home paths above
-        }
         paths << root + QStringLiteral("Backups");
         paths << root + QStringLiteral("Email Backups");
     }

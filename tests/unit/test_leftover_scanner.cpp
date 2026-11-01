@@ -110,6 +110,8 @@ private Q_SLOTS:
 
     // -- R5-G23-4: shared-container protection is drive-agnostic (non-C: system drive) --
     void isSharedContainerPath_isDriveAgnostic();
+    void protectedPaths_followThisMachinesSystemFolders();
+    void liveSystemFolders_comeFromTheKnownFolderApi();
 };
 
 // -- Helper ------------------------------------------------------------------
@@ -1594,6 +1596,66 @@ void LeftoverScannerTests::isSharedContainerPath_isDriveAgnostic() {
     QVERIFY(
         !LeftoverScanner::isSharedContainerPath(QStringLiteral("D:/Users/Bob/AppData/Local/Acme")));
     QVERIFY(!LeftoverScanner::isSharedContainerPath(QString()));
+}
+
+// The protected system folders were written for a C: install only. On a machine whose Windows,
+// ProgramData or Users live elsewhere, only the container NAME stayed protected (by the leaf check
+// above), so a leftover under D:\ProgramData\Microsoft was classified like any other folder. The
+// protected list is now rebased onto the machine's own folders.
+void LeftoverScannerTests::protectedPaths_followThisMachinesSystemFolders() {
+    const LeftoverScanner::SystemFolders d_install{
+        .windows = QStringLiteral("D:/Windows"),
+        .program_files = QStringLiteral("D:\\Program Files"),
+        .program_files_common = QStringLiteral("D:\\Program Files\\Common Files"),
+        .program_data = QStringLiteral("D:\\ProgramData"),
+        .user_profiles = QStringLiteral("E:\\Users"),
+        .public_profile = QStringLiteral("E:\\Users\\Public")};
+    const QStringList paths = LeftoverScanner::protectedPathsFor(d_install);
+    QCOMPARE(paths,
+             (QStringList{QStringLiteral("D:\\Windows"),
+                          QStringLiteral("D:\\Windows\\System32"),
+                          QStringLiteral("D:\\Windows\\SysWOW64"),
+                          QStringLiteral("D:\\Windows\\WinSxS"),
+                          QStringLiteral("D:\\Program Files\\Common Files\\Microsoft Shared"),
+                          QStringLiteral("D:\\Program Files\\Windows"),
+                          QStringLiteral("D:\\ProgramData\\Microsoft"),
+                          QStringLiteral("E:\\Users\\Default"),
+                          QStringLiteral("E:\\Users\\Public")}));
+    QVERIFY(LeftoverScanner::protectedPathsFor({}).isEmpty());
+
+    // The subtree, not only the container: what the C: list always protected on C:.
+    QVERIFY(LeftoverScanner::pathUnderProtectedRoot(
+        QStringLiteral("D:/ProgramData/Microsoft/EdgeUpdate"), paths, QString()));
+    QVERIFY(LeftoverScanner::pathUnderProtectedRoot(
+        QStringLiteral("e:\\users\\default\\AppData\\Local\\Acme"), paths, QString()));
+    QVERIFY(
+        LeftoverScanner::pathUnderProtectedRoot(QStringLiteral("D:\\Windows"), paths, QString()));
+    // A sibling that only shares a prefix is not inside it, and an unrelated folder is not.
+    QVERIFY(!LeftoverScanner::pathUnderProtectedRoot(
+        QStringLiteral("D:\\ProgramData\\MicrosoftEdgeLeftovers"), paths, QString()));
+    QVERIFY(!LeftoverScanner::pathUnderProtectedRoot(
+        QStringLiteral("D:\\ProgramData\\Acme"), paths, QString()));
+    // The program's own trusted install folder strictly below a protected root stays exempt.
+    QVERIFY(!LeftoverScanner::pathUnderProtectedRoot(
+        QStringLiteral("D:\\Program Files\\Windows\\Acme\\cache"),
+        paths,
+        QStringLiteral("D:\\Program Files\\Windows\\Acme")));
+}
+
+void LeftoverScannerTests::liveSystemFolders_comeFromTheKnownFolderApi() {
+    const LeftoverScanner::SystemFolders live = LeftoverScanner::liveSystemFolders();
+    for (const QString& folder : {live.windows,
+                                  live.program_files,
+                                  live.program_files_common,
+                                  live.program_data,
+                                  live.user_profiles,
+                                  live.public_profile}) {
+        QVERIFY2(!folder.isEmpty() && QDir::isAbsolutePath(folder) && QFileInfo(folder).isDir(),
+                 qPrintable(folder));
+    }
+    const QStringList paths = LeftoverScanner::protectedPathsFor(live);
+    QCOMPARE(paths.size(), 9);
+    QVERIFY(QFileInfo(paths.at(1)).isDir());  // <Windows>\System32 exists on any Windows
 }
 
 QTEST_GUILESS_MAIN(LeftoverScannerTests)

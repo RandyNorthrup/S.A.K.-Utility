@@ -12538,8 +12538,18 @@ void PartitionManagerPanel::onRepairBoot() {
     if (!ok) {
         return;
     }
+    // The running system's Windows folder as the OS reports it: the repair rebuilds the boot
+    // files of the Windows that is running, which is not always C:\Windows.
+    const QString system32 = sak::windowsDirPath(QStringLiteral("System32"));
+    if (system32.isEmpty()) {
+        Q_EMIT statusMessage(tr("Boot repair cancelled: this PC's Windows folder could not be "
+                                "found"),
+                             sak::kTimerStatusDefaultMs);
+        return;
+    }
     QJsonObject payload;
-    payload[QStringLiteral("windows_path")] = QStringLiteral("C:\\Windows");
+    payload[QStringLiteral("windows_path")] =
+        QDir::toNativeSeparators(QFileInfo(system32).absolutePath());
     payload[QStringLiteral("esp_letter")] = QStringLiteral("S");
     payload[QStringLiteral("boot_mode")] = mode;
     queueOperation(PartitionOperationType::RepairBoot, *target, expected_layout_hash, payload);

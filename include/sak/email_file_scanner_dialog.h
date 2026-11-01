@@ -14,6 +14,7 @@ class QProgressBar;
 class QPushButton;
 class QTableWidget;
 class QVBoxLayout;
+class EmailFileScannerDialogTests;  // unit-test friend (global namespace)
 
 namespace sak {
 
@@ -21,6 +22,8 @@ namespace sak {
 ///        the user pick one to open.
 class EmailFileScannerDialog : public QDialog {
     Q_OBJECT
+
+    friend class ::EmailFileScannerDialogTests;
 
 public:
     explicit EmailFileScannerDialog(QWidget* parent = nullptr);
