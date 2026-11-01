@@ -26,6 +26,7 @@ private Q_SLOTS:
     void nestedAndDirectProcessBinaryReadsAreBlocked();
     void blocksBroadRegistryRecursion();
     void registryRecursionCheckIsClauseScoped();
+    void scriptBlockBodyStaysWithTheValueItActsOn();
     void blocksPowerShellPidMutation();
     void blocksChecksumBypass();
     void checksumBypassCatchesEverySpellingAndSubstitution();
@@ -136,6 +137,31 @@ void AiCommandGuardTests::registryRecursionCheckIsClauseScoped() {
             qPrintable(recurse));
     }
     QVERIFY(blockError(QStringLiteral("Get-ChildItem HKLM:\\Software -Rec:$false")).isEmpty());
+}
+
+void AiCommandGuardTests::scriptBlockBodyStaysWithTheValueItActsOn() {
+    // GUARD-6 residual, kept on purpose. A `{ }` block is not a clause separator, so
+    // `if (Test-Path HKLM:\Software) { gci C:\x -Recurse }` over-blocks. Splitting at braces --
+    // even a split that keeps a `${env:TEMP}` variable whole -- moves a loop or script block's
+    // body into a clause apart from the value it acts on, and the guards' own targets, written
+    // through a loop variable or a script-block parameter, would then pass. Telling the `if`
+    // apart from the `foreach` needs variable data flow, not a better tokenizer.
+    const auto blockError = [](const QString& command) {
+        sak::ai::AiCommandRequest request;
+        request.command = command;
+        return sak::ai::evaluateCommandGuard(request).blockError();
+    };
+    const QString registry_scan = QStringLiteral(
+        "Blocked broad recursive registry scan. Query exact uninstall/vendor keys instead and cap "
+        "output with Select-Object -First.");
+    QCOMPARE(blockError(
+                 QStringLiteral("foreach ($k in 'HKLM:\\Software') { Get-ChildItem $k -Recurse }")),
+             registry_scan);
+    QCOMPARE(blockError(QStringLiteral("Invoke-Command -ScriptBlock { param($p) Get-ChildItem $p "
+                                       "-Recurse } -ArgumentList 'HKLM:\\Software'")),
+             registry_scan);
+    QVERIFY(blockError(QStringLiteral("foreach ($f in 'C:\\tools\\tool.exe') { Get-Content $f }"))
+                .startsWith(QStringLiteral("Blocked binary file dump.")));
 }
 
 void AiCommandGuardTests::blocksPowerShellPidMutation() {
