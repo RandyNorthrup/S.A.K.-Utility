@@ -346,7 +346,9 @@ that exists for reasons that no longer apply. Owner decisions (2026-10-24):
   preflight/verification scans and queued operations (`ElevationBroker::sessionBroker`; other
   inventory callers -- File Management, Organizer, Advanced Search -- share it too). A helper
   near its 5-minute idle timeout is retired before a task is sent, never handed one. Still per
-  feature: the AI panel and quick actions each keep one long-lived broker. Not changed, with
+  feature: the AI panel keeps one long-lived broker for elevated PowerShell, and the quick-action
+  controller starts a broker (one helper, one UAC prompt) per elevated run and closes it when the
+  run ends (corrected 2026-11-01; it said both kept one long-lived broker). Not changed, with
   reasons: the Image Flasher writes raw disks in-process and so requires the whole app elevated
   (restart-as-admin gate); SMART runs smartctl unelevated and reports "re-run with administrator
   privileges". Routing either through the helper needs a new privileged helper task (raw image
@@ -494,6 +496,56 @@ that exists for reasons that no longer apply. Owner decisions (2026-10-24):
   `--elevated-relaunch` launch waits for the first instance and then starts); the UAC path itself
   needs an interactive run.
 
+#### Dedup package status (2026-11-01)
+
+The duplicate implementations approved for removal as a class (behavior audit above). Each group
+kept the most hardened copy, routed every caller to it and deleted the rest; lines are the
+deletions of that group's commits (`git show --numstat`).
+
+- DONE (af313a2f; -2848 lines): zip. Kept the explorer's in-process engine (FileExplorerArchiveService:
+  bounded central directory, entry/expansion caps, zip-slip and junction refusal, rollback). The
+  .nupkg extract/repack (.NET ZipFile in a PowerShell child) now calls it; a skipped entry fails a
+  package. UserDataManager's Compress-/Expand-Archive backup API had no caller since dec179d8 and
+  is deleted with its test; its one live function (scanForAppData) moved into its only caller.
+  Chocolatey 2.7.5 installs a repacked .nupkg (directory entries, no OPC parts). The advanced
+  search's own zip reader is a different job (reads entry text from an already-bounded buffer for
+  search, never writes) and stays.
+- DONE (7d17abbe; -577 lines): NuGet. Kept the paginated FindPackagesById client (every rel=next
+  page, same origin, well-formed body), now PackageInternalizationEngine::fetchFeedVersions; version
+  resolution, both .nupkg hash lookups and both verified downloads use it. Fixed by the merge:
+  resolution and the hash lookup read page 1 only. Version resolution keeps its 3 attempts (a Stop
+  now ends the wait); the hash is looked up before the download.
+- DONE (1bfcc2e8; -218 lines): Qt deploy. Kept scripts/deploy_qt_runtime.ps1 (validated windeployqt
+  plan), now called by stage_portable_release.ps1 on the staged exe; the unused CMake install route
+  is deleted. The package no longer ships platforms/qoffscreen.dll (a test-suite plugin the
+  stager's directory copy swept in).
+- DONE (472bc697; -243 lines): elevation. One check (ElevationManager::isElevated, four forwarding
+  wrappers and canElevate deleted), one UAC request (launchElevated, shared by the relaunch and the
+  elevated helper; a decline is elevation_denied for both), one relaunch (requestElevatedRestart,
+  shared by Run as Admin and every elevation gate: a gate now asks about running work first and
+  shows nothing when UAC is declined). Broker ownership is unchanged; see the quick-action item.
+- NOT a duplicate, left as is: the two Generate Report features. The Diagnostics panel's
+  "Generate HTML Report" (`DiagnosticReportGenerator`) renders the results of scans the technician
+  ran -- benchmarks, SMART verdicts, stress test, findings, ticket fields -- as HTML/JSON/CSV;
+  "Generate Report" (`GenerateSystemReportAction`, also the assistant's read-only
+  `action.generate_system_report`) collects a live inventory -- Windows licence status, uptime,
+  network adapters, volumes -- into a text file. Five hardware fields overlap; neither can replace
+  the other without new collection work, so neither is redundant as the approval requires. Open
+  for the owner: the two buttons share a name on one panel, and the quick action writes to a fixed
+  `C:/SAK_Backups` without showing the path.
+- OPEN: the three quick-action controllers (User Migration, Diagnostics and Network panels each
+  own a `QuickActionController` and their own action objects; the assistant's `AppActionService`
+  owns a fourth with all ten actions). One app-scoped controller needs three things the panels do
+  not do today, each a behaviour change with no panel-level test: the output folder travels with
+  each request (the assistant's staging folder and the BitLocker folder are set on the shared action
+  objects today, so a queued run would write into the other caller's folder); each panel reacts
+  only to its own actions' signals; a click while another caller's action runs says it is queued.
+  Not done in this package for want of a test that drives the panels.
+
+Fixed in the kept copies on the way (each its own guard and drill): the archive engine wrote
+archives QZipWriter cannot encode (65,536+ entries read back as 0, 4 GiB+ wrapped), and followed
+directory junctions when compressing (2b98a864).
+
 ### Open release infrastructure
 
 - Tiered gates: the local tiers (T1 commit hooks, T1p pre-push, manual-stage T2-T4 twins), the
@@ -523,6 +575,11 @@ that exists for reasons that no longer apply. Owner decisions (2026-10-24):
   among themselves, not against a developer's running app. Whether such an app was behind the one
   2026-10-24 failure cannot be established now; the item stays open until it recurs with a cause or
   a run of full suites shows it gone.
+- Intermittent, cause unidentified (2026-11-01): `test_ai_assistant_panel_tool_dispatch`
+  `sessionPickerListsSessionsOffTheGuiThread` failed once (`itemText(0)` did not start with
+  "Listed chat") in a `-j 6` run beside two 30-75 s archive suites, and passed when rerun alone.
+  The run touched no session-picker code; the case waits on an off-thread listing, so a load-bound
+  wait is the likely shape, not established.
 - One shared core library so first-party sources compile once instead of once per test target.
 - Done 2026-10-24: the Current Certification State block in `docs/PARTITION_MANAGER_CERTIFICATION.md`
   is generated from the computed claim level and both certification matrices, the T3 check fails
