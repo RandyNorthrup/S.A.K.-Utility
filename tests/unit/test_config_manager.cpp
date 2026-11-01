@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 /// @file test_config_manager.cpp
-/// @brief Unit tests for ConfigManager singleton -- load, save, defaults, signals
+/// @brief Unit tests for ConfigManager singleton -- load, save, defaults, retired settings
 
 #include "sak/app_paths.h"
 #include "sak/config_manager.h"
@@ -14,7 +14,8 @@
 #include <QFile>
 #include <QProcessEnvironment>
 #include <QRegularExpression>
-#include <QSignalSpy>
+#include <QSettings>
+#include <QTemporaryDir>
 #include <QtTest/QtTest>
 #include <QVariant>
 
@@ -22,6 +23,7 @@ class ConfigManagerTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void initTestCase();
     void portableSettingsLiveInTheDataFolder();
     void noSourceWritesSettingsToTheRegistry();
     void dataRootHasNoSilentFallback();
@@ -41,21 +43,8 @@ private Q_SLOTS:
 
     // Defaults
     void resetToDefaults_restoresValues();
-
-    // Signal emission
-    void setValue_emitsSignal();
-
-    // Typed accessors -- backup
-    void backupThreadCount_setGet();
-    void backupVerifyMD5_setGet();
-    void lastBackupLocation_setGet();
-
-    // Typed accessors -- organizer
-    void organizerPreviewMode_setGet();
-
-    // Typed accessors -- duplicate finder
-    void duplicateMinFileSize_setGet();
-    void duplicateKeepStrategy_setGet();
+    void removeRetiredKeys_dropsOnlyGoneSettings();
+    void removeRetiredKeys_writesNothingWithoutThem();
 
     // Typed accessors -- image flasher
     void imageFlasherValidationMode_setGet();
@@ -140,116 +129,109 @@ void ConfigManagerTests::remove_key() {
 void ConfigManagerTests::resetToDefaults_restoresValues() {
     auto& mgr = sak::ConfigManager::instance();
 
-    // Override a known default
-    mgr.setBackupThreadCount(99);
-    QCOMPARE(mgr.getBackupThreadCount(), 99);
+    // Override a known default. Read the raw key: the getter's own fallback is also "system".
+    mgr.setThemePreference(QStringLiteral("dark"));
+    QCOMPARE(mgr.getValue("ui/theme").toString(), QStringLiteral("dark"));
 
-    // Reset
     mgr.resetToDefaults();
 
-    // resetToDefaults restores the exact kDefaultBackupThreadCount (mirrors the reclamp
-    // sibling's QCOMPARE at getBackupThreadCount()==4).
-    int defaultCount = mgr.getBackupThreadCount();
-    QCOMPARE(defaultCount, 4);
+    QVERIFY(mgr.contains("ui/theme"));
+    QCOMPARE(mgr.getValue("ui/theme").toString(), QStringLiteral("system"));
 }
 
-// ============================================================================
-// Signal
-// ============================================================================
+// Settings that are gone: the SettingsDialog nothing opened, User Migration's popup whose values
+// no backup read, defaults nothing read, and a flag nothing set.
+namespace {
+const QStringList& retiredKeysForTest() {
+    static const QStringList keys{QStringLiteral("image_flasher/show_system_drive_warning"),
+                                  QStringLiteral("backup/thread_count"),
+                                  QStringLiteral("backup/verify_md5"),
+                                  QStringLiteral("backup/last_location"),
+                                  QStringLiteral("organizer/preview_mode"),
+                                  QStringLiteral("duplicate/minimum_file_size"),
+                                  QStringLiteral("duplicate/keep_strategy"),
+                                  QStringLiteral("ui/restore_window_geometry"),
+                                  QStringLiteral("quick_actions/backup_location"),
+                                  QStringLiteral("quick_actions/confirm_before_execute"),
+                                  QStringLiteral("quick_actions/show_notifications"),
+                                  QStringLiteral("quick_actions/enable_logging"),
+                                  QStringLiteral("quick_actions/compress_backups")};
+    return keys;
+}
+}  // namespace
 
-void ConfigManagerTests::setValue_emitsSignal() {
+// The real load path: a Utility.ini written by an older build still carries the retired keys;
+// constructing the store (the app's first instance() call) drops them and keeps the rest. Runs
+// before any test function, because cleanup() constructs the singleton after the first one.
+void ConfigManagerTests::initTestCase() {
+    {
+        QSettings seed(sak::app_paths::configFilePath(), QSettings::IniFormat);
+        for (const QString& key : retiredKeysForTest()) {
+            seed.setValue(key, QStringLiteral("old"));
+        }
+        seed.setValue(QStringLiteral("ui/theme"), QStringLiteral("dark"));
+        seed.sync();
+        QCOMPARE(seed.status(), QSettings::NoError);
+    }
     auto& mgr = sak::ConfigManager::instance();
-    QSignalSpy spy(&mgr, &sak::ConfigManager::settingChanged);
-    QVERIFY(spy.isValid());
-
-    mgr.setValue("test/signal_key", "signal_value");
-    QCOMPARE(spy.count(), 1);
-
-    auto args = spy.takeFirst();
-    QCOMPARE(args.at(0).toString(), QString("test/signal_key"));
-    QCOMPARE(args.at(1).toString(), QString("signal_value"));
+    for (const QString& key : retiredKeysForTest()) {
+        QVERIFY2(!mgr.contains(key), qPrintable(key));
+    }
+    QCOMPARE(mgr.getValue("ui/theme").toString(), QStringLiteral("dark"));
 }
 
-// ============================================================================
-// Typed Accessors -- Backup
-// ============================================================================
+void ConfigManagerTests::removeRetiredKeys_dropsOnlyGoneSettings() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QSettings store(dir.filePath(QStringLiteral("cfg.ini")), QSettings::IniFormat);
+    for (const QString& key : retiredKeysForTest()) {
+        store.setValue(key, 1);
+    }
+    store.setValue(QStringLiteral("image_flasher/buffer_size"), 2048);
+    store.setValue(QStringLiteral("advsearch/max_results"), 50);
+    store.setValue(QStringLiteral("future/unknown_feature"), 9001);
 
-void ConfigManagerTests::backupThreadCount_setGet() {
-    auto& mgr = sak::ConfigManager::instance();
-    mgr.setBackupThreadCount(8);
-    QCOMPARE(mgr.getBackupThreadCount(), 8);
+    sak::ConfigManager::removeRetiredKeys(store);
 
-    // Second arm: the setter REFUSES non-positive input outright (early return, no
-    // write, hence no settingChanged -- config_manager.cpp:287-293). That is a
-    // different contract from "stored, then re-clamped on read", so the previously
-    // stored 8 must survive untouched. Read the RAW key: the typed getter's own
-    // re-clamp would mask an overwritten value with the same 4 either way.
-    QSignalSpy spy(&mgr, &sak::ConfigManager::settingChanged);
-    QVERIFY(spy.isValid());
-    mgr.setBackupThreadCount(0);
-    mgr.setBackupThreadCount(-5);
-    QCOMPARE(spy.count(), 0);
-    QCOMPARE(mgr.getValue("backup/thread_count").toInt(), 8);
-    QCOMPARE(mgr.getBackupThreadCount(), 8);
+    QStringList left = store.allKeys();
+    left.sort();
+    QCOMPARE(left,
+             (QStringList{QStringLiteral("advsearch/max_results"),
+                          QStringLiteral("future/unknown_feature"),
+                          QStringLiteral("image_flasher/buffer_size")}));
 }
 
-void ConfigManagerTests::backupVerifyMD5_setGet() {
-    auto& mgr = sak::ConfigManager::instance();
-    mgr.setBackupVerifyMD5(true);
-    QVERIFY(mgr.getBackupVerifyMD5());
-    mgr.setBackupVerifyMD5(false);
-    QVERIFY(!mgr.getBackupVerifyMD5());
-}
+// A store with no retired keys is not rewritten: a comment line, which QSettings drops whenever
+// it rewrites the file, survives.
+void ConfigManagerTests::removeRetiredKeys_writesNothingWithoutThem() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("cfg.ini"));
+    {
+        QSettings seed(path, QSettings::IniFormat);
+        seed.setValue(QStringLiteral("ui/theme"), QStringLiteral("light"));
+        seed.sync();
+    }
+    const QByteArray marker = QByteArrayLiteral("; sak-no-rewrite-marker\n");
+    {
+        QFile raw(path);
+        QVERIFY(raw.open(QIODevice::Append));
+        QCOMPARE(raw.write(marker), static_cast<qint64>(marker.size()));
+    }
+    QFile before_file(path);
+    QVERIFY(before_file.open(QIODevice::ReadOnly));
+    const QByteArray before = before_file.readAll();
+    before_file.close();
 
-void ConfigManagerTests::lastBackupLocation_setGet() {
-    auto& mgr = sak::ConfigManager::instance();
-    // Absent-key contract first: the getter's default is an EMPTY string
-    // (config_manager.cpp:304), never a guessed path.
-    mgr.remove("backup/last_location");
-    QCOMPARE(mgr.getLastBackupLocation(), QString());
-    mgr.setLastBackupLocation("C:/Backups/test");
-    QCOMPARE(mgr.getLastBackupLocation(), QString("C:/Backups/test"));
-    // Pin the persisted key name too: setter and getter agree by construction, so a
-    // symmetric rename round-trips green while orphaning every already-stored
-    // last-backup location on upgrade.
-    QCOMPARE(mgr.getValue("backup/last_location").toString(), QString("C:/Backups/test"));
-}
+    {
+        QSettings store(path, QSettings::IniFormat);
+        sak::ConfigManager::removeRetiredKeys(store);
+        store.sync();
+    }
 
-// ============================================================================
-// Typed Accessors -- Organizer
-// ============================================================================
-
-void ConfigManagerTests::organizerPreviewMode_setGet() {
-    auto& mgr = sak::ConfigManager::instance();
-    // `true` is BOTH the initialized default (config_manager.cpp:127-129) and the
-    // getter's own fallback (config_manager.cpp:313), and cleanup() re-runs
-    // resetToDefaults() before every case -- so writing true and reading true is
-    // green with the setter entirely gutted. Drive `false`, the value only a real
-    // write can produce, and pin the raw key so a symmetric key rename cannot hide
-    // inside the setter/getter pair.
-    mgr.setOrganizerPreviewMode(false);
-    QVERIFY(!mgr.getOrganizerPreviewMode());
-    QVERIFY(mgr.contains("organizer/preview_mode"));
-    QCOMPARE(mgr.getValue("organizer/preview_mode").toBool(), false);
-    mgr.setOrganizerPreviewMode(true);
-    QVERIFY(mgr.getOrganizerPreviewMode());
-    QCOMPARE(mgr.getValue("organizer/preview_mode").toBool(), true);
-}
-
-// ============================================================================
-// Typed Accessors -- Duplicate Finder
-// ============================================================================
-
-void ConfigManagerTests::duplicateMinFileSize_setGet() {
-    auto& mgr = sak::ConfigManager::instance();
-    mgr.setDuplicateMinimumFileSize(1024);
-    QCOMPARE(mgr.getDuplicateMinimumFileSize(), qint64{1024});
-}
-
-void ConfigManagerTests::duplicateKeepStrategy_setGet() {
-    auto& mgr = sak::ConfigManager::instance();
-    mgr.setDuplicateKeepStrategy("newest");
-    QCOMPARE(mgr.getDuplicateKeepStrategy(), QString("newest"));
+    QFile after_file(path);
+    QVERIFY(after_file.open(QIODevice::ReadOnly));
+    QCOMPARE(after_file.readAll(), before);
 }
 
 // ============================================================================
@@ -342,15 +324,6 @@ void ConfigManagerTests::typedGetters_reclampOutOfRangeStoredValues() {
     auto& mgr = sak::ConfigManager::instance();
 
     // Poke invalid values straight into the store, bypassing the setter guards.
-    mgr.setValue("backup/thread_count", -5);
-    QCOMPARE(mgr.getBackupThreadCount(), 4);
-
-    mgr.setValue("duplicate/minimum_file_size", qint64{-1});
-    QCOMPARE(mgr.getDuplicateMinimumFileSize(), qint64{0});
-
-    mgr.setValue("duplicate/keep_strategy", QString());
-    QCOMPARE(mgr.getDuplicateKeepStrategy(), QString("oldest"));
-
     mgr.setValue("image_flasher/validation_mode", QString());
     QCOMPARE(mgr.getImageFlasherValidationMode(), QString("full"));
     // The mode guard is a WHITELIST (config_manager.cpp:49-55), not an emptiness
@@ -396,13 +369,13 @@ void ConfigManagerTests::clear_removesAllKeys() {
     // that lives inside one of them.
     mgr.setValue("foreign/unknown_feature", 9001);
     QVERIFY(mgr.contains("test/clear_me"));
-    QVERIFY(mgr.contains("backup/thread_count"));
+    QVERIFY(mgr.contains("ui/theme"));
     QCOMPARE(mgr.storedSchemaVersion(), sak::ConfigManager::kCurrentSchemaVersion);
 
     mgr.clear();
     QVERIFY(!mgr.contains("test/clear_me"));
     QVERIFY(!mgr.contains("foreign/unknown_feature"));
-    QVERIFY(!mgr.contains("backup/thread_count"));
+    QVERIFY(!mgr.contains("ui/theme"));
     // The meta schema stamp goes too: resetToDefaults() re-stamps it right after
     // clear() (config_manager.cpp:214-220), and a stamp that survives leaves a
     // newer-than-current store permanently unhealthy across a "reset to defaults".

@@ -8,9 +8,7 @@
 
 #include "sak/actions/backup_bitlocker_keys_action.h"
 #include "sak/actions/screenshot_settings_action.h"
-#include "sak/config_manager.h"
 #include "sak/detachable_log_window.h"
-#include "sak/info_button.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/quick_action_controller.h"
@@ -22,10 +20,8 @@
 
 #include <QDateTime>
 #include <QDialog>
-#include <QDialogButtonBox>
 #include <QFileDialog>
 #include <QFont>
-#include <QFormLayout>
 #include <QFrame>
 #include <QGridLayout>
 #include <QGroupBox>
@@ -34,16 +30,12 @@
 #include <QMessageBox>
 #include <QProgressBar>
 #include <QScrollArea>
-#include <QSpinBox>
 #include <QVBoxLayout>
 
 namespace sak {
 
 namespace {
 
-constexpr int kUserMigrationSettingsDialogMinWidth = 440;
-constexpr int kBackupThreadCountMin = 1;
-constexpr int kBackupThreadCountMax = 16;
 constexpr int kProgressBarMinimum = 0;
 
 }  // namespace
@@ -92,18 +84,13 @@ void UserMigrationPanel::setupUi() {
 
     main_layout->addStretch();
 
-    // Bottom row: Settings + Log toggle
+    // Bottom row: Log toggle
     auto* bottom_layout = new QHBoxLayout();
     bottom_layout->setContentsMargins(sak::ui::kMarginMedium,
                                       sak::ui::kMarginTight,
                                       sak::ui::kMarginMedium,
                                       sak::ui::kMarginSmall);
 
-    auto* settings_btn = new QPushButton(tr("Settings"), this);
-    settings_btn->setAccessibleName(QStringLiteral("User Migration Settings"));
-    settings_btn->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    connect(settings_btn, &QPushButton::clicked, this, &UserMigrationPanel::onSettingsClicked);
-    bottom_layout->addWidget(settings_btn);
 
     m_logToggle = new LogToggleSwitch(tr("Log"), this);
     bottom_layout->addWidget(m_logToggle);
@@ -395,76 +382,6 @@ void UserMigrationPanel::onQuickActionError(QuickAction* action, const QString& 
     sak::logError("Quick action error: {} - {}",
                   action->name().toStdString(),
                   error_message.toStdString());
-}
-
-void UserMigrationPanel::onSettingsClicked() {
-    auto& config = ConfigManager::instance();
-
-    QDialog dialog(this);
-    dialog.setWindowTitle(tr("User Migration Settings"));
-    dialog.setMinimumWidth(kUserMigrationSettingsDialogMinWidth);
-    auto* layout = new QVBoxLayout(&dialog);
-
-    auto* form_layout = new QFormLayout();
-
-    auto* thread_spin = new QSpinBox(&dialog);
-    thread_spin->setRange(kBackupThreadCountMin, kBackupThreadCountMax);
-    thread_spin->setValue(config.getBackupThreadCount());
-    form_layout->addRow(
-        InfoButton::createInfoLabel(
-            tr("Thread Count:"),
-            tr("Number of parallel copy threads \u2014 higher values speed up backup but increase "
-               "CPU and disk I/O load"),
-            &dialog),
-        thread_spin);
-
-    auto* verify_check = new QCheckBox(tr("Verify files using MD5 hash after backup"), &dialog);
-    verify_check->setChecked(config.getBackupVerifyMD5());
-    form_layout->addRow(
-        InfoButton::createInfoLabel(
-            tr("Verify MD5:"),
-            tr("Re-read each copied file and verify its MD5 checksum matches the original \u2014 "
-               "slower but ensures integrity"),
-            &dialog),
-        verify_check);
-
-    auto* loc_row = new QHBoxLayout();
-    auto* loc_edit = new QLineEdit(config.getLastBackupLocation(), &dialog);
-    loc_edit->setReadOnly(true);
-    auto* browse_btn = new QPushButton(tr("Browse..."), &dialog);
-    browse_btn->setStyleSheet(sak::ui::kPrimaryButtonStyle);
-    connect(browse_btn, &QPushButton::clicked, &dialog, [&loc_edit, &dialog]() {
-        const QString dir = QFileDialog::getExistingDirectory(&dialog,
-                                                              tr("Select Backup Location"),
-                                                              loc_edit->text());
-        if (!dir.isEmpty()) {
-            loc_edit->setText(dir);
-        }
-    });
-    loc_row->addWidget(loc_edit);
-    loc_row->addWidget(browse_btn);
-    form_layout->addRow(
-        InfoButton::createInfoLabel(
-            tr("Backup Location:"), tr("Choose the destination folder for backup files"), &dialog),
-        loc_row);
-
-    layout->addLayout(form_layout);
-
-    auto* buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    layout->addWidget(buttons);
-
-    if (dialog.exec() == QDialog::Accepted) {
-        config.setBackupThreadCount(thread_spin->value());
-        config.setBackupVerifyMD5(verify_check->isChecked());
-        config.setLastBackupLocation(loc_edit->text());
-        config.sync();
-        appendLog(QString("Settings updated: threads=%1, verify=%2, location=%3")
-                      .arg(thread_spin->value())
-                      .arg(verify_check->isChecked() ? "yes" : "no")
-                      .arg(loc_edit->text()));
-    }
 }
 
 }  // namespace sak

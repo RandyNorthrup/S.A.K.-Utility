@@ -166,11 +166,6 @@ public Q_SLOTS:
     void executeAction(const QString& action_name, bool require_confirmation = true);
 
     /**
-     * @brief Scan all actions
-     */
-    void scanAllActions();
-
-    /**
      * @brief Cancel current action
      */
     void cancelCurrentAction();

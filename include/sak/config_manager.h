@@ -141,26 +141,11 @@ public:
     /// Persisted schema version, or kNoSchemaVersion if the key is absent.
     [[nodiscard]] int storedSchemaVersion() const;
 
-    // Backup settings
-    [[nodiscard]] int getBackupThreadCount() const;
-    void setBackupThreadCount(int count);
-
-    [[nodiscard]] bool getBackupVerifyMD5() const;
-    void setBackupVerifyMD5(bool verify);
-
-    [[nodiscard]] QString getLastBackupLocation() const;
-    void setLastBackupLocation(const QString& path);
-
-    // Organizer settings
-    [[nodiscard]] bool getOrganizerPreviewMode() const;
-    void setOrganizerPreviewMode(bool preview);
-
-    // Duplicate finder settings
-    [[nodiscard]] qint64 getDuplicateMinimumFileSize() const;
-    void setDuplicateMinimumFileSize(qint64 size);
-
-    [[nodiscard]] QString getDuplicateKeepStrategy() const;
-    void setDuplicateKeepStrategy(const QString& strategy);
+    /// Remove the keys of settings this build no longer has (each listed with its reason in
+    /// config_manager.cpp), so a stored value cannot outlive the control it described. Writes
+    /// only when a retired key is present. Runs with the defaults on every load and reset.
+    /// Pure + static for unit testing: it touches only `settings`.
+    static void removeRetiredKeys(QSettings& settings);
 
     // Image Flasher settings
     [[nodiscard]] QString getImageFlasherValidationMode() const;
@@ -185,9 +170,6 @@ public:
     void setImageFlasherEnableNotifications(bool enable);
 
     // UI settings
-    [[nodiscard]] bool getRestoreWindowGeometry() const;
-    void setRestoreWindowGeometry(bool restore);
-
     [[nodiscard]] QByteArray getWindowGeometry() const;
     void setWindowGeometry(const QByteArray& geometry);
 
@@ -199,20 +181,11 @@ public:
     [[nodiscard]] QString getThemePreference() const;
     void setThemePreference(const QString& preference);
 
-Q_SIGNALS:
-    /**
-     * @brief Emitted when a setting changes
-     * @param key Configuration key
-     * @param value New value
-     */
-    void settingChanged(const QString& key, const QVariant& value);
-
 private:
     explicit ConfigManager(QObject* parent = nullptr);
     ~ConfigManager() override = default;
 
     void initializeDefaults();
-    void initializeBackupAndOrganizerDefaults();
     void initializeFlasherDefaults();
     void initializeUiDefaults();
 

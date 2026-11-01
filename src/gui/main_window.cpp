@@ -1857,13 +1857,6 @@ void MainWindow::appendLogIfActive(int tab_idx, const QString& formatted) {
     }
 }
 
-void MainWindow::setProgressVisible(bool visible) {
-    if (m_progress_bar != nullptr) {
-        m_progress_bar->setVisible(visible);
-    }
-}
-
-
 void MainWindow::onTabChanged(int index) {
     if (m_shutting_down) {
         return;
@@ -1970,11 +1963,8 @@ QShortcut* MainWindow::addWindowShortcut(const QKeySequence& sequence) {
 void MainWindow::loadWindowState() {
     Q_ASSERT(m_tab_widget);
     const auto& config = ConfigManager::instance();
-
-    if (config.getRestoreWindowGeometry()) {
-        restoreGeometry(config.getWindowGeometry());
-        restoreState(config.getWindowState());
-    }
+    restoreGeometry(config.getWindowGeometry());
+    restoreState(config.getWindowState());
 
     // Always start on the first registered panel. With AI enabled this is AI Assistant.
     m_tab_widget->setCurrentIndex(0);

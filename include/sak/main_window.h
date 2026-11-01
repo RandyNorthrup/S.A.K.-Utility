@@ -93,12 +93,6 @@ public Q_SLOTS:
      */
     void updateProgress(int current, int maximum);
 
-    /**
-     * @brief Show/hide progress bar
-     * @param visible True to show, false to hide
-     */
-    void setProgressVisible(bool visible);
-
     /// @brief Restore the window if minimized and bring it to the foreground. A second launch
     ///        on the same data folder asks for this (SingleInstanceGuard); a window that was
     ///        never shown (a headless smoke run) is left alone.

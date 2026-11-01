@@ -334,8 +334,8 @@ void QuickActionController::scanAction(const QString& action_name) {
 
     // Fail closed: never scan an action that is currently executing. On the non-elevated
     // path it lives on the execution worker thread, so moving it to the scan thread from
-    // here would fail and leave it wedged. Skip it, but keep the scan queue moving so a
-    // scanAllActions() sweep does not stall on the running action.
+    // here would fail and leave it wedged. Skip it, but keep the scan queue moving so scans
+    // queued behind it do not stall on the running action.
     if (action == m_current_execution_action) {
         Q_EMIT logMessage(QString("Skipped scan of '%1' while it is executing").arg(action_name));
         if ((m_current_scan_action == nullptr) && !m_scan_queue.isEmpty()) {
@@ -486,19 +486,6 @@ QString QuickActionController::prepareElevatedAction(QuickAction* action,
                                    kElevationRequestProgress);
     logOperation(action, QStringLiteral("Requesting administrator elevation via helper"));
     return task_id;
-}
-
-void QuickActionController::scanAllActions() {
-    // Queue all registered actions for sequential scan
-    m_scan_queue.clear();
-    for (const auto& action : m_actions) {
-        m_scan_queue.enqueue(action->name());
-    }
-
-    if ((m_current_scan_action == nullptr) && !m_scan_queue.isEmpty()) {
-        const QString next_action = m_scan_queue.dequeue();
-        scanAction(next_action);
-    }
 }
 
 void QuickActionController::cancelCurrentAction() {

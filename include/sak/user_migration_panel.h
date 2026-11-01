@@ -71,7 +71,6 @@ private Q_SLOTS:
     // Main actions
     void onBackupSelected();
     void onRestoreBackup();
-    void onSettingsClicked();
 
     // Quick action slots
     void onQuickActionClicked(QuickAction* action);

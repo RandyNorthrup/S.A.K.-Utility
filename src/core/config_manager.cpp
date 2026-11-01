@@ -13,13 +13,34 @@
 #include <QCoreApplication>
 #include <QtGlobal>
 
+#include <array>
 #include <stdexcept>
 
 namespace sak {
 
 namespace {
-constexpr int kDefaultBackupThreadCount = 4;
 constexpr int kDefaultLargeDriveThresholdGb = 128;
+
+// Settings that are gone, dropped from an existing store on load so a stored value cannot outlive
+// the control it described. image_flasher/show_system_drive_warning described a protection that
+// cannot be turned off. backup/* and quick_actions/* were written and read back only by settings
+// dialogs whose values nothing used (User Migration's popup and the never-opened SettingsDialog);
+// the organizer/duplicate defaults had no reader, and ui/restore_window_geometry had no writer.
+constexpr std::array<const char*, 13> kRetiredKeys = {
+    "image_flasher/show_system_drive_warning",
+    "backup/thread_count",
+    "backup/verify_md5",
+    "backup/last_location",
+    "organizer/preview_mode",
+    "duplicate/minimum_file_size",
+    "duplicate/keep_strategy",
+    "ui/restore_window_geometry",
+    "quick_actions/backup_location",
+    "quick_actions/confirm_before_execute",
+    "quick_actions/show_notifications",
+    "quick_actions/enable_logging",
+    "quick_actions/compress_backups",
+};
 // Sane upper bound (in MB) for the flasher read/write buffer. The settings dialog
 // caps at 512 MB; the only larger legitimate values are the app default and tests,
 // so anything above this can only come from a hand-edited INI or a foreign writer.
@@ -31,14 +52,6 @@ constexpr int kMaxImageFlasherBufferSizeMb = 4096;
 // have refused; fall back to the default when the stored value is invalid.
 int positiveOrDefault(int value, int default_value) {
     return value > 0 ? value : default_value;
-}
-
-qint64 nonNegativeOrDefault(qint64 value, qint64 default_value) {
-    return value >= 0 ? value : default_value;
-}
-
-QString nonEmptyOrDefault(const QString& value, const QString& default_value) {
-    return value.isEmpty() ? default_value : value;
 }
 
 // Getter-side enum enforcement: validation_mode must be one of the fixed set the
@@ -118,31 +131,21 @@ ConfigManager::ConfigManager(QObject* parent) : QObject(parent) {
 }
 
 void ConfigManager::initializeDefaults() {
-    initializeBackupAndOrganizerDefaults();
+    removeRetiredKeys(*m_settings);
     initializeFlasherDefaults();
     initializeUiDefaults();
 }
 
-void ConfigManager::initializeBackupAndOrganizerDefaults() {
-    // Only set defaults if keys don't exist
-    if (!contains("backup/thread_count")) {
-        setValue("backup/thread_count", kDefaultBackupThreadCount);
-    }
-    if (!contains("backup/verify_md5")) {
-        setValue("backup/verify_md5", true);
-    }
-    if (!contains("organizer/preview_mode")) {
-        setValue("organizer/preview_mode", true);
-    }
-    if (!contains("duplicate/minimum_file_size")) {
-        setValue("duplicate/minimum_file_size", 0);
-    }
-    if (!contains("duplicate/keep_strategy")) {
-        setValue("duplicate/keep_strategy", "oldest");
+void ConfigManager::removeRetiredKeys(QSettings& settings) {
+    // Removing a key the store does not hold changes nothing, so a store without them is not
+    // rewritten on every launch (removeRetiredKeys_writesNothingWithoutThem).
+    for (const char* key : kRetiredKeys) {
+        settings.remove(QLatin1String(key));
     }
 }
 
 void ConfigManager::initializeFlasherDefaults() {
+    // Only set defaults if keys don't exist
     if (!contains("image_flasher/validation_mode")) {
         setValue("image_flasher/validation_mode", "full");
     }
@@ -152,14 +155,8 @@ void ConfigManager::initializeFlasherDefaults() {
     if (!contains("image_flasher/unmount_on_completion")) {
         setValue("image_flasher/unmount_on_completion", true);
     }
-    // image_flasher/show_system_drive_warning is retired, not defaulted: the
-    // system-drive block is unconditional in both ImageFlasherPanel and
-    // FlashCoordinator, so the setting described protection that could not be turned
-    // off. Drop it from installs that already carry it, so a stored value cannot
-    // outlive the control it described.
-    if (contains("image_flasher/show_system_drive_warning")) {
-        remove("image_flasher/show_system_drive_warning");
-    }
+    // image_flasher/show_system_drive_warning is retired, not defaulted (kRetiredKeys): the
+    // system-drive block is unconditional in both ImageFlasherPanel and FlashCoordinator.
     if (!contains("image_flasher/show_large_drive_warning")) {
         setValue("image_flasher/show_large_drive_warning", true);
     }
@@ -175,9 +172,6 @@ void ConfigManager::initializeFlasherDefaults() {
 }
 
 void ConfigManager::initializeUiDefaults() {
-    if (!contains("ui/restore_window_geometry")) {
-        setValue("ui/restore_window_geometry", true);
-    }
     if (!contains("ui/theme")) {
         setValue("ui/theme", QStringLiteral("system"));
     }
@@ -197,7 +191,6 @@ void ConfigManager::setValue(const QString& key, const QVariant& value) {
         return;
     }
     m_settings->setValue(key, value);
-    Q_EMIT settingChanged(key, value);
 }
 
 bool ConfigManager::contains(const QString& key) const {
@@ -286,71 +279,6 @@ bool ConfigManager::sync() {
         return false;
     }
     return true;
-}
-
-// Backup settings
-int ConfigManager::getBackupThreadCount() const {
-    return positiveOrDefault(getValue("backup/thread_count", kDefaultBackupThreadCount).toInt(),
-                             kDefaultBackupThreadCount);
-}
-
-void ConfigManager::setBackupThreadCount(int count) {
-    if (count <= 0) {
-        logWarning("setBackupThreadCount: ignoring non-positive count {}", count);
-        return;
-    }
-    setValue("backup/thread_count", count);
-}
-
-bool ConfigManager::getBackupVerifyMD5() const {
-    return getValue("backup/verify_md5", true).toBool();
-}
-
-void ConfigManager::setBackupVerifyMD5(bool verify) {
-    setValue("backup/verify_md5", verify);
-}
-
-QString ConfigManager::getLastBackupLocation() const {
-    return getValue("backup/last_location", QString()).toString();
-}
-
-void ConfigManager::setLastBackupLocation(const QString& path) {
-    setValue("backup/last_location", path);
-}
-
-// Organizer settings
-bool ConfigManager::getOrganizerPreviewMode() const {
-    return getValue("organizer/preview_mode", true).toBool();
-}
-
-void ConfigManager::setOrganizerPreviewMode(bool preview) {
-    setValue("organizer/preview_mode", preview);
-}
-
-// Duplicate finder settings
-qint64 ConfigManager::getDuplicateMinimumFileSize() const {
-    return nonNegativeOrDefault(getValue("duplicate/minimum_file_size", 0).toLongLong(), 0);
-}
-
-void ConfigManager::setDuplicateMinimumFileSize(qint64 size) {
-    if (size < 0) {
-        logWarning("setDuplicateMinimumFileSize: ignoring negative size {}", size);
-        return;
-    }
-    setValue("duplicate/minimum_file_size", size);
-}
-
-QString ConfigManager::getDuplicateKeepStrategy() const {
-    return nonEmptyOrDefault(getValue("duplicate/keep_strategy", "oldest").toString(),
-                             QStringLiteral("oldest"));
-}
-
-void ConfigManager::setDuplicateKeepStrategy(const QString& strategy) {
-    if (strategy.isEmpty()) {
-        logWarning("setDuplicateKeepStrategy: ignoring empty strategy");
-        return;
-    }
-    setValue("duplicate/keep_strategy", strategy);
 }
 
 // Image Flasher settings
@@ -444,14 +372,6 @@ void ConfigManager::setThemePreference(const QString& preference) {
         return;
     }
     setValue("ui/theme", preference);
-}
-
-bool ConfigManager::getRestoreWindowGeometry() const {
-    return getValue("ui/restore_window_geometry", true).toBool();
-}
-
-void ConfigManager::setRestoreWindowGeometry(bool restore) {
-    setValue("ui/restore_window_geometry", restore);
 }
 
 QByteArray ConfigManager::getWindowGeometry() const {

@@ -27,7 +27,7 @@ namespace {
 constexpr int kFutureSchemaVersion = ConfigManager::kCurrentSchemaVersion + 1;
 
 // Distinctive probe values so a preserved key is unmistakable in a failure diff.
-constexpr int kBackupThreadProbe = 7;
+constexpr int kKnownKeyProbe = 7;
 constexpr int kPreciseProbe = 4242;
 constexpr int kFutureFeatureProbe = 9001;
 
@@ -83,7 +83,7 @@ void ConfigSchemaVersioningTests::reconcile_currentVersion_isByteIdenticalNoWrit
     {
         QSettings seed(path, QSettings::IniFormat);
         seed.setValue(schemaKey(), ConfigManager::kCurrentSchemaVersion);
-        seed.setValue(QStringLiteral("backup/thread_count"), kBackupThreadProbe);
+        seed.setValue(QStringLiteral("image_flasher/buffer_size"), kKnownKeyProbe);
         // A key outside this build's recognized set. Without one, "no write" is
         // unfalsifiable: a Current branch that prunes unrecognized keys has nothing to
         // prune here, never dirties the store, and leaves the file byte-identical.
@@ -112,7 +112,7 @@ void ConfigSchemaVersioningTests::reconcile_currentVersion_isByteIdenticalNoWrit
     store.sync();
 
     QCOMPARE(static_cast<int>(state), static_cast<int>(ConfigManager::SchemaVersionState::Current));
-    QCOMPARE(store.value(QStringLiteral("backup/thread_count")).toInt(), kBackupThreadProbe);
+    QCOMPARE(store.value(QStringLiteral("image_flasher/buffer_size")).toInt(), kKnownKeyProbe);
     QCOMPARE(store.value(QStringLiteral("future/unknown_feature")).toInt(), kFutureFeatureProbe);
     QCOMPARE(store.value(schemaKey()).toInt(), ConfigManager::kCurrentSchemaVersion);
     // Pin the PERSISTED name, not only schemaKey(): every seed and every read-back in this
@@ -126,8 +126,8 @@ void ConfigSchemaVersioningTests::reconcile_currentVersion_isByteIdenticalNoWrit
     // Exact key set: an at-current store is neither tidied nor added to.
     QStringList keys_after = store.allKeys();
     keys_after.sort();
-    const QStringList expected_keys{QStringLiteral("backup/thread_count"),
-                                    QStringLiteral("future/unknown_feature"),
+    const QStringList expected_keys{QStringLiteral("future/unknown_feature"),
+                                    QStringLiteral("image_flasher/buffer_size"),
                                     schemaKey()};
     QCOMPARE(keys_after, expected_keys);
     QCOMPARE(readAllBytes(path), before);
@@ -145,8 +145,8 @@ void ConfigSchemaVersioningTests::reconcile_olderVersion_migratesAndPreservesVal
         // One version behind whatever the current build is (future-proof as the
         // constant grows). With current == 1 this is kNoSchemaVersion.
         seed.setValue(schemaKey(), ConfigManager::kCurrentSchemaVersion - 1);
-        seed.setValue(QStringLiteral("backup/thread_count"), kBackupThreadProbe);
-        seed.setValue(QStringLiteral("duplicate/keep_strategy"), QStringLiteral("newest"));
+        seed.setValue(QStringLiteral("image_flasher/buffer_size"), kKnownKeyProbe);
+        seed.setValue(QStringLiteral("image_flasher/validation_mode"), QStringLiteral("quick"));
         // Both keys above are ones this build writes itself, so "no data loss" was only ever
         // probed against the allowlist. A migrate step that drops unrecognized keys -- the
         // exact line a future author edits when chaining a field migration in -- ships green.
@@ -160,16 +160,16 @@ void ConfigSchemaVersioningTests::reconcile_olderVersion_migratesAndPreservesVal
     QCOMPARE(static_cast<int>(state),
              static_cast<int>(ConfigManager::SchemaVersionState::Migrated));
     QCOMPARE(store.value(schemaKey()).toInt(), ConfigManager::kCurrentSchemaVersion);
-    QCOMPARE(store.value(QStringLiteral("backup/thread_count")).toInt(), kBackupThreadProbe);
-    QCOMPARE(store.value(QStringLiteral("duplicate/keep_strategy")).toString(),
-             QStringLiteral("newest"));
+    QCOMPARE(store.value(QStringLiteral("image_flasher/buffer_size")).toInt(), kKnownKeyProbe);
+    QCOMPARE(store.value(QStringLiteral("image_flasher/validation_mode")).toString(),
+             QStringLiteral("quick"));
     QCOMPARE(store.value(QStringLiteral("future/unknown_feature")).toInt(), kFutureFeatureProbe);
     // Stamping the version is the migration's ONLY write: nothing dropped, nothing invented.
     QStringList keys_after = store.allKeys();
     keys_after.sort();
-    const QStringList expected_keys{QStringLiteral("backup/thread_count"),
-                                    QStringLiteral("duplicate/keep_strategy"),
-                                    QStringLiteral("future/unknown_feature"),
+    const QStringList expected_keys{QStringLiteral("future/unknown_feature"),
+                                    QStringLiteral("image_flasher/buffer_size"),
+                                    QStringLiteral("image_flasher/validation_mode"),
                                     schemaKey()};
     QCOMPARE(keys_after, expected_keys);
 }
@@ -183,7 +183,7 @@ void ConfigSchemaVersioningTests::reconcile_legacyNoVersionKey_migratesAndPreser
 
     {
         QSettings seed(path, QSettings::IniFormat);
-        seed.setValue(QStringLiteral("backup/thread_count"), kBackupThreadProbe);
+        seed.setValue(QStringLiteral("image_flasher/buffer_size"), kKnownKeyProbe);
         // A pre-versioning store is the one MOST likely to carry keys this build has never
         // heard of, so it is the worst case for an allowlist prune -- and the only seeded key
         // above is one the build defaults itself.
@@ -198,13 +198,13 @@ void ConfigSchemaVersioningTests::reconcile_legacyNoVersionKey_migratesAndPreser
     QCOMPARE(static_cast<int>(state),
              static_cast<int>(ConfigManager::SchemaVersionState::Migrated));
     QCOMPARE(store.value(schemaKey()).toInt(), ConfigManager::kCurrentSchemaVersion);
-    QCOMPARE(store.value(QStringLiteral("backup/thread_count")).toInt(), kBackupThreadProbe);
+    QCOMPARE(store.value(QStringLiteral("image_flasher/buffer_size")).toInt(), kKnownKeyProbe);
     QCOMPARE(store.value(QStringLiteral("future/unknown_feature")).toInt(), kFutureFeatureProbe);
     // Adding the version key is the migration's ONLY write.
     QStringList keys_after = store.allKeys();
     keys_after.sort();
-    const QStringList expected_keys{QStringLiteral("backup/thread_count"),
-                                    QStringLiteral("future/unknown_feature"),
+    const QStringList expected_keys{QStringLiteral("future/unknown_feature"),
+                                    QStringLiteral("image_flasher/buffer_size"),
                                     schemaKey()};
     QCOMPARE(keys_after, expected_keys);
 }
@@ -220,7 +220,7 @@ void ConfigSchemaVersioningTests::reconcile_newerVersion_preservesUnknownKeysAnd
     {
         QSettings seed(path, QSettings::IniFormat);
         seed.setValue(schemaKey(), kFutureSchemaVersion);
-        seed.setValue(QStringLiteral("backup/thread_count"), kBackupThreadProbe);
+        seed.setValue(QStringLiteral("image_flasher/buffer_size"), kKnownKeyProbe);
         seed.setValue(QStringLiteral("future/unknown_feature"), kFutureFeatureProbe);
         seed.sync();
     }
@@ -252,12 +252,12 @@ void ConfigSchemaVersioningTests::reconcile_newerVersion_preservesUnknownKeysAnd
     // Version left intact so the newer build still recognizes its own store.
     QCOMPARE(store.value(schemaKey()).toInt(), kFutureSchemaVersion);
     // Known and unknown keys both preserved.
-    QCOMPARE(store.value(QStringLiteral("backup/thread_count")).toInt(), kBackupThreadProbe);
+    QCOMPARE(store.value(QStringLiteral("image_flasher/buffer_size")).toInt(), kKnownKeyProbe);
     QCOMPARE(store.value(QStringLiteral("future/unknown_feature")).toInt(), kFutureFeatureProbe);
     QStringList keys_after = store.allKeys();
     keys_after.sort();
-    const QStringList expected_keys{QStringLiteral("backup/thread_count"),
-                                    QStringLiteral("future/unknown_feature"),
+    const QStringList expected_keys{QStringLiteral("future/unknown_feature"),
+                                    QStringLiteral("image_flasher/buffer_size"),
                                     schemaKey()};
     QCOMPARE(keys_after, expected_keys);
     QCOMPARE(readAllBytes(path), before);
@@ -280,29 +280,19 @@ void ConfigSchemaVersioningTests::singleton_freshStore_isCurrentVersionAndHealth
     // in this file leans on cleanup()'s resetToDefaults() to hand back a well-formed store, so
     // the whole file would stay green. Read with no getter-side default so a dropped key cannot
     // be masked by the getter's own fallback.
-    QCOMPARE(mgr.getValue(QStringLiteral("backup/thread_count")).toInt(), 4);
-    // The REST of initializeBackupAndOrganizerDefaults() (config_manager.cpp:119-136). Only
-    // thread_count and keep_strategy were pinned, so deleting -- or flipping -- the other three
-    // default writes ships green here, and in test_config_manager.cpp too, whose
-    // backup/organizer/duplicate cases each SET a value first and never read a freshly reset
-    // store.
-    QVERIFY(mgr.contains(QStringLiteral("backup/verify_md5")));
-    QCOMPARE(mgr.getValue(QStringLiteral("backup/verify_md5")).toBool(), true);
-    QVERIFY(mgr.contains(QStringLiteral("organizer/preview_mode")));
-    QCOMPARE(mgr.getValue(QStringLiteral("organizer/preview_mode")).toBool(), true);
-    // 0 is also what an ABSENT key converts to, so contains() is what carries this one.
-    QVERIFY(mgr.contains(QStringLiteral("duplicate/minimum_file_size")));
-    QCOMPARE(mgr.getValue(QStringLiteral("duplicate/minimum_file_size")).toLongLong(), qint64{0});
-    QCOMPARE(mgr.getValue(QStringLiteral("duplicate/keep_strategy")).toString(),
-             QStringLiteral("oldest"));
-    QCOMPARE(mgr.getValue(QStringLiteral("duplicate/keep_strategy")).toString(),
-             QStringLiteral("oldest"));
+    QCOMPARE(mgr.getValue(QStringLiteral("image_flasher/buffer_size")).toInt(), 4096);
     QCOMPARE(mgr.getValue(QStringLiteral("image_flasher/validation_mode")).toString(),
              QStringLiteral("full"));
     QCOMPARE(mgr.getValue(QStringLiteral("image_flasher/max_concurrent_writes")).toInt(), 1);
-    QCOMPARE(mgr.getValue(QStringLiteral("ui/restore_window_geometry")).toBool(), true);
-    // The retired key must not come back.
-    QVERIFY(!mgr.contains(QStringLiteral("image_flasher/show_system_drive_warning")));
+    QCOMPARE(mgr.getValue(QStringLiteral("ui/theme")).toString(), QStringLiteral("system"));
+    // Retired settings must not come back as defaults.
+    for (const char* retired : {"image_flasher/show_system_drive_warning",
+                                "backup/thread_count",
+                                "organizer/preview_mode",
+                                "duplicate/keep_strategy",
+                                "ui/restore_window_geometry"}) {
+        QVERIFY2(!mgr.contains(QLatin1String(retired)), retired);
+    }
 }
 
 // Same-version write/read round-trip: a value persists and the schema version is

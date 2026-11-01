@@ -907,7 +907,6 @@ set(SAK_GUI_SOURCES
     src/gui/file_explorer_details_pane.cpp
     src/gui/file_explorer_style.cpp
     src/gui/file_management_explorer_panel.cpp
-    src/gui/log_viewer.cpp
     include/sak/main_window.h
     include/sak/running_work_exit_guard.h
     include/sak/user_migration_panel.h
@@ -924,9 +923,6 @@ set(SAK_GUI_SOURCES
     include/sak/file_explorer_details_pane.h
     include/sak/file_explorer_style.h
     include/sak/file_management_explorer_panel.h
-    include/sak/log_viewer.h
-    include/sak/settings_dialog.h
-    src/gui/settings_dialog.cpp
     src/gui/app_installation_panel.cpp
     src/gui/app_installation_panel_actions.cpp
     src/gui/app_installation_panel_table.cpp

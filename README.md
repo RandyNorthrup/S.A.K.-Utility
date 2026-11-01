@@ -816,10 +816,11 @@ administrator actions.
 
 ### Key Settings
 
-```ini
-[QuickActions]
-backup_location=C:/SAK_Backups
-```
+`Utility.ini` holds the theme (`[ui]` `theme=system`, `light` or `dark`, chosen from the status
+bar's Theme button), the window size and position, the Image Flasher options (`[image_flasher]`,
+from its Settings dialog), the Advanced Search and Advanced Uninstall preferences, and Partition
+Manager's quick-partition presets. Settings this build no longer has are removed from the file
+when the app starts. Other panels keep their UI state in `<app>/data/config/ui_state.ini`.
 
 ---
 
