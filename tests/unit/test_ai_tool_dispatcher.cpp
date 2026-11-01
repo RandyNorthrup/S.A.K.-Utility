@@ -28,6 +28,8 @@ private Q_SLOTS:
     void contradictorySuccessCountsAsHealthFailure();
     void businessFailuresDoNotTripHealth();
     void providerGatewayHealthKeyUsesCanonicalTarget();
+    void appActionAndPackageHealthIsPerTarget();
+    void leaseReleaseFailureNamesTheRealCause();
     void clearRegistrationsClearsHandlersAndCheckers();
 };
 
@@ -531,6 +533,70 @@ void AiToolDispatcherTests::providerGatewayHealthKeyUsesCanonicalTarget() {
     QCOMPARE(dispatcher.dispatch(sak::ai::AiToolPolicy::MutatingRequiresLease, request, string_args)
                  .health_key,
              expected);
+}
+
+void AiToolDispatcherTests::appActionAndPackageHealthIsPerTarget() {
+    // NEW-8. Only the provider gateway had a per-target health key. Every sak_app_action shared
+    // one key, as did every sak_package_manager call, so failures of ONE action or ONE package
+    // suppressed the whole tool for every other target.
+    sak::ai::AiToolDispatcher dispatcher;
+    sak::ai::AiLeaseManager leases;
+    sak::ai::AiToolHealthLedger ledger(1, 60'000, 60'000);  // one failure trips a key
+    dispatcher.setLeaseManager(&leases);
+    dispatcher.setHealthLedger(&ledger);
+    const auto failing = [](const QJsonObject&, const sak::ai::AiToolPolicyDecision&) {
+        return QJsonObject{{QStringLiteral("success"), false},
+                           {QStringLiteral("error_message"), QStringLiteral("target broke")}};
+    };
+    dispatcher.registerHandler(QStringLiteral("sak_app_action"), failing);
+    dispatcher.registerHandler(QStringLiteral("sak_package_manager"), failing);
+
+    sak::ai::AiToolCallRequest action;
+    action.tool_name = QStringLiteral("sak_app_action");
+    action.operation = QStringLiteral("run");
+    const auto run = [&](const sak::ai::AiToolCallRequest& request, const QJsonObject& args) {
+        return dispatcher.dispatch(sak::ai::AiToolPolicy::MutatingRequiresLease, request, args);
+    };
+    const QJsonObject broken_action{{QStringLiteral("action_id"), QStringLiteral("disk_check")}};
+    const QJsonObject other_action{{QStringLiteral("action_id"), QStringLiteral("sfc_scan")}};
+    QCOMPARE(run(action, broken_action).health_key,
+             QStringLiteral("sak_app_action:run:disk_check"));
+    QVERIFY(run(action, broken_action).health_suppressed);  // the broken target is tripped...
+    const auto other = run(action, other_action);           // ...and only that target
+    QVERIFY(!other.health_suppressed);
+    QVERIFY(other.dispatched);
+    QCOMPARE(other.health_key, QStringLiteral("sak_app_action:run:sfc_scan"));
+
+    sak::ai::AiToolCallRequest package;
+    package.tool_name = QStringLiteral("sak_package_manager");
+    package.operation = QStringLiteral("install");
+    package.user_message = QStringLiteral("Install the selected package");
+    const QJsonObject broken_package{{QStringLiteral("package_id"), QStringLiteral("brokenpkg")}};
+    const QJsonObject other_package{{QStringLiteral("package_id"), QStringLiteral("7zip")}};
+    QCOMPARE(run(package, broken_package).health_key,
+             QStringLiteral("sak_package_manager:install:brokenpkg"));
+    QVERIFY(run(package, broken_package).health_suppressed);
+    QVERIFY(!run(package, other_package).health_suppressed);
+
+    // A call that names no target keeps the operation-level key.
+    sak::ai::AiToolCallRequest search = package;
+    search.operation = QStringLiteral("search");
+    QCOMPARE(run(search, {}).health_key, QStringLiteral("sak_package_manager:search"));
+}
+
+void AiToolDispatcherTests::leaseReleaseFailureNamesTheRealCause() {
+    // NEW-9. The message blamed a TTL sweep -- leases have had no TTL since 38338649 -- and
+    // printed the full lease id, which is the bearer token that releases the lease.
+    const auto acquired = sak::ai::AiLeaseManager::acquire(QStringLiteral("message_probe"));
+    QVERIFY(acquired.granted);
+    const QString lease_id = acquired.lease.lease_id;
+    QVERIFY(sak::ai::AiLeaseManager::release(lease_id));
+
+    const QString message = sak::ai::AiToolDispatcher::leaseReleaseFailureMessage(lease_id);
+    QVERIFY2(!message.contains(QStringLiteral("TTL")), qPrintable(message));
+    QVERIFY2(!message.contains(lease_id), qPrintable(message));
+    QVERIFY2(message.contains(sak::ai::AiLeaseManager::publicLabel(lease_id)), qPrintable(message));
+    QVERIFY(message.contains(QStringLiteral("ownership was violated")));
 }
 
 void AiToolDispatcherTests::clearRegistrationsClearsHandlersAndCheckers() {

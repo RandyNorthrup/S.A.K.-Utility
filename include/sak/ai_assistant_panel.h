@@ -858,6 +858,8 @@ private:
         QString model;
         QString reasoning;
         ai::CancellationToken token;
+        // The user's own request for this turn: the only source of the workflow's user_message.
+        QString user_message;
     };
     // Reads session state and resolves + validates the requested workflow on the
     // GUI thread (called from the run_workflow async handler).
@@ -1087,7 +1089,11 @@ private:
     ai::AiModelClientFactory m_delegateSubagentModelFactoryOverride;
     std::unique_ptr<ChocolateyManager> m_chocoManager;
     std::unique_ptr<PackageListManager> m_packageListManager;
-    std::unique_ptr<OfflineDeploymentWorker> m_offlineWorker;
+    // True while executeOfflineOperation runs its operation (on its own local worker). This
+    // replaced a member worker that was constructed and never started: every busy check, the
+    // tool_busy availability check and both Stop paths watched that idle worker, so they never
+    // saw a live offline operation. Stop reaches the live one through m_activeToolRunToken.
+    std::atomic_bool m_offline_operation_running{false};
     QVector<ContextItem> m_contextItems;
     QString m_apiKey;
     QString m_taskStatus;

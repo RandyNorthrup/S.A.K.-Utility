@@ -3616,8 +3616,7 @@ AiAssistantPanel::AiAssistantPanel(QWidget* parent)
     , m_workflowStore(std::make_unique<ai::WorkflowStore>())
     , m_skillStore(std::make_unique<ai::SkillStore>())
     , m_chocoManager(std::make_unique<ChocolateyManager>(this))
-    , m_packageListManager(std::make_unique<PackageListManager>())
-    , m_offlineWorker(std::make_unique<OfflineDeploymentWorker>(this)) {
+    , m_packageListManager(std::make_unique<PackageListManager>()) {
     QElapsedTimer phase_timer;
     phase_timer.start();
     logAiStartupPhase(&phase_timer, "member initialization complete");
@@ -3639,7 +3638,7 @@ AiAssistantPanel::AiAssistantPanel(QWidget* parent)
         [this]() {
             return hasLiveBackgroundWork() ||
                    (m_executionBroker && m_executionBroker->isRunning()) ||
-                   (m_offlineWorker && m_offlineWorker->isRunning());
+                   m_offline_operation_running.load();
         },
         [this]() { onStopClicked(); });
     logAiStartupPhase(&phase_timer, "broker and signal wiring");
@@ -3749,11 +3748,14 @@ void AiAssistantPanel::cancelRunningWorkOnDestroy() {
     if (m_runToken.isValid()) {
         m_runToken.cancel(QStringLiteral("panel_destroyed"));
     }
+    // A live offline operation polls this token (executeOfflineOperation) and cancels its own
+    // worker when it fires. It is usually the same token as m_runToken, but a late tool turn may
+    // hold only this one -- the same reason cancelLocalAiWork cancels it.
+    if (m_activeToolRunToken.isValid()) {
+        m_activeToolRunToken.cancel(QStringLiteral("panel_destroyed"));
+    }
     if (m_executionBroker && m_executionBroker->isRunning()) {
         m_executionBroker->cancel();
-    }
-    if (m_offlineWorker && m_offlineWorker->isRunning()) {
-        m_offlineWorker->cancel();
     }
     if (m_client) {
         m_client->cancel();
@@ -5075,7 +5077,7 @@ ai::AiPanelActivity AiAssistantPanel::currentAiActivity() const {
     activity.tool_turn_active = m_toolTurn.active();
     activity.workflow_run_active = m_workflowRunActive;
     activity.execution_broker_running = m_executionBroker && m_executionBroker->isRunning();
-    activity.offline_worker_running = m_offlineWorker && m_offlineWorker->isRunning();
+    activity.offline_worker_running = m_offline_operation_running.load();
     // The runner is the ONE authority on the async built-in tool: it stays running after
     // Stop detaches the job (detach only drops the result), so a blocking install/recipe
     // that is still mutating the machine keeps the panel busy until it actually drains.
@@ -8043,13 +8045,13 @@ QJsonObject AiAssistantPanel::runOfflineDownloaderTool(const QJsonObject& args) 
     if (!ai::aiAccessModeAllowsLocalExecution(currentAccessMode())) {
         return toolError(QStringLiteral("Local offline downloader is disabled in Chat mode"));
     }
-    if (!m_offlineWorker || !m_packageListManager) {
+    if (!m_packageListManager) {
         return toolError(QStringLiteral("SAK offline downloader is not available"));
     }
 
     ai::AiOfflineDownloaderToolCallbacks callbacks;
     callbacks.is_running = [this]() {
-        return m_offlineWorker && m_offlineWorker->isRunning();
+        return m_offline_operation_running.load();
     };
     callbacks.presets_result = [this]() {
         return offlinePresetsResult();
@@ -8311,6 +8313,10 @@ AiAssistantPanel::OfflineToolRunResult AiAssistantPanel::executeOfflineOperation
     if (!validateOfflineOperation(operation, &run)) {
         return run;
     }
+    // Live for exactly as long as this operation, so busy checks, the tool_busy check and the
+    // shutdown prompt see it. The runner's process-wide claim keeps operations one at a time.
+    m_offline_operation_running.store(true);
+    const auto clear_running = qScopeGuard([this]() { m_offline_operation_running.store(false); });
 
     appendOfflineOperationStartedEvent(operation, output_dir, args);
     QSemaphore done;
@@ -9861,14 +9867,14 @@ void AiAssistantPanel::registerOfflineDownloaderAvailabilityChecker() {
     m_toolDispatcher->registerAvailabilityChecker(
         QStringLiteral("sak_offline_downloader"),
         [this](const QJsonObject&, const ai::AiToolPolicyDecision&) {
-            if (!m_offlineWorker || !m_packageListManager) {
+            if (!m_packageListManager) {
                 QJsonObject result =
                     toolError(QStringLiteral("SAK offline downloader is not available"));
                 result[QStringLiteral("failure_class")] =
                     QStringLiteral("offline_downloader_unavailable");
                 return result;
             }
-            if (m_offlineWorker->isRunning()) {
+            if (m_offline_operation_running.load()) {
                 QJsonObject result =
                     toolError(QStringLiteral("SAK offline downloader is already running"));
                 result[QStringLiteral("failure_class")] = QStringLiteral("tool_busy");
@@ -11319,6 +11325,7 @@ AiAssistantPanel::WorkflowRunToolContext AiAssistantPanel::resolveWorkflowRunCon
                             ? m_reasoningEffortCombo->currentText().trimmed().toLower()
                             : QString();
         ctx.token = m_activeToolRunToken.isValid() ? m_activeToolRunToken : m_runToken;
+        ctx.user_message = m_activeUserMessage;
         const ai::WorkflowTemplate* workflow =
             m_workflowStore ? m_workflowStore->workflowById(workflow_id) : nullptr;
         if (workflow == nullptr) {
@@ -11378,14 +11385,12 @@ QJsonObject AiAssistantPanel::runRunWorkflowTool(const QJsonObject& args) {
     launch.model = ctx.model;
     launch.reasoning = ctx.reasoning;
     launch.input_values = input_values;
-    // The run_workflow schema carries no 'objective' field, so honor it when a caller
-    // does supply one but otherwise fall back to the request the user actually made:
-    // an empty user_message would strip the workflow of its originating context (target
-    // resolution, delegate prompts, report text).
-    launch.user_message = args.value(QStringLiteral("objective")).toString().trimmed();
-    if (launch.user_message.isEmpty()) {
-        invokeOnGuiThreadBlocking([&]() { launch.user_message = m_activeUserMessage; });
-    }
+    // ALWAYS the request the user actually made. This took an `objective` argument first --
+    // one the run_workflow schema does not declare -- and the workflow's user_message is what
+    // subagent and package policy read as "what the user asked", so a model-written objective
+    // could stand in for the user's own words. Strict schemas kept the model from sending it;
+    // this no longer depends on that.
+    launch.user_message = ctx.user_message;
     // Clamp the tool-invoked workflow to the session ceiling too (B12-01): a run_workflow tool
     // call must not let a workflow agent exceed the session's granted capability.
     launch.session_policy_ceiling = currentAccessToolPolicy();
@@ -12951,9 +12956,6 @@ void AiAssistantPanel::cancelLocalAiWork() {
     }
     if (m_executionBroker && m_executionBroker->isRunning()) {
         m_executionBroker->cancel();
-    }
-    if (m_offlineWorker && m_offlineWorker->isRunning()) {
-        m_offlineWorker->cancel();
     }
     // Drop the result of an in-flight async built-in tool call so it does not
     // resume the (now torn-down) tool turn; the inner worker is cancelled above

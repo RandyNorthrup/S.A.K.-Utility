@@ -38,10 +38,11 @@ public:
         bool lease_denied{false};
         bool availability_denied{false};
         bool health_suppressed{false};
-        // Set when this dispatch's own mutating lease was reclaimed by the manager's TTL sweep
-        // WHILE the handler was still running -- proof the exclusive-mutation guarantee was
-        // broken mid-op (another agent could have acquired a fresh lease and mutated at the same
-        // time), so the result is forced to a failure rather than reported as a clean success.
+        // Set when this dispatch's own mutating lease was no longer held when the handler
+        // finished. Leases never expire, so that means ownership was violated mid-op -- proof the
+        // exclusive-mutation guarantee was broken (another agent could have acquired a fresh lease
+        // and mutated at the same time), so the result is forced to a failure rather than
+        // reported as a clean success.
         bool lease_release_failed{false};
         QString lease_id;
         QString health_key;
@@ -73,6 +74,9 @@ public:
                                                               const QJsonObject& availability);
     [[nodiscard]] static QJsonObject healthSuppressedResult(const AiToolCallRequest& request,
                                                             const AiToolAvailability& availability);
+    /// @brief The error a dispatch reports when its own lease was gone at release: ownership was
+    /// violated. Names the lease by its public label, never the bearer id.
+    [[nodiscard]] static QString leaseReleaseFailureMessage(const QString& lease_id);
 
 private:
     [[nodiscard]] bool applyHealthGate(DispatchOutcome* outcome,

@@ -119,12 +119,31 @@ void appendWin32HealthTarget(const QJsonObject& extra, QStringList* parts) {
     appendHealthPart(tool, parts);
 }
 
-QString providerGatewayDiscriminator(const AiToolCallRequest& request,
-                                     const QJsonObject& arguments) {
+QString boundedOperation(const AiToolCallRequest& request, const QJsonObject& arguments) {
     QString operation = request.operation.left(kHealthDiscriminatorPartChars).trimmed().toLower();
     if (operation.isEmpty()) {
         operation = boundedHealthPart(arguments.value(QStringLiteral("operation")));
     }
+    return operation;
+}
+
+// "<operation>:<target>" for a tool whose calls each act on one named target, so one broken
+// target does not take the tool away from every other one. sak_app_action used to share a single
+// key across every action id, and sak_package_manager across every package: three unclassified
+// failures of one action or one package suppressed the whole tool for every target for the
+// backoff window (5 s, growing to 300 s).
+QString targetedDiscriminator(const AiToolCallRequest& request,
+                              const QJsonObject& arguments,
+                              const QString& target_field) {
+    QStringList parts;
+    appendHealthPart(boundedOperation(request, arguments), &parts);
+    appendHealthPart(boundedHealthPart(arguments.value(target_field)), &parts);
+    return parts.join(QLatin1Char(':'));
+}
+
+QString providerGatewayDiscriminator(const AiToolCallRequest& request,
+                                     const QJsonObject& arguments) {
+    const QString operation = boundedOperation(request, arguments);
     const QJsonObject extra = nestedGatewayArguments(arguments.value(QStringLiteral("arguments")));
 
     QStringList parts;
@@ -141,13 +160,15 @@ QString providerGatewayDiscriminator(const AiToolCallRequest& request,
 
 QString healthKeyFor(const AiToolCallRequest& request, const QJsonObject& arguments) {
     const QString name = normalizeName(request.tool_name);
+    QString discriminator;
     if (name == QLatin1String("sak_provider_gateway")) {
-        const QString discriminator = providerGatewayDiscriminator(request, arguments);
-        if (!discriminator.isEmpty()) {
-            return QStringLiteral("%1:%2").arg(name, discriminator);
-        }
+        discriminator = providerGatewayDiscriminator(request, arguments);
+    } else if (name == QLatin1String("sak_app_action")) {
+        discriminator = targetedDiscriminator(request, arguments, QStringLiteral("action_id"));
+    } else if (name == QLatin1String("sak_package_manager")) {
+        discriminator = targetedDiscriminator(request, arguments, QStringLiteral("package_id"));
     }
-    return name;
+    return discriminator.isEmpty() ? name : QStringLiteral("%1:%2").arg(name, discriminator);
 }
 
 bool failureAffectsHealth(const QJsonObject& result) {
@@ -270,8 +291,8 @@ void AiToolDispatcher::invokeHandler(const Handler& handler,
     try {
         outcome->result = handler(arguments, outcome->policy_decision);
     } catch (const std::exception& ex) {
-        // Fail closed: a throwing handler must not leak the mutation lease -- an unreleased
-        // lease blocks every future mutating call until its TTL expires -- nor skip health
+        // Fail closed: a throwing handler must not leak the mutation lease -- leases never expire,
+        // so an unreleased one blocks every future mutating call until restart -- nor skip health
         // recording. Convert the throw into a structured failure so the caller's normal
         // record-health / release-lease path still runs.
         sak::logError("AI tool handler '{}' threw: {}", request.tool_name.toStdString(), ex.what());
@@ -318,7 +339,7 @@ AiToolDispatcher::DispatchOutcome AiToolDispatcher::dispatch(AiToolPolicy policy
 
     invokeHandler(handler, request, arguments, &outcome);
     // Release BEFORE recording health: a release that reports the lease was already gone means
-    // the TTL sweep reclaimed it mid-op, which fails the result closed -- and the health ledger
+    // lease ownership was violated mid-op, which fails the result closed -- and the health ledger
     // must then record that corrected failure, not the handler's (now untrustworthy) success.
     releaseLeaseForDispatch(&outcome, request, lease_id);
     recordHealthForResult(outcome);
@@ -451,11 +472,17 @@ void AiToolDispatcher::releaseLeaseForDispatch(DispatchOutcome* outcome,
     outcome->result[QStringLiteral("failure_class")] = QStringLiteral("lease_release_failed");
     outcome->result[QStringLiteral("tool_name")] = request.tool_name;
     outcome->result[QStringLiteral("operation")] = request.operation;
-    outcome->result[QStringLiteral("error_message")] =
-        QStringLiteral(
-            "Mutating lease '%1' was reclaimed by TTL while the handler was still "
-            "running; exclusive access could not be guaranteed for this call")
-            .arg(lease_id);
+    outcome->result[QStringLiteral("error_message")] = leaseReleaseFailureMessage(lease_id);
+}
+
+QString AiToolDispatcher::leaseReleaseFailureMessage(const QString& lease_id) {
+    // Leases have had no TTL since 38338649, so "reclaimed by TTL" named a cause that cannot
+    // happen. And the full id is the BEARER TOKEN that releases the lease: the diagnostic gets the
+    // non-secret label, as the denial path already does.
+    return QStringLiteral(
+               "Mutating lease '%1' was no longer held when the handler finished: lease "
+               "ownership was violated, so exclusive access could not be guaranteed for this call")
+        .arg(AiLeaseManager::publicLabel(lease_id));
 }
 
 void AiToolDispatcher::recordHealthForResult(const DispatchOutcome& outcome) const {

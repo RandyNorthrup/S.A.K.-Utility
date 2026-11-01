@@ -8283,6 +8283,55 @@ private Q_SLOTS:
         QTRY_VERIFY_WITH_TIMEOUT(subagent_invoked.load(), 5000);
     }
 
+    // NEW-6: a tool-launched workflow's user_message is the user's own request. It used to take
+    // an undeclared `objective` argument first, and that message is what subagent and package
+    // policy read as "what the user asked".
+    void workflowToolUserMessageIsTheUsersRequest() {
+        AiAssistantPanel panel;
+        QVERIFY(panel.m_workflowStore != nullptr);
+        ai::WorkflowTemplate workflow;
+        workflow.schema_version = 1;
+        workflow.id = QStringLiteral("user_message_flow");
+        workflow.title = QStringLiteral("User Message Flow");
+        workflow.role = QStringLiteral("test");
+        workflow.starter_prompt = QStringLiteral("Check the user's request");
+        workflow.phases.append({.id = QStringLiteral("phase_one"),
+                                .type = QStringLiteral("overseer"),
+                                .prompt = QStringLiteral("Check state")});
+        QStringList errors;
+        QVERIFY2(panel.m_workflowStore->addWorkflow(workflow, &errors),
+                 qPrintable(errors.join(QLatin1Char('\n'))));
+        panel.m_activeUserMessage = QStringLiteral("check disk space on this laptop");
+
+        const auto ctx = panel.resolveWorkflowRunContext(workflow.id, QJsonObject{});
+        QVERIFY(ctx.found);
+        QCOMPARE(ctx.user_message, QStringLiteral("check disk space on this laptop"));
+    }
+
+    // NEW-7: busy and tool_busy watch the LIVE offline operation. They used to watch a member
+    // worker that was constructed and never started, so they never saw one.
+    void offlineBusyStateTracksTheLiveOperation() {
+        AiAssistantPanel panel;
+        QVERIFY(!panel.currentAiActivity().offline_worker_running);
+        panel.m_offline_operation_running.store(true);
+        const auto reset =
+            qScopeGuard([&panel]() { panel.m_offline_operation_running.store(false); });
+        QVERIFY(panel.currentAiActivity().offline_worker_running);
+        QVERIFY(panel.isAiBusy());
+
+        ai::AiToolCallRequest request;
+        request.tool_name = QStringLiteral("sak_offline_downloader");
+        request.operation = QStringLiteral("search");
+        const auto outcome = panel.m_toolDispatcher->dispatch(
+            ai::AiToolPolicy::DownloadOnly,
+            request,
+            QJsonObject{{QStringLiteral("operation"), QStringLiteral("search")},
+                        {QStringLiteral("query"), QStringLiteral("7zip")}});
+        QVERIFY(outcome.availability_denied);
+        QCOMPARE(outcome.result.value(QStringLiteral("failure_class")).toString(),
+                 QStringLiteral("tool_busy"));
+    }
+
     // run_workflow must fail closed on a missing or unknown workflow id before it
     // commits to any orchestration.
     void runWorkflowToolValidatesWorkflowId() {
