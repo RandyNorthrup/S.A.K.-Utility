@@ -308,9 +308,11 @@ cmake/                -- CMake modules and build config
 - **Product libraries** -- every first-party source is compiled once into one of the static
   libraries in the root `CMakeLists.txt`: `sak_foundation` (logging, paths, ProcessRunner and
   its Job, elevation queries, hashing, WorkerBase), `sak_partition_fs` (filesystem drivers,
-  raw I/O, decompressors), `sak_core`, `sak_win32mcp`, `sak_ai_core` and `sak_gui`. A new
-  source goes into its library's list; the app, the helpers and the tests link the library,
-  so no test target needs editing. `sak_utility` itself is only `main.cpp` and its resources.
+  raw I/O, decompressors), `sak_core`, `sak_secret_redaction` (the one secret catalogue and its
+  redactors, shared by `sak_ai_core` and `sak_win32mcp`), `sak_win32mcp`, `sak_ai_core` and
+  `sak_gui`. A new source goes into its library's list; the app, the helpers and the tests link
+  the library, so no test target needs editing. `sak_utility` itself is only `main.cpp` and its
+  resources.
 
 ### Important Conventions
 

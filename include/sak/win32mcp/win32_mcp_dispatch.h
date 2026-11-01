@@ -28,11 +28,11 @@ struct Win32McpServerPolicy {
     // tools/call refuses any non-read-only tool, so a read-only session cannot invoke a mutating
     // or input tool even if the client's own policy gate were bypassed.
     bool read_only_profile{false};
-    // WIN32_MCP_REDACT_SENSITIVE_OUTPUT == "true": mask the secret assignments
-    // redactWin32McpSensitiveText models in the TEXT blocks of a tool result before it leaves the
-    // process. Scope is that keyword scrubber and text blocks only -- image blocks (screenshots)
-    // and secrets in a shape it does not model pass through, so this reduces exposure rather than
-    // guaranteeing no credential reaches the model.
+    // WIN32_MCP_REDACT_SENSITIVE_OUTPUT == "true": redact the secrets the shared catalogue
+    // recognises (redactWin32McpSensitiveText) in the TEXT blocks of a tool result before it
+    // leaves the process. Image blocks (screenshots) and secrets in a shape the catalogue does not
+    // model pass through, so this reduces exposure rather than guaranteeing no credential reaches
+    // the model.
     bool redact_sensitive_output{false};
 
     /// Read both tokens from the process environment. An unrecognized non-empty token is an
@@ -46,10 +46,13 @@ struct Win32McpServerPolicy {
 /// so it never trusts the client. KEEP THE TWO LISTS IN SYNC when adding a read-only tool.
 [[nodiscard]] bool win32McpToolIsReadOnly(const QString& tool_name);
 
-/// Mask the secret assignments this scrubber models (password/pwd/secret/token/api key/access
-/// key/client secret/bearer, in `key=value`, `key: value` and quoted-JSON shapes) in @p text.
-/// Best-effort by design: a credential in a shape it does not model passes through unchanged, so
-/// callers must treat it as exposure reduction, not a guarantee. Exposed for unit testing.
+/// Redact @p text, one tool-result text block, with the product's one secret catalogue
+/// (sak/ai/ai_secret_redaction.h, the same rules the AI layer applies before it persists
+/// anything). A JSON document -- what every native tool returns -- is redacted value by value
+/// (sak::ai::redactSecretsInJson) and keeps its exact bytes when nothing in it was a secret; any
+/// other text goes through sak::ai::redactSecrets. Best-effort by design: a credential in a shape
+/// the catalogue does not model passes through unchanged, so callers must treat it as exposure
+/// reduction, not a guarantee. Exposed for unit testing.
 [[nodiscard]] QString redactWin32McpSensitiveText(const QString& text);
 
 /// Validate tool-call @p args against a native tool's advertised @p input_schema: returns an

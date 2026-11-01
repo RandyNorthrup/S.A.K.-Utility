@@ -470,6 +470,11 @@ void AiCredentialStoreTests::redactsAssignmentsInEveryQuotingStyle() {
     const QString shortQuoted =
         sak::ai::CredentialStore::redactSecrets(QStringLiteral("password='ab'"));
     QVERIFY2(!shortQuoted.contains(QStringLiteral("'ab'")), qPrintable(shortQuoted));
+
+    // A quoted JSON member keeps its punctuation, so a JSON fragment in text still parses. It
+    // used to become "token=[redacted], leaving the key's opening quote unmatched.
+    QCOMPARE(sak::ai::redactSecrets(QStringLiteral("{\"token\" : \"jsonstylevalue\", \"n\": 1}")),
+             QStringLiteral("{\"token\" : \"[redacted]\", \"n\": 1}"));
 }
 
 void AiCredentialStoreTests::redactsCompoundAndEnvironmentStyleSecretNames() {
@@ -571,6 +576,9 @@ void AiCredentialStoreTests::leavesOrdinaryTextAlone() {
                                   QStringLiteral("Run Get-FileHash to verify the download."),
                                   QStringLiteral("PasswordRequired       : True"),
                                   QStringLiteral("PasswordLastSet        : 10/1/2026 9:00:00 AM"),
+                                  // A boolean is a fact even when the head word is "password".
+                                  QStringLiteral("UserMayChangePassword  : True"),
+                                  QStringLiteral("CannotChangePassword   : False"),
                                   QStringLiteral("token_count: 1234 max_tokens=4096"),
                                   QStringLiteral("token_type: Bearer"),
                                   QStringLiteral("secretary: Ada Lovelace"),
@@ -598,9 +606,10 @@ void AiCredentialStoreTests::leavesUnmatchedTextUncopied() {
 }
 
 void AiCredentialStoreTests::redactsJsonWithoutDestroyingTheDocument() {
-    // THE REASON THIS IS A TREE WALK AND NOT A TEXT PASS. Redacting serialized JSON would rewrite
-    // "token":"abc" to token=[redacted], deleting the quotes and the colon -- the document stops
-    // parsing and the record is lost. Every assertion here is about structure surviving.
+    // THE REASON THIS IS A TREE WALK AND NOT A TEXT PASS. A text pass over serialized JSON cannot
+    // see its escapes: a bare value swallows the closing quote of the string it sits in, so the
+    // document stops parsing and the record is lost, and an escaped quoted value is not matched at
+    // all. Every assertion here is about structure surviving.
     QJsonObject inner;
     inner[QStringLiteral("stdout")] = QStringLiteral("Authorization: ") + QStringLiteral("Bea") +
                                       QStringLiteral("rer ") +
@@ -675,6 +684,8 @@ void AiCredentialStoreTests::redactsSecretsNamedByTheirJsonKey() {
         QJsonObject{{QStringLiteral("user"), QStringLiteral("u")}};
     root[QStringLiteral("max_tokens")] = 4096;
     root[QStringLiteral("PasswordRequired")] = true;
+    // Its head word is "password", but a boolean carries no secret: it stays a fact.
+    root[QStringLiteral("UserMayChangePassword")] = true;
 
     const QJsonObject out = sak::ai::CredentialStore::redactSecretsInJson(root);
 
@@ -700,6 +711,7 @@ void AiCredentialStoreTests::redactsSecretsNamedByTheirJsonKey() {
     QCOMPARE(out.value(QStringLiteral("secretary")).toString(), QStringLiteral("Ada"));
     QCOMPARE(out.value(QStringLiteral("max_tokens")), QJsonValue(4096));
     QCOMPARE(out.value(QStringLiteral("PasswordRequired")), QJsonValue(true));
+    QCOMPARE(out.value(QStringLiteral("UserMayChangePassword")), QJsonValue(true));
 }
 
 void AiCredentialStoreTests::keyNamesASecretJudgesTheHeadWord() {
@@ -719,7 +731,21 @@ void AiCredentialStoreTests::keyNamesASecretJudgesTheHeadWord() {
                                "secret_value",
                                "Cookie",
                                "bearer",
-                               "ciphertext"}) {
+                               "ciphertext",
+                               // The win32 MCP server's names, folded into this catalogue (NEW-10):
+                               // a connection string's Pwd, the run-together spellings its
+                               // access[_-]?key / client[_-]?secret pattern matched, and pass as a
+                               // whole token.
+                               "Pwd",
+                               "db_pwd",
+                               "access_key",
+                               "AccessKey",
+                               "accesskey",
+                               "clientsecret",
+                               "AccountKey",
+                               "pass",
+                               "smtp.pass",
+                               "db-pass"}) {
         QVERIFY2(sak::ai::keyNamesASecret(QLatin1String(secret)), secret);
     }
     for (const char* harmless : {"",
@@ -736,7 +762,17 @@ void AiCredentialStoreTests::keyNamesASecretJudgesTheHeadWord() {
                                  "api_version",
                                  "api_key_id",
                                  "author",
-                                 "cookie_policy"}) {
+                                 "cookie_policy",
+                                 // pass is ambiguous as a compound's head: the orchestrator's own
+                                 // recovery_pass flag and nginx's proxy_pass are not credentials.
+                                 "recovery_pass",
+                                 "proxy_pass",
+                                 "bypass",
+                                 "passes",
+                                 "pass_count",
+                                 "OLDPWD",
+                                 "aws_access_key_id",
+                                 "account_id"}) {
         QVERIFY2(!sak::ai::keyNamesASecret(QLatin1String(harmless)), harmless);
     }
 }

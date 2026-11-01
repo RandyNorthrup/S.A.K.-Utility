@@ -115,12 +115,56 @@ void redactCookieHeaders(QString& result) {
 // The scheme is kept and the credential after it redacted: matching only the scheme word as the
 // value would print the credential beside a marker that claims it was handled.
 constexpr int kAssignmentNameGroup = 1;
-constexpr int kAssignmentSchemeGroup = 2;
+constexpr int kAssignmentSeparatorGroup = 2;
+constexpr int kAssignmentSchemeGroup = 3;
+constexpr int kAssignmentBareValueGroup = 4;
 const QRegularExpression kSecretAssignmentRegex(
-    QStringLiteral(R"((?<![A-Za-z0-9_])([A-Za-z][A-Za-z0-9_.\-]*)\x22?\s*[:=]\s*)"
+    QStringLiteral(R"((?<![A-Za-z0-9_])([A-Za-z][A-Za-z0-9_.\-]*)(\x22?\s*[:=]\s*))"
                    R"((?:\x22[^\x22]*\x22|'[^']*'|)"
-                   R"((?:(basic|bearer|digest|negotiate|ntlm)\s+)?[^\s\x22';,]{4,})\x22?)"),
+                   R"((?:(basic|bearer|digest|negotiate|ntlm)\s+)?([^\s\x22';,]{4,}))\x22?)"),
     QRegularExpression::CaseInsensitiveOption);
+
+// A bare true or false is a FACT about a secret, never one: Get-LocalUser prints
+// `UserMayChangePassword : True` and Active Directory `CannotChangePassword : False` for every
+// account, and their head word is "password". A boolean carries no credential. A QUOTED "true"
+// is still redacted, like any quoted value.
+bool assignsABoolean(const QRegularExpressionMatch& match) {
+    const QString bare = match.captured(kAssignmentBareValueGroup);
+    return match.captured(kAssignmentSchemeGroup).isEmpty() &&
+           (bare.compare(QLatin1String("true"), Qt::CaseInsensitive) == 0 ||
+            bare.compare(QLatin1String("false"), Qt::CaseInsensitive) == 0);
+}
+
+// A quoted JSON key with a quoted value -- "password" : "..." -- keeps its own punctuation and gets
+// a quoted marker, so a JSON fragment in plain text still parses after redaction: a browser page
+// showing a config, or a tool payload quoted in a message. Normalising it to name=[redacted] left
+// the key's opening quote unmatched. Every other form is normalised to name=[redacted].
+bool isQuotedJsonMember(const QString& text, const QRegularExpressionMatch& match) {
+    const qsizetype name_start = match.capturedStart(kAssignmentNameGroup);
+    const qsizetype value_start = match.capturedEnd(kAssignmentSeparatorGroup);
+    const QString separator = match.captured(kAssignmentSeparatorGroup);
+    return name_start > 0 && text.at(name_start - 1) == QLatin1Char('"') &&
+           separator.startsWith(QLatin1Char('"')) && separator.contains(QLatin1Char(':')) &&
+           value_start < text.size() && text.at(value_start) == QLatin1Char('"');
+}
+
+void appendRedactedAssignment(QString& rewritten,
+                              const QString& text,
+                              const QRegularExpressionMatch& match) {
+    rewritten.append(match.captured(kAssignmentNameGroup));
+    if (isQuotedJsonMember(text, match)) {
+        rewritten.append(match.captured(kAssignmentSeparatorGroup));
+        rewritten.append(QStringLiteral("\"[redacted]\""));
+        return;
+    }
+    rewritten.append(QLatin1Char('='));
+    const QString scheme = match.captured(kAssignmentSchemeGroup);
+    if (!scheme.isEmpty()) {
+        rewritten.append(scheme);
+        rewritten.append(QLatin1Char(' '));
+    }
+    rewritten.append(QStringLiteral("[redacted]"));
+}
 
 void redactAssignmentSecrets(QString& result) {
     QString rewritten;
@@ -132,22 +176,14 @@ void redactAssignmentSecrets(QString& result) {
         if (!match.hasMatch()) {
             break;
         }
-        const QString name = match.captured(kAssignmentNameGroup);
-        if (!keyNamesASecret(name)) {
+        if (!keyNamesASecret(match.captured(kAssignmentNameGroup)) || assignsABoolean(match)) {
             // Resume right after the NAME, not after the value: in `x=password=hunter2` the
             // secret assignment is the value of a harmless one.
             offset = match.capturedEnd(kAssignmentNameGroup);
             continue;
         }
         rewritten.append(QStringView(result).mid(copied_to, match.capturedStart(0) - copied_to));
-        rewritten.append(name);
-        rewritten.append(QLatin1Char('='));
-        const QString scheme = match.captured(kAssignmentSchemeGroup);
-        if (!scheme.isEmpty()) {
-            rewritten.append(scheme);
-            rewritten.append(QLatin1Char(' '));
-        }
-        rewritten.append(QStringLiteral("[redacted]"));
+        appendRedactedAssignment(rewritten, result, match);
         copied_to = match.capturedEnd(0);
         offset = copied_to;
         redacted_any = true;
@@ -165,10 +201,15 @@ void redactAssignmentSecrets(QString& result) {
 // qualify it. Judging the head is what keeps Get-LocalUser's `PasswordRequired : True` and
 // `PasswordLastSet : ...`, or `token_count` and `max_tokens`, readable: they are facts ABOUT a
 // password or tokens, not one.
+//
+// `pwd`, `accesskey` and `clientsecret` came from the win32 MCP server's own list when it was
+// folded into this one (NEW-10): a connection string's `Pwd=`, and the run-together spellings its
+// `access[_-]?key` / `client[_-]?secret` pattern matched, which split into no words here.
 bool isSecretNoun(const QString& word) {
     static const QSet<QString> kSecretNouns{
         QStringLiteral("password"),
         QStringLiteral("passwd"),
+        QStringLiteral("pwd"),
         QStringLiteral("passphrase"),
         QStringLiteral("secret"),
         QStringLiteral("secrets"),
@@ -181,8 +222,25 @@ bool isSecretNoun(const QString& word) {
         QStringLiteral("ciphertext"),
         QStringLiteral("bearer"),
         QStringLiteral("apikey"),
+        QStringLiteral("accesskey"),
+        QStringLiteral("clientsecret"),
     };
     return kSecretNouns.contains(word);
+}
+
+// `pass` is short for password in a command switch (`--pass`), a script variable (`$pass`) and a
+// dotted or hyphenated setting (`smtp.pass`, `db-pass`), all of which the win32 MCP server's
+// `\bpass\b` caught. As the head of a compound it is ambiguous -- `recovery_pass` is the
+// orchestrator's iteration flag, nginx's `proxy_pass` holds a URL -- so it counts only as the
+// name's whole final token, where a token runs over letters, digits and '_': exactly the server's
+// rule. `recovery_pass`, `bypass` and `passes` are not secrets.
+bool endsInPassAbbreviation(const QString& key) {
+    qsizetype start = key.size();
+    while (start > 0 &&
+           (key.at(start - 1).isLetterOrNumber() || key.at(start - 1) == QLatin1Char('_'))) {
+        --start;
+    }
+    return QStringView(key).mid(start).compare(QLatin1String("pass"), Qt::CaseInsensitive) == 0;
 }
 
 // A trailing word that names a CONTAINER of the noun before it: `password_hash`,
@@ -199,10 +257,18 @@ bool isSecretContainerWord(const QString& word) {
 }
 
 // Words that turn a trailing "key" into a secret one: api_key, secret_access_key, private_key,
-// subscription_key. A bare "key" is a keystroke or a registry key, not a credential.
+// subscription_key, access_key (the win32 MCP server's list) and an Azure Storage connection
+// string's AccountKey. A bare "key" is a keystroke or a registry key, not a credential.
 bool isSecretKeyQualifier(const QString& word) {
-    return word == QLatin1String("api") || word == QLatin1String("secret") ||
-           word == QLatin1String("private") || word == QLatin1String("subscription");
+    static const QSet<QString> kKeyQualifiers{
+        QStringLiteral("api"),
+        QStringLiteral("secret"),
+        QStringLiteral("private"),
+        QStringLiteral("subscription"),
+        QStringLiteral("access"),
+        QStringLiteral("account"),
+    };
+    return kKeyQualifiers.contains(word);
 }
 
 // True between "aB" (lower or digit, then upper) and inside "AWSSecret" (the last capital of an
@@ -244,6 +310,9 @@ QStringList keyWords(const QString& key) {
 }  // namespace
 
 bool keyNamesASecret(const QString& key) {
+    if (endsInPassAbbreviation(key)) {
+        return true;
+    }
     QStringList words = keyWords(key);
     if (words.size() > 1 && isSecretContainerWord(words.last())) {
         words.removeLast();
@@ -283,11 +352,12 @@ QJsonArray redactJsonArray(const QJsonArray& array) {
 QJsonObject redactJsonObject(const QJsonObject& object) {
     QJsonObject out;
     for (auto it = object.constBegin(); it != object.constEnd(); ++it) {
-        if (keyNamesASecret(it.key())) {
+        if (keyNamesASecret(it.key()) && !it.value().isBool()) {
             // The KEY already says this is a secret, so the value goes wholesale -- no length
             // floor and no pattern matching. A field named "password" holding "ab" is still a
             // password, and a non-string value there (a number, an object) is redacted too rather
-            // than passed through because it did not look like text.
+            // than passed through because it did not look like text. A boolean is the exception:
+            // `"UserMayChangePassword": true` is a fact about a password and carries no secret.
             out.insert(it.key(), QStringLiteral("[redacted]"));
             continue;
         }
@@ -315,5 +385,8 @@ QJsonObject redactSecretsInJson(const QJsonObject& object) {
     return redactJsonObject(object);
 }
 
+QJsonArray redactSecretsInJson(const QJsonArray& array) {
+    return redactJsonArray(array);
+}
 
 }  // namespace sak::ai

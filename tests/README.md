@@ -487,8 +487,9 @@ endif()
 ```
 
 Product code comes from the static product libraries the root `CMakeLists.txt` declares
-(`sak_foundation`, `sak_partition_fs`, `sak_core`, `sak_win32mcp`, `sak_ai_core`, `sak_gui`), so a
-test target lists only its own test sources, fixtures and fakes. Do not add a `src/` file to a test
+(`sak_foundation`, `sak_partition_fs`, `sak_core`, `sak_secret_redaction`, `sak_win32mcp`,
+`sak_ai_core`, `sak_gui`), so a test target lists only its own test sources, fixtures and fakes.
+Do not add a `src/` file to a test
 target: a new product source goes into its library's list and reaches every test from there. The
 exceptions are a target that must compile a product file with a test-only definition that changes
 a class (the two Partition Manager hook tests), the two suites that drive partition/filesystem test seams compiled only under `SAK_PARTITION_FS_TEST_HOOKS` (`test_partition_manager_core` and `test_file_management_file_system`; see `SAK_PARTITION_FS_TEST_HOOK_SOURCES`), and the certification helpers, which compile their

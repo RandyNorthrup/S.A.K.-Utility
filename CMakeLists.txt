@@ -1011,7 +1011,6 @@ set(SAK_GUI_SOURCES
 # assistant panel nothing in the application references it, so none of it is linked in.
 set(SAK_AI_CORE_SOURCES
     src/ai/ai_credential_store.cpp
-    src/ai/ai_secret_redaction.cpp
     src/ai/ai_cancellation_token.cpp
     src/ai/ai_command_guard.cpp
     src/ai/ai_command_tool_planner.cpp
@@ -1145,6 +1144,16 @@ set(SAK_QUICK_ACTIONS_SOURCES
     include/sak/actions/generate_system_report_action.h
     include/sak/actions/screenshot_settings_action.h
     include/sak/actions/backup_bitlocker_keys_action.h
+)
+
+# Secret redaction: the one catalogue of what names a secret (keyNamesASecret) and the text and
+# JSON redactors built on it. Qt Core only. It is its own library because two processes need the
+# SAME rules: the AI layer before it persists or logs anything, and the win32 MCP server before a
+# tool result reaches the model. The server links no other first-party library, and while this
+# lived in sak_ai_core it kept a weaker list of its own (NEW-10).
+set(SAK_SECRET_REDACTION_SOURCES
+    src/ai/ai_secret_redaction.cpp
+    include/sak/ai/ai_secret_redaction.h
 )
 
 # Win32 MCP server and Chrome browser-control host. They are folded into the application binary
@@ -1380,6 +1389,12 @@ target_link_libraries(sak_core
         Qt6::CorePrivate
 )
 
+sak_add_product_library(sak_secret_redaction ${SAK_SECRET_REDACTION_SOURCES})
+target_link_libraries(sak_secret_redaction
+    PUBLIC
+        Qt6::Core
+)
+
 sak_add_product_library(sak_win32mcp ${SAK_WIN32MCP_SOURCES})
 target_link_libraries(sak_win32mcp
     PUBLIC
@@ -1387,6 +1402,8 @@ target_link_libraries(sak_win32mcp
         Qt6::Gui
         ${PLATFORM_LIBS}
     PRIVATE
+        # Tool output is redacted with the AI layer's own rules before it reaches the model.
+        sak_secret_redaction
         # shcore: GetDpiForMonitor (per-monitor DPI in list_monitors). gdi32/user32: screen
         # capture (BitBlt/PrintWindow/CreateDIBSection) in the desktop-control tools.
         # runtimeobject: WinRT activation (RoGetActivationFactory) for the Windows.Media.Ocr tools.
@@ -1399,6 +1416,7 @@ target_link_libraries(sak_win32mcp
 sak_add_product_library(sak_ai_core ${SAK_AI_CORE_SOURCES})
 target_link_libraries(sak_ai_core
     PUBLIC
+        sak_secret_redaction
         sak_core
         Qt6::Core
         Qt6::Concurrent

@@ -91,6 +91,12 @@ private Q_SLOTS:
     void readOnlyProfileFiltersCatalogAndRefusesMutatingCall();
     void redactionMasksSecretsInResultText();
     void redactionMasksQuotedJsonSecrets();
+    void redactionCoversCompoundAndHeaderSecretNames_data();
+    void redactionCoversCompoundAndHeaderSecretNames();
+    void redactionKeepsTheServersOwnNames_data();
+    void redactionKeepsTheServersOwnNames();
+    void redactionWalksJsonDocumentsAsTrees();
+    void redactionLeavesOrdinaryOutputIntact();
     void readOnlySetExcludesActiveBrowserTools();
     void relayModeRequiresOurPinnedExtensionOrigin();
     void serverProfile_unknownTokenFailsClosedToReadOnly();
@@ -667,21 +673,179 @@ void Win32McpServerTests::redactionMasksSecretsInResultText() {
         QStringLiteral("user=admin password=Hunter2 api_key: ABC123 note=ok"));
     // Pin the whole masked string: absence-plus-presence checks are equally satisfied by a
     // redactor that destroys the surrounding text, and the exact form also shows that each
-    // secret is replaced IN PLACE with its key intact.
-    QCOMPARE(masked, QStringLiteral("user=admin password=[REDACTED] api_key: [REDACTED] note=ok"));
+    // secret is replaced IN PLACE with its key intact. The marker and the name=[redacted] form
+    // are the shared redactor's, the same text the AI layer persists (NEW-10).
+    QCOMPARE(masked, QStringLiteral("user=admin password=[redacted] api_key=[redacted] note=ok"));
 }
 
 void Win32McpServerTests::redactionMasksQuotedJsonSecrets() {
     // Quoted-JSON secrets (a UIA value or tool payload carrying "token":"secret") must also be
-    // masked -- the earlier regex only caught bare key=value / key: value forms.
+    // masked -- the earlier regex only caught bare key=value / key: value forms. The payload is
+    // in the key order QJsonDocument writes, which is what every native tool emits.
     const QString masked = sak::win32mcp::redactWin32McpSensitiveText(
-        QStringLiteral(R"({"token":"s3cr3tValue","note":"ok"})"));
+        QStringLiteral(R"({"note":"ok","token":"s3cr3tValue"})"));
     // The JSON stays well-formed with only the value replaced.
-    QCOMPARE(masked, QStringLiteral(R"({"token":"[REDACTED]","note":"ok"})"));
+    QCOMPARE(masked, QStringLiteral(R"({"note":"ok","token":"[redacted]"})"));
 
+    // A JSON member inside plain text keeps its punctuation too.
     const QString masked_pw =
         sak::win32mcp::redactWin32McpSensitiveText(QStringLiteral(R"("password" : "Hunter2")"));
-    QCOMPARE(masked_pw, QStringLiteral(R"("password" : "[REDACTED]")"));
+    QCOMPARE(masked_pw, QStringLiteral(R"("password" : "[redacted]")"));
+}
+
+void Win32McpServerTests::redactionCoversCompoundAndHeaderSecretNames_data() {
+    // NEW-10. The server kept its own name list behind a \b, and '_' is a word character, so \b
+    // never fires inside an identifier: the compound names below reached the model with their
+    // values (client_secret was caught only because the list spelled it out whole), only a Bearer
+    // credential was caught in an Authorization header, and nothing in a Cookie header. One row
+    // per name, so each one is proved on its own. Each fixture is assembled at run time from
+    // pieces kept apart in the source, so the repository's secret scanner does not read it as a
+    // live credential.
+    QTest::addColumn<QString>("input");
+    QTest::addColumn<QString>("expected");
+    const QString value = QStringLiteral("Fx") + QStringLiteral("9q2Lm") + QStringLiteral("7Rw");
+    const QString basic = QStringLiteral("dXNlcjpw") + QStringLiteral("YXNzd29yZA==");
+    const QString bearer_token = QStringLiteral("ab+cd/efGH") + QStringLiteral("IJ0123+/xyz==");
+    const QString bearer = QStringLiteral("Bea") + QStringLiteral("rer ");
+    QTest::newRow("access_token") << QStringLiteral("access_token=") + value +
+                                         QStringLiteral(" done")
+                                  << QStringLiteral("access_token=[redacted] done");
+    QTest::newRow("client_secret")
+        << QStringLiteral("client_secret=") + value + QStringLiteral(" done")
+        << QStringLiteral("client_secret=[redacted] done");
+    QTest::newRow("AWS_SECRET_ACCESS_KEY")
+        << QStringLiteral("set AWS_SECRET_ACCESS_KEY=") + value + QStringLiteral(" done")
+        << QStringLiteral("set AWS_SECRET_ACCESS_KEY=[redacted] done");
+    QTest::newRow("X_API_KEY") << QStringLiteral("X_API_KEY=") + value + QStringLiteral(" done")
+                               << QStringLiteral("X_API_KEY=[redacted] done");
+    QTest::newRow("refresh_token")
+        << QStringLiteral("refresh_token: ") + value + QStringLiteral(" done")
+        << QStringLiteral("refresh_token=[redacted] done");
+    QTest::newRow("query-string access_token")
+        << QStringLiteral("https://login.example.test/cb?code=1&access_token=") + value +
+               QStringLiteral(" done")
+        << QStringLiteral("https://login.example.test/cb?code=1&access_token=[redacted] done");
+    // The scheme stays so the reader still sees which kind of credential was there.
+    QTest::newRow("Authorization Basic")
+        << QStringLiteral("Authorization: Basic ") + basic + QStringLiteral(" done")
+        << QStringLiteral("Authorization=Basic [redacted] done");
+    QTest::newRow("Authorization Bearer")
+        << QStringLiteral("Authorization: ") + bearer + bearer_token + QStringLiteral(" done")
+        << QStringLiteral("Authorization=Bearer [redacted] done");
+    // A Cookie header carries several credentials; all of them go, to the end of the line.
+    QTest::newRow("Cookie") << QStringLiteral("Cookie: sid=") + value + QStringLiteral("; csrf=") +
+                                   value + QStringLiteral("\nnext line stays")
+                            << QStringLiteral("Cookie=[redacted]\nnext line stays");
+}
+
+void Win32McpServerTests::redactionCoversCompoundAndHeaderSecretNames() {
+    QFETCH(QString, input);
+    QFETCH(QString, expected);
+    QCOMPARE(sak::win32mcp::redactWin32McpSensitiveText(input), expected);
+}
+
+void Win32McpServerTests::redactionKeepsTheServersOwnNames_data() {
+    // The names the server's own list knew stay covered now that it uses the shared catalogue:
+    // pwd (a connection string's Pwd=), pass as a whole token, access_key and the run-together
+    // accesskey / clientsecret spellings its pattern matched. AccountKey (an Azure Storage
+    // connection string) was in neither list.
+    QTest::addColumn<QString>("input");
+    QTest::addColumn<QString>("expected");
+    const QString value = QStringLiteral("Fx") + QStringLiteral("9q2Lm") + QStringLiteral("7Rw");
+    const QString account_key = QStringLiteral("Zm9v+YmFy/") + QStringLiteral("YmF6cXV4PT0=");
+    QTest::newRow("Pwd") << QStringLiteral("Server=db1;Uid=sa;Pwd=") + value +
+                                QStringLiteral(";Encrypt=yes")
+                         << QStringLiteral("Server=db1;Uid=sa;Pwd=[redacted];Encrypt=yes");
+    QTest::newRow("pass") << QStringLiteral("pass=") + value << QStringLiteral("pass=[redacted]");
+    QTest::newRow("$pass") << QStringLiteral("$pass = '") + value + QStringLiteral("'")
+                           << QStringLiteral("$pass=[redacted]");
+    QTest::newRow("smtp.pass") << QStringLiteral("smtp.pass=") + value
+                               << QStringLiteral("smtp.pass=[redacted]");
+    QTest::newRow("access_key") << QStringLiteral("access_key: ") + value
+                                << QStringLiteral("access_key=[redacted]");
+    QTest::newRow("AccessKey") << QStringLiteral("AccessKey=") + value
+                               << QStringLiteral("AccessKey=[redacted]");
+    QTest::newRow("accesskey") << QStringLiteral("accesskey=") + value
+                               << QStringLiteral("accesskey=[redacted]");
+    QTest::newRow("clientsecret") << QStringLiteral("clientsecret=") + value
+                                  << QStringLiteral("clientsecret=[redacted]");
+    QTest::newRow("secret") << QStringLiteral("secret=") + value
+                            << QStringLiteral("secret=[redacted]");
+    QTest::newRow("token") << QStringLiteral("token: ") + value
+                           << QStringLiteral("token=[redacted]");
+    QTest::newRow("AccountKey")
+        << QStringLiteral("AccountName=acct;AccountKey=") + account_key +
+               QStringLiteral(";EndpointSuffix=core.windows.net")
+        << QStringLiteral("AccountName=acct;AccountKey=[redacted];EndpointSuffix=core.windows.net");
+}
+
+void Win32McpServerTests::redactionKeepsTheServersOwnNames() {
+    QFETCH(QString, input);
+    QFETCH(QString, expected);
+    QCOMPARE(sak::win32mcp::redactWin32McpSensitiveText(input), expected);
+}
+
+void Win32McpServerTests::redactionWalksJsonDocumentsAsTrees() {
+    // Every native tool returns a JSON document, so the server redacts it value by value. A text
+    // pass cannot see JSON escapes: a window title or UIA value holding password="my secret" is
+    // serialised with \" around the value, the old rule stopped at the backslash, and the secret
+    // reached the model. The documents are serialised here the way a tool writes them (moc's
+    // tokenizer cannot read a raw string literal that contains a backslash before a quote).
+    const QString quoted_secret = QStringLiteral("password=\"my secret\"");
+    const QString escaped =
+        QString::fromUtf8(QJsonDocument(QJsonObject{{QStringLiteral("value"), quoted_secret}})
+                              .toJson(QJsonDocument::Compact));
+    QVERIFY2(escaped.contains(QStringLiteral("\\\"my secret\\\"")), qPrintable(escaped));
+    QCOMPARE(sak::win32mcp::redactWin32McpSensitiveText(escaped),
+             QStringLiteral(R"({"value":"password=[redacted]"})"));
+
+    // A member whose KEY names a secret goes wholesale, whatever it holds -- the headers here
+    // were not in the old list at all -- and a string value is scrubbed by the text rules.
+    const QString value = QStringLiteral("Fx") + QStringLiteral("9q2Lm") + QStringLiteral("7Rw");
+    const QString headers = QStringLiteral(R"({"Authorization":"Basic )") + value +
+                            QStringLiteral(R"(","Cookie":"sid=)") + value +
+                            QStringLiteral(R"(","value":"access_token=)") + value +
+                            QStringLiteral(R"("})");
+    const QString headers_redacted =
+        QStringLiteral(R"({"Authorization":"[redacted]","Cookie":"[redacted]",)") +
+        QStringLiteral(R"("value":"access_token=[redacted]"})");
+    QCOMPARE(sak::win32mcp::redactWin32McpSensitiveText(headers), headers_redacted);
+
+    // A document whose root is an array is walked the same way.
+    const QString array = QString::fromUtf8(
+        QJsonDocument(QJsonArray{QJsonObject{{QStringLiteral("token"), QStringLiteral("s3cr3tV")}},
+                                 quoted_secret})
+            .toJson(QJsonDocument::Compact));
+    QCOMPARE(sak::win32mcp::redactWin32McpSensitiveText(array),
+             QStringLiteral(R"([{"token":"[redacted]"},"password=[redacted]"])"));
+
+    // A document with nothing to redact keeps its exact bytes, even when it is not in the
+    // compact, key-sorted form a re-serialisation would produce. A boolean under a name whose
+    // head word is "password" is a fact, not a secret.
+    const QString untouched = QStringLiteral(
+        R"({"z": 1, "UserMayChangePassword": true, "a": "PasswordRequired : True"})");
+    QCOMPARE(sak::win32mcp::redactWin32McpSensitiveText(untouched), untouched);
+}
+
+void Win32McpServerTests::redactionLeavesOrdinaryOutputIntact() {
+    // Facts ABOUT a password are not one. Get-LocalUser and `net user` print these on every
+    // account, and the old rule's bare-whitespace separator turned "Password required Yes" into
+    // "Password [REDACTED] Yes" and "The bearer of" into "The bearer [REDACTED] this". A
+    // redactor that fires on ordinary output trains the reader to ignore it.
+    for (const QString& benign : {QStringLiteral("PasswordRequired       : True"),
+                                  QStringLiteral("PasswordLastSet        : 10/1/2026 9:00:00 AM"),
+                                  QStringLiteral("PasswordChangeable     : 10/2/2026 9:00:00 AM"),
+                                  QStringLiteral("UserMayChangePassword  : True"),
+                                  QStringLiteral("CannotChangePassword   : False"),
+                                  QStringLiteral("Password last set            10/1/2026"),
+                                  QStringLiteral("Password required            Yes"),
+                                  QStringLiteral("Password expires             Never"),
+                                  QStringLiteral("The bearer of this note is authorized."),
+                                  QStringLiteral("token_count: 1234 max_tokens=4096"),
+                                  QStringLiteral("recovery_pass: true"),
+                                  QStringLiteral("Press key: Enter")}) {
+        QCOMPARE(sak::win32mcp::redactWin32McpSensitiveText(benign), benign);
+    }
 }
 
 void Win32McpServerTests::readOnlySetExcludesActiveBrowserTools() {

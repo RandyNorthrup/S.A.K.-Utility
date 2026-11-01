@@ -4,14 +4,16 @@
 #include "sak/win32mcp/win32_mcp_dispatch.h"
 
 #include "sak/ai/ai_mcp_jsonrpc.h"
+#include "sak/ai/ai_secret_redaction.h"
 #include "sak/win32mcp/browser_control.h"
 #include "sak/win32mcp/win32_mcp_tools.h"
 
 #include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonParseError>
 #include <QJsonValue>
 #include <QLatin1String>
 #include <QProcessEnvironment>
-#include <QRegularExpression>
 #include <QSet>
 
 #include <optional>
@@ -115,11 +117,20 @@ QJsonArray fullToolCatalog(const BrowserControl* browser, const Win32McpServerPo
     return read_only_tools;
 }
 
+// @p root redacted value by value, as the text it came from when nothing in it was a secret (so
+// untouched output keeps its exact bytes), else re-serialised compactly as the tools write it.
+template <typename JsonRoot>
+QString redactedJsonText(const QString& text, const JsonRoot& root) {
+    const JsonRoot redacted = ai::redactSecretsInJson(root);
+    return redacted == root
+               ? text
+               : QString::fromUtf8(QJsonDocument(redacted).toJson(QJsonDocument::Compact));
+}
+
 // Redact the text blocks of a tools/call result in place when the policy asks for it. Scope is
-// deliberately the text blocks and the secret-key regex below: image blocks are opaque binary
-// the client renders, and arbitrary value fields (e.g. cookie values) are out of scope by
-// design -- this is an opt-in best-effort keyword scrubber, not a completeness guarantee. It
-// never claims to have redacted content it does not model, so it does not fail open.
+// deliberately the text blocks: image blocks are opaque binary the client renders (a screenshot
+// of a secret is not text this can see). Within text, the coverage is the shared catalogue's
+// (redactWin32McpSensitiveText) -- exposure reduction, not a completeness guarantee.
 QJsonObject redactToolCallResult(QJsonObject result, const Win32McpServerPolicy& policy) {
     if (!policy.redact_sensitive_output) {
         return result;
@@ -345,18 +356,28 @@ QString redactWin32McpSensitiveText(const QString& text) {
     if (text.isEmpty()) {
         return text;
     }
-    QString redacted = text;
-    // key = value / key: value where key names a secret (password, token, secret, api key,
-    // client_secret, ...). Capture the key + separator, replace the value with a marker. An
-    // optional closing quote after the key and an optional opening quote before the value let
-    // this also catch quoted-JSON forms like "token":"secret"; the value stops at a quote,
-    // whitespace, comma, or closing brace so structural punctuation is not swallowed.
-    static const QRegularExpression kAssignment(
-        QStringLiteral(
-            R"RX((\b(?:pass(?:word)?|pwd|secret|token|api[_-]?key|access[_-]?key|client[_-]?secret|bearer)\b"?(?:\s*[:=]\s*|\s+)"?)([^"\s,}]+))RX"),
-        QRegularExpression::CaseInsensitiveOption);
-    redacted.replace(kAssignment, QStringLiteral("\\1[REDACTED]"));
-    return redacted;
+    // ONE REDACTOR. This server used to keep its own name list, the third catalogue in the
+    // product, with the gap the AI layer's had already closed: a `\b` before the name never fires
+    // after '_', so `access_token=`, `refresh_token=` and `AWS_SECRET_ACCESS_KEY=` reached the
+    // model (`client_secret` was caught only because the list spelled it out whole), only a
+    // Bearer credential was caught in an Authorization header, and nothing in a Cookie header
+    // (NEW-10).
+    //
+    // A native tool's text block is a compact JSON document (jsonResult/errorResult), so it is
+    // redacted as a TREE: a text pass cannot see JSON escapes, and printed the secret in a value
+    // such as `password=\"my secret\"`. The document is re-serialised only when something was
+    // redacted, so untouched output keeps its exact bytes. Any other text -- a browser page
+    // outline, a plain message -- goes through the text rules.
+    QJsonParseError parse_error{};
+    const QJsonDocument document = QJsonDocument::fromJson(text.toUtf8(), &parse_error);
+    const bool parsed = parse_error.error == QJsonParseError::NoError;
+    if (parsed && document.isObject()) {
+        return redactedJsonText(text, document.object());
+    }
+    if (parsed && document.isArray()) {
+        return redactedJsonText(text, document.array());
+    }
+    return ai::redactSecrets(text);
 }
 
 QJsonObject toolCallResult(const ToolResult& result) {
