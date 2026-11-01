@@ -56,6 +56,13 @@ private:
         std::function<void(const QByteArray&)> observer);
     [[nodiscard]] static QString decryptCredentialBytesForTesting(QByteArray encrypted,
                                                                   QString* error_message);
+    // loadApiKey / saveApiKey against a caller-chosen file, so the file format and the DACL can
+    // be tested in a temporary directory instead of the shared portable data root.
+    [[nodiscard]] static QString loadApiKeyFromPathForTesting(const QString& path,
+                                                              QString* error_message);
+    [[nodiscard]] static bool saveApiKeyToPathForTesting(const QString& path,
+                                                         const QString& api_key,
+                                                         QString* error_message);
 #endif  // SAK_AI_TEST_HOOKS
 };
 

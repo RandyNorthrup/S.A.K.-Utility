@@ -13,6 +13,8 @@
 #include <QFile>
 #include <QFileInfo>
 
+#include <vector>
+
 #ifdef Q_OS_WIN
 #include <sddl.h>
 #pragma comment(lib, "advapi32.lib")
@@ -672,6 +674,61 @@ auto PermissionManager::trySetStandardUserPermissions(const QString& path, const
     m_lastError = "Permission management only supported on Windows";
     return std::unexpected(sak::error_code::platform_not_supported);
 #endif
+}
+
+namespace {
+
+// The SID of the user this process runs as, copied out of its token, or the Win32 error.
+std::expected<std::vector<BYTE>, DWORD> currentUserSid() {
+    HANDLE token = nullptr;
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token) == 0) {
+        return std::unexpected(GetLastError());
+    }
+    DWORD needed = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &needed);
+    std::vector<BYTE> token_user(needed);
+    const bool read = needed != 0 &&
+                      GetTokenInformation(token, TokenUser, token_user.data(), needed, &needed) !=
+                          0;
+    const DWORD read_error = read ? ERROR_SUCCESS : GetLastError();
+    CloseHandle(token);
+    if (!read) {
+        return std::unexpected(read_error);
+    }
+    const PSID user = reinterpret_cast<const TOKEN_USER*>(token_user.data())->User.Sid;
+    std::vector<BYTE> sid(GetLengthSid(user));
+    if (CopySid(static_cast<DWORD>(sid.size()), sid.data(), user) == 0) {
+        return std::unexpected(GetLastError());
+    }
+    return sid;
+}
+
+}  // namespace
+
+std::expected<void, QString> restrictFileToCurrentUser(const QString& path) {
+    auto sid = currentUserSid();
+    if (!sid) {
+        return std::unexpected(
+            QStringLiteral("Could not read the current user's SID (Windows error %1)")
+                .arg(sid.error()));
+    }
+    PACL dacl = nullptr;
+    const DWORD built = buildStandardUserDacl(reinterpret_cast<PSID>(sid->data()), &dacl);
+    if (built != ERROR_SUCCESS) {
+        return std::unexpected(QStringLiteral("Failed to create ACL: %1").arg(built));
+    }
+    const SecurityChange change{.si = DACL_SECURITY_INFORMATION |
+                                      PROTECTED_DACL_SECURITY_INFORMATION,
+                                .owner = nullptr,
+                                .group = nullptr,
+                                .dacl = dacl};
+    const DWORD applied = applySecurityNoFollow(path, WRITE_DAC | READ_CONTROL, change);
+    LocalFree(dacl);
+    QString refusal;
+    if (interpretSecurityResult(applied, "Failed to set permissions", refusal)) {
+        return {};
+    }
+    return std::unexpected(refusal);
 }
 
 bool PermissionManager::isRunningAsAdmin() {

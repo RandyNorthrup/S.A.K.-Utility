@@ -5,6 +5,7 @@
 
 #include "sak/ai/ai_paths.h"
 #include "sak/ai/ai_secret_redaction.h"
+#include "sak/permission_manager.h"
 #include "sak/secure_memory.h"
 
 #include <QByteArray>
@@ -19,8 +20,11 @@
 #include <QScopeGuard>
 
 #include <algorithm>
+#include <expected>
 #include <optional>
+#include <string>
 #include <utility>
+#include <vector>
 
 #include <windows.h>
 
@@ -64,22 +68,48 @@ void setError(QString* error_message, const QString& message) {
     }
 }
 
-std::optional<QJsonObject> readCredentialRoot(const QString& path, QString* error_message) {
+// The ONE rule for what an API key may look like, applied before a key is saved AND after one is
+// decrypted. The load side used to skip it: any non-empty plaintext a DPAPI blob produced went
+// straight into the outbound Authorization header, CR/LF included. Only a same-user writer can
+// plant such a blob, so no trust boundary was crossed -- but a check that one side runs and the
+// other does not is two definitions of a valid key. Returns the reason, or empty when valid.
+[[nodiscard]] QString apiKeyTextError(const QString& api_key) {
+    if (api_key.trimmed().isEmpty()) {
+        return QStringLiteral("API key is empty");
+    }
+    if (api_key.size() > kMaxApiKeyChars) {
+        return QStringLiteral("API key is implausibly long");
+    }
+    // Reject embedded control characters (NUL, CR, LF, tab, etc.): a real API key never contains
+    // them, and letting one through could inject a newline into an outbound Authorization header
+    // downstream. Fail closed rather than silently storing or using a malformed credential.
+    if (std::ranges::any_of(api_key, [](const QChar ch) {
+            return ch.unicode() < kAsciiControlLimit || ch.unicode() == kAsciiDelete;
+        })) {
+        return QStringLiteral("API key contains control characters");
+    }
+    return {};
+}
+
+// The credential file's root object, nullopt when NO FILE exists ("no key configured"), or the
+// reason a file that does exist cannot be used.
+//
+// Absent and empty are different answers. Both used to come back as an empty object, so a key
+// file truncated or overwritten to `{}` read as "no key configured" with no error at all, and the
+// technician saw a missing key instead of a damaged one.
+std::expected<std::optional<QJsonObject>, QString> readCredentialRoot(const QString& path) {
     QFile file(path);
     if (!file.exists()) {
-        return QJsonObject{};
+        return std::optional<QJsonObject>{};
     }
     if (file.size() > kMaxCredentialFileBytes) {
-        setError(error_message,
-                 QStringLiteral("Encrypted API key file is implausibly large (%1 bytes)")
-                     .arg(file.size()));
-        return std::nullopt;
+        return std::unexpected(
+            QStringLiteral("Encrypted API key file is implausibly large (%1 bytes)")
+                .arg(file.size()));
     }
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        setError(
-            error_message,
+        return std::unexpected(
             QStringLiteral("Could not read encrypted API key file: %1").arg(file.errorString()));
-        return std::nullopt;
     }
 
     // Bound the read at the cap+1 so a file that grew (or was swapped) between the size check
@@ -87,25 +117,54 @@ std::optional<QJsonObject> readCredentialRoot(const QString& path, QString* erro
     // is the real ceiling.
     const QByteArray raw = file.read(kMaxCredentialFileBytes + 1);
     if (raw.size() > kMaxCredentialFileBytes) {
-        setError(error_message, QStringLiteral("Encrypted API key file is implausibly large"));
-        return std::nullopt;
+        return std::unexpected(QStringLiteral("Encrypted API key file is implausibly large"));
     }
-    QJsonParseError parse_error;
+    QJsonParseError parse_error{};
     const QJsonDocument doc = QJsonDocument::fromJson(raw, &parse_error);
-    if (parse_error.error != QJsonParseError::NoError || !doc.isObject()) {
-        setError(
-            error_message,
+    if (parse_error.error != QJsonParseError::NoError) {
+        return std::unexpected(
             QStringLiteral("Encrypted API key file is invalid: %1").arg(parse_error.errorString()));
-        return std::nullopt;
     }
-    return doc.object();
+    // Its own message: valid JSON whose root is an array or a scalar parses WITHOUT an error, so
+    // sharing the parse branch reported "Encrypted API key file is invalid: no error occurred".
+    if (!doc.isObject()) {
+        return std::unexpected(
+            QStringLiteral("Encrypted API key file is invalid: its JSON root is not an object"));
+    }
+    return std::optional<QJsonObject>(doc.object());
 }
 
-std::optional<QByteArray> encryptedCredentialBytes(const QJsonObject& root,
-                                                   QString* error_message) {
+// The version this build writes and the only one it can read. The field was written and never
+// checked, so a file from a future format with the same provider name would have been decrypted
+// as this one.
+constexpr int kCredentialFileVersion = 1;
+
+[[nodiscard]] QString credentialRootError(const QJsonObject& root) {
+    if (root.isEmpty()) {
+        return QStringLiteral(
+            "Encrypted API key file holds an empty JSON object; it was truncated or overwritten");
+    }
+    const QJsonValue version = root.value(QStringLiteral("version"));
+    if (version.isUndefined()) {
+        return QStringLiteral("Encrypted API key file has no version");
+    }
+    if (!version.isDouble()) {
+        return QStringLiteral("Encrypted API key file version is not a number");
+    }
+    if (version.toInt(-1) != kCredentialFileVersion) {
+        return QStringLiteral("Encrypted API key file version %1 is unsupported")
+            .arg(version.toDouble());
+    }
     if (root.value(QStringLiteral("provider")).toString() != QLatin1String(kCredentialProvider)) {
-        setError(error_message, QStringLiteral("Encrypted API key provider is unsupported"));
-        return std::nullopt;
+        return QStringLiteral("Encrypted API key provider is unsupported");
+    }
+    return {};
+}
+
+std::expected<QByteArray, QString> encryptedCredentialBytes(const QJsonObject& root) {
+    const QString root_error = credentialRootError(root);
+    if (!root_error.isEmpty()) {
+        return std::unexpected(root_error);
     }
     // Strict Base64: reject any non-Base64 byte instead of silently discarding it, so a
     // corrupted ciphertext fails closed here rather than decoding to a different blob.
@@ -113,12 +172,10 @@ std::optional<QByteArray> encryptedCredentialBytes(const QJsonObject& root,
         root.value(QStringLiteral("ciphertext")).toString().toLatin1(),
         QByteArray::Base64Encoding | QByteArray::AbortOnBase64DecodingErrors);
     if (!decoded) {
-        setError(error_message, QStringLiteral("Encrypted API key payload is not valid Base64"));
-        return std::nullopt;
+        return std::unexpected(QStringLiteral("Encrypted API key payload is not valid Base64"));
     }
     if (decoded.decoded.isEmpty()) {
-        setError(error_message, QStringLiteral("Encrypted API key payload is empty"));
-        return std::nullopt;
+        return std::unexpected(QStringLiteral("Encrypted API key payload is empty"));
     }
     return decoded.decoded;
 }
@@ -207,7 +264,7 @@ std::optional<QJsonObject> protectedCredentialRoot(const QString& api_key, QStri
     const QByteArray encrypted(reinterpret_cast<const char*>(out_blob.pbData),
                                static_cast<int>(out_blob.cbData));
     QJsonObject root;
-    root[QStringLiteral("version")] = 1;
+    root[QStringLiteral("version")] = kCredentialFileVersion;
     root[QStringLiteral("provider")] = QString::fromLatin1(kCredentialProvider);
     root[QStringLiteral("created_utc")] =
         QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
@@ -218,6 +275,43 @@ std::optional<QJsonObject> protectedCredentialRoot(const QString& api_key, QStri
         LocalFree(out_blob.pbData);
     }
     return root;
+}
+
+// Whether the volume holding @p path stores ACLs at all: NTFS and ReFS do, FAT32 and exFAT do not.
+std::expected<bool, QString> volumeStoresAcls(const QString& path) {
+    const std::wstring native =
+        QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()).toStdWString();
+    // The volume root is never longer than the path it was resolved from, plus a trailing
+    // separator and the terminating NUL.
+    constexpr std::size_t kVolumeRootExtraChars = 2;
+    std::vector<wchar_t> volume_root(native.size() + kVolumeRootExtraChars, L'\0');
+    if (GetVolumePathNameW(
+            native.c_str(), volume_root.data(), static_cast<DWORD>(volume_root.size())) == 0) {
+        return std::unexpected(QStringLiteral("could not resolve the volume of %1 (%2)")
+                                   .arg(path, winErrorMessage(GetLastError())));
+    }
+    DWORD flags = 0;
+    if (GetVolumeInformationW(
+            volume_root.data(), nullptr, 0, nullptr, nullptr, &flags, nullptr, 0) == 0) {
+        return std::unexpected(
+            QStringLiteral("could not read the file system flags of %1 (%2)")
+                .arg(QString::fromWCharArray(volume_root.data()), winErrorMessage(GetLastError())));
+    }
+    return (flags & FILE_PERSISTENT_ACLS) != 0;
+}
+
+// A portable copy run from a FAT32 or exFAT stick has no ACL to set, because those file systems
+// store none; DPAPI still binds the ciphertext to this Windows user, and that is the protection
+// there. Refusing to save on such a volume would remove the feature without protecting anything.
+std::expected<void, QString> restrictCredentialFile(const QString& path) {
+    const auto stores_acls = volumeStoresAcls(path);
+    if (!stores_acls) {
+        return std::unexpected(stores_acls.error());
+    }
+    if (!*stores_acls) {
+        return {};
+    }
+    return sak::restrictFileToCurrentUser(path);
 }
 
 bool writeCredentialRoot(const QString& path, const QJsonObject& root, QString* error_message) {
@@ -241,16 +335,70 @@ bool writeCredentialRoot(const QString& path, const QJsonObject& root, QString* 
             QStringLiteral("Could not commit encrypted API key file: %1").arg(file.errorString()));
         return false;
     }
-    // Harden to owner-only; if that fails the file may be world-readable, so remove it and
-    // fail closed rather than reporting success for an unprotected credential file.
-    if (!QFile::setPermissions(path, QFile::ReadOwner | QFile::WriteOwner)) {
-        QFile::remove(path);
+    // Restrict the file to this user (plus SYSTEM and Administrators) with a protected DACL, and
+    // fail closed -- removing the file -- when that cannot be done.
+    //
+    // This used to be QFile::setPermissions(ReadOwner | WriteOwner), which on Windows only toggles
+    // the read-only attribute: the file kept the data folder's inherited DACL, the call returned
+    // true, and its fail-closed branch could never run. The content was protected by DPAPI alone
+    // while the comment claimed owner-only access.
+    const auto restricted = restrictCredentialFile(path);
+    if (!restricted) {
+        const bool removed = QFile::remove(path);
         setError(error_message,
-                 QStringLiteral("Could not restrict permissions on encrypted API key file: %1")
-                     .arg(path));
+                 QStringLiteral("Could not restrict access to the encrypted API key file (%1); %2")
+                     .arg(restricted.error(),
+                          removed ? QStringLiteral("the file was removed")
+                                  : QStringLiteral("the file could NOT be removed: %1").arg(path)));
         return false;
     }
     return true;
+}
+
+QString loadApiKeyFrom(const QString& path, QString* error_message) {
+    const auto root = readCredentialRoot(path);
+    if (!root) {
+        setError(error_message, root.error());
+        return {};
+    }
+    if (!root->has_value()) {
+        return {};  // no file: no key configured, which is not an error
+    }
+    auto encrypted = encryptedCredentialBytes(**root);
+    if (!encrypted) {
+        setError(error_message, encrypted.error());
+        return {};
+    }
+    QString decrypt_error;
+    const QString api_key = decryptCredentialBytes(std::move(*encrypted), &decrypt_error);
+    if (!decrypt_error.isEmpty()) {
+        setError(error_message, decrypt_error);
+        return {};
+    }
+    // A stored credential passed apiKeyTextError when it was saved; one that fails it now was not
+    // written by this store, and it goes no further -- in particular not into a request header.
+    const QString key_error = apiKeyTextError(api_key);
+    if (!key_error.isEmpty()) {
+        setError(error_message, QStringLiteral("Stored API key is invalid: %1").arg(key_error));
+        return {};
+    }
+    return api_key;
+}
+
+bool saveApiKeyTo(const QString& path, const QString& api_key, QString* error_message) {
+    const QString key_error = apiKeyTextError(api_key);
+    if (!key_error.isEmpty()) {
+        setError(error_message, key_error);
+        return false;
+    }
+    if (!ensureCredentialDirectory(path, error_message)) {
+        return false;
+    }
+    const auto root = protectedCredentialRoot(api_key, error_message);
+    if (!root.has_value()) {
+        return false;
+    }
+    return writeCredentialRoot(path, *root, error_message);
 }
 }  // namespace
 
@@ -359,70 +507,36 @@ QString CredentialStore::decryptCredentialBytesForTesting(QByteArray encrypted,
                                                           QString* error_message) {
     return decryptCredentialBytes(std::move(encrypted), error_message);
 }
+
+QString CredentialStore::loadApiKeyFromPathForTesting(const QString& path, QString* error_message) {
+    if (error_message != nullptr) {
+        error_message->clear();
+    }
+    return loadApiKeyFrom(path, error_message);
+}
+
+bool CredentialStore::saveApiKeyToPathForTesting(const QString& path,
+                                                 const QString& api_key,
+                                                 QString* error_message) {
+    if (error_message != nullptr) {
+        error_message->clear();
+    }
+    return saveApiKeyTo(path, api_key, error_message);
+}
 #endif  // SAK_AI_TEST_HOOKS
 
 QString CredentialStore::loadApiKey(QString* error_message) {
     if (error_message != nullptr) {
         error_message->clear();
     }
-
-    const auto root = readCredentialRoot(credentialFilePath(), error_message);
-    if (!root.has_value()) {
-        return {};
-    }
-    if (root->isEmpty()) {
-        return {};
-    }
-
-    auto encrypted = encryptedCredentialBytes(*root, error_message);
-    if (!encrypted.has_value()) {
-        return {};
-    }
-    const QString api_key = decryptCredentialBytes(std::move(*encrypted), error_message);
-    if (api_key.isEmpty()) {
-        // A stored credential is never empty (saveApiKey rejects empty). An empty result here
-        // means decryption failed (error already set) or the plaintext was empty/corrupt -- do
-        // not hand back an empty key as if that were an error-free "not configured" state.
-        if ((error_message != nullptr) && error_message->isEmpty()) {
-            *error_message = QStringLiteral("Decrypted API key is empty or invalid");
-        }
-        return {};
-    }
-    return api_key;
+    return loadApiKeyFrom(credentialFilePath(), error_message);
 }
 
 bool CredentialStore::saveApiKey(const QString& api_key, QString* error_message) {
     if (error_message != nullptr) {
         error_message->clear();
     }
-
-    if (api_key.trimmed().isEmpty()) {
-        setError(error_message, QStringLiteral("API key is empty"));
-        return false;
-    }
-    if (api_key.size() > kMaxApiKeyChars) {
-        setError(error_message, QStringLiteral("API key is implausibly long"));
-        return false;
-    }
-    // Reject embedded control characters (NUL, CR, LF, tab, etc.): a real API key never contains
-    // them, and letting one through could inject a newline into an outbound Authorization header
-    // downstream. Fail closed rather than silently storing a malformed credential.
-    if (std::ranges::any_of(api_key, [](const QChar ch) {
-            return ch.unicode() < kAsciiControlLimit || ch.unicode() == kAsciiDelete;
-        })) {
-        setError(error_message, QStringLiteral("API key contains control characters"));
-        return false;
-    }
-
-    const QString path = credentialFilePath();
-    if (!ensureCredentialDirectory(path, error_message)) {
-        return false;
-    }
-    const auto root = protectedCredentialRoot(api_key, error_message);
-    if (!root.has_value()) {
-        return false;
-    }
-    return writeCredentialRoot(path, *root, error_message);
+    return saveApiKeyTo(credentialFilePath(), api_key, error_message);
 }
 
 bool CredentialStore::deleteApiKey(QString* error_message) {

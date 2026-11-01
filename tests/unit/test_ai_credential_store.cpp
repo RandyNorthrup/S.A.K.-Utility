@@ -18,14 +18,24 @@
 #include "sak/ai/ai_credential_store.h"
 #include "sak/ai/ai_secret_redaction.h"
 
+#include <QDir>
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonValue>
 #include <QScopeGuard>
+#include <QTemporaryDir>
 #include <QtTest/QtTest>
 #include <QVector>
 
 #include <algorithm>
+#include <string>
+#include <vector>
+
+#include <windows.h>
+
+#include <aclapi.h>
+#include <dpapi.h>
 
 class AiCredentialStoreTests : public QObject {
     Q_OBJECT
@@ -42,7 +52,246 @@ private Q_SLOTS:
     void keyNamesASecretJudgesTheHeadWord();
     void dpapiProtectsAndAuthenticatesLocalState();
     void credentialDecryptFailureWipesCiphertextAndEntropy();
+    void keyFileRoundTripsAndAbsentFileIsNotAnError();
+    void emptyObjectKeyFileIsReportedNotHidden();
+    void nonObjectKeyFileGetsItsOwnError();
+    void keyFileVersionIsChecked();
+    void decryptedKeyIsValidatedLikeASavedOne();
+    void savedKeyFileIsRestrictedToItsUser();
 };
+
+namespace {
+
+// A realistic key, assembled at run time so the source holds no matchable credential.
+QString fixtureApiKey() {
+    return QStringLiteral("sk-") + QStringLiteral("test") + QStringLiteral("Q9x7Lm2Rw4Zp8Kd3");
+}
+
+bool writeBytes(const QString& path, const QByteArray& bytes) {
+    QFile file(path);
+    return file.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+           file.write(bytes) == bytes.size();
+}
+
+QJsonObject readKeyFile(const QString& path) {
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return {};
+    }
+    return QJsonDocument::fromJson(file.readAll()).object();
+}
+
+// A DPAPI blob of @p plaintext under the store's own entropy, i.e. what a same-user writer that
+// is NOT this store could plant. The entropy string is the file-format constant
+// ai_credential_store.cpp writes; a test fixture has to name it to forge the format.
+QByteArray dpapiBlobFor(const QString& plaintext) {
+    QByteArray bytes = plaintext.toUtf8();
+    QByteArray entropy("SAK Utility/OpenAI API Key/v1");
+    DATA_BLOB input{static_cast<DWORD>(bytes.size()), reinterpret_cast<BYTE*>(bytes.data())};
+    DATA_BLOB salt{static_cast<DWORD>(entropy.size()), reinterpret_cast<BYTE*>(entropy.data())};
+    DATA_BLOB output{};
+    if (CryptProtectData(
+            &input, nullptr, &salt, nullptr, nullptr, CRYPTPROTECT_UI_FORBIDDEN, &output) == 0) {
+        return {};
+    }
+    QByteArray blob(reinterpret_cast<const char*>(output.pbData), static_cast<int>(output.cbData));
+    LocalFree(output.pbData);
+    return blob;
+}
+
+std::vector<BYTE> currentUserSid() {
+    HANDLE token = nullptr;
+    if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token) == 0) {
+        return {};
+    }
+    DWORD needed = 0;
+    GetTokenInformation(token, TokenUser, nullptr, 0, &needed);
+    std::vector<BYTE> token_user(needed);
+    const bool read = needed != 0 &&
+                      GetTokenInformation(token, TokenUser, token_user.data(), needed, &needed) !=
+                          0;
+    CloseHandle(token);
+    if (!read) {
+        return {};
+    }
+    const PSID user = reinterpret_cast<const TOKEN_USER*>(token_user.data())->User.Sid;
+    std::vector<BYTE> sid(GetLengthSid(user));
+    CopySid(static_cast<DWORD>(sid.size()), sid.data(), user);
+    return sid;
+}
+
+std::vector<BYTE> wellKnownSid(WELL_KNOWN_SID_TYPE type) {
+    std::vector<BYTE> sid(SECURITY_MAX_SID_SIZE);
+    DWORD size = static_cast<DWORD>(sid.size());
+    if (CreateWellKnownSid(type, nullptr, sid.data(), &size) == 0) {
+        return {};
+    }
+    sid.resize(size);
+    return sid;
+}
+
+}  // namespace
+
+void AiCredentialStoreTests::keyFileRoundTripsAndAbsentFileIsNotAnError() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("credentials/key.json"));
+
+    // No file is the "no key configured" state: no key AND no error.
+    QString error = QStringLiteral("stale");
+    QVERIFY(sak::ai::CredentialStore::loadApiKeyFromPathForTesting(path, &error).isEmpty());
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+
+    QVERIFY2(sak::ai::CredentialStore::saveApiKeyToPathForTesting(path, fixtureApiKey(), &error),
+             qPrintable(error));
+    QCOMPARE(sak::ai::CredentialStore::loadApiKeyFromPathForTesting(path, &error), fixtureApiKey());
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    // The written format is what the reader now checks.
+    QCOMPARE(readKeyFile(path).value(QStringLiteral("version")), QJsonValue(1));
+}
+
+void AiCredentialStoreTests::emptyObjectKeyFileIsReportedNotHidden() {
+    // CRED-3. An absent file and a file holding `{}` used to produce the same empty object, so
+    // a key file truncated or overwritten to `{}` read as "no key configured" with no error --
+    // the technician saw a missing key, not a damaged one.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("key.json"));
+    QVERIFY(writeBytes(path, QByteArrayLiteral("{}")));
+
+    QString error;
+    QVERIFY(sak::ai::CredentialStore::loadApiKeyFromPathForTesting(path, &error).isEmpty());
+    QVERIFY2(error.contains(QStringLiteral("empty JSON object")), qPrintable(error));
+}
+
+void AiCredentialStoreTests::nonObjectKeyFileGetsItsOwnError() {
+    // CRED-6. `[]` is valid JSON, so the parser reports NO error; sharing its branch printed
+    // "Encrypted API key file is invalid: no error occurred".
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("key.json"));
+    QVERIFY(writeBytes(path, QByteArrayLiteral("[]")));
+
+    QString error;
+    QVERIFY(sak::ai::CredentialStore::loadApiKeyFromPathForTesting(path, &error).isEmpty());
+    QVERIFY2(error.contains(QStringLiteral("not an object")), qPrintable(error));
+    QVERIFY2(!error.contains(QStringLiteral("no error occurred")), qPrintable(error));
+}
+
+void AiCredentialStoreTests::keyFileVersionIsChecked() {
+    // CRED-7. `version` was written and never read, so a future format reusing the provider name
+    // would have been decrypted as this one. The file below is a VALID saved key with only its
+    // version changed, so the refusal can only come from the version.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("key.json"));
+    QString error;
+    QVERIFY2(sak::ai::CredentialStore::saveApiKeyToPathForTesting(path, fixtureApiKey(), &error),
+             qPrintable(error));
+    const QJsonObject saved = readKeyFile(path);
+
+    QJsonObject future = saved;
+    future[QStringLiteral("version")] = 2;
+    QVERIFY(writeBytes(path, QJsonDocument(future).toJson()));
+    QVERIFY(sak::ai::CredentialStore::loadApiKeyFromPathForTesting(path, &error).isEmpty());
+    QVERIFY2(error.contains(QStringLiteral("version 2 is unsupported")), qPrintable(error));
+
+    QJsonObject unversioned = saved;
+    unversioned.remove(QStringLiteral("version"));
+    QVERIFY(writeBytes(path, QJsonDocument(unversioned).toJson()));
+    QVERIFY(sak::ai::CredentialStore::loadApiKeyFromPathForTesting(path, &error).isEmpty());
+    QVERIFY2(error.contains(QStringLiteral("no version")), qPrintable(error));
+
+    QJsonObject text_version = saved;
+    text_version[QStringLiteral("version")] = QStringLiteral("1");
+    QVERIFY(writeBytes(path, QJsonDocument(text_version).toJson()));
+    QVERIFY(sak::ai::CredentialStore::loadApiKeyFromPathForTesting(path, &error).isEmpty());
+    QVERIFY2(error.contains(QStringLiteral("not a number")), qPrintable(error));
+}
+
+void AiCredentialStoreTests::decryptedKeyIsValidatedLikeASavedOne() {
+    // CRED-4. The save side refuses control characters and implausible lengths; the load side
+    // returned any non-empty plaintext, and the key goes straight into the Authorization header.
+    // These blobs are what a same-user writer other than this store could plant.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("key.json"));
+    struct Case {
+        QString plaintext;
+        QString reason;
+    };
+    const QList<Case> cases = {
+        {fixtureApiKey() + QStringLiteral("\r\nX-Injected: 1"),
+         QStringLiteral("control characters")},
+        {QString(8193, QLatin1Char('k')), QStringLiteral("implausibly long")},
+        {QStringLiteral("   "), QStringLiteral("empty")},
+    };
+    for (const Case& c : cases) {
+        const QByteArray blob = dpapiBlobFor(c.plaintext);
+        QVERIFY(!blob.isEmpty());
+        const QJsonObject root{
+            {QStringLiteral("version"), 1},
+            {QStringLiteral("provider"), QStringLiteral("dpapi-current-user-v1")},
+            {QStringLiteral("ciphertext"), QString::fromLatin1(blob.toBase64())}};
+        QVERIFY(writeBytes(path, QJsonDocument(root).toJson()));
+        QString error;
+        const QString key = sak::ai::CredentialStore::loadApiKeyFromPathForTesting(path, &error);
+        QVERIFY2(key.isEmpty(), qPrintable(c.reason));
+        QVERIFY2(error.startsWith(QStringLiteral("Stored API key is invalid")), qPrintable(error));
+        QVERIFY2(error.contains(c.reason), qPrintable(error));
+    }
+}
+
+void AiCredentialStoreTests::savedKeyFileIsRestrictedToItsUser() {
+    // CRED-5. The "owner-only" step was QFile::setPermissions(ReadOwner | WriteOwner), which on
+    // Windows only toggles the read-only attribute: the file kept the folder's INHERITED DACL,
+    // so every account that could read the data folder could read the key file. The DACL is now
+    // protected (nothing inherited) and names only this user, SYSTEM and Administrators.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("key.json"));
+    QString error;
+    QVERIFY2(sak::ai::CredentialStore::saveApiKeyToPathForTesting(path, fixtureApiKey(), &error),
+             qPrintable(error));
+
+    const std::wstring native = QDir::toNativeSeparators(path).toStdWString();
+    PSECURITY_DESCRIPTOR descriptor = nullptr;
+    PACL dacl = nullptr;
+    QCOMPARE(GetNamedSecurityInfoW(native.c_str(),
+                                   SE_FILE_OBJECT,
+                                   DACL_SECURITY_INFORMATION,
+                                   nullptr,
+                                   nullptr,
+                                   &dacl,
+                                   nullptr,
+                                   &descriptor),
+             static_cast<DWORD>(ERROR_SUCCESS));
+    const auto free_descriptor = qScopeGuard([descriptor]() { LocalFree(descriptor); });
+    SECURITY_DESCRIPTOR_CONTROL control = 0;
+    DWORD revision = 0;
+    QVERIFY(GetSecurityDescriptorControl(descriptor, &control, &revision) != 0);
+    QVERIFY2((control & SE_DACL_PROTECTED) != 0, "the key file's DACL must not inherit");
+    QVERIFY(dacl != nullptr);
+
+    std::vector<BYTE> user = currentUserSid();
+    std::vector<BYTE> system = wellKnownSid(WinLocalSystemSid);
+    std::vector<BYTE> admins = wellKnownSid(WinBuiltinAdministratorsSid);
+    QVERIFY(!user.empty() && !system.empty() && !admins.empty());
+    bool user_allowed = false;
+    for (DWORD index = 0; index < dacl->AceCount; ++index) {
+        void* ace = nullptr;
+        QVERIFY(GetAce(dacl, index, &ace) != 0);
+        const auto* header = static_cast<const ACE_HEADER*>(ace);
+        QCOMPARE(header->AceType, static_cast<BYTE>(ACCESS_ALLOWED_ACE_TYPE));
+        QVERIFY2((header->AceFlags & INHERITED_ACE) == 0, "no entry may be inherited");
+        const PSID sid = &static_cast<ACCESS_ALLOWED_ACE*>(ace)->SidStart;
+        const bool is_user = EqualSid(sid, user.data()) != 0;
+        QVERIFY2(is_user || EqualSid(sid, system.data()) != 0 || EqualSid(sid, admins.data()) != 0,
+                 "only the user, SYSTEM and Administrators may be granted access");
+        user_allowed = user_allowed || is_user;
+    }
+    QVERIFY(user_allowed);
+}
 
 void AiCredentialStoreTests::credentialDecryptFailureWipesCiphertextAndEntropy() {
     QVector<QByteArray> wiped_inputs;
