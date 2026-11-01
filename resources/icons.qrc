@@ -21,8 +21,6 @@
         <file>icons/panel_image_flasher.svg</file>
         <file>icons/panel_network.svg</file>
         <file>icons/panel_organizer.svg</file>
-        <file>icons/panel_partition_manager.svg</file>
-        <file>icons/panel_quick_actions.svg</file>
         <file>icons/panel_search.svg</file>
         <file>icons/panel_uninstall.svg</file>
         <file>icons/panel_wifi.svg</file>
@@ -33,8 +31,6 @@
         <file>icons/icons8-duplicate.svg</file>
         <file>icons/icons8-settings_help.svg</file>
         <file>icons/icons8-source.svg</file>
-        <file>icons/icons8-destination.svg</file>
-        <file>icons/icons8-orchestrator.svg</file>
         <file>icons/icons8-network-card.svg</file>
         <file>icons/icons8-address-book.svg</file>
         <file>icons/icons8-attachment.svg</file>
@@ -81,7 +77,6 @@
         <file>icons/icons8-pm-copy.svg</file>
         <file>icons/icons8-pm-properties.svg</file>
         <file>icons/icons8-pm-disk.svg</file>
-        <file>icons/icons8-pm-data-transfer.svg</file>
         <file>icons/icons8-pm-data-recovery.svg</file>
         <file>icons/icons8-pm-align.svg</file>
         <file>icons/icons8-pm-delete.svg</file>
@@ -94,7 +89,6 @@
         <file>icons/icons8-pm-resize.svg</file>
         <file>icons/icons8-pm-split.svg</file>
         <file>icons/icons8-pm-dry-run.svg</file>
-        <file>icons/icons8-pm-ssd.svg</file>
         <file>icons/icons8-pm-os-drive.svg</file>
         <file>icons/files/refresh.svg</file>
         <file>icons/files/new-folder.svg</file>

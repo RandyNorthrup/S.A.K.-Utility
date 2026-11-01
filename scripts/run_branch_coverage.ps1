@@ -38,7 +38,7 @@
 #         -DCMAKE_PREFIX_PATH="C:/Qt/6.12.0/msvc2022_64" `
 #         -DCMAKE_TOOLCHAIN_FILE="C:/vcpkg/scripts/buildsystems/vcpkg.cmake" `
 #         -DVCPKG_TARGET_TRIPLET=x64-windows `
-#         -DENABLE_COVERAGE=ON -DENABLE_ASAN=OFF -DENABLE_UBSAN=OFF
+#         -DENABLE_COVERAGE=ON -DENABLE_ASAN=OFF
 #
 #     Ninja rather than the Visual Studio generator because the VS "ClangCL" platform toolset
 #     component is not installed; the standalone LLVM is enough for Ninja.

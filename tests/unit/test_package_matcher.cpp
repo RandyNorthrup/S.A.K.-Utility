@@ -6,8 +6,6 @@
 
 #include "sak/package_matcher.h"
 
-#include <QFile>
-#include <QTemporaryDir>
 #include <QtTest/QtTest>
 
 class PackageMatcherTests : public QObject {
@@ -24,9 +22,6 @@ private Q_SLOTS:
     void hasMapping_nonExistentKey();
     void getMappingCount_afterAdd();
 
-    // Mapping export/import
-    void exportImport_roundTrip();
-    void importMappings_missingFileReturnsFalse();
 
     // Fuzzy matching internal -- via findMatch
     void findMatch_exactMapping();
@@ -102,39 +97,6 @@ void PackageMatcherTests::getMappingCount_afterAdd() {
     matcher.addMapping("NewApp2", "new-app-2");
 
     QCOMPARE(matcher.getMappingCount(), initial + 2);
-}
-
-// ============================================================================
-// Export / Import
-// ============================================================================
-
-void PackageMatcherTests::exportImport_roundTrip() {
-    QTemporaryDir tempDir;
-    QVERIFY(tempDir.isValid());
-    QString exportPath = tempDir.filePath("mappings.json");
-
-    sak::PackageMatcher original;
-    original.addMapping("UniqueTestApp", "unique-test-pkg");
-    const int original_count = original.getMappingCount();
-
-    // export/import now report success/failure so callers can detect I/O errors.
-    QVERIFY(original.exportMappings(exportPath));
-    QVERIFY(QFile::exists(exportPath));
-
-    sak::PackageMatcher imported;
-    QVERIFY(imported.importMappings(exportPath));
-
-    QCOMPARE(imported.getMappingCount(), original_count);
-    QVERIFY(imported.hasMapping("UniqueTestApp"));
-    QCOMPARE(imported.getMapping("UniqueTestApp"), QString("unique-test-pkg"));
-}
-
-void PackageMatcherTests::importMappings_missingFileReturnsFalse() {
-    // A failed open must surface as false (not a silent void), so the caller knows the import did
-    // not happen rather than assuming success.
-    sak::PackageMatcher matcher;
-    QVERIFY(
-        !matcher.importMappings(QStringLiteral("Z:/no-such-dir/absent-mappings-xyz-98765.json")));
 }
 
 // ============================================================================

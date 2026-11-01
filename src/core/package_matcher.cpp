@@ -5,12 +5,7 @@
 
 #include "sak/logger.h"
 
-#include <QFile>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
 #include <QRegularExpression>
-#include <QSaveFile>
 
 #include <algorithm>
 #include <cmath>
@@ -706,7 +701,7 @@ void PackageMatcher::addMapping(const QString& app_name, const QString& choco_pa
     const QString normalized = normalizeAppName(app_name);
     if (normalized.isEmpty() || choco_package.isEmpty()) {
         // Never store a blank mapping: it would surface as an empty suggestion and cannot map
-        // anything. Matches importMappings(), which already skips blank entries. Fail closed.
+        // anything. Fail closed.
         return;
     }
     m_exact_mappings[normalized] = choco_package;
@@ -741,78 +736,6 @@ int PackageMatcher::getFuzzyMatchCount() const {
 
 int PackageMatcher::getSearchMatchCount() const {
     return m_search_match_count;
-}
-
-bool PackageMatcher::exportMappings(const QString& file_path) const {
-    QJsonObject root;
-    QJsonArray mappings;
-
-    for (auto it = m_exact_mappings.begin(); it != m_exact_mappings.end(); ++it) {
-        QJsonObject mapping;
-        mapping["app_name"] = it.key();
-        mapping["choco_package"] = it.value();
-        mappings.append(mapping);
-    }
-
-    root["mappings"] = mappings;
-    root["count"] = m_exact_mappings.size();
-
-    // QSaveFile writes to a temp file and atomically renames on commit(), so a
-    // crash or short write never truncates the user's existing mappings file.
-    QSaveFile file(file_path);
-    if (!file.open(QIODevice::WriteOnly)) {
-        sak::logWarning("[PackageMatcher] Failed to open mappings file for write: {}",
-                        file_path.toStdString());
-        return false;
-    }
-    const QByteArray json_bytes = QJsonDocument(root).toJson(QJsonDocument::Indented);
-    if (file.write(json_bytes) != json_bytes.size() || !file.commit()) {
-        sak::logWarning("[PackageMatcher] Failed to write mappings file (original left intact): {}",
-                        file_path.toStdString());
-        return false;
-    }
-    return true;
-}
-
-bool PackageMatcher::importMappings(const QString& file_path) {
-    QFile file(file_path);
-    if (!file.open(QIODevice::ReadOnly)) {
-        sak::logWarning("[PackageMatcher] Failed to open mappings file: {}",
-                        file_path.toStdString());
-        return false;
-    }
-
-    // Bound the read: a mappings file is a small hand-editable list. Refuse an implausibly large
-    // file rather than readAll() it into memory unbounded (fail closed on a DoS-sized input).
-    constexpr qint64 kMaxMappingsFileBytes = 8LL * 1024 * 1024;
-    if (file.size() > kMaxMappingsFileBytes) {
-        sak::logWarning("[PackageMatcher] Mappings file exceeds size cap, refusing to import: {}",
-                        file_path.toStdString());
-        return false;
-    }
-
-    const QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
-    file.close();
-
-    if (!doc.isObject()) {
-        sak::logWarning("Package mappings file is not a valid JSON object: {}",
-                        file_path.toStdString());
-        return false;
-    }
-
-    QJsonObject root = doc.object();
-    const QJsonArray mappings = root["mappings"].toArray();
-
-    for (const QJsonValue& value : mappings) {
-        QJsonObject mapping = value.toObject();
-        const QString app_name = mapping["app_name"].toString();
-        const QString choco_package = mapping["choco_package"].toString();
-
-        if (!app_name.isEmpty() && !choco_package.isEmpty()) {
-            m_exact_mappings[app_name] = choco_package;
-        }
-    }
-    return true;
 }
 
 void PackageMatcher::clearCache() {

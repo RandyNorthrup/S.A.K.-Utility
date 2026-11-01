@@ -22,7 +22,6 @@ Win32/
 ARM64/
 
 # Old/backup builds
-build_old_*/
 *_old/
 *.bak
 
@@ -30,7 +29,6 @@ build_old_*/
 build_*.log
 build_*.txt
 aqtinstall.log
-test_results.log
 
 # CMake
 CMakeCache.txt
@@ -115,7 +113,6 @@ bld/
 
 # EXCEPTION: Keep UUP Media Creator binaries (patched UUPMediaConverter)
 !tools/uup/uupmc/**/*.dll
-!tools/uup/uupmc/**/*.exe
 
 # Compiled Static libraries
 *.a
@@ -137,10 +134,7 @@ bld/
 !tools/uup/aria2c.exe
 !tools/iperf3/iperf3.exe
 !tools/iperf3/cygwin1.dll
-!tools/mcp/
-!tools/mcp/**
-tools/mcp/_build/
-tools/mcp/**/*.spec
+!tools/uup/uupmc/**/*.exe
 
 # Linker files
 *.ilk
@@ -192,20 +186,6 @@ coverage/
 *.testlog
 
 # ============================================================================
-# Documentation
-# ============================================================================
-
-# Generated docs
-docs/html/
-docs/latex/
-docs/xml/
-docs/_build/
-Doxyfile.bak
-
-# Archive (keep in repo but ignore changes)
-# docs/archive/
-
-# ============================================================================
 # Profiling & Debugging
 # ============================================================================
 
@@ -249,7 +229,6 @@ vcpkg_installed/
 *.log
 *.tlog
 _logs/
-cpp_logs_old/
 *.log.*
 
 # Temporary files
@@ -343,22 +322,6 @@ tramp
 *.sublime-workspace
 *.sublime-project
 
-# ============================================================================
-# Python (Legacy - in python_archive/)
-# ============================================================================
-
-# Keep python_archive/ but ignore Python artifacts inside it
-python_archive/**/__pycache__/
-python_archive/**/*.py[cod]
-python_archive/**/*.so
-python_archive/**/.venv/
-python_archive/**/venv/
-python_archive/**/.pytest_cache/
-python_archive/**/.mypy_cache/
-python_archive/**/dist/
-python_archive/**/build/
-python_archive/**/*.egg-info/
-
 # Ignore Python bytecode/caches everywhere (tools/, scripts/, etc.)
 **/__pycache__/
 **/*.py[cod]
@@ -371,8 +334,6 @@ python_archive/**/*.egg-info/
 *.csv
 *.html
 *.json
-!package_mappings.json
-!compile_commands.json
 !resources/ai/workflows/*.json
 !resources/ai/providers/*.json
 !resources/icons/files/manifest.json
@@ -396,10 +357,6 @@ tools/filesystem/**/_build/
 tools/filesystem/**/*.local
 !tools/filesystem/manifest.json
 
-# User data (if any)
-user_data/
-backup/
-
 # Chocolatey packages (embedded tools are kept)
 tools/chocolatey/lib/
 tools/chocolatey/.chocolatey/
@@ -408,7 +365,6 @@ tools/chocolatey/.chocolatey/
 !tools/chocolatey/lib/chocolatey/chocolatey.nupkg
 
 # Local configuration
-local_config.json
 *.local
 
 # Local build configuration (contains machine-specific paths)
@@ -416,9 +372,6 @@ cmake/SAK_BuildConfig.cmake
 
 # Archived/legacy code (kept locally but not version-controlled)
 /_archived/
-
-# cppcheck output (generated)
-cppcheck_errors.txt
 
 # Outlook/email test fixtures (large binary, kept locally)
 *.ost
@@ -524,12 +477,8 @@ scripts/sign-config.ps1
 !.gitignore
 !.gitattributes
 !CMakeLists.txt
-!package_mappings.json
 !resources/icon.ico
-!resources/sak_utility.rc
 
-# Local Qt verification build tree
-build-qt610/
 # Ninja configuration used only to emit compile_commands.json for clang-tidy.
 # The Visual Studio generator cannot produce a compilation database, so this
 # parallel build tree exists purely to feed static analysis. See R5-G12.

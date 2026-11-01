@@ -106,79 +106,25 @@ if(MSVC)
     add_compile_options(/guard:cf)  # Control Flow Guard
     add_link_options(/guard:cf /DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA)
 
-# Clang/GCC Compiler Flags
-elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-    # Comprehensive warning flags
-    add_compile_options(
-        -Wall                   # Enable all warnings
-        -Wextra                 # Extra warnings
-        -Werror                 # Warnings as errors
-        -Wpedantic              # Pedantic warnings
-        -Wconversion            # Implicit conversions
-        -Wshadow                # Variable shadowing
-        -Wnon-virtual-dtor      # Non-virtual destructors
-        -Wold-style-cast        # C-style casts
-        -Wcast-align            # Alignment casts
-        -Wunused                # Unused variables/functions
-        -Woverloaded-virtual    # Overloaded virtuals
-        -Wsign-conversion       # Sign conversions
-        -Wnull-dereference      # Null pointer dereference
-        -Wdouble-promotion      # Float to double promotion
-        -Wformat=2              # Format string vulnerabilities
-    )
-
-    # Config-specific flags.
-    #
-    # -march=native bakes the BUILD host's instruction set into the image, so a
-    # release compiled on a newer CPU dies with an illegal instruction on the
-    # older technician and customer machines this tool exists to service. It
-    # stays available for local benchmarking, but it has to be asked for: a
-    # distributable build must never pick it up by accident.
-    option(SAK_ENABLE_MARCH_NATIVE
-        "Optimize Release builds for the build host's CPU (NOT distributable)" OFF)
-    add_compile_options(
-        $<$<CONFIG:Release>:-O3>
-        $<$<CONFIG:Release>:-flto>
-        $<$<CONFIG:Debug>:-O0>
-        $<$<CONFIG:Debug>:-g3>
-    )
-    if(SAK_ENABLE_MARCH_NATIVE)
-        add_compile_options($<$<CONFIG:Release>:-march=native>)
-        message(STATUS "-march=native:      ENABLED (the binary is NOT portable off this host)")
-    endif()
-    add_link_options($<$<CONFIG:Release>:-flto>)
-
-    # Security features.
-    #
-    # _FORTIFY_SOURCE needs an optimizing compile to do anything at all; glibc
-    # answers -O0 with "#warning _FORTIFY_SOURCE requires compiling with
-    # optimization", and the -Werror above turns that into a hard error - so the
-    # flag meant to harden Release would instead stop every Debug build. Apply it
-    # only to the configurations where it has an effect.
-    add_compile_options(-fstack-protector-strong)
-    add_compile_options($<$<NOT:$<CONFIG:Debug>>:-D_FORTIFY_SOURCE=2>)
+# Qt's msvc2022_64 build and the MSVC runtime this project links need the MSVC ABI: MSVC, or
+# clang-cl, which takes the branch above. A GNU-style driver (GCC, MinGW or plain clang) cannot
+# link against them, so it is refused rather than given flags no build has ever used.
+else()
+    message(FATAL_ERROR "S.A.K. Utility builds with MSVC or clang-cl, not ${CMAKE_CXX_COMPILER_ID} "
+                        "with a GNU-style driver.")
 endif()
 
 # ============================================================================
 # Sanitizers -- Strictest Settings for Debug and Testing
 # ============================================================================
 #
-# MSVC supports:  ASan only (/fsanitize=address)
-# Clang/GCC:      ASan, UBSan, TSan (TSan mutually exclusive with ASan)
-#
-# Debug build:    cmake -B build -DCMAKE_BUILD_TYPE=Debug
-# ASan + UBSan:   cmake -B build -DCMAKE_BUILD_TYPE=Debug (default)
-# TSan only:      cmake -B build -DCMAKE_BUILD_TYPE=Debug -DENABLE_TSAN=ON -DENABLE_ASAN=OFF
+# MSVC and clang-cl: ASan (/fsanitize=address) for the Debug configuration.
 #
 # Runtime env vars (set before running the executable):
 #   ASAN_OPTIONS=strict_string_checks=1:detect_stack_use_after_return=1:check_initialization_order=1:strict_init_order=1:detect_odr_violation=2:halt_on_error=1
-#   UBSAN_OPTIONS=print_stacktrace=1:halt_on_error=1
-#   TSAN_OPTIONS=halt_on_error=1:second_deadlock_stack=1
 # ============================================================================
 
 option(ENABLE_ASAN "Enable Address Sanitizer (Debug builds)" ON)
-option(ENABLE_UBSAN "Enable Undefined Behavior Sanitizer (Clang/GCC Debug)" ON)
-option(ENABLE_TSAN "Enable Thread Sanitizer (mutually exclusive with ASan)" OFF)
 
 # ============================================================================
 # BRANCH COVERAGE (R5-G14-16b)
@@ -217,18 +163,6 @@ endif()
 # Effective state, reported in the configuration summary below. The option
 # values are requests; these say what the build will actually instrument.
 set(SAK_ASAN_STATE "OFF")
-set(SAK_UBSAN_STATE "OFF")
-set(SAK_TSAN_STATE "OFF")
-
-# Two mutually exclusive sanitizers were requested. Quietly dropping one leaves
-# the build reporting coverage it does not have, so refuse to configure and make
-# the caller say which one is wanted.
-if(ENABLE_TSAN AND ENABLE_ASAN)
-    message(FATAL_ERROR
-        "ENABLE_TSAN and ENABLE_ASAN are mutually exclusive: one binary cannot carry "
-        "both instrumentations. Configure with -DENABLE_TSAN=ON -DENABLE_ASAN=OFF for a "
-        "TSan build, or leave ENABLE_TSAN=OFF for the default ASan+UBSan build.")
-endif()
 
 # The sanitizer flags MUST be selected per-configuration with a generator
 # expression, never behind "if(CMAKE_BUILD_TYPE STREQUAL Debug)".
@@ -243,109 +177,44 @@ endif()
 #
 # $<CONFIG:Debug> is evaluated per configuration, so this is correct under both
 # multi-config and single-config generators. Release is unaffected.
-if(TRUE)
-    if(MSVC)
-        # MSVC Address Sanitizer - strictest configuration
-        if(ENABLE_ASAN)
-            add_compile_options($<$<CONFIG:Debug>:/fsanitize=address>)
-            # /Zi for full debug info with ASan stack traces
-            add_compile_options($<$<CONFIG:Debug>:/Zi>)
-            # MSVC ASan is incompatible with incremental linking, so turn it off
-            # for Debug only. Note that /RTC1 (CMake's Debug default, emitted as
-            # BasicRuntimeChecks=EnableFastChecks) is NOT stripped: it was tested
-            # against MSVC 14.44 and the two coexist, so removing it would be a
-            # change made on an assumption rather than on evidence.
-            add_link_options($<$<CONFIG:Debug>:/INCREMENTAL:NO>)
-            # An ASan-instrumented binary loads clang_rt.asan_dynamic at startup.
-            # Without it on the search path every Debug executable dies with
-            # STATUS_DLL_NOT_FOUND (0xC0000135) BEFORE main, which looks like a
-            # broken test rather than a missing runtime. Resolve it from the
-            # compiler's own directory (it ships beside cl.exe) and fail closed
-            # if it is not there, instead of producing binaries that cannot run.
-            get_filename_component(SAK_MSVC_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
-            set(SAK_ASAN_RUNTIME
-                "${SAK_MSVC_BIN_DIR}/clang_rt.asan_dynamic-x86_64.dll")
-            if(NOT EXISTS "${SAK_ASAN_RUNTIME}")
-                message(FATAL_ERROR
-                    "ENABLE_ASAN is ON but the ASan runtime was not found at "
-                    "${SAK_ASAN_RUNTIME}. Install the 'C++ AddressSanitizer' "
-                    "component of the Visual Studio installer, or configure with "
-                    "-DENABLE_ASAN=OFF.")
-            endif()
-            set(SAK_ASAN_STATE "ENABLED for the Debug configuration")
-            message(STATUS "Address Sanitizer:  ${SAK_ASAN_STATE}")
-            message(STATUS "ASan runtime:       ${SAK_ASAN_RUNTIME}")
-            # Stage it beside both Debug output roots at configure time, so every
-            # Debug executable finds it without depending on the developer's PATH.
-            # An instrumented binary that cannot load this DLL dies with
-            # STATUS_DLL_NOT_FOUND before main, which reads as a broken test
-            # rather than a missing runtime -- measured, not assumed.
-            file(COPY "${SAK_ASAN_RUNTIME}" DESTINATION "${CMAKE_BINARY_DIR}/Debug")
-            file(COPY "${SAK_ASAN_RUNTIME}" DESTINATION "${CMAKE_BINARY_DIR}/tests/Debug")
-        endif()
-        # Note: MSVC does not support UBSan or TSan.
-        # Use clang-cl or GCC for UBSan/TSan coverage.
-        # ENABLE_UBSAN is ON by default, so its value here is not a request from
-        # anyone; report the effective state and carry on. ENABLE_TSAN defaults
-        # OFF, so ON means somebody explicitly asked for coverage this toolchain
-        # cannot give - that fails configure instead of printing SKIPPED and
-        # then building an uninstrumented binary that looks tested.
-        if(ENABLE_UBSAN)
-            set(SAK_UBSAN_STATE "SKIPPED (MSVC has no UBSan; use clang-cl or GCC)")
-            message(STATUS "UBSan:              ${SAK_UBSAN_STATE}")
-        endif()
-        if(ENABLE_TSAN)
+if(MSVC)
+    # MSVC Address Sanitizer - strictest configuration
+    if(ENABLE_ASAN)
+        add_compile_options($<$<CONFIG:Debug>:/fsanitize=address>)
+        # /Zi for full debug info with ASan stack traces
+        add_compile_options($<$<CONFIG:Debug>:/Zi>)
+        # MSVC ASan is incompatible with incremental linking, so turn it off
+        # for Debug only. Note that /RTC1 (CMake's Debug default, emitted as
+        # BasicRuntimeChecks=EnableFastChecks) is NOT stripped: it was tested
+        # against MSVC 14.44 and the two coexist, so removing it would be a
+        # change made on an assumption rather than on evidence.
+        add_link_options($<$<CONFIG:Debug>:/INCREMENTAL:NO>)
+        # An ASan-instrumented binary loads clang_rt.asan_dynamic at startup.
+        # Without it on the search path every Debug executable dies with
+        # STATUS_DLL_NOT_FOUND (0xC0000135) BEFORE main, which looks like a
+        # broken test rather than a missing runtime. Resolve it from the
+        # compiler's own directory (it ships beside cl.exe) and fail closed
+        # if it is not there, instead of producing binaries that cannot run.
+        get_filename_component(SAK_MSVC_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
+        set(SAK_ASAN_RUNTIME
+            "${SAK_MSVC_BIN_DIR}/clang_rt.asan_dynamic-x86_64.dll")
+        if(NOT EXISTS "${SAK_ASAN_RUNTIME}")
             message(FATAL_ERROR
-                "ENABLE_TSAN=ON but the compiler is MSVC, which has no ThreadSanitizer. "
-                "Build the TSan configuration with clang-cl or GCC, or configure with "
-                "-DENABLE_TSAN=OFF.")
+                "ENABLE_ASAN is ON but the ASan runtime was not found at "
+                "${SAK_ASAN_RUNTIME}. Install the 'C++ AddressSanitizer' "
+                "component of the Visual Studio installer, or configure with "
+                "-DENABLE_ASAN=OFF.")
         endif()
-    elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
-        # GCC/Clang Sanitizers - strictest flags. Same per-config rule as MSVC.
-        if(ENABLE_ASAN)
-            add_compile_options(
-                $<$<CONFIG:Debug>:-fsanitize=address>
-                $<$<CONFIG:Debug>:-fno-omit-frame-pointer>
-                $<$<CONFIG:Debug>:-fno-optimize-sibling-calls>  # Better stack traces
-            )
-            add_link_options($<$<CONFIG:Debug>:-fsanitize=address>)
-            set(SAK_ASAN_STATE "ENABLED for the Debug configuration")
-            message(STATUS "Address Sanitizer:  ${SAK_ASAN_STATE}")
-        endif()
-
-        if(ENABLE_UBSAN)
-            add_compile_options(
-                $<$<CONFIG:Debug>:-fsanitize=undefined>
-                $<$<CONFIG:Debug>:-fsanitize=float-divide-by-zero>
-                $<$<CONFIG:Debug>:-fsanitize=float-cast-overflow>
-                $<$<CONFIG:Debug>:-fno-sanitize-recover=all>  # Strictest: abort on any UB
-                $<$<CONFIG:Debug>:-fno-omit-frame-pointer>
-            )
-            # -fsanitize=integer is a Clang-only group (unsigned-integer-overflow
-            # and friends). GCC rejects the command line outright, so a GCC Debug
-            # build - a configuration this branch explicitly claims to support -
-            # would fail before compiling a single file. Add it where it exists,
-            # and say plainly where it does not.
-            if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-                add_compile_options($<$<CONFIG:Debug>:-fsanitize=integer>)
-                set(SAK_UBSAN_STATE "ENABLED for Debug (strictest, no recovery, +integer)")
-            else()
-                set(SAK_UBSAN_STATE
-                    "ENABLED for Debug (strictest, no recovery; -fsanitize=integer is Clang-only)")
-            endif()
-            add_link_options($<$<CONFIG:Debug>:-fsanitize=undefined>)
-            message(STATUS "UBSan:              ${SAK_UBSAN_STATE}")
-        endif()
-
-        if(ENABLE_TSAN)
-            add_compile_options(
-                $<$<CONFIG:Debug>:-fsanitize=thread>
-                $<$<CONFIG:Debug>:-fno-omit-frame-pointer>
-            )
-            add_link_options($<$<CONFIG:Debug>:-fsanitize=thread>)
-            set(SAK_TSAN_STATE "ENABLED for the Debug configuration")
-            message(STATUS "Thread Sanitizer:   ${SAK_TSAN_STATE}")
-        endif()
+        set(SAK_ASAN_STATE "ENABLED for the Debug configuration")
+        message(STATUS "Address Sanitizer:  ${SAK_ASAN_STATE}")
+        message(STATUS "ASan runtime:       ${SAK_ASAN_RUNTIME}")
+        # Stage it beside both Debug output roots at configure time, so every
+        # Debug executable finds it without depending on the developer's PATH.
+        # An instrumented binary that cannot load this DLL dies with
+        # STATUS_DLL_NOT_FOUND before main, which reads as a broken test
+        # rather than a missing runtime -- measured, not assumed.
+        file(COPY "${SAK_ASAN_RUNTIME}" DESTINATION "${CMAKE_BINARY_DIR}/Debug")
+        file(COPY "${SAK_ASAN_RUNTIME}" DESTINATION "${CMAKE_BINARY_DIR}/tests/Debug")
     endif()
 endif()
 
@@ -473,13 +342,6 @@ set(PLATFORM_LIBS advapi32 crypt32 shell32 user32 dxgi pdh
 # Project Configuration
 # ============================================================================
 
-# Resolve build type for multi-config generators (MSVC)
-# CMAKE_BUILD_TYPE is empty on multi-config; use generator expression fallback
-if(CMAKE_BUILD_TYPE)
-    set(SAK_RESOLVED_BUILD_TYPE "${CMAKE_BUILD_TYPE}")
-else()
-    set(SAK_RESOLVED_BUILD_TYPE "Release")
-endif()
 
 option(SAK_ENABLE_AI_ASSISTANT "Build the AI Assistant panel" ON)
 
@@ -1298,8 +1160,6 @@ if(MSVC AND CMAKE_GENERATOR MATCHES "Visual Studio")
     endforeach()
 elseif(MSVC)
     target_compile_options(sak_lzfse PRIVATE /w)
-else()
-    target_compile_options(sak_lzfse PRIVATE -w)
 endif()
 
 # One compiled Job owner. sak_foundation archives it beside ProcessRunner, and the test suite
@@ -1638,11 +1498,6 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/chocolatey/choco.exe")
                         "Run 'powershell -File scripts/bundle_chocolatey.ps1' to bundle choco.exe.")
 endif()
 
-if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/tools/mcp/_build")
-    message(FATAL_ERROR "Temporary MCP build files found under tools/mcp/_build. "
-                        "Remove that directory before building so release packages stay portable.")
-endif()
-
 # The win32 desktop/browser automation provider is now the native sak_win32_mcp target
 # (built below), not a bundled external binary, so nothing to require here.
 
@@ -1717,7 +1572,7 @@ target_compile_definitions(sak_utility PRIVATE
 
 # Icon bootstrap from the parent directory (see the two uses below).
 option(SAK_IMPORT_PARENT_ICON
-    "Overwrite the tracked resources/ icon with ../icon.ico|.icns during configure" OFF)
+    "Overwrite the tracked resources/ icon with ../icon.ico during configure" OFF)
 
 # Windows-specific settings
 # Set Windows subsystem. This has to be per-configuration, not
@@ -2038,8 +1893,6 @@ message(STATUS "Build Testing:     ${BUILD_TESTING}")
 # reads ON while nothing carries the instrumentation is the exact failure this
 # file already had to fix once for /fsanitize=address.
 message(STATUS "ASan:              ${SAK_ASAN_STATE}")
-message(STATUS "UBSan:             ${SAK_UBSAN_STATE}")
-message(STATUS "TSan:              ${SAK_TSAN_STATE}")
 if(LIZARD_EXE)
     message(STATUS "Lizard:            AVAILABLE (cmake --build build --target lizard)")
 else()
