@@ -314,6 +314,12 @@ void AiTraceStoreTests::activityMetadata_isRedacted() {
     metadata[QStringLiteral("authorization")] = QStringLiteral("Bearer ") +
                                                 QStringLiteral("abcdef") +
                                                 QStringLiteral("ghijklmnopqrstuvwxyz");
+    // The trace store now asks the SAME catalogue as the conversation store's redactor
+    // (keyNamesASecret). Its old substring list agreed with that redactor on neither side: it
+    // blanked a usage count because the word "token" appears in it, which a technician reading
+    // the activity log needs.
+    metadata[QStringLiteral("access_token")] = QStringLiteral("Fx") + QStringLiteral("9q2Lm7Rw");
+    metadata[QStringLiteral("token_count")] = 17;
 
     QString error;
     auto activity = sak::ai::TraceStore::activityEvent({QStringLiteral("session_5"),
@@ -332,6 +338,9 @@ void AiTraceStoreTests::activityMetadata_isRedacted() {
              QStringLiteral("[redacted]"));
     QCOMPARE(activity_events.first().metadata.value(QStringLiteral("model")).toString(),
              QStringLiteral("gpt-5.5"));
+    QCOMPARE(activity_events.first().metadata.value(QStringLiteral("access_token")).toString(),
+             QStringLiteral("[redacted]"));
+    QCOMPARE(activity_events.first().metadata.value(QStringLiteral("token_count")), QJsonValue(17));
     // Free-text summary runs through the same redactor: the key is rewritten IN PLACE and the
     // surrounding text is kept, so a redactor that blanked the whole field is caught too.
     QCOMPARE(activity_events.first().summary, QStringLiteral("done [redacted-context7-key]"));

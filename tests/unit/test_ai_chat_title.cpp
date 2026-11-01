@@ -9,6 +9,7 @@ private Q_SLOTS:
     void firstPromptCreatesRelevantTechnicianTitle();
     void offlineInstallerKeepsProductName();
     void titleRedactsSecretsPathsAndUrls();
+    void titleRedactsUncPathsAndSpacedFileNames();
     void titleRedactsEverySecretShapeNotJustOpenAiKeys();
     void titleRedactsAnySchemeAndUnclosedCode();
     void domainRulesMatchWholeWordsOnly();
@@ -69,6 +70,39 @@ void AiChatTitleTests::titleRedactsSecretsPathsAndUrls() {
     QVERIFY2(!bounded.contains(QStringLiteral("temp")), qPrintable(bounded));
 }
 
+void AiChatTitleTests::titleRedactsUncPathsAndSpacedFileNames() {
+    // TITLE-2. The UNC rule stopped at the first space, so this prompt was saved with the title
+    // "Open Smith Salary Review Xlsx" -- a person's name and the subject of a payroll file, in
+    // the artifact that outlives the conversation. The PATH GOES FIRST in each prompt so the
+    // six-word title cap cannot drop the leaked words for an unrelated reason.
+    const QString unc = QStringLiteral("\\\\") + QStringLiteral("nas\\home\\John Smith\\") +
+                        QStringLiteral("salary review.xlsx");
+    const QString unc_title = sak::ai::chatTitleFromFirstPrompt(QStringLiteral("open %1").arg(unc));
+    for (const char* leaked : {"nas", "home", "John", "Smith", "Salary", "Review", "Xlsx"}) {
+        QVERIFY2(!unc_title.contains(QLatin1String(leaked), Qt::CaseInsensitive),
+                 qPrintable(unc_title));
+    }
+
+    // A space in the LAST component, with no separator after it, is the case the drive rule
+    // missed too: it looked only one word ahead for another separator, so "review.xlsx" was
+    // left in the title even with the earlier drive-path fix.
+    const QString drive = QStringLiteral("C:") +
+                          QStringLiteral("\\Users\\John Smith\\Q3 salary review.xlsx");
+    const QString drive_title =
+        sak::ai::chatTitleFromFirstPrompt(QStringLiteral("open %1 please").arg(drive));
+    for (const char* leaked : {"John", "Smith", "Q3", "Salary", "Review", "Xlsx"}) {
+        QVERIFY2(!drive_title.contains(QLatin1String(leaked), Qt::CaseInsensitive),
+                 qPrintable(drive_title));
+    }
+
+    // Still BOUNDED: prose after a UNC path is the title, not part of the path.
+    const QString unc_then_prose = sak::ai::chatTitleFromFirstPrompt(
+        QStringLiteral("\\\\") + QStringLiteral("nas\\share\\report.docx won't open in Word"));
+    QVERIFY2(unc_then_prose.contains(QStringLiteral("Word")), qPrintable(unc_then_prose));
+    QVERIFY2(!unc_then_prose.contains(QStringLiteral("report"), Qt::CaseInsensitive),
+             qPrintable(unc_then_prose));
+}
+
 void AiChatTitleTests::defaultTitleDetectionPreservesManualNames() {
     QVERIFY(sak::ai::isDefaultChatTitle(QStringLiteral("AI Session")));
     QVERIFY(sak::ai::isDefaultChatTitle(QStringLiteral("")));
@@ -94,6 +128,7 @@ void AiChatTitleTests::titleRedactsEverySecretShapeNotJustOpenAiKeys() {
     const QString github_token = QStringLiteral("gh") + QStringLiteral("p_") +
                                  QStringLiteral("abcdefghijklmnopqrstuvwxyz012345");
     const QString aws_key = QStringLiteral("AKI") + QStringLiteral("AIOSFODNN7EXAMPLE");
+    const QString compound_value = QStringLiteral("Fx") + QStringLiteral("9q2Lm7Rw");
 
     struct Case {
         QString prompt;
@@ -108,10 +143,22 @@ void AiChatTitleTests::titleRedactsEverySecretShapeNotJustOpenAiKeys() {
         {QStringLiteral("Rotate ") + github_token + QStringLiteral(" on the build box"),
          github_token},
         {QStringLiteral("AWS key ") + aws_key + QStringLiteral(" is failing auth"), aws_key},
+        // Compound and environment-style names (CRED-1R): the shared redactor used to miss
+        // every one of them, because '_' is a word character and its \b never fired inside an
+        // identifier. The secret leads the prompt so the title cap cannot hide a leak.
+        {QStringLiteral("access_token") + QStringLiteral("=") + compound_value +
+             QStringLiteral(" rejected"),
+         compound_value},
+        {QStringLiteral("AWS_SECRET_ACCESS_KEY") + QStringLiteral("=") + compound_value +
+             QStringLiteral(" invalid"),
+         compound_value},
     };
     for (const Case& c : cases) {
         const QString title = sak::ai::chatTitleFromFirstPrompt(c.prompt);
-        QVERIFY2(!title.contains(c.secret), qPrintable(c.prompt + QStringLiteral(" -> ") + title));
+        // CASE-INSENSITIVE: the title upper-cases any word containing a digit, so a
+        // case-sensitive check passes on a leaked "FX9Q2LM7RW" for the wrong reason.
+        QVERIFY2(!title.contains(c.secret, Qt::CaseInsensitive),
+                 qPrintable(c.prompt + QStringLiteral(" -> ") + title));
         // The marker vocabulary must be mapped before the punctuation strip, or the brackets go
         // and the bare word "redacted" ends up in the title.
         QVERIFY2(!title.contains(QStringLiteral("redacted"), Qt::CaseInsensitive),

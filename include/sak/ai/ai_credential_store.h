@@ -39,8 +39,8 @@ public:
     /// rewrites `"token":"abc"` to `token=[redacted]`, which deletes the quotes and the colon and
     /// destroys the document, so the re-parse fails and the record is lost. This walks the tree so
     /// the structure is never touched:
-    ///   - a value whose KEY names a secret (password/passwd/secret/token/api_key) is replaced
-    ///     wholesale, however it is spelled and whatever it holds;
+    ///   - a value whose KEY names a secret (sak::ai::keyNamesASecret: password, access_token,
+    ///     client_secret, Authorization, Cookie, ...) is replaced wholesale, whatever it holds;
     ///   - any other string value is passed through redactSecrets(), which catches a secret
     ///     embedded in captured stdout;
     ///   - objects and arrays are walked recursively; non-string scalars are left alone.

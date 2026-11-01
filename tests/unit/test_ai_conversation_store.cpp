@@ -1700,15 +1700,19 @@ void AiConversationStoreTests::appendCommand_redactsSecretsInPersistedRecord() {
     QVERIFY(!QString::fromUtf8(commands_bytes).contains(secret));
     // Not merely "the secret is gone": the record must persist the EXACT redacted form, so a
     // command that was dropped, blanked or wholly replaced cannot pass for redaction.
+    //
+    // The header VALUE goes whole, because `Authorization` names a secret (keyNamesASecret).
+    // This used to pin '[redacted-context7-key]': only the vendor-key rule fired here, so the same
+    // header carrying a Basic credential or any non-vendor token was persisted in clear.
     const QString redacted =
-        QStringLiteral("Invoke-RestMethod -Headers @{ Authorization = '[redacted-context7-key]' }");
+        QStringLiteral("Invoke-RestMethod -Headers @{ Authorization=[redacted] }");
     const QJsonObject record = QJsonDocument::fromJson(commands_bytes.trimmed()).object();
     QCOMPARE(record.value(QStringLiteral("command")).toString(), redacted);
     QVERIFY(record.value(QStringLiteral("result"))
                 .toObject()
                 .value(QStringLiteral("success"))
                 .toBool());
-    const auto hits = store.searchSessions(QStringLiteral("redacted-context7-key"), 10, &error);
+    const auto hits = store.searchSessions(QStringLiteral("Authorization=[redacted]"), 10, &error);
     QVERIFY2(error.isEmpty(), qPrintable(error));
     QCOMPARE(hits.size(), 1);
     QCOMPARE(hits.first().source, QStringLiteral("command"));

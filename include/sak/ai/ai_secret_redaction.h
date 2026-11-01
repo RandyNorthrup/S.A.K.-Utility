@@ -22,13 +22,39 @@
 
 namespace sak::ai {
 
+/// @brief Does @p key -- a JSON key, an environment variable, a header or a `name=` label --
+/// name a secret?
+///
+/// THE ONE CATALOGUE. The JSON key test, the `name=value` text rule and the trace store all ask
+/// this, because two catalogues had already disagreed: the trace store matched `authorization`,
+/// `cookie` and `credential` by substring while the conversation store's redactor knew five whole
+/// keys, so `access_token`, `client_secret`, `Authorization` and `Cookie` reached the persisted
+/// conversation in clear text.
+///
+/// The key is split into words at `_`, `-`, `.`, whitespace and camelCase boundaries
+/// (`AWS_SECRET_ACCESS_KEY`, `x-api-key`, `clientSecret`), and its HEAD -- the last word, which
+/// is the noun the others qualify -- is judged:
+///   - a head of password, passwd, passphrase, secret(s), token, authorization, cookie(s),
+///     credential(s), ciphertext, bearer or apikey names a secret (`access_token`,
+///     `client_secret`, `Proxy-Authorization`, `Set-Cookie`), while a fact about one does not
+///     (`token_count`, `max_tokens`, `PasswordRequired`, `PasswordLastSet`);
+///   - a trailing value, header, hash, confirm or confirmation is a container of the noun
+///     before it, so `password_hash` and `authorization_header` name a secret too;
+///   - a head of key names one only after api, secret, private or subscription (`api_key`,
+///     `X-Api-Key`, `AWS_SECRET_ACCESS_KEY`), so a bare `key` (a keystroke, a registry key) is
+///     not one.
+/// A word must match whole: `secretary` is not `secret`.
+[[nodiscard]] bool keyNamesASecret(const QString& key);
+
 /// @brief Replace anything that looks like a credential in @p text.
 ///
 /// Covers vendor-prefixed keys (OpenAI, Context7, GitHub, Slack, AWS, Google, Stripe), bearer
-/// tokens across the whole base64/base64url/opaque alphabet, and generic
-/// password/passwd/secret/token/api_key assignments in bare, double-quoted and single-quoted
-/// form. Ordinary prose is left untouched: a redactor that fires on normal text trains the reader
-/// to ignore it.
+/// tokens across the whole base64/base64url/opaque alphabet, a `Cookie:` header line, and any
+/// `name=value` / `name: value` assignment whose name keyNamesASecret() accepts -- environment
+/// style (`AWS_SECRET_ACCESS_KEY=...`), query-string style (`?access_token=...`), header style
+/// (`Authorization: Basic ...`, which keeps the scheme word) and quoted JSON style -- in bare,
+/// double-quoted and single-quoted form. Ordinary prose is left untouched: a redactor that fires
+/// on normal text trains the reader to ignore it.
 [[nodiscard]] QString redactSecrets(const QString& text);
 
 /// @brief redactSecrets applied to a JSON document, VALUE BY VALUE.
@@ -36,7 +62,8 @@ namespace sak::ai {
 /// Never redact serialized JSON as text: the assignment pattern rewrites `"token":"abc"` to
 /// `token=[redacted]`, deleting the quotes and the colon, so the document no longer parses and
 /// the record is lost. This walks the tree instead, leaving structure alone:
-///   - a value whose KEY names a secret is replaced wholesale, whatever it holds;
+///   - a value whose KEY names a secret (keyNamesASecret) is replaced wholesale, whatever it
+///     holds;
 ///   - any other string value goes through redactSecrets(), catching a secret embedded in
 ///     captured stdout;
 ///   - objects and arrays are walked recursively; non-string scalars are left alone.

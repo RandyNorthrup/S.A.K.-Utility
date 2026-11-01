@@ -4,6 +4,7 @@
 #include "sak/ai/ai_trace_store.h"
 
 #include "sak/ai/ai_credential_store.h"
+#include "sak/ai/ai_secret_redaction.h"
 
 #include <QDir>
 #include <QFile>
@@ -14,7 +15,6 @@
 #include <QMutexLocker>
 #include <QUuid>
 
-#include <algorithm>
 #include <cmath>
 #include <limits>
 #include <utility>
@@ -92,25 +92,6 @@ QJsonArray stringListToJson(const QStringList& values) {
     return array;
 }
 
-bool sensitiveKey(const QString& key) {
-    const QString name = key.trimmed().toLower();
-    static const QStringList kMarkers = {QStringLiteral("password"),
-                                         QStringLiteral("passwd"),
-                                         QStringLiteral("secret"),
-                                         QStringLiteral("token"),
-                                         QStringLiteral("api_key"),
-                                         QStringLiteral("api-key"),
-                                         QStringLiteral("apikey"),
-                                         QStringLiteral("authorization"),
-                                         QStringLiteral("bearer"),
-                                         QStringLiteral("cookie"),
-                                         QStringLiteral("credential"),
-                                         QStringLiteral("ciphertext"),
-                                         QStringLiteral("recovery_password")};
-    return std::ranges::any_of(kMarkers,
-                               [&name](const auto& marker) { return name.contains(marker); });
-}
-
 QJsonValue redactAndCapJson(const QJsonValue& value, const QString& key = {}, int depth = 0);
 
 QJsonObject redactObject(const QJsonObject& object, int depth) {
@@ -147,7 +128,11 @@ QString redactString(QString text) {
 }
 
 QJsonValue redactAndCapJson(const QJsonValue& value, const QString& key, int depth) {
-    if (sensitiveKey(key)) {
+    // The ONE secret-name catalogue (sak::ai::keyNamesASecret), shared with the conversation
+    // store's redactor. This file used to keep its own substring list, which already disagreed
+    // with that redactor in both directions: it caught Authorization and Cookie the persisted
+    // conversation let through, and it blanked token_count and max_tokens as if they were keys.
+    if (keyNamesASecret(key)) {
         return QStringLiteral("[redacted]");
     }
     if (depth > kMaxJsonRedactionDepth) {

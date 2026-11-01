@@ -39,6 +39,30 @@ QString boundedTitle(QString title) {
     return title.isEmpty() ? QStringLiteral("AI Chat") : title;
 }
 
+// Drive-rooted and UNC paths may contain SPACES ("C:\Users\Username With Space\secret.txt",
+// "\\nas\home\John Smith\salary review.xlsx"). A pattern that stops at the first whitespace
+// redacts only up to that space and leaves the rest of the path -- INCLUDING THE FILENAME -- in a
+// title that is then PERSISTED: a leak in exactly the artifact that outlives the conversation.
+// The UNC rule had exactly that shape after the drive rule was fixed.
+//
+// Both rules share one continuation (kPathInterior): a space is consumed only while one of the
+// next four words still looks like path interior -- it holds a separator, or it ends in a file
+// extension. Checking the next word alone was not enough: "salary review.xlsx" has no separator
+// after its space, so the last component of the path leaked even with the drive fix in place.
+// "C:\temp and then reboot" still stops at "C:\temp" rather than swallowing the sentence:
+// over-redaction costs title quality, under-redaction costs a leak, and this bounds both.
+void redactFilePaths(QString& text) {
+    static const QString kPathInterior = QStringLiteral(
+        R"((?:[^\s]|[ \t]+(?=(?:[^\s]+[ \t]+){0,3}[^\s]*)"
+        R"((?:[\\/]|\.[A-Za-z][A-Za-z0-9]{0,7}(?!\S)))))");
+    text.replace(QRegularExpression(QStringLiteral(R"(\b[A-Za-z]:[\\/])") + kPathInterior +
+                                    QStringLiteral("*")),
+                 QStringLiteral(" file "));
+    text.replace(QRegularExpression(QStringLiteral(R"(\\\\)") + kPathInterior +
+                                    QStringLiteral("+")),
+                 QStringLiteral(" file "));
+}
+
 QString redactedPromptText(QString text) {
     // Bound the work before any processing; truncating the scan window changes no
     // normal-length title (see kMaxPromptScanChars).
@@ -61,19 +85,7 @@ QString redactedPromptText(QString text) {
     text.replace(QRegularExpression(QStringLiteral(R"([A-Za-z][A-Za-z0-9+.\-]*://\S+|www\.\S+)"),
                                     QRegularExpression::CaseInsensitiveOption),
                  QStringLiteral(" website "));
-    // A drive-rooted path may contain SPACES ("C:\Users\Username With Space\secret.txt"). The old
-    // pattern stopped at the first whitespace, so it redacted only up to that space and left the
-    // rest of the path -- INCLUDING THE FILENAME -- in a title that is then PERSISTED: a leak in
-    // exactly the artifact that outlives the conversation.
-    //
-    // A space is consumed only when what follows still looks like path interior, i.e. a further
-    // separator appears before the next whitespace. So "C:\temp and then reboot" still stops at
-    // "C:\temp" rather than swallowing the sentence: over-redaction would cost title quality,
-    // under-redaction costs a leak, and this keeps both bounded.
-    text.replace(QRegularExpression(
-                     QStringLiteral(R"(\b[A-Za-z]:[\\/](?:[^\s]|\s(?=[^\s]*[\\/]))*)")),
-                 QStringLiteral(" file "));
-    text.replace(QRegularExpression(QStringLiteral(R"(\\\\[^\s]+)")), QStringLiteral(" file "));
+    redactFilePaths(text);
     // Route the whole text through the ONE hardened redactor rather than keeping a second, weaker
     // secret catalogue here. This file recognised only sk-* keys, so a bearer token, a JWT, a
     // GitHub/AWS/Slack/Stripe key or a plain "password=..." went into the generated title -- and
