@@ -662,7 +662,8 @@ auto decodeBackupFileDigest(const QString& source_path,
     -> std::expected<BackupCodecResult, error_code> {
     const BackupContainerKind kind = backupContainerKind(source_path);
     if (kind == BackupContainerKind::None) {
-        logError("Backup codec: {} is not a backup container", source_path.toStdString());
+        logError("Backup codec: cannot check {}, not a backup container",
+                 source_path.toStdString());
         return std::unexpected(error_code::invalid_format);
     }
     QFile source(source_path);

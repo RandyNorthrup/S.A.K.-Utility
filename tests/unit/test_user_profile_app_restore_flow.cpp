@@ -773,12 +773,12 @@ void UserProfileAppRestoreFlowTests::skipDoesNotCarryOntoThePageAfter() {
 
 void UserProfileAppRestoreFlowTests::customFolderMustBeInsideTheProfile() {
     using Dialog = sak::PerUserCustomizationDialog;
-    const QString profile = QStringLiteral("C:/Users/Pat");
-    QCOMPARE(Dialog::pathInsideProfile(profile, QStringLiteral("C:/Users/Pat/Projects/Site")),
+    const QString profile = QStringLiteral("C:/Users/Username");
+    QCOMPARE(Dialog::pathInsideProfile(profile, profile + QStringLiteral("/Projects/Site")),
              QStringLiteral("Projects/Site"));
     QVERIFY(Dialog::pathInsideProfile(profile, QStringLiteral("D:/Work")).isEmpty());
-    QVERIFY(Dialog::pathInsideProfile(profile, QStringLiteral("C:/Users/Sam/Documents")).isEmpty());
-    QVERIFY(Dialog::pathInsideProfile(profile, QStringLiteral("C:/Users/Pat")).isEmpty());
+    QVERIFY(Dialog::pathInsideProfile(profile, profile + QStringLiteral("2/Documents")).isEmpty());
+    QVERIFY(Dialog::pathInsideProfile(profile, profile).isEmpty());
 }
 
 // The whole backup path as the wizard drives it: what the pages chose reaches the worker.
