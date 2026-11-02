@@ -180,6 +180,69 @@ private Q_SLOTS:
         verifySequentialArmMatches(config, static_cast<qint64>(content.size()));
     }
 
+    // The window used to stop at ten groups and print only file names. A person deciding what to
+    // delete needs to see every copy and where it is.
+    void summaryListsEveryGroupWithFullPathsBiggestFirst() {
+        QTemporaryDir tmpDir;
+        QVERIFY(tmpDir.isValid());
+        constexpr int kGroups = 12;
+        for (int i = 0; i < kGroups; ++i) {
+            const QByteArray content(100 * (i + 1), static_cast<char>('a' + i));
+            createFile(tmpDir.path(), QStringLiteral("a%1.bin").arg(i), content);
+            createFile(tmpDir.path(), QStringLiteral("b%1.bin").arg(i), content);
+        }
+
+        DuplicateFinderWorker::Config config;
+        config.scanDirectories << tmpDir.path();
+        config.minimum_file_size = 0;
+        config.recursive_scan = false;
+        DuplicateFinderWorker worker(config);
+
+        QString summary;
+        connect(&worker,
+                &DuplicateFinderWorker::resultsReady,
+                [&summary](const QString& text, int, qint64) { summary = text; });
+        QSignalSpy spy(&worker, &DuplicateFinderWorker::finished);
+        worker.start();
+        QTRY_COMPARE_WITH_TIMEOUT(spy.count(), 1, 10'000);
+
+        const QString folder = QDir::toNativeSeparators(tmpDir.path());
+        for (int i = 0; i < kGroups; ++i) {
+            const QString copy = folder + QStringLiteral("\\a%1.bin").arg(i);
+            QVERIFY2(summary.contains(copy), qPrintable(copy + QLatin1Char('\n') + summary));
+        }
+        // The largest group wastes 1200 bytes and the smallest 100.
+        QVERIFY(summary.indexOf(QStringLiteral("a11.bin")) <
+                summary.indexOf(QStringLiteral("a0.bin")));
+    }
+
+    // A path handed to std::filesystem as UTF-8 is read in the system code page, so a folder with
+    // a name outside it was reported as not existing, and the scan found nothing in it.
+    void namesOutsideTheCodePageAreFoundAndShownIntact() {
+        QTemporaryDir tmpDir;
+        QVERIFY(tmpDir.isValid());
+        const QString folder_name = QString::fromUtf8("\xE5\x86\x99\xE7\x9C\x9F");  // photos
+        QVERIFY(QDir(tmpDir.path()).mkdir(folder_name));
+        const QString folder = QDir(tmpDir.path()).filePath(folder_name);
+        createFile(folder, folder_name + QStringLiteral("_a.txt"), "same content");
+        createFile(folder, folder_name + QStringLiteral("_b.txt"), "same content");
+
+        DuplicateFinderWorker::Config config;
+        config.scanDirectories << folder;
+        config.minimum_file_size = 0;
+        config.recursive_scan = false;
+        DuplicateFinderWorker worker(config);
+        QSignalSpy spy(&worker, &DuplicateFinderWorker::finished);
+        worker.start();
+        QTRY_COMPARE_WITH_TIMEOUT(spy.count(), 1, 10'000);
+
+        QCOMPARE(static_cast<int>(worker.duplicateGroups().size()), 1);
+        const auto& paths = worker.duplicateGroups().front().file_paths;
+        QCOMPARE(paths.size(), 2);
+        QVERIFY2(paths.at(0).contains(folder_name), qPrintable(paths.at(0)));
+        QVERIFY(QFile::exists(paths.at(0)));
+    }
+
     // B6-21: a file that cannot be hashed (here: exclusively locked) must be
     // COUNTED as unhashed, not silently dropped so the scan looks complete.
     // (Windows-only mechanism; this codebase targets Windows/MSVC.)

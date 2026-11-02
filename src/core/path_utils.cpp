@@ -200,7 +200,7 @@ auto path_utils::normalize(const std::filesystem::path& path)
             // prefix relative. isSafePath's containment comparison only means
             // anything between two absolute paths, so fail closed rather than
             // answer a security question from a half-resolved path.
-            logError("Normalized path is not absolute: {}", normalized.string());
+            logError("Normalized path is not absolute: {}", pathAsUtf8(normalized));
             return std::unexpected(error_code::invalid_path);
         }
         return normalized;
@@ -262,8 +262,8 @@ auto path_utils::isSafePath(const std::filesystem::path& path,
         auto norm_base = *norm_base_result;
 
         // Check if normalized path starts with base directory
-        auto path_str = norm_path.string();
-        auto base_str = norm_base.string();
+        auto path_str = pathAsUtf8(norm_path);
+        auto base_str = pathAsUtf8(norm_base);
 
         path_str = normalize_for_compare(std::move(path_str));
         base_str = normalize_for_compare(std::move(base_str));
@@ -274,7 +274,7 @@ auto path_utils::isSafePath(const std::filesystem::path& path,
         }
 
         return path_str.starts_with(base_str) ||
-               path_str == normalize_for_compare(norm_base.string());
+               path_str == normalize_for_compare(pathAsUtf8(norm_base));
 
     } catch (const std::exception& e) {
         logError("Exception in isSafePath(): {}", e.what());
@@ -285,7 +285,7 @@ auto path_utils::isSafePath(const std::filesystem::path& path,
 bool path_utils::matchesPattern(const std::filesystem::path& path,
                                 const std::vector<std::string>& patterns) noexcept {
     try {
-        const auto filename = path.filename().string();
+        const auto filename = pathAsUtf8(path.filename());
         return std::ranges::any_of(patterns,
 
                                    [&filename](const std::string& pattern) {
@@ -322,7 +322,7 @@ auto path_utils::getDirectorySizeAndCount(const std::filesystem::path& dir_path)
         // tree; an unreadable regular file or any other read error fails closed.
         if (const auto walk_ec = walkDirectoryTree(dir_path, info);
             walk_ec != error_code::success) {
-            logError("Failed to calculate the size of directory: {}", dir_path.string());
+            logError("Failed to calculate the size of directory: {}", pathAsUtf8(dir_path));
             return std::unexpected(walk_ec);
         }
     } catch (const std::filesystem::filesystem_error& e) {

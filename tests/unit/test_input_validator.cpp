@@ -7,6 +7,7 @@
 #include "sak/error_codes.h"
 #include "sak/input_validator.h"
 
+#include <QDir>
 #include <QFile>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
@@ -28,6 +29,7 @@ private Q_SLOTS:
     void validatePath_directoryAsFile_fails();
     void validatePath_traversalSequences();
     void validatePath_suspiciousPatterns();
+    void validatePath_nameOutsideTheCodePage();
     void validatePath_maxPathLength();
     void pathPrefixes_decomposesEveryAncestor();
     void emptyInput_handledGracefully();
@@ -525,6 +527,30 @@ void InputValidatorTests::containsTraversal_urlEncoded() {
     // Non-vacuity: an ordinary percent sequence that is not encoded traversal is not flagged.
     QVERIFY(!sak::input_validator::containsTraversalSequences(
         std::filesystem::path("uploads/100%25done/file.txt")));
+}
+
+// path::string() converts to the system code page, and THROWS on a character it does not have.
+// These checks are noexcept, so that would end the process; before them it ended the run with
+// "Unhandled exception", for any folder whose name is outside the PC's language setting.
+void InputValidatorTests::validatePath_nameOutsideTheCodePage() {
+    const QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString name = QString::fromUtf8("\xE5\x86\x99\xE7\x9C\x9F");  // photos
+    QVERIFY(QDir(dir.path()).mkdir(name));
+    const std::filesystem::path folder(QDir(dir.path()).filePath(name).toStdWString());
+
+    QVERIFY(!sak::input_validator::containsTraversalSequences(folder));
+    QVERIFY(!sak::input_validator::containsSuspiciousPatterns(folder));
+
+    sak::path_validation_config config;
+    config.must_exist = true;
+    config.must_be_directory = true;
+    QVERIFY(sak::input_validator::validatePath(folder, config));
+
+    // Two different names in that alphabet must not compare as the same folder.
+    QVERIFY(!sak::input_validator::validatePathWithinBase(folder.parent_path() / L"\u5199\u771F2",
+                                                          folder));
+    QVERIFY(sak::input_validator::validatePathWithinBase(folder / L"inside", folder));
 }
 
 void InputValidatorTests::containsSuspicious_windowsDeviceNames() {

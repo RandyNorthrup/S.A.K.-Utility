@@ -262,6 +262,10 @@ private Q_SLOTS:
     // The wizard's own defaults, which every other case here avoids.
     void defaultPermissionsRoundTrip();
 
+    // A person's name can be in any alphabet, and so can their files.
+    void namesOutsideTheCodePageRoundTrip_data();
+    void namesOutsideTheCodePageRoundTrip();
+
     // Controls on the backup wizard that used to change nothing.
     void verifyAfterBackupChecksEveryStoredFile_data();
     void verifyAfterBackupChecksEveryStoredFile();
@@ -883,6 +887,45 @@ void UserProfileRoundTripTests::defaultPermissionsRoundTrip() {
              qPrintable(restored.message + QLatin1Char('\n') + restored.warnings.join('\n')));
     QCOMPARE(readFile(
                  QDir(profileUnder(system_drive)).filePath(QStringLiteral("Documents/report.txt"))),
+             content);
+}
+
+void UserProfileRoundTripTests::namesOutsideTheCodePageRoundTrip_data() {
+    verifiedRestoreRoundTrips_data();
+}
+
+void UserProfileRoundTripTests::namesOutsideTheCodePageRoundTrip() {
+    QFETCH(bool, compress);
+    QFETCH(bool, encrypt);
+    QTemporaryDir profile;
+    QTemporaryDir backup;
+    QTemporaryDir system_drive;
+    QVERIFY(profile.isValid() && backup.isValid() && system_drive.isValid());
+    qputenv("SystemDrive", system_drive.path().toLocal8Bit());
+
+    const QString name = QString::fromUtf8("\xE5\x86\x99\xE7\x9C\x9F");  // photos
+    const QByteArray content = documentContent();
+    const QString relative = QStringLiteral("Documents/") + name + QStringLiteral("/") + name +
+                             QStringLiteral(".txt");
+    QVERIFY(writeFile(profile.filePath(relative), content));
+
+    sak::UserProfile user = sourceProfile(profile.path());
+    user.username = name;
+    auto options = backupOptions(compress, encrypt);
+    options.verify = true;
+    const RunResult backed_up = runBackup(user, backup.path(), options);
+    QVERIFY2(backed_up.completed && backed_up.success,
+             qPrintable(backed_up.message + QLatin1Char('\n') + backed_up.warnings.join('\n')));
+
+    sak::UserMapping mapping = mappingTo(MergeMode::CreateNewUser);
+    mapping.source_username = name;
+    mapping.destination_username = name;
+    const RunResult restored = runRestore(
+        backup.path(), {mapping}, verifiedRestore(ConflictResolution::SkipDuplicate, encrypt));
+    QVERIFY2(restored.completed && restored.success,
+             qPrintable(restored.message + QLatin1Char('\n') + restored.warnings.join('\n')));
+    QCOMPARE(readFile(system_drive.filePath(QStringLiteral("Users/") + name + QLatin1Char('/') +
+                                            relative)),
              content);
 }
 

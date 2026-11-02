@@ -350,7 +350,7 @@ validation_result checkWindowsPermissions(const std::filesystem::path& path,
 std::vector<std::string> normalizedPathComponents(const std::filesystem::path& p) {
     std::vector<std::string> components;
     for (const auto& part : p.lexically_normal()) {
-        std::string component = part.string();
+        std::string component = pathAsUtf8(part);
         if (component.empty() || component == ".") {
             continue;
         }
@@ -383,8 +383,8 @@ validation_result input_validator::validatePathPermissions(const std::filesystem
 
 validation_result input_validator::validatePathSyntax(const std::filesystem::path& path,
                                                       const path_validation_config& config) {
-    const auto path_str = path.string();
-    if (path_str.length() > config.max_path_length) {
+    const auto path_str = pathAsUtf8(path);
+    if (path.native().length() > config.max_path_length) {
         return failure(error_code::path_too_long, "Path exceeds maximum allowed length");
     }
     if (path_str.find('\0') != std::string::npos) {
@@ -474,7 +474,7 @@ bool hasDotDotSegment(const std::string& s) noexcept {
 bool input_validator::containsTraversalSequences(const std::filesystem::path& path) noexcept {
     // An empty path contains no traversal sequence; do not assert non-empty
     // (debug-only crash on a legitimate empty query).
-    const auto path_str = path.string();
+    const auto path_str = pathAsUtf8(path);
 
     // Reject a real parent-directory segment (".." delimited by separators), not
     // any incidental ".." inside an ordinary filename.
@@ -490,7 +490,7 @@ bool input_validator::containsTraversalSequences(const std::filesystem::path& pa
 
     // Check each path component
     return std::ranges::any_of(path, [](const auto& component) {
-        const auto comp_str = component.string();
+        const auto comp_str = pathAsUtf8(component);
         return comp_str == ".." || comp_str == ".";
     });
 }
@@ -576,7 +576,7 @@ bool hasTrailingDotOrSpace(const std::string& path_str) noexcept {
 bool input_validator::containsSuspiciousPatterns(const std::filesystem::path& path) noexcept {
     // An empty path has no suspicious pattern; do not assert non-empty (debug-only
     // crash on a legitimate empty query).
-    const auto path_str = path.string();
+    const auto path_str = pathAsUtf8(path);
 
     // Windows device names (CON, PRN, AUX, NUL, COM1-9, LPT1-9)
     static const std::regex kDevicePattern(kWindowsDeviceNamePattern, std::regex::icase);

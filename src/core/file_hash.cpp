@@ -7,6 +7,7 @@
 #include "sak/file_hash.h"
 
 #include "sak/logger.h"
+#include "sak/path_utils.h"
 
 #include <QByteArrayView>
 #include <QCryptographicHash>
@@ -68,18 +69,18 @@ auto file_hasher::calculateHash(const std::filesystem::path& file_path,
     std::error_code ec;
     const bool present = std::filesystem::exists(file_path, ec);
     if (ec) {
-        logError("Cannot stat path: {}", file_path.string());
+        logError("Cannot stat path: {}", pathAsUtf8(file_path));
         return std::unexpected(error_code::invalid_path);
     }
     if (!present) {
-        logError("File not found: {}", file_path.string());
+        logError("File not found: {}", pathAsUtf8(file_path));
         return std::unexpected(error_code::file_not_found);
     }
 
     // Validate it's a regular file (non-throwing overload, same rationale).
     const bool regular = std::filesystem::is_regular_file(file_path, ec);
     if (ec || !regular) {
-        logError("Path is not a regular file: {}", file_path.string());
+        logError("Path is not a regular file: {}", pathAsUtf8(file_path));
         return std::unexpected(error_code::invalid_path);
     }
 

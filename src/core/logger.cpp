@@ -6,6 +6,8 @@
 
 #include "sak/logger.h"
 
+#include "sak/path_utils.h"
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -136,7 +138,7 @@ auto logger::initialize(const std::filesystem::path& log_dir, std::string_view p
 
         m_initialized.store(true, std::memory_order_release);
         m_bytes_written.store(0, std::memory_order_relaxed);
-        init_log_path = m_log_file.string();
+        init_log_path = pathAsUtf8(m_log_file);
     }
 
     // Write initialization message (outside lock -- writeEntryToFile acquires it). Use the
@@ -443,7 +445,7 @@ std::vector<std::filesystem::path> logger::collectRotationCandidates() const {
         if (entry.path().extension() != ".log") {
             continue;
         }
-        if (!entry.path().stem().string().starts_with(m_prefix)) {
+        if (!pathAsUtf8(entry.path().stem()).starts_with(m_prefix)) {
             continue;
         }
         log_files.push_back(entry.path());

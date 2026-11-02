@@ -7,6 +7,7 @@
 #include "sak/file_scanner.h"
 
 #include "sak/logger.h"
+#include "sak/path_utils.h"
 
 #include <QtGlobal>
 
@@ -26,12 +27,12 @@ auto file_scanner::scan(const std::filesystem::path& root_path,
     // Validate root path. An empty root_path never exists, so it is reported
     // here as file_not_found.
     if (!std::filesystem::exists(root_path)) {
-        logError("Scan root path does not exist: {}", root_path.string());
+        logError("Scan root path does not exist: {}", pathAsUtf8(root_path));
         return std::unexpected(error_code::file_not_found);
     }
 
     if (!std::filesystem::is_directory(root_path)) {
-        logError("Scan root path is not a directory: {}", root_path.string());
+        logError("Scan root path is not a directory: {}", pathAsUtf8(root_path));
         return std::unexpected(error_code::not_a_directory);
     }
 
@@ -46,13 +47,13 @@ auto file_scanner::scan(const std::filesystem::path& root_path,
         std::error_code root_ec;
         const auto canonical_root = std::filesystem::canonical(root_path, root_ec);
         if (!root_ec) {
-            m_visited_dirs.insert(canonical_root.string());
+            m_visited_dirs.insert(pathAsUtf8(canonical_root));
         }
     }
 
     scan_statistics stats;
 
-    logInfo("Starting directory scan: {}", root_path.string());
+    logInfo("Starting directory scan: {}", pathAsUtf8(root_path));
 
     // Start recursive scan
     auto result = scanDirectoryRecursive(root_path, options, stats, 0, stop_token);
@@ -170,7 +171,7 @@ bool passesTypeFilter(file_type_filter filter, bool is_dir, bool is_file) {
 
 bool isExcludedDirectory(const std::filesystem::path& path,
                          const std::vector<std::string>& exclude_dirs) {
-    const auto dir_name = path.filename().string();
+    const auto dir_name = pathAsUtf8(path.filename());
     return std::ranges::any_of(exclude_dirs,
                                [&dir_name](const auto& excl) { return dir_name == excl; });
 }
@@ -292,7 +293,7 @@ bool file_scanner::isHidden(const std::filesystem::path& path) noexcept {
     // which is never empty.
     Q_ASSERT(!path.empty());
     try {
-        auto filename = path.filename().string();
+        auto filename = pathAsUtf8(path.filename());
 
         // Unix-style hidden files (start with .)
         if (!filename.empty() && filename[0] == '.') {
@@ -370,12 +371,12 @@ bool file_scanner::canDescendInto(const std::filesystem::directory_entry& entry,
                                                   : std::filesystem::canonical(path, ec);
         if (ec) {
             logWarning("Refusing to follow {}: canonical path unresolved ({})",
-                       path.string(),
+                       pathAsUtf8(path),
                        ec.message());
             stats.errors_encountered++;
             return false;
         }
-        if (!m_visited_dirs.insert(canonical.string()).second) {
+        if (!m_visited_dirs.insert(pathAsUtf8(canonical)).second) {
             return false;  // already descended into this directory this scan
         }
     }
@@ -457,7 +458,7 @@ auto file_scanner::processEntryWithErrorHandling(const std::filesystem::director
         }
         return processScannedEntry(entry, options, stats, current_depth, stop_token);
     } catch (const std::filesystem::filesystem_error& e) {
-        logWarning("Error processing entry: {} - {}", entry.path().string(), e.what());
+        logWarning("Error processing entry: {} - {}", pathAsUtf8(entry.path()), e.what());
         stats.errors_encountered++;
         return {};
     } catch (const std::exception& e) {
@@ -491,7 +492,7 @@ auto file_scanner::scanDirectoryRecursive(const std::filesystem::path& current_p
         const std::filesystem::directory_iterator dir_it(current_path, dir_options, ec);
 
         if (ec) {
-            logWarning("Failed to open directory: {} - {}", current_path.string(), ec.message());
+            logWarning("Failed to open directory: {} - {}", pathAsUtf8(current_path), ec.message());
             stats.errors_encountered++;
             return {};  // Continue with other directories
         }

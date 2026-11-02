@@ -1701,9 +1701,9 @@ QJsonObject serializePreviewPlan(const std::vector<OrganizerWorker::MoveOperatio
         }
         if (moves.size() < kMaxPreviewMoveSamples) {
             moves.append(QJsonObject{{QStringLiteral("source"),
-                                      clampLine(QString::fromStdString(op.source.string()))},
+                                      clampLine(QString::fromStdWString(op.source.wstring()))},
                                      {QStringLiteral("destination"),
-                                      clampLine(QString::fromStdString(op.destination.string()))},
+                                      clampLine(QString::fromStdWString(op.destination.wstring()))},
                                      {QStringLiteral("category"), op.category},
                                      {QStringLiteral("would_overwrite"), op.would_overwrite}});
         }

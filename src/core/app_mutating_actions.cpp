@@ -1294,8 +1294,12 @@ AppActionResult organizeDirectory(const QJsonObject& args,
             {true, QStringLiteral("Organized %1 (%2 file(s) moved)").arg(target).arg(moved), data});
     });
     QObject::connect(
-        &worker, &WorkerBase::failed, inv.context(), [&inv](int, const QString& error) {
-            inv.finish({false, error.isEmpty() ? QStringLiteral("Organize failed") : error, {}});
+        &worker, &WorkerBase::failed, inv.context(), [&inv, &worker](int, const QString& error) {
+            inv.finish({false,
+                        error.isEmpty() ? QStringLiteral("Organize failed") : error,
+                        {{QStringLiteral("files_moved"), worker.movedCount()},
+                         {QStringLiteral("failed_moves"),
+                          QJsonArray::fromStringList(worker.failedMoves())}}});
         });
 
     const AppActionResult result = inv.run([&worker]() { worker.start(); });

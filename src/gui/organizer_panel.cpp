@@ -536,10 +536,6 @@ QWidget* OrganizerPanel::createOrganizerTab() {
     m_collision_strategy->setAccessibleName(QStringLiteral("Collision Strategy"));
     m_collision_strategy->setVisible(false);
 
-    m_preview_mode_checkbox = new QCheckBox(tr("Preview Mode (Dry Run)"), this);
-    m_preview_mode_checkbox->setAccessibleName(QStringLiteral("Preview mode dry run"));
-    m_preview_mode_checkbox->setChecked(true);
-    m_preview_mode_checkbox->setVisible(false);
 
     m_create_subdirs_checkbox = new QCheckBox(tr("Create Subdirectories"), this);
     m_create_subdirs_checkbox->setAccessibleName(QStringLiteral("Create category subdirectories"));
@@ -901,8 +897,7 @@ void OrganizerPanel::onBrowseClicked() {
 }
 
 void OrganizerPanel::onPreviewClicked() {
-    m_preview_mode_checkbox->setChecked(true);
-    onExecuteClicked();
+    runOrganizer(true);
 }
 
 bool OrganizerPanel::validateOrganizerTarget() {
@@ -935,10 +930,6 @@ bool OrganizerPanel::validateOrganizerTarget() {
 }
 
 bool OrganizerPanel::confirmOrganizerExecution(const QDir& target_dir) {
-    if (m_preview_mode_checkbox->isChecked()) {
-        return true;
-    }
-
     const int file_count =
         static_cast<int>(target_dir.entryInfoList(QDir::Files | QDir::NoDotAndDotDot).size());
     auto result = sak::showQuestionLogged(
@@ -958,7 +949,7 @@ OrganizerWorker::Config OrganizerPanel::buildOrganizerConfig() const {
     OrganizerWorker::Config config;
     config.target_directory = m_target_path->text();
     config.category_mapping = getCategoryMapping();
-    config.preview_mode = m_preview_mode_checkbox->isChecked();
+    config.preview_mode = m_preview_run;
     config.create_subdirectories = m_create_subdirs_checkbox->isChecked();
 
     const QString strategy = m_collision_strategy->currentText().toLower();
@@ -1022,17 +1013,21 @@ void OrganizerPanel::startOrganizerWorker(const OrganizerWorker::Config& config)
 }
 
 void OrganizerPanel::onExecuteClicked() {
+    runOrganizer(false);
+}
+
+void OrganizerPanel::runOrganizer(bool preview) {
     Q_ASSERT(m_target_path);
-    Q_ASSERT(m_preview_mode_checkbox);
     if (!validateOrganizerTarget()) {
         return;
     }
 
     const QDir target_dir(m_target_path->text());
-    if (!confirmOrganizerExecution(target_dir)) {
+    if (!preview && !confirmOrganizerExecution(target_dir)) {
         return;
     }
 
+    m_preview_run = preview;
     m_worker.reset();
     startOrganizerWorker(buildOrganizerConfig());
 }
@@ -1084,17 +1079,16 @@ void OrganizerPanel::onRemoveCategoryClicked() {
 }
 
 void OrganizerPanel::onWorkerStarted() {
-    const QString mode = m_preview_mode_checkbox->isChecked() ? "preview" : "organization";
+    const QString mode = m_preview_run ? "preview" : "organization";
     logMessage(QString("Starting %1...").arg(mode));
     Q_EMIT statusMessage(QString("%1 in progress").arg(mode), 0);
 }
 
 void OrganizerPanel::onWorkerFinished() {
     Q_ASSERT(m_progress_bar);
-    Q_ASSERT(m_preview_mode_checkbox);
     setOperationRunning(false);
     m_progress_bar->setValue(kProgressMaximum);
-    const QString mode = m_preview_mode_checkbox->isChecked() ? "Preview" : "Organization";
+    const QString mode = m_preview_run ? "Preview" : "Organization";
     Q_EMIT statusMessage(QString("%1 complete").arg(mode), sak::kTimerStatusDefaultMs);
     Q_EMIT progressUpdate(kProgressMaximum, kProgressMaximum);
     logMessage(QString("%1 completed successfully").arg(mode));
@@ -1115,10 +1109,25 @@ void OrganizerPanel::onWorkerFailed(int error_code, const QString& error_message
     Q_EMIT statusMessage(tr("Organization failed"), sak::kTimerStatusDefaultMs);
     Q_EMIT progressUpdate(0, kProgressMaximum);
     logMessage(QString("Organization failed: Error %1: %2").arg(error_code).arg(safe_error));
+    logError("Organization failed: {}", safe_error.toStdString());
+    if (m_worker != nullptr && !m_worker->failedMoves().isEmpty()) {
+        showScrollableResultsDialog(tr("Organization Finished With Errors"),
+                                    organizerFailureReport(safe_error));
+        updateDirectorySummary();
+        return;
+    }
     sak::showWarningLogged(this,
                            tr("Organization Failed"),
                            QString("Error %1: %2").arg(error_code).arg(safe_error));
-    logError("Organization failed: {}", safe_error.toStdString());
+}
+
+QString OrganizerPanel::organizerFailureReport(const QString& error_message) const {
+    const QStringList& failed = m_worker->failedMoves();
+    return tr("Moved %1 file(s).\n\n%2 file(s) could not be moved and stayed where they were (%3):"
+              "\n\n%4\n\nClose any program using them and run it again.")
+        .arg(m_worker->movedCount())
+        .arg(failed.size())
+        .arg(error_message, failed.join(QLatin1Char('\n')));
 }
 
 void OrganizerPanel::onWorkerCancelled() {
@@ -1269,7 +1278,6 @@ void OrganizerPanel::showScrollableResultsDialog(const QString& title, const QSt
 
 void OrganizerPanel::onSettingsClicked() {
     Q_ASSERT(m_collision_strategy);
-    Q_ASSERT(m_preview_mode_checkbox);
     QDialog dialog(this);
     dialog.setWindowTitle(tr("File Organizer Settings"));
     dialog.setMinimumWidth(sak::kDialogWidthSmall);
@@ -1287,14 +1295,6 @@ void OrganizerPanel::onSettingsClicked() {
             &dialog),
         collision_combo);
 
-    auto* preview_check = new QCheckBox(tr("Preview Mode (Dry Run)"), &dialog);
-    preview_check->setChecked(m_preview_mode_checkbox->isChecked());
-    auto* preview_row = new QHBoxLayout();
-    preview_row->addWidget(preview_check);
-    preview_row->addWidget(new InfoButton(
-        tr("When enabled, shows what would happen without actually moving any files"), &dialog));
-    preview_row->addStretch();
-    layout->addRow(preview_row);
 
     auto* subdir_check = new QCheckBox(tr("Create Subdirectories"), &dialog);
     subdir_check->setChecked(m_create_subdirs_checkbox->isChecked());
@@ -1309,7 +1309,6 @@ void OrganizerPanel::onSettingsClicked() {
 
     if (dialog.exec() == QDialog::Accepted) {
         m_collision_strategy->setCurrentIndex(collision_combo->currentIndex());
-        m_preview_mode_checkbox->setChecked(preview_check->isChecked());
         m_create_subdirs_checkbox->setChecked(subdir_check->isChecked());
     }
 }

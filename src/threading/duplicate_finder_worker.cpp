@@ -8,8 +8,10 @@
 
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
+#include "sak/path_utils.h"
 
 #include <QCryptographicHash>
+#include <QDir>
 #include <QFileInfo>
 #include <QHash>
 #include <QtConcurrent>
@@ -25,7 +27,8 @@
 namespace {
 constexpr std::size_t kExpectedDuplicateScanFiles = 1000;
 constexpr int kDuplicateSummarySizePrecision = 2;
-constexpr int kDuplicateSummaryGroupLimit = 10;
+// Enough for any listing a person will read, without building a window that cannot scroll.
+constexpr int kDuplicateSummaryGroupLimit = 2000;
 constexpr uint64_t kDuplicateVirtualReadMaxBytes = 512ULL * 1024ULL * 1024ULL;
 constexpr int kDuplicateVirtualBrowseMaxEntries = 10'000;
 // How often the cancel-monitor thread polls the worker's cooperative stop. Small enough that an
@@ -205,13 +208,13 @@ auto DuplicateFinderWorker::hashFiles(const std::vector<std::filesystem::path>& 
         const auto& file = files[i];
         Q_EMIT scanProgress(static_cast<int>(i + 1),
                             static_cast<int>(file_count),
-                            QString::fromStdString(file.string()));
+                            QString::fromStdWString(file.wstring()));
 
         auto hash_result = calculateFileHash(file);
         if (hash_result) {
             hashed_files.emplace_back(file, hash_result.value());
         } else {
-            sak::logWarning("Failed to hash file: {}", file.string());
+            sak::logWarning("Failed to hash file: {}", sak::pathAsUtf8(file));
         }
     }
     stop_cancel_monitor();
@@ -232,7 +235,8 @@ void DuplicateFinderWorker::buildDuplicateGroups(
         group.hash = QString::fromStdString(hash);
 
         for (const auto& path : paths) {
-            group.file_paths.push_back(QString::fromStdString(path.string()));
+            group.file_paths.push_back(
+                QDir::toNativeSeparators(QString::fromStdWString(path.wstring())));
         }
 
         try {
@@ -283,7 +287,7 @@ auto DuplicateFinderWorker::collectFilesFromDirectory(const std::filesystem::pat
         }
         return collectEntries<std::filesystem::directory_iterator>(dir_path, files);
     } catch (const std::filesystem::filesystem_error& e) {
-        sak::logError("Error scanning directory {}: {}", dir_path.string(), e.what());
+        sak::logError("Error scanning directory {}: {}", sak::pathAsUtf8(dir_path), e.what());
         return std::unexpected(sak::error_code::scan_failed);
     }
 }
@@ -298,15 +302,15 @@ auto DuplicateFinderWorker::scanDirectories()
             return std::unexpected(sak::error_code::operation_cancelled);
         }
 
-        const std::filesystem::path dir_path(dir_str.toStdString());
+        const std::filesystem::path dir_path(dir_str.toStdWString());
 
         if (!std::filesystem::exists(dir_path)) {
-            sak::logWarning("Directory does not exist: {}", dir_path.string());
+            sak::logWarning("Directory does not exist: {}", sak::pathAsUtf8(dir_path));
             continue;
         }
 
         if (!std::filesystem::is_directory(dir_path)) {
-            sak::logWarning("Path is not a directory: {}", dir_path.string());
+            sak::logWarning("Path is not a directory: {}", sak::pathAsUtf8(dir_path));
             continue;
         }
 
@@ -480,7 +484,7 @@ auto DuplicateFinderWorker::calculateFileHash(const std::filesystem::path& file_
     -> std::expected<std::string, sak::error_code> {
     // Pass the shared cancel token so a mid-file stop returns operation_cancelled (the sequential
     // path; the caller discards results on cancel).
-    auto result = m_hasher.calculateHash(file_path.string(), nullptr, m_hash_stop.get_token());
+    auto result = m_hasher.calculateHash(file_path, nullptr, m_hash_stop.get_token());
     if (!result) {
         return std::unexpected(result.error());
     }
@@ -522,21 +526,35 @@ auto DuplicateFinderWorker::generateSummary(const std::vector<DuplicateGroup>& g
                         'f',
                         kDuplicateSummarySizePrecision);
 
-    summary += "Top duplicate groups:\n";
-    int count = 0;
+    // Most wasted space first: the groups come out of a hash table in no useful order, and these
+    // are the ones worth a person's time.
+    std::vector<const DuplicateGroup*> ordered;
+    ordered.reserve(groups.size());
     for (const auto& group : groups) {
+        ordered.push_back(&group);
+    }
+    std::ranges::stable_sort(ordered, [](const DuplicateGroup* a, const DuplicateGroup* b) {
+        return a->wasted_space > b->wasted_space;
+    });
+
+    summary += "Duplicate groups, most wasted space first:\n";
+    int count = 0;
+    for (const DuplicateGroup* group : ordered) {
         if (++count > kDuplicateSummaryGroupLimit) {
+            summary +=
+                QString("\n%1 more group(s) are not listed here.\n")
+                    .arg(static_cast<qsizetype>(ordered.size()) - kDuplicateSummaryGroupLimit);
             break;
         }
 
-        summary += QString("\nGroup %1 (%2 files, %3 KB wasted):\n")
-                       .arg(count)
-                       .arg(group.file_paths.size())
-                       .arg(static_cast<double>(group.wasted_space) / sak::kBytesPerKBf, 0, 'f', 1);
+        summary +=
+            QString("\nGroup %1 (%2 files, %3 KB wasted):\n")
+                .arg(count)
+                .arg(group->file_paths.size())
+                .arg(static_cast<double>(group->wasted_space) / sak::kBytesPerKBf, 0, 'f', 1);
 
-        for (const auto& path : group.file_paths) {
-            const QFileInfo info(path);
-            summary += QString("  - %1\n").arg(info.fileName());
+        for (const auto& path : group->file_paths) {
+            summary += QString("  - %1\n").arg(path);
         }
     }
 
@@ -585,7 +603,7 @@ std::function<void(int)> makeParallelHashTask(const std::shared_ptr<ParallelHash
             const QMutexLocker locker(&job->m_results_mutex);
             job->m_results[static_cast<size_t>(index)] = std::make_pair(file, hash_result.value());
         } else {
-            sak::logWarning("Failed to hash file: {}", file.string());
+            sak::logWarning("Failed to hash file: {}", sak::pathAsUtf8(file));
             job->m_error_occurred.store(true);
         }
         job->m_processed_count.fetch_add(1);

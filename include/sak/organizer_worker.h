@@ -74,6 +74,16 @@ public:
     [[nodiscard]] int movedCount() const noexcept { return m_moved_count; }
 
     /**
+     * @brief The files the last run could not move, each with the reason.
+     *
+     * One locked file does not stop the others, so the run finishes and then reports failure. These
+     * files stayed where they were. Written on the worker thread before failed() is emitted, so it
+     * is safe to read from a slot connected to failed().
+     * @return One line per file
+     */
+    [[nodiscard]] const QStringList& failedMoves() const noexcept { return m_failed_moves; }
+
+    /**
      * @brief The move operations planned by the last run (source, destination, category,
      *        would_overwrite), before any move is executed.
      *
@@ -167,6 +177,7 @@ private:
     Config m_config;
     std::vector<MoveOperation> m_planned_operations;
     int m_moved_count{0};  ///< Files actually relocated by the current run
+    QStringList m_failed_moves;
     bool m_plan_truncated{
-        false};            ///< Preview hit max_preview_files (reported count is a lower bound)
+        false};  ///< Preview hit max_preview_files (reported count is a lower bound)
 };

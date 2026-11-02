@@ -18,6 +18,14 @@
 
 namespace sak {
 
+/// @brief A path as UTF-8. Use this where a path becomes text, not path::string(): that converts to
+/// the system code page and throws on any character the code page does not have, so one file with
+/// a name from another language can end a whole operation.
+[[nodiscard]] inline std::string pathAsUtf8(const std::filesystem::path& path) {
+    const std::u8string utf8 = path.u8string();
+    return {utf8.begin(), utf8.end()};
+}
+
 /// @brief Path utility functions for file system operations
 /// @details Thread-safe utilities for path manipulation, validation, and normalization
 class path_utils {

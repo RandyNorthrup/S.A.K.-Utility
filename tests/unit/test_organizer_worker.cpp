@@ -11,6 +11,8 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#include <windows.h>
+
 class OrganizerWorkerTests : public QObject {
     Q_OBJECT
 
@@ -395,6 +397,70 @@ private Q_SLOTS:
         // A cancelled run reports itself as cancelled, not as a completed organize.
         QCOMPARE(cancelled.count(), 1);
         QCOMPARE(done.count(), 0);
+    }
+
+    // One file a program has open used to stop the run, leaving the person to work out what had
+    // moved and what had not.
+    void aLockedFileDoesNotStopTheRestAndIsNamed() {
+        QTemporaryDir tmpDir;
+        QVERIFY(tmpDir.isValid());
+        for (const char* name : {"a.png", "b.png", "c.png"}) {
+            createDummyFile(tmpDir.path(), name);
+        }
+        const QString locked = QDir(tmpDir.path()).filePath(QStringLiteral("b.png"));
+        HANDLE lock = CreateFileW(QDir::toNativeSeparators(locked).toStdWString().c_str(),
+                                  GENERIC_READ,
+                                  0,
+                                  nullptr,
+                                  OPEN_EXISTING,
+                                  FILE_ATTRIBUTE_NORMAL,
+                                  nullptr);
+        QVERIFY(lock != INVALID_HANDLE_VALUE);
+
+        OrganizerWorker::Config config;
+        config.target_directory = tmpDir.path();
+        config.category_mapping = defaultCategoryMapping();
+        OrganizerWorker worker(config);
+        QSignalSpy failed(&worker, &OrganizerWorker::failed);
+        worker.start();
+        QTRY_COMPARE_WITH_TIMEOUT(failed.count(), 1, 5000);
+        QVERIFY(worker.wait(5000));
+        CloseHandle(lock);
+
+        QCOMPARE(worker.movedCount(), 2);
+        QCOMPARE(worker.failedMoves().size(), 1);
+        QVERIFY2(worker.failedMoves().first().contains(QStringLiteral("b.png")),
+                 qPrintable(worker.failedMoves().first()));
+        QVERIFY(QFile::exists(locked));
+        QVERIFY(QFile::exists(QDir(tmpDir.path()).filePath(QStringLiteral("Images/a.png"))));
+        QVERIFY(QFile::exists(QDir(tmpDir.path()).filePath(QStringLiteral("Images/c.png"))));
+    }
+
+    // A path handed to std::filesystem as UTF-8 is read in the system code page, so a folder or a
+    // file with a name outside it could not be organized at all.
+    void namesOutsideTheCodePageAreMoved() {
+        QTemporaryDir tmpDir;
+        QVERIFY(tmpDir.isValid());
+        const QString name = QString::fromUtf8("\xE5\x86\x99\xE7\x9C\x9F");  // photos
+        QVERIFY(QDir(tmpDir.path()).mkdir(name));
+        const QString folder = QDir(tmpDir.path()).filePath(name);
+        createDummyFile(folder, name + QStringLiteral(".png"));
+
+        OrganizerWorker::Config config;
+        config.target_directory = folder;
+        config.category_mapping = defaultCategoryMapping();
+        OrganizerWorker worker(config);
+        QSignalSpy done(&worker, &OrganizerWorker::finished);
+        QSignalSpy failed(&worker, &OrganizerWorker::failed);
+        worker.start();
+        QVERIFY(worker.wait(5000));
+        QVERIFY2(failed.isEmpty(),
+                 qPrintable(failed.isEmpty() ? QString() : failed.first().at(1).toString()));
+        QTRY_COMPARE_WITH_TIMEOUT(done.count(), 1, 5000);
+
+        QCOMPARE(worker.movedCount(), 1);
+        QVERIFY(QFile::exists(
+            QDir(folder).filePath(QStringLiteral("Images/") + name + QStringLiteral(".png"))));
     }
 };
 

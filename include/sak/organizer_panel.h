@@ -121,6 +121,10 @@ private:
     bool validateCategoryMapping() const;
     bool validateOrganizerTarget();
     bool confirmOrganizerExecution(const QDir& target_dir);
+    /// @brief Check the target, ask before a real run, and start the worker.
+    void runOrganizer(bool preview);
+    /// @brief The moved count and every file left behind, once a real run has finished.
+    [[nodiscard]] QString organizerFailureReport(const QString& error_message) const;
     OrganizerWorker::Config buildOrganizerConfig() const;
     void connectOrganizerWorkerSignals();
     void connectDedupWorkerSignals();
@@ -154,8 +158,9 @@ private:
     QPushButton* m_reset_categories_button{nullptr};
 
     QComboBox* m_collision_strategy{nullptr};
-    QCheckBox* m_preview_mode_checkbox{nullptr};
     QCheckBox* m_create_subdirs_checkbox{nullptr};
+    /// Whether the run in progress came from Preview, so nothing moves.
+    bool m_preview_run{false};
 
     QPushButton* m_preview_button{nullptr};
     QPushButton* m_execute_button{nullptr};

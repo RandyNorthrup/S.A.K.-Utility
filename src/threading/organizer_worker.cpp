@@ -9,12 +9,14 @@
 #include "sak/app_organizer_helpers.h"
 #include "sak/input_validator.h"
 #include "sak/logger.h"
+#include "sak/path_utils.h"
 
 #include <QFile>
 #include <QtGlobal>
 #include <QVector>
 
 #include <algorithm>
+#include <tuple>
 
 namespace {
 constexpr qsizetype kInitialFileReserveCount = 256;
@@ -73,7 +75,7 @@ std::expected<void, sak::error_code> validateTargetDirectory(
     dir_cfg.check_read_permission = true;
     dir_cfg.check_write_permission = !config.preview_mode;
     auto dir_result = sak::input_validator::validatePath(
-        std::filesystem::path(config.target_directory.toStdString()), dir_cfg);
+        std::filesystem::path(config.target_directory.toStdWString()), dir_cfg);
     if (!dir_result) {
         sak::logError("Target directory validation failed: {}", dir_result.error_message);
         return std::unexpected(sak::error_code::invalid_path);
@@ -90,6 +92,7 @@ OrganizerWorker::OrganizerWorker(const Config& config, QObject* parent)
 auto OrganizerWorker::execute() -> std::expected<void, sak::error_code> {
     sak::logInfo("Starting directory organization: {}", m_config.target_directory.toStdString());
     m_moved_count = 0;
+    m_failed_moves.clear();
     m_plan_truncated = false;
 
     // Refuse a malformed configuration before touching the filesystem (see
@@ -132,7 +135,7 @@ auto OrganizerWorker::execute() -> std::expected<void, sak::error_code> {
 
         Q_EMIT fileProgress(static_cast<int>(i + 1),
                             static_cast<int>(files.size()),
-                            QString::fromStdString(file.string()));
+                            QString::fromStdWString(file.wstring()));
     }
 
     sak::logInfo("Planned {} move operations", m_planned_operations.size());
@@ -157,17 +160,19 @@ auto OrganizerWorker::executePlannedMoves() -> std::expected<void, sak::error_co
         }
 
         const auto& operation = m_planned_operations[i];
-        auto result = executeMove(operation);
-        if (!result) {
-            sak::logError("Failed to move file: {}", operation.source.string());
-            return result;
-        }
+        // A file another program has open must not stop the rest. It stays where it is, and the
+        // run reports it by name when everything else is done.
+        std::ignore = executeMove(operation);
 
         Q_EMIT fileProgress(static_cast<int>(i + 1),
                             static_cast<int>(m_planned_operations.size()),
-                            QString::fromStdString(operation.source.string()));
+                            QString::fromStdWString(operation.source.wstring()));
     }
 
+    if (!m_failed_moves.isEmpty()) {
+        sak::logError("Organizer could not move {} file(s)", m_failed_moves.size());
+        return std::unexpected(sak::error_code::write_error);
+    }
     sak::logInfo("Directory organization complete");
     return {};
 }
@@ -175,15 +180,15 @@ auto OrganizerWorker::executePlannedMoves() -> std::expected<void, sak::error_co
 auto OrganizerWorker::scanDirectory()
     -> std::expected<std::vector<std::filesystem::path>, sak::error_code> {
     std::vector<std::filesystem::path> files;
-    const std::filesystem::path target_path(m_config.target_directory.toStdString());
+    const std::filesystem::path target_path(m_config.target_directory.toStdWString());
 
     if (!std::filesystem::exists(target_path)) {
-        sak::logError("Target directory does not exist: {}", target_path.string());
+        sak::logError("Target directory does not exist: {}", sak::pathAsUtf8(target_path));
         return std::unexpected(sak::error_code::file_not_found);
     }
 
     if (!std::filesystem::is_directory(target_path)) {
-        sak::logError("Target path is not a directory: {}", target_path.string());
+        sak::logError("Target path is not a directory: {}", sak::pathAsUtf8(target_path));
         return std::unexpected(sak::error_code::invalid_path);
     }
 
@@ -223,20 +228,14 @@ auto OrganizerWorker::scanDirectory()
 }
 
 auto OrganizerWorker::categorizeFile(const std::filesystem::path& file_path) -> QString {
-    auto extension = file_path.extension().string();
-    if (extension.empty()) {
+    const QString extension = QString::fromStdWString(file_path.extension().wstring());
+    if (extension.isEmpty()) {
         return QString();
     }
 
     // Remove leading dot and convert to lowercase
-    if (extension[0] == '.') {
-        extension = extension.substr(1);
-    }
-    std::ranges::transform(extension, extension.begin(), [](unsigned char c) {
-        return std::tolower(c);
-    });
-
-    const QString ext_lower = QString::fromStdString(extension);
+    const QString ext_lower =
+        (extension.startsWith(QLatin1Char('.')) ? extension.mid(1) : extension).toLower();
 
     // Find matching category
     for (auto it = m_config.category_mapping.begin(); it != m_config.category_mapping.end(); ++it) {
@@ -256,8 +255,8 @@ auto OrganizerWorker::planMove(const std::filesystem::path& file_path, const QSt
     op.category = category;
 
     // Build destination path
-    const std::filesystem::path target_dir(m_config.target_directory.toStdString());
-    const std::filesystem::path category_dir = target_dir / category.toStdString();
+    const std::filesystem::path target_dir(m_config.target_directory.toStdWString());
+    const std::filesystem::path category_dir = target_dir / category.toStdWString();
     op.destination = category_dir / file_path.filename();
 
     // Check for collision
@@ -291,12 +290,17 @@ auto OrganizerWorker::executeMove(const MoveOperation& operation)
         if (final_dest != operation.source) {
             ++m_moved_count;
         }
-        sak::logInfo("Moved: {} -> {}", operation.source.string(), final_dest.string());
+        sak::logInfo("Moved: {} -> {}",
+                     sak::pathAsUtf8(operation.source),
+                     sak::pathAsUtf8(final_dest));
 
         return {};
 
     } catch (const std::filesystem::filesystem_error& e) {
         sak::logError("Failed to move file: {}", e.what());
+        m_failed_moves.append(
+            QStringLiteral("%1: %2").arg(QString::fromStdWString(operation.source.wstring()),
+                                         QString::fromStdString(e.code().message())));
         return std::unexpected(sak::error_code::write_error);
     }
 }
@@ -318,7 +322,7 @@ auto OrganizerWorker::handleCollision(const MoveOperation& operation) -> std::fi
 
     int counter = 1;
     while (std::filesystem::exists(dest)) {
-        auto new_filename = stem.string() + "_" + std::to_string(counter) + extension.string();
+        auto new_filename = stem.wstring() + L"_" + std::to_wstring(counter) + extension.wstring();
         dest = parent / new_filename;
         ++counter;
     }
