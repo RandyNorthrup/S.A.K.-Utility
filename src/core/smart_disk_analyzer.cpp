@@ -129,8 +129,25 @@ void SmartDiskAnalyzer::analyzeAll() {
 void SmartDiskAnalyzer::analyzeDrive(uint32_t disk_number) {
     const QByteArray json_data = runSmartctl(disk_number);
     if (json_data.isEmpty()) {
+        if (m_cancelled.load(std::memory_order_relaxed)) {
+            return;  // Not a failure of this drive; the run is ending.
+        }
         Q_EMIT errorOccurred(
             QString("Failed to read SMART data for PhysicalDrive%1").arg(disk_number));
+        // Keep the drive in the results. Left out, an unreadable drive looks like no drive at all,
+        // and with none readable the table is simply empty.
+        SmartReport unreadable;
+        unreadable.device_path = QString("\\\\.\\PhysicalDrive%1").arg(disk_number);
+        unreadable.model = QString("PhysicalDrive%1").arg(disk_number);
+        unreadable.overall_health = SmartHealthStatus::Unknown;
+        unreadable.warnings.append(QString("PhysicalDrive%1: %2")
+                                       .arg(disk_number)
+                                       .arg(m_last_read_failure.isEmpty()
+                                                ? QStringLiteral("SMART data could not be read.")
+                                                : m_last_read_failure));
+        unreadable.scan_timestamp = QDateTime::currentDateTime();
+        m_reports.append(unreadable);
+        Q_EMIT driveAnalyzed(unreadable);
         return;
     }
 
@@ -201,7 +218,26 @@ QString SmartDiskAnalyzer::resolveSmartctlPath() {
     return path;
 }
 
+QString SmartDiskAnalyzer::smartctlFailureReason(const QByteArray& json) {
+    const QJsonArray messages = QJsonDocument::fromJson(json)
+                                    .object()
+                                    .value(QStringLiteral("smartctl"))
+                                    .toObject()
+                                    .value(QStringLiteral("messages"))
+                                    .toArray();
+    QString said;
+    for (const QJsonValue& message : messages) {
+        said = message.toObject().value(QStringLiteral("string")).toString();
+        if (said.contains(QStringLiteral("Error=5"))) {
+            return QStringLiteral(
+                "Windows refused access. Run S.A.K. Utility as administrator to read this drive.");
+        }
+    }
+    return said.isEmpty() ? QString() : QStringLiteral("smartctl said: %1").arg(said);
+}
+
 QByteArray SmartDiskAnalyzer::runSmartctl(uint32_t disk_number) {
+    m_last_read_failure.clear();
     const QString smartctl_path = resolveSmartctlPath();
     if (smartctl_path.isEmpty()) {
         return {};
@@ -259,6 +295,7 @@ QByteArray SmartDiskAnalyzer::runSmartctl(uint32_t disk_number) {
                  disk_number,
                  exit_code,
                  stderr_text.toStdString());
+        m_last_read_failure = smartctlFailureReason(result.std_out.toUtf8());
         return {};
     }
 

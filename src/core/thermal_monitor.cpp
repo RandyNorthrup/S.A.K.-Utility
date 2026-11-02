@@ -78,7 +78,9 @@ void logSensorStatuses(const QStringList& statuses) {
         "if($_.CategoryInfo.Category -eq 'ObjectNotFound' -or "
         "$_.CategoryInfo.Reason -match 'NotSupported'){"
         "Write-Output 'status_cpu=unavailable:command_not_supported'"
-        "}else{throw}};");
+        // Windows denies this WMI class to a normal user. That says nothing about the GPU and disk
+        // queries below, which do not need the same rights: a throw here would blank them too.
+        "}else{Write-Output 'status_cpu=unavailable:query_failed'}};");
 }
 
 [[nodiscard]] QString gpuThermalScript() {

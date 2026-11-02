@@ -51,6 +51,14 @@ private:
 
 void ThermalMonitorTests::sensorScriptSurfacesUnavailableQueries() {
     const QString script = ThermalMonitor::buildCombinedThermalScript();
+    // A denied CPU query must not take the GPU and disk readings with it, so the CPU section ends
+    // in a status line and the rest of the script still runs.
+    const qsizetype gpu_section = script.indexOf(QStringLiteral("nvidia-smi"));
+    QVERIFY(gpu_section > 0);
+    QVERIFY2(!script.left(gpu_section).contains(QStringLiteral("throw")),
+             "the CPU section must not abort the script");
+    QVERIFY(
+        script.left(gpu_section).contains(QStringLiteral("status_cpu=unavailable:query_failed")));
     QVERIFY2(!script.contains(QStringLiteral("SilentlyContinue")), qPrintable(script));
     QVERIFY2(!script.contains(QStringLiteral("2>$null")), qPrintable(script));
     QVERIFY2(!script.contains(QStringLiteral("catch{}")), qPrintable(script));

@@ -25,6 +25,10 @@ private Q_SLOTS:
     void isSmartctlAvailable_isStableAndSideEffectFree();
     void bundledSmartctlPath_onlyTheSmartmontoolsFolder();
 
+    // Why a drive could not be read
+    void failureReasonNamesAdministratorRightsOnAccessDenied();
+    void failureReasonQuotesAnythingElse();
+
     // Parse output tests (using known JSON structures)
     void parseOutput_validSataJson();
     void parseOutput_validNvmeJson();
@@ -126,6 +130,25 @@ void SmartDiskAnalyzerTests::bundledSmartctlPath_onlyTheSmartmontoolsFolder() {
 }
 
 // ============================================================================
+// Failure reasons -- the message is smartctl 7.5's own, captured with --json on Windows 11 by a
+// normal user against a SATA drive behind USB. An NVMe drive read fine on the same run.
+void SmartDiskAnalyzerTests::failureReasonNamesAdministratorRightsOnAccessDenied() {
+    const QByteArray captured =
+        R"({"smartctl":{"messages":[{"string":"Smartctl open device: /dev/sdb [SAT] failed: )"
+        R"(\\\\.\\PhysicalDrive1: Open failed, Error=5","severity":"error"}],"exit_status":2}})";
+    const QString reason = sak::SmartDiskAnalyzer::smartctlFailureReason(captured);
+    QVERIFY2(reason.contains(QStringLiteral("administrator")), qPrintable(reason));
+}
+
+void SmartDiskAnalyzerTests::failureReasonQuotesAnythingElse() {
+    const QByteArray captured =
+        R"({"smartctl":{"messages":[{"string":"/dev/sdd: Unable to detect device type",)"
+        R"("severity":"error"}],"exit_status":1}})";
+    QCOMPARE(sak::SmartDiskAnalyzer::smartctlFailureReason(captured),
+             QStringLiteral("smartctl said: /dev/sdd: Unable to detect device type"));
+    QCOMPARE(sak::SmartDiskAnalyzer::smartctlFailureReason(QByteArray("not json")), QString());
+}
+
 // Parse Output Tests -- parseSmartctlOutput is private, so these drive it through
 // parseAndAssessForTesting(), the public seam that runs the real
 // parse -> assess -> recommend pipeline over raw smartctl JSON bytes.

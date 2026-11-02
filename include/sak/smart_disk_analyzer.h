@@ -77,6 +77,11 @@ public:
     /// @note Exposed for tests: certifies the fail-closed path (malformed or
     ///       empty JSON must resolve to Unknown, never Healthy). Does not touch
     ///       the cached report list or emit signals.
+    /// @brief Plain words for why smartctl could not read a drive, from smartctl's own messages in
+    ///        @p json. Access denied (Error=5) needs administrator rights: Windows lets a normal
+    ///        user read an NVMe drive's health but not a SATA or USB one's. Pure; unit-testable.
+    [[nodiscard]] static QString smartctlFailureReason(const QByteArray& json);
+
     [[nodiscard]] SmartReport parseAndAssessForTesting(const QByteArray& json_data,
                                                        uint32_t disk_number);
 
@@ -118,6 +123,8 @@ private:
     /// @param disk_number Physical drive number
     /// @return Raw JSON output from smartctl, or empty QByteArray on failure
     [[nodiscard]] QByteArray runSmartctl(uint32_t disk_number);
+    /// Why the last runSmartctl on this drive returned nothing, for the drive's report.
+    QString m_last_read_failure;
 
     /// @brief Parse smartctl JSON output into a SmartReport
     /// @param json_data Raw JSON bytes
