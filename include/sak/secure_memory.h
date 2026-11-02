@@ -12,11 +12,9 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdio>
-#include <cstring>
 #include <limits>
-#include <memory>
 #include <span>
-#include <string>
+#include <string_view>
 #include <type_traits>
 
 #include <intrin.h>
@@ -58,171 +56,6 @@ public:
                       "secure_wiper::wipe requires a trivially-copyable element type");
         wipe(data.data(), data.size_bytes());
     }
-};
-
-/// @brief Custom allocator that zeros memory on deallocation
-/// @tparam T Type to allocate
-template <typename T>
-class secure_allocator {
-public:
-    using value_type = T;
-    using size_type = std::size_t;
-    using difference_type = std::ptrdiff_t;
-    using propagate_on_container_move_assignment = std::true_type;
-
-    constexpr secure_allocator() noexcept = default;
-    constexpr secure_allocator(const secure_allocator&) noexcept = default;
-
-    template <typename U>
-    explicit constexpr secure_allocator(const secure_allocator<U>&) noexcept {}
-
-    [[nodiscard]] static T* allocate(std::size_t n) {
-        if (n > std::numeric_limits<std::size_t>::max() / sizeof(T)) {
-            throw std::bad_alloc();
-        }
-
-        void* ptr = ::operator new(n * sizeof(T));
-        if (!ptr) {
-            throw std::bad_alloc();
-        }
-
-        return static_cast<T*>(ptr);
-    }
-
-    static void deallocate(T* ptr, std::size_t n) noexcept {
-        if (ptr != nullptr && n > 0) {
-            // Securely wipe memory before deallocation
-            secure_wiper::wipe(ptr, n * sizeof(T));
-        }
-        ::operator delete(ptr);
-    }
-
-    template <typename U>
-    friend constexpr bool operator==(const secure_allocator<T>&,
-                                     const secure_allocator<U>&) noexcept {
-        return true;
-    }
-
-    template <typename U>
-    friend constexpr bool operator!=(const secure_allocator<T>&,
-                                     const secure_allocator<U>&) noexcept {
-        return false;
-    }
-};
-
-/// @brief Smallest capacity secure_string forces so its storage lives on the heap.
-/// @details The standard library keeps short strings in a small buffer INSIDE the string
-/// object (15 chars on MSVC and libstdc++), and that buffer is never handed to the allocator
-/// -- so secure_allocator::deallocate() never wipes it. Reserving past the largest such small
-/// buffer routes the characters through the heap, where deallocate() wipes the whole
-/// allocation (including any residual tail from a previously longer value) on destruction.
-inline constexpr std::size_t kSecureStringMinCapacity = 32;
-
-/// @brief Secure string type that zeros its storage on destruction.
-/// @details std::basic_string parameterised with secure_allocator wipes only heap storage.
-/// This subclass forces heap storage for the default-construct-then-fill path (the way a
-/// secret is normally built up) and, as a belt-and-suspenders for any value that still lands
-/// in the small-string buffer, wipes the live characters directly in its destructor.
-class secure_string
-    : public std::basic_string<char, std::char_traits<char>, secure_allocator<char>> {
-    using base = std::basic_string<char, std::char_traits<char>, secure_allocator<char>>;
-
-public:
-    using base::base;
-    using base::operator=;
-
-    secure_string() { base::reserve(kSecureStringMinCapacity); }
-
-    secure_string(const secure_string&) = default;
-    secure_string(secure_string&&) noexcept = default;
-    secure_string& operator=(const secure_string&) = default;
-    secure_string& operator=(secure_string&&) noexcept = default;
-
-    ~secure_string() {
-        if (!empty()) {
-            secure_wiper::wipe(data(), size());
-        }
-    }
-};
-
-/// @brief RAII wrapper for secure memory regions
-/// @tparam T Element type
-template <typename T>
-class secure_buffer {
-    // The buffer is zeroed with memset and wiped with secure_wiper::wipe over its whole byte
-    // extent, which is well-defined only for a trivially-copyable element type; overwriting the
-    // object representation of a non-trivial T (then running its destructor) is undefined
-    // behavior. Enforce the invariant at compile time rather than relying on callers.
-    static_assert(std::is_trivially_copyable_v<T>,
-                  "secure_buffer requires a trivially-copyable element type");
-
-public:
-    /// @brief Construct secure buffer with specified size
-    /// @param size Number of elements
-    explicit secure_buffer(std::size_t size) : m_data(std::make_unique<T[]>(size)), m_size(size) {
-        // Zero initialize
-        std::memset(m_data.get(), 0, size * sizeof(T));
-    }
-
-    // No copy
-    secure_buffer(const secure_buffer&) = delete;
-    secure_buffer& operator=(const secure_buffer&) = delete;
-
-    // Move allowed
-    secure_buffer(secure_buffer&& other) noexcept
-        : m_data(std::move(other.m_data)), m_size(other.m_size) {
-        other.m_size = 0;
-    }
-
-    secure_buffer& operator=(secure_buffer&& other) noexcept {
-        if (this != &other) {
-            clear();
-            m_data = std::move(other.m_data);
-            m_size = other.m_size;
-            other.m_size = 0;
-        }
-        return *this;
-    }
-
-    /// @brief Destructor - securely wipes memory
-    ~secure_buffer() { clear(); }
-
-    /// @brief Get pointer to buffer data
-    [[nodiscard]] T* data() noexcept { return m_data.get(); }
-
-    /// @brief Get const pointer to buffer data
-    [[nodiscard]] const T* data() const noexcept { return m_data.get(); }
-
-    /// @brief Get buffer size
-    [[nodiscard]] std::size_t size() const noexcept { return m_size; }
-
-    /// @brief Get span view of buffer
-    [[nodiscard]] std::span<T> span() noexcept { return std::span<T>(m_data.get(), m_size); }
-
-    /// @brief Get const span view of buffer
-    [[nodiscard]] std::span<const T> span() const noexcept {
-        return std::span<const T>(m_data.get(), m_size);
-    }
-
-    /// @brief Array subscript operator
-    [[nodiscard]] T& operator[](std::size_t index) noexcept { return m_data[index]; }
-
-    /// @brief Const array subscript operator
-    [[nodiscard]] const T& operator[](std::size_t index) const noexcept { return m_data[index]; }
-
-    /// @brief Securely clear buffer contents
-    void clear() noexcept {
-        if (m_data && m_size > 0) {
-            secure_wiper::wipe(m_data.get(), m_size * sizeof(T));
-        }
-    }
-
-    /// @brief Check if buffer is empty
-    [[nodiscard]] bool empty() const noexcept { return m_size == 0; }
-
-private:
-    std::unique_ptr<T[]> m_data;
-    std::size_t m_size{0};
 };
 
 /// @brief RAII guard for secure memory - wipes on scope exit
@@ -294,8 +127,7 @@ template <typename T>
     }
 
     // Refuse to compare when the byte-count multiplication below would wrap: a wrapped count
-    // would compare only a prefix and could report differing buffers as equal. Mirrors the
-    // overflow guard in secure_allocator::allocate().
+    // would compare only a prefix and could report differing buffers as equal.
     if (a.size() > std::numeric_limits<std::size_t>::max() / sizeof(T)) {
         return false;
     }

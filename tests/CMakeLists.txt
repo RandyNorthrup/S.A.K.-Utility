@@ -1113,7 +1113,7 @@ add_test(NAME test_path_utils COMMAND test_path_utils
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_path_utils")
 
-# test_secure_memory - wipe, secure_buffer, secure_allocator, secure random
+# test_secure_memory - wipe, secure random, constant-time compare, locked memory
 add_executable(test_secure_memory
     unit/test_secure_memory.cpp
 )

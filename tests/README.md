@@ -165,7 +165,7 @@ and termination-utility setup handshakes; neither changes production deadlines.
 | Test | Module Under Test | Coverage |
 |---|---|---|
 | test_encryption | `encryption` | AES-256-CBC encrypt/decrypt, wrong password, Unicode, file encryption, IV randomness |
-| test_secure_memory | `secure_memory` | SecureString/SecureBuffer zeroing, VirtualLock, random generation |
+| test_secure_memory | `secure_memory` | Memory wiping, VirtualLock, random generation, constant-time comparison |
 
 ### Elevation & Privilege
 | Test | Module Under Test | Coverage |
