@@ -10,7 +10,12 @@
 #include "sak/layout_constants.h"
 #include "sak/process_runner.h"
 
+#include <QDeadlineTimer>
 #include <QStorageInfo>
+
+#include <algorithm>
+
+#include <windows.h>
 
 namespace sak {
 
@@ -21,6 +26,20 @@ constexpr int kDiskReportWidth = 78;
 constexpr int kMinimumScanKeyValueParts = 2;
 constexpr int kDriveScanProgressStart = 10;
 constexpr int kDriveScanProgressSpan = 80;
+// An online scan walks the file system's metadata, so its time follows how many files the drive
+// holds rather than its size, and a large one can take far longer than the 30 seconds this used to
+// allow. One drive gets half an hour; the whole run is bound by kCheckDiskErrorsTimeoutMs.
+constexpr int kDriveScanTimeoutMs = sak::kTimeoutSystemRepairMs;
+
+// Only a volume mounted at a bare drive-letter root ("C:/") can be addressed by Repair-Volume
+// -DriveLetter. A directory-mounted volume ("C:/Mount/Foreign/") would otherwise be misread as its
+// mount path's first letter and the host drive scanned in its place.
+bool isBareDriveRoot(const QString& root) {
+    return root.length() == kBareDriveRootLength && root.at(0).isLetter() &&
+           root.at(1) == QLatin1Char(':') &&
+           (root.at(kDriveRootSeparatorIndex) == QLatin1Char('/') ||
+            root.at(kDriveRootSeparatorIndex) == QLatin1Char('\\'));
+}
 
 QVector<QChar> enumerateWritableDriveLetters() {
     QVector<QChar> drives;
@@ -30,18 +49,15 @@ QVector<QChar> enumerateWritableDriveLetters() {
         if (!storage.isValid() || storage.isReadOnly()) {
             continue;
         }
-        // Only a volume mounted at a bare drive-letter root ("C:/") can be addressed by
-        // Repair-Volume -DriveLetter. A directory-mounted volume ("C:/Mount/Foreign/") would
-        // otherwise be misread as its mount path's first letter and the host drive scanned in
-        // its place -- fail closed by skipping anything that is not exactly "<letter>:<sep>",
-        // and de-duplicate so one drive is never scanned (or counted) twice.
         const QString root = storage.rootPath();
-        if (root.length() != kBareDriveRootLength || !root.at(0).isLetter() ||
-            root.at(1) != QLatin1Char(':') ||
-            (root.at(kDriveRootSeparatorIndex) != QLatin1Char('/') &&
-             root.at(kDriveRootSeparatorIndex) != QLatin1Char('\\'))) {
+        if (!isBareDriveRoot(root)) {
             continue;
         }
+        const std::wstring wide_root = root.toStdWString();
+        if (!CheckDiskErrorsAction::driveTypeIsScannable(GetDriveTypeW(wide_root.c_str()))) {
+            continue;
+        }
+        // De-duplicate so one drive is never scanned (or counted) twice.
         const QChar drive = root.at(0).toUpper();
         if (!drives.contains(drive)) {
             drives.append(drive);
@@ -74,6 +90,37 @@ QString describeProcessFailure(const ProcessResult& proc) {
 
 CheckDiskErrorsAction::CheckDiskErrorsAction(QObject* parent) : QuickAction(parent) {}
 
+bool CheckDiskErrorsAction::driveTypeIsScannable(unsigned int drive_type) {
+    return drive_type == DRIVE_FIXED || drive_type == DRIVE_REMOVABLE;
+}
+
+CheckDiskErrorsAction::ScanVerdict CheckDiskErrorsAction::classifyScanResult(
+    const QString& result) {
+    // The names are the Volume.RepairStatus enumeration in the Storage module's Volume.cdxml.
+    // Everything not listed -- Failed, ScanNeedsRetry, ScanRunning, the snapshot errors, the
+    // triage states, or a name a later Windows adds -- is not an answer about this volume.
+    static const QStringList kClean = {QStringLiteral("NoErrorsFound"),
+                                       QStringLiteral("ScanNoErrorsFound")};
+    static const QStringList kFixed = {QStringLiteral("ErrorsFixed"),
+                                       QStringLiteral("MinorErrorsFixedOrCleanup"),
+                                       QStringLiteral("ScanErrorsFoundAndFixedOnline"),
+                                       QStringLiteral("ScanFoundAndFixedLeaks")};
+    static const QStringList kNeedsRepair = {QStringLiteral("ScanErrorsFixedOnlineAlsoNeedSpotFix"),
+                                             QStringLiteral("ScanErrorsFoundNeedSpotFix"),
+                                             QStringLiteral("NeedOfflineScanAndFix"),
+                                             QStringLiteral("ScanFoundLeaks")};
+    if (kClean.contains(result)) {
+        return ScanVerdict::NoErrors;
+    }
+    if (kFixed.contains(result)) {
+        return ScanVerdict::FixedOnline;
+    }
+    if (kNeedsRepair.contains(result)) {
+        return ScanVerdict::NeedsRepair;
+    }
+    return ScanVerdict::Inconclusive;
+}
+
 void CheckDiskErrorsAction::execute() {
     if (isCancelled()) {
         emitCancelledResult("Disk error check cancelled");
@@ -92,6 +139,10 @@ void CheckDiskErrorsAction::execute() {
     totals.total_drives = static_cast<int>(drives.count());
     executeRunVolumeScan(
         drives, report, totals.drives_scanned, totals.errors_found, totals.repairs_recommended);
+    if (isCancelled()) {
+        emitCancelledResult(QStringLiteral("Disk error check cancelled"), start_time);
+        return;
+    }
 
     executeBuildReport(start_time, report, totals);
 }
@@ -124,8 +175,8 @@ bool CheckDiskErrorsAction::executeEnumerateVolumes(const QDateTime& start_time,
 QString CheckDiskErrorsAction::buildScanVolumeScript(QChar drive) {
     // Read-only check ONLY: Repair-Volume -Scan is a non-destructive online scan.
     // This action is a "Check Disk Errors" scan and must NOT mutate the disk, so
-    // it never calls -OfflineScanAndFix (which schedules a boot-time repair). On
-    // detecting the $corrupt marker it merely reports that a repair is advisable.
+    // it never calls -OfflineScanAndFix (which schedules a boot-time repair). The verdict is the
+    // result the scan itself returns; a repair is only ever recommended, never run.
     return QString(
                "$drive = \"%1:\"\n"
                "Write-Output '===SCAN_START==='\n"
@@ -133,18 +184,8 @@ QString CheckDiskErrorsAction::buildScanVolumeScript(QChar drive) {
                "\n"
                "try {\n"
                "    Write-Output 'Running online scan...'\n"
-               "    Repair-Volume -DriveLetter %1 -Scan -ErrorAction Stop\n"
-               "    Write-Output 'OnlineScan: Success'\n"
-               "    \n"
-               "    if (Test-Path \"$drive\\\\`$corrupt\" -ErrorAction Stop) {\n"
-               "        Write-Output 'CorruptFile: Detected'\n"
-               "        Write-Output 'Status: Corruption detected - repair recommended'\n"
-               "        Write-Output 'RepairRecommended: Yes'\n"
-               "    } else {\n"
-               "        Write-Output 'CorruptFile: NotFound'\n"
-               "        Write-Output 'Status: No corruption detected'\n"
-               "        Write-Output 'RepairRecommended: No'\n"
-               "    }\n"
+               "    $scanResult = Repair-Volume -DriveLetter %1 -Scan -ErrorAction Stop\n"
+               "    Write-Output \"ScanResult: $scanResult\"\n"
                "} catch {\n"
                "    Write-Output \"Error: $($_.Exception.Message)\"\n"
                "    Write-Output 'Status: Scan failed'\n"
@@ -175,7 +216,7 @@ void CheckDiskErrorsAction::parseDriveScanResult(const QString& output,
 
         if (trimmed == "===SCAN_END===") {
             parsing = false;
-            appendDriveScanEntry(state, report, drives_scanned, errors_found);
+            appendDriveScanEntry(state, report, drives_scanned, errors_found, repairs_recommended);
             continue;
         }
 
@@ -196,65 +237,60 @@ void CheckDiskErrorsAction::parseDriveScanResult(const QString& output,
             continue;
         }
 
-        processScanKeyValue(parts[0].trimmed(), parts[1].trimmed(), state, repairs_recommended);
+        processScanKeyValue(parts[0].trimmed(), parts[1].trimmed(), state);
     }
 }
 
 void CheckDiskErrorsAction::processScanKeyValue(const QString& key,
                                                 const QString& value,
-                                                ParsedDriveState& state,
-                                                int& repairs_recommended) {
+                                                ParsedDriveState& state) {
     if (key == "Drive") {
         state.drive_letter = value;
-    } else if (key == "OnlineScan") {
-        state.scan_success = (value == "Success");
-    } else if (key == "CorruptFile") {
-        // Only a recognized verdict counts as known; a malformed value leaves corrupt_known
-        // false so the drive is not reported clean on an ambiguous result.
-        if (value == "Detected") {
-            state.has_corrupt = true;
-            state.corrupt_known = true;
-        } else if (value == "NotFound") {
-            state.has_corrupt = false;
-            state.corrupt_known = true;
-        }
+    } else if (key == "ScanResult") {
+        state.result = value;
     } else if (key == "Status") {
         state.status = value;
-    } else if (key == "RepairRecommended" && value == "Yes") {
-        repairs_recommended++;
     }
 }
 
 void CheckDiskErrorsAction::appendDriveScanEntry(const ParsedDriveState& state,
                                                  QString& report,
                                                  int& drives_scanned,
-                                                 int& errors_found) {
-    // A drive is only a successful scan when the online scan reported success AND a definitive
-    // corruption verdict was seen. A scan whose corruption check errored or whose output was
-    // cut short after "OnlineScan: Success" leaves corrupt_known false and must NOT be reported
-    // clean -- fail closed and count it as not scanned.
-    if (state.scan_success && state.corrupt_known) {
-        drives_scanned++;
-
-        report += QString("Drive %1:\n").arg(state.drive_letter);
-        report += QString("  Status: %1\n").arg(state.status);
-
-        if (state.has_corrupt) {
-            errors_found++;
-            report += "  \u26a0 Corruption detected: $corrupt file found\n";
-            report += "  \u2139 Repair recommended (this check does not modify the disk)\n";
-        } else {
-            report += "  \u2713 No corruption detected\n";
-        }
-    } else {
+                                                 int& errors_found,
+                                                 int& repairs_recommended) {
+    // Only an answer about the volume counts as scanned. A scan that errored, whose output was cut
+    // short, or that returned a result this check cannot read is never reported clean.
+    const ScanVerdict verdict = classifyScanResult(state.result);
+    if (verdict == ScanVerdict::Inconclusive) {
         QString detail = state.status.isEmpty() ? QStringLiteral("Scan did not complete cleanly")
                                                 : state.status;
+        if (!state.result.isEmpty()) {
+            detail += QStringLiteral(" (result: ") + state.result + QLatin1Char(')');
+        }
         if (!state.error.isEmpty()) {
             detail += QStringLiteral(" (") + state.error + QLatin1Char(')');
         }
-        report += QString("Drive %1: - %2\n").arg(state.drive_letter).arg(detail);
+        report += QString("Drive %1: - %2\n\n").arg(state.drive_letter).arg(detail);
+        return;
     }
 
+    drives_scanned++;
+    report += QString("Drive %1: scan result %2\n").arg(state.drive_letter, state.result);
+    switch (verdict) {
+    case ScanVerdict::NoErrors:
+        report += "  \u2713 No errors found\n";
+        break;
+    case ScanVerdict::FixedOnline:
+        errors_found++;
+        report += "  \u26a0 Errors found and fixed by Windows while the drive stayed online\n";
+        break;
+    default:
+        errors_found++;
+        repairs_recommended++;
+        report += "  \u26a0 Errors found\n";
+        report += "  \u2139 Repair recommended (this check does not modify the disk)\n";
+        break;
+    }
     report += "\n";
 }
 
@@ -263,7 +299,11 @@ void CheckDiskErrorsAction::executeRunVolumeScan(const QVector<QChar>& drives,
                                                  int& drives_scanned,
                                                  int& errors_found,
                                                  int& repairs_recommended) {
+    const QDeadlineTimer run_deadline(kCheckDiskErrorsTimeoutMs);
     for (int i = 0; i < drives.count(); ++i) {
+        if (isCancelled()) {
+            return;
+        }
         const QChar& drive = drives[i];
 
         const int progress = static_cast<int>(kDriveScanProgressStart +
@@ -272,7 +312,19 @@ void CheckDiskErrorsAction::executeRunVolumeScan(const QVector<QChar>& drives,
 
         const QString ps_cmd = buildScanVolumeScript(drive);
 
-        const ProcessResult proc = runPowerShell(ps_cmd, sak::kTimeoutProcessLongMs);
+        const qint64 remaining_ms = run_deadline.remainingTime();
+        if (remaining_ms == 0) {
+            report +=
+                QString("Drive %1: - not scanned, the run reached its time limit\n\n").arg(drive);
+            continue;
+        }
+        const int granted_ms =
+            static_cast<int>(std::min<qint64>(kDriveScanTimeoutMs, remaining_ms));
+        const ProcessResult proc =
+            runPowerShell(ps_cmd, granted_ms, true, true, [this]() { return isCancelled(); });
+        if (proc.cancelled) {
+            return;
+        }
         if (proc.timed_out) {
             report += QString("Drive %1: - TIMEOUT (scan took too long)\n\n").arg(drive);
             continue;
@@ -325,7 +377,7 @@ void CheckDiskErrorsAction::executeBuildReport(const QDateTime& start_time,
 
     if (totals.repairs_recommended > 0) {
         final_report +=
-            "\n(!) Corruption found -- run a disk repair to fix "
+            "\n(!) Errors found -- run a disk repair to fix them "
             "(this check does not modify disks)\n";
     }
 

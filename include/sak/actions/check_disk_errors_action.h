@@ -10,6 +10,8 @@
 #include <QString>
 #include <QVector>
 
+class CheckDiskErrorsActionTests;
+
 namespace sak {
 
 /**
@@ -19,6 +21,9 @@ namespace sak {
  *
  * scheduling or applying a repair.
  */
+/// How long one run of the check may take across all its drives.
+inline constexpr int kCheckDiskErrorsTimeoutMs = 2 * 60 * 60 * 1000;
+
 class CheckDiskErrorsAction : public QuickAction {
     Q_OBJECT
 
@@ -28,6 +33,7 @@ public:
     QString name() const override {
         return QString::fromLatin1(quick_action_elevation::kCheckDiskErrorsName);
     }
+    int executionTimeoutMs() const override { return kCheckDiskErrorsTimeoutMs; }
     QString description() const override { return "Run read-only online scans on all drives"; }
     QIcon icon() const override { return QIcon(); }
     ActionCategory category() const override { return ActionCategory::Maintenance; }
@@ -57,15 +63,32 @@ public:
     /// corruption is found it reports RepairRecommended, nothing more.
     static QString buildScanVolumeScript(QChar drive);
 
+    /// @brief What Repair-Volume -Scan's own result means for this check.
+    enum class ScanVerdict {
+        NoErrors,      ///< The volume is clean.
+        FixedOnline,   ///< Errors were found and the file system fixed them without going offline.
+        NeedsRepair,   ///< Errors remain and need a repair this check does not run.
+        Inconclusive,  ///< No usable answer: failed, must retry, or a value this check does not
+                       ///< know.
+    };
+    /// @brief Classify one Volume.RepairStatus name from the Storage module. An unknown name is
+    ///        Inconclusive, never clean. Pure; unit-testable.
+    [[nodiscard]] static ScanVerdict classifyScanResult(const QString& result);
+
+    /// @brief Whether a volume's drive type can be scanned at all. Repair-Volume addresses only a
+    ///        local volume, so a mapped network drive would otherwise always read as a failure.
+    ///        Pure; unit-testable.
+    [[nodiscard]] static bool driveTypeIsScannable(unsigned int drive_type);
+
 private:
+    friend class ::CheckDiskErrorsActionTests;
+
     /// @brief Parsed state from a single drive scan output block
     struct ParsedDriveState {
         QString drive_letter;
         QString status;
-        QString error;               ///< Real exception text from a failed scan, if reported.
-        bool has_corrupt = false;
-        bool corrupt_known = false;  ///< True once a definitive Detected/NotFound verdict is seen.
-        bool scan_success = false;
+        QString error;   ///< Real exception text from a failed scan, if reported.
+        QString result;  ///< Repair-Volume's own result, one Volume.RepairStatus name.
     };
 
     /// @brief Aggregated per-run tallies passed to report building.
@@ -97,12 +120,12 @@ private:
                               int& repairs_recommended);
     static void processScanKeyValue(const QString& key,
                                     const QString& value,
-                                    ParsedDriveState& state,
-                                    int& repairs_recommended);
+                                    ParsedDriveState& state);
     void appendDriveScanEntry(const ParsedDriveState& state,
                               QString& report,
                               int& drives_scanned,
-                              int& errors_found);
+                              int& errors_found,
+                              int& repairs_recommended);
 };
 
 }  // namespace sak
