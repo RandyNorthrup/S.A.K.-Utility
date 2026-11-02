@@ -671,9 +671,8 @@ bool ImageFlasherPanel::loadImageFile(const QString& file_path) {
 }
 
 void ImageFlasherPanel::onSelectImageClicked() {
-    const QString filter =
-        "Disk Images (*.iso *.img *.wic *.dmg *.dsk *.gz *.bz2 *.xz *.zip);;All Files "
-        "(*.*)";
+    // Only what flashes: ZIP archives and Apple .dmg images are refused, so they are not offered.
+    const QString filter = "Disk Images (*.iso *.img *.wic *.dsk *.gz *.bz2 *.xz);;All Files (*.*)";
     const QString file_path =
         QFileDialog::getOpenFileName(this, "Select Image File", QString(), filter);
 
@@ -1115,6 +1114,14 @@ bool ImageFlasherPanel::validateImageFile(const QString& file_path) {
     if (file_info.size() == 0) {
         logWarning("Invalid Image: Image file is empty");
         sak::showWarningLogged(this, "Invalid Image", "Image file is empty");
+        return false;
+    }
+
+    // Say so at selection rather than after the technician has picked a drive and confirmed.
+    const QString unsupported = FlashCoordinator::unsupportedImageReason(file_path);
+    if (!unsupported.isEmpty()) {
+        logWarning(QString("Invalid Image: %1: %2").arg(file_path, unsupported).toStdString());
+        sak::showWarningLogged(this, "Invalid Image", unsupported);
         return false;
     }
 

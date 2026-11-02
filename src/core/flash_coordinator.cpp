@@ -14,6 +14,7 @@
 #include <QFileInfo>
 #include <QMutexLocker>
 #include <QSet>
+#include <QtEndian>
 #include <QThread>
 
 #include <algorithm>
@@ -51,6 +52,12 @@ constexpr int kWorkerShutdownTimeoutMs = sak::kTimeoutThreadShutdownMs;
 constexpr int kZipSignatureLength = 4;
 constexpr int kZipSignatureThirdByteIndex = 2;
 constexpr int kZipSignatureFourthByteIndex = 3;
+
+// Apple UDIF trailer: the last 512 bytes of the file, "koly" then a big-endian version and a
+// big-endian header size that equals the trailer's own length.
+constexpr qint64 kUdifTrailerBytes = 512;
+constexpr qint64 kUdifTrailerStartBytes = 12;
+constexpr int kUdifHeaderSizeFieldOffset = 8;
 
 // Milliseconds in one second, for converting an elapsed-timer reading to fractional seconds.
 constexpr double kMillisecondsPerSecond = 1000.0;
@@ -131,6 +138,25 @@ bool isUnsupportedCompressedContainer(const QString& imagePath) {
     // and refuse on either signal.
     return FileImageSource::detectFormat(imagePath) == sak::ImageFormat::ZIP ||
            hasZipContainerMagic(imagePath);
+}
+
+// True when the file ends with an Apple UDIF "koly" trailer, whatever its extension says. The
+// trailer holds the block map that says where each compressed run of the image belongs, so the
+// bytes before it are not a disk: written raw they leave an unusable drive. A .dmg with no
+// trailer really is a raw image and is left to flash. The header-size field is checked as well
+// so a raw image that happens to end in the four signature bytes is not refused.
+bool hasUdifTrailer(const QString& imagePath) {
+    QFile file(imagePath);
+    if (!file.open(QIODevice::ReadOnly) || file.size() < kUdifTrailerBytes ||
+        !file.seek(file.size() - kUdifTrailerBytes)) {
+        return false;
+    }
+    const QByteArray start = file.read(kUdifTrailerStartBytes);
+    if (start.size() != kUdifTrailerStartBytes || !start.startsWith("koly")) {
+        return false;
+    }
+    return qFromBigEndian<quint32>(start.constData() + kUdifHeaderSizeFieldOffset) ==
+           kUdifTrailerBytes;
 }
 
 // True only when a SUCCESSFUL IOCTL_VOLUME_GET_VOLUME_DISK_EXTENTS reply actually
@@ -400,7 +426,30 @@ bool FlashCoordinator::validateImagePath(const QString& imagePath) {
         failRun("Empty image", "Image file is empty (0 bytes); nothing to flash");
         return false;
     }
+    const QString unsupported = unsupportedImageReason(imagePath);
+    if (!unsupported.isEmpty()) {
+        sak::logError("Refusing to flash an image that is not a disk: {}",
+                      unsupported.toStdString());
+        failRun("Unsupported image", unsupported);
+        return false;
+    }
     return true;
+}
+
+QString FlashCoordinator::unsupportedImageReason(const QString& imagePath) {
+    // The trailer comes first: a bzip2-compressed UDIF image can begin with a bzip2 signature,
+    // and the compressed-source sniff would then happily "decompress" it into garbage.
+    if (hasUdifTrailer(imagePath)) {
+        return QStringLiteral(
+            "Apple .dmg images cannot be written to a drive. Convert it to a raw image first "
+            "(on a Mac: hdiutil convert -format UDTO).");
+    }
+    if (isUnsupportedCompressedContainer(imagePath)) {
+        return QStringLiteral(
+            "Unsupported compressed image; extract the disk image before "
+            "flashing");
+    }
+    return {};
 }
 
 bool FlashCoordinator::prepareImageSource(const QString& imagePath) {
@@ -410,11 +459,6 @@ bool FlashCoordinator::prepareImageSource(const QString& imagePath) {
     Q_ASSERT(!imagePath.isEmpty());
     if (CompressedImageSource::isCompressed(imagePath)) {
         m_imageSource = std::make_unique<CompressedImageSource>(imagePath);
-    } else if (isUnsupportedCompressedContainer(imagePath)) {
-        sak::logError("Refusing to flash an unsupported compressed container (e.g. .zip)");
-        failRun("Unsupported compressed image",
-                "Unsupported compressed image; extract the disk image before flashing");
-        return false;
     } else {
         m_imageSource = std::make_unique<FileImageSource>(imagePath);
     }

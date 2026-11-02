@@ -39,7 +39,7 @@ class LogToggleSwitch;
  * Based on balena.io Etcher functionality with Windows-specific optimizations.
  *
  * Features:
- * - Select image files (ISO, IMG, WIC, ZIP, GZ, BZ2, XZ, DMG, DSK)
+ * - Select image files (ISO, IMG, WIC, GZ, BZ2, XZ, DSK)
  * - Automatic image decompression
  * - Multi-drive selection with safety checks
  * - Parallel writing to multiple drives

@@ -25,7 +25,7 @@ enum class ImageFormat {
     GZIP,   // GZIP compressed image
     BZIP2,  // BZIP2 compressed image
     XZ,     // XZ compressed image
-    DMG,    // Apple Disk Image
+    DMG,    // .dmg extension. A real UDIF image is refused; see unsupportedImageReason
     DSK     // Generic disk image
 };
 

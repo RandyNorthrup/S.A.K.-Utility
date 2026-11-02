@@ -169,6 +169,12 @@ public:
      */
     bool startFlash(const QString& imagePath, const QStringList& targetDrives);
 
+    /// @brief Why this file cannot be written to a drive as an image, or empty when it can. A ZIP
+    ///        archive and an Apple UDIF disk image are containers rather than disks, and written
+    ///        raw they leave an unusable drive. Decided from the file's bytes, so a renamed file
+    ///        gets the same answer. The panel asks at selection and startFlash asks again.
+    [[nodiscard]] static QString unsupportedImageReason(const QString& imagePath);
+
     /// @brief Return the first target device path that appears more than once in
     ///        @p targetDrives (case-/whitespace-insensitive), or empty if all are
     ///        distinct. Two workers writing the SAME physical disk concurrently

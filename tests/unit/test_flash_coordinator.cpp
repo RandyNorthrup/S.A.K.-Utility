@@ -5,6 +5,7 @@
 
 #include <QFile>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QTest>
 
@@ -42,6 +43,10 @@ private Q_SLOTS:
     // -- startFlash guards -----------------------------------
     void testStartFlashEmptyDrives();
     void testStartFlashRejectsZeroLengthImage();
+    void testUnsupportedImageReasonRefusesUdifByItsTrailer();
+    void testUnsupportedImageReasonAcceptsRawImages();
+    void testUnsupportedImageReasonRefusesZipByContent();
+    void testStartFlashRefusesAnAppleDiskImage();
     void testStartFlashRejectsDuplicateTargets();
     void testStartFlashRejectsTooManyTargets();
     void testFirstDuplicateTargetSeam();
@@ -223,6 +228,92 @@ void TestFlashCoordinator::testStartFlashEmptyDrives() {
     QVERIFY(!m_coord->startFlash("C:/test.iso", QStringList{}));
     QCOMPARE(spy.count(), 2);
     QCOMPARE(spy.at(1).first().toString(), QStringLiteral("No target drives specified"));
+}
+
+namespace {
+
+QByteArray udifTrailer() {
+    QByteArray trailer(512, '\0');
+    trailer.replace(0, 4, "koly");
+    trailer[10] = 2;  // big-endian header size 512
+    return trailer;
+}
+
+QString writeFile(const QTemporaryDir& dir, const QString& name, const QByteArray& bytes) {
+    const QString path = dir.filePath(name);
+    QFile file(path);
+    if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size()) {
+        return {};
+    }
+    return path;
+}
+
+}  // namespace
+
+// A real .dmg is compressed blocks plus a trailing block map: written raw it leaves an unusable
+// drive. It is refused by content, so renaming it does not get it through.
+void TestFlashCoordinator::testUnsupportedImageReasonRefusesUdifByItsTrailer() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray body(4096, 'x');
+    const QString dmg = writeFile(dir, QStringLiteral("a.dmg"), body + udifTrailer());
+    const QString renamed = writeFile(dir, QStringLiteral("b.img"), body + udifTrailer());
+    QVERIFY(FlashCoordinator::unsupportedImageReason(dmg).contains(QStringLiteral(".dmg")));
+    QVERIFY(FlashCoordinator::unsupportedImageReason(renamed).contains(QStringLiteral(".dmg")));
+
+    // A bzip2-compressed image starts with the bzip2 signature, and is still a UDIF image.
+    const QByteArray bzip_body = QByteArray("BZh91AY&SY") + body;
+    const QString bzip = writeFile(dir, QStringLiteral("c.dmg"), bzip_body + udifTrailer());
+    QVERIFY(FlashCoordinator::unsupportedImageReason(bzip).contains(QStringLiteral(".dmg")));
+}
+
+void TestFlashCoordinator::testUnsupportedImageReasonAcceptsRawImages() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray body(4096, 'x');
+    // A .dmg with no trailer is a raw image, and flashing it is correct.
+    QVERIFY(FlashCoordinator::unsupportedImageReason(writeFile(dir, QStringLiteral("r.dmg"), body))
+                .isEmpty());
+    // The signature alone is not a trailer: the header-size field has to agree.
+    QByteArray near_miss = udifTrailer();
+    near_miss[10] = 0;
+    QVERIFY(FlashCoordinator::unsupportedImageReason(
+                writeFile(dir, QStringLiteral("n.img"), body + near_miss))
+                .isEmpty());
+    // The size field alone is not a trailer either: the signature has to be there.
+    QByteArray no_signature = udifTrailer();
+    no_signature.replace(0, 4, "xxxx");
+    QVERIFY(FlashCoordinator::unsupportedImageReason(
+                writeFile(dir, QStringLiteral("x.img"), body + no_signature))
+                .isEmpty());
+    // Shorter than a trailer: nothing to read, and not a reason to refuse.
+    QVERIFY(FlashCoordinator::unsupportedImageReason(
+                writeFile(dir, QStringLiteral("s.img"), QByteArray("koly")))
+                .isEmpty());
+}
+
+void TestFlashCoordinator::testUnsupportedImageReasonRefusesZipByContent() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray zip = QByteArray("PK\x03\x04", 4) + QByteArray(64, 'x');
+    QVERIFY(!FlashCoordinator::unsupportedImageReason(writeFile(dir, QStringLiteral("a.zip"), zip))
+                 .isEmpty());
+    QVERIFY(!FlashCoordinator::unsupportedImageReason(writeFile(dir, QStringLiteral("b.img"), zip))
+                 .isEmpty());
+}
+
+// The refusal holds on the path the assistant drives as well, before any drive work.
+void TestFlashCoordinator::testStartFlashRefusesAnAppleDiskImage() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString dmg =
+        writeFile(dir, QStringLiteral("a.dmg"), QByteArray(4096, 'x') + udifTrailer());
+
+    QSignalSpy spy(m_coord.get(), &FlashCoordinator::flashError);
+    QVERIFY(!m_coord->startFlash(dmg, QStringList{QStringLiteral("\\\\.\\PhysicalDrive99")}));
+    QCOMPARE(spy.count(), 1);
+    QVERIFY(spy.first().first().toString().contains(QStringLiteral(".dmg")));
+    QCOMPARE(m_coord->state(), sak::FlashState::Failed);
 }
 
 // A 0-byte image must be refused BEFORE any drive work: it would write nothing yet

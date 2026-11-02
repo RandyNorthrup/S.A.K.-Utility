@@ -22,6 +22,7 @@
 #include <QCoreApplication>
 #include <QDir>
 #include <QFile>
+#include <QFileDialog>
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
@@ -75,6 +76,9 @@ private Q_SLOTS:
     void loadImageFileRefusesAnEmptyFile();
     void aRejectedImageLeavesFlashDisabled();
     void loadImageFileRefusesAnUnknownFormatWhenDeclined();
+    void loadImageFileRefusesAZipArchive();
+    void loadImageFileRefusesAnAppleDiskImage();
+    void imagePickerOffersOnlyWhatFlashes();
 
 private:
     QPushButton* flashButton() const;
@@ -82,7 +86,7 @@ private:
     /// Put one selectable drive row in the list, as onDriveListUpdated would.
     void selectOneDrive();
     /// Close whatever modal QMessageBox appears; returns after it has been closed.
-    void armMessageBoxDismisser();
+    void armMessageBoxDismisser(QString* seen_text = nullptr);
     /// Write @p bytes to a .img under m_dir and return its path.
     QString writeImage(const QString& name, const QByteArray& bytes);
 
@@ -148,13 +152,16 @@ void ImageFlasherPanelTests::selectOneDrive() {
     item->setSelected(true);
 }
 
-void ImageFlasherPanelTests::armMessageBoxDismisser() {
+void ImageFlasherPanelTests::armMessageBoxDismisser(QString* seen_text) {
     auto* dismiss = new QTimer(this);
     dismiss->setInterval(kModalPollIntervalMs);
-    connect(dismiss, &QTimer::timeout, this, [dismiss]() {
+    connect(dismiss, &QTimer::timeout, this, [dismiss, seen_text]() {
         if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
             dismiss->stop();
             dismiss->deleteLater();
+            if (seen_text != nullptr) {
+                *seen_text = box->text();
+            }
             box->accept();
         }
     });
@@ -321,6 +328,66 @@ void ImageFlasherPanelTests::loadImageFileRefusesAnEmptyFile() {
     armMessageBoxDismisser();
     QVERIFY(!m_panel->loadImageFile(image));
     QVERIFY(!flashButton()->isEnabled());
+}
+
+// The picker listed these and the flash then refused them after a drive had been chosen. The
+// refusal now comes at selection and says what to do, whatever the file's name claims.
+void ImageFlasherPanelTests::loadImageFileRefusesAZipArchive() {
+    const QString image = writeImage("archive.img", QByteArray("PK\x03\x04 not a disk", 16));
+    QVERIFY(!image.isEmpty());
+    QString seen;
+    armMessageBoxDismisser(&seen);
+    QVERIFY(!m_panel->loadImageFile(image));
+    QVERIFY2(seen.contains(QStringLiteral("extract the disk image")), qPrintable(seen));
+    QVERIFY(!flashButton()->isEnabled());
+}
+
+void ImageFlasherPanelTests::loadImageFileRefusesAnAppleDiskImage() {
+    QByteArray bytes(2048, '\0');
+    QByteArray trailer(512, '\0');
+    trailer.replace(0, 4, "koly");
+    trailer[11] = 0;
+    trailer[10] = 2;  // big-endian header size 512
+    bytes.replace(bytes.size() - trailer.size(), trailer.size(), trailer);
+    const QString image = writeImage("installer.dmg", bytes);
+    QVERIFY(!image.isEmpty());
+    QString seen;
+    armMessageBoxDismisser(&seen);
+    QVERIFY(!m_panel->loadImageFile(image));
+    QVERIFY2(seen.contains(QStringLiteral(".dmg")), qPrintable(seen));
+    QVERIFY(!flashButton()->isEnabled());
+}
+
+void ImageFlasherPanelTests::imagePickerOffersOnlyWhatFlashes() {
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);
+    QPushButton* select = nullptr;
+    const auto buttons = m_panel->findChildren<QPushButton*>();
+    for (QPushButton* button : buttons) {
+        if (button->text() == QStringLiteral("Select Image File")) {
+            select = button;
+        }
+    }
+    QVERIFY(select != nullptr);
+
+    QStringList filters;
+    QTimer poll;
+    poll.setInterval(kModalPollIntervalMs);
+    connect(&poll, &QTimer::timeout, this, [&filters, &poll]() {
+        if (auto* dialog = qobject_cast<QFileDialog*>(QApplication::activeModalWidget())) {
+            filters = dialog->nameFilters();
+            poll.stop();
+            dialog->reject();
+        }
+    });
+    poll.start();
+    select->click();
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, false);
+
+    QVERIFY(!filters.isEmpty());
+    const QString disk_images = filters.first();
+    QVERIFY2(disk_images.contains(QStringLiteral("*.iso")), qPrintable(disk_images));
+    QVERIFY2(!disk_images.contains(QStringLiteral("*.zip")), qPrintable(disk_images));
+    QVERIFY2(!disk_images.contains(QStringLiteral("*.dmg")), qPrintable(disk_images));
 }
 
 // The shape of the download-flow bug: an image that fails validation selects
