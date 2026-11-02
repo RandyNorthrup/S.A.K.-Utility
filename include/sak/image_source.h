@@ -9,6 +9,7 @@
 #include <QObject>
 #include <QString>
 
+#include <functional>
 #include <memory>
 
 namespace sak {
@@ -43,6 +44,18 @@ struct ImageMetadata {
     QString compressionType;                    // "gzip", "bzip2", "xz", etc.
 
     bool isValid() const { return !path.isEmpty() && size > 0 && format != ImageFormat::Unknown; }
+};
+
+/**
+ * @brief What decoding a compressed image from start to finish found
+ *
+ * gzip, bzip2 and xz do not reliably record how large their output is (gzip's trailer keeps it
+ * modulo 4 GiB), so the only trustworthy size is the one a full decode produces.
+ */
+struct CompressedImageMeasurement {
+    qint64 uncompressedBytes = -1;  // -1 unless the stream decoded cleanly from start to end
+    QString error;                  // Why it could not be measured; empty on success and on cancel
+    bool cancelled = false;
 };
 
 }  // namespace sak
@@ -208,6 +221,27 @@ public:
      * @return true if supported compression format detected
      */
     static bool isCompressed(const QString& filePath);
+
+    /**
+     * @brief Decode the whole file once to learn its true uncompressed size.
+     * @param filePath Compressed image to read; nothing is written anywhere.
+     * @param shouldStop Polled between reads; true ends the decode as cancelled.
+     * @param progress Called each time the share of the compressed file read grows by a whole
+     *        percent, with the compressed bytes read and the compressed file's size. May be empty.
+     *
+     * A truncated or corrupt stream comes back as an error, as does a tar archive: a .tar.gz
+     * decodes cleanly, but writing its bytes to a drive leaves nothing that can boot.
+     */
+    [[nodiscard]] static sak::CompressedImageMeasurement measure(
+        const QString& filePath,
+        const std::function<bool()>& shouldStop,
+        const std::function<void(qint64, qint64)>& progress = {});
+
+    /**
+     * @brief Record the size measure() found, so size() can answer without decoding again.
+     * @param bytes Positive size; anything else leaves size() reporting -1 (unknown).
+     */
+    void setUncompressedSize(qint64 bytes);
 
 Q_SIGNALS:
     /**

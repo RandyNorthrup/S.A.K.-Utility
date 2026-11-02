@@ -6,8 +6,11 @@
 
 #include "sak/image_source.h"
 
+#include "../support/compress_fixture.h"
+
 #include <QFile>
 #include <QSignalSpy>
+#include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QtTest/QtTest>
 
@@ -39,6 +42,10 @@ private Q_SLOTS:
     void isCompressed_xz();
     void isCompressed_iso();
     void isCompressed_emptyPath();
+    void measure_reportsTheTrueSize();
+    void measure_refusesWhatCannotBeFlashed();
+    void measure_stopsWhenAsked();
+    void compressedSeek_landsOnTheRightByte();
     void isCompressed_longExtensions();
     void isCompressed_zipNotStreamable();
 
@@ -196,6 +203,168 @@ void TestImageSource::isCompressed_iso() {
     QCOMPARE(gzipBody.write(gzipMagic), qint64(gzipMagic.size()));
     gzipBody.close();
     QVERIFY(CompressedImageSource::isCompressed(gzipBody.fileName()));
+}
+
+// ===================================================================
+// CompressedImageSource::measure and seek
+// ===================================================================
+
+namespace {
+// Not one repeated byte: a seek or a measure that lands in the wrong place has to show.
+QByteArray imagePayload(qsizetype bytes) {
+    QByteArray payload(bytes, Qt::Uninitialized);
+    for (qsizetype i = 0; i < bytes; ++i) {
+        payload[i] = static_cast<char>((i * 31) ^ (i >> 8));
+    }
+    return payload;
+}
+
+QString writeFile(const QTemporaryDir& dir, const QString& name, const QByteArray& bytes) {
+    QFile file(dir.filePath(name));
+    if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size()) {
+        return {};
+    }
+    return file.fileName();
+}
+}  // namespace
+
+// What the flash coordinator relies on: every format reports its true uncompressed length, which
+// here is deliberately larger than 4 x the 1 MB read buffer so one read could not hide a short
+// count.
+void TestImageSource::measure_reportsTheTrueSize() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray payload = imagePayload(5 * 1024 * 1024 + 123);
+
+    struct Format {
+        QString name;
+        QByteArray bytes;
+    };
+    const QList<Format> formats = {
+        {QStringLiteral("image.img.gz"), sak_test::gzipCompress(payload)},
+        {QStringLiteral("image.img.bz2"), sak_test::bzip2Compress(payload)},
+        {QStringLiteral("image.img.xz"), sak_test::xzCompress(payload)}};
+
+    for (const auto& format : formats) {
+        const QString path = writeFile(dir, format.name, format.bytes);
+        QVERIFY(!path.isEmpty());
+        qint64 lastRead = -1;
+        qint64 reportedTotal = -1;
+        const auto outcome = CompressedImageSource::measure(
+            path, {}, [&](qint64 compressedRead, qint64 compressedTotal) {
+                lastRead = compressedRead;
+                reportedTotal = compressedTotal;
+            });
+        QVERIFY2(outcome.error.isEmpty(), qPrintable(outcome.error));
+        QVERIFY(!outcome.cancelled);
+        QCOMPARE(outcome.uncompressedBytes, qint64(payload.size()));
+        // Progress is about the compressed file, and ends at all of it.
+        QCOMPARE(reportedTotal, qint64(format.bytes.size()));
+        QCOMPARE(lastRead, qint64(format.bytes.size()));
+
+        // The size reaches size() only once it is recorded, and survives the reopen every
+        // checksum and verify pass does.
+        CompressedImageSource source(path);
+        QVERIFY(source.open());
+        QCOMPARE(source.size(), qint64(-1));
+        source.setUncompressedSize(outcome.uncompressedBytes);
+        QCOMPARE(source.size(), qint64(payload.size()));
+        source.close();
+        QVERIFY(source.open());
+        QCOMPARE(source.size(), qint64(payload.size()));
+    }
+}
+
+void TestImageSource::measure_refusesWhatCannotBeFlashed() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray payload = imagePayload(256 * 1024);
+
+    // Truncated: the file ends before the decoder does.
+    QByteArray truncated = sak_test::gzipCompress(payload);
+    truncated.chop(truncated.size() / 2);
+    auto outcome =
+        CompressedImageSource::measure(writeFile(dir, QStringLiteral("cut.img.gz"), truncated), {});
+    QCOMPARE(outcome.uncompressedBytes, qint64(-1));
+    QVERIFY2(!outcome.error.isEmpty(), "a truncated stream must not measure");
+    // The decoder's own reason, not the empty-stream one a swallowed read error would turn into.
+    QVERIFY2(!outcome.error.contains(QStringLiteral("nothing")), qPrintable(outcome.error));
+
+    // Corrupt: a .xz name over bytes that are not xz.
+    outcome = CompressedImageSource::measure(
+        writeFile(dir, QStringLiteral("junk.img.xz"), imagePayload(4096)), {});
+    QCOMPARE(outcome.uncompressedBytes, qint64(-1));
+    QVERIFY2(!outcome.error.isEmpty(), "a corrupt stream must not measure");
+    QVERIFY2(!outcome.error.contains(QStringLiteral("nothing")), qPrintable(outcome.error));
+
+    // A tar archive decodes perfectly and is still not a disk.
+    QByteArray tarBlock(1024, '\0');
+    tarBlock.replace(0, 9, "file.txt\0");
+    tarBlock.replace(257, 5, "ustar");
+    outcome = CompressedImageSource::measure(
+        writeFile(dir, QStringLiteral("rootfs.tar.gz"), sak_test::gzipCompress(tarBlock)), {});
+    QCOMPARE(outcome.uncompressedBytes, qint64(-1));
+    QVERIFY2(outcome.error.contains(QStringLiteral("tar archive")), qPrintable(outcome.error));
+
+    // The same bytes with no tar marker are a perfectly good image, so it is the marker that
+    // refused the one above and not the content or the length.
+    tarBlock.replace(257, 5, "plain");
+    outcome = CompressedImageSource::measure(
+        writeFile(dir, QStringLiteral("plain.img.gz"), sak_test::gzipCompress(tarBlock)), {});
+    QVERIFY2(outcome.error.isEmpty(), qPrintable(outcome.error));
+    QCOMPARE(outcome.uncompressedBytes, qint64(tarBlock.size()));
+
+    // Nothing inside: a run with zero bytes to write must end here.
+    outcome = CompressedImageSource::measure(
+        writeFile(dir, QStringLiteral("empty.img.gz"), sak_test::gzipCompress(QByteArray())), {});
+    QCOMPARE(outcome.uncompressedBytes, qint64(-1));
+    QVERIFY2(outcome.error.contains(QStringLiteral("nothing")), qPrintable(outcome.error));
+}
+
+void TestImageSource::measure_stopsWhenAsked() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeFile(dir,
+                                   QStringLiteral("image.img.gz"),
+                                   sak_test::gzipCompress(imagePayload(3 * 1024 * 1024)));
+    int polls = 0;
+    const auto outcome = CompressedImageSource::measure(path, [&polls]() {
+        ++polls;
+        return polls > 1;  // One read happens, then the stop is honoured.
+    });
+    QVERIFY(outcome.cancelled);
+    QCOMPARE(outcome.uncompressedBytes, qint64(-1));
+    QVERIFY(outcome.error.isEmpty());
+    QCOMPARE(polls, 2);
+}
+
+// Sample verification reads blocks by offset. Before this the seek always failed, so verifying a
+// compressed image in Quick mode read back no blocks at all and failed every run.
+void TestImageSource::compressedSeek_landsOnTheRightByte() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray payload = imagePayload(3 * 1024 * 1024 + 17);
+    const QString path =
+        writeFile(dir, QStringLiteral("image.img.xz"), sak_test::xzCompress(payload));
+    CompressedImageSource source(path);
+
+    // Closed: nothing to seek in.
+    QVERIFY(!source.seek(0));
+    QVERIFY(source.open());
+    QVERIFY(!source.seek(-1));
+
+    QByteArray block(4096, Qt::Uninitialized);
+    const auto readsFrom = [&](qint64 offset) {
+        return source.seek(offset) && source.position() == offset &&
+               source.read(block.data(), block.size()) == block.size() &&
+               block == payload.mid(offset, block.size());
+    };
+    QVERIFY(readsFrom(2 * 1024 * 1024));     // Forward, more than one discard buffer away.
+    QVERIFY(readsFrom(100));                 // Backward starts the stream over.
+    QVERIFY(readsFrom(100 + block.size()));  // Already there: no reopen and no skipped bytes.
+
+    // Past the end: refused, not a silent stop at the last byte.
+    QVERIFY(!source.seek(payload.size() + 1));
 }
 
 void TestImageSource::isCompressed_emptyPath() {

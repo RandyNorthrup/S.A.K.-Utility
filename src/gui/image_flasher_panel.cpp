@@ -875,6 +875,14 @@ void ImageFlasherPanel::onFlashProgress(const FlashProgress& progress) {
         return;
     }
     Q_EMIT progressUpdate(static_cast<int>(progress.percentage), kPercentMax);
+    if (progress.state == FlashState::Decompressing) {
+        // Nothing is being written yet: these are bytes of the compressed file read so far.
+        m_flashDetailsLabel->setText(QString("Read: %1 / %2")
+                                         .arg(formatFileSize(progress.bytesWritten))
+                                         .arg(formatFileSize(progress.totalBytes)));
+        m_flashSpeedLabel->clear();
+        return;
+    }
     m_flashDetailsLabel->setText(QString("Written: %1 / %2")
                                      .arg(formatFileSize(progress.bytesWritten))
                                      .arg(formatFileSize(progress.totalBytes)));

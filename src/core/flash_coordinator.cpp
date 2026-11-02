@@ -14,6 +14,7 @@
 #include <QFileInfo>
 #include <QMutexLocker>
 #include <QSet>
+#include <QtConcurrent/QtConcurrent>
 #include <QtEndian>
 #include <QThread>
 
@@ -248,6 +249,12 @@ FlashCoordinator::~FlashCoordinator() {
     if (isFlashing()) {
         cancel();
     }
+    // The measurement polls m_isCancelled between 1 MB reads and reports back to this object, so
+    // it has to be over before the members it uses go away.
+    m_isCancelled = true;
+    // SAK-ALLOW-BLOCKING: bounded by one 1 MB decode, and nothing else can stop a pool task
+    // that holds a pointer to this object.
+    m_measureFuture.waitForFinished();
     cleanupWorkers();
     // A run torn down by destruction (owner shutdown, a timeout, a cancel that the
     // workers answer after we are gone) never reaches emitTerminalOutcome, so nothing
@@ -303,10 +310,26 @@ bool FlashCoordinator::startFlash(const QString& imagePath, const QStringList& t
         return false;
     }
 
+    return openImageAndContinue(imagePath, targetDrives);
+}
+
+bool FlashCoordinator::openImageAndContinue(const QString& imagePath,
+                                            const QStringList& targetDrives) {
     if (!prepareImageSource(imagePath)) {
         return false;
     }
 
+    // A compressed image reports -1 until something has decoded it. Do that before any disk goes
+    // offline, on a pool thread: it can take minutes, and it can still refuse the image.
+    if (m_imageSource->size() < 0) {
+        startImageMeasurement(imagePath, targetDrives);
+        return true;
+    }
+
+    return beginWriting(imagePath, targetDrives);
+}
+
+bool FlashCoordinator::beginWriting(const QString& imagePath, const QStringList& targetDrives) {
     if (!recordTotalBytes(imagePath, targetDrives.size())) {
         return false;
     }
@@ -316,6 +339,98 @@ bool FlashCoordinator::startFlash(const QString& imagePath, const QStringList& t
     // for minutes with large images).
 
     return unmountAndFlash(imagePath, targetDrives);
+}
+
+void FlashCoordinator::startImageMeasurement(const QString& imagePath,
+                                             const QStringList& targetDrives) {
+    setState(sak::FlashState::Decompressing);
+    Q_EMIT stateChanged(sak::FlashState::Decompressing,
+                        QStringLiteral("Reading the compressed image to find its full size..."));
+
+    m_measureWatcher = new QFutureWatcher<sak::CompressedImageMeasurement>(this);
+    connect(
+        m_measureWatcher, &QFutureWatcherBase::finished, this, [this, imagePath, targetDrives]() {
+            const sak::CompressedImageMeasurement outcome = m_measureWatcher->result();
+            m_measureWatcher->deleteLater();
+            m_measureWatcher = nullptr;
+            onImageMeasured(imagePath, targetDrives, outcome);
+        });
+    m_measureFuture = QtConcurrent::run([this, imagePath]() {
+        return CompressedImageSource::measure(
+            imagePath,
+            [this]() { return m_isCancelled.load(); },
+            [this](qint64 compressedRead, qint64 compressedTotal) {
+                QMetaObject::invokeMethod(
+                    this,
+                    [this, compressedRead, compressedTotal]() {
+                        publishMeasureProgress(compressedRead, compressedTotal);
+                    },
+                    Qt::QueuedConnection);
+            });
+    });
+    m_measureWatcher->setFuture(m_measureFuture);
+}
+
+void FlashCoordinator::publishMeasureProgress(qint64 compressedRead, qint64 compressedTotal) {
+    sak::FlashProgress snapshot;
+    {
+        const QMutexLocker locker(&m_mutex);
+        if (m_state != sak::FlashState::Decompressing) {
+            return;  // A report queued before the run moved on or was cancelled.
+        }
+        snapshot = m_progress;
+    }
+    // A snapshot only: m_progress keeps meaning bytes written to the drives.
+    snapshot.bytesWritten = compressedRead;
+    snapshot.totalBytes = compressedTotal;
+    snapshot.percentage = snapshot.getOverallProgress();
+    Q_EMIT progressUpdated(snapshot);
+}
+
+void FlashCoordinator::onImageMeasured(const QString& imagePath,
+                                       const QStringList& targetDrives,
+                                       const sak::CompressedImageMeasurement& outcome) {
+    if (outcome.cancelled || m_isCancelled.load()) {
+        finishCancelledBeforeWriting(targetDrives);
+        return;
+    }
+    if (!outcome.error.isEmpty()) {
+        sak::logError(QString("Refusing %1: %2").arg(imagePath, outcome.error).toStdString());
+        failRun("Could not read the compressed image",
+                QString("Refusing to flash %1: %2").arg(imagePath, outcome.error));
+        return;
+    }
+    sak::logInfo(QString("Compressed image %1 decodes to %2 bytes")
+                     .arg(imagePath)
+                     .arg(outcome.uncompressedBytes)
+                     .toStdString());
+    m_measuredImageBytes = outcome.uncompressedBytes;
+    if (auto* compressed = qobject_cast<CompressedImageSource*>(m_imageSource.get())) {
+        compressed->setUncompressedSize(m_measuredImageBytes);
+    }
+    // Nothing to do with the result: a failure here has already gone out through flashError.
+    static_cast<void>(beginWriting(imagePath, targetDrives));
+}
+
+void FlashCoordinator::finishCancelledBeforeWriting(const QStringList& targetDrives) {
+    sak::FlashResult result;
+    {
+        const QMutexLocker locker(&m_mutex);
+        for (const QString& devicePath : targetDrives) {
+            m_progress.failedDrives++;
+            m_result.failedDrives.append(devicePath);
+            m_result.errorMessages.append(
+                QString("%1: cancelled before writing started").arg(devicePath));
+        }
+        m_result.success = false;
+        finalizeResultMetrics();
+        m_state = sak::FlashState::Cancelled;
+        m_progress.state = m_state;
+        result = m_result;
+    }
+    emitTerminalOutcome(sak::FlashState::Cancelled,
+                        result,
+                        QStringLiteral("Cancelled before anything was written"));
 }
 
 void FlashCoordinator::resetRunState(const QStringList& targetDrives) {
@@ -338,6 +453,7 @@ void FlashCoordinator::resetRunState(const QStringList& targetDrives) {
     m_progress.state = m_state;
     m_result = sak::FlashResult{};
     m_reportedWorkers.clear();
+    m_measuredImageBytes = 0;
     m_flashTimer.start();
 }
 
@@ -542,7 +658,9 @@ bool FlashCoordinator::buildWorkerQueue(const QString& imagePath, const QStringL
         for (const QString& drive : targetDrives) {
             std::unique_ptr<ImageSource> workerSource;
             if (CompressedImageSource::isCompressed(imagePath)) {
-                workerSource = std::make_unique<CompressedImageSource>(imagePath);
+                auto compressedSource = std::make_unique<CompressedImageSource>(imagePath);
+                compressedSource->setUncompressedSize(m_measuredImageBytes);
+                workerSource = std::move(compressedSource);
             } else {
                 workerSource = std::make_unique<FileImageSource>(imagePath);
             }
@@ -744,6 +862,10 @@ bool FlashCoordinator::beginFlashClaim() {
     const QMutexLocker locker(&m_mutex);
     if (isActiveFlashState(m_state)) {
         return false;  // A run is already active -- refuse re-entry atomically.
+    }
+    // A cancelled measurement still has to report back and finish its run.
+    if (m_measureWatcher != nullptr) {
+        return false;
     }
     // Cancelled/Failed is NOT the same as "no writers left". requestStop() is
     // cooperative and a worker wedged in a long raw WriteFile keeps writing sectors

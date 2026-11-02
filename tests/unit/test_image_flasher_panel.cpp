@@ -16,6 +16,7 @@
 /// selection state and button state, not in any single function.
 
 #include "sak/drive_scanner.h"
+#include "sak/flash_coordinator.h"
 #include "sak/image_flasher_panel.h"
 
 #include <QApplication>
@@ -23,6 +24,7 @@
 #include <QDir>
 #include <QFile>
 #include <QFileDialog>
+#include <QLabel>
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
@@ -79,6 +81,7 @@ private Q_SLOTS:
     void loadImageFileRefusesAZipArchive();
     void loadImageFileRefusesAnAppleDiskImage();
     void imagePickerOffersOnlyWhatFlashes();
+    void readingACompressedImageIsNotShownAsWriting();
 
 private:
     QPushButton* flashButton() const;
@@ -93,6 +96,27 @@ private:
     std::unique_ptr<ImageFlasherPanel> m_panel;
     QTemporaryDir m_dir;
 };
+
+// The first stage of a compressed image reads the file; nothing has gone to any drive yet.
+void ImageFlasherPanelTests::readingACompressedImageIsNotShownAsWriting() {
+    auto* coordinator = m_panel->findChild<FlashCoordinator*>();
+    QVERIFY(coordinator != nullptr);
+    FlashProgress progress;
+    progress.state = FlashState::Decompressing;
+    progress.bytesWritten = 512;
+    progress.totalBytes = 1024;
+    progress.percentage = 50.0;
+    Q_EMIT coordinator->progressUpdated(progress);
+
+    const auto labels = m_panel->findChildren<QLabel*>();
+    const auto shows = [&labels](const QString& start) {
+        return std::ranges::any_of(labels, [&start](const QLabel* label) {
+            return label->text().startsWith(start);
+        });
+    };
+    QVERIFY(shows(QStringLiteral("Read: ")));
+    QVERIFY(!shows(QStringLiteral("Written: ")));
+}
 
 void ImageFlasherPanelTests::initTestCase() {
     // The panel always starts its DriveScanner -- smoke and audit modes included -- so tests

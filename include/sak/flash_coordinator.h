@@ -10,6 +10,8 @@
 #include "image_source.h"
 
 #include <QElapsedTimer>
+#include <QFuture>
+#include <QFutureWatcher>
 #include <QMutex>
 #include <QObject>
 #include <QSet>
@@ -22,6 +24,7 @@
 
 class FlashWorker;
 class DriveUnmounter;
+class TestFlashCoordinator;
 
 namespace sak {
 
@@ -344,9 +347,31 @@ private Q_SLOTS:
     void onWorkerFailed(const QString& error);
 
 private:
+    friend class ::TestFlashCoordinator;  // drives the size stage without a real target disk
+
     bool validateImagePath(const QString& imagePath);
     bool prepareImageSource(const QString& imagePath);
     bool unmountAndFlash(const QString& imagePath, const QStringList& targetDrives);
+    /// @brief Everything after the targets are validated: open the image, measure it if it is
+    ///        compressed, and go on to write. True means the run is under way; its outcome then
+    ///        arrives through flashCompleted or flashError.
+    bool openImageAndContinue(const QString& imagePath, const QStringList& targetDrives);
+    /// @brief Everything after the image's size is known: the byte-total gate, then the unmount
+    ///        and the writers. Failures have been reported through flashError by the time it
+    ///        returns false.
+    bool beginWriting(const QString& imagePath, const QStringList& targetDrives);
+    /// @brief Decode a compressed image once on a pool thread to learn its size, BEFORE any disk
+    ///        is taken offline. The run stays in Decompressing and continues in onImageMeasured.
+    void startImageMeasurement(const QString& imagePath, const QStringList& targetDrives);
+    /// @brief Continue the run on the coordinator's thread once the measurement has ended.
+    void onImageMeasured(const QString& imagePath,
+                         const QStringList& targetDrives,
+                         const sak::CompressedImageMeasurement& outcome);
+    /// @brief Publish how far through the compressed file the measurement has read.
+    void publishMeasureProgress(qint64 compressedRead, qint64 compressedTotal);
+    /// @brief End a run cancelled before any writer existed, with a terminal outcome that names
+    ///        every target as not written, so a caller waiting on one is released.
+    void finishCancelledBeforeWriting(const QStringList& targetDrives);
 
     bool validateTargets(const QStringList& targetDrives);
     /// @brief Validate one target device (accessible, valid disk, not the OS disk).
@@ -467,6 +492,13 @@ private:
     void onWorkerFailedFor(const FlashWorker* worker, const QString& error);
 
     std::unique_ptr<ImageSource> m_imageSource;
+    /// Size a measurement found for this run's compressed image, handed to every worker's source
+    /// so none of them decodes it again just to answer size(). 0 when there is none.
+    qint64 m_measuredImageBytes = 0;
+    /// The running measurement, or null. Non-null also refuses a new run, so a stale finish cannot
+    /// continue a run that has since been replaced.
+    QFutureWatcher<sak::CompressedImageMeasurement>* m_measureWatcher = nullptr;
+    QFuture<sak::CompressedImageMeasurement> m_measureFuture;
     std::vector<sak::WorkerPtr<FlashWorker>> m_workers;
 
     mutable QMutex m_mutex;                  ///< Guards m_state, m_progress, m_result

@@ -171,6 +171,16 @@ public:
      */
     [[nodiscard]] qint64 bufferSize() const { return m_bufferSize; }
 
+    /// @brief Size this worker's image source reports, or -1 with no source or an unknown size.
+    ///        Read-only, for the same reason as bufferSize(): the coordinator hands a measured size
+    ///        to each worker's source, and this is what makes that observable.
+    [[nodiscard]] qint64 imageSize() const { return m_imageSource ? m_imageSource->size() : -1; }
+
+    /// @brief Whether @p incoming more bytes still fit inside an image of @p total bytes after
+    ///        @p written have gone out. False means the source has grown since the capacity gate
+    ///        approved its size, and writing on could run toward the end of the drive. Pure.
+    [[nodiscard]] static bool readStaysWithinImage(qint64 written, qint64 incoming, qint64 total);
+
     /// @brief Zero-pad a buffer up to a whole multiple of the device sector size
     /// @param buffer Buffer to pad in place (grown to the padded size)
     /// @param bytes_read In/out valid byte count; set to the padded size on success

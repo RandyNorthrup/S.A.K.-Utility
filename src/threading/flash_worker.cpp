@@ -758,6 +758,10 @@ bool FlashWorker::padToSectorSize(QByteArray& buffer, qint64& bytes_read, qint64
     return true;
 }
 
+bool FlashWorker::readStaysWithinImage(qint64 written, qint64 incoming, qint64 total) {
+    return written <= total && incoming <= total - written;
+}
+
 bool FlashWorker::writeImage() {
     Q_ASSERT(m_imageSource);  // execute() refuses a null source before reaching this stage.
     sak::logInfo("Writing image");
@@ -792,6 +796,15 @@ bool FlashWorker::writeImage() {
 
         if (bytes_read == 0) {
             break;
+        }
+
+        // Fail closed on a source that has grown past the size the capacity gate approved: a
+        // file replaced after it was measured would otherwise run on toward the end of the drive.
+        if (!readStaysWithinImage(m_contentBytesWritten, bytes_read, m_totalBytes)) {
+            sak::logError(QString("Image is longer than expected: more than %1 bytes")
+                              .arg(m_totalBytes)
+                              .toStdString());
+            return false;
         }
 
         // The meaningful (decompressed) content length, before sector padding.
@@ -1072,8 +1085,10 @@ int FlashWorker::verifySampleBlocks(sak::ValidationResult& result,
     // that many DISTINCT blocks; a per-iteration bounded() draw could re-verify one block
     // and under-cover the image. num_samples <= total_blocks here (verifySample() caps the
     // sample at 10% of the image), so this yields exactly num_samples distinct indices.
-    const QList<qint64> block_indices = pickDistinctBlockIndices(config.total_blocks,
-                                                                 config.num_samples);
+    // Ascending, because a compressed source can only read forward: out of order, each block
+    // behind the last would mean decoding the stream again from its start.
+    QList<qint64> block_indices = pickDistinctBlockIndices(config.total_blocks, config.num_samples);
+    std::ranges::sort(block_indices);
 
     for (const qint64 block_index : block_indices) {
         if (stopRequested()) {

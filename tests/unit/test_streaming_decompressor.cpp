@@ -8,6 +8,8 @@
 #include "sak/streaming_decompressor.h"
 #include "sak/xz_decompressor.h"
 
+#include "../support/compress_fixture.h"
+
 #include <QFile>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
@@ -73,9 +75,6 @@ private:
 
     void writeFile(const QString& name, const QByteArray& content);
     QString filePath(const QString& name) const;
-    static QByteArray gzipCompress(const QByteArray& input);
-    static QByteArray xzCompress(const QByteArray& input);
-    static QByteArray bzip2Compress(const QByteArray& input);
     static QByteArray lzmaAloneHeader(quint32 dictSize);
     static qint64 readFully(sak::StreamingDecompressor& decomp);
 };
@@ -246,30 +245,6 @@ void StreamingDecompressorTests::atEnd_beforeOpen() {
 // Truncated stream detection (must fail closed, not report a clean short read)
 // ============================================================================
 
-QByteArray StreamingDecompressorTests::gzipCompress(const QByteArray& input) {
-    z_stream zs{};
-    // windowBits 15 + 16 selects the gzip wrapper.
-    const int init =
-        deflateInit2(&zs, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 15 + 16, 8, Z_DEFAULT_STRATEGY);
-    if (init != Z_OK) {
-        return {};
-    }
-    zs.next_in = reinterpret_cast<Bytef*>(const_cast<char*>(input.constData()));
-    zs.avail_in = static_cast<uInt>(input.size());
-
-    QByteArray out;
-    char buffer[16'384];
-    int ret = Z_OK;
-    do {
-        zs.next_out = reinterpret_cast<Bytef*>(buffer);
-        zs.avail_out = sizeof(buffer);
-        ret = deflate(&zs, Z_FINISH);
-        out.append(buffer, static_cast<qsizetype>(sizeof(buffer) - zs.avail_out));
-    } while (ret == Z_OK);
-    deflateEnd(&zs);
-    return ret == Z_STREAM_END ? out : QByteArray();
-}
-
 qint64 StreamingDecompressorTests::readFully(sak::StreamingDecompressor& decomp) {
     qint64 total = 0;
     char buffer[8192];
@@ -290,7 +265,7 @@ void StreamingDecompressorTests::completeGzip_readsAllBytes() {
     for (qsizetype i = 0; i < payload.size(); ++i) {
         payload[i] = static_cast<char>((i * 31 + 7) & 0xFF);
     }
-    const QByteArray gz = gzipCompress(payload);
+    const QByteArray gz = sak_test::gzipCompress(payload);
     QVERIFY(!gz.isEmpty());
     writeFile("complete.gz", gz);
 
@@ -309,7 +284,7 @@ void StreamingDecompressorTests::truncatedGzip_reportsError() {
     for (qsizetype i = 0; i < payload.size(); ++i) {
         payload[i] = static_cast<char>((i * 31 + 7) & 0xFF);
     }
-    QByteArray gz = gzipCompress(payload);
+    QByteArray gz = sak_test::gzipCompress(payload);
     QVERIFY(gz.size() > 200);
     gz.chop(gz.size() / 2);  // drop the second half: real compressed data + trailer
     writeFile("truncated.gz", gz);
@@ -330,24 +305,6 @@ void StreamingDecompressorTests::truncatedGzip_reportsError() {
 // Encode @p input as a real .bz2 stream with the same libbz2 the decompressor decodes
 // with, so these tests exercise Bzip2Decompressor::decompressStep on a genuine payload
 // (blockSize100k=9, the largest block; verbosity=0 quiet; workFactor=0 -> library default).
-QByteArray StreamingDecompressorTests::bzip2Compress(const QByteArray& input) {
-    // libbz2's documented one-shot output-buffer floor: sourceLen + sourceLen/100 + 600.
-    unsigned int destLen = static_cast<unsigned int>(input.size() + input.size() / 100 + 600);
-    QByteArray out(static_cast<qsizetype>(destLen), Qt::Uninitialized);
-    const int ret = BZ2_bzBuffToBuffCompress(out.data(),
-                                             &destLen,
-                                             const_cast<char*>(input.constData()),
-                                             static_cast<unsigned int>(input.size()),
-                                             9,
-                                             0,
-                                             0);
-    if (ret != BZ_OK) {
-        return {};
-    }
-    out.truncate(static_cast<qsizetype>(destLen));
-    return out;
-}
-
 void StreamingDecompressorTests::completeBzip2_readsAllBytes() {
     // A complete .bz2 must decode to the exact original bytes. This is the covering
     // assert for the bzip2 stream-end completeness check (BZ_STREAM_END): inverting it
@@ -358,7 +315,7 @@ void StreamingDecompressorTests::completeBzip2_readsAllBytes() {
     for (qsizetype i = 0; i < payload.size(); ++i) {
         payload[i] = static_cast<char>((i * 41 + 13) & 0xFF);
     }
-    const QByteArray bz = bzip2Compress(payload);
+    const QByteArray bz = sak_test::bzip2Compress(payload);
     QVERIFY(!bz.isEmpty());
     writeFile("complete.bz2", bz);
 
@@ -395,7 +352,7 @@ void StreamingDecompressorTests::truncatedBzip2_reportsError() {
     for (qsizetype i = 0; i < payload.size(); ++i) {
         payload[i] = static_cast<char>((i * 41 + 13) & 0xFF);
     }
-    QByteArray bz = bzip2Compress(payload);
+    QByteArray bz = sak_test::bzip2Compress(payload);
     QVERIFY(bz.size() > 200);
     bz.chop(bz.size() / 2);  // drop the second half, leaving the final block incomplete
     writeFile("truncated.bz2", bz);
@@ -411,26 +368,6 @@ void StreamingDecompressorTests::truncatedBzip2_reportsError() {
 }
 
 // Encode @p input as a real .xz stream (default preset -> 8 MiB dictionary).
-QByteArray StreamingDecompressorTests::xzCompress(const QByteArray& input) {
-    const size_t bound = lzma_stream_buffer_bound(static_cast<size_t>(input.size()));
-    QByteArray out(static_cast<qsizetype>(bound), Qt::Uninitialized);
-    size_t out_pos = 0;
-    const lzma_ret ret =
-        lzma_easy_buffer_encode(LZMA_PRESET_DEFAULT,
-                                LZMA_CHECK_CRC64,
-                                nullptr,
-                                reinterpret_cast<const uint8_t*>(input.constData()),
-                                static_cast<size_t>(input.size()),
-                                reinterpret_cast<uint8_t*>(out.data()),
-                                &out_pos,
-                                bound);
-    if (ret != LZMA_OK) {
-        return {};
-    }
-    out.truncate(static_cast<qsizetype>(out_pos));
-    return out;
-}
-
 void StreamingDecompressorTests::realXzStreamDecodesUnderMemLimit() {
     // B8-11: the bounded decoder memory limit (512 MiB) must still admit a normal
     // xz stream (default preset needs an 8 MiB dictionary), so capping memory does
@@ -440,7 +377,7 @@ void StreamingDecompressorTests::realXzStreamDecodesUnderMemLimit() {
     for (qsizetype i = 0; i < payload.size(); ++i) {
         payload[i] = static_cast<char>((i * 37 + 11) & 0xFF);
     }
-    const QByteArray xz = xzCompress(payload);
+    const QByteArray xz = sak_test::xzCompress(payload);
     QVERIFY(!xz.isEmpty());
     writeFile("real.xz", xz);
 
@@ -507,8 +444,8 @@ void StreamingDecompressorTests::concatenatedGzipMembersDecodeFully() {
     for (qsizetype i = 0; i < b.size(); ++i) {
         b[i] = static_cast<char>((i * 29 + 17) & 0xFF);
     }
-    const QByteArray ga = gzipCompress(a);
-    const QByteArray gb = gzipCompress(b);
+    const QByteArray ga = sak_test::gzipCompress(a);
+    const QByteArray gb = sak_test::gzipCompress(b);
     QVERIFY(!ga.isEmpty());
     QVERIFY(!gb.isEmpty());
     writeFile("multi.gz", ga + gb);
@@ -529,8 +466,8 @@ void StreamingDecompressorTests::concatenatedXzMembersDecodeFully() {
     for (qsizetype i = 0; i < b.size(); ++i) {
         b[i] = static_cast<char>((i * 19 + 23) & 0xFF);
     }
-    const QByteArray xa = xzCompress(a);
-    const QByteArray xb = xzCompress(b);
+    const QByteArray xa = sak_test::xzCompress(a);
+    const QByteArray xb = sak_test::xzCompress(b);
     QVERIFY(!xa.isEmpty());
     QVERIFY(!xb.isEmpty());
     writeFile("multi.xz", xa + xb);
@@ -548,7 +485,7 @@ void StreamingDecompressorTests::trailingGarbageAfterMemberFailsClosed() {
     for (qsizetype i = 0; i < a.size(); ++i) {
         a[i] = static_cast<char>((i * 11 + 2) & 0xFF);
     }
-    const QByteArray ga = gzipCompress(a);
+    const QByteArray ga = sak_test::gzipCompress(a);
     QVERIFY(!ga.isEmpty());
     // Append clearly non-gzip trailing bytes (gzip magic is 1F 8B).
     writeFile("garbage.gz", ga + QByteArray(4096, static_cast<char>(0xFF)));

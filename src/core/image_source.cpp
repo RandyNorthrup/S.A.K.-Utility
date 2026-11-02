@@ -15,6 +15,58 @@
 #include <QFileInfo>
 
 #include <algorithm>
+#include <vector>
+
+namespace {
+// Reads during a measure or a seek go to a scratch buffer and are thrown away.
+constexpr qint64 kDiscardBufferBytes = 1024 * 1024;
+
+// A POSIX tar header carries "ustar" at this offset of its first 512-byte block.
+constexpr qint64 kTarMagicOffset = 257;
+constexpr QByteArrayView kTarMagic("ustar");
+
+bool looksLikeTarArchive(const char* data, qint64 length) {
+    return length >= kTarMagicOffset + kTarMagic.size() &&
+           QByteArrayView(data + kTarMagicOffset, kTarMagic.size()) == kTarMagic;
+}
+
+// A fresh stream for measuring, independent of any open source, or null with the reason in @p
+// error.
+std::unique_ptr<sak::StreamingDecompressor> openForMeasuring(const QString& filePath,
+                                                             QString* error) {
+    auto decompressor = sak::DecompressorFactory::create(filePath);
+    if (!decompressor) {
+        *error = QString("Unsupported or undetected compression format: %1").arg(filePath);
+        return nullptr;
+    }
+    if (!decompressor->open(filePath)) {
+        *error = decompressor->lastError();
+        return nullptr;
+    }
+    return decompressor;
+}
+
+// Tells the caller how far through the compressed file a measurement is, once per whole percent.
+class MeasureProgress {
+public:
+    MeasureProgress(const std::function<void(qint64, qint64)>& report, qint64 compressedTotal)
+        : m_report(report), m_compressedTotal(compressedTotal) {}
+
+    void update(qint64 compressedRead) {
+        const qint64 percent =
+            m_compressedTotal > 0 ? (compressedRead * sak::kPercentMax) / m_compressedTotal : 0;
+        if (m_report && percent != m_lastPercent) {
+            m_lastPercent = percent;
+            m_report(compressedRead, m_compressedTotal);
+        }
+    }
+
+private:
+    const std::function<void(qint64, qint64)>& m_report;
+    qint64 m_compressedTotal;
+    qint64 m_lastPercent = -1;
+};
+}  // namespace
 
 // ============================================================================
 // ImageSource Base Class
@@ -395,11 +447,27 @@ qint64 CompressedImageSource::position() const {
     return m_totalDecompressed;
 }
 
-bool CompressedImageSource::seek(qint64) {
-    // Seeking in compressed streams is not supported
-    // Would require decompressing from beginning to reach position
-    sak::logWarning("Seek not supported for compressed streams");
-    return false;
+bool CompressedImageSource::seek(qint64 pos) {
+    // A compressed stream can only be read forward, so a seek decodes up to the position and
+    // throws the bytes away, and going backward starts over. Sample verification asks for its
+    // blocks in ascending order, so one pass over the stream serves all of them.
+    if (pos < 0 || !isOpen()) {
+        return false;
+    }
+    if (pos < m_totalDecompressed) {
+        close();
+        if (!open()) {
+            return false;
+        }
+    }
+    std::vector<char> discard(static_cast<size_t>(kDiscardBufferBytes));
+    while (m_totalDecompressed < pos) {
+        const qint64 wanted = std::min(kDiscardBufferBytes, pos - m_totalDecompressed);
+        if (read(discard.data(), wanted) <= 0) {
+            return false;  // Past the end of the image, or the stream failed.
+        }
+    }
+    return true;
 }
 
 bool CompressedImageSource::atEnd() const {
@@ -468,4 +536,48 @@ bool CompressedImageSource::isCompressed(const QString& filePath) {
         return false;
     }
     return sak::DecompressorFactory::isCompressed(filePath);
+}
+
+sak::CompressedImageMeasurement CompressedImageSource::measure(
+    const QString& filePath,
+    const std::function<bool()>& shouldStop,
+    const std::function<void(qint64, qint64)>& progress) {
+    sak::CompressedImageMeasurement outcome;
+    const auto decompressor = openForMeasuring(filePath, &outcome.error);
+    if (!decompressor) {
+        return outcome;
+    }
+
+    MeasureProgress reporter(progress, QFileInfo(filePath).size());
+    std::vector<char> discard(static_cast<size_t>(kDiscardBufferBytes));
+    qint64 total = 0;
+    while (!decompressor->atEnd()) {
+        if (shouldStop && shouldStop()) {
+            outcome.cancelled = true;
+            return outcome;
+        }
+        const qint64 got = decompressor->read(discard.data(), kDiscardBufferBytes);
+        if (got < 0) {
+            outcome.error = decompressor->lastError();
+            return outcome;
+        }
+        if (total == 0 && looksLikeTarArchive(discard.data(), got)) {
+            outcome.error = QStringLiteral(
+                "It is a compressed tar archive, not a disk image. Extract it and flash the "
+                "image inside.");
+            return outcome;
+        }
+        total += got;
+        reporter.update(decompressor->compressedBytesRead());
+    }
+    if (total == 0) {
+        outcome.error = QStringLiteral("It decompresses to nothing, so there is nothing to flash.");
+        return outcome;
+    }
+    outcome.uncompressedBytes = total;
+    return outcome;
+}
+
+void CompressedImageSource::setUncompressedSize(qint64 bytes) {
+    m_metadata.uncompressedSize = bytes > 0 ? bytes : 0;
 }

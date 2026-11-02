@@ -126,6 +126,7 @@ private Q_SLOTS:
     void alignUpToSectorSizeRoundsUp();
     void alignUpToSectorSizeRejectsBogusSectorSize();
     void alignUpToSectorSizeRejectsOverflow();
+    void readStaysWithinImageBoundary();
     void imageFitsDeviceUnderAndExact();
     void imageFitsDeviceRejectsOversize();
     void imageFitsDeviceRejectsUnknownCapacity();
@@ -471,6 +472,19 @@ void FlashWorkerTests::alignUpToSectorSizeRejectsOverflow() {
     // value above that must fail rather than wrap negative.
     const qint64 huge = std::numeric_limits<qint64>::max() - 1;
     QCOMPARE(FlashWorker::alignUpToSectorSize(huge, 512), static_cast<qint64>(-1));
+}
+
+// A source that grew after its size was approved must stop at the size, not at the end of the
+// drive.
+void FlashWorkerTests::readStaysWithinImageBoundary() {
+    QVERIFY(FlashWorker::readStaysWithinImage(0, 100, 100));   // the whole image in one read
+    QVERIFY(FlashWorker::readStaysWithinImage(60, 40, 100));   // landing exactly on the end
+    QVERIFY(FlashWorker::readStaysWithinImage(100, 0, 100));   // nothing left and nothing read
+    QVERIFY(!FlashWorker::readStaysWithinImage(60, 41, 100));  // one byte past it
+    QVERIFY(!FlashWorker::readStaysWithinImage(101, 0, 100));  // already past it
+    // Compared by subtraction, so a huge count cannot wrap around and pass.
+    const qint64 huge = std::numeric_limits<qint64>::max();
+    QVERIFY(!FlashWorker::readStaysWithinImage(60, huge, 100));
 }
 
 void FlashWorkerTests::imageFitsDeviceUnderAndExact() {

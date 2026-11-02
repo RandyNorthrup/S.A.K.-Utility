@@ -2,6 +2,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
 #include "sak/flash_coordinator.h"
+#include "sak/flash_worker.h"
+
+#include "../support/compress_fixture.h"
 
 #include <QFile>
 #include <QSignalSpy>
@@ -55,12 +58,130 @@ private Q_SLOTS:
     void testParsePhysicalDriveNumberSeam();
     void testCancelWhenIdle();
 
+    // -- Compressed images -----------------------------------
+    void testCompressedImageIsMeasuredBeforeAnyDiskIsTouched();
+    void testCorruptCompressedImageStopsBeforeAnyDiskIsTouched();
+    void testCancelDuringMeasurementEndsTheRun();
+
 private:
     std::unique_ptr<FlashCoordinator> m_coord;
 };
 
 void TestFlashCoordinator::init() {
     m_coord = std::make_unique<FlashCoordinator>();
+}
+
+// ============================================================================
+// Compressed images
+// ============================================================================
+
+namespace {
+// The highest number the coordinator accepts and a disk no machine has: these tests reach the
+// unmount step on purpose, and it must find nothing there.
+const QString kNoSuchDrive = QStringLiteral("\\\\.\\PhysicalDrive1023");
+
+QString writeImage(const QTemporaryDir& dir, const QString& name, const QByteArray& bytes) {
+    QFile file(dir.filePath(name));
+    if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size()) {
+        return {};
+    }
+    return file.fileName();
+}
+}  // namespace
+
+void TestFlashCoordinator::testCompressedImageIsMeasuredBeforeAnyDiskIsTouched() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QByteArray payload(2 * 1024 * 1024 + 5, 'x');
+    const QString path =
+        writeImage(dir, QStringLiteral("image.img.xz"), sak_test::xzCompress(payload));
+    const QStringList targets{kNoSuchDrive};
+
+    QSignalSpy errors(m_coord.get(), &FlashCoordinator::flashError);
+    QSignalSpy states(m_coord.get(), &FlashCoordinator::stateChanged);
+    QVERIFY(m_coord->beginFlashClaim());
+    m_coord->resetRunState(targets);
+    // The size is unknown until decoded: without the measurement this step refuses every
+    // compressed image, which is the bug this stage exists to fix.
+    QVERIFY(m_coord->openImageAndContinue(path, targets));
+    QCOMPARE(m_coord->m_imageSource->size(), qint64(-1));
+    QCOMPARE(m_coord->state(), sak::FlashState::Decompressing);
+    // A second run cannot slip in while this one decodes.
+    QVERIFY(!m_coord->beginFlashClaim());
+
+    // The run then carries on by itself to the unmount step, which refuses the missing disk.
+    QTRY_VERIFY_WITH_TIMEOUT(errors.count() >= 1, 60'000);
+    QVERIFY2(errors.at(0).at(0).toString().contains(QStringLiteral("unmount")),
+             qPrintable(errors.at(0).at(0).toString()));
+    QCOMPARE(m_coord->m_measuredImageBytes, qint64(payload.size()));
+    QCOMPARE(m_coord->progress().totalBytes, qint64(payload.size()));
+    QCOMPARE(m_coord->state(), sak::FlashState::Failed);
+    // Decompressing came first: nothing went toward a disk until the size was known.
+    QCOMPARE(states.at(0).at(0).value<sak::FlashState>(), sak::FlashState::Decompressing);
+    QCOMPARE(states.at(1).at(0).value<sak::FlashState>(), sak::FlashState::Unmounting);
+
+    // Each worker's source is told the size, or its capacity gate would refuse the image.
+    QVERIFY(m_coord->buildWorkerQueue(path, targets));
+    QCOMPARE(m_coord->m_workers.size(), size_t(1));
+    QCOMPARE(m_coord->m_workers.front()->imageSize(), qint64(payload.size()));
+    m_coord->cleanupWorkers();
+}
+
+void TestFlashCoordinator::testCorruptCompressedImageStopsBeforeAnyDiskIsTouched() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QByteArray cut = sak_test::gzipCompress(QByteArray(1024 * 1024, 'y'));
+    cut.chop(cut.size() / 2);
+    const QString path = writeImage(dir, QStringLiteral("image.img.gz"), cut);
+    const QStringList targets{kNoSuchDrive};
+
+    QSignalSpy errors(m_coord.get(), &FlashCoordinator::flashError);
+    QVERIFY(m_coord->beginFlashClaim());
+    m_coord->resetRunState(targets);
+    QVERIFY(m_coord->openImageAndContinue(path, targets));
+
+    QTRY_VERIFY_WITH_TIMEOUT(errors.count() >= 1, 60'000);
+    const QString message = errors.at(0).at(0).toString();
+    QVERIFY2(message.startsWith(QStringLiteral("Refusing to flash")), qPrintable(message));
+    QVERIFY2(!message.contains(QStringLiteral("unmount")), qPrintable(message));
+    QCOMPARE(m_coord->state(), sak::FlashState::Failed);
+    QCOMPARE(m_coord->m_measuredImageBytes, qint64(0));
+    // The failed run let go of the image and of the claim, so a new run can start.
+    QVERIFY(!m_coord->m_imageSource);
+    QVERIFY(m_coord->beginFlashClaim());
+}
+
+void TestFlashCoordinator::testCancelDuringMeasurementEndsTheRun() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeImage(dir,
+                                    QStringLiteral("image.img.gz"),
+                                    sak_test::gzipCompress(QByteArray(1024 * 1024, 'z')));
+    const QStringList targets{kNoSuchDrive};
+
+    QSignalSpy errors(m_coord.get(), &FlashCoordinator::flashError);
+    QSignalSpy completed(m_coord.get(), &FlashCoordinator::flashCompleted);
+    QVERIFY(m_coord->beginFlashClaim());
+    m_coord->resetRunState(targets);
+    QVERIFY(m_coord->openImageAndContinue(path, targets));
+
+    // No event loop has run, so the finish handler cannot have been delivered yet, however quickly
+    // the pool thread got through this small file.
+    m_coord->cancel();
+    QCOMPARE(m_coord->state(), sak::FlashState::Cancelled);
+    // Cancelled, but not over: the measurement still has to report back before a new run.
+    QVERIFY(!m_coord->beginFlashClaim());
+
+    // A waiting caller (the assistant's action) is released by this and by nothing else.
+    QTRY_COMPARE_WITH_TIMEOUT(completed.count(), 1, 60'000);
+    const auto result = completed.at(0).at(0).value<sak::FlashResult>();
+    QVERIFY(!result.success);
+    QCOMPARE(result.failedDrives, targets);
+    QVERIFY(result.errorMessages.at(0).contains(QStringLiteral("cancelled before writing")));
+    // It never went near a disk.
+    QCOMPARE(errors.count(), 0);
+    QCOMPARE(m_coord->state(), sak::FlashState::Cancelled);
+    QVERIFY(m_coord->beginFlashClaim());
 }
 
 // ============================================================================
