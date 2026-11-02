@@ -20,6 +20,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   previewed blank and could not be converted.
 - **Attached emails are saved as real .eml files** - An email attached to another email, and an
   embedded object, used to come out as four meaningless bytes under the attachment's name.
+- **A message's attachments keep one order** - They were listed in a different order, with different
+  numbers, each time the app started.
 - **MBOX mailboxes show their real count and size** - A six-message mailbox read as 65 messages and
   0 B. Contacts and Calendar stay off for an MBOX, Per page works, and the Attachments Browser finds
   its attachments. Scan finds Thunderbird's mailboxes, which have no file extension, and they open.

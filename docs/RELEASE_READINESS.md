@@ -452,7 +452,7 @@ below are. An independent reader, libpff, was used to check the folder and messa
 | NST-1, 16 MB | 24 | 0 both | none | not run | refused | n/a | n/a |
 | ICS-1 | n/a | n/a | n/a | n/a | refused | n/a | n/a |
 
-PST-1 converted in about 30 s with a peak of 127 MB of memory. Before these fixes the app listed
+PST-1 converted in 21 to 30 s with a peak of 127 MB of memory. Before these fixes the app listed
 14,350 of its 16,886 messages, and with only the reader fixed 1,114 of the 16,886 still failed to
 convert. Each row's Converted plus the items left out as not mail equals its Messages. OST and PST behave the same. NST
 is refused by decision: it is built like an OST and the one real NST held no messages, so reading mail
