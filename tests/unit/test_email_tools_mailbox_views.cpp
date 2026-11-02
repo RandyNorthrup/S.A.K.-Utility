@@ -704,6 +704,26 @@ private Q_SLOTS:
         QCOMPARE(panel.m_controller->fileInfo().total_items, 6);
     }
 
+    // The count is done and its answer is waiting for the event loop when Stop arrives. It must not
+    // announce a file that is gone.
+    void aCountThatFinishedJustBeforeTheStopAnnouncesNothing() {
+        const QString path = writeFile(QStringLiteral(".mbox"), sixMessageMailbox());
+        sak::EmailInspectorPanel panel;
+        QSignalSpy opened(panel.m_controller.get(), &EmailInspectorController::fileOpened);
+        panel.m_controller->openFile(path);
+        QCOMPARE(panel.m_controller->currentState(), EmailInspectorController::State::Opening);
+        // No event loop runs here, so whatever the finished count sent is still queued.
+        QVERIFY(QThreadPool::globalInstance()->waitForDone(kWaitMs));
+        QCOMPARE(opened.count(), 0);
+        QCOMPARE(panel.m_controller->currentState(), EmailInspectorController::State::Opening);
+
+        panel.m_cancel_operation_button->click();
+        QCoreApplication::processEvents();
+        QCOMPARE(opened.count(), 0);
+        QVERIFY(!panel.m_mbox_active);
+        QCOMPARE(panel.m_controller->currentState(), EmailInspectorController::State::Idle);
+    }
+
     // With every pool thread busy the count has not begun, so waiting for it runs it right there on
     // this thread. A Stop that was forgotten then counts the whole file and announces it mid-close.
     void stoppingBeforeTheCountHasBegunAbandonsIt() {
@@ -768,6 +788,8 @@ private Q_SLOTS:
     void closingTheAttachmentsBrowserOfAStoreGoesNowhere() {
         sak::EmailInspectorPanel panel;
         openAndWait(panel, writeFile(QStringLiteral(".pst"), storeWithInlinePicture()));
+        QSignalSpy failed(panel.m_controller.get(), &EmailInspectorController::itemDetailFailed);
+        QSignalSpy errors(panel.m_controller.get(), &EmailInspectorController::errorOccurred);
         ModalDriver driver;
         bool closed = false;
         driver.onModal = [&closed](QWidget* modal) {
@@ -779,7 +801,11 @@ private Q_SLOTS:
         };
         panel.onExportAttachmentsClicked();
         QVERIFY(closed);
+        // Asking for item 0 fails: nothing is there. So nothing may have asked.
         QCoreApplication::processEvents();
+        QCOMPARE(failed.count(), 0);
+        QCOMPARE(errors.count(), 0);
+        QCOMPARE(panel.m_controller->currentState(), EmailInspectorController::State::Idle);
         QVERIFY(!panel.m_current_item_id.has_value());
         QCOMPARE(panel.m_current_folder_id, uint64_t{0});
     }

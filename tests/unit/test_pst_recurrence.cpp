@@ -340,9 +340,27 @@ private Q_SLOTS:
         moved.original_start = utcAt(2026, 11, 23, 9);
         moved.start = utcAt(2026, 11, 24, 14);
         moved.end = utcAt(2026, 11, 24, 15);
-        moved.location = QStringLiteral("Annex \u00E9");
+        // Past Latin-1, so the text can only have come from the Unicode copy, read at the right
+        // place.
+        moved.location = QStringLiteral("Annex \u4F1A");
         spec.changed = {moved};
-        QCOMPARE(read(spec).exceptions.first().location, QStringLiteral("Annex \u00E9"));
+        QCOMPARE(read(spec).exceptions.first().location, QStringLiteral("Annex \u4F1A"));
+    }
+
+    // The count comes from the file. No real series has this many, and reserving room for whatever
+    // a damaged one says is how a count becomes an allocation of many gigabytes.
+    void aListLongerThanAnyRealSeriesIsRefused() {
+        constexpr int kMostDates = 100'000;
+        RecurrenceSpec spec = weeklyMondays();
+        spec.deleted = QVector<QDate>(kMostDates, QDate(2026, 11, 9));
+        const auto at_the_limit = read(spec);
+        QCOMPARE(at_the_limit.state, sak::RecurrenceState::Readable);
+        QCOMPARE(at_the_limit.deleted.size(), kMostDates);
+
+        spec.deleted.append(QDate(2026, 11, 16));
+        const auto past_it = read(spec);
+        QCOMPARE(past_it.state, sak::RecurrenceState::Unreadable);
+        QCOMPARE(past_it.problem, QStringLiteral("its list of changed occurrences is damaged"));
     }
 
     void whatCannotBeReadIsSaidAndNeverGuessed() {
