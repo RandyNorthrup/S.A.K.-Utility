@@ -162,7 +162,7 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
     <ul>
         <li><b>App Installation</b> &mdash; Search Chocolatey packages, build an install queue from presets or saved lists, bulk-install on a new PC, and offline deployment with direct installer downloads</li>
         <li><b>Advanced Uninstall</b> &mdash; Deep application removal with leftover scanning, registry snapshot diffs, and recycle bin support</li>
-        <li><b>Vulnerability Scanner</b> &mdash; Check installed apps and packages against CISA KEV, NVD, GitHub Security Advisories, and OSV with patch guidance and CSV/JSON export</li>
+        <li><b>Vulnerability Scanner</b> &mdash; Check installed apps against CISA KEV, or look up one package in CISA KEV, NVD, GitHub Security Advisories, and OSV, with patch guidance and CSV/JSON export</li>
     </ul>
 </div>
 
@@ -1095,8 +1095,8 @@ void MainWindow::createAppManagementPanel() {
             {.icon = ":/icons/icons/icons8-warning-shield.svg",
              .title = "Vulnerability Scanner",
              .subtitle =
-                 "Check installed software and packages against CISA KEV, NVD, GitHub Advisories, "
-                 "and OSV"},
+                 "Check installed apps against CISA KEV, or look up one package in CISA KEV, NVD, "
+                 "GitHub Advisories, and OSV"},
         }};
         if (index >= 0 && index < static_cast<int>(std::size(kTabs))) {
             const auto& m = kTabs[index];
