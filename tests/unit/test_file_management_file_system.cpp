@@ -561,11 +561,11 @@ private Q_SLOTS:
         QVERIFY(writableApfs.can_write_files);
         QCOMPARE(Bridge::safetyNotes(writableApfs),
                  QStringList{QStringLiteral(
-                     "APFS writes commit through the Apple-certified in-place COW engine; "
-                     "S.A.K.-generated and real Apple-created (foreign) containers are both "
-                     "supported. Operations the engine has not certified for this container "
-                     "(snapshot-frozen deletes/renames, Fusion/Tier2 sets, locked encrypted "
-                     "volumes) fail closed with exact blockers.")});
+                     "APFS writes commit through an in-place copy-on-write engine validated with "
+                     "Apple's own tools; S.A.K.-generated and real Apple-created containers are "
+                     "both supported. Fusion and multi-device containers, sealed system volumes, "
+                     "case-sensitive volumes, and locked encrypted volumes are refused with an "
+                     "exact reason.")});
 
         // XFS/Btrfs and ext each get their own specific note.
         QCOMPARE(Bridge::safetyNotes(

@@ -1728,10 +1728,10 @@ APFS and HFS+/HFSX are now full driver-level write-certified (A1-A8 / H1-H8 -
 see `docs/archive/APFS_HFS_FULL_DRIVER_WRITE_PLAN.md`). Release wording must keep
 XFS/Btrfs to read-only metadata, and may state full driver-level APFS + HFS+/HFSX
 read/write with the standing hard boundaries: APFS Fusion/Tier2 multi-device out
-of scope, encryption credential-gated, sealed-system-volume writes behind a typed
-seal-invalidation confirmation, APFS writes gated to S.A.K. generated-layout
-containers at the Apply layer, and APFS container shrink + chunk-adding grow as
-documented follow-ons.
+of scope, encryption credential-gated, sealed-system and case-sensitive volumes refused,
+and APFS container shrink + chunk-adding grow as documented follow-ons. (Corrected
+2026-11-01: this said sealed volumes had a typed override and that Apply was limited to
+generated layouts. Neither is in the code.)
 
 APFS image-offset proof also passed on 2026-06-06 UTC against
 `temp\Sonoma 14.dmg` using `--input-offset-bytes 1233310720`; evidence:

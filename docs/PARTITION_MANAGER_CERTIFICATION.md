@@ -386,7 +386,7 @@ JSON output, and refresh evidence. Generated-image root-file
 create/replace/byte-range patch/delete and generated-image empty root-directory
 create/delete plus generated-image volume-label change remain helper-exposed
 with payload/read-back, directory-empty, old/new-label, or negative-read-back
-hashes. (Arbitrary Apple APFS mutation was blocked at this I1-era stage; now superseded - the in-place COW engine and A1-A8 driver operations are Apple-certified, with arbitrary non-generated media fail-closed only at the production Apply layer. See the full driver-level capstone below.)
+hashes. (Arbitrary Apple APFS mutation was blocked at this I1-era stage; now superseded - the in-place COW engine and A1-A8 driver operations are Apple-certified, and they write Apple-created containers. See the full driver-level capstone below.)
 The helper no longer blanket-enables protected, compressed, snapshot, or
 multi-volume APFS mutation options; generated APFS v2 single-volume layouts pass
 through the generated-layout proof path, while active snapshot/revert metadata,
@@ -774,11 +774,10 @@ I1 wired every capability through the production Apply route (16/16) with the
 FileVault secret materialized to an owner-scoped temp credential file at
 execution and shred-deleted, never on a command line. Fail-closed by design (not
 defects): APFS Fusion/Tier2 multi-device is out of scope (no rig); encrypted
-volumes require the user credential; sealed/signed system-volume writes need a
-typed seal-invalidation confirmation; APFS container shrink and chunk-adding
-grow are documented follow-ons; arbitrary non-generated Apple-media mutation
-stays fail-closed at the Apply layer (the COW engine is certified, the
-production exposure is generated-layout-only).
+volumes require the user credential; sealed/signed system volumes and case-sensitive
+volumes are refused; APFS container shrink and chunk-adding grow are documented
+follow-ons. (Corrected 2026-11-01: this said sealed volumes had a typed override and that
+Apply was limited to generated layouts. Neither is in the code.)
 
 ## Certification Harness
 

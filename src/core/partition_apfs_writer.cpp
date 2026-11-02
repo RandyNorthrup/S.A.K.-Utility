@@ -300,6 +300,7 @@ constexpr qsizetype kApfsObjectMagicOffset = 0x20;
 constexpr qsizetype kApfsNxBlockSizeOffset = 0x24;
 constexpr qsizetype kApfsNxBlockCountOffset = 0x28;
 constexpr qsizetype kApfsNxIncompatibleFeaturesOffset = 0x40;
+constexpr uint64_t kApfsContainerIncompatFusion = 0x00'00'01'00;
 constexpr qsizetype kApfsNxUuidOffset = 0x48;
 constexpr qsizetype kApfsNxNextOidOffset = 0x58;
 constexpr qsizetype kApfsNxNextXidOffset = 0x60;
@@ -10752,8 +10753,7 @@ bool loadLiveAllocationSlot(ApfsFsCommitContext* ctx, QStringList* blockers) {
 // signed-system (sealed) volume. A sealed volume sets APFS_INCOMPAT_SEALED_VOLUME
 // and references an integrity-meta object whose hash tree authenticates every block;
 // mutating it silently breaks that seal (the OS refuses to boot the volume). The
-// mutation is blocked unconditionally here -- a typed seal-invalidation confirmation
-// is the documented opt-in override at the safety-validation layer, not a silent path.
+// mutation is blocked unconditionally here, and no route offers an override.
 bool appendSealedVolumeBlocker(QIODevice* image,
                                const ApfsRepairGeometry& geometry,
                                uint64_t volSbBlock,
@@ -10777,8 +10777,7 @@ bool appendSealedVolumeBlocker(QIODevice* image,
         le64(volSb, kApfsVolumeIntegrityMetaOidOffset) != 0) {
         blockers->append(
             QStringLiteral("APFS sealed (signed-system) volume: any mutation breaks the volume "
-                           "seal and is blocked; a typed seal-invalidation confirmation is "
-                           "required to override"));
+                           "seal, so it is blocked"));
         return false;
     }
     // Pass-2 encoding gate: this writer emits HASHED j_drec keys whose 22-bit hash is computed
@@ -11023,6 +11022,14 @@ bool loadFsCommitContext(QIODevice* image, ApfsFsCommitContext* ctx, QStringList
     // Drop block-0 trust: a macOS-advanced (foreign) volume keeps its newest superblock in the
     // xp_desc ring while block 0 lags. COW must start from the newest checkpoint or it corrupts.
     ctx->nxsb = newestCheckpointSuperblock(image, ctx->geometry, ctx->nxsb, blockers);
+    // Fusion and multi-device containers are outside this writer's single-device scope: every
+    // allocation path here models the main device only.
+    if ((le64(ctx->nxsb, kApfsNxIncompatibleFeaturesOffset) & kApfsContainerIncompatFusion) != 0) {
+        blockers->append(
+            QStringLiteral("APFS Fusion or multi-device container: mutation is blocked because "
+                           "this writer models a single device"));
+        return false;
+    }
     ctx->live = readLiveCheckpoint(ctx->nxsb);
     // Drive the container-omap walk by the REAL target volume oid (nx_fs_oid[0]) so a container
     // whose target volume does not use the format constant is still matched, and a container with
@@ -21437,9 +21444,11 @@ PartitionApfsWritePreflight PartitionApfsWriter::preflightExistingContainer(
     PartitionApfsWriteOperation operation,
     const PartitionApfsWriteOptions& options) {
     PartitionApfsWritePreflight result;
+    // The repair and label routes that come through here. File and directory writes do not: they
+    // run on the in-place checkpoint commit, which writes Apple-created containers too.
     result.warnings.append(
-        QStringLiteral("APFS mutation remains limited to certified generated/minimal layouts; "
-                       "arbitrary Apple APFS mutation stays blocked"));
+        QStringLiteral("APFS repair and legacy label changes are limited to certified "
+                       "generated/minimal layouts"));
 
     appendAlwaysRequiredApfsWriterBlockers(options, &result);
     appendDetectionBlockers(detection, &result);

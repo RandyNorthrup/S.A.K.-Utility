@@ -1702,6 +1702,7 @@ private Q_SLOTS:
     void apfsWriter_growsMultiChunkSourceContainer();
     void apfsWriter_shrinksContainerDroppingChunks();
     void apfsWriter_blocksSealedVolumeMutation();
+    void apfsWriter_blocksFusionContainerMutation();
     void apfsCrypto_matchesPublishedVectors();
     void apfsCrypto_xtsGf128ReductionConstantIsExercised();
     void apfsKeybag_reproducesHarvestedFileVaultBlobs();
@@ -2682,24 +2683,24 @@ void verifyApfsRegistryCapability() {
                           QStringLiteral("bounded recursive export"),
                           QStringLiteral("generated APFS create"),
                           QStringLiteral("generated APFS metadata-checksum repair")});
-    // A1/A2 promotion: multi-CIB + CAB-tier format/repair confirmed; in-place write
-    // still single-chunk.
+    // A1/A2 promotion: multi-CIB + CAB-tier format/repair confirmed.
+    QVERIFY(available.contains(QStringLiteral("Apple-created")));
     QVERIFY(available.contains(QStringLiteral("multi-CIB")));
     QVERIFY(available.contains(QStringLiteral("CAB-tier")));
     QVERIFY(available.contains(QStringLiteral("24 TiB")));
-    // The whole blocked list. The "single spaceman chunk" probe still matched if the
-    // certified-ceiling clause of entry 2 were silently dropped -- i.e. the ~24 TiB / 48 TiB
-    // CAB bound could disappear from the advertised limits with this test green.
+    // The whole blocked list, so no limit can disappear from the advertised set with this green.
+    // It used to say Apple-created containers could not be written, while the engine this bridge
+    // runs on writes them; each entry here names a refusal the writer actually makes.
     QCOMPARE(apfs.blocked_actions,
-             QStringList({QStringLiteral("Arbitrary existing Apple APFS mutation remains blocked "
-                                         "by generated-layout guards"),
-                          QStringLiteral("Generated APFS in-place root-file write/patch/delete is "
-                                         "bounded to a single spaceman chunk (<=128 MiB) pending "
-                                         "multi-CIB/CAB in-place commit wiring; generated "
-                                         "format/repair targets above the certified ~24 TiB / 48 "
-                                         "TiB-engine CAB ceiling remain blocked"),
-                          QStringLiteral("Encrypted/compressed files, file writes on arbitrary "
-                                         "Apple APFS, and resize remain blocked")}));
+             QStringList({QStringLiteral("Metadata-checksum repair is limited to S.A.K.-generated "
+                                         "layouts; generated format/repair targets above the "
+                                         "certified ~24 TiB / 48 TiB-engine CAB ceiling remain "
+                                         "blocked"),
+                          QStringLiteral("Fusion and multi-device containers, sealed "
+                                         "(signed-system) volumes, and case-sensitive volumes "
+                                         "refuse every write"),
+                          QStringLiteral("Encrypted volumes stay locked until their password or "
+                                         "recovery key is supplied")}));
     QVERIFY(PartitionFileSystemRegistry::actionSummary(apfs.required_tools)
                 .contains(QStringLiteral("sak_apfs_writer_cli")));
 }
@@ -13719,6 +13720,55 @@ void PartitionManagerCoreTests::apfsWriter_shrinksContainerDroppingChunks() {
     // A multi-chunk source shrinks to a SUB-full-chunk target (removes the high chunks and lands in
     // a partial chunk 0, tail verified free); orig.bin reads back after 512 MiB -> 64 MiB.
     certifyShrinkReadsBack(dir, withFile, 64ULL * 1024ULL * 1024ULL, options, payload);
+}
+
+void PartitionManagerCoreTests::apfsWriter_blocksFusionContainerMutation() {
+    // A-i: a Fusion or multi-device container is outside the single-device driver's scope. The
+    // commit engine only models the main device, so it must refuse before it allocates anything.
+    constexpr uint32_t kNxsbMagic = 0x42'53'58'4E;  // 'NXSB'
+    constexpr qsizetype kNxIncompatibleFeaturesOffset = 0x40;
+    constexpr uint64_t kVersion2AndFusion = 0x102;
+    const PartitionApfsWriteOptions options = certifiedApfsImageOnlyOptions();
+    QTemporaryDir temp;
+    QVERIFY(temp.isValid());
+    const QDir dir(temp.path());
+    const QString fusion = dir.filePath(QStringLiteral("fusion.apfs"));
+    QVERIFY(PartitionApfsWriter::buildImageOnlyFormatImage(
+                {.image_path = fusion,
+                 .target_container_bytes = 64ULL * 1024ULL * 1024ULL,
+                 .block_size_bytes = 4096,
+                 .volume_name = QStringLiteral("SAKFUSION"),
+                 .options = options})
+                .ok);
+
+    // Block 0 and every copy in the checkpoint ring, so whichever the engine picks as newest
+    // carries the flag.
+    QByteArray image = readBytes(fusion);
+    int stamped = 0;
+    for (qsizetype offset = 0; offset + kTestApfsTamperBlockSize <= image.size();
+         offset += kTestApfsTamperBlockSize) {
+        if (qFromLittleEndian<quint32>(image.constData() + offset + kTestApfsMagicOffset) ==
+            kNxsbMagic) {
+            QVERIFY(patchAndStampApfsBlock(&image,
+                                           {.block_offset = offset,
+                                            .field_offset = kNxIncompatibleFeaturesOffset,
+                                            .value = kVersion2AndFusion,
+                                            .field32 = false}));
+            ++stamped;
+        }
+    }
+    QVERIFY(stamped > 0);
+    QVERIFY(writeBytes(fusion, image));
+
+    const auto blocked = PartitionApfsWriter::commitImageOnlyFileInsert(
+        {.source_image_path = fusion,
+         .written_image_path = dir.filePath(QStringLiteral("fusion-out.apfs")),
+         .file_name = QStringLiteral("a.txt"),
+         .file_data = QByteArrayLiteral("hi"),
+         .options = options});
+    QVERIFY(!blocked.ok);
+    QVERIFY2(blocked.blockers.join(' ').contains(QStringLiteral("Fusion")),
+             qPrintable(blocked.blockers.join(QStringLiteral("; "))));
 }
 
 void PartitionManagerCoreTests::apfsWriter_blocksSealedVolumeMutation() {

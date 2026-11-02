@@ -158,8 +158,8 @@ PartitionFileSystemCapability apfsCapability() {
         .id = QStringLiteral("apfs"),
         .display_name = QStringLiteral("APFS"),
         .support_level = QStringLiteral(
-            "Detection, original read-only browse/extract, and one-chunk generated "
-            "APFS format/repair/root-file mutation"),
+            "Detection, original read-only browse/extract, generated APFS format/repair, and "
+            "in-place file and directory writes on S.A.K.-generated and Apple-created containers"),
         .aliases = {QStringLiteral("APFS"), QStringLiteral("apfs")},
         .available_actions =
             {QStringLiteral("Read-only signature detection"),
@@ -174,17 +174,19 @@ PartitionFileSystemCapability apfsCapability() {
                             "mount certified, incl. the CAB tier at 8 TiB / cab_count 2)"),
              QStringLiteral("Confirmed generated APFS metadata-checksum repair through Pending "
                             "Operations (64 MiB through 24 TiB targets)"),
-             QStringLiteral("Confirmed single-spaceman-chunk (<=128 MiB) generated APFS root-file "
-                            "write, patch, and delete through Pending Operations")},
-        .blocked_actions = {QStringLiteral("Arbitrary existing Apple APFS mutation remains blocked "
-                                           "by generated-layout guards"),
-                            QStringLiteral(
-                                "Generated APFS in-place root-file write/patch/delete is bounded "
-                                "to a single spaceman chunk (<=128 MiB) pending multi-CIB/CAB "
-                                "in-place commit wiring; generated format/repair targets above the "
-                                "certified ~24 TiB / 48 TiB-engine CAB ceiling remain blocked"),
-                            QStringLiteral("Encrypted/compressed files, file writes on arbitrary "
-                                           "Apple APFS, and resize remain blocked")},
+             QStringLiteral("Confirmed in-place file and directory write, patch, rename, move, and "
+                            "delete on S.A.K.-generated and Apple-created containers through "
+                            "Pending Operations")},
+        .blocked_actions = {QStringLiteral(
+                                "Metadata-checksum repair is limited to S.A.K.-generated "
+                                "layouts; generated format/repair targets above the "
+                                "certified ~24 TiB / 48 TiB-engine CAB ceiling remain "
+                                "blocked"),
+                            QStringLiteral("Fusion and multi-device containers, sealed "
+                                           "(signed-system) volumes, and case-sensitive volumes "
+                                           "refuse every write"),
+                            QStringLiteral("Encrypted volumes stay locked until their password or "
+                                           "recovery key is supplied")},
         .required_tools = {QStringLiteral("sak_apfs_writer_cli")},
         .non_native = true};
 }

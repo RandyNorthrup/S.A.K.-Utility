@@ -273,8 +273,8 @@ bool computeWritableNonNative(const QString& fs, const FileManagementTarget& tar
     // APFS writes route through the certified in-place COW engine, which supports both
     // S.A.K.-generated and real Apple-created (foreign) containers on raw partitions and
     // image files. The only bridge-level gate is a KNOWN container size inside the
-    // engine's certified range; everything the engine has not certified for a given
-    // container (snapshot-frozen deletes, Fusion/Tier2, locked encrypted volumes) fails
+    // engine's certified range; what the engine does not write (Fusion and multi-device
+    // containers, sealed volumes, case-sensitive volumes, locked encrypted volumes) fails
     // closed inside the engine itself with an exact blocker.
     const bool apfsWriteCapableKind = target.kind == FileManagementTargetKind::Partition ||
                                       target.kind == FileManagementTargetKind::ImageFile;
@@ -1136,11 +1136,11 @@ QStringList FileManagementFileSystemBridge::safetyNotes(const FileManagementTarg
         notes.append(
             target.can_write_files
                 ? QStringLiteral(
-                      "APFS writes commit through the Apple-certified in-place COW engine; "
-                      "S.A.K.-generated and real Apple-created (foreign) containers are both "
-                      "supported. Operations the engine has not certified for this container "
-                      "(snapshot-frozen deletes/renames, Fusion/Tier2 sets, locked encrypted "
-                      "volumes) fail closed with exact blockers.")
+                      "APFS writes commit through an in-place copy-on-write engine validated with "
+                      "Apple's own tools; S.A.K.-generated and real Apple-created containers are "
+                      "both supported. Fusion and multi-device containers, sealed system volumes, "
+                      "case-sensitive volumes, and locked encrypted volumes are refused with an "
+                      "exact reason.")
                 : QStringLiteral(
                       "APFS writes need a known container size within the certified engine "
                       "range (%1); this target is read-only because its size is unknown or "
