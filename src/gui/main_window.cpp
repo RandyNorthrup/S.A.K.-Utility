@@ -120,7 +120,7 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
 <div class="section">
     <div class="section-title">Migration &amp; Backup</div>
     <ul>
-        <li><b>User Profile Backup &amp; Restore</b> &mdash; Step-by-step wizards with smart filtering, per-user customization, AES-256 encryption, and NTFS permission handling</li>
+        <li><b>User Profile Backup &amp; Restore</b> &mdash; Step-by-step wizards with smart filtering, per-user customization, AES-256 encryption, and NTFS permission handling. The backup records which installed applications have a known Chocolatey package, and the restore offers to reinstall them</li>
         <li><b>Quick Tools</b> &mdash; One-click Screenshot Settings capture and BitLocker Key Backup integrated directly into the panel</li>
     </ul>
 </div>
@@ -160,8 +160,8 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
 <div class="section">
     <div class="section-title">Application Management</div>
     <ul>
-        <li><b>App Installation</b> &mdash; Scan installed apps, match to Chocolatey packages, export/import, bulk-install on a new PC, and offline deployment with direct installer downloads</li>
-        <li><b>Advanced Uninstall</b> &mdash; Deep application removal with leftover scanning, registry snapshot diffs, recycle bin support, and locked-file reboot scheduling</li>
+        <li><b>App Installation</b> &mdash; Search Chocolatey packages, build an install queue from presets or saved lists, bulk-install on a new PC, and offline deployment with direct installer downloads</li>
+        <li><b>Advanced Uninstall</b> &mdash; Deep application removal with leftover scanning, registry snapshot diffs, and recycle bin support</li>
         <li><b>Vulnerability Scanner</b> &mdash; Check installed apps and packages against CISA KEV, NVD, GitHub Security Advisories, and OSV with patch guidance and CSV/JSON export</li>
     </ul>
 </div>
@@ -178,7 +178,7 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
 <div class="section">
     <div class="section-title">Network Management</div>
     <ul>
-        <li><b>Network Diagnostics</b> &mdash; Ping, traceroute, MTR, DNS lookup, port scan, bandwidth test, WiFi analyzer, active connections, firewall auditor, and network share browser</li>
+        <li><b>Network Diagnostics</b> &mdash; Ping, traceroute, MTR, DNS lookup, port scan, bandwidth test, WiFi analyzer, active connections, firewall auditor, network share browser, and HTML or JSON reports</li>
         <li><b>Network Adapters</b> &mdash; Adapter inspector with ethernet configuration backup and restore across machines, plus one-click Reset Network Settings</li>
         <li><b>WiFi Manager</b> &mdash; QR code generation, network scanning, bulk export, and connection scripts</li>
     </ul>
@@ -194,7 +194,7 @@ Built with modern C++23 and Qt 6 for Windows 10/11 x64.</div>
         <li><b>Attachments Browser</b> &mdash; Scan all emails for attachments with type filtering, search, and batch extraction</li>
         <li><b>Email Profile Manager</b> &mdash; Backup and restore profiles for Outlook, Thunderbird, and Windows Mail</li>
         <li><b>Orphaned File Discovery</b> &mdash; Scan drives for orphaned PST, OST, and MBOX files not linked to active profiles</li>
-        <li><b>OST/PST Converter</b> &mdash; Multi-threaded bulk conversion to EML, MBOX, HTML, and PDF with deleted item recovery</li>
+        <li><b>OST/PST Converter</b> &mdash; Multi-threaded bulk conversion to MBOX with deleted item recovery</li>
     </ul>
 </div>
 
@@ -231,7 +231,7 @@ constexpr char kCreditsTabHtml[] = R"SAKCREDITS(
 <h3>Third-Party Components</h3>
 
 <div class="dep">
-    <b><a href="https://www.qt.io/">Qt Framework 6.5+</a></b> &mdash; LGPL v3<br/>
+    <b><a href="https://www.qt.io/">Qt Framework 6.12</a></b> &mdash; LGPL v3<br/>
     <span class="desc">GUI framework, threading, networking, resources, and application infrastructure</span>
 </div>
 <div class="dep">
@@ -1016,7 +1016,7 @@ void MainWindow::createEmailToolsPanel() {
                          "\xe2\x80\x94 inspect PST, OST, and MBOX files"},
             {.icon = ":/icons/icons/panel_email.svg",
              .title = "OST Converter",
-             .subtitle = "Bulk OST/PST file conversion to EML, MSG, MBOX, and more"},
+             .subtitle = "Bulk OST/PST file conversion to MBOX"},
         }};
         if (index >= 0 && index < static_cast<int>(std::size(kTabs))) {
             const auto& m = kTabs[index];

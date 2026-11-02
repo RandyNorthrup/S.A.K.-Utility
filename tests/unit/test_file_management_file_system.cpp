@@ -567,6 +567,17 @@ private Q_SLOTS:
                      "case-sensitive volumes, and locked encrypted volumes are refused with an "
                      "exact reason.")});
 
+        // Apple tools validated the HFS+ writer; Apple itself certified nothing.
+        const auto writableHfs =
+            Bridge::manualTarget(QStringLiteral("\\\\?\\GLOBALROOT\\Device\\Harddisk4\\Partition3"),
+                                 QStringLiteral("HFS+"),
+                                 128ULL * 1024ULL * 1024ULL);
+        QVERIFY(writableHfs.can_write_files);
+        QCOMPARE(Bridge::safetyNotes(writableHfs),
+                 QStringList{QStringLiteral(
+                     "HFS+/HFSX writes commit through a catalog/extents/attributes B-tree writer "
+                     "validated with Apple's own tools.")});
+
         // XFS/Btrfs and ext each get their own specific note.
         QCOMPARE(Bridge::safetyNotes(
                      Bridge::manualTarget(QStringLiteral("C:/x.img"), QStringLiteral("XFS"))),

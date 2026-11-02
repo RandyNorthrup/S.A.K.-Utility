@@ -294,57 +294,12 @@ jobs:
         body: |
           # S.A.K. Utility v${{ steps.version.outputs.version }}
 
-          **Swiss Army Knife Utility** - a portable Windows toolkit for PC technicians, IT pros, and sysadmins. Release artifacts are installer-free ZIP packages that include the app, Qt runtime files, plugins, and bundled technician tools.
+          **Swiss Army Knife Utility** is a portable Windows toolkit for PC technicians, IT pros, and sysadmins. There is no installer: extract the ZIP to a folder you can write to and run `sak_utility.exe`.
 
-          ### AI Assistant
-          Codex-style technician chat workspace with prompt/result transcript, custom chat sessions, prompt history, context chips, Markdown instruction attachments, token usage status, and generated reports. Uses a user-supplied OpenAI API key stored encrypted under the portable app data directory.
+          - [How to use it](https://sakutility.com/wiki)
+          - [What changed](https://github.com/${{ github.repository }}/blob/main/CHANGELOG.md)
 
-          **Local PC actions** - PowerShell, cmd.exe, direct process launch, screenshots, HTTPS downloads, SAK package manager actions, and SAK offline downloader actions. Risky or destructive operations use approval gates and restore-point prompts when rollback may be needed.
-
-          **Multi-agent workflows** - Overseer-led workflow execution with specialized subagents, shared session memory, phase progress, cancellation, recovery policy, verification, cleanup, artifacts, and human handoff. Built-in workflows cover full PC health checks, drive diagnostics, Windows Update repair, network repair, BSOD investigation, printer troubleshooting, startup performance triage, malware and virus removal, bloatware/adware cleanup, clean uninstall, app install, offline installer download, offline deployment bundles, technician tool-assisted tasks, and service reports.
-
-          ### Backup and Restore
-          Step-by-step user profile backup and restore wizards. Smart category filtering (Documents, Desktop, AppData, browser profiles, etc.), AES-256 encryption, NTFS permission and timestamp preservation, and compressed ZIP output. Integrated quick tools: Screenshot Settings capture and BitLocker Key Backup.
-
-          ### Application Management
-          **App Installation** - Scan installed programs on the current machine, match them to Chocolatey packages, and bulk-install on a new PC with a single click. Export/import application lists as JSON. Offline deployment supports Chocolatey bundle and direct installer modes.
-          **Advanced Uninstall** - Deep application removal for Win32, UWP, and provisioned apps. Three-level leftover scanner (safe/moderate/advanced), registry snapshot engine for pre/post uninstall diffs, batch uninstall queue, and Recycle Bin support with locked-file reboot scheduling.
-          **Vulnerability Scanner** - Installed-app and package checks against CISA KEV, NVD, GitHub Security Advisories, and OSV with CSV/JSON export.
-
-          ### Benchmark and Diagnostics
-          **Diagnostics** - SMART disk health analysis, system info collection, and HTML/JSON/CSV report export with technician metadata.
-          **Benchmarks** - CPU, disk (sequential and random I/O), and memory throughput benchmarks. Stress testing with thermal monitoring, configurable duration, and per-core thread control.
-
-          ### Image Flasher
-          Flash ISO/IMG files to USB drives with partition-level writing. Built-in Windows ISO downloader (via UUP Dump API with UUP-to-ISO conversion pipeline) and Linux distro catalog with direct download links.
-
-          ### File Management
-          **File Organizer** - Sort files into folders by extension using customizable category rules. Collision handling (skip, rename, overwrite), undo support, and dry-run preview.
-          **Duplicate Finder** - Parallel file hashing (MD5/SHA-256) with size pre-filter. Group duplicates by hash, select which to keep, and delete or move the rest.
-          **Advanced Search** - Grep-style content search with regex, glob filters, and file metadata constraints (size, date, attributes). Binary/hex mode, archive search (ZIP/EPUB/DOCX/XLSX), preview pane with match highlighting, and search history.
-
-          ### Network Management
-          **Network Diagnostics** - 10-tool suite: Ping, Traceroute, MTR, DNS Lookup, Port Scanner, Bandwidth (iPerf3 + HTTP), WiFi Analyzer, Active Connections, Firewall Auditor, and Network Share Browser. HTML and JSON report generation.
-          **Network Adapters** - Adapter inspector with full IPv4/IPv6 config, DHCP, DNS, driver info, and traffic stats. Ethernet settings backup/restore to portable JSON for cross-machine portability.
-          **WiFi Manager** - WiFi credential manager with QR code generation for phone/tablet connection. Batch QR export (PNG/PDF/JPG/BMP), Windows `.cmd` script generation, macOS `.mobileconfig` profile export, and Windows known-profile scanning.
-
-          ### Email Tools
-          **Email Inspector** - Browse, search, checkbox-select, and export data from Outlook PST/OST and MBOX archives - no Outlook or MAPI required. Folder tree navigation, sortable item list, HTML/plain-text preview, MAPI property inspector, selected-message export to HTML/TXT/EML/PDF with attachment preservation, contacts dialog with VCF/CSV export, calendar dialog (month/week/day views) with ICS/CSV export, and checkbox-backed attachments browser with batch extraction. Full-text search across subjects, bodies, senders, recipients, and attachment names. Email profile manager with orphaned file discovery.
-          **OST Converter** - Multi-threaded bulk OST/PST conversion to 8 output formats (PST, EML, MSG, MBOX, DBX, HTML, PDF, IMAP Upload) with deleted item recovery, PST splitting, IMAP cloud upload, and advanced filtering.
-
-          ### Modern UI and Release Quality
-          Windows 11-style responsive Qt UI with light/dark themes, themed selector icons, explicit action-button hover states, and raw style literals centralized behind release-gated constants. Release gates cover tests, accessibility, style constants, magic numbers, complexity, secrets, license audits, package smoke, and signed artifact verification.
-
-          ### Settings
-          Per-panel settings - each panel provides its own configuration (backup location, uninstall defaults, scan levels, flash options, etc.).
-
-          ---
-
-          Portable ZIP. Open source. No telemetry.
-
-          **Requirements:** Windows 10/11 x64 - Runs as standard user; elevates per-task via UAC when needed
-
-          See the [README](https://github.com/${{ github.repository }}/blob/main/README.md) for detailed documentation and screenshots.
+          **Requirements:** Windows 10 or 11, x64. `SHA256SUMS.txt` lists the hash of the download.
         draft: false
         prerelease: false
       env:

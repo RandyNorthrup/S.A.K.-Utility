@@ -1149,8 +1149,9 @@ QStringList FileManagementFileSystemBridge::safetyNotes(const FileManagementTarg
                       .arg(apfsCapacityRangeText()));
     } else if (fs.contains(QStringLiteral("hfs"))) {
         notes.append(target.can_write_files
-                         ? QStringLiteral("HFS+/HFSX writes commit through the Apple-certified "
-                                          "catalog/extents/attributes B-tree writer.")
+                         ? QStringLiteral("HFS+/HFSX writes commit through a catalog/extents/"
+                                          "attributes B-tree writer validated with Apple's own "
+                                          "tools.")
                          : QStringLiteral("This HFS+/HFSX target is read-only; certified writes "
                                           "require a write-capable raw/image slice."));
     } else if (fs.contains(QStringLiteral("xfs")) || fs.contains(QStringLiteral("btrfs"))) {
