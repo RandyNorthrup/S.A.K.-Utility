@@ -316,6 +316,30 @@ Open, each with why:
   UAC prompt and a real scan, which the T2 runners and this host's unattended lane cannot give.
   First live check is the Windows 11 VM smoke.
 
+### Site-claims audit fixes (2026-11-01)
+
+A static audit of sakutility.com against the code found product defects. Each was confirmed in the
+code first, and each fix landed with its own test and drills.
+
+- FIXED: Chocolatey matching had no production caller, so restore offered nothing. The backup scan
+  records matches from a reviewed table (`PackageMatcher`) and restore offers them, behind the
+  administrator gate.
+- DESIGN DECISION: matching is offline. `choco search` sorts alphabetically, takes about 2 s a query
+  and the feed answers excess traffic with an hour of 429s, so the online fuzzy and search stages
+  were removed instead of wired. An application the table does not know stays "(no match)". The
+  table's ids were checked on the feed with `choco search <id> --exact` on 2026-11-01.
+- FIXED: Image Flasher picker and refusals (ZIP, UDIF .dmg), network report route, Email Inspector
+  search results and folder scope.
+- FIXED, data-loss class: the capability matrix and the File Explorer note said a Fusion or
+  multi-device APFS container fails closed, and no write path checked. `loadFsCommitContext` now
+  refuses it. Unit-tested on a flagged image; no real Fusion container was available.
+- FIXED: `scripts/verify_authenticode_signatures.ps1` requires the published subject on `sak_*`
+  binaries. Still to prove: the first signed run, which is also the first time the pin meets the
+  Azure profile's real subject.
+- INCOMPLETE: a restore install through `choco install` has not run end to end. The test stops at
+  the list handed to Chocolatey, because a real install changes the machine it runs on. To prove on
+  the VM smoke.
+
 ### Behavior audit 2026-10-24 -- owner decisions
 
 A read-only audit looked for code that makes the app behave unlike a normal Windows tool, or

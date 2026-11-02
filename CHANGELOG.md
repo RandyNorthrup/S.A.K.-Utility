@@ -8,6 +8,36 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **Restore can reinstall applications** - The backup's installed-application scan now records a
+  Chocolatey package for the applications it recognizes, and the restore wizard's Restore
+  Applications page offers those installs. Before, every row said "(no match)". Recognition uses a
+  built-in list and makes no network calls, so a backup on an offline PC records the same matches;
+  an application the list does not know stays "(no match)". Installing asks to restart as
+  administrator first, as App Installation does.
+
+- **Image Flasher offers only what it can flash** - The file picker no longer lists ZIP or DMG. A
+  ZIP archive or an Apple .dmg chosen another way is refused when you select it, with a message
+  saying what to do, rather than after you pick a drive. A real .dmg used to be written raw, which
+  left an unusable drive.
+
+- **Network reports** - Network Diagnostics has a Generate Report button. It asks for technician,
+  ticket and notes, then saves the results of the diagnostics you ran as HTML or JSON.
+
+- **Email Inspector search shows its results** - A search used to report only a count. The matches
+  now fill the item list and open like any other message; clicking a folder goes back to it.
+  "Search in This Folder..." now really searches just that folder, and search also looks in
+  recipients and attachment names.
+
+- **APFS statements agree** - Partition Manager's properties said Apple-created APFS containers
+  could not be written, while File Explorer writes them. It now says what the writer does. A Fusion
+  or multi-device container, which the app had said it refused without checking, is now refused.
+
+- **Help Wiki** - The Open Help Wiki button now opens https://sakutility.com/wiki.
+
+- **About and release notes** - About no longer describes features the app does not have: reboot
+  scheduling for locked files, converter output other than MBOX. The release notes are a short
+  summary with links to the wiki and this changelog.
+
 - **Shorter version numbers** - Versions now have three parts, so this release is v0.9.3. Older
   releases keep their four-part names.
 - **Smaller download** - The package no longer carries files the app never loads: Mesa's
