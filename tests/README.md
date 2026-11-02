@@ -179,6 +179,7 @@ and termination-utility setup handshakes; neither changes production deadlines.
 |---|---|---|
 | test_migration_report | `migration_report` | Migration report generation |
 | test_email_inspector_panel | `email_inspector_panel` | Search scope, fields searched, and hits listed in the item table |
+| test_main_window_help | `main_window` | Where the Help tab's links go and what the About tab claims |
 | test_package_matcher | `package_matcher` | App-to-Chocolatey matching on real display names |
 | test_user_profile_app_restore_flow | backup and restore wizard pages | Scan to restore: real install offers, one install per package, elevation gate |
 | test_chocolatey_manager | `chocolatey_manager` | Package install, update, version queries |

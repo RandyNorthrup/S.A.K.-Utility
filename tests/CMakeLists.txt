@@ -1510,6 +1510,31 @@ set_tests_properties(test_window_input PROPERTIES
     ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
 message(STATUS "Added unit test: test_window_input")
 
+# test_main_window_help - where the Help tab's links go and what the About tab claims
+add_executable(test_main_window_help
+    unit/test_main_window_help.cpp
+    ../resources/icons.qrc
+)
+set_target_properties(test_main_window_help PROPERTIES
+    AUTOMOC ON
+    AUTORCC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_main_window_help PRIVATE
+    sak_gui sak_ai_core sak_win32mcp sak_core sak_partition_fs sak_foundation
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test
+    ${PLATFORM_LIBS}
+)
+target_include_directories(test_main_window_help PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_main_window_help COMMAND test_main_window_help
+         -o "${TEST_OUTPUT_DIR}/test_main_window_help.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+set_tests_properties(test_main_window_help PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+message(STATUS "Added unit test: test_main_window_help")
+
 # test_app_theme - the main window's appearance: flat surfaces with 1px borders and no drop
 # shadows; the theme follows Windows (Light / Dark / System) and every built tab renders in both
 add_executable(test_app_theme
@@ -6766,6 +6791,7 @@ set(_sak_lock_portable_data_root
     test_ai_assistant_panel_tool_dispatch test_app_action_service test_quick_action_controller
     test_image_flasher_panel test_network_diagnostic_controller test_partition_manager_panel
     test_running_work_exit_guard test_app_installation_panel test_window_input test_app_theme
+    test_main_window_help
     test_single_instance_guard test_single_instance_app
     test_diagnostic_benchmark_panel test_advanced_uninstall_panel test_network_diagnostic_panel
     test_quick_action_panels test_file_management_explorer_panel

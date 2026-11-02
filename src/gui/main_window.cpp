@@ -1393,11 +1393,10 @@ QHBoxLayout* MainWindow::createHelpRow_wikiAndCommunity(QWidget* parent) {
     auto* wiki_btn = new QPushButton(tr("Open Help Wiki"), parent);
     wiki_btn->setMinimumHeight(sak::kButtonHeightTall);
     wiki_btn->setStyleSheet(ui::kSecondaryButtonStyle);
-    wiki_btn->setAccessibleName(QStringLiteral("Open help wiki on GitHub"));
-    wiki_btn->setToolTip(QStringLiteral("Opens the S.A.K. Utility wiki on GitHub"));
+    wiki_btn->setAccessibleName(QStringLiteral("Open help wiki"));
+    wiki_btn->setToolTip(QStringLiteral("Opens the S.A.K. Utility wiki at sakutility.com"));
     connect(wiki_btn, &QPushButton::clicked, this, []() {
-        QDesktopServices::openUrl(
-            QUrl(QStringLiteral("https://github.com/RandyNorthrup/S.A.K.-Utility/wiki")));
+        QDesktopServices::openUrl(QUrl(QStringLiteral("https://sakutility.com/wiki")));
     });
 
     row->addWidget(createActionCard(parent,
