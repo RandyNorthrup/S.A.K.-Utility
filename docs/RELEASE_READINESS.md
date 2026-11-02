@@ -378,6 +378,61 @@ worker and restores it through the restore worker, which nothing did before.
   prove on the VM smoke: back up a real Chrome and Firefox profile, restore on another account, and
   open the bookmarks. Saved passwords are expected not to work there; that is Windows, not the app.
 
+### Imaging and diagnostics fixes (2026-11-02)
+
+Found by wiki writers reading the code, then confirmed where this unelevated PC allows it. Each landed
+with a test that goes red without the fix. Nothing here wrote to a physical drive.
+
+- FIXED: GZ, BZ2 and XZ images were all refused. They are decoded once on a pool thread before any
+  disk goes offline, which gives the true size and refuses a truncated, corrupt or tar stream.
+  Coordinator tests reach the unmount step against a disk number no machine has.
+- FIXED: Quick verification could never pass on a compressed image (no seek), and a source that grew
+  after approval had no stop short of the end of the drive. Both were unreachable until this landed.
+- FIXED, confirmed with real bytes: SFC's redirected output is UTF-16 with no BOM. Captured from
+  sfc.exe here, 0D 00 0D 00 0A 00 59 00; Windows PowerShell's default Get-Content returned 96 NULs in
+  192 characters. The test runs real PowerShell over the same bytes.
+- FIXED: Check Disk ignored Repair-Volume's result. Classified from Volume.RepairStatus in Windows'
+  own Volume.cdxml; a name it does not know is not an answer. 30 s per drive became 30 min.
+- FIXED: result.log reached no panel. One fix in the controller, which also covers the Network
+  panel's Reset Network finding on the E list. The BitLocker log holds counts and paths, no keys.
+- FIXED: ALL TESTS PASSED after a partial run. FIXED: stress test -1.0 degC and no warning.
+- FIXED: Windows route from the ISO's label. It now looks inside with the bundled 7-Zip, checked
+  against the real Win11 25H2 ISO (found, 53 ms), and against real Arch, Clonezilla, Ventoy and
+  ShredOS ISOs (none). FIXED: "VERIFIED BOOTABLE" was untested and is gone.
+- FIXED: Clonezilla (rolling, from the project's mirror), Ventoy (release-wide sha256.txt), ShredOS
+  (default name; verify goes by upstream name). The three real ISOs were downloaded to E: and each
+  matched its published hash: Clonezilla 3.3.3-37, Ventoy 1.1.18, ShredOS 0.43.1.
+- CONFIRMED AT RUNTIME, unelevated here: smartctl reads the NVMe drive and gets Error=5 on SATA and
+  USB, so "without admin" is per drive type, not all or nothing. The page and the message say so.
+
+DESIGN DECISIONS:
+
+- A compressed image is decoded for its size rather than trusting xz's index or gzip's trailer.
+  gzip's trailer is modulo 4 GiB, bzip2 records nothing, and one path serves all three. It costs one
+  extra pass; xz's index could make that instant for xz alone if it ever matters.
+- SFC's verdict is English only and has no switch like DISM's /English, so on a non-English Windows
+  the run reports failed and quotes SFC's line. Reading CBS.log's [SR] lines would avoid that, and
+  has not been tried on a real scan.
+- Stress test with no CPU sensor keeps running, with the warning on screen and in the report, rather
+  than refusing every PC that cannot report a temperature. Only the CPU is watched.
+
+INCOMPLETE, all need an administrator session on a VM. This PC's session is not elevated, and the
+capture VM is held:
+
+- Real flash of a compressed image. Attach a VHD of at least 2 GB, flash a real `.img.xz`, `.img.gz`
+  and `.img.bz2` from the Image Flasher in each of Full, Quick and Off verification, and read the VHD
+  back with `fc /b` against the unpacked image. No test here can open a raw disk.
+- Real SFC on a healthy VM: Verify System Files must report "SFC found no integrity violations".
+- Real Repair-Volume -Scan: Check Disk Errors must print `ScanNoErrorsFound` or `NoErrorsFound` for
+  each NTFS volume, and show what a FAT32 or exFAT USB stick answers. That result word was read from
+  the cmdlet's definition, not seen from a real run.
+- Real Windows install media from Win11 25H2 and a rescue ISO without an install image: the first
+  must say Extract ISO, the second Raw disk imaging.
+- Real downloads through the app of Clonezilla, Ventoy and ShredOS, with aria2 and the verify step.
+  URLs and hashes are proved above by download and hash, and the verify logic by tests on the real
+  checksum files, but not through the dialog.
+- Disk benchmark and disk stress on C: unelevated: must run, and leave nothing behind.
+
 ### Behavior audit 2026-10-24 -- owner decisions
 
 A read-only audit looked for code that makes the app behave unlike a normal Windows tool, or

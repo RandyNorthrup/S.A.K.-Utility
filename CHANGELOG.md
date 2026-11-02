@@ -8,6 +8,62 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **GZ, BZ2 and XZ images really flash** - Every one of them was refused with "its uncompressed
+  size could not be determined". The app now reads the compressed file all the way through before
+  it touches the drive, which finds the real size and can take a few minutes on a large image. A
+  damaged file or a compressed tar archive is refused at that stage, with nothing written. Quick
+  verification also works on these images; it could never pass before.
+
+- **Verify System Files reads SFC's answer** - A healthy PC reported "SFC did not complete a
+  verification run" and Failed, because SFC's output was read in the wrong encoding. It now reports
+  what SFC found. On a non-English Windows the app cannot read SFC's wording, so the run still
+  counts as failed, and the message quotes what SFC said.
+
+- **Check Disk Errors reports what the scan found** - It ignored the scan's result, so errors could
+  read as clean. Each drive's entry now says no errors, fixed by Windows, repair recommended, or no
+  answer. A drive gets 30 minutes instead of 30 seconds, and mapped network drives are left out.
+
+- **Every quick action's detail reaches the Log** - The per-drive disk report, the Reset Network
+  backup paths and per-step errors, the CBS log path and the power plan report were produced and
+  never shown.
+
+- **"All tests passed" means all of them** - The report's banner could say ALL TESTS PASSED after one
+  hardware scan, or when no drive could be read. Fewer steps now read WARNINGS DETECTED, and the
+  warnings name each step with no result.
+
+- **Stress test says when its thermal limit is not working** - With no CPU sensor the screen showed
+  -1.0 degC and gave no warning. It now says the limit is not being enforced, and the report says so
+  too. The tooltip now says what the limit does: the test stops and reports FAILED. It watches the
+  CPU only.
+
+- **Windows install media is recognized by what is inside it** - A label containing WIN, or an image
+  built with Microsoft's tools, was enough to erase the drive with the Windows writer and then fail
+  on a rescue disc. The app now looks for the Windows install image inside the ISO. An ISO without
+  one is written raw, and the confirmation says so. The final status no longer says "verified
+  bootable", which nothing tested.
+
+- **Clonezilla Live and Ventoy LiveCD download** - Both were listed and always refused. Clonezilla
+  now reads its current release from its project's mirror. Ventoy's release-wide checksum file is
+  accepted. ShredOS gets a default file name, and a download saved under any name now verifies; a
+  different name used to fail after the whole download.
+
+- **Drive health shows a drive it cannot read** - A SATA or USB drive that Windows refuses without
+  administrator rights now gets a row, N/A health, and a line saying to run as administrator, where
+  the table used to stay empty.
+
+- **Disk benchmark and disk stress work on C: without administrator rights** - They wrote their test
+  file to the root of the drive, which Windows refuses. On the Windows drive they now use the temp
+  folder, on the same disk.
+
+- **Smaller Image Flasher and diagnostics fixes** - Buffer Size starts at 64 MB, as its tip says; the
+  old default was 4096 meant as bytes and read as megabytes, and older settings holding it are
+  corrected. A refusal before writing says nothing was written, instead of warning that the drive may
+  be unusable. A built ISO no longer adds a third dialog that always said Windows 11. A denied CPU
+  temperature no longer blanks the GPU and disk rows, and the row showing the hottest drive is named
+  Hottest disk. Export Scan Report writes the HTML it says it writes. The inventory report no longer
+  prints two percent signs. WIC is no longer called Windows Imaging, and the Linux category reads
+  Security & Pen-Testing.
+
 - **Backups really hold application data** - The backup wizard's Application Data step recorded
   your choices and copied nothing, so browser profiles were not saved. They are now: each source
   you leave ticked is copied, compressed and encrypted like any other folder, and comes back on
