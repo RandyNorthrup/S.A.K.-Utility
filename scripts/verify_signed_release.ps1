@@ -19,7 +19,7 @@ if ([string]::IsNullOrWhiteSpace($PackageRoot)) {
         throw "Signed release VERSION file not found: $versionPath"
     }
     $version = (Get-Content -LiteralPath $versionPath -Raw).Trim()
-    if ($version -notmatch '^\d+\.\d+\.\d+\.\d+$') {
+    if ($version -notmatch '^\d+\.\d+\.\d+$') {
         throw "Signed release VERSION is malformed: $version"
     }
     $PackageRoot = Join-Path $ProjectRoot "build\Release\SAK-Utility-v$version"

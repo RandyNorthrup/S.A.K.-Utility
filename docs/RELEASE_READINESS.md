@@ -1567,7 +1567,7 @@ first-prompt role inference with explicit user role-switch support, and an exact
 `/v1/responses/input_tokens` so operators can judge when summary/report
 compaction is needed.
 The current local package proof staged `S.A.K.-Utility-0.9.1.9` (STALE: `VERSION`
-is 0.9.2.0 and the recipe below produces `SAK-Utility-v0.9.2.0`; this proof
+is 0.9.3 and the recipe below produces `SAK-Utility-v0.9.3`; this proof
 predates the version bump and needs re-running before release), passed portable
 dependency smoke, passed portable startup E2E smoke, passed package-root release
 readiness, and rebuilt `S.A.K.-Utility-0.9.1.9-Windows-x64.zip` after the

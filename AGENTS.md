@@ -52,6 +52,12 @@ about what is "obviously fine".
   same proof as any change (build, the tests it can reach, T2 green). A downloaded artifact is
   pinned by hash and its provenance recorded in the bundle script. Staying behind needs a
   written reason in `docs/RELEASE_READINESS.md`.
+- **Versions have three parts, MAJOR.MINOR.PATCH** (owner, 2026-11-01). No part rolls over at 9:
+  `0.9.9` can be followed by `0.9.10` or `0.10.0`, and `0.100.x` is fine. Which part moves, and
+  when 1.0 happens, is the owner's call. `VERSION` and `project()` in `CMakeLists.txt` own the
+  number. Windows requires a fourth field in the version resource and the manifest, so those
+  templates fix it at 0, and Windows caps each part at 65535. Older tags and changelog headings
+  keep their four parts.
 
 **Make a proper decision about it.** Keep or remove is a real decision, and it has to be made on
 evidence rather than on whichever is easier at that moment. Deleting something to make a problem

@@ -7,6 +7,7 @@
 #include "sak/partition_apfs_file_system_reader.h"
 #include "sak/partition_apfs_writer.h"
 #include "sak/secure_memory.h"
+#include "sak/version.h"
 
 #include <QCommandLineOption>
 #include <QCommandLineParser>
@@ -2517,7 +2518,7 @@ static QString rawTargetProtectedDiskRefusal(const CliInvocation& invocation) {
 int main(int argc, char* argv[]) {
     const QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("sak_apfs_writer_cli"));
-    QCoreApplication::setApplicationVersion(QStringLiteral("0.9.2.0"));
+    QCoreApplication::setApplicationVersion(QString::fromLatin1(sak::get_version()));
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral(

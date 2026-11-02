@@ -99,8 +99,11 @@ function Invoke-ReleaseReadinessScript {
 Push-Location $ProjectRoot
 try {
     $version = (Get-Content -LiteralPath "VERSION" -Raw).Trim()
+    if ($version -notmatch '^\d+\.\d+\.\d+$') {
+        throw "VERSION ($version) is not MAJOR.MINOR.PATCH"
+    }
     $cmake = Get-Content -LiteralPath "CMakeLists.txt" -Raw
-    if ($cmake -notmatch "project\(SAK_Utility\s+VERSION\s+$([regex]::Escape($version))\b") {
+    if ($cmake -notmatch "project\(SAK_Utility\s+VERSION\s+$([regex]::Escape($version))\s") {
         throw "VERSION ($version) does not match CMake project version"
     }
 

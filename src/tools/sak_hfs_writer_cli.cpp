@@ -5,6 +5,7 @@
 /// @brief Command-line bridge for certified image-only HFS+ writer operations.
 
 #include "sak/partition_hfs_file_system_reader.h"
+#include "sak/version.h"
 
 #include <QCommandLineOption>
 #include <QCommandLineParser>
@@ -1000,7 +1001,7 @@ QString rawTargetProtectedDiskRefusal(const CliInvocation& invocation) {
 int main(int argc, char* argv[]) {
     const QCoreApplication app(argc, argv);
     QCoreApplication::setApplicationName(QStringLiteral("sak_hfs_writer_cli"));
-    QCoreApplication::setApplicationVersion(QStringLiteral("0.9.2.0"));
+    QCoreApplication::setApplicationVersion(QString::fromLatin1(sak::get_version()));
 
     QCommandLineParser parser;
     parser.setApplicationDescription(QStringLiteral(

@@ -8,6 +8,8 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
 
 ## Unreleased
 
+- **Shorter version numbers** - Versions now have three parts, so this release is v0.9.3. Older
+  releases keep their four-part names.
 - **Smaller download** - The package no longer carries files the app never loads: Mesa's
   software OpenGL renderer (20 MB), the Direct3D shader compiler, Qt's touch-input,
   network-information and certificate-only TLS plugins, and two unused Visual C++ runtime DLLs.
