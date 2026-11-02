@@ -363,26 +363,40 @@ qint64 estimatedEntryBytes(const PstItemDetail& item,
     return total;
 }
 
-// Fail closed rather than fabricate envelope metadata: the mbox "From_" line and the RFC 5322
-// Date are load-bearing, and inventing "unknown@localhost" or the current time would masquerade
-// missing data as real (no-fallback rule). A caller that reaches here with a message lacking a
-// sender or date must surface that gap.
-std::expected<void, error_code> validateEnvelope(const PstItemDetail& item) {
-    if (item.sender_email.isEmpty()) {
-        logError("MboxWriter: message has no sender address; refusing to fabricate one");
-        return std::unexpected(error_code::missing_required_field);
+// What the mbox "From_" line carries when the message names no usable sender. It is the marker
+// Thunderbird itself writes, so importing clients accept it, and unlike "unknown@localhost" it
+// does not claim anyone sent the message. Drafts and items saved but never sent are normal mail.
+constexpr auto kUnknownEnvelopeSender = "-";
+
+// An X.500 path can contain spaces, which the separator line cannot carry; the From: header still
+// holds the sender as the store recorded it.
+QByteArray envelopeSender(const QString& sender) {
+    const QString clean = sanitizeHeaderValue(sender);
+    const bool usable = !clean.trimmed().isEmpty() && !clean.contains(QLatin1Char(' '));
+    return usable ? clean.toUtf8() : QByteArray(kUnknownEnvelopeSender);
+}
+
+// The separator line needs a time. Prefer when the message was sent or delivered; an unsent item
+// has only the store's own timestamp, which goes on that line alone and never becomes a Date:
+// header. A message with no time at all fails closed: inventing one would date it falsely.
+std::expected<QDateTime, error_code> envelopeTime(const PstItemDetail& item) {
+    if (item.date.isValid()) {
+        return item.date;
     }
-    if (item.sender_email.trimmed().isEmpty() || item.sender_email.contains(QLatin1Char('<')) ||
+    if (item.store_timestamp.isValid()) {
+        return item.store_timestamp;
+    }
+    logError("MboxWriter: message has no date of any kind; refusing to fabricate one");
+    return std::unexpected(error_code::missing_required_field);
+}
+
+// A sender that is present but carries its own angle brackets would name someone else once it is
+// emitted between brackets, so it is refused rather than rewritten. No sender at all is fine.
+std::expected<void, error_code> validateSender(const PstItemDetail& item) {
+    if (item.sender_email.contains(QLatin1Char('<')) ||
         item.sender_email.contains(QLatin1Char('>'))) {
-        // The addr-spec is emitted between angle brackets and after the "From " envelope keyword;
-        // a value carrying its own brackets (or nothing but spaces) would name a different sender
-        // than the message did.
         logError("MboxWriter: message sender address is malformed; refusing to rewrite it");
         return std::unexpected(error_code::validation_failed);
-    }
-    if (!item.date.isValid()) {
-        logError("MboxWriter: message has no valid date; refusing to fabricate one");
-        return std::unexpected(error_code::missing_required_field);
     }
     return {};
 }
@@ -666,16 +680,29 @@ QString MboxWriter::makeUniqueBoundary(const PstItemDetail& item) {
     return QString();
 }
 
+namespace {
+
+// From: encode only the display-name phrase (RFC 2047), never the addr-spec. A message that names
+// no sender, like an unsent draft, gets no From: header at all.
+void appendFromHeader(QByteArray& message, const PstItemDetail& item, const QString& sender) {
+    if (!sender.isEmpty()) {
+        const QByteArray from_value = item.sender_name.isEmpty()
+                                          ? sanitizeHeaderValue(sender).toUtf8()
+                                          : encodedDisplayName(item.sender_name).toUtf8() + " <" +
+                                                sanitizeHeaderValue(sender).toUtf8() + ">";
+        message.append("From: " + from_value + "\r\n");
+    } else if (!item.sender_name.isEmpty()) {
+        message.append("From: " + encodedDisplayName(item.sender_name).toUtf8() + "\r\n");
+    }
+}
+
+}  // namespace
+
 void MboxWriter::appendMessageHeaders(QByteArray& message,
                                       const PstItemDetail& item,
                                       const QString& sender,
                                       const QDateTime& date) {
-    // From: encode only the display-name phrase (RFC 2047), never the addr-spec.
-    const QByteArray from_value = item.sender_name.isEmpty()
-                                      ? sanitizeHeaderValue(sender).toUtf8()
-                                      : encodedDisplayName(item.sender_name).toUtf8() + " <" +
-                                            sanitizeHeaderValue(sender).toUtf8() + ">";
-    message.append("From: " + from_value + "\r\n");
+    appendFromHeader(message, item, sender);
 
     if (!item.display_to.isEmpty()) {
         message.append("To: " + encodedHeaderValue(item.display_to) + "\r\n");
@@ -691,7 +718,9 @@ void MboxWriter::appendMessageHeaders(QByteArray& message,
     if (!item.subject.isEmpty()) {
         message.append("Subject: " + encodedHeaderValue(item.subject) + "\r\n");
     }
-    message.append("Date: " + date.toString(Qt::RFC2822Date).toUtf8() + "\r\n");
+    if (date.isValid()) {
+        message.append("Date: " + date.toString(Qt::RFC2822Date).toUtf8() + "\r\n");
+    }
     if (!item.message_id.isEmpty()) {
         message.append("Message-ID: " + sanitizeHeaderValue(item.message_id).toUtf8() + "\r\n");
     }
@@ -769,22 +798,27 @@ std::expected<QByteArray, error_code> MboxWriter::formatMboxEntry(
     // static (declaration only, per the header): every callee is free or already static.
     QByteArray entry;
 
-    if (auto envelope = validateEnvelope(item); !envelope) {
-        return std::unexpected(envelope.error());
+    if (auto sender_check = validateSender(item); !sender_check) {
+        return std::unexpected(sender_check.error());
+    }
+    const auto separator_time = envelopeTime(item);
+    if (!separator_time) {
+        return std::unexpected(separator_time.error());
     }
     if (auto content = validateContent(item, attachments); !content) {
         return std::unexpected(content.error());
     }
-    const QString sender = item.sender_email;
+    const QString sender = item.sender_email.trimmed();
     const QDateTime date = item.date;
 
     // asctime format: "Mon Jan 01 00:00:00 2024"
-    const QString date_str = date.toUTC().toString(QStringLiteral("ddd MMM dd HH:mm:ss yyyy"));
+    const QString date_str =
+        separator_time->toUTC().toString(QStringLiteral("ddd MMM dd HH:mm:ss yyyy"));
 
     entry.append("From ");
     // Strip CR/LF/controls from the sender: an unescaped newline here would forge a second From_
     // line and split one message into two on the next read.
-    entry.append(sanitizeHeaderValue(sender).toUtf8());
+    entry.append(envelopeSender(sender));
     entry.append(' ');
     entry.append(date_str.toUtf8());
     entry.append('\n');

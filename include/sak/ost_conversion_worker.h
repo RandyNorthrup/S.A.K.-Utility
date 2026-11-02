@@ -64,10 +64,15 @@ Q_SIGNALS:
     void progressUpdated(int items_done, int items_total, QString current_folder);
     void conversionFinished(sak::OstConversionResult result);
     void errorOccurred(QString message);
-    void warningOccurred(QString message);
 
 private:
-    /// Process all folders recursively
+    /// Convert the folders, recover what was asked for, and close the mailboxes.
+    void convertStore(PstParser* parser,
+                      const PstFolderTree& tree,
+                      const OstConversionConfig& config,
+                      OstConversionResult& result);
+
+    /// Convert the mail folders, and count what is left out
     void processFolderTree(PstParser* parser,
                            const PstFolderTree& tree,
                            const OstConversionConfig& config,
@@ -116,6 +121,14 @@ private:
     /// @p result (which classifyOutcome then turns into a Failed job).
     void finalizeWriters(OstConversionResult& result);
 
+    /// Rows in the folders a run converts, which is what its progress counts up to.
+    [[nodiscard]] static int countConvertibleItems(PstParser* parser, const PstFolderTree& tree);
+
+    /// Count a non-mail folder's items, and its subfolders', as left out of the MBOX.
+    static void countSkippedFolder(PstParser* parser,
+                                   const PstFolder& folder,
+                                   OstConversionResult& result);
+
     /// Check if a folder passes the include/exclude filter
     [[nodiscard]] bool folderPassesFilter(const QString& folder_name,
                                           const OstConversionConfig& config) const;
@@ -151,7 +164,7 @@ private:
                              const OstConversionConfig& config,
                              OstConversionResult& result);
 
-    /// Load and process all items in a folder via batched reads
+    /// Load and process all items in a folder
     void loadAndProcessFolderItems(PstParser* parser,
                                    const PstFolder& folder,
                                    const QString& folder_path,

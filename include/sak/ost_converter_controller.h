@@ -62,6 +62,10 @@ public:
     /// Classify a finished conversion into a queue status. Fail closed: any failed
     /// item or recorded error demotes the job to Failed even when some items
     /// converted, so a partial/errored run is never reported as a clean Complete.
+    /// Why a file cannot join the queue, or empty when it can. Only .pst and .ost are accepted: the
+    /// parser reads any "!BDN" file, so an .nst would convert to nothing and read as a success.
+    [[nodiscard]] static QString refusalForFile(const QString& path);
+
     [[nodiscard]] static OstConversionJob::Status classifyOutcome(
         const OstConversionResult& result);
 
@@ -82,7 +86,6 @@ Q_SIGNALS:
 
     // Errors
     void errorOccurred(int file_index, QString message);
-    void warningOccurred(int file_index, QString message);
 
     // Status
     void statusMessage(QString message, int timeout_ms);

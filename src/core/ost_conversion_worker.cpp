@@ -7,6 +7,8 @@
 #include "sak/ost_conversion_worker.h"
 
 #include "sak/deleted_item_scanner.h"
+#include "sak/email_constants.h"
+#include "sak/email_folder_selection.h"
 #include "sak/email_types.h"
 #include "sak/error_codes.h"
 #include "sak/layout_constants.h"
@@ -20,6 +22,8 @@
 #include <QFile>
 #include <QFileInfo>
 
+#include <algorithm>
+#include <functional>
 #include <optional>
 #include <tuple>
 
@@ -104,8 +108,8 @@ void OstConversionWorker::convert(const QString& source_path, const OstConversio
         return;
     }
 
-    const PstFileInfo file_info = parser->fileInfo();
-    m_items_total = file_info.total_items;
+    const PstFolderTree tree = parser->folderTree();
+    m_items_total = countConvertibleItems(parser.get(), tree);
     result.output_path = config.output_directory;
 
     Q_EMIT conversionStarted(m_items_total);
@@ -118,16 +122,7 @@ void OstConversionWorker::convert(const QString& source_path, const OstConversio
         return;
     }
 
-    // Get folder tree and process
-    const PstFolderTree tree = parser->folderTree();
-    processFolderTree(parser.get(), tree, config, result);
-
-    // Process deleted/recovered items if requested
-    if (config.recover_deleted_items && !m_cancelled.load()) {
-        processRecoveredItems(parser.get(), config, result);
-    }
-
-    finalizeWriters(result);
+    convertStore(parser.get(), tree, config, result);
 
     // Record whether a user cancel cut the run short (processFolderTree/processRecoveredItems
     // return early on cancel), so the controller classifies it Cancelled rather than Complete:
@@ -142,6 +137,23 @@ void OstConversionWorker::convert(const QString& source_path, const OstConversio
             std::to_string(result.items_failed));
 
     Q_EMIT conversionFinished(result);
+}
+
+void OstConversionWorker::convertStore(PstParser* parser,
+                                       const PstFolderTree& tree,
+                                       const OstConversionConfig& config,
+                                       OstConversionResult& result) {
+    processFolderTree(parser, tree, config, result);
+
+    // Process deleted/recovered items if requested. Deep recovery is the same scan plus the
+    // orphaned-node walk, so asking for it asks for the recovery.
+    const bool wants_recovery = config.recover_deleted_items ||
+                                config.recovery_mode == RecoveryMode::DeepRecovery;
+    if (wants_recovery && !m_cancelled.load()) {
+        processRecoveredItems(parser, config, result);
+    }
+
+    finalizeWriters(result);
 }
 
 bool OstConversionWorker::computeSourceChecksumIfRequested(const QString& source_path,
@@ -275,15 +287,107 @@ void OstConversionWorker::cancel() {
 // Folder Processing
 // ============================================================================
 
+namespace {
+
+/// The folders mail lives under: the same starting point the Email Inspector's tree and "Export
+/// ALL Mail Folders" use, so a conversion covers exactly the mail a technician can see there.
+const PstFolderTree& mailFolderRoots(const PstFolderTree& tree) {
+    const PstFolder* ipm = findIpmSubtree(tree);
+    return (ipm != nullptr && !ipm->children.isEmpty()) ? ipm->children : tree;
+}
+
+/// A search folder lists messages that live in other folders; converting it would duplicate them.
+bool isSearchFolder(const PstFolder& folder) {
+    constexpr uint64_t kNidTypeMask = 0x1F;
+    return (folder.node_id & kNidTypeMask) == email::kNidTypeSearchFolder;
+}
+
+void recordSkippedItem(EmailItemType type, OstConversionResult& result) {
+    switch (type) {
+    case EmailItemType::Contact:
+    case EmailItemType::DistList:
+        ++result.skipped_contacts;
+        break;
+    case EmailItemType::Calendar:
+    case EmailItemType::MeetingRequest:
+        ++result.skipped_calendar;
+        break;
+    case EmailItemType::Task:
+        ++result.skipped_tasks;
+        break;
+    case EmailItemType::StickyNote:
+        ++result.skipped_notes;
+        break;
+    default:
+        ++result.skipped_other;
+        break;
+    }
+}
+
+}  // namespace
+
+void OstConversionWorker::countSkippedFolder(PstParser* parser,
+                                             const PstFolder& folder,
+                                             OstConversionResult& result) {
+    if (!isSearchFolder(folder)) {
+        const auto items = parser->readFolderItems(folder.node_id, 0, 0);
+        if (items.has_value()) {
+            for (const auto& item : *items) {
+                recordSkippedItem(item.item_type, result);
+            }
+        }
+    }
+    for (const auto& child : folder.children) {
+        countSkippedFolder(parser, child, result);
+    }
+}
+
+int OstConversionWorker::countConvertibleItems(PstParser* parser, const PstFolderTree& tree) {
+    int total = 0;
+    for (const uint64_t folder_id : mailFolderNodeIds(tree)) {
+        const auto items = parser->readFolderItems(folder_id, 0, 0);
+        if (items.has_value()) {
+            total += static_cast<int>(items->size());
+        }
+    }
+    return total;
+}
+
 void OstConversionWorker::processFolderTree(PstParser* parser,
                                             const PstFolderTree& tree,
                                             const OstConversionConfig& config,
                                             OstConversionResult& result) {
-    for (const auto& root_folder : tree) {
+    const PstFolderTree& mail_roots = mailFolderRoots(tree);
+    for (const auto& root_folder : mail_roots) {
         if (m_cancelled.load()) {
             return;
         }
         processFolder(parser, root_folder, FolderPosition{}, config, result);
+    }
+    // Everything outside the mail roots -- the store's bookkeeping folders -- is left out too, and
+    // counted, so a run never drops something without saying so.
+    if (&mail_roots == &tree) {
+        return;
+    }
+    const PstFolder* ipm = findIpmSubtree(tree);
+    const std::function<void(const PstFolder&)> count_outside = [&](const PstFolder& folder) {
+        if (&folder == ipm) {
+            return;
+        }
+        if (!isSearchFolder(folder)) {
+            const auto items = parser->readFolderItems(folder.node_id, 0, 0);
+            if (items.has_value()) {
+                for (const auto& item : *items) {
+                    recordSkippedItem(item.item_type, result);
+                }
+            }
+        }
+        for (const auto& child : folder.children) {
+            count_outside(child);
+        }
+    };
+    for (const auto& root_folder : tree) {
+        count_outside(root_folder);
     }
 }
 
@@ -299,13 +403,12 @@ void OstConversionWorker::processItemInFolder(const PstItemSummary& item_summary
 
     auto detail_result = parser->readItemDetail(item_summary.node_id);
     if (!detail_result.has_value()) {
-        if (config.recovery_mode == RecoveryMode::SkipCorrupt) {
-            ++result.items_failed;
-            Q_EMIT warningOccurred("Skipped corrupt item in " + folder_path);
-            return;
-        }
+        // One unreadable item never stops the run: it is named here, the rest carry on, and the
+        // file ends Failed so the gap cannot be missed.
         ++result.items_failed;
         result.errors.append("Failed to read item " + item_summary.subject + " in " + folder_path);
+        ++m_items_done;
+        Q_EMIT progressUpdated(m_items_done, m_items_total, folder_path);
         return;
     }
 
@@ -335,40 +438,24 @@ void OstConversionWorker::loadAndProcessFolderItems(PstParser* parser,
                                                     const QString& folder_path,
                                                     const OstConversionConfig& config,
                                                     OstConversionResult& result) {
-    if (folder.content_count <= 0) {
+    // Every row the table holds, whatever PR_CONTENT_COUNT declares. The declared count can be low
+    // or absent, and walking up to it silently dropped the rest of the folder.
+    auto items_result = parser->readFolderItems(folder.node_id, 0, 0);
+    if (!items_result.has_value()) {
+        // Surface the loss in items_failed instead of silently under-reporting: the table could
+        // not be read, so every item the folder declares is a message we could not convert.
+        result.items_failed += std::max(folder.content_count, 1);
+        const QString err = "Failed to read items from folder: " + folder_path;
+        logWarning("OST Converter: {}", err.toStdString());
+        result.errors.append(err);
         return;
     }
 
-    constexpr int kBatchSize = 100;
-    int offset = 0;
-
-    while (offset < folder.content_count && !m_cancelled.load()) {
-        auto items_result = parser->readFolderItems(folder.node_id, offset, kBatchSize);
-
-        if (!items_result.has_value()) {
-            // Surface the loss in items_failed instead of silently under-reporting:
-            // every still-unread item in this folder is a message we could not
-            // convert, so count the remaining declared items as failed.
-            const int remaining = folder.content_count - offset;
-            if (remaining > 0) {
-                result.items_failed += remaining;
-            }
-            const QString err = "Failed to read items from folder: " + folder_path;
-            logWarning("OST Converter: {}", err.toStdString());
-            result.errors.append(err);
-            break;
+    for (const auto& item_summary : *items_result) {
+        if (m_cancelled.load()) {
+            return;
         }
-
-        const auto& items = items_result.value();
-        if (items.isEmpty()) {
-            break;
-        }
-
-        for (const auto& item_summary : items) {
-            processItemInFolder(item_summary, parser, folder_path, config, result);
-        }
-
-        offset += static_cast<int>(items.size());
+        processItemInFolder(item_summary, parser, folder_path, config, result);
     }
 }
 
@@ -401,6 +488,14 @@ void OstConversionWorker::processFolder(PstParser* parser,
     const QString safe_segment = sanitizeFolderSegment(folder.display_name);
     const QString folder_path =
         position.parent_path.isEmpty() ? safe_segment : position.parent_path + "/" + safe_segment;
+
+    if (isSearchFolder(folder)) {
+        return;
+    }
+    if (!isMailFolder(folder.display_name, folder.container_class)) {
+        countSkippedFolder(parser, folder, result);
+        return;
+    }
 
     if (!folderPassesFilter(folder.display_name, config)) {
         return;

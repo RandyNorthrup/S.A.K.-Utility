@@ -25,11 +25,10 @@ inline constexpr int kDefaultOstConversionThreads = 2;
 // Recovery Mode
 // ============================================================================
 
-/// @brief Recovery mode for damaged files
+/// @brief How far a conversion looks for deleted mail
 enum class RecoveryMode {
-    Normal,       ///< Standard parsing - stop on critical errors
-    SkipCorrupt,  ///< Skip corrupt blocks, log errors, continue
-    DeepRecovery  ///< Scan all NBT nodes including orphaned ones
+    Normal,       ///< Only what recover_deleted_items asks for
+    DeepRecovery  ///< Also scan all NBT nodes for orphaned messages; implies recover_deleted_items
 };
 
 // ============================================================================
@@ -42,8 +41,6 @@ struct OstConversionJob {
     QString display_name;  ///< Filename for display
     qint64 file_size_bytes = 0;
     bool is_ost = false;
-    int estimated_items = 0;  ///< From PstFileInfo
-    int estimated_folders = 0;
 
     /// @brief Conversion state
     enum class Status {
@@ -114,6 +111,14 @@ struct OstConversionResult {
     int items_converted = 0;
     int items_failed = 0;
     int items_recovered = 0;  ///< Deleted items recovered
+    /// Items left out of the MBOX because they are not mail, or sit in a system folder. They are
+    /// not failures: an MBOX holds mail, and these belong in the Contacts and Calendar windows.
+    /// Counted by what they are, so the run can say exactly what it did not convert.
+    int skipped_contacts = 0;
+    int skipped_calendar = 0;
+    int skipped_tasks = 0;
+    int skipped_notes = 0;
+    int skipped_other = 0;
     /// False when the deleted-item scan could not enumerate every candidate (a non-cancel read
     /// error truncated the Recoverable Items walk, or an orphan node could not be read), so
     /// items_recovered is a floor and NOT the count of what the source holds. An empty or small
@@ -129,6 +134,10 @@ struct OstConversionResult {
     /// above are partial and the output is incomplete. classifyOutcome maps this to Cancelled
     /// (never Complete) even when no item failed and no error was recorded.
     bool cancelled = false;
+
+    [[nodiscard]] int itemsSkipped() const {
+        return skipped_contacts + skipped_calendar + skipped_tasks + skipped_notes + skipped_other;
+    }
 };
 
 /// @brief Aggregate result of the entire conversion batch
@@ -142,6 +151,8 @@ struct OstConversionBatchResult {
     int files_cancelled = 0;
     int total_items_converted = 0;
     int total_items_recovered = 0;
+    int total_items_failed = 0;
+    int total_items_skipped = 0;
     qint64 total_bytes_written = 0;
     QVector<OstConversionResult> file_results;
     QDateTime batch_started;

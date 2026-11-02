@@ -494,9 +494,9 @@ private Q_SLOTS:
         QCOMPARE(ok.accepted(), static_cast<qint64>(5));
     }
 
-    // A message with no sender address must fail closed rather than fabricate an
-    // "unknown@localhost" envelope sender (no-fallback rule).
-    void failsClosedOnMissingSender() {
+    // Unsent drafts and saved items name no sender. They are mail, so they are written: the
+    // separator carries Thunderbird's own unknown-sender marker, and no From: header is invented.
+    void writesAMessageWithNoSender() {
         QTemporaryDir temp_dir;
         QVERIFY(temp_dir.isValid());
         sak::MboxWriter writer(temp_dir.path(), false);
@@ -506,24 +506,48 @@ private Q_SLOTS:
         item.body_plain = QStringLiteral("body");
         item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
 
-        auto result = writer.writeMessage(item, {}, QString());
-        QVERIFY(!result.has_value());
-        QCOMPARE(result.error(), sak::error_code::missing_required_field);
+        QVERIFY(writer.writeMessage(item, {}, QString()).has_value());
+        // A sender of nothing but spaces is no sender, not a malformed one.
+        item.sender_email = QStringLiteral("   ");
+        QVERIFY(writer.writeMessage(item, {}, QString()).has_value());
+        writer.finalize();
 
-        // The SIBLING arm of the same envelope guard is otherwise unreached in the whole suite: a
-        // sender carrying its own angle brackets -- or one that is nothing but whitespace -- would
-        // name a different sender than the message did, and is refused with a DIFFERENT code
-        // (mbox_writer.cpp validateEnvelope -> validation_failed). Deleting that branch outright
-        // left every test green.
+        QFile file(temp_dir.filePath(QStringLiteral("mailbox.mbox")));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray bytes = file.readAll();
+        QVERIFY(bytes.startsWith("From - Wed Jan 01 00:00:00 2025\n"));
+        QVERIFY(!bytes.contains("From: "));
+    }
+
+    void keepsADisplayNameWhenThereIsNoAddress() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        sak::MboxWriter writer(temp_dir.path(), false);
+        sak::PstItemDetail item;
+        item.sender_name = QStringLiteral("Dana Whitlock");
+        item.body_plain = QStringLiteral("body");
+        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+        QVERIFY(writer.writeMessage(item, {}, QString()).has_value());
+        writer.finalize();
+        QFile file(temp_dir.filePath(QStringLiteral("mailbox.mbox")));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        QVERIFY(file.readAll().contains("From: Dana Whitlock\r\n"));
+    }
+
+    // A sender carrying its own angle brackets would name someone other than the message did.
+    void refusesASenderCarryingAngleBrackets() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        sak::MboxWriter writer(temp_dir.path(), false);
+
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("bracketed");
+        item.body_plain = QStringLiteral("body");
+        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
         item.sender_email = QStringLiteral("<evil@example.com>");
         auto bracketed = writer.writeMessage(item, {}, QString());
         QVERIFY(!bracketed.has_value());
         QCOMPARE(bracketed.error(), sak::error_code::validation_failed);
-
-        item.sender_email = QStringLiteral("   ");
-        auto blank = writer.writeMessage(item, {}, QString());
-        QVERIFY(!blank.has_value());
-        QCOMPARE(blank.error(), sak::error_code::validation_failed);
 
         // A refused message must not have cost the destination: the entry is assembled BEFORE the
         // mailbox is opened, and opening truncates.
@@ -531,9 +555,47 @@ private Q_SLOTS:
                  QStringList());
     }
 
-    // A message with no valid date must fail closed rather than stamp the current
+    // An Exchange path holds spaces, which the separator line cannot carry; a reader would split
+    // the line wrongly. The From: header keeps the sender as recorded.
+    void keepsAnExchangePathOutOfTheSeparatorLine() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        sak::MboxWriter writer(temp_dir.path(), false);
+        sak::PstItemDetail item;
+        item.sender_email = QStringLiteral("/O=First Organization/CN=RECIPIENTS/CN=OWEN");
+        item.body_plain = QStringLiteral("body");
+        item.date = QDateTime(QDate(2025, 1, 1), QTime(0, 0, 0), QTimeZone::utc());
+        QVERIFY(writer.writeMessage(item, {}, QString()).has_value());
+        writer.finalize();
+        QFile file(temp_dir.filePath(QStringLiteral("mailbox.mbox")));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray bytes = file.readAll();
+        QVERIFY(bytes.startsWith("From - "));
+        QVERIFY(bytes.contains("From: /O=First Organization/CN=RECIPIENTS/CN=OWEN\r\n"));
+    }
+
+    // An unsent item has only the store's timestamp. It dates the separator so the record is well
+    // formed, and is never presented as when the message was sent.
+    void usesTheStoreTimestampOnlyOnTheSeparatorLine() {
+        QTemporaryDir temp_dir;
+        QVERIFY(temp_dir.isValid());
+        sak::MboxWriter writer(temp_dir.path(), false);
+        sak::PstItemDetail item;
+        item.subject = QStringLiteral("draft");
+        item.body_plain = QStringLiteral("body");
+        item.store_timestamp = QDateTime(QDate(2025, 2, 3), QTime(4, 5, 6), QTimeZone::utc());
+        QVERIFY(writer.writeMessage(item, {}, QString()).has_value());
+        writer.finalize();
+        QFile file(temp_dir.filePath(QStringLiteral("mailbox.mbox")));
+        QVERIFY(file.open(QIODevice::ReadOnly));
+        const QByteArray bytes = file.readAll();
+        QVERIFY(bytes.startsWith("From - Mon Feb 03 04:05:06 2025\n"));
+        QVERIFY(!bytes.contains("Date: "));
+    }
+
+    // A message with no time of any kind must fail closed rather than stamp the current
     // time into the envelope/Date header (no-fallback rule).
-    void failsClosedOnMissingDate() {
+    void failsClosedOnNoTimeOfAnyKind() {
         QTemporaryDir temp_dir;
         QVERIFY(temp_dir.isValid());
         sak::MboxWriter writer(temp_dir.path(), false);
@@ -542,7 +604,7 @@ private Q_SLOTS:
         item.subject = QStringLiteral("no date");
         item.sender_email = QStringLiteral("s@test.com");
         item.body_plain = QStringLiteral("body");
-        // item.date left invalid
+        // item.date and item.store_timestamp left invalid
 
         auto result = writer.writeMessage(item, {}, QString());
         QVERIFY(!result.has_value());

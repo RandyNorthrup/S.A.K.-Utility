@@ -24,6 +24,7 @@ class QPushButton;
 class QSpinBox;
 class QTableWidget;
 class QVBoxLayout;
+class OstConverterWidgetTests;
 
 namespace sak {
 
@@ -32,6 +33,7 @@ class OstConverterController;
 /// @brief Main UI for the OST/PST Converter tab
 class OstConverterWidget : public QWidget {
     Q_OBJECT
+    friend class ::OstConverterWidgetTests;
 
 public:
     explicit OstConverterWidget(QWidget* parent = nullptr);
@@ -97,6 +99,9 @@ private:
     [[nodiscard]] OstConversionConfig buildConfig() const;
     void updateQueueRow(int row, const OstConversionJob& job);
     [[nodiscard]] static QString formatBytes(qint64 bytes);
+    /// What a finished row's Progress column says: converted, failed, and left out.
+    [[nodiscard]] static QString progressSummary(const OstConversionResult& result);
+
     [[nodiscard]] static QString statusLabel(OstConversionJob::Status status);
     void loadSettings();
     void saveSettings();
@@ -129,7 +134,6 @@ private:
     QGroupBox* m_recovery_group{nullptr};
     QCheckBox* m_recover_deleted_check{nullptr};
     QCheckBox* m_deep_recovery_check{nullptr};
-    QCheckBox* m_skip_corrupt_check{nullptr};
 
     // -- Progress Tracking ------------------------------------------------
     int m_total_files{0};

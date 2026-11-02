@@ -37,15 +37,11 @@ private Q_SLOTS:
         job.display_name = QStringLiteral("mailbox.ost");
         job.file_size_bytes = 1024 * 1024;
         job.is_ost = true;
-        job.estimated_items = 500;
-        job.estimated_folders = 10;
 
         QCOMPARE(job.source_path, QStringLiteral("C:/test/mailbox.ost"));
         QCOMPARE(job.display_name, QStringLiteral("mailbox.ost"));
         QCOMPARE(job.file_size_bytes, static_cast<qint64>(1024 * 1024));
         QVERIFY(job.is_ost);
-        QCOMPARE(job.estimated_items, 500);
-        QCOMPARE(job.estimated_folders, 10);
     }
 
     // ====================================================================
@@ -122,8 +118,7 @@ private Q_SLOTS:
     void testQueueColumnEnum() {
         QCOMPARE(sak::ost::ColFile, 0);
         QCOMPARE(sak::ost::ColSize, 1);
-        QCOMPARE(sak::ost::ColItems, 2);
-        QCOMPARE(sak::ost::ColStatus, 3);
+        QCOMPARE(sak::ost::ColStatus, 2);
         QCOMPARE(sak::ost::ColProgress, 4);
         QCOMPARE(sak::ost::ColCount, 5);
     }
@@ -134,8 +129,7 @@ private Q_SLOTS:
 
     void testRecoveryModeValues() {
         QCOMPARE(static_cast<int>(sak::RecoveryMode::Normal), 0);
-        QCOMPARE(static_cast<int>(sak::RecoveryMode::SkipCorrupt), 1);
-        QCOMPARE(static_cast<int>(sak::RecoveryMode::DeepRecovery), 2);
+        QCOMPARE(static_cast<int>(sak::RecoveryMode::DeepRecovery), 1);
     }
 
     void testJobStatusValues() {

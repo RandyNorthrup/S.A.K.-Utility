@@ -189,7 +189,7 @@ QWidget* OstConverterWidget::createFileQueueSection() {
     m_queue_table = new QTableWidget(0, ost::ColCount, group);
     m_queue_table->setAccessibleName(tr("Email conversion queue"));
     m_queue_table->setHorizontalHeaderLabels(
-        {tr("File"), tr("Size"), tr("Items"), tr("Status"), tr("Progress")});
+        {tr("File"), tr("Size"), tr("Status"), tr("Progress")});
     configureStandardTable(m_queue_table, QAbstractItemView::SingleSelection);
     m_queue_table->horizontalHeader()->setStretchLastSection(true);
     m_queue_table->setMinimumHeight(kQueueTableMinHeight);
@@ -197,7 +197,6 @@ QWidget* OstConverterWidget::createFileQueueSection() {
     // Column widths
     m_queue_table->setColumnWidth(ost::ColFile, ost::kQueueFileColumnWidth);
     m_queue_table->setColumnWidth(ost::ColSize, ost::kQueueSizeColumnWidth);
-    m_queue_table->setColumnWidth(ost::ColItems, ost::kQueueItemsColumnWidth);
     m_queue_table->setColumnWidth(ost::ColStatus, ost::kQueueStatusColumnWidth);
 
     layout->addWidget(m_queue_table, 1);
@@ -371,11 +370,6 @@ QWidget* OstConverterWidget::createRecoverySection() {
         tr("Walk all NBT nodes to find hard-deleted messages not in any folder"));
     layout->addWidget(m_deep_recovery_check);
 
-    m_skip_corrupt_check = new QCheckBox(
-        tr("Skip corrupt blocks (continue on errors, log skipped items)"), m_recovery_group);
-    m_skip_corrupt_check->setAccessibleName(tr("Skip corrupt email blocks"));
-    layout->addWidget(m_skip_corrupt_check);
-
     return m_recovery_group;
 }
 
@@ -541,14 +535,16 @@ void OstConverterWidget::onFileConversionComplete(int file_index, OstConversionR
     Q_EMIT progressUpdate(m_files_done, m_total_files);
 
     if (file_index >= 0 && file_index < m_queue_table->rowCount()) {
+        // One rule for what a run's outcome is, the one the batch totals and the report use: a
+        // file with any failed item or recorded error did not convert cleanly, however much of
+        // it was written.
         auto* status_item = m_queue_table->item(file_index, ost::ColStatus);
         if (status_item != nullptr) {
-            const bool failed = (result.items_converted == 0 && result.items_failed > 0);
-            status_item->setText(failed ? tr("Failed") : tr("Complete"));
+            status_item->setText(statusLabel(OstConverterController::classifyOutcome(result)));
         }
         auto* progress_item = m_queue_table->item(file_index, ost::ColProgress);
         if (progress_item != nullptr) {
-            progress_item->setText(tr("%1 items").arg(result.items_converted));
+            progress_item->setText(progressSummary(result));
         }
     }
 }
@@ -563,11 +559,17 @@ void OstConverterWidget::onAllConversionsComplete(OstConversionBatchResult resul
     const QString report = m_controller->reportPath();
     m_view_report_button->setEnabled(!report.isEmpty());
 
-    Q_EMIT statusMessage(tr("Conversion complete: %1/%2 files, %3 items")
-                             .arg(result.files_succeeded)
-                             .arg(result.files_total)
-                             .arg(result.total_items_converted),
-                         kTimerStatusLongMs);
+    QString summary = tr("Conversion complete: %1/%2 files, %3 items")
+                          .arg(result.files_succeeded)
+                          .arg(result.files_total)
+                          .arg(result.total_items_converted);
+    if (result.total_items_failed > 0) {
+        summary += tr(", %1 failed").arg(result.total_items_failed);
+    }
+    if (result.total_items_skipped > 0) {
+        summary += tr(", %1 not mail and left out").arg(result.total_items_skipped);
+    }
+    Q_EMIT statusMessage(summary, kTimerStatusLongMs);
 }
 
 void OstConverterWidget::onErrorOccurred(int file_index, QString message) {
@@ -634,17 +636,16 @@ OstConversionConfig OstConverterWidget::buildConfig() const {
     // Recovery mode
     if (m_deep_recovery_check->isChecked()) {
         config.recovery_mode = RecoveryMode::DeepRecovery;
-    } else if (m_skip_corrupt_check->isChecked()) {
-        config.recovery_mode = RecoveryMode::SkipCorrupt;
     }
 
     const bool filters_enabled = m_filters_enabled_check != nullptr &&
                                  m_filters_enabled_check->isChecked();
 
-    // Date filter
+    // Date filter. The range covers whole days: a QDateEdit's time is midnight, and using it for
+    // the end date left out everything sent on that day.
     if (filters_enabled && m_date_filter_check->isChecked()) {
-        config.date_from = m_date_from_edit->dateTime();
-        config.date_to = m_date_to_edit->dateTime();
+        config.date_from = m_date_from_edit->date().startOfDay();
+        config.date_to = m_date_to_edit->date().endOfDay();
     }
 
     // Sender / recipient filters
@@ -661,11 +662,6 @@ void OstConverterWidget::updateQueueRow(int row, const OstConversionJob& job) {
     m_queue_table->setItem(row,
                            ost::ColSize,
                            new QTableWidgetItem(formatBytes(job.file_size_bytes)));
-    m_queue_table->setItem(row,
-                           ost::ColItems,
-                           new QTableWidgetItem(job.estimated_items > 0
-                                                    ? QStringLiteral("~%1").arg(job.estimated_items)
-                                                    : tr("-")));
     m_queue_table->setItem(row, ost::ColStatus, new QTableWidgetItem(statusLabel(job.status)));
     m_queue_table->setItem(row, ost::ColProgress, new QTableWidgetItem(QString()));
 }
@@ -674,6 +670,17 @@ QString OstConverterWidget::formatBytes(qint64 bytes) {
     // The shared compact byte style. This class carried its own copy; five existed across
     // the tree, differing only in which unit got which precision.
     return sak::formatBytesCompact(bytes);
+}
+
+QString OstConverterWidget::progressSummary(const OstConversionResult& result) {
+    QStringList parts{tr("%1 items").arg(result.items_converted)};
+    if (result.items_failed > 0) {
+        parts.append(tr("%1 failed").arg(result.items_failed));
+    }
+    if (result.itemsSkipped() > 0) {
+        parts.append(tr("%1 not mail").arg(result.itemsSkipped()));
+    }
+    return parts.join(QStringLiteral(", "));
 }
 
 QString OstConverterWidget::statusLabel(OstConversionJob::Status status) {
@@ -715,7 +722,8 @@ void OstConverterWidget::loadSettings() {
                               QStringLiteral("imapPort"),
                               QStringLiteral("imapSsl"),
                               QStringLiteral("imapAuth"),
-                              QStringLiteral("imapUser")}) {
+                              QStringLiteral("imapUser"),
+                              QStringLiteral("skipCorrupt")}) {
         settings.remove(stale);
     }
 
@@ -729,7 +737,6 @@ void OstConverterWidget::loadSettings() {
         settings.value(QStringLiteral("recoverDeleted"), false).toBool());
     m_deep_recovery_check->setChecked(
         settings.value(QStringLiteral("deepRecovery"), false).toBool());
-    m_skip_corrupt_check->setChecked(settings.value(QStringLiteral("skipCorrupt"), false).toBool());
 
     settings.endGroup();
 
@@ -749,7 +756,6 @@ void OstConverterWidget::saveSettings() {
     settings.setValue(QStringLiteral("filtersEnabled"), m_filters_enabled_check->isChecked());
     settings.setValue(QStringLiteral("recoverDeleted"), m_recover_deleted_check->isChecked());
     settings.setValue(QStringLiteral("deepRecovery"), m_deep_recovery_check->isChecked());
-    settings.setValue(QStringLiteral("skipCorrupt"), m_skip_corrupt_check->isChecked());
 
     settings.endGroup();
 }

@@ -29,6 +29,20 @@ OstConverterController::~OstConverterController() {
     cancelAll();
 }
 
+QString OstConverterController::refusalForFile(const QString& path) {
+    const QString suffix = QFileInfo(path).suffix().toLower();
+    if (suffix == QStringLiteral("pst") || suffix == QStringLiteral("ost")) {
+        return {};
+    }
+    if (suffix == QStringLiteral("nst")) {
+        return tr("%1 was not added: NST files, Outlook's cache of Microsoft 365 group mail, are "
+                  "not supported.")
+            .arg(QFileInfo(path).fileName());
+    }
+    return tr("%1 was not added: only PST and OST files can be converted.")
+        .arg(QFileInfo(path).fileName());
+}
+
 // ============================================================================
 // Queue Management
 // ============================================================================
@@ -37,6 +51,13 @@ void OstConverterController::addFile(const QString& path) {
     const QFileInfo fi(path);
     if (!fi.exists() || !fi.isFile()) {
         logWarning("OST Converter: file does not exist: {}", path.toStdString());
+        return;
+    }
+
+    const QString refusal = refusalForFile(path);
+    if (!refusal.isEmpty()) {
+        logWarning("OST Converter: {}", refusal.toStdString());
+        Q_EMIT errorOccurred(-1, refusal);
         return;
     }
 
@@ -269,6 +290,8 @@ void OstConverterController::finalizeBatch() {
     for (const auto& file_result : m_batch_result.file_results) {
         m_batch_result.total_items_converted += file_result.items_converted;
         m_batch_result.total_items_recovered += file_result.items_recovered;
+        m_batch_result.total_items_failed += file_result.items_failed;
+        m_batch_result.total_items_skipped += file_result.itemsSkipped();
         m_batch_result.total_bytes_written += file_result.bytes_written;
     }
 

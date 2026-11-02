@@ -254,6 +254,9 @@ QString ConversionReportGenerator::buildSummaryStatsHtml(const OstConversionBatc
                  QStringLiteral("Failed"));
     }
     add_stat(QString::number(batch.total_items_converted), QStringLiteral("Items Converted"));
+    if (batch.total_items_skipped > 0) {
+        add_stat(QString::number(batch.total_items_skipped), QStringLiteral("Not Mail, Left Out"));
+    }
     if (batch.total_items_recovered > 0) {
         add_stat(QString::number(batch.total_items_recovered), QStringLiteral("Items Recovered"));
     }

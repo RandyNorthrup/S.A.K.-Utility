@@ -48,7 +48,6 @@ constexpr int kTimeoutThreadTerminateMs = 2000;
 enum QueueColumn {
     ColFile = 0,
     ColSize,
-    ColItems,
     ColStatus,
     ColProgress,
     ColCount
@@ -56,7 +55,6 @@ enum QueueColumn {
 
 constexpr int kQueueFileColumnWidth = 300;
 constexpr int kQueueSizeColumnWidth = 80;
-constexpr int kQueueItemsColumnWidth = 60;
 constexpr int kQueueStatusColumnWidth = 100;
 
 }  // namespace sak::ost
