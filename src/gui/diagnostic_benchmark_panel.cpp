@@ -629,8 +629,8 @@ QHBoxLayout* DiagnosticBenchmarkPanel::createStressConfigRow() {
     m_stress_thermal_limit_spin->setValue(kStressThermalDefaultC);
     m_stress_thermal_limit_spin->setAccessibleName(QStringLiteral("Thermal Limit"));
     m_stress_thermal_limit_spin->setToolTip(
-        QStringLiteral("Maximum temperature before the stress "
-                       "test is paused"));
+        QStringLiteral("If the CPU reaches this temperature the stress test stops and reports "
+                       "FAILED. Only the CPU is watched, and only if it has a readable sensor."));
     config_row->addWidget(m_stress_thermal_limit_spin);
 
     config_row->addStretch();
@@ -705,7 +705,7 @@ QGroupBox* DiagnosticBenchmarkPanel::createThermalSection() {
 
     add_thermal_row("CPU:", m_thermal_cpu_label, m_thermal_cpu_bar, kCpuThermalMaxC);
     add_thermal_row("GPU:", m_thermal_gpu_label, m_thermal_gpu_bar, kGpuThermalMaxC);
-    add_thermal_row("Disk 0:", m_thermal_disk_label, m_thermal_disk_bar, kDiskThermalMaxC);
+    add_thermal_row("Hottest disk:", m_thermal_disk_label, m_thermal_disk_bar, kDiskThermalMaxC);
 
     return group;
 }

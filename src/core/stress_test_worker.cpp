@@ -128,7 +128,8 @@ HANDLE openExclusiveStressFile(const QString& drive) {
     const QString name = QString("sak_stress_test_%1_%2.tmp")
                              .arg(GetCurrentProcessId())
                              .arg(QDateTime::currentMSecsSinceEpoch());
-    const std::wstring wpath = QDir(drive).filePath(name).toStdWString();
+    const std::wstring wpath =
+        QDir::toNativeSeparators(QDir(diskTestFolder(drive)).filePath(name)).toStdWString();
     HANDLE h = CreateFileW(wpath.c_str(),
                            GENERIC_WRITE | GENERIC_READ | DELETE,
                            0,           // exclusive: nothing can swap or delete the file mid-run

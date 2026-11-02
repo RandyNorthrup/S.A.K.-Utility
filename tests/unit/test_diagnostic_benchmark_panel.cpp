@@ -7,6 +7,7 @@
 
 #include "sak/actions/generate_system_report_action.h"
 #include "sak/diagnostic_benchmark_panel.h"
+#include "sak/diagnostic_controller.h"
 #include "sak/quick_action_controller.h"
 #include "sak/thermal_monitor.h"
 
@@ -14,10 +15,14 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QLabel>
+#include <QMessageBox>
 #include <QPushButton>
 #include <QScopeGuard>
 #include <QSignalSpy>
+#include <QSpinBox>
 #include <QStandardPaths>
+#include <QTableWidget>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QtTest/QtTest>
@@ -77,6 +82,11 @@ private Q_SLOTS:
     void thermalPollsOnlyWhileShown();
     void inventoryReportAsksWhereToSaveAndSaysWhereItWent();
     void inventoryReportCancelledFolderRunsNothing();
+    void stressStatusSaysWhenThereIsNoSensor();
+    void thermalLimitTooltipSaysWhatHappens();
+    void anUnreadableDriveShowsNoFakeNumbers();
+    void thermalDiskRowSaysItIsTheHottestDisk();
+    void exportScanReportWritesTheHtmlItSays();
 
 private:
     bool m_nativeDialogsWereDisabled{false};
@@ -211,6 +221,127 @@ void DiagnosticBenchmarkPanelTests::inventoryReportCancelledFolderRunsNothing() 
     QVERIFY(button->isEnabled());
     QVERIFY(statusTexts(log).contains(
         QStringLiteral("System Inventory Report cancelled: no folder was chosen")));
+}
+
+// The row shows the hottest disk in the PC, not disk 0.
+void DiagnosticBenchmarkPanelTests::thermalDiskRowSaysItIsTheHottestDisk() {
+    sak::QuickActionController quick_actions;
+    sak::DiagnosticBenchmarkPanel panel(quick_actions);
+    const auto labels = panel.findChildren<QLabel*>();
+    QVERIFY(std::ranges::any_of(labels, [](const QLabel* label) {
+        return label->text() == QStringLiteral("Hottest disk:");
+    }));
+    QVERIFY(std::ranges::none_of(labels, [](const QLabel* label) {
+        return label->text() == QStringLiteral("Disk 0:");
+    }));
+}
+
+// Its tooltip says HTML. JSON and CSV have their own buttons beside it.
+void DiagnosticBenchmarkPanelTests::exportScanReportWritesTheHtmlItSays() {
+    QTemporaryDir output;
+    QVERIFY(output.isValid());
+    sak::QuickActionController quick_actions;
+    sak::DiagnosticBenchmarkPanel panel(quick_actions);
+    auto* controller = panel.findChild<sak::DiagnosticController*>();
+    QVERIFY(controller != nullptr);
+    // A result to report, without running a real scan.
+    QVERIFY(QMetaObject::invokeMethod(controller,
+                                      "onCpuBenchmarkComplete",
+                                      Qt::DirectConnection,
+                                      Q_ARG(sak::CpuBenchmarkResult, sak::CpuBenchmarkResult{})));
+
+    QPushButton* button = nullptr;
+    for (auto* candidate : panel.findChildren<QPushButton*>()) {
+        if (candidate->accessibleName() == QStringLiteral("Export Scan Report")) {
+            button = candidate;
+        }
+    }
+    QVERIFY(button != nullptr);
+    inspectNextFolderDialog([&](QFileDialog* dialog) {
+        if (dialog != nullptr) {
+            dialog->setDirectory(output.path());
+            static_cast<QDialog*>(dialog)->accept();
+        }
+    });
+    // The success box blocks until answered.
+    QSignalSpy generated(controller, &sak::DiagnosticController::reportsGenerated);
+    QTimer closer;
+    QObject::connect(&closer, &QTimer::timeout, &panel, []() {
+        if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+            box->accept();
+        }
+    });
+    closer.start(50);
+    button->setEnabled(true);
+    button->click();
+    QTRY_COMPARE(generated.count(), 1);
+
+    const QStringList written = QDir(output.path()).entryList(QDir::Files);
+    QCOMPARE(written.size(), 1);
+    QVERIFY2(written.first().endsWith(QStringLiteral(".html")), qPrintable(written.first()));
+}
+
+void DiagnosticBenchmarkPanelTests::stressStatusSaysWhenThereIsNoSensor() {
+    sak::QuickActionController quick_actions;
+    sak::DiagnosticBenchmarkPanel panel(quick_actions);
+    auto* controller = panel.findChild<sak::DiagnosticController*>();
+    QVERIFY(controller != nullptr);
+    const auto temperatureText = [&panel]() {
+        for (const auto* label : panel.findChildren<QLabel*>()) {
+            if (label->text().startsWith(QStringLiteral("CPU Temp:"))) {
+                return label->text();
+            }
+        }
+        return QString();
+    };
+
+    Q_EMIT controller->stressTestStatus(5, -1.0, 0);
+    QVERIFY2(temperatureText().contains(QStringLiteral("not being enforced")),
+             qPrintable(temperatureText()));
+    QVERIFY2(!temperatureText().contains(QStringLiteral("-1")), qPrintable(temperatureText()));
+
+    Q_EMIT controller->stressTestStatus(6, 71.5, 0);
+    QCOMPARE(temperatureText(), QStringLiteral("CPU Temp: 71.5 degC"));
+}
+
+void DiagnosticBenchmarkPanelTests::thermalLimitTooltipSaysWhatHappens() {
+    sak::QuickActionController quick_actions;
+    sak::DiagnosticBenchmarkPanel panel(quick_actions);
+    QSpinBox* limit = nullptr;
+    for (auto* spin : panel.findChildren<QSpinBox*>()) {
+        if (spin->accessibleName() == QStringLiteral("Thermal Limit")) {
+            limit = spin;
+        }
+    }
+    QVERIFY(limit != nullptr);
+    QVERIFY2(limit->toolTip().contains(QStringLiteral("stops")), qPrintable(limit->toolTip()));
+    QVERIFY2(!limit->toolTip().contains(QStringLiteral("paused")), qPrintable(limit->toolTip()));
+}
+
+void DiagnosticBenchmarkPanelTests::anUnreadableDriveShowsNoFakeNumbers() {
+    sak::QuickActionController quick_actions;
+    sak::DiagnosticBenchmarkPanel panel(quick_actions);
+    auto* controller = panel.findChild<sak::DiagnosticController*>();
+    QVERIFY(controller != nullptr);
+    sak::SmartReport unreadable;
+    unreadable.model = QStringLiteral("PhysicalDrive1");
+    unreadable.overall_health = sak::SmartHealthStatus::Unknown;
+    unreadable.warnings = {QStringLiteral("Could not read this drive")};
+    Q_EMIT controller->smartAnalysisComplete({unreadable});
+
+    auto* table = panel.findChild<QTableWidget*>();
+    bool checked = false;
+    for (auto* candidate : panel.findChildren<QTableWidget*>()) {
+        if (candidate->accessibleName() == QStringLiteral("SMART Health Table")) {
+            table = candidate;
+            checked = true;
+        }
+    }
+    QVERIFY(checked);
+    QCOMPARE(table->rowCount(), 1);
+    QCOMPARE(table->item(0, 2)->text(), QStringLiteral("N/A"));
+    QCOMPARE(table->item(0, 3)->text(), QStringLiteral("--"));
+    QCOMPARE(table->item(0, 4)->text(), QStringLiteral("--"));
 }
 
 QTEST_MAIN(DiagnosticBenchmarkPanelTests)

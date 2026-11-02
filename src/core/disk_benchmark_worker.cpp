@@ -625,8 +625,8 @@ bool DiskBenchmarkWorker::createTestFile() {
     const QString name = makeUniqueBenchmarkFileName(GetCurrentProcessId(),
                                                      QDateTime::currentMSecsSinceEpoch(),
                                                      seq);
-    const QString path = QDir(m_config.drive_path).filePath(name);
-    const std::wstring wpath = path.toStdWString();
+    const QString path = QDir(diskTestFolder(m_config.drive_path)).filePath(name);
+    const std::wstring wpath = QDir::toNativeSeparators(path).toStdWString();
 
     // Create exclusively with direct I/O flags -- one call is both the atomic
     // claim (CREATE_NEW) and the open, so there is no check-then-open window.

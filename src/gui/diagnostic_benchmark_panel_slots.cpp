@@ -186,6 +186,10 @@ void DiagnosticBenchmarkPanel::onSmartAnalysisComplete(const QVector<SmartReport
     for (int row = 0; row < reports.size(); ++row) {
         const auto& report = reports[row];
 
+        // A drive that could not be read has no temperature or hours to show: zeros would read as
+        // measurements.
+        const bool read = report.overall_health != SmartHealthStatus::Unknown;
+
         m_smart_table->setItem(row, SmartColDrive, new QTableWidgetItem(report.model));
         m_smart_table->setItem(row, SmartColType, new QTableWidgetItem(report.interface_type));
 
@@ -210,14 +214,17 @@ void DiagnosticBenchmarkPanel::onSmartAnalysisComplete(const QVector<SmartReport
         }
         m_smart_table->setItem(row, SmartColHealth, health_item);
 
-        m_smart_table->setItem(row,
-                               SmartColTemperature,
-                               new QTableWidgetItem(
-                                   QString("%1 degC").arg(report.temperature_celsius, 0, 'f', 0)));
+        m_smart_table->setItem(
+            row,
+            SmartColTemperature,
+            new QTableWidgetItem(read
+                                     ? QString("%1 degC").arg(report.temperature_celsius, 0, 'f', 0)
+                                     : QStringLiteral("--")));
 
         m_smart_table->setItem(row,
                                SmartColPowerOnHours,
-                               new QTableWidgetItem(QString::number(report.power_on_hours)));
+                               new QTableWidgetItem(read ? QString::number(report.power_on_hours)
+                                                         : QStringLiteral("--")));
 
         // Wear level: NVMe percentage or "--" for SATA
         const QString wear = report.nvme_health.has_value()
@@ -486,11 +493,13 @@ void DiagnosticBenchmarkPanel::onStressTestComplete(const StressTestResult& resu
             sak::ui::kFontWeightSemibold, sak::ui::kStatusColorError));
     }
 
-    logMessage(QString("Stress test %1 (%2s, %3 errors, max temp: %4 degC)")
+    logMessage(QString("Stress test %1 (%2s, %3 errors, max temp: %4)")
                    .arg(result.passed ? "PASSED" : "FAILED")
                    .arg(result.duration_seconds)
                    .arg(result.errors_detected)
-                   .arg(result.max_cpu_temp, 0, 'f', 1));
+                   .arg(result.cpuTemperatureRead()
+                            ? QString("%1 degC").arg(result.max_cpu_temp, 0, 'f', 1)
+                            : QStringLiteral("no reading, thermal limit not enforced")));
     Q_EMIT statusMessage(result.passed ? "Stress test passed" : "Stress test FAILED",
                          sak::kTimerStatusDefaultMs);
 }
@@ -518,7 +527,17 @@ void DiagnosticBenchmarkPanel::onStressTestStatus(int elapsed_seconds,
             .arg(min, sak::kTimeFieldWidth, sak::kDecimalBase, QChar('0'))
             .arg(sec, sak::kTimeFieldWidth, sak::kDecimalBase, QChar('0')));
 
-    m_stress_temp_label->setText(QString("CPU Temp: %1 degC").arg(cpu_temp, 0, 'f', 1));
+    // ThermalMonitor::queryCpuTemperature answers -1.0 for "no reading". A number here would read
+    // as a measurement, and it would hide that the thermal limit is doing nothing.
+    if (cpu_temp > 0.0) {
+        m_stress_temp_label->setText(QString("CPU Temp: %1 degC").arg(cpu_temp, 0, 'f', 1));
+        m_stress_temp_label->setStyleSheet(QString());
+    } else {
+        m_stress_temp_label->setText(
+            QStringLiteral("CPU Temp: no reading - the thermal limit is not being enforced"));
+        m_stress_temp_label->setStyleSheet(sak::ui::fontWeightAndColorStyle(
+            sak::ui::kFontWeightSemibold, sak::ui::kStatusColorWarning));
+    }
 
     m_stress_errors_label->setText(QString("Errors: %1").arg(errors));
 
@@ -778,12 +797,13 @@ void DiagnosticBenchmarkPanel::onGenerateReportClicked() {
         return;
     }
 
-    logMessage(QString("Generating reports in %1...").arg(dir));
+    // HTML only: JSON and CSV have their own buttons beside this one.
+    logMessage(QString("Generating report in %1...").arg(dir));
     m_controller->generateReport(dir,
                                  m_report_technician_edit->text(),
                                  m_report_ticket_edit->text(),
                                  m_report_notes_edit->toPlainText(),
-                                 "html,json,csv");
+                                 "html");
 }
 
 void DiagnosticBenchmarkPanel::onReportsGenerated(const QString& output_dir) {

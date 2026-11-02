@@ -6,6 +6,7 @@
 
 #include "sak/diagnostic_types.h"
 
+#include <QDir>
 #include <QtTest/QtTest>
 
 using namespace sak;
@@ -14,6 +15,7 @@ class DiagnosticTypesTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void diskTestFolderAvoidsTheSystemRoot();
     void cpuBenchmarkResult_defaults();
     void diskBenchmarkConfig_defaults();
     void diskBenchmarkResult_defaults();
@@ -152,6 +154,21 @@ void DiagnosticTypesTests::smartHealthStatus_enum() {
     QVERIFY(SmartHealthStatus::Healthy != SmartHealthStatus::Warning);
     QVERIFY(SmartHealthStatus::Warning != SmartHealthStatus::Critical);
     QVERIFY(SmartHealthStatus::Critical != SmartHealthStatus::Unknown);
+}
+
+void DiagnosticTypesTests::diskTestFolderAvoidsTheSystemRoot() {
+    // The drive that holds the temp folder uses the temp folder: its root may need administrator
+    // rights. A disk test on that drive still measures that disk.
+    const QString temp = QDir::tempPath();
+    const QString temp_drive = temp.left(2) + QStringLiteral("\\");
+    QCOMPARE(sak::diskTestFolder(temp_drive), temp);
+    QCOMPARE(sak::diskTestFolder(temp_drive.toLower()), temp);
+
+    // Any other drive keeps its root: the test has to land on the drive that was picked.
+    const QString other = (temp.startsWith(QStringLiteral("Q"), Qt::CaseInsensitive))
+                              ? QStringLiteral("R:\\")
+                              : QStringLiteral("Q:\\");
+    QCOMPARE(sak::diskTestFolder(other), other);
 }
 
 QTEST_MAIN(DiagnosticTypesTests)
