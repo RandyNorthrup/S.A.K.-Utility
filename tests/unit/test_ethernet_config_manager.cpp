@@ -63,9 +63,13 @@ void TestEthernetConfigManager::adapterNamesFromJson_readsAnyLanguageAndAnyCount
     const QString german = QStringLiteral("Ethernet-Verbindung 2");
     const QString wifi = QStringLiteral("WLAN");
     const QString japanese = QString::fromUtf8("\xE3\x82\xA4\xE3\x83\xBC\xE3\x82\xB5\xE3\x83\x8D");
-    const QString json = QStringLiteral("[\"%1\",\"%2\",\"%3\"]").arg(german, wifi, japanese);
+    const QString json = QStringLiteral("[\"%1\",\"%2\",\"%3\"]").arg(wifi, japanese, german);
     QCOMPARE(EthernetConfigManager::adapterNamesFromJson(json),
              (QStringList{german, wifi, japanese}));
+    // The script writes anything outside ASCII as \\uXXXX, so it survives any code page.
+    QCOMPARE(EthernetConfigManager::adapterNamesFromJson(
+                 QStringLiteral("[\"\\u30a4\\u30fc\\u30b5\\u30cd\"]")),
+             QStringList{japanese});
     QVERIFY(EthernetConfigManager::adapterNamesFromJson(QStringLiteral("[]")).isEmpty());
 }
 
@@ -85,9 +89,6 @@ void TestEthernetConfigManager::listEthernetAdapters_readsThisPcsAdapters() {
     QVERIFY2(errors.isEmpty(),
              errors.isEmpty() ? "" : qPrintable(errors.first().first().toString()));
     QVERIFY(!names.isEmpty());
-    QStringList sorted = names;
-    sorted.sort(Qt::CaseInsensitive);
-    QCOMPARE(names, sorted);
 }
 
 void TestEthernetConfigManager::snapshotFromNetIpConfig_isLocaleIndependent() {

@@ -36,12 +36,14 @@ namespace {
 // slower than the single netsh call it replaced. Bounded, not unbounded: a scan that never
 // returns must still fail the capture rather than hang the caller.
 constexpr int kAdapterScanTimeoutMs = 30'000;
-// The adapter names and nothing else, as JSON so a name with any characters comes back whole.
-// -InputObject keeps it an array for one adapter, which piping would unwrap to a bare string.
+// The adapter names and nothing else, as JSON. -InputObject keeps it an array for one adapter,
+// which piping would unwrap to a bare string. Non-ASCII goes out as \\uXXXX, so a name in any
+// language survives whatever code page the output is read back through.
 constexpr auto kAdapterNamesPowerShell =
-    "[Console]::OutputEncoding = [System.Text.Encoding]::UTF8; "
-    "ConvertTo-Json -Compress -InputObject @(Get-NetAdapter -ErrorAction Stop | "
-    "Sort-Object -Property Name | ForEach-Object { $_.Name })";
+    "$names = ConvertTo-Json -Compress -InputObject @(Get-NetAdapter -ErrorAction Stop | "
+    "ForEach-Object { $_.Name }); "
+    "[regex]::Replace($names, '[^\\x00-\\x7F]', "
+    "{ param($c) '\\u{0:x4}' -f [int][char]$c.Value })";
 
 // 4 MiB. An Ethernet config backup is a few hundred bytes; a larger file is not a trusted backup
 // and must be rejected before it is read into memory (self-DoS guard).
@@ -408,6 +410,8 @@ QStringList EthernetConfigManager::adapterNamesFromJson(const QString& json) {
             names.append(name);
         }
     }
+    // Windows returns them in its own order, which is no use to someone choosing from a list.
+    names.sort(Qt::CaseInsensitive);
     return names;
 }
 
