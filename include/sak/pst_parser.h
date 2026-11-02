@@ -14,6 +14,7 @@
 
 #include "sak/email_constants.h"
 #include "sak/email_types.h"
+#include "sak/pst_named_properties.h"
 
 #include <QFile>
 #include <QHash>
@@ -163,6 +164,12 @@ private:
     };
     QHash<uint64_t, BbtEntry> m_bbt_cache;
 
+    /// Property id -> name for the named properties the app reads (MS-PST 2.4.7).
+    QHash<uint16_t, sak::pst::NamedPropertyKey> m_named_properties;
+
+    /// How deep attached messages are nested in the read in progress.
+    int m_embedded_depth = 0;
+
     // -- Internal helper types --
 
     /// Parsed BTree page metadata (NDB layer)
@@ -222,8 +229,11 @@ private:
     /// Populate file-level metadata after structural parse succeeds
     void populateFileInfo(const QString& file_path);
 
-    /// Load message-store display name when present
-    void loadMessageStoreDisplayName();
+    /// Load the message store's display name and flag its IPM subtree in the folder tree
+    void loadMessageStoreProperties();
+
+    /// Load the store's Name-to-ID map
+    void loadNamedPropertyMap();
 
     /// Read and size-check the fixed PST header prefix
     [[nodiscard]] std::expected<QByteArray, sak::error_code> readHeaderBytes();
@@ -544,9 +554,26 @@ private:
 
     /// Read the contents table for a folder
     [[nodiscard]] std::expected<QVector<sak::PstItemSummary>, sak::error_code> readContentsTable(
-        uint64_t contents_nid, int offset, int limit);
+        uint64_t contents_nid, int offset, int limit, int* total_rows = nullptr);
 
     /// Read a full message/contact/calendar/task item
+    [[nodiscard]] static uint64_t contentsTableNid(uint64_t folder_node_id);
+    [[nodiscard]] std::expected<QVector<sak::MapiProperty>, sak::error_code>
+    readPropertyContextForNode(const sak::PstNode& node);
+    [[nodiscard]] std::expected<sak::PstItemDetail, sak::error_code> readMessageForNode(
+        const sak::PstNode& node, uint64_t message_nid);
+    void applyMessageProperties(sak::PstItemDetail& detail,
+                                const QVector<sak::MapiProperty>& props) const;
+    [[nodiscard]] std::expected<QVector<sak::PstAttachmentInfo>, sak::error_code>
+    readAttachmentsForNode(const sak::PstNode& node);
+    [[nodiscard]] std::expected<QByteArray, sak::error_code> readAttachmentDataForNode(
+        const sak::PstNode& node, int attachment_index);
+    [[nodiscard]] std::expected<QByteArray, sak::error_code> extractObjectAttachment(
+        const sak::MapiProperty& data_prop,
+        const QVector<sak::MapiProperty>& att_props,
+        const HeapContext& ctx);
+    [[nodiscard]] std::expected<QByteArray, sak::error_code> embeddedMessageAsEml(
+        const sak::PstNode& node);
     [[nodiscard]] std::expected<sak::PstItemDetail, sak::error_code> readMessage(
         uint64_t message_nid);
 

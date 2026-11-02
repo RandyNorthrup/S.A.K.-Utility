@@ -47,6 +47,18 @@ const QStringList& nonMailFolderNames() {
     return kNames;
 }
 
+const PstFolder* findFlaggedIpmSubtree(const QVector<PstFolder>& folders) {
+    for (const auto& folder : folders) {
+        if (folder.is_ipm_subtree) {
+            return &folder;
+        }
+        if (const PstFolder* found = findFlaggedIpmSubtree(folder.children)) {
+            return found;
+        }
+    }
+    return nullptr;
+}
+
 void collectInto(const PstFolder& folder, QVector<uint64_t>& out) {
     if (!isMailFolder(folder.display_name, folder.container_class)) {
         return;
@@ -75,7 +87,43 @@ bool isMailFolder(const QString& display_name, const QString& container_class) {
     });
 }
 
+static const PstFolder* findNamedIpmSubtree(const QVector<PstFolder>& folders);
+
+bool isTaskOrNoteFolder(const QString& display_name, const QString& container_class) {
+    const bool holds_them = container_class.startsWith(QLatin1String("IPF.Task")) ||
+                            container_class.startsWith(QLatin1String("IPF.StickyNote"));
+    // Exchange's own bookkeeping folders can carry these classes too.
+    return holds_them &&
+           std::ranges::none_of(nonMailFolderNames(), [&display_name](const QString& n) {
+               return display_name.compare(n, Qt::CaseInsensitive) == 0;
+           });
+}
+
+const PstFolder* findFolderByNodeId(const QVector<PstFolder>& tree,
+                                    std::optional<uint64_t> node_id) {
+    if (!node_id.has_value()) {
+        return nullptr;
+    }
+    for (const auto& folder : tree) {
+        if (folder.node_id == *node_id) {
+            return &folder;
+        }
+        if (const PstFolder* found = findFolderByNodeId(folder.children, node_id)) {
+            return found;
+        }
+    }
+    return nullptr;
+}
+
 const PstFolder* findIpmSubtree(const QVector<PstFolder>& folders) {
+    // The store's own pointer wins: the folder's name is localized and varies by Outlook version.
+    if (const PstFolder* flagged = findFlaggedIpmSubtree(folders)) {
+        return flagged;
+    }
+    return findNamedIpmSubtree(folders);
+}
+
+static const PstFolder* findNamedIpmSubtree(const QVector<PstFolder>& folders) {
     const PstFolder* best = nullptr;
 
     for (const auto& folder : folders) {
@@ -88,7 +136,7 @@ const PstFolder* findIpmSubtree(const QVector<PstFolder>& folders) {
                 best = &folder;
             }
         }
-        const PstFolder* found = findIpmSubtree(folder.children);
+        const PstFolder* found = findNamedIpmSubtree(folder.children);
         if (found != nullptr && !found->children.isEmpty()) {
             return found;
         }

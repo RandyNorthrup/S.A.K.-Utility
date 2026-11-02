@@ -18,6 +18,7 @@
 #include <QVector>
 
 #include <cstdint>
+#include <optional>
 
 namespace sak {
 
@@ -45,5 +46,13 @@ namespace sak {
 /// tree renders -- addFolderToTree returns early on a hidden folder, so its children
 /// never appear.
 [[nodiscard]] QVector<uint64_t> mailFolderNodeIds(const QVector<PstFolder>& tree);
+
+/// Whether a folder holds tasks or sticky notes. They are not mail, so "all mail folders" leaves
+/// them out, but they are browsed in the folder tree like mail.
+[[nodiscard]] bool isTaskOrNoteFolder(const QString& display_name, const QString& container_class);
+
+/// The folder a node id names, or nullptr when the id is empty or not in the tree.
+[[nodiscard]] const PstFolder* findFolderByNodeId(const QVector<PstFolder>& tree,
+                                                  std::optional<uint64_t> node_id);
 
 }  // namespace sak

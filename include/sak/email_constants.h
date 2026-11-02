@@ -245,6 +245,7 @@ constexpr uint16_t kPropTypeBoolean = 0x000B;
 constexpr uint16_t kPropTypeFloat64 = 0x0005;
 constexpr uint16_t kPropTypeCurrency = 0x0006;
 constexpr uint16_t kPropTypeAppTime = 0x0007;
+constexpr uint16_t kPropTypeObject = 0x000D;
 constexpr uint16_t kPropTypeInt64 = 0x0014;
 constexpr uint16_t kPropTypeString8 = 0x001E;
 constexpr uint16_t kPropTypeUnicode = 0x001F;
@@ -289,6 +290,13 @@ constexpr uint16_t kPropIdContentCount = 0x3602;
 constexpr uint16_t kPropIdContentUnreadCount = 0x3603;
 constexpr uint16_t kPropIdSubfolders = 0x360A;
 constexpr uint16_t kPropIdContainerClass = 0x3613;
+
+// -- Message store properties --
+constexpr uint16_t kPropIdIpmSubtreeEntryId = 0x35E0;
+
+/// An EntryID is rgbFlags(4) + ProviderUID(16) + the object's NID(4).
+constexpr int kEntryIdBytes = 24;
+constexpr int kEntryIdNidOffset = 20;
 
 // -- Attachment properties --
 constexpr uint16_t kPropIdAttachFilename = 0x3704;

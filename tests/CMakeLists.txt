@@ -5893,6 +5893,189 @@ add_test(NAME test_pst_parser COMMAND test_pst_parser
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_pst_parser")
 
+# test_pst_store_structure - whole generated stores: the shapes real Outlook files have
+add_executable(test_pst_store_structure
+    unit/test_pst_store_structure.cpp
+    support/pst_store_builder.h
+)
+set_target_properties(test_pst_store_structure PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_pst_store_structure PRIVATE
+    sak_core sak_foundation
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_pst_store_structure PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_pst_store_structure COMMAND test_pst_store_structure
+         -o "${TEST_OUTPUT_DIR}/test_pst_store_structure.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_pst_store_structure")
+
+# test_pst_rtf_body - compressed RTF bodies: MS-OXRTFCP vectors and text extraction
+add_executable(test_pst_rtf_body
+    unit/test_pst_rtf_body.cpp
+)
+set_target_properties(test_pst_rtf_body PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_pst_rtf_body PRIVATE
+    sak_core sak_foundation
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_pst_rtf_body PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_pst_rtf_body COMMAND test_pst_rtf_body
+         -o "${TEST_OUTPUT_DIR}/test_pst_rtf_body.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_pst_rtf_body")
+
+# test_ost_conversion_scope - what a store-to-MBOX conversion covers, on whole generated stores
+add_executable(test_ost_conversion_scope
+    unit/test_ost_conversion_scope.cpp
+    support/pst_store_builder.h
+)
+set_target_properties(test_ost_conversion_scope PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ost_conversion_scope PRIVATE
+    sak_core sak_foundation
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_ost_conversion_scope PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ost_conversion_scope COMMAND test_ost_conversion_scope
+         -o "${TEST_OUTPUT_DIR}/test_ost_conversion_scope.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_ost_conversion_scope")
+
+# test_ost_converter_widget - the converter tab: queue row outcomes and the options it hands on
+add_executable(test_ost_converter_widget
+    unit/test_ost_converter_widget.cpp
+    ../resources/icons.qrc
+)
+set_target_properties(test_ost_converter_widget PROPERTIES
+    AUTOMOC ON
+    AUTORCC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_ost_converter_widget PRIVATE
+    sak_gui sak_ai_core sak_win32mcp sak_core sak_partition_fs sak_foundation
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_ost_converter_widget PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_ost_converter_widget COMMAND test_ost_converter_widget
+         -o "${TEST_OUTPUT_DIR}/test_ost_converter_widget.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+# GUI suite on the offscreen platform.
+set_tests_properties(test_ost_converter_widget PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+message(STATUS "Added unit test: test_ost_converter_widget")
+
+# test_email_tools_mailbox_views - the Inspector's views over a real controller and generated stores
+add_executable(test_email_tools_mailbox_views
+    unit/test_email_tools_mailbox_views.cpp
+    support/pst_store_builder.h
+    ../resources/icons.qrc
+)
+set_target_properties(test_email_tools_mailbox_views PROPERTIES
+    AUTOMOC ON
+    AUTORCC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_email_tools_mailbox_views PRIVATE
+    sak_gui sak_ai_core sak_win32mcp sak_core sak_partition_fs sak_foundation
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_email_tools_mailbox_views PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_email_tools_mailbox_views COMMAND test_email_tools_mailbox_views
+         -o "${TEST_OUTPUT_DIR}/test_email_tools_mailbox_views.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+# GUI suite on the offscreen platform.
+set_tests_properties(test_email_tools_mailbox_views PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+message(STATUS "Added unit test: test_email_tools_mailbox_views")
+
+# test_vulnerability_panel - what the scan outcome says on screen
+add_executable(test_vulnerability_panel
+    unit/test_vulnerability_panel.cpp
+    ../resources/icons.qrc
+)
+set_target_properties(test_vulnerability_panel PROPERTIES
+    AUTOMOC ON
+    AUTORCC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_vulnerability_panel PRIVATE
+    sak_gui sak_ai_core sak_win32mcp sak_core sak_partition_fs sak_foundation
+    Qt6::Core Qt6::Gui Qt6::Widgets Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_vulnerability_panel PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_vulnerability_panel COMMAND test_vulnerability_panel
+         -o "${TEST_OUTPUT_DIR}/test_vulnerability_panel.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+# GUI suite on the offscreen platform.
+set_tests_properties(test_vulnerability_panel PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+message(STATUS "Added unit test: test_vulnerability_panel")
+
+# test_harbor_lane_sample - the fictional mailbox the wiki's screenshots open, proved openable
+add_executable(test_harbor_lane_sample
+    unit/test_harbor_lane_sample.cpp
+    support/harbor_lane_sample.h
+    support/pst_store_builder.h
+)
+set_target_properties(test_harbor_lane_sample PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_harbor_lane_sample PRIVATE
+    sak_core sak_foundation
+    Qt6::Core Qt6::Gui Qt6::Test ${PLATFORM_LIBS}
+)
+target_include_directories(test_harbor_lane_sample PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_harbor_lane_sample COMMAND test_harbor_lane_sample
+         -o "${TEST_OUTPUT_DIR}/test_harbor_lane_sample.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+# Draws the sample's pictures, so it needs a platform plugin, not a display.
+set_tests_properties(test_harbor_lane_sample PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+message(STATUS "Added unit test: test_harbor_lane_sample")
+
+# make_sample_pst - writes harbor-lane-sample.pst for the wiki's screenshot capture
+add_executable(make_sample_pst
+    tools/make_sample_pst.cpp
+    support/harbor_lane_sample.h
+    support/pst_store_builder.h
+)
+set_target_properties(make_sample_pst PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(make_sample_pst PRIVATE Qt6::Core Qt6::Gui ${PLATFORM_LIBS})
+target_include_directories(make_sample_pst PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+# Run so the generator cannot rot: it must still write a file on every build of the tests.
+add_test(NAME make_sample_pst
+         COMMAND make_sample_pst "${TEST_OUTPUT_DIR}/harbor-lane-sample.pst" 2026-11
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+set_tests_properties(make_sample_pst PROPERTIES
+    ENVIRONMENT "QT_QPA_PLATFORM=offscreen")
+
 # test_ost_integration - opens generated OST/PST fixtures through full parse/export pipeline
 add_executable(test_ost_integration
     integration/test_ost_integration.cpp

@@ -661,6 +661,8 @@ set(SAK_CORE_SOURCES
     include/sak/style_constants.h
     # Email & PST/OST Inspector core
     src/core/pst_parser.cpp
+    src/core/pst_named_properties.cpp
+    src/core/pst_rtf_body.cpp
     src/core/mbox_parser.cpp
     src/core/email_search_worker.cpp
     src/core/email_export_worker.cpp
@@ -672,6 +674,8 @@ set(SAK_CORE_SOURCES
     include/sak/email_constants.h
     include/sak/email_types.h
     include/sak/pst_parser.h
+    include/sak/pst_named_properties.h
+    include/sak/pst_rtf_body.h
     include/sak/mbox_parser.h
     include/sak/email_search_worker.h
     include/sak/email_export_worker.h

@@ -7,11 +7,14 @@
 #include "sak/pst_parser.h"
 
 #include "sak/email_html_sanitizer.h"
+#include "sak/eml_writer.h"
 #include "sak/error_codes.h"
 #include "sak/logger.h"
+#include "sak/pst_rtf_body.h"
 
 #include <QDataStream>
 #include <QFileInfo>
+#include <QScopeGuard>
 #include <qt_windows.h>
 #include <QtEndian>
 #include <QTextDocument>
@@ -156,6 +159,8 @@ static constexpr uint16_t kPidTagLtpRowId = 0x67F2;
 static constexpr uint64_t kNidTypeMask = 0x1F;
 static constexpr uint64_t kNidLower32Mask = 0xFF'FF'FF'FF;
 static constexpr uint64_t kBidInternalFlag = 0x02;
+static constexpr uint64_t kBidReservedBit = 0x01;  // MS-PST 2.2.2.2 "A": readers treat it as zero
+static constexpr int kMaxEmbeddedMessageDepth = 8;
 static constexpr int kHidOffsetRecordSize = 2;
 static constexpr int kUnicode4kEntrySizeOffset = 4;
 static constexpr int kUnicode4kLevelOffset = 5;
@@ -804,16 +809,6 @@ static std::expected<int, error_code> resolveHnBlockOffset(uint16_t hid_block_in
 }
 
 /// Find a property by tag ID, returning pointer to raw value (or nullptr)
-static const QByteArray* findPropertyById(const QVector<sak::MapiProperty>& props,
-                                          uint16_t tag_id) {
-    for (const auto& prop : props) {
-        if (prop.tag_id == tag_id) {
-            return &prop.raw_value;
-        }
-    }
-    return nullptr;
-}
-
 // ============================================================================
 // Table Context helpers (use PstParser::TcColDesc and PstParser::TcInfo)
 // ============================================================================
@@ -980,7 +975,25 @@ void PstParser::populateFileInfo(const QString& file_path) {
     m_file_info.last_modified = fi.lastModified();
 }
 
-void PstParser::loadMessageStoreDisplayName() {
+namespace {
+
+/// Flag the folder whose node id the store names as its IPM subtree. Returns true once found.
+bool markIpmSubtree(sak::PstFolderTree& tree, uint64_t nid) {
+    for (auto& folder : tree) {
+        if (folder.node_id == nid) {
+            folder.is_ipm_subtree = true;
+            return true;
+        }
+        if (markIpmSubtree(folder.children, nid)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
+void PstParser::loadMessageStoreProperties() {
     auto store_it = m_nbt_cache.find(sak::email::kNidMessageStore);
     if (store_it == m_nbt_cache.end()) {
         return;
@@ -994,9 +1007,38 @@ void PstParser::loadMessageStoreDisplayName() {
     for (const auto& prop : *props) {
         if (prop.tag_id == sak::email::kPropIdDisplayName) {
             m_file_info.display_name = prop.display_value;
-            break;
+        } else if (prop.tag_id == sak::email::kPropIdIpmSubtreeEntryId &&
+                   prop.raw_value.size() == sak::email::kEntryIdBytes) {
+            // The IPM subtree's name is localized and varies by Outlook version ("Top of Outlook
+            // data file", "IPM_SUBTREE", ...); the store's own pointer to it does not. An EntryID
+            // ends in the folder's NID.
+            markIpmSubtree(m_folder_tree,
+                           readLE<uint32_t>(prop.raw_value, sak::email::kEntryIdNidOffset));
         }
     }
+}
+
+void PstParser::loadNamedPropertyMap() {
+    m_named_properties.clear();
+    if (!m_nbt_cache.contains(sak::email::kNidNameToIdMap)) {
+        return;
+    }
+    auto props = readPropertyContext(sak::email::kNidNameToIdMap);
+    if (!props) {
+        sak::logWarning("PstParser: Name-to-ID map could not be read: {}",
+                        sak::to_string(props.error()));
+        return;
+    }
+    QByteArray guid_stream;
+    QByteArray entry_stream;
+    for (const auto& prop : *props) {
+        if (prop.tag_id == sak::pst::kPropIdNameidStreamGuid) {
+            guid_stream = prop.raw_value;
+        } else if (prop.tag_id == sak::pst::kPropIdNameidStreamEntry) {
+            entry_stream = prop.raw_value;
+        }
+    }
+    m_named_properties = sak::pst::parseNameIdMap(guid_stream, entry_stream);
 }
 
 void PstParser::open(const QString& file_path) {
@@ -1019,7 +1061,8 @@ void PstParser::open(const QString& file_path) {
 
     populateFileInfo(file_path);
 
-    loadMessageStoreDisplayName();
+    loadMessageStoreProperties();
+    loadNamedPropertyMap();
 
     m_is_open = true;
     Q_EMIT progressUpdated(kPstOpenProgressComplete, QStringLiteral("File loaded successfully"));
@@ -1037,6 +1080,7 @@ void PstParser::close() {
     m_folder_tree.clear();
     m_nbt_cache.clear();
     m_bbt_cache.clear();
+    m_named_properties.clear();
     m_is_unicode = false;
     m_is_4k = false;
     m_encryption_type = 0;
@@ -1055,30 +1099,18 @@ sak::PstFolderTree PstParser::folderTree() const {
 }
 
 void PstParser::loadFolderItems(uint64_t folder_node_id, int offset, int limit) {
-    auto result = readFolderItems(folder_node_id, offset, limit);
+    int total = 0;
+    auto result = m_is_open
+                      ? readContentsTable(contentsTableNid(folder_node_id), offset, limit, &total)
+                      : std::unexpected(error_code::invalid_operation);
     if (result) {
         // Enrich items with sender names from individual PCs.
         // The TC often lacks usable sender data, so we do a
         // lightweight per-item PC read for sender properties only.
         enrichItemSenders(*result);
 
-        // Read total count from the folder's content_count
-        int total = 0;
-        auto node_it = m_nbt_cache.find(folder_node_id);
-        if (node_it != m_nbt_cache.end()) {
-            auto props = readPropertyContext(folder_node_id);
-            if (props) {
-                for (const auto& prop : *props) {
-                    if (prop.tag_id == sak::email::kPropIdContentCount) {
-                        total = prop.display_value.toInt();
-                        break;
-                    }
-                }
-            }
-        }
-        if (total == 0) {
-            total = static_cast<int>(result->size());
-        }
+        // The total is the rows the table really holds. A store's declared PR_CONTENT_COUNT can
+        // run ahead of them (real OST and PST files do), and paging by it offered pages of nothing.
         Q_EMIT folderItemsLoaded(folder_node_id, std::move(*result), total);
     } else {
         Q_EMIT errorOccurred(QStringLiteral("Failed to load folder items: %1")
@@ -1143,12 +1175,12 @@ std::expected<QVector<sak::PstItemSummary>, error_code> PstParser::readFolderIte
         return std::unexpected(error_code::invalid_operation);
     }
 
-    // Build the contents table NID from the folder NID
-    // Contents table NID = (folder_nid & 0xFFFFFFE0) | NID_TYPE_CONTENTS_TABLE
-    const uint64_t contents_nid = (folder_node_id & ~kNidTypeMask) |
-                                  sak::email::kNidTypeContentsTable;
+    return readContentsTable(contentsTableNid(folder_node_id), offset, limit);
+}
 
-    return readContentsTable(contents_nid, offset, limit);
+uint64_t PstParser::contentsTableNid(uint64_t folder_node_id) {
+    // Contents table NID = (folder_nid & 0xFFFFFFE0) | NID_TYPE_CONTENTS_TABLE
+    return (folder_node_id & ~kNidTypeMask) | sak::email::kNidTypeContentsTable;
 }
 
 std::expected<sak::PstItemDetail, error_code> PstParser::readItemDetail(uint64_t item_node_id) {
@@ -1192,12 +1224,79 @@ std::expected<QByteArray, error_code> PstParser::extractAttachmentFromSubnode(
         return std::unexpected(bth.error());
     }
 
-    auto att_props = parsePropertyRecords(*bth, ctx);
-    const auto* data = findPropertyById(att_props, sak::email::kPropIdAttachData);
-    if (data != nullptr) {
-        return *data;
+    const auto att_props = parsePropertyRecords(*bth, ctx);
+    for (const auto& prop : att_props) {
+        if (prop.tag_id != sak::email::kPropIdAttachData) {
+            continue;
+        }
+        if (prop.tag_type == sak::email::kPropTypeObject) {
+            return extractObjectAttachment(prop, att_props, ctx);
+        }
+        return prop.raw_value;
     }
     return std::unexpected(error_code::pst_attachment_error);
+}
+
+std::expected<QByteArray, error_code> PstParser::extractObjectAttachment(
+    const sak::MapiProperty& data_prop,
+    const QVector<sak::MapiProperty>& att_props,
+    const HeapContext& ctx) {
+    // A PtypObject value is an HNID leading to {dwNid, ulSize}; dwNid names a sub-node of this
+    // attachment holding the object (MS-PST 2.3.3.5). Reading the HNID as if it were the payload
+    // handed back four meaningless bytes under the attachment's name.
+    if (data_prop.raw_value.size() < kPropertyValueRefSize) {
+        return std::unexpected(error_code::pst_attachment_error);
+    }
+    const auto reference = resolveHnid(readLE<uint32_t>(data_prop.raw_value, 0),
+                                       ctx.heap_data,
+                                       ctx.block_offsets,
+                                       ctx.subnode_map);
+    if (!reference || reference->size() < kPropertyValueRefSize) {
+        return std::unexpected(error_code::pst_attachment_error);
+    }
+    const auto object_node = ctx.subnode_map.constFind(readLE<uint32_t>(*reference, 0));
+    if (object_node == ctx.subnode_map.constEnd()) {
+        return std::unexpected(error_code::pst_attachment_error);
+    }
+    const bool is_embedded_message = [&att_props] {
+        for (const auto& prop : att_props) {
+            if (prop.tag_id == sak::email::kPropIdAttachMethod) {
+                return prop.display_value.toInt() == sak::email::kAttachEmbeddedMessage;
+            }
+        }
+        return false;
+    }();
+    if (!is_embedded_message) {
+        // An OLE object: the sub-node's data is the object's own stream.
+        return readDataTree(object_node->data_bid);
+    }
+    return embeddedMessageAsEml(*object_node);
+}
+
+std::expected<QByteArray, error_code> PstParser::embeddedMessageAsEml(const sak::PstNode& node) {
+    // Bounded: a message attached to itself, directly or through a chain, must not recurse until
+    // the stack runs out.
+    if (m_embedded_depth >= kMaxEmbeddedMessageDepth) {
+        return std::unexpected(error_code::pst_attachment_error);
+    }
+    ++m_embedded_depth;
+    const auto depth_guard = qScopeGuard([this] { --m_embedded_depth; });
+
+    auto detail = readMessageForNode(node, node.node_id);
+    if (!detail) {
+        return std::unexpected(detail.error());
+    }
+    QVector<QPair<QString, QByteArray>> attachments;
+    attachments.reserve(detail->attachments.size());
+    for (const auto& att : detail->attachments) {
+        auto data = readAttachmentDataForNode(node, att.index);
+        if (!data) {
+            return std::unexpected(data.error());
+        }
+        const QString name = att.long_filename.isEmpty() ? att.filename : att.long_filename;
+        attachments.append({name, *data});
+    }
+    return sak::EmlWriter::buildEmlContent(*detail, attachments);
 }
 
 std::expected<QByteArray, error_code> PstParser::readAttachmentData(uint64_t message_node_id,
@@ -1213,12 +1312,16 @@ std::expected<QByteArray, error_code> PstParser::readAttachmentData(uint64_t mes
                         m_nbt_cache.size());
         return std::unexpected(error_code::pst_node_not_found);
     }
+    return readAttachmentDataForNode(*msg_it, attachment_index);
+}
 
-    if (msg_it->subnode_bid == 0) {
+std::expected<QByteArray, error_code> PstParser::readAttachmentDataForNode(const sak::PstNode& node,
+                                                                           int attachment_index) {
+    if (node.subnode_bid == 0) {
         return std::unexpected(error_code::pst_attachment_error);
     }
 
-    auto subnodes = readSubNodeBTree(msg_it->subnode_bid);
+    auto subnodes = readSubNodeBTree(node.subnode_bid);
     if (!subnodes) {
         return std::unexpected(subnodes.error());
     }
@@ -1619,7 +1722,7 @@ std::expected<void, error_code> PstParser::loadBlockBTreeGuarded(uint64_t page_o
             }
 
             auto entry = readBlockLeafEntry(data, off, m_is_unicode);
-            m_bbt_cache.insert(entry.bid,
+            m_bbt_cache.insert(entry.bid & ~kBidReservedBit,
                                BbtEntry{.file_offset = entry.file_offset, .cb = entry.cb});
         }
     } else {
@@ -1646,9 +1749,13 @@ std::expected<void, error_code> PstParser::loadBlockBTreeGuarded(uint64_t page_o
 // ============================================================================
 
 std::expected<QByteArray, error_code> PstParser::readBlock(uint64_t bid) {
-    // section 2.2.2.2 -- The BBT stores BIDs with the fInternal bit (bit 1)
-    // intact, so look up the BID as-is.
-    auto it = m_bbt_cache.find(bid);
+    // section 2.2.2.2 -- The BBT stores BIDs with the fInternal bit (bit 1) intact, so that bit
+    // stays in the key. Bit 0 is the reserved "A" bit: readers must ignore it and treat it as zero
+    // before looking the BID up. Outlook does leave it set on some references in real stores, and
+    // an exact-match lookup turned each of those into "Block not found", hiding the whole folder
+    // or message behind it.
+    const uint64_t lookup_bid = bid & ~kBidReservedBit;
+    auto it = m_bbt_cache.find(lookup_bid);
     if (it == m_bbt_cache.end()) {
         return std::unexpected(error_code::pst_block_not_found);
     }
@@ -1673,7 +1780,7 @@ std::expected<QByteArray, error_code> PstParser::readBlock(uint64_t bid) {
         return std::unexpected(error_code::read_error);
     }
 
-    return postProcessBlock(std::move(*block_data), file_offset, cb, bid);
+    return postProcessBlock(std::move(*block_data), file_offset, cb, lookup_bid);
 }
 
 std::expected<QByteArray, error_code> PstParser::postProcessBlock(QByteArray raw,
@@ -1919,13 +2026,15 @@ std::expected<void, error_code> PstParser::verifyBlockTrailer(const QByteArray& 
     if (block_crc != readLE<uint32_t>(*trailer, kBlockTrailerCrcOffset)) {
         return std::unexpected(error_code::pst_integrity_check_failed);
     }
-    // wSig authenticates offset+bid; the trailer's own bid must match the BBT bid.
-    if (msPstComputeSig(file_offset, bid) != readLE<uint16_t>(*trailer, kBlockTrailerSigOffset)) {
-        return std::unexpected(error_code::pst_integrity_check_failed);
-    }
+    // wSig authenticates offset+bid, computed over the bid as the trailer records it; that bid must
+    // name the block the BBT says lives here, once the reserved bit readers ignore is cleared.
     const uint64_t trailer_bid = m_is_unicode ? readLE<uint64_t>(*trailer, kBlockTrailerBidOffset)
                                               : readLE<uint32_t>(*trailer, kBlockTrailerBidOffset);
-    if (trailer_bid != bid) {
+    if (msPstComputeSig(file_offset, trailer_bid) !=
+        readLE<uint16_t>(*trailer, kBlockTrailerSigOffset)) {
+        return std::unexpected(error_code::pst_integrity_check_failed);
+    }
+    if ((trailer_bid & ~kBidReservedBit) != bid) {
         return std::unexpected(error_code::pst_integrity_check_failed);
     }
     return {};
@@ -2175,7 +2284,11 @@ std::expected<QVector<sak::MapiProperty>, error_code> PstParser::readPropertyCon
         return std::unexpected(error_code::pst_node_not_found);
     }
 
-    const auto& node = node_it.value();
+    return readPropertyContextForNode(node_it.value());
+}
+
+std::expected<QVector<sak::MapiProperty>, error_code> PstParser::readPropertyContextForNode(
+    const sak::PstNode& node) {
     if (node.data_bid == 0) {
         return QVector<sak::MapiProperty>{};
     }
@@ -2949,7 +3062,7 @@ void PstParser::loadChildFolders(sak::PstFolder& folder,
 // ============================================================================
 
 std::expected<QVector<sak::PstItemSummary>, error_code> PstParser::readContentsTable(
-    uint64_t contents_nid, int offset, int limit) {
+    uint64_t contents_nid, int offset, int limit, int* total_rows) {
     auto table_result = readTableContext(contents_nid);
     if (!table_result) {
         if (table_result.error() == error_code::pst_node_not_found) {
@@ -2959,6 +3072,9 @@ std::expected<QVector<sak::PstItemSummary>, error_code> PstParser::readContentsT
     }
 
     const auto& rows = *table_result;
+    if (total_rows != nullptr) {
+        *total_rows = static_cast<int>(rows.size());
+    }
     // Clamp the pagination offset: a negative offset (reachable when a caller's
     // page*page_size int-multiply overflows) must not produce a negative start
     // index and read rows[] out of bounds. Clamp to [0, rows.size()].
@@ -2992,32 +3108,138 @@ std::expected<QVector<sak::PstItemSummary>, error_code> PstParser::readContentsT
 // Messaging Layer -- Full Message Read
 // ============================================================================
 
+namespace {
+
+constexpr uint16_t kPropIdStartDate = 0x0060;
+constexpr uint16_t kPropIdEndDate = 0x0061;
+constexpr uint16_t kPropIdCreationTime = 0x3007;
+constexpr uint16_t kPropIdLastModificationTime = 0x3008;
+constexpr uint16_t kPropIdSenderSmtpAddress = 0x5D01;
+constexpr uint16_t kPropIdSentRepresentingSmtpAddress = 0x5D02;
+
+/// Message properties that only fill a gap the main setters and named properties left, so they
+/// are applied after the whole property list has been seen, whatever its order.
+struct MessageExtraProperties {
+    QDateTime start_date;
+    QDateTime end_date;
+    QDateTime modified;
+    QDateTime created;
+    QString sender_smtp;
+    QString representing_smtp;
+
+    void note(const sak::MapiProperty& prop) {
+        switch (prop.tag_id) {
+        case kPropIdStartDate:
+            start_date = QDateTime::fromString(prop.display_value, Qt::ISODate);
+            break;
+        case kPropIdEndDate:
+            end_date = QDateTime::fromString(prop.display_value, Qt::ISODate);
+            break;
+        case kPropIdCreationTime:
+            created = QDateTime::fromString(prop.display_value, Qt::ISODate);
+            break;
+        case kPropIdLastModificationTime:
+            modified = QDateTime::fromString(prop.display_value, Qt::ISODate);
+            break;
+        case kPropIdSenderSmtpAddress:
+            sender_smtp = prop.display_value;
+            break;
+        case kPropIdSentRepresentingSmtpAddress:
+            representing_smtp = prop.display_value;
+            break;
+        default:
+            break;
+        }
+    }
+
+    void apply(sak::PstItemDetail& detail) const {
+        if (!detail.start_time.isValid()) {
+            detail.start_time = start_date;
+        }
+        if (!detail.end_time.isValid()) {
+            detail.end_time = end_date;
+        }
+        detail.store_timestamp = modified.isValid() ? modified : created;
+        // Exchange records the sender as an X.500 path; the SMTP address, when the store has it,
+        // is the one any other mail program can use.
+        if (!detail.sender_email.contains(QLatin1Char('@'))) {
+            const QString& smtp = sender_smtp.isEmpty() ? representing_smtp : sender_smtp;
+            if (!smtp.isEmpty()) {
+                detail.sender_email = smtp;
+            }
+        }
+    }
+};
+
+/// Fill the text bodies from compressed RTF when that is all the message has. A body that fails
+/// its integrity checks stays as raw RTF, which the exporters refuse rather than write blank.
+void applyRtfBody(sak::PstItemDetail& detail) {
+    if (detail.body_rtf_compressed.isEmpty() || !detail.body_plain.isEmpty() ||
+        !detail.body_html.isEmpty()) {
+        return;
+    }
+    const auto rtf = sak::pst::decompressRtf(detail.body_rtf_compressed);
+    if (!rtf) {
+        sak::logWarning("PstParser: compressed RTF body failed its integrity checks");
+        return;
+    }
+    const sak::pst::RtfBodyText body = sak::pst::rtfToText(*rtf);
+    (body.is_html ? detail.body_html : detail.body_plain) = body.text;
+    detail.body_rtf_compressed.clear();
+}
+
+}  // namespace
+
 std::expected<sak::PstItemDetail, error_code> PstParser::readMessage(uint64_t message_nid) {
-    auto props_result = readPropertyContext(message_nid);
+    auto node_it = m_nbt_cache.find(message_nid);
+    if (node_it == m_nbt_cache.end()) {
+        return std::unexpected(error_code::pst_node_not_found);
+    }
+    return readMessageForNode(*node_it, message_nid);
+}
+
+void PstParser::applyMessageProperties(sak::PstItemDetail& detail,
+                                       const QVector<sak::MapiProperty>& props) const {
+    const auto& setters = detailSetters();
+    MessageExtraProperties extra;
+    for (const auto& prop : props) {
+        auto setter_it = setters.find(prop.tag_id);
+        if (setter_it != setters.end()) {
+            (*setter_it)(detail, prop);
+        } else if (prop.tag_id >= sak::pst::kFirstNamedPropertyId) {
+            const auto named = m_named_properties.constFind(prop.tag_id);
+            if (named != m_named_properties.constEnd()) {
+                sak::pst::applyNamedProperty(detail, *named, prop);
+            }
+        } else {
+            extra.note(prop);
+        }
+    }
+    extra.apply(detail);
+}
+
+std::expected<sak::PstItemDetail, error_code> PstParser::readMessageForNode(
+    const sak::PstNode& node, uint64_t message_nid) {
+    auto props_result = readPropertyContextForNode(node);
     if (!props_result) {
         return std::unexpected(props_result.error());
     }
 
     sak::PstItemDetail detail;
     detail.node_id = message_nid;
-
-    const auto& setters = detailSetters();
-    for (const auto& prop : *props_result) {
-        auto setter_it = setters.find(prop.tag_id);
-        if (setter_it != setters.end()) {
-            (*setter_it)(detail, prop);
-        }
-    }
+    applyMessageProperties(detail, *props_result);
 
     // Propagate an attachment-read failure rather than returning an attachment-free message:
     // silently dropping it would present a message that has attachments as if it had none
     // (data loss the caller cannot detect). A message with no attachments returns an empty
     // vector (success), so this only fails on a genuine parse error.
-    auto att_result = readAttachments(message_nid);
+    auto att_result = readAttachmentsForNode(node);
     if (!att_result) {
         return std::unexpected(att_result.error());
     }
     detail.attachments = std::move(*att_result);
+
+    applyRtfBody(detail);
 
     // Ensure both body representations are always populated when the message
     // has any body at all.  Many PST messages store only PR_HTML (no PR_BODY);
@@ -3253,6 +3475,25 @@ std::expected<sak::PstAttachmentInfo, error_code> PstParser::readSingleAttachmen
     return att;
 }
 
+namespace {
+
+/// An attached email carries no file name of its own: it is written out as an .eml named after its
+/// subject, which the attachment's display name repeats.
+void describeAttachedMessage(sak::PstAttachmentInfo& att, const QString& display_name) {
+    if (att.attach_method != sak::email::kAttachEmbeddedMessage) {
+        return;
+    }
+    att.is_embedded_message = true;
+    att.mime_type = QStringLiteral("message/rfc822");
+    if (att.long_filename.isEmpty() && att.filename.isEmpty()) {
+        att.long_filename = (display_name.isEmpty() ? QStringLiteral("attached message")
+                                                    : display_name) +
+                            QStringLiteral(".eml");
+    }
+}
+
+}  // namespace
+
 void PstParser::populateAttachmentFromLeaf(sak::PstAttachmentInfo& att,
                                            const BthLeafResult& bth,
                                            const HeapContext& ctx) {
@@ -3263,6 +3504,7 @@ void PstParser::populateAttachmentFromLeaf(sak::PstAttachmentInfo& att,
 
     const int record_count = static_cast<int>(bth.leaf_data.size() / record_size);
     const auto& setters = attachmentSetters();
+    QString display_name;
 
     for (int rec_idx = 0; rec_idx < record_count; ++rec_idx) {
         const int rec_offset = rec_idx * record_size;
@@ -3290,8 +3532,12 @@ void PstParser::populateAttachmentFromLeaf(sak::PstAttachmentInfo& att,
         auto setter_it = setters.find(prop_id);
         if (setter_it != setters.end()) {
             (*setter_it)(att, formatPropertyValue(prop_type, raw_val));
+        } else if (prop_id == sak::email::kPropIdDisplayName) {
+            display_name = formatPropertyValue(prop_type, raw_val);
         }
     }
+
+    describeAttachedMessage(att, display_name);
 }
 
 std::expected<QVector<sak::PstAttachmentInfo>, error_code> PstParser::readAttachments(
@@ -3300,12 +3546,16 @@ std::expected<QVector<sak::PstAttachmentInfo>, error_code> PstParser::readAttach
     if (node_it == m_nbt_cache.end()) {
         return std::unexpected(error_code::pst_node_not_found);
     }
+    return readAttachmentsForNode(*node_it);
+}
 
-    if (node_it->subnode_bid == 0) {
+std::expected<QVector<sak::PstAttachmentInfo>, error_code> PstParser::readAttachmentsForNode(
+    const sak::PstNode& node) {
+    if (node.subnode_bid == 0) {
         return QVector<sak::PstAttachmentInfo>{};
     }
 
-    auto subnodes = readSubNodeBTree(node_it->subnode_bid);
+    auto subnodes = readSubNodeBTree(node.subnode_bid);
     if (!subnodes) {
         return std::unexpected(subnodes.error());
     }

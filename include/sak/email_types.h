@@ -134,6 +134,7 @@ struct PstFolder {
     int unread_count = 0;
     int subfolder_count = 0;
     QString container_class;      ///< IPF.Note, IPF.Contact, IPF.Appointment, etc.
+    bool is_ipm_subtree = false;  ///< The store names this folder as its top of mail folders
     QVector<PstFolder> children;  ///< Subfolders
 };
 
@@ -188,7 +189,10 @@ struct PstItemDetail {
     QString subject;
     QString sender_name;
     QString sender_email;
-    QDateTime date;
+    QDateTime date;  ///< When it was delivered or sent; invalid for an unsent item
+    /// When the store last changed or created it. Never shown as a send date: an MBOX record
+    /// needs a time on its separator line even when the message was never sent.
+    QDateTime store_timestamp;
     qint64 size_bytes = 0;
     int importance = 1;
 
@@ -346,6 +350,8 @@ struct EmailExportConfig {
     // Attachment options
     bool flatten_attachments = true;  ///< All into one folder vs per-message
     QString attachment_filter;        ///< Glob pattern, e.g., "*.pdf"
+    /// Leave inline pictures out of saved attachments and text exports. HTML, PDF and EML always
+    /// carry them, since they are part of how the message reads.
     bool skip_inline_images = true;
 
     // EML options
