@@ -5,6 +5,7 @@
 /// @brief The detachable log opens on-screen, without taking focus, and is not rebuilt hidden.
 
 #include "sak/detachable_log_window.h"
+#include "sak/layout_constants.h"
 
 #include <QApplication>
 #include <QMainWindow>
@@ -28,6 +29,12 @@ class DetachableLogWindowTests : public QObject {
 private Q_SLOTS:
     void anchoredGeometry_snapsBesideWindowWithRoom();
     void anchoredGeometry_staysOnScreenBesideMaximizedWindow();
+    void anchoredGeometry_narrowsTheLogToFitBesideTheWindow();
+    void anchoredGeometry_overlapsOnlyWhenTheMinimumWidthCannotFit();
+    void mainWindowShift_isWhatTheLogNeedsAndTheScreenAllows();
+    void openingMovesAMainWindowThatLeavesNoRoom();
+    void openingLeavesAMaximizedMainWindowWhereItIs();
+    void movingTheMainWindowAfterwardsIsNotFought();
     void openingBesideFullScreenWindowLandsOnScreen();
     void openingDoesNotTakeFocus();
     void hiddenWindowIsNotRebuilt();
@@ -62,6 +69,113 @@ void DetachableLogWindowTests::anchoredGeometry_staysOnScreenBesideMaximizedWind
                             .arg(frame.height())));
     QCOMPARE(frame.right(), available.right());
     QCOMPARE(anchored.width(), kLogWidth);
+}
+
+// 1280 wide on a 1680 display, moved fully left: 400 pixels are free, and the log needs 436.
+void DetachableLogWindowTests::anchoredGeometry_narrowsTheLogToFitBesideTheWindow() {
+    const QRect available(0, 0, 1680, 860);
+    const QRect main_frame(0, 0, 1280, 800);
+    const QRect main_geometry(8, 31, 1264, 761);
+    const QRect anchored = sak::DetachableLogWindow::anchoredGeometry(
+        main_frame, main_geometry, kLogWidth, kLogFrame, available);
+    const QRect frame = frameOf(anchored);
+    QVERIFY2(!frame.intersects(main_frame), "the log covers the main window");
+    QVERIFY(available.contains(frame));
+    QCOMPARE(frame.left(), main_frame.right() + 1);
+    QVERIFY(anchored.width() >= sak::kDetachLogMinW);
+}
+
+void DetachableLogWindowTests::anchoredGeometry_overlapsOnlyWhenTheMinimumWidthCannotFit() {
+    const QRect available(0, 0, 1680, 860);
+    const QRect main_frame(0, 0, 1500, 800);
+    const QRect main_geometry(8, 31, 1484, 761);
+    const QRect anchored = sak::DetachableLogWindow::anchoredGeometry(
+        main_frame, main_geometry, kLogWidth, kLogFrame, available);
+    const QRect frame = frameOf(anchored);
+    QVERIFY(available.contains(frame));
+    // No shrinking below the minimum to no end: the log keeps its width and overlaps.
+    QCOMPARE(anchored.width(), kLogWidth);
+    QVERIFY(frame.intersects(main_frame));
+}
+
+void DetachableLogWindowTests::mainWindowShift_isWhatTheLogNeedsAndTheScreenAllows() {
+    const QRect available(0, 0, 1680, 860);
+    using Log = sak::DetachableLogWindow;
+    // Room already: stays put.
+    QCOMPARE(Log::mainWindowShiftForLog(QRect(0, 0, 1000, 800), 436, available), 0);
+    // Exactly enough room.
+    QCOMPARE(Log::mainWindowShiftForLog(QRect(244, 0, 1000, 800), 436, available), 0);
+    // Short by 36 and room to move.
+    QCOMPARE(Log::mainWindowShiftForLog(QRect(280, 0, 1000, 800), 436, available), 36);
+    // Short by 236, with only 200 to the screen's edge.
+    QCOMPARE(Log::mainWindowShiftForLog(QRect(200, 0, 1280, 800), 436, available), 200);
+    // Hard against the left edge, or past it: nowhere to go.
+    QCOMPARE(Log::mainWindowShiftForLog(QRect(0, 0, 1500, 800), 436, available), 0);
+    QCOMPARE(Log::mainWindowShiftForLog(QRect(-8, 0, 1696, 800), 436, available), 0);
+    // A second display that starts further right is measured from its own left edge.
+    const QRect second(1680, 0, 1680, 860);
+    QCOMPARE(Log::mainWindowShiftForLog(QRect(1880, 0, 1280, 800), 436, second), 200);
+}
+
+namespace {
+/// A main window placed on the primary screen, with @p room_on_right left over on its right.
+void placeWithRoomOnRight(QMainWindow& main, const QRect& available, int room_on_right) {
+    constexpr int kWidth = 300;
+    constexpr int kHeight = 400;
+    main.resize(kWidth, kHeight);
+    main.show();
+    main.move(available.right() - room_on_right - main.frameGeometry().width() + 1,
+              available.top());
+}
+}  // namespace
+
+// Seen on a VM: a centred window on a 1680 display, with the log covering its right side.
+void DetachableLogWindowTests::openingMovesAMainWindowThatLeavesNoRoom() {
+    QScreen* screen = QGuiApplication::primaryScreen();
+    QVERIFY(screen != nullptr);
+    const QRect available = screen->availableGeometry();
+    QMainWindow main;
+    placeWithRoomOnRight(main, available, 10);
+    const int before = main.frameGeometry().left();
+    QVERIFY(before > available.left());
+    sak::DetachableLogWindow log(QStringLiteral("Log"), &main);
+
+    log.setLogVisible(true);
+
+    QVERIFY2(main.frameGeometry().left() < before, "the main window should have made room");
+    QVERIFY(available.contains(main.frameGeometry()));
+    QCOMPARE(log.frameGeometry().left(), main.frameGeometry().right() + 1);
+}
+
+void DetachableLogWindowTests::openingLeavesAMaximizedMainWindowWhereItIs() {
+    QMainWindow main;
+    main.showMaximized();
+    QVERIFY(QTest::qWaitForWindowExposed(&main));
+    QVERIFY(main.isMaximized());
+    const QPoint before = main.pos();
+    sak::DetachableLogWindow log(QStringLiteral("Log"), &main);
+
+    log.setLogVisible(true);
+
+    QCOMPARE(main.pos(), before);
+}
+
+// The log follows the main window around, and that must not turn into a tug of war.
+void DetachableLogWindowTests::movingTheMainWindowAfterwardsIsNotFought() {
+    QScreen* screen = QGuiApplication::primaryScreen();
+    QVERIFY(screen != nullptr);
+    const QRect available = screen->availableGeometry();
+    QMainWindow main;
+    placeWithRoomOnRight(main, available, 10);
+    sak::DetachableLogWindow log(QStringLiteral("Log"), &main);
+    log.setLogVisible(true);
+
+    placeWithRoomOnRight(main, available, 10);
+    const QPoint dragged_to = main.pos();
+    log.repositionIfAnchored();
+
+    QCOMPARE(main.pos(), dragged_to);
+    QVERIFY(available.contains(log.frameGeometry()));
 }
 
 void DetachableLogWindowTests::openingBesideFullScreenWindowLandsOnScreen() {

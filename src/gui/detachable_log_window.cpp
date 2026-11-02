@@ -158,6 +158,7 @@ void DetachableLogWindow::setLogVisible(bool visible) {
         // neither raise() nor activateWindow() is called -- an owned tool window already sits
         // above its owner.
         show();
+        makeRoomBesideMainWindow();
         snapToMainWindow();
     } else {
         hide();
@@ -218,6 +219,33 @@ void DetachableLogWindow::moveEvent(QMoveEvent* event) {
     }
 }
 
+void DetachableLogWindow::makeRoomBesideMainWindow() {
+    // Only when the person opens the log. Doing this on every snap would push the main window back
+    // each time they dragged it toward the screen edge.
+    auto* main_win = findMainWindow();
+    if (main_win == nullptr || main_win->isMaximized() || main_win->isFullScreen()) {
+        return;
+    }
+    const QScreen* screen = main_win->screen();
+    if (screen == nullptr) {
+        return;
+    }
+    const int shift = mainWindowShiftForLog(main_win->frameGeometry(),
+                                            frameGeometry().width(),
+                                            screen->availableGeometry());
+    if (shift > 0) {
+        main_win->move(main_win->pos() - QPoint(shift, 0));
+    }
+}
+
+int DetachableLogWindow::mainWindowShiftForLog(const QRect& main_frame,
+                                               int log_frame_width,
+                                               const QRect& available) {
+    const int room_on_right = available.right() - main_frame.right();
+    const int room_on_left = main_frame.left() - available.left();
+    return std::clamp(log_frame_width - room_on_right, 0, (std::max)(room_on_left, 0));
+}
+
 void DetachableLogWindow::snapToMainWindow() {
     auto* main_win = findMainWindow();
     if (main_win == nullptr) {
@@ -256,6 +284,11 @@ QRect DetachableLogWindow::anchoredGeometry(const QRect& main_frame,
                 log_width + frame_w,
                 main_geometry.height() + frame_h);
     if (available.isValid()) {
+        // Beside the main window whenever it fits, narrowing the log down to its minimum to do so.
+        const int room_on_right = available.right() - main_frame.right();
+        if (room_on_right >= sak::kDetachLogMinW + frame_w) {
+            frame.setWidth((std::min)(frame.width(), room_on_right));
+        }
         // Keep the whole frame on the work area. A maximized main window leaves no room on its
         // right, so the log overlaps its right edge rather than opening off-screen.
         frame.setWidth((std::min)(frame.width(), available.width()));

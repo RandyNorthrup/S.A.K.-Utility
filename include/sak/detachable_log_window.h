@@ -62,6 +62,12 @@ public:
                                                 const QMargins& log_frame,
                                                 const QRect& available);
 
+    /// @brief How far left a main window must move for a log frame this wide to fit on its right,
+    /// limited by the screen's left edge. Pure; tested offscreen.
+    [[nodiscard]] static int mainWindowShiftForLog(const QRect& main_frame,
+                                                   int log_frame_width,
+                                                   const QRect& available);
+
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;
     void showEvent(QShowEvent* event) override;
@@ -73,6 +79,9 @@ Q_SIGNALS:
 
 private:
     void snapToMainWindow();
+    /// @brief Move a main window that leaves the log no room to its left, as far as the screen
+    ///        allows. Never a maximized or full-screen one, which has nowhere to go.
+    void makeRoomBesideMainWindow();
     QWidget* findMainWindow() const;
 
     QTextEdit* m_logEdit{nullptr};
