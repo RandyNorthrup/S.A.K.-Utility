@@ -531,7 +531,7 @@ void DiagnosticBenchmarkPanel::onStressTestStatus(int elapsed_seconds,
     // as a measurement, and it would hide that the thermal limit is doing nothing.
     if (cpu_temp > 0.0) {
         m_stress_temp_label->setText(QString("CPU Temp: %1 degC").arg(cpu_temp, 0, 'f', 1));
-        m_stress_temp_label->setStyleSheet(QString());
+        m_stress_temp_label->setStyleSheet({});
     } else {
         m_stress_temp_label->setText(
             QStringLiteral("CPU Temp: no reading - the thermal limit is not being enforced"));

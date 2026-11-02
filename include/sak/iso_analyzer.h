@@ -74,13 +74,13 @@ public:
     ///       file is identical.
     static IsoInfo analyzeDevice(QIODevice& device);
 
-    /// @brief Whether the analyzed image is Windows installation media
+    /// @brief Whether the analyzed image describes itself as Windows installation media
     /// @param info Result of analyze()
-    /// @return true iff it needs the Windows install (diskpart/wim) USB path
-    ///         rather than raw imaging
+    /// @return true when its metadata says Windows
     /// @note Decides from the image's own metadata (os_family / editions from the
     ///       volume label + application ID), never from the filename -- a Linux
-    ///       "server" ISO must not be treated as Windows media.
+    ///       "server" ISO must not be treated as Windows media. A description, not proof: which
+    ///       writer the Image Flasher uses comes from WindowsUSBCreator::checkInstallImage.
     [[nodiscard]] static bool isWindowsInstallMedia(const IsoInfo& info);
 
 private:

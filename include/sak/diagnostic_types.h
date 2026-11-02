@@ -379,8 +379,12 @@ struct StressTestResult {
 ///        drive that holds the temp folder the test uses that folder: the same disk, and it works
 ///        for a normal user. Any other drive uses its root.
 [[nodiscard]] inline QString diskTestFolder(const QString& drive_path) {
+    constexpr qsizetype kDriveLetterLength = 2;  // "C:"
     const QString temp = QDir::tempPath();
-    return drive_path.left(2).compare(temp.left(2), Qt::CaseInsensitive) == 0 ? temp : drive_path;
+    return drive_path.left(kDriveLetterLength)
+                       .compare(temp.left(kDriveLetterLength), Qt::CaseInsensitive) == 0
+               ? temp
+               : drive_path;
 }
 
 // ============================================================================

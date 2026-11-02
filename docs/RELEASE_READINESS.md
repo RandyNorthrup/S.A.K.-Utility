@@ -416,6 +416,10 @@ DESIGN DECISIONS:
 - Stress test with no CPU sensor keeps running, with the warning on screen and in the report, rather
   than refusing every PC that cannot report a temperature. Only the CPU is watched.
 
+INCOMPLETE, found while fixing this and not fixed: the assistant's `flash_image` action always writes
+raw, and a raw Windows install ISO does not boot from USB. It should refuse such an ISO using
+`WindowsUSBCreator::checkInstallImage` and point at the Image Flasher tab.
+
 INCOMPLETE, all need an administrator session on a VM. This PC's session is not elevated, and the
 capture VM is held:
 

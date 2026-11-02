@@ -973,8 +973,8 @@ WindowsUSBCreator::InstallImageCheck WindowsUSBCreator::checkInstallImage(const 
     const QString appDir = QCoreApplication::applicationDirPath();
     const QString sevenZipPath = appDir + "/tools/chocolatey/tools/7z.exe";
     if (!isSafeBundledExecutable(sevenZipPath, appDir)) {
-        sak::logError(QString("Refusing to run untrusted or missing 7z.exe at: %1")
-                          .arg(sevenZipPath)
+        sak::logError(QString("Cannot look inside %1: 7z.exe is missing or untrusted at %2")
+                          .arg(isoPath, sevenZipPath)
                           .toStdString());
         return InstallImageCheck::Failed;
     }
