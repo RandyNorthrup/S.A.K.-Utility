@@ -103,6 +103,14 @@ void SmartFilter::initializeDefaults() {
     };
 }
 
+SmartFilter SmartFilter::forApplicationData() const {
+    SmartFilter rules = *this;
+    for (const char* name : {"Packages", "node_modules", ".git", ".svn", "__pycache__"}) {
+        rules.exclude_folders.removeAll(QString::fromLatin1(name));
+    }
+    return rules;
+}
+
 QJsonObject SmartFilter::toJson() const {
     QJsonObject obj;
     obj["enable_file_size_limit"] = enable_file_size_limit;
@@ -497,6 +505,7 @@ static constexpr FolderTypeEntry kFolderTypes[] = {
     {.type = FolderType::Favorites, .name = "Favorites"},
     {.type = FolderType::StartMenu, .name = "StartMenu"},
     {.type = FolderType::Custom, .name = "Custom"},
+    {.type = FolderType::ApplicationData, .name = "ApplicationData"},
 };
 
 }  // namespace

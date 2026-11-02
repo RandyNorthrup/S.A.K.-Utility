@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "sak/user_profile_restore_selection.h"
 #include "sak/user_profile_types.h"
 
 #include <QFileInfo>
@@ -59,6 +60,9 @@ public:
         QVector<WifiProfileInfo> wifi_profiles;
         QVector<EthernetConfigInfo> ethernet_configs;
         QVector<AppDataSourceInfo> app_data_sources;
+        /// Folders unticked on the Select Folders page. Separate from the manifest because the
+        /// manifest's checksum covers its own folder flags, and it must still verify.
+        QVector<FolderRestoreChoice> folder_choices;
     };
 
     /**
@@ -196,6 +200,11 @@ private:
                             const BackupUserData& sourceUser,
                             const QString& sourcePath,
                             const QString& destProfilePath);
+    /// @brief True unless @p folder was unticked on the folder or application data pages.
+    [[nodiscard]] bool folderIsToBeRestored(const FolderSelection& folder) const;
+    /// @brief True when @p folder sits inside another folder this run restores.
+    [[nodiscard]] bool insideAnotherRestoredFolder(const BackupUserData& user,
+                                                   const FolderSelection& folder) const;
     /// @brief Resolve the destination profile directory based on merge mode
     bool resolveDestinationProfilePath(const UserMapping& mapping, QString& destProfilePath);
     bool resolveCreateNewUser(const UserMapping& mapping,
@@ -301,6 +310,9 @@ private:
     QVector<WifiProfileInfo> m_wifiProfiles;
     QVector<EthernetConfigInfo> m_ethernetConfigs;
     QVector<AppDataSourceInfo> m_appDataSources;
+    QVector<FolderRestoreChoice> m_folderChoices;
+    /// True while restoring a source from the Application Data page; see resolveFileConflict.
+    bool m_restoringAppData{false};
     /// Effective destination username of the mapping currently being restored, set
     /// at the top of restoreUser(). Passed to applyPermissions so
     /// PermissionMode::AssignToDestination actually assigns ownership to the target

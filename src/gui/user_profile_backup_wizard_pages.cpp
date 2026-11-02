@@ -1,11 +1,13 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+#include "sak/app_data_sources.h"
 #include "sak/app_scanner.h"
 #include "sak/backup_destination_guard.h"
 #include "sak/layout_constants.h"
 // sak::scanEthernetConfigs -- the shared, language-neutral adapter scan this page runs.
 #include "sak/ethernet_config_manager.h"
+#include "sak/format_utils.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
 #include "sak/package_matcher.h"
@@ -55,7 +57,7 @@ constexpr int kUserFolderColumnName = 0;
 constexpr int kUserFolderColumnFolders = 1;
 constexpr int kUserFolderColumnCount = 2;
 constexpr int kSizeDisplayPrecision = 2;
-constexpr int kAppDataSizeDisplayPrecision = 1;
+
 constexpr int kMaxFileSizeMinimumMb = 1;
 constexpr int kMaxFileSizeMaximumMb = 10'000;
 constexpr int kDefaultMaxSingleFileMb = 2048;
@@ -71,6 +73,8 @@ constexpr int kInstalledAppPackageRole = Qt::UserRole;
 constexpr int kAppDataColumnName = 0;
 constexpr int kAppDataColumnPath = 1;
 constexpr int kAppDataColumnSize = 2;
+// The exact size rides on the row, so it reaches the manifest with the selection.
+constexpr int kAppDataSizeRole = Qt::UserRole;
 constexpr int kEthernetColumnSelect = 0;
 constexpr int kEthernetColumnAdapter = 1;
 constexpr int kEthernetColumnDhcp = 2;
@@ -1385,262 +1389,6 @@ void UserProfileBackupInstalledAppsPage::onSelectNone() {
 // UserProfileBackupAppDataPage
 // ============================================================================
 
-/// @brief Calculate size of a file or directory; returns -1 if path doesn't exist
-static qint64 calculateSourceSize(const QString& path, const std::atomic_bool* cancel) {
-    Q_ASSERT(!path.isEmpty());
-    const QFileInfo info(path);
-    if (!info.exists()) {
-        return -1;
-    }
-    if (!info.isDir()) {
-        return info.size();
-    }
-    qint64 size = 0;
-    QDirIterator it(path, QDir::Files | QDir::NoDotAndDotDot, QDirIterator::Subdirectories);
-    while (it.hasNext()) {
-        if ((cancel != nullptr) && cancel->load()) {
-            return size;
-        }
-        it.next();
-        size += it.fileInfo().size();
-    }
-    return size;
-}
-
-static const auto kCommonAppDataSources = std::to_array<AppDataSourceInfo>({
-    // Browsers
-    {.name = "Chrome Profiles",
-     .category = "Browsers",
-     .relative_path = "AppData/Local/Google/Chrome/User Data",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-    {.name = "Firefox Profiles",
-     .category = "Browsers",
-     .relative_path = "AppData/Roaming/Mozilla/Firefox/Profiles",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-    {.name = "Edge Profiles",
-     .category = "Browsers",
-     .relative_path = "AppData/Local/Microsoft/Edge/User Data",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-    {.name = "Brave Profiles",
-     .category = "Browsers",
-     .relative_path = "AppData/Local/BraveSoftware/Brave-Browser/User Data",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-    {.name = "Opera Profiles",
-     .category = "Browsers",
-     .relative_path = "AppData/Roaming/Opera Software/Opera Stable",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-    {.name = "Vivaldi Profiles",
-     .category = "Browsers",
-     .relative_path = "AppData/Local/Vivaldi/User Data",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-
-    // Email Clients
-    {.name = "Thunderbird Profiles",
-     .category = "Email",
-     .relative_path = "AppData/Roaming/Thunderbird/Profiles",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-    {.name = "Outlook Data",
-     .category = "Email",
-     .relative_path = "AppData/Local/Microsoft/Outlook",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-
-    // IDEs & Editors
-    {.name = "VS Code Settings",
-     .category = "Development",
-     .relative_path = "AppData/Roaming/Code/User",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-    {.name = "VS Code Extensions",
-     .category = "Development",
-     .relative_path = ".vscode/extensions",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-    {.name = "JetBrains Settings",
-     .category = "Development",
-     .relative_path = "AppData/Roaming/JetBrains",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-    {.name = "Sublime Text Settings",
-     .category = "Development",
-     .relative_path = "AppData/Roaming/Sublime Text 3",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-    {.name = "Notepad++ Settings",
-     .category = "Development",
-     .relative_path = "AppData/Roaming/Notepad++",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-
-    // Communication
-    {.name = "Discord Data",
-     .category = "Communication",
-     .relative_path = "AppData/Roaming/discord",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-    {.name = "Telegram Data",
-     .category = "Communication",
-     .relative_path = "AppData/Roaming/Telegram Desktop",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-    {.name = "Signal Data",
-     .category = "Communication",
-     .relative_path = "AppData/Roaming/Signal",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-    {.name = "Slack Data",
-     .category = "Communication",
-     .relative_path = "AppData/Roaming/Slack",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-
-    // Gaming
-    {.name = "Steam Config",
-     .category = "Gaming",
-     .relative_path = "AppData/Local/Steam",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-    {.name = "Epic Games Settings",
-     .category = "Gaming",
-     .relative_path = "AppData/Local/EpicGamesLauncher",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-    {.name = "Minecraft Data",
-     .category = "Gaming",
-     .relative_path = "AppData/Roaming/.minecraft",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-
-    // Productivity
-    {.name = "OneNote Cache",
-     .category = "Productivity",
-     .relative_path = "AppData/Local/Microsoft/OneNote",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-    {.name = "Sticky Notes",
-     .category = "Productivity",
-     .relative_path = "AppData/Local/Packages/"
-                      "Microsoft.MicrosoftStickyNotes_8wekyb3d8bbwe/"
-                      "LocalState",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-
-    // Media
-    {.name = "Spotify Data",
-     .category = "Media",
-     .relative_path = "AppData/Roaming/Spotify",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-    {.name = "VLC Settings",
-     .category = "Media",
-     .relative_path = "AppData/Roaming/vlc",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-    {.name = "OBS Studio",
-     .category = "Media",
-     .relative_path = "AppData/Roaming/obs-studio",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-
-    // Utilities
-    {.name = "PuTTY Sessions",
-     .category = "Utilities",
-     .relative_path = "AppData/Roaming/PuTTY",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-    {.name = "WinSCP Settings",
-     .category = "Utilities",
-     .relative_path = "AppData/Roaming/WinSCP",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-    {.name = "FileZilla Settings",
-     .category = "Utilities",
-     .relative_path = "AppData/Roaming/FileZilla",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-    {.name = "PowerShell Profile",
-     .category = "Utilities",
-     .relative_path = "Documents/PowerShell",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-    {.name = "Windows Terminal Settings",
-     .category = "Utilities",
-     .relative_path = "AppData/Local/Packages/"
-                      "Microsoft.WindowsTerminal_8wekyb3d8bbwe/"
-                      "LocalState",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-
-    // System
-    {.name = "SSH Keys",
-     .category = "System",
-     .relative_path = ".ssh",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-    {.name = "Git Config",
-     .category = "System",
-     .relative_path = ".gitconfig",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-    {.name = "npm Config",
-     .category = "System",
-     .relative_path = "AppData/Roaming/npm",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-    {.name = "pip Config",
-     .category = "System",
-     .relative_path = "AppData/Roaming/pip",
-     .size_bytes = 0,
-     .exists = false,
-     .selected = true},
-});
-
-/// @brief Common application data sources to detect
-static QVector<AppDataSourceInfo> getCommonAppDataSources() {
-    return QVector<AppDataSourceInfo>(std::begin(kCommonAppDataSources),
-                                      std::end(kCommonAppDataSources));
-}
-
 UserProfileBackupAppDataPage::UserProfileBackupAppDataPage(QVector<UserProfile>& users,
                                                            QWidget* parent)
     : QWizardPage(parent), m_users(users) {
@@ -1677,7 +1425,10 @@ void UserProfileBackupAppDataPage::setupUi() {
     auto* instruction_label = new QLabel(
         tr("Click <b>Scan App Data</b> to detect application data on selected users. "
            "This backs up application settings, profiles, and configurations -- "
-           "not the applications themselves (use the Installed Applications step for that)."),
+           "not the applications themselves (use the Installed Applications step for that). "
+           "Cache folders are left out. Browser bookmarks, history and extensions move with a "
+           "profile, but saved passwords and sign-ins are protected by Windows for this account "
+           "and usually do not open on another PC, so export those from the browser first."),
         this);
     instruction_label->setWordWrap(true);
     layout->addWidget(instruction_label);
@@ -1751,33 +1502,6 @@ void UserProfileBackupAppDataPage::cleanupPage() {
     }
 }
 
-// Worker-thread seam: size every common app-data source for the selected
-// users. Read-only (no mutation), so it is safe to run off the GUI thread.
-// Honors an optional cancel flag so an owner teardown can bound the wait.
-static QVector<AppDataSourceInfo> scanSelectedAppDataSources(const QVector<UserProfile>& users,
-                                                             const std::atomic_bool* cancel) {
-    QVector<AppDataSourceInfo> all_sources;
-    const auto common_sources = getCommonAppDataSources();
-    for (const auto& user : users) {
-        if (!user.is_selected) {
-            continue;
-        }
-        for (auto source : common_sources) {
-            if ((cancel != nullptr) && cancel->load()) {
-                return all_sources;
-            }
-            const QString full_path = user.profile_path + "/" + source.relative_path;
-            const qint64 path_size = calculateSourceSize(full_path, cancel);
-            if (path_size < 0) {
-                continue;
-            }
-            source.exists = true;
-            source.size_bytes = path_size;
-            all_sources.append(source);
-        }
-    }
-    return all_sources;
-}
 
 void UserProfileBackupAppDataPage::onScanAppData() {
     Q_ASSERT(m_scanButton);
@@ -1797,8 +1521,10 @@ void UserProfileBackupAppDataPage::onScanAppData() {
     m_scanCancel = std::make_shared<std::atomic_bool>(false);
     const QVector<UserProfile> users = m_users;
     const auto cancel = m_scanCancel;
+    auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard());
+    const SmartFilter rules = wiz != nullptr ? wiz->getSmartFilter() : SmartFilter{};
     m_scanWatcher->setFuture(QtConcurrent::run(
-        [users, cancel] { return scanSelectedAppDataSources(users, cancel.get()); }));
+        [users, rules, cancel] { return scanAppDataSources(users, rules, cancel.get()); }));
 }
 
 void UserProfileBackupAppDataPage::onScanFinished() {
@@ -1838,9 +1564,8 @@ void UserProfileBackupAppDataPage::populateTree(const QVector<AppDataSourceInfo>
             auto* item = new QTreeWidgetItem(category_item);
             item->setText(kAppDataColumnName, source->name);
             item->setText(kAppDataColumnPath, source->relative_path);
-            const double size_mb = static_cast<double>(source->size_bytes) / sak::kBytesPerMBf;
-            item->setText(kAppDataColumnSize,
-                          QString("%1 MB").arg(size_mb, 0, 'f', kAppDataSizeDisplayPrecision));
+            item->setText(kAppDataColumnSize, formatBytes(source->size_bytes));
+            item->setData(kAppDataColumnSize, kAppDataSizeRole, source->size_bytes);
             item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
             item->setCheckState(0, source->selected ? Qt::Checked : Qt::Unchecked);
             if (source->selected) {
@@ -1866,6 +1591,7 @@ void UserProfileBackupAppDataPage::commitAppDataSelection() {
     Q_ASSERT(m_summaryLabel);
     int total = 0;
     int selected = 0;
+    qint64 selected_bytes = 0;
     QVector<AppDataSourceInfo> selected_sources;
 
     for (int i = 0; i < m_appDataTree->topLevelItemCount(); ++i) {
@@ -1881,13 +1607,18 @@ void UserProfileBackupAppDataPage::commitAppDataSelection() {
             info.name = app_item->text(0);
             info.category = category->text(0);
             info.relative_path = app_item->text(1);
+            info.size_bytes = app_item->data(kAppDataColumnSize, kAppDataSizeRole).toLongLong();
+            info.exists = true;
             info.selected = true;
+            selected_bytes += info.size_bytes;
             selected_sources.append(info);
         }
     }
 
-    m_summaryLabel->setText(
-        tr("%1 of %2 application data source(s) selected").arg(selected).arg(total));
+    m_summaryLabel->setText(tr("%1 of %2 application data source(s) selected, about %3")
+                                .arg(selected)
+                                .arg(total)
+                                .arg(formatBytes(selected_bytes)));
     if (auto* wiz = qobject_cast<UserProfileBackupWizard*>(wizard())) {
         wiz->setAppDataSources(selected_sources);
     }

@@ -1,8 +1,10 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+#include "sak/app_data_sources.h"
 #include "sak/chocolatey_manager.h"
 #include "sak/elevation_gate.h"
+#include "sak/format_utils.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
@@ -23,6 +25,7 @@
 #include <QMessageBox>
 #include <QPointer>
 #include <QSet>
+#include <QSignalBlocker>
 #include <QtConcurrent>
 #include <QVBoxLayout>
 
@@ -644,6 +647,9 @@ void UserProfileRestoreFolderSelectionPage::loadFolderTable() {
     BackupManifest manifest = wiz->manifest();
     const QVector<UserMapping> mappings = wiz->userMappings();
 
+    // Filling a row reports each cell as changed, and the summary this drives reads the whole row.
+    // Reached with a row half filled, it dereferenced the missing Size cell and crashed the app.
+    const QSignalBlocker no_summary_until_filled(m_folderTable);
     m_folderTable->setRowCount(0);
 
     for (const auto& mapping : mappings) {
@@ -655,6 +661,10 @@ void UserProfileRestoreFolderSelectionPage::loadFolderTable() {
         }
 
         for (const auto& folder : user_it->backed_up_folders) {
+            // Chosen on the Application Data page, which is where a person looks for them.
+            if (folder.type == FolderType::ApplicationData) {
+                continue;
+            }
             const int row = m_folderTable->rowCount();
             m_folderTable->insertRow(row);
 
@@ -748,7 +758,11 @@ bool UserProfileRestoreFolderSelectionPage::validatePage() {
         }
     }
 
-    if (selected_count == 0) {
+    auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
+    if (wiz == nullptr) {
+        return false;
+    }
+    if (selected_count == 0 && appDataStoredInBackup(wiz->manifest()).isEmpty()) {
         sak::logWarning("No folders selected for restore operation");
         sak::showWarningLogged(this,
                                tr("No Folders Selected"),
@@ -756,13 +770,9 @@ bool UserProfileRestoreFolderSelectionPage::validatePage() {
         return false;
     }
 
-    // Persist the per-folder selection onto the wizard's manifest so the restore
-    // worker skips unchecked folders. Without this the selection is display-only
-    // and every backed-up folder is restored regardless of the checkboxes.
-    auto* wiz = qobject_cast<UserProfileRestoreWizard*>(wizard());
-    if (wiz == nullptr) {
-        return false;
-    }
+    // Hand the per-folder selection to the restore worker, so it skips unchecked folders. Not onto
+    // the wizard's manifest: its checksum covers these flags, so changing them makes the restore
+    // refuse the backup as damaged.
     QVector<FolderRestoreChoice> choices;
     choices.reserve(m_folderTable->rowCount());
     for (int row = 0; row < m_folderTable->rowCount(); ++row) {
@@ -772,9 +782,7 @@ bool UserProfileRestoreFolderSelectionPage::validatePage() {
         choice.selected = m_folderTable->item(row, 0)->checkState() == Qt::Checked;
         choices.append(choice);
     }
-    BackupManifest manifest = wiz->manifest();
-    applyFolderRestoreSelections(manifest, choices);
-    wiz->setManifest(manifest);
+    wiz->setFolderChoices(choices);
     return true;
 }
 
@@ -905,7 +913,7 @@ void UserProfileRestoreAppDataPage::loadAppDataSources() {
         return;
     }
 
-    QVector<AppDataSourceInfo> sources = manifest.app_data_sources;
+    QVector<AppDataSourceInfo> sources = appDataStoredInBackup(manifest);
     for (auto& info : sources) {
         info.selected = true;  // All selected by default for restore
     }
@@ -913,7 +921,11 @@ void UserProfileRestoreAppDataPage::loadAppDataSources() {
     m_loaded = true;
 
     if (sources.isEmpty()) {
-        m_statusLabel->setText(tr("No application data found in backup"));
+        m_statusLabel->setText(
+            manifest.app_data_sources.isEmpty()
+                ? tr("No application data found in backup")
+                : tr("This backup lists application data but holds no copy of it. It was made by "
+                     "an older version that recorded the choice without copying the files."));
         return;
     }
 
@@ -975,9 +987,7 @@ void UserProfileRestoreAppDataPage::populateTree(const QVector<AppDataSourceInfo
             auto* item = new QTreeWidgetItem(category_item);
             item->setText(0, source->name);
             item->setText(1, source->relative_path);
-            const double size_mb = static_cast<double>(source->size_bytes) / sak::kBytesPerMBf;
-            item->setText(kTreeDetailColumn,
-                          QString("%1 MB").arg(size_mb, 0, 'f', kMegabyteDisplayPrecision));
+            item->setText(kTreeDetailColumn, formatBytes(source->size_bytes));
             item->setFlags(item->flags() | Qt::ItemIsUserCheckable);
             item->setCheckState(0, Qt::Checked);  // All selected by default
             cat_selected++;

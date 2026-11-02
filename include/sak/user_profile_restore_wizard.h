@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "sak/user_profile_restore_selection.h"
 #include "sak/user_profile_types.h"
 
 #include <QCheckBox>
@@ -129,6 +130,7 @@ private Q_SLOTS:
  */
 class UserProfileRestoreFolderSelectionPage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileRestoreFolderSelectionPage(QWidget* parent = nullptr);
@@ -157,6 +159,7 @@ private Q_SLOTS:
  */
 class UserProfileRestoreAppDataPage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileRestoreAppDataPage(QWidget* parent = nullptr);
@@ -448,6 +451,11 @@ public:
         m_appDataSources = sources;
     }
 
+    QVector<FolderRestoreChoice> folderChoices() const { return m_folderChoices; }
+    void setFolderChoices(const QVector<FolderRestoreChoice>& choices) {
+        m_folderChoices = choices;
+    }
+
 private:
     QString m_backupPath;
     BackupManifest m_manifest;
@@ -455,6 +463,7 @@ private:
     QVector<WifiProfileInfo> m_wifiProfiles;
     QVector<EthernetConfigInfo> m_ethernetConfigs;
     QVector<AppDataSourceInfo> m_appDataSources;
+    QVector<FolderRestoreChoice> m_folderChoices;
     ConflictResolution m_conflictResolution;
     PermissionMode m_permissionMode;
     bool m_verifyFiles;

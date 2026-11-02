@@ -217,6 +217,7 @@ private:
  */
 class UserProfileBackupAppDataPage : public QWizardPage {
     Q_OBJECT
+    friend class ::UserProfileAppRestoreFlowTests;
 
 public:
     explicit UserProfileBackupAppDataPage(QVector<UserProfile>& users, QWidget* parent = nullptr);
@@ -469,6 +470,7 @@ private:
     /// @brief Re-screen the destination this page was constructed with
     /// @return an empty string when the destination may be used, else the refusal reason
     QString screenRunDestination() const;
+
     /// @brief Screen, then ensure the backup destination directory exists (create if needed)
     /// @param error Set to a user-facing reason when the destination is refused or cannot be made
     /// @return true if the directory exists or was created, false otherwise

@@ -6,6 +6,7 @@
 #endif
 #include "sak/user_profile_restore_worker.h"
 
+#include "sak/backup_destination_guard.h"
 #include "sak/backup_file_codec.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
@@ -326,6 +327,7 @@ bool UserProfileRestoreWorker::startRestore(const QString& backupPath,
             m_wifiProfiles = selections.wifi_profiles;
             m_ethernetConfigs = selections.ethernet_configs;
             m_appDataSources = selections.app_data_sources;
+            m_folderChoices = selections.folder_choices;
             m_conflictMode = config.conflict_mode;
             m_permissionMode = config.perm_mode;
             m_verify = config.verify;
@@ -408,6 +410,7 @@ void UserProfileRestoreWorker::run() {
         Q_EMIT restoreComplete(false, tr("Invalid backup"));
         return;
     }
+    applyFolderRestoreSelections(m_manifest, m_folderChoices);
 
     // Calculate total size
     Q_EMIT logMessage(tr("Calculating total size..."), false);
@@ -524,11 +527,13 @@ bool UserProfileRestoreWorker::restoreUserFolders(const UserMapping& mapping,
             return false;
         }
 
-        // Honor the folder-selection page: a folder the user unchecked must not
-        // be restored (its `selected` flag was persisted into the manifest).
-        if (!folder.selected) {
+        // Honor the folder-selection and application-data pages, and leave a source that sits
+        // inside a selected folder to that folder's pass: restoring it twice would make it conflict
+        // with itself.
+        if (!folderIsToBeRestored(folder) || insideAnotherRestoredFolder(sourceUser, folder)) {
             continue;
         }
+        m_restoringAppData = folder.type == FolderType::ApplicationData;
 
         Q_EMIT statusUpdate(mapping.source_username, tr("Restoring: %1").arg(folder.display_name));
 
@@ -555,6 +560,19 @@ bool UserProfileRestoreWorker::restoreUserFolders(const UserMapping& mapping,
     }
 
     return true;
+}
+
+bool UserProfileRestoreWorker::folderIsToBeRestored(const FolderSelection& folder) const {
+    return folder.selected && !isAppDataPathExcluded(folder.relative_path, m_appDataSources);
+}
+
+bool UserProfileRestoreWorker::insideAnotherRestoredFolder(const BackupUserData& user,
+                                                           const FolderSelection& folder) const {
+    return std::ranges::any_of(user.backed_up_folders, [&](const FolderSelection& other) {
+        return folderIsToBeRestored(other) &&
+               backupPathKey(other.relative_path) != backupPathKey(folder.relative_path) &&
+               backupPathIsWithin(folder.relative_path, other.relative_path);
+    });
 }
 
 bool UserProfileRestoreWorker::resolveCreateNewUser(const UserMapping& mapping,
@@ -642,6 +660,17 @@ bool UserProfileRestoreWorker::restoreFolder(const FolderSelection& folder,
     if (!sourceInfo.exists()) {
         Q_EMIT logMessage(tr("Source folder does not exist: %1").arg(sourcePath), true);
         return false;
+    }
+
+    // One file rather than a folder, as Git's settings are. A folder of that name would be wrong,
+    // so only its parent is created.
+    if (sourceInfo.isFile()) {
+        if (!QDir().mkpath(QFileInfo(destPath).absolutePath())) {
+            Q_EMIT logMessage(tr("Failed to create directory: %1").arg(destPath), true);
+            return false;
+        }
+        copyDirectoryEntry(sourceInfo, destPath, folder, folder.relative_path);
+        return true;
     }
 
     // Create destination directory
@@ -777,9 +806,12 @@ bool UserProfileRestoreWorker::copyFileWithConflictResolution(const QString& sou
     // Copy the file (atomically replacing an existing destination, if any). When
     // the safety option is on, the pre-restore file is saved to `.sakbak` first.
     // A displaced original is moved aside (not deleted) and returned so it can be
-    // restored below if the permission/verify steps fail.
+    // restored below if the permission/verify steps fail. A program's data stands together, so a
+    // source from the Application Data page replaces what is there (see resolveFileConflict), and
+    // the file it replaces is always kept beside it.
     RestoredPayload restored;
-    if (!copyFileReplacingExisting(source, finalDestPath, m_createBackup, m_password, restored)) {
+    if (!copyFileReplacingExisting(
+            source, finalDestPath, m_createBackup || m_restoringAppData, m_password, restored)) {
         Q_EMIT logMessage(tr("Error copying file: %1").arg(source), true);
         m_filesErrored++;
         return false;
@@ -860,6 +892,11 @@ bool UserProfileRestoreWorker::resolveFileConflict(const QString& source,
                                                    const QFileInfo& destInfo,
                                                    qint64 size,
                                                    QString& finalDestPath) {
+    // Skipping or renaming one file of a browser profile leaves the program reading the old file,
+    // so a renamed Bookmarks would look like a restore that did nothing.
+    if (m_restoringAppData) {
+        return true;
+    }
     switch (m_conflictMode) {
     case ConflictResolution::SkipDuplicate:
         Q_EMIT logMessage(tr("Skipping existing file: %1").arg(destInfo.fileName()), false);
@@ -1069,10 +1106,11 @@ qint64 UserProfileRestoreWorker::calculateTotalSize() {
         }
 
         for (const auto& folder : user->backed_up_folders) {
-            if (!folder.selected) {
-                continue;  // Unchecked folders are skipped during restore; exclude from totals.
+            // Skipped during restore, so left out of the totals. A source inside a restored folder
+            // is counted by that folder.
+            if (folderIsToBeRestored(folder) && !insideAnotherRestoredFolder(*user, folder)) {
+                accumulateFolderTotals(folder, totalSize);
             }
-            accumulateFolderTotals(folder, totalSize);
         }
     }
 

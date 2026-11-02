@@ -211,11 +211,12 @@ void UserProfileRestoreExecutePage::onStartRestore() {
 
     // Forward the WiFi/Ethernet/AppData selections persisted by their pages'
     // validatePage() so the worker actually applies them (previously dead state).
-    worker->startRestore(backup_path,
-                         manifest,
-                         mappings,
-                         {conflict_mode, perm_mode, verify, create_backup, password},
-                         {wiz->wifiProfiles(), wiz->ethernetConfigs(), wiz->appDataSources()});
+    worker->startRestore(
+        backup_path,
+        manifest,
+        mappings,
+        {conflict_mode, perm_mode, verify, create_backup, password},
+        {wiz->wifiProfiles(), wiz->ethernetConfigs(), wiz->appDataSources(), wiz->folderChoices()});
 
     m_overallProgressBar->setRange(0, 0);
     m_currentProgressBar->setRange(0, 0);  // Indeterminate

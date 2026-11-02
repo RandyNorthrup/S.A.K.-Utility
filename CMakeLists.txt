@@ -456,6 +456,7 @@ set(SAK_CORE_SOURCES
     src/core/user_profile_backup_worker.cpp
     src/core/user_profile_restore_worker.cpp
     src/core/user_profile_restore_selection.cpp
+    src/core/app_data_sources.cpp
     src/core/drive_scanner.cpp
     src/core/image_source.cpp
     src/core/iso_analyzer.cpp

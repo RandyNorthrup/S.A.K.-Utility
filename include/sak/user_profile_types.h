@@ -30,7 +30,8 @@ enum class FolderType {
     AppData_Local,
     Favorites,
     StartMenu,
-    Custom
+    Custom,
+    ApplicationData  // A source from the Application Data page, restored as a unit
 };
 
 /**
@@ -154,6 +155,11 @@ struct SmartFilter {
     /// This set is non-negotiable: initializeDefaults() seeds it and fromJson()
     /// re-unions it, so no supplied/edited manifest can drop it.
     [[nodiscard]] static QStringList mandatoryDangerousFiles();
+
+    /// These rules as they apply to a source chosen on the Application Data page. Folder names that
+    /// mean "skip this" in a tree of someone's documents are part of the program here: a program's
+    /// settings live under Packages, and an extension will not run without its node_modules.
+    [[nodiscard]] SmartFilter forApplicationData() const;
 };
 
 /**

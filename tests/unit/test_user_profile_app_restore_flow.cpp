@@ -5,7 +5,10 @@
 /// @brief A scanned application reaches the restore page as a real install offer: scan result,
 ///        backup page, installed_apps.json on disk, restore page, list handed to Chocolatey.
 
+#include "sak/app_data_program_prompt.h"
 #include "sak/elevation_manager.h"
+#include "sak/format_utils.h"
+#include "sak/layout_constants.h"
 #include "sak/user_profile_backup_wizard.h"
 #include "sak/user_profile_restore_wizard.h"
 
@@ -15,6 +18,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QMessageBox>
+#include <QProcess>
+#include <QPushButton>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QtTest/QtTest>
@@ -86,6 +91,11 @@ private Q_SLOTS:
     void restoreIgnoresAnIdChocolateyWouldRefuse();
     void restoreInstallsAPackageOnce();
     void restoreInstallAsksForAdministratorFirst();
+    void appDataSizeTravelsToTheManifestAndTheRestorePage();
+    void restorePageOffersOnlyStoredAppData();
+    void restoreFolderPageLeavesAppDataToItsOwnPage();
+    void restoreFolderPageRecordsTheChoiceWithoutTouchingTheManifest();
+    void runningProgramStopsTheBackupUntilAnswered();
 
 private:
     static sak::UserProfileRestoreAppRestorePage* restorePage(
@@ -241,6 +251,184 @@ void UserProfileAppRestoreFlowTests::restoreInstallAsksForAdministratorFirst() {
     QVERIFY2(question.contains(QStringLiteral("administrator")), qPrintable(question));
     QVERIFY(!restore_page->m_installing);
     QVERIFY(restore_page->isComplete());
+}
+
+// The page dropped the size when it committed its selection, so every row showed 0.0 MB on restore.
+void UserProfileAppRestoreFlowTests::appDataSizeTravelsToTheManifestAndTheRestorePage() {
+    constexpr qint64 kChromeBytes = 5 * sak::kBytesPerMB;
+    sak::UserProfileBackupWizard backup_wizard;
+    auto* app_data_page = qobject_cast<sak::UserProfileBackupAppDataPage*>(
+        backup_wizard.page(sak::UserProfileBackupWizard::Page_AppData));
+    QVERIFY(app_data_page != nullptr);
+    sak::AppDataSourceInfo chrome;
+    chrome.name = QStringLiteral("Chrome Profiles");
+    chrome.category = QStringLiteral("Browsers");
+    chrome.relative_path = QStringLiteral("AppData/Local/Google/Chrome/User Data");
+    chrome.size_bytes = kChromeBytes;
+    chrome.exists = true;
+    app_data_page->populateTree({chrome});
+
+    QCOMPARE(backup_wizard.appDataSources().size(), 1);
+    QCOMPARE(backup_wizard.appDataSources().first().size_bytes, kChromeBytes);
+
+    sak::BackupManifest manifest;
+    sak::UserProfileBackupExecutePage execute_page(manifest, {}, QString());
+    execute_page.recordNetworkSelectionsInManifest(&backup_wizard);
+    QCOMPARE(manifest.app_data_sources.size(), 1);
+
+    sak::FolderSelection stored;
+    stored.type = sak::FolderType::ApplicationData;
+    stored.relative_path = chrome.relative_path;
+    stored.size_bytes = kChromeBytes;
+    sak::BackupUserData user;
+    user.username = QStringLiteral("Pat");
+    user.backed_up_folders = {stored};
+    manifest.users = {user};
+    manifest.manifest_checksum = manifest.computeManifestChecksum();
+
+    sak::UserProfileRestoreWizard restore_wizard;
+    restore_wizard.setManifest(manifest);
+    auto* restore_page = restore_wizard.findChild<sak::UserProfileRestoreAppDataPage*>();
+    QVERIFY(restore_page != nullptr);
+    restore_page->loadAppDataSources();
+    const QTreeWidgetItem* row = findRow(restore_page->m_appDataTree,
+                                         QStringLiteral("Chrome Profiles"));
+    QVERIFY(row != nullptr);
+    QCOMPARE(row->text(kPackageColumn), sak::formatBytes(kChromeBytes));
+}
+
+// A backup from a version that recorded the choice and copied nothing must not offer it.
+void UserProfileAppRestoreFlowTests::restorePageOffersOnlyStoredAppData() {
+    sak::AppDataSourceInfo chrome;
+    chrome.name = QStringLiteral("Chrome Profiles");
+    chrome.relative_path = QStringLiteral("AppData/Local/Google/Chrome/User Data");
+    sak::BackupManifest manifest;
+    manifest.app_data_sources = {chrome};
+    sak::BackupUserData user;
+    user.username = QStringLiteral("Pat");
+    manifest.users = {user};
+    manifest.manifest_checksum = manifest.computeManifestChecksum();
+
+    sak::UserProfileRestoreWizard restore_wizard;
+    restore_wizard.setManifest(manifest);
+    auto* page = restore_wizard.findChild<sak::UserProfileRestoreAppDataPage*>();
+    QVERIFY(page != nullptr);
+    page->loadAppDataSources();
+    QCOMPARE(page->m_appDataTree->topLevelItemCount(), 0);
+    QVERIFY2(page->m_statusLabel->text().contains(QStringLiteral("older version")),
+             qPrintable(page->m_statusLabel->text()));
+}
+
+void UserProfileAppRestoreFlowTests::restoreFolderPageLeavesAppDataToItsOwnPage() {
+    sak::FolderSelection stored;
+    stored.type = sak::FolderType::ApplicationData;
+    stored.display_name = QStringLiteral("Chrome Profiles");
+    stored.relative_path = QStringLiteral("AppData/Local/Google/Chrome/User Data");
+    sak::AppDataSourceInfo chrome;
+    chrome.name = stored.display_name;
+    chrome.relative_path = stored.relative_path;
+    sak::BackupUserData user;
+    user.username = QStringLiteral("Pat");
+    user.backed_up_folders = {stored};
+    sak::BackupManifest manifest;
+    manifest.users = {user};
+    manifest.app_data_sources = {chrome};
+
+    sak::UserProfileRestoreWizard restore_wizard;
+    restore_wizard.setManifest(manifest);
+    sak::UserMapping mapping;
+    mapping.source_username = user.username;
+    restore_wizard.setUserMappings({mapping});
+    auto* page = restore_wizard.findChild<sak::UserProfileRestoreFolderSelectionPage*>();
+    QVERIFY(page != nullptr);
+    page->initializePage();
+    QCOMPARE(page->m_folderTable->rowCount(), 0);
+    // Nothing to tick here, and the application data page still has something to restore.
+    QVERIFY(page->validatePage());
+}
+
+void UserProfileAppRestoreFlowTests::restoreFolderPageRecordsTheChoiceWithoutTouchingTheManifest() {
+    sak::FolderSelection documents;
+    documents.type = sak::FolderType::Documents;
+    documents.display_name = QStringLiteral("Documents");
+    documents.relative_path = QStringLiteral("Documents");
+    documents.selected = true;
+    sak::FolderSelection pictures = documents;
+    pictures.type = sak::FolderType::Pictures;
+    pictures.display_name = QStringLiteral("Pictures");
+    pictures.relative_path = QStringLiteral("Pictures");
+    sak::BackupUserData user;
+    user.username = QStringLiteral("Pat");
+    user.backed_up_folders = {documents, pictures};
+    sak::BackupManifest manifest;
+    manifest.users = {user};
+    manifest.manifest_checksum = manifest.computeManifestChecksum();
+
+    sak::UserProfileRestoreWizard restore_wizard;
+    restore_wizard.setManifest(manifest);
+    sak::UserMapping mapping;
+    mapping.source_username = user.username;
+    restore_wizard.setUserMappings({mapping});
+    auto* page = restore_wizard.findChild<sak::UserProfileRestoreFolderSelectionPage*>();
+    QVERIFY(page != nullptr);
+    page->initializePage();
+    QCOMPARE(page->m_folderTable->rowCount(), 2);
+    page->m_folderTable->item(1, 0)->setCheckState(Qt::Unchecked);
+    QVERIFY(page->validatePage());
+
+    const auto choices = restore_wizard.folderChoices();
+    QCOMPARE(choices.size(), 2);
+    QCOMPARE(choices.at(1).relative_path, QStringLiteral("Pictures"));
+    QVERIFY(!choices.at(1).selected);
+    QVERIFY(restore_wizard.manifest().verifyManifestChecksum());
+}
+
+// A real process with a name on the list: a program's own copy of ping renamed, so nothing depends
+// on what this machine has installed or running.
+void UserProfileAppRestoreFlowTests::runningProgramStopsTheBackupUntilAnswered() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString fake_vlc = dir.filePath(QStringLiteral("vlc.exe"));
+    const QString ping = QString::fromLocal8Bit(qgetenv("SystemRoot")) +
+                         QStringLiteral("/System32/PING.EXE");
+    QVERIFY(QFile::copy(ping, fake_vlc));
+    QProcess running;
+    running.start(fake_vlc,
+                  {QStringLiteral("-n"), QStringLiteral("60"), QStringLiteral("127.0.0.1")});
+    QVERIFY(running.waitForStarted());
+
+    sak::AppDataSourceInfo vlc;
+    vlc.name = QStringLiteral("VLC Settings");
+    vlc.relative_path = QStringLiteral("AppData/Roaming/vlc");
+    vlc.selected = true;
+
+    QString question;
+    QMessageBox::StandardButton answer = QMessageBox::Cancel;
+    QTimer poll;
+    poll.setInterval(kDialogPollMs);
+    connect(&poll, &QTimer::timeout, this, [&question, &answer]() {
+        auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+        if (box != nullptr) {
+            question = box->text();
+            box->button(answer)->click();
+        }
+    });
+    poll.start();
+
+    QVERIFY(!sak::askToCloseProgramsHolding(nullptr, {vlc}));
+    QVERIFY2(question.contains(vlc.name), qPrintable(question));
+
+    answer = QMessageBox::Ignore;
+    QVERIFY(sak::askToCloseProgramsHolding(nullptr, {vlc}));
+
+    // Nothing selected, nothing to ask.
+    question.clear();
+    vlc.selected = false;
+    QVERIFY(sak::askToCloseProgramsHolding(nullptr, {vlc}));
+    QVERIFY(question.isEmpty());
+
+    running.kill();
+    QVERIFY(running.waitForFinished());
 }
 
 QTEST_MAIN(UserProfileAppRestoreFlowTests)

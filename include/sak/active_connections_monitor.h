@@ -64,6 +64,10 @@ public:
     /// path ignores it and is unaffected.
     [[nodiscard]] bool lastRefreshHadError() const noexcept { return m_lastRefreshError; }
 
+    /// Build a PID -> process-name map from ONE Toolhelp snapshot, so a refresh pays a single
+    /// snapshot instead of one per connection (was O(connections * processes)).
+    [[nodiscard]] static QHash<uint32_t, QString> snapshotProcessNames();
+
 Q_SIGNALS:
     void connectionsUpdated(QVector<sak::ConnectionInfo> connections);
     void newConnectionDetected(sak::ConnectionInfo connection);
@@ -84,9 +88,6 @@ private:
         const QHash<uint32_t, QString>& processNames, quint32& readError);
     [[nodiscard]] QVector<ConnectionInfo> enumerateUdpListeners(
         const QHash<uint32_t, QString>& processNames, quint32& readError);
-    /// Build a PID -> process-name map from ONE Toolhelp snapshot, so a refresh pays a single
-    /// snapshot instead of one per connection (was O(connections * processes)).
-    [[nodiscard]] static QHash<uint32_t, QString> snapshotProcessNames();
     [[nodiscard]] static QString lookupProcessName(uint32_t pid,
                                                    const QHash<uint32_t, QString>& processNames);
     [[nodiscard]] static QString getProcessPath(uint32_t pid);

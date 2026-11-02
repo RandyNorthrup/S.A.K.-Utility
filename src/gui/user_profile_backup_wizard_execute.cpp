@@ -1,6 +1,7 @@
 // Copyright (c) 2025 Randy Northrup. All rights reserved.
 // SPDX-License-Identifier: AGPL-3.0-or-later
 
+#include "sak/app_data_program_prompt.h"
 #include "sak/backup_destination_guard.h"
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
@@ -188,6 +189,11 @@ void UserProfileBackupExecutePage::onStartBackup() {
     const SmartFilter smart_filter = wiz->getSmartFilter();
     const PermissionMode permission_mode = wiz->getPermissionMode();
 
+    if (!askToCloseProgramsHolding(this, wiz->appDataSources())) {
+        failBackupPreflight(tr("Backup not started: close the programs listed, then try again."));
+        return;
+    }
+
     // The sidecars are written into the destination directory, so it must exist
     // and be writable before anything is saved (previously they were written
     // first and silently failed when the directory did not yet exist).
@@ -208,6 +214,7 @@ void UserProfileBackupExecutePage::onStartBackup() {
 
     connectAndStartBackupWorker(smart_filter, permission_mode);
 }
+
 
 bool UserProfileBackupExecutePage::saveAllSidecars(const UserProfileBackupWizard* wiz) {
     // Every sidecar is attempted (left operand runs first) so all failures are
@@ -464,7 +471,8 @@ void UserProfileBackupExecutePage::onBackupProgress(int completed_users,
 
 void UserProfileBackupExecutePage::onBackupComplete(bool success, const QString& message) {
     m_completed = true;
-    m_statusLabel->setText(success ? tr("Backup completed successfully!") : tr("Backup failed!"));
+    m_statusLabel->setText(success ? tr("Backup completed successfully!")
+                                   : message.section(QLatin1Char('\n'), 0, 0));
     if (success) {
         m_overallProgress->setRange(0, kPercentMax);
         m_overallProgress->setValue(kPercentMax);

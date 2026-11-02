@@ -82,6 +82,10 @@ public:
     /// @brief Check if current process can read the given path
     [[nodiscard]] static bool canReadPath(const QString& path);
 
+    /// @brief True when another program has @p path open in a way that refuses even a shared read,
+    /// as a running browser does with some of its databases.
+    [[nodiscard]] static bool isLockedByAnotherProgram(const QString& path);
+
     /// @brief True if @p segment is a single safe path component: non-empty, not "."/".." and free
     /// of separators, drive colons, and wildcards. Validates an untrusted username before it
     /// becomes a backup subdirectory (a name like "..\\..\\Windows" must never escape the root).
@@ -159,15 +163,24 @@ protected:
 
 private:
     // Core backup operations
+    /// @brief Add a folder to each selected user for every selected source they have, so the rest
+    /// of the run handles it like any other folder and the manifest records what was really stored.
+    void addAppDataFolders();
+    void addAppDataFolder(UserProfile& user, const AppDataSourceInfo& source);
     /// @brief Run all user backup iterations
     void backupAllUsers();
     /// @brief Compose and emit the final backup summary
     void emitBackupSummary();
     bool backupUser(const UserProfile& user, const QString& userBackupPath);
+    /// @brief Choose the filter @p folder is copied under, and whether files already stored by a
+    /// folder that contains it are left alone.
+    void prepareForFolder(const UserProfile& user, const FolderSelection& folder);
     bool backupFolder(const FolderSelection& folder,
                       const QString& sourcePath,
                       const QString& destPath);
     bool copyFileWithFiltering(const QString& sourcePath, const QString& destPath, qint64 fileSize);
+    /// @brief True when filters, size or permissions leave this file out. Counts and reports why.
+    bool fileIsSkipped(const QFileInfo& sourceInfo, qint64 fileSize);
 
     /// @brief Write one file to the backup: a verbatim copy, or a codec container when
     /// compression or encryption is on. The single point where the transform is applied.
@@ -241,6 +254,12 @@ private:
 
     // Instances for operations
     SmartFileFilter* m_fileFilter{nullptr};
+    /// The same rules for a source from the Application Data page; see forApplicationData().
+    SmartFileFilter* m_appDataFilter{nullptr};
+    /// Whichever of the two the folder in progress is copied under.
+    const SmartFileFilter* m_activeFilter{nullptr};
+    /// True while copying a source inside a folder this run already copied. Its files are there.
+    bool m_leaveStoredFiles{false};
     PermissionManager* m_permissionManager{nullptr};
 };
 

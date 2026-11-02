@@ -3,6 +3,8 @@
 
 #include "sak/user_profile_backup_worker.h"
 
+#include "sak/app_data_sources.h"
+#include "sak/backup_destination_guard.h"
 #include "sak/elevation_manager.h"
 #include "sak/layout_constants.h"
 #include "sak/thread_custody.h"
@@ -170,6 +172,8 @@ bool parentWithinCanonicalRoot(const QString& canonicalRoot, const QString& item
 UserProfileBackupWorker::UserProfileBackupWorker(QObject* parent)
     : QThread(parent)
     , m_fileFilter(new SmartFileFilter())
+    , m_appDataFilter(new SmartFileFilter())
+    , m_activeFilter(m_fileFilter)
     , m_permissionManager(new PermissionManager()) {}
 
 UserProfileBackupWorker::~UserProfileBackupWorker() {
@@ -181,11 +185,13 @@ UserProfileBackupWorker::~UserProfileBackupWorker() {
         ThreadCustody::joinOrFailInDestructor(*this, kTimeoutThreadShutdownMs);
     }
     delete m_fileFilter;
+    delete m_appDataFilter;
     delete m_permissionManager;
 }
 
 void UserProfileBackupWorker::applySmartFilterRules(const SmartFilter& smartFilter) {
     m_fileFilter->setRules(smartFilter);
+    m_appDataFilter->setRules(smartFilter.forApplicationData());
     // An exclude pattern that fails to compile is dropped, so files the user meant
     // to exclude WILL be backed up (fail-open). Surface it rather than silently
     // backing up what they asked to skip (B8-23).
@@ -293,6 +299,8 @@ void UserProfileBackupWorker::run() {
         return;
     }
 
+    addAppDataFolders();
+
     // Calculate the total size first so the disk-space check has a real
     // requirement to compare against (an empty total would always pass).
     Q_EMIT logMessage(tr("Calculating total size..."), false);
@@ -329,6 +337,67 @@ void UserProfileBackupWorker::run() {
 
     // Save manifest and emit summary
     emitBackupSummary();
+}
+
+void UserProfileBackupWorker::addAppDataFolders() {
+    for (UserProfile& user : m_users) {
+        if (!user.is_selected) {
+            continue;
+        }
+        if (!canReadPath(user.profile_path)) {
+            // Another person's profile reads as "nothing there" without administrator rights, so
+            // without this their application data would quietly be missing.
+            Q_EMIT logMessage(
+                tr("Skipping application data (requires elevation): %1").arg(user.username), true);
+            Q_EMIT elevationSkipped(user.profile_path, QString());
+            m_filesElevationSkipped++;
+            continue;
+        }
+        for (const AppDataSourceInfo& source : m_manifest.app_data_sources) {
+            if (m_cancelled) {
+                return;
+            }
+            if (source.selected) {
+                addAppDataFolder(user, source);
+            }
+        }
+    }
+}
+
+void UserProfileBackupWorker::addAppDataFolder(UserProfile& user, const AppDataSourceInfo& source) {
+    if (!isSafeRelativePath(source.relative_path)) {
+        Q_EMIT logMessage(
+            tr("Skipping application data with unsafe path: %1").arg(source.relative_path), true);
+        ++m_filesErrored;
+        return;
+    }
+    const AppDataMeasure measure =
+        measureAppDataSource(user.profile_path + QLatin1Char('/') + source.relative_path,
+                             *m_appDataFilter,
+                             user.profile_path,
+                             &m_cancelled);
+    if (!measure.exists) {
+        return;  // This user does not have that program's data, which is not a failure.
+    }
+    FolderSelection folder;
+    folder.type = FolderType::ApplicationData;
+    folder.display_name = source.name;
+    folder.relative_path = source.relative_path;
+    folder.selected = true;
+    folder.size_bytes = measure.size_bytes;
+    folder.file_count = measure.file_count;
+    user.folder_selections.append(folder);
+}
+
+void UserProfileBackupWorker::prepareForFolder(const UserProfile& user,
+                                               const FolderSelection& folder) {
+    const bool is_app_data = folder.type == FolderType::ApplicationData;
+    m_activeFilter = is_app_data ? m_appDataFilter : m_fileFilter;
+    m_leaveStoredFiles = is_app_data &&
+                         std::ranges::any_of(user.folder_selections, [&folder](const auto& other) {
+                             return other.selected && other.type != FolderType::ApplicationData &&
+                                    backupPathIsWithin(folder.relative_path, other.relative_path);
+                         });
 }
 
 void UserProfileBackupWorker::backupAllUsers() {
@@ -375,11 +444,21 @@ void UserProfileBackupWorker::emitBackupSummary() {
         Q_EMIT logMessage(tr("Warning: Failed to save manifest"), true);
     }
 
+    // Report success only when the manifest was written AND nothing was left out:
+    // any hard error OR an elevation-required skip means the backup is incomplete
+    // (some selected data was not captured), so it must not read as a clean success
+    // (B7-20). Intentional filter skips (m_filesSkipped: caches, *.tmp) do not count.
+    const bool success = (m_filesErrored == 0) && (m_filesElevationSkipped == 0) && manifestSaved;
+    const QString headline = success         ? tr("Backup complete!")
+                             : manifestSaved ? tr("Backup finished, but not everything was copied.")
+                                             : tr("Backup failed: the manifest was not saved.");
+
     // Complete
     const QString summary =
-        tr("Backup complete!\nFiles copied: %1\nFiles skipped: %2\n"
-           "Skipped (elevation required): %3\nErrors: %4\nTotal "
-           "size: %5 MB")
+        tr("%1\nFiles copied: %2\nFiles skipped: %3\n"
+           "Skipped (elevation required): %4\nErrors: %5\nTotal "
+           "size: %6 MB")
+            .arg(headline)
             .arg(m_filesCopied)
             .arg(m_filesSkipped)
             .arg(m_filesElevationSkipped)
@@ -388,11 +467,6 @@ void UserProfileBackupWorker::emitBackupSummary() {
 
     Q_EMIT logMessage(tr("=== Backup Complete ==="), false);
     Q_EMIT logMessage(summary, false);
-    // Report success only when the manifest was written AND nothing was left out:
-    // any hard error OR an elevation-required skip means the backup is incomplete
-    // (some selected data was not captured), so it must not read as a clean success
-    // (B7-20). Intentional filter skips (m_filesSkipped: caches, *.tmp) do not count.
-    const bool success = (m_filesErrored == 0) && (m_filesElevationSkipped == 0) && manifestSaved;
     Q_EMIT backupComplete(success, summary, m_manifest);
 }
 
@@ -445,6 +519,8 @@ bool UserProfileBackupWorker::backupUser(const UserProfile& user, const QString&
         }
 
         Q_EMIT statusUpdate(user.username, tr("Backing up: %1").arg(folder.display_name));
+
+        prepareForFolder(user, folder);
 
         const QString sourcePath = user.profile_path + "/" + folder.relative_path;
         const QString destPath = userBackupPath + "/" + folder.relative_path;
@@ -524,8 +600,8 @@ bool UserProfileBackupWorker::copyDirectory(const QString& sourceDir,
     const QFileInfo sourceDirInfo(sourceDir);
     const QString& currentUserProfile = m_currentUserProfile;
 
-    if (m_fileFilter->shouldExcludeFolder(sourceDirInfo, currentUserProfile)) {
-        const QString reason = m_fileFilter->getExclusionReason(sourceDirInfo);
+    if (m_activeFilter->shouldExcludeFolder(sourceDirInfo, currentUserProfile)) {
+        const QString reason = m_activeFilter->getExclusionReason(sourceDirInfo);
         Q_EMIT logMessage(tr("Skipping folder: %1 (%2)").arg(sourceDir, reason), false);
         m_filesSkipped++;
         return true;  // Not an error, just skipped
@@ -617,27 +693,17 @@ void UserProfileBackupWorker::copyDirectoryEntry(const QString& sourceItem,
     }
 }
 
-bool UserProfileBackupWorker::copyFileWithFiltering(const QString& sourcePath,
-                                                    const QString& destPath,
-                                                    qint64 fileSize) {
-    // Empty paths fail the file operations below; see startBackup. fileSize stays
-    // asserted because it is an invariant this class guarantees: it comes from
-    // QFileInfo::size(), which reports 0 - never a negative - for a file it
-    // cannot stat.
-    Q_ASSERT_X(fileSize >= 0, "copyFileWithFiltering", "fileSize must be non-negative");
-    const QFileInfo sourceInfo(sourcePath);
-    const QString& currentUserProfile = m_currentUserProfile;
-
+bool UserProfileBackupWorker::fileIsSkipped(const QFileInfo& sourceInfo, qint64 fileSize) {
     // Apply smart filtering
-    if (m_fileFilter->shouldExcludeFile(sourceInfo, currentUserProfile)) {
-        const QString reason = m_fileFilter->getExclusionReason(sourceInfo);
+    if (m_activeFilter->shouldExcludeFile(sourceInfo, m_currentUserProfile)) {
+        const QString reason = m_activeFilter->getExclusionReason(sourceInfo);
         Q_EMIT logMessage(tr("Skipping file: %1 (%2)").arg(sourceInfo.fileName(), reason), false);
         m_filesSkipped++;
         return true;  // Not an error
     }
 
     // Check size limit
-    if (m_fileFilter->exceedsSizeLimit(fileSize)) {
+    if (m_activeFilter->exceedsSizeLimit(fileSize)) {
         Q_EMIT logMessage(tr("Skipping large file: %1 (%2 MB)")
                               .arg(sourceInfo.fileName())
                               .arg(static_cast<double>(fileSize) / sak::kBytesPerMBf, 0, 'f', 1),
@@ -647,6 +713,7 @@ bool UserProfileBackupWorker::copyFileWithFiltering(const QString& sourcePath,
     }
 
     // Check if file is accessible (cross-user files may require elevation)
+    const QString sourcePath = sourceInfo.absoluteFilePath();
     if (!canReadPath(sourcePath)) {
         QString owner;
         if (!ElevationManager::isElevated()) {
@@ -656,6 +723,24 @@ bool UserProfileBackupWorker::copyFileWithFiltering(const QString& sourcePath,
                           true);
         Q_EMIT elevationSkipped(sourcePath, owner);
         m_filesElevationSkipped++;
+        return true;
+    }
+    return false;
+}
+
+bool UserProfileBackupWorker::copyFileWithFiltering(const QString& sourcePath,
+                                                    const QString& destPath,
+                                                    qint64 fileSize) {
+    // Empty paths fail the file operations below; see startBackup. fileSize stays
+    // asserted because it is an invariant this class guarantees: it comes from
+    // QFileInfo::size(), which reports 0 - never a negative - for a file it
+    // cannot stat.
+    Q_ASSERT_X(fileSize >= 0, "copyFileWithFiltering", "fileSize must be non-negative");
+    if (fileIsSkipped(QFileInfo(sourcePath), fileSize)) {
+        return true;
+    }
+
+    if (m_leaveStoredFiles && QFileInfo::exists(destPath)) {
         return true;
     }
 
@@ -691,7 +776,10 @@ bool UserProfileBackupWorker::storeFile(const QString& sourcePath, const QString
         if (QFile::copy(sourcePath, destPath)) {
             return true;
         }
-        Q_EMIT logMessage(tr("Error copying file: %1").arg(sourcePath), true);
+        Q_EMIT logMessage(isLockedByAnotherProgram(sourcePath)
+                              ? tr("In use by another program, not backed up: %1").arg(sourcePath)
+                              : tr("Error copying file: %1").arg(sourcePath),
+                          true);
         return false;
     }
 
@@ -705,6 +793,10 @@ bool UserProfileBackupWorker::storeFile(const QString& sourcePath, const QString
     }
     if (written.error() == sak::error_code::operation_cancelled) {
         // Not an error to report per-file: run() emits the single cancelled outcome.
+        return false;
+    }
+    if (isLockedByAnotherProgram(sourcePath)) {
+        Q_EMIT logMessage(tr("In use by another program, not backed up: %1").arg(sourcePath), true);
         return false;
     }
     Q_EMIT logMessage(tr("Error writing file: %1 (%2)")
@@ -765,7 +857,11 @@ bool UserProfileBackupWorker::saveManifest() {
         userData.username = user.username;
         userData.sid = user.sid;
         userData.profile_path = user.profile_path;
-        userData.backed_up_folders = user.folder_selections;
+        // Only what was copied. A folder left unticked is not in this backup, and listing it would
+        // offer it for restore.
+        std::ranges::copy_if(user.folder_selections,
+                             std::back_inserter(userData.backed_up_folders),
+                             [](const FolderSelection& folder) { return folder.selected; });
         userData.permissions_mode = m_permissionMode;
         // Digest the user's backed-up payload so restore can detect corruption or
         // tampering of the stored files (B7-13).
@@ -877,6 +973,24 @@ bool UserProfileBackupWorker::canReadPath(const QString& path) {
     }
     CloseHandle(handle);
     return true;
+}
+
+bool UserProfileBackupWorker::isLockedByAnotherProgram(const QString& path) {
+    const QString extended =
+        extendedLengthPath(QDir::toNativeSeparators(QFileInfo(path).absoluteFilePath()));
+    HANDLE handle = CreateFileW(extended.toStdWString().c_str(),
+                                GENERIC_READ,
+                                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                                nullptr,
+                                OPEN_EXISTING,
+                                0,
+                                nullptr);
+    if (handle != INVALID_HANDLE_VALUE) {
+        CloseHandle(handle);
+        return false;
+    }
+    const DWORD err = GetLastError();
+    return err == ERROR_SHARING_VIOLATION || err == ERROR_LOCK_VIOLATION;
 }
 
 bool UserProfileBackupWorker::isSafePathSegment(const QString& segment) {

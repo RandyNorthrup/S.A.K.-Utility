@@ -156,11 +156,12 @@ void TestUserProfileBackupWorker::backupMissingSelectedFolderReportsFailure() {
         runBackup(worker, srcDir.path(), folder, destParent.filePath(QStringLiteral("dest")));
     QVERIFY2(run.completed, "backup never emitted backupComplete");
     QVERIFY(!run.success);
-    // The worker still prefixes "Backup complete!" on a failed run; Errors: 1 is the only signal a
-    // bare !run.success misses.
+    // The first line is what the wizard shows as the outcome, and Errors: 1 is the signal a bare
+    // !run.success misses.
     QCOMPARE(run.message,
-             QStringLiteral("Backup complete!\nFiles copied: 0\nFiles skipped: 0\nSkipped "
-                            "(elevation required): 0\nErrors: 1\nTotal size: 0.0 MB"));
+             QStringLiteral("Backup finished, but not everything was copied.\nFiles copied: 0\n"
+                            "Files skipped: 0\nSkipped (elevation required): 0\nErrors: 1\nTotal "
+                            "size: 0.0 MB"));
 }
 
 void TestUserProfileBackupWorker::backupExistingFolderReportsSuccess() {

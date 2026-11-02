@@ -4522,6 +4522,26 @@ add_test(NAME test_user_profile_round_trip COMMAND test_user_profile_round_trip
          WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
 message(STATUS "Added unit test: test_user_profile_round_trip")
 
+# test_app_data_sources - what the Application Data pages offer, and what a backup holds
+add_executable(test_app_data_sources
+    unit/test_app_data_sources.cpp
+)
+set_target_properties(test_app_data_sources PROPERTIES
+    AUTOMOC ON
+    RUNTIME_OUTPUT_DIRECTORY_RELEASE "${SAK_MAIN_OUTPUT_DIR}"
+)
+target_link_libraries(test_app_data_sources PRIVATE
+    sak_core sak_foundation
+    Qt6::Core Qt6::Test ZLIB::ZLIB ${PLATFORM_LIBS}
+)
+target_include_directories(test_app_data_sources PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/../include
+)
+add_test(NAME test_app_data_sources COMMAND test_app_data_sources
+         -o "${TEST_OUTPUT_DIR}/test_app_data_sources.txt,txt" -o -,txt
+         WORKING_DIRECTORY "${TEST_OUTPUT_DIR}")
+message(STATUS "Added unit test: test_app_data_sources")
+
 # test_windows_usb_creator - Input validation, BUG-09 disk number injection (TST-07)
 add_executable(test_windows_usb_creator
     unit/test_windows_usb_creator.cpp
