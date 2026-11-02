@@ -223,7 +223,7 @@ void DetachableLogWindow::makeRoomBesideMainWindow() {
     // Only when the person opens the log. Doing this on every snap would push the main window back
     // each time they dragged it toward the screen edge.
     auto* main_win = findMainWindow();
-    if (main_win == nullptr || main_win->isMaximized() || main_win->isFullScreen()) {
+    if (main_win == nullptr) {
         return;
     }
     const QScreen* screen = main_win->screen();

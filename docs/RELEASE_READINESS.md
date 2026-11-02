@@ -481,11 +481,11 @@ Not covered by a test:
 
 ### Network, assistant, help and leftover fixes (2026-11-02)
 
-Reading: `fix_round_5` of the owner's "fix everything the agents find".
-
 - FIXED: speed test and iPerf3 results wiped by the operation's end, confirmed at runtime on the
   capture VM. Stop and failure no longer show 0.00 Mbps, a failed latency no longer shows negative. A
-  finished speed test reaches the report, which listed it as not run.
+  finished speed test reaches the report, which listed it as not run. One real speed test through the
+  panel kept its result on screen and reached the report (one run only, about 24 MB). iPerf3 against a
+  real server has not run; its label is tested with a result handed to the panel.
 - FIXED: Reset Network's status bar left out the reboot. Its backup paths and step errors have reached
   the Log since the imaging round.
 - FIXED: the adapter list read netsh's English words. It now comes from Get-NetAdapter. Compared with

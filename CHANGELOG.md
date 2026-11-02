@@ -37,8 +37,6 @@ The format is loosely based on [Keep a Changelog](https://keepachangelog.com/).
   always says network drives are not checked.
 - **Button names for screen readers and voice control** - 85 buttons had accessible names that did not
   contain the words on the button. Each now does, and the start-up accessibility check holds that.
-- **Dead code removed** - Unused memory-lock, comparison and random helpers, an unused migration report
-  entry point, and three unused package-mapping helpers.
 
 - **Email Inspector now reads a whole Outlook file** - Tested on real archives, the reader hid every
   folder behind a block reference with a reserved bit set, which Outlook does write. On a 1.1 GB PST

@@ -33,6 +33,7 @@ private Q_SLOTS:
     void selectScanTargets_setsNetworkDrivesApart();
     void executeSaysItSkippedANetworkDrive();
     void executeStopsItsScanWhenCancelled();
+    void aScanProcessThatWasCancelledEndsTheRun();
     void reportSaysNetworkDrivesAreNotChecked();
 };
 
@@ -56,6 +57,7 @@ public:
     QVector<MountedVolume> volumes;
     QStringList scripts_run;
     bool cancel_during_scan{false};
+    bool report_process_cancelled{false};
     bool saw_cancel_through_callback{false};
 
 protected:
@@ -69,6 +71,10 @@ protected:
         scripts_run << script;
         ProcessResult proc;
         proc.exit_code = 0;
+        if (report_process_cancelled) {
+            proc.cancelled = true;
+            return proc;
+        }
         if (cancel_during_scan) {
             cancel();
             saw_cancel_through_callback = should_cancel();
@@ -122,6 +128,17 @@ void CheckDiskErrorsActionTests::reportSaysNetworkDrivesAreNotChecked() {
     QVERIFY2(action.lastExecutionResult().log.contains(
                  QStringLiteral("Network drives are not checked.")),
              qPrintable(action.lastExecutionResult().log));
+}
+
+// The process's own word that it was stopped is enough, whatever the action's flag says by then.
+void CheckDiskErrorsActionTests::aScanProcessThatWasCancelledEndsTheRun() {
+    ScriptedCheckDisk action;
+    action.volumes = {volume("C:/", kFixed), volume("F:/", kFixed)};
+    action.report_process_cancelled = true;
+
+    action.execute();
+
+    QCOMPARE(action.scripts_run.size(), 1);  // F: never starts
 }
 
 void CheckDiskErrorsActionTests::executeStopsItsScanWhenCancelled() {

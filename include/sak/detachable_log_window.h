@@ -80,7 +80,7 @@ Q_SIGNALS:
 private:
     void snapToMainWindow();
     /// @brief Move a main window that leaves the log no room to its left, as far as the screen
-    ///        allows. Never a maximized or full-screen one, which has nowhere to go.
+    ///        allows. A maximized or full-screen one has nowhere to go, and stays.
     void makeRoomBesideMainWindow();
     QWidget* findMainWindow() const;
 

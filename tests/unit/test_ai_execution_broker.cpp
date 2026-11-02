@@ -56,7 +56,11 @@ private Q_SLOTS:
 
 namespace {
 
-[[nodiscard]] bool waitForFinish(QSignalSpy& spy, int timeout_ms = 20'000) {
+// The first PowerShell on a freshly booted CI runner has taken over 20 s to print one line, which
+// failed the first two cases here with nothing wrong. None of these cases is about the time limit.
+constexpr int kPowerShellBudgetSeconds = 60;
+
+[[nodiscard]] bool waitForFinish(QSignalSpy& spy, int timeout_ms = 90'000) {
     // qWaitFor re-checks the predicate, so it returns immediately when the broker already
     // emitted finished before the test reached this call. A bare spy.wait() latches the
     // count on entry and would block for a second emission that never comes.
@@ -137,7 +141,7 @@ void AiExecutionBrokerTests::runPowerShell_capturesStdoutAndEmitsFinished() {
 
     sak::ai::AiCommandRequest request;
     request.command = QStringLiteral("Write-Output 'sak-ai-ok'");
-    request.timeout_seconds = 10;
+    request.timeout_seconds = kPowerShellBudgetSeconds;
 
     QVERIFY(broker.startPowerShell(request, QStringLiteral("cmd_001")));
     QVERIFY(waitForFinish(finished_spy));
@@ -175,7 +179,7 @@ void AiExecutionBrokerTests::runPowerShell_streamsStdoutChunks() {
 
     sak::ai::AiCommandRequest request;
     request.command = QStringLiteral("Write-Output 'stream-marker'");
-    request.timeout_seconds = 10;
+    request.timeout_seconds = kPowerShellBudgetSeconds;
 
     QVERIFY(broker.startPowerShell(request, QStringLiteral("cmd_stream")));
     QVERIFY(waitForFinish(finished_spy));
@@ -383,7 +387,7 @@ void AiExecutionBrokerTests::startCmd_capturesStdoutFromCmd() {
 
     sak::ai::AiCommandRequest request;
     request.command = QStringLiteral("echo cmd-marker");
-    request.timeout_seconds = 10;
+    request.timeout_seconds = kPowerShellBudgetSeconds;
 
     QVERIFY(broker.startCmd(request, QStringLiteral("cmd_cmd")));
     QVERIFY(waitForFinish(finished_spy));
@@ -419,7 +423,7 @@ void AiExecutionBrokerTests::startProcess_launchesProgramDirectly() {
     sak::ai::AiCommandRequest request;
     request.program = QStringLiteral("cmd.exe");
     request.arguments = QStringList{QStringLiteral("/c"), QStringLiteral("echo proc-marker")};
-    request.timeout_seconds = 10;
+    request.timeout_seconds = kPowerShellBudgetSeconds;
 
     QVERIFY(broker.startProcess(request, QStringLiteral("cmd_proc")));
     QVERIFY(waitForFinish(finished_spy));
@@ -445,7 +449,7 @@ void AiExecutionBrokerTests::startProcess_refusesUnresolvableBareName() {
     // AiCommandResult carries no program field, so only the refusal side is observable.
     sak::ai::AiCommandRequest request;
     request.program = QStringLiteral("definitely-not-a-real-sak-test-binary.exe");
-    request.timeout_seconds = 10;
+    request.timeout_seconds = kPowerShellBudgetSeconds;
 
     // Refusal is synchronous (false), unlike the async "Process start error" an absolute
     // bad path produces -- delete the resolver and this flips to true.
@@ -467,7 +471,7 @@ void AiExecutionBrokerTests::startProcess_reportsInvalidProgramAsAsyncFailure() 
 
     sak::ai::AiCommandRequest request;
     request.program = QStringLiteral("C:/definitely-not-a-real-sak-test-binary.exe");
-    request.timeout_seconds = 10;
+    request.timeout_seconds = kPowerShellBudgetSeconds;
 
     QVERIFY(broker.startProcess(request, QStringLiteral("cmd_bad_proc")));
     QVERIFY(waitForFinish(finished_spy));
@@ -575,7 +579,7 @@ void AiExecutionBrokerTests::startProcess_refusesWorkingDirectoryRelativeProgram
 
     sak::ai::AiCommandRequest request;
     request.program = QStringLiteral("sub/planted.exe");
-    request.timeout_seconds = 10;
+    request.timeout_seconds = kPowerShellBudgetSeconds;
 
     QVERIFY(!broker.startProcess(request, QStringLiteral("cmd_relative")));
     QVERIFY(waitForFinish(finished_spy));
@@ -590,7 +594,7 @@ void AiExecutionBrokerTests::startProcess_refusesWorkingDirectoryRelativeProgram
     QSignalSpy back_spy(&back_broker, &sak::ai::ExecutionBroker::finished);
     sak::ai::AiCommandRequest back_request;
     back_request.program = QStringLiteral("sub\\planted.exe");
-    back_request.timeout_seconds = 10;
+    back_request.timeout_seconds = kPowerShellBudgetSeconds;
     QVERIFY(!back_broker.startProcess(back_request, QStringLiteral("cmd_relative_back")));
     QVERIFY(waitForFinish(back_spy));
     QVERIFY(!resultFromSpy(back_spy).started);
@@ -607,7 +611,7 @@ void AiExecutionBrokerTests::startProcess_refusesAProgramThatIsNotTheApprovedFil
 
     sak::ai::AiCommandRequest request;
     request.program = cmd;
-    request.timeout_seconds = 10;
+    request.timeout_seconds = kPowerShellBudgetSeconds;
     // A VALID identity belonging to a DIFFERENT real file: this is what a swap looks like from
     // the launch site -- the path still resolves, the file is still readable, it is simply not
     // the one that was approved.
