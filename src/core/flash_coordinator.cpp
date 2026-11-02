@@ -29,7 +29,7 @@
 #include <winioctl.h>
 
 namespace {
-constexpr qint64 kDefaultFlashBufferSizeMb = 256;
+constexpr qint64 kDefaultFlashBufferSizeMb = 64;
 // Per-worker I/O buffer ceiling. Each running worker allocates one, and the size can
 // come from an attacker-writable config file, so it is bounded rather than passed
 // through to an allocation. Well above the 512 MB the settings dialog offers.

@@ -18,15 +18,22 @@
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
+#include <QFileInfo>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
+#include <QtEndian>
 #include <QtTest>
+
+#include <cstring>
 
 class WindowsUSBCreatorTests : public QObject {
     Q_OBJECT
 
 private Q_SLOTS:
+    void installImageListing_needsTheTopLevelSourcesFolder();
+    void checkInstallImage_runsTheRealToolOverARealIso();
+    void finalStatus_saysFilesVerifiedNotBootable();
     void initTestCase();
     void cleanupTestCase();
 
@@ -540,6 +547,143 @@ void WindowsUSBCreatorTests::isCriticalWindowsFile_rejectsNonCriticalPaths() {
     // boot.wim only counts under sources/: a same-named file elsewhere is not the payload
     // whose size the integrity check is pinning.
     QVERIFY(!WindowsUSBCreator::isCriticalWindowsFile(QStringLiteral("other/boot.wim")));
+}
+
+// ----- The real tool over real images. The listing below is 7z's own output for the Windows 11
+// 25H2 ISO (UDF), filtered the same way; the Arch Linux ISO gives an empty listing with exit 0.
+// -----
+void WindowsUSBCreatorTests::installImageListing_needsTheTopLevelSourcesFolder() {
+    const QString real_windows = QStringLiteral(
+        "2025-09-15 12:53:56 .....   6868632137   6868633600  sources\\install.wim\r\n");
+    QVERIFY(WindowsUSBCreator::listingHasInstallImage(real_windows));
+    // ISO 9660 names come out in capitals.
+    QVERIFY(WindowsUSBCreator::listingHasInstallImage(
+        QStringLiteral("2025-09-15 12:53:56 .....  10  10  SOURCES\\INSTALL.ESD")));
+    QVERIFY(WindowsUSBCreator::listingHasInstallImage(
+        QStringLiteral("2025-09-15 12:53:56 .....  10  10  sources/install.swm")));
+
+    QVERIFY(!WindowsUSBCreator::listingHasInstallImage(QString()));
+    // A rescue disc carries boot.wim, and a tool may keep its own image elsewhere.
+    QVERIFY(!WindowsUSBCreator::listingHasInstallImage(
+        QStringLiteral("2025-09-15 12:53:44 .....  10  10  sources\\boot.wim")));
+    QVERIFY(!WindowsUSBCreator::listingHasInstallImage(
+        QStringLiteral("2025-09-15 12:53:44 .....  10  10  rescue\\sources\\install.wim")));
+}
+
+namespace {
+// One 2048-byte ISO 9660 directory record.
+QByteArray isoDirectoryRecord(quint32 lba, quint32 size, bool directory, const QByteArray& name) {
+    QByteArray record(33 + name.size() + (name.size() % 2 == 0 ? 1 : 0), '\0');
+    record[0] = static_cast<char>(record.size());
+    qToLittleEndian<quint32>(lba, record.data() + 2);
+    qToBigEndian<quint32>(lba, record.data() + 6);
+    qToLittleEndian<quint32>(size, record.data() + 10);
+    qToBigEndian<quint32>(size, record.data() + 14);
+    record[25] = directory ? 2 : 0;
+    qToLittleEndian<quint16>(1, record.data() + 28);
+    qToBigEndian<quint16>(1, record.data() + 30);
+    record[32] = static_cast<char>(name.size());
+    record.replace(33, name.size(), name);
+    return record;
+}
+
+// A real, minimal ISO 9660 image holding one file at SOURCES/<file_name>.
+QByteArray isoWithSourcesFile(const QByteArray& file_name) {
+    constexpr int kSector = 2048;
+    constexpr quint32 kPvd = 16;
+    constexpr quint32 kTerminator = 17;
+    constexpr quint32 kRoot = 18;
+    constexpr quint32 kSources = 19;
+    constexpr quint32 kData = 20;
+    constexpr quint32 kSectors = 21;
+    QByteArray image(kSectors * kSector, '\0');
+    const auto sector = [&image](quint32 lba) {
+        return image.data() + (lba * kSector);
+    };
+
+    QByteArray pvd(kSector, '\0');
+    pvd[0] = 1;
+    pvd.replace(1, 5, "CD001");
+    pvd[6] = 1;
+    qToLittleEndian<quint32>(kSectors, pvd.data() + 80);
+    qToBigEndian<quint32>(kSectors, pvd.data() + 84);
+    qToLittleEndian<quint16>(1, pvd.data() + 120);
+    qToBigEndian<quint16>(1, pvd.data() + 122);
+    qToLittleEndian<quint16>(1, pvd.data() + 124);
+    qToBigEndian<quint16>(1, pvd.data() + 126);
+    qToLittleEndian<quint16>(kSector, pvd.data() + 128);
+    qToBigEndian<quint16>(kSector, pvd.data() + 130);
+    const QByteArray root_self = isoDirectoryRecord(kRoot, kSector, true, QByteArray(1, '\0'));
+    pvd.replace(156, root_self.size(), root_self);
+    pvd[881] = 1;
+    std::memcpy(sector(kPvd), pvd.constData(), kSector);
+
+    QByteArray terminator(kSector, '\0');
+    terminator[0] = static_cast<char>(255);
+    terminator.replace(1, 5, "CD001");
+    terminator[6] = 1;
+    std::memcpy(sector(kTerminator), terminator.constData(), kSector);
+
+    const QByteArray dot = isoDirectoryRecord(kRoot, kSector, true, QByteArray(1, '\0'));
+    const QByteArray dotdot = isoDirectoryRecord(kRoot, kSector, true, QByteArray(1, '\1'));
+    const QByteArray root = dot + dotdot + isoDirectoryRecord(kSources, kSector, true, "SOURCES");
+    std::memcpy(sector(kRoot), root.constData(), root.size());
+
+    const QByteArray sources = isoDirectoryRecord(kSources, kSector, true, QByteArray(1, '\0')) +
+                               dotdot + isoDirectoryRecord(kData, 4, false, file_name + ";1");
+    std::memcpy(sector(kSources), sources.constData(), sources.size());
+
+    std::memcpy(sector(kData), "data", 4);
+    return image;
+}
+
+QString bundledSevenZip() {
+    return QDir(QFileInfo(QStringLiteral(__FILE__)).absolutePath())
+        .filePath(QStringLiteral("../../tools/chocolatey/tools/7z.exe"));
+}
+
+QString writeTestFile(const QTemporaryDir& dir, const QString& name, const QByteArray& bytes) {
+    QFile file(dir.filePath(name));
+    if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size()) {
+        return {};
+    }
+    return file.fileName();
+}
+}  // namespace
+
+void WindowsUSBCreatorTests::checkInstallImage_runsTheRealToolOverARealIso() {
+    const QString seven_zip = bundledSevenZip();
+    QVERIFY2(QFile::exists(seven_zip), qPrintable(seven_zip));
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    using Check = WindowsUSBCreator::InstallImageCheck;
+
+    const QString install =
+        writeTestFile(dir, QStringLiteral("win.iso"), isoWithSourcesFile("INSTALL.WIM"));
+    QCOMPARE(WindowsUSBCreator::checkInstallImageWith(install, seven_zip), Check::Found);
+
+    // The rescue-disc shape: Windows-looking, boot.wim, no install image.
+    const QString rescue =
+        writeTestFile(dir, QStringLiteral("rescue.iso"), isoWithSourcesFile("BOOT.WIM"));
+    QCOMPARE(WindowsUSBCreator::checkInstallImageWith(rescue, seven_zip), Check::NotFound);
+
+    // A raw disk image 7z cannot open is an ordinary thing to flash, not a failure.
+    const QString raw = writeTestFile(dir, QStringLiteral("raw.img"), QByteArray(64 * 1024, 'r'));
+    QCOMPARE(WindowsUSBCreator::checkInstallImageWith(raw, seven_zip), Check::NotFound);
+
+    // No tool, no answer. The caller refuses rather than guessing a writer.
+    QCOMPARE(WindowsUSBCreator::checkInstallImageWith(install,
+                                                      dir.filePath(QStringLiteral("no.exe"))),
+             Check::Failed);
+}
+
+// "Verified bootable" was a claim nothing here tested, and false for firmware that cannot read
+// NTFS.
+void WindowsUSBCreatorTests::finalStatus_saysFilesVerifiedNotBootable() {
+    const QString status = WindowsUSBCreator::finalVerificationStatus();
+    QVERIFY2(!status.contains(QStringLiteral("BOOTABLE"), Qt::CaseInsensitive), qPrintable(status));
+    QVERIFY2(status.contains(QStringLiteral("files verified")), qPrintable(status));
+    QVERIFY2(status.contains(QStringLiteral("NTFS")), qPrintable(status));
 }
 
 QTEST_MAIN(WindowsUSBCreatorTests)

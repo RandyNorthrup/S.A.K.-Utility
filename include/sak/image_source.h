@@ -21,7 +21,7 @@ enum class ImageFormat {
     Unknown,
     ISO,    // ISO 9660 CD/DVD image
     IMG,    // Raw disk image
-    WIC,    // Windows Imaging Format
+    WIC,    // Raw disk image from OpenEmbedded's wic tool
     ZIP,    // ZIP archive containing image
     GZIP,   // GZIP compressed image
     BZIP2,  // BZIP2 compressed image

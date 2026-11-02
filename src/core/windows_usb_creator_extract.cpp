@@ -955,6 +955,57 @@ bool WindowsUSBCreator::verifyBootAndInstallFiles(const QString& cleanDrive) {
     return true;
 }
 
+QString WindowsUSBCreator::finalVerificationStatus() {
+    return QStringLiteral(
+        "[x] USB files verified. A PC whose UEFI firmware cannot read NTFS will not boot it.");
+}
+
+bool WindowsUSBCreator::listingHasInstallImage(const QString& listing) {
+    // Directly in the top-level sources folder, whatever the case: a Windows install image has
+    // this one place, and an install.wim deeper in some other tool's tree says nothing.
+    static const QRegularExpression kInstallImage(
+        QStringLiteral(R"((^|\s)sources[\\/]install\.(wim|esd|swm)\s*$)"),
+        QRegularExpression::CaseInsensitiveOption | QRegularExpression::MultilineOption);
+    return kInstallImage.match(listing).hasMatch();
+}
+
+WindowsUSBCreator::InstallImageCheck WindowsUSBCreator::checkInstallImage(const QString& isoPath) {
+    const QString appDir = QCoreApplication::applicationDirPath();
+    const QString sevenZipPath = appDir + "/tools/chocolatey/tools/7z.exe";
+    if (!isSafeBundledExecutable(sevenZipPath, appDir)) {
+        sak::logError(QString("Refusing to run untrusted or missing 7z.exe at: %1")
+                          .arg(sevenZipPath)
+                          .toStdString());
+        return InstallImageCheck::Failed;
+    }
+    return checkInstallImageWith(isoPath, sevenZipPath);
+}
+
+WindowsUSBCreator::InstallImageCheck WindowsUSBCreator::checkInstallImageWith(
+    const QString& isoPath, const QString& sevenZipPath) {
+    const sak::ProcessResult result = sak::runProcess(sevenZipPath,
+                                                      {QStringLiteral("l"),
+                                                       QStringLiteral("-ba"),
+                                                       QStringLiteral("-sccUTF-8"),
+                                                       QStringLiteral("--"),
+                                                       isoPath,
+                                                       QStringLiteral("sources\\install.*")},
+                                                      sak::kTimeoutProcessLongMs);
+    // exit_code stays negative when the process never started. A real 7z exit is never negative.
+    if (result.timed_out || result.exit_status != 0 || result.output_truncated ||
+        result.exit_code < 0) {
+        sak::logError(QString("Could not list %1 with 7z (exit %2)")
+                          .arg(isoPath)
+                          .arg(result.exit_code)
+                          .toStdString());
+        return InstallImageCheck::Failed;
+    }
+    // A raw disk image 7z cannot open exits non-zero with no listing, and that is a real answer:
+    // there is no install image in it that the Windows writer could use.
+    return listingHasInstallImage(result.std_out) ? InstallImageCheck::Found
+                                                  : InstallImageCheck::NotFound;
+}
+
 void WindowsUSBCreator::logFinalVerificationSuccess(int fileCount) {
     // finalVerification counts up from 0 with a QDirIterator and returns early below the
     // 10-item minimum, so the count reaching here is always positive.
@@ -968,7 +1019,7 @@ void WindowsUSBCreator::logFinalVerificationSuccess(int fileCount) {
     sak::logInfo("========================================");
 
     Q_EMIT progressUpdated(sak::kPercentMax);
-    Q_EMIT statusChanged("[x] USB VERIFIED BOOTABLE - All checks passed");
+    Q_EMIT statusChanged(finalVerificationStatus());
 
     // THIS IS THE ONLY PLACE completed() IS EMITTED
     Q_EMIT completed();

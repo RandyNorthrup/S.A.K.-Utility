@@ -245,9 +245,11 @@ QString bootTypeFromFlags(const BootCatalogFlags& flags) {
 }
 
 bool hasWindowsMetadata(const QString& label, const QString& app) {
-    return containsAny(
-               label,
-               {"WIN", "CCCOMA", "J_CCSA", "SSS_X64", "CPBA_", "CCSA_", "CPRA_", "GSP1RM"}) ||
+    // "WIN" only at the start of a word: WIN10, WIN11_25H2, WINDOWS, but not DARWIN or TWIN.
+    static const QRegularExpression kWinWord(QStringLiteral("(^|[^A-Z0-9])WIN"));
+    return kWinWord.match(label).hasMatch() ||
+           containsAny(label,
+                       {"CCCOMA", "J_CCSA", "SSS_X64", "CPBA_", "CCSA_", "CPRA_", "GSP1RM"}) ||
            containsAny(app, {"MICROSOFT", "CDIMAGE"});
 }
 

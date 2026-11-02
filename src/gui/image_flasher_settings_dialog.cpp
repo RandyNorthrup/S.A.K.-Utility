@@ -9,7 +9,6 @@
 #include "sak/layout_constants.h"
 #include "sak/logger.h"
 #include "sak/message_box_helpers.h"
-#include "sak/network_constants.h"
 #include "sak/style_constants.h"
 
 #include <QDialogButtonBox>
@@ -296,7 +295,7 @@ void ImageFlasherSettingsDialog::onAccept() {
 
 void ImageFlasherSettingsDialog::onResetDefaults() {
     m_validationModeCombo->setCurrentIndex(0);  // Full
-    m_bufferSizeSpin->setValue(static_cast<int>(sak::kBufferAlignment));
+    m_bufferSizeSpin->setValue(sak::kImageFlasherDefaultBufferMb);
     m_maxConcurrentWritesSpin->setValue(kDefaultMaxConcurrentWrites);
     m_showLargeDriveWarningCheck->setChecked(true);
     m_largeDriveThresholdSpin->setValue(kDefaultLargeDriveThresholdGb);

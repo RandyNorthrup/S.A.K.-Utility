@@ -89,7 +89,7 @@ QString imageFormatLabel(ImageFormat format) {
     case ImageFormat::IMG:
         return QStringLiteral("Raw Image");
     case ImageFormat::WIC:
-        return QStringLiteral("Windows Imaging");
+        return QStringLiteral("WIC Disk Image");
     case ImageFormat::GZIP:
         return QStringLiteral("GZIP Compressed");
     case ImageFormat::BZIP2:
@@ -144,12 +144,6 @@ ImageFlasherPanel::ImageFlasherPanel(QWidget* parent)
             &FlashCoordinator::flashError,
             this,
             &ImageFlasherPanel::onFlashError);
-
-    // Connect ISO downloader signals
-    connect(m_isoDownloader.get(),
-            &WindowsISODownloader::downloadComplete,
-            this,
-            &ImageFlasherPanel::onWindowsISODownloaded);
 
     // Started in every mode. Startup smoke and the accessibility audit exist to exercise the
     // start-up work users get, so they must not skip it. The scan is read-only and, with no
@@ -791,19 +785,6 @@ bool ImageFlasherPanel::onImageSelected(const QString& image_path) {
     return true;
 }
 
-void ImageFlasherPanel::onWindowsISODownloaded(const QString& iso_path) {
-    // Do not report a successful download when the downloaded image fails validation
-    // (validateImageFile has already surfaced the specific reason).
-    if (!onImageSelected(iso_path)) {
-        return;
-    }
-
-    sak::showInformationLogged(
-        this,
-        "Download Complete",
-        QString("Windows 11 ISO downloaded successfully!\n\n%1").arg(iso_path));
-}
-
 void ImageFlasherPanel::onDriveListUpdated() {
     Q_ASSERT(m_driveListWidget);
     Q_ASSERT(m_driveScanner);
@@ -982,6 +963,12 @@ void ImageFlasherPanel::notifyFlashFinished(const FlashResult& result) {
 }
 
 void ImageFlasherPanel::onFlashError(const QString& error) {
+    // Everything the coordinator reports this way happens before a writer starts: a write that
+    // fails after that ends in flashCompleted, with the failed drives listed.
+    showFlashFailure(error, QStringLiteral("Nothing was written to the target drive(s)."));
+}
+
+void ImageFlasherPanel::showFlashFailure(const QString& error, const QString& drive_state) {
     Q_ASSERT(m_stackedWidget);
     m_isFlashing = false;
     m_settingsButton->setEnabled(true);
@@ -993,12 +980,10 @@ void ImageFlasherPanel::onFlashError(const QString& error) {
     const QString reported = error.isEmpty() ? tr("The writer reported no reason.") : error;
 
     logError(("Flash Error: " + reported).toStdString());
-    sak::showCriticalLogged(this,
-                            "Flash Error",
-                            QString("The flash operation failed:\n\n%1\n\n"
-                                    "The target drive(s) may be in an unusable state. "
-                                    "You may need to reformat them before they can be used again.")
-                                .arg(reported));
+    sak::showCriticalLogged(
+        this,
+        "Flash Error",
+        QString("The flash operation failed:\n\n%1\n\n%2").arg(reported, drive_state));
 
     // Return to drive selection so the user can see the state
     m_stackedWidget->setCurrentIndex(1);
@@ -1184,7 +1169,7 @@ bool ImageFlasherPanel::confirmSelectionStillValid() {
         sak::showCriticalLogged(this,
                                 "Drive Changed",
                                 "A selected drive changed or was removed since you selected it. "
-                                "Rescan and reselect the target before flashing.");
+                                "Reselect the target before flashing.");
         return false;
     }
     return true;
@@ -1303,6 +1288,25 @@ QString ImageFlasherPanel::buildFlashConfirmationMessage(const QStringList& driv
         .arg(method_info);
 }
 
+bool ImageFlasherPanel::decideImageWriter(bool* is_windows_iso) {
+    // Which writer this image needs is decided from what is inside it. If that cannot be read,
+    // stop here: guessing wrong erases the drive and then fails.
+    const WindowsUSBCreator::InstallImageCheck install_image =
+        CompressedImageSource::isCompressed(m_selectedImagePath)
+            ? WindowsUSBCreator::InstallImageCheck::NotFound
+            : WindowsUSBCreator::checkInstallImage(m_selectedImagePath);
+    if (install_image == WindowsUSBCreator::InstallImageCheck::Failed) {
+        sak::showCriticalLogged(this,
+                                "Could Not Read Image",
+                                "Could not look inside the image to tell how it has to be written, "
+                                "so nothing was changed. The bundled 7-Zip tool may be missing "
+                                "from the application folder.");
+        return false;
+    }
+    *is_windows_iso = install_image == WindowsUSBCreator::InstallImageCheck::Found;
+    return true;
+}
+
 void ImageFlasherPanel::showConfirmationDialog() {
     Q_ASSERT(m_flashButton);
     // Reaching here with no image selected is a real state, not an impossible one:
@@ -1319,8 +1323,10 @@ void ImageFlasherPanel::showConfirmationDialog() {
         return;
     }
 
-    // Check if this is a Windows ISO
-    const bool is_windows_iso = isWindowsInstallISO(m_selectedImagePath);
+    bool is_windows_iso = false;
+    if (!decideImageWriter(&is_windows_iso)) {
+        return;
+    }
 
     // Build drive list for display
     bool has_system_drive = false;
@@ -1409,13 +1415,6 @@ void ImageFlasherPanel::beginConfirmedFlash(bool is_windows_iso) {
     }
 }
 
-bool ImageFlasherPanel::isWindowsInstallISO(const QString& iso_path) {
-    // Classify from the image's own metadata (volume label / application ID via
-    // IsoAnalyzer), not the filename. The old filename heuristic matched
-    // "server" and routed Linux server ISOs into the Windows-installer path.
-    return IsoAnalyzer::isWindowsInstallMedia(IsoAnalyzer::analyze(iso_path));
-}
-
 void ImageFlasherPanel::connectWindowsUSBCreatorSignals(WindowsUSBCreator* creator,
                                                         QThread* thread) {
     Q_ASSERT(creator);
@@ -1451,7 +1450,10 @@ void ImageFlasherPanel::connectWindowsUSBCreatorSignals(WindowsUSBCreator* creat
         m_flashButton->setEnabled(true);
         m_flashButton->setVisible(true);
         updateNavigationButtons();
-        onFlashError(error);
+        // This writer erases the drive first, so a failure may leave it with nothing usable on it.
+        showFlashFailure(error,
+                         QStringLiteral("The target drive may be left unusable. You may need to "
+                                        "reformat it before it can be used again."));
     });
 
     // Clean up thread and creator when thread finishes

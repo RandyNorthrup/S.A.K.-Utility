@@ -6,6 +6,7 @@
 
 #include "sak/iso_analyzer.h"
 
+#include <QBuffer>
 #include <QFile>
 #include <QStringList>
 #include <QTemporaryDir>
@@ -128,6 +129,7 @@ private Q_SLOTS:
     void windowsFamilyIsInstallMedia();
     void windowsEditionsImplyInstallMedia();
     void linuxServerIsoIsNotWindows();
+    void winInsideAWordIsNotWindows();
     void unknownOrEmptyIsNotWindows();
 
     // analyze() over real bytes
@@ -186,6 +188,21 @@ void IsoAnalyzerTests::linuxServerIsoIsNotWindows() {
     info.distro_name = QStringLiteral("Ubuntu");
     info.volume_label = QStringLiteral("Ubuntu-Server 24.04.1 LTS amd64");
     QVERIFY(!IsoAnalyzer::isWindowsInstallMedia(info));
+}
+
+// A word that merely has WIN inside it is not Windows. These are real-world shaped labels; the OS
+// row of the image details must not call them Windows.
+void IsoAnalyzerTests::winInsideAWordIsNotWindows() {
+    const auto labelled = [](const char* label) {
+        QByteArray image = buildSyntheticIso({.volume_label = label});
+        QBuffer buffer(&image);
+        buffer.open(QIODevice::ReadOnly);
+        return IsoAnalyzer::analyzeDevice(buffer);
+    };
+    QVERIFY(labelled("DARWIN_RESCUE").os_family != QStringLiteral("Windows"));
+    QVERIFY(labelled("TWIN-LIVE").os_family != QStringLiteral("Windows"));
+    QCOMPARE(labelled("WIN10_22H2").os_family, QStringLiteral("Windows"));
+    QCOMPARE(labelled("Win11_25H2_English_x64").os_family, QStringLiteral("Windows"));
 }
 
 void IsoAnalyzerTests::unknownOrEmptyIsNotWindows() {

@@ -610,7 +610,8 @@ QString GenerateSystemReportAction::gatherQtAndVolumeInfo() const {
                 ? kPercentMaxF * (1.0 - (static_cast<double>(storage.bytesFree()) /
                                          static_cast<double>(total_bytes)))
                 : 0.0;  // guard divide-by-zero: an unknown-capacity volume reports 0% used
-        section += QString("  Used: %1%%\n\n").arg(used_percent, 0, 'f', kPercentDisplayPrecision);
+        // QString::arg has no %% escape: written that way it printed two percent signs.
+        section += QString("  Used: %1%\n\n").arg(used_percent, 0, 'f', kPercentDisplayPrecision);
     }
 
     return section;

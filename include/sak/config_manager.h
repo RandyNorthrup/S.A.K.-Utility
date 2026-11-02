@@ -25,6 +25,10 @@ namespace sak {
  * - Settings validation
  * - Reset to defaults
  */
+/// Default Image Flasher read/write buffer, in MB. Large enough for USB and SD throughput without
+/// holding a lot of memory per drive.
+inline constexpr int kImageFlasherDefaultBufferMb = 64;
+
 class ConfigManager : public QObject {
     Q_OBJECT
 

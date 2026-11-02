@@ -275,8 +275,12 @@ void ConfigManagerTests::themePreference_setGetAndUnknownReadsAsSystem() {
 
 void ConfigManagerTests::imageFlasherBufferSize_setGet() {
     auto& mgr = sak::ConfigManager::instance();
-    mgr.setImageFlasherBufferSize(2048);
-    QCOMPARE(mgr.getImageFlasherBufferSize(), 2048);
+    mgr.setImageFlasherBufferSize(256);
+    QCOMPARE(mgr.getImageFlasherBufferSize(), 256);
+    // 4096 was the old default, written to every install's settings as if it were megabytes. The
+    // dialog cannot show it and the flasher refuses it, so it reads back as the real default.
+    mgr.setValue("image_flasher/buffer_size", 4096);
+    QCOMPARE(mgr.getImageFlasherBufferSize(), sak::kImageFlasherDefaultBufferMb);
 }
 
 // image_flasher/show_system_drive_warning was retired: the system-drive block is
@@ -304,9 +308,10 @@ void ConfigManagerTests::imageFlasherDefaults_doNotRecreateRetiredSystemDriveWar
     QVERIFY(mgr.contains("image_flasher/validation_mode"));
     QCOMPARE(mgr.getValue("image_flasher/validation_mode").toString(), QString("full"));
     QVERIFY(mgr.contains("image_flasher/buffer_size"));
-    // kBufferAlignment (4096) as a literal: config_manager.h does not include
+    // The default is a size in megabytes the settings dialog can show and the flasher accepts.
     // network_constants.h.
-    QCOMPARE(mgr.getValue("image_flasher/buffer_size").toInt(), 4096);
+    QCOMPARE(mgr.getValue("image_flasher/buffer_size").toInt(), sak::kImageFlasherDefaultBufferMb);
+    QCOMPARE(sak::kImageFlasherDefaultBufferMb, 64);
     QVERIFY(mgr.contains("image_flasher/enable_notifications"));
     QCOMPARE(mgr.getValue("image_flasher/enable_notifications").toBool(), true);
 
@@ -336,18 +341,15 @@ void ConfigManagerTests::typedGetters_reclampOutOfRangeStoredValues() {
     QCOMPARE(mgr.getImageFlasherValidationMode(), QString("quick"));
 
     mgr.setValue("image_flasher/buffer_size", 0);
-    // A non-positive buffer reclamps to the default kBufferAlignment (4096); literal because
-    // config_manager.h does not include network_constants.h.
-    QCOMPARE(mgr.getImageFlasherBufferSize(), 4096);
-    // The buffer guard has TWO arms: the magnitude cap (kMaxImageFlasherBufferSizeMb
-    // == 4096 MB, config_manager.cpp:26) is what stops an absurd allocation request
-    // from a hand-edited INI. Bracket it -- 4095 is in range and passes through,
-    // 4097 is over and reclamps. (4096 itself would prove nothing: it equals the
-    // default the clamp hands back.)
-    mgr.setValue("image_flasher/buffer_size", 4095);
-    QCOMPARE(mgr.getImageFlasherBufferSize(), 4095);
-    mgr.setValue("image_flasher/buffer_size", 4097);
-    QCOMPARE(mgr.getImageFlasherBufferSize(), 4096);
+    // A non-positive buffer reclamps to the default.
+    QCOMPARE(mgr.getImageFlasherBufferSize(), sak::kImageFlasherDefaultBufferMb);
+    // The buffer guard has TWO arms: the magnitude cap (kMaxImageFlasherBufferSizeMb, the 512 MB
+    // the settings dialog offers) is what stops an absurd allocation request from a hand-edited
+    // INI. Bracket it: 512 is in range and passes through, 513 is over and reclamps.
+    mgr.setValue("image_flasher/buffer_size", 512);
+    QCOMPARE(mgr.getImageFlasherBufferSize(), 512);
+    mgr.setValue("image_flasher/buffer_size", 513);
+    QCOMPARE(mgr.getImageFlasherBufferSize(), sak::kImageFlasherDefaultBufferMb);
 
     mgr.setValue("image_flasher/large_drive_threshold", -10);
     QCOMPARE(mgr.getImageFlasherLargeDriveThreshold(), 128);

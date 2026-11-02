@@ -73,6 +73,29 @@ public:
     ///        bundled tool. Fails closed. Pure/testable.
     [[nodiscard]] static bool isSafeBundledExecutable(const QString& path, const QString& appDir);
 
+    /// @brief Whether an image holds a Windows install image, the file this writer needs.
+    enum class InstallImageCheck {
+        Found,     ///< sources\\install.wim, .esd or .swm is inside: this writer can make media.
+        NotFound,  ///< It is not there, or the file is not an archive 7z can list.
+        Failed,    ///< 7z could not be run, so nothing is known about the image.
+    };
+
+    /// @brief Look inside @p isoPath for a Windows install image. A volume label cannot decide
+    ///        this: anything may carry "WIN" in its label or be built with Microsoft's tools, and a
+    ///        rescue ISO routed here has its drive erased before the missing file is noticed. This
+    ///        only lists the image, so a large file costs a fraction of a second.
+    [[nodiscard]] static InstallImageCheck checkInstallImage(const QString& isoPath);
+    /// @brief checkInstallImage with the 7z to use named, so a test can run the real tool.
+    [[nodiscard]] static InstallImageCheck checkInstallImageWith(const QString& isoPath,
+                                                                 const QString& sevenZipPath);
+    /// @brief Whether a 7z listing names a Windows install image. Pure; unit-testable.
+    [[nodiscard]] static bool listingHasInstallImage(const QString& listing);
+
+    /// @brief What the status line says when the media has passed its final checks. It says what
+    ///        was checked: the files are on the drive and the partition is active. Whether a given
+    ///        PC boots it is another matter, since the media is NTFS with no FAT32 EFI partition.
+    [[nodiscard]] static QString finalVerificationStatus();
+
     /// @brief True iff @p path names a file whose presence and size decide whether
     ///        an extracted Windows install medium is usable. Accepts either
     ///        separator: 7z reports ISO paths with backslashes on Windows.

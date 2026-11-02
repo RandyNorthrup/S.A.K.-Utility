@@ -18,6 +18,9 @@
 #include "sak/drive_scanner.h"
 #include "sak/flash_coordinator.h"
 #include "sak/image_flasher_panel.h"
+#include "sak/linux_iso_download_dialog.h"
+#include "sak/linux_iso_downloader.h"
+#include "sak/windows_iso_downloader.h"
 
 #include <QApplication>
 #include <QCoreApplication>
@@ -25,6 +28,7 @@
 #include <QFile>
 #include <QFileDialog>
 #include <QLabel>
+#include <QLineEdit>
 #include <QListWidget>
 #include <QMessageBox>
 #include <QPushButton>
@@ -82,6 +86,10 @@ private Q_SLOTS:
     void loadImageFileRefusesAnAppleDiskImage();
     void imagePickerOffersOnlyWhatFlashes();
     void readingACompressedImageIsNotShownAsWriting();
+    void aRefusalBeforeWritingSaysNothingWasWritten();
+    void aBuiltIsoIsNotAnnouncedTwice();
+    void shredOsStillGetsASaveLocation();
+    void aWicImageIsNotCalledWindowsImaging();
 
 private:
     QPushButton* flashButton() const;
@@ -96,6 +104,78 @@ private:
     std::unique_ptr<ImageFlasherPanel> m_panel;
     QTemporaryDir m_dir;
 };
+
+// Every coordinator error comes before a writer starts. Telling the technician to expect a ruined
+// drive at that point is false, and on a raw-disk tool it is alarming.
+void ImageFlasherPanelTests::aRefusalBeforeWritingSaysNothingWasWritten() {
+    auto* coordinator = m_panel->findChild<FlashCoordinator*>();
+    QVERIFY(coordinator != nullptr);
+    QString dialog_text;
+    QTimer::singleShot(0, this, [&dialog_text]() {
+        auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+        if (box != nullptr) {
+            dialog_text = box->text();
+            box->accept();
+        }
+    });
+    Q_EMIT coordinator->flashError(QStringLiteral("Refusing to flash: too small"));
+    QVERIFY2(dialog_text.contains(QStringLiteral("Nothing was written")), qPrintable(dialog_text));
+    QVERIFY2(!dialog_text.contains(QStringLiteral("unusable")), qPrintable(dialog_text));
+}
+
+// The build dialog says it finished and the panel offers to flash. The downloader's own signal used
+// to add a third box on top, always naming Windows 11 whatever was built.
+void ImageFlasherPanelTests::aBuiltIsoIsNotAnnouncedTwice() {
+    auto* downloader = m_panel->findChild<WindowsISODownloader*>();
+    QVERIFY(downloader != nullptr);
+    Q_EMIT downloader->downloadComplete(QStringLiteral("C:/does-not-exist.iso"), 1);
+    QTest::qWait(0);
+    QVERIFY(QApplication::activeModalWidget() == nullptr);
+}
+
+// .wic is the raw disk image OpenEmbedded's wic tool produces. It has nothing to do with Windows.
+void ImageFlasherPanelTests::aWicImageIsNotCalledWindowsImaging() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    QFile image(dir.filePath(QStringLiteral("board.wic")));
+    QVERIFY(image.open(QIODevice::WriteOnly));
+    image.write(QByteArray(4096, 'w'));
+    image.close();
+    QVERIFY(m_panel->loadImageFile(image.fileName()));
+
+    const auto labels = m_panel->findChildren<QLabel*>();
+    QVERIFY(std::ranges::any_of(labels, [](const QLabel* label) {
+        return label->text() == QStringLiteral("WIC Disk Image");
+    }));
+    QVERIFY(std::ranges::none_of(labels, [](const QLabel* label) {
+        return label->text().contains(QStringLiteral("Windows Imaging"));
+    }));
+}
+
+// ShredOS's release name is only known once the download has started, and an empty Save Location
+// left the technician to invent a name, which then failed the checksum after the whole download.
+void ImageFlasherPanelTests::shredOsStillGetsASaveLocation() {
+    LinuxISODownloader downloader;
+    LinuxISODownloadDialog dialog(&downloader);
+    auto* list = dialog.findChild<QListWidget*>();
+    QVERIFY(list != nullptr);
+    int shredos_row = -1;
+    for (int row = 0; row < list->count(); ++row) {
+        if (list->item(row)->text().startsWith(QStringLiteral("ShredOS"))) {
+            shredos_row = row;
+        }
+    }
+    QVERIFY(shredos_row >= 0);
+    list->setCurrentRow(shredos_row);
+
+    QString save_path;
+    for (const auto* edit : dialog.findChildren<QLineEdit*>()) {
+        if (edit->placeholderText().startsWith(QStringLiteral("Select a distribution"))) {
+            save_path = edit->text();
+        }
+    }
+    QVERIFY2(save_path.endsWith(QStringLiteral("shredos.iso")), qPrintable(save_path));
+}
 
 // The first stage of a compressed image reads the file; nothing has gone to any drive yet.
 void ImageFlasherPanelTests::readingACompressedImageIsNotShownAsWriting() {

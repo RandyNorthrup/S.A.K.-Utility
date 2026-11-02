@@ -42,9 +42,9 @@ constexpr std::array<const char*, 13> kRetiredKeys = {
     "quick_actions/compress_backups",
 };
 // Sane upper bound (in MB) for the flasher read/write buffer. The settings dialog
-// caps at 512 MB; the only larger legitimate values are the app default and tests,
-// so anything above this can only come from a hand-edited INI or a foreign writer.
-constexpr int kMaxImageFlasherBufferSizeMb = 4096;
+// caps at 512 MB, so anything above this comes from a hand-edited INI, a foreign writer, or the
+// 4096 older versions wrote as their default by mistake.
+constexpr int kMaxImageFlasherBufferSizeMb = 512;
 
 // Getter-side invariant enforcement: a stored value can be out of range (older
 // config, hand-edited INI, or a foreign writer) even though the setters reject
@@ -150,7 +150,7 @@ void ConfigManager::initializeFlasherDefaults() {
         setValue("image_flasher/validation_mode", "full");
     }
     if (!contains("image_flasher/buffer_size")) {
-        setValue("image_flasher/buffer_size", static_cast<int>(sak::kBufferAlignment));
+        setValue("image_flasher/buffer_size", kImageFlasherDefaultBufferMb);
     }
     if (!contains("image_flasher/unmount_on_completion")) {
         setValue("image_flasher/unmount_on_completion", true);
@@ -299,8 +299,8 @@ void ConfigManager::setImageFlasherValidationMode(const QString& mode) {
 
 int ConfigManager::getImageFlasherBufferSize() const {
     return boundedBufferSizeOrDefault(
-        getValue("image_flasher/buffer_size", static_cast<int>(sak::kBufferAlignment)).toInt(),
-        static_cast<int>(sak::kBufferAlignment));
+        getValue("image_flasher/buffer_size", kImageFlasherDefaultBufferMb).toInt(),
+        kImageFlasherDefaultBufferMb);
 }
 
 void ConfigManager::setImageFlasherBufferSize(int size) {

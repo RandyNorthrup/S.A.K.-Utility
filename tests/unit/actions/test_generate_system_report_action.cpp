@@ -29,6 +29,7 @@ class GenerateSystemReportActionTests : public QObject {
 
 private Q_SLOTS:
     void collectorFailed_truthTable();
+    void volumeSectionHasOnePercentSign();
     void collectorScriptsSurfaceUnavailableQueries();
     void reportGenerationSucceeded_requiresSaveAndCollectors();
     void saveReportCountsUtf8BytesNotUtf16Units();
@@ -226,6 +227,13 @@ void GenerateSystemReportActionTests::failedSaveLogsItsReason() {
     QVERIFY2(message.startsWith(QStringLiteral("Failed to save system inventory report: ")),
              qPrintable(message));
     QVERIFY2(!message.contains(path), qPrintable(message));
+}
+
+void GenerateSystemReportActionTests::volumeSectionHasOnePercentSign() {
+    GenerateSystemReportAction action(QDir::tempPath());
+    const QString section = action.gatherQtAndVolumeInfo();
+    QVERIFY2(section.contains(QStringLiteral("  Used: ")), qPrintable(section));
+    QVERIFY2(!section.contains(QStringLiteral("%%")), qPrintable(section));
 }
 
 QTEST_GUILESS_MAIN(GenerateSystemReportActionTests)

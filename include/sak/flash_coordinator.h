@@ -241,7 +241,7 @@ public:
 
     /**
      * @brief Set buffer size for reading/writing
-     * @param sizeBytes Buffer size in bytes (default 256MB)
+     * @param sizeBytes Buffer size in bytes (default 64 MB)
      */
     void setBufferSize(qint64 sizeBytes);
 

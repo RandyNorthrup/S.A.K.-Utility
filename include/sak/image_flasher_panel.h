@@ -103,7 +103,6 @@ private Q_SLOTS:
      *         and navigation stays disabled (fail closed). */
     bool onImageSelected(const QString& image_path);
     /** @brief Handle a completed Windows ISO download */
-    void onWindowsISODownloaded(const QString& iso_path);
 
     // Step 2: Drive Selection
     /** @brief Refresh the drive list after a scan completes */
@@ -209,7 +208,6 @@ private:
     ///        Called immediately before each raw-image flash starts.
     void applyFlasherSettings();
     /** @brief Return true if the ISO is a Windows installer (needs special handling) */
-    static bool isWindowsInstallISO(const QString& iso_path);
     /** @brief Create a bootable Windows USB instead of raw flash */
     void createWindowsUSB();
     /** @brief Wire signal/slot connections for the Windows USB creator worker */
@@ -220,6 +218,12 @@ private:
     /// Exit-flow cancel: signals both writers to stop, without the Cancel button's prompt.
     void cancelWritesForExit();
     /** @brief Parse disk number from PhysicalDrive device path; returns empty on failure */
+    /// @brief Work out which writer the selected image needs, from what is inside it. Returns
+    /// false,
+    ///        having told the user, when that cannot be read.
+    [[nodiscard]] bool decideImageWriter(bool* is_windows_iso);
+    /// @brief Tell the user a run failed and what state the drive is in, then return to step 2.
+    void showFlashFailure(const QString& error, const QString& drive_state);
     QString parseDiskNumberFromDevicePath(const QString& device_path);
     /** @brief Find the display text for a drive by matching its device path in the list widget */
     QString findDriveDisplayText(const QString& device_path) const;
